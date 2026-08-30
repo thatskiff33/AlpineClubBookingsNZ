@@ -265,25 +265,78 @@ afterEach(() => {
  * "shape production cannot emit" this whole helper exists to stop.
  */
 function completeHostingGuestRows<
-  T extends { memberId?: string | null; ageTier?: string },
+  T extends { memberId?: string | null; ageTier?: string; priceCents?: number },
 >(guests: readonly T[], checkIn: Date, checkOut: Date) {
-  return guests.map((guest) => ({
-    // A guest with no stay window of its own stays the whole booking, which is
-    // what every route in this file assumes when it reprices the full party.
-    stayStart: checkIn,
-    stayEnd: checkOut,
-    nights: [] as Array<{ stayDate: Date }>,
-    // `null` = no consent was ever needed, which is operationally present (D-12)
-    // and the right default for an ordinary guest row.
-    consentStatus: null as string | null,
-    ...guest,
-    member:
-      typeof guest.memberId === "string"
-        ? hostingMemberRow(
-            guest.memberId,
-            guest.ageTier ? { ageTier: guest.ageTier } : {},
-          )
-        : null,
+  return guests.map((guest) => {
+    const stayStart = (guest as { stayStart?: Date }).stayStart ?? checkIn;
+    const stayEnd = (guest as { stayEnd?: Date }).stayEnd ?? checkOut;
+    return {
+      // A guest with no stay window of its own stays the whole booking, which is
+      // what every route in this file assumes when it reprices the full party.
+      stayStart,
+      stayEnd,
+      // #3031: and a per-night SOLD PRICE that reconciles to the guest's stored
+      // total. `[]` used to be the default, and it was the pre-#713 row shape -
+      // legitimate then, and the unpriceable case now: an edit that gives a
+      // night back reads what it was sold for off these rows and refuses to
+      // invent an amount when there is nothing to read. Production has carried
+      // rows for every guest since the #2739 backfill, so filling them in makes
+      // these fixtures MORE like a live booking, not less. A fixture that states
+      // its own `nights` still wins, including one that deliberately states none.
+      nights: syntheticSoldNightRows(stayStart, stayEnd, guest.priceCents),
+      // `null` = no consent was ever needed, which is operationally present (D-12)
+      // and the right default for an ordinary guest row.
+      consentStatus: null as string | null,
+      ...guest,
+      member:
+        typeof guest.memberId === "string"
+          ? hostingMemberRow(
+              guest.memberId,
+              guest.ageTier ? { ageTier: guest.ageTier } : {},
+            )
+          : null,
+    };
+  });
+}
+
+/**
+ * `BookingGuestNight` rows for `[stayStart, stayEnd)` that sum EXACTLY to
+ * `priceCents` (#3031).
+ *
+ * AN EVEN SPLIT, DELIBERATELY, and it is not the estimator #3031 removes. It
+ * mirrors what migrations `20260704150000` (#1098) and `20260810010000` (#2739)
+ * really wrote into this table for guests who had no rows: the stored total
+ * divided by the night count with the remainder on the first night. So a fixture
+ * built this way is the shape a large share of live bookings genuinely carries,
+ * which is exactly why INV-MOD-028 tests RECONCILIATION rather than provenance —
+ * these rows reconcile, and the invariant says in as many words that an evenly
+ * split backfilled strand prices as exact.
+ *
+ * What matters here is that the rows reconcile to the stored total, because that
+ * is the test an edit applies before it will price anything. A guest with no
+ * stored total gets no rows - there is nothing to allocate - and that fixture is
+ * then deliberately in the unpriceable case.
+ */
+function syntheticSoldNightRows(
+  stayStart: Date,
+  stayEnd: Date,
+  priceCents: number | undefined,
+): Array<{ stayDate: Date; priceCents: number }> {
+  if (typeof priceCents !== "number") return [];
+  const nights: Date[] = [];
+  for (
+    let night = new Date(stayStart);
+    night < stayEnd;
+    night = new Date(night.getTime() + 86_400_000)
+  ) {
+    nights.push(new Date(night));
+  }
+  if (nights.length === 0) return [];
+  const base = Math.floor(priceCents / nights.length);
+  const remainder = priceCents - base * nights.length;
+  return nights.map((stayDate, index) => ({
+    stayDate,
+    priceCents: base + (index === 0 ? remainder : 0),
   }));
 }
 
@@ -741,6 +794,96 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
     const body = await res.json();
     expect(body.priceDiffCents).toBe(20000); // 30000 - 10000
     expect(body.changeFeeCents).toBe(0);
+  });
+
+  it("writes the moved range's night rows at the amounts it priced (#3031)", async () => {
+    // THE CONTROL for the refusal below, and the reason the refusal cannot pass
+    // against a function that simply always throws: given a complete per-night
+    // vector, this writer stores exactly those amounts against exactly those
+    // nights. `BookingGuestNight` rows ARE the booking's sold-price history from
+    // here on, so what lands here is what the NEXT edit reads back as evidence
+    // (INV-MOD-028).
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
+    const booking = makeBooking();
+    const tx = makeTx(booking);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCheckCapacity.mockResolvedValue({ available: true, minAvailable: 10, nightDetails: [] });
+    const movedNights = [
+      new Date("2026-06-05T00:00:00.000Z"),
+      new Date("2026-06-06T00:00:00.000Z"),
+      new Date("2026-06-07T00:00:00.000Z"),
+    ];
+    // Deliberately UNEQUAL: an even split of 15000 across three nights would be
+    // 5000/5000/5000 and would satisfy a weaker assertion just as well.
+    mockedCalcPrice.mockReturnValue({
+      guests: [
+        { ageTier: "ADULT" as const, isMember: true, rateMembershipTypeId: "type-member", nights: 3, priceCents: 15000, perNightCents: [4000, 5000, 6000], nightDates: movedNights },
+        { ageTier: "ADULT" as const, isMember: true, rateMembershipTypeId: "type-member", nights: 3, priceCents: 15000, perNightCents: [4000, 5000, 6000], nightDates: movedNights },
+      ],
+      totalPriceCents: 30000,
+    });
+    mockedCalcChangeFee.mockReturnValue({ feeCents: 0, fromTierRefundPct: 100, toTierRefundPct: 100 });
+    mockedDaysUntilDate.mockReturnValue(30);
+    mockedLoadPolicy.mockResolvedValue([{ daysBeforeStay: 14, refundPercentage: 100 }]);
+    mockedGetHoldDays.mockResolvedValue(7);
+    mockFindUnique.mockResolvedValue({ id: "m1", active: true, email: "alice@test.com", firstName: "Alice" });
+
+    const req = new NextRequest("http://localhost/api/bookings/bk1/modify-dates", {
+      method: "PUT",
+      body: JSON.stringify({ checkIn: "2026-06-05", checkOut: "2026-06-08" }),
+    });
+    const res = await PUT(req, { params: Promise.resolve({ id: "bk1" }) });
+
+    expect(res.status).toBe(200);
+    expect(tx.bookingGuestNight.createMany).toHaveBeenCalledWith({
+      data: [
+        { bookingGuestId: "g1", stayDate: movedNights[0], priceCents: 4000 },
+        { bookingGuestId: "g1", stayDate: movedNights[1], priceCents: 5000 },
+        { bookingGuestId: "g1", stayDate: movedNights[2], priceCents: 6000 },
+      ],
+    });
+  });
+
+  it("refuses to write a moved night the reprice put no amount against (#3031)", async () => {
+    // The prohibited answer is `?? 0`, which this writer carried until #3031: a
+    // per-night vector shorter than the night list would put a REAL night into
+    // the sold-price history at zero, and the next edit would credit it back at
+    // nothing. Refusing is the only answer that neither invents money nor
+    // silently loses it. Nothing must be committed either.
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
+    const booking = makeBooking();
+    const tx = makeTx(booking);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCheckCapacity.mockResolvedValue({ available: true, minAvailable: 10, nightDetails: [] });
+    const movedNights = [
+      new Date("2026-06-05T00:00:00.000Z"),
+      new Date("2026-06-06T00:00:00.000Z"),
+      new Date("2026-06-07T00:00:00.000Z"),
+    ];
+    mockedCalcPrice.mockReturnValue({
+      guests: [
+        { ageTier: "ADULT" as const, isMember: true, rateMembershipTypeId: "type-member", nights: 3, priceCents: 15000, perNightCents: [5000, 5000], nightDates: movedNights },
+        { ageTier: "ADULT" as const, isMember: true, rateMembershipTypeId: "type-member", nights: 3, priceCents: 15000, perNightCents: [5000, 5000], nightDates: movedNights },
+      ],
+      totalPriceCents: 30000,
+    });
+    mockedCalcChangeFee.mockReturnValue({ feeCents: 0, fromTierRefundPct: 100, toTierRefundPct: 100 });
+    mockedDaysUntilDate.mockReturnValue(30);
+    mockedLoadPolicy.mockResolvedValue([{ daysBeforeStay: 14, refundPercentage: 100 }]);
+    mockedGetHoldDays.mockResolvedValue(7);
+    mockFindUnique.mockResolvedValue({ id: "m1", active: true, email: "alice@test.com", firstName: "Alice" });
+
+    const req = new NextRequest("http://localhost/api/bookings/bk1/modify-dates", {
+      method: "PUT",
+      body: JSON.stringify({ checkIn: "2026-06-05", checkOut: "2026-06-08" }),
+    });
+    const res = await PUT(req, { params: Promise.resolve({ id: "bk1" }) });
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe(
+      "The new dates could not be priced night by night",
+    );
+    expect(tx.bookingGuestNight.createMany).not.toHaveBeenCalled();
   });
 
   it("processes Stripe refund on price decrease for confirmed+paid booking", async () => {

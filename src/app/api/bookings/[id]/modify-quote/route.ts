@@ -115,6 +115,7 @@ import {
   lockedNightPricesForGuest,
   resolveGuestMemberLinks,
   resolveGuestNameUpdates,
+  BookingEditFinancialReviewRequiredError,
   isMemberWholeLodgeBooking,
   isQuotePricedBooking,
   QUOTE_PRICED_EDIT_BLOCK_MESSAGE,
@@ -123,6 +124,7 @@ import {
 } from "@/lib/booking-modify";
 import {
   buildInProgressGuestRangePlan,
+  type InProgressGuestRangePlanResult,
   type BookingEditGuestRangePlan,
 } from "@/lib/booking-edit-guest-ranges";
 import { formatDateOnly, parseDateOnly } from "@/lib/date-only";
@@ -1435,12 +1437,13 @@ export async function POST(
     subscriptionLockoutMode,
   });
 
-  let inProgressPlan: BookingEditGuestRangePlan | null = null;
+  let planResult: InProgressGuestRangePlanResult | null = null;
   try {
-    inProgressPlan =
+    planResult =
       isInProgressEdit && editableFrom
         ? buildInProgressGuestRangePlan({
           booking: {
+            id: booking.id,
             checkIn: booking.checkIn,
             checkOut: booking.checkOut,
             totalPriceCents: booking.totalPriceCents,
@@ -1468,6 +1471,33 @@ export async function POST(
       { status: 400 }
     );
   }
+
+  // #3031 (epic #2797): QUOTE AND APPLY CONSUME THE SAME DISCRIMINATED RESULT,
+  // which is the issue's own parity requirement. The preview refuses here with
+  // the same code and the same member-facing sentence the save refuses with
+  // (`BookingEditFinancialReviewRequiredError`), so the member cannot be shown a
+  // price the save would decline to honour — and is never shown an estimate or a
+  // `$0` for an amount nobody has worked out yet.
+  if (planResult?.kind === "financial_review_required") {
+    const refusal = new BookingEditFinancialReviewRequiredError(
+      planResult.occurrences,
+    );
+    logger.info(
+      {
+        bookingId,
+        // The CAUSES only. Which nights and what was stored against them is
+        // evidence for an admin on the review task (#3030), not log fodder.
+        causes: planResult.occurrences.map((occurrence) => occurrence.cause),
+      },
+      "Booking modification quote needs financial review",
+    );
+    return NextResponse.json(
+      { error: refusal.message, code: refusal.code },
+      { status: refusal.status },
+    );
+  }
+  const inProgressPlan: BookingEditGuestRangePlan | null =
+    planResult?.plan ?? null;
 
   // Capacity check (exclude current booking)
   // #1746: with admin-flagged partner-sharers the preview runs the same

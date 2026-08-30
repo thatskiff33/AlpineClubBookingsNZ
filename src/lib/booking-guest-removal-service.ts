@@ -48,6 +48,7 @@ import {
   applyPaymentAdjustments,
   assertBookingNotQuotePriced,
   calculateModificationSettlementOptions,
+  BookingEditFinancialReviewRequiredError,
   lockedNightPricesForGuest,
   rateSnapshotUpdateForRepricedGuest,
   type BookingModificationSettlementMethod,
@@ -55,6 +56,10 @@ import {
 } from "@/lib/booking-modify";
 import type { SupersededPrimaryPaymentIntent } from "@/lib/booking-payment-cleanup";
 import { assertNoPendingEditFinancialReview } from "@/lib/edit-financial-review";
+import {
+  editFinancialReviewOccurrence,
+  storedSoldPriceEvidenceForGuest,
+} from "@/lib/stored-sold-price-evidence";
 import { createBookingModificationCredit } from "@/lib/member-credit";
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
 import { lockRosterDates } from "@/lib/roster-lock";
@@ -502,6 +507,88 @@ export async function removeBookingGuestInTransaction({
 
   await assertBookingNotQuotePriced(tx, bookingId);
 
+  // #3031 (epic #2797), INV-MOD-028: CAN THIS BOOKING'S HISTORY PRICE THE
+  // REMOVAL EXACTLY?
+  //
+  // Removing a guest gives back every night that guest holds, so the credit is
+  // historical money and must come from what was actually sold. This path never
+  // computed it that way: it repriced the REMAINING guests and took the
+  // difference against the booking's stored total. Where a remaining guest's
+  // rows carry no usable price, that reprice values THEIR nights at today's
+  // rate, and the whole of that movement lands inside what the member is told is
+  // the departing guest's credit — a rate rise on somebody else's stay changing
+  // the amount refunded for this one.
+  //
+  // Requiring every strand to reconcile is what makes the existing arithmetic
+  // exact rather than replacing it: with every remaining night locked, the
+  // reprice returns each remaining guest's stored total unchanged, so the
+  // difference IS the departing guest's own stored price. That equality is
+  // asserted below rather than assumed.
+  //
+  // Judged before any write. `removeGuestChoreAssignments` and the guest delete
+  // follow immediately, and although this runs in a transaction that would roll
+  // back, refusing before touching anything is the clearer contract.
+  //
+  // NOT ON A CONSENT-AUTHORITY REMOVAL, and that exemption is owner decision
+  // D-14 rather than a convenience. A DECLINE or an EXPIRY must ALWAYS be able
+  // to take its target off the booking; refusing one traps a member on a booking
+  // they have said no to, and traps them permanently — the refusal rolls the
+  // status-guarded claim back with `consentStatus` already written terminal, and
+  // the claim requires PENDING, so the member cannot retry. It would also refuse
+  // them for a DIFFERENT guest's unreconciled rows, since this gate judges every
+  // strand on the booking. Where the epic and D-14 meet, the structural removal
+  // wins and only the MONEY waits.
+  //
+  // >>> HAND-OFF TO #3032 (BFI 3). This is the one path in the epic where an
+  // unreconciled strand still reaches the existing arithmetic. #3032 must PARK
+  // the money here: commit the structural removal, and raise one OPEN
+  // `ManualRefundTask` carrying exactly the occurrences this gate would have
+  // built, instead of settling the difference-of-repricings amount below. The
+  // occurrence shape is `editFinancialReviewOccurrence`, and it is deliberately
+  // the same one every other path hands over. <<<
+  //
+  // WHAT THAT COSTS TODAY, stated rather than hidden: on a consent removal from
+  // a booking whose rows do not reconcile, the credit is still derived from
+  // repricing the remaining guests. That is the approximation this issue removes
+  // everywhere else, and it is the pre-existing behaviour of this path rather
+  // than anything new. The two alternatives available WITHOUT #3032's writer are
+  // both worse: refusing traps the member (D-14), and settling nothing writes a
+  // $0 adjustment, which epic #2797 rejects by name — "Zero is a real financial
+  // number, not an honest representation of 'not yet known'". Parking is the
+  // right answer and it needs the task writer this child does not have; the epic
+  // reaches `main` as ONE merge, so no deployment ever sees this half.
+  const unpriceableStrands = consentAuthorityApplies
+    ? []
+    : [guestToRemove, ...booking.guests]
+        .filter(
+          (guest, index, all) =>
+            all.findIndex((other) => other.id === guest.id) === index,
+        )
+        .flatMap((guest) => {
+          const evidence = storedSoldPriceEvidenceForGuest(guest, booking);
+          if (evidence.kind === "exact") return [];
+          return [
+            editFinancialReviewOccurrence({
+              bookingId,
+              bookingGuestId: guest.id,
+              evidence,
+              guestTotalCents: guest.priceCents,
+              // A removal surrenders every night the departing guest holds and
+              // adds none; a remaining guest surrenders nothing. Recorded from
+              // the rows this service can still see, because the delete below
+              // destroys them.
+              surrenderedNightDates:
+                guest.id === guestId
+                  ? evidence.nightPrices.map((night) => night.date)
+                  : [],
+              addedNightDates: [],
+            }),
+          ];
+        });
+  if (unpriceableStrands.length > 0) {
+    throw new BookingEditFinancialReviewRequiredError(unpriceableStrands);
+  }
+
   const choreWarnings = await removeGuestChoreAssignments(tx, guestId);
 
   await tx.bookingGuest.delete({ where: { id: guestId } });
@@ -631,6 +718,23 @@ export async function removeBookingGuestInTransaction({
   }));
 
   const newTotalPriceCents = priceBreakdown.totalPriceCents;
+  // #3031: THE CREDIT IS THE DEPARTING GUEST'S OWN STORED PRICE, and the gate
+  // above is what makes it so rather than an assertion here.
+  //
+  // `newTotalPriceCents` is a reprice of the REMAINING guests, and the credit is
+  // the difference against the booking's stored total. That was the defect: a
+  // remaining guest whose rows carried no usable price had their nights valued
+  // at today's rate, and the whole of that movement landed inside what the
+  // member was told was the departing guest's credit.
+  //
+  // Every remaining night is now locked at what it was sold for before this
+  // point is reached, and a locked night short-circuits the season lookup, so
+  // the reprice returns each remaining guest's stored total unchanged and the
+  // difference is exactly `guestToRemove.priceCents`. It is structural, not
+  // policed - there is no state left in which the reprice could move - and it is
+  // proved against the REAL pricing engine in
+  // `booking-guest-removal-exact-credit.test.ts` rather than re-checked here
+  // against a number this function has just derived.
   // #3123 — the SAME club day the caller resolved before it opened this
   // transaction, re-expressed as the calendar day the promo window and the
   // refund tier are written in. `today` arrives as the UTC-midnight `@db.Date`

@@ -9,19 +9,25 @@ import { toSeasonRateData } from "@/lib/policies/booking-route-decisions";
  * hand it the club's group-discount config (#2756).
  *
  * `buildInProgressGuestRangePlan` credits a night given back at the price
- * recorded on its `BookingGuestNight` row, and falls back to the CURRENT season
- * rate for a night whose price it cannot see (INV-MOD-005). It cannot tell "this
- * night has no stored price" from "this query did not ask for it": both arrive
- * as a row with no `priceCents`, and both take the fallback.
+ * recorded on its `BookingGuestNight` row. Since #3031 it does not fall back to
+ * anything: a night whose stored price it cannot see makes the whole edit
+ * `financial_review_required`, because inventing the amount is what epic #2797
+ * exists to stop. What has NOT changed is that the plan cannot tell "this night
+ * has no stored price" from "this query did not ask for it" — both arrive as a
+ * row with no `priceCents`.
  *
- * So the whole money fix rests on two Prisma selects saying
+ * So the whole money path still rests on two Prisma selects saying
  * `nights: { select: { stayDate: true, priceCents: true } }`, and the failure
- * mode if one stops is the worst kind. Nothing throws, nothing fails to
- * type-check — `priceCents` is optional on the plan's night type so that a
- * caller holding a bare `Date` still compiles — and no unit test notices,
- * because the plan-level suites build guests by hand and
- * `calculate-modified-pricing-capacity.test.ts` mocks the database. The only
- * symptom is a member being refunded at today's price list again.
+ * mode if one stops is still silent in the type system: `priceCents` is optional
+ * on the plan's night type so that a caller holding a bare `Date` compiles, and
+ * the plan-level suites build guests by hand while
+ * `calculate-modified-pricing-capacity.test.ts` mocks the database.
+ *
+ * #3031 changed what that failure LOOKS like, and the new one is much louder: a
+ * trimmed select no longer refunds a member at today's price list, it makes
+ * every in-progress edit on every booking refuse as unpriceable. Louder is not
+ * the same as caught, and an outage is not obviously better than a quiet
+ * over-refund, so this census still earns its place.
  *
  * Roughly twenty other sites in the tree load `nights: { select: { stayDate:
  * true } }`, because they only need to know which nights a guest holds. A new
@@ -335,5 +341,137 @@ describe("season rate data census (#2756)", () => {
     // the rows again — the type system cannot object, because the field is
     // optional.
     expect(found).toEqual([SEASON_RATE_MAPPER_FILE]);
+  });
+});
+
+
+/**
+ * `lockedNightPricesForGuest` — the LENIENT reader, and the door every edit path
+ * that is not the in-progress planner goes through (#3031, E6).
+ *
+ * It turns whatever prices a guest's rows carry into `lockedNightPrices` and
+ * says nothing at all about the rows it could not use: a night with no usable
+ * price simply yields no lock, and an unlocked night prices at the CURRENT
+ * season rate. That is the right answer for a night the edit is genuinely
+ * BUYING and the wrong answer for a night it is giving BACK, and the function
+ * cannot tell them apart, because it is handed no idea what the edit is doing.
+ *
+ * It is deliberately NOT made strict. A strict version would refuse the guest-add
+ * and date-change paths, where an unlocked night is a night being bought and
+ * pricing it at today's rate is correct policy. What #3031 adds instead is the
+ * strict twin — `storedSoldPriceEvidenceForGuest` — which returns a verdict
+ * rather than a best effort, and which the guest-removal path asks BEFORE it
+ * prices anything, because a removal gives every one of the departing guest's
+ * nights back.
+ *
+ * This census is what stops a SEVENTH caller appearing without that choice being
+ * made. A new edit path reaching for the lenient reader because it is the
+ * obvious one is precisely how "never guess historical money" comes undone, and
+ * nothing in the type system objects: both functions compile at every call site.
+ */
+const LENIENT_LOCK_CALL_SITES = [
+  {
+    file: "src/app/api/bookings/[id]/guests/route.ts",
+    calls: 1,
+    what: "adding a guest: the existing party keep their booked prices while the new guest's nights are bought at current rates. An unlocked night here is a night nobody is giving back",
+  },
+  {
+    file: "src/app/api/bookings/[id]/modify-quote/route.ts",
+    calls: 1,
+    what: "the QUOTE path's ORDINARY (not in-progress) pricing pass. The in-progress branch of the same route does not use this reader at all — it goes through the planner, which is strict",
+  },
+  {
+    file: "src/lib/booking-date-modification-service.ts",
+    calls: 1,
+    what: "a date change: the locks are keyed by NORMALISED stay date, so a night the guest keeps across the move matches its lock however far the range moved and keeps its booked price - only genuinely new nights reach the season table. The old side of the credit is `Booking.finalPriceCents` as stored, so nothing here reconstructs a historical amount. What this path does NOT do is test that the stored rows can account for that total: a strand with no usable per-night price still has its dropped nights valued at today's rate, which is #3166 and not INV-MOD-028",
+  },
+  {
+    file: "src/lib/booking-guest-removal-service.ts",
+    calls: 1,
+    what: "the REMOVAL path, which is the one that gives nights back — and which asks storedSoldPriceEvidenceForGuest first and refuses the removal outright unless every strand reconciles. By the time this reader runs, every night it is handed is known to be locked",
+  },
+  {
+    file: "src/lib/booking-modify-plan.ts",
+    calls: 2,
+    what: "prepareGuestPlan (the apply path's ordinary pricing pass) and the proposed-remaining-guest pass. The declaration itself is excluded by the pattern's lookbehind",
+  },
+] as const;
+
+/**
+ * {@link LENIENT_LOCK_CALL} without `g`, for `String.search` — a global flag
+ * makes a regex stateful, and a shared stateful one is a test that passes or
+ * fails depending on what ran before it.
+ */
+const LENIENT_LOCK_CALL_ONCE =
+  /(?<!function\s)\blockedNightPricesForGuest\s*\(/;
+
+/** A CALL, not the declaration or a re-export. */
+const LENIENT_LOCK_CALL =
+  /(?<!function\s)\blockedNightPricesForGuest\s*\(/g;
+
+describe("lenient locked-night reader census (#3031, E6)", () => {
+  it("declares every production caller of the lenient reader", () => {
+    const found = allSourceFiles(SRC_ROOT)
+      .filter(
+        (absolute) =>
+          [
+            ...withoutComments(fs.readFileSync(absolute, "utf8")).matchAll(
+              LENIENT_LOCK_CALL,
+            ),
+          ].length > 0,
+      )
+      .map(repoRelative)
+      .sort();
+
+    // A new caller must be classified here: does this path VALUE a night it is
+    // giving back? If yes it needs `storedSoldPriceEvidenceForGuest`, not this.
+    expect(found).toEqual(
+      LENIENT_LOCK_CALL_SITES.map((site) => site.file as string).sort(),
+    );
+  });
+
+  it("counts the calls in each declared file, so a second one cannot hide", () => {
+    for (const site of LENIENT_LOCK_CALL_SITES) {
+      const source = withoutComments(
+        fs.readFileSync(path.resolve(process.cwd(), site.file), "utf8"),
+      );
+      expect([...source.matchAll(LENIENT_LOCK_CALL)].length, site.file).toBe(
+        site.calls,
+      );
+    }
+  });
+
+  it("keeps the removal path asking the STRICT twin, and asking it FIRST", () => {
+    // The one lenient call site that values nights being GIVEN BACK. It is safe
+    // only because it runs after the strict gate; delete the gate and the
+    // removal silently reprices a remaining guest's stay at today's rate again,
+    // reporting the movement as the departing guest's credit (#3031, E10).
+    //
+    // ASSERTED AS CALLS AND AS AN ORDER, not as the presence of the words. A
+    // bare `toContain("storedSoldPriceEvidenceForGuest")` is satisfied by an
+    // IMPORT of the symbol, so it would still pass with the gate deleted and the
+    // import left behind — which is the likeliest way this actually regresses,
+    // because nothing else complains about an unused import until knip runs.
+    const source = withoutComments(
+      fs.readFileSync(
+        path.resolve(process.cwd(), "src/lib/booking-guest-removal-service.ts"),
+        "utf8",
+      ),
+    );
+
+    const strictCall = source.search(
+      /(?<!function\s)\bstoredSoldPriceEvidenceForGuest\s*\(/,
+    );
+    const lenientCall = source.search(LENIENT_LOCK_CALL_ONCE);
+    const refusal = source.search(
+      /throw new BookingEditFinancialReviewRequiredError\s*\(/,
+    );
+
+    expect(strictCall, "the strict twin must be CALLED, not merely imported").toBeGreaterThan(-1);
+    expect(refusal, "an unusable strand must be refused, not noted").toBeGreaterThan(-1);
+    expect(lenientCall).toBeGreaterThan(-1);
+    // The gate decides before the lenient reader is handed anything.
+    expect(strictCall).toBeLessThan(lenientCall);
+    expect(refusal).toBeLessThan(lenientCall);
   });
 });

@@ -317,6 +317,7 @@ Prefix `INV-MOD`.
 | `INV-MOD-022` | The admin exemption is not one predicate, and is stated per path |
 | `INV-MOD-023` | Advisory surfaces report the same facts and gate nothing; no row is persisted, no capacity reserved |
 | `INV-MOD-024` | Minimum-stay policy administration is versioned; a stale version is refused, not overwritten |
+| `INV-MOD-028` | The in-progress edit planner and the single-guest removal value historical nights only from exact, reconciling stored sold-price rows; anything else is an explicit financial review with typed causes and no numeric result |
 
 ### Adult-member hosting
 

@@ -10,6 +10,7 @@ import {
   readHostingCoverageOverride,
 } from "@/lib/adult-member-hosting-same-owner";
 import { ApiError } from "@/lib/api-error";
+import { BookingEditFinancialReviewRequiredError } from "@/lib/booking-modify-validation";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
@@ -491,6 +492,17 @@ export async function DELETE(
     if (err instanceof SameOwnerCoverageOverrideRequiredError) {
       return NextResponse.json(
         buildSameOwnerCoverageOverrideRequiredBody(err),
+        { status: err.status },
+      );
+    }
+    // #3031 (epic #2797): the removal is structurally fine but the exact credit
+    // cannot be read from this booking's stored sold-price history. MUST stay
+    // above the generic `ApiError` branch - this error extends ApiError, and
+    // that branch would drop the machine-readable code the edit panel needs to
+    // say what happens next rather than showing a bare failure.
+    if (err instanceof BookingEditFinancialReviewRequiredError) {
+      return NextResponse.json(
+        { error: err.message, code: err.code },
         { status: err.status },
       );
     }
