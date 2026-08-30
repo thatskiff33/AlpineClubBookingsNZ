@@ -22,12 +22,8 @@ import { buildHelpGrounding } from "@/lib/help/grounding";
 import type { HelpSurface } from "@/lib/help/types";
 import { MEMBER_ACCESS_ROLE_SELECT } from "@/lib/access-role-definitions";
 import {
-  canAccessConsolidatedFeesPage,
-  canViewAdminHref,
-  getAdminPermissionMatrix,
-  hasAdminPortalAccess,
+  canOpenAdminPath,
   hasFinanceViewerAccess,
-  isConsolidatedFeesPath,
 } from "@/lib/admin-permissions";
 import { prisma } from "@/lib/prisma";
 import { reportAiError } from "@/lib/observability-bridge";
@@ -94,11 +90,13 @@ function fallback(reason: FallbackReason): NextResponse {
  * for THAT admin screen — so answering "are you an admin at all" here would
  * hand any administrator the page help for every area of the product, whichever
  * ones they hold. It asks whether this caller could actually OPEN the screen
- * they are asking about instead, which is the same question
- * `guardAdminLayout` answers when they navigate there. Nobody legitimate loses
+ * they are asking about instead, by calling the SAME `canOpenAdminPath` that
+ * `guardAdminLayout` step 6 calls when they navigate there — including its two
+ * adjudicated special cases, the consolidated fee console's bookings-OR-finance
+ * rule (#1933) and the ADR-002 admission surface. Nobody legitimate loses
  * anything: a caller asking about the page they are standing on passes by
- * construction. The consolidated fee console is the one page admitted on
- * EITHER bookings or finance (#1933), so it is honoured the same way here.
+ * construction. Holding a path's own area implies holding at least one, so this
+ * subsumes portal standing rather than needing a second check for it.
  *
  * A refused claim degrades to the member corpus rather than erroring, exactly
  * as an unheld "finance" claim already did.
@@ -117,10 +115,7 @@ async function resolveEffectiveSurface(
   const input = { accessRoles: member?.accessRoles ?? [] };
 
   if (claimed === "admin") {
-    const admitted = isConsolidatedFeesPath(pathname)
-      ? canAccessConsolidatedFeesPage(getAdminPermissionMatrix(input))
-      : canViewAdminHref(input, pathname);
-    return hasAdminPortalAccess(input) && admitted ? "admin" : "member";
+    return canOpenAdminPath(input, pathname) ? "admin" : "member";
   }
   return hasFinanceViewerAccess(input) ? "finance" : "member";
 }

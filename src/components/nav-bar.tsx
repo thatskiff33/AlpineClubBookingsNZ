@@ -59,14 +59,23 @@ const financeLink = { href: "/finance", label: "Finance" };
   hold, which for them is /admin/payments.
 
   That extra hop was measured against pointing the link at
-  `getFirstAccessibleAdminHref` instead, and the redirect WON. Computing the
-  destination here means the member-facing and finance layouts would each have
-  to resolve an admin destination, which `admin-layout-guard-adoption.test.ts`
-  refuses by name: admin admission logic belongs to `admin-layout-guard.ts`
-  alone, and evading that census with a differently-named wrapper would be
-  worse than the hop it saves. `admin-route-authorization-proof.test.ts` proves
-  the hop always lands somewhere the same grid may actually open, for every
-  single-area grid and every admin page.
+  `getFirstAccessibleAdminHref` instead, and the redirect WON. This bar is
+  rendered by the member-facing shell and by the finance shell, so computing the
+  destination here means BOTH of them resolve an admin destination — and
+  `admin-layout-guard-adoption.test.ts` forbids exactly that symbol in a layout
+  by name: admin admission logic belongs to `admin-layout-guard.ts` alone, and
+  evading the census with a differently-named wrapper would be worse than the
+  hop it saves.
+
+  That reasoning was HALF WRONG when it was written, and the correction is worth
+  keeping rather than quietly fixing. The census discovered `(group)/layout.tsx`
+  files only, and the finance shell is `(finance)/finance/layout.tsx` — a nested
+  layout it could not see at all, so the rule it was cited for did not in fact
+  reach the finance half. #2975 widened the discovery to every layout under
+  `src/app`, which is what makes the sentence above true of both shells instead
+  of one. `admin-route-authorization-proof.test.ts` proves the hop always lands
+  somewhere the same grid may actually open, for every single-area grid and
+  every admin page.
 */
 const adminLink = { href: "/admin/dashboard", label: "Admin" };
 const viewLodgeLink = { href: "/lodge/kiosk", label: "View Lodge" };
