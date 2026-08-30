@@ -28,8 +28,9 @@ rules:
       # `server-only`. That USED to be because `tsx` entrypoints reaching it
       # would abort; since #2850 those commands run with
       # `--conditions=react-server` and the marker is inert under it, so the
-      # three modules below could be marked and are deliberately not — the one
-      # home for that reasoning is docs/invariants/operations.md -> INV-OPS-013,
+      # three modules below could be marked and are deliberately not; the
+      # marking work is tracked as #3204, and the one home for the reasoning is
+      # docs/invariants/operations.md -> INV-OPS-013,
       # "The three modules that stay unmarked". What keeps them out of a bundle
       # meanwhile is this list. Next inlines `NEXT_PUBLIC_*`, so importing
       # `club-time-zone-env` from a

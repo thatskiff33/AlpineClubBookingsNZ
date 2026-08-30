@@ -42,7 +42,8 @@ import logger from "@/lib/logger";
  * `--conditions=react-server`, under which the marker is inert, so THAT REASON
  * IS RETIRED. It stays unmarked because nothing needs it to be marked, and
  * because marking a module is a decision of its own — see
- * `docs/invariants/operations.md` -> `INV-OPS-013`, "The three modules that stay unmarked".
+ * `docs/invariants/operations.md` -> `INV-OPS-013`, "The three modules that
+ * stay unmarked", where the sibling decision is recorded and tracked as #3204.
  */
 
 // ---------------------------------------------------------------------------
@@ -54,8 +55,9 @@ import logger from "@/lib/logger";
 // boot module stays free of that module's `server-only` import. Since #2850 the
 // out-of-band `npm run config:self-heal` entrypoint runs with
 // `--conditions=react-server` and would survive the import, so the literal is
-// no longer load-bearing for THAT reason — it is kept because importing a
-// settings module for one string is a dependency this boot path does not need.
+// no longer load-bearing for THAT reason (#3204 tracks the marking question
+// itself) — it is kept because importing a settings module for one string is a
+// dependency this boot path does not need.
 const CLUB_IDENTITY_SETTINGS_ID = "default";
 
 interface ClubIdentitySelfHealValue {

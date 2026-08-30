@@ -972,9 +972,9 @@ Residual risks to keep visible:
   published without it. `@/lib/club-time-zone-env` and
   `@/lib/environment-role*` stay unmarked — the condition makes marking them
   possible, so the old "an entrypoint would abort" reason is retired, and they
-  are unmarked as a deliberate decision instead. That reasoning has one home:
-  `docs/invariants/operations.md` -> `INV-OPS-013`, "The three modules that stay
-  unmarked".
+  are unmarked as a deliberate decision instead, tracked for sealing as #3204.
+  That reasoning has one home: `docs/invariants/operations.md` ->
+  `INV-OPS-013`, "The three modules that stay unmarked".
 - The repo does not yet publish signed image attestations or SBOM artifacts.
   Current image provenance is protected PR checks plus commit-SHA GHCR tags.
 

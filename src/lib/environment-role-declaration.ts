@@ -49,8 +49,9 @@
  * `npm run setup:check`, which a `server-only` import would abort; since #2850
  * that command carries `--conditions=react-server` and the marker is inert
  * under it, so THAT REASON IS RETIRED and marking this module is technically
- * possible. Why it is deliberately not done lives in one place: see
- * `docs/invariants/operations.md` -> `INV-OPS-013`, "The three modules that stay unmarked".
+ * possible. It is deliberately not done, and the marking work is tracked as
+ * #3204; why lives in one place: `docs/invariants/operations.md` ->
+ * `INV-OPS-013`, "The three modules that stay unmarked".
  * Meanwhile it is kept off the client graph by being NAMED as a forbidden leaf
  * in both halves of `INV-OPS-013`: `FORBIDDEN_MODULES` in
  * `src/lib/__tests__/client-server-boundary-census.test.ts`, which walks the

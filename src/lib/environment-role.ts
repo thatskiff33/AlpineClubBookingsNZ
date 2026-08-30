@@ -64,10 +64,11 @@
  * `tsx` entrypoint `npm run setup:check`, which a `server-only` import once
  * would have aborted; since #2850 that command carries
  * `--conditions=react-server` and the marker is inert under it, so THAT REASON
- * IS RETIRED and marking this module is technically possible. Why it is
- * deliberately not done lives in one place: see
- * `docs/invariants/operations.md` -> `INV-OPS-013`, "The three modules that stay unmarked". It is kept off the client bundle graph by being named a
- * forbidden leaf in both halves of `INV-OPS-013` — see
+ * IS RETIRED and marking this module is technically possible. It is
+ * deliberately not done, and the marking work is tracked as #3204; why lives in
+ * one place: `docs/invariants/operations.md` -> `INV-OPS-013`, "The three
+ * modules that stay unmarked". It is kept off the client bundle graph by being
+ * named a forbidden leaf in both halves of `INV-OPS-013` — see
  * `environment-role-declaration.ts`'s docblock for the two lists and why being
  * in neither means being protected by neither.
  */

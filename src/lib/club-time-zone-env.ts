@@ -27,8 +27,10 @@
  * `npm run setup:check`) that a `server-only` import would abort. Since #2850
  * those commands run with `--conditions=react-server`, under which the marker
  * resolves to an empty module, so THAT REASON IS RETIRED and marking this
- * module is technically possible. It is deliberately not done, for reasons that
- * live in one place and are not restated here: see `docs/invariants/operations.md` -> `INV-OPS-013`, "The three modules that stay unmarked".
+ * module is technically possible. It is deliberately not done, and the marking
+ * work is tracked as #3204. The reasoning lives in one place and is not
+ * restated here: `docs/invariants/operations.md` -> `INV-OPS-013`, "The three
+ * modules that stay unmarked".
  * Meanwhile it is kept off the client graph by being NAMED as a forbidden leaf
  * in both halves of
  * `INV-OPS-013`: `FORBIDDEN_MODULES` in

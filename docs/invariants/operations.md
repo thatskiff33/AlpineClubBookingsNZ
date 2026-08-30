@@ -360,7 +360,11 @@ rules first written here. #2765 extended it with the measured-audience half.
   emailed (`INV-CONFIG-003`). Getting that wrong is not a build error, it is a
   mailout from a copy of the site.
 
-  Until that decision is taken they are kept off the browser graph the way they
+  **That decision is filed as #3204**, which is where the marking work and its
+  verification live. A reader who arrives here wanting to know why these three
+  are different should be handed that issue, not the retired excuse.
+
+  Until it is taken they are kept off the browser graph the way they
   always were: by being NAMED as forbidden leaves in both halves of this
   invariant — `FORBIDDEN_MODULES` in
   `src/lib/__tests__/client-server-boundary-census.test.ts`, and the `$MOD`

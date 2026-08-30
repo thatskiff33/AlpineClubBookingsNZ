@@ -69,7 +69,8 @@ const EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs"];
  * `--conditions=react-server` (#2850), so the "an entrypoint would abort"
  * reason those docblocks used to give is RETIRED; it is unmarked as a decision
  * instead, recorded once in `docs/invariants/operations.md` -> `INV-OPS-013`,
- * "The three modules that stay unmarked", and not restated here. Next inlines
+ * "The three modules that stay unmarked" — where the sealing work is tracked
+ * as #3204 — and not restated here. Next inlines
  * `NEXT_PUBLIC_*` into the browser bundle, so a
  * `"use client"` component importing it would silently answer from the
  * BUILD-TIME `NEXT_PUBLIC_TZ` rather than from the running server — the

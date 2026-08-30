@@ -56,7 +56,8 @@ import { getXeroClient } from "@/lib/xero";
 // would abort (since #2850 those commands carry `--conditions=react-server`,
 // under which the marker is inert) but as a decision of its own, recorded in
 // docs/invariants/operations.md -> INV-OPS-013, "The three modules that stay
-// unmarked". While it is unmarked, this rule and the census test are the only
+// unmarked", and tracked for sealing as #3204. While it is unmarked, this rule
+// and the census test are the only
 // things keeping it off the browser graph. Next inlines
 // `NEXT_PUBLIC_*` into the bundle, so a client component importing it would
 // answer from the BUILD-TIME `NEXT_PUBLIC_TZ` rather than from the running
