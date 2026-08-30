@@ -28,6 +28,7 @@ import type {
 } from "@/lib/edit-financial-review-context";
 import {
   classifyStoredSoldPriceEvidence,
+  counterpartStrandReviewOccurrence,
   editFinancialReviewOccurrence,
   storedNightPricesByKey,
   unusableStoredSoldPriceEvidence,
@@ -1370,6 +1371,15 @@ export function buildInProgressGuestRangePlan(
   // all.
   const financialReviewOccurrences: EditFinancialReviewOccurrence[] = [];
   /**
+   * #3166: exact strands whose stored evidence THIS parked edit destroys.
+   *
+   * Appended below only when the edit actually parks, so they can never make an
+   * otherwise-priceable edit park — they are a record of what was lost, not a
+   * reason to stop. The pre-check-in twin (`preCheckInEditEvidence`) splits its
+   * lists the same way and for the same reason.
+   */
+  const destroyedButReadable: EditFinancialReviewOccurrence[] = [];
+  /**
    * Per existing guest, in booking order: what each night they hold was sold
    * for. Every value is a stored integer — this map is the ONLY source of a
    * historical amount below, and it is empty for a strand the gate rejected.
@@ -1388,6 +1398,35 @@ export function buildInProgressGuestRangePlan(
       )
     );
     if (verdict.kind === "exact") {
+      /**
+       * #3166: an exact strand this edit takes nights from, or puts new nights
+       * on, is about to stop being readable — and nothing else in the database
+       * would remember what it said.
+       *
+       * `composeParkedPlan` below deletes every one of this strand's night rows
+       * and recreates only the proposed ones: a surrendered night's stored price
+       * simply stops existing, and an added night is written `NULL` against a
+       * frozen stored total, which turns a strand that reconciled exactly into
+       * `PARTIAL_STORED_NIGHT_PRICES` — unpriceable for good.
+       * `BookingModification.previousData` keeps booking-level totals and no
+       * per-night price at all, so without this the money is gone with no record
+       * that it ever existed. A strand whose night set does not move keeps every
+       * row byte for byte and raises nothing.
+       */
+      const surrendered = surrenderedNightDatesOf(entry);
+      const added = addedNightDatesOf(entry);
+      if (surrendered.length > 0 || added.length > 0) {
+        destroyedButReadable.push(
+          counterpartStrandReviewOccurrence({
+            bookingId: input.booking.id,
+            bookingGuestId: entry.guest.id,
+            evidence: verdict,
+            guestTotalCents: entry.guest.priceCents,
+            surrenderedNightDates: surrendered,
+            addedNightDates: added,
+          })
+        );
+      }
       continue;
     }
     financialReviewOccurrences.push(
@@ -1401,6 +1440,48 @@ export function buildInProgressGuestRangePlan(
       })
     );
   }
+  /**
+   * THE OCCURRENCE LIST OF A PARKED EDIT, for BOTH review exits below (#3166,
+   * `INV-SSOT`).
+   *
+   * Appending `destroyedButReadable` at only ONE of the two exits is not a
+   * smaller version of this rule; it is a DIFFERENT rule, and which one applied
+   * would depend on the moment the failure was discovered rather than on
+   * anything about the booking. Measured on the shape below: two guests each
+   * hold 20-21 Aug at a stored $50 a night, an officer extends the check-out,
+   * and one strand's rows reach past its own stored `stayEnd` (INV-DATE-012).
+   * Caught by the gate, the edit records both strands; caught by the
+   * reconciliation check instead, it used to record only the failing one - while
+   * `composeParkedPlan` rewrote the OTHER strand's rows exactly as it does at the
+   * first exit, turning a strand that reconciled exactly into
+   * `PARTIAL_STORED_NIGHT_PRICES` with nothing anywhere naming it.
+   *
+   * A strand the caller has already named is NOT appended again. The two lists
+   * genuinely overlap at the second exit - a strand can be exact at the gate
+   * with a moving night set (so `destroyedButReadable`) and still fail to
+   * reconcile once composed (so unpriceable). Both occurrences would carry the
+   * same booking, the same strand, the same night sets and the same stored
+   * evidence, and differ in `cause` alone - which is enough, because `cause` is
+   * part of the occurrence key's material (`edit-financial-review-occurrence.ts`).
+   * So they hash to two keys and raise TWO tasks for one guest. The unpriceable
+   * occurrence wins, because it is the one that says why no money moved.
+   */
+  const parkedOccurrences = (
+    unpriceable: readonly EditFinancialReviewOccurrence[]
+  ): EditFinancialReviewOccurrence[] => {
+    const alreadyNamed = new Set(
+      unpriceable.map((occurrence) => occurrence.bookingGuestId)
+    );
+    return [
+      ...unpriceable,
+      // Only when the edit parks — every caller is inside a parked exit. An
+      // exact strand losing or gaining nights is a record of destroyed
+      // evidence, never on its own a reason to withhold money.
+      ...destroyedButReadable.filter(
+        (occurrence) => !alreadyNamed.has(occurrence.bookingGuestId)
+      ),
+    ];
+  };
 
   /**
    * The structural half of a parked edit, composed once for BOTH review exits
@@ -1540,7 +1621,7 @@ export function buildInProgressGuestRangePlan(
   if (financialReviewOccurrences.length > 0) {
     return {
       kind: "financial_review_required",
-      occurrences: financialReviewOccurrences,
+      occurrences: parkedOccurrences(financialReviewOccurrences),
       parkedPlan: composeParkedPlan(),
     };
   }
@@ -1729,20 +1810,25 @@ export function buildInProgressGuestRangePlan(
     return {
       kind: "financial_review_required",
       parkedPlan: composeParkedPlan(),
-      occurrences: unreconciledGuestIndexes.map((index) => {
-        const entry = existingNightPlans[index];
-        return editFinancialReviewOccurrence({
-          bookingId: input.booking.id,
-          bookingGuestId: entry.guest.id,
-          evidence: unusableStoredSoldPriceEvidence(
-            "STORED_TOTAL_MISMATCH",
-            heldNightPrices(entry.heldNightKeys, entry.storedNightPriceByKey)
-          ),
-          guestTotalCents: entry.guest.priceCents,
-          surrenderedNightDates: surrenderedNightDatesOf(entry),
-          addedNightDates: addedNightDatesOf(entry),
-        });
-      }),
+      // Through `parkedOccurrences`, so the exact strands this park destroys
+      // the evidence of are recorded here exactly as they are at the gate
+      // (#3166) — and a strand named in BOTH lists is recorded once.
+      occurrences: parkedOccurrences(
+        unreconciledGuestIndexes.map((index) => {
+          const entry = existingNightPlans[index];
+          return editFinancialReviewOccurrence({
+            bookingId: input.booking.id,
+            bookingGuestId: entry.guest.id,
+            evidence: unusableStoredSoldPriceEvidence(
+              "STORED_TOTAL_MISMATCH",
+              heldNightPrices(entry.heldNightKeys, entry.storedNightPriceByKey)
+            ),
+            guestTotalCents: entry.guest.priceCents,
+            surrenderedNightDates: surrenderedNightDatesOf(entry),
+            addedNightDates: addedNightDatesOf(entry),
+          });
+        })
+      ),
     };
   }
 

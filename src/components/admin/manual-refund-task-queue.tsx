@@ -212,6 +212,29 @@ function EditFinancialReviewEvidenceBlock({
         Booked stay: {formatClubDate(evidence.bookingCheckIn)} to{" "}
         {formatClubDate(evidence.bookingCheckOut)}
       </p>
+      {evidence.guestsAddedByEdit ? (
+        /*
+         * #3166: what the same change did to the REST of the party.
+         *
+         * Everything above describes one guest whose stored prices could not be
+         * read — on an add, a guest nobody touched. Without this line the card
+         * reads "nights given back: none · nights added: none" while the booking
+         * has just gained people the club has charged nothing for, because a
+         * parked edit writes the booking's total back unchanged. Their prices
+         * live only on their own rows, so this is the only place the person
+         * pricing the booking is told the money exists.
+         */
+        <p className="font-medium text-foreground">
+          This change also added {evidence.guestsAddedByEdit.count}{" "}
+          {evidence.guestsAddedByEdit.count === 1 ? "guest" : "guests"}, priced
+          at{" "}
+          {evidence.guestsAddedByEdit.totalPriceCents === null
+            ? "an amount that could not be read"
+            : formatCents(evidence.guestsAddedByEdit.totalPriceCents)}
+          . The booking&rsquo;s own total was left as it was, so that amount has
+          not been charged.
+        </p>
+      ) : null}
     </div>
   );
 }

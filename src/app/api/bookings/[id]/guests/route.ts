@@ -49,7 +49,12 @@ import { logAudit } from "@/lib/audit";
 import { sendBookingModifiedEmail } from "@/lib/email";
 import { bookingHasOpenFinancialReview } from "@/lib/booking-financial-review-visibility";
 import {
+  preCheckInEditEvidence,
+  preCheckInEditStrands,
+} from "@/lib/stored-sold-price-evidence";
+import {
   assertNoPendingEditFinancialReview,
+  raiseParkedEditFinancialReviewTasks,
   EditFinancialReviewPendingError,
 } from "@/lib/edit-financial-review";
 import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
@@ -616,6 +621,55 @@ export async function POST(
         );
       }
 
+      /**
+       * #3166 (epic #2797): THE FOURTH EDIT DOOR, and the reason it needed the
+       * same gate as the other three.
+       *
+       * This route does NOT rewrite an existing strand's night rows, so it is
+       * not the write-back mechanism the epic is mostly about. What it does is
+       * recompute `Booking.totalPriceCents` from a FULL-PARTY pass in which
+       * every existing strand is priced through the LENIENT reader — so a night
+       * whose stored price is blank prices at today's rate, lands in the new
+       * total, and the difference is charged to (or refunded from) the member
+       * as an "additional amount" for a night nobody added.
+       *
+       * Worked through: a strand holding two nights, one stored at $25 and one
+       * blank, with a stored total of $50. Add a guest. The blank night reprices
+       * at today's $75, so the strand contributes $100 instead of $50 and the
+       * member is billed $50 more than the guest they actually added. #3170 is
+       * what makes a blank storable, so this became reachable in the same
+       * release and could not be left for a later one.
+       *
+       * It PARKS, exactly as the batch edit, the date change and the guest
+       * removal do: the guests are created and charged nothing, the booking's
+       * own totals do not move, and one OPEN task per unreadable strand asks a
+       * person what this booking is really worth.
+       */
+      const addEvidence = preCheckInEditEvidence({
+        bookingId,
+        booking: { checkIn: booking.checkIn, checkOut: booking.checkOut },
+        // THE SAME ASSEMBLY the modify save, preview and date change use
+        // (`INV-SSOT`). This route changes nobody's nights and removes nobody,
+        // so each strand ends the edit holding exactly the nights the
+        // full-party pass just priced it over.
+        strands: preCheckInEditStrands({
+          bookingGuests: booking.guests,
+          guestsForPricing: booking.guests.map((guest) => ({
+            bookingGuestId: guest.id,
+          })),
+          pricedGuests: fullPriceBreakdown.guests,
+        }),
+      });
+      /**
+       * True when an existing strand's own history cannot account for the
+       * booking's money. From here it withholds every money decision and
+       * nothing else: the guests are still created, still priced at what they
+       * are genuinely being sold for, and still get real night rows — that money
+       * is known. What does not happen is a reprice of the booking, a promotion
+       * recalculation, or an additional charge.
+       */
+      const parked = addEvidence.occurrences.length > 0;
+
       // Create BookingGuest records from their slice of the full-party
       // breakdown, persisting one BookingGuestNight row per priced night
       // (#1093) so added guests join the uniform night-row model: without
@@ -681,7 +735,14 @@ export async function POST(
         firstNight: booking.checkIn,
       }));
 
-      const newTotalPriceCents = fullPriceBreakdown.totalPriceCents;
+      // #3166: on a parked add the booking's stored total is written back
+      // unchanged. The guests created above carry their own real prices; what
+      // the booking as a whole is now worth is the question the OPEN task exists
+      // to answer, and a number here would be this route's one chance to answer
+      // it wrongly.
+      const newTotalPriceCents = parked
+        ? booking.totalPriceCents
+        : fullPriceBreakdown.totalPriceCents;
 
       // Recalculate promo discount
       let newDiscountCents = 0;
@@ -689,7 +750,15 @@ export async function POST(
       let promoRemoved = false;
       let promoCoverage: PromoCoverageNotice | null = null;
 
-      if (booking.promoRedemption?.promoCode) {
+      if (parked) {
+        // The booking's stored promotion figures, written back untouched. A
+        // parked add re-runs no cap and re-allocates nothing — the discount is a
+        // function of a price nobody has worked out yet, and the per-night rates
+        // a cap would read include today's rate for a night this booking cannot
+        // account for.
+        newDiscountCents = booking.discountCents;
+        newPromoAdjustmentCents = booking.promoAdjustmentCents;
+      } else if (booking.promoRedemption?.promoCode) {
         // Row-lock the promo code and re-read its usage counter before the caps
         // are checked (#2299). Adding a member guest to an assigned promo makes
         // that member a NEW beneficiary, so this path can take a
@@ -759,7 +828,15 @@ export async function POST(
         }
       }
 
-      const newFinalPriceCents = newTotalPriceCents + newPromoAdjustmentCents;
+      // #3166: the booking's own stored final price on a parked add, written
+      // back rather than recomposed from the parked figures. The two agree by
+      // construction today, and deriving it would make this line quietly depend
+      // on that agreement holding — `priceDiffCents` is what decides whether an
+      // additional charge is raised below, and it must be zero because the
+      // booking did not move, not because two expressions happened to cancel.
+      const newFinalPriceCents = parked
+        ? booking.finalPriceCents
+        : newTotalPriceCents + newPromoAdjustmentCents;
       const priceDiffCents = newFinalPriceCents - booking.finalPriceCents;
 
       // Update hasNonMembers
@@ -913,6 +990,30 @@ export async function POST(
           priceDiffCents,
           changeFeeCents: 0,
         },
+      });
+
+      /**
+       * #3166: one OPEN review task per unreadable strand, inside this same
+       * transaction and under the locks it already holds, anchored to the
+       * `BookingModification` this add just wrote — the same anchoring the batch
+       * edit, the date change and the removal use, so a confirmed amount reaches
+       * settlement by one route rather than four.
+       *
+       * The raise ITSELF - the settlement payment id, the strand's member, the
+       * null amount - is `raiseParkedEditFinancialReviewTasks`, stated once
+       * there rather than four times across the four parked doors (`INV-SSOT`).
+       * A no-op when this add priced normally.
+       */
+      await raiseParkedEditFinancialReviewTasks({
+        booking,
+        guests: booking.guests,
+        // The whole point of this door: the guests just added, priced at what
+        // they are genuinely being sold for, against a booking total that is
+        // written back unchanged. That money is owed and nothing else records it.
+        addedGuests: createdGuests,
+        occurrences: addEvidence.occurrences,
+        bookingModificationId: bookingModification.id,
+        store: tx,
       });
 
       return {
@@ -1077,11 +1178,18 @@ export async function POST(
     if (member && notifyMember !== false) {
       /*
         #3032 (epic #2797): whether the club is still working out an amount on
-        this booking as the email is written. Adding a guest raises no review of
-        its own, so - as on the batch and date paths - the honest value is the
-        booking's current state, read through the same
-        `bookingHasOpenFinancialReview` the booking-detail banner and the My
-        Bookings row use, so the email and the page agree (`INV-SSOT`).
+        this booking as the email is written. The booking's CURRENT state, read
+        through the same `bookingHasOpenFinancialReview` the booking-detail
+        banner and the My Bookings row use, so the email and the page the member
+        clicks through to cannot disagree (`INV-SSOT`).
+
+        #3166: this used to say "adding a guest raises no review of its own",
+        and that is no longer true. An add to a booking whose price history
+        cannot be read now parks and raises a task inside the transaction that
+        just committed, so this read finds THIS edit's own review and the member
+        is told in the same email that tells them the guest was added. Left as a
+        live read rather than a hard-coded value precisely so a change like this
+        one could not make it a lie.
       */
       const financialReviewPending = await bookingHasOpenFinancialReview(
         result.booking.id,

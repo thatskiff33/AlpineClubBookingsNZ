@@ -313,7 +313,7 @@ vi.mock("@/lib/booking-member-guest-subscriptions", () => ({
 }));
 
 function makeBooking(overrides: Record<string, unknown> = {}) {
-  return {
+  const booking = {
     id: "bk1",
     memberId: "m1",
     checkIn: new Date("2026-08-20"),
@@ -360,6 +360,55 @@ function makeBooking(overrides: Record<string, unknown> = {}) {
     promoRedemption: null,
     ...overrides,
   };
+  return {
+    ...booking,
+    guests: reconcilingNightRows(booking, booking.guests),
+  };
+}
+
+/**
+ * Give every fixture guest stored night rows that reconcile with their total
+ * (#3166), unless the case supplied its own.
+ *
+ * Every edit path is now judged on exact stored sold-price evidence, so a guest
+ * with no `BookingGuestNight` rows PARKS the edit for financial review — nothing
+ * is repriced, nothing settles, and not one payment assertion in this file can
+ * run. That is the gate doing its job; it is not what this suite is about. So
+ * the DEFAULT fixture guest is the ordinary readable one, and the cases that
+ * genuinely mean to describe unreadable history pass `nights` themselves (the
+ * `NO_STORED_NIGHT_PRICES` and `STORED_TOTAL_MISMATCH` cases below), which this
+ * leaves untouched.
+ *
+ * The rows are an even split with the remainder on the first night, so they sum
+ * to the stored total EXACTLY — an approximate split would not reconcile, and a
+ * fixture that parks silently would take every assertion below down with it.
+ */
+function reconcilingNightRows<G extends Record<string, unknown>>(
+  booking: { checkIn: Date; checkOut: Date },
+  guests: G[],
+): G[] {
+  return guests.map((guest) => {
+    if (guest.nights !== undefined) return guest;
+    const start = (guest.stayStart ?? booking.checkIn) as Date;
+    const end = (guest.stayEnd ?? booking.checkOut) as Date;
+    const nights: Date[] = [];
+    for (
+      let day = new Date(start.getTime());
+      day < end;
+      day = new Date(day.getTime() + 86_400_000)
+    ) {
+      nights.push(new Date(day.getTime()));
+    }
+    const total = (guest.priceCents as number | undefined) ?? 0;
+    const base = nights.length === 0 ? 0 : Math.floor(total / nights.length);
+    return {
+      ...guest,
+      nights: nights.map((stayDate, index) => ({
+        stayDate,
+        priceCents: index === 0 ? total - base * (nights.length - 1) : base,
+      })),
+    };
+  });
 }
 
 function makeTx(booking: ReturnType<typeof makeBooking>) {
@@ -2892,7 +2941,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
     );
 
     // Two guests at $50 each = $100, dropping to one guest = $50 → refund $50
-    booking.guests = [
+    booking.guests = reconcilingNightRows(booking, [
       ...booking.guests,
       {
         id: "g2",
@@ -2904,7 +2953,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
         memberId: null,
         priceCents: 5000,
       },
-    ];
+    ]);
     booking.totalPriceCents = 10000;
     booking.finalPriceCents = 10000;
     booking.payment!.amountCents = 10000;
@@ -2971,7 +3020,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
       fn(tx)
     );
 
-    booking.guests = [
+    booking.guests = reconcilingNightRows(booking, [
       ...booking.guests,
       {
         id: "g2",
@@ -2983,7 +3032,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
         memberId: null,
         priceCents: 5000,
       },
-    ];
+    ]);
     booking.totalPriceCents = 10000;
     booking.finalPriceCents = 10000;
     booking.payment = {
@@ -3041,7 +3090,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
     // payment. hasCapturedPayment() is false, settlementOptions is null, and
     // before the fix xeroRefundAmountCents collapsed to 0 -> classify 'none'
     // -> the outstanding invoice kept the removed guest.
-    booking.guests = [
+    booking.guests = reconcilingNightRows(booking, [
       ...booking.guests,
       {
         id: "g2",
@@ -3053,7 +3102,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
         memberId: null,
         priceCents: 5000,
       },
-    ];
+    ]);
     booking.payment = {
       ...booking.payment!,
       amountCents: 10000,
@@ -3112,7 +3161,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
       fn(tx)
     );
 
-    booking.guests = [
+    booking.guests = reconcilingNightRows(booking, [
       ...booking.guests,
       {
         id: "g2",
@@ -3124,7 +3173,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
         memberId: null,
         priceCents: 5000,
       },
-    ];
+    ]);
     booking.totalPriceCents = 10000;
     booking.finalPriceCents = 10000;
     booking.payment = {
@@ -3178,7 +3227,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
       fn(tx)
     );
 
-    booking.guests = [
+    booking.guests = reconcilingNightRows(booking, [
       ...booking.guests,
       {
         id: "g2",
@@ -3190,7 +3239,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
         memberId: null,
         priceCents: 5000,
       },
-    ];
+    ]);
     booking.totalPriceCents = 10000;
     booking.finalPriceCents = 10000;
     booking.payment!.amountCents = 10000;
@@ -3228,7 +3277,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
       fn(tx)
     );
 
-    booking.guests = [
+    booking.guests = reconcilingNightRows(booking, [
       ...booking.guests,
       {
         id: "g2",
@@ -3240,7 +3289,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
         memberId: null,
         priceCents: 5000,
       },
-    ];
+    ]);
     booking.totalPriceCents = 10000;
     booking.finalPriceCents = 10000;
     booking.payment!.amountCents = 10000;
@@ -3314,7 +3363,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
       fn(tx)
     );
 
-    booking.guests = [
+    booking.guests = reconcilingNightRows(booking, [
       ...booking.guests,
       {
         id: "g2",
@@ -3326,7 +3375,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
         memberId: null,
         priceCents: 5000,
       },
-    ];
+    ]);
     booking.totalPriceCents = 10000;
     booking.finalPriceCents = 10000;
     booking.payment!.amountCents = 10000;
@@ -3376,7 +3425,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
       fn(tx)
     );
 
-    booking.guests = [
+    booking.guests = reconcilingNightRows(booking, [
       ...booking.guests,
       {
         id: "g2",
@@ -3388,7 +3437,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
         memberId: null,
         priceCents: 5000,
       },
-    ];
+    ]);
     booking.totalPriceCents = 10000;
     booking.finalPriceCents = 10000;
     booking.payment!.amountCents = 10000;
@@ -3875,6 +3924,273 @@ describe("PUT /api/bookings/[id]/modify", () => {
       );
       // The fence DID run and passed — it is not silently absent on this path.
       expect(tx.manualRefundTask.findFirst).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  /**
+   * #3166 (epic #2797): the gate on the path members actually use — an edit to a
+   * booking that has NOT started yet.
+   *
+   * Until this existed the gate ran only for a stay already under way, so the same
+   * booking with the same defect in its data got opposite answers depending on
+   * which side of check-in the edit landed on, and the wrong answer was the common
+   * case: the ordinary pricing pass valued any night without a usable stored row
+   * at today's rate and `syncGuestNights` wrote that number into
+   * `BookingGuestNight.priceCents`, where the NEXT edit read it back as evidence.
+   *
+   * The frozen clock puts "today" at 2026-07-01, so the default fixture's stay
+   * (20-22 Aug 2026) is entirely in the future and every case here is pre-check-in
+   * by construction.
+   *
+   * WHAT THESE CASES ARE FOR is the question the owner's decision turned on. When
+   * the gate was widened the recorded cost was that some member edits would FAIL
+   * until an admin priced them. #3170 landed parking on this path first, so what
+   * should actually happen is a SAVE plus a review — and "should" is not evidence.
+   * Each case below asserts which of the two the member gets.
+   */
+  describe("#3166 an edit to a booking that has not started is judged on stored evidence", () => {
+    /** A pre-check-in booking whose single strand carries no stored night rows. */
+    function unreadableBooking() {
+      return makeBooking({
+        guests: [
+          {
+            id: "g1",
+            bookingId: "bk1",
+            firstName: "Alice",
+            lastName: "Member",
+            ageTier: "ADULT",
+            isMember: true,
+            memberId: "m1" as string | null,
+            priceCents: 5000,
+            // Explicitly none — a legacy strand, or one from a booking created by
+            // approving a request (#2739). Stated rather than omitted so the
+            // fixture's own reconciling default cannot quietly fill them in.
+            nights: [] as Array<{ stayDate: Date; priceCents: number | null }>,
+          },
+        ],
+      });
+    }
+
+    async function runPreCheckInBatch(
+      tx: ReturnType<typeof makeTx>,
+      input: Record<string, unknown>,
+    ) {
+      const { modifyBookingBatch } = await import(
+        "@/lib/booking-batch-modification-service"
+      );
+      return modifyBookingBatch({
+        todayAtClub: FIXTURE_CLUB_DAY,
+        bookingId: "bk1",
+        actor: { id: "officer-1", role: "ADMIN" },
+        input: input as never,
+        ipAddress: "127.0.0.1",
+        tx: tx as never,
+      });
+    }
+
+    beforeEach(() => {
+      mockCalculateBookingPrice.mockImplementation(
+        pricesNightsHandedIn(2500, 3000) as never,
+      );
+    });
+
+    it("SAVES AND PARKS a check-out extension rather than refusing it", async () => {
+      // The shape the owner accepted a refusal for, measured. It does not refuse:
+      // the stay moves, no money moves, and one task is raised.
+      const tx = makeTx(unreadableBooking());
+
+      const result = await runPreCheckInBatch(tx, { checkOut: "2026-08-23" });
+
+      // The structural half committed.
+      expect(tx.booking.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            checkOut: new Date("2026-08-23T00:00:00.000Z"),
+            // And the money did not: the booking's own stored totals are written
+            // back unchanged rather than recomposed.
+            totalPriceCents: 5000,
+            finalPriceCents: 5000,
+          }),
+        }),
+      );
+      expect(tx.bookingModification.create).toHaveBeenCalled();
+
+      expect(result.priceDiffCents).toBe(0);
+      expect(result.changeFeeCents).toBe(0);
+      expect(result.refundAmountCents ?? 0).toBe(0);
+      expect(mockPaymentUpdate).not.toHaveBeenCalled();
+      expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
+
+      // Exactly one review task, carrying no amount.
+      expect(tx.manualRefundTask.create).toHaveBeenCalledTimes(1);
+      const raised = tx.manualRefundTask.create.mock.calls[0][0] as {
+        data: { raisedAmountCents: number | null; kind: string };
+      };
+      expect(raised.data.kind).toBe("EDIT_FINANCIAL_REVIEW");
+      expect(raised.data.raisedAmountCents).toBeNull();
+    });
+
+    it("writes NULL for every night it cannot value, and never a today's-rate guess", async () => {
+      // THE DEFECT THIS ISSUE IS ABOUT. Before the gate these three nights were
+      // written as 2500 each — today's rate for a night nobody had priced — and
+      // the next edit read them back as what the member had paid.
+      const tx = makeTx(unreadableBooking());
+
+      await runPreCheckInBatch(tx, { checkOut: "2026-08-23" });
+
+      const nightRows = (
+        tx.bookingGuestNight.createMany.mock.calls[0][0] as {
+          data: Array<{ stayDate: Date; priceCents: number | null }>;
+        }
+      ).data;
+      expect(
+        nightRows.map((row) => ({
+          date: row.stayDate.toISOString().slice(0, 10),
+          priceCents: row.priceCents,
+        })),
+      ).toEqual([
+        { date: "2026-08-20", priceCents: null },
+        { date: "2026-08-21", priceCents: null },
+        { date: "2026-08-22", priceCents: null },
+      ]);
+
+      // And the strand's own stored total is not rewritten either.
+      const guestUpdate = tx.bookingGuest.update.mock.calls[0][0] as {
+        data: { priceCents?: number };
+      };
+      expect(guestUpdate.data.priceCents).toBe(5000);
+    });
+
+    it("preserves a readable night byte for byte while blanking only the unreadable one", async () => {
+      // A PARTIAL strand: the 20th carries real money and the 21st carries a
+      // negative, which INV-MOD-028 classifies as an absence of evidence rather
+      // than a cheap night. Blanking the readable row too would be its own damage.
+      const booking = makeBooking({
+        guests: [
+          {
+            id: "g1",
+            bookingId: "bk1",
+            firstName: "Alice",
+            lastName: "Member",
+            ageTier: "ADULT",
+            isMember: true,
+            memberId: "m1" as string | null,
+            priceCents: 5000,
+            nights: [
+              { stayDate: new Date("2026-08-20T00:00:00.000Z"), priceCents: 2500 },
+              { stayDate: new Date("2026-08-21T00:00:00.000Z"), priceCents: -100 },
+            ],
+          },
+        ],
+      });
+      const tx = makeTx(booking);
+
+      await runPreCheckInBatch(tx, { checkOut: "2026-08-23" });
+
+      const nightRows = (
+        tx.bookingGuestNight.createMany.mock.calls[0][0] as {
+          data: Array<{ stayDate: Date; priceCents: number | null }>;
+        }
+      ).data;
+      expect(
+        nightRows.map((row) => ({
+          date: row.stayDate.toISOString().slice(0, 10),
+          priceCents: row.priceCents,
+        })),
+      ).toEqual([
+        { date: "2026-08-20", priceCents: 2500 },
+        { date: "2026-08-21", priceCents: null },
+        // The night this edit newly puts the strand on. It is NOT priced at
+        // today's rate: no money is moving for it, and a number here would be read
+        // back by the next edit as evidence the member had paid it.
+        { date: "2026-08-22", priceCents: null },
+      ]);
+    });
+
+    it("records a REMOVED strand whose own rows were readable, so a parked edit destroys no number", async () => {
+      // Two strands: g1 unreadable, g2 exact. Removing g2 deletes its rows, and
+      // its BookingGuestNight history goes with them — so if only g1 were
+      // recorded, the departing guest's refund would be a figure no longer present
+      // anywhere in the database.
+      const booking = makeBooking({
+        totalPriceCents: 10000,
+        finalPriceCents: 10000,
+        guests: [
+          {
+            id: "g1",
+            bookingId: "bk1",
+            firstName: "Alice",
+            lastName: "Member",
+            ageTier: "ADULT",
+            isMember: true,
+            memberId: "m1" as string | null,
+            priceCents: 5000,
+            nights: [] as Array<{ stayDate: Date; priceCents: number | null }>,
+          },
+          {
+            id: "g2",
+            bookingId: "bk1",
+            firstName: "Bob",
+            lastName: "Guest",
+            ageTier: "ADULT",
+            isMember: false,
+            memberId: null as string | null,
+            priceCents: 5000,
+            nights: [
+              { stayDate: new Date("2026-08-20T00:00:00.000Z"), priceCents: 2500 },
+              { stayDate: new Date("2026-08-21T00:00:00.000Z"), priceCents: 2500 },
+            ],
+          },
+        ],
+      });
+      const tx = makeTx(booking);
+
+      await runPreCheckInBatch(tx, { removeGuestIds: ["g2"] });
+
+      // The removal committed and no money moved.
+      expect(tx.bookingGuest.delete).toHaveBeenCalledWith({ where: { id: "g2" } });
+      expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
+
+      // TWO tasks: the unreadable strand, and the readable one whose evidence this
+      // edit is about to delete.
+      expect(tx.manualRefundTask.create).toHaveBeenCalledTimes(2);
+      const occurrences = tx.manualRefundTask.create.mock.calls.map((call) => {
+        const data = (call[0] as { data: { reviewContext: unknown } }).data;
+        const context = data.reviewContext as {
+          occurrence: { cause: string; bookingGuestId: string };
+        };
+        return context.occurrence;
+      });
+      expect(occurrences).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            bookingGuestId: "g1",
+            cause: "NO_STORED_NIGHT_PRICES",
+          }),
+          expect.objectContaining({
+            bookingGuestId: "g2",
+            cause: "COUNTERPART_STRAND_UNREADABLE",
+          }),
+        ]),
+      );
+    });
+
+    it("CONTROL: the identical edit on a readable booking still prices and settles", async () => {
+      // Without this, every case above would pass against a gate that parked
+      // EVERY pre-check-in edit — which would be a far worse defect than the one
+      // being fixed, and invisible from the assertions alone.
+      const tx = makeTx(makeBooking());
+
+      const result = await runPreCheckInBatch(tx, { checkOut: "2026-08-23" });
+
+      expect(tx.manualRefundTask.create).not.toHaveBeenCalled();
+      expect(result.priceDiffCents).toBe(2500);
+      const nightRows = (
+        tx.bookingGuestNight.createMany.mock.calls[0][0] as {
+          data: Array<{ priceCents: number | null }>;
+        }
+      ).data;
+      expect(nightRows.map((row) => row.priceCents)).toEqual([2500, 2500, 2500]);
     });
   });
 });

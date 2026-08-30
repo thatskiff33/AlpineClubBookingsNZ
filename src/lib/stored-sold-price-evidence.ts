@@ -240,6 +240,20 @@ export function editFinancialReviewOccurrence(args: {
  * prices, and the invariant is: **a parked edit never destroys a number the
  * system could have known.**
  *
+ * ## Not only the departing strand (#3166)
+ *
+ * A removal is one of three ways a parked edit destroys an exact strand's
+ * evidence, and it was the only one this was raised for at first. The other two
+ * are the ordinary pre-check-in edit: a strand that gives nights BACK has the
+ * price stored against each of them deleted (both night writers delete every row
+ * and recreate only the proposed ones), and a strand that GAINS nights against a
+ * frozen stored total stops reconciling — it becomes
+ * `PARTIAL_STORED_NIGHT_PRICES` and is unpriceable for good. Both destroy real
+ * money evidence just as finally as a delete does, and neither is recoverable
+ * from `BookingModification.previousData`, which keeps booking-level totals and
+ * no per-night price at all. `preCheckInEditEvidence` decides which of the three
+ * applies; this builder does not care which.
+ *
  * ## Why it is a separate function rather than a `cause` argument
  *
  * The cause is not a choice the caller gets to make. `COUNTERPART_STRAND_UNREADABLE`
@@ -393,4 +407,280 @@ export function storedNightPricesByKey(
     }
   }
   return byKey;
+}
+
+/**
+ * One existing guest strand as an edit to a NOT-YET-STARTED booking proposes to
+ * leave it (#3166, epic #2797).
+ *
+ * `proposedNightDates` is the night list the writer will actually persist for
+ * this strand — `priceBreakdown.guests[i].nightDates`, the array
+ * `syncGuestNights` consumes — and NOT a re-derivation of it. That is the whole
+ * reason this type asks for it rather than for the request: a second derivation
+ * of "which nights does this guest end up with" would be a second answer to a
+ * question the pricing pass has already answered, and the gate would then be
+ * judging an edit different from the one being written (`INV-SSOT`).
+ *
+ * A strand the edit REMOVES passes an empty list and sets `rowsDestroyed`, which
+ * is what earns it a counterpart occurrence when some other strand parks the
+ * edit — its rows are about to be deleted, so a number the system could have
+ * known would otherwise be gone (`counterpartStrandReviewOccurrence`).
+ */
+export type PreCheckInEditStrand = {
+  bookingGuestId: string;
+  /** `BookingGuest.priceCents` as stored. */
+  guestTotalCents: number;
+  stayStart?: Date | null;
+  stayEnd?: Date | null;
+  nights?: ReadonlyArray<{
+    stayDate: Date | string;
+    priceCents?: number | null;
+  }> | null;
+  /** The nights this strand ends up holding. Empty for a strand being removed. */
+  proposedNightDates: ReadonlyArray<Date | string>;
+  /**
+   * True when the edit deletes this strand's rows outright (a removal).
+   *
+   * NOT the only way a parked edit destroys an exact strand's evidence, and not
+   * the test for whether one is recorded — shortening and extending do it too.
+   * See `evidenceDestroyed` in `preCheckInEditEvidence`.
+   */
+  rowsDestroyed?: boolean;
+};
+
+/**
+ * The verdict on an edit to a booking that has NOT started yet (#3166, epic
+ * #2797) — the pre-check-in twin of the in-progress planner's own evidence gate.
+ *
+ * ## Why every existing strand is judged, not only the ones giving nights back
+ *
+ * For exactly the reason the in-progress planner states: `applyGuestChanges`
+ * DELETES AND RECREATES every existing guest's `BookingGuestNight` rows from the
+ * per-night vector it is handed. A strand whose stored prices cannot be
+ * preserved would therefore have its price history rewritten at today's rate by
+ * an edit that never touched it — and the next edit would read those numbers
+ * back as evidence of what the member paid. Preserving a row byte for byte and
+ * having no row to preserve are different situations, and only the first can be
+ * written.
+ *
+ * ## No carve-out for a strand this edit deliberately reprices
+ *
+ * A placeholder→member link (#2337) and an other-club rate election both CLEAR a
+ * strand's locked night prices on purpose, so their nights price fresh under
+ * current policy rather than from history. It is tempting to exempt them, and
+ * this deliberately does not: the exemption would be a second rule about which
+ * strands are judged, the flag that says a tick was honoured is written from
+ * what pricing actually charged, and a parked edit charges nothing — so a
+ * parked link or tick is recorded as un-honoured, which is exactly what
+ * `otherLodgeRatedGuestIds` already promises. One rule, no exceptions to state.
+ *
+ * ## What it returns, and what it deliberately does not
+ *
+ * `occurrences` is EMPTY when every strand is exact — the edit prices normally.
+ * A single unusable strand parks the whole edit, and then every OTHER strand
+ * whose own rows were readable and whose evidence this edit destroys is recorded
+ * too — removed, shortened or extended — so a parked edit never destroys a
+ * number the system could have known. There is no amount anywhere in here.
+ *
+ * `soldNightPriceByGuestId` carries, per strand, the stored integer against each
+ * night it holds — usable rows only, from either verdict, so a PARTIAL strand
+ * keeps the rows it does have. It is the ONLY source of a historical amount for
+ * the parked write, which is what makes "preserved byte for byte" true by
+ * construction rather than by inspection.
+ */
+export function preCheckInEditEvidence(args: {
+  bookingId: string;
+  booking: BookingStayRange;
+  strands: readonly PreCheckInEditStrand[];
+}): {
+  occurrences: EditFinancialReviewOccurrence[];
+  soldNightPriceByGuestId: Map<string, ReadonlyMap<CalendarDate, number>>;
+} {
+  const unusable: EditFinancialReviewOccurrence[] = [];
+  const destroyedButReadable: EditFinancialReviewOccurrence[] = [];
+  const soldNightPriceByGuestId = new Map<
+    string,
+    ReadonlyMap<CalendarDate, number>
+  >();
+
+  for (const strand of args.strands) {
+    const heldKeys = getGuestBedNightKeys(strand, args.booking).map((key) =>
+      requireCalendarDate(key),
+    );
+    const proposedKeys = getExplicitGuestBedNightKeys({
+      nights: [...strand.proposedNightDates],
+    })?.map((key) => requireCalendarDate(key)) ?? [];
+    const heldSet = new Set<CalendarDate>(heldKeys);
+    const proposedSet = new Set<CalendarDate>(proposedKeys);
+    const surrenderedNightDates = heldKeys.filter(
+      (key) => !proposedSet.has(key),
+    );
+    const addedNightDates = proposedKeys.filter((key) => !heldSet.has(key));
+
+    const evidence = storedSoldPriceEvidenceForGuest(
+      {
+        priceCents: strand.guestTotalCents,
+        stayStart: strand.stayStart,
+        stayEnd: strand.stayEnd,
+        nights: strand.nights,
+      },
+      args.booking,
+    );
+    soldNightPriceByGuestId.set(
+      strand.bookingGuestId,
+      new Map(
+        evidence.nightPrices.flatMap((night) =>
+          isNonNegativeIntegerCents(night.priceCents)
+            ? [[night.date, night.priceCents] as const]
+            : [],
+        ),
+      ),
+    );
+
+    if (evidence.kind === "unusable") {
+      unusable.push(
+        editFinancialReviewOccurrence({
+          bookingId: args.bookingId,
+          bookingGuestId: strand.bookingGuestId,
+          evidence,
+          guestTotalCents: strand.guestTotalCents,
+          surrenderedNightDates,
+          addedNightDates,
+        }),
+      );
+      continue;
+    }
+    /**
+     * Does this parked edit DESTROY what this exact strand's rows say?
+     *
+     * Three ways, and only the first was covered when #3166 first shipped:
+     *
+     *  - its rows are deleted outright (a removal);
+     *  - it gives nights BACK. `syncGuestNights` and the date path both delete
+     *    every one of its rows and recreate only the proposed ones, so the price
+     *    stored against each surrendered night stops existing - and
+     *    `BookingModification.previousData` keeps booking-level totals, never
+     *    per-night prices;
+     *  - it GAINS nights while its stored total is frozen. Every new night is
+     *    written `NULL`, so a strand that reconciled exactly before the edit no
+     *    longer does afterwards: it becomes `PARTIAL_STORED_NIGHT_PRICES` and is
+     *    unpriceable for good, with real money owed and nothing recording what
+     *    the strand used to be worth.
+     *
+     * A strand whose night set does not move keeps every row byte for byte, so
+     * there is nothing to record and it raises nothing.
+     */
+    const evidenceDestroyed =
+      strand.rowsDestroyed === true ||
+      surrenderedNightDates.length > 0 ||
+      addedNightDates.length > 0;
+    if (evidenceDestroyed) {
+      destroyedButReadable.push(
+        counterpartStrandReviewOccurrence({
+          bookingId: args.bookingId,
+          bookingGuestId: strand.bookingGuestId,
+          evidence,
+          guestTotalCents: strand.guestTotalCents,
+          surrenderedNightDates,
+          addedNightDates,
+        }),
+      );
+    }
+  }
+
+  return {
+    occurrences:
+      unusable.length > 0 ? [...unusable, ...destroyedButReadable] : [],
+    soldNightPriceByGuestId,
+  };
+}
+
+
+/**
+ * The strands of a pre-check-in edit, assembled from what the booking holds and
+ * what the pricing pass proposes — for `preCheckInEditEvidence` (#3166,
+ * `INV-SSOT`).
+ *
+ * ## Why this is shared and the derivations around it are not
+ *
+ * The SAVE (`calculateModifiedPricing`) and the PREVIEW (`modify-quote`) must
+ * agree exactly about which strands an edit is judged on, or one of them quotes
+ * a price the other will not honour — the disagreement INV-MOD-028 exists to
+ * make impossible. They used to build this list twice, ~40 identical lines each,
+ * with no divergence yet: precisely the shape #3131 measured, where one of five
+ * copies had already drifted. The predicate they feed it to was properly shared
+ * from the start; the input to it was not.
+ *
+ * ## The proposed night set comes from the PRICING PASS, never re-derived
+ *
+ * `pricedGuests[i].nightDates` is the night set the edit really proposes and the
+ * one `syncGuestNights` will write. Deriving it again here would be a second
+ * answer to a question already answered, and a divergence between the two would
+ * be silent — a strand judged against nights it does not end up holding.
+ * `pricedGuests` is therefore INDEX-ALIGNED with `guestsForPricing`, exactly as
+ * the pricing engine returns it; a guest with no `bookingGuestId` (a new
+ * arrival, whose money is known) is skipped rather than shifting the alignment.
+ *
+ * ## Removed strands are appended, and only they carry `rowsDestroyed`
+ *
+ * The writer DELETES a removed guest's `BookingGuest` row and its night rows
+ * cascade with it, so an exact strand leaving a parked edit is the one place a
+ * number the system could have known is about to stop existing outright. The
+ * other two ways a parked edit destroys evidence — surrendering nights and
+ * gaining them — fall out of the proposed night set and are decided inside
+ * `preCheckInEditEvidence`, not here.
+ */
+export function preCheckInEditStrands(args: {
+  bookingGuests: ReadonlyArray<{
+    id: string;
+    priceCents: number;
+    stayStart?: Date | null;
+    stayEnd?: Date | null;
+    nights?: ReadonlyArray<{
+      stayDate: Date | string;
+      priceCents?: number | null;
+    }> | null;
+  }>;
+  guestsForPricing: ReadonlyArray<{ bookingGuestId?: string | null }>;
+  /** Index-aligned with `guestsForPricing`, as the pricing pass returns it. */
+  pricedGuests: ReadonlyArray<{
+    nightDates?: ReadonlyArray<Date | string> | null;
+  }>;
+  removeGuestIds?: Iterable<string> | null;
+}): PreCheckInEditStrand[] {
+  const storedGuestById = new Map(
+    args.bookingGuests.map((guest) => [guest.id, guest]),
+  );
+  const removeSet = new Set(args.removeGuestIds ?? []);
+  const strands: PreCheckInEditStrand[] = [];
+
+  args.guestsForPricing.forEach((guest, index) => {
+    const bookingGuestId = guest.bookingGuestId;
+    if (!bookingGuestId) return;
+    const stored = storedGuestById.get(bookingGuestId);
+    if (!stored) return;
+    strands.push({
+      bookingGuestId,
+      guestTotalCents: stored.priceCents,
+      stayStart: stored.stayStart,
+      stayEnd: stored.stayEnd,
+      nights: stored.nights,
+      proposedNightDates: args.pricedGuests[index]?.nightDates ?? [],
+    });
+  });
+
+  for (const guest of args.bookingGuests) {
+    if (!removeSet.has(guest.id)) continue;
+    strands.push({
+      bookingGuestId: guest.id,
+      guestTotalCents: guest.priceCents,
+      stayStart: guest.stayStart,
+      stayEnd: guest.stayEnd,
+      nights: guest.nights,
+      proposedNightDates: [],
+      rowsDestroyed: true,
+    });
+  }
+
+  return strands;
 }

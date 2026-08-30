@@ -152,7 +152,7 @@ describe("edit financial review race DB safety guard (#3032)", () => {
 
 let prisma: (typeof import("@/lib/prisma"))["prisma"];
 let raiseEditFinancialReviewTask: (typeof import("@/lib/edit-financial-review"))["raiseEditFinancialReviewTask"];
-let editFinancialReviewOccurrenceKey: (typeof import("@/lib/edit-financial-review"))["editFinancialReviewOccurrenceKey"];
+let editFinancialReviewOccurrenceKey: (typeof import("@/lib/edit-financial-review-occurrence"))["editFinancialReviewOccurrenceKey"];
 let resolveManualRefundTask: (typeof import("@/lib/manual-refund-task-resolution"))["resolveManualRefundTask"];
 
 /**
@@ -189,7 +189,27 @@ let observerClient: PrismaClient;
       bookingCheckIn: "2026-08-01" as CalendarDate,
       bookingCheckOut: "2026-08-03" as CalendarDate,
       bookingModificationId: MODIFICATION_ID,
+      // #3166: both required, never defaulted — see `raiseEditFinancialReviewTask`.
+      paymentId: null,
+      guestsAddedByEdit: null,
     });
+
+    /**
+     * One raise, in its own transaction, taking `lock(1)` first — the shape
+     * every production door uses (`modifyBookingBatch` and its three siblings).
+     *
+     * Stated once rather than at each call site (`INV-SSOT`). The barrier cases
+     * below keep their own inline copies on purpose: they need explicit
+     * `maxWait`/`timeout` budgets so a contender parked behind the lock holder
+     * does not expire before the barrier is satisfied, and folding that into a
+     * shared helper would put a timing constant nobody reads at the call site
+     * into the one place the timing matters.
+     */
+    const raiseInOwnTransaction = () =>
+      prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+        return raiseEditFinancialReviewTask({ ...raiseInput(), store: tx });
+      });
 
     /**
      * Everything a completed review writes, in FK order.
@@ -302,8 +322,12 @@ let observerClient: PrismaClient;
       assertSafeEditReviewRaceDbUrl(RACE_DB_URL);
       process.env.DATABASE_URL = RACE_DB_URL;
       ({ prisma } = await import("@/lib/prisma"));
-      ({ raiseEditFinancialReviewTask, editFinancialReviewOccurrenceKey } =
-        await import("@/lib/edit-financial-review"));
+      ({ raiseEditFinancialReviewTask } = await import(
+        "@/lib/edit-financial-review"
+      ));
+      ({ editFinancialReviewOccurrenceKey } = await import(
+        "@/lib/edit-financial-review-occurrence"
+      ));
       ({ resolveManualRefundTask } = await import(
         "@/lib/manual-refund-task-resolution"
       ));
@@ -505,10 +529,7 @@ let observerClient: PrismaClient;
     it("FORCES the double-completion interleaving: two admins closing ONE task queue on its row and exactly one credit is issued", async () => {
       await clearReviewRunState();
 
-      const raised = await prisma.$transaction(async (tx) => {
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
-        return raiseEditFinancialReviewTask({ ...raiseInput(), store: tx });
-      });
+      const raised = await raiseInOwnTransaction();
 
       const lockHeld = deferred();
       const releaseLock = deferred();
@@ -721,19 +742,76 @@ let observerClient: PrismaClient;
       ]);
     });
 
-    it("a replay of a COMPLETED occurrence reopens nothing and issues no second credit", async () => {
-      // SELF-CONTAINED, deliberately. An earlier revision continued from the
-      // previous case's committed state, which is one `-t` filter, one `.only`
-      // or one shard boundary away from a false green - and a race proof that
-      // can pass vacuously is worse than none. It builds its own COMPLETED
-      // occurrence instead: a retry of the same structural edit after an admin
-      // has already priced and closed it is exactly the replay that must not
-      // produce a second adjustment.
+    /**
+     * #3166 — THE TWO MONEY RULES THAT READ AS ONE RULE, PINNED SEPARATELY.
+     *
+     * Both of the cases below are about "do not raise twice", and they demand
+     * opposite answers to byte-identical input:
+     *
+     *   - a REPLAY of one edit must not produce a second adjustment; and
+     *   - a second, GENUINELY NEW edit of the same shape must raise its own
+     *     task, because the epic's whole failure mode was a parked guest-add
+     *     whose occurrence identity cannot move — add a guest, an officer
+     *     settles it, add another, and the pre-#3166 lookup matched the settled
+     *     row, so no task was raised, no charge went out, no banner appeared,
+     *     and the guest rode free, repeating for the next one.
+     *
+     * THE DISCRIMINATOR IS THE STATUS OF THE ROW AT THE BASE KEY, and it is a
+     * real discriminator rather than a coin toss dressed up as one. A replay can
+     * only ever see an OPEN row or none at all: the raise runs inside the
+     * caller's transaction, so a rolled-back attempt takes its task with it, and
+     * an attempt that committed is a finished edit nobody retries. A TERMINAL
+     * row means an officer has answered that question and the pending-review
+     * fence — `pg_advisory_xact_lock(1)` then
+     * `assertNoPendingEditFinancialReview`, on every money-affecting door — has
+     * since let a FURTHER edit through. `findFreeOccurrenceSlot` argues it in
+     * full; these two cases are it, against a real server.
+     *
+     * An earlier single case asserted the pre-#3166 rule ("a replay finds the
+     * COMPLETED row and creates nothing") and was replaced rather than relaxed:
+     * that sequence is not a replay in production, and believing it was is what
+     * cost the money.
+     *
+     * BOTH ARE SELF-CONTAINED, deliberately. An earlier revision continued from
+     * the previous case's committed state, which is one `-t` filter, one `.only`
+     * or one shard boundary away from a false green — and a proof that can pass
+     * vacuously is worse than none.
+     */
+    it("a replay of an OPEN occurrence returns the task already on file and writes nothing further", async () => {
       await clearReviewRunState();
-      const priced = await prisma.$transaction(async (tx) => {
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
-        return raiseEditFinancialReviewTask({ ...raiseInput(), store: tx });
+
+      const first = await raiseInOwnTransaction();
+      const replay = await raiseInOwnTransaction();
+
+      expect(first.created).toBe(true);
+      expect(first.occurrenceKey).toBe(
+        editFinancialReviewOccurrenceKey(occurrence()),
+      );
+      // The replay is handed the SAME row, at the SAME key, still awaiting a
+      // person. No `#2`, because nobody has answered anything yet.
+      expect(replay.created).toBe(false);
+      expect(replay.taskId).toBe(first.taskId);
+      expect(replay.occurrenceKey).toBe(first.occurrenceKey);
+      expect(replay.status).toBe("OPEN");
+
+      const tasks = await prisma.manualRefundTask.findMany({
+        where: { bookingId: BOOKING_ID },
+        select: { id: true, amountCents: true, status: true },
       });
+      expect(tasks).toHaveLength(1);
+      expect(tasks[0].amountCents).toBeNull();
+
+      // And nothing moved: a raise is a row, not money.
+      const credits = await prisma.memberCredit.findMany({
+        where: { sourceBookingModificationId: MODIFICATION_ID },
+      });
+      expect(credits).toHaveLength(0);
+    });
+
+    it("a NEW occurrence of an identity an officer has already settled gets its own task, and the settled row is left exactly as they left it", async () => {
+      await clearReviewRunState();
+
+      const priced = await raiseInOwnTransaction();
       await resolveManualRefundTask({
         taskId: priced.taskId,
         resolution: "completed",
@@ -744,23 +822,57 @@ let observerClient: PrismaClient;
         recordedNightPrices: null,
       });
 
-      const replay = await prisma.$transaction(async (tx) => {
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
-        return raiseEditFinancialReviewTask({ ...raiseInput(), store: tx });
-      });
+      const next = await raiseInOwnTransaction();
 
-      expect(replay.created).toBe(false);
-      expect(replay.status).toBe("COMPLETED");
+      // The money the pre-#3166 lookup lost: this raise WRITES, under the first
+      // free recurrence key, so the second guest is charged and an officer is
+      // told. `created: false` here is the silent free bed.
+      expect(next.created).toBe(true);
+      expect(next.taskId).not.toBe(priced.taskId);
+      expect(next.occurrenceKey).toBe(`${priced.occurrenceKey}#2`);
+      expect(next.status).toBe("OPEN");
+
+      // TERMINAL IS STILL TERMINAL. The officer's decision is not reopened, not
+      // amended and not re-keyed — the new question got a new row instead.
+      const settled = await prisma.manualRefundTask.findUniqueOrThrow({
+        where: { id: priced.taskId },
+        select: {
+          status: true,
+          amountCents: true,
+          raisedAmountCents: true,
+          occurrenceKey: true,
+        },
+      });
+      expect(settled.status).toBe("COMPLETED");
+      expect(settled.amountCents).toBe(4500);
+      expect(settled.raisedAmountCents).toBeNull();
+      expect(settled.occurrenceKey).toBe(priced.occurrenceKey);
+
+      // The new one is raised unknown, never at the amount the last one settled
+      // at — that figure was a decision about a different edit.
+      const fresh = await prisma.manualRefundTask.findUniqueOrThrow({
+        where: { id: next.taskId },
+        select: { status: true, amountCents: true, raisedAmountCents: true },
+      });
+      expect(fresh.status).toBe("OPEN");
+      expect(fresh.amountCents).toBeNull();
+      expect(fresh.raisedAmountCents).toBeNull();
 
       const tasks = await prisma.manualRefundTask.findMany({
         where: { bookingId: BOOKING_ID },
       });
-      expect(tasks).toHaveLength(1);
+      expect(tasks).toHaveLength(2);
 
+      // AND STILL EXACTLY ONE CREDIT. Raising a second review moves no money —
+      // only the officer's completion does — so the property the replaced case
+      // was really protecting ("no second adjustment for one edit") survives the
+      // change, and it is asserted here rather than assumed.
       const credits = await prisma.memberCredit.findMany({
         where: { sourceBookingModificationId: MODIFICATION_ID },
+        select: { amountCents: true },
       });
       expect(credits).toHaveLength(1);
+      expect(credits[0].amountCents).toBe(4500);
     });
   },
 );

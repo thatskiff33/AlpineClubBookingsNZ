@@ -104,3 +104,45 @@ export function getRemainingRefundableCents(
     0
   );
 }
+
+/**
+ * The payment shape `editReviewSettlementPaymentId` needs, spelled out so a
+ * caller cannot hand it a payment row loaded without its id.
+ */
+export type EditReviewSettlementPayment =
+  | (BookingPaymentState & { id: string })
+  | null
+  | undefined;
+
+/**
+ * #3166 (epic #2797): the captured payment a PARKED edit's financial review
+ * settles against, or null — the one home for that rule (`INV-SSOT`).
+ *
+ * Four parked edit doors (the batch edit, the date change, the single-guest
+ * removal and the guest-add route) each computed this inline from the same two
+ * predicates. It is not a formatting detail: `chooseEditReviewSettlementRoute`
+ * reads the id at COMPLETION to decide whether the confirmed amount goes back to
+ * the card, is mirrored as a hand-settled allocation, or becomes account credit.
+ * A copy that drifted would re-route real money, weeks later, with nothing
+ * failing.
+ *
+ * Gated on a CAPTURED payment in a settled booking status — the same test
+ * `applyPaymentAdjustments` uses — so a booking with nothing taken carries null
+ * and a confirmed amount can never be routed to a refund of money that was never
+ * received. Null is an ordinary answer, not a gap: owner decision D2 makes the
+ * task's `paymentId` nullable precisely because a credit owed for a surrendered
+ * night need not sit against any one captured payment.
+ *
+ * Lives here beside `hasIssuedPrimaryXeroInvoice`, which is the same shape for
+ * the same reason, rather than in `edit-financial-review.ts` — that module is
+ * deliberately about the review STATE and reads no payment policy of its own.
+ */
+export function editReviewSettlementPaymentId(booking: {
+  status: string;
+  payment: EditReviewSettlementPayment;
+}): string | null {
+  return isSettledBookingStatus(booking.status) &&
+    hasCapturedPayment(booking.payment)
+    ? (booking.payment?.id ?? null)
+    : null;
+}

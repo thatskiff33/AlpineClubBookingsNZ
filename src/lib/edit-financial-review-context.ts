@@ -173,6 +173,35 @@ export type EditFinancialReviewContext = {
   bookingCheckIn: CalendarDate;
   bookingCheckOut: CalendarDate;
   /**
+   * #3166: the guests this same edit ADDED to the booking, and what they were
+   * priced at — or null when it added none.
+   *
+   * ## Why an admin cannot do the job without it
+   *
+   * A parked edit's occurrence describes ONE unreadable strand. On a guest add
+   * that strand is an existing guest nobody touched, so the whole card reads
+   * "nights given back: none · nights added: none · stored total: $200" — and
+   * says nothing at all about the two guests just put on the booking at $320
+   * each. A parked add writes the booking's total back UNCHANGED and raises no
+   * charge, so that $640 is owed, is recorded only on the new guests' own rows,
+   * and the person being asked to price the booking is never shown it.
+   *
+   * It is on the CONTEXT and deliberately not on the occurrence: occurrence
+   * fields are the material the key is hashed from, so putting it there would
+   * re-identify every future occurrence and would have to bump the namespace
+   * version. This is evidence about the edit, not identity.
+   *
+   * OPTIONAL, because rows written before #3166 have no such field and the
+   * parser is a whole-object `strict()` read that must keep accepting them.
+   * `totalPriceCents` is nullable for the same reason the stored figures are: a
+   * total that is not usable money is recorded as absent rather than as a number
+   * an admin might act on.
+   */
+  guestsAddedByEdit?: {
+    count: number;
+    totalPriceCents: number | null;
+  } | null;
+  /**
    * #3032 (owner decision D-3032-1): the `BookingModification` row the edit that
    * raised this review wrote, and the anchor a confirmed amount settles against
    * later.
@@ -285,6 +314,13 @@ const contextSchema: z.ZodType<EditFinancialReviewContext> = z
     guestMemberId: z.string().min(1).nullable(),
     bookingCheckIn: calendarDateSchema,
     bookingCheckOut: calendarDateSchema,
+    guestsAddedByEdit: z
+      .object({
+        count: z.number().int().positive(),
+        totalPriceCents: nonNegativeCentsOrNull,
+      })
+      .strict()
+      .nullish(),
     bookingModificationId: z.string().min(1).nullable(),
   })
   .strict();
@@ -364,6 +400,15 @@ export type EditFinancialReviewEvidence = {
   };
   bookingCheckIn: CalendarDate;
   bookingCheckOut: CalendarDate;
+  /**
+   * #3166: how many guests the same edit added and what they were priced at.
+   * Money the club is owed and has NOT taken, which this strand's own evidence
+   * cannot show. No id and no name — a count and a figure.
+   */
+  guestsAddedByEdit: {
+    count: number;
+    totalPriceCents: number | null;
+  } | null;
 };
 
 /**
@@ -387,5 +432,6 @@ export function toEditFinancialReviewEvidence(
     },
     bookingCheckIn: context.bookingCheckIn,
     bookingCheckOut: context.bookingCheckOut,
+    guestsAddedByEdit: context.guestsAddedByEdit ?? null,
   };
 }

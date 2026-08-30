@@ -8,7 +8,7 @@ honoured: its row mapping and the redaction that goes with it were lifted into
 gate exists to force and a better home for that code anyway.
 
 file: src/components/admin/manual-refund-task-queue.tsx
-lines: 1453
+lines: 1476
 reason: this is where the whole admin half of the feature lands — the two
   kind-aware intro paragraphs, the captured-evidence block, the permission-gated
   booking link, and the per-kind dialog copy. The obvious split is to lift the
