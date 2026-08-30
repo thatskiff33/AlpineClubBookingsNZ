@@ -1438,7 +1438,11 @@ shortened or extended, each beside a control — in
 surfaces and its answer is what fences the write in the pre-check-in gate census
 in `in-progress-edit-sold-price-census.test.ts`, that a SETTLED review no longer
 silences the next occurrence of the same identity in
-`edit-financial-review.test.ts`, that the waitlist offer sweep declines to
+`edit-financial-review.test.ts` and, against a real server, in
+`edit-financial-review-races.realdb.test.ts`, which pins both directions at once
+(a replay of an OPEN occurrence writes nothing further; a new occurrence of a
+settled identity gets its own task while the settled row stays as the officer
+left it), that the waitlist offer sweep declines to
 reprice over a blank in `waitlist.test.ts`, the date change in
 `fix-mod-payment.test.ts`
 (including that a moved range which still covers a night keeps that night at the
