@@ -367,6 +367,9 @@ Prefix `INV-HOST`.
 | `INV-HOST-038` | The inline drain is scoped to the booking just written; the cron drains everything |
 | `INV-HOST-039` | Every path that can enqueue must also drain, asserted tree-wide by a census |
 | `INV-HOST-040` | Dependent reads have their own ordered, logged ceiling, separate from the source read's |
+| `INV-HOST-041` | Third optional scope, appended never reordered, off until a club enables it |
+| `INV-HOST-042` | Outside the all-or-none CHECK; NULL on a decided row means off |
+| `INV-HOST-043` | Group identity is the organiser/join columns, never parentBookingId or container status |
 
 ### Booking requests
 

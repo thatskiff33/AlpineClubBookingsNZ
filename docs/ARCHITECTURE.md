@@ -1907,13 +1907,25 @@ the soft allowlist structurally.
 The second consumer of that foundation now has two independently inherited
 dimensions. The CONSEQUENCE is `DISABLED`, `ADMIN_REVIEW_REQUIRED`, or
 `ENFORCED`; the host-scope set enables `SAME_BOOKING`,
-`SAME_BOOKING_OWNER`, or both. `AdultMemberHostingPolicy` holds one row per
+`SAME_BOOKING_OWNER`, `SAME_GROUP_TRIP`, or any combination of them.
+`AdultMemberHostingPolicy` holds one row per
 configuration scope (club-wide plus per-lodge override), with scope identity
 pinned by a CHECK on `scopeKey`, an explicit `capacityMode` carrying no database
 default, and a revision that every write compare-and-swaps on under the
 `adult-member-hosting-policy-set` advisory key. A lodge may inherit either
 dimension while overriding the other. Existing NULL scope columns resolve to
 same-booking only, so the expansion does not broaden an existing club's policy.
+
+`SAME_GROUP_TRIP` (#3037, epic #2943) is the third scope and the first that can
+cross accounts, so it is off by default in a stronger sense than its siblings:
+its column is NOT part of the all-or-none CHECK that binds the other two, and a
+NULL there on a row that decided the rest reads as OFF rather than as inherit.
+That asymmetry is what keeps a blue/green deploy working — the draining colour's
+policy INSERT names only the two columns it knows. Group identity itself has one
+home, `src/lib/group-trip-identity.ts`: `GroupBooking.organiserBookingId` and
+`GroupBookingJoin.bookingId`, never `Booking.parentBookingId`, and never gated on
+the container's own `GroupBooking.status`, which governs joining rather than
+cover.
 
 The evaluator in `src/lib/policies/adult-member-hosting.ts` is pure: it takes a
 resolved consequence/scope set and participant facts stamped with the scope by
