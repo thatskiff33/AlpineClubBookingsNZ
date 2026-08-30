@@ -9,6 +9,7 @@
 export {
   assertBookingModifiable,
   assertBookingNotQuotePriced,
+  BookingEditFinancialReviewRequiredError,
   BookingModifyReviewJustificationRequiredError,
   GUEST_MEMBER_LINK_IN_PROGRESS_MESSAGE,
   hasOutstandingAdditionalPayment,

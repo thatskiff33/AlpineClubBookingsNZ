@@ -126,6 +126,12 @@ const mockTx = {
   bookingGuest: {
     update: vi.fn(),
   },
+  // #3031: the offer-time reprice now writes the per-night rows it prices, so
+  // the rows and the guest total agree afterwards (INV-MOD-028).
+  bookingGuestNight: {
+    deleteMany: vi.fn(),
+    createMany: vi.fn(),
+  },
   groupDiscountSetting: {
     findUnique: vi.fn(),
   },
@@ -296,6 +302,10 @@ beforeEach(() => {
   mockPrismaTransaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => fn(mockTx));
   mockTx.bookingGuest.update.mockReset();
   mockTx.bookingGuest.update.mockResolvedValue({});
+  mockTx.bookingGuestNight.deleteMany.mockReset();
+  mockTx.bookingGuestNight.deleteMany.mockResolvedValue({ count: 0 });
+  mockTx.bookingGuestNight.createMany.mockReset();
+  mockTx.bookingGuestNight.createMany.mockResolvedValue({ count: 0 });
   // #2543: an empty party by default, so no fixture is repriced and no
   // paid-up-adult requirement bites unless a test sets one up.
   mockBookingGuestFindMany.mockReset();
@@ -553,6 +563,183 @@ describe("processWaitlistForDates", () => {
     expect(logger.error).not.toHaveBeenCalledWith(
       expect.anything(),
       "Failed to resolve the #2543 member-rate notice for a waitlist offer",
+    );
+  });
+
+  it("writes the per-night rows it just priced, so the strand still reconciles (#3031)", async () => {
+    const { processWaitlistForDates } = await import("@/lib/waitlist");
+    const { checkCapacityForGuestRanges: mockCheckCapacity } = await import(
+      "@/lib/capacity"
+    );
+
+    // The shape that used to break every later edit: the offer reprices upward,
+    // the guest total moves to the new figure, and the STORED night rows still
+    // hold the old one. The rows would then no longer sum to the total, which is
+    // INV-MOD-028's `STORED_TOTAL_MISMATCH` — so the next in-progress edit or
+    // single-guest removal on this booking would be refused and sent to a
+    // person, for a mismatch this sweep had created.
+    const night1 = new Date("2026-08-01T00:00:00.000Z");
+    const night2 = new Date("2026-08-02T00:00:00.000Z");
+    const candidate = {
+      id: "booking1",
+      memberId: "m1",
+      checkIn: new Date("2026-08-01"),
+      checkOut: new Date("2026-08-03"),
+      createdAt: new Date("2026-06-01"),
+      totalPriceCents: 20000,
+      finalPriceCents: 20000,
+      guests: [
+        {
+          id: "g1",
+          ageTier: "ADULT",
+          isMember: true,
+          memberId: "m1",
+          nights: [
+            { stayDate: night1, priceCents: 5000 },
+            { stayDate: night2, priceCents: 5000 },
+          ],
+        },
+      ],
+      member: {
+        id: "m1",
+        email: "test@test.com",
+        firstName: "John",
+        lastName: "Doe",
+      },
+      promoRedemption: null,
+    };
+    mockTxBookingFindMany.mockResolvedValue([candidate]);
+    (mockCheckCapacity as ReturnType<typeof vi.fn>).mockResolvedValue({
+      available: true,
+    });
+    mockTx.booking.update.mockResolvedValue({});
+    mockTx.booking.count.mockResolvedValue(0);
+    mockPriceWithPolicy.mockResolvedValue({
+      totalPriceCents: 13000,
+      guests: [
+        {
+          priceCents: 13000,
+          // Deliberately UNEQUAL: an even split would have stored 6500/6500 and
+          // reconciled just as well, so equal amounts could not tell the two
+          // apart. These are the real per-night figures the offer charges.
+          perNightCents: [6000, 7000],
+          nightDates: [night1, night2],
+        },
+      ],
+    });
+
+    const result = await processWaitlistForDates({
+      checkIn: new Date("2026-08-01"),
+      checkOut: new Date("2026-08-03"),
+    });
+
+    expect(result.offeredBookingId).toBe("booking1");
+    expect(mockTx.bookingGuestNight.deleteMany).toHaveBeenCalledWith({
+      where: { bookingGuestId: "g1" },
+    });
+    expect(mockTx.bookingGuestNight.createMany).toHaveBeenCalledWith({
+      data: [
+        { bookingGuestId: "g1", stayDate: night1, priceCents: 6000 },
+        { bookingGuestId: "g1", stayDate: night2, priceCents: 7000 },
+      ],
+    });
+    // The property that matters, stated as itself rather than left implied by
+    // the two assertions above: what was written to the rows adds up to what was
+    // written to the guest.
+    const written = mockTx.bookingGuestNight.createMany.mock.calls[0][0] as {
+      data: Array<{ priceCents: number }>;
+    };
+    expect(
+      written.data.reduce((sum, row) => sum + row.priceCents, 0),
+    ).toBe(13000);
+    expect(mockTx.bookingGuest.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "g1" },
+        data: expect.objectContaining({ priceCents: 13000 }),
+      }),
+    );
+  });
+
+  it("refuses to write a night the reprice put no amount against (#3031)", async () => {
+    const { processWaitlistForDates } = await import("@/lib/waitlist");
+    const { checkCapacityForGuestRanges: mockCheckCapacity } = await import(
+      "@/lib/capacity"
+    );
+
+    // A per-night vector shorter than the night list. The prohibited answer is
+    // `?? 0`, which would write a real night at zero and hand the NEXT edit
+    // evidence that the member paid nothing for it.
+    const night1 = new Date("2026-08-01T00:00:00.000Z");
+    const night2 = new Date("2026-08-02T00:00:00.000Z");
+    const candidate = {
+      id: "booking1",
+      memberId: "m1",
+      checkIn: new Date("2026-08-01"),
+      checkOut: new Date("2026-08-03"),
+      createdAt: new Date("2026-06-01"),
+      totalPriceCents: 20000,
+      finalPriceCents: 20000,
+      guests: [
+        {
+          id: "g1",
+          ageTier: "ADULT",
+          isMember: true,
+          memberId: "m1",
+          nights: [
+            { stayDate: night1, priceCents: 5000 },
+            { stayDate: night2, priceCents: 5000 },
+          ],
+        },
+      ],
+      member: {
+        id: "m1",
+        email: "test@test.com",
+        firstName: "John",
+        lastName: "Doe",
+      },
+      promoRedemption: null,
+    };
+    mockTxBookingFindMany.mockResolvedValue([candidate]);
+    (mockCheckCapacity as ReturnType<typeof vi.fn>).mockResolvedValue({
+      available: true,
+    });
+    mockTx.booking.update.mockResolvedValue({});
+    mockTx.booking.count.mockResolvedValue(0);
+    mockPriceWithPolicy.mockResolvedValue({
+      totalPriceCents: 13000,
+      guests: [
+        {
+          priceCents: 13000,
+          perNightCents: [6000],
+          nightDates: [night1, night2],
+        },
+      ],
+    });
+
+    // The reprice degrades to the stored snapshot rather than losing the queue
+    // place (its documented behaviour for ANY reprice failure), so the offer
+    // still goes out — at the OLD price, and with the booking's stored history
+    // untouched. What must never happen is a HALF-written reprice, which is why
+    // the refusal is raised before the first mutation rather than between two of
+    // them.
+    const result = await processWaitlistForDates({
+      checkIn: new Date("2026-08-01"),
+      checkOut: new Date("2026-08-03"),
+    });
+
+    expect(result.offeredBookingId).toBe("booking1");
+    expect(mockTx.bookingGuestNight.createMany).not.toHaveBeenCalled();
+    expect(mockTx.bookingGuestNight.deleteMany).not.toHaveBeenCalled();
+    expect(mockTx.bookingGuest.update).not.toHaveBeenCalled();
+    expect(mockTx.booking.update).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ totalPriceCents: 13000 }),
+      }),
+    );
+    const { default: logger } = await import("@/lib/logger");
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.anything(),
+      "Failed to reprice waitlisted booking at offer time; offering at the stored snapshot",
     );
   });
 

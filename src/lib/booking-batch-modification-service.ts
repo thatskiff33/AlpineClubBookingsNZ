@@ -18,6 +18,7 @@ import {
   applyPromoCodeChanges,
   assertBookingModifiable,
   calculateModificationSettlementOptions,
+  BookingEditFinancialReviewRequiredError,
   BookingModificationSettlementMethodRequiredError,
   calculateModificationChangeFee,
   calculateModifiedPricing,
@@ -192,24 +193,51 @@ export type BatchModificationResponse = {
  * arrays, which the guest-sync step treats as "leave the rows alone".
  */
 function buildIdentityOnlyPricing(booking: LoadedBookingForModify): PricingResult {
+  // #3031: NO `?? 0`, ANYWHERE IN THIS ECHO. These amounts are written straight
+  // back onto `BookingGuestNight.priceCents` by `syncGuestNights`, so a default
+  // would replace a night's real sold price with a magic zero on an edit whose
+  // entire promise is that it preserves it (INV-MOD-028). A night loaded without
+  // its price is a SELECT that did not ask for it — the census in
+  // `in-progress-edit-sold-price-census.test.ts` exists to stop exactly that —
+  // and the honest response is to refuse rather than to invent. A stored value
+  // that is negative IS echoed, unchanged: the promise is byte-for-byte
+  // preservation, and repairing damaged rows is #2745's audited decision, not
+  // this echo's.
+  //
+  // ONE READ OF THE ROWS, feeding both the breakdown and the per-night rates
+  // (`INV-SSOT`). They were read twice, and the second read defaulted — dead
+  // only because object-literal properties evaluate in source order and the
+  // refusal happened to precede it. A prohibited construct on a money value must
+  // not depend on evaluation order for its harmlessness.
+  const echoedNights = booking.guests.map((guest) =>
+    (guest.nights ?? []).map((night) => {
+      if (typeof night.priceCents !== "number") {
+        throw new Error(
+          `Booking guest ${guest.id} night ${night.stayDate.toISOString()} was loaded without its stored sold price (#3031)`,
+        );
+      }
+      return { stayDate: night.stayDate, priceCents: night.priceCents };
+    }),
+  );
   return {
+    kind: "priced",
     inProgressPlan: null,
     capacityOverridden: false,
     newTotalPriceCents: booking.totalPriceCents,
     priceBreakdown: {
       totalPriceCents: booking.totalPriceCents,
-      guests: booking.guests.map((guest) => ({
+      guests: booking.guests.map((guest, index) => ({
         priceCents: guest.priceCents,
-        perNightCents: (guest.nights ?? []).map((night) => night.priceCents ?? 0),
-        nightDates: (guest.nights ?? []).map((night) => night.stayDate),
+        perNightCents: echoedNights[index].map((night) => night.priceCents),
+        nightDates: echoedNights[index].map((night) => night.stayDate),
       })),
     },
-    guestNightRates: booking.guests.map((guest) => ({
+    guestNightRates: booking.guests.map((guest, index) => ({
       bookingGuestId: guest.id,
       memberId: guest.memberId ?? null,
       isMember: guest.isMember,
-      perNightRates: (guest.nights ?? []).map((night) => night.priceCents ?? 0),
-      nightDates: (guest.nights ?? []).map((night) => night.stayDate),
+      perNightRates: echoedNights[index].map((night) => night.priceCents),
+      nightDates: echoedNights[index].map((night) => night.stayDate),
     })),
     // Nothing was rated here — this echo does not run the rate resolver at all.
     // A request carrying an other-lodge election is therefore kept OFF this path
@@ -706,7 +734,7 @@ export async function modifyBookingBatch({
     const pricePreservingModification =
       (identityOnlyModification || requestIsCreditElectionOnly) &&
       !requestCarriesOtherLodgeElection(input);
-    const pricing = pricePreservingModification
+    const pricingResult = pricePreservingModification
       ? buildIdentityOnlyPricing(booking)
       : await calculateModifiedPricing(tx, {
           booking,
@@ -735,6 +763,21 @@ export async function modifyBookingBatch({
           // #1745 reserved-slot check (gated to ADMIN actors above).
           partnerSharedGuests: input.partnerSharedGuests,
         });
+
+    // #3031 (epic #2797): the exact adjustment could not be read from this
+    // booking's own stored sold-price history, and there is no number on the
+    // review branch to fall back to. Thrown INSIDE the transaction, so the
+    // structural change rolls back with it and the member is told nothing has
+    // moved — which is what the refusal's own wording promises.
+    //
+    // This is the seam #3032 re-routes: there the stay/guest change commits and
+    // one OPEN admin review task is created in the same transaction instead.
+    if (pricingResult.kind === "financial_review_required") {
+      throw new BookingEditFinancialReviewRequiredError(
+        pricingResult.occurrences,
+      );
+    }
+    const pricing = pricingResult;
 
     const promo = pricePreservingModification
       ? {

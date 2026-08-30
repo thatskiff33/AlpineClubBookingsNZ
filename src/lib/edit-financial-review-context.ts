@@ -117,6 +117,21 @@ export type EditFinancialReviewOccurrence = {
 };
 
 /**
+ * THE ONE "we cannot price this" OUTCOME (`INV-SSOT`, #3031, epic #2797).
+ *
+ * Both the in-progress planner (`InProgressGuestRangePlanResult`) and the
+ * modification pricer (`PricingResult`) answer with either a priced result or
+ * this — one idea, so one type rather than two parallel unions that happened to
+ * be spelled identically. There is deliberately NO numeric field on it: the epic
+ * prohibits a magic zero and an estimate alike, and a shape carrying neither is
+ * cheaper than a rule saying not to read one (INV-MOD-028).
+ */
+export type FinancialReviewRequired = {
+  kind: "financial_review_required";
+  occurrences: EditFinancialReviewOccurrence[];
+};
+
+/**
  * What is written to `ManualRefundTask.reviewContext`: the identity above, plus
  * the display-only evidence D3 asks for.
  *
@@ -154,6 +169,13 @@ const calendarDateSchema = z.custom<CalendarDate>(isCalendarDate, {
  * lives here — in the client-safe half of the feature, which every one of the
  * four can import.
  *
+ * #3031 added a fifth, and it is the one that explains why the rule has to be
+ * shared rather than merely tidy: a stored `BookingGuestNight.priceCents` is a
+ * bare `Int` with NO non-negative constraint, so "is this stored value usable as
+ * money at all" is asked by the planner that refuses to price from it as well as
+ * by the writers above. Those two disagreeing is the difference between refusing
+ * a value and storing it.
+ *
  * The ten pre-existing inline sites are deliberately NOT refactored onto this;
  * that is a wider change than this issue, and doing it half-way would leave the
  * rule looking centralised when it is not.
@@ -161,10 +183,10 @@ const calendarDateSchema = z.custom<CalendarDate>(isCalendarDate, {
 export const nonNegativeCentsSchema = z.number().int().nonnegative();
 
 /**
- * The same rule as a predicate, for the two server callers that validate a
- * number they already hold and throw their own domain error. Derived FROM the
- * schema rather than re-implemented beside it, so there is one definition and
- * not two that agree today.
+ * The same rule as a predicate, for the server callers that validate a number
+ * they already hold and throw their own domain error. Derived FROM the schema
+ * rather than re-implemented beside it, so there is one definition and not two
+ * that agree today.
  */
 export function isNonNegativeIntegerCents(value: unknown): value is number {
   return nonNegativeCentsSchema.safeParse(value).success;

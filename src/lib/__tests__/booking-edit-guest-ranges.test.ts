@@ -49,11 +49,48 @@ function guest(stayStart: string, stayEnd: string, priceCents: number, id = "g1"
     // exercise the envelope FALLBACK and stop covering the branch production
     // takes. Contiguous stay, so they are the envelope expanded and every
     // expectation below is unchanged.
-    nights: eachDateOnlyInRange(D(stayStart), D(stayEnd)).map((stayDate) => ({
-      stayDate,
-    })),
+    //
+    // #3031: they carry their SOLD PRICE too. The plan prices a stay from the
+    // stored rows and refuses to invent an amount when they do not reconcile to
+    // the guest total, so a night row without a price is no longer a fixture
+    // detail — it is the unpriceable case. These are contiguous stays at one
+    // rate, so the rows reconcile and every expectation below is unchanged.
+    nights: (() => {
+      const dates = eachDateOnlyInRange(D(stayStart), D(stayEnd));
+      // INTEGER cents, remainder on the first night. A float division puts a
+      // fraction of a cent on every row, so the reconciliation the plan
+      // applies would rest on floating point rather than on the integer
+      // arithmetic the column actually holds (INV-MONEY-001).
+      const base = Math.floor(priceCents / dates.length);
+      const remainder = priceCents - base * dates.length;
+      return dates.map((stayDate, index) => ({
+        stayDate,
+        priceCents: index === 0 ? base + remainder : base,
+      }));
+    })(),
     priceCents,
   };
+}
+
+/**
+ * The plan, insisting it priced.
+ *
+ * #3031 made `buildInProgressGuestRangePlan` return a discriminated result, and
+ * unwrapping it through an assertion rather than a cast is deliberate: a fixture
+ * that drifts into the unpriceable case fails HERE, naming the causes, instead
+ * of failing twenty lines later on an expectation about a number that was never
+ * produced.
+ */
+function pricedPlan(input: BuildInProgressGuestRangePlanInput) {
+  const result = buildInProgressGuestRangePlan(input);
+  if (result.kind !== "priced") {
+    throw new Error(
+      `Expected a priced plan, got financial review: ${result.occurrences
+        .map((occurrence) => occurrence.cause)
+        .join(", ")}`,
+    );
+  }
+  return result.plan;
 }
 
 function planInput(
@@ -68,6 +105,7 @@ function planInput(
   const totalPriceCents = guests.reduce((s, g) => s + g.priceCents, 0);
   return {
     booking: {
+      id: "booking-1",
       checkIn: D("2026-08-20"),
       checkOut: D("2026-08-24"),
       totalPriceCents,
@@ -87,7 +125,7 @@ function planInput(
 describe("buildInProgressGuestRangePlan — #2029 check-out-day extension pricing", () => {
   it("(a) charges exactly 1 night for a check-out-day +1 extension (was free)", () => {
     // today == checkOut (2026-08-24) => editableFrom = NZ tomorrow (08-25).
-    const plan = buildInProgressGuestRangePlan(
+    const plan = pricedPlan(
       planInput({ editableFrom: "2026-08-25", newCheckOut: "2026-08-25" }),
     );
 
@@ -102,7 +140,7 @@ describe("buildInProgressGuestRangePlan — #2029 check-out-day extension pricin
   });
 
   it("(b) charges exactly 2 nights for a check-out-day +2 extension", () => {
-    const plan = buildInProgressGuestRangePlan(
+    const plan = pricedPlan(
       planInput({ editableFrom: "2026-08-25", newCheckOut: "2026-08-26" }),
     );
 
@@ -115,7 +153,7 @@ describe("buildInProgressGuestRangePlan — #2029 check-out-day extension pricin
   it("(c) last-night-day extension still charges exactly the added nights (regression pin)", () => {
     // today == checkOut - 1 (2026-08-23) => editableFrom = 08-24 == original
     // check-out. This case was ALREADY correct before #2029; pin it unchanged.
-    const plan = buildInProgressGuestRangePlan(
+    const plan = pricedPlan(
       planInput({ editableFrom: "2026-08-24", newCheckOut: "2026-08-26" }),
     );
 
@@ -126,7 +164,7 @@ describe("buildInProgressGuestRangePlan — #2029 check-out-day extension pricin
 
   it("(d) mid-stay extension is unchanged", () => {
     // today == 2026-08-21 => editableFrom = 08-22, well before the old check-out.
-    const plan = buildInProgressGuestRangePlan(
+    const plan = pricedPlan(
       planInput({ editableFrom: "2026-08-22", newCheckOut: "2026-08-26" }),
     );
 
@@ -144,7 +182,7 @@ describe("buildInProgressGuestRangePlan — #2029 check-out-day extension pricin
   });
 
   it("charges per guest: a two-guest check-out-day +1 costs one night each", () => {
-    const plan = buildInProgressGuestRangePlan(
+    const plan = pricedPlan(
       planInput({ editableFrom: "2026-08-25", newCheckOut: "2026-08-25" }, [
         guest("2026-08-20", "2026-08-24", 4 * RATE, "g1"),
         guest("2026-08-20", "2026-08-24", 4 * RATE, "g2"),
@@ -162,7 +200,7 @@ describe("buildInProgressGuestRangePlan — #2029 check-out-day extension pricin
     // Guest only occupies [08-22, 08-24); their stay starts AFTER editableFrom.
     // The extension must still cost exactly their two added nights (08-24, 08-25),
     // never the [editableFrom, stayStart) nights they were never there for.
-    const plan = buildInProgressGuestRangePlan(
+    const plan = pricedPlan(
       planInput({ editableFrom: "2026-08-21", newCheckOut: "2026-08-26" }, [
         guest("2026-08-22", "2026-08-24", 2 * RATE),
       ]),
@@ -174,7 +212,7 @@ describe("buildInProgressGuestRangePlan — #2029 check-out-day extension pricin
 
 describe("buildInProgressGuestRangePlan — #2029 capacity ranges", () => {
   it("covers the check-out-day night in the +1 capacity range and window start", () => {
-    const plan = buildInProgressGuestRangePlan(
+    const plan = pricedPlan(
       planInput({ editableFrom: "2026-08-25", newCheckOut: "2026-08-25" }),
     );
 
@@ -193,7 +231,7 @@ describe("buildInProgressGuestRangePlan — #2029 capacity ranges", () => {
   });
 
   it("covers both new nights in a +2 capacity range", () => {
-    const plan = buildInProgressGuestRangePlan(
+    const plan = pricedPlan(
       planInput({ editableFrom: "2026-08-25", newCheckOut: "2026-08-26" }),
     );
 
@@ -209,7 +247,7 @@ describe("buildInProgressGuestRangePlan — #2029 capacity ranges", () => {
   });
 
   it("leaves the capacity window at editableFrom for a mid-stay extension (unchanged)", () => {
-    const plan = buildInProgressGuestRangePlan(
+    const plan = pricedPlan(
       planInput({ editableFrom: "2026-08-22", newCheckOut: "2026-08-26" }),
     );
 
@@ -218,7 +256,7 @@ describe("buildInProgressGuestRangePlan — #2029 capacity ranges", () => {
   });
 
   it("anchors a future-dated partial-range guest's capacity range at their arrival, not earlier (#713)", () => {
-    const plan = buildInProgressGuestRangePlan(
+    const plan = pricedPlan(
       planInput({ editableFrom: "2026-08-21", newCheckOut: "2026-08-26" }, [
         guest("2026-08-22", "2026-08-24", 2 * RATE),
       ]),

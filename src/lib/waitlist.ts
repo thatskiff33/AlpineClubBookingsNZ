@@ -203,9 +203,46 @@ async function repriceWaitlistCandidate(
     const newFinalPriceCents =
       newTotalPriceCents + promoResult.newPromoAdjustmentCents;
 
+    // #3031 (epic #2797): THE NIGHT ROWS THIS REPRICE PRICED, built and checked
+    // BEFORE anything is written.
+    //
+    // This used to move `BookingGuest.priceCents` and leave `BookingGuestNight`
+    // untouched, so after any rate change between the waitlist entry and the
+    // offer the rows summed to the OLD total while the guest carried the NEW
+    // one. That is a strand that does not reconcile — INV-MOD-028's
+    // `STORED_TOTAL_MISMATCH` — manufactured fresh, on a healthy live booking,
+    // every time this ran. Every subsequent in-progress edit and single-guest
+    // removal on that booking would then be refused and sent to a person, for a
+    // mismatch the application itself had created.
+    //
+    // The amounts were already in hand: `perNightCents` and `nightDates` are the
+    // same values `guestNightRates` hands to the promo allocator above, so this
+    // writes what the offer is actually charging rather than deriving anything.
+    //
+    // BUILT FIRST, and that ordering is load-bearing. This function's catch
+    // degrades to the stored snapshot and lets the offer go out, so a throw
+    // BETWEEN two writes would commit half a reprice — a guest at the new total
+    // with its night rows already deleted. Everything that can refuse is
+    // therefore resolved here, before the first mutation.
+    const repricedNightRows = candidate.guests.map((guest, index) => {
+      const nightDates = priceBreakdown.guests[index].nightDates ?? [];
+      return nightDates.map((stayDate, k) => {
+        // NO `?? 0`. These rows become the booking's sold-price history from
+        // here on, and a magic zero would be read back by the next edit as
+        // evidence the member paid nothing for the night.
+        const priceCents = priceBreakdown.guests[index].perNightCents[k];
+        if (typeof priceCents !== "number") {
+          throw new Error(
+            `Waitlist reprice priced no amount for the night of ${stayDate.toISOString()} (#3031)`,
+          );
+        }
+        return { bookingGuestId: guest.id, stayDate, priceCents };
+      });
+    });
+
     await Promise.all(
-      candidate.guests.map((guest, index) =>
-        tx.bookingGuest.update({
+      candidate.guests.map(async (guest, index) => {
+        await tx.bookingGuest.update({
           where: { id: guest.id },
           // Reprice overwrites the rate-membership-type snapshot alongside the
           // price (#1930, E4): the offer re-bases the whole booking at current
@@ -215,8 +252,18 @@ async function repriceWaitlistCandidate(
             rateMembershipTypeId:
               priceBreakdown.guests[index].rateMembershipTypeId,
           },
-        })
-      )
+        });
+        // Delete-then-create, exactly as every other night writer does, because
+        // the repriced night SET can differ from the stored one.
+        await tx.bookingGuestNight.deleteMany({
+          where: { bookingGuestId: guest.id },
+        });
+        if (repricedNightRows[index].length > 0) {
+          await tx.bookingGuestNight.createMany({
+            data: repricedNightRows[index],
+          });
+        }
+      })
     );
     await tx.booking.update({
       where: { id: candidate.id },

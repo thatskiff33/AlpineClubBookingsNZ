@@ -191,6 +191,27 @@ interface PartyGuest {
 }
 
 /** What a guest's stored night rows say they have paid so far. */
+/**
+ * The pricing result, insisting it priced (#3031).
+ *
+ * `calculateModifiedPricing` answers with a discriminated result now, so a
+ * fixture whose stored rows stop reconciling fails HERE, naming the causes,
+ * rather than later on an expectation about a number that was never produced.
+ */
+async function pricedPricing(
+  ...args: Parameters<typeof calculateModifiedPricing>
+) {
+  const result = await calculateModifiedPricing(...args);
+  if (result.kind !== "priced") {
+    throw new Error(
+      `Expected a priced modification, got financial review: ${result.occurrences
+        .map((occurrence) => occurrence.cause)
+        .join(", ")}`,
+    );
+  }
+  return result;
+}
+
 function storedPriceOf(guest: PartyGuest): number {
   return (guest.nights ?? []).reduce((sum, night) => sum + night.priceCents, 0);
 }
@@ -274,7 +295,7 @@ describe.each(SEASON_SHAPES)(
      */
     async function extendByOneNight(state: "disabled" | "on" | "off") {
       const party = FIVE_NON_MEMBERS;
-      const result = await calculateModifiedPricing(txFor(state, summerOnly), {
+      const result = await pricedPricing(txFor(state, summerOnly), {
         booking: bookingOf(party, D("2026-09-10"), D("2026-09-12"), 0),
         bookingId: "b1",
         isInProgressEdit: false,
@@ -347,7 +368,7 @@ describe.each(SEASON_SHAPES)(
       }));
 
       const run = (state: "disabled" | "on" | "off") =>
-        calculateModifiedPricing(txFor(state, summerOnly), {
+        pricedPricing(txFor(state, summerOnly), {
           booking: bookingOf(party, D("2026-09-10"), D("2026-09-12"), 0),
           bookingId: "b1",
           isInProgressEdit: false,
@@ -389,7 +410,7 @@ describe.each(SEASON_SHAPES)(
         stayEnd: D("2026-09-13"),
       }));
       const run = (state: "disabled" | "on" | "off") =>
-        calculateModifiedPricing(txFor(state, summerOnly), {
+        pricedPricing(txFor(state, summerOnly), {
           booking: bookingOf(party, D("2026-09-10"), D("2026-09-12"), 0),
           bookingId: "b1",
           isInProgressEdit: false,
@@ -442,7 +463,7 @@ describe.each(SEASON_SHAPES)(
           priceCents: NON_MEMBER_RATE_CENTS,
         })),
       }));
-      return calculateModifiedPricing(txFor(state, summerOnly), {
+      return pricedPricing(txFor(state, summerOnly), {
         booking: bookingOf(party, D("2026-06-28"), D("2026-07-03")),
         bookingId: "b1",
         isInProgressEdit: true,
