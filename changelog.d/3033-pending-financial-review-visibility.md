@@ -12,8 +12,17 @@
   No figure of any kind is shown — not a zero, not an estimate, not the new
   total — and nothing internal or fault-finding is said. The My Bookings row
   keeps the total and marks it as being checked rather than hiding or
-  "correcting" it, and the modification email carries the same sentence, ahead
-  of any additional payment the same change may also have created.
+  "correcting" it, and the booking's Transaction History keeps the change's real
+  figure but stops colouring it like a refund that has been paid.
+
+  Where the same change also created something to pay, the member is told
+  **both**. One edit can give back nights that cannot be priced while adding
+  nights that price normally, so an unpaid booking still shows its amount due
+  and its instruction to pay, and the modification email still carries the
+  amount, the invoice number and the payment reference — with the review
+  sentence alongside rather than instead. "There is nothing you need to do"
+  always names the change it applies to, so it can never be read as covering a
+  payment that is genuinely outstanding.
 
   The wording is editable under **Admin → Bookings setup → Booking messages**
   ("Adjustment being reviewed"), so a club can soften it without a release. Do

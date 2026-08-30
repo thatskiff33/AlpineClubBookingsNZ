@@ -235,9 +235,16 @@ Work the amount out from that evidence and the booking's payment history, then:
 Every amount, note and status change is written to the booking's audit log.
 
 A booking with a review waiting also shows a **Money waiting for review** warning
-on its own page, under **Admin tools**, with a link back to this page. While a
-review is open, a manual cash settlement on that booking cannot be reversed: the
-booking's money is unresolved, so unpicking a settlement underneath it is refused.
+on its own page, under **Admin tools**, with a link back to this page.
+
+**What an open review does and does not block.** A review raised against a
+captured payment blocks that payment's manual settlement from being reversed —
+the block is scoped to the payment the task names. A review with no payment
+behind it, which is the ordinary shape when the adjustment would be an account
+credit, blocks nothing: there is no settlement for it to sit in front of. So do
+not treat an open review as a guarantee that the booking's money is frozen.
+Check the booking's own payment history before reversing anything on a booking
+that has a review waiting.
 
 ### A refund that happened without you — "Refunded automatically"
 
@@ -361,7 +368,7 @@ the whole filtered set; **Success Rate** is computed from the visible page.
 | Amounts look off by 100× | Amounts are stored as cents and shown as dollars | Enter amount filters in dollars (for example `90.00`) |
 | **Record manual payment** says there is a Xero invoice | The booking already has an invoice in Xero, or one is queued | Record the payment against that invoice in Xero instead — recording it here would leave the two systems permanently disagreeing |
 | An admin alert says a cash settlement and a Xero payment disagree | The member (or their employer) later paid the Xero invoice for a booking already recorded as paid in cash | Check whether the two are genuinely separate money. Reverse the manual record, or refund the duplicate — the system deliberately changed nothing |
-| **Reverse manual payment** is not offered | A refund, a card payment, an open hand-back task or a Xero invoice has appeared since | Cancel the booking instead; a reversal can no longer be undone cleanly |
+| **Reverse manual payment** is not offered | A refund, a card payment, an open task against **that payment**, or a Xero invoice has appeared since | Cancel the booking instead; a reversal can no longer be undone cleanly |
 | A row says **Awaiting pricing** instead of an amount | It is a booking change the system would not price. The amount is genuinely unknown, not zero | Work it out from the evidence on the row and the booking's payment history, then record it — or click **No adjustment** if nothing is owed |
 | A review row says its recorded evidence **cannot be read** | The evidence was written by a different version of the site | Decide the amount from the booking's own payment and rate history instead, and tell your club administrator — that evidence is the only record of what the change removed |
 | The evidence shows a booking identifier instead of a link | Your admin role covers finance but not bookings | Quote the identifier to an admin who can open bookings, or ask for bookings view access |

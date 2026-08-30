@@ -527,12 +527,18 @@ no diagnostic category, and no clause that could read as the member's fault.
 
 Between the banner's facts and its next step sits the club's own explanation,
 which is editable at **Admin → Bookings setup → Booking messages** under
-*"Adjustment being reviewed"*. The split is deliberate: the narrative owns the
-facts, which are the same for every club and are shared with the public
-payment-link page, and the message key owns the explanation, which is the sentence
-the owner named as needing to be honest without being alarming and therefore the
-one a club must be able to soften without a release. An amount must never be put
-in it.
+*"Adjustment being reviewed"*. The split is deliberate and is enforced by the
+wording on each side rather than merely asserted: the narrative owns the FACTS —
+the change saved, the club will confirm the amount, nothing has moved, there is
+nothing to do about it — which are the same for every club, are shared with the
+public payment-link page and with the change-confirmation email, and live once in
+`booking-financial-review-copy.ts`. The message key owns only the club's
+EXPLANATION of why a person is working the amount out, which is the part the
+owner named as needing to be honest without being alarming and therefore the part
+a club must be able to soften without a release. It restates none of the facts —
+an earlier draft repeated two of them, which meant a club softening the key could
+not change the narrative's copy, which was the whole justification for having the
+key. An amount must never be put in it.
 
 **On My Bookings**, the row keeps the post-edit total and qualifies it — *"· being
 checked"* beside the figure, and an info chip reading *"Adjustment being checked"*
@@ -541,20 +547,49 @@ member with no number at all, and correcting it is the estimation this epic
 forbids; the booking status is unchanged and still true, so the chip sits next to
 it rather than overwriting it.
 
-**By email**, the ordinary *Booking Modified* message carries the same sentence in
+**By email**, the ordinary *Booking Modified* message carries the same sentences in
 its money section. Before #3033 that section rendered **empty** for this case — all
 three of its branches test for a positive amount and an unresolved adjustment has
 none — so the member received a change confirmation that said nothing at all about
-money. The new branch is checked **first**, ahead of the additional-payment one,
-because a single edit can add nights that price normally while surrendering nights
-that cannot be valued: checked last, the member would be told what to pay and
-nothing about what they are owed.
+money.
+
+The review note is **composed with** the settlement note, not substituted for it.
+A single edit can add nights that price normally while surrendering nights that
+cannot be valued, so a review-pending change can carry a genuine additional
+amount. An exclusive choice loses one of two true things whichever way it is
+ordered: the payment instruction shadows the honest sentence, or the honest
+sentence suppresses an instruction to pay — and with it the amount, the Xero
+invoice number and the payment reference — leaving a member who does not pay,
+whose hold expires and whose booking cancels. The three settlement notes remain
+mutually exclusive among themselves.
+
+"There is nothing you need to do" is written **"about that change"** everywhere it
+appears, for the same reason: it sits beside instructions that do require action,
+and an unscoped version cancels them.
 
 The banner does **not** displace a cancellation, a release or a decline. Those
 describe what happened to the booking, which is the more important truth, and the
 review wording assumes a stay that is still going ahead. It does displace the paid
 narrative, whose "nothing more to do" is exactly the false reassurance this issue
 exists to remove.
+
+It does **not** displace a payable one either — it is added to it. `PAYABLE_STATUSES`
+covers CONFIRMED, and a CONFIRMED-unpaid booking renders the member's **Complete
+Payment** card, so returning the review narrative outright put *"there is nothing
+you need to do"* directly beside a card asking for money. A payable booking with a
+review keeps its amount due and its instruction to pay, and gains the review's
+sentences plus the fact that joins them: the unpriced adjustment is not part of
+the figure being asked for. Gating the review branch to PAID would have resolved
+the contradiction by deleting the disclosure.
+
+**In the booking's own Transaction History**, the modification row for the change
+keeps its figure and loses its colour. The signed price difference is real — it is
+how far the booking's total moved — but it was rendered in the same green a
+completed refund gets, which under this banner reads as money already returned.
+The tone drops to neutral and the row says the refund or credit is still being
+worked out. Only the most recent **priced** modification is qualified: a review is
+raised by a priced edit and no later one can sit above it, so saying an edit from
+months ago is unresolved would be false.
 
 ### What the admin sees
 
