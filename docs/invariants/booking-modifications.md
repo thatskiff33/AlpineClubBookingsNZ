@@ -1247,12 +1247,32 @@ and is restored here because the five paths below now enforce it — not because
 the sentence reads better. A documented claim is a contract in this repository,
 so if a sixth edit door is added it is gated or this heading changes.
 
-**All five PARK. None refuses.** #3170 made "not known" storable and deleted the
-member-facing refusal outright, so an edit whose money this booking's history
-cannot support commits its structural half and holds the amount for a person, on
-every one of them. That uniformity is the point: the same booking with the same
-defect in its data used to get opposite answers depending which door the member
-came through.
+**All five PARK on the FIRST such edit. None of them refuses for want of
+evidence.** #3170 made "not known" storable and deleted the member-facing
+refusal outright, so an edit whose money this booking's history cannot support
+commits its structural half and holds the amount for a person, on every one of
+them. That uniformity is the point: the same booking with the same defect in its
+data used to get opposite answers depending which door the member came through.
+
+**A SECOND money-affecting edit, while the review is still open, IS refused —
+and that is a real reduction in self-service, chosen knowingly.**
+`assertNoPendingEditFinancialReview` sits ahead of all five gates and throws a
+409 while any `EDIT_FINANCIAL_REVIEW` task on the booking is OPEN, because a
+second edit would have to price against the unresolved money the first one
+parked. So the shape a member meets is: the first edit saves and parks, and
+every later price-affecting edit is turned away until an officer clears the
+queue. Identity-only edits (`moneyAffecting: false`) pass straight through, and
+a consent-authority removal is exempt.
+
+Two things follow that are worth stating plainly rather than discovering:
+
+- **A booking with no stored night rows at all parks on its first edit.** The
+  envelope fallback classifies it `NO_STORED_NIGHT_PRICES`, so every booking
+  predating #713 is one-edit-per-officer-intervention from the moment it is
+  first touched.
+- **Because nothing clears a blank**, a booking that has parked once parks again
+  on every later edit. The review queue is the only route back to a fully priced
+  booking.
 
 What every parked path does, identically: the structural change commits and the
 capacity check still runs on the same ranges a priced edit would be checked
@@ -1306,10 +1326,32 @@ money genuinely did not move, NOT because 0 was chosen as the adjustment.
   created and still priced at what they are genuinely being sold for; that money
   is known.
 
-**A BLANK IS NEVER REPAIRED BY A REPRICE, on any path.** It is cleared only by a
-person supplying the amount. That is the rule the date path broke and is the
-reason it is stated separately from the five bullets above: a path can be gated
-against inventing a *credit* and still quietly invent a *row*.
+**A BLANK IS NEVER REPAIRED BY A REPRICE.** It is cleared only by a person
+supplying the amount. That is the rule the date path broke and is the reason it
+is stated separately from the five bullets above: a path can be gated against
+inventing a *credit* and still quietly invent a *row*.
+
+It binds every writer of `BookingGuestNight.priceCents`, not only the five edit
+doors — a wholesale night-row rewriter destroys a blank exactly as effectively as
+an edit does, and two of them exist outside the edit paths. Both are named here,
+with what was done about each, because an enumeration claimed to be complete and
+missing a writer is worse than no enumeration:
+
+- **The waitlist offer-time reprice** (`repriceWaitlistCandidate`,
+  `src/lib/waitlist.ts`) re-bases the whole stay at current rates, passing no
+  locked prices and rewriting every night row. It is fenced (#3166): a booking
+  carrying a night with no known sold price is offered at its stored snapshot
+  instead, and the reprice is declined rather than attempted. It was REACHABLE —
+  `ADMIN_FUTURE_EDIT_STATUSES` includes `WAITLISTED`, so an admin edit could park
+  a waitlisted booking and this sweep would then convert its `NULL`s into
+  guesses while the review task that wrote them was still open.
+- **The booking-request approval preservation path**
+  (`src/lib/booking-request.ts`) deletes and recreates an existing hold's night
+  rows at the approval's own prices. It is NOT fenced, and is outside this rule
+  rather than an exception to it: an officer accepted a specific quote option at
+  a price they chose, and those are the figures written. That IS "a person
+  supplying the amount". Nothing on that path consults a rate table or re-derives
+  an amount, which is what separates a decision from a guess.
 
 NOT GATED, and named rather than left to be discovered. Both are outside this
 rule rather than exceptions to it, because neither values a historical night:
@@ -1322,14 +1364,16 @@ rule rather than exceptions to it, because neither values a historical night:
 - **The waitlist offer-time reprice** re-bases the whole stay at current rates by
   design (the offer is a new price the member has not yet accepted) and, since
   #3031, writes the per-night rows it prices so the next edit reads real
-  evidence.
+  evidence. It values no historical night, so this rule does not reach it — but
+  it IS bound by the blank clause below, and is fenced accordingly (#3166).
 
-**The consequence worth stating plainly:** because nothing clears a blank,
-a booking that has been parked once is unreadable for good, and every later edit
-to it parks again. That is honest rather than harmful — the club is asked each
-time instead of being told a number nobody decided — but it means the review
-queue is the only route back to a fully priced booking, and today settling a
-review writes an amount to the TASK, not a price to the night row.
+**The consequence worth stating plainly:** because nothing clears a blank, a
+booking that has been parked once is unreadable for good. Settling a review
+writes an amount to the TASK, not a price to the night row. Combined with the
+pending-review fence above, that means a parked booking is one price-affecting
+edit per officer intervention — honest rather than harmful, because the club is
+asked each time instead of being told a number nobody decided, but a real cost
+to self-service and not a detail.
 
 A negative or non-integer stored row is classified as an ABSENCE of usable
 evidence, never as a price: trusting one inverts an edit, so giving a night back

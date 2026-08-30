@@ -743,6 +743,99 @@ describe("processWaitlistForDates", () => {
     );
   });
 
+  it("declines to reprice over a night whose sold price is NOT KNOWN, and offers at the stored snapshot (#3166, INV-MOD-028)", async () => {
+    const { processWaitlistForDates } = await import("@/lib/waitlist");
+    const { checkCapacityForGuestRanges: mockCheckCapacity } = await import(
+      "@/lib/capacity"
+    );
+
+    // A booking an admin edit already PARKED: #3170 wrote NULL onto the second
+    // night to say the sold price is not known, and an OPEN review task is
+    // waiting for a person to price it. This sweep passes no locked prices and
+    // rewrites every night row, so without the fence the blank comes back as
+    // today's rate — a figure nobody decided, in the column the next edit reads
+    // as evidence, while the review that was raised over it is still open.
+    //
+    // The CONTROL for this is "writes the per-night rows it just priced" above:
+    // the identical sweep on a booking with no blank still reprices and still
+    // writes its rows. A fence that stopped every reprice would pass this test
+    // and fail that one.
+    const night1 = new Date("2026-08-01T00:00:00.000Z");
+    const night2 = new Date("2026-08-02T00:00:00.000Z");
+    const candidate = {
+      id: "booking1",
+      memberId: "m1",
+      checkIn: new Date("2026-08-01"),
+      checkOut: new Date("2026-08-03"),
+      createdAt: new Date("2026-06-01"),
+      totalPriceCents: 20000,
+      finalPriceCents: 20000,
+      guests: [
+        {
+          id: "g1",
+          ageTier: "ADULT",
+          isMember: true,
+          memberId: "m1",
+          nights: [
+            { stayDate: night1, priceCents: 5000 },
+            { stayDate: night2, priceCents: null },
+          ],
+        },
+      ],
+      member: {
+        id: "m1",
+        email: "test@test.com",
+        firstName: "John",
+        lastName: "Doe",
+      },
+      promoRedemption: null,
+    };
+    mockTxBookingFindMany.mockResolvedValue([candidate]);
+    (mockCheckCapacity as ReturnType<typeof vi.fn>).mockResolvedValue({
+      available: true,
+    });
+    mockTx.booking.update.mockResolvedValue({});
+    mockTx.booking.count.mockResolvedValue(0);
+    mockPriceWithPolicy.mockResolvedValue({
+      totalPriceCents: 26000,
+      guests: [
+        {
+          priceCents: 26000,
+          perNightCents: [13000, 13000],
+          nightDates: [night1, night2],
+        },
+      ],
+    });
+
+    const result = await processWaitlistForDates({
+      checkIn: new Date("2026-08-01"),
+      checkOut: new Date("2026-08-03"),
+    });
+
+    // The offer still goes out — the queue place is not lost over this.
+    expect(result.offeredBookingId).toBe("booking1");
+    // Nothing was priced, so nothing was written: no season lookup, no rows.
+    expect(mockPriceWithPolicy).not.toHaveBeenCalled();
+    expect(mockTx.bookingGuestNight.deleteMany).not.toHaveBeenCalled();
+    expect(mockTx.bookingGuestNight.createMany).not.toHaveBeenCalled();
+    expect(mockTx.bookingGuest.update).not.toHaveBeenCalled();
+    expect(mockTx.booking.update).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ totalPriceCents: 26000 }),
+      }),
+    );
+    // Declined, not failed: nothing went wrong, a decision was refused.
+    const { default: logger } = await import("@/lib/logger");
+    expect(logger.error).not.toHaveBeenCalledWith(
+      expect.anything(),
+      "Failed to reprice waitlisted booking at offer time; offering at the stored snapshot",
+    );
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.anything(),
+      "Waitlisted booking carries a night with no known sold price; offering at the stored snapshot rather than repricing over it (#3166)",
+    );
+  });
+
   it("reprices downward when season rates dropped during the wait (#1035)", async () => {
     const { processWaitlistForDates } = await import("@/lib/waitlist");
     const { checkCapacityForGuestRanges: mockCheckCapacity } = await import("@/lib/capacity");

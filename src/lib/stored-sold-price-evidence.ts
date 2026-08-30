@@ -624,3 +624,43 @@ export function preservedNightPrices(
     return cents === undefined ? null : cents;
   });
 }
+
+/**
+ * Does this booking carry a night whose sold price is NOT KNOWN? (#3166,
+ * `INV-MOD-028`.)
+ *
+ * A `NULL` in `BookingGuestNight.priceCents` is the column's own statement that
+ * nobody knows what the night was sold for (#3170), and the rule it comes with
+ * is absolute: **a blank is cleared only by a person supplying the amount, never
+ * by a reprice.** A writer that re-prices a whole stay and rewrites every night
+ * row would otherwise convert "not known" into a figure nobody decided, and the
+ * next edit reads that column back as evidence of what the member paid.
+ *
+ * This is the predicate a wholesale night-row rewriter asks BEFORE it rewrites,
+ * and it lives here rather than in each of them so that "what a blank is" has
+ * one definition (`INV-SSOT`).
+ *
+ * ## Exactly a `NULL`, and deliberately not the wider class
+ *
+ * `storedSoldPriceEvidenceForGuest` treats a negative or non-integer row as an
+ * ABSENCE of usable evidence too, and this does not. Those are damage from
+ * pre-#2744 arithmetic, what to do about them is #2745's audited decision, and
+ * this repository's standing answer is forward-only: nothing here repairs one
+ * and nothing here refuses on account of one. A `NULL` is different in kind — it
+ * was written deliberately, by a parked edit, to say that an amount is owed and
+ * unknown.
+ *
+ * A row loaded WITHOUT its price is indistinguishable from a null one here, so
+ * callers must load `priceCents`; every current caller loads whole night rows.
+ */
+export function carriesUnvaluedStoredNight(
+  guests: ReadonlyArray<{
+    nights?: ReadonlyArray<{ priceCents?: number | null }> | null;
+  }>,
+): boolean {
+  return guests.some((guest) =>
+    (guest.nights ?? []).some(
+      (night) => night.priceCents === null || night.priceCents === undefined,
+    ),
+  );
+}

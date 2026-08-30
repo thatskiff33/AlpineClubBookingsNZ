@@ -1912,6 +1912,20 @@ export async function reassignHeldBookingGuests(
    * `bookingGuestId` and `stayDate`, not on a night row's id, so deleting and
    * rewriting nights cascades to nothing. Guest ids still survive the swap,
    * which is the property that preservation actually rests on.
+   *
+   * ## It may overwrite a `NULL` night price, and that is not the thing
+   * `INV-MOD-028` forbids
+   *
+   * The hold this preserves can have been edited by an admin and PARKED, which
+   * writes `NULL` — "sold price not known" — onto a night (#3170). The rewrite
+   * below replaces it with an approval price, and the invariant's rule is that a
+   * blank is cleared only by A PERSON SUPPLYING THE AMOUNT, never by a reprice.
+   * An approval IS that person: an officer accepted a specific quote option for
+   * this stay, at a price they chose, and `planned` carries exactly that figure.
+   * Nothing here consults a rate table or re-derives an amount, which is what
+   * makes it a decision rather than a guess. The waitlist offer-time reprice is
+   * the opposite case and is fenced accordingly (#3166); this one is named in
+   * `INV-MOD-028` rather than gated.
    */
   if (existing.length > 0) {
     await tx.bookingGuestNight.deleteMany({
