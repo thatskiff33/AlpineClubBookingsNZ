@@ -270,3 +270,134 @@ describe("createXeroSupplementaryInvoice mixed-sign components (#1356)", () => {
     expect(createPayments).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * #3193 (epic #2797): THE SECOND ASK'S DOCUMENT.
+ *
+ * When a booking change's supplementary invoice has already gone out, a review
+ * share settled afterwards is billed on its own small invoice. Three things about
+ * that document have to be right, and one flag decides all three so a caller
+ * cannot take one without the others: the link it writes must NOT land on the
+ * booking change (or the change's own "is an invoice already going out?" reads
+ * would find it and could raise it to the combined total), the Xero idempotency
+ * key must not be the change's (or Xero answers the create with the earlier
+ * invoice and the difference is never billed), and the member has to be told why
+ * a second invoice has arrived.
+ */
+describe("createXeroSupplementaryInvoice: the second ask (#3193)", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    mocks.bookingFindUnique.mockResolvedValue({
+      id: "bk1",
+      memberId: "mem1",
+      payment: { xeroInvoiceId: "inv_orig" },
+    });
+    mocks.bookingModificationFindUnique.mockResolvedValue({
+      createdAt: new Date("2026-01-01T00:00:00Z"),
+    });
+    mocks.getAuthenticatedXeroClient.mockResolvedValue({
+      xero: { accountingApi: {} },
+      tenantId: "tenant_1",
+    });
+    mocks.findOrCreateXeroContact.mockResolvedValue("contact_1");
+    mocks.getResolvedAccountMapping.mockResolvedValue({
+      code: "200",
+      itemCode: undefined,
+      codeExplicitlyConfigured: false,
+    });
+    mocks.getAccountMapping.mockResolvedValue("606");
+    mocks.startXeroSyncOperation.mockResolvedValue({ id: "op_x" });
+    mocks.completeXeroSyncOperation.mockResolvedValue(undefined);
+    mocks.failXeroSyncOperation.mockResolvedValue(undefined);
+    mocks.retryXeroWriteWithContactRepair.mockResolvedValue({
+      body: { invoices: [{ invoiceID: "inv_second", invoiceNumber: "INV-0043" }] },
+    });
+    mocks.callXeroApi.mockImplementation((fn: () => unknown) => fn());
+  });
+
+  it("anchors on the review task and keys the create so Xero cannot dedupe it", async () => {
+    const invoiceId = await createXeroSupplementaryInvoice({
+      bookingId: "bk1",
+      priceDiffCents: 3000,
+      changeFeeCents: 0,
+      bookingModificationId: "mod_123",
+      shortfallReviewTaskId: "task_2",
+      recordPayment: false,
+    });
+
+    expect(invoiceId).toBe("inv_second");
+    const enqueued = mocks.startXeroSyncOperation.mock.calls[0][0];
+    expect(enqueued.localModel).toBe("ManualRefundTask");
+    expect(enqueued.localId).toBe("task_2");
+    expect(enqueued.idempotencyKey).toBe(
+      "review-task:task_2:supplementary-shortfall-invoice:3000:0:v1",
+    );
+    // Not the change's key, in either half. A shared key would have Xero answer
+    // this create with the invoice already sent.
+    expect(enqueued.idempotencyKey).not.toContain("mod_123");
+    expect(enqueued.idempotencyKey).not.toContain(":supplementary-invoice:");
+
+    // And the LINK follows the anchor, which is what keeps it out of the reads
+    // that decide whether the change already has an invoice going out.
+    const completion = mocks.completeXeroSyncOperation.mock.calls[0][1];
+    const invoiceLink = completion.extraLinks.find(
+      (link: { role: string }) => link.role === "SUPPLEMENTARY_INVOICE",
+    );
+    expect(invoiceLink.localModel).toBe("ManualRefundTask");
+    expect(invoiceLink.localId).toBe("task_2");
+  });
+
+  it("tells the member why a second invoice has arrived", async () => {
+    await createXeroSupplementaryInvoice({
+      bookingId: "bk1",
+      priceDiffCents: 3000,
+      changeFeeCents: 0,
+      bookingModificationId: "mod_123",
+      shortfallReviewTaskId: "task_2",
+      recordPayment: false,
+    });
+
+    const enqueued = mocks.startXeroSyncOperation.mock.calls[0][0];
+    const [line] = enqueued.requestPayload.invoices[0].lineItems;
+    expect(line.unitAmount).toBe(30);
+    expect(line.description).toContain("already been sent");
+    expect(line.description).toContain("covers the remainder");
+    // Plain English about THIS document, with no internal vocabulary and no
+    // claim about how the club prices or reviews a change - this is the generic
+    // product, and a club's policy is not a hard-coded string.
+    expect(line.description).not.toMatch(/review|task|shortfall|supplementary/i);
+    expect(enqueued.requestPayload.invoices[0].reference).toContain(
+      "Further supplementary",
+    );
+  });
+
+  /**
+   * CONTROL. The change's OWN invoice is unchanged in all three respects -
+   * without this, a change that simply broke the ordinary anchor, key or wording
+   * would pass every assertion above.
+   */
+  it("CONTROL: the booking change's own invoice keeps its anchor, key and wording", async () => {
+    await createXeroSupplementaryInvoice({
+      bookingId: "bk1",
+      priceDiffCents: 3000,
+      changeFeeCents: 0,
+      bookingModificationId: "mod_123",
+      recordPayment: false,
+    });
+
+    const enqueued = mocks.startXeroSyncOperation.mock.calls[0][0];
+    expect(enqueued.localModel).toBe("BookingModification");
+    expect(enqueued.localId).toBe("mod_123");
+    expect(enqueued.idempotencyKey).toBe(
+      "booking-mod:mod_123:supplementary-invoice:3000:0:v1",
+    );
+    const [line] = enqueued.requestPayload.invoices[0].lineItems;
+    expect(line.description).toContain("price adjustment");
+    expect(line.description).not.toContain("already been sent");
+    const completion = mocks.completeXeroSyncOperation.mock.calls[0][1];
+    const invoiceLink = completion.extraLinks.find(
+      (link: { role: string }) => link.role === "SUPPLEMENTARY_INVOICE",
+    );
+    expect(invoiceLink.localModel).toBe("BookingModification");
+  });
+});

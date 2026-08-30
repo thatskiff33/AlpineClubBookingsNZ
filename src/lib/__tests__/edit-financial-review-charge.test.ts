@@ -51,6 +51,7 @@ const mocks = vi.hoisted(() => ({
   recordBookingEvent: vi.fn(),
   queueXeroBookingEditSettlement: vi.fn(),
   restatePendingSupplementaryInvoiceAmount: vi.fn(),
+  enqueueXeroSecondSupplementaryInvoiceOperation: vi.fn(),
   enqueueEditFinancialReviewRefundRecovery: vi.fn(),
   markEditFinancialReviewRefundRecoverySucceeded: vi.fn(),
   enqueueAdditionalPaymentIntentRecovery: vi.fn(),
@@ -141,6 +142,8 @@ vi.mock("@/lib/xero-booking-edit-settlement", () => ({
 vi.mock("@/lib/xero-operation-outbox", () => ({
   restatePendingSupplementaryInvoiceAmount: (...a: unknown[]) =>
     mocks.restatePendingSupplementaryInvoiceAmount(...a),
+  enqueueXeroSecondSupplementaryInvoiceOperation: (...a: unknown[]) =>
+    mocks.enqueueXeroSecondSupplementaryInvoiceOperation(...a),
 }));
 vi.mock("@/lib/audit", () => ({
   createAuditLog: (...a: unknown[]) => mocks.createAuditLog(...a),
@@ -341,6 +344,14 @@ beforeEach(() => {
   mocks.restatePendingSupplementaryInvoiceAmount.mockResolvedValue({
     restated: 0,
     alreadyCovering: 0,
+  });
+  // #3193: the second ask's ordinary answer - it queued this share's own small
+  // invoice. `none` there means "no invoice exists or will", which is the only
+  // outcome that leaves the difference uncollected.
+  mocks.enqueueXeroSecondSupplementaryInvoiceOperation.mockResolvedValue({
+    queueOperationId: "queue-op-second-ask",
+    outcome: "covers-total",
+    message: "Xero supplementary invoice queued for background processing.",
   });
   // The real dispatcher answers with the classification PLUS what the accounting
   // ask actually did about it. `none` is "no supplementary invoice is involved",
@@ -1277,9 +1288,99 @@ describe("a share that could not join the Xero invoice (#3170 fix round, F2)", (
     });
   });
 
-  it("writes the durable record when the invoice could not be raised to the total", async () => {
+  /**
+   * #3193: THE DIFFERENCE IS BILLED, AND IT IS BILLED AS THE SHARE.
+   *
+   * This is the assertion the whole issue turns on. The change's invoice went
+   * out at $200; this task settled $30; the second ask must be for $30. Handing
+   * it the $230 combined total - the figure sitting right beside it in the same
+   * dispatch, and the figure the change's own invoice bills - would ask the
+   * member for $200 they have already been invoiced for, which is strictly worse
+   * than the shortfall this issue exists to remove.
+   */
+  it("raises a second invoice for THIS SHARE, never the combined total", async () => {
     mocks.queueXeroBookingEditSettlement.mockResolvedValue({
       supplementaryInvoice: "short",
+    });
+
+    await settleSecondShare();
+    await flushDispatch();
+
+    expect(
+      mocks.enqueueXeroSecondSupplementaryInvoiceOperation,
+    ).toHaveBeenCalledTimes(1);
+    const [params] = mocks.enqueueXeroSecondSupplementaryInvoiceOperation.mock
+      .calls[0] as [
+      { bookingId: string; bookingModificationId: string; reviewTaskId: string; shareCents: number },
+    ];
+    expect(params.shareCents).toBe(3000);
+    expect(params.shareCents).not.toBe(23000);
+    // Anchored on the TASK. That is what makes it idempotent and what keeps it
+    // invisible to the change's own restate, which would otherwise raise this
+    // $30 row to $230 on top of an invoice already sent.
+    expect(params.reviewTaskId).toBe("task-2");
+    expect(params.bookingModificationId).toBe("mod-1");
+    expect(params.bookingId).toBe("booking-1");
+  });
+
+  /**
+   * And it says so on the booking, because a member receiving two invoices for
+   * one change will ask why and the office has to be able to answer. A SUCCESS
+   * row, not the failure row: nothing is owed outside the system now.
+   */
+  it("records that the difference is being billed, not that it is uncollected", async () => {
+    mocks.queueXeroBookingEditSettlement.mockResolvedValue({
+      supplementaryInvoice: "short",
+    });
+
+    await settleSecondShare();
+    await flushDispatch();
+
+    expect(mocks.createAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "booking.editFinancialReview.chargeShareReinvoiced",
+        category: "payment",
+        outcome: "success",
+        severity: "info",
+        entityId: "booking-1",
+        subjectMemberId: "member-1",
+        metadata: expect.objectContaining({
+          leg: "xero-invoice",
+          bookingModificationId: "mod-1",
+          derivedTotalCents: 23000,
+          shareCents: 3000,
+        }),
+      }),
+    );
+    const row = mocks.createAuditLog.mock.calls
+      .map((call) => call[0] as { action: string; summary: string; details: string })
+      .find(
+        (entry) =>
+          entry.action ===
+          "booking.editFinancialReview.chargeShareReinvoiced",
+      )!;
+    expect(row.summary).toContain("$30.00");
+    expect(row.details).toContain("two invoices");
+    expect(row.details).toContain("Nothing needs collecting by hand");
+    // The uncollected row is the OTHER ending. Writing both would tell an
+    // officer to chase money that is already on its way.
+    expect(mocks.createAuditLog).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "booking.editFinancialReview.chargeShareUncollected",
+      }),
+    );
+  });
+
+  it("writes the durable record when the second invoice could not be raised either", async () => {
+    mocks.queueXeroBookingEditSettlement.mockResolvedValue({
+      supplementaryInvoice: "short",
+    });
+    // `none` from the second ask is the one outcome that leaves the difference
+    // unbilled: no primary invoice to supplement, or nothing positive to bill.
+    mocks.enqueueXeroSecondSupplementaryInvoiceOperation.mockResolvedValue({
+      queueOperationId: null,
+      outcome: "none",
+      message: "No original Xero invoice exists for this booking.",
     });
 
     await settleSecondShare();
@@ -1294,6 +1395,7 @@ describe("a share that could not join the Xero invoice (#3170 fix round, F2)", (
         subjectMemberId: "member-1",
         metadata: expect.objectContaining({
           leg: "xero-invoice",
+          secondAsk: "failed",
           bookingModificationId: "mod-1",
           derivedTotalCents: 23000,
           // Unknowable, and said so rather than guessed: the outbox handler
@@ -1321,6 +1423,34 @@ describe("a share that could not join the Xero invoice (#3170 fix round, F2)", (
     // different things on each.
     expect(row.details).toContain("internet banking");
     expect(row.details).toContain("card");
+    // #3193: and it now has to say what happened to the automatic second ask,
+    // because an officer told only that the invoice is short will not know
+    // whether one is already on its way.
+    expect(row.details).toContain("Raise one by hand for the difference only");
+  });
+
+  /**
+   * A throw is the same ending as a refusal, and it must not take the completion
+   * with it: the money question is settled and committed by this point, so the
+   * Xero leg's job is to leave a record rather than to fail.
+   */
+  it("records the shortfall when queueing the second invoice throws", async () => {
+    mocks.queueXeroBookingEditSettlement.mockResolvedValue({
+      supplementaryInvoice: "short",
+    });
+    mocks.enqueueXeroSecondSupplementaryInvoiceOperation.mockRejectedValue(
+      new Error("Xero is down"),
+    );
+
+    await expect(settleSecondShare()).resolves.toBeDefined();
+    await flushDispatch();
+
+    expect(mocks.createAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "booking.editFinancialReview.chargeShareUncollected",
+        metadata: expect.objectContaining({ secondAsk: "failed" }),
+      }),
+    );
   });
 
   /**
@@ -1340,6 +1470,18 @@ describe("a share that could not join the Xero invoice (#3170 fix round, F2)", (
     expect(mocks.createAuditLog).not.toHaveBeenCalledWith(
       expect.objectContaining({
         action: "booking.editFinancialReview.chargeShareUncollected",
+      }),
+    );
+    // #3193: and NO second ask. This is #3170's ordinary case - the invoice was
+    // still in the queue and was raised to the total - so a second invoice here
+    // would be the double ask the owner's decision is explicitly bounded away
+    // from.
+    expect(
+      mocks.enqueueXeroSecondSupplementaryInvoiceOperation,
+    ).not.toHaveBeenCalled();
+    expect(mocks.createAuditLog).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "booking.editFinancialReview.chargeShareReinvoiced",
       }),
     );
   });
@@ -1362,6 +1504,10 @@ describe("a share that could not join the Xero invoice (#3170 fix round, F2)", (
         action: "booking.editFinancialReview.chargeShareUncollected",
       }),
     );
+    // #3193: nothing fell short, so nothing is asked for a second time.
+    expect(
+      mocks.enqueueXeroSecondSupplementaryInvoiceOperation,
+    ).not.toHaveBeenCalled();
   });
 
   /**
@@ -1380,6 +1526,7 @@ describe("a share that could not join the Xero invoice (#3170 fix round, F2)", (
     await recordUncollectedEditReviewChargeShare({
       leg: "xero-invoice",
       cause: "ask-owed-unknown",
+      secondAsk: null,
       bookingId: "booking-1",
       bookingModificationId: "mod-1",
       memberId: "member-1",
@@ -1416,6 +1563,7 @@ describe("a share that could not join the Xero invoice (#3170 fix round, F2)", (
     await recordUncollectedEditReviewChargeShare({
       leg: "xero-invoice",
       cause: "ask-not-raised",
+      secondAsk: null,
       bookingId: "booking-1",
       bookingModificationId: "mod-1",
       memberId: "member-1",

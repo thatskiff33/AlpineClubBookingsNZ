@@ -18,6 +18,7 @@ import logger from "@/lib/logger";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import {
   buildXeroIdempotencyKey,
+  buildXeroSupplementaryInvoiceKey,
   completeXeroSyncOperation,
   failXeroSyncOperation,
   sanitizeForJson,
@@ -46,6 +47,22 @@ export async function createXeroSupplementaryInvoice(params: {
   priceDiffCents: number;
   changeFeeCents: number;
   bookingModificationId?: string;
+  /**
+   * THE SECOND ASK (#3193, epic #2797): the review task whose settled share this
+   * invoice bills, when this is not the booking change's own supplementary
+   * invoice but a small follow-on for a share that invoice had already gone out
+   * without.
+   *
+   * ONE FLAG, THREE EFFECTS, deliberately inseparable. It anchors the
+   * `XeroObjectLink` on the task instead of the `BookingModification`, so the
+   * change's own "is an invoice already going out?" reads cannot see it and
+   * cannot raise it to the combined total; it scopes the Xero idempotency key to
+   * the task, so Xero does not answer this create with the earlier invoice; and
+   * it changes what the member reads on the document. A caller able to take one
+   * without the others could bill the same money twice, so there is no way to
+   * ask for one (`INV-SSOT`).
+   */
+  shortfallReviewTaskId?: string;
   createdByMemberId?: string;
   recordPayment?: boolean;
   repairExistingLink?: boolean;
@@ -56,6 +73,7 @@ export async function createXeroSupplementaryInvoice(params: {
     priceDiffCents,
     changeFeeCents,
     bookingModificationId,
+    shortfallReviewTaskId,
     createdByMemberId,
     recordPayment = true,
     repairExistingLink,
@@ -133,7 +151,20 @@ export async function createXeroSupplementaryInvoice(params: {
     const lineMapping = refundMapping ?? incomeMapping;
     const lineCode = lineMapping.code ?? "200";
     const li: LineItem = {
-      description: `Booking modification - price adjustment (Booking ${bookingId.slice(0, 8)})`,
+      /**
+       * #3193: WHY THE MEMBER IS BEING ASKED TWICE, on the document itself.
+       *
+       * A second small invoice for a booking change they have already been
+       * invoiced for reads as a mistake unless it says otherwise, and by the
+       * time it arrives nobody is standing next to them to explain. Plain
+       * English, no internal vocabulary, and it says what it is FOR rather than
+       * how the system produced it. Deliberately says nothing about how the club
+       * prices or reviews a change: this is the generic product, and a club's
+       * policy is not a hard-coded string (`INV-CONFIG-001`).
+       */
+      description: shortfallReviewTaskId
+        ? `Further amount for a booking change (Booking ${bookingId.slice(0, 8)}). The invoice for this change had already been sent when this part of it was finalised, so this covers the remainder rather than replacing it.`
+        : `Booking modification - price adjustment (Booking ${bookingId.slice(0, 8)})`,
       quantity: 1,
       unitAmount: priceDiffCents / 100,
       taxType: "OUTPUT2",
@@ -182,21 +213,28 @@ export async function createXeroSupplementaryInvoice(params: {
     lineItems,
     date: supplementaryInvoiceIssueDate,
     dueDate: supplementaryInvoiceDueDate,
-    reference: `Supplementary for booking ${bookingId.slice(0, 8)}${booking.payment?.xeroInvoiceId ? ` (original: ${booking.payment.xeroInvoiceId})` : ""}`,
+    reference: shortfallReviewTaskId
+      ? `Further supplementary for booking ${bookingId.slice(0, 8)}${booking.payment?.xeroInvoiceId ? ` (original: ${booking.payment.xeroInvoiceId})` : ""}`
+      : `Supplementary for booking ${bookingId.slice(0, 8)}${booking.payment?.xeroInvoiceId ? ` (original: ${booking.payment.xeroInvoiceId})` : ""}`,
     status: Invoice.StatusEnum.AUTHORISED,
     lineAmountTypes: LineAmountTypes.Inclusive,
   });
 
-  const localModel = "BookingModification";
-  const localId = bookingModificationId;
-  const invoiceIdempotencyKey = buildXeroIdempotencyKey(
-    "booking-mod",
+  // #3193: a second ask is anchored on the review task whose share it bills, so
+  // the link it writes cannot be mistaken for the booking change's own invoice
+  // by any of the reads that decide whether one is already going out.
+  const localModel = shortfallReviewTaskId
+    ? ("ManualRefundTask" as const)
+    : ("BookingModification" as const);
+  const localId = shortfallReviewTaskId ?? bookingModificationId;
+  // The same mint the outbox uses for the row's correlation key, so the key sent
+  // to Xero and the key stored beside it can never describe different documents.
+  const invoiceIdempotencyKey = buildXeroSupplementaryInvoiceKey({
+    localModel,
     localId,
-    "supplementary-invoice",
     priceDiffCents,
     changeFeeCents,
-    "v1"
-  );
+  });
   let operationId = syncOperationId ?? null;
   const requestPayload = { invoices: [buildInvoice(contactId)] };
 
@@ -270,8 +308,14 @@ export async function createXeroSupplementaryInvoice(params: {
         // The recorded payment is the NET — exactly what the additional
         // Stripe PaymentIntent captured (#1356). Recording anything larger
         // than the capture overstates the Stripe clearing account.
+        // The prefix travels with the ANCHOR (#3193). A second ask never
+        // records a payment - it is raised unpaid, because the card that could
+        // have paid it was taken at the earlier figure - so this is unreachable
+        // there today; hard-coding `booking-mod` beside a task-anchored
+        // `localId` would leave that dead branch describing an anchor it does
+        // not have, which is the same defect #3170 fixed in the restate.
         const paymentIdempotencyKey = buildXeroIdempotencyKey(
-          "booking-mod",
+          shortfallReviewTaskId ? "review-task" : "booking-mod",
           localId,
           "supplementary-payment",
           netAmountCents,

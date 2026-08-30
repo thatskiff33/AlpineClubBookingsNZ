@@ -158,6 +158,65 @@ export function buildXeroIdempotencyKey(
 }
 
 /**
+ * WHAT A SUPPLEMENTARY INVOICE IS ANCHORED TO, and therefore what its Xero
+ * idempotency key is (#3193, epic #2797).
+ *
+ * `BookingModification` is the booking change's own supplementary invoice, and
+ * `Booking` is the same thing on the legacy branch that supplies no modification
+ * id. `ManualRefundTask` is the SECOND ASK: one settled review share's own small
+ * invoice, raised because the change's invoice had already gone out and could not
+ * be raised to include it. A second ask therefore never shares an anchor, a
+ * correlation key or a Xero idempotency key with the invoice it follows, which is
+ * what stops the two being taken for one another in either direction.
+ */
+export type XeroSupplementaryInvoiceAnchorModel =
+  | "BookingModification"
+  | "Booking"
+  | "ManualRefundTask";
+
+/**
+ * The ONE mint of a supplementary invoice's correlation/idempotency key.
+ *
+ * Three places need this exact string and they must agree: the enqueue writes it
+ * on the outbox row, `restatePendingSupplementaryInvoiceAmount` rewrites it when
+ * it raises an amount (the key moves with the amount because it is built FROM the
+ * amount), and `createXeroSupplementaryInvoice` sends it to Xero as the
+ * create-invoice idempotency key. They used to build it from three copies of the
+ * same literal shape, and #3170 already lost money once to a key that did not
+ * mean what a reader thought it did; adding a fourth anchor without collapsing
+ * them would be inviting the same class back (`INV-SSOT`).
+ */
+export function buildXeroSupplementaryInvoiceKey({
+  localModel,
+  localId,
+  priceDiffCents,
+  changeFeeCents,
+}: {
+  localModel: XeroSupplementaryInvoiceAnchorModel;
+  localId: string;
+  priceDiffCents: number;
+  changeFeeCents: number;
+}): string {
+  return buildXeroIdempotencyKey(
+    localModel === "BookingModification"
+      ? "booking-mod"
+      : localModel === "ManualRefundTask"
+        ? "review-task"
+        : "booking",
+    localId,
+    // A DIFFERENT segment, not only a different id: the second ask is a
+    // different kind of document to a person reading an operation row, and a
+    // key that only differed in the id would read as the same invoice re-keyed.
+    localModel === "ManualRefundTask"
+      ? "supplementary-shortfall-invoice"
+      : "supplementary-invoice",
+    priceDiffCents,
+    changeFeeCents,
+    "v1"
+  );
+}
+
+/**
  * The cents one REFUND_CREDIT_NOTE link contributes to a payment's covered
  * refund total (#1162): the link metadata's recorded `amountCents` when
  * present, else the create operation's persisted request payload

@@ -1972,6 +1972,28 @@ async function processCreateAdditionalPaymentIntentOperation(
             outcome: attempt.outcome,
             bookingId: operation.bookingId,
             bookingModificationId,
+            /**
+             * #3193: NO SECOND ASK FROM THIS FORK, and that is a refusal rather
+             * than an omission.
+             *
+             * The second ask bills ONE settled share, anchored on the task that
+             * settled it, which is what makes it safe: that share is provably
+             * absent from the invoice that went out, so billing it adds exactly
+             * what is missing. This replay holds no task. It re-derives the
+             * edit's COMBINED total across every share and cannot say which part
+             * of it the sent invoice already carries - so the only figure it
+             * could raise an invoice for is the whole total, and that would
+             * charge the member a second time for money they have already been
+             * asked for. Strictly worse than the shortfall.
+             *
+             * Nulls here therefore reach `raiseSecondEditReviewChargeInvoice` as
+             * `unavailable`, which is a named outcome with its own officer
+             * instruction naming the booking-vs-Xero repair pass - not a silent
+             * skip and not `failed`, which would tell an officer to bill a
+             * difference by hand that nothing here can state.
+             */
+            reviewTaskId: null,
+            shareCents: null,
             memberId: booking.member?.id ?? null,
             totalCents: synced.totalCents,
           }).catch((err) =>
@@ -2016,6 +2038,11 @@ async function processCreateAdditionalPaymentIntentOperation(
               attempt.status === "not-recorded"
                 ? "ask-owed-unknown"
                 : "ask-not-raised",
+            // #3193: no ask exists here for a second one to follow, so the
+            // second-ask question does not arise. `null`, not `unavailable`,
+            // which is specifically "an ask exists and the difference cannot be
+            // worked out".
+            secondAsk: null,
             bookingId: operation.bookingId,
             bookingModificationId,
             memberId: booking.member?.id ?? null,

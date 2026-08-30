@@ -160,8 +160,16 @@ export async function dispatchEditReviewXeroSettlement({
         outcome: queued.supplementaryInvoice,
         bookingId,
         bookingModificationId: xeroAnchorId,
+        // #3193: THIS TASK, and THIS TASK'S OWN SHARE, are what a second ask is
+        // anchored to and what it bills. The combined total above is what the
+        // change's own invoice bills; handing that figure to the second ask
+        // would invoice the member a second time for money already asked for.
+        // The two travel together and are read together at the far end.
+        reviewTaskId: taskId,
+        shareCents: amountCents,
         memberId: chargeMemberId,
         totalCents: xeroAmountCents,
+        createdByMemberId: actingMemberId,
       });
     })
     .catch((err) =>

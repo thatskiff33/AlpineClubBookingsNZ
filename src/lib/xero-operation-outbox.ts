@@ -11,12 +11,14 @@ import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { clubSeasonYear } from "@/lib/financial-year";
 import {
   buildXeroIdempotencyKey,
+  buildXeroSupplementaryInvoiceKey,
   completeXeroSyncOperation,
   failXeroSyncOperation,
   findCanonicalPaymentRefundCreditNote,
   startXeroSyncOperation,
   sumCoveredRefundCreditNoteCents,
   upsertXeroObjectLink,
+  type XeroSupplementaryInvoiceAnchorModel,
 } from "@/lib/xero-sync";
 import {
   createXeroInvoiceForBooking,
@@ -1117,6 +1119,90 @@ export type XeroSupplementaryInvoiceEnqueueOutcome =
   | "short"
   | "none";
 
+/**
+ * THE SECOND ASK (#3193, epic #2797): raise a settled review share's OWN small
+ * supplementary invoice, because the booking change's invoice had already left
+ * the queue and could not be raised to include it.
+ *
+ * The owner decided on 31 Aug 2026 that the difference is billed through the
+ * system rather than chased by hand. That NARROWS #3170's "one booking edit, one
+ * ask" rather than overturning it: while the invoice is still in the queue a
+ * second settlement RAISES it and the member is asked once, which remains the
+ * ordinary case. Only once the invoice has been claimed for sending or sent -
+ * the window where the alternative was billing the member too little - does the
+ * difference become its own ask.
+ *
+ * WHY IT CANNOT DOUBLE-BILL, which is the whole design and not a caveat:
+ *
+ *   * IT BILLS THE SHARE, NEVER THE TOTAL. This function is reached only when
+ *     `enqueueXeroSupplementaryInvoiceOperation` answered `short`, and `short`
+ *     means the caller's restate found nothing restatable AND nothing already
+ *     covering - so this share is provably NOT in the invoice that went out.
+ *     Every settled share is therefore billed exactly once: by the change's
+ *     invoice if it was in it, by its own invoice if it was not. The shares sum
+ *     to the derived total by construction, with no figure read back off a sent
+ *     invoice and no difference computed from anything the club would have to
+ *     guess.
+ *   * IT ANCHORS ON THE TASK, NOT THE CHANGE. The outbox row and the resulting
+ *     `XeroObjectLink` sit on `ManualRefundTask/<taskId>`, so the link-check and
+ *     the queued-check below fence THIS SHARE'S ask - one per share, whatever
+ *     order shares settle in and however many there are. Two shares racing after
+ *     the invoice went out are two different keys doing two independent, correct
+ *     things; they cannot both bill the same difference, because neither of them
+ *     bills a difference at all.
+ *   * IT IS INVISIBLE TO THE ORDINARY PATH, and that is load-bearing rather than
+ *     tidy. A pending second ask found by the change's own restate would be
+ *     RAISED to the combined total - $30 becoming $230 on top of a $200 invoice
+ *     already sent. It cannot be found there, because every one of those reads is
+ *     scoped to `BookingModification/<modificationId>`.
+ *
+ * Safe to run twice, which a settlement's fire-and-forget dispatch needs: a
+ * second call for the same task finds its own queued operation or its own active
+ * link and queues nothing.
+ *
+ * A NAMED PATH, not a relaxation of the refusal. It reaches the same locked
+ * decision the ordinary enqueue makes - one transaction, one advisory key, one
+ * link-check -> queued-check -> write - with a different anchor, so there is
+ * still exactly one place that answers "does this ask already have an invoice
+ * going out?".
+ */
+export async function enqueueXeroSecondSupplementaryInvoiceOperation(
+  params: {
+    bookingId: string;
+    bookingModificationId: string;
+    /** The review task whose settled share this invoice bills. The anchor. */
+    reviewTaskId: string;
+    /** That share, and only that share. Never the edit's combined total. */
+    shareCents: number;
+  },
+  options?: { createdByMemberId?: string }
+) {
+  return enqueueXeroSupplementaryInvoiceOperation(
+    {
+      bookingId: params.bookingId,
+      priceDiffCents: params.shareCents,
+      changeFeeCents: 0,
+      bookingModificationId: params.bookingModificationId,
+    },
+    {
+      createdByMemberId: options?.createdByMemberId,
+      /**
+       * UNPAID AND SENT NOW, on both routes, and the card route is the one worth
+       * arguing. `short` on the card route requires the change's invoice to have
+       * left WAITING_PAYMENT, which only the additional payment confirming can
+       * do - so the card has already been taken at the EARLIER figure and this
+       * share is genuinely unbilled. Recording a payment against it would invent
+       * money nobody sent, and waiting for a payment would wait for a
+       * confirmation that has already happened.
+       */
+      recordPayment: false,
+      waitForConfirmedAdditionalPayment: false,
+      paymentIntentId: null,
+      shortfallReviewTaskId: params.reviewTaskId,
+    }
+  );
+}
+
 export async function enqueueXeroSupplementaryInvoiceOperation(
   params: {
     bookingId: string;
@@ -1129,6 +1215,13 @@ export async function enqueueXeroSupplementaryInvoiceOperation(
     paymentIntentId?: string | null;
     waitForConfirmedAdditionalPayment?: boolean;
     recordPayment?: boolean;
+    /**
+     * #3193: anchor this invoice on a review task instead of the booking change,
+     * because it bills that task's settled share alone. Set ONLY by
+     * `enqueueXeroSecondSupplementaryInvoiceOperation` above, which is where the
+     * reasoning lives.
+     */
+    shortfallReviewTaskId?: string;
   }
 ) {
   const {
@@ -1174,17 +1267,23 @@ export async function enqueueXeroSupplementaryInvoiceOperation(
     };
   }
 
-  const localModel = bookingModificationId ? "BookingModification" : "Booking";
-  const localId = bookingModificationId ?? bookingId;
+  // #3193: a second ask anchors on the review task whose share it bills, so
+  // every read below - the link check, the queued check, the advisory key - is
+  // scoped to that share rather than to the booking change's own invoice.
+  const shortfallReviewTaskId = options?.shortfallReviewTaskId ?? null;
+  const localModel: XeroSupplementaryInvoiceAnchorModel = shortfallReviewTaskId
+    ? "ManualRefundTask"
+    : bookingModificationId
+      ? "BookingModification"
+      : "Booking";
+  const localId = shortfallReviewTaskId ?? bookingModificationId ?? bookingId;
 
-  const correlationKey = buildXeroIdempotencyKey(
-    bookingModificationId ? "booking-mod" : "booking",
+  const correlationKey = buildXeroSupplementaryInvoiceKey({
+    localModel,
     localId,
-    "supplementary-invoice",
     priceDiffCents,
     changeFeeCents,
-    "v1"
-  );
+  });
 
   /**
    * ONE SUPPLEMENTARY INVOICE PER ANCHOR, decided under a lock (#3170 fix round).
@@ -1298,6 +1397,9 @@ export async function enqueueXeroSupplementaryInvoiceOperation(
         paymentIntentId: options?.paymentIntentId ?? null,
         waitForConfirmedAdditionalPayment:
           options?.waitForConfirmedAdditionalPayment ?? false,
+        // #3193: the handler reads this to anchor the link, scope the Xero
+        // idempotency key and tell the member why they are being asked twice.
+        shortfallReviewTaskId,
       },
       createdByMemberId: options?.createdByMemberId ?? null,
       store: tx,
@@ -1489,8 +1591,15 @@ export async function restatePendingSupplementaryInvoiceAmount({
    * docblock claim that a queued operation asking for LESS is raised was false
    * on exactly that branch - quietly, because "nothing matched" and "nothing
    * needed raising" return the same zeroes.
+   *
+   * `ManualRefundTask` is #3193's second ask. A raise there is only ever a
+   * no-op: a settled share is a terminal, fixed figure, so a repeat arrives with
+   * the amount already queued and is counted as `alreadyCovering`. It is passed
+   * through rather than special-cased because the enqueue's decision is one
+   * decision for all three anchors, and a carve-out would be a second answer to
+   * the same question.
    */
-  localModel?: "BookingModification" | "Booking";
+  localModel?: XeroSupplementaryInvoiceAnchorModel;
   priceDiffCents: number;
   changeFeeCents: number;
   /**
@@ -1519,15 +1628,14 @@ export async function restatePendingSupplementaryInvoiceAmount({
   // The SAME shape the enqueue mints, prefix included: it derives the prefix
   // from the anchor's model, so restating a Booking-anchored operation under a
   // `booking-mod` prefix would leave the row describing an anchor it does not
-  // have.
-  const correlationKey = buildXeroIdempotencyKey(
-    localModel === "BookingModification" ? "booking-mod" : "booking",
-    bookingModificationId,
-    "supplementary-invoice",
+  // have. #3193 collapsed the three copies of that shape into one mint rather
+  // than adding a fourth anchor to each of them (`INV-SSOT`).
+  const correlationKey = buildXeroSupplementaryInvoiceKey({
+    localModel,
+    localId: bookingModificationId,
     priceDiffCents,
     changeFeeCents,
-    "v1"
-  );
+  });
 
   const requestedNetCents = priceDiffCents + changeFeeCents;
 
@@ -2655,6 +2763,11 @@ export async function processQueuedXeroOutboxOperations(options?: {
           changeFeeCents: payload.changeFeeCents,
           bookingModificationId: payload.bookingModificationId,
           recordPayment: payload.recordPayment ?? true,
+          // #3193: present means this row is one review share's OWN invoice, so
+          // the handler anchors its link on that task, scopes the Xero
+          // idempotency key to it, and says on the invoice why the member is
+          // being asked twice.
+          shortfallReviewTaskId: payload.shortfallReviewTaskId,
           createdByMemberId: queuedOperation.createdByMemberId ?? undefined,
           syncOperationId: queuedOperation.id,
         });
