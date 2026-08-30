@@ -415,6 +415,11 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
     // asserts exactly what it asserted before.
     manualRefundTask: {
       findFirst: vi.fn().mockResolvedValue(null),
+      // #3170: the park's own raise is a find-then-create on the occurrence
+      // key. Nothing on file by default, so a raising test sees a create and a
+      // replay test can put a row here instead.
+      findUnique: vi.fn().mockResolvedValue(null),
+      create: vi.fn().mockResolvedValue({ id: "task_1" }),
       // #3032: the modified email asks whether the club is still working
       // out an amount on this booking (`bookingHasOpenFinancialReview`).
       // Empty by default - no review is open - so every pre-#3032
@@ -2293,14 +2298,17 @@ describe("PUT /api/bookings/[id]/modify", () => {
     }
   });
 
-  it("refuses the SAVE with 409 FINANCIAL_REVIEW_REQUIRED and moves nothing (#3031)", async () => {
+  it("COMMITS the save, writes NULL for what it cannot price, and parks exactly one task (#3170)", async () => {
     // THE APPLY HALF of the issue's quote/apply parity criterion. The parity
     // suite proves the quote and the save reach the same discriminated VALUE;
-    // it does not prove that the save route turns the review branch into a
-    // refusal, returns the machine-readable code the edit panel needs, or leaves
-    // the booking untouched. Nothing exercised `PUT /api/bookings/[id]/modify`
-    // for that at all, so disabling the throw inside the transaction left every
-    // suite green.
+    // it does not prove what the save route DOES with the review branch.
+    //
+    // #3031 REFUSED here and this case asserted the 409. #3170 replaced that
+    // with a park on the owner's decision of 30 Aug 2026, so asserting a refusal
+    // would now pin behaviour that was deliberately removed. The property being
+    // protected is the stronger one: the structural change commits, the money
+    // does not move, and the unknown is STORED as unknown rather than as a
+    // number.
     //
     // The same in-progress shortening as the case above, on a strand whose
     // stored rows do not add up to its stored total (9000 against 10000). That
@@ -2377,32 +2385,228 @@ describe("PUT /api/bookings/[id]/modify", () => {
         params: Promise.resolve({ id: "bk1" }),
       });
 
-      expect(response.status).toBe(409);
+      expect(response.status).toBe(200);
       const data = await response.json();
-      // The machine-readable code, echoed ABOVE the generic ApiError branch so
-      // the edit panel can say what happens next rather than showing a bare
-      // failure. Losing it is a silent degradation, which is why it is asserted
-      // rather than left to the status.
-      expect(data.code).toBe("FINANCIAL_REVIEW_REQUIRED");
-      // No estimate and no $0 in what the member is told. Both are prohibited.
-      expect(data).not.toHaveProperty("priceDiffCents");
-      expect(data).not.toHaveProperty("refundAmountCents");
 
-      // Nothing moved and nothing was written. The refusal is raised INSIDE the
-      // transaction precisely so the structural change rolls back with it, which
-      // is what the refusal's own wording promises the member.
-      expect(tx.bookingGuest.update).not.toHaveBeenCalled();
-      expect(tx.bookingGuest.delete).not.toHaveBeenCalled();
-      expect(tx.bookingGuestNight.createMany).not.toHaveBeenCalled();
-      expect(tx.bookingModification.create).not.toHaveBeenCalled();
+      // THE STRUCTURAL HALF COMMITTED. The strand's stay is shortened, its night
+      // rows are rewritten and the change is on the history — which is what
+      // "park" means and what a refusal could not give.
+      expect(tx.bookingGuest.update).toHaveBeenCalled();
+      expect(tx.bookingGuestNight.createMany).toHaveBeenCalled();
+      expect(tx.bookingModification.create).toHaveBeenCalled();
+
+      // EVERY RETAINED NIGHT KEEPS ITS STORED PRICE, BYTE FOR BYTE. This strand
+      // is a `STORED_TOTAL_MISMATCH`: its rows are individually readable (they
+      // simply do not add up to the stored total), so the park preserves them
+      // rather than blanking them. Writing NULL over a number the club DOES have
+      // would be its own kind of damage, and this is what stops it.
+      const nightRows = (
+        tx.bookingGuestNight.createMany.mock.calls[0][0] as {
+          data: Array<{ stayDate: Date; priceCents: number | null }>;
+        }
+      ).data;
+      expect(
+        nightRows.map((row) => ({
+          date: row.stayDate.toISOString().slice(0, 10),
+          priceCents: row.priceCents,
+        })),
+      ).toEqual([
+        { date: "2026-08-20", priceCents: 2500 },
+        { date: "2026-08-21", priceCents: 2500 },
+      ]);
+
+      // The strand's own stored total is NOT rewritten. What this edit does to
+      // it is the question the OPEN task exists to answer.
+      const guestUpdate = tx.bookingGuest.update.mock.calls[0][0] as {
+        data: { priceCents?: number };
+      };
+      expect(guestUpdate.data.priceCents).toBe(10000);
+
+      // AND THE MONEY DID NOT MOVE. Each of these is a separate door, and the
+      // park has to close every one of them: no payment row rewritten, no
+      // refund sent, no credit note enqueued, and the response's own deltas are
+      // zero because the booking's money genuinely did not move.
       expect(mockPaymentUpdate).not.toHaveBeenCalled();
       expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
       expect(
         mockEnqueueXeroModificationCreditNoteOperation,
       ).not.toHaveBeenCalled();
+      expect(data.priceDiffCents).toBe(0);
+      expect(data.changeFeeCents).toBe(0);
+      expect(data.refundAmountCents).toBe(0);
+      expect(data.accountCreditAmountCents).toBe(0);
+
+      // EXACTLY ONE TASK, carrying NO AMOUNT. A number here would be the guess
+      // the whole epic exists to avoid, so `raisedAmountCents` is asserted as
+      // null rather than merely "not the wrong number".
+      expect(tx.manualRefundTask.create).toHaveBeenCalledTimes(1);
+      const raised = tx.manualRefundTask.create.mock.calls[0][0] as {
+        data: { raisedAmountCents: number | null; kind: string };
+      };
+      expect(raised.data.raisedAmountCents).toBeNull();
+      expect(raised.data.kind).toBe("EDIT_FINANCIAL_REVIEW");
 
       await Promise.resolve();
-      expect(sendBookingModifiedEmail).not.toHaveBeenCalled();
+      // The member is told, because the change DID happen to their booking.
+      expect(sendBookingModifiedEmail).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /**
+   * The shared fixture for the two cases below: a strand whose rows are
+   * PARTIALLY readable. Three nights carry real money and one carries a
+   * negative, which INV-MOD-028 classifies as an ABSENCE of usable evidence
+   * rather than as a cheap night — trusting it would invert the edit.
+   *
+   * Shortening the stay to the 22nd leaves the guest holding the 20th and the
+   * 21st, so the edit RETAINS one readable night and one unreadable one. That is
+   * the shape #3170 exists for: there is no honest number for the 21st, and
+   * before this change the column could not say so.
+   */
+  const partiallyReadableInProgressBooking = () =>
+    makeBooking({
+      status: "COMPLETED",
+      checkIn: new Date("2026-08-20T00:00:00.000Z"),
+      checkOut: new Date("2026-08-24T00:00:00.000Z"),
+      totalPriceCents: 10000,
+      finalPriceCents: 10000,
+      guests: [
+        {
+          id: "g1",
+          bookingId: "bk1",
+          firstName: "Alice",
+          lastName: "Member",
+          ageTier: "ADULT",
+          isMember: true,
+          memberId: "m1",
+          stayStart: new Date("2026-08-20T00:00:00.000Z"),
+          stayEnd: new Date("2026-08-24T00:00:00.000Z"),
+          nights: [
+            { stayDate: new Date("2026-08-20T00:00:00.000Z"), priceCents: 2500 },
+            // Not money. Pre-#2744 arithmetic could write one of these, and it
+            // is deliberately NOT a missing row: the row exists, and what it
+            // holds cannot be a price.
+            { stayDate: new Date("2026-08-21T00:00:00.000Z"), priceCents: -100 },
+            { stayDate: new Date("2026-08-22T00:00:00.000Z"), priceCents: 2500 },
+            { stayDate: new Date("2026-08-23T00:00:00.000Z"), priceCents: 2500 },
+          ],
+          priceCents: 10000,
+        },
+      ],
+      payment: {
+        id: "pay_1",
+        bookingId: "bk1",
+        amountCents: 10000,
+        source: "STRIPE",
+        status: "SUCCEEDED",
+        stripePaymentIntentId: "pi_original",
+        xeroInvoiceId: "inv_primary",
+        stripeCustomerId: null,
+        refundedAmountCents: 0,
+        changeFeeCents: 0,
+      },
+    });
+
+  const shortenInProgressStay = () =>
+    new NextRequest("http://localhost/api/bookings/bk1/modify", {
+      method: "PUT",
+      body: JSON.stringify({
+        checkOut: "2026-08-22",
+        removeGuestIds: ["g1"],
+        settlementMethod: "card",
+      }),
+    });
+
+  it("stores a retained night it cannot price as NULL, never as 0 (#3170)", async () => {
+    // THE CENTRAL ASSERTION OF #3170, and it is made against the value that
+    // REACHES THE DATABASE rather than against anything a formatter produced.
+    //
+    // A zero would satisfy every arithmetic check in this file — it sums, it is
+    // a non-negative integer, it reconciles — and it would be a lie the NEXT
+    // edit reads back as evidence that the member paid nothing for that night.
+    // A comped night legitimately stores 0, which is exactly why 0 cannot also
+    // mean "not known". So this asserts `null` and, separately, that it is not
+    // `0`: `toBeNull` alone would still pass if someone later widened the
+    // assertion, and the pair says which of the two failures happened.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-20T12:00:00.000Z"));
+    try {
+      const booking = partiallyReadableInProgressBooking();
+      const tx = makeTx(booking);
+      mockTransaction.mockImplementation((fn: (innerTx: typeof tx) => unknown) =>
+        fn(tx),
+      );
+      mockCalculateBookingPrice.mockImplementation(
+        pricesNightsHandedIn(2500, 3000) as never,
+      );
+
+      const { PUT } = await import("@/app/api/bookings/[id]/modify/route");
+      const response = await PUT(shortenInProgressStay(), {
+        params: Promise.resolve({ id: "bk1" }),
+      });
+
+      expect(response.status).toBe(200);
+      const nightRows = (
+        tx.bookingGuestNight.createMany.mock.calls[0][0] as {
+          data: Array<{ stayDate: Date; priceCents: number | null }>;
+        }
+      ).data;
+      const written = nightRows.map((row) => ({
+        date: row.stayDate.toISOString().slice(0, 10),
+        priceCents: row.priceCents,
+      }));
+      expect(written).toEqual([
+        // Readable, so preserved byte for byte.
+        { date: "2026-08-20", priceCents: 2500 },
+        // Not readable, so recorded as not known.
+        { date: "2026-08-21", priceCents: null },
+      ]);
+      // Said twice on purpose — see the comment above.
+      expect(written[1].priceCents).toBeNull();
+      expect(written[1].priceCents).not.toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("raises nothing further when the same parked edit is replayed (#3170)", async () => {
+    // The idempotency the park depends on. The raise is a find-then-create on
+    // the occurrence key; a replay must return the task ALREADY ON FILE rather
+    // than create a second one — and rather than throw a unique violation,
+    // which would roll this edit's structural half back with it and undo a save
+    // the member was told had succeeded.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-20T12:00:00.000Z"));
+    try {
+      const booking = partiallyReadableInProgressBooking();
+      const tx = makeTx(booking);
+      // The first run's task, already on file under this occurrence's key.
+      tx.manualRefundTask.findUnique.mockResolvedValue({
+        id: "task_1",
+        status: "OPEN",
+        kind: "EDIT_FINANCIAL_REVIEW",
+      } as never);
+      mockTransaction.mockImplementation((fn: (innerTx: typeof tx) => unknown) =>
+        fn(tx),
+      );
+      mockCalculateBookingPrice.mockImplementation(
+        pricesNightsHandedIn(2500, 3000) as never,
+      );
+
+      const { PUT } = await import("@/app/api/bookings/[id]/modify/route");
+      const response = await PUT(shortenInProgressStay(), {
+        params: Promise.resolve({ id: "bk1" }),
+      });
+
+      expect(response.status).toBe(200);
+      // The control for the assertion below: the raise DID run and DID look.
+      expect(tx.manualRefundTask.findUnique).toHaveBeenCalled();
+      expect(tx.manualRefundTask.create).not.toHaveBeenCalled();
+      // And still no money, on the replay as on the first run.
+      expect(mockPaymentUpdate).not.toHaveBeenCalled();
+      expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
     }

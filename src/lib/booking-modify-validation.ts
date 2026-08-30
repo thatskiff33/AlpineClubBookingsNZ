@@ -476,66 +476,34 @@ export class BookingModifyReviewJustificationRequiredError extends ApiError {
 }
 
 /**
- * Thrown when a booking edit's structural change is fine but the exact financial
- * adjustment cannot be read from the booking's own stored history (#3031, epic
+ * What the EDIT PANEL says when the quote it just asked for PARKS (#3170, epic
  * #2797).
  *
- * The planner never returns an amount in this case — there is no field on its
- * review branch to read one from — so this is the seam between "we could not
- * price it" and "here is what happens next".
+ * ## What it replaced, and why the old sentence had to go rather than stay
  *
- * ## Where this is still thrown, and where it is not
+ * There used to be a `BookingEditFinancialReviewRequiredError` here — a 409 with
+ * the code `FINANCIAL_REVIEW_REQUIRED` and the sentence *"Nothing has been
+ * changed yet — please contact the office."* #3031 raised it on the in-progress
+ * edit path, #3032 removed it from the guest-removal path, and #3170 removed the
+ * last one: an unpriceable edit now COMMITS its structural half and holds the
+ * amount for a person, on every path this rule covers.
  *
- * #3032 replaced the refusal with the epic's real answer — save the stay/guest
- * change and park the money as an OPEN admin review task — on the SINGLE-GUEST
- * REMOVAL path, whose structural change is a row delete and therefore needs no
- * valuation to apply.
+ * So the class is deleted rather than kept for a caller that might come back.
+ * Its sentence is now FALSE for what the system does — something HAS been
+ * changed — and a member-facing refusal left lying around for a state that can
+ * no longer occur is the next implementor's most likely mistake.
  *
- * It is still thrown from the IN-PROGRESS BATCH EDIT (`modifyBookingBatch`) and
- * echoed by the quote preview, because that path's structural change rewrites
- * every strand's `BookingGuestNight` rows from a per-night integer that a strand
- * with no usable stored price does not have. The reasoning, and the three money
- * decisions parking it would require, are stated in full at the throw site in
- * `booking-batch-modification-service.ts`. The occurrences are still carried on
- * the error so that re-route stays a re-route when the decision is taken.
+ * ## The wording is bound by the epic
  *
- * ## The wording is member-facing and is bound by the epic
- *
- * No estimate and no `$0` (both are prohibited), no "corrupt"/"invalid data"
+ * No estimate and no `$0` (both prohibited), no "corrupt" or "invalid data"
  * terminology, and nothing that reads as the member's fault — the stored history
- * is the club's record, not theirs.
- */
-/**
- * What the EDIT PANEL says when the quote it just asked for parks (#3170).
- *
- * The counterpart to the refusal below, and deliberately a different sentence:
- * the refusal says nothing has changed and to ring the office, while this one
- * says the change WILL be saved and that no money moves until a person has
- * checked it. Telling a member "nothing has been changed yet" about a save that
- * is about to go through would be worse than saying nothing.
- *
- * Bound by the same rules as the refusal: no estimate and no `$0` (the epic
- * prohibits both), no "corrupt" or "invalid data" wording, and nothing that
- * reads as the member's fault — the stored history is the club's record, not
- * theirs. Rendered VERBATIM by the panel; it is never re-worded there.
+ * is the club's record, not theirs. It must also say that the change WILL be
+ * saved, because it will. Rendered VERBATIM by the panel; never re-worded there.
  */
 export const EDIT_FINANCIAL_REVIEW_QUOTE_NOTICE =
   "The club needs to check the amount for this change. Your change will be saved, " +
   "and nothing will be charged or refunded until someone from the office has " +
   "confirmed it with you.";
-
-export class BookingEditFinancialReviewRequiredError extends ApiError {
-  /** Machine-readable, in the style of `REVIEW_JUSTIFICATION_REQUIRED`. */
-  readonly code = "FINANCIAL_REVIEW_REQUIRED";
-
-  constructor(readonly occurrences: readonly EditFinancialReviewOccurrence[]) {
-    super(
-      "The club needs to confirm the amount for this change before it can be saved. Nothing has been changed yet — please contact the office, who can complete it.",
-      409,
-    );
-    this.name = "BookingEditFinancialReviewRequiredError";
-  }
-}
 
 export function assertBookingModifiable(
   booking: LoadedBookingForModify | null,

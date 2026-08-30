@@ -840,24 +840,38 @@ function composeProposedNightPrices(args: {
   futureNightKeys: readonly string[];
   futurePerNightCents: readonly number[];
   /**
-   * #3170: what to do about a RETAINED night with no stored sold price. There
-   * is no default, deliberately — the answer differs between the two callers
-   * and a default would silently give one of them the other's.
+   * #3170: what to do about a night this function has no amount for. There is
+   * no default, deliberately — the two callers need opposite answers, and a
+   * default would silently give one of them the other's.
    *
-   *  - `"refuse"` — the PRICED path. The evidence gate has already established
-   *    that every held night carries usable money, so this cannot fire; if it
-   *    ever did, the strand's history is being rewritten from something other
-   *    than itself and throwing is the only answer that invents nothing.
-   *  - `"record-as-unknown"` — the PARKED path. The edit is committing its
-   *    structural half while a person prices the money, so the night is written
-   *    as `NULL`: not known, rather than zero and rather than deleted.
+   *  - `"refuse"` — the PRICED path, and byte-identical to the pre-#3170
+   *    behaviour. Every held night carries usable money by the evidence gate
+   *    and every new night was just priced by the pass, so NEITHER arm can fire;
+   *    if one ever did, the strand's rows would be about to be written from
+   *    something other than the strand itself, and throwing is the only answer
+   *    that invents nothing.
+   *  - `"record-as-unknown"` — the PARKED path. The edit commits its structural
+   *    half while a person prices the money, so a night with no amount is
+   *    written as `NULL`: not known, rather than zero and rather than deleted.
    *
-   * A NEWLY BOUGHT night is unaffected by this choice and still throws when the
-   * pass did not price it, on both paths. That night is being SOLD right now,
-   * at a price the engine produced moments ago; an unpriced one is a wiring
-   * defect, not an unknown, and the two must never collapse into each other.
+   * ## Why the parked path answers the same way for BOTH kinds of night
+   *
+   * It looks like the mode is losing a distinction. It is not: on a parked edit
+   * there is no night of an existing strand that is being BOUGHT. Nothing is
+   * charged, the strand's stored total is frozen, and no pricing pass is run for
+   * it — so a night the edit newly puts that strand on is not a sale at a price
+   * the member is paying, it is one more night whose amount only a person can
+   * set. Writing today's rate for it would be the exact defect this epic exists
+   * to remove: an amount no money followed, which the next edit reads back as
+   * evidence the member paid it.
+   *
+   * The distinction that guards against a wiring defect is still enforced, one
+   * layer down and where it can still fire. `nightPriceCentsToWrite` (the write
+   * itself) tells an explicit `null` from a vector that is merely SHORT and
+   * throws on the second; an ADDED guest's vector is built by `nightPricesFrom`,
+   * which throws for any night the pass did not price, on both paths.
    */
-  onUnknownRetainedNight: "refuse" | "record-as-unknown";
+  onNightWithNoAmount: "refuse" | "record-as-unknown";
 }): (number | null)[] {
   const newNightCents = new Map(
     args.futureNightKeys.map((key, index) => [
@@ -869,7 +883,7 @@ function composeProposedNightPrices(args: {
     if (args.heldNightKeySet.has(key)) {
       const stored = args.soldNightPriceByKey.get(key);
       if (typeof stored !== "number") {
-        if (args.onUnknownRetainedNight === "record-as-unknown") {
+        if (args.onNightWithNoAmount === "record-as-unknown") {
           return null;
         }
         // Unreachable on a priced edit — the evidence gate refuses such a
@@ -884,6 +898,9 @@ function composeProposedNightPrices(args: {
     }
     const priced = newNightCents.get(key);
     if (priced === undefined) {
+      if (args.onNightWithNoAmount === "record-as-unknown") {
+        return null;
+      }
       throw new Error(
         `Newly bought night ${key} was not priced by this edit (INV-MOD-025)`
       );
@@ -1445,25 +1462,23 @@ export function buildInProgressGuestRangePlan(
         stayStart: entry.stayStart,
         stayEnd: entry.proposedStayEnd,
         nights: entry.proposedNightKeys.map((key) => parseDateOnly(key)),
+        // NO PRICED NIGHTS ARE SUPPLIED, and that is the decision rather than an
+        // omission: a night this edit newly puts the strand on is unknown too,
+        // because the strand's stored total is frozen by the park — pricing that
+        // night would put its rows out of step with its own total and make the
+        // NEXT edit unreadable as well, which is the mismatch that made THIS one
+        // unpriceable. So every night that is not retained-with-usable-money
+        // comes out as `null`.
         perNightCents: composeProposedNightPrices({
           proposedNightKeys: entry.proposedNightKeys,
           heldNightKeySet: entry.heldNightKeySet,
           soldNightPriceByKey: usableStoredNightPrices(
             entry.storedNightPriceByKey
           ),
-          // No night of an existing strand is priced on this branch, so the
-          // "newly bought" arm has nothing to look up and every night that is
-          // not RETAINED-with-usable-money comes out as `null`.
-          futureNightKeys: entry.proposedNightKeys,
+          futureNightKeys: [],
           futurePerNightCents: [],
-          onUnknownRetainedNight: "record-as-unknown",
-        }).map((cents, index) =>
-          // A night this edit newly puts the strand on is unknown too, for the
-          // reason on `ParkedEditStructuralPlan`: the strand's stored total does
-          // not move, so a priced new night would put its rows out of step with
-          // its own total and make the NEXT edit unreadable as well.
-          entry.heldNightKeySet.has(entry.proposedNightKeys[index]) ? cents : null
-        ),
+          onNightWithNoAmount: "record-as-unknown",
+        }),
         // The STORED total, untouched. How much this edit changes it is the
         // question the OPEN task exists to answer.
         priceCents: entry.guest.priceCents,
@@ -1649,10 +1664,11 @@ export function buildInProgressGuestRangePlan(
         soldNightPriceByKey,
         futureNightKeys,
         futurePerNightCents,
-        // The PRICED path. Every held night is exact by the gate above, so this
-        // cannot produce an unknown; asking for one would be asking to write a
-        // NULL onto an edit that is settling money against these very rows.
-        onUnknownRetainedNight: "refuse",
+        // The PRICED path. Every held night is exact by the gate above and
+        // every new night was just priced, so this cannot produce an unknown;
+        // asking for one would be asking to write a NULL onto an edit that is
+        // settling money against these very rows.
+        onNightWithNoAmount: "refuse",
       }),
       guest.id
     );

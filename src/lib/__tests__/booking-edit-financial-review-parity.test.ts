@@ -37,7 +37,7 @@ import {
   type BuildInProgressGuestRangePlanInput,
 } from "@/lib/booking-edit-guest-ranges";
 import { calculateModifiedPricing } from "@/lib/booking-modify-plan";
-import { BookingEditFinancialReviewRequiredError } from "@/lib/booking-modify-validation";
+import { EDIT_FINANCIAL_REVIEW_QUOTE_NOTICE } from "@/lib/booking-modify-validation";
 import {
   parseEditFinancialReviewContext,
   type EditFinancialReviewContext,
@@ -227,7 +227,7 @@ describe("#3031 quote and apply consume one discriminated result", () => {
       return;
     }
 
-    // Not "both refused" — the same refusal, in full. The occurrence is what
+    // Not "both parked" — the same park, in full. The occurrence is what
     // #3030 hashes into a task identity, so a preview and a save that produced
     // different material would raise two tasks for one edit.
     expect(apply.occurrences).toEqual(quote.occurrences);
@@ -247,11 +247,45 @@ describe("#3031 quote and apply consume one discriminated result", () => {
       },
     ]);
 
-    // And neither branch carries an amount at all. `?? 0` has nothing to bite
+    // AND NEITHER BRANCH CARRIES AN AMOUNT AT ALL. `?? 0` has nothing to bite
     // on, which is what makes the magic zero unrepresentable rather than
     // forbidden (epic #2797).
-    expect(Object.keys(apply)).toEqual(["kind", "occurrences"]);
-    expect(Object.keys(quote)).toEqual(["kind", "occurrences"]);
+    //
+    // #3170 added the STRUCTURAL half — which beds, on which nights — and the
+    // property is unchanged, because beds are not money. The key lists are
+    // pinned rather than spot-checked so a future field carrying a booking total
+    // has to be argued for here, in front of this comment, instead of appearing.
+    expect(Object.keys(quote).sort()).toEqual([
+      "kind",
+      "occurrences",
+      "parkedPlan",
+    ]);
+    expect(Object.keys(apply).sort()).toEqual([
+      // Whether an admin confirmed an overbooking to fit these beds. Not an
+      // amount, and the parked plan goes through the same capacity check a
+      // priced one does.
+      "capacityOverridden",
+      "kind",
+      "occurrences",
+      "parkedPlan",
+    ]);
+    expect(Object.keys(quote.parkedPlan).sort()).toEqual([
+      "capacityGuestRanges",
+      "capacityRangeStart",
+      "proposedAddedGuests",
+      "proposedExistingGuests",
+      "remainingGuests",
+      "removedGuests",
+    ]);
+
+    // The strand's own stored total is carried back UNCHANGED, and every night
+    // this edit cannot value is `null`. Neither is an adjustment: the first is
+    // what the booking already says, and the second is the absence of a number.
+    const strand = quote.parkedPlan.proposedExistingGuests[0];
+    expect(strand.priceCents).toBe(3 * RATE);
+    expect(strand.perNightCents.every((cents) => cents === null)).toBe(true);
+    // The control, so the assertion above cannot pass on an empty list.
+    expect(strand.perNightCents.length).toBeGreaterThan(0);
   });
 
   it("produces an occurrence #3030 can actually store as review evidence", () => {
@@ -281,25 +315,31 @@ describe("#3031 quote and apply consume one discriminated result", () => {
     expect(parseEditFinancialReviewContext(context)).toEqual(context);
   });
 
-  it("carries the occurrences on the refusal both routes raise", () => {
-    // The seam #3032 re-routes. Today the edit is refused; there the stay change
-    // commits and one OPEN task is raised from exactly these occurrences, so the
-    // error has to carry them rather than only a sentence.
-    const result = buildInProgressGuestRangePlan(planInput(UNPRICED_NIGHTS));
-    if (result.kind !== "financial_review_required") throw new Error("priced");
-
-    const refusal = new BookingEditFinancialReviewRequiredError(
-      result.occurrences,
+  it("tells the member the change will be saved, and says nothing about an amount", () => {
+    // WHAT REPLACED THE REFUSAL'S WORDING CONTRACT (#3170). This used to assert
+    // that the 409's sentence said "nothing has been changed yet". That sentence
+    // is now false — the change IS saved — and the class carrying it is deleted,
+    // so pinning it would pin behaviour that was deliberately removed.
+    //
+    // The contract itself survives intact and is asserted on the sentence that
+    // took its place: the epic binds this wording, not the class it lived on.
+    expect(EDIT_FINANCIAL_REVIEW_QUOTE_NOTICE).toMatch(
+      /your change will be saved/i,
     );
-
-    expect(refusal.occurrences).toEqual(result.occurrences);
-    expect(refusal.status).toBe(409);
-    expect(refusal.code).toBe("FINANCIAL_REVIEW_REQUIRED");
-    // Member-facing wording, bound by the epic: no estimate, no `$0`, no
-    // "corrupt"/"invalid data" terminology, and nothing that reads as the
-    // member's fault - the stored history is the club's record, not theirs.
-    expect(refusal.message).toMatch(/nothing has been changed yet/i);
-    expect(refusal.message).not.toMatch(/\$|corrupt|invalid|error|your data/i);
+    expect(EDIT_FINANCIAL_REVIEW_QUOTE_NOTICE).toMatch(
+      /nothing will be charged or refunded/i,
+    );
+    // No estimate, no `$0`, no "corrupt"/"invalid data", and nothing that reads
+    // as the member's fault — the stored history is the club's record, not
+    // theirs.
+    expect(EDIT_FINANCIAL_REVIEW_QUOTE_NOTICE).not.toMatch(
+      /\$|corrupt|invalid|error|your data/i,
+    );
+    // And it must NOT carry the old promise forward, which is the one way this
+    // sentence could be wrong rather than merely thin.
+    expect(EDIT_FINANCIAL_REVIEW_QUOTE_NOTICE).not.toMatch(
+      /nothing has been changed/i,
+    );
   });
 });
 

@@ -18,7 +18,6 @@ import {
   applyPromoCodeChanges,
   assertBookingModifiable,
   calculateModificationSettlementOptions,
-  BookingEditFinancialReviewRequiredError,
   BookingModificationSettlementMethodRequiredError,
   calculateModificationChangeFee,
   calculateModifiedPricing,

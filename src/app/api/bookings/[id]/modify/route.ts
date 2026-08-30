@@ -30,7 +30,6 @@ import { clubTime } from "@/lib/club-time/server";
 import { adminShiftBookingDates } from "@/lib/booking-date-modification-service";
 import { EditFinancialReviewPendingError } from "@/lib/edit-financial-review";
 import {
-  BookingEditFinancialReviewRequiredError,
   BookingModifyReviewJustificationRequiredError,
 } from "@/lib/booking-modify-validation";
 import { MinimumStayPolicyViolationError } from "@/lib/booking-policy-exceptions";
@@ -384,17 +383,6 @@ export async function PUT(
     // panel can reveal the required justification field even when its local
     // predicate missed the trip.
     if (err instanceof BookingModifyReviewJustificationRequiredError) {
-      return NextResponse.json(
-        { error: err.message, code: err.code },
-        { status: err.status },
-      );
-    }
-    // #3031 (epic #2797): the stay change was fine but the exact financial
-    // adjustment cannot be read from this booking's stored history. Echo the
-    // machine-readable code above the generic ApiError branch (this error
-    // extends ApiError) so the edit panel can say what happens next rather than
-    // showing a bare failure — and so it never shows an estimate or a $0.
-    if (err instanceof BookingEditFinancialReviewRequiredError) {
       return NextResponse.json(
         { error: err.message, code: err.code },
         { status: err.status },
