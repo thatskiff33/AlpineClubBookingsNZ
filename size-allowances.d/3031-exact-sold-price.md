@@ -36,7 +36,7 @@ reason: the file that must NOT be split, and the file's own header says why in a
   `stored-sold-price-evidence.ts`.
 
 file: src/lib/booking-modify-plan.ts
-lines: 2481
+lines: 2490
 reason: `PricingResult` becomes a discriminated union, so the priced fields move
   behind `PricedModification` and every reader narrows once — plus
   `requiredNightPriceCents`, the refusal that replaces `perNightCents[k] ?? 0`
