@@ -2,6 +2,12 @@ import fs from "fs";
 import path from "path";
 import { describe, expect, it } from "vitest";
 
+import {
+  blankLiterals,
+  blankLiteralsWithSpans,
+  type BlankedSpan,
+} from "./support/strip-comments";
+
 // #182 guard (process follow-up to upstream PR #1911 review finding H1): a
 // capacity ADMISSION path must use the per-lodge lock, while global-cohort
 // booking lifecycle and settlement/money transitions use the canonical global
@@ -1093,9 +1099,8 @@ function isTestFile(relPath: string): boolean {
 }
 
 /**
- * The one masking rule, shared by the per-site scan and the count inventories.
- * Returns `null` for a whole-line comment, and otherwise the line with
- * double-quoted string literals blanked — except literals containing `SELECT`.
+ * Does this blanked run hold a RAW STATEMENT the census must be able to read,
+ * rather than prose about one?
  *
  * DOUBLE-QUOTED LITERALS ARE NOT CODE for this purpose, and #2623 T9(d) is where
  * that started to matter: `adult-member-hosting-queue-participants.ts` names its
@@ -1104,45 +1109,75 @@ function isTestFile(relPath: string): boolean {
  * counter that scored it would put a number in the inventory below that no reader
  * could reconcile against the file, and would fail the census when somebody
  * reworded a sentence. Every raw statement in this repository is written as a
- * BACKTICK template, so backticks are deliberately left alone.
+ * BACKTICK template, so template text is always restored.
  *
- * BUT ONLY PROSE, NOT SQL (#2623 F7). Blanking every double-quoted literal opened
- * the same hole T9(d) exists to close, one level down: `$executeRawUnsafe` takes a
- * plain string, so `const SQL = "SELECT … FOR UPDATE"; await tx.$executeRawUnsafe(SQL)`
- * would score ZERO and drop out of the census silently. A literal containing
- * `SELECT` is therefore left intact and counted — prose about the protocol does not
- * contain it (the one live case, quoted above, does not), and a raw statement always
- * does. The narrower rule keeps the false positive suppressed while refusing to
- * suppress a real statement.
+ * BUT ONLY PROSE, NOT SQL (#2623 F7). Suppressing every double-quoted literal
+ * opened the same hole T9(d) exists to close, one level down: `$executeRawUnsafe`
+ * takes a plain string, so `const SQL = "SELECT … FOR UPDATE"; await
+ * tx.$executeRawUnsafe(SQL)` would score ZERO and drop out of the census
+ * silently. A literal containing `SELECT` is therefore restored and counted —
+ * prose about the protocol does not contain it (the one live case, quoted above,
+ * does not), and a raw statement always does. The narrower rule keeps the false
+ * positive suppressed while refusing to suppress a real statement.
+ *
+ * A `comment` run is never restored, which is the whole point of masking, and a
+ * `regex` run is never restored because a pattern is not a statement.
  */
-function codeOnly(rawLine: string): string | null {
-  const trimmed = rawLine.trim();
-  if (trimmed.startsWith("//") || trimmed.startsWith("*") || trimmed.startsWith("/*")) {
-    return null;
-  }
-  return rawLine.replace(/"(?:[^"\\]|\\.)*"/g, (literal) =>
-    /SELECT/i.test(literal) ? literal : '""',
-  );
+function holdsRawStatement(source: string, span: BlankedSpan): boolean {
+  if (span.kind === "template") return true;
+  if (span.kind !== "string") return false;
+  return /SELECT/i.test(source.slice(span.start, span.end));
 }
 
 /**
- * Count occurrences of `needle` in `source`, ignoring whole-line comments and
- * the contents of double-quoted string literals (see `codeOnly`).
+ * The one masking rule, shared by the per-site scan and the count inventories:
+ * the file with every comment and every prose literal blanked to spaces, and the
+ * raw SQL put back where {@link holdsRawStatement} recognises it.
+ *
+ * THE SCANNER IS THE SHARED ONE (#3196, `INV-SSOT-004`). Until then this census
+ * carried the last private comment scanner in the tree, and it worked a LINE at a
+ * time: a whole-line comment was dropped by its leading `//` or `*`, and
+ * double-quoted literals were blanked with a regex. Both halves were wrong in
+ * ways nothing here could see. A TRAILING comment was never dropped at all, nor
+ * was a block-comment body line that did not begin with `*`, so prose in either
+ * shape counted as code. And a line-local quote regex has no idea what a REGEX
+ * LITERAL is: `.replace(/"/g, "")` reads as a string opener, which is the exact
+ * defect #3155 removed from the shared scanner and #3180 then found LIVE in a
+ * sibling census, where it hid a real database write five hundred lines further
+ * down. The remedy is not a better local regex; it is not having a second
+ * scanner. `blankLiteralsWithSpans` blanks with every offset preserved and hands
+ * back the runs it blanked, so the SQL carve-out lives HERE — where a policy
+ * about SQL belongs — and the lexing lives in the module that owns it.
+ *
+ * OFFSETS SURVIVE THE RESTORE, because every span is exactly as long as the
+ * spaces standing in for it. That is what lets the scan below keep using the
+ * masked text as a coordinate system for line numbers.
+ */
+function maskedSource(source: string): string {
+  const { code, spans } = blankLiteralsWithSpans(source);
+  const pieces: string[] = [];
+  let cursor = 0;
+  for (const span of spans) {
+    if (!holdsRawStatement(source, span)) continue;
+    pieces.push(code.slice(cursor, span.start), source.slice(span.start, span.end));
+    cursor = span.end;
+  }
+  pieces.push(code.slice(cursor));
+  return pieces.join("");
+}
+
+/**
+ * Count occurrences of `needle` in `source`, ignoring comments and the contents
+ * of every literal but a raw statement (see {@link maskedSource}).
  */
 function countCodeOccurrences(source: string, needle: string | RegExp): number {
+  const masked = maskedSource(source);
+  if (typeof needle !== "string") return (masked.match(needle) ?? []).length;
   let count = 0;
-  for (const rawLine of source.split("\n")) {
-    const line = codeOnly(rawLine);
-    if (line === null) continue;
-    if (typeof needle !== "string") {
-      count += (line.match(needle) ?? []).length;
-      continue;
-    }
-    let idx = line.indexOf(needle);
-    while (idx !== -1) {
-      count += 1;
-      idx = line.indexOf(needle, idx + needle.length);
-    }
+  let idx = masked.indexOf(needle);
+  while (idx !== -1) {
+    count += 1;
+    idx = masked.indexOf(needle, idx + needle.length);
   }
   return count;
 }
@@ -1249,11 +1284,11 @@ function collectAdvisoryLockSites(
     const routePath = routePathOf(rel);
     const ordinals = new Map<string, number>();
 
-    // One masked copy of the whole file, line boundaries preserved, so an offset
-    // in it still names a line while the argument reader can cross line breaks.
-    const rawLines = text.split("\n");
-    const maskedLines = rawLines.map((rawLine) => codeOnly(rawLine) ?? "");
-    const maskedText = maskedLines.join("\n");
+    // One masked copy of the whole file. It is the SAME LENGTH as the original
+    // and every line break is where it was, so an offset in it still names a
+    // line while the argument reader can cross line breaks.
+    const maskedText = maskedSource(text);
+    const maskedLines = maskedText.split("\n");
     const lineStarts: number[] = [];
     let offset = 0;
     for (const maskedLine of maskedLines) {
@@ -1271,13 +1306,17 @@ function collectAdvisoryLockSites(
       return low;
     };
 
-    // The symbol is still read line by line, from the RAW lines: a declaration
-    // inside a block comment should not open a symbol.
+    // The symbol is read line by line from the MASKED lines, which is what stops
+    // a declaration written inside a comment opening a symbol: the comment is
+    // spaces, and a column-0 anchor cannot match spaces. Re-testing the RAW line
+    // for comment-ness — what this did before #3196 — only ever caught a comment
+    // the private scanner recognised, and it recognised neither a trailing one
+    // nor a block-comment body line without a leading star.
     const symbolByLine: string[] = [];
     let symbol = "(module scope)";
-    rawLines.forEach((rawLine, index) => {
-      const declaration = TOP_LEVEL_DECLARATION.exec(rawLine);
-      if (declaration && codeOnly(rawLine) !== null) {
+    maskedLines.forEach((maskedLine, index) => {
+      const declaration = TOP_LEVEL_DECLARATION.exec(maskedLine);
+      if (declaration) {
         symbol = declaration[1] ?? declaration[2] ?? symbol;
       }
       symbolByLine[index] = symbol;
@@ -1643,5 +1682,126 @@ describe("advisory lock guard (#182 / H1 regression class)", () => {
         "every participant provably shares one key — call the helper instead " +
         "of rebuilding the expression (INV-LOCK-002)."
     ).toEqual([]);
+  });
+});
+
+/*
+  THE MASKING RULE ITSELF, PINNED (#3196).
+
+  This census used to own the last private comment scanner in the tree, and the
+  reason it kept one was real: it hunts raw SQL, which lives inside string
+  literals, while the prose it must ignore lives inside string literals too.
+  Blanking everything hides the evidence; blanking nothing counts a sentence
+  describing `FOR UPDATE` as a lock. #3196 moved the lexing to the shared
+  `blankLiteralsWithSpans` and kept only the CHOICE here — which is a policy
+  about SQL, and belongs to the census rather than to a general-purpose helper.
+
+  These cases are what make that move checkable. Each is a shape the retired
+  line-local scanner got WRONG or could only get right by accident, and every
+  one of them is stated as behaviour rather than as a count, so a future edit to
+  `holdsRawStatement` fails here and not four inventories away.
+*/
+describe("the masking rule (#3196, INV-SSOT-004)", () => {
+  const rowLocks = (source: string): number =>
+    countCodeOccurrences(source, ROW_LOCK_STRENGTHS);
+
+  it("counts a raw statement in a backtick template", () => {
+    expect(
+      rowLocks("await tx.$executeRaw`SELECT 1 FROM x FOR UPDATE`;"),
+    ).toBe(1);
+  });
+
+  it("counts a raw statement in a double-quoted literal, because $executeRawUnsafe takes one", () => {
+    // #2623 F7. `const SQL = "SELECT … FOR UPDATE"` reaches the database, and a
+    // masker that suppressed every double-quoted literal would score it ZERO and
+    // drop a real lock out of the census silently.
+    expect(rowLocks('const SQL = "SELECT 1 FROM x FOR UPDATE";')).toBe(1);
+  });
+
+  it("does not count PROSE about a statement in a double-quoted literal", () => {
+    // #2623 T9(d), live in `adult-member-hosting-queue-participants.ts`.
+    expect(
+      rowLocks('throw new Error("never issued without its FOR KEY SHARE lock");'),
+    ).toBe(0);
+  });
+
+  it("does not count a TRAILING comment, which the retired scanner never dropped", () => {
+    // The private scanner decided comment-ness from the START of a line, so a
+    // comment after code was read as code. Both of the next two cases scored 1
+    // before #3196 and are the clearest evidence the swap changed the instrument.
+    expect(rowLocks("const x = 1; // takes the row FOR UPDATE first")).toBe(0);
+  });
+
+  it("does not count a block-comment body line that has no leading star", () => {
+    expect(rowLocks("/*\n  the merge takes it FOR UPDATE\n*/\nconst x = 1;")).toBe(0);
+  });
+
+  it("is not blinded by a regex literal containing a quote", () => {
+    // THE #3155 DEFECT, which #3180 found LIVE in a sibling census where it hid a
+    // real database write five hundred lines below the regex. `xero-contacts.ts`
+    // writes `.replace(/"/g, "")` AND takes two scoped advisory locks after it,
+    // so this census only ever escaped that fate by being line-local — which is
+    // an accident of a limitation, not a defence.
+    const source = [
+      'const q = input.fullName.replace(/"/g, "");',
+      "await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;",
+      'const sql = "SELECT 1 FROM x FOR UPDATE";',
+    ].join("\n");
+
+    expect(rowLocks(source)).toBe(1);
+    const sites = collectAdvisoryLockSites([{ rel: "src/lib/probe.ts", text: source }]);
+    expect(sites.map((site) => site.tier)).toEqual(["GLOBAL"]);
+  });
+
+  it("does not count a needle that only appears inside a regex", () => {
+    // A pattern is not a statement. `blankLiteralsWithSpans` reports the regex
+    // body as its own kind and `holdsRawStatement` refuses it.
+    expect(rowLocks('const re = /FOR UPDATE/;')).toBe(0);
+  });
+
+  /*
+    THE MODULE CONTRACT THIS CENSUS RESTS ON, asserted here rather than assumed.
+    Restoring a span only leaves line numbers and columns intact because a span
+    is exactly as long as the spaces standing in for it. If that ever stopped
+    being true, every line number this census reports would drift and nothing
+    else in the tree would notice.
+  */
+  it("restores spans without moving a single offset", () => {
+    const source = [
+      "/* a docblock naming FOR UPDATE */",
+      'const message = "prose about FOR KEY SHARE";',
+      "const sql = `SELECT 1 FROM x FOR UPDATE`;",
+      'const re = /"/g;',
+      "await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`; // trailing",
+    ].join("\n");
+
+    const { code, spans } = blankLiteralsWithSpans(source);
+    expect(code).toBe(blankLiterals(source));
+    expect(code.length).toBe(source.length);
+    expect(maskedSource(source).length).toBe(source.length);
+
+    // Restoring EVERY span must reproduce the file byte for byte: that is what
+    // says the spans are the complete account of what was blanked.
+    const pieces: string[] = [];
+    let cursor = 0;
+    for (const span of spans) {
+      expect(span.start).toBeGreaterThanOrEqual(cursor);
+      pieces.push(code.slice(cursor, span.start), source.slice(span.start, span.end));
+      cursor = span.end;
+    }
+    pieces.push(code.slice(cursor));
+    expect(pieces.join("")).toBe(source);
+  });
+
+  it("keeps a lock site on the line it is written on", () => {
+    const source = [
+      "// a comment",
+      "/* a block\n   comment */",
+      'const label = "prose";',
+      "await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;",
+    ].join("\n");
+    const sites = collectAdvisoryLockSites([{ rel: "src/lib/probe.ts", text: source }]);
+    expect(sites).toHaveLength(1);
+    expect(sites[0]?.line).toBe(source.split("\n").findIndex((line) => line.includes("pg_advisory")) + 1);
   });
 });
