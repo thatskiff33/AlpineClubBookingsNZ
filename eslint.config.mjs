@@ -1504,14 +1504,96 @@ export const COMMENT_STRIPPER_ALLOWLIST = [
       'A permitted second FORM, not an exemption. `stripCommentsAndStrings` blanks the CONTENTS of every string as well as the comments, so a rule cannot fire on prose inside a quoted example, and it keeps an identifier-shaped bracket key (`invoice["dueDate"]`) because that spelling IS a property read. Its own tests pin both behaviours, and converging it onto `stripComments`, which keeps strings, would destroy the census rather than tidy it. It already imports the canonical `startsRegexLiteral` / `endOfRegexLiteral` predicates, so the two forms cannot disagree about where a regex literal ends (#3132).',
   },
   {
-    file: "src/lib/__tests__/config-transfer-cleaned-literals.test.ts",
+    file: "prisma/migration-verification/split-statements.ts",
     reason:
-      "SQL, not JavaScript. `withoutSqlComments` drops `--` line comments from a migration's SQL text; the canonical helper does not know that delimiter and would hand the census a commented-out UPDATE as a live one. #3164 renamed it from `withoutComments` so the name says which language it is about.",
+      "SQL, not JavaScript. `splitSqlStatements` and `hasExecutableText` step over `--` line comments, NESTED block comments (PostgreSQL nests them; JavaScript does not) and dollar-quoted bodies, to find where one statement ends. The canonical helper knows none of those, and this splitter is what the migration-verification gate runs on real migration text.",
   },
   {
-    file: "src/lib/__tests__/email-delivery-boundary-census.test.ts",
+    file: "scripts/audit/audit-writer-census.ts",
     reason:
-      "dotenv and YAML `#` comments, not JavaScript. `withoutDotenvComments` strips the way this repository's own dotenv reader does — a whole-line `#`, and an inline `#` preceded by whitespace — because `.env.example` EXPLAINS the capture rule in prose containing a live-looking `USE_LOCAL_CAPTURE=true`. The canonical helper would leave every one of those comments in place. #3164 renamed it and converged the separate JavaScript strip that lived in the same file.",
+      "SQL, not JavaScript. `stripSqlComments` exists because the door-code migration discusses `UPDATE \"AuditLog\"` in its header comment as well as performing it, and a census that did not strip SQL comments would count the sentence as a writer.",
+  },
+  {
+    file: "src/lib/__tests__/data-migration-verification-gate.test.ts",
+    reason:
+      "SQL, not JavaScript. `stripSqlComments` leaves single-quoted, double-quoted and dollar-quoted bodies untouched, because a comment token inside a SQL string is data. It deliberately mirrors what the two splitters implement, which is `INV-SSOT-002` rather than a copy of this rule's subject.",
+  },
+  {
+    file: "src/components/ui/__tests__/placeholder-styling-contract.test.ts",
+    reason:
+      "CSS, not JavaScript — and CSS is the one language that shares JavaScript's block delimiter, which is why it reaches this list rather than passing unnoticed. The canonical helper lexes JavaScript strings, template literals and REGEX literals; run over CSS it reads the slash in `url(a/b)` as opening a regex and eats to the end of the line.",
+  },
+  {
+    file: "src/lib/__tests__/app-theme-layout-contract.test.ts",
+    reason:
+      "CSS, not JavaScript. Same reason as the placeholder contract above: this strips comments out of a `globals.css` rule body before counting declarations.",
+  },
+  {
+    file: "src/lib/__tests__/print-light-palette-contract.test.ts",
+    reason:
+      "CSS, not JavaScript. Three sites, all inside the print-stylesheet reader: a selector, a declaration list and a rule body.",
+  },
+  {
+    file: "src/app/api/bookings/__tests__/rooms-unscoped-mode-has-no-internal-caller.test.ts",
+    reason:
+      "It COLLECTS comments rather than removing them. `commentBlocks` groups the docblock lines above a call so the test can assert what the comment says; the canonical helper deletes exactly the text this assertion is about. The file imports `stripComments` as well, for the half of its work that is a strip — which is what makes the distinction visible rather than theoretical.",
+  },
+];
+
+/**
+ * The comment-aware SCANNERS that #3164 measured and did not converge, with the
+ * work each is waiting on.
+ *
+ * THIS IS A RATCHET, NOT AN ALLOWLIST, and the difference is the whole reason it
+ * is a second list. Every entry above is a different CONCEPT that the canonical
+ * helper cannot express and never will. Every entry here does something the
+ * canonical module could express and does not offer YET, so each one is a filed
+ * piece of work rather than a settled exception. `ssot-comment-stripper-guard.test.ts`
+ * pins the length, so the list can shrink and cannot grow: a new file that needs
+ * to be added here is a new copy, which is exactly what this rule exists to
+ * refuse.
+ *
+ * WHAT THEY HAVE IN COMMON. None of them produces stripped text at all. They
+ * WALK source — counting brackets to find a call's argument list, or blanking a
+ * region to spaces in place — and they step over comments and strings on the way
+ * so a brace or a quote inside prose cannot derail the walk. Every offset they
+ * report is an offset into the ORIGINAL text, which is what a reported line
+ * number is made of. `stripComments` preserves newlines but not columns, and
+ * `stripCommentsAndStrings` replaces each string with a two-character `""`, so
+ * neither can serve a walker without moving what it points at.
+ *
+ * THE REMEDY IS A THIRD FORM IN THE CANONICAL MODULE — a blanker that replaces
+ * every comment and string with spaces of the same length, so that offsets,
+ * columns and line numbers all survive, and these five walk the blanked text
+ * instead of re-implementing the lexer. That is a design change to the canonical
+ * module plus five conversions with their own censuses to re-measure, which is a
+ * separate piece of work from this one and is filed as such.
+ */
+export const UNCONVERGED_COMMENT_SCANNERS = [
+  {
+    file: "src/lib/__tests__/family-group-role-retirement.test.ts",
+    reason:
+      "Three scanners, and two of them are SQL. `stringLiterals` EXTRACTS every string literal with its offset, so an offender can be reported at its real line; `blankSqlComments` blanks `--` and block comments to spaces inside those extracted literals, skipping single-quoted SQL strings; the third keeps newlines while blanking. The extractor is arguably a permanent second concept rather than a ratchet entry, and is listed here rather than above because the file's three scanners should be decided together.",
+  },
+  {
+    file: "src/lib/__tests__/lock-bound-club-zone-outside-transaction.test.ts",
+    reason:
+      "Two: `spansForOpener` walks brackets from a call opener to its matching close, stepping over comments and strings, and reports the line it started on; `blankCommentsAndStrings` blanks both to spaces with every offset preserved.",
+  },
+  {
+    file: "src/lib/__tests__/payment-link-expiry-club-zone.test.ts",
+    reason:
+      "`transactionCallbackSpans` — the same bracket walk over `$transaction(`, with the same reported line number. It and the two above are near-identical and are the clearest argument for the shared blanker.",
+  },
+  {
+    file: "src/lib/__tests__/xero-object-url-write-guard.test.ts",
+    reason:
+      "An in-place blanker that keeps the string DELIMITERS and blanks only the contents, so `readCallArguments` can walk the result and still see where each argument started.",
+  },
+  {
+    file: "src/lib/__tests__/advisory-lock-guard.test.ts",
+    reason:
+      "`codeOnly` works a LINE at a time and blanks string literals EXCEPT the ones containing `SELECT`, because the raw SQL it hunts for lives inside those. A carve-out by content is not a form the canonical module should grow; this one probably converges on the blanker plus a caller-side filter.",
   },
 ];
 
@@ -1597,9 +1679,11 @@ const noLocalCommentStripper = {
   },
   create(context) {
     const file = repoRelativePath(context.filename);
-    if (COMMENT_STRIPPER_ALLOWLIST.some((entry) => entry.file === file)) {
-      return {};
-    }
+    const excused = [
+      ...COMMENT_STRIPPER_ALLOWLIST,
+      ...UNCONVERGED_COMMENT_SCANNERS,
+    ];
+    if (excused.some((entry) => entry.file === file)) return {};
 
     /**
      * function node -> what its own literals say about it.
