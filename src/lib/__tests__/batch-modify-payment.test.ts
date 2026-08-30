@@ -1479,6 +1479,12 @@ describe("PUT /api/bookings/[id]/modify", () => {
       idempotencyKey: "payment_recovery_additional_intent_mod_1",
       amountCents: 10000,
       stripeIdempotencyKey: "mod_batch_bk1_mod_1",
+      // #3181: the edit's OWN answer to "did this booking already have a primary
+      // Xero invoice", frozen here because this is the last moment it is known.
+      // The replay reads it back rather than re-deriving one hours later, when
+      // an invoice minted in between would make it say yes to a different
+      // question.
+      hadIssuedXeroInvoice: true,
     });
   });
 

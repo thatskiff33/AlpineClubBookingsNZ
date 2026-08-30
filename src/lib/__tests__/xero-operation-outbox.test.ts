@@ -3175,6 +3175,21 @@ describe("a recovered additional payment raises exactly one supplementary invoic
     );
   }
 
+  /**
+   * EVERY row of any kind for this anchor, which is what a "raises nothing" case
+   * has to assert over (#3181 fix round).
+   *
+   * `supplementaryRowsFor` filters on `queueType`, so it is blind to exactly the
+   * row a wrong answer here would create: handed a reduction, the settlement
+   * dispatcher does not do nothing, it queues a MODIFICATION_CREDIT_NOTE - a
+   * refund to the member, from a function named for an invoice. Asserting the
+   * absence of one row type proved nothing about the other, and the negative-net
+   * case below passed for that reason rather than because it was right.
+   */
+  function allRowsFor(localId: string) {
+    return store.filter((row) => row.localId === localId);
+  }
+
   beforeEach(() => {
     vi.clearAllMocks();
     store = [];
@@ -3360,10 +3375,18 @@ describe("a recovered additional payment raises exactly one supplementary invoic
   });
 
   /**
-   * CONTROL. A mixed-sign edit whose net is not positive settles through the
-   * credit-note paths; the recovery must not gross-bill the fee (#1356).
+   * CONTROL, AND IT ASSERTS OVER EVERY ROW BECAUSE THE FIRST VERSION DID NOT.
+   *
+   * A mixed-sign edit whose net is not positive settles through the credit-note
+   * paths; the recovery must not gross-bill the fee (#1356). The earlier form of
+   * this test asserted `"none"` and zero SUPPLEMENTARY rows, and both passed
+   * while the dispatcher queued a $40 MODIFICATION_CREDIT_NOTE - a refund to the
+   * member, issued by a function called "complete the deferred supplementary
+   * invoice", reached from a replay whose whole subject is money the member OWES.
+   * A non-positive net now returns before the dispatcher, so nothing at all is
+   * queued, and `allRowsFor` is what can tell the difference.
    */
-  it("raises nothing when the edit's net is not positive", async () => {
+  it("raises nothing at all when the edit's net is not positive", async () => {
     await expect(
       completeDeferredXeroSupplementaryInvoice({
         bookingId: "booking_1",
@@ -3375,6 +3398,40 @@ describe("a recovered additional payment raises exactly one supplementary invoic
         originalPaymentStatus: "SUCCEEDED",
       }),
     ).resolves.toBe("none");
-    expect(supplementaryRowsFor("mod_1")).toHaveLength(0);
+    expect(allRowsFor("mod_1")).toHaveLength(0);
+  });
+
+  /**
+   * The boundary itself: a net of exactly zero is not a positive delta, and it is
+   * the shape a parked review edit leaves behind (`priceDiffCents +
+   * changeFeeCents == 0`), so it is the one most likely to arrive here.
+   */
+  it("raises nothing at all when the edit's net is exactly zero", async () => {
+    await expect(
+      completeDeferredXeroSupplementaryInvoice({
+        bookingId: "booking_1",
+        bookingModificationId: "mod_1",
+        paymentIntentId: "pi_recovered",
+        priceDiffCents: -500,
+        changeFeeCents: 500,
+        hasIssuedXeroInvoice: true,
+        originalPaymentStatus: "SUCCEEDED",
+      }),
+    ).resolves.toBe("none");
+    expect(allRowsFor("mod_1")).toHaveLength(0);
+  });
+
+  /**
+   * CONTROL for both of those: the same assertion over EVERY row still sees the
+   * one invoice a positive net raises, so "nothing at all" is a real refusal
+   * rather than an instrument that cannot see anything.
+   */
+  it("still queues exactly one row in total for a positive net", async () => {
+    await recoverIntent();
+
+    expect(allRowsFor("mod_1")).toHaveLength(1);
+    expect(allRowsFor("mod_1")[0].requestPayload.queueType).toBe(
+      "SUPPLEMENTARY_INVOICE",
+    );
   });
 });

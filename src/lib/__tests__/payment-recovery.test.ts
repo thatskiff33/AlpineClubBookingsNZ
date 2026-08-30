@@ -38,6 +38,7 @@ const {
   mockBookingModificationFindUnique,
   mockCompleteDeferredSupplementaryInvoice,
   mockRecordShortEditReviewChargeInvoice,
+  mockRecordUncollectedEditReviewChargeShare,
 } = vi.hoisted(() => ({
   mockPaymentRecoveryFindMany: vi.fn(),
   mockPaymentRecoveryFindUnique: vi.fn(),
@@ -83,6 +84,7 @@ const {
     .fn()
     .mockResolvedValue("covers-total"),
   mockRecordShortEditReviewChargeInvoice: vi.fn().mockResolvedValue(false),
+  mockRecordUncollectedEditReviewChargeShare: vi.fn().mockResolvedValue(undefined),
 }));
 
 /**
@@ -171,6 +173,8 @@ vi.mock("@/lib/xero-booking-edit-settlement", () => ({
 vi.mock("@/lib/edit-financial-review-charge-request", () => ({
   recordShortEditReviewChargeInvoice: (...args: unknown[]) =>
     mockRecordShortEditReviewChargeInvoice(...args),
+  recordUncollectedEditReviewChargeShare: (...args: unknown[]) =>
+    mockRecordUncollectedEditReviewChargeShare(...args),
 }));
 
 vi.mock("@/lib/payment-transactions", () => ({
@@ -242,6 +246,9 @@ function makeOperation(overrides: Record<string, unknown> = {}) {
     attempts: 1,
     nextRetryAt: new Date("2026-05-23T00:00:00.000Z"),
     lastError: null,
+    // #3181: only CREATE_ADDITIONAL_PAYMENT_INTENT rows carry the edit's frozen
+    // answer, so the generic row's honest value is "not recorded".
+    hadIssuedXeroInvoice: null,
     processingStartedAt: new Date("2026-05-23T00:00:00.000Z"),
     succeededAt: null,
     createdAt: new Date("2026-05-23T00:00:00.000Z"),
@@ -1686,6 +1693,9 @@ describe("payment recovery worker", () => {
         paymentIntentId: "mod_guest_bk1_mod-9",
         idempotencyKey: "payment_recovery_additional_intent_mod-9",
         paymentTransactionId: null,
+        // #3181: this edit HAD a primary Xero invoice when it dispatched, which
+        // is what makes a deferred supplementary invoice the right completion.
+        hadIssuedXeroInvoice: true,
         createdAt: new Date("2026-06-01T00:00:00.000Z"),
         ...overrides,
       });
@@ -1923,6 +1933,58 @@ describe("payment recovery worker", () => {
       });
 
       /**
+       * #3181 fix round: THE EDIT'S ANSWER, NOT THE PASSAGE OF TIME.
+       *
+       * The booking's primary Xero invoice had NOT been minted when the edit
+       * committed, so the edit queued nothing - correctly, because the primary
+       * invoice reads the booking's CURRENT state when its own outbox operation
+       * finally runs and therefore bills the edit itself. By the time the replay
+       * arrives that invoice exists and `payment.xeroInvoiceId` is set, so a
+       * replay that re-derived the flag would raise a SECOND ask for money the
+       * primary invoice already carries: $600 of Xero income and a $50
+       * receivable for a $550 booking, and only because Stripe blinked.
+       *
+       * The payment row below deliberately CARRIES the invoice id. That is the
+       * whole point: the fact that would mislead a re-derivation is present, and
+       * the frozen `hadIssuedXeroInvoice: false` is what stops it.
+       */
+      it("bills the edit's own answer when the payment row now says otherwise", async () => {
+        primeQueue(additionalIntentOperation({ hadIssuedXeroInvoice: false }));
+        // Deliberately CARRYING the invoice id: this is the fact that would
+        // mislead a re-derivation, and the frozen `false` is what stops it. A
+        // `false` reaches the dispatcher rather than short-circuiting here,
+        // because "no primary invoice means no supplementary invoice" is
+        // `classifyXeroBookingEditSettlement`'s decision and belongs in one
+        // place (`INV-SSOT`); the outbox suite's control proves it queues
+        // nothing.
+        mockPaymentFindUnique.mockResolvedValue(paymentWithIssuedInvoice());
+
+        const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+        expect(result.succeeded).toBe(1);
+        expect(mockCompleteDeferredSupplementaryInvoice).toHaveBeenCalledWith(
+          expect.objectContaining({ hasIssuedXeroInvoice: false }),
+        );
+      });
+
+      /**
+       * A row enqueued before that answer was recorded cannot be asked, so it is
+       * not guessed. The asymmetry is the argument: an invoice this pass fails to
+       * raise is surfaced by the booking-vs-Xero repair pass as a critical,
+       * one-click finding, while a duplicate it raises in error is surfaced by
+       * nobody and lands on the member.
+       */
+      it("raises nothing when the edit's answer was never recorded", async () => {
+        primeQueue(additionalIntentOperation({ hadIssuedXeroInvoice: null }));
+        mockPaymentFindUnique.mockResolvedValue(paymentWithIssuedInvoice());
+
+        const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+        expect(result.succeeded).toBe(1);
+        expect(mockCompleteDeferredSupplementaryInvoice).not.toHaveBeenCalled();
+      });
+
+      /**
        * The recovery row carries what STRIPE is collecting; the invoice bills the
        * edit's two SIGNED components (#1356), which a price reduction plus a
        * larger late-change fee separates. Reaching for `operation.amountCents`
@@ -2058,6 +2120,19 @@ describe("payment recovery worker", () => {
         stripeIdempotencyKey: "mod_guest_bk1_mod-9",
         hadIssuedXeroInvoice: true,
       });
+
+      // #3181: the edit's answer is frozen on CREATE and deliberately absent
+      // from UPDATE - a colliding second caller for one debt must not rewrite a
+      // fact the cron may already be acting on, so first-writer-wins keeps the
+      // earliest edit-time answer.
+      {
+        const upsert = mockPaymentRecoveryUpsert.mock.calls[0][0] as {
+          create: Record<string, unknown>;
+          update: Record<string, unknown>;
+        };
+        expect(upsert.create).toMatchObject({ hadIssuedXeroInvoice: true });
+        expect(upsert.update).not.toHaveProperty("hadIssuedXeroInvoice");
+      }
 
       expect(mockPaymentRecoveryUpsert).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -2443,6 +2518,8 @@ describe("edit-financial-review charge recovery (#3170)", () => {
       idempotencyKey:
         buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey("mod-1"),
       paymentTransactionId: null,
+      // #3181: frozen by the settlement that raised this charge.
+      hadIssuedXeroInvoice: true,
       createdAt: new Date("2026-06-01T00:00:00.000Z"),
       ...overrides,
     });
@@ -2475,8 +2552,9 @@ describe("edit-financial-review charge recovery (#3170)", () => {
       },
       payment: {
         stripeCustomerId: "cus_123",
-        // #3181: the deferred supplementary invoice is classified from these.
-        xeroInvoiceId: "xero-inv-1",
+        // #3181: the invoice's local paid/refunded state is classified from
+        // this. Whether an invoice EXISTS is deliberately NOT read here - the
+        // recovery row carries the edit's own answer.
         status: PaymentStatus.SUCCEEDED,
       },
     });
@@ -2514,6 +2592,10 @@ describe("edit-financial-review charge recovery (#3170)", () => {
     expect(mockSyncEditFinancialReviewChargeRequest).toHaveBeenCalledWith({
       bookingId: "booking-1",
       bookingModificationId: "mod-1",
+      // #3181: the settlement's own answer, read back off this row rather than
+      // re-derived - a second, disagreeing answer in the one place the frozen
+      // one exists to prevent.
+      hasIssuedXeroInvoice: true,
       paymentId: "payment-1",
       member: {
         id: "m1",
@@ -2663,9 +2745,100 @@ describe("edit-financial-review charge recovery (#3170)", () => {
   });
 
   /**
-   * CONTROL for the record above: the verdict is passed through on every run, and
-   * the function that owns the mapping is what stays silent on a covered ask. A
-   * caller re-deriving "is this short" is how the two legs came to disagree.
+   * #3181 fix round: THE REVIEW FORK LEAVES A DURABLE TRACE WHEN THE ENQUEUE
+   * THROWS, because it is the one fork that cannot fall back on the repair pass.
+   *
+   * A parked edit's `BookingModification` carries only the readable strands'
+   * money, so an edit whose only money-affecting strand was the parked one has
+   * `priceDiffCents + changeFeeCents == 0` - and the booking-vs-Xero repair pass
+   * gates its missing-supplementary finding on `netAmountCents > 0`, so it never
+   * looks. Without this record an officer settles at $230, the member pays it,
+   * and the club's only account of the charge is a `logger.error`. `INV-PAY`: a
+   * log line is not a durable trace.
+   */
+  it("records the unraised invoice when the enqueue throws", async () => {
+    mockCompleteDeferredSupplementaryInvoice.mockRejectedValueOnce(
+      new Error("outbox unavailable"),
+    );
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    // The intent - this operation's actual job - succeeded, so the row closes.
+    expect(result.succeeded).toBe(1);
+    expect(mockRecordShortEditReviewChargeInvoice).not.toHaveBeenCalled();
+    expect(mockRecordUncollectedEditReviewChargeShare).toHaveBeenCalledWith({
+      leg: "xero-invoice",
+      // Not `ask-closed`: no invoice exists to bill the earlier figure, so the
+      // whole settled total is unbilled rather than under-billed.
+      cause: "ask-not-raised",
+      bookingId: "booking-1",
+      bookingModificationId: "mod-1",
+      memberId: "m1",
+      derivedTotalCents: 23000,
+      requestedTotalCents: null,
+    });
+  });
+
+  /**
+   * The same trace for the other way of raising nothing: a row enqueued before
+   * the edit's answer was recorded is not guessed at, and silence about a charge
+   * the member has been asked for is exactly what this issue removed.
+   */
+  it("records the unraised invoice when the edit's answer was never recorded", async () => {
+    const operation = chargeOperation({ hadIssuedXeroInvoice: null });
+    mockPaymentRecoveryFindUnique.mockResolvedValue(operation);
+    mockPaymentRecoveryFindMany.mockImplementation(
+      (args?: { where?: { attempts?: { gte?: number } } }) => {
+        if (args?.where?.attempts && "gte" in args.where.attempts) {
+          return Promise.resolve([]);
+        }
+        return Promise.resolve([{ ...operation, status: "PENDING" }]);
+      },
+    );
+
+    await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(mockCompleteDeferredSupplementaryInvoice).not.toHaveBeenCalled();
+    expect(mockRecordUncollectedEditReviewChargeShare).toHaveBeenCalledWith(
+      expect.objectContaining({ cause: "ask-not-raised", derivedTotalCents: 23000 }),
+    );
+  });
+
+  /**
+   * #3181 fix round: AN ALREADY-PAID ASK GETS NO WAITING_PAYMENT ROW.
+   *
+   * `already-paid` is the sync saying this edit's request was captured before the
+   * replay reached it - its webhook has fired and cannot fire again. An invoice
+   * queued WAITING_PAYMENT against that intent is a row nothing will ever
+   * release, cancelled by the 14-day reaper with no invoice raised at all. Worse,
+   * while it sits there the repair pass reads the anchor as
+   * `BLOCKED_BY_XERO_OPERATION` - warning, not auto-appliable, no action offered,
+   * reported as waiting for a payment that has already happened - instead of the
+   * critical, one-click `MISSING_SUPPLEMENTARY_INVOICE`. The share that could not
+   * join the ask already has its record, written by the sync on the
+   * `payment-request` leg, so nothing is lost by staying out of the way.
+   */
+  it("queues no invoice against an ask that was already paid", async () => {
+    mockSyncEditFinancialReviewChargeRequest.mockResolvedValue({
+      outcome: "already-paid",
+      paymentIntentId: "pi_additional_1",
+      totalCents: 20000,
+    });
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result.succeeded).toBe(1);
+    expect(mockCompleteDeferredSupplementaryInvoice).not.toHaveBeenCalled();
+    // Not an unraised-invoice record either: the sync has already written the
+    // `payment-request` leg for this exact share, and two records for one fact
+    // is how an officer learns to distrust both.
+    expect(mockRecordUncollectedEditReviewChargeShare).not.toHaveBeenCalled();
+  });
+
+  /**
+   * CONTROL for the two records above: on an ordinary run the covered verdict is
+   * passed through, and the function that owns the mapping is what stays silent.
+   * A caller re-deriving "is this short" is how the two legs came to disagree.
    */
   it("passes a covered verdict through to the same record function", async () => {
     await processPaymentRecoveryOperations({ limit: 1 });
