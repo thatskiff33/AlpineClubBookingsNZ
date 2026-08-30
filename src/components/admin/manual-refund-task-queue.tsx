@@ -14,11 +14,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { FieldHint, useFieldHint } from "@/components/ui/field-hint";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { FocusedActionError } from "@/components/focused-action-error";
 import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import { MONEY_INPUT_PROPS, parseDecimalDollarsToCents } from "@/lib/money-input";
 import { formatCents } from "@/lib/utils";
 import type { ManualRefundTaskKind } from "@prisma/client";
 import {
@@ -218,6 +220,45 @@ type ResolutionTarget = {
   resolution: "completed" | "dismissed";
 };
 
+/**
+ * #3170: which way the officer says the money goes.
+ *
+ * `null` is "not yet chosen" and is the state the dialog OPENS in - there is no
+ * default, deliberately. Before this issue the direction was implicit in the word
+ * "refund", and that implicitness was the hazard: this is the first release where
+ * a parked edit can have raised the price, so an officer reading the evidence can
+ * correctly conclude the club is owed, and every settlement path was refund
+ * -shaped. A pre-ticked "pay them back" would put the wrong-direction movement
+ * one un-noticed default away.
+ */
+type SettlementDirection = "REFUND_TO_MEMBER" | "CHARGE_TO_MEMBER";
+
+/**
+ * What each direction actually does, in the words the officer needs BEFORE they
+ * commit rather than in a receipt afterwards. Both sentences name the instrument,
+ * and the charge sentence says plainly that nothing is taken from the card here -
+ * the completion raises the request and the member pays it, exactly as they would
+ * for an ordinary check-out extension.
+ */
+const DIRECTION_CHOICES: ReadonlyArray<{
+  value: SettlementDirection;
+  label: string;
+  detail: string;
+}> = [
+  {
+    value: "REFUND_TO_MEMBER",
+    label: "The club owes the member",
+    detail:
+      "The money goes back to them: to the card they paid with, or as account credit where there is no card behind it.",
+  },
+  {
+    value: "CHARGE_TO_MEMBER",
+    label: "The member owes the club",
+    detail:
+      "They are asked to pay it: added to this booking as an additional payment on their card, or onto the booking's invoice to pay by internet banking. Nothing is taken from their card by this screen.",
+  },
+];
+
 function completionTitle({ task, resolution }: ResolutionTarget): string {
   if (resolution === "dismissed") {
     return isFinancialReview(task)
@@ -226,9 +267,13 @@ function completionTitle({ task, resolution }: ResolutionTarget): string {
   }
 
   if (isFinancialReview(task)) {
-    return task.amountCents === null
-      ? `Record an adjustment for ${task.memberName}?`
-      : `Record the confirmed adjustment of ${formatCents(task.amountCents)} for ${task.memberName}?`;
+    // #3170: NO DIRECTION IN THE TITLE. It used to say "Record an adjustment",
+    // which reads as neutral and settles as a refund - the wording that made a
+    // wrong-direction movement one plausible action away once a parked edit could
+    // raise the price. The direction is chosen in the body and stated on the
+    // button, so the sentence the officer presses is the one that says which way
+    // the money goes.
+    return `Settle this review for ${task.memberName}?`;
   }
 
   return task.amountCents === null
@@ -247,20 +292,36 @@ function resolutionDescription({
   }
 
   if (isFinancialReview(task)) {
-    return task.amountCents === null
-      ? "This review has no confirmed amount yet, so there is nothing to record. Confirm the adjustment from the evidence and the booking's payment history first; if the evidence shows nothing is owed, close the review with no adjustment instead."
-      : "This records the adjustment the club has decided on and settles the review through the normal path. Check it against the evidence on the row and the booking's payment history before you confirm it.";
+    return "Price this from the evidence on the row and the booking's payment history: the amount, and which way it goes. If the club owes the member it is paid back or held as account credit; if the member owes the club they are asked to pay it on this booking. If nothing is owed either way, close the review with no adjustment instead.";
   }
 
   return "Only do this once the money has actually gone back to the member. It writes the refund into the payment ledger and records a refund on the booking's history.";
 }
 
-function confirmButtonLabel({ task, resolution }: ResolutionTarget): string {
+/**
+ * #3170: the button says the DIRECTION, because it is the last thing the officer
+ * reads before money moves. "Record the adjustment" was true of both directions
+ * and therefore said nothing about either.
+ *
+ * Before a direction is chosen it stays neutral, and the button is disabled - a
+ * label that named one direction while the other was still available would be the
+ * pre-ticked default this dialog deliberately does not have.
+ */
+function confirmButtonLabel(
+  { task, resolution }: ResolutionTarget,
+  direction: SettlementDirection | null,
+): string {
   if (resolution === "dismissed") {
     return isFinancialReview(task) ? "Close with no adjustment" : "Dismiss refund";
   }
 
-  return isFinancialReview(task) ? "Record the adjustment" : "Record as paid back";
+  if (isFinancialReview(task)) {
+    if (direction === "CHARGE_TO_MEMBER") return "Ask the member to pay";
+    if (direction === "REFUND_TO_MEMBER") return "Pay the member back";
+    return "Settle the review";
+  }
+
+  return "Record as paid back";
 }
 
 /**
@@ -617,6 +678,16 @@ export function ManualRefundTaskQueue() {
   const [viewerCanViewBookings, setViewerCanViewBookings] = useState(false);
   const [target, setTarget] = useState<ResolutionTarget | null>(null);
   const [note, setNote] = useState("");
+  /**
+   * #3170: the officer's pricing of a review, held only while the dialog is open.
+   *
+   * `direction` opens as null on purpose (see `SettlementDirection`), and
+   * `amountInput` is the typed text rather than a number - `parseDecimalDollarsToCents`
+   * is the boundary for money a person typed (`INV-MONEY-003`), and it returns
+   * null for anything malformed rather than a zero.
+   */
+  const [direction, setDirection] = useState<SettlementDirection | null>(null);
+  const [amountInput, setAmountInput] = useState("");
   const [submitting, setSubmitting] = useState(false);
   /**
    * #2668 review SF-5: the sentence for an outcome that was never read, held on
@@ -645,6 +716,8 @@ export function ManualRefundTaskQueue() {
     carries that, and repeating it there would announce it twice.
   */
   const noteHint = useFieldHint();
+  /** #3170: the review pricing box's hint, on the house field-hint wiring. */
+  const amountHint = useFieldHint();
 
   const load = useCallback(async () => {
     try {
@@ -681,6 +754,24 @@ export function ManualRefundTaskQueue() {
     void load();
   }, [load]);
 
+  /**
+   * #3170: the officer's figure in integer cents, or null when what they typed is
+   * not a well-formed amount. `parseDecimalDollarsToCents` returns null rather
+   * than zero for malformed text (#2685), and null here disables the button -
+   * a completion at zero is refused by the server anyway, and "nothing is owed"
+   * has its own control.
+   */
+  const pricingReview =
+    target !== null &&
+    target.resolution === "completed" &&
+    isFinancialReview(target.task);
+  const pricedAmountCents = pricingReview
+    ? parseDecimalDollarsToCents(amountInput)
+    : null;
+  const reviewPricingIncomplete =
+    pricingReview &&
+    (direction === null || pricedAmountCents === null || pricedAmountCents <= 0);
+
   async function submit() {
     if (!target) return;
     setSubmitting(true);
@@ -695,6 +786,15 @@ export function ManualRefundTaskQueue() {
             resolution: target.resolution,
             confirmed: true,
             note: note.trim() || null,
+            // #3170: a POSITIVE magnitude plus an explicit direction, never a
+            // signed amount. Sent only where the officer was asked for them, so
+            // a legacy hand-back posts exactly the body it always did.
+            ...(pricingReview
+              ? {
+                  confirmedAmountCents: pricedAmountCents,
+                  direction,
+                }
+              : {}),
           }),
         },
       );
@@ -708,6 +808,8 @@ export function ManualRefundTaskQueue() {
       toast.success(data?.message ?? "Done.");
       setTarget(null);
       setNote("");
+      setDirection(null);
+      setAmountInput("");
       await load();
     } catch {
       /*
@@ -930,6 +1032,16 @@ export function ManualRefundTaskQueue() {
                         onClick={() => {
                           setNote("");
                           setUnverified(null);
+                          // #3170: open with no direction chosen, and with the
+                          // amount the task already carries where it has one -
+                          // a review raised unpriced opens blank rather than at
+                          // a figure nobody decided.
+                          setDirection(null);
+                          setAmountInput(
+                            task.amountCents === null
+                              ? ""
+                              : (task.amountCents / 100).toFixed(2),
+                          );
                           setTarget({ task, resolution: "completed" });
                         }}
                       >
@@ -951,6 +1063,8 @@ export function ManualRefundTaskQueue() {
                         onClick={() => {
                           setNote("");
                           setUnverified(null);
+                          setDirection(null);
+                          setAmountInput("");
                           setTarget({ task, resolution: "dismissed" });
                         }}
                       >
@@ -973,6 +1087,11 @@ export function ManualRefundTaskQueue() {
               if (!open) {
                 setTarget(null);
                 setUnverified(null);
+                // #3170: a direction and an amount belong to the task they were
+                // typed for. Carrying either onto the next row would offer a
+                // pre-filled figure nobody priced.
+                setDirection(null);
+                setAmountInput("");
               }
             }}
           >
@@ -993,6 +1112,73 @@ export function ManualRefundTaskQueue() {
                       {resolutionDescription(target)}
                     </DialogDescription>
                   </DialogHeader>
+                  {pricingReview ? (
+                    <div className="space-y-4">
+                      {/*
+                        #3170: the direction FIRST, and with no default. Every
+                        settlement path used to hand money back, so an officer who
+                        correctly read the evidence as "the member owes us" had one
+                        plausible action that paid them instead. Asking which way
+                        before asking how much is what stops the amount being typed
+                        into a control whose direction the officer never saw.
+                      */}
+                      <fieldset className="space-y-2">
+                        <legend className="text-sm font-medium">
+                          Which way does this money go?
+                        </legend>
+                        {DIRECTION_CHOICES.map((choice) => (
+                          <label
+                            key={choice.value}
+                            htmlFor={`manual-refund-task-direction-${choice.value}`}
+                            className="flex gap-2 rounded-md border border-border p-2 text-sm"
+                          >
+                            <input
+                              type="radio"
+                              id={`manual-refund-task-direction-${choice.value}`}
+                              name="manual-refund-task-direction"
+                              className="mt-1"
+                              value={choice.value}
+                              checked={direction === choice.value}
+                              onChange={() => setDirection(choice.value)}
+                            />
+                            <span className="space-y-1">
+                              <span className="block font-medium">
+                                {choice.label}
+                              </span>
+                              <span className="block text-xs text-muted-foreground">
+                                {choice.detail}
+                              </span>
+                            </span>
+                          </label>
+                        ))}
+                      </fieldset>
+                      <div className="space-y-2">
+                        <Label htmlFor="manual-refund-task-amount">Amount</Label>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm">$</span>
+                          <Input
+                            id="manual-refund-task-amount"
+                            {...MONEY_INPUT_PROPS}
+                            value={amountInput}
+                            className="w-32"
+                            onChange={(event) =>
+                              setAmountInput(event.target.value)
+                            }
+                            {...amountHint.fieldProps}
+                          />
+                        </div>
+                        <FieldHint {...amountHint.hintProps}>
+                          {/*
+                            The box takes a magnitude, never a sign: the direction
+                            above is what says which way it goes, and a money box
+                            that accepts a minus sign is the overloading this epic
+                            exists to remove.
+                          */}
+                          Example: 45.00 — how much, without a plus or minus
+                        </FieldHint>
+                      </div>
+                    </div>
+                  ) : null}
                   <div className="space-y-2">
                     <Label htmlFor="manual-refund-task-note">
                       Note{target.resolution === "dismissed" ? " (required)" : " (optional)"}
@@ -1056,12 +1242,22 @@ export function ManualRefundTaskQueue() {
                           Supplying the confirmed amount is #3032's; this only
                           stops the dead press in the meantime.
                         */
+                        /*
+                          #3170: a review completion is armed only once the
+                          officer has said which way and how much. It replaces the
+                          #3033 guard that disabled the button whenever the task
+                          carried no amount - which was right while nothing on
+                          this screen could supply one, and would now disable the
+                          control that supplies it.
+                        */
+                        reviewPricingIncomplete ||
                         (target.resolution === "completed" &&
+                          !isFinancialReview(target.task) &&
                           target.task.amountCents === null) ||
                         (target.resolution === "dismissed" && note.trim().length === 0)
                       }
                     >
-                      {confirmButtonLabel(target)}
+                      {confirmButtonLabel(target, direction)}
                     </Button>
                   </DialogFooter>
                 </>

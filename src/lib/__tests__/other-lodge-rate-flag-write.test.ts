@@ -93,7 +93,6 @@ async function writeWith(options: {
       ] as unknown as ApplyArgs["proposedRemainingGuests"],
       normalizedAddGuests: undefined,
       priceBreakdown: {
-        totalPriceCents: 2000,
         guests: [
           { priceCents: 2000, perNightCents: [2000], nightDates: [CHECK_IN] },
         ],
@@ -173,7 +172,6 @@ describe("#2978: the stored other-lodge flag follows the PRICED rate", () => {
         ] as unknown as ApplyArgs["proposedRemainingGuests"],
         normalizedAddGuests: undefined,
         priceBreakdown: {
-          totalPriceCents: 2000,
           guests: [
             { priceCents: 2000, perNightCents: [2000], nightDates: [CHECK_IN] },
           ],

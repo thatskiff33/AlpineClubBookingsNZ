@@ -315,17 +315,40 @@ describe("what completing or dismissing means, per kind (#3033)", () => {
     expect(dialog).toHaveTextContent("Dismiss refund");
   });
 
-  it("refuses to offer a completion it knows the server will reject", async () => {
-    // The server will not close a task with no amount. A button whose only
-    // outcome is a refusal is worse than no button, so it is disarmed and the
-    // dialog says what to do instead. Supplying the amount is #3032's.
+  it("refuses to offer a completion until the officer has said how much and which way", async () => {
+    /*
+      #3033 disarmed this button whenever the task carried no amount, because
+      nothing on this screen could supply one and a button whose only outcome is
+      a refusal is worse than no button. #3170 supplies one, so the guard moves
+      to the two things the officer must now decide: an unpriced review opens with
+      neither, and the button is still dead.
+    */
     const dialog = await openDialog(REVIEW_TASK, "Record the adjustment");
 
-    expect(dialog).toHaveTextContent(/no confirmed amount yet/);
+    expect(dialog).toHaveTextContent(/Which way does this money go\?/);
     // And it does not print "Record Awaiting pricing as paid back".
     expect(dialog).not.toHaveTextContent("Awaiting pricing as paid back");
     expect(
-      screen.getByRole("button", { name: "Record the adjustment" }),
+      screen.getByRole("button", { name: "Settle the review" }),
+    ).toBeDisabled();
+
+    // An amount alone is not enough: the direction is what stops a wrong-way
+    // movement, so it is required rather than defaulted.
+    fireEvent.change(screen.getByLabelText("Amount"), {
+      target: { value: "45.00" },
+    });
+    expect(
+      screen.getByRole("button", { name: "Settle the review" }),
+    ).toBeDisabled();
+
+    // And a direction alone is not enough either — the control is a genuine
+    // pair, not one requirement wearing two labels.
+    fireEvent.change(screen.getByLabelText("Amount"), {
+      target: { value: "" },
+    });
+    fireEvent.click(screen.getByLabelText(/The club owes the member/));
+    expect(
+      screen.getByRole("button", { name: "Pay the member back" }),
     ).toBeDisabled();
   });
 
@@ -340,13 +363,72 @@ describe("what completing or dismissing means, per kind (#3033)", () => {
     const priced = { ...REVIEW_TASK, id: "task-review-priced", amountCents: 4500 };
     const dialog = await openDialog(priced, "Record the adjustment");
 
-    expect(dialog).toHaveTextContent("$45.00");
+    // #3170: the figure is now in the box the officer can amend, not printed in
+    // the title - the title carries no direction at all any more (see below).
+    expect(screen.getByLabelText("Amount")).toHaveValue("45.00");
     expect(dialog).not.toHaveTextContent(/as paid back/);
     expect(dialog).not.toHaveTextContent(/actually gone back to the member/);
-    expect(dialog).toHaveTextContent(/adjustment the club has decided on/);
+    fireEvent.click(screen.getByLabelText(/The club owes the member/));
     expect(
-      screen.getByRole("button", { name: "Record the adjustment" }),
+      screen.getByRole("button", { name: "Pay the member back" }),
     ).not.toBeDisabled();
+  });
+
+  it("never names a direction before the officer has chosen one (#3170)", async () => {
+    /*
+      THE MEASURED HAZARD. Every settlement route was refund-shaped and the copy
+      read "Record an adjustment", which is neutral to read and settles as a
+      refund. This child is the first that can park an edit which RAISED the
+      price, so an officer who correctly concludes "they owe us $200" and types it
+      would have had $200 sent to their card.
+
+      So: no direction in the title, no pre-ticked radio, and the button - the
+      last thing read before money moves - says which way.
+    */
+    const priced = { ...REVIEW_TASK, id: "task-review-dir", amountCents: 4500 };
+    const dialog = await openDialog(priced, "Record the adjustment");
+
+    expect(dialog).toHaveTextContent("Settle this review for Grace Hopper?");
+    expect(dialog).not.toHaveTextContent(/Record an adjustment/);
+    expect(screen.getByLabelText(/The club owes the member/)).not.toBeChecked();
+    expect(screen.getByLabelText(/The member owes the club/)).not.toBeChecked();
+    expect(screen.getByRole("button", { name: "Settle the review" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText(/The member owes the club/));
+    expect(
+      screen.getByRole("button", { name: "Ask the member to pay" }),
+    ).toBeInTheDocument();
+    // And it says plainly that this screen does not take the money.
+    expect(dialog).toHaveTextContent(
+      /Nothing is taken from their card by this screen/,
+    );
+  });
+
+  it("posts a positive magnitude and an explicit direction (#3170)", async () => {
+    const priced = { ...REVIEW_TASK, id: "task-review-post", amountCents: null };
+    await openDialog(priced, "Record the adjustment");
+
+    fireEvent.change(screen.getByLabelText("Amount"), {
+      target: { value: "200.00" },
+    });
+    fireEvent.click(screen.getByLabelText(/The member owes the club/));
+    fireEvent.change(screen.getByLabelText(/^Note/), {
+      target: { value: "two extra nights, priced from the 2024 rate card" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Ask the member to pay" }));
+
+    await waitFor(() => {
+      const call = vi.mocked(fetch).mock.calls.find(
+        ([url]) =>
+          typeof url === "string" &&
+          url.includes("/manual-refund-tasks/task-review-post"),
+      );
+      expect(call).toBeDefined();
+      const body = JSON.parse(String((call?.[1] as RequestInit).body));
+      // A magnitude and a direction, never a signed amount.
+      expect(body.confirmedAmountCents).toBe(20000);
+      expect(body.direction).toBe("CHARGE_TO_MEMBER");
+    });
   });
 
   it("does not read a hand-back's placeholder as an amount", async () => {

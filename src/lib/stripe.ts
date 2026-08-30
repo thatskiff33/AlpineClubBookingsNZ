@@ -210,6 +210,36 @@ export async function getPaymentIntent(
   return stripe.paymentIntents.retrieve(paymentIntentId);
 }
 
+/**
+ * #3170 (epic #2797): raise what an EXISTING, unpaid PaymentIntent asks for.
+ *
+ * The one operation that lets a booking edit carry ONE request while more than
+ * one review task contributes a share to it. Creating a second intent instead is
+ * what loses money here: minting queues every other outstanding `ADDITIONAL`
+ * transaction on the payment for cancellation, and the payment record carries a
+ * single outstanding additional rather than a sum, so the second ask silently
+ * replaced the first.
+ *
+ * Stripe's own idempotency cannot do this: replaying the create key returns the
+ * ORIGINAL intent at its ORIGINAL amount, and replaying it with a different
+ * amount is an `idempotency_error`. Updating is the only way to restate an ask.
+ *
+ * NOT a capture and NOT a charge - it changes what the member will be asked for
+ * when they choose to pay. Stripe refuses an amount change on an intent that has
+ * already succeeded or been cancelled, and the caller refuses those states before
+ * it gets here, so a rejection from Stripe means the caller's pre-check raced
+ * something and the failure is loud rather than silent.
+ */
+export async function updatePaymentIntentAmount(
+  paymentIntentId: string,
+  amountCents: number
+): Promise<Stripe.PaymentIntent> {
+  const stripe = await getStripe();
+  return stripe.paymentIntents.update(paymentIntentId, {
+    amount: amountCents,
+  });
+}
+
 const CANCELLABLE_PAYMENT_INTENT_STATUSES = new Set<Stripe.PaymentIntent.Status>([
   "requires_payment_method",
   "requires_confirmation",

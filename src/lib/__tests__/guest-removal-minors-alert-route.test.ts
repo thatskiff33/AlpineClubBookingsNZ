@@ -66,12 +66,11 @@ vi.mock("@/lib/booking-modify", async (importActual) => {
     calculateModificationSettlementOptions: mocks.calculateModificationSettlementOptions,
     lockedNightPricesForGuest: mocks.lockedNightPricesForGuest,
     rateSnapshotUpdateForRepricedGuest: actual.rateSnapshotUpdateForRepricedGuest,
-    // #3031: the real refusal class. A module mock that omits it makes the
-    // service's `new BookingEditFinancialReviewRequiredError(...)` a TypeError,
-    // which the route maps to a bare 400 - so a fixture that stopped reconciling
-    // would fail as "something broke" instead of "the money needs review".
-    BookingEditFinancialReviewRequiredError:
-      actual.BookingEditFinancialReviewRequiredError,
+    // #3170: the refusal class this partial mock used to carry is GONE. Nothing
+    // throws it any more - an unpriceable edit parks on every path this rule
+    // covers - so re-exporting it would be re-exporting a symbol that no longer
+    // exists, which is a TypeError of exactly the kind the old comment warned
+    // about, in the other direction.
   };
 });
 vi.mock("@/lib/membership-type-policy", () => ({

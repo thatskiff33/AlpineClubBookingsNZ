@@ -150,6 +150,7 @@ are the literal `1`.
 | **Xero member contact link (legacy key)** | `hashtext(<memberId>)` | short local-link transactions (`xero-contacts.ts`) | — | First-writer-wins local `Member.xeroContactId` linking after provider work. This legacy unnamespaced key is shared by both Xero contact-link writers; do not copy it for new domains. |
 | **Diagnostics budget reserve (per month)** | `hashtext("diagnostics-budget-reserve"), hashtext(<month>)` | `reserveDiagnosticsBudget` **and** `settleDiagnosticsRoundtrip` (`ai-diagnostics-usage.ts`, AID-2 #2371) | — | Serialises every AI Diagnostics budget RESERVE **and** SETTLE for one billing month so the reserve's read-check-insert (sum live reservations + settled spend, compare to budget, insert reservation) is atomic against concurrent reservers AND against a settle's reservation-delete + `settledCents` increment. A burst of paid diagnostics roundtrips therefore cannot push `settled + reserved` over the monthly budget, and a settle can never commit mid-reserve to under-count committed spend; a lost claim (over budget) inserts nothing and denies the paid call. Different months do not contend. Held only for the milliseconds of each short transaction; the provider call runs entirely OUTSIDE both. Both take ONLY this key (no second lock), so no ordering cycle is possible. See "Composition: diagnostics budget reserve" below. |
 | **Backup run claim** | `hashtext("backup:run-lock")` | `claimBackupRun` (`backup-run.ts`, #2095) | — | Single-flights managed database backups across containers (nightly cron vs admin run-now). Held only for the milliseconds of the reap-stale → active-check → insert-RUNNING claim transaction; the `pg_dump`/upload pipeline runs entirely outside any transaction, so a crashed run can never wedge the lock (a dead RUNNING row is reaped by heartbeat age on the next claim). Single-lock holder; composes with no other family. The config-transfer pre-apply safety backup deliberately bypasses this claim (it must run inline; concurrent dumps are independent snapshots writing uniquely-named files). |
+| **Xero supplementary invoice per anchor** | `hashtext("xero-supplementary-invoice"), hashtext(<BookingModification id>)` | `enqueueXeroSupplementaryInvoiceOperation` (`xero-operation-outbox.ts`, #3170) | anchor | Single-flights "does this booking change already have a supplementary invoice going out?" so one edit can never send two. Held only for the milliseconds of the link-check -> queued-check -> raise-or-create transaction; the Xero round trip happens later, in the outbox worker, entirely outside it. Single-lock holder, composing with no other family, and its two callers both arrive holding nothing: the edit-settlement callers reach it post-commit through a fire-and-forget `queueXeroBookingEditSettlement`, and the booking-vs-Xero repair pass (`xero-booking-repair-passes.ts`, `QUEUE_SUPPLEMENTARY_INVOICE`) calls it DIRECTLY from an operator-driven admin/CLI action that opens no transaction and takes no advisory lock. So no ordering cycle is possible. It exists because #3170 made two review settlements of ONE edit contribute to one combined total: both restate first, both find nothing queued, and the queued-operation lookup deduped on a `correlationKey` BUILT FROM THE AMOUNT - so $200 and $30 were two keys, two operations and two invoices. The lookup is now scoped to the anchor, and an operation asking for less is RAISED through `restatePendingSupplementaryInvoiceAmount`, which refuses to lower. Note that `startXeroSyncOperation` runs on this transaction's client, so its P2002 fallback (re-read the winner's row) cannot run here - a unique violation aborts the surrounding transaction. Under this key that fallback is unreachable rather than needed: a concurrent enqueue for the same anchor is serialised behind us and finds our row through the queued-check. Residual, stated: a share settled AFTER the worker has claimed the operation (RUNNING) or after the invoice has been sent cannot join it, so the invoice bills the earlier figure and the difference is collected by hand. The enqueue reports that as `outcome: "short"` and the settlement writes `booking.editFinancialReview.chargeShareUncollected` (leg `xero-invoice`) so an officer can find it - one invoice, never two, and never a silent shortfall. Proven against real PostgreSQL by the "FORCES the two-settlement interleaving" case in `edit-financial-review-races.realdb.test.ts`, which the #1881 harness runs in CI. |
 
 ### Composition: lodge admission, deactivation and hut-leader assignments (#2701)
 
@@ -2578,6 +2579,40 @@ would give two same-amount refunds identical per-slice keys, so Stripe would
 answer the second with the FIRST refund and the caller would take the replayed id
 as success; a modification-scoped recovery key would let the two tasks upsert one
 another's row, and that upsert overwrites `amountCents` and `stripeKeyPrefix`.
+
+**#3170's CHARGE keys are scoped the OTHER way — to the `BookingModification` —
+and that is not a contradiction, it is the same question answered about a
+different object.** A refund is money already SENT, so two refunds of one edit are
+two movements that must never converge; a charge is a REQUEST the member still has
+to act on, and the owner's 30 Aug 2026 decision on #3170 is that one edit raises
+exactly one of those, for the total of its shares. Two requests lose money without
+any race at all: minting an additional PaymentIntent queues every other
+outstanding `ADDITIONAL` transaction on that payment for cancellation, and
+`reconcilePaymentAggregates` carries a single `additionalAmountCents` rather than
+a sum. So a later share RAISES the existing intent's amount instead of minting,
+and both the Stripe key and the recovery key name the edit.
+
+**Two officers settling two shares at once is made safe by DERIVATION plus a
+compare-and-set, not by a lock** — which matters here because this path still has
+none, for the reason above. The combined total is summed from the settled task
+rows (`sumEditReviewChargeSharesCents`) at execution time, after the caller's
+transaction has committed, so:
+
+- **no double count** — each task contributes exactly once, from the row its own
+  status-fenced claim wrote, and never as an increment of a running figure;
+- **no lost share** — whichever completion commits LAST necessarily reads after
+  both commits, so at least one run always derives the true total;
+- **the stale run cannot win** — a settled share is terminal, so the derived total
+  only ever grows and a smaller figure is always the older answer. The write
+  REFUSES TO LOWER the recorded request, which makes the outcome independent of
+  the order the two provider calls happen to land in.
+
+The recovery replay is the same function, so a crash between the commit and the
+Stripe call costs a delay rather than a share: the row's stored `amountCents` is
+advisory and the replay re-derives. A review-charge recovery operation is
+therefore routed AWAY from the ordinary additional-intent worker, whose "a newer
+additional supersedes this one" check would otherwise see the request this very
+edit already minted and complete having minted nothing.
 
 **The lockless path also needed one WRITE made safe.**
 `applyLocalRefundAllocation` computes an ABSOLUTE `refundedAmountCents` from a

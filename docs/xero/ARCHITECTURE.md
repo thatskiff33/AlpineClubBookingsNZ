@@ -959,6 +959,14 @@ invoices.
     and sums each settleable child's per-guest run drift, so the reconstructed
     line-item input matches what was invoiced.
 
+  A guest holding a night whose price is **not known** (`BookingGuestNight.priceCents`
+  is `NULL` — a night a parked edit committed without valuing, #3170) has their
+  per-night detail dropped for the replay, and is replayed on the whole-stay
+  legacy path instead. That is not a shortcut: it is what `buildInvoiceLineItems`
+  itself now does for such a guest, and this audit's whole promise is that it
+  replays the builder. Valuing an unknown night at zero would have reported a
+  drift figure that is not the drift.
+
   It is a **diagnostic only**: zero live-provider calls, no transactions, no
   mutations — it issues only `booking.findMany` +
   `groupBookingSettlement.findMany` reads (cursor-paginated). Run it against a

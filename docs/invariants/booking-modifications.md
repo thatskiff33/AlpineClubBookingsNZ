@@ -1193,8 +1193,24 @@ estimate of historical money.** (#3031, epic #2797.)
 
 A guest strand is **exactly priced** when every night it holds carries a stored
 non-negative integer `BookingGuestNight.priceCents` and those prices sum to
-`BookingGuest.priceCents` to the cent. The test is RECONCILIATION and not
-provenance: two of the three events that populated that table were themselves
+`BookingGuest.priceCents` to the cent.
+
+**`priceCents` is nullable, and a `NULL` is the column's own statement that the
+night's sold price is NOT KNOWN** (#3170, epic #2797). It joins the class this
+rule already had — an absent row, a negative row, a non-integer row — as an
+ABSENCE of usable evidence. It is never a zero: a stored `0` is a real sold price
+(a comped night) and reconciles like any other. So the definition above does not
+change shape, and that is why it can be restated in one sentence: **a strand
+holding a `NULL` night is not exact, and goes to a person.** An evenly-split
+backfilled strand carries an integer on every night, so it still reconciles and
+still prices as exact — the consequence this rule was written to preserve.
+
+Only a PARKED edit writes a `NULL`, and only for a night it cannot value: one the
+strand already held whose row carried no usable money, or one the edit newly puts
+that strand on while its stored total is frozen. A night an edit BUYS at a price
+the member is charged always carries that integer.
+
+The test is RECONCILIATION and not provenance: two of the three events that populated that table were themselves
 even splits (migrations `20260704150000` #1098 and `20260810010000` #2739), there
 is no provenance column and `createdAt` does not separate a backfilled row from a
 live one — so an evenly-split backfilled strand reconciles and prices as exact,
@@ -1204,10 +1220,19 @@ valid evidence once stored; equal nightly rows alone are not a defect.
 Where a strand is exact, an edit values every night it keeps or gives back at the
 integer on the row, and every night it newly buys under current pricing policy
 (INV-MOD-005, INV-MOD-006). Where it is not, the edit produces **no numeric
-result at all** — not zero, not null, not an optional a caller can default —
+result at all** — not zero, not an amount, not an optional a caller can default —
 only a typed cause (`NO_STORED_NIGHT_PRICES`, `PARTIAL_STORED_NIGHT_PRICES`,
-`STORED_TOTAL_MISMATCH`) and the evidence as it stands. Nothing is written: a
-retained row is preserved byte for byte or not written at all.
+`STORED_TOTAL_MISMATCH`, `COUNTERPART_STRAND_UNREADABLE`) and the evidence as it
+stands.
+
+**No AMOUNT is written; the STRUCTURAL change may be** (#3170). Every stored
+money value stays exactly as it is: a retained row is preserved byte for byte,
+each strand's `BookingGuest.priceCents` is untouched, and the booking's own
+totals do not move. What the edit may still write is which nights each guest
+holds — a statement about beds, not about cents — with a `NULL` on every night it
+cannot value. That is what "park" means, and it is why `NULL` had to become
+storable: without it the only ways to commit the change were to invent a number
+or to delete the evidence.
 
 Prohibited as a source of a historical amount: today's season rate for a night
 the edit does not buy; a stored average; a proportional estimator; an even split
@@ -1227,14 +1252,24 @@ made the two differ:
 
 - the IN-PROGRESS edit planner, `buildInProgressGuestRangePlan`
   (`src/lib/booking-edit-guest-ranges.ts`), reached from both the modify-quote
-  preview and the modify save whenever the stay is already under way. It still
-  REFUSES (`FINANCIAL_REVIEW_REQUIRED`, 409) and moves nothing. The refusal is an
-  interim and is named as one: parking it needs a per-night integer for every
-  night each strand ends up holding, because `syncGuestNights` rewrites those rows
-  from `perNightCents` and refuses rather than defaulting, and a strand with no
-  usable stored price has no such number for a night it KEEPS. The three ways to
-  supply one are money decisions rather than implementation choices, and they are
-  open — see the throw site in `booking-batch-modification-service.ts`;
+  preview and the modify save whenever the stay is already under way. It **PARKS**
+  (#3170). It used to refuse, and the refusal was named as an interim: parking
+  needed a per-night value for every night each strand ends up holding, because
+  `syncGuestNights` rewrites those rows and refused rather than defaulting, and a
+  strand with no usable stored price has no number for a night it KEEPS. The
+  owner settled that on 30 Aug 2026 by making `NULL` storable, so the edit now
+  commits and the amount waits for a person. On that branch nothing is repriced,
+  no promotion is recalculated, no change fee is charged, no settlement options
+  are computed and the booking's stored totals do not move; one OPEN
+  `EDIT_FINANCIAL_REVIEW` task per unreadable strand is raised inside the same
+  transaction under the locks already held. The capacity check still runs, on the
+  same ranges a priced edit would be checked against — parking withholds the
+  money, never the beds. The modify-quote preview parks in step, reporting a zero
+  movement and the club's own sentence rather than a price, so it can never block
+  a save that would succeed. THIS IS THE PATH THAT CAN PARK A PRICE INCREASE - a
+  check-out extension, or a guest added - so the review it raises may owe the CLUB
+  rather than the member. Which way a completion sends the money, and how it is
+  collected, is `INV-PAY-051`;
 - the single-guest removal, `removeBookingGuestInTransaction`
   (`src/lib/booking-guest-removal-service.ts`), reached from the guest DELETE
   route. It PARKS (#3032): the guest comes off, and the amount is held as an OPEN
