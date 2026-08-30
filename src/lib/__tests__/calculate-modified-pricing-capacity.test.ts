@@ -643,10 +643,44 @@ describe("calculateModifiedPricing in-progress per-night breakdown (#2736)", () 
       }),
     ).rejects.toThrow(/Not enough beds available/);
 
-    // The control, and it is what makes the assertion above mean something: the
-    // capacity resolver was asked about THE PARKED PLAN's ranges, not skipped
-    // and not asked about the booking's stored ones.
+    /*
+      The control, and it is what makes the assertion above mean something: the
+      capacity resolver was asked about THE PARKED PLAN's ranges.
+
+      A CALL COUNT ALONE DOES NOT SAY THAT, and asserting only the count is how
+      this pair came to be a guard that could not fail. Mutating the plan
+      selection to `const capacityPlan = inProgressPlan;` drops the parked branch
+      and falls through to the envelope call - `newCheckIn` as the range start and
+      `policyAdjustedGuestsForPricing` as the ranges - which is the pre-#2736
+      shape, still exactly one call, and the whole suite stayed green.
+
+      So the ARGUMENTS are what is pinned. Two things distinguish the parked
+      plan's ranges from the envelope's, and both are load-bearing:
+        - the range starts at `editableFrom`, not at the booking's check-in, so
+          nights already spent are not re-checked (#2029's capacityRangeStart);
+        - the range carries an EXPLICIT night set, so the sparse guest's gap at
+          08-21 is not silently occupied and #2029's check-out-day extension
+          night IS.
+    */
     expect(h.checkCapacityForGuestRanges).toHaveBeenCalledTimes(1);
+    const [lodgeId, rangeStart, rangeEnd, proposed] =
+      h.checkCapacityForGuestRanges.mock.calls[0];
+    expect(lodgeId).toBe("lodge-1");
+    expect(rangeStart).toEqual(D("2026-08-21"));
+    // Said the other way round too: the envelope start is what a reverted
+    // planner would pass, and it is not this.
+    expect(rangeStart).not.toEqual(D("2026-08-20"));
+    expect(rangeEnd).toEqual(D("2026-08-25"));
+    expect(proposed).toEqual([
+      {
+        stayStart: D("2026-08-21"),
+        stayEnd: D("2026-08-25"),
+        // 08-21 is the guest's gap and is absent; 08-24 is the extension's
+        // newly-occupied night and is present.
+        nights: [D("2026-08-22"), D("2026-08-23"), D("2026-08-24")],
+        memberId: "m1",
+      },
+    ]);
   });
 
   it("parks the same edit when the beds ARE there", async () => {
