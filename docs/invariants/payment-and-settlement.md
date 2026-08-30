@@ -1290,12 +1290,21 @@ one, check the other.
     in-progress batch edit does NOT yet raise; it still refuses, for the structural
     reason stated in `INV-MOD-028`. So a live club can now hold rows of this kind,
     and they arrive from exactly one door.
-  - **One task per unreadable STRAND, not one per edit.** The occurrence key is
-    minted per strand, so per strand is what "exactly one" can mean idempotently: a
-    replay of the same edit re-derives the same keys and creates nothing. The
-    ordinary booking has one unreadable strand — the guest leaving — and raises one
-    task. A booking predating `BookingGuestNight` has one per guest, and only the
-    departing guest's carries surrendered nights and therefore money; the others
-    record a strand whose history a person must read, and their honest resolution
-    is usually DISMISSED with a note, which is a defined state above and claims no
-    payment.
+  - **One task per parked STRAND, and the DEPARTING strand is always one of
+    them.** The occurrence key is minted per strand, so per strand is what
+    "exactly one" can mean idempotently: a replay of the same edit re-derives the
+    same keys and creates nothing. A remaining strand is recorded when its own
+    rows cannot be read; it carries no surrendered nights, and its honest
+    resolution is often DISMISSED with a note, which is a defined state above and
+    claims no payment. **The strand actually leaving is recorded on every parked
+    removal, whether or not its own rows read cleanly** (#3032) — because nothing
+    settles on a parked removal and the delete destroys the guest's night rows,
+    so a departing strand that was skipped for being exact left its refund as a
+    figure no longer present anywhere in the database, behind a task about
+    somebody else that correctly read as "nothing to adjust". Where that strand's
+    rows ARE exact its cause is `COUNTERPART_STRAND_UNREADABLE`, its stored
+    evidence carries the real per-night prices, and no `amountCents` is written:
+    the money that goes back also depends on the cancellation tier and the promo
+    recalculation a parked removal skips, so the gross stored figure is evidence
+    for the admin rather than a settlement the system may assert. **The rule:
+    a parked edit never destroys a number the system could have known.**

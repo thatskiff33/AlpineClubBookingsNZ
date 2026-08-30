@@ -63,6 +63,7 @@ import {
   raiseEditFinancialReviewTask,
 } from "@/lib/edit-financial-review";
 import {
+  counterpartStrandReviewOccurrence,
   editFinancialReviewOccurrence,
   storedSoldPriceEvidenceForGuest,
 } from "@/lib/stored-sold-price-evidence";
@@ -567,31 +568,15 @@ export async function removeBookingGuestInTransaction({
   // what a refusal could not give. Leaving the exemption would now be the harmful
   // branch — a consent removal from a booking whose rows do not reconcile would
   // settle an invented amount while every other removal parked.
-  const unpriceableStrands = [guestToRemove, ...booking.guests]
+  const strandEvidence = [guestToRemove, ...booking.guests]
     .filter(
       (guest, index, all) =>
         all.findIndex((other) => other.id === guest.id) === index,
     )
-    .flatMap((guest) => {
-      const evidence = storedSoldPriceEvidenceForGuest(guest, booking);
-      if (evidence.kind === "exact") return [];
-      return [
-        editFinancialReviewOccurrence({
-          bookingId,
-          bookingGuestId: guest.id,
-          evidence,
-          guestTotalCents: guest.priceCents,
-          // A removal surrenders every night the departing guest holds and adds
-          // none; a remaining guest surrenders nothing. Recorded from the rows
-          // this service can still see, because the delete below destroys them.
-          surrenderedNightDates:
-            guest.id === guestId
-              ? evidence.nightPrices.map((night) => night.date)
-              : [],
-          addedNightDates: [],
-        }),
-      ];
-    });
+    .map((guest) => ({
+      guest,
+      evidence: storedSoldPriceEvidenceForGuest(guest, booking),
+    }));
   /**
    * Is this removal's money unknowable from the booking's own history?
    *
@@ -603,7 +588,71 @@ export async function removeBookingGuestInTransaction({
    * guest's credit. That is the defect #3031 named, and it is not confined to the
    * guest who is leaving, which is why the check above judges every strand.
    */
-  const parkedFinancialReview = unpriceableStrands.length > 0;
+  const parkedFinancialReview = strandEvidence.some(
+    (strand) => strand.evidence.kind !== "exact",
+  );
+  /**
+   * The strands this removal parks, and why the DEPARTING one is always among
+   * them.
+   *
+   * A REMAINING strand is recorded when its own rows cannot be read - that is a
+   * separate question for the admin, and it carries no surrendered nights
+   * because nothing of that guest's is being given back.
+   *
+   * THE DEPARTING STRAND IS RECORDED WHENEVER THIS REMOVAL PARKS, READABLE OR
+   * NOT, and that is a defect fix rather than symmetry. Filtering it out when its
+   * own rows happened to be exact lost real money: nothing settles on a parked
+   * removal (`priceDiffCents` is 0, and the booking's stored total does not
+   * move), `tx.bookingGuest.delete` below destroys the guest row and every night
+   * row behind it, and `BookingModification.previousData` keeps only name, age
+   * tier and membership. So on a booking where the LEAVING guest reconciles and a
+   * REMAINING one does not, the only task raised named the remaining guest, said
+   * "gave back no nights", and read - correctly, for what it described - as
+   * "reviewed, nothing to adjust". An admin dismissing it cleared the banner, and
+   * the departing member's refund was a figure no longer present anywhere in the
+   * database.
+   *
+   * Its evidence is exact, so the number IS knowable and is preserved on the
+   * task: the real per-night prices, the stored guest total, and the nights this
+   * removal surrenders. `COUNTERPART_STRAND_UNREADABLE` says which of the two
+   * situations an admin is looking at, and `counterpartStrandReviewOccurrence`
+   * carries the rest of the reasoning - including why no AMOUNT is written even
+   * though the rows add up.
+   */
+  const unpriceableStrands = !parkedFinancialReview
+    ? []
+    : strandEvidence.flatMap(({ guest, evidence }) => {
+        // A removal surrenders every night the departing guest holds and adds
+        // none; a remaining guest surrenders nothing. Recorded from the rows
+        // this service can still see, because the delete below destroys them.
+        const surrenderedNightDates =
+          guest.id === guestId
+            ? evidence.nightPrices.map((night) => night.date)
+            : [];
+        if (evidence.kind === "unusable") {
+          return [
+            editFinancialReviewOccurrence({
+              bookingId,
+              bookingGuestId: guest.id,
+              evidence,
+              guestTotalCents: guest.priceCents,
+              surrenderedNightDates,
+              addedNightDates: [],
+            }),
+          ];
+        }
+        if (guest.id !== guestId) return [];
+        return [
+          counterpartStrandReviewOccurrence({
+            bookingId,
+            bookingGuestId: guest.id,
+            evidence,
+            guestTotalCents: guest.priceCents,
+            surrenderedNightDates,
+            addedNightDates: [],
+          }),
+        ];
+      });
 
   const choreWarnings = await removeGuestChoreAssignments(tx, guestId);
 
@@ -1016,15 +1065,23 @@ export async function removeBookingGuestInTransaction({
    * the headline requirement, and it is the reason the raise is shaped that way
    * rather than as a bare `create`.
    *
-   * ONE TASK PER UNPRICEABLE STRAND, not one per removal, and the difference is
+   * ONE TASK PER PARKED STRAND, not one per removal, and the difference is
    * deliberate. The occurrence key is minted per strand, so per-strand is what
    * "exactly one" can mean idempotently: a replay of this removal re-derives the
-   * same keys and creates nothing. A booking usually has exactly one such strand
-   * - the guest leaving - and then this raises exactly one task. Where a
-   * REMAINING strand is unreadable too it gets its own task, because it is a
-   * separate question for the admin: this one carries no surrendered nights, and
-   * its honest resolution is usually DISMISSED ("reviewed, nothing to adjust"),
-   * which is a state this feature already has and does not pretend is a payment.
+   * same keys and creates nothing.
+   *
+   * THE DEPARTING STRAND IS ALWAYS ONE OF THEM when this removal parks - see
+   * `unpriceableStrands` above, where dropping it because its own rows read
+   * cleanly is what silently destroyed the departing member's refund. So the task
+   * carrying the surrendered nights, and therefore the money, is raised on every
+   * parked removal.
+   *
+   * Where a REMAINING strand is unreadable it gets its own task beside it,
+   * because it is a separate question for the admin: that one carries no
+   * surrendered nights, and its honest resolution is often DISMISSED ("reviewed,
+   * nothing to adjust"), which is a state this feature already has and does not
+   * pretend is a payment. Dismissing it no longer discards anything, because the
+   * departing guest's money is on its own task.
    *
    * `raisedAmountCents` IS NULL AND MUST STAY NULL. The amount is not zero and
    * not estimated - it is unknown, which is the whole point of the epic. A

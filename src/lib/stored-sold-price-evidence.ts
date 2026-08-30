@@ -212,17 +212,89 @@ export function editFinancialReviewOccurrence(args: {
   surrenderedNightDates: readonly CalendarDate[];
   addedNightDates: readonly CalendarDate[];
 }): EditFinancialReviewOccurrence {
+  return composeOccurrence({
+    ...args,
+    cause: args.evidence.cause,
+    nightPrices: args.evidence.nightPrices,
+  });
+}
+
+/**
+ * #3032: the occurrence for a strand whose OWN rows are exact, on an edit that
+ * was parked because a DIFFERENT strand on the same booking is unreadable.
+ *
+ * ## Why this exists rather than "exact strands raise nothing"
+ *
+ * It closes a hole that silently destroyed money. The single-guest removal
+ * settles a DIFFERENCE OF REPRICINGS, so one unreadable strand anywhere parks
+ * the whole edit: nothing is settled, `priceDiffCents` is 0 and the booking's
+ * stored total does not move. If the strand actually LEAVING is exact, it was
+ * skipped by the unreadable-strand filter — and the delete that follows takes
+ * its `BookingGuest` row and every `BookingGuestNight` row with it, while
+ * `BookingModification.previousData` keeps only name, age tier and membership.
+ * The departing member's refund was then a number no longer present anywhere in
+ * the database, behind a task that named a REMAINING guest, carried no
+ * surrendered nights, and read as "reviewed, nothing to adjust".
+ *
+ * So a parked edit records the departing strand too, with its real per-night
+ * prices, and the invariant is: **a parked edit never destroys a number the
+ * system could have known.**
+ *
+ * ## Why it is a separate function rather than a `cause` argument
+ *
+ * The cause is not a choice the caller gets to make. `COUNTERPART_STRAND_UNREADABLE`
+ * is true exactly when this strand's evidence is `exact`, and the three other
+ * causes are true exactly when it is `unusable` — so the input type decides the
+ * value, and neither function can be handed the other's case (`INV-SSOT`'s
+ * "prefer unrepresentable over policed"). Both compose the identity through the
+ * one body below, so a field spelled differently at one of them is impossible.
+ *
+ * ## What it deliberately does NOT do
+ *
+ * It carries no amount. The strand's stored total is on the evidence and an
+ * admin can read it, but the money that goes back also depends on the
+ * cancellation tier and the promo recalculation this parked path skipped — so
+ * writing the gross figure into `amountCents` would be a policy guess dressed as
+ * a fact, which is the thing epic #2797 exists to stop. The rows are preserved;
+ * the person decides.
+ */
+export function counterpartStrandReviewOccurrence(args: {
+  bookingId: string;
+  bookingGuestId: string;
+  evidence: Extract<StoredSoldPriceEvidence, { kind: "exact" }>;
+  /** `BookingGuest.priceCents` as stored. */
+  guestTotalCents: number;
+  surrenderedNightDates: readonly CalendarDate[];
+  addedNightDates: readonly CalendarDate[];
+}): EditFinancialReviewOccurrence {
+  return composeOccurrence({
+    ...args,
+    cause: "COUNTERPART_STRAND_UNREADABLE",
+    nightPrices: args.evidence.nightPrices,
+  });
+}
+
+/** The one body both builders above compose the identity through. */
+function composeOccurrence(args: {
+  bookingId: string;
+  bookingGuestId: string;
+  cause: EditFinancialReviewCause;
+  guestTotalCents: number;
+  surrenderedNightDates: readonly CalendarDate[];
+  addedNightDates: readonly CalendarDate[];
+  nightPrices: readonly { date: CalendarDate; priceCents: number | null }[];
+}): EditFinancialReviewOccurrence {
   return {
     bookingId: args.bookingId,
     bookingGuestId: args.bookingGuestId,
-    cause: args.evidence.cause,
+    cause: args.cause,
     surrenderedNightDates: args.surrenderedNightDates,
     addedNightDates: args.addedNightDates,
     storedEvidence: {
       guestTotalCents: isNonNegativeIntegerCents(args.guestTotalCents)
         ? args.guestTotalCents
         : null,
-      nightPrices: args.evidence.nightPrices.map((night) => ({
+      nightPrices: args.nightPrices.map((night) => ({
         date: night.date,
         priceCents: night.priceCents,
       })),

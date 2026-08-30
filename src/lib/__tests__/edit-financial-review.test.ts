@@ -590,6 +590,11 @@ describe("#3030 reviewContext parser - a blob it cannot vouch for is not read", 
       "NO_STORED_NIGHT_PRICES",
       "PARTIAL_STORED_NIGHT_PRICES",
       "STORED_TOTAL_MISMATCH",
+      // #3032: this strand's own rows are exact; a DIFFERENT strand on the same
+      // booking is not, and the edit parked as a whole. It exists so a parked
+      // removal can record the departing guest's money instead of discarding it
+      // for being readable — see `counterpartStrandReviewOccurrence`.
+      "COUNTERPART_STRAND_UNREADABLE",
     ]);
     expect(
       parseEditFinancialReviewContext({

@@ -39,6 +39,13 @@ import type { CalendarDate } from "@/lib/club-time";
  * Deliberately about the EVIDENCE, never about the member: none of these is a
  * fault of theirs, and none of them may reach member-facing copy (#3033 forbids
  * "corruption terminology" and blaming the member).
+ *
+ * ADDING A VALUE IS SAFE; CHANGING WHAT IS HASHED IS NOT. The occurrence key's
+ * material is a fixed set of FIELDS (`editFinancialReviewOccurrenceKey`), and a
+ * new value of an existing field re-identifies nothing that already exists — an
+ * occurrence that hashed as `STORED_TOTAL_MISMATCH` yesterday still does. That
+ * is why `COUNTERPART_STRAND_UNREADABLE` below needed no namespace bump, and it
+ * is not a precedent for adding a FIELD, which would move every future key.
  */
 export const EDIT_FINANCIAL_REVIEW_CAUSES = [
   /** The guest strand carries no stored per-night price at all. */
@@ -47,6 +54,23 @@ export const EDIT_FINANCIAL_REVIEW_CAUSES = [
   "PARTIAL_STORED_NIGHT_PRICES",
   /** Stored night prices exist but do not reconcile to the stored guest total. */
   "STORED_TOTAL_MISMATCH",
+  /**
+   * #3032: THIS strand's own rows read perfectly. Another strand on the same
+   * booking does not, so the edit's money was parked as a whole and this
+   * strand's share went with it.
+   *
+   * It exists because the removal path settles a DIFFERENCE OF REPRICINGS: one
+   * unreadable strand anywhere on the booking makes the arithmetic unsafe for
+   * every strand, including the one whose nights are actually being given back.
+   * Before this cause existed such a strand was skipped entirely — it was
+   * "exact", so nothing raised it — and the departing guest's money, which the
+   * delete was about to destroy, was recorded nowhere at all.
+   *
+   * The distinction is what an admin needs: on this cause the stored evidence
+   * beside it is complete and adds up, so they are confirming a number the rows
+   * already show rather than reconstructing one.
+   */
+  "COUNTERPART_STRAND_UNREADABLE",
 ] as const;
 
 export type EditFinancialReviewCause =
@@ -300,6 +324,8 @@ export const EDIT_FINANCIAL_REVIEW_CAUSE_LABEL: Record<
     "Only some of the nights given back carry a stored price, so the total cannot be worked out from what is stored.",
   STORED_TOTAL_MISMATCH:
     "The stored night prices do not add up to the stored total for this guest, so neither figure can be trusted on its own.",
+  COUNTERPART_STRAND_UNREADABLE:
+    "This guest's own stored night prices are complete and add up, but another guest on the same booking has prices that cannot be read — so the booking's total could not be reworked automatically. The figures shown here are what was stored for this guest.",
 };
 
 /**

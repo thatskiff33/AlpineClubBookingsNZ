@@ -216,7 +216,16 @@ export function buildEditFinancialReviewReason(
       : nights.length === 1
         ? `the night of ${nights[0]}`
         : `${nights.length} nights: ${nights.join(", ")}`;
-  return `Booking edit gave back ${nightsPhrase}. The exact sold price could not be read from this booking's stored history, so the club must price the adjustment from the booking's own payment and rate history before any money moves.`.slice(
+  // #3032: the second sentence has to match the cause, because the two are read
+  // as instructions. "The exact sold price could not be read" is FALSE of a
+  // `COUNTERPART_STRAND_UNREADABLE` strand - its rows are complete and add up -
+  // and an admin told otherwise about a task that carries real per-night prices
+  // has been handed a contradiction while pricing real money.
+  const why =
+    occurrence.cause === "COUNTERPART_STRAND_UNREADABLE"
+      ? "This guest's own stored night prices are complete and add up, but another guest on the same booking has prices that cannot be read, so the booking's total could not be reworked automatically. Confirm the amount owed for the nights above before any money moves."
+      : "The exact sold price could not be read from this booking's stored history, so the club must price the adjustment from the booking's own payment and rate history before any money moves.";
+  return `Booking edit gave back ${nightsPhrase}. ${why}`.slice(
     0,
     MANUAL_REFUND_TASK_REASON_MAX,
   );
