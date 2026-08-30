@@ -110,8 +110,8 @@ import {
 import {
   classifyNightPriceToWrite,
   preCheckInEditEvidence,
+  preCheckInEditStrands,
   preservedNightPrices,
-  type PreCheckInEditStrand,
 } from "@/lib/stored-sold-price-evidence";
 import {
   isOperationallyPresentConsent,
@@ -1862,45 +1862,24 @@ export async function calculateModifiedPricing(
    * park.
    */
   if (!inProgressPlan) {
+    // Assembled by `preCheckInEditStrands`, which the modify-quote PREVIEW also
+    // calls (`INV-SSOT`): the two surfaces must judge the identical strands over
+    // the identical night sets, or one quotes a price the other declines to
+    // honour. What the save adds on top — and the preview has no use for — is
+    // the `parkedGuestRows` composition below, which needs each stored guest by
+    // id.
     const storedGuestById = new Map(
       booking.guests.map((guest) => [guest.id, guest]),
     );
-    const removeSetForEvidence = new Set(removeGuestIds ?? []);
-    const strands: PreCheckInEditStrand[] = [];
-    guestsForPricing.forEach((guest, index) => {
-      const bookingGuestId = guest.bookingGuestId;
-      if (!bookingGuestId) return;
-      const stored = storedGuestById.get(bookingGuestId);
-      if (!stored) return;
-      strands.push({
-        bookingGuestId,
-        guestTotalCents: stored.priceCents,
-        stayStart: stored.stayStart,
-        stayEnd: stored.stayEnd,
-        nights: stored.nights,
-        proposedNightDates: priceBreakdown.guests[index]?.nightDates ?? [],
-      });
-    });
-    for (const guest of booking.guests) {
-      if (!removeSetForEvidence.has(guest.id)) continue;
-      strands.push({
-        bookingGuestId: guest.id,
-        guestTotalCents: guest.priceCents,
-        stayStart: guest.stayStart,
-        stayEnd: guest.stayEnd,
-        nights: guest.nights,
-        proposedNightDates: [],
-        // The ordinary writer branch DELETES a removed guest's row, and its
-        // night rows cascade with it — so an exact strand leaving a parked edit
-        // is the one place a number the system could have known is about to
-        // stop existing.
-        rowsDestroyed: true,
-      });
-    }
     const evidence = preCheckInEditEvidence({
       bookingId: booking.id,
       booking: { checkIn: booking.checkIn, checkOut: booking.checkOut },
-      strands,
+      strands: preCheckInEditStrands({
+        bookingGuests: booking.guests,
+        guestsForPricing,
+        pricedGuests: priceBreakdown.guests,
+        removeGuestIds,
+      }),
     });
     if (evidence.occurrences.length > 0) {
       return {

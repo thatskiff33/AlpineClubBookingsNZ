@@ -50,7 +50,7 @@ import {
 } from "@/lib/edit-financial-review";
 import {
   preCheckInEditEvidence,
-  type PreCheckInEditStrand,
+  preCheckInEditStrands,
 } from "@/lib/stored-sold-price-evidence";
 import type { MinimumStayViolation } from "@/lib/booking-policies";
 import {
@@ -1720,43 +1720,16 @@ export async function POST(
    * order, so they cannot disagree about which strands are unreadable.
    */
   if (!inProgressPlan && priceBreakdown) {
-    const storedGuestById = new Map(
-      booking.guests.map((guest) => [guest.id, guest]),
-    );
-    const previewStrands: PreCheckInEditStrand[] = [];
-    guestsForPricing.forEach((guest, index) => {
-      const bookingGuestId = guest.bookingGuestId;
-      if (!bookingGuestId) return;
-      const stored = storedGuestById.get(bookingGuestId);
-      if (!stored) return;
-      previewStrands.push({
-        bookingGuestId,
-        guestTotalCents: stored.priceCents,
-        stayStart: stored.stayStart,
-        stayEnd: stored.stayEnd,
-        nights: stored.nights,
-        proposedNightDates: priceBreakdown.guests[index]?.nightDates ?? [],
-      });
-    });
-    for (const guest of booking.guests) {
-      if (!removeSet.has(guest.id)) continue;
-      previewStrands.push({
-        bookingGuestId: guest.id,
-        guestTotalCents: guest.priceCents,
-        stayStart: guest.stayStart,
-        stayEnd: guest.stayEnd,
-        nights: guest.nights,
-        proposedNightDates: [],
-        // The save DELETES a removed strand's rows, so a readable one leaving a
-        // parked edit is recorded here too — the preview and the save must agree
-        // on how many reviews the member is about to cause.
-        rowsDestroyed: true,
-      });
-    }
     const previewEvidence = preCheckInEditEvidence({
       bookingId: booking.id,
       booking: { checkIn: booking.checkIn, checkOut: booking.checkOut },
-      strands: previewStrands,
+      // THE SAME ASSEMBLY THE SAVE USES, not a second one that agrees today.
+      strands: preCheckInEditStrands({
+        bookingGuests: booking.guests,
+        guestsForPricing,
+        pricedGuests: priceBreakdown.guests,
+        removeGuestIds: removeSet,
+      }),
     });
     if (previewEvidence.occurrences.length > 0) {
       return parkedQuoteResponse(

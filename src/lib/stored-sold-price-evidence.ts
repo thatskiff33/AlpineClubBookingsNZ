@@ -715,3 +715,92 @@ export function classifyNightPriceToWrite(
   if (typeof cents !== "number") return { kind: "unstated" };
   return { kind: "amount", priceCents: cents };
 }
+
+/**
+ * The strands of a pre-check-in edit, assembled from what the booking holds and
+ * what the pricing pass proposes — for `preCheckInEditEvidence` (#3166,
+ * `INV-SSOT`).
+ *
+ * ## Why this is shared and the derivations around it are not
+ *
+ * The SAVE (`calculateModifiedPricing`) and the PREVIEW (`modify-quote`) must
+ * agree exactly about which strands an edit is judged on, or one of them quotes
+ * a price the other will not honour — the disagreement INV-MOD-028 exists to
+ * make impossible. They used to build this list twice, ~40 identical lines each,
+ * with no divergence yet: precisely the shape #3131 measured, where one of five
+ * copies had already drifted. The predicate they feed it to was properly shared
+ * from the start; the input to it was not.
+ *
+ * ## The proposed night set comes from the PRICING PASS, never re-derived
+ *
+ * `pricedGuests[i].nightDates` is the night set the edit really proposes and the
+ * one `syncGuestNights` will write. Deriving it again here would be a second
+ * answer to a question already answered, and a divergence between the two would
+ * be silent — a strand judged against nights it does not end up holding.
+ * `pricedGuests` is therefore INDEX-ALIGNED with `guestsForPricing`, exactly as
+ * the pricing engine returns it; a guest with no `bookingGuestId` (a new
+ * arrival, whose money is known) is skipped rather than shifting the alignment.
+ *
+ * ## Removed strands are appended, and only they carry `rowsDestroyed`
+ *
+ * The writer DELETES a removed guest's `BookingGuest` row and its night rows
+ * cascade with it, so an exact strand leaving a parked edit is the one place a
+ * number the system could have known is about to stop existing outright. The
+ * other two ways a parked edit destroys evidence — surrendering nights and
+ * gaining them — fall out of the proposed night set and are decided inside
+ * `preCheckInEditEvidence`, not here.
+ */
+export function preCheckInEditStrands(args: {
+  bookingGuests: ReadonlyArray<{
+    id: string;
+    priceCents: number;
+    stayStart?: Date | null;
+    stayEnd?: Date | null;
+    nights?: ReadonlyArray<{
+      stayDate: Date | string;
+      priceCents?: number | null;
+    }> | null;
+  }>;
+  guestsForPricing: ReadonlyArray<{ bookingGuestId?: string | null }>;
+  /** Index-aligned with `guestsForPricing`, as the pricing pass returns it. */
+  pricedGuests: ReadonlyArray<{
+    nightDates?: ReadonlyArray<Date | string> | null;
+  }>;
+  removeGuestIds?: Iterable<string> | null;
+}): PreCheckInEditStrand[] {
+  const storedGuestById = new Map(
+    args.bookingGuests.map((guest) => [guest.id, guest]),
+  );
+  const removeSet = new Set(args.removeGuestIds ?? []);
+  const strands: PreCheckInEditStrand[] = [];
+
+  args.guestsForPricing.forEach((guest, index) => {
+    const bookingGuestId = guest.bookingGuestId;
+    if (!bookingGuestId) return;
+    const stored = storedGuestById.get(bookingGuestId);
+    if (!stored) return;
+    strands.push({
+      bookingGuestId,
+      guestTotalCents: stored.priceCents,
+      stayStart: stored.stayStart,
+      stayEnd: stored.stayEnd,
+      nights: stored.nights,
+      proposedNightDates: args.pricedGuests[index]?.nightDates ?? [],
+    });
+  });
+
+  for (const guest of args.bookingGuests) {
+    if (!removeSet.has(guest.id)) continue;
+    strands.push({
+      bookingGuestId: guest.id,
+      guestTotalCents: guest.priceCents,
+      stayStart: guest.stayStart,
+      stayEnd: guest.stayEnd,
+      nights: guest.nights,
+      proposedNightDates: [],
+      rowsDestroyed: true,
+    });
+  }
+
+  return strands;
+}
