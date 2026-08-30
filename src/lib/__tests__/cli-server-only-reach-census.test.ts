@@ -48,10 +48,12 @@ import { describe, expect, it } from "vitest";
  * So this walks the import graph from every CLI root, and separately sweeps
  * every place in the repository where a `tsx` entrypoint is NAMED — package
  * scripts, `prisma.config.ts`, shell scripts, workflows, and the documentation
- * an operator copies from. A root that reaches `server-only` must carry
- * `--conditions=react-server` at EVERY one of those sites. The spelling is
- * exact on purpose: one form is greppable, and a form this census does not
- * recognise fails closed rather than passing on a fuzzy match.
+ * an operator copies from. A root that reaches `server-only` must ask for the
+ * `react-server` condition at EVERY one of those sites. The repository
+ * publishes one spelling, `--conditions=react-server`, because one form is
+ * greppable — but the check accepts Node's space form and comma lists too,
+ * since refusing a command that is genuinely safe would be a false positive in
+ * the one place people go to find out what is really broken.
  *
  * `next/headers` is judged by the OLD, absolute rule and the condition does not
  * excuse it. Measured: `next/headers` imports fine under `tsx` either way, so
@@ -130,16 +132,24 @@ const STATIC_IMPORT =
 const DYNAMIC_IMPORT = /(?:\bimport|\brequire)\s*\(\s*["']([^"']+)["']\s*\)/g;
 
 /**
- * A `tsx` invocation, with whatever flags sit between the binary and the
- * entrypoint captured so this census can see whether the condition is there.
+ * A `tsx` command: the binary, then the rest of its arguments on that line.
+ * The arguments are TOKENISED below rather than parsed by this pattern, which
+ * is the whole point — an earlier version encoded the flag shape in the regex,
+ * and `tsx --conditions react-server foo.ts` (the space spelling, which is
+ * equally safe) then matched NOTHING and vanished from the census instead of
+ * being judged. A sweep that silently drops the invocation it cannot parse is
+ * worse than no sweep, because it reads as a pass.
  *
- * The lookbehind is what lets `./node_modules/.bin/tsx scripts/x.ts` match —
- * the induction runbook's spelling, which runs inside the Compose `migrate`
- * service where the npm wrapper is not the published form — while keeping a
- * filename that merely ends in `.tsx` from being read as the binary.
+ * The lookbehind lets `./node_modules/.bin/tsx scripts/x.ts` match — the
+ * induction runbook's spelling, which runs inside the Compose `migrate` service
+ * where the npm wrapper is not the published form — while excluding a filename
+ * that merely ends in `.tsx`, and excluding `--loader:.tsx=tsx`, where the
+ * esbuild transpile script names the loader rather than the runner.
  */
-const TSX_INVOCATION =
-  /(?<![\w.-])tsx\s+((?:--[\w-]+(?:=\S+)?\s+)*)([\w./-]+\.[cm]?tsx?)(?=[\s"';)]|$)/gm;
+const TSX_COMMAND = /(?<![\w.=:-])tsx((?:[ \t]+\S+)+)/g;
+
+/** A token that names a file `tsx` could execute. */
+const TSX_ENTRYPOINT_TOKEN = /^[\w./-]+\.[cm]?tsx?$/;
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
@@ -298,16 +308,45 @@ type Invocation = {
   hasCondition: boolean;
 };
 
+/**
+ * Does this argument list ask Node for the `react-server` condition?
+ *
+ * Both spellings count, because both are safe: Node accepts
+ * `--conditions=react-server` and `--conditions react-server`, and a
+ * comma-separated list containing it. The repository PUBLISHES the `=` form —
+ * one spelling is greppable — but refusing a correct command would be a false
+ * positive, and this census is the thing people trust to tell them what is
+ * really broken.
+ */
+function tokensRequestReactServer(tokens: string[]): boolean {
+  return tokens.some((token, index) => {
+    const value = token.startsWith("--conditions=")
+      ? token.slice("--conditions=".length)
+      : token === "--conditions"
+        ? (tokens[index + 1] ?? "")
+        : null;
+    return value !== null && value.split(",").includes("react-server");
+  });
+}
+
 function sweepInvocations(): Invocation[] {
   const found: Invocation[] = [];
   for (const file of invocationSources()) {
-    const text = readFileSync(file, "utf8");
-    for (const match of text.matchAll(TSX_INVOCATION)) {
-      const flags = match[1] ?? "";
+    // Join shell line continuations first, so a command wrapped across lines is
+    // read as the one command it is rather than losing its entrypoint.
+    const text = readFileSync(file, "utf8").replace(/\\\r?\n[ \t]*/g, " ");
+    for (const match of text.matchAll(TSX_COMMAND)) {
+      const tokens = match[1].trim().split(/\s+/);
+      const entryIndex = tokens.findIndex((token) =>
+        TSX_ENTRYPOINT_TOKEN.test(token),
+      );
+      // No file argument at all: prose about `tsx`, or a flag-only command.
+      // Nothing to judge, and nothing this census can say about it.
+      if (entryIndex === -1) continue;
       found.push({
         source: relative(file),
-        entry: match[2].replace(/^\.\//, ""),
-        hasCondition: flags.split(/\s+/).includes(REACT_SERVER_CONDITION),
+        entry: tokens[entryIndex].replace(/^\.\//, ""),
+        hasCondition: tokensRequestReactServer(tokens.slice(0, entryIndex)),
       });
     }
   }
