@@ -313,7 +313,7 @@ vi.mock("@/lib/booking-member-guest-subscriptions", () => ({
 }));
 
 function makeBooking(overrides: Record<string, unknown> = {}) {
-  return {
+  const booking = {
     id: "bk1",
     memberId: "m1",
     checkIn: new Date("2026-08-20"),
@@ -360,6 +360,55 @@ function makeBooking(overrides: Record<string, unknown> = {}) {
     promoRedemption: null,
     ...overrides,
   };
+  return {
+    ...booking,
+    guests: reconcilingNightRows(booking, booking.guests),
+  };
+}
+
+/**
+ * Give every fixture guest stored night rows that reconcile with their total
+ * (#3166), unless the case supplied its own.
+ *
+ * Every edit path is now judged on exact stored sold-price evidence, so a guest
+ * with no `BookingGuestNight` rows PARKS the edit for financial review — nothing
+ * is repriced, nothing settles, and not one payment assertion in this file can
+ * run. That is the gate doing its job; it is not what this suite is about. So
+ * the DEFAULT fixture guest is the ordinary readable one, and the cases that
+ * genuinely mean to describe unreadable history pass `nights` themselves (the
+ * `NO_STORED_NIGHT_PRICES` and `STORED_TOTAL_MISMATCH` cases below), which this
+ * leaves untouched.
+ *
+ * The rows are an even split with the remainder on the first night, so they sum
+ * to the stored total EXACTLY — an approximate split would not reconcile, and a
+ * fixture that parks silently would take every assertion below down with it.
+ */
+function reconcilingNightRows<G extends Record<string, unknown>>(
+  booking: { checkIn: Date; checkOut: Date },
+  guests: G[],
+): G[] {
+  return guests.map((guest) => {
+    if (guest.nights !== undefined) return guest;
+    const start = (guest.stayStart ?? booking.checkIn) as Date;
+    const end = (guest.stayEnd ?? booking.checkOut) as Date;
+    const nights: Date[] = [];
+    for (
+      let day = new Date(start.getTime());
+      day < end;
+      day = new Date(day.getTime() + 86_400_000)
+    ) {
+      nights.push(new Date(day.getTime()));
+    }
+    const total = (guest.priceCents as number | undefined) ?? 0;
+    const base = nights.length === 0 ? 0 : Math.floor(total / nights.length);
+    return {
+      ...guest,
+      nights: nights.map((stayDate, index) => ({
+        stayDate,
+        priceCents: index === 0 ? total - base * (nights.length - 1) : base,
+      })),
+    };
+  });
 }
 
 function makeTx(booking: ReturnType<typeof makeBooking>) {
@@ -2892,7 +2941,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
     );
 
     // Two guests at $50 each = $100, dropping to one guest = $50 → refund $50
-    booking.guests = [
+    booking.guests = reconcilingNightRows(booking, [
       ...booking.guests,
       {
         id: "g2",
@@ -2904,7 +2953,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
         memberId: null,
         priceCents: 5000,
       },
-    ];
+    ]);
     booking.totalPriceCents = 10000;
     booking.finalPriceCents = 10000;
     booking.payment!.amountCents = 10000;
@@ -2971,7 +3020,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
       fn(tx)
     );
 
-    booking.guests = [
+    booking.guests = reconcilingNightRows(booking, [
       ...booking.guests,
       {
         id: "g2",
@@ -2983,7 +3032,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
         memberId: null,
         priceCents: 5000,
       },
-    ];
+    ]);
     booking.totalPriceCents = 10000;
     booking.finalPriceCents = 10000;
     booking.payment = {
@@ -3041,7 +3090,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
     // payment. hasCapturedPayment() is false, settlementOptions is null, and
     // before the fix xeroRefundAmountCents collapsed to 0 -> classify 'none'
     // -> the outstanding invoice kept the removed guest.
-    booking.guests = [
+    booking.guests = reconcilingNightRows(booking, [
       ...booking.guests,
       {
         id: "g2",
@@ -3053,7 +3102,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
         memberId: null,
         priceCents: 5000,
       },
-    ];
+    ]);
     booking.payment = {
       ...booking.payment!,
       amountCents: 10000,
@@ -3112,7 +3161,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
       fn(tx)
     );
 
-    booking.guests = [
+    booking.guests = reconcilingNightRows(booking, [
       ...booking.guests,
       {
         id: "g2",
@@ -3124,7 +3173,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
         memberId: null,
         priceCents: 5000,
       },
-    ];
+    ]);
     booking.totalPriceCents = 10000;
     booking.finalPriceCents = 10000;
     booking.payment = {
@@ -3178,7 +3227,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
       fn(tx)
     );
 
-    booking.guests = [
+    booking.guests = reconcilingNightRows(booking, [
       ...booking.guests,
       {
         id: "g2",
@@ -3190,7 +3239,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
         memberId: null,
         priceCents: 5000,
       },
-    ];
+    ]);
     booking.totalPriceCents = 10000;
     booking.finalPriceCents = 10000;
     booking.payment!.amountCents = 10000;
@@ -3228,7 +3277,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
       fn(tx)
     );
 
-    booking.guests = [
+    booking.guests = reconcilingNightRows(booking, [
       ...booking.guests,
       {
         id: "g2",
@@ -3240,7 +3289,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
         memberId: null,
         priceCents: 5000,
       },
-    ];
+    ]);
     booking.totalPriceCents = 10000;
     booking.finalPriceCents = 10000;
     booking.payment!.amountCents = 10000;
@@ -3314,7 +3363,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
       fn(tx)
     );
 
-    booking.guests = [
+    booking.guests = reconcilingNightRows(booking, [
       ...booking.guests,
       {
         id: "g2",
@@ -3326,7 +3375,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
         memberId: null,
         priceCents: 5000,
       },
-    ];
+    ]);
     booking.totalPriceCents = 10000;
     booking.finalPriceCents = 10000;
     booking.payment!.amountCents = 10000;
@@ -3376,7 +3425,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
       fn(tx)
     );
 
-    booking.guests = [
+    booking.guests = reconcilingNightRows(booking, [
       ...booking.guests,
       {
         id: "g2",
@@ -3388,7 +3437,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
         memberId: null,
         priceCents: 5000,
       },
-    ];
+    ]);
     booking.totalPriceCents = 10000;
     booking.finalPriceCents = 10000;
     booking.payment!.amountCents = 10000;

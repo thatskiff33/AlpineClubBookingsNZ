@@ -90,6 +90,16 @@ function baseArgs() {
     stayStart: D("2026-09-10"),
     stayEnd: D("2026-09-13"),
     priceCents: 30000,
+    // #3166: three stored night rows that reconcile to the strand's total, so
+    // this CAPACITY fixture is judged on capacity. Without them the strand has
+    // no readable sold-price history at all and every case here would park for
+    // financial review instead — which is the new rule working, not a bed
+    // question. The reconciling shape is the one the suite means to describe.
+    nights: [
+      { stayDate: D("2026-09-10"), priceCents: 10000 },
+      { stayDate: D("2026-09-11"), priceCents: 10000 },
+      { stayDate: D("2026-09-12"), priceCents: 10000 },
+    ],
   };
   const booking = {
     id: "b1",
