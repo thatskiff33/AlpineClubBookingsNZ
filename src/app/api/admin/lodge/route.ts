@@ -126,7 +126,32 @@ function serializeLodge(lodge: {
 
 /**
  * GET /api/admin/lodge
- * Returns the lodge account details. Auto-creates if missing.
+ * Returns the lodge account details, and provisions the FIRST kiosk account
+ * when a Full Admin is the one asking.
+ *
+ * WHY THE PROVISIONING IS GATED SEPARATELY FROM THE READ. `POST` below refuses
+ * a scoped admin outright, because "creating an account that holds the
+ * privileged LODGE access role is an access-role write" (separation of duties,
+ * upstream #1012). This handler used to do exactly that thing on a plain page
+ * load at `lodge:view` — so the only shipped role holding lodge view without
+ * edit, "Read-only Admin" ("Can view admin areas without making changes"),
+ * could bring a login-capable account into existence by opening a screen. One
+ * handler stated the rule and its neighbour walked around it.
+ *
+ * The read stays at `lodge:view`, because looking at kiosk details is
+ * legitimately a read. Only the CREATE is raised to Full Admin, which is where
+ * `POST` already had it. A scoped admin loading this page before any kiosk
+ * exists now gets the empty state the client already renders, and the page's
+ * existing "create" action — the Full-Admin-gated `POST` — remains the explicit
+ * way to make one.
+ *
+ * This is not a theoretical tightening: the auto-create is the ONLY way a
+ * club's first kiosk account comes into being (no seed, no setup wizard, no
+ * migration writes one), so it is deliberately kept rather than removed —
+ * a Full Admin opening this page during setup still gets a kiosk with no extra
+ * step. Decided by the owner on 30 Aug 2026 after the usage was measured;
+ * found by the #2975 authorization sweep, which named it in
+ * `SIDE_EFFECTING_GETS` rather than implying it away.
  */
 export async function GET() {
   const guard = await requireAdmin({
@@ -141,7 +166,7 @@ export async function GET() {
   });
   let lodge = accounts[0] ?? null;
 
-  if (!lodge) {
+  if (!lodge && isFullAdmin(session.user)) {
     // Auto-create the lodge account with a random password (admin must set via UI)
     const randomPassword = crypto.randomBytes(24).toString("base64url");
     const passwordHash = await bcrypt.hash(randomPassword, 12);
@@ -196,12 +221,16 @@ export async function GET() {
     lodge = accounts[0];
   }
 
-  await ensureMemberAccessRolesFromCompatibilityFields(prisma, {
-    memberId: lodge.id,
-    role: lodge.role,
-    financeAccessLevel: lodge.financeAccessLevel,
-    canLogin: lodge.canLogin,
-  });
+  // Only when one exists. A scoped admin who found none is reading an empty
+  // page, and there is no member whose compatibility fields could be reconciled.
+  if (lodge) {
+    await ensureMemberAccessRolesFromCompatibilityFields(prisma, {
+      memberId: lodge.id,
+      role: lodge.role,
+      financeAccessLevel: lodge.financeAccessLevel,
+      canLogin: lodge.canLogin,
+    });
+  }
 
   // Name of the lodge an unbound kiosk account falls back to, so the admin UI
   // can warn which lodge an unbound account would actually serve (issue #23).
@@ -212,8 +241,10 @@ export async function GET() {
   });
 
   return NextResponse.json({
-    // Legacy single-account shape, kept for existing clients.
-    lodge: serializeLodge(lodge),
+    // Legacy single-account shape, kept for existing clients. `null` when no
+    // kiosk exists yet and the reader may not create one; the client already
+    // renders that as an empty list rather than an error.
+    lodge: lodge ? serializeLodge(lodge) : null,
     accounts: accounts.map((account) => serializeKioskAccount(account)),
     defaultLodgeName: defaultLodge?.name ?? null,
   });
