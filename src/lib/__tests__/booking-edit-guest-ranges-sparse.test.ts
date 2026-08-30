@@ -1334,6 +1334,117 @@ describe("#2736 a sparse stay", () => {
     expect(entry.perNightCents.reduce((a, b) => a + b, 0)).toBe(entry.priceCents);
   });
 
+  /**
+   * #3166: BOTH parked exits record the same thing, because which one an edit
+   * reaches is not a fact about the booking.
+   *
+   * One fixture, two guests, run twice. The only thing that moves between the
+   * two runs is WHEN `g1` becomes unpriceable — at the gate, or at the
+   * reconciliation check after composing — and the occurrence list must not
+   * notice. It used to: the second exit built its list purely from the strands
+   * that failed to reconcile, so `g2` — exact before the edit, rewritten to
+   * `PARTIAL_STORED_NIGHT_PRICES` by the park, with real money owed on nights
+   * nobody has priced — was named nowhere at all.
+   */
+  describe("both parked exits record the counterpart strands they destroy", () => {
+    /** Two guests, each holding 20-21 Aug at a stored $50 a night. */
+    const BOUGHT = ["2026-08-20", "2026-08-21"];
+    /** The officer extends the check-out by two nights, from tomorrow on. */
+    const EXTEND = {
+      editableFrom: "2026-08-21",
+      newCheckOut: "2026-08-24",
+      checkIn: "2026-08-20",
+      checkOut: "2026-08-22",
+    } as const;
+    const counterpart = guestFromNights(BOUGHT, "g2");
+
+    it("records the exact counterpart when the FIRST exit parks (the control)", () => {
+      // `g1` fails at the gate: its rows are all present and priced, and they do
+      // not add up to its stored total. This is the behaviour that already
+      // shipped, pinned here so the second exit below is measured against a
+      // control on the same fixture rather than against a description of one.
+      const driftedTotal = guestFromNights(BOUGHT, "g1", true, true, 101);
+      const occurrences = reviewOf(
+        planInput({ guests: [driftedTotal, counterpart], ...EXTEND }),
+      );
+
+      expect(
+        occurrences.map((occurrence) => [
+          occurrence.bookingGuestId,
+          occurrence.cause,
+        ]),
+      ).toEqual([
+        ["g1", "STORED_TOTAL_MISMATCH"],
+        ["g2", "COUNTERPART_STRAND_UNREADABLE"],
+      ]);
+      // `g2`'s real per-night prices travel with it. They are about to stop
+      // existing: the park writes its rows as $50, $50, NULL, NULL against a
+      // frozen $100 total.
+      expect(occurrences[1].storedEvidence.nightPrices).toEqual([
+        { date: "2026-08-20", priceCents: LOW },
+        { date: "2026-08-21", priceCents: LOW },
+      ]);
+      expect(occurrences[1].addedNightDates).toEqual([
+        "2026-08-22",
+        "2026-08-23",
+      ]);
+    });
+
+    it("records the exact counterpart when the SECOND exit parks, and names each strand once", () => {
+      // Same booking, same destruction, and `g1` unpriceable for a different
+      // reason: its rows reach one day past its own stored `stayEnd`
+      // (INV-DATE-012), so the night of the 21st is outside the old-price window
+      // and charged again in the new one. Its own evidence is EXACT, so the gate
+      // passes it and only the post-compose reconciliation check catches it.
+      const rowsPastEnvelope = {
+        ...guestFromNights(BOUGHT, "g1"),
+        // One day short: the real envelope for those rows is the 22nd.
+        stayEnd: D("2026-08-21"),
+      };
+      // PREMISE, so the fixture cannot silently stop being the shape under test.
+      expect(
+        storedSoldPriceEvidenceForGuest(rowsPastEnvelope, {
+          checkIn: D("2026-08-20"),
+          checkOut: D("2026-08-22"),
+        }).kind,
+      ).toBe("exact");
+
+      const occurrences = reviewOf(
+        planInput({ guests: [rowsPastEnvelope, counterpart], ...EXTEND }),
+      );
+
+      // Byte for byte what the control above records. `g2` is here, with its
+      // prices, because the parked plan rewrites its rows exactly as it does at
+      // the first exit.
+      expect(
+        occurrences.map((occurrence) => [
+          occurrence.bookingGuestId,
+          occurrence.cause,
+        ]),
+      ).toEqual([
+        ["g1", "STORED_TOTAL_MISMATCH"],
+        ["g2", "COUNTERPART_STRAND_UNREADABLE"],
+      ]);
+      expect(occurrences[1].storedEvidence.nightPrices).toEqual([
+        { date: "2026-08-20", priceCents: LOW },
+        { date: "2026-08-21", priceCents: LOW },
+      ]);
+
+      // AND ONCE EACH. `g1` is in both lists here — exact at the gate with a
+      // night set that moves, so it is a destroyed-evidence strand too, and
+      // unpriceable once composed. A naive concatenation emits it twice with two
+      // different causes and two different night sets, which hash to two keys
+      // and raise TWO review tasks for one guest. The unpriceable occurrence is
+      // the one that survives, because it says why no money moved.
+      expect(
+        occurrences.filter((occurrence) => occurrence.bookingGuestId === "g1"),
+      ).toHaveLength(1);
+      expect(
+        new Set(occurrences.map((occurrence) => occurrence.bookingGuestId)).size,
+      ).toBe(occurrences.length);
+    });
+  });
+
   it("keeps every cent an integer, with no float anywhere in the sum", () => {
     // INV-MONEY-001 / INV-MONEY-003. Every term here is a season rate in cents;
     // the plan only ever adds and subtracts them.
