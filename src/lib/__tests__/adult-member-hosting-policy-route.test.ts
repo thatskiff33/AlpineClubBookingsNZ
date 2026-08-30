@@ -66,6 +66,9 @@ const stored = {
   // falls back to the built-in same-booking-only default.
   hostScopeSameBooking: null,
   hostScopeSameBookingOwner: null,
+  // #3037's column too: NULL on an existing row, read as OFF, so an upgrading
+  // club's Group Trip cover is off until it ticks the box.
+  hostScopeSameGroupTrip: null,
   version: 4,
 };
 
@@ -245,6 +248,7 @@ describe("adult-member hosting policy route (#2364)", () => {
         // dimension", stored as both columns NULL — the inherit option (#2569 §2).
         hostScopeSameBooking: null,
         hostScopeSameBookingOwner: null,
+        hostScopeSameGroupTrip: null,
         version: 1,
       },
     });
@@ -287,6 +291,9 @@ describe("adult-member hosting policy route (#2364)", () => {
         capacityMode: "HOLD",
         hostScopeSameBooking: null,
         hostScopeSameBookingOwner: null,
+        // Null WITH the pair, which is what the migration's CHECK requires: the
+        // Group Trip column may be set only on a row that decided the rest.
+        hostScopeSameGroupTrip: null,
         version: 5,
       },
     });
@@ -426,6 +433,13 @@ describe("adult-member hosting policy route (#2364)", () => {
         capacityMode: "HOLD",
         hostScopeSameBooking: true,
         hostScopeSameBookingOwner: true,
+        // #3037. THE BODY DID NOT NAME IT, and it is stored as an explicit
+        // `false` rather than NULL. That is the whole default-OFF contract at the
+        // write boundary: a client that predates the scope — a browser tab loaded
+        // from the previous colour during a blue/green window — cannot turn Group
+        // Trip cover on by omission, and cannot leave the column in the "did not
+        // decide" state on a row that decided everything else either.
+        hostScopeSameGroupTrip: false,
         version: 1,
       },
     });

@@ -34,6 +34,7 @@ const clubPolicy = {
   capacityMode: "HOLD",
   hostScopeSameBooking: null,
   hostScopeSameBookingOwner: null,
+  hostScopeSameGroupTrip: null,
   version: 2,
 };
 const lodgePolicy = {
@@ -44,6 +45,7 @@ const lodgePolicy = {
   capacityMode: "NO_HOLD",
   hostScopeSameBooking: null,
   hostScopeSameBookingOwner: null,
+  hostScopeSameGroupTrip: null,
   version: 1,
 };
 
@@ -261,6 +263,7 @@ describe("adult-member hosting configuration transfer (#2364)", () => {
         capacityMode: "NO_HOLD",
         hostScopeSameBooking: null,
         hostScopeSameBookingOwner: null,
+        hostScopeSameGroupTrip: null,
         version: 3,
       },
     });
@@ -271,6 +274,7 @@ describe("adult-member hosting configuration transfer (#2364)", () => {
         capacityMode: "HOLD",
         hostScopeSameBooking: null,
         hostScopeSameBookingOwner: null,
+        hostScopeSameGroupTrip: null,
         version: 2,
       },
     });
@@ -303,6 +307,7 @@ describe("adult-member hosting configuration transfer (#2364)", () => {
         capacityMode: "HOLD",
         hostScopeSameBooking: null,
         hostScopeSameBookingOwner: null,
+        hostScopeSameGroupTrip: null,
       },
       select: { id: true },
     });
@@ -347,6 +352,11 @@ describe("adult-member hosting configuration transfer (#2364)", () => {
         capacityMode: "HOLD",
         hostScopeSameBooking: true,
         hostScopeSameBookingOwner: true,
+        // #3037. The cell named two scopes, so the third is written as an
+        // explicit `false`: a bundle that does not mention Group Trip cover
+        // cannot turn it on, and cannot leave it undecided on a row that decided
+        // the rest of the set either.
+        hostScopeSameGroupTrip: false,
         version: 3,
       },
     });
@@ -369,6 +379,7 @@ describe("adult-member hosting configuration transfer (#2364)", () => {
         capacityMode: "HOLD",
         hostScopeSameBooking: true,
         hostScopeSameBookingOwner: false,
+        hostScopeSameGroupTrip: false,
         version: 3,
       },
     });

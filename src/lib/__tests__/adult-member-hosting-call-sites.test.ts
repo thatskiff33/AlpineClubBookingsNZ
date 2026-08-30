@@ -207,6 +207,10 @@ describe("one authoritative evaluator and one resolver (#2569 §6, §7)", () => 
     expect(declared).toEqual([
       "hostScopeSameBooking",
       "hostScopeSameBookingOwner",
+      // #3037 (epic #2943). Read off the schema and asserted here as well, so
+      // adding a scope column without threading it through the loader's select
+      // fails at the one place that can see both.
+      "hostScopeSameGroupTrip",
     ]);
 
     const loader = readRepoCode("src/lib/adult-member-hosting-review.ts");
@@ -223,6 +227,112 @@ describe("one authoritative evaluator and one resolver (#2569 §6, §7)", () => 
       .map((match) => match[1])
       .sort();
     expect(selected).toEqual(declared);
+  });
+
+  it("selects the same host-scope columns in every other narrowed policy read", () => {
+    // The assertion above pins the ONE loader every booking write path goes
+    // through. It is not the only narrowed read of this table, and the other
+    // three fail in quieter ways than a booking write does: a missing column in
+    // the reconciliation projection makes a scope-only policy edit queue no
+    // re-evaluation at all (both sides of the before/after comparison read "did
+    // not decide"), one in config transfer exports a scope set that is not the
+    // stored one, and one in the public booking-rules read publishes a sentence
+    // describing a rule the club is not applying. None of the three is a
+    // typecheck error, for the same `Pick<PrismaClient, ...>` reason.
+    const schema = readRepoFile("prisma/schema.prisma");
+    const declared = [
+      ...new Set(
+        [...schema.matchAll(/^\s*(hostScope\w+)\s+Boolean\?/gm)].map(
+          (match) => match[1],
+        ),
+      ),
+    ].sort();
+
+    // Matched over the WHOLE comment-stripped file rather than a sliced window,
+    // and de-duplicated. Each of these files holds exactly one narrowed read of
+    // this table, and a window delimited by the next `},` is not robust here:
+    // the public-content read carries a ternary `where` whose own braces close
+    // before the select begins, so a window-based sweep silently found nothing
+    // and the assertion passed on an empty list. A whole-file set states the
+    // claim that matters — this file names exactly the declared scope columns,
+    // no fewer (a quiet wrong answer) and none that the schema has dropped (a
+    // runtime Prisma validation failure).
+    for (const file of [
+      "src/lib/adult-member-hosting-policy-reconciliation.ts",
+      "src/lib/config-transfer/categories/adult-member-hosting.ts",
+      "src/lib/public-page-content-tokens.ts",
+    ]) {
+      const source = readRepoCode(file);
+      const selected = [
+        ...new Set(
+          [...source.matchAll(/(hostScope\w+):\s*true/g)].map(
+            (match) => match[1],
+          ),
+        ),
+      ].sort();
+      expect(selected, file).toEqual(declared);
+    }
+  });
+});
+
+describe("canonical Group Trip identity (#3037, epic #2943)", () => {
+  // The owner's contract names the two authoritative columns and forbids one
+  // other by name, and both halves are structural claims a behavioural test of
+  // today's call sites cannot make: it passes just as green the day a new site
+  // resolves grouping from the wrong relationship.
+
+  it("resolves Group Trip identity in exactly one module", () => {
+    // Every later child of the epic - the cross-booking evaluator (#3038), the
+    // reconciliation writers (#3039) and the kiosk/admin payloads (#3040) -
+    // consumes this one definition. A second resolver would give identical
+    // answers right up to the day the two disagree about a joined booking whose
+    // container was closed, which is the exact case the contract calls out.
+    expect(sourceFilesNaming("groupTripIdentityOf(")).toEqual([
+      "src/lib/group-trip-identity.ts",
+    ]);
+    expect(sourceFilesNaming("groupTripMembershipWhere(")).toEqual([
+      "src/lib/group-trip-identity.ts",
+    ]);
+  });
+
+  it("never resolves Group Trip identity from parentBookingId", () => {
+    // `Booking.parentBookingId` is the #738 split-booking relationship. It is
+    // neither necessary nor sufficient for Group Trip membership - two bookings
+    // in one Group Trip have no such link, and a split pair in no Group Trip has
+    // one - so reading grouping off it produces a sibling set that is wrong in
+    // both directions. The module that owns group identity must not name it.
+    const identity = readRepoCode("src/lib/group-trip-identity.ts");
+    expect(identity).not.toContain("parentBookingId");
+    // And the canonical columns really are the two the contract names.
+    expect(identity).toContain("groupBookingAsOrganiser");
+    expect(identity).toContain("groupBookingJoin");
+  });
+
+  it("keeps the group container's status out of both coverage where-builders", () => {
+    // A CLOSED or CANCELLED GroupBooking governs JOINING, not cover: a still-live
+    // individual booking can hold an adult who is genuinely travelling with the
+    // party, so filtering the source or dependent set on container status would
+    // silently strip cover from compliant bookings and silently drop bookings
+    // that still need reconciling. Whether a booking is really happening is
+    // decided on `Booking.status`, through the canonical lifecycle helper.
+    const identity = readRepoCode("src/lib/group-trip-identity.ts");
+    const builders = identity.slice(
+      identity.indexOf("export function groupTripCoverageSourceWhere("),
+    );
+    expect(builders).not.toMatch(/groupBooking\s*:\s*\{[^}]*status/);
+    expect(builders).not.toContain("GroupBookingStatus");
+    expect(builders).not.toContain("CANCELLED");
+    expect(builders).toContain("hostingCoverageSourceBookingFilter(");
+  });
+
+  it("never selects the group joinCode", () => {
+    // The group's join credential. The epic's privacy contract keeps it out of
+    // every payload and every tier, and identity resolution has no use for it -
+    // so the module that every consumer reads group identity through must not
+    // put it within reach of one.
+    expect(readRepoCode("src/lib/group-trip-identity.ts")).not.toContain(
+      "joinCode",
+    );
   });
 });
 
