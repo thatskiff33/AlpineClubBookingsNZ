@@ -1,6 +1,6 @@
 "use client";
 
-import { useId } from "react";
+import { useId, useState } from "react";
 
 import { describedByFieldHint, FieldHint } from "@/components/ui/field-hint";
 import { Input } from "@/components/ui/input";
@@ -26,8 +26,10 @@ import {
  * `manual-refund-task-queue.tsx` is already the largest file on this surface and
  * carries two cards, a dialog and the whole settlement conversation. The seam is
  * a real one rather than a line-count dodge: this is one question with one rule,
- * and everything it needs arrives as props - it holds no state, decides nothing,
- * and makes no request.
+ * and everything it needs arrives as props - it decides nothing and makes no
+ * request. The one thing it holds is which boxes the officer has LEFT, which is
+ * a fact about this fieldset's own focus and about nothing else on the screen;
+ * the answer itself still lives entirely in `values`.
  *
  * ## What it deliberately does NOT do
  *
@@ -90,14 +92,25 @@ export function UnpricedNightPriceFields({
   const statusId = useId();
   const hintId = useId();
   /*
-    Every box holds text, so the officer has answered as fully as they are going
-    to. Until then a refusal is ordinary progress rather than a rejection, and
-    warning colour on the very first keystroke reads as "you have done something
-    wrong" when they have simply not finished. The SENTENCE is unchanged - it
-    still says what is missing - only how loudly it is said.
+    Which boxes the officer has moved away from. The verdict is SAID at every
+    keystroke and only said LOUDLY once they have finished, and "filled in" is
+    not the same as "finished": on a single-blank strand - the ordinary shape -
+    the box holds text from the very first digit, so typing the `4` of `45.00`
+    turned the paragraph red mid-number. That is the exact effect this rule
+    exists to remove, and an earlier draft of it claimed to have removed it while
+    measurably leaving it in place.
+
+    Leaving the box is the cheapest honest signal that an answer is finished. It
+    costs nothing to produce - moving to the next box, to the note, or to the
+    confirm button all fire it - and it cannot be wrong in the direction that
+    matters, because a refusal said quietly still says everything it said before.
+    The SENTENCE never changes; only how loudly it is said.
   */
-  const everyBoxFilled = summary.dates.every(
-    (date) => (values[date] ?? "").trim() !== "",
+  const [boxesLeft, setBoxesLeft] = useState<Readonly<Record<string, boolean>>>(
+    {},
+  );
+  const everyBoxAnswered = summary.dates.every(
+    (date) => (values[date] ?? "").trim() !== "" && boxesLeft[date] === true,
   );
 
   return (
@@ -125,6 +138,9 @@ export function UnpricedNightPriceFields({
               value={values[date] ?? ""}
               disabled={disabled}
               onChange={(event) => onChange(date, event.target.value)}
+              onBlur={() =>
+                setBoxesLeft((current) => ({ ...current, [date]: true }))
+              }
               aria-describedby={describedByFieldHint(hintId, statusId)}
             />
           </div>
@@ -146,7 +162,7 @@ export function UnpricedNightPriceFields({
         id={statusId}
         aria-live="polite"
         className={
-          !targetKnown || check === null || check.ok || !everyBoxFilled
+          !targetKnown || check === null || check.ok || !everyBoxAnswered
             ? "text-xs text-muted-foreground"
             : "text-xs text-warning-11"
         }

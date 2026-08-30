@@ -120,11 +120,20 @@ export function completionMessage(result: {
  * review again" would be a receipt disproved by the next edit. Overstating it
  * here is worse than overstating it anywhere else on this screen, because not
  * coming back is the entire thing #3191 promises.
+ *
+ * THE SECOND SENTENCE IS CONDITIONAL, and it has to be written as one (#3191 fix
+ * round). "Another guest on the same booking still can" presupposes a guest who
+ * does not exist on a single-guest booking, which is most of them. Whether one
+ * exists is not something this message can know - the projection the screen
+ * receives deliberately carries no strand id and no party - so the sentence
+ * states the rule ("if there is one") rather than asserting the guest. Gating it
+ * on a real count would mean a second query on the settle path to change one
+ * clause, which is not a trade worth making for copy that is already true.
  */
 export function nightPricesRecordedMessage(count: number): string {
   if (count === 0) return "";
   const tail =
-    ", so this guest's nights will not send this booking back for review again. Another guest on the same booking still can, if their nights are unpriced too.";
+    ", so this guest's nights will not send this booking back for review again. If another guest on the same booking has unpriced nights, theirs still can.";
   return count === 1
     ? ` One night's price was recorded${tail}`
     : ` ${count} nights' prices were recorded${tail}`;

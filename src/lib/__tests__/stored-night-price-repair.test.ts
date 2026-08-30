@@ -185,6 +185,26 @@ describe("the figures must reconcile to the amount being settled", () => {
     expect(result.ok === false && result.message).toMatch(
       /clear every box and settle without them/,
     );
+    /*
+      #3191 fix round, second pass: AND IT LEADS WITH IT. The clause used to sit
+      at the end of a 480-character paragraph an officer reads in `text-xs`,
+      behind "Change the night amounts, or the settlement figure" - so the person
+      facing exactly the case this sentence was extended for was told first to do
+      the thing that produces a false price. `docs/guides/payments.md` leads with
+      the opposite emphasis, and a screen that disagrees with the guide on this
+      one sentence is worse than a screen that says nothing.
+
+      Order asserted, not just presence: it is the ORDER that was wrong.
+    */
+    const message = result.ok === false ? result.message : "";
+    expect(message.indexOf("clear every box")).toBeLessThan(
+      message.indexOf("Otherwise correct whichever figure is wrong"),
+    );
+    // And the guide's corrective reaches the officer who is being told to change
+    // a figure, rather than being left in the guide.
+    expect(message).toMatch(
+      /do not change a night's price to make the arithmetic work/,
+    );
   });
 
   it("says the same when no set of prices could satisfy it at all", () => {

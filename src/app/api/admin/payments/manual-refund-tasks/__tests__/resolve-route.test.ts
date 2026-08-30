@@ -244,7 +244,9 @@ describe("what the operator is told afterwards", () => {
     expect(body.message).toContain(
       "this guest's nights will not send this booking back for review again",
     );
-    expect(body.message).toContain("Another guest on the same booking still can");
+    expect(body.message).toContain(
+      "If another guest on the same booking has unpriced nights",
+    );
   });
 
   it("says nothing extra when no nights were recorded", async () => {

@@ -773,8 +773,25 @@ describe("recording what the unpriced nights sold for (#3191)", () => {
       have simply not finished. The sentence is unchanged; only its loudness is.
     */
     expect(verdict.className).toContain("text-muted-foreground");
+
+    /*
+      SECOND PASS (#3191): "filled in" was the wrong test for "finished", and a
+      review lens measured why. On a single-blank strand - the ordinary shape -
+      the last box holds text from the first digit, so typing the `4` of `45.00`
+      turned the paragraph red mid-number, which is the effect the paragraph
+      above claims to remove. Leaving the box is the signal instead, so a wrong
+      figure the officer is still typing stays quiet.
+    */
+    fireEvent.change(nightBox("2026-08-12"), { target: { value: "1" } });
+    expect(
+      screen.getByTestId("unpriced-night-price-reconciliation").className,
+    ).toContain("text-muted-foreground");
+
+    // Both boxes answered AND left, and the figures still wrong: now it is a
+    // rejection.
     fireEvent.change(nightBox("2026-08-12"), { target: { value: "1.00" } });
-    // Both boxes answered and the figures still wrong: now it is a rejection.
+    fireEvent.blur(nightBox("2026-08-11"));
+    fireEvent.blur(nightBox("2026-08-12"));
     expect(
       screen.getByTestId("unpriced-night-price-reconciliation").className,
     ).toContain("text-warning-11");

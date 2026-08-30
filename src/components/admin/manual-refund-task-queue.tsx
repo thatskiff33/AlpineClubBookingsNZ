@@ -38,6 +38,7 @@ import { zeroCompletionRefusal } from "@/lib/manual-refund-task-copy";
 import {
   checkStoredNightPriceRepair,
   nightPriceRepairUnreadableMessage,
+  type NonEmptyDates,
   settlementDeltaCents,
   unpricedNightTargetCents,
   type RecordedNightPrice,
@@ -887,7 +888,7 @@ export function ManualRefundTaskQueue() {
     that null into a validation error the person can see (#2685); this is that
     caller.
   */
-  const unreadableNightDates: CalendarDate[] = [];
+  let unreadableNightDates: NonEmptyDates | null = null;
   let nightBoxesTyped = 0;
   if (unpricedNights) {
     for (const date of unpricedNights.dates) {
@@ -895,8 +896,19 @@ export function ManualRefundTaskQueue() {
       if (raw.trim() === "") continue;
       nightBoxesTyped += 1;
       const cents = parseNightInput(raw);
-      if (cents === null) unreadableNightDates.push(date);
-      else nightPriceEntries.push({ date, priceCents: cents });
+      /*
+        Built as a NON-EMPTY list by construction (#3191 fix round), because
+        that is the only shape the refusal below accepts - handed an empty one
+        it would render "The amounts for  are not ones these boxes can read."
+        The type is what stops that, rather than the `.length > 0` check the
+        branch below used to rely on.
+      */
+      if (cents === null) {
+        unreadableNightDates =
+          unreadableNightDates === null
+            ? [date]
+            : [...unreadableNightDates, date];
+      } else nightPriceEntries.push({ date, priceCents: cents });
     }
   }
   // A partial or malformed answer never reaches the checker as if it were whole:
@@ -906,7 +918,7 @@ export function ManualRefundTaskQueue() {
   const nightPriceCheck: StoredNightPriceRepairCheck | null =
     !unpricedNights || nightBoxesTyped === 0 || nightPriceDeltaCents === null
       ? null
-      : unreadableNightDates.length > 0
+      : unreadableNightDates !== null
         ? {
             ok: false,
             message: nightPriceRepairUnreadableMessage(unreadableNightDates),
