@@ -38,9 +38,9 @@ import {
  * (#2851). `computeProposalHash` needs a real SHA-256, so line 1 is
  * `import { createHash } from "node:crypto"` and everything reachable from a
  * `"use client"` component that imports ANY export here is compiled into the
- * browser bundle — Node built-in and all. It used to be: four client entry
- * points imported `MEMBER_MESSAGE_MAX_LENGTH` and
- * `formatPolicyExceptionRequestAge` from here, so those two now live in
+ * browser bundle — Node built-in and all. It used to be: seven `"use client"`
+ * modules reached here, all of them for `MEMBER_MESSAGE_MAX_LENGTH` or
+ * `formatPolicyExceptionRequestAge`. Those two now live in
  * `@/lib/booking-exception-request-shared`, which imports nothing, and this
  * module is off the client graph entirely.
  *

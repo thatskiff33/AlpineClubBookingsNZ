@@ -44,9 +44,11 @@ const SRC = path.resolve(process.cwd(), "src");
 const EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs"];
 
 /**
- * The leaves a browser bundle must never reach. `@/lib/prisma` and `@/lib/auth`
- * are the two that do NOT fail the Next build today, because neither imports
- * `server-only` — so they are the two that would ship silently.
+ * The leaves a browser bundle must never reach. Since #2850 `@/lib/auth` fails
+ * the Next build on its own; `@/lib/prisma`, `@/lib/audit`, `@/lib/email`,
+ * `@/lib/xero` and `@/lib/stripe` do not, because each is reachable from an
+ * operator CLI that `server-only` would abort — so those are the ones that
+ * would ship silently if this census missed them.
  *
  * THIS LIST IS THE GUARD. It is not a sample of the server-only modules and
  * there is no rule that adds new ones automatically, so a module that is not
@@ -105,8 +107,8 @@ const NODE_BUILTINS = new Set([
  * `src/lib/booking-exception-requests.ts -> node:crypto` — and named it in a
  * `KNOWN_EDGES` set rather than fixing it, because the fix was a code move
  * inside capacity-adjacent Critical code and did not belong in a CI-enforcement
- * change. Four `"use client"` components imported `MEMBER_MESSAGE_MAX_LENGTH`
- * and `formatPolicyExceptionRequestAge` from that module, so the whole module —
+ * change. Seven `"use client"` modules reached it for `MEMBER_MESSAGE_MAX_LENGTH`
+ * and `formatPolicyExceptionRequestAge`, so the whole module —
  * `createHash` and all — was compiled into the browser bundle. It built anyway,
  * which meant the bundler was shimming or dropping `node:crypto`: an
  * implementation detail, not a guarantee.
@@ -191,7 +193,7 @@ function isForbiddenLeaf(fromFile: string, specifier: string): string | null {
   if (resolved === null) return null;
   const withoutExt = resolved.replace(/\.(tsx?|jsx?|mjs)$/, "");
   if (!FORBIDDEN_MODULES.has(withoutExt)) return null;
-  // Prisma and auth are never exemptable — an exemption for either is a
+  // No exemption exists to consult: reaching any of these from the client is a
   // credential or a database client in a browser bundle, which is the thing
   // this census exists to make impossible.
   return specifier;

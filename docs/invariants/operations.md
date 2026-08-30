@@ -239,11 +239,11 @@ rules first written here. #2765 extended it with the measured-audience half.
   `@/lib/session`, `@/lib/email`, `@/lib/xero`, `@/lib/stripe`, `@/lib/env`,
   `next/headers`, `server-only` or a Node built-in from a `"use client"` file
   ships database access, credential handling or filesystem code to every
-  visitor. `next/headers` and `server-only` fail the Next build by themselves,
-  and since #2850 so does `@/lib/auth`, which now carries
-  `import "server-only"`. The rest do not: `@/lib/prisma`, `@/lib/audit`,
-  `@/lib/email`, `@/lib/xero` and `@/lib/stripe` are all reachable from
-  operator CLI entrypoints, for the measured reason set out below, so they are
+  visitor. Importing `server-only` from the client layer fails the Next build
+  outright, and since #2850 so does reaching `@/lib/auth`, which now carries
+  that marker. The others do not: `@/lib/prisma`, `@/lib/audit`,
+  `@/lib/email`, `@/lib/xero` and `@/lib/stripe` are each reachable from an
+  operator CLI entrypoint, for the measured reason set out below, so they are
   the ones that would ship silently were the two source-level guards to miss
   them.
 

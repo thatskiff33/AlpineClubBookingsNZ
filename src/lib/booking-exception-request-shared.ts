@@ -9,11 +9,12 @@
  * `@/lib/booking-exception-requests` onto the client graph, and with it
  * `import { createHash } from "node:crypto"`.
  *
- * That was a real, live edge until #2851. Four client entry points reached
- * `booking-exception-requests.ts`, and between them they imported exactly these
- * two runtime symbols; everything else that module exports is server-side. So
- * the whole workflow module, and its Node-only crypto import, was compiled into
- * the browser bundle for the sake of a number and a string formatter. It built
+ * That was a real, live edge until #2851. Seven `"use client"` modules reached
+ * `booking-exception-requests.ts` — two importing it directly and five
+ * through those two — and between them they wanted exactly these two runtime
+ * symbols. Everything else that module exports is server-side, so the whole
+ * workflow module, and its Node-only crypto import, was compiled into the
+ * browser bundle for the sake of a number and a string formatter. It built
  * only because the bundler was shimming or dropping `node:crypto`, which is an
  * implementation detail and not a guarantee.
  * `src/lib/__tests__/client-server-boundary-census.test.ts` carried it as its
