@@ -51,6 +51,8 @@ import { isManualSettlementMarkerEvent } from "@/lib/manual-settlement-reversal-
 import {
   FINANCIAL_REVIEW_NOTHING_MOVED,
   FINANCIAL_REVIEW_NOTHING_TO_DO,
+  FINANCIAL_REVIEW_NOT_IN_THAT_FIGURE,
+  FINANCIAL_REVIEW_WILL_BE_IN_TOUCH,
   FINANCIAL_REVIEW_WORKING_IT_OUT,
 } from "@/lib/booking-financial-review-copy";
 
@@ -464,11 +466,17 @@ function buildFinancialReviewPendingNarrative(
  * opposite of what this issue is for — the member would pay, and hear nothing
  * about the money they may be owed.
  *
- * The bridging sentence is this module's own and duplicates nothing: "not part
- * of that figure" is a fact about the relationship between the two amounts,
- * which only exists in this composed case. The two money clauses after it are
- * the shared ones, and they read correctly here precisely because they name
- * what they are about rather than relying on where they sit.
+ * EVERY SENTENCE OF THE REVIEW HALF IS NOW SHARED (#3194). The bridging
+ * sentence — "not part of that figure", a fact about the relationship between
+ * the two amounts — was this module's own literal while this was the only place
+ * that needed it, and so was the closing "we'll be in touch". The public
+ * payment-link page needs the same five sentences beside a payment card it
+ * renders itself, so they moved to `booking-financial-review-copy.ts` and both
+ * surfaces compose from there. This function's output is byte-identical to what
+ * it produced before the move; `financialReviewNoteBesideAnAmount` is the other
+ * composition, and a test pins the two against each other sentence for sentence.
+ * The clauses read correctly in either precisely because they name what they are
+ * about rather than relying on where they sit.
  */
 function buildPayableWithFinancialReviewNarrative(
   booking: NarrativeBooking,
@@ -483,8 +491,8 @@ function buildPayableWithFinancialReviewNarrative(
     // still that it is unpaid, and "Your booking change is saved" at the top of
     // a screen asking for payment would bury it.
     headline: payable.headline,
-    message: `${payable.message} You have also made a change to this booking whose amount is not part of that figure. ${FINANCIAL_REVIEW_WORKING_IT_OUT} ${FINANCIAL_REVIEW_NOTHING_MOVED}`,
-    nextStep: `${payable.nextStep} ${FINANCIAL_REVIEW_NOTHING_TO_DO} We'll be in touch once the amount is confirmed.`,
+    message: `${payable.message} ${FINANCIAL_REVIEW_NOT_IN_THAT_FIGURE} ${FINANCIAL_REVIEW_WORKING_IT_OUT} ${FINANCIAL_REVIEW_NOTHING_MOVED}`,
+    nextStep: `${payable.nextStep} ${FINANCIAL_REVIEW_NOTHING_TO_DO} ${FINANCIAL_REVIEW_WILL_BE_IN_TOUCH}`,
   };
 }
 
