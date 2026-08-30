@@ -10,6 +10,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { stripComments } from "./support/strip-comments";
+
 const ROOT = process.cwd();
 
 function source(relativePath: string): string {
@@ -106,9 +108,7 @@ describe("stay-range model contract (#2622)", () => {
     expect(predicate).toContain(
       "return isGuestOperationallyPresentOnDay(guest, date, booking);",
     );
-    const predicateCode = predicate
-      .replace(/\/\*[\s\S]*?\*\//g, "")
-      .replace(/^\s*\/\/.*$/gm, "");
+    const predicateCode = stripComments(predicate);
     expect(predicateCode).not.toMatch(/dateKey|stayStartKey|stayEndKey|maxKey/);
 
     const wrapper = stayRanges.slice(
@@ -181,9 +181,7 @@ describe("stay-range model contract (#2622)", () => {
     expect(rosterStatus).toContain(
       'from "@/lib/member-guest-consent"',
     );
-    const rosterStatusCode = rosterStatus
-      .replace(/\/\*[\s\S]*?\*\//g, "")
-      .replace(/^\s*\/\/.*$/gm, "");
+    const rosterStatusCode = stripComments(rosterStatus);
     expect(
       rosterStatusCode.split("OPERATIONALLY_PRESENT_GUEST_WHERE").length - 1,
     ).toBe(5); // 1 import + 2 per entry point

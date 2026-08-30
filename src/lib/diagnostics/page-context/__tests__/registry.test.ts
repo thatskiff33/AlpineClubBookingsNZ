@@ -19,6 +19,8 @@ import {
 } from "@/lib/admin-permissions";
 import type { StuckStateSeverity } from "@/lib/stuck-state-dashboard";
 
+import { stripComments } from "@/lib/__tests__/support/strip-comments";
+
 import {
   DIAGNOSTICS_PAGE_CONTEXT_ROUTES,
   DIAGNOSTICS_PAGE_ERROR_CODES,
@@ -262,11 +264,7 @@ describe("every registry pathname is a page an operator can stand on (#2812)", (
       // current registry page satisfies; a legitimate page that renders through
       // a helper call would fail here loudly and be adjudicated on purpose,
       // which is the posture every census in this repo takes.
-      const source = fs
-        .readFileSync(pagePath, "utf8")
-        .replace(/\/\*[\s\S]*?\*\//g, "")
-        .replace(/^[ \t]*\/\/.*$/gm, "")
-        .replace(/\{\/\*[\s\S]*?\*\/\}/g, "");
+      const source = stripComments(fs.readFileSync(pagePath, "utf8"));
       const rendersJsx = /return\s*\(?\s*</.test(source);
       expect(
         rendersJsx,

@@ -3,6 +3,8 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { toSeasonRateData } from "@/lib/policies/booking-route-decisions";
 
+import { stripComments } from "./support/strip-comments";
+
 /**
  * Census: every loader that feeds an in-progress edit must select the column
  * that says what a night was SOLD for (#2744), and every builder of the plan must
@@ -70,6 +72,30 @@ function allSourceFiles(directory: string): string[] {
   });
 }
 
+/**
+ * Every scanned file paired with its comment-stripped source, computed ONCE.
+ *
+ * Two censuses below walk the whole of `src/` and strip every file. Doing that
+ * twice cost this file its 5-second budget the moment #3164 moved it onto the
+ * canonical scanner: a full-tree pass is 366 ms against the 56 ms the two-regex
+ * copy took, which is invisible on its own and is not invisible twice over,
+ * under the parallel load a real run puts on it. Measured rather than assumed —
+ * each of those two tests takes ~450 ms in isolation and both timed out at
+ * 5,000 ms when seven suites ran together.
+ *
+ * Sharing the pass is the fix rather than a longer timeout, because a timeout
+ * raised to cover a slower scan hides the NEXT slow thing as well.
+ */
+let strippedTree: Array<{ absolute: string; code: string }> | null = null;
+
+function strippedSources(): Array<{ absolute: string; code: string }> {
+  strippedTree ??= allSourceFiles(SRC_ROOT).map((absolute) => ({
+    absolute,
+    code: stripComments(fs.readFileSync(absolute, "utf8")),
+  }));
+  return strippedTree;
+}
+
 function repoRelative(absolute: string): string {
   return path.relative(process.cwd(), absolute).split(path.sep).join("/");
 }
@@ -107,19 +133,6 @@ const PLAN_BUILDER_CALL = /(?<!function\s)\bbuildInProgressGuestRangePlan\s*\(/g
  * these two call sites and a false FAILURE here is cheap to diagnose while a
  * false pass is the thing being guarded against.
  */
-/**
- * The same text with `//` and block comments blanked out.
- *
- * Both checks below read source text for the presence of a field, and prose
- * mentioning the field is not the field. Newlines are preserved so a stripped
- * comment cannot join two lines into something that matches.
- */
-function withoutComments(source: string): string {
-  return source
-    .replace(/\/\*[\s\S]*?\*\//g, (match) => match.replace(/[^\n]/g, " "))
-    .replace(/\/\/[^\n]*/g, (match) => " ".repeat(match.length));
-}
-
 function balancedArgumentList(source: string, openIndex: number): string {
   let depth = 0;
   for (let index = openIndex; index < source.length; index++) {
@@ -244,7 +257,7 @@ describe("in-progress edit sold-price census (#2744)", () => {
         // than the same night bought before the stay began — and nothing else in
         // the tree goes red, because the argument is optional by design (a club
         // that has not switched the discount on passes nothing).
-        const argumentList = withoutComments(
+        const argumentList = stripComments(
           balancedArgumentList(source, openIndex),
         );
         expect(
@@ -324,16 +337,9 @@ describe("season rate data census (#2756)", () => {
   });
 
   it("keeps that mapper the only production season mapping", () => {
-    const found = allSourceFiles(SRC_ROOT)
-      .filter(
-        (absolute) =>
-          [
-            ...withoutComments(fs.readFileSync(absolute, "utf8")).matchAll(
-              SEASON_RATE_MAPPING,
-            ),
-          ].length > 0,
-      )
-      .map(repoRelative)
+    const found = strippedSources()
+      .filter((file) => [...file.code.matchAll(SEASON_RATE_MAPPING)].length > 0)
+      .map((file) => repoRelative(file.absolute))
       .sort();
 
     // A second mapper is how `type` went missing on five edit paths at once. If a
@@ -411,16 +417,9 @@ const LENIENT_LOCK_CALL =
 
 describe("lenient locked-night reader census (#3031, E6)", () => {
   it("declares every production caller of the lenient reader", () => {
-    const found = allSourceFiles(SRC_ROOT)
-      .filter(
-        (absolute) =>
-          [
-            ...withoutComments(fs.readFileSync(absolute, "utf8")).matchAll(
-              LENIENT_LOCK_CALL,
-            ),
-          ].length > 0,
-      )
-      .map(repoRelative)
+    const found = strippedSources()
+      .filter((file) => [...file.code.matchAll(LENIENT_LOCK_CALL)].length > 0)
+      .map((file) => repoRelative(file.absolute))
       .sort();
 
     // A new caller must be classified here: does this path VALUE a night it is
@@ -432,7 +431,7 @@ describe("lenient locked-night reader census (#3031, E6)", () => {
 
   it("counts the calls in each declared file, so a second one cannot hide", () => {
     for (const site of LENIENT_LOCK_CALL_SITES) {
-      const source = withoutComments(
+      const source = stripComments(
         fs.readFileSync(path.resolve(process.cwd(), site.file), "utf8"),
       );
       expect([...source.matchAll(LENIENT_LOCK_CALL)].length, site.file).toBe(
@@ -461,7 +460,7 @@ describe("lenient locked-night reader census (#3031, E6)", () => {
     // the symbol, so it would still pass with the gate deleted and the import left
     // behind - which is the likeliest way this actually regresses, because nothing
     // else complains about an unused import until knip runs.
-    const source = withoutComments(
+    const source = stripComments(
       fs.readFileSync(
         path.resolve(process.cwd(), "src/lib/booking-guest-removal-service.ts"),
         "utf8",

@@ -224,16 +224,90 @@ are permanent: never renumbered, never reused.
   evidenced in the tree, so the count is not restated here. Cite the record, not
   the tally.
 - **`src/lib/__tests__/support/strip-comments.ts` is the canonical
-  `stripComments`, and since #3132 it is the only one.** Every source-scanning
-  test imports it, and so does the one CI script that used to export a copy.
-  **Use it; do not write a second.** Nothing fails on a second copy yet — the
-  lint arm is a follow-up, because this rule's first bullet prefers deleting the
-  copies to policing them — so this one is on review.
+  `stripComments`, and since #3164 a lint rule enforces it.** 48 test files and
+  one CI script import it, and `ssot/no-local-comment-stripper` in
+  `eslint.config.mjs` reports a second scanner as it is written rather than
+  twelve minutes later in CI. **Use it; do not write a second.**
+- **A population measured by NAME is not the population**, and the count above
+  is the evidence. #3132 converged the copies spelled `stripComments` and closed;
+  seven more were alive that day under the name `withoutComments`, and #3164
+  found twenty-one more again with no name at all — an inline `.replace()` chain
+  inside a census, which no symbol sweep can see. That is why the rule keys on
+  what a function DOES: it names a JavaScript block-comment delimiter, or
+  compares characters against a slash and a star. Two of those seven were not
+  JavaScript strippers at all (one SQL, one dotenv), and converging either would
+  have BROKEN its census — so a behaviour sweep has to classify, not just match.
+- **The lists that say what is not a copy live in `eslint.config.mjs`, and there
+  are two of them on purpose.** `COMMENT_STRIPPER_ALLOWLIST` is permanent: a
+  different concept the canonical helper cannot express — SQL comments, a comment
+  EXTRACTOR, and the guard's own fixture file. `UNCONVERGED_COMMENT_SCANNERS` is
+  a **ratchet** of four files, whose length is pinned in
+  `ssot-comment-stripper-guard.test.ts`, so the list can shrink and cannot grow.
+- **The canonical module holds three FORMS, and a claim made about a whole list
+  has to be true of every entry on it.** `stripComments` removes comments and
+  keeps strings; `stripCommentsAndStrings` also blanks string CONTENTS, which is
+  what a rule needs when its own subject is discussed in prose; `stripCssComments`
+  handles the one other language sharing the block delimiter. #3164 moved the
+  second form out of `xero-provider-date-boundary-census.test.ts`, where the
+  #2869 review had written it — one of two instruments reading the same tree by
+  different methods is exactly this ID, and a second form no other file could
+  import is why a ratchet entry could not converge onto it.
+- **The ratchet's preamble claimed a property two of its five entries did not
+  have, and that is the correction worth recording.** It said none produced
+  reduced text and all reported original-text offsets. Measured, that was false
+  twice: `family-group-role-retirement.test.ts`'s `codeOnly` really did reduce,
+  and has been converged onto the second form with **no change to what its
+  census reports** — `member-merge.ts` comes back without `maxFamilyRole` either
+  way, and the canonical form is the stricter of the two, since it keeps
+  `obj["maxFamilyRole"]` as the property read it is where the local one erased
+  it. `advisory-lock-guard.test.ts`'s works a line at a time and reduces too; it
+  stays, for its own accurate reason — a `SELECT` carve-out, because the raw SQL
+  it hunts for lives inside the double-quoted literals it otherwise blanks.
+  Three of the remaining four share the offset-preserving property; the fourth
+  is named as the exception rather than covered by the sentence. The blanker
+  they wait on is #3180.
+- **What the guard cannot catch is stated in its own failure message**, which is
+  the honest form for an inexact rule: a stripper that handles only line
+  comments (indistinguishable from the URL patterns this tree is full of), one
+  whose delimiters are computed at runtime, one written for another language,
+  and — at module top level only — one that names a single block delimiter
+  rather than the pair. Three false-positive classes were measured and closed on
+  the way in — a quantifier before an escaped slash (`/<br\s*\/?>/`, two
+  HTML-to-text converters), a single slash/star pair (a glob compiler, and
+  `endsWith("/*")`, whose margin is one character comparison and is pinned as a
+  fixture for that reason), and `diagnostics/tools/define.ts`'s module-level SQL
+  banlist. All are kept as fixtures so a later widening reopens them loudly.
+- **CSS is the one other language sharing JavaScript's block delimiter, and its
+  strip is a second FORM in the canonical module rather than three allowlist
+  entries.** `placeholder-styling-contract`, `app-theme-layout-contract` and
+  `print-light-palette-contract` each wrote the identical one-line `replaceAll`
+  at five call sites between them; since #3164 they import `stripCssComments`.
+  The reason CSS cannot simply use `stripComments` was also wrong where it was
+  first written, and the correction matters because the old one is not
+  reproducible: the JavaScript scanner does **not** read the slash in
+  `url(a/b)` as opening a regex and eat the line — a regex literal is copied
+  through verbatim, and `url(a/b.png)` and `url(/images/hero.png)` both come back
+  byte for byte. What it really eats is the LINE delimiter that CSS does not
+  have: `url(https://cdn.example/x.png)` unquoted loses everything from the
+  double slash onward. No stylesheet here writes one today, so the hazard is
+  **latent, not live** — the first unquoted absolute URL would silently shrink
+  whichever contract read that file.
+- **The rule reads the module body as well as every function, and the bar out
+  there is higher.** Its first form recorded evidence only against a literal's
+  enclosing function, so a stripper written beside a census's imports was
+  invisible while the identical chain one scope further in was reported — an
+  accidental limit, and an undeclared one. It now reads module scope too,
+  requiring BOTH block delimiters rather than either, because one escaped opener
+  at module level is the `define.ts` banlist entry above and a guard that is
+  wrong when it fires teaches its reader to switch it off. That reach is what put
+  `ssot-comment-stripper-guard.test.ts` on the allowlist: its fixtures are
+  module-level constants, and the suite proves the LISTING is what silences it,
+  by linting the file's own text at a fixture path and requiring a report.
 - **What converging measured is the argument for the rule, not a footnote.** The
-  sixteen copies fell into five behaviour classes, and they disagreed where it
-  mattered: six tracked no string literals at all, so a `//` inside `"https://x"`
-  opened a comment and ate the rest of the line; one was the two-regex strip that
-  drops newlines. Worse, the canonical itself read `.replace(/\//g, "_")` — two
+  sixteen copies #3132 removed fell into five behaviour classes, and they
+  disagreed where it mattered: six tracked no string literals at all, so a `//`
+  inside `"https://x"` opened a comment and ate the rest of the line; one was the
+  two-regex strip that drops newlines. Worse, the canonical itself read `.replace(/\//g, "_")` — two
   adjacent slashes inside a regex literal — as a line comment and deleted real
   code in a dozen files, a defect the #2869 review had already found and fixed in
   `xero-provider-date-boundary-census.test.ts` **alone**. One of two instruments
@@ -241,6 +315,17 @@ are permanent: never renumbered, never reused.
   scanner and that census imports it. Where the remaining gaps are, and why
   neither the scanner nor a full TypeScript parse dominates the other, is in the
   canonical module's docblock rather than restated here.
+- **#3164 re-measured that argument against the copies #3132 left behind, and it
+  is larger than the original.** Across `src/`, the two-regex strip with a
+  line-start guard deletes 100,390 characters of real code that the canonical
+  scanner keeps, in 58 files; the colon-guarded variant 104,254 in 157 files; the
+  space-blanking variant 205,978 in 671 files. The worst single case is not the
+  escaped slash at all: `rooms-beds-manager.tsx` contains a LINE comment quoting
+  the glob `/api/admin/bed-allocation/*`, whose block-comment opener runs 464
+  lines to the next closer and takes 23% of the file with it. None of the
+  converged censuses' own patterns lived in the deleted regions, so no census
+  result moved — the defect was live and latent, which is the state a guard is
+  for and an incident is not.
 - When you add the second instrument to a guard, check what the first one
   normalises before writing the second, and say in the test which method both
   share. **Prefer the broader instrument for the second one**: over-reporting is

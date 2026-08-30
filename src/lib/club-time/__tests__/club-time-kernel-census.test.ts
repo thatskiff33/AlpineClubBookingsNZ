@@ -15,6 +15,8 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { stripComments } from "@/lib/__tests__/support/strip-comments";
+
 const ROOT = process.cwd();
 const KERNEL = path.join(ROOT, "src", "lib", "club-time");
 const LODGE_DISPLAY = path.join(ROOT, "src", "components", "lodge-display");
@@ -35,53 +37,9 @@ function walk(dir: string, out: string[] = []): string[] {
 const rel = (file: string) =>
   path.relative(ROOT, file).split(path.sep).join("/");
 
-/**
- * The source with its COMMENTS removed.
- *
- * Every claim below is about what the code DOES, and every docblock in this
- * kernel names the thing its module is forbidden to do — `APP_TIME_ZONE`,
- * `resolvedOptions().timeZone`, `getUTCDate()`, `server-only`. A census that
- * scanned raw text would fail on its own explanations, which is the fastest way
- * to teach the next reader to delete the guard. String and template literals are
- * kept, because an import specifier is one.
- */
-function withoutComments(source: string): string {
-  const out: string[] = [];
-  let index = 0;
-  let quote: string | null = null;
-  while (index < source.length) {
-    const char = source[index] as string;
-    if (quote === null && char === "/") {
-      const next = source[index + 1];
-      if (next === "/") {
-        const end = source.indexOf("\n", index);
-        index = end === -1 ? source.length : end;
-        continue;
-      }
-      if (next === "*") {
-        const end = source.indexOf("*/", index + 2);
-        index = end === -1 ? source.length : end + 2;
-        continue;
-      }
-    }
-    if (quote === null && (char === '"' || char === "'" || char === "`")) {
-      quote = char;
-    } else if (quote !== null && char === "\\") {
-      out.push(source.slice(index, index + 2));
-      index += 2;
-      continue;
-    } else if (char === quote) {
-      quote = null;
-    }
-    out.push(char);
-    index += 1;
-  }
-  return out.join("");
-}
-
 const kernelFiles = walk(KERNEL).map((file) => ({
   rel: rel(file),
-  text: withoutComments(readFileSync(file, "utf8")),
+  text: stripComments(readFileSync(file, "utf8")),
 }));
 
 describe("the census can see the kernel at all", () => {
@@ -107,7 +65,7 @@ describe("the comment stripper the census depends on", () => {
       'const url = "https://example.test/not-a-comment";',
       'const kept = `APP_TIME_ZONE in a template`;',
     ].join("\n");
-    const stripped = withoutComments(source);
+    const stripped = stripComments(source);
     expect(stripped).not.toContain("line comment");
     expect(stripped).not.toContain("block comment");
     expect(stripped).toContain('"server-only"');
@@ -265,7 +223,7 @@ describe("the legacy adapter is an adapter, not a second implementation", () => 
       implementations, and CT-6 has to delete one of them.
     */
     for (const adapter of ["src/lib/date-only.ts"]) {
-      const source = withoutComments(
+      const source = stripComments(
         readFileSync(path.join(ROOT, adapter), "utf8"),
       );
       expect(source.length).toBeGreaterThan(0);
@@ -280,7 +238,7 @@ describe("the legacy adapter is an adapter, not a second implementation", () => 
   });
 
   it("keeps every zone-taking adapter pointed at the kernel", () => {
-    const source = withoutComments(
+    const source = stripComments(
       readFileSync(path.join(ROOT, "src/lib/date-only.ts"), "utf8"),
     );
     for (const delegated of [
@@ -353,7 +311,7 @@ describe("the stay window is not an occupancy decision", () => {
     // suite that exercises the window is the witness that the walk still works.
     expect(candidates.length).toBeGreaterThan(0);
     const usesStayWindow = candidates
-      .map((file) => ({ rel: file.rel, text: withoutComments(file.raw) }))
+      .map((file) => ({ rel: file.rel, text: stripComments(file.raw) }))
       .filter((file) => /\bstayWindow\b/.test(file.text));
     /*
       TWO DIRECTIONS, because a mutation probe found the first one alone was
@@ -389,7 +347,7 @@ describe("the stay window is not an occupancy decision", () => {
       .filter((file) => file.text.includes("booking-guest-stay-ranges"))
       .map((file) => file.rel);
     const occupancyItself = occupancyModules
-      .filter((file) => /\bstayWindow\b/.test(withoutComments(file.raw)))
+      .filter((file) => /\bstayWindow\b/.test(stripComments(file.raw)))
       .map((file) => file.rel);
     expect(
       [...alsoExpandsNights, ...occupancyItself].sort(),
@@ -411,7 +369,7 @@ describe("the lobby wall no longer reasons from UTC midnight", () => {
     */
     const displayFiles = walk(LODGE_DISPLAY).map((file) => ({
       rel: rel(file),
-      text: withoutComments(readFileSync(file, "utf8")),
+      text: stripComments(readFileSync(file, "utf8")),
     }));
     expect(displayFiles.length).toBeGreaterThan(5);
     const builders = displayFiles
@@ -427,7 +385,7 @@ describe("the lobby wall no longer reasons from UTC midnight", () => {
   it("derives no label from a lodge night turned back into an instant", () => {
     const displayFiles = walk(LODGE_DISPLAY).map((file) => ({
       rel: rel(file),
-      text: withoutComments(readFileSync(file, "utf8")),
+      text: stripComments(readFileSync(file, "utf8")),
     }));
     const offenders = displayFiles
       .filter((file) => /getUTCDate\(\)|T00:00:00Z`\)/.test(file.text))
