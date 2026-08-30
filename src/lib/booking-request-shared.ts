@@ -39,6 +39,7 @@ import {
 } from "@/lib/membership-type-policy";
 import { getStayNights } from "@/lib/policies/pricing";
 import { prisma } from "@/lib/prisma";
+import { requiredGuestPriceCents } from "@/lib/required-price-cents";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import { formatDateOnly } from "@/lib/date-only";
 
@@ -279,7 +280,24 @@ export async function buildApprovalGuestCreates(
       memberId,
       stayStart: checkIn,
       stayEnd: checkOut,
-      priceCents: guestPriceCents[index],
+      // #3167 (epic #2797): NO `?? 0` and no bare index read — the rule is in
+      // `required-price-cents.ts`. This is the shared guest writer for ALL
+      // THREE approval pipelines, so it is the site the rule most needs to
+      // hold at, not the one it can most easily be argued off. The #3167
+      // census graded it a TAUTOLOGY on today's callers — every one of them
+      // either builds the vector with `splitPriceAcrossGuests(total,
+      // guests.length)` or sits behind an explicit
+      // `price.guests.length === guests.length` check — and there is no `?? 0`
+      // here to remove, so a short vector currently makes Prisma reject an
+      // `undefined` rather than store a zero. It goes in anyway: the refusal
+      // says WHICH writer was handed a short split and why that is a caller
+      // defect, and leaving the one unguarded money read in the tree because
+      // the reason it is safe is subtle is how the subtlety gets forgotten.
+      priceCents: requiredGuestPriceCents(
+        guestPriceCents,
+        index,
+        "the shared booking-request approval guest writer"
+      ),
     };
   });
   await assertMembershipTypeBookingAllowed(tx, {
