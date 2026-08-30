@@ -22,7 +22,7 @@ reason: this is where the whole admin half of the feature lands — the two
   change's own subject, not as a line-count tidy-up ridden in on a money-copy fix.
 
 file: src/lib/email/booking.ts
-lines: 1533
+lines: 1539
 reason: the growth is the composed money note in `sendBookingModifiedEmail` —
   a review sentence rendered ALONGSIDE the settlement sentence rather than
   instead of it, which is what stops a member being told there is nothing to do

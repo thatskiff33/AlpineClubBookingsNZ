@@ -45,7 +45,7 @@ reason: `PricingResult` becomes a discriminated union, so the priced fields move
   `booking-guest-profile-gates.test.ts`, which compares positions inside it.
 
 file: src/lib/booking-batch-modification-service.ts
-lines: 1613
+lines: 1639
 reason: the apply path narrows the pricing result once and refuses the review
   branch inside the transaction, so the structural change rolls back with it;
   plus the identity-only echo's `?? 0` becoming a refusal. The comment weight is
@@ -96,7 +96,7 @@ reason: the evidence gate, which is the whole of E10: a removal's credit was
   not.
 
 file: src/lib/booking-date-modification-service.ts
-lines: 1797
+lines: 1833
 reason: eleven lines. `perNightCents[k] ?? 0` becomes a refusal in the writer
   that persists the new range's night rows — a magic zero there is a real sold
   price of nothing on a real night, which the next edit reads back as evidence.
@@ -123,7 +123,7 @@ reason: one error branch, above the generic `ApiError` branch that would
   disagreed about one refusal, which is the parity this epic requires of them.
 
 file: src/app/api/bookings/[id]/guests/[guestId]/route.ts
-lines: 534
+lines: 543
 reason: the same one branch, for the same reason, on the removal route.
   Raise-trigger round (+12): that branch is REPLACED rather than added to. An
   unpriceable removal is no longer refused — it is parked — and DELETE is the
