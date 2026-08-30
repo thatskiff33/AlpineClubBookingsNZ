@@ -281,6 +281,18 @@ const FIVE_NON_MEMBERS: PartyGuest[] = [1, 2, 3, 4, 5].map((n) => ({
   isMember: false,
   stayStart: D("2026-09-10"),
   stayEnd: D("2026-09-12"),
+  // #3166: the two nights they already hold, each carrying what it was sold
+  // for, so the strand's rows reconcile with the total `storedPriceOf` derives
+  // from them. Without stored rows this party has no readable sold-price
+  // history and every ordinary-planner case below now parks for financial
+  // review rather than pricing — which is the gate working, not a discount
+  // question. These are the nights the edit KEEPS, so they lock at their stored
+  // price in both switch states and the only night either state can move is the
+  // one the extension buys, which is exactly what the assertions measure.
+  nights: [D("2026-09-10"), D("2026-09-11")].map((stayDate) => ({
+    stayDate,
+    priceCents: NON_MEMBER_RATE_CENTS,
+  })),
 }));
 
 describe.each(SEASON_SHAPES)(
@@ -320,17 +332,24 @@ describe.each(SEASON_SHAPES)(
         extendByOneNight("off"),
       ]);
 
-      // Three nights × five non-members, undiscounted.
+      // Three nights × five non-members, undiscounted. Two of the three were
+      // already bought at the non-member rate and keep it (#3166 gave this
+      // party the stored rows it needs to be priceable at all), so the figure is
+      // unchanged even though its composition is not.
       expect(disabled.newTotalPriceCents).toBe(
         3 * 5 * NON_MEMBER_RATE_CENTS,
       );
 
       // The load-bearing assertion, and the one an inert gate cannot pass: the
-      // switch is worth real money on these nights.
+      // switch is worth real money on the night this edit BUYS. It reaches that
+      // night only — the two already bought keep their stored price in every
+      // state (INV-MOD-005), which is the neighbouring case's subject.
       expect(on.newTotalPriceCents).toBeLessThan(off.newTotalPriceCents);
-      expect(on.newTotalPriceCents).toBe(3 * 5 * MEMBER_RATE_CENTS);
+      expect(on.newTotalPriceCents).toBe(
+        2 * 5 * NON_MEMBER_RATE_CENTS + 5 * MEMBER_RATE_CENTS,
+      );
       expect(off.newTotalPriceCents - on.newTotalPriceCents).toBe(
-        3 * 5 * DISCOUNT_PER_NIGHT_CENTS,
+        5 * DISCOUNT_PER_NIGHT_CENTS,
       );
 
       // Off is the ABSENCE of a discount, not a second discount rule: byte-for-byte

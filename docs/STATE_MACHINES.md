@@ -1503,12 +1503,17 @@ OPEN -> DISMISSED   (#3030: for an `EDIT_FINANCIAL_REVIEW` task this means
                      downstream can read a dismissal as money having moved.)
 ```
 
-**#3030: terminal is terminal PER OCCURRENCE, not merely per row.** An
+**#3030/#3166: terminal is terminal FOR THE ROW, and for nothing after it.** An
 `EDIT_FINANCIAL_REVIEW` task carries an `occurrenceKey` - the identity of the
-structural edit that raised it. A replay of that edit finds the existing row and
-raises nothing, whatever state it has reached, so COMPLETED and DISMISSED close
-the OCCURRENCE rather than just the row. Where the key is minted, what counts as
-"the same structural edit", and which database constraints hold the rules up are
+structural edit that raised it. A REPLAY of that edit finds the existing row and
+raises nothing; a COMPLETED or DISMISSED row is not a replay's answer at all, and
+since #3166 it no longer suppresses the next occurrence of the same identity -
+that raise takes a `#n` recurrence key of its own and the settled row is left
+untouched. An earlier revision of this paragraph said a replay raises nothing
+"whatever state it has reached", which is the pre-#3166 rule and the money it
+lost. Where the key is minted, what counts as
+"the same structural edit", what separates a replay from a new edit of the same
+shape, and which database constraints hold the rules up are
 stated once, in [`INV-PAY-051`](invariants/payment-and-settlement.md#inv-pay-051)
 - not restated here, because one rule with three homes is one rename away from
 two of them lying.

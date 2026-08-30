@@ -267,8 +267,19 @@ describe("#3031 quote and apply consume one discriminated result", () => {
       "capacityOverridden",
       "kind",
       "occurrences",
+      // #3166: the guest ROWS the writer is handed — one entry per strand,
+      // carrying that strand's own STORED total and a per-night vector whose
+      // unknown nights are null. It is the same content `parkedPlan` already
+      // carried, hoisted so the pre-check-in park (which has no plan) and the
+      // in-progress park hand the writer one shape. It carries NO booking-level
+      // total, which is the property this block exists to defend, and the
+      // assertion below is what holds that line rather than this comment.
+      "parkedGuestRows",
       "parkedPlan",
     ]);
+    expect(Object.keys(apply.parkedGuestRows).sort()).toEqual(["guests"]);
+    expect(quote.parkedPlan).not.toBeNull();
+    if (quote.parkedPlan === null) throw new Error("expected a parked plan");
     expect(Object.keys(quote.parkedPlan).sort()).toEqual([
       "capacityGuestRanges",
       "capacityRangeStart",
