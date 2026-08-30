@@ -12,6 +12,7 @@ import {
   type SeasonRateData,
 } from "@/lib/policies";
 import { dateOnlyFromParts } from "@/lib/date-only";
+import { requiredNightPriceCents } from "@/lib/required-price-cents";
 
 /**
  * Property-based tests (fast-check) for the pure pricing money math
@@ -114,6 +115,153 @@ const guestArb: fc.Arbitrary<GuestInput> = fc
 
 const guestsArb = fc.array(guestArb, { minLength: 1, maxLength: 4 });
 
+/**
+ * #3167: the guest shapes the generator above never produces.
+ *
+ * `guestArb` sets neither a partial stay nor an explicit night set, so every
+ * guest it makes is priced over the whole booking range and
+ * `getGuestPricedNights` only ever takes its `getStayNights` fallback. That
+ * matters because epic #2797's create-path refusals rest on ONE structural
+ * claim — that `calculateBookingPrice` returns `perNightCents` and `nightDates`
+ * of the same length, so a writer can read the two index-by-index — and the
+ * branch where those could most plausibly come apart is the one nothing here
+ * was exercising. The #3167 census recommended closing exactly this gap: the
+ * claim was read by a person, not proved by the suite.
+ *
+ * `EXPLICIT_NIGHTS` deliberately allows repeated picks, because that is the one
+ * input where the priced night count differs from the count the CALLER supplied
+ * — `getGuestPricedNights` dedupes by calendar day. A writer that sized its
+ * loop from the input rather than from `nightDates` would be wrong there, and
+ * the property below is what says so.
+ */
+type StaySpec = { checkIn: Date; checkOut: Date; nights: number };
+
+type GuestStayShape = "FULL" | "PARTIAL" | "EXPLICIT_NIGHTS";
+
+type GuestSpec = {
+  guest: GuestInput;
+  shape: GuestStayShape;
+  /** Nights from check-in that a PARTIAL guest's own envelope starts at. */
+  offsetNights: number;
+  /** How many nights a PARTIAL guest's envelope spans (0 is allowed). */
+  spanNights: number;
+  /** Indexes into the stay's nights for an EXPLICIT_NIGHTS guest; may repeat. */
+  nightPicks: number[];
+};
+
+const guestSpecArb: fc.Arbitrary<GuestSpec> = fc.record({
+  guest: guestArb,
+  shape: fc.constantFrom<GuestStayShape>("FULL", "PARTIAL", "EXPLICIT_NIGHTS"),
+  offsetNights: fc.integer({ min: 0, max: 5 }),
+  spanNights: fc.integer({ min: 0, max: 5 }),
+  nightPicks: fc.array(fc.integer({ min: 0, max: 4 }), {
+    minLength: 0,
+    maxLength: 6,
+  }),
+});
+
+const guestSpecsArb = fc.array(guestSpecArb, { minLength: 1, maxLength: 4 });
+
+/**
+ * A hand-built case per shape, run FIRST and unconditionally by fast-check.
+ *
+ * The property below counts which shapes it saw and then asserts it saw each
+ * one, because a generator that quietly stopped producing them would pass
+ * vacuously — the very failure this test exists to end. fast-check picks a
+ * fresh seed on every run, so leaving that coverage to chance would trade a
+ * vacuous pass for a flaky one. These examples make the coverage a fact of the
+ * test rather than a property of the seed; the random runs add breadth on top.
+ */
+const FIXED_STAY: StaySpec = {
+  checkIn: dateOnlyFromParts(2026, 0, 31),
+  checkOut: dateOnlyFromParts(2026, 1, 3), // 3 nights: Jan 31, Feb 1, Feb 2
+  nights: 3,
+};
+
+const FIXED_RATES: SeasonRateData["rates"] = AGE_TIERS.flatMap(
+  (ageTier, i) => [
+    { ageTier, membershipTypeId: MEMBER_TYPE, pricePerNightCents: 5_000 + i * 100 },
+    { ageTier, membershipTypeId: NONMEMBER_TYPE, pricePerNightCents: 8_000 + i * 100 },
+  ]
+);
+
+const FIXED_GUEST: GuestInput = {
+  ageTier: "ADULT",
+  isMember: false,
+  rateMembershipTypeId: NONMEMBER_TYPE,
+  rateSource: "NON_MEMBER_DEFAULT",
+};
+
+const SHAPE_COVERAGE_EXAMPLE: [StaySpec, GuestSpec[], SeasonRateData["rates"]] = [
+  FIXED_STAY,
+  [
+    // FULL — the only shape the original generator ever produced.
+    {
+      guest: FIXED_GUEST,
+      shape: "FULL",
+      offsetNights: 0,
+      spanNights: 0,
+      nightPicks: [],
+    },
+    // PARTIAL, spanning nothing: the guest priced over NO nights, whose two
+    // halves must both come back empty rather than one of them.
+    {
+      guest: FIXED_GUEST,
+      shape: "PARTIAL",
+      offsetNights: 1,
+      spanNights: 0,
+      nightPicks: [],
+    },
+    // PARTIAL, a real middle slice.
+    {
+      guest: FIXED_GUEST,
+      shape: "PARTIAL",
+      offsetNights: 1,
+      spanNights: 2,
+      nightPicks: [],
+    },
+    // EXPLICIT_NIGHTS with a REPEATED pick and a hole: three nights asked for,
+    // two priced, in a non-contiguous set. This is the case where a writer that
+    // sized its loop from the caller's own night list would run off the end of
+    // `perNightCents`.
+    {
+      guest: FIXED_GUEST,
+      shape: "EXPLICIT_NIGHTS",
+      offsetNights: 0,
+      spanNights: 0,
+      nightPicks: [0, 0, 2],
+    },
+  ],
+  FIXED_RATES,
+];
+
+/** Turn a shape-independent spec into a real GuestInput against a stay. */
+function materialiseGuest(spec: GuestSpec, stay: StaySpec): GuestInput {
+  const dayAfterCheckIn = (days: number) =>
+    new Date(stay.checkIn.getTime() + days * 24 * 60 * 60 * 1000);
+
+  if (spec.shape === "FULL") return spec.guest;
+
+  if (spec.shape === "PARTIAL") {
+    // Keep the envelope inside the booking range so the shape under test is a
+    // partial stay rather than an out-of-range one. A zero-night envelope is
+    // deliberately reachable: a guest priced over no nights at all is the case
+    // that must produce two EMPTY arrays, not one.
+    const start = Math.min(spec.offsetNights, stay.nights);
+    const end = Math.min(start + spec.spanNights, stay.nights);
+    return {
+      ...spec.guest,
+      stayStart: dayAfterCheckIn(start),
+      stayEnd: dayAfterCheckIn(end),
+    };
+  }
+
+  return {
+    ...spec.guest,
+    nights: spec.nightPicks.map((pick) => dayAfterCheckIn(pick % stay.nights)),
+  };
+}
+
 describe("calculateBookingPrice properties", () => {
   it("keeps totals additive, integer, and non-negative", () => {
     fc.assert(
@@ -145,6 +293,84 @@ describe("calculateBookingPrice properties", () => {
       }),
       PRICE_RUNS
     );
+  }, PRICE_TEST_TIMEOUT_MS);
+
+  it("keeps perNightCents and nightDates the same length for partial stays and explicit night sets too (#3167)", () => {
+    // Coverage counters. The whole point of this test is that the generator
+    // above did not previously reach these branches, so a version of it that
+    // silently stopped reaching them would pass vacuously — which is the exact
+    // failure mode #3167 was filed about. Assert the shapes were produced.
+    const seen = { FULL: 0, PARTIAL: 0, EXPLICIT_NIGHTS: 0, deduped: 0, empty: 0 };
+
+    fc.assert(
+      fc.property(stayArb, guestSpecsArb, ratesArb(), (stay, specs, rates) => {
+        const guests = specs.map((spec) => materialiseGuest(spec, stay));
+        const breakdown = calculateBookingPrice(
+          stay.checkIn,
+          stay.checkOut,
+          guests,
+          [seasonFromRates(rates)]
+        );
+
+        expect(breakdown.guests).toHaveLength(specs.length);
+
+        specs.forEach((spec, i) => {
+          const guest = breakdown.guests[i];
+          if (spec.shape === "EXPLICIT_NIGHTS" && spec.nightPicks.length > 0) {
+            seen.EXPLICIT_NIGHTS++;
+            if (new Set(spec.nightPicks.map((p) => p % stay.nights)).size <
+                spec.nightPicks.length) {
+              seen.deduped++;
+            }
+          } else if (spec.shape === "PARTIAL") {
+            seen.PARTIAL++;
+          } else {
+            seen.FULL++;
+          }
+          if (guest.nightDates.length === 0) seen.empty++;
+
+          // THE claim the create-path refusals rest on: the two halves are
+          // parallel, so a writer may read them index-by-index.
+          expect(guest.perNightCents).toHaveLength(guest.nightDates.length);
+          expect(guest.nights).toBe(guest.nightDates.length);
+          expect(guest.priceCents).toBe(
+            guest.perNightCents.reduce((s, c) => s + c, 0)
+          );
+
+          // Stated as the writers state it: every night the breakdown carries
+          // has a priced amount, so `requiredNightPriceCents` never refuses a
+          // breakdown this engine produced.
+          guest.nightDates.forEach((stayDate, k) => {
+            expect(() =>
+              requiredNightPriceCents(
+                guest.perNightCents,
+                k,
+                stayDate,
+                "the pricing property test"
+              )
+            ).not.toThrow();
+          });
+
+          // Nights are the chronological, deduplicated set — the reason a
+          // writer must size its loop from `nightDates` and not from whatever
+          // night list it handed in.
+          for (let k = 1; k < guest.nightDates.length; k++) {
+            expect(guest.nightDates[k].getTime()).toBeGreaterThan(
+              guest.nightDates[k - 1].getTime()
+            );
+          }
+        });
+      }),
+      { ...PRICE_RUNS, examples: [SHAPE_COVERAGE_EXAMPLE] }
+    );
+
+    expect(seen.FULL).toBeGreaterThan(0);
+    expect(seen.PARTIAL).toBeGreaterThan(0);
+    expect(seen.EXPLICIT_NIGHTS).toBeGreaterThan(0);
+    // A repeated pick (the dedupe branch) and a guest priced over no nights at
+    // all are the two edges a parallel-array assumption breaks on first.
+    expect(seen.deduped).toBeGreaterThan(0);
+    expect(seen.empty).toBeGreaterThan(0);
   }, PRICE_TEST_TIMEOUT_MS);
 
   it("is deterministic: repricing the same input yields the same breakdown", () => {

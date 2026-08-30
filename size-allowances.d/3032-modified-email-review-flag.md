@@ -10,7 +10,7 @@ allowance that already owns them (`3031-exact-sold-price.md` and
 here. This route is the one path no live allowance covers.
 
 file: src/app/api/bookings/[id]/guests/route.ts
-lines: 1264
+lines: 1277
 reason: TWO additions, and the second is the larger one. The pending-review
   FENCE: this route is the fourth money-affecting door and had no fence on
   it, so an edit priced against a total under review, absorbed the

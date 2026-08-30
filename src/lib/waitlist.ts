@@ -49,6 +49,7 @@ import {
 } from "@/lib/subscription-lockout-enforcement";
 import { formatMissingPaidUpAdultWaitlistRefusal } from "@/lib/policies/subscription-lockout-pricing";
 import { formatAdultMemberHostingWaitlistRefusal } from "@/lib/policies/adult-member-hosting";
+import { requiredNightPriceCents } from "@/lib/required-price-cents";
 
 export const WAITLIST_OFFER_HOURS =
   Number(process.env.WAITLIST_OFFER_HOURS) || 48;
@@ -227,18 +228,22 @@ async function repriceWaitlistCandidate(
     // therefore resolved here, before the first mutation.
     const repricedNightRows = candidate.guests.map((guest, index) => {
       const nightDates = priceBreakdown.guests[index].nightDates ?? [];
-      return nightDates.map((stayDate, k) => {
+      return nightDates.map((stayDate, k) => ({
+        bookingGuestId: guest.id,
+        stayDate,
         // NO `?? 0`. These rows become the booking's sold-price history from
         // here on, and a magic zero would be read back by the next edit as
-        // evidence the member paid nothing for the night.
-        const priceCents = priceBreakdown.guests[index].perNightCents[k];
-        if (typeof priceCents !== "number") {
-          throw new Error(
-            `Waitlist reprice priced no amount for the night of ${stayDate.toISOString()} (#3031)`,
-          );
-        }
-        return { bookingGuestId: guest.id, stayDate, priceCents };
-      });
+        // evidence the member paid nothing for the night. The rule itself, why
+        // it refuses rather than defaults, and the caller census behind it are
+        // stated once in `required-price-cents.ts` (#3031, #3167); all this
+        // site says is which writer it is.
+        priceCents: requiredNightPriceCents(
+          priceBreakdown.guests[index].perNightCents,
+          k,
+          stayDate,
+          "the waitlist offer reprice",
+        ),
+      }));
     });
 
     await Promise.all(

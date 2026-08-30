@@ -32,6 +32,7 @@ import {
   type BookingRequestLinkedGuestMember,
 } from "@/lib/booking-request";
 import { reconcileBedAllocationsForBookingWithGlobalLockHeld } from "@/lib/bed-allocation-lifecycle";
+import { requiredGuestPriceCents } from "@/lib/required-price-cents";
 import {
   buildApprovalGuestNights,
   collectNotifiedMemberGuestIds,
@@ -1423,7 +1424,19 @@ export async function holdBookingRequestSlots(input: {
           memberId,
           stayStart: request.checkIn,
           stayEnd: request.checkOut,
-          priceCents: guestPriceCents[index] ?? 0,
+          // #3167 (epic #2797): NO `?? 0` — the rule is in
+          // `required-price-cents.ts`. The #3167 census graded this site a
+          // TAUTOLOGY, the strongest of its three verdicts: the split is taken
+          // over `guests.length` and this loop iterates that same const, with
+          // nothing between them that mutates it, so the refusal cannot fire on
+          // any input. It goes in anyway — leaving one prohibited construct on a
+          // money column because the reason it is safe is subtle is how the
+          // subtlety gets forgotten.
+          priceCents: requiredGuestPriceCents(
+            guestPriceCents,
+            index,
+            "the booking-request capacity hold"
+          ),
         };
       }),
     })

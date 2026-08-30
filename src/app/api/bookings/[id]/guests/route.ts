@@ -55,6 +55,7 @@ import {
 import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
 import { createModificationAdditionalPaymentIntent } from "@/lib/booking-modification-settlement";
 import logger from "@/lib/logger";
+import { requiredNightPriceCents } from "@/lib/required-price-cents";
 import { z } from "zod";
 import { bookableAgeTierEnum } from "@/lib/age-tier-schema";
 import { parseJsonRequestBody } from "@/lib/api-json";
@@ -645,7 +646,19 @@ export async function POST(
             nights: {
               create: (priced.nightDates ?? []).map((stayDate, k) => ({
                 stayDate,
-                priceCents: priced.perNightCents[k] ?? 0,
+                // #3167 (epic #2797): NO `?? 0` — the rule and the #3167
+                // census are in `required-price-cents.ts`. What is specific
+                // here is the blast radius: this is the one writer that puts
+                // night rows on an EXISTING booking, beside rows already
+                // carrying real sold prices, so a magic zero would not read as
+                // the caller bug it is — it would surface much later as an
+                // unexplained review on somebody else's day.
+                priceCents: requiredNightPriceCents(
+                  priced.perNightCents,
+                  k,
+                  stayDate,
+                  "the add-guest route"
+                ),
               })),
             },
           },
