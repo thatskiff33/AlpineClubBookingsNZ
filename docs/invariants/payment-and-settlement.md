@@ -1148,9 +1148,8 @@ one, check the other.
   since #3194 the completion re-reads the booking's own payment and routes on
   that. Identity is the `occurrenceKey`, minted
   only by `editFinancialReviewOccurrenceKey`
-  (`src/lib/edit-financial-review.ts`), never a `reason` sentence — so a replay
-  raises one task across OPEN, COMPLETED and DISMISSED, and both terminal states
-  are terminal for the OCCURRENCE. Completion carries the admin's confirmed
+  (`src/lib/edit-financial-review-occurrence.ts`), never a `reason` sentence — so
+  a replay of one edit raises one task and no more. Completion carries the admin's confirmed
   POSITIVE integer cents plus a note, written inside the same status-guarded
   claim as the status so it cannot apply twice; a figure differing from one the
   task already held is the audited amendment D2 permits on this kind alone, with
@@ -1159,6 +1158,20 @@ one, check the other.
   says whether nothing was owed or the club settled it outside the task. Nothing
   moves at Stripe, in the ledger, in Xero or as account credit until an admin
   confirms.
+  - **A SETTLED occurrence does not suppress the next one of the same identity**
+    (#3166). A replay collapses into an OPEN task and only an OPEN task; a
+    COMPLETED or DISMISSED row at the same key means a person already answered
+    that question, so the raise walks past it onto a `#n` recurrence key and
+    writes a new OPEN task. The settled row is never reopened, amended or
+    re-keyed. The two are distinguishable because a replay cannot see a terminal
+    row: the raise runs inside the caller's transaction, so a rolled-back attempt
+    leaves nothing to find, and a new edit reaches the raise only after
+    `assertNoPendingEditFinancialReview` has confirmed nothing on the booking is
+    OPEN. Before this, a parked guest-add — whose identity cannot move, because
+    it surrenders no night and writes no row — raised nothing after the first
+    settlement: no task, no charge, no banner, repeating per guest. Pinned by
+    `edit-financial-review.test.ts` and, against a real server, by
+    `edit-financial-review-races.realdb.test.ts`, which asserts both directions.
   - **A stored night price is not proof of a sold price, which is why a human
     prices this.** Two backfill migrations populated
     `BookingGuestNight.priceCents` by dividing a stored guest total by the night
@@ -1202,9 +1215,10 @@ one, check the other.
     `createBookingModificationCredit` where nothing was captured, whose
     exactly-once key is the `BookingModification` id. **Which one is a question
     about the booking, asked at completion** (#3194): a task carrying no payment
-    id re-reads the booking's own payment through `capturedBookingPayment` — the
-    single derivation both raise sites use — so a member's refund does not depend
-    on whether they happened to pay before or after an unrelated edit was parked.
+    id re-reads the booking's own payment through `editReviewSettlementPayment` —
+    the single derivation the raise sites use too, through its id-only sibling
+    `editReviewSettlementPaymentId` — so a member's refund does not depend on
+    whether they happened to pay before or after an unrelated edit was parked.
     A task that DOES carry a payment id is still routed by that id, because the
     stored id reaches routes the live row no longer would (a reversed manual
     settlement, a booking that has left the settled statuses) where the amount is

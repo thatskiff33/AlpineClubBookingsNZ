@@ -7,8 +7,6 @@ import {
 } from "@prisma/client";
 import { ApiError } from "@/lib/api-error";
 import logger from "@/lib/logger";
-import { stableDigest } from "@/lib/stable-digest";
-import { canonicalNights } from "@/lib/stable-json";
 import {
   isNonNegativeIntegerCents,
   parseEditFinancialReviewContext,
@@ -16,7 +14,20 @@ import {
   type EditFinancialReviewOccurrence,
 } from "@/lib/edit-financial-review-context";
 import { MANUAL_REFUND_TASK_REASON_MAX } from "@/lib/manual-subscription-payment";
-import type { CalendarDate } from "@/lib/club-time";
+import {
+  buildEditFinancialReviewReason,
+  editFinancialReviewOccurrenceKey,
+  findFreeOccurrenceSlot,
+  MAX_OCCURRENCE_RECURRENCES,
+} from "@/lib/edit-financial-review-occurrence";
+import {
+  editReviewSettlementPaymentId,
+  type EditReviewSettlementPayment,
+} from "@/lib/booking-payment-state";
+import {
+  calendarDateOfDateOnlyInstant,
+  type CalendarDate,
+} from "@/lib/club-time";
 
 /**
  * #3030 (epic #2797): raise the durable "this booking edit is valid, but the
@@ -34,7 +45,11 @@ import type { CalendarDate } from "@/lib/club-time";
  * nothing, and reads no rate. It does not decide WHETHER an edit is unpriceable
  * - that is the planner (#3031) - and it does not call itself from the
  * booking-edit path - that is #3032, which composes the structural edit and this
- * raise into one local action.
+ * raise into one local action. Since #3166 it does not mint an occurrence's
+ * IDENTITY either: the key, its material, the recurrence walk that says where a
+ * new occurrence goes, and the operator prose derived from the same occurrence
+ * all live in `edit-financial-review-occurrence.ts`. The boundary is exactly one
+ * value - a key and a slot - so nothing here re-derives a key.
  *
  * ## Locking (`INV-LOCK-001`, `INV-LOCK-002`)
  *
@@ -81,170 +96,29 @@ import type { CalendarDate } from "@/lib/club-time";
  * whole point of the state is that nothing has moved yet.
  */
 
-/**
- * The occurrence-key namespace and its version.
- *
- * `v1` is a real hinge. The key IS the identity of an occurrence, so changing
- * what goes into the hash silently re-identifies every future edit and would let
- * an already-reviewed occurrence raise a second task. Bumping this prefix makes
- * such a change a deliberate new namespace instead - old keys keep matching old
- * rows, and nothing collides. Never widen the material without bumping it.
- */
-const OCCURRENCE_KEY_NAMESPACE = "edit-financial-review";
-const OCCURRENCE_KEY_VERSION = "v1";
-
-/**
- * The identity of one unpriceable structural edit, as 64 lowercase hex
- * characters behind a namespaced, versioned prefix.
- *
- * ## What "the same structural edit" means, precisely
- *
- * Two calls describe the SAME occurrence when all of the following match:
- *
- *  1. the booking and the guest strand whose nights were given back;
- *  2. why the price could not be proven (the `cause`);
- *  3. the set of night dates surrendered, and the set added - as SETS, so order
- *     and duplicates cannot change the answer; and
- *  4. the stored night-price rows the edit was judged against - the guest's
- *     stored total, and every stored night row's date and price, including the
- *     nulls, as it all stood BEFORE the edit.
- *
- * Anything else differing - the operator prose in `reason`, the wall-clock
- * moment, who was signed in, which retry this is - does not change the key.
- *
- * ## Why (4) is in there, which is the part worth arguing
- *
- * Without it a retry is still one task, but this sequence quietly loses money.
- * A night is surrendered and the amount cannot be proven, so a task is raised.
- * An admin prices it and COMPLETES it. Later the same night is added back to the
- * booking and surrendered again. That is a genuinely new occurrence owed a
- * genuinely new adjustment - but on booking, guest, cause and dates alone it
- * hashes to the key the completed task already holds, so the raise finds a
- * terminal row, declines to create anything, and the second adjustment is never
- * reviewed by anybody. Including the stored evidence distinguishes the two,
- * because the first edit changed it.
- *
- * ## Why NOT the `BookingGuestNight` row ids, which is the obvious answer
- *
- * Row ids would distinguish that case cleanly and were rejected on measurement:
- * the whole reason an edit reaches this module is that the stored per-night
- * evidence is missing or unusable, so in the `NO_STORED_NIGHT_PRICES` case there
- * are no row ids to key on at all. An identity that is unavailable in its own
- * primary failure case is not an identity.
- *
- * The evidence fingerprint costs nothing extra: it is data the planner has
- * necessarily already read (it is what failed to reconcile), and the same data
- * `reviewContext` must capture regardless, because the edit destroys it.
- *
- * It is IDENTITY MATERIAL, and calling it "sold-price evidence" would overstate
- * it. A stored `BookingGuestNight.priceCents` may be a derived even split rather
- * than a price anyone was ever charged - two backfill migrations wrote splits,
- * and nothing distinguishes their rows from genuinely-sold ones
- * (`StoredNightPriceEvidence` names them). That does not weaken its use HERE:
- * the key needs a fingerprint of what the database held at the moment of the
- * edit, and that is exactly what this is. It is also why the amount goes to a
- * human instead of being computed.
- *
- * ## Why a hash rather than a readable composite key
- *
- * The material is unbounded - a stay can be a fortnight, and every night
- * contributes a date and a price - and `occurrenceKey` is one indexed column.
- * A digest is fixed-width. It is not a secret and nothing is hidden by it: the
- * whole input is stored in plain form in `reviewContext` on the same row, so the
- * key can be recomputed and checked. Canonicalisation goes through the shared
- * `stableDigest` (`INV-SSOT`) because `JSON.stringify` is insertion-ordered and
- * a key that shifts with field order is not an identity either.
- *
- * The digest for a fixed occurrence is PINNED in
- * `src/lib/__tests__/edit-financial-review.test.ts`. That pin is what makes the
- * "never widen the material without bumping the version" rule above enforceable
- * rather than merely written down: every other test recomputes the key on both
- * sides and would pass through exactly the change that loses the money.
- */
-export function editFinancialReviewOccurrenceKey(
-  occurrence: EditFinancialReviewOccurrence,
-): string {
-  const material = {
-    bookingId: occurrence.bookingId,
-    bookingGuestId: occurrence.bookingGuestId,
-    cause: occurrence.cause,
-    surrenderedNightDates: canonicalNights(occurrence.surrenderedNightDates),
-    addedNightDates: canonicalNights(occurrence.addedNightDates),
-    storedEvidence: {
-      guestTotalCents: occurrence.storedEvidence.guestTotalCents,
-      // Sorted by date so the planner's read order cannot change the identity.
-      // Two rows for one date would be evidence in their own right, so they are
-      // NOT deduplicated here - only ordered.
-      nightPrices: [...occurrence.storedEvidence.nightPrices]
-        .map((night) => ({ date: night.date, priceCents: night.priceCents }))
-        .sort((left, right) =>
-          left.date === right.date
-            ? (left.priceCents ?? -1) - (right.priceCents ?? -1)
-            : left.date < right.date
-              ? -1
-              : 1,
-        ),
-    },
-  };
-  return `${OCCURRENCE_KEY_NAMESPACE}:${OCCURRENCE_KEY_VERSION}:${stableDigest(material)}`;
-}
-
-/**
- * The operator prose on the task.
- *
- * A builder rather than free text at the call site, so every raised task reads
- * the same way - but prose is emphatically NOT the identity. #3030 rejects "free
- * form task reason as the identity" outright, and this repository has already
- * been bitten by the weaker version of that: `reason` has been used as a
- * de-facto discriminator via a `startsWith` match in the finance queue, which is
- * what `ManualRefundTaskKind` exists to replace. Change this wording freely; the
- * occurrence key will not move.
- */
-export function buildEditFinancialReviewReason(
-  occurrence: EditFinancialReviewOccurrence,
-): string {
-  const nights = canonicalNights(occurrence.surrenderedNightDates);
-  // NOT "first to last". A night set need not be contiguous, and "3 nights
-  // (2026-08-02 to 2026-08-20)" reads as a nineteen-night span for three actual
-  // nights - in the sentence an admin reads WHILE PRICING REAL MONEY. The nights
-  // are listed instead, and the list is what gets truncated if the stay is long
-  // enough to overrun the column; `reviewContext` carries the full set either
-  // way, and #3033 renders it.
-  const nightsPhrase =
-    nights.length === 0
-      ? "no nights"
-      : nights.length === 1
-        ? `the night of ${nights[0]}`
-        : `${nights.length} nights: ${nights.join(", ")}`;
-  // #3032: the second sentence has to match the cause, because the two are read
-  // as instructions. "The exact sold price could not be read" is FALSE of a
-  // `COUNTERPART_STRAND_UNREADABLE` strand - its rows are complete and add up -
-  // and an admin told otherwise about a task that carries real per-night prices
-  // has been handed a contradiction while pricing real money.
-  const why =
-    occurrence.cause === "COUNTERPART_STRAND_UNREADABLE"
-      ? "This guest's own stored night prices are complete and add up, but another guest on the same booking has prices that cannot be read, so the booking's total could not be reworked automatically. Confirm the amount owed for the nights above before any money moves."
-      : "The exact sold price could not be read from this booking's stored history, so the club must price the adjustment from the booking's own payment and rate history before any money moves.";
-  return `Booking edit gave back ${nightsPhrase}. ${why}`.slice(
-    0,
-    MANUAL_REFUND_TASK_REASON_MAX,
-  );
-}
 
 /** What became of a raise. */
 export type RaiseEditFinancialReviewResult = {
   taskId: string;
+  /**
+   * The key the returned task is actually stored under: the occurrence digest
+   * for the first turn of an identity, and the digest plus a `#n` recurrence
+   * suffix afterwards (#3166). A caller wanting to find this row again must use
+   * THIS value rather than re-deriving the digest.
+   */
   occurrenceKey: string;
   /**
    * True only when THIS call inserted the row. False means the occurrence was
-   * already on file - a replay - and `status` says what has since become of it.
+   * already OPEN on file - a replay - and nothing further was written.
    */
   created: boolean;
   /**
-   * The occurrence's status now. `OPEN` on a fresh raise or a replay of one
-   * still awaiting pricing; `COMPLETED` or `DISMISSED` when the occurrence was
-   * already resolved, in which case this call deliberately did nothing: those
-   * states are terminal for that occurrence and a replay must not reopen them.
+   * The status of the task this call returns, which since #3166 is always
+   * `OPEN`: a row just inserted, or a replay of one still awaiting pricing. A
+   * COMPLETED or DISMISSED task is terminal, is never reopened or returned here,
+   * and no longer SUPPRESSES a later occurrence of the same identity - the money
+   * `findFreeOccurrenceSlot` closes. Typed as the enum rather than the literal
+   * because that is the caller's question to ask.
    */
   status: ManualRefundTaskStatus;
 };
@@ -271,11 +145,12 @@ export class EditFinancialReviewError extends ApiError {
 /**
  * Create - or find - the ONE financial-review task for this occurrence.
  *
- * Idempotent by design: a replay of the same structural edit returns the
- * existing task rather than raising a second one, whatever state that task has
- * reached. `created` tells the caller which happened, so #3032 can be atomic
- * about the structural edit without having to guess whether it also just made
- * work for an admin.
+ * Idempotent by design: a REPLAY of the same structural edit returns the
+ * existing OPEN task rather than raising a second one, and `created` tells the
+ * caller which happened. This sentence used to end "whatever state that task has
+ * reached", which #3166 makes false: a SETTLED task suppresses nothing, because
+ * a question a person has already answered is not a replay of anything. What
+ * separates the two is argued once, in `findFreeOccurrenceSlot`.
  *
  * ## `store` is required, and is a transaction client on purpose
  *
@@ -325,8 +200,9 @@ export async function raiseEditFinancialReviewTask({
   bookingCheckIn,
   bookingCheckOut,
   bookingModificationId,
+  guestsAddedByEdit,
   reason,
-  paymentId = null,
+  paymentId,
   raisedAmountCents = null,
   store,
 }: {
@@ -348,16 +224,31 @@ export async function raiseEditFinancialReviewTask({
    * the question at the point they are written rather than inherit an answer.
    */
   bookingModificationId: string | null;
+  /**
+   * #3166: the guests this same edit added and what they were priced at, or null.
+   * REQUIRED for the same reason as the two arguments above: an add whose new
+   * guests were dropped from the evidence hands an admin a card saying the
+   * booking gained nothing. `EditFinancialReviewContext.guestsAddedByEdit`
+   * carries the reasoning.
+   */
+  guestsAddedByEdit: { count: number; totalPriceCents: number | null } | null;
   /** Operator prose. Defaults to `buildEditFinancialReviewReason`. */
   reason?: string;
   /**
-   * A captured payment this adjustment sits against, or null. Null is the
-   * ordinary case here and is not a gap: owner decision D2 made `paymentId`
-   * optional precisely because a credit owed back for a surrendered night need
+   * A captured payment this adjustment sits against, or null. Null is an
+   * ordinary answer and is not a gap: owner decision D2 made `paymentId`
+   * nullable precisely because a credit owed back for a surrendered night need
    * not sit against any one captured payment, and completing such a task writes
    * no refund allocation.
+   *
+   * REQUIRED rather than defaulted (#3166), for the reason
+   * `bookingModificationId` beside it gives: a caller that quietly inherited
+   * `null` would have its refund silently re-routed to credit, and the failure
+   * would surface only when an admin closed the task. Derive it through
+   * `editReviewSettlementPaymentId`; `raiseParkedEditFinancialReviewTasks` below
+   * does that and is what every production caller uses.
    */
-  paymentId?: string | null;
+  paymentId: string | null;
   /**
    * What the task is RAISED with, written once and never amended.
    *
@@ -396,7 +287,7 @@ export async function raiseEditFinancialReviewTask({
     );
   }
 
-  const occurrenceKey = editFinancialReviewOccurrenceKey(occurrence);
+  const baseOccurrenceKey = editFinancialReviewOccurrenceKey(occurrence);
 
   // `INV-LOCK-001` / `INV-LOCK-002`: the global settlement cohort key, taken
   // before the find-then-create below, which is what makes that pair atomic.
@@ -404,18 +295,22 @@ export async function raiseEditFinancialReviewTask({
   // module's header for why the unique index is not the primary fence.
   await store.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
 
-  const existing = await store.manualRefundTask.findUnique({
-    where: { occurrenceKey },
-    select: { id: true, status: true },
-  });
-  if (existing) {
+  const slot = await findFreeOccurrenceSlot(store, baseOccurrenceKey);
+  if (slot.kind === "exhausted") {
+    throw new EditFinancialReviewError(
+      `This booking edit's financial review has already been raised and settled ${MAX_OCCURRENCE_RECURRENCES} times for the identical change; it will not be raised again automatically.`,
+      500,
+    );
+  }
+  if (slot.kind === "open") {
     return {
-      taskId: existing.id,
-      occurrenceKey,
+      taskId: slot.task.id,
+      occurrenceKey: slot.occurrenceKey,
       created: false,
-      status: existing.status,
+      status: slot.task.status,
     };
   }
+  const occurrenceKey = slot.occurrenceKey;
 
   const reviewContext: EditFinancialReviewContext = {
     version: 1,
@@ -423,6 +318,7 @@ export async function raiseEditFinancialReviewTask({
     guestMemberId,
     bookingCheckIn,
     bookingCheckOut,
+    guestsAddedByEdit,
     bookingModificationId,
   };
   // Parsed through the SAME schema the reader uses, at the WRITE site, because
@@ -494,6 +390,114 @@ export async function raiseEditFinancialReviewTask({
     }
     throw error;
   }
+}
+
+/**
+ * #3166: THE PARKED EDIT'S WHOLE RAISE, in one place, for all four doors.
+ *
+ * Every parked path used to write this block out by hand: the same settlement
+ * payment id, the same `memberIdByGuestId` map, the same loop with the same
+ * constant arguments. Four copies of ONE fact — which captured payment a parked
+ * edit's review settles against, and which member owns the strand it names — and
+ * the drift had already started: two copies said why the payment id matters and
+ * two did not (`INV-SSOT`).
+ *
+ * That value is not incidental. `chooseEditReviewSettlementRoute` reads it at
+ * COMPLETION to decide whether a confirmed amount goes back to the card, is
+ * mirrored as a hand-settled allocation, or becomes account credit — so getting
+ * it wrong does not fail, it routes real money down the wrong path weeks later
+ * in front of an admin with no way to tell. It is derived through
+ * `editReviewSettlementPaymentId`, the one home for that rule - a SNAPSHOT
+ * nothing backfills, which is why the COMPLETION re-asks the same question of
+ * the booking where the task carries no id (#3194).
+ *
+ * `raisedAmountCents` is not an argument at all, so no caller can pass a number:
+ * a parked edit's amount is unknown, zero is a real financial decision, and a
+ * computed figure is the guess the review exists to avoid. Unrepresentable beats
+ * policed.
+ *
+ * Call it inside the caller's transaction, after the locks and after the
+ * `BookingModification` row exists — the returned task ids are in occurrence
+ * order.
+ */
+export async function raiseParkedEditFinancialReviewTasks({
+  booking,
+  guests,
+  addedGuests,
+  occurrences,
+  bookingModificationId,
+  store,
+}: {
+  /**
+   * The booking AS IT WAS before this edit. Its dates are what the task
+   * describes, so the review names the stay the unreadable evidence belongs to
+   * rather than the one the edit moved it to.
+   */
+  booking: {
+    status: string;
+    payment: EditReviewSettlementPayment;
+    checkIn: Date;
+    checkOut: Date;
+  };
+  /**
+   * Every strand an occurrence can name, INCLUDING one this edit is deleting —
+   * the single-guest removal raises for the departing guest, whose row is not in
+   * the booking's remaining guest list.
+   */
+  guests: readonly { id: string; memberId?: string | null }[];
+  /**
+   * The guests THIS edit added, if any. Passed as the created rows rather than
+   * as a count so no caller has to state the rule twice; an add of nothing is an
+   * empty array and is recorded as null.
+   */
+  addedGuests: readonly { priceCents: number }[];
+  occurrences: readonly EditFinancialReviewOccurrence[];
+  /**
+   * Owner decision D-3032-1: THIS edit's own `BookingModification`, so the
+   * credit or refund that eventually moves is keyed to the change that caused it
+   * rather than to a second history row minted at completion.
+   */
+  bookingModificationId: string | null;
+  store: Prisma.TransactionClient;
+}): Promise<string[]> {
+  if (occurrences.length === 0) return [];
+  const memberIdByGuestId = new Map(
+    guests.map((guest) => [guest.id, guest.memberId ?? null]),
+  );
+  const paymentId = editReviewSettlementPaymentId(booking);
+  // Money the club is owed and has not taken: a parked edit writes the booking's
+  // total back unchanged, so an added guest's price lives only on their own row.
+  // A total that is not usable money is recorded as ABSENT rather than as a
+  // figure an admin might act on - the same rule the stored evidence follows.
+  const addedTotalCents = addedGuests.reduce(
+    (total, guest) => total + guest.priceCents,
+    0,
+  );
+  const guestsAddedByEdit =
+    addedGuests.length === 0
+      ? null
+      : {
+          count: addedGuests.length,
+          totalPriceCents: isNonNegativeIntegerCents(addedTotalCents)
+            ? addedTotalCents
+            : null,
+        };
+  const taskIds: string[] = [];
+  for (const occurrence of occurrences) {
+    const raised = await raiseEditFinancialReviewTask({
+      occurrence,
+      guestMemberId: memberIdByGuestId.get(occurrence.bookingGuestId) ?? null,
+      bookingCheckIn: calendarDateOfDateOnlyInstant(booking.checkIn),
+      bookingCheckOut: calendarDateOfDateOnlyInstant(booking.checkOut),
+      bookingModificationId,
+      guestsAddedByEdit,
+      paymentId,
+      raisedAmountCents: null,
+      store,
+    });
+    taskIds.push(raised.taskId);
+  }
+  return taskIds;
 }
 
 /**

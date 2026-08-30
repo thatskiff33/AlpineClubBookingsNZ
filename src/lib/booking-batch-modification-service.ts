@@ -22,7 +22,6 @@ import {
   calculateModificationChangeFee,
   calculateModifiedPricing,
   loadActiveSeasonRates,
-  parkedPriceBreakdown,
   prepareGuestPlan,
   resolveGuestNameUpdates,
   resolveTargetDates,
@@ -43,7 +42,7 @@ import {
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import {
   assertNoPendingEditFinancialReview,
-  raiseEditFinancialReviewTask,
+  raiseParkedEditFinancialReviewTasks,
 } from "@/lib/edit-financial-review";
 import { bookingHasOpenFinancialReview } from "@/lib/booking-financial-review-visibility";
 import { linkModificationToOutstandingChangeRequest } from "@/lib/booking-change-request-linkage";
@@ -76,10 +75,7 @@ import {
   resolveCreditElectionUpdate,
 } from "@/lib/booking-credit-election";
 import type { PromoCoverageNotice } from "@/lib/promo-cap-coverage";
-import {
-  capturedBookingPayment,
-  hasCapturedPayment,
-} from "@/lib/booking-payment-state";
+import { hasCapturedPayment } from "@/lib/booking-payment-state";
 import { prisma } from "@/lib/prisma";
 import {
   withOptionalTransaction,
@@ -99,7 +95,6 @@ import {
 import type { MemberGuestAddActor } from "@/lib/member-guest-consent";
 import { resolveSubscriptionLockoutMode } from "@/lib/member-subscription-eligibility";
 import {
-  calendarDateOfDateOnlyInstant,
   dateOnlyInstantOf,
   type CalendarDate,
 } from "@/lib/club-time";
@@ -977,7 +972,13 @@ export async function modifyBookingBatch({
       priceBreakdown:
         pricingResult.kind === "priced"
           ? pricingResult.priceBreakdown
-          : parkedPriceBreakdown(pricingResult.parkedPlan),
+          : pricingResult.parkedGuestRows,
+      // #3166: NULL on a pre-check-in park, which selects the ORDINARY writer
+      // branch below — the one that knows about member links, consent columns,
+      // other-club flags and guest removal. An in-progress park still carries
+      // its plan and still takes the in-progress branch. One field decides which
+      // writer runs; `parkedGuestRows` above is what that writer is handed
+      // either way, so neither branch composes its own rows.
       inProgressPlan:
         pricingResult.kind === "priced"
           ? pricingResult.inProgressPlan
@@ -1235,46 +1236,28 @@ export async function modifyBookingBatch({
      * eventually moves is keyed to the change that caused it rather than to a
      * second history row minted at completion.
      *
-     * `raiseEditFinancialReviewTask` is a find-then-create with a P2002 catch on
-     * the occurrence-key index, so a REPLAY returns the task already on file
-     * instead of throwing a unique violation that would roll this edit's
-     * structural half back with it. That is what makes "a replay raises nothing
-     * further" true rather than hoped for.
+     * The raise is a find-then-create with a P2002 catch on the occurrence-key
+     * index, so a REPLAY returns the task already on file instead of throwing a
+     * unique violation that would roll this edit's structural half back with it.
+     * That is what makes "a replay raises nothing further" true rather than
+     * hoped for.
      *
-     * `raisedAmountCents` IS NULL AND MUST STAY NULL. The amount is not zero and
-     * not estimated — it is unknown, which is the whole point of the epic.
+     * The raise ITSELF - the settlement payment id, the strand's member, the
+     * null amount - is `raiseParkedEditFinancialReviewTasks`, and is stated once
+     * there rather than four times across the four parked doors (#3166,
+     * `INV-SSOT`).
      */
-    if (parked) {
-      const memberIdByGuestId = new Map(
-        booking.guests.map((guest) => [guest.id, guest.memberId ?? null]),
-      );
-      // The captured money behind this booking AS IT STANDS NOW, and the reason
-      // the task carries a payment id at all: `chooseEditReviewSettlementRoute`
-      // reads it to decide whether a confirmed amount goes back to the card, is
-      // mirrored as a hand-settled allocation, or becomes account credit. Gated
-      // on a CAPTURED payment in a settled status — the same test
-      // `applyPaymentAdjustments` uses — so a booking with nothing taken carries
-      // null and cannot be routed to a refund of money never received.
-      //
-      // #3194: through the ONE derivation (`INV-SSOT`), which the completion
-      // path now asks the same question of. This value is a snapshot of THIS
-      // MOMENT and nothing keeps it current: a member who pays after this runs
-      // leaves it null for ever, which is why the completion re-asks rather than
-      // trusting it — see `chooseEditReviewSettlementRoute`.
-      const settledPaymentId = capturedBookingPayment(booking)?.id ?? null;
-      for (const occurrence of parked.occurrences) {
-        await raiseEditFinancialReviewTask({
-          occurrence,
-          guestMemberId: memberIdByGuestId.get(occurrence.bookingGuestId) ?? null,
-          bookingCheckIn: calendarDateOfDateOnlyInstant(booking.checkIn),
-          bookingCheckOut: calendarDateOfDateOnlyInstant(booking.checkOut),
-          bookingModificationId: bookingModification.id,
-          paymentId: settledPaymentId,
-          raisedAmountCents: null,
-          store: tx,
-        });
-      }
-    }
+    await raiseParkedEditFinancialReviewTasks({
+      booking,
+      guests: booking.guests,
+      // A batch edit can add guests in the same request. They are priced and
+      // written normally while the booking's own total is frozen, so the money
+      // is owed and only their rows record it.
+      addedGuests: createdGuests,
+      occurrences: parked?.occurrences ?? [],
+      bookingModificationId: bookingModification.id,
+      store: tx,
+    });
 
     if (payments.accountCreditAmountCents > 0) {
       await createBookingModificationCredit(

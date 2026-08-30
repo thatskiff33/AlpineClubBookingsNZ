@@ -106,38 +106,75 @@ export function getRemainingRefundableCents(
 }
 
 /**
- * #3194 (epic #2797): the booking's OWN captured money, or `null` when it has
- * none — the ONE derivation of that question, and the reason it is here.
+ * The payment shape the two accessors below need, spelled out so a caller cannot
+ * hand them a payment row loaded without its id.
+ */
+export type EditReviewSettlementPayment =
+  | (BookingPaymentState & { id: string })
+  | null
+  | undefined;
+
+/**
+ * #3166 / #3194 (epic #2797): the captured payment a PARKED edit's financial
+ * review settles against, or `null` — THE one derivation of that rule
+ * (`INV-SSOT`), asked at both ends of the review's life.
  *
  * It answers "is there money behind this booking that a refund could come out
  * of?", and it answers it the way the whole settlement surface already does: the
  * booking is inside its payment lifecycle AND the payment row has actually
- * captured something. Neither half is sufficient on its own.
- * `Payment.source` defaults to `STRIPE` in the schema, so a hand-settled booking
- * carries that column with nothing captured behind it; and a DRAFT or WAITLISTED
- * booking can hold a `PENDING` payment row that has never taken a cent.
+ * captured something. Neither half is sufficient on its own. `Payment.source`
+ * defaults to `STRIPE` in the schema, so a hand-settled booking carries that
+ * column with nothing captured behind it; and a DRAFT or WAITLISTED booking can
+ * hold a `PENDING` payment row that has never taken a cent. It is the same test
+ * `applyPaymentAdjustments` uses, so a booking with nothing taken carries null
+ * and a confirmed amount can never be routed to a refund of money that was never
+ * received. Null is an ordinary answer, not a gap: owner decision D2 makes the
+ * task's `paymentId` nullable precisely because a credit owed for a surrendered
+ * night need not sit against any one captured payment.
  *
- * ONE HOME, and it exists because there were two identical copies with
- * near-identical comments (`INV-SSOT`): the guest-removal service and the batch
- * modification service each derived the payment id a parked edit's review task
- * is raised with, and #3194 needed the same question asked a THIRD time — at
- * COMPLETION, by `chooseEditReviewSettlementRoute`, on a booking that may have
- * been paid since the review was raised. Three spellings of one rule is exactly
- * the shape `INV-SSOT` calls the defect, and the third spelling is the one where
- * disagreeing with the other two sends a member's refund to the wrong place.
+ * TWO CALLERS, ONE QUESTION, and the second is why this returns the payment ROW:
  *
- * Returns the PAYMENT rather than its id, because the completion path needs its
- * `source` as well and re-reading the same row through a second accessor would
- * reintroduce the disagreement this removes.
+ *  - AT RAISE TIME, `raiseParkedEditFinancialReviewTasks` stamps the id onto the
+ *    task. Four parked edit doors (the batch edit, the date change, the
+ *    single-guest removal and the guest-add route) each computed it inline from
+ *    the same two predicates before #3166 gathered them.
+ *  - AT COMPLETION, `chooseEditReviewSettlementRoute` re-asks it of the booking
+ *    as it stands NOW, but ONLY where the task carries no id — the stamped value
+ *    is a snapshot of the moment the edit parked and nothing backfills it, so a
+ *    member who paid afterwards would otherwise be refunded as club credit for
+ *    ever. That path needs the row's `source` as well as its id to tell a card
+ *    refund from a hand-settled ledger mirror, and re-reading the same row
+ *    through a second accessor would reintroduce the disagreement this removes.
+ *
+ * Getting it wrong does not fail: it routes real money down the wrong path weeks
+ * later, in front of an admin with no way to tell. That is why both ends read
+ * this and not a copy of it.
+ *
+ * Lives here beside `hasIssuedPrimaryXeroInvoice`, which is the same shape for
+ * the same reason, rather than in `edit-financial-review.ts` — that module is
+ * deliberately about the review STATE and reads no payment policy of its own.
+ *
+ * NOT the same question as the `account-credit` route's
+ * `allocateAgainstPaymentId`, which deliberately drops the settled-status half;
+ * `edit-financial-review-settlement.ts` states why at that site.
  */
-export function capturedBookingPayment<
-  T extends { id: string; status: string; amountCents?: number | null },
->(booking: {
-  status: string;
-  payment: T | null | undefined;
-}): T | null {
+export function editReviewSettlementPayment<
+  T extends BookingPaymentState & { id: string },
+>(booking: { status: string; payment: T | null | undefined }): T | null {
   return isSettledBookingStatus(booking.status) &&
     hasCapturedPayment(booking.payment)
     ? (booking.payment ?? null)
     : null;
+}
+
+/**
+ * The id half of `editReviewSettlementPayment` above, which is all a raise site
+ * stores. Derived from it rather than repeating its two predicates, so the two
+ * ends of a review's life cannot drift apart (`INV-SSOT`).
+ */
+export function editReviewSettlementPaymentId(booking: {
+  status: string;
+  payment: EditReviewSettlementPayment;
+}): string | null {
+  return editReviewSettlementPayment(booking)?.id ?? null;
 }

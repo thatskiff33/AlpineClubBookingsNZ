@@ -1,3 +1,4 @@
+import { BookingStatus } from "@prisma/client";
 import { describe, expect, it } from "vitest";
 import {
   bookingStayHasStarted,
@@ -351,5 +352,66 @@ describe("booking edit policy — admin override (issue #1668)", () => {
       "This booking cannot be modified in its current status",
     );
 
+  });
+});
+
+/**
+ * #3166 / `INV-MOD-028`: the booking-request approval path rewrites an existing
+ * hold's night rows and is NOT fenced against overwriting a blank
+ * (`reassignHeldBookingGuests`, `src/lib/booking-request.ts`). It does not need
+ * to be, and the reason is entirely this: **a hold can never be carrying one.**
+ *
+ * A blank night price is written only by a PARKED edit, and every edit door
+ * refuses a booking in `AWAITING_REVIEW` — the status a hold is created in and
+ * the one both callers of that function require it still to be in. The override
+ * branch is included deliberately: it is the one door that lifts the DATE locks,
+ * and it is also the one somebody would reach for if a hold ever needed editing.
+ *
+ * This is a guard rather than a sentence in a comment because the comment it
+ * replaces asserted something that was never true of the code — that nothing on
+ * the approval path re-derives an amount — while reaching the right conclusion.
+ * The day `AWAITING_REVIEW` joins either edit set, this fails; a comment would
+ * have gone on saying no fence was needed.
+ */
+describe("a booking-request hold is not editable, so it cannot carry a blank night price (#3166)", () => {
+  const HOLD = BookingStatus.AWAITING_REVIEW;
+
+  it.each(["MEMBER", "ADMIN"])(
+    "refuses every edit door for a %s",
+    (role) => {
+      expect(
+        canModifyBookingStatusForRole(HOLD, role),
+        "AWAITING_REVIEW must be in neither edit-status set — see INV-MOD-028 and reassignHeldBookingGuests",
+      ).toBe(false);
+    },
+  );
+
+  it.each([
+    [
+      "a future stay",
+      {
+        checkIn: new Date("2026-08-10T00:00:00.000Z"),
+        checkOut: new Date("2026-08-12T00:00:00.000Z"),
+      },
+    ],
+    [
+      "a stay under way",
+      {
+        checkIn: new Date("2026-06-28T00:00:00.000Z"),
+        checkOut: new Date("2026-07-04T00:00:00.000Z"),
+      },
+    ],
+  ])("refuses %s, with and without the admin override", (_label, dates) => {
+    for (const adminOverride of [false, true]) {
+      const policy = getBookingEditPolicy({
+        status: HOLD,
+        role: "ADMIN",
+        ...dates,
+        today: new Date("2026-07-01T00:00:00.000Z"),
+        adminOverride,
+      });
+      expect(policy.canModify, `adminOverride: ${adminOverride}`).toBe(false);
+      expect(policy.mode).toBeNull();
+    }
   });
 });

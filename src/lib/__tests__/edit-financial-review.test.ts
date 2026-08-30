@@ -18,14 +18,25 @@ import {
  *
  * The RAISE must be idempotent, must leave an unknown amount genuinely unknown
  * rather than zero, and must never reopen a terminal occurrence.
+ *
+ * #3166 splits that last requirement in two, because the old tests conflated
+ * them and the conflation lost money. "Never reopen a terminal occurrence" is
+ * kept exactly. "A terminal task suppresses every later raise of the same
+ * identity" is NOT the same rule, and was wrong: an identity minted by a parked
+ * guest-add cannot move, so one settled task silenced every subsequent add on
+ * that booking for good. Every raise test here used to mock `findUnique` to
+ * `null`, so that branch was never exercised at all — the tests below
+ * deliberately do not.
  */
 
 vi.mock("server-only", () => ({}));
 
 import {
-  assertNoPendingEditFinancialReview,
   buildEditFinancialReviewReason,
   editFinancialReviewOccurrenceKey,
+} from "@/lib/edit-financial-review-occurrence";
+import {
+  assertNoPendingEditFinancialReview,
   findOpenEditFinancialReviewTask,
   raiseEditFinancialReviewTask,
   EditFinancialReviewError,
@@ -95,6 +106,9 @@ const raiseInput = {
   bookingCheckOut: day("2026-08-04"),
   // #3032: the settlement anchor a confirmed amount closes against (D-3032-1).
   bookingModificationId: "mod-1",
+  // #3166: both required, never defaulted — see `raiseEditFinancialReviewTask`.
+  paymentId: null,
+  guestsAddedByEdit: null,
 };
 
 beforeEach(() => {
@@ -315,24 +329,163 @@ describe("#3030 raise - one task per occurrence, and an unknown amount stays unk
     [ManualRefundTaskStatus.COMPLETED],
     [ManualRefundTaskStatus.DISMISSED],
   ])(
-    "does not reopen or duplicate an occurrence already resolved as %s - terminal means terminal",
+    "never reopens or amends an occurrence already resolved as %s - terminal means terminal",
     async (status) => {
-      mocks.findUnique.mockResolvedValue({ id: "task-done", status });
+      mocks.findUnique.mockImplementation(({ where }: never) =>
+        Promise.resolve(
+          (where as { occurrenceKey: string }).occurrenceKey.includes("#")
+            ? null
+            : { id: "task-done", status },
+        ),
+      );
 
-      const result = await raiseEditFinancialReviewTask({
+      await raiseEditFinancialReviewTask({
         ...raiseInput,
         occurrence: occurrence(),
         store: store(),
       });
 
-      expect(mocks.create).not.toHaveBeenCalled();
-      expect(result).toMatchObject({
-        taskId: "task-done",
-        created: false,
-        status,
-      });
+      // Nothing is updated, reopened or re-read: the settled row is left exactly
+      // as the officer left it. The new occurrence gets its own row instead.
+      expect(mocks.create).toHaveBeenCalledTimes(1);
+      expect(mocks.create.mock.calls[0][0].data.status).toBe(
+        ManualRefundTaskStatus.OPEN,
+      );
     },
   );
+
+  /**
+   * #3166 — THE MONEY A TERMINAL TASK USED TO SUPPRESS.
+   *
+   * These do NOT mock `findUnique` to null. That is the whole point: every
+   * earlier raise test did, so the branch that decided what a settled task means
+   * was never once exercised, and it silently answered "already raised, charge
+   * nothing" for an occurrence whose identity cannot move.
+   */
+  describe("#3166 a settled task no longer suppresses the next occurrence of the same identity", () => {
+    it.each([
+      [ManualRefundTaskStatus.COMPLETED],
+      [ManualRefundTaskStatus.DISMISSED],
+    ])(
+      "raises a fresh OPEN task under a recurrence key when the base key holds a %s one",
+      async (status) => {
+        // The identity a parked guest-add mints: no night surrendered, none
+        // added, and a parked add writes nothing to the guest's stored rows — so
+        // this key is the same on the second add as it was on the first.
+        const parkedAdd = occurrence({
+          surrenderedNightDates: [],
+          addedNightDates: [],
+        });
+        const baseKey = editFinancialReviewOccurrenceKey(parkedAdd);
+        mocks.findUnique.mockImplementation(({ where }: never) =>
+          Promise.resolve(
+            (where as { occurrenceKey: string }).occurrenceKey === baseKey
+              ? { id: "task-settled", status }
+              : null,
+          ),
+        );
+
+        const result = await raiseEditFinancialReviewTask({
+          ...raiseInput,
+          occurrence: parkedAdd,
+          store: store(),
+        });
+
+        expect(mocks.create).toHaveBeenCalledTimes(1);
+        expect(mocks.create.mock.calls[0][0].data.occurrenceKey).toBe(
+          `${baseKey}#2`,
+        );
+        expect(mocks.create.mock.calls[0][0].data.amountCents).toBeNull();
+        expect(result).toMatchObject({
+          taskId: "task-new",
+          occurrenceKey: `${baseKey}#2`,
+          created: true,
+          status: ManualRefundTaskStatus.OPEN,
+        });
+      },
+    );
+
+    it("walks past every settled recurrence rather than stopping at the first, so the third add is reviewed too", async () => {
+      const parkedAdd = occurrence({
+        surrenderedNightDates: [],
+        addedNightDates: [],
+      });
+      const baseKey = editFinancialReviewOccurrenceKey(parkedAdd);
+      const settled = new Set([baseKey, `${baseKey}#2`]);
+      mocks.findUnique.mockImplementation(({ where }: never) =>
+        Promise.resolve(
+          settled.has((where as { occurrenceKey: string }).occurrenceKey)
+            ? { id: "task-settled", status: ManualRefundTaskStatus.COMPLETED }
+            : null,
+        ),
+      );
+
+      await raiseEditFinancialReviewTask({
+        ...raiseInput,
+        occurrence: parkedAdd,
+        store: store(),
+      });
+
+      expect(mocks.create.mock.calls[0][0].data.occurrenceKey).toBe(
+        `${baseKey}#3`,
+      );
+    });
+
+    it("still collapses a genuine replay, because an OPEN recurrence is returned rather than duplicated", async () => {
+      const parkedAdd = occurrence({
+        surrenderedNightDates: [],
+        addedNightDates: [],
+      });
+      const baseKey = editFinancialReviewOccurrenceKey(parkedAdd);
+      mocks.findUnique.mockImplementation(({ where }: never) => {
+        const key = (where as { occurrenceKey: string }).occurrenceKey;
+        if (key === baseKey)
+          return Promise.resolve({
+            id: "task-settled",
+            status: ManualRefundTaskStatus.COMPLETED,
+          });
+        if (key === `${baseKey}#2`)
+          return Promise.resolve({
+            id: "task-live",
+            status: ManualRefundTaskStatus.OPEN,
+          });
+        return Promise.resolve(null);
+      });
+
+      const result = await raiseEditFinancialReviewTask({
+        ...raiseInput,
+        occurrence: parkedAdd,
+        store: store(),
+      });
+
+      expect(mocks.create).not.toHaveBeenCalled();
+      expect(result).toMatchObject({
+        taskId: "task-live",
+        occurrenceKey: `${baseKey}#2`,
+        created: false,
+        status: ManualRefundTaskStatus.OPEN,
+      });
+    });
+
+    it("refuses rather than looping for ever when one identity has been settled implausibly many times", async () => {
+      mocks.findUnique.mockResolvedValue({
+        id: "task-settled",
+        status: ManualRefundTaskStatus.COMPLETED,
+      });
+
+      await expect(
+        raiseEditFinancialReviewTask({
+          ...raiseInput,
+          occurrence: occurrence(),
+          store: store(),
+        }),
+      ).rejects.toMatchObject({
+        name: "EditFinancialReviewError",
+        status: 500,
+      });
+      expect(mocks.create).not.toHaveBeenCalled();
+    });
+  });
 
   it("reports a lost race on the unique index loudly rather than swallowing it, because it cannot be recovered in place", async () => {
     mocks.create.mockRejectedValue(

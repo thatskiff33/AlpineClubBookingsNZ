@@ -10,7 +10,7 @@ import {
 
 import { recordBookingEvent } from "@/lib/booking-events";
 import {
-  capturedBookingPayment,
+  editReviewSettlementPayment,
   hasCapturedPayment,
 } from "@/lib/booking-payment-state";
 import {
@@ -176,13 +176,14 @@ export type EditReviewSettlementRoute =
        * `createBookingModificationCredit` takes a payment id at all). Null when
        * there is no captured payment to allocate against.
        *
-       * DELIBERATELY A LOOSER TEST than the one that picks this route (#3194):
-       * `hasCapturedPayment` alone, with no settled-status gate. A captured
-       * payment on a booking still inside its payment lifecycle now takes the
-       * card or ledger route, so what arrives here holding money is the booking
-       * that has LEFT it - cancelled, most obviously - whose cents are just as
-       * capable of being refunded twice. Matching the route gate would drop the
-       * allocation on the one shape that still needs it.
+       * DELIBERATELY A LOOSER TEST than the one that picks this route (#3194),
+       * and NOT a stray copy of `editReviewSettlementPayment` to be converged
+       * with it: `hasCapturedPayment` alone, with no settled-status gate. A
+       * captured payment on a booking still inside its payment lifecycle now
+       * takes the card or ledger route, so what arrives here holding money is
+       * the booking that has LEFT it - cancelled, most obviously - whose cents
+       * are just as capable of being refunded twice. Matching the route gate
+       * would drop the allocation on the one shape that still needs it.
        */
       allocateAgainstPaymentId: string | null;
     }
@@ -417,7 +418,7 @@ export async function chooseEditReviewSettlementRoute({
    *
    * A task WITHOUT a payment id therefore re-asks the question here, against the
    * booking's own row on this same transaction, through the gate the raise sites
-   * use (`capturedBookingPayment`, `INV-SSOT`). That answers exactly "what would
+   * use (`editReviewSettlementPayment`, `INV-SSOT`). That answers exactly "what would
    * have been recorded had the review been raised now", which is the point: a
    * refund must not depend on whether the member paid before or after an
    * unrelated edit was parked.
@@ -439,7 +440,9 @@ export async function chooseEditReviewSettlementRoute({
    * not exist.
    */
   const backfilledPayment =
-    task.paymentId === null ? capturedBookingPayment(task.booking) : null;
+    task.paymentId === null
+      ? editReviewSettlementPayment(task.booking)
+      : null;
   const settlementPaymentId = task.paymentId ?? backfilledPayment?.id ?? null;
   const settlementPaymentSource =
     task.paymentId !== null

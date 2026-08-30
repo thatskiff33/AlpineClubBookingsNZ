@@ -1268,8 +1268,9 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
  *
  * The fix is a re-read, not a backfill: a task with NO payment id asks the
  * booking's own row, inside the completion transaction, through the same
- * `capturedBookingPayment` gate both raise sites use. Nothing is written, so
- * there is no second write for a webhook replay to duplicate.
+ * `editReviewSettlementPayment` gate the raise sites use (they take its id-only
+ * sibling `editReviewSettlementPaymentId`). Nothing is written, so there is no
+ * second write for a webhook replay to duplicate.
  *
  * Every test here has its control, because the property being protected is
  * two-sided: the missing route has to open, and none of the existing ones may
@@ -1476,7 +1477,7 @@ describe("#3194 - a review raised before the member paid still refunds to their 
 
   it("MUTATION: does not reach for a payment on a booking that has left its payment lifecycle", async () => {
     // The other half of the same gate, and the reason it is
-    // `capturedBookingPayment` rather than `hasCapturedPayment` alone. A DRAFT
+    // `editReviewSettlementPayment` rather than `hasCapturedPayment` alone. A DRAFT
     // booking can hold a payment row that captured money for a lifecycle it is
     // no longer in; the raise sites refuse it, so the completion refuses it too,
     // or the two would disagree about one member's money.

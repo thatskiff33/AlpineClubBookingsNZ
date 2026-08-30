@@ -100,16 +100,15 @@ across the stay envelope, integer cents, remainder on the first night), so
 that fallback now covers only quote-priced bookings — already protected by
 the #1032 edit block — and rows created outside the app.
 
-**Superseded in part by INV-MOD-028 (#3031, epic #2797).** The last sentence's
+**Superseded by INV-MOD-028 (#3031 and #3166, epic #2797).** The last sentence's
 "legacy guests without stored night rows price at current rates" no longer holds
-on the two paths INV-MOD-028 gates: the IN-PROGRESS edit planner
-(`buildInProgressGuestRangePlan`) and the single-guest removal
-(`removeBookingGuestInTransaction`). There, a strand whose stored rows cannot
-account for its stored total is not priced at all: the edit is
-`financial_review_required` and a person prices it. It DOES still hold on an
-edit to a booking that has not started yet, which is the larger population and is
-#3166's decision, not this one's. Everything else here stands, including
-current-rate pricing for a night an edit genuinely buys.
+on any edit path. A strand whose stored rows cannot account for its stored total
+is not priced at all: the edit commits its structural half and a person prices
+the money. #3031 gated the in-progress planner and #3032 the single-guest
+removal; #3166 finished the job on the three doors that carried the larger
+population — the ordinary pre-check-in edit and its preview, the date change, and
+the guest add. Everything else here stands, including current-rate pricing for a
+night an edit genuinely buys.
 
 ## INV-MOD-006
 
@@ -670,8 +669,8 @@ became the evidence the next edit read). Both lived in the in-progress planner,
 both are deleted outright, and both conditions are now
 `financial_review_required` there. "Values each at the price it was sold for" is
 unchanged and is now the only rule on that path — there is no fallback beneath
-it. The pre-check-in edit path keeps its own current-rate pricing for an
-unrecoverable night; see INV-MOD-028's scope note and #3166.
+it. #3166 closed the same two holes on the pre-check-in edit path, so no edit
+path anywhere values an unrecoverable night at current rates; see INV-MOD-028.
 
 **Not retired, and #2770 records why.** The owner's 10 Aug 2026 decision on #2756
 asked for this id to be retired, and #2770's acceptance criterion 5 repeated it.
@@ -1240,73 +1239,179 @@ of a total across nights; and a clamp of a credit against a derived total. The
 captured-cash settlement caps in `booking-modify-settlement.ts` are NOT in this
 class and are untouched — they cap a refund against money actually taken.
 
-### Where it holds today, and where it does not
+### Where it holds, and the two places it deliberately does not reach
 
-**Stated as narrowly as the code enforces it, on purpose.** A documented claim is
-a contract here, and an invariant asserting a reach it does not have is worse
-than no invariant: the next reader stops checking.
+**It holds on EVERY edit path** (#3166, epic #2797). That wording was false when
+first written, was narrowed by #3031 to the two paths the code actually enforced,
+and is restored here because the five paths below now enforce it — not because
+the sentence reads better. A documented claim is a contract in this repository,
+so if a sixth edit door is added it is gated or this heading changes.
 
-GATED — the rule above is enforced, and restoring an estimator makes a named test
-fail. What a gated path DOES about an unpriceable edit differs, and #3032 is what
-made the two differ:
+**All five PARK on the FIRST such edit. None of them refuses for want of
+evidence.** #3170 made "not known" storable and deleted the member-facing
+refusal outright, so an edit whose money this booking's history cannot support
+commits its structural half and holds the amount for a person, on every one of
+them. That uniformity is the point: the same booking with the same defect in its
+data used to get opposite answers depending which door the member came through.
+
+**A SECOND money-affecting edit, while the review is still open, IS refused —
+and that is a real reduction in self-service, chosen knowingly.**
+`assertNoPendingEditFinancialReview` sits ahead of all five gates and throws a
+409 while any `EDIT_FINANCIAL_REVIEW` task on the booking is OPEN, because a
+second edit would have to price against the unresolved money the first one
+parked. So the shape a member meets is: the first edit saves and parks, and
+every later price-affecting edit is turned away until an officer clears the
+queue. Identity-only edits (`moneyAffecting: false`) pass straight through, and
+a consent-authority removal is exempt.
+
+Two things follow that are worth stating plainly rather than discovering:
+
+- **A booking with no stored night rows at all parks on its first edit.** The
+  envelope fallback classifies it `NO_STORED_NIGHT_PRICES`, so every booking
+  predating #713 is one-edit-per-officer-intervention from the moment it is
+  first touched.
+- **Because nothing clears a blank**, a booking that has parked once parks again
+  on every later edit. The review queue is the only route back to a fully priced
+  booking.
+
+What every parked path does, identically: the structural change commits and the
+capacity check still runs on the same ranges a priced edit would be checked
+against — parking withholds the money, never the beds. Nothing is repriced, no
+promotion is recalculated, no change fee is charged, no settlement option is
+computed, the booking's stored totals and each strand's `BookingGuest.priceCents`
+do not move, and the rate-type snapshot is left alone because a parked edit
+charged nobody anything. Every night whose price the booking can still account
+for keeps it byte for byte; every other night is written `NULL`. One OPEN
+`EDIT_FINANCIAL_REVIEW` task per unreadable strand is raised inside the same
+transaction, under the locks already held, anchored to that edit's own
+`BookingModification`. `priceDiffCents` falls out as 0 because the booking's
+money genuinely did not move, NOT because 0 was chosen as the adjustment.
 
 - the IN-PROGRESS edit planner, `buildInProgressGuestRangePlan`
   (`src/lib/booking-edit-guest-ranges.ts`), reached from both the modify-quote
-  preview and the modify save whenever the stay is already under way. It **PARKS**
-  (#3170). It used to refuse, and the refusal was named as an interim: parking
-  needed a per-night value for every night each strand ends up holding, because
-  `syncGuestNights` rewrites those rows and refused rather than defaulting, and a
-  strand with no usable stored price has no number for a night it KEEPS. The
-  owner settled that on 30 Aug 2026 by making `NULL` storable, so the edit now
-  commits and the amount waits for a person. On that branch nothing is repriced,
-  no promotion is recalculated, no change fee is charged, no settlement options
-  are computed and the booking's stored totals do not move; one OPEN
-  `EDIT_FINANCIAL_REVIEW` task per unreadable strand is raised inside the same
-  transaction under the locks already held. The capacity check still runs, on the
-  same ranges a priced edit would be checked against — parking withholds the
-  money, never the beds. The modify-quote preview parks in step, reporting a zero
-  movement and the club's own sentence rather than a price, so it can never block
-  a save that would succeed. THIS IS THE PATH THAT CAN PARK A PRICE INCREASE - a
-  check-out extension, or a guest added - so the review it raises may owe the CLUB
-  rather than the member. Which way a completion sends the money, and how it is
+  preview and the modify save whenever the stay is already under way (#3031,
+  parked by #3170). THIS IS THE PATH THAT CAN PARK A PRICE INCREASE — a check-out
+  extension, or a guest added — so the review it raises may owe the CLUB rather
+  than the member. Which way a completion sends the money, and how it is
   collected, is `INV-PAY-051`;
 - the single-guest removal, `removeBookingGuestInTransaction`
   (`src/lib/booking-guest-removal-service.ts`), reached from the guest DELETE
-  route. It PARKS (#3032): the guest comes off, and the amount is held as an OPEN
-  `EDIT_FINANCIAL_REVIEW` task with a NULL amount under `INV-PAY-051`. A removal's
-  structural change is a row delete, so it is fully expressible with no valuation
-  at all. On that branch nothing is repriced, no promotion is recalculated, no
-  settlement options are computed, no remaining strand's price or rate snapshot is
-  rewritten, and the booking's stored total does not move — reducing it would mean
-  knowing by how much, which is the question under review. `priceDiffCents` is
-  zero because the booking did not move, NOT because zero was chosen as the
-  adjustment.
+  route (#3032). A removal's structural change is a row delete, so it is fully
+  expressible with no valuation at all, and no remaining strand's price or rate
+  snapshot is rewritten;
+- **the ordinary PRE-CHECK-IN edit**, `calculateModifiedPricing`
+  (`src/lib/booking-modify-plan.ts`), which is the busiest edit path in the
+  product and the one the member edit panel uses (#3166). Every existing strand
+  is judged, not only the ones giving nights back, because `applyGuestChanges`
+  deletes and recreates EVERY existing guest's night rows — so a strand whose
+  stored prices cannot be preserved would have its history rewritten at today's
+  rate by an edit that never touched it. There is no carve-out for a strand the
+  edit deliberately reprices in full (a placeholder→member link, an other-club
+  rate election): a parked edit charges nobody, so the flag recording what was
+  charged is written as un-honoured, which is what `otherLodgeRatedGuestIds`
+  already promises. The modify-quote PREVIEW runs the identical gate over the
+  identical night sets, so it can never quote money the save will not move;
+- **the date change**, `modifyBookingDates`
+  (`src/lib/booking-date-modification-service.ts`) (#3166). It read night prices
+  through the LENIENT `lockedNightPricesForGuest`, so a blank night got no lock,
+  was repriced at today's rate and was written back as a real integer — fenced
+  only while a review task was still OPEN. Since **nothing ever clears a blank**,
+  the first date change after a review closed converted "not known" into a guess
+  and wrote it into the column the next edit reads as evidence;
+- **the guest-add route**, `POST /api/bookings/[id]/guests` (#3166). It rewrites
+  no existing strand's night rows, so it is not the write-back mechanism — but it
+  recomputed `Booking.totalPriceCents` from a full-party pass in which a blank
+  night priced at today's rate, and billed the member the difference as an
+  additional amount for a night nobody added. The guests it adds are still
+  created and still priced at what they are genuinely being sold for; that money
+  is known.
 
-NOT GATED, and named rather than left to be discovered:
+**A BLANK IS NEVER REPAIRED BY A REPRICE.** It is cleared only by a person
+supplying the amount. That is the rule the date path broke and is the reason it
+is stated separately from the five bullets above: a path can be gated against
+inventing a *credit* and still quietly invent a *row*.
 
-- **Any edit to a booking that has NOT started yet.** `calculateModifiedPricing`
-  builds the gated planner only when the edit is in progress; every other edit
-  takes the ordinary pricing pass, where a night with no usable stored price
-  still prices at today's rate through the lenient `lockedNightPricesForGuest`
-  and that amount is written into the night rows. This is the busiest booking
-  path, and widening the gate onto it is a product decision about refusing edits
-  to a large share of live bookings, not a tidy-up. It is **#3166**.
-- ~~**A consent DECLINE or EXPIRY removal** is exempt from the removal gate.~~
-  **Closed by #3032, and the exemption is gone.** It existed because the gate
-  could only REFUSE, and owner decision D-14 says such a removal must ALWAYS be
-  able to take its target off the booking — refusing one traps a member on a
-  booking they have said no to, permanently, because the refusal rolls the
-  status-guarded claim back with `consentStatus` already written terminal. Parking
-  removes the guest and holds only the amount, which is what D-14 asked for and
-  what a refusal could not give, so there is nothing left to exempt. A consent
-  removal is now judged and parked exactly like any other. It remains exempt from
-  the SEPARATE pending-review fence (`INV-PAY-051`), which is a different rule
-  about a SECOND edit while an earlier review is open.
+It binds every writer of `BookingGuestNight.priceCents`, not only the five edit
+doors — a wholesale night-row rewriter destroys a blank exactly as effectively as
+an edit does, and two of them exist outside the edit paths. Both are named here,
+with what was done about each, because an enumeration claimed to be complete and
+missing a writer is worse than no enumeration:
+
+- **The waitlist offer-time reprice** (`repriceWaitlistCandidate`,
+  `src/lib/waitlist.ts`) re-bases the whole stay at current rates, passing no
+  locked prices and rewriting every night row. It is fenced (#3166): a booking
+  carrying a night with no known sold price is offered at its stored snapshot
+  instead, and the reprice is declined rather than attempted. It was REACHABLE —
+  `ADMIN_FUTURE_EDIT_STATUSES` includes `WAITLISTED`, so an admin edit could park
+  a waitlisted booking and this sweep would then convert its `NULL`s into
+  guesses while the review task that wrote them was still open.
+- **The booking-request approval preservation path**
+  (`src/lib/booking-request.ts`) deletes and recreates an existing hold's night
+  rows at the approval's own prices. It is NOT fenced, and the reason is that it
+  can never meet a blank: a blank is written only by a parked edit, a hold is
+  created and kept in `AWAITING_REVIEW`, and that status is in neither
+  `ADMIN_FUTURE_EDIT_STATUSES` nor `IN_PROGRESS_EDIT_STATUSES`, so every edit
+  door refuses it — `adminOverride` included. `booking-edit-policy.test.ts` →
+  "a booking-request hold is not editable" fails the day that stops being true.
+  It is **not** exempt on the ground that its figures are a person's: the school
+  approval pipeline writes engine prices off the season table whenever
+  `BookingRequest.priceCents` is null, and `buildApprovalGuestNights` falls back
+  to an even split of the total across the nights. Both are things this rule
+  prohibits; they are simply out of its reach here.
+
+NOT GATED, and named rather than left to be discovered. Both are outside this
+rule rather than exceptions to it, because neither values a historical night:
+
+- **The admin "shift dates only" override**, `adminShiftBookingDates`. Every cent
+  is frozen by construction — booking totals, per-guest `priceCents` and every
+  `BookingGuestNight.priceCents` are carried across the translated stay verbatim,
+  a stored `NULL` included. It reconstructs nothing, so there is nothing for this
+  rule to gate.
 - **The waitlist offer-time reprice** re-bases the whole stay at current rates by
   design (the offer is a new price the member has not yet accepted) and, since
   #3031, writes the per-night rows it prices so the next edit reads real
-  evidence. It values no historical night, so it is outside this rule rather than
-  an exception to it.
+  evidence. It values no historical night, so this rule does not reach it — but
+  it IS bound by the blank clause above, and is fenced accordingly (#3166).
+
+### Three limits this rule does NOT close, named rather than left to be found
+
+Each is a real edge with a real reason for being left alone. None is a defect
+disguised as a decision, and none is a follow-up hiding in prose — a change that
+removes any of them is a change to the rule above, not a tidy-up.
+
+- **A member can still be asked for, and can still pay, the PRE-EDIT price while
+  a review is open.** A parked shortening leaves `Booking.finalPriceCents` at the
+  figure it had before, and no payment path is fenced on an open review —
+  `bookingHasOpenFinancialReview` is read by the member's banner, the modified
+  email, the history builders and a diagnostic, and by nothing that takes money.
+  That is deliberate: the stored total IS the last figure a person stood behind,
+  the review exists precisely to settle the difference afterwards through
+  `chooseEditReviewSettlementRoute`, and fencing payment would strand a member
+  on a `PAYMENT_PENDING` booking they cannot pay for, on a booking the club then
+  holds no money against. The member is told, by the banner and by the email,
+  that the adjustment is still being worked out.
+- **A placeholder→member link (#2337) HALF-lands on a parked edit.** The identity
+  columns — `isMember`, `memberId`, name and consent — are written
+  unconditionally, while the price and the rate-membership-type snapshot stay
+  frozen because a parked edit charges nobody. So the strand is member-flagged
+  and priced, and posted to Xero, at the non-member figure until the review
+  settles, and no review task names it — the strand is exact and its nights did
+  not move, so nothing records it. It is the same trade `otherLodgeRatedGuestIds`
+  already makes: the flag says what was CHARGED, and nothing was. Undoing it
+  would mean either withholding an identity correction the member asked for, or
+  charging money the edit was parked for being unable to price.
+- **A parked batch edit writes the officer's other-club rate tick back as
+  `false`, with no message on screen.** Intended, for the reason above — the tick
+  records a rate that was honoured, and a parked edit honours no rate — but the
+  officer is not told, so they may believe they applied it.
+
+**The consequence worth stating plainly:** because nothing clears a blank, a
+booking that has been parked once is unreadable for good. Settling a review
+writes an amount to the TASK, not a price to the night row. Combined with the
+pending-review fence above, that means a parked booking is one price-affecting
+edit per officer intervention — honest rather than harmful, because the club is
+asked each time instead of being told a number nobody decided, but a real cost
+to self-service and not a detail.
 
 A negative or non-integer stored row is classified as an ABSENCE of usable
 evidence, never as a price: trusting one inverts an edit, so giving a night back
@@ -1320,7 +1425,28 @@ Pinned by `booking-edit-guest-ranges-sparse.test.ts` (the 960-case matrix and on
 refusal proof per removed estimator), `booking-edit-financial-review-parity.test.ts`,
 `booking-guest-removal-exact-credit.test.ts`,
 `guest-removal-minors-alert-route.test.ts` and the lenient-reader census in
-`in-progress-edit-sold-price-census.test.ts`. The removal PARK is pinned by
+`in-progress-edit-sold-price-census.test.ts`. The three paths #3166 added are
+pinned where each of them lives, every case beside a control that proves the
+identical edit on a readable booking still prices and settles: the pre-check-in
+edit in `batch-modify-payment.test.ts` (the save commits and parks rather than
+refusing, `NULL` is written for every night it cannot value, a partially readable
+strand keeps its readable row byte for byte, and a REMOVED strand whose own rows
+were readable is recorded before they are deleted), the preview in
+`phase2-guest-subscription.test.ts`, which strand a parked edit RECORDS — removed,
+shortened or extended, each beside a control — in
+`pre-check-in-edit-evidence.test.ts`, that the gate is CALLED on all four
+surfaces and its answer is what fences the write in the pre-check-in gate census
+in `in-progress-edit-sold-price-census.test.ts`, that a SETTLED review no longer
+silences the next occurrence of the same identity in
+`edit-financial-review.test.ts` and, against a real server, in
+`edit-financial-review-races.realdb.test.ts`, which pins both directions at once
+(a replay of an OPEN occurrence writes nothing further; a new occurrence of a
+settled identity gets its own task while the settled row stays as the officer
+left it), that the waitlist offer sweep declines to
+reprice over a blank in `waitlist.test.ts`, the date change in
+`fix-mod-payment.test.ts`
+(including that a moved range which still covers a night keeps that night at the
+price it was sold for), and the guest add in `guests-add-notify-choice.test.ts`. The removal PARK is pinned by
 `booking-guest-consent-authority.test.ts` (the consent decline and the expiry
 sweep, each against a priced control that raises nothing) and by
 `guest-removal-minors-alert-route.test.ts`, which drives the real route and
