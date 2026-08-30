@@ -149,7 +149,12 @@ beforeEach(() => {
   });
   mocks.enqueueEditFinancialReviewRefundRecovery.mockResolvedValue({ id: "rec-1" });
   mocks.markEditFinancialReviewRefundRecoverySucceeded.mockResolvedValue({ count: 1 });
-  mocks.queueXeroBookingEditSettlement.mockResolvedValue(undefined);
+  // The real dispatcher answers with the classification PLUS what the accounting
+  // ask did about it (#3170 fix round, F2). Every fixture here is a REFUND, which
+  // queues a credit note rather than a supplementary invoice.
+  mocks.queueXeroBookingEditSettlement.mockResolvedValue({
+    supplementaryInvoice: "none",
+  });
 });
 
 describe("resolveManualRefundTask", () => {
@@ -160,6 +165,7 @@ describe("resolveManualRefundTask", () => {
       note: "cash handed back",
       actingMemberId: "admin-1",
       confirmedAmountCents: null,
+      direction: "REFUND_TO_MEMBER",
     });
 
     expect(mocks.applyLocalRefundAllocation).toHaveBeenCalledWith({
@@ -224,6 +230,7 @@ describe("resolveManualRefundTask", () => {
         note: null,
         actingMemberId: "admin-1",
         confirmedAmountCents: null,
+        direction: "REFUND_TO_MEMBER",
       })
     ).rejects.toMatchObject({ status: 409 });
     expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
@@ -253,6 +260,7 @@ describe("resolveManualRefundTask", () => {
         note: null,
         actingMemberId: "admin-1",
         confirmedAmountCents: null,
+        direction: "REFUND_TO_MEMBER",
       })
     ).rejects.toMatchObject({ status: 409 });
   });
@@ -267,6 +275,7 @@ describe("resolveManualRefundTask", () => {
         note: null,
         actingMemberId: "admin-1",
         confirmedAmountCents: null,
+        direction: "REFUND_TO_MEMBER",
       })
     ).rejects.toMatchObject({ status: 404 });
   });
@@ -337,6 +346,7 @@ describe("#3030 - pricing an unknown amount at completion", () => {
       note: "Priced from the June invoice: two nights at $45.",
       actingMemberId: "admin-1",
       confirmedAmountCents: 9000,
+      direction: "REFUND_TO_MEMBER",
     });
 
     // The amount and the terminal status are ONE write. That is what makes a
@@ -369,6 +379,7 @@ describe("#3030 - pricing an unknown amount at completion", () => {
         note: "closing it",
         actingMemberId: "admin-1",
         confirmedAmountCents: null,
+        direction: "REFUND_TO_MEMBER",
       })
     ).rejects.toMatchObject({ status: 409 });
     expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
@@ -402,6 +413,7 @@ describe("#3030 - pricing an unknown amount at completion", () => {
         note: "  ",
         actingMemberId: "admin-1",
         confirmedAmountCents: 4200,
+        direction: "REFUND_TO_MEMBER",
       })
     ).rejects.toMatchObject({ status: 400 });
     expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
@@ -418,6 +430,7 @@ describe("#3030 - pricing an unknown amount at completion", () => {
           note: "priced",
           actingMemberId: "admin-1",
           confirmedAmountCents: bad,
+          direction: "REFUND_TO_MEMBER",
         })
       ).rejects.toMatchObject({ status: 400 });
     }
@@ -435,6 +448,7 @@ describe("#3030 - pricing an unknown amount at completion", () => {
       note: "Credited to the member account.",
       actingMemberId: "admin-1",
       confirmedAmountCents: 4500,
+      direction: "REFUND_TO_MEMBER",
     });
 
     // There is nothing to allocate a refund against, and inventing a payment
@@ -492,6 +506,7 @@ describe("#3030 - pricing an unknown amount at completion", () => {
         note: "Nothing turned out to be owed.",
         actingMemberId: "admin-1",
         confirmedAmountCents: 0,
+        direction: "REFUND_TO_MEMBER",
       })
     ).rejects.toMatchObject({ status: 400 });
 
@@ -516,6 +531,7 @@ describe("#3030 - pricing an unknown amount at completion", () => {
         note: "closing it",
         actingMemberId: "admin-1",
         confirmedAmountCents: null,
+        direction: "REFUND_TO_MEMBER",
       })
     ).rejects.toMatchObject({ status: 400 });
     expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
@@ -540,6 +556,7 @@ describe("#3030 - pricing an unknown amount at completion", () => {
         note: "priced at 900",
         actingMemberId: "admin-1",
         confirmedAmountCents: 90000,
+        direction: "REFUND_TO_MEMBER",
       })
     ).rejects.toMatchObject({ status: 400 });
     expect(mocks.recordBookingEvent).not.toHaveBeenCalled();
@@ -558,6 +575,7 @@ describe("#3030 - pricing an unknown amount at completion", () => {
         note: "priced",
         actingMemberId: "admin-1",
         confirmedAmountCents: 9000,
+        direction: "REFUND_TO_MEMBER",
       })
     ).rejects.toMatchObject({ message: "connection reset" });
   });
@@ -575,6 +593,7 @@ describe("#3030 - amending at completion, audited (owner decision D2)", () => {
       note: "The second night was comped, so $42 not $50.",
       actingMemberId: "admin-1",
       confirmedAmountCents: 4200,
+      direction: "REFUND_TO_MEMBER",
     });
 
     expect(result.amountAmended).toBe(true);
@@ -604,6 +623,7 @@ describe("#3030 - amending at completion, audited (owner decision D2)", () => {
         note: "paid back 80",
         actingMemberId: "admin-1",
         confirmedAmountCents: 8000,
+        direction: "REFUND_TO_MEMBER",
       })
     ).rejects.toMatchObject({ status: 409 });
     expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
@@ -617,6 +637,7 @@ describe("#3030 - amending at completion, audited (owner decision D2)", () => {
       note: null,
       actingMemberId: "admin-1",
       confirmedAmountCents: 9000,
+      direction: "REFUND_TO_MEMBER",
     });
 
     expect(result.amountAmended).toBe(false);
@@ -641,6 +662,7 @@ describe("#3030 - a confirmation cannot apply twice", () => {
         note: "priced at 90",
         actingMemberId: "admin-2",
         confirmedAmountCents: 9000,
+        direction: "REFUND_TO_MEMBER",
       })
     ).rejects.toMatchObject({ status: 409 });
 
@@ -665,6 +687,7 @@ describe("#3030 - a confirmation cannot apply twice", () => {
         note: "priced again",
         actingMemberId: "admin-2",
         confirmedAmountCents: 7000,
+        direction: "REFUND_TO_MEMBER",
       })
     ).rejects.toMatchObject({ status: 409 });
     expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
@@ -683,6 +706,7 @@ describe("#3030 - a confirmation cannot apply twice", () => {
         note: "actually we do owe them",
         actingMemberId: "admin-2",
         confirmedAmountCents: 3000,
+        direction: "REFUND_TO_MEMBER",
       })
     ).rejects.toMatchObject({ status: 409 });
     expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
@@ -756,6 +780,7 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
       note: "Priced from the June card receipt.",
       actingMemberId: "admin-1",
       confirmedAmountCents: 7300,
+      direction: "REFUND_TO_MEMBER",
     });
 
     // NOT a second ledger write. `refundPaymentTransactions` increments
@@ -809,6 +834,7 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
       note: "Priced from the June card receipt.",
       actingMemberId: "admin-1",
       confirmedAmountCents: 7300,
+      direction: "REFUND_TO_MEMBER",
     });
 
     expect(mocks.enqueueEditFinancialReviewRefundRecovery).toHaveBeenCalledWith({
@@ -845,6 +871,7 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
       note: "Priced from the June card receipt.",
       actingMemberId: "admin-1",
       confirmedAmountCents: 7300,
+      direction: "REFUND_TO_MEMBER",
     });
 
     // The task IS closed - the claim committed - but the member is not told
@@ -880,6 +907,7 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
         note: "Priced from the June card receipt.",
         actingMemberId: "admin-1",
         confirmedAmountCents: 7300,
+        direction: "REFUND_TO_MEMBER",
       })
     ).rejects.toMatchObject({ status: 400 });
 
@@ -910,6 +938,7 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
         note: "Priced from the June card receipt.",
         actingMemberId: "admin-1",
         confirmedAmountCents: 7300,
+        direction: "REFUND_TO_MEMBER",
       })
     ).rejects.toMatchObject({ status: 400 });
     expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
@@ -936,6 +965,7 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
       note: "Priced from the June card receipt.",
       actingMemberId: "admin-1",
       confirmedAmountCents: 7300,
+      direction: "REFUND_TO_MEMBER",
     });
 
     expect(mocks.queueXeroBookingEditSettlement).toHaveBeenCalledWith(
@@ -969,6 +999,7 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
       note: "Priced from the June card receipt.",
       actingMemberId: "admin-1",
       confirmedAmountCents: 7300,
+      direction: "REFUND_TO_MEMBER",
     });
 
     // The dispatch still runs - `classifyXeroBookingEditSettlement` owns the
@@ -1000,6 +1031,7 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
         note: "priced",
         actingMemberId: "admin-1",
         confirmedAmountCents: 4500,
+        direction: "REFUND_TO_MEMBER",
       })
     ).rejects.toMatchObject({ status: 409 });
     expect(mocks.recordBookingEvent).not.toHaveBeenCalled();
@@ -1027,6 +1059,7 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
       note: "Credited to the member account.",
       actingMemberId: "admin-1",
       confirmedAmountCents: 4500,
+      direction: "REFUND_TO_MEMBER",
     });
 
     // #1031: an account credit consumes refundable value exactly like a card
@@ -1056,6 +1089,7 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
         note: "Credited to the member account.",
         actingMemberId: "admin-1",
         confirmedAmountCents: 4500,
+        direction: "REFUND_TO_MEMBER",
       })
     ).rejects.toMatchObject({ status: 409 });
 
@@ -1086,6 +1120,7 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
         note: "Credited to the member account.",
         actingMemberId: "admin-1",
         confirmedAmountCents: 4500,
+        direction: "REFUND_TO_MEMBER",
       })
     ).rejects.toMatchObject({ status: 409 });
     expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
@@ -1110,6 +1145,7 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
         note: "Credited to the member account.",
         actingMemberId: "admin-1",
         confirmedAmountCents: 4500,
+        direction: "REFUND_TO_MEMBER",
       })
     ).rejects.toMatchObject({ status: 409 });
     expect(mocks.createBookingModificationCredit).not.toHaveBeenCalled();
@@ -1123,6 +1159,7 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
       note: null,
       actingMemberId: "admin-1",
       confirmedAmountCents: null,
+      direction: "REFUND_TO_MEMBER",
     });
 
     expect(mocks.applyLocalRefundAllocation).toHaveBeenCalledWith({
@@ -1190,6 +1227,7 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
         note: "Credited to the member account.",
         actingMemberId: "admin-1",
         confirmedAmountCents: 4500,
+        direction: "REFUND_TO_MEMBER",
       })
     ).rejects.toMatchObject({ status: 409 });
 

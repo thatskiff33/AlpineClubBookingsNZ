@@ -143,6 +143,25 @@ export function PriceSummaryCard({
           </div>
         ) : null}
 
+        {/* #3170 (epic #2797) — this edit's money cannot be read from the
+            booking's own stored history, so saving will commit the change and
+            hold the amount for a person to confirm. Shown in the same slot and
+            with the same lifecycle as the two notices around it, and rendered
+            VERBATIM: the server owns this sentence, because the words are bound
+            by the epic (no estimate, no `$0`, and nothing that reads as the
+            member's fault). Every figure above it is the booking's stored one
+            and every delta is zero, so there is no number here to explain away
+            — which is exactly why the sentence has to be present. */}
+        {quote?.financialReviewRequired && quote.financialReviewNotice ? (
+          <div
+            className="rounded-md bg-info-3 p-3 text-sm text-info-11"
+            role="status"
+            data-testid="financial-review-required-notice"
+          >
+            {quote.financialReviewNotice}
+          </div>
+        ) : null}
+
         {/* #2770 D2 — "tell them why" for the edit-time group discount
             switch, in the same slot and with the same lifecycle as the
             subscription notice above: gated on `quote` alone so it survives

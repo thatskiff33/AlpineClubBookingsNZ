@@ -100,6 +100,147 @@ export function buildEditFinancialReviewRefundStripeKeyPrefix(taskId: string) {
   return `edit_financial_review_refund_${taskId}`;
 }
 
+// The recovery-operation dedup key for an ordinary booking edit's additional
+// PaymentIntent (#1096), scoped to the `BookingModification` that recorded the
+// price increase - one edit, one charge debt.
+//
+// #3170 MOVED IT HERE from `payment-recovery.ts`, where it was private. That
+// module initialises the Prisma client at load time; this one is deliberately
+// free of it so a caller can build a key without dragging the client into its
+// graph, which is why every other builder already lives here. The move is what
+// lets `createModificationAdditionalPaymentIntent` default the key without
+// importing the enqueue module's whole surface.
+export function buildAdditionalIntentRecoveryIdempotencyKey(
+  bookingModificationId: string,
+) {
+  return `payment_recovery_additional_intent_${bookingModificationId}`;
+}
+
+// #3170: the recovery-operation dedup key for the additional PaymentIntent a
+// completed EDIT_FINANCIAL_REVIEW task contributes to when the officer decides
+// the MEMBER owes the club.
+//
+// SCOPED TO THE EDIT (`BookingModification`), NOT TO THE TASK, and that INVERTS
+// what the first #3170 round shipped. The reasoning that produced the task-scoped
+// key was right about the mechanism and wrong about the goal: one edit can raise
+// TWO review tasks over one `BookingModification` row, and under a shared key
+// Stripe answers the second review's mint with the FIRST review's intent. That is
+// now the DESIRED behaviour, because the owner's 30 Aug 2026 decision on #3170 is
+// that both reviews contribute to ONE request for the total. Two separate
+// requests is the arrangement that lost the money:
+// `queueSupersededAdditionalIntentCancellations` cancels every OTHER outstanding
+// additional on the payment when a new one is minted, and
+// `reconcilePaymentAggregates` carries a single `additionalAmountCents`, so a
+// $200 request followed by a $30 request collected $30 of $230 with both tasks
+// reading COMPLETED.
+//
+// WHICH OF THE TWO EACH KEY BELONGS TO, stated here because it is the subtlety
+// most likely to be got wrong later:
+//
+//   * THE REQUEST is edit-scoped - one PaymentIntent, one `ADDITIONAL`
+//     PaymentTransaction, one figure on the member's pay link. So the Stripe key
+//     below and this recovery key, which both name the REQUEST, are scoped to the
+//     `BookingModification`.
+//   * THE SHARE is task-scoped - one officer's decision about one unreadable
+//     guest strand, with its own amount and its own direction. It stays on the
+//     `ManualRefundTask` row (`amountCents`, `settlementDirection`) and in that
+//     task's audit entry, which is what keeps the combined figure explainable
+//     back to the two decisions that produced it.
+//   * The REFUND keys above stay TASK-scoped, and that is not an inconsistency:
+//     a refund is not a request the member acts on, it is money already sent, so
+//     two refunds of one edit are two separate movements and must never converge.
+//
+// The amount stored on the recovery row is ADVISORY, not the debt. The replay
+// re-derives the total from the settled shares
+// (`syncEditFinancialReviewChargeRequest`), so a row carrying a stale figure
+// cannot mint for the wrong one - which is what makes a single edit-scoped row
+// safe where the first round needed one row per task to protect the amount.
+export function buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey(
+  bookingModificationId: string,
+) {
+  return `edit_financial_review_additional_intent_recovery_${bookingModificationId}`;
+}
+
+// #3170: the Stripe idempotency key for that same additional PaymentIntent,
+// edit-scoped for the reason set out above. It is what makes the FIRST mint for
+// an edit the ONLY mint for that edit: a later share does not create a second
+// intent, it raises this one's amount to the new total through
+// `updatePaymentIntentAmount`, so nothing is ever superseded and nothing is ever
+// cancelled between two shares of one edit. The inline sync and the recovery
+// replay share the key, so a genuine replay converges on the one intent.
+export function buildEditFinancialReviewAdditionalIntentStripeKey(
+  bookingModificationId: string,
+) {
+  return `edit_financial_review_additional_${bookingModificationId}`;
+}
+
+// #3170: the `reason` stamped on the combined request's `ADDITIONAL`
+// PaymentTransaction, and the way a later share FINDS that request.
+//
+// It is a lookup key rather than prose, which is why it is built here beside the
+// idempotency keys rather than spelled inline at the call site. The request has
+// to be findable from the edit alone - a second share knows its
+// `BookingModification` and nothing about the first share - and the ledger row
+// carries no anchor column of its own. Matching is EXACT EQUALITY on this whole
+// string; nothing slices an id back out of it, which is deliberate (see
+// `bookingModificationIdForAdditionalIntentRecoveryKey` for why prefix-slicing is
+// the thing that went wrong here once already).
+export function buildEditFinancialReviewChargeReason(
+  bookingModificationId: string,
+) {
+  return `edit_financial_review_charge_${bookingModificationId}`;
+}
+
+// Whether a CREATE_ADDITIONAL_PAYMENT_INTENT recovery operation belongs to a
+// completed EDIT_FINANCIAL_REVIEW charge rather than to an ordinary booking edit.
+// The two replay DIFFERENTLY - the review charge re-derives its total from the
+// settled shares and may need to RAISE an existing intent rather than mint one -
+// so the recovery worker has to tell them apart, and this is the one place that
+// knows how.
+export function isEditFinancialReviewAdditionalIntentRecoveryKey(
+  idempotencyKey: string | null | undefined,
+): boolean {
+  return Boolean(
+    idempotencyKey?.startsWith(
+      "edit_financial_review_additional_intent_recovery_",
+    ),
+  );
+}
+
+// The `BookingModification` a CREATE_ADDITIONAL_PAYMENT_INTENT recovery operation
+// belongs to, read back from its dedup key.
+//
+// #3170 REPLACED A BROKEN INLINE SLICE. `payment-recovery.ts` used to derive this
+// by slicing `"payment_recovery_additional_intent_".length` characters off the
+// key, which is correct for the ordinary edit key and silently wrong for every
+// other shape: a review-charge key sliced to `"tent_recovery_<id>"`, and the
+// caller then looked for waiting Xero operations under a modification id that
+// cannot exist. The builder had been moved into this module and made a required
+// argument; the parser was left behind, which is exactly the half-move
+// `INV-SSOT` exists to stop.
+//
+// FAIL-CLOSED: an unrecognised key returns null and the caller does nothing,
+// rather than a slice of a string that is not an id. Add a prefix here whenever a
+// new caller builds one of these keys, or its recovery replay silently skips the
+// Xero attach.
+const ADDITIONAL_INTENT_RECOVERY_KEY_PREFIXES = [
+  "edit_financial_review_additional_intent_recovery_",
+  "payment_recovery_additional_intent_",
+] as const;
+
+export function bookingModificationIdForAdditionalIntentRecoveryKey(
+  idempotencyKey: string | null | undefined,
+): string | null {
+  if (!idempotencyKey) return null;
+  for (const prefix of ADDITIONAL_INTENT_RECOVERY_KEY_PREFIXES) {
+    if (idempotencyKey.startsWith(prefix)) {
+      const id = idempotencyKey.slice(prefix.length);
+      return id.length > 0 ? id : null;
+    }
+  }
+  return null;
+}
+
 // #1494: the Stripe refund `metadata` for a booking-cancellation card refund.
 // The inline cancel path (which creates the Stripe refund) and the recovery
 // cron (which replays it under the shared `booking_cancel_refund_<bookingId>`

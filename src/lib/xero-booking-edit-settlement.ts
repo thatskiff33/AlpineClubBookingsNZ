@@ -15,6 +15,7 @@ import {
   enqueueXeroSupplementaryInvoiceOperation,
   kickQueuedXeroOutboxOperationsIfConnected,
   recordSkippedXeroBookingInvoiceUpdateOperation,
+  type XeroSupplementaryInvoiceEnqueueOutcome,
 } from "@/lib/xero-operation-outbox";
 
 type XeroBookingEditFinancialAction =
@@ -52,6 +53,25 @@ export interface XeroBookingEditSettlementDecision {
   originalInvoiceUnsafe: boolean;
   financialAction: XeroBookingEditFinancialAction;
   primaryInvoiceUpdateAction: XeroBookingEditPrimaryUpdateAction;
+}
+
+/**
+ * What the classification decided, plus what the accounting ask actually did
+ * about it (#3170 fix round, F2).
+ *
+ * The decision alone says what this dispatcher INTENDED. `supplementaryInvoice`
+ * says what the enqueue then found under its per-anchor lock, which is the only
+ * moment anyone can tell whether a settled share reached the invoice: once the
+ * outbox worker has claimed the operation, `createXeroSupplementaryInvoice`
+ * overwrites its payload with the Xero invoice body, so the queued amount is
+ * gone. `"none"` on every branch that does not queue a supplementary invoice at
+ * all - including the deferred one below, where the invoice is waiting for an
+ * additional PaymentIntent that does not exist yet and no ask has been made to
+ * fall short of.
+ */
+export interface XeroBookingEditSettlementResult
+  extends XeroBookingEditSettlementDecision {
+  supplementaryInvoice: XeroSupplementaryInvoiceEnqueueOutcome;
 }
 
 export interface ClassifyXeroBookingEditSettlementInput {
@@ -183,8 +203,9 @@ async function kickQueuedXeroOperation(queued: { queueOperationId: string | null
 
 export async function queueXeroBookingEditSettlement(
   input: QueueXeroBookingEditSettlementInput
-) {
+): Promise<XeroBookingEditSettlementResult> {
   const decision = classifyXeroBookingEditSettlement(input);
+  let supplementaryInvoice: XeroSupplementaryInvoiceEnqueueOutcome = "none";
 
   if (decision.financialAction.type === "primary-invoice") {
     const queued = await enqueueXeroBookingInvoiceOperation(input.bookingId, {
@@ -196,6 +217,9 @@ export async function queueXeroBookingEditSettlement(
       input.requiresAdditionalStripePayment &&
       !decision.financialAction.waitForPaymentIntentId
     ) {
+      // Deferred, not short: nothing has been asked for yet, so there is no ask
+      // for a share to fall short of. The intent's recovery replay is what
+      // eventually mints one.
       logger.warn(
         {
           bookingId: input.bookingId,
@@ -220,6 +244,7 @@ export async function queueXeroBookingEditSettlement(
           recordPayment: decision.financialAction.recordPayment,
         }
       );
+      supplementaryInvoice = queued.outcome;
       await kickQueuedXeroOperation(queued);
     }
   } else if (decision.financialAction.type === "modification-credit-note") {
@@ -262,5 +287,5 @@ export async function queueXeroBookingEditSettlement(
     });
   }
 
-  return decision;
+  return { ...decision, supplementaryInvoice };
 }

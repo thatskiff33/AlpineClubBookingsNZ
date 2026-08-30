@@ -115,7 +115,7 @@ import {
   lockedNightPricesForGuest,
   resolveGuestMemberLinks,
   resolveGuestNameUpdates,
-  BookingEditFinancialReviewRequiredError,
+  EDIT_FINANCIAL_REVIEW_QUOTE_NOTICE,
   isMemberWholeLodgeBooking,
   isQuotePricedBooking,
   QUOTE_PRICED_EDIT_BLOCK_MESSAGE,
@@ -1478,26 +1478,30 @@ export async function POST(
   // (`BookingEditFinancialReviewRequiredError`), so the member cannot be shown a
   // price the save would decline to honour — and is never shown an estimate or a
   // `$0` for an amount nobody has worked out yet.
-  if (planResult?.kind === "financial_review_required") {
-    const refusal = new BookingEditFinancialReviewRequiredError(
-      planResult.occurrences,
-    );
-    logger.info(
-      {
-        bookingId,
-        // The CAUSES only. Which nights and what was stored against them is
-        // evidence for an admin on the review task (#3030), not log fodder.
-        causes: planResult.occurrences.map((occurrence) => occurrence.cause),
-      },
-      "Booking modification quote needs financial review",
-    );
-    return NextResponse.json(
-      { error: refusal.message, code: refusal.code },
-      { status: refusal.status },
-    );
-  }
+  //
+  // #3170 CHANGED WHAT THAT PARITY MEANS, and the parity itself is why this had
+  // to change here too. The save no longer refuses: it COMMITS the structural
+  // change and parks the amount as an OPEN review task. A preview that went on
+  // refusing would have blocked the member from a save that would have
+  // succeeded, which is the same disagreement in the opposite direction.
+  //
+  // So the quote parks as well: it prices NOTHING, reports a zero movement
+  // because the booking's money genuinely does not move, and says so with
+  // `financialReviewRequired`. It is not a `$0` quote — the panel renders the
+  // sentence rather than the number, and no settlement option is offered
+  // because none is being taken.
+  //
+  // THE CAPACITY CHECK STILL RUNS FIRST, on the parked plan, for the same
+  // reason it does on the save: beds are not money, and the member must be told
+  // "no beds" before they are told "an officer will confirm the amount".
+  const parkedPlan = planResult?.kind === "financial_review_required"
+    ? planResult.parkedPlan
+    : null;
   const inProgressPlan: BookingEditGuestRangePlan | null =
-    planResult?.plan ?? null;
+    planResult?.kind === "priced" ? planResult.plan : null;
+  // Which plan the capacity check reads. Exactly one is ever set, and both
+  // propose the same beds by construction (`composeCapacityCoverage`).
+  const capacityPlan = inProgressPlan ?? parkedPlan;
 
   // Capacity check (exclude current booking)
   // #1746: with admin-flagged partner-sharers the preview runs the same
@@ -1547,13 +1551,13 @@ export async function POST(
     };
   } else {
     capacity =
-      inProgressPlan && editableFrom
+      capacityPlan && editableFrom
         ? await checkCapacityForGuestRanges(
             bookingLodgeId,
             // #2029: capacityRangeStart, not editableFrom — see above.
-            inProgressPlan.capacityRangeStart,
+            capacityPlan.capacityRangeStart,
             newCheckOut,
-            inProgressPlan.capacityGuestRanges,
+            capacityPlan.capacityGuestRanges,
             bookingId
           )
         : await checkCapacityForGuestRanges(
@@ -1563,6 +1567,62 @@ export async function POST(
             policyAdjustedGuestsForPricing,
             bookingId
           );
+  }
+
+  // #3170: the parked preview. Taken the moment the beds are settled and before
+  // a single cent is computed — everything below prices the edit, and this
+  // booking's history cannot support a price.
+  //
+  // EVERY MONEY FIELD IS THE BOOKING'S OWN STORED FIGURE, and the three deltas
+  // are zero because the booking's money does not move on this save, not
+  // because zero was chosen as the adjustment. `settlementOptions` is null, so
+  // the panel offers no card-or-credit election for a movement that is not
+  // happening, and `promoValidation` is null because no promotion is re-run.
+  if (parkedPlan) {
+    logger.info(
+      {
+        bookingId,
+        // The CAUSES only. Which nights and what was stored against them is
+        // evidence for an admin on the review task (#3030), not log fodder.
+        causes: planResult?.kind === "financial_review_required"
+          ? planResult.occurrences.map((occurrence) => occurrence.cause)
+          : [],
+      },
+      "Booking modification quote parks its money for financial review",
+    );
+    return NextResponse.json({
+      newTotalPriceCents: booking.totalPriceCents,
+      newDiscountCents: booking.discountCents,
+      newPromoAdjustmentCents: booking.promoAdjustmentCents,
+      newFinalPriceCents: booking.finalPriceCents,
+      priceDiffCents: 0,
+      changeFeeCents: 0,
+      netChargeCents: 0,
+      settlementOptions: null,
+      availableCreditCents,
+      capacityAvailable: capacity.available,
+      financialReviewRequired: true,
+      financialReviewNotice: EDIT_FINANCIAL_REVIEW_QUOTE_NOTICE,
+      minimumStayValid: minimumStayViolations.length === 0,
+      minimumStayViolations,
+      exceptionReview,
+      promoStillValid: true,
+      promoCoverage: null,
+      promoValidation: null,
+      itemizedChanges: [],
+      ...(partnerSharedReason !== null ? { partnerSharedReason } : {}),
+      ...(adminOverride && !capacity.available && partnerSharedGuests.length === 0
+        ? { overCapacityConfirmRequired: true }
+        : {}),
+      ...(capacity.available
+        ? {}
+        : {
+            nightDetails: capacity.nightDetails.map((n) => ({
+              date: formatDateOnly(n.date),
+              availableBeds: n.availableBeds,
+            })),
+          }),
+    });
   }
 
   // Calculate new total price

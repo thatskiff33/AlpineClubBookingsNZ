@@ -423,6 +423,68 @@ describe("scanBookingInvoiceRoundingDrift (read-only)", () => {
     expect(Object.keys(client.booking)).toEqual(["findMany"]);
   });
 
+  it("values an unknown night the way the builder does, not at zero (#3170)", async () => {
+    /*
+      #3170 made `BookingGuestNight.priceCents` nullable: a night a parked edit
+      committed without valuing. Two things went wrong here if the scanner just
+      passed those rows through.
+
+      One, the ARITHMETIC. `totalCents += night.priceCents` adds a null as 0 and
+      `Math.min(minPrice, null)` collapses to 0, so a $30 night valued at nothing
+      produces a drift figure that is not the drift - in a report a person acts
+      on.
+
+      Two, the BRANCH. This module's promise is that it replays the builder, and
+      since #3170 the builder sends a guest with ANY unknown night down the
+      whole-stay legacy branch. Staying on the per-night branch replays a builder
+      that no longer exists, for exactly the population #3170 creates.
+    */
+    const blankNightRow: RoundingAuditBooking = {
+      ...bookingRow("blank", false),
+      guests: [
+        {
+          firstName: "Guest",
+          lastName: "blank",
+          ageTier: "ADULT",
+          isMember: true,
+          // $80 stored for the guest, over the booking's three nights.
+          priceCents: 8000,
+          nights: [
+            { stayDate: day(2026, 6, 1), priceCents: 2500 },
+            { stayDate: day(2026, 6, 2), priceCents: 2500 },
+            { stayDate: day(2026, 6, 3), priceCents: null },
+          ],
+        },
+      ],
+    };
+    const findMany = vi.fn().mockResolvedValueOnce([blankNightRow]);
+    const client = {
+      booking: { findMany },
+      groupBookingSettlement: { findMany: vi.fn() },
+    } as unknown as RoundingAuditPrismaClient;
+
+    const result = await scanBookingInvoiceRoundingDrift(client, {});
+
+    expect(result.scannedInvoices).toBe(1);
+    // The legacy branch: round(8000 / 3) = 2667, 3 * 2667 = 8001, so +1c of real
+    // drift on the line the builder actually emits.
+    expect(result.totalDriftCents).toBe(1);
+    const runs = result.affected[0].guests[0].driftedRuns;
+    expect(runs).toHaveLength(1);
+    // The legacy branch emits no date boundaries - it bills the booking's own
+    // range as one line - which is itself the proof of which branch ran.
+    expect(runs[0].startDate).toBe("");
+    expect(runs[0].nightCount).toBe(3);
+    expect(runs[0].totalCents).toBe(8000);
+    // A CONTROL on the null-as-zero half: had the unknown night been added as 0,
+    // the per-night branch would have totalled 5000 over three nights, which is
+    // 3 * round(1666.67) = 5001 - a +1c drift too, but on $50 of a guest who was
+    // charged $80. Asserting the TOTAL, not just the drift, is what tells the two
+    // apart.
+    expect(runs[0].totalCents).not.toBe(5000);
+    expect(runs[0].mixedPrices).toBe(false);
+  });
+
   it("paginates across batches with a cursor", async () => {
     const batch1 = [bookingRow("p0", false), bookingRow("p1", false)];
     const batch2 = [bookingRow("p2", false), bookingRow("last", true)];

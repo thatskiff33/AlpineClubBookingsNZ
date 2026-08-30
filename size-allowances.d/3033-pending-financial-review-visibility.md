@@ -8,7 +8,7 @@ honoured: its row mapping and the redaction that goes with it were lifted into
 gate exists to force and a better home for that code anyway.
 
 file: src/components/admin/manual-refund-task-queue.tsx
-lines: 1094
+lines: 1290
 reason: this is where the whole admin half of the feature lands — the two
   kind-aware intro paragraphs, the captured-evidence block, the permission-gated
   booking link, and the per-kind dialog copy. The obvious split is to lift the
@@ -19,7 +19,7 @@ reason: this is where the whole admin half of the feature lands — the two
   guard hardcodes is this repository's known silent-false-green failure — the
   guard keeps passing over the half that stayed. Splitting it is worth doing on an
   issue where those three guards can be re-pointed and mutation-proved as the
-  change's own subject, not as a line-count tidy-up ridden in on a money-copy fix.
+  change's own subject, not as a line-count tidy-up ridden in on a money-copy fix. #3170 (+196): the queue could not price a review at all - the confirm button was disarmed whenever the task carried no amount - and its copy read "Record an adjustment", which is neutral to read and settles as a refund. The growth is the amount box, the two-way direction choice with no default, the sentence under each option naming the instrument it uses, and the direction-bearing button label. It is the screen where a wrong-direction money movement was one plausible action away, so the words are the fix.
 
 file: src/lib/email/booking.ts
 lines: 1545

@@ -46,6 +46,22 @@ const bodySchema = z.discriminatedUnion("resolution", [
         .positive()
         .optional()
         .nullable(),
+      /**
+       * #3170: WHICH WAY the confirmed amount goes. A positive magnitude plus an
+       * explicit direction, never a signed amount - the sign of a money value is
+       * exactly the kind of overloading this epic exists to remove, and the
+       * `ManualRefundTask_amount_nonnegative` CHECK forbids it anyway.
+       *
+       * Optional over HTTP and defaulted to null, which the library reads as
+       * REFUND_TO_MEMBER: that is the only thing a legacy hand-back can mean, and
+       * an older client posting nothing keeps working. An `EDIT_FINANCIAL_REVIEW`
+       * completion that omits it is refused there, not here, because that refusal
+       * depends on the task's kind - which this route does not read.
+       */
+      direction: z
+        .enum(["REFUND_TO_MEMBER", "CHARGE_TO_MEMBER"])
+        .optional()
+        .nullable(),
     })
     .strict(),
   z
@@ -98,8 +114,9 @@ const bodySchema = z.discriminatedUnion("resolution", [
  */
 function completionMessage(result: {
   amountAmended: boolean;
-  settlementRoute: { kind: string } | null;
+  settlementRoute: { kind: string; collectVia?: "stripe" | "invoice" } | null;
   stripeRefundId: string | null;
+  additionalPaymentIntentId: string | null;
 }) {
   const amended = result.amountAmended ? " at the confirmed amount" : "";
   if (result.settlementRoute?.kind === "stripe-refund") {
@@ -109,6 +126,18 @@ function completionMessage(result: {
   }
   if (result.settlementRoute?.kind === "account-credit") {
     return `Account credit issued to the member${amended}.`;
+  }
+  // #3170: the direction that asks for money rather than returning it. Its two
+  // sentences say what the member will actually receive, because "adjustment
+  // recorded" over a request that was never sent is the same false receipt the
+  // failed-card case above exists to avoid - in the opposite direction.
+  if (result.settlementRoute?.kind === "additional-charge") {
+    if (result.settlementRoute.collectVia === "invoice") {
+      return `Added to this booking's invoice for the member to pay${amended}.`;
+    }
+    return result.additionalPaymentIntentId
+      ? `The member has been asked to pay this${amended}. It is on the booking as an additional payment and they will be reminded until it is paid.`
+      : "The request for payment could not be raised just now. It has been recorded and will be retried automatically — check this booking's payment history before asking the member another way.";
   }
   return `Refund recorded as paid back by hand${amended}.`;
 }
@@ -148,6 +177,7 @@ export async function POST(
             note: parsed.data.note ?? null,
             actingMemberId: guard.session.user.id,
             confirmedAmountCents: parsed.data.confirmedAmountCents ?? null,
+            direction: parsed.data.direction ?? null,
           }
         : {
             taskId: id,

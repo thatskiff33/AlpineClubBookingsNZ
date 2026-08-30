@@ -584,9 +584,9 @@ land.
 manifest moving with it. The numbers this page was written against:
 
 ```
-row-producing sites:  462
+row-producing sites:  463
 uncategorised:        0
-category values: admin 104, booking 101, xero 34, family 35, payment 37,
+category values: admin 104, booking 101, xero 34, family 35, payment 38,
                  lodge 65, account 19, security 22, privacy 19,
                  communication 21, system 4
 ```
@@ -626,11 +626,18 @@ Portal (epic #2992) added the six club message board moderation writers
 (`communication` 14 → 20, 453 → 459). The federation work then added the
 board image upload writer (`communication` 20 → 21, 459 → 460). The upstream
 merge then brought the club-time and environment-safety writers with it
-(`admin` 102 → 104, 460 → 462). That is the figure
-above, and it was taken from `npm run audit:census` on the merged tree rather
-than by adding one branch's delta to the other's total. The category values sum
-to 461 rather than 462 because one site forwards its category rather than
-naming one.
+(`admin` 102 → 104, 460 → 462). Since then #3170 added the uncollected
+review-share record (`payment` 37 → 38, 462 → 463): a settled share that could
+not be added to a booking change's ask is money the club is owed and nobody can
+find, and it was a log line rather than a record until then. ONE write site
+serves both asks — the card request already paid, and the Xero supplementary
+invoice already sent — because they are the same fact about the same edit; a
+`leg` of `payment-request` or `xero-invoice` in the metadata and in the prose is
+what tells an officer which one to go and fix. That
+is the figure above, and it was taken from `npm run audit:census` on the merged
+tree rather than by adding one branch's delta to the other's total. The category
+values sum to 462 rather than 463 because one site forwards its category rather
+than naming one.
 
 The 22 moves are pinned **per site**, not only by that
 distribution: `REVIEWED_ADMIN_CATEGORIES_2730` in

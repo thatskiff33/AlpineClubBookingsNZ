@@ -1,0 +1,131 @@
+-- #3170 (epic #2797): record WHICH WAY a completed review task's money went.
+--
+-- WHY. Every ManualRefundTask kind that existed before EDIT_FINANCIAL_REVIEW can
+-- only ever hand money BACK, so the table's name carried the direction and no
+-- column was needed. #3170 is the first change that parks an edit which can move
+-- the price UP -- a check-out extension, or a guest added -- so an officer
+-- pricing one may correctly conclude the CLUB is owed, and #3170 gives them a way
+-- to collect it through the ordinary additional-payment path. From that point a
+-- row recording "amountCents" = 20000 and nothing else cannot say whether $200
+-- was paid back to the member or collected from them. Those are opposite claims
+-- about the club's money, and the audit entry alone is the wrong home for the
+-- distinction: the task row is what the queue, the finance diagnostics pack and
+-- the booking's payment history actually read.
+--
+-- FOUR STATEMENTS: one CREATE TYPE, one ADD COLUMN, two ADD CONSTRAINT ... CHECK.
+--
+--   1. CREATE TYPE "ManualRefundTaskDirection" AS ENUM
+--        ('REFUND_TO_MEMBER', 'CHARGE_TO_MEMBER')
+--   2. ALTER TABLE "ManualRefundTask" ADD COLUMN "settlementDirection"
+--        "ManualRefundTaskDirection"   -- nullable, no default
+--   3. "ManualRefundTask_direction_only_when_completed"        (VALIDATED)
+--        a direction may exist only on a COMPLETED row.
+--   4. "ManualRefundTask_completed_edit_review_has_direction"  (NOT VALID)
+--        a COMPLETED EDIT_FINANCIAL_REVIEW row must carry one.
+--
+-- WHY THE COLUMN IS NULLABLE WITH NO DEFAULT. NULL is a real state and not an
+-- omission: it means "no direction has been decided", which is the truth of every
+-- OPEN row, of every DISMISSED row (a dismissal moves no money, so there is no
+-- direction to record -- writing REFUND_TO_MEMBER there would assert a hand-back
+-- that did not happen, which is the magic-value failure this epic exists to
+-- remove), and of every row completed before this column existed. A DEFAULT of
+-- 'REFUND_TO_MEMBER' was considered and rejected for exactly that reason: it
+-- would make the undecided case look decided, and would silently stamp an
+-- assertion onto every existing row.
+--
+-- WHY THE TWO CHECKS ARE DIFFERENT STRENGTHS, which is a deliberate asymmetry and
+-- not an inconsistency.
+--   (3) IS VALIDATED because the population it polices is provably empty: the
+--       column is created by this same migration, so every existing row holds
+--       NULL and satisfies it by construction. Validating means the constraint is
+--       true of the WHOLE table rather than only of future writes, which is what
+--       lets a reader trust it -- the 20260903010000 reasoning, applied to a
+--       population that is empty for a stronger reason still.
+--   (4) IS NOT VALID because its population is NOT empty. Rows completed before
+--       this migration carry no direction and must stay legal; a validating scan
+--       would fail the deploy over history nobody can retro-fit. NOT VALID
+--       constrains every row written from here on, which is the whole ask: no
+--       future completion of a review task can omit the direction, whatever the
+--       application layer does. That is the choice 20260819130000 made for the
+--       two BookingGuest/BookingGuestNight checks, for the same reason.
+--
+-- NOTE THE THREE-VALUED LOGIC IN (4), because the obvious spelling is wrong.
+-- "kind" is nullable (every pre-#2797 row has none). Written as
+-- ("kind" <> 'EDIT_FINANCIAL_REVIEW' OR ...) a kind IS NULL row evaluates the
+-- first operand to NULL, and a CHECK accepts anything that is not FALSE -- which
+-- would exempt that row by accident rather than on purpose. IS DISTINCT FROM is
+-- null-safe and says what is meant: a row of some OTHER kind, including no kind
+-- at all, is outside this rule. It is the 20260903010000 note applied in the
+-- opposite direction -- there the null-safe form was needed to CATCH the
+-- null-kind row, here to EXEMPT it deliberately.
+--
+-- EXPAND-ONLY AND ADDITIVE. No column, type, index or constraint is dropped or
+-- renamed; nothing is read, rewritten, inserted or deleted. There is no UPDATE,
+-- no INSERT, no DELETE, no data-modifying CTE and no DO block, so every existing
+-- ManualRefundTask row is byte-identical afterwards and
+-- scripts/check-data-migration-verification.sh classifies it as shape-only and
+-- demands no fixture. NO SESSION CLOCK: there is no DML at all, so the #1627 DML
+-- gate is satisfied.
+--
+-- MATCHES NO GUARD PATTERN, measured rather than asserted. "ManualRefundTask" is
+-- not in HOT_TABLE_SQL_REGEX, and that pattern anchors its table names in double
+-- quotes so no listed name can match this one by prefix. CREATE TYPE, ADD COLUMN
+-- and ADD CONSTRAINT ... CHECK match neither BREAKING_SQL_REGEX nor
+-- DESTRUCTIVE_REMOVAL_SQL_REGEX -- no DROP, no RENAME, no ALTER COLUMN ... TYPE,
+-- no SET NOT NULL. Its ledger row is therefore documentation of this analysis
+-- rather than a coverage requirement, and says so.
+--
+-- OLD-CODE COMPATIBLE, and the argument is that the draining colour CANNOT
+-- violate either check rather than that it probably will not. The old colour's
+-- generated Prisma client has no "settlementDirection" field, so it never SELECTs
+-- the column (nothing it reads changes shape) and never writes it -- every INSERT
+-- and UPDATE it issues leaves the column NULL, which satisfies (3) outright and
+-- satisfies (4) except when completing an EDIT_FINANCIAL_REVIEW task. That
+-- exception is empty in practice AND in principle: EDIT_FINANCIAL_REVIEW is an
+-- epic-#2797 kind that no released colour has ever written a row of, so a
+-- draining colour has no such OPEN row to complete. A new enum TYPE is invisible
+-- to a client that never reads a column of that type.
+--
+-- LOCK IMPACT. CREATE TYPE takes no table lock. ADD COLUMN with no DEFAULT and no
+-- NOT NULL is a catalog-only change on pg_attribute -- no heap write, no rewrite,
+-- and its duration does not grow with the table. Statement (3) validates, taking
+-- ACCESS EXCLUSIVE on "ManualRefundTask" for one sequential scan; (4) is NOT
+-- VALID and takes ACCESS EXCLUSIVE only for the catalog write, with no scan. All
+-- four run inside Prisma's per-migration transaction, so the lock is taken once.
+-- "ManualRefundTask" is the club's hand-back work queue -- tens of rows, not
+-- millions, and 20260819130000 recorded it as small and cold when it validated
+-- three checks on it in one migration. No Booking, Payment, Member, capacity,
+-- credit, subscription or provider table is read, locked or altered, and this
+-- migration composes no application writer, so INV-LOCK-001 and INV-LOCK-002 are
+-- unaffected.
+--
+-- REVERSE IS CLEAN, and unusually so for this epic (compare 20260905010000, whose
+-- reverse is a one-way door). Nothing here creates or destroys data, so:
+--   ALTER TABLE "ManualRefundTask"
+--     DROP CONSTRAINT "ManualRefundTask_completed_edit_review_has_direction";
+--   ALTER TABLE "ManualRefundTask"
+--     DROP CONSTRAINT "ManualRefundTask_direction_only_when_completed";
+--   ALTER TABLE "ManualRefundTask" DROP COLUMN "settlementDirection";
+--   DROP TYPE "ManualRefundTaskDirection";
+-- What that reverse LOSES is the direction of every completion made while the
+-- column existed. The audit entry for each still records it, so the fact is
+-- recoverable, but not from the task row. No rollback.sql is required (this row
+-- is not windowed).
+--
+-- IDEMPOTENT: it is not, and that is correct for Prisma. PostgreSQL has no
+-- ADD CONSTRAINT ... IF NOT EXISTS, so a replay raises 42710, and CREATE TYPE
+-- raises 42710 likewise. That matches every ADD CONSTRAINT already in this
+-- directory; Prisma records each migration in _prisma_migrations and never
+-- re-applies one.
+--
+-- TIMESTAMP COORDINATION: 20260906010000 sorts strictly above 20260905010000
+-- (this branch's own), 20260904010000 (a parallel lane) and 20260903010000 (this
+-- epic), and reuses no existing prefix. RE-VERIFY BEFORE MERGE across origin/main,
+-- every remote and local branch and every registered worktree, and renumber if
+-- anything has landed at or above it -- a migration inserted BENEATH one already
+-- applied fails the linear-history strictness of migrate dev, the trap
+-- 20260813010000 and 20260820020000 both recorded.
+CREATE TYPE "ManualRefundTaskDirection" AS ENUM ('REFUND_TO_MEMBER', 'CHARGE_TO_MEMBER');
+ALTER TABLE "ManualRefundTask" ADD COLUMN "settlementDirection" "ManualRefundTaskDirection";
+ALTER TABLE "ManualRefundTask" ADD CONSTRAINT "ManualRefundTask_direction_only_when_completed" CHECK ("settlementDirection" IS NULL OR "status" = 'COMPLETED');
+ALTER TABLE "ManualRefundTask" ADD CONSTRAINT "ManualRefundTask_completed_edit_review_has_direction" CHECK ("kind" IS DISTINCT FROM 'EDIT_FINANCIAL_REVIEW' OR "status" <> 'COMPLETED' OR "settlementDirection" IS NOT NULL) NOT VALID;

@@ -2,6 +2,7 @@ import "server-only";
 
 import {
   BookingEventType,
+  ManualRefundTaskDirection,
   ManualRefundTaskKind,
   PaymentSource,
   Prisma,
@@ -9,6 +10,12 @@ import {
 
 import { recordBookingEvent } from "@/lib/booking-events";
 import { hasCapturedPayment } from "@/lib/booking-payment-state";
+import {
+  chooseEditReviewChargeRoute,
+  executeEditReviewCharge,
+  REVIEW_CHARGE_WRONG_KIND_MESSAGE,
+  type EditReviewChargeRoute,
+} from "@/lib/edit-financial-review-charge";
 import { parseEditFinancialReviewContext } from "@/lib/edit-financial-review-context";
 import logger from "@/lib/logger";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
@@ -22,7 +29,7 @@ import {
   refundPaymentTransactions,
   type RefundAllocationSlice,
 } from "@/lib/payment-transactions";
-import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
+import { dispatchEditReviewXeroSettlement } from "@/lib/edit-financial-review-xero-leg";
 
 /**
  * #3032 (epic #2797): WHERE a confirmed review amount goes when the task is
@@ -94,8 +101,19 @@ import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settleme
  */
 
 /**
- * The three settlement paths that already exist, and this issue picks between
- * rather than adding a fourth:
+ * The settlement paths that already exist, and this issue picks between rather
+ * than adding a new one.
+ *
+ * #3170 ADDED A DIRECTION, NOT A MECHANISM. The three routes below all hand money
+ * BACK, which was sufficient while only guest REMOVALS could park - a removal can
+ * only ever owe the member. #3170 is the first change that parks an edit which
+ * can move the price UP, so a fourth route, `additional-charge`, asks for money
+ * instead; it re-enters `createModificationAdditionalPaymentIntent`, which is the
+ * same function every ordinary price increase already goes through, so the
+ * instrument, the ledger row, the chasing and the Xero leg are all the existing
+ * ones - and, since the fix round, one such request per EDIT rather than per
+ * task. Which route a completion takes is a function of the officer's stated
+ * direction and the booking's own facts, never of a preference:
  *
  *  - `stripe-refund` - the booking was paid by card, so the money goes back the
  *    way it came. `executeBookingModificationRefund` owns the provider call, its
@@ -133,9 +151,9 @@ export type EditReviewSettlementRoute =
       paymentId: string;
       /**
        * The `BookingModification` anchor, for the Xero credit note the caller
-       * queues after the commit. NULL on every pre-#3032 task kind, which is what
-       * keeps their behaviour byte-identical: they were raised for bookings with
-       * no edit behind them and no invoice line to correct.
+       * queues after the commit. NULL on every pre-#3032 task kind, keeping their
+       * behaviour byte-identical: they were raised for bookings with no edit
+       * behind them and no invoice line to correct.
        */
       bookingModificationId: string | null;
     }
@@ -148,11 +166,17 @@ export type EditReviewSettlementRoute =
        * allocation has to be written or a later cancellation refunds the same
        * cents a second time (#1031, and the reason
        * `createBookingModificationCredit` takes a payment id at all). Null when
-       * the booking has no captured payment, where there is nothing to allocate
-       * against.
+       * there is no captured payment to allocate against.
        */
       allocateAgainstPaymentId: string | null;
-    };
+    }
+  /**
+   * #3170: the direction that did not exist before this issue - the MEMBER owes
+   * the CLUB. Defined in `edit-financial-review-charge.ts`, which is the whole of
+   * what a charge is; the three above are the whole of what a refund is; and this
+   * union is the one place that picks between them.
+   */
+  | EditReviewChargeRoute;
 
 /**
  * Raised when the review carries no `BookingModification` to settle against -
@@ -237,6 +261,23 @@ export type EditReviewSettlementTask = {
       status: string;
       amountCents: number | null;
       refundedAmountCents: number | null;
+      /**
+       * #3170: a CHARGE has no task payment to route on - the money is coming the
+       * other way - so it asks the BOOKING's payment whether there is a card
+       * behind it, and needs that payment's own source and Stripe customer.
+       */
+      source: PaymentSource;
+      stripeCustomerId: string | null;
+    } | null;
+    /**
+     * #3170: for `findOrCreateCustomer` when a charge has to mint a Stripe
+     * customer. Read inside the completion transaction with everything else.
+     */
+    member: {
+      id: string;
+      email: string;
+      firstName: string;
+      lastName: string;
     } | null;
   };
 };
@@ -259,18 +300,45 @@ export type EditReviewSettlementTask = {
 export async function chooseEditReviewSettlementRoute({
   task,
   amountCents,
+  hasIssuedXeroInvoice,
+  direction,
   store,
 }: {
   task: EditReviewSettlementTask;
   /**
-   * The confirmed amount this completion will settle, in integer cents. The card
-   * route needs it before the claim: the cap and the frozen allocation are both
-   * functions of it, and both have to be answered while a refusal is still free.
+   * The confirmed amount this completion will settle, in integer cents. Always a
+   * POSITIVE magnitude: `direction` says which way it goes, so no amount on this
+   * path is ever negative and the sign is never overloaded to mean a direction
+   * (`INV-MONEY-001`, and the magic-value rule this epic is built on).
+   *
+   * The card route needs it before the claim: the cap and the frozen allocation
+   * are both functions of it, and both have to be answered while a refusal is
+   * still free.
    */
   amountCents: number;
+  /**
+   * #3170: whether this booking already has an issued primary Xero invoice, from
+   * the caller's own `hasIssuedPrimaryXeroInvoice` read on the same transaction.
+   * The CHARGE direction needs it BEFORE the claim, because it is one of the two
+   * instruments a charge can use and its absence is a refusal rather than a
+   * silent no-op.
+   */
+  hasIssuedXeroInvoice: boolean;
+  /**
+   * #3170: WHICH WAY the money goes, and it is the officer's decision rather than
+   * anything the system can derive - the amount is precisely the figure it could
+   * not work out. It arrives as an explicit value with no default: before this
+   * issue the direction was implicit in the word "refund", which is exactly how
+   * an officer who correctly concluded "they owe us $200" could have $200 sent to
+   * the member's card.
+   */
+  direction: ManualRefundTaskDirection;
   store: Prisma.TransactionClient;
 }): Promise<EditReviewSettlementRoute | null> {
   if (task.kind !== ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW) {
+    if (direction === ManualRefundTaskDirection.CHARGE_TO_MEMBER) {
+      throw new ManualBookingPaymentError(REVIEW_CHARGE_WRONG_KIND_MESSAGE, 400);
+    }
     return task.paymentId !== null
       ? {
           kind: "local-allocation",
@@ -287,6 +355,24 @@ export async function chooseEditReviewSettlementRoute({
   // refusal below with a message that says what to do instead.
   const reviewContext = parseEditFinancialReviewContext(task.reviewContext);
   const bookingModificationId = reviewContext?.bookingModificationId ?? null;
+
+  if (direction === ManualRefundTaskDirection.CHARGE_TO_MEMBER) {
+    // #3170. Everything below hands money BACK; this is the one arm that asks for
+    // it, and it delegates rather than branching inline - a charge shares none of
+    // the refund machinery, and the strongest guard against one quietly taking a
+    // refund path is that the two share no code at all.
+    return chooseEditReviewChargeRoute({
+      bookingModificationId,
+      bookingPayment: task.booking.payment,
+      member: task.booking.member,
+      hasIssuedXeroInvoice,
+      // #3170: the same transaction the claim runs in, because the charge route
+      // asks whether this EDIT already has a request open to a further share and
+      // that read must see the snapshot the claim commits against - the reason
+      // the credit-anchor read below takes the store too.
+      store,
+    });
+  }
 
   if (task.paymentId !== null && task.payment?.source === PaymentSource.STRIPE) {
     if (!bookingModificationId) {
@@ -359,7 +445,6 @@ export async function chooseEditReviewSettlementRoute({
   };
 }
 
-
 /**
  * #3032: everything a completed review has to do AFTER its transaction commits.
  *
@@ -379,7 +464,10 @@ export async function chooseEditReviewSettlementRoute({
  *
  * Returns the Stripe refund id when one actually issued, and `null` otherwise -
  * including when the provider call failed, because the caller turns that null
- * into an honest message rather than a receipt.
+ * into an honest message rather than a receipt. #3170 returns the additional
+ * PaymentIntent id on the same terms, for the same reason: "the member has been
+ * asked for $200" over an intent that was never minted is a false receipt in the
+ * opposite direction.
  */
 export async function executeEditReviewSettlement({
   bookingId,
@@ -397,7 +485,10 @@ export async function executeEditReviewSettlement({
   amountCents: number | null;
   hasIssuedXeroInvoice: boolean;
   bookingPaymentStatus: string | null;
-}): Promise<string | null> {
+}): Promise<{
+  stripeRefundId: string | null;
+  additionalPaymentIntentId: string | null;
+}> {
   let stripeRefundId: string | null = null;
 
   if (route?.kind === "stripe-refund") {
@@ -461,6 +552,36 @@ export async function executeEditReviewSettlement({
     }
   }
 
+  /**
+   * #3170: the charge direction, executed AFTER the commit for the same reason
+   * the refund is - the Stripe call is a provider round trip and the locking
+   * guide forbids one inside a transaction.
+   *
+   * NOTHING IS TAKEN FROM THE MEMBER'S CARD HERE. This raises the REQUEST: one
+   * additional PaymentIntent per EDIT and the PENDING `ADDITIONAL`
+   * PaymentTransaction row the club's whole additional-payment machinery keys off
+   * - the chase reminders, the resend service, the member's pay link. The member
+   * pays it themselves, exactly as they would for an ordinary check-out
+   * extension. That is why a failure here is recoverable rather than a lost
+   * charge: the debt is durable and the recovery cron replays the same
+   * re-derivation under the same edit-scoped key.
+   */
+  let additionalPaymentIntentId: string | null = null;
+  // #3170 (owner decision, 30 Aug 2026): the combined total of every share
+  // settled as money owed to the club against THIS EDIT - not `amountCents`,
+  // which is this one task's share. Both legs of the edit read it, so they can
+  // never disagree. Null on every route that is not a charge.
+  let chargeTotalCents: number | null = null;
+  if (route?.kind === "additional-charge") {
+    const charged = await executeEditReviewCharge({
+      bookingId,
+      taskId,
+      route,
+    });
+    additionalPaymentIntentId = charged.paymentIntentId;
+    chargeTotalCents = charged.totalCents;
+  }
+
   if (route?.kind === "account-credit") {
     // `INV-PAY-051` asks for the booking event to be written where the money
     // moves, and this is that place: the credit row is committed, so the claim
@@ -476,69 +597,26 @@ export async function executeEditReviewSettlement({
 
   /**
    * The Xero leg, which the issue's "through the existing canonical settlement
-   * path" includes.
+   * path" includes: the officer's direction becomes a signed delta, an invoice
+   * this edit already has queued is raised rather than duplicated, and a share
+   * the accounting ask could not take is recorded. It lives in
+   * `edit-financial-review-xero-leg.ts` because those three are one decision
+   * about one edit's one invoice, while everything above here is money MOVING.
    *
-   * Every edit-time settlement in this repository computes an
-   * `xeroRefundAmountCents` and dispatches it; a completion that moved money on
-   * all three routes and dispatched nothing would leave a booking with an issued
-   * invoice showing a total the club no longer holds - and unlike a local ledger
-   * slip, nothing later reconciles it. Routed through the SAME choke point the
-   * three booking-edit services use, so the credit-note shape, the outbox
-   * idempotency (an active `MODIFICATION_CREDIT_NOTE` link on the anchor, plus a
-   * correlation key) and the connected-instance kick are the existing ones rather
-   * than a second dispatch.
-   *
-   * The anchor is null for a DISMISSED task (no route) and for every pre-#3032
-   * task kind: those are raised for cancelled cash-settled bookings whose Xero
-   * side the cancellation path already handled, so a credit note here would be a
-   * second, contradictory correction of the same money.
-   *
-   * Best-effort and after the commit, matching every other caller: a Xero outage
-   * must not undo a completion whose money has already moved.
+   * Awaited, but nothing inside it holds the request open: the dispatch itself
+   * is fire-and-forget, exactly as it was inline.
    */
-  const xeroAnchorId = route?.bookingModificationId ?? null;
-  if (xeroAnchorId && amountCents) {
-    void queueXeroBookingEditSettlement({
-      bookingId,
-      bookingModificationId: xeroAnchorId,
-      createdByMemberId: actingMemberId,
-      hasIssuedXeroInvoice,
-      originalPaymentStatus: bookingPaymentStatus,
-      // A settled review only ever gives money BACK - a completion at zero is
-      // refused outright and a negative amount cannot be represented - so the
-      // delta is always negative and always reaches the credit-note branch.
-      priceDiffCents: -amountCents,
-      changeFeeCents: 0,
-      // The structural edit that raised this review queued its own narration
-      // update when it committed. This is the money leg alone; claiming the dates
-      // or the party changed here would queue a second, redundant invoice update.
-      datesChanged: false,
-      guestIdentityChanged: false,
-      // `"credit"` picks the UNAPPLIED modification credit note and anything else
-      // picks the ordinary one, so this reads as a two-way discriminator rather
-      // than a claim about the instrument: an internet-banking hand-back is not a
-      // card refund, but the club DID return the money, so it takes the same
-      // ordinary credit note a card refund does.
-      settlementMethod: route?.kind === "account-credit" ? "credit" : "card",
-      settlementAmountCents: amountCents,
-    }).catch((err) =>
-      logger.error(
-        { err, bookingId, taskId },
-        "Failed to queue Xero settlement for a completed edit financial review",
-      ),
-    );
-  } else if (route && hasIssuedXeroInvoice) {
-    // An edit-review completion that moved money on a booking with an issued
-    // invoice but carries no anchor to correct it against. The card and
-    // account-credit routes refuse before the claim when the anchor is missing,
-    // so only the hand-settled route can reach here - and its money HAS moved, so
-    // refusing now is not available. Say so loudly instead of leaving the
-    // divergence silent: an operator has to correct that invoice by hand.
-    logger.warn(
-      { bookingId, taskId },
-      "Edit financial review settled by hand with no BookingModification anchor - the Xero invoice must be corrected manually",
-    );
-  }
+  await dispatchEditReviewXeroSettlement({
+    bookingId,
+    taskId,
+    actingMemberId,
+    route,
+    amountCents,
+    chargeTotalCents,
+    hasIssuedXeroInvoice,
+    bookingPaymentStatus,
+    additionalPaymentIntentId,
+  });
 
-  return stripeRefundId;
+  return { stripeRefundId, additionalPaymentIntentId };
 }

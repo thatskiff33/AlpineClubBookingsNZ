@@ -1265,7 +1265,17 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // disjoint and all unpinned — upstream's club-time and environment-safety
     // writers plus this branch's seven communication writers. 462 sites
     // measured minus 127 pinned; `pinned` is unchanged on both sides.
-    ).toEqual({ pinned: 127, unpinned: 335 });
+    // 335 -> 336 (#3170): one new writer,
+    // `booking.editFinancialReview.chargeShareUncollected` — the durable record
+    // that a settled review share met an ask it could not join. Categorised
+    // `payment` at the site and named in none of the four per-site maps, so it
+    // lands unpinned like every other new feature's writer. 463 sites measured
+    // minus 127 pinned; `pinned` is unchanged, so no existing classification
+    // moved. Both figures were RE-MEASURED against this branch's head rather
+    // than incremented — the arithmetic in the line above was left stale by the
+    // round that changed this assertion, which is exactly the drift these bump
+    // lines exist to prevent.
+    ).toEqual({ pinned: 127, unpinned: 336 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {

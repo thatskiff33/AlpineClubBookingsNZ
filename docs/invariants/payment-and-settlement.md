@@ -1206,6 +1206,130 @@ one, check the other.
     completion holds no advisory lock - see `docs/CONCURRENCY_AND_LOCKING.md` for
     why that is deliberate - so the status claim is the whole single-flight
     guarantee.
+  - **A completion states WHICH WAY the money goes, and the row records it**
+    (#3170, owner decision 30 Aug 2026). Every kind older than
+    `EDIT_FINANCIAL_REVIEW` can only hand money back, so "refund task" carried the
+    direction and no column was needed. #3170 is the first child that parks an
+    edit which can move the price UP, so an officer pricing one may correctly
+    conclude the CLUB is owed. `ManualRefundTaskDirection` is therefore written
+    into `settlementDirection` inside the same status-guarded claim as the amount,
+    and the amount stays a POSITIVE magnitude on both directions - the sign of a
+    money value is never overloaded to mean a direction. An
+    `EDIT_FINANCIAL_REVIEW` completion that states no direction is refused before
+    the claim; silence on a legacy kind still means `REFUND_TO_MEMBER`, which is
+    all it can mean there, and `CHARGE_TO_MEMBER` on one is refused outright. A
+    dismissal records no direction, because nothing moved.
+  - **The charging direction is the additional-payment path, not a new
+    mechanism** (#3170). A `CHARGE_TO_MEMBER` completion re-enters
+    `createModificationAdditionalPaymentIntent` - the same function every ordinary
+    booking-edit price increase goes through - so the instrument, the PENDING
+    `ADDITIONAL` `PaymentTransaction`, the chase reminders, the member's pay link
+    and the Xero supplementary invoice's wait-for-payment are the existing ones.
+    NOTHING IS TAKEN FROM THE CARD BY THE COMPLETION: it raises the request and
+    the member pays it. The club has exactly two instruments - a captured card
+    payment, or an issued Xero invoice to add a supplementary line to - and a
+    booking with neither is REFUSED before the claim, with the task left OPEN,
+    rather than recorded as collected. The Xero leg is the same choke point with a
+    POSITIVE `priceDiffCents`, which is the only place the direction becomes a
+    sign.
+  - **ONE BOOKING EDIT RAISES ONE CHARGE REQUEST, for the total of its shares**
+    (#3170, owner decision 30 Aug 2026). One edit raises one review task per guest
+    strand whose history could not be read, so two is ordinary, and an officer may
+    settle both as money owed to the club. Two separate requests LOSE MONEY:
+    minting an additional PaymentIntent queues every OTHER outstanding
+    `ADDITIONAL` transaction on that payment for cancellation, and
+    `reconcilePaymentAggregates` carries a single `additionalAmountCents` rather
+    than a sum, so $200 then $30 collected $30 of $230 with both tasks COMPLETED
+    and both audited as settled. So:
+    - **The REQUEST is anchored to the `BookingModification`** - one intent, one
+      `ADDITIONAL` row, one figure on the member's pay link - and BOTH the Stripe
+      idempotency key and the recovery operation are scoped to it. A later share
+      RAISES that intent's amount rather than minting a second, so nothing is ever
+      superseded between two shares of one edit. (The REFUND keys stay TASK-scoped,
+      and that is not an inconsistency: a refund is money already sent, so two
+      refunds of one edit are two movements that must never converge.)
+    - **The SHARE stays anchored to the task** - its `amountCents`, its
+      `settlementDirection` and its audit entry - so the combined figure remains
+      explainable back to the decisions that produced it.
+    - **The total is DERIVED from the settled shares, never incremented.** That is
+      the concurrency argument: each task contributes exactly once, from the row
+      its own status-fenced claim wrote, so two officers closing two tasks at once
+      cannot double-count. Whichever completion commits LAST reads after both
+      commits and therefore derives the true total; a settled share is terminal, so
+      the total only ever grows and a smaller figure is always the older answer.
+      **Neither leg may LOWER what is recorded**, which is what makes the outcome
+      independent of the order two concurrent settlements land in. On the Stripe
+      leg that is a compare-and-set on the request, and it is why that leg needs no
+      advisory lock. The accounting leg needs one, and has one, for the reason
+      below.
+    - **A share may not be added to a request the member has already paid, or to
+      one whose supplementary invoice has already been issued.** Both are REFUSED
+      before the claim with the task left OPEN. Minting a remainder request instead
+      would be a second outstanding request against one edit - the arrangement that
+      lost the money - and the internet-banking route reaches the second case
+      routinely, because its supplementary invoice is raised unpaid and issues as
+      soon as the outbox runs.
+    - **The Xero leg bills the TOTAL, on ONE invoice per edit, and that is
+      enforced rather than assumed.** A share arriving while this edit's
+      supplementary invoice operation is still PENDING or WAITING_PAYMENT RAISES
+      that operation's amount rather than queueing a second invoice.
+      `enqueueXeroSupplementaryInvoiceOperation` decides link-check ->
+      queued-check -> write inside ONE transaction holding
+      `pg_advisory_xact_lock(hashtext("xero-supplementary-invoice"),
+      hashtext(<anchor>))`, and looks for an outstanding invoice by ANCHOR rather
+      than by the amount-derived correlation key. Both halves are needed: the
+      active `SUPPLEMENTARY_INVOICE` link only exists once the FIRST invoice has
+      been created, so before that it fences nothing, and while the queued lookup
+      keyed on an amount, $200 and $30 were two different keys - two operations,
+      two Xero invoices, $430 billed for a $230 edit. That shape was introduced by
+      the combining (each share used to queue its own amount and the concurrent
+      case summed correctly) and is closed by it.
+    - **A restate that WRITES is a restate that goes out.** The outbox worker used
+      to read an operation's payload from its SCAN and claim the row only when its
+      loop reached it, one Xero round trip per row later. In that window the row is
+      still PENDING, so a restate matched, wrote, and honestly reported that it had
+      restated - while the send used the scanned figure and the caller returned
+      early believing the combined total was billed. On the internet-banking route,
+      where the supplementary invoice IS the ask, that invoiced $200 of a $230 edit
+      and left the $30 existing nowhere. `processQueuedXeroOutboxOperations` now
+      re-reads `requestPayload` after its claim commits; RUNNING is outside the
+      restatable set, so a restate either lands and is sent or matches nothing and
+      reports zero, with no third outcome.
+    - **What the accounting leg does NOT guarantee, stated rather than implied.** A
+      restate can still arrive too late to land AT ALL. Once the worker has claimed
+      the operation it is RUNNING, and once the invoice has been sent the anchor
+      carries an active `SUPPLEMENTARY_INVOICE` link; a share settled after either
+      point meets an ask that has left the building. The enqueue then refuses to
+      queue a second invoice behind the first - correct, because two invoices for
+      one edit is the failure this all exists to remove - so the invoice bills the
+      earlier figure and the club collects the difference by hand. That is a
+      recoverable shortfall rather than lost money only because it is RECORDED:
+      `enqueueXeroSupplementaryInvoiceOperation` returns `outcome: "short"` and the
+      settlement writes `booking.editFinancialReview.chargeShareUncollected` with
+      leg `xero-invoice`. Closing the window itself would mean voiding and
+      reissuing an invoice already with the member, which is a different decision
+      from this one.
+    - **A durable retry closes the debt only when the ask EXISTS afterwards.** The
+      recovery replay re-derives the total through the same sync the inline
+      completion uses, and that sync reports which of four things happened
+      (`nothing-owed`, `raised`, `already-paid`, `not-raised`) rather than a null
+      intent id that meant three of them at once. On `not-raised` the replay leaves
+      its operation open, so the existing back-off, retry and admin-alert machinery
+      carries the debt. The mint it calls SWALLOWS a provider failure by design -
+      the ordinary edit path has to return the member's saved change - and the row
+      it re-enqueues is the row being replayed, whose upsert deliberately does not
+      reset `status`; so a replay that closed unconditionally marked the operation
+      SUCCEEDED having minted nothing.
+    - **Every path that settles a share without producing a request leaves a
+      durable trace.** A `logger.warn` is not one: nobody goes looking through a
+      log stream for money the club is owed. The mint refusing before its own `try`
+      writes the recovery row, and BOTH already-closed races - the card request
+      already paid, and the Xero invoice already gone - write an audit row
+      (`booking.editFinancialReview.chargeShareUncollected`, category `payment`,
+      with a `leg` of `payment-request` or `xero-invoice` in its metadata and its
+      prose)
+      naming the shortfall, so an officer can find what has to be collected by
+      hand.
   - **The card route is capped before it claims, and keyed to the TASK.** The cap
     is measured off the booking's captured `PaymentTransaction` rows, not off
     `Payment.source` - that column DEFAULTS to `STRIPE`, so routing on it alone
