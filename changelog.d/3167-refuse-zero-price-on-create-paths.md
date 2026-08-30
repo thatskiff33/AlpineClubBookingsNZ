@@ -15,3 +15,10 @@
   These three now stop and report the fault instead of saving a zero, which is
   the same thing booking edits have done since the price-history work earlier in
   this epic. Nothing an operator does day to day changes.
+
+  Two further places that write the same kind of money — approving a booking
+  request, and repricing a booking when a waitlist offer goes out — never had
+  that fall back to zero, but each was checking for the missing price in its own
+  words. They now ask the same one question the other three ask, so the rule is
+  written down once and a later change to it cannot reach some of these places
+  and miss others. Nothing about what either of them does changes.
