@@ -145,11 +145,12 @@ export class EditFinancialReviewError extends ApiError {
 /**
  * Create - or find - the ONE financial-review task for this occurrence.
  *
- * Idempotent by design: a replay of the same structural edit returns the
- * existing task rather than raising a second one, whatever state that task has
- * reached. `created` tells the caller which happened, so #3032 can be atomic
- * about the structural edit without having to guess whether it also just made
- * work for an admin.
+ * Idempotent by design: a REPLAY of the same structural edit returns the
+ * existing OPEN task rather than raising a second one, and `created` tells the
+ * caller which happened. This sentence used to end "whatever state that task has
+ * reached", which #3166 makes false: a SETTLED task suppresses nothing, because
+ * a question a person has already answered is not a replay of anything. What
+ * separates the two is argued once, in `findFreeOccurrenceSlot`.
  *
  * ## `store` is required, and is a transaction client on purpose
  *

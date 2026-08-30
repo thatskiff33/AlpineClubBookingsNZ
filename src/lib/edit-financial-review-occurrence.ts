@@ -205,6 +205,49 @@ function occurrenceKeyForRecurrence(
  * replay - it is a question somebody already answered, and the edit in front of
  * us is asking a new one.
  *
+ * ## THE TWO RULES LOOK IDENTICAL AND ARE NOT, AND STATUS IS WHAT SEPARATES THEM
+ *
+ * Two money rules sit on this walk and read like the same rule. *A replay of one
+ * edit must not produce a second adjustment.* And *a second, genuinely new edit
+ * of the same shape must raise its own task.* They are distinguishable, and the
+ * status of the row at the base key is the whole discriminator. That is worth
+ * setting out, because the obvious reading - "identical input, therefore the
+ * same edit" - is what the pre-#3166 code believed, and it is false here.
+ *
+ * A REPLAY CANNOT SEE A TERMINAL ROW. For any row to be visible at all, the
+ * predecessor's transaction must have COMMITTED - the raise runs inside the
+ * caller's transaction (enforced at the top of `raiseEditFinancialReviewTask`),
+ * so a rolled-back attempt takes its task with it and the retry finds nothing.
+ * Once it has committed, the edit is done and there is nothing left to retry;
+ * the only replays that reach a committed predecessor are a concurrent apply and
+ * a retry of a request whose commit the client never heard about, and both land
+ * within the same request, long before any officer can settle anything. So a
+ * replay finds OPEN, or it finds nothing.
+ *
+ * A TERMINAL ROW IS ALWAYS A NEW EDIT, and the pending-review FENCE is what
+ * makes that airtight rather than merely likely. Every money-affecting door
+ * takes `pg_advisory_xact_lock(1)` and then calls
+ * `assertNoPendingEditFinancialReview` before it writes anything, so a new edit
+ * cannot even reach this walk while ANY `EDIT_FINANCIAL_REVIEW` task on that
+ * booking is OPEN. Reaching here and finding the base key COMPLETED or DISMISSED
+ * therefore means: an officer answered that question, the fence then let a
+ * FURTHER edit through, and that further edit is the one in front of us. It is
+ * owed its own review.
+ *
+ * WHICH FAILURE EACH READING WOULD BUY. Treating a terminal row as a replay is
+ * the money this walk closes - silent, and unbounded: no task, no charge, no
+ * banner, repeating for every guest added after the first. Treating an OPEN row
+ * as a new edit would buy the opposite - two tasks for one edit, which an
+ * officer sees on one booking and can dismiss. Neither is acceptable and neither
+ * has to be accepted, because the fence and the transaction boundary between
+ * them leave no case where the two readings both apply.
+ *
+ * Pinned against a real server by
+ * `edit-financial-review-races.realdb.test.ts`, which asserts BOTH directions -
+ * a replay of an OPEN occurrence writing nothing further, and a new occurrence
+ * of a SETTLED identity getting its own row while the settled one is left as the
+ * officer left it.
+ *
  * ## Why a suffix rather than widening the hashed material
  *
  * `bookingModificationId` is the obvious discriminator and is the wrong one: a
