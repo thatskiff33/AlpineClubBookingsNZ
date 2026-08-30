@@ -1,7 +1,7 @@
 /**
  * Diagnose why a member can (or cannot) see and manage calendar events.
  *
- *   npx tsx scripts/diagnose-calendar-access.ts someone@example.com
+ *   npm run calendar:diagnose-access -- someone@example.com
  *
  * Prints the exact inputs to the calendar gates (src/lib/calendar-access.ts):
  * the club's `eventsCalendar` module flag, the view gate (organisation accounts
@@ -27,7 +27,7 @@ import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 async function main() {
   const email = process.argv[2]?.toLowerCase().trim();
   if (!email) {
-    console.error("Usage: npx tsx scripts/diagnose-calendar-access.ts <email>");
+    console.error("Usage: npm run calendar:diagnose-access -- <email>");
     process.exit(1);
   }
 

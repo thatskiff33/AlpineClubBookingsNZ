@@ -1,4 +1,3 @@
-#!/usr/bin/env tsx
 import "dotenv/config";
 import fs from "node:fs";
 import path from "node:path";
@@ -447,7 +446,7 @@ async function main() {
     }
 
     console.error(`Unknown setup command: ${command}`);
-    console.error("Usage: tsx scripts/setup.ts check|wizard");
+    console.error("Usage: npm run setup:check | npm run setup:wizard");
     process.exitCode = 1;
   } finally {
     // Both commands may open a database connection; release it so the CLI exits.

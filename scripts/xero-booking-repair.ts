@@ -1,4 +1,3 @@
-#!/usr/bin/env npx tsx
 import "dotenv/config";
 import { formatBookingXeroRepairHumanSummary, runBookingXeroRepair } from "../src/lib/xero-booking-repair";
 import { prisma } from "../src/lib/prisma";
@@ -6,11 +5,11 @@ import { parseRepairScopeDay } from "../src/lib/xero-booking-repair-utils";
 
 function printUsage() {
   console.log(`Usage:
-  npx tsx scripts/xero-booking-repair.ts --dry-run
-  npx tsx scripts/xero-booking-repair.ts --booking <bookingId> --dry-run
-  npx tsx scripts/xero-booking-repair.ts --apply
-  npx tsx scripts/xero-booking-repair.ts --from <YYYY-MM-DD> --to <YYYY-MM-DD> --apply
-  npx tsx scripts/xero-booking-repair.ts --apply --apply-action <actionKey>
+  npm run xero:booking-repair -- --dry-run
+  npm run xero:booking-repair -- --booking <bookingId> --dry-run
+  npm run xero:booking-repair -- --apply
+  npm run xero:booking-repair -- --from <YYYY-MM-DD> --to <YYYY-MM-DD> --apply
+  npm run xero:booking-repair -- --apply --apply-action <actionKey>
 
 --apply-action executes ONE not-safeToAutoApply action you have verified from
 a prior dry-run report (repeatable; exact action key match; requires --apply).
