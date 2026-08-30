@@ -68,7 +68,38 @@ describe("the evidence projection an admin screen is built from (#3033)", () => 
       },
       bookingCheckIn: "2026-08-10",
       bookingCheckOut: "2026-08-12",
+      // #3166. Null here because THIS fixture's edit added nobody; the case
+      // below proves a populated one crosses as a count and a figure only.
+      guestsAddedByEdit: null,
     });
+  });
+
+  it("carries what the same edit ADDED, as a count and a figure and nothing else (#3166)", () => {
+    // A parked add writes the booking's total back unchanged, so the money for
+    // the new guests is owed and lives only on their own rows. Without this the
+    // admin card describes one untouched guest and says nothing about them.
+    const context = parseEditFinancialReviewContext({
+      version: 1,
+      occurrence: CONTEXT.occurrence,
+      guestMemberId: "member-guest-9",
+      bookingCheckIn: "2026-08-10",
+      bookingCheckOut: "2026-08-12",
+      guestsAddedByEdit: { count: 2, totalPriceCents: 64000 },
+      bookingModificationId: null,
+    })!;
+
+    expect(toEditFinancialReviewEvidence(context).guestsAddedByEdit).toEqual({
+      count: 2,
+      totalPriceCents: 64000,
+    });
+  });
+
+  it("still reads a row written before #3166, which carries no added-guest field at all", () => {
+    // The parser is a whole-object `.strict()` read and every stored row
+    // predating this field omits it. Refusing those would blank the evidence on
+    // every task already in the queue.
+    expect(CONTEXT.guestsAddedByEdit ?? null).toBeNull();
+    expect(toEditFinancialReviewEvidence(CONTEXT).guestsAddedByEdit).toBeNull();
   });
 
   it("keeps an absent stored price as an absence, not as a zero", () => {
