@@ -7,6 +7,8 @@ import { enqueueHostingCoverageReevaluation } from "@/lib/adult-member-hosting-c
 import { tryLockHostingCoverageOwners } from "@/lib/adult-member-hosting-coverage-lock";
 import { buildMemberMergeHostingCoveragePlan } from "@/lib/adult-member-hosting-merge-coverage-plan";
 
+import { stripComments } from "./support/strip-comments";
+
 /**
  * #3123 — the club's day now arrives at these lock-bound entry points as a
  * REQUIRED argument, resolved by the caller outside its transaction
@@ -697,11 +699,7 @@ describe("participant fence source contract (#2619)", () => {
    * very assertions it is explaining.
    */
   function readModuleCode(): string {
-    return readFileSync(MODULE_PATH, "utf8")
-      .replace(/\/\*[\s\S]*?\*\//g, "")
-      .split("\n")
-      .filter((line) => !/^\s*(\/\/|\*)/.test(line))
-      .join("\n");
+    return stripComments(readFileSync(MODULE_PATH, "utf8"));
   }
 
   /**

@@ -2,6 +2,8 @@ import fs from "fs";
 import path from "path";
 import { describe, expect, it } from "vitest";
 
+import { stripComments } from "./support/strip-comments";
+
 // #2289 — the guard that keeps raw SQL honest.
 //
 // ENFORCES INV-OPS-001 (`docs/invariants/operations.md`), which names this file
@@ -124,19 +126,16 @@ function isTestFile(relPath: string): boolean {
   );
 }
 
-/** Drop whole-line comments so a docblock discussing `$queryRaw` is not a call site. */
+/**
+ * Drop comments so a docblock discussing `$queryRaw` is not a call site.
+ *
+ * Through the canonical scanner since #3164, which changes two things for the
+ * better. The line filter this replaced kept a raw call that shared its line
+ * with a trailing comment — and it DELETED comment lines rather than blanking
+ * them, so the joined text ran a docblock's neighbours together.
+ */
 function codeLines(source: string): string {
-  return source
-    .split("\n")
-    .filter((line) => {
-      const trimmed = line.trim();
-      return !(
-        trimmed.startsWith("//") ||
-        trimmed.startsWith("*") ||
-        trimmed.startsWith("/*")
-      );
-    })
-    .join("\n");
+  return stripComments(source);
 }
 
 /**

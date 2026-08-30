@@ -2,6 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { stripComments } from "./support/strip-comments";
+
 /**
  * Census: every place a stay becomes nights is declared here (#2628).
  *
@@ -75,26 +77,21 @@ const ENVELOPE_EXPANSION =
 /**
  * The code of a file with whole-line comments removed.
  *
- * Line-based on purpose. A whole-file comment strip is not safe here: `src/`
- * holds regex literals and JSX strings containing `/*`, and one of them will
- * happily swallow a real call site and make this census silently pass. Skipping
- * lines that are themselves a comment costs nothing and cannot misfire — the
- * only thing it lets through would be a call sharing a line with a trailing
- * `//`, which is a call, not a comment. Blank-lining rather than deleting them
- * keeps a comment from joining two unrelated statements into one apparent call.
+ * THE ARGUMENT AGAINST A WHOLE-FILE STRIP WAS AN ARGUMENT AGAINST THE TWO-REGEX
+ * ONE (#3164). It said, correctly, that `src/` holds regex literals and JSX
+ * strings containing a block-comment opener and that one of them would swallow a
+ * real call site and make this census silently pass. That is measured, not
+ * theoretical: the copy this file used to reason about loses 100,390 characters
+ * of real code across 58 files, 23% of `rooms-beds-manager.tsx` alone, where a
+ * LINE comment quoting the glob `/api/admin/bed-allocation/*` opens a block
+ * comment that runs 464 lines. The canonical scanner tracks strings, template
+ * literals and regex literals, so none of that reaches it — and it also removes
+ * the trailing comment this file's line filter could not, which is the half the
+ * old note called acceptable. Newlines are preserved either way, so a comment
+ * still cannot join two statements into one apparent call.
  */
 function codeOnly(source: string): string {
-  return source
-    .split("\n")
-    .map((line) => {
-      const trimmed = line.trim();
-      return trimmed.startsWith("//") ||
-        trimmed.startsWith("*") ||
-        trimmed.startsWith("/*")
-        ? ""
-        : line;
-    })
-    .join("\n");
+  return stripComments(source);
 }
 
 /** How many stay-envelope expansions this file's code contains. */
