@@ -19,9 +19,9 @@
  * accident of where things landed. `stripComments` keeps strings and removes
  * comments; `stripCommentsAndStrings` (#3164 moved it here from the Xero census
  * that wrote it) also blanks the CONTENTS of every string, so a rule cannot fire
- * on prose inside a quoted example; `stripCssComments` is the one other language
- * sharing JavaScript's block delimiter. A caller picks a form. It does not write
- * a fourth.
+ * on prose inside a quoted example; `stripCssComments` reads CSS, the one other
+ * language sharing JavaScript's block delimiter. A caller picks a form. It does
+ * not write a fourth.
  *
  * Two lists in `eslint.config.mjs` say what is not a copy.
  * `COMMENT_STRIPPER_ALLOWLIST` holds the scanners that are a different CONCEPT —
@@ -277,9 +277,12 @@ export function stripComments(source: string): string {
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// THE CSS FORM: the one other language sharing JavaScript's block delimiter
+// ---------------------------------------------------------------------------
+
 /**
- * CSS with its comments removed — the one other language that shares
- * JavaScript's block delimiter.
+ * CSS with its comments removed.
  *
  * ONE LINE OF CODE, AND IT LIVED IN THREE FILES AT FIVE CALL SITES until #3164:
  * `placeholder-styling-contract`, `app-theme-layout-contract` and
@@ -312,7 +315,7 @@ export function stripCssComments(css: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// THE SECOND FORM: comments AND string contents, offsets NOT preserved
+// THE STRING-BLANKING FORM: comments AND string contents, offsets NOT preserved
 // ---------------------------------------------------------------------------
 
 interface ScanResult {
