@@ -1725,7 +1725,18 @@ const noLocalCommentStripper = {
      * contains whatever it needed to assert about.
      */
     function inspectExactValue(node, value) {
-      if (typeof value !== "string") return;
+      // Checked BEFORE walking up to the enclosing function, because every
+      // string literal in the tree reaches this and almost none of them is one
+      // of these five characters.
+      if (
+        value !== BLOCK_OPEN &&
+        value !== BLOCK_CLOSE &&
+        value !== LINE_DELIMITER &&
+        value !== CHAR_SLASH &&
+        value !== CHAR_STAR
+      ) {
+        return;
+      }
       const found = evidenceFor(node);
       if (!found) return;
       // A whole-value block CLOSER is proof by itself: it is meaningless in a
