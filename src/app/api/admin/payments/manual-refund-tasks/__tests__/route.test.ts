@@ -72,6 +72,8 @@ const OPEN_ROW = {
   booking: {
     checkIn: CHECK_IN,
     checkOut: CHECK_OUT,
+    memberId: "member-ada",
+    deletedAt: null,
     member: { firstName: "Ada", lastName: "Lovelace" },
   },
 };
@@ -115,6 +117,8 @@ const REVIEW_ROW = {
   booking: {
     checkIn: CHECK_IN,
     checkOut: CHECK_OUT,
+    memberId: "member-ada",
+    deletedAt: null,
     member: { firstName: "Ada", lastName: "Lovelace" },
   },
 };
@@ -548,5 +552,86 @@ describe("financial-review evidence: what may cross the wire (#3033)", () => {
     };
 
     expect(body.viewerCanViewBookings).toBe(true);
+  });
+});
+
+
+/**
+ * #3033 — the OTHER way somebody reaches `/bookings/{id}`.
+ *
+ * `viewerCanViewBookings` answers "may this admin open anybody's booking". The
+ * booking's own member may open their own without it: the page's `isBookingOwner`
+ * compares `booking.memberId` against `session.user.id`, which IS the member id.
+ * So a finance-only admin whose own booking sat in this queue was handed an
+ * identifier for a page they can open.
+ *
+ * MUTATION PROOF. Drop the ownership comparison and "an admin who owns the
+ * booking may open it without bookings access" fails. Drop the deleted-booking
+ * exclusion and "does not offer a link into a booking that has been deleted"
+ * fails. Compare against anything but the session's own id and "does not offer
+ * somebody else's booking to a finance-only admin" fails.
+ */
+describe("the booking link an owner holds regardless of admin access (#3033)", () => {
+  async function bodyFor(row: Record<string, unknown>, canViewBookings: boolean) {
+    mocks.hasAdminAreaAccess.mockReturnValue(canViewBookings);
+    mocks.manualRefundTaskFindMany
+      .mockReset()
+      .mockResolvedValueOnce([row])
+      .mockResolvedValueOnce([]);
+    const response = await GET();
+    return (await response.json()) as {
+      viewerCanViewBookings: boolean;
+      tasks: { viewerOwnsBooking: boolean }[];
+    };
+  }
+
+  const owned = {
+    ...REVIEW_ROW,
+    booking: { ...REVIEW_ROW.booking, memberId: "admin-1" },
+  };
+
+  it("an admin who owns the booking may open it without bookings access", async () => {
+    const body = await bodyFor(owned, false);
+
+    expect(body.viewerCanViewBookings).toBe(false);
+    expect(body.tasks[0]?.viewerOwnsBooking).toBe(true);
+  });
+
+  it("does not offer somebody else's booking to a finance-only admin", async () => {
+    // The control: same shape, a different member. Nothing about the row itself
+    // grants the link.
+    const body = await bodyFor(REVIEW_ROW, false);
+
+    expect(body.tasks[0]?.viewerOwnsBooking).toBe(false);
+  });
+
+  it("does not offer a link into a booking that has been deleted", async () => {
+    // That page 404s for a non-admin even when they own it, and a link into a
+    // 404 is the dead end the printed identifier exists to avoid.
+    const body = await bodyFor(
+      {
+        ...owned,
+        booking: { ...owned.booking, deletedAt: new Date("2026-06-27T00:00:00.000Z") },
+      },
+      false,
+    );
+
+    expect(body.tasks[0]?.viewerOwnsBooking).toBe(false);
+  });
+
+  it("reads the owner and the deletion state for the hand-back list only", async () => {
+    // The automatic-refund list offers no link at all, so it has no use for a
+    // membership-roll identifier and does not ask for one.
+    await bodyFor(REVIEW_ROW, true);
+    const [handBack, autoRefunded] = calls() as [
+      { select: { booking: { select: Record<string, unknown> } } },
+      { select: { booking: { select: Record<string, unknown> } } },
+    ];
+
+    expect(handBack.select.booking.select).toMatchObject({
+      memberId: true,
+      deletedAt: true,
+    });
+    expect(autoRefunded.select.booking.select).not.toHaveProperty("memberId");
   });
 });

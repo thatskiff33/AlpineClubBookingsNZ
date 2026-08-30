@@ -101,6 +101,18 @@ export async function GET() {
   } as const;
 
   /*
+    #3033. The hand-back queue's own summary additionally reads who OWNS the
+    booking and whether it still exists, for the ownership case below. Kept off
+    `bookingSummary` itself so the automatic-refund list, which offers no link at
+    all, does not start reading an identifier it has no use for.
+  */
+  const handBackBookingSummary = {
+    ...bookingSummary,
+    memberId: true,
+    deletedAt: true,
+  } as const;
+
+  /*
     #2760: the record now covers two populations — a late capture auto-refunded on
     a booking the club DELETED, and one on a booking that is cancelled but still
     on file — and the card groups them, because the deleted case is the
@@ -159,7 +171,7 @@ export async function GET() {
         reviewContext: true,
         reason: true,
         createdAt: true,
-        booking: { select: bookingSummary },
+        booking: { select: handBackBookingSummary },
       },
     }),
     /*
@@ -227,6 +239,23 @@ export async function GET() {
         memberName: `${task.booking.member.firstName} ${task.booking.member.lastName}`,
         checkIn: task.booking.checkIn.toISOString(),
         checkOut: task.booking.checkOut.toISOString(),
+        /*
+          #3033. `viewerCanViewBookings` above answers "may this admin open
+          ANYBODY's booking". It is not the only way somebody reaches
+          `/bookings/{id}`: the page admits the booking's own member
+          (`isBookingOwner`, compared against `session.user.id`, which is the
+          member id), so a finance-only admin whose own booking is sitting in
+          this queue was being shown an identifier for a page they can open.
+
+          Answered per row, because ownership is. Deleted bookings are excluded
+          because that page 404s for a non-admin even when they own it, and
+          offering a link into a 404 is the dead end the identifier exists to
+          avoid. Both halves default false, so a row that cannot establish
+          either still gets the identifier.
+        */
+        viewerOwnsBooking:
+          task.booking.deletedAt === null &&
+          task.booking.memberId === guard.session.user.id,
         reviewEvidence: reviewContext
           ? toEditFinancialReviewEvidence(reviewContext)
           : null,

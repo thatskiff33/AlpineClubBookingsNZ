@@ -71,6 +71,13 @@ interface ManualRefundTask {
    */
   reviewEvidence?: EditFinancialReviewEvidence | null;
   reviewEvidenceUnreadable?: boolean;
+  /**
+   * #3033: this row's booking belongs to the person looking at it, and still
+   * exists — so they may open it as its member even without admin bookings
+   * access. Per row, because ownership is; absent means false, so a response
+   * that cannot say offers no link.
+   */
+  viewerOwnsBooking?: boolean;
 }
 
 /**
@@ -866,8 +873,14 @@ export function ManualRefundTaskQueue() {
                           has never carried one. They get the identifier instead,
                           which is what they need in order to quote the booking
                           to somebody who can open it.
+
+                          Or to an admin whose OWN booking this is, who reaches
+                          the same page as its member. Two ways to hold the same
+                          authority, so either is enough; both default false, so
+                          a response that establishes neither offers no link.
                         */}
-                        {viewerCanViewBookings ? (
+                        {viewerCanViewBookings ||
+                        task.viewerOwnsBooking === true ? (
                           <Link
                             className="underline"
                             href={`/bookings/${task.bookingId}`}

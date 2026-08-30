@@ -220,6 +220,37 @@ describe("the evidence an admin prices from (#3033, owner decision D3)", () => {
     expect(queue).toHaveTextContent("booking-edit");
   });
 
+  it("offers the link to an admin whose own booking this is", async () => {
+    /*
+      The card is gated on finance:view; opening a booking is a separate
+      permission. But a finance-only admin who OWNS the booking reaches the same
+      page as its member, so the identifier was a worse answer than a link. Both
+      grants are read independently — here the global one is off.
+    */
+    const queue = await renderQueue({
+      tasks: [{ ...REVIEW_TASK, viewerOwnsBooking: true }],
+      viewerCanViewBookings: false,
+    });
+
+    expect(queue).toHaveTextContent(
+      "View the booking's payment and rate history",
+    );
+  });
+
+  it("offers no link when neither grant is present", async () => {
+    // The control for the pair above: absent means false on both, so a response
+    // that establishes neither prints the identifier.
+    const queue = await renderQueue({
+      tasks: [REVIEW_TASK],
+      viewerCanViewBookings: false,
+    });
+
+    expect(queue).not.toHaveTextContent(
+      "View the booking's payment and rate history",
+    );
+    expect(queue).toHaveTextContent("booking-edit");
+  });
+
   it("offers the payment and rate history link when the viewer may open it", async () => {
     const queue = await renderQueue({
       tasks: [REVIEW_TASK],

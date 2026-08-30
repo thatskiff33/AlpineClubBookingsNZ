@@ -219,9 +219,9 @@ normally be, and carries the evidence recorded at the moment the change was made
   price" is the gap that raised the task in the first place;
 - **the booked stay**, so you can see which season's rates applied at the time;
 - **a link to the booking's own payment and rate history**, which is the live
-  record. That link only appears if your admin role lets you open a booking; if
-  it does not, the booking identifier is printed instead, so you can quote it to
-  somebody who can.
+  record. That link appears if your admin role lets you open a booking, or if the
+  booking is your own; if neither, the booking identifier is printed instead, so
+  you can quote it to somebody who can open it.
 
 Work the amount out from that evidence and the booking's payment history, then:
 
@@ -371,7 +371,7 @@ the whole filtered set; **Success Rate** is computed from the visible page.
 | **Reverse manual payment** is not offered | A refund, a card payment, an open task against **that payment**, or a Xero invoice has appeared since | Cancel the booking instead; a reversal can no longer be undone cleanly |
 | A row says **Awaiting pricing** instead of an amount | It is a booking change the system would not price. The amount is genuinely unknown, not zero | Work it out from the evidence on the row and the booking's payment history, then record it — or click **No adjustment** if nothing is owed |
 | A review row says its recorded evidence **cannot be read** | The evidence was written by a different version of the site | Decide the amount from the booking's own payment and rate history instead, and tell your club administrator — that evidence is the only record of what the change removed |
-| The evidence shows a booking identifier instead of a link | Your admin role covers finance but not bookings | Quote the identifier to an admin who can open bookings, or ask for bookings view access |
+| The evidence shows a booking identifier instead of a link | Your admin role covers finance but not bookings, and the booking is not your own | Quote the identifier to an admin who can open bookings, or ask for bookings view access |
 
 ## Related links
 

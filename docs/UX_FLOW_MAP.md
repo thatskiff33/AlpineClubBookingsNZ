@@ -445,7 +445,12 @@ its link to everyone this screen admits, including the Finance Viewer for whom i
 was the dead end this paragraph describes. The route now states
 `viewerCanViewBookings` from the DB-verified permission matrix and the card fails
 closed without it; a viewer who holds `bookings:view` gets the link, and everyone
-else gets the booking identifier as plain text, exactly as here.
+else gets the booking identifier as plain text, exactly as here. One further
+grant is read per row: an admin who OWNS the booking reaches the same page as its
+member, so a finance-only admin whose own booking is in the queue gets the link
+too — excluding a deleted booking, whose page 404s for a non-admin even when they
+own it. Both grants default to false, so a response that establishes neither
+offers no link.
 
 The second card has **no controls at all**, deliberately: there is no decision
 left, and "Mark paid back" on such a row would record a second refund for one
