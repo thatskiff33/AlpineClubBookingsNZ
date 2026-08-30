@@ -3397,6 +3397,27 @@ model AdultMemberHostingPolicy {
   hostScopeSameBooking      Boolean?
   hostScopeSameBookingOwner Boolean?
 
+  // The optional Group Trip scope (#3037, epic #2943). Added AFTER the pair
+  // above and never before it, because `ADULT_MEMBER_HOST_SCOPES` is an ordered
+  // constant that a frozen violation snapshot is sorted through: reordering it
+  // would change the bytes of snapshots nobody edited.
+  //
+  // NULLABLE, NO DEFAULT, AND DELIBERATELY NOT PART OF THE ALL-OR-NONE CHECK.
+  // The pair above is held to all-null or all-set; this column is held only to
+  // "never set on a row that did not decide the pair". That asymmetry is not a
+  // looser rule, it is the only rule that survives a blue/green deploy: a
+  // DRAINING OLD COLOUR's INSERT names the two columns it knows and leaves this
+  // one NULL, so a three-way all-or-none CHECK would refuse an old-colour
+  // policy create between migrate and cutover.
+  //
+  // NULL on a row that DID decide therefore reads as OFF, not as "inherit", and
+  // that reading is what makes the upgrade a no-op: every existing row — the
+  // ones with the pair set as much as the ones inheriting — keeps judging
+  // exactly the cover it judged before, and no club is silently widened to
+  // cross-booking Group Trip cover. A club opts in by ticking the box, which
+  // writes `false` -> `true` explicitly.
+  hostScopeSameGroupTrip    Boolean?
+
   // Stable policy revision and compare-and-swap token, managed by the
   // AdultMemberHostingPolicy_version trigger. Same contract as
   // MinimumStayPolicy.version (#2363): timestamps are not a version.
