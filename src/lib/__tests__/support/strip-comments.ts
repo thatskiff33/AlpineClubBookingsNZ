@@ -100,6 +100,14 @@
  * entry points and cannot drift apart again. The predicates are private for that
  * reason — nothing outside this file needs them any more.
  *
+ * TWO JSX SHAPES ARE CARVED OUT of the regex branch (#3191 fix round), and they
+ * are the only ones: `</Tag>` and a self-closing ` />` after a value token. Both
+ * used to open a phantom regex that ran forward to the next `/` on the line and
+ * DELETED the code between - measured on `finance-fees-sections.tsx`, where it
+ * hid two `.fieldProps` spreads and made an accessibility-wiring contract report
+ * a half-wired file that is wired correctly. The condition and its controls are
+ * on `startsRegexLiteral` and in `xero-provider-date-boundary-census.test.ts`.
+ *
  * It is still not a full parser, and what it does not attempt is stated so
  * nobody has to rediscover it: it does not check that a regex is well-formed,
  * and a `/` following a string literal (`"abc" / 2`) is read as opening a regex
@@ -165,9 +173,34 @@ const REGEX_POSITION_KEYWORD =
  * reached, and an empty regex is unwritable in JavaScript, so the two cannot
  * collide.
  */
-function startsRegexLiteral(codeSoFar: string): boolean {
+function startsRegexLiteral(codeSoFar: string, next: string): boolean {
   const previous = lastSignificant(codeSoFar);
   if (previous === "") return true;
+  /*
+    THE TWO JSX SHAPES, and they are a MEASURED defect rather than pedantry
+    (#3191 fix round). Both delete real code on a single-line element, which is
+    the unsafe direction for an instrument whose job is to stop a guard passing
+    vacuously - the two imprecisions this module already documents both fail the
+    other way, toward keeping text.
+
+    `</Label>` is a closing tag, and `<` is not one of the value tokens below, so
+    the old rule opened a regex on it and ran forward to the next `/` - the `/>`
+    of a sibling element. `>` is likewise not a value token, so the `/` of that
+    `/>` opened another one and ran to the next closing tag. Measured on
+    `finance-fees-sections.tsx`, whose fee rows are written one element per line:
+    both `{...entranceAmountHint.fieldProps}` spreads were deleted while both
+    `.hintProps` spreads survived, so `field-hint.test.tsx`'s three-way count
+    read 91 hooks against 89 fieldProps - a half-wiring failure reported against
+    a file that is wired correctly.
+
+    Neither condition can hide a real regex literal. A regex written after `<`
+    (`a < /x/.test(b)`) is legal JavaScript and does not occur on this surface;
+    and `/>` is refused only where a JSX self-close puts a value token before it,
+    so `split(/>/)` - whose `/` follows `(` - is untouched, as is `/>=/` after an
+    `=`.
+  */
+  if (previous === "<") return false;
+  if (next === ">" && /["'}]/.test(previous)) return false;
   if (/[)\]\w$]/.test(previous)) {
     return REGEX_POSITION_KEYWORD.test(codeSoFar);
   }
@@ -223,7 +256,7 @@ export function stripComments(source: string): string {
       // A regex literal is CODE, and is copied through verbatim so the scanner
       // cannot mistake a slash or a quote inside it for a delimiter. Checked
       // AFTER the two comment openers, so `//` and `/*` never reach here.
-      if (character === "/" && startsRegexLiteral(out)) {
+      if (character === "/" && startsRegexLiteral(out, next ?? "")) {
         const end = endOfRegexLiteral(source, index);
         out += source.slice(index, end);
         index = end;
@@ -422,7 +455,7 @@ function scanCode(
       index = template.next;
       continue;
     }
-    if (char === "/" && startsRegexLiteral(out)) {
+    if (char === "/" && startsRegexLiteral(out, source[index + 1] ?? "")) {
       index = endOfRegexLiteral(source, index);
       out += '""';
       continue;

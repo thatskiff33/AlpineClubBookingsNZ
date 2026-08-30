@@ -10,6 +10,9 @@ import {
   describedByFieldHint,
   useFieldHint,
 } from "@/components/ui/field-hint";
+// `INV-SSOT-004`: the ONE comment/string stripper in the tree, imported rather
+// than written again.
+import { stripCommentsAndStrings } from "@/lib/__tests__/support/strip-comments";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
@@ -139,12 +142,33 @@ function conversionSources(dir = "src"): string[] {
   return out;
 }
 
-/** The primitive itself: it names all three in its own doc comment. */
+/**
+ * The primitive itself, which DEFINES all three and so cannot be counted with
+ * its callers: `export function useFieldHint(` would read as a hook call with
+ * no matching spreads, and the two prop bags it returns as spreads with no
+ * hook.
+ */
 const FIELD_HINT_MODULE = "src/components/ui/field-hint.tsx";
 
+/**
+ * How many times a needle appears in the CODE under `src/`.
+ *
+ * COMMENTS AND STRING CONTENTS ARE STRIPPED FIRST (#3191 fix round), through the
+ * tree's one stripper (`INV-SSOT-004`). Counting raw text made this contract
+ * fire on PROSE: a component that explained in a comment why its `.map()` rows
+ * call `describedByFieldHint` rather than the hook was counted as calling the
+ * hook, so its three counts went out of balance and an accessibility-wiring
+ * contract failed over a sentence. That pushed the defect into production code -
+ * the component was left saying it must not spell the hook's name - which is the
+ * wrong half of the tree to bend. This repository documents each defect at the
+ * site it removed it from, so a raw-text scanner here misfires worst where the
+ * wiring is most carefully explained.
+ */
 function countAcrossSrc(needle: string): number {
   return conversionSources().reduce((total, path) => {
-    const text = readFileSync(join(process.cwd(), path), "utf8");
+    const text = stripCommentsAndStrings(
+      readFileSync(join(process.cwd(), path), "utf8"),
+    );
     return total + text.split(needle).length - 1;
   }, 0);
 }
@@ -174,5 +198,23 @@ describe("FieldHint wiring contract", () => {
     const derived = countAcrossSrc("describedByFieldHint(");
     expect(derived).toBeGreaterThan(0);
     expect(countAcrossSrc("useFieldHint(") + derived).toBeGreaterThanOrEqual(21);
+  });
+
+  it("counts code and not prose", () => {
+    // THE CONTROL for the stripping above, and it has both halves. A stripper
+    // that returned nothing would make every count zero and the three-way
+    // comparison pass vacuously, which is the failure this repository has
+    // shipped before; one that stripped nothing would put us back to counting
+    // a comment ABOUT the hook as a call to it.
+    const stripped = stripCommentsAndStrings(
+      [
+        "// this row cannot call useFieldHint() inside a .map()",
+        "/* it spreads .fieldProps and .hintProps */",
+        'const note = "useFieldHint() is the hook";',
+        "const hint = useFieldHint();",
+      ].join("\n"),
+    );
+    expect(stripped.split("useFieldHint(").length - 1).toBe(1);
+    expect(stripped).toContain("const hint = useFieldHint();");
   });
 });

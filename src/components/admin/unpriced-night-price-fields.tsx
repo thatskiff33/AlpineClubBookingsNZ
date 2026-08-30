@@ -67,13 +67,10 @@ export function UnpricedNightPriceFields({
   disabled: boolean;
 }) {
   /*
-    #3191 fix round. Deterministic ids rather than the field-hint hook, because
+    #3191 fix round. Deterministic ids rather than `useFieldHint()`, because
     EVERY box is described by the same two paragraphs and a hook cannot be
     called per row - the `.map()` case `field-hint.tsx` names, with
-    `describedByFieldHint` as its helper. (The hook's name is deliberately not
-    spelled with its bracket anywhere in this file: `field-hint.test.tsx`
-    balances three raw-text counts across the tree with no comment stripping, so
-    prose ABOUT the hook counts as a call to it and fails that contract.)
+    `describedByFieldHint` as its helper.
 
     Two problems this fixes, both of which land hardest on a screen-reader user:
 
