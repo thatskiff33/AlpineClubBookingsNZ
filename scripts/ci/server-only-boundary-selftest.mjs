@@ -90,6 +90,45 @@ export const FIXTURE_BRIDGE = `./${FIXTURE_DIR.split(path.sep).join("/")}/bridge
 export const PROTECTED_ROOTS = ["./src/lib/auth.ts", "./src/lib/prisma.ts"];
 
 /**
+ * The statement, exactly. Every marked root carries this line and nothing
+ * looser: fifteen files in this repository merely NAME `import "server-only"`
+ * inside a docblock explaining the boundary, so a substring search would count
+ * a paragraph about the marker as the marker itself.
+ */
+export const MARKER_STATEMENT = 'import "server-only";';
+
+/**
+ * EVERY module that carries `MARKER_STATEMENT`, which is a longer list than the
+ * two the fixture plants.
+ *
+ * `PROTECTED_ROOTS` above is what this gate can prove with a build: the fixture
+ * imports those two, so those two are the ones Turbopack is made to complain
+ * about. That left the other four marked roots pinned by nothing — a reviewer
+ * deleted `import "server-only"` from `@/lib/audit`, `@/lib/email`,
+ * `@/lib/stripe` and `@/lib/xero` and every boundary suite stayed green, which
+ * is the same silent-green shape this whole file exists to prevent.
+ *
+ * So the list lives here, beside the two the build plants, and
+ * `src/lib/__tests__/client-server-boundary-census.test.ts` asserts every entry
+ * still carries the statement. Keeping both lists in one file is what stops
+ * them drifting: the unit test beside this one requires `PROTECTED_ROOTS` to be
+ * a SUBSET of this list, so a root cannot be planted by the build proof and
+ * absent from the census at the same time.
+ *
+ * Adding a root here is the whole cost of marking a new module. Removing one is
+ * a deliberate act that has to be argued for in review, because the module it
+ * names stops being refused by the production build the moment it happens.
+ */
+export const MARKED_ROOTS = [
+  "./src/lib/audit.ts",
+  "./src/lib/auth.ts",
+  "./src/lib/email.ts",
+  "./src/lib/prisma.ts",
+  "./src/lib/stripe.ts",
+  "./src/lib/xero.ts",
+];
+
+/**
  * Next's own wording. Quoted rather than matched loosely so a version bump that
  * reworded or dropped the rule fails here instead of passing on a fuzzy match.
  * The "Pages Router" clause is Next's, and is wrong — this is the App Router —

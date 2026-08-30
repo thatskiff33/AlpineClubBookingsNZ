@@ -4,6 +4,8 @@ import {
   BOUNDARY_MESSAGE,
   BROWSER_LAYER,
   FIXTURE_PAGE,
+  MARKED_ROOTS,
+  MARKER_STATEMENT,
   PROTECTED_ROOTS,
   problemsWithSeededBuild,
   splitErrorBlocks,
@@ -212,5 +214,32 @@ describe("server-only boundary self-test: output parsing", () => {
     expect(splitErrorBlocks("./src/lib/auth.ts\n./src/lib/prisma.ts")).toEqual(
       [],
     );
+  });
+});
+
+describe("server-only boundary self-test: the two root lists", () => {
+  it("plants only roots the census also polices", () => {
+    // The lists answer different questions - `PROTECTED_ROOTS` is what the
+    // build proof plants, `MARKED_ROOTS` is every module carrying the marker -
+    // so they are allowed to differ in size. They are NOT allowed to diverge:
+    // a root the build proves but the census has never heard of would lose its
+    // marker silently the moment the fixture stopped naming it.
+    for (const root of PROTECTED_ROOTS) {
+      expect(
+        MARKED_ROOTS,
+        `${root} is planted by the build proof but is not in MARKED_ROOTS, so ` +
+          "nothing asserts it still carries the marker",
+      ).toContain(root);
+    }
+  });
+
+  it("names six roots, sorted and without duplicates", () => {
+    // A non-vacuity floor for the census that consumes this list: a rename that
+    // emptied it, or a copy-paste that duplicated an entry into looking full,
+    // would otherwise leave that census checking nothing while staying green.
+    expect(MARKED_ROOTS).toHaveLength(6);
+    expect(new Set(MARKED_ROOTS).size).toBe(MARKED_ROOTS.length);
+    expect([...MARKED_ROOTS].sort()).toEqual(MARKED_ROOTS);
+    expect(MARKER_STATEMENT).toBe('import "server-only";');
   });
 });

@@ -2,6 +2,11 @@ import { existsSync, readFileSync, readdirSync, statSync } from "fs";
 import path from "path";
 import { describe, expect, it } from "vitest";
 
+import {
+  MARKED_ROOTS,
+  MARKER_STATEMENT,
+} from "../../../scripts/ci/server-only-boundary-selftest.mjs";
+
 /**
  * INV-OPS-013, with transitive reach (#2686).
  *
@@ -314,5 +319,88 @@ describe("INV-OPS-013: no client module reaches server-only code, at any depth",
       violations,
       `A "use client" module reaches server-only code. Everything on the path below is compiled into the browser bundle:\n\n${violations.join("\n\n")}`,
     ).toEqual([]);
+  });
+});
+
+/**
+ * The other half of `INV-OPS-013`, and the half that had nothing holding it
+ * down until #3186.
+ *
+ * `scripts/ci/server-only-boundary-selftest.mjs` proves the production build
+ * refuses a client component reaching `@/lib/auth` or `@/lib/prisma`, because
+ * those are the two roots its fixture imports. Four more modules carry the same
+ * marker — `@/lib/audit`, `@/lib/email`, `@/lib/stripe` and `@/lib/xero` — and
+ * nothing checked that they still did. Measured: delete the marker from all
+ * four and every boundary suite in this repository stays green.
+ *
+ * So the list of marked roots lives in the self-test beside the two it plants,
+ * and this asserts each entry still carries the statement. The two lists cannot
+ * drift, because `server-only-boundary-selftest.test.mjs` requires
+ * `PROTECTED_ROOTS` to be a subset of `MARKED_ROOTS`.
+ *
+ * ANCHORED, not a substring search, and that distinction is the whole check.
+ * Fifteen files here NAME `import "server-only"` inside a docblock explaining
+ * the boundary — including the roots themselves, whose docblocks open by
+ * quoting the statement they carry. A substring match would be satisfied by the
+ * paragraph ABOUT the marker surviving while the marker itself was deleted,
+ * which is precisely the mutation this exists to catch.
+ */
+const MARKER_LINE = new RegExp(
+  `^${MARKER_STATEMENT.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
+  "m",
+);
+
+function carriesMarker(text: string): boolean {
+  return MARKER_LINE.test(text.replace(/\r\n/g, "\n"));
+}
+
+describe("INV-OPS-013: every marked module still carries the marker", () => {
+  it("names six roots, all of which exist", () => {
+    // Non-vacuity, in the one shape that would make the assertion below pass by
+    // checking nothing: a rename, a deletion, or a truncated list. The count is
+    // asserted in `server-only-boundary-selftest.test.mjs` too; repeated here
+    // so this file cannot be read as trusting a list it never looked at.
+    expect(MARKED_ROOTS).toHaveLength(6);
+    for (const root of MARKED_ROOTS) {
+      expect(
+        existsSync(path.resolve(process.cwd(), root)),
+        `${root} is listed as a server-only root but no such file exists, ` +
+          "so the marker assertion below is checking nothing",
+      ).toBe(true);
+    }
+  });
+
+  it("finds the marker as a real statement in each of them", () => {
+    const missing = MARKED_ROOTS.filter(
+      (root) =>
+        !carriesMarker(readFileSync(path.resolve(process.cwd(), root), "utf8")),
+    );
+
+    expect(
+      missing,
+      "A module listed as a server-only root no longer carries " +
+        `\`${MARKER_STATEMENT}\`, so the production build will happily compile ` +
+        "it into a browser bundle. Restore the statement, or remove the module " +
+        "from MARKED_ROOTS in scripts/ci/server-only-boundary-selftest.mjs and " +
+        "say in review why shipping it to visitors is acceptable " +
+        "(INV-OPS-013, #2850, #3186).\n\n" +
+        missing.join("\n"),
+    ).toEqual([]);
+  });
+
+  it("is not satisfied by a docblock that merely mentions the marker", () => {
+    // The mutation the anchor exists to survive, run as a fixture rather than
+    // left to whoever remembers to try it by hand. Every one of these roots
+    // opens with a docblock quoting the statement, so an unanchored search
+    // would call a stripped module marked.
+    const docblockOnly = [
+      "/**",
+      ` * \`${MARKER_STATEMENT}\` makes the production build REFUSE this module`,
+      " * in a browser bundle, at any depth.",
+      " */",
+      "export const value = 1;",
+    ].join("\n");
+    expect(carriesMarker(docblockOnly)).toBe(false);
+    expect(carriesMarker(`${docblockOnly}\n${MARKER_STATEMENT}\n`)).toBe(true);
   });
 });
