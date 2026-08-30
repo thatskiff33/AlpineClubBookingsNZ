@@ -733,7 +733,7 @@ describe("calculateModifiedPricing in-progress departed guest (#2743)", () => {
     // had gone home.
     expect(gone.nightDates).toEqual([D("2026-08-18"), D("2026-08-19")]);
     expect(gone.priceCents).toBe(2 * RATE);
-    expect(gone.perNightCents.reduce((a, b) => a + b, 0)).toBe(gone.priceCents);
+    expect(gone.perNightCents.reduce<number>((a, b) => a + (b ?? Number.NaN), 0)).toBe(gone.priceCents);
     // The guest who is actually there is untouched.
     expect(present.nightDates).toEqual([
       D("2026-08-18"), D("2026-08-19"), D("2026-08-20"), D("2026-08-21"),
@@ -882,7 +882,7 @@ describe("calculateModifiedPricing in-progress per-night prices (#2744)", () => 
       D("2026-08-24"),
     ]);
     expect(guest.perNightCents).toEqual([LOW, LOW, HIGH, HIGH]);
-    expect(guest.perNightCents.reduce((a, b) => a + b, 0)).toBe(guest.priceCents);
+    expect(guest.perNightCents.reduce<number>((a, b) => a + (b ?? Number.NaN), 0)).toBe(guest.priceCents);
     expect(result.newTotalPriceCents).toBe(2 * LOW + 2 * HIGH);
     // Xero rebuilds its lines per contiguous run of equal price, so the runs
     // have to multiply back out: 2 x LOW and 2 x HIGH, no phantom balance.

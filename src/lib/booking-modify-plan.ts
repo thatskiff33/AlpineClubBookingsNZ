@@ -1242,7 +1242,25 @@ export type PricedModification = {
   newTotalPriceCents: number;
   priceBreakdown: {
     totalPriceCents: number;
-    guests: Array<{ priceCents: number; perNightCents: number[]; nightDates: Date[] }>;
+    /**
+     * #3170: `perNightCents` may hold a `null`, and exactly ONE producer ever
+     * puts one there — the identity-only echo (`buildIdentityOnlyPricing`),
+     * which copies a booking's stored rows back byte for byte on an edit that
+     * changes only a name or a credit election. A row that says "price not
+     * known" is preserved as that; refusing to echo it would refuse a member a
+     * spelling correction on a booking whose money an officer has yet to
+     * confirm, and writing a number would invent one.
+     *
+     * Every OTHER producer's vector is all integers: the in-progress planner's
+     * priced branch and the ordinary pricing engine both value every night they
+     * return. A parked edit does not come through here at all — it has no
+     * `PricedModification`, and its sparse breakdown is `parkedPriceBreakdown`.
+     */
+    guests: Array<{
+      priceCents: number;
+      perNightCents: (number | null)[];
+      nightDates: Date[];
+    }>;
   };
   guestNightRates: Array<{
     bookingGuestId?: string | null;
@@ -1424,6 +1442,29 @@ export async function resolvePartnerSharedCapacity(params: {
     params.excludeBookingId,
     params.tx,
   );
+}
+
+/**
+ * Narrow a priced breakdown's per-night vector for a consumer that must have a
+ * rate on every night (#3170).
+ *
+ * It cannot fire from `calculateModifiedPricing`'s own branches — see the call
+ * site — and it is here so that a future producer which starts carrying an
+ * unknown fails at the promotion cap rather than quietly discounting against a
+ * night with no rate.
+ */
+function requireRatedNights(
+  perNightCents: readonly (number | null)[],
+  bookingGuestId: string | null,
+): number[] {
+  return perNightCents.map((cents, index) => {
+    if (cents === null) {
+      throw new Error(
+        `Night ${index} of guest ${bookingGuestId ?? "(new)"} has no rate to apply a promotion against (#3170)`,
+      );
+    }
+    return cents;
+  });
 }
 
 export async function calculateModifiedPricing(
@@ -1751,7 +1792,17 @@ export async function calculateModifiedPricing(
         memberId: guest.memberId ?? null,
         bookingGuestId: guest.bookingGuestId ?? null,
         isMember: guest.isMember,
-        perNightRates: priceBreakdown.guests[index]?.perNightCents ?? [],
+        // #3170: narrowed rather than widened. This branch's breakdown comes
+        // from the ordinary pricing engine, which values every night it
+        // returns, so there is no null to carry — and the promotion cap that
+        // reads these rates must never be handed one, because a null summed
+        // into a cap is a zero-rated night by another name. The identity-only
+        // echo, which is the one producer that CAN carry a null, builds its own
+        // `guestNightRates` and does not come through here.
+        perNightRates: requireRatedNights(
+          priceBreakdown.guests[index]?.perNightCents ?? [],
+          guest.bookingGuestId ?? null,
+        ),
         // Dates the positional rates so internal work-party promos restrict
         // the discount to the event's night window — correct for gaps too.
         firstNight: guest.stayStart ?? newCheckIn,

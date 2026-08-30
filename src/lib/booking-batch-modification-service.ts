@@ -222,9 +222,20 @@ function buildIdentityOnlyPricing(booking: LoadedBookingForModify): PricingResul
   // only because object-literal properties evaluate in source order and the
   // refusal happened to precede it. A prohibited construct on a money value must
   // not depend on evaluation order for its harmlessness.
+  //
+  // #3170: AND A ROW THAT SAYS "NOT KNOWN" IS ECHOED AS THAT. Byte-for-byte
+  // preservation is the promise, and a `NULL` is a value this column now holds:
+  // it is what a parked edit writes for a night this booking's history cannot
+  // price. Refusing it here would refuse a member a spelling correction on a
+  // booking whose amount an officer has yet to confirm, and writing a number
+  // instead would invent the very figure the review exists to establish.
+  //
+  // The two absences stay apart, exactly as they do at the write. `null` is the
+  // row's own statement and is preserved; `undefined` is still a SELECT that
+  // did not ask for the price — a caller wiring defect — and still throws.
   const echoedNights = booking.guests.map((guest) =>
     (guest.nights ?? []).map((night) => {
-      if (typeof night.priceCents !== "number") {
+      if (night.priceCents === undefined) {
         throw new Error(
           `Booking guest ${guest.id} night ${night.stayDate.toISOString()} was loaded without its stored sold price (#3031)`,
         );
@@ -245,13 +256,26 @@ function buildIdentityOnlyPricing(booking: LoadedBookingForModify): PricingResul
         nightDates: echoedNights[index].map((night) => night.stayDate),
       })),
     },
-    guestNightRates: booking.guests.map((guest, index) => ({
-      bookingGuestId: guest.id,
-      memberId: guest.memberId ?? null,
-      isMember: guest.isMember,
-      perNightRates: echoedNights[index].map((night) => night.priceCents),
-      nightDates: echoedNights[index].map((night) => night.stayDate),
-    })),
+    // #3170: RATES ONLY, and the pair stays aligned. A night whose stored price
+    // is not known has no rate to state, so it is dropped from BOTH lists
+    // together rather than carried as a null one list would read as zero. This
+    // echo's rates are unused in practice — a price-preserving modification
+    // re-runs no promotion cap, which is the only reader — so dropping is safe
+    // as well as honest; what would not be safe is a rate vector whose
+    // positions no longer matched its dates.
+    guestNightRates: booking.guests.map((guest, index) => {
+      const rated = echoedNights[index].filter(
+        (night): night is { stayDate: Date; priceCents: number } =>
+          night.priceCents !== null,
+      );
+      return {
+        bookingGuestId: guest.id,
+        memberId: guest.memberId ?? null,
+        isMember: guest.isMember,
+        perNightRates: rated.map((night) => night.priceCents),
+        nightDates: rated.map((night) => night.stayDate),
+      };
+    }),
     // Nothing was rated here — this echo does not run the rate resolver at all.
     // A request carrying an other-lodge election is therefore kept OFF this path
     // (see `pricePreservingModification` below): storing the flag from an echo

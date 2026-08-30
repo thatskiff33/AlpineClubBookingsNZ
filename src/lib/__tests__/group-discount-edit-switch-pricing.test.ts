@@ -348,7 +348,12 @@ describe.each(SEASON_SHAPES)(
             expect(Number.isInteger(cents)).toBe(true);
           }
           expect(
-            guest.perNightCents.reduce((sum, cents) => sum + cents, 0),
+            guest.perNightCents.reduce<number>(
+              // #3170: NaN, never 0 — an unknown night must FAIL this sum, not
+              // satisfy it. A `?? 0` here would let a null pass as a comped night.
+              (sum, cents) => sum + (cents ?? Number.NaN),
+              0,
+            ),
           ).toBe(guest.priceCents);
         }
       }
@@ -527,7 +532,12 @@ describe.each(SEASON_SHAPES)(
             expect(Number.isInteger(cents)).toBe(true);
           }
           expect(
-            guest.perNightCents.reduce((sum, cents) => sum + cents, 0),
+            guest.perNightCents.reduce<number>(
+              // #3170: NaN, never 0 — an unknown night must FAIL this sum, not
+              // satisfy it. A `?? 0` here would let a null pass as a comped night.
+              (sum, cents) => sum + (cents ?? Number.NaN),
+              0,
+            ),
           ).toBe(guest.priceCents);
         }
       }
