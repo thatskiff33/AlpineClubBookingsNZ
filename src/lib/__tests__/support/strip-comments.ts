@@ -513,7 +513,7 @@ export function stripCommentsAndStrings(source: string): string {
  * `kind` is what the blanker was reading, and the four differ in where the
  * DELIMITERS fall, which a caller restoring by span has to know:
  *
- * - `comment` — the whole comment, its `//` or its `/*` and `*` + `/` included.
+ * - `comment` — the WHOLE comment, both delimiters included, line or block.
  * - `string` — a quoted literal's CONTENTS, WITHOUT its quotes, which survive in
  *   `code` at their own offsets.
  * - `template` — one stretch of literal text inside a backtick template. A
