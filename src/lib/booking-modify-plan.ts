@@ -1323,11 +1323,20 @@ export type PricingResult =
  * `perNightCents * nightCount === totalCents`, free of a phantom balance
  * (INV-MONEY-001, INV-MONEY-003).
  */
-function guestNightBreakdown(entry: {
+function guestNightBreakdown<Cents extends number | null>(entry: {
   nights: ReadonlyArray<Date>;
-  perNightCents: ReadonlyArray<number>;
+  // #3170: `null` is a night whose sold price is not known. GENERIC so the
+  // element type survives: the priced plan hands in `number[]` and gets
+  // `number[]` back, and only the PARKED plan's `(number | null)[]` carries an
+  // unknown through. Widening this to `number | null` unconditionally would have
+  // let a null into the priced breakdown, where every amount is settled.
+  perNightCents: ReadonlyArray<Cents>;
   priceCents: number;
-}): { priceCents: number; perNightCents: number[]; nightDates: Date[] } {
+}): {
+  priceCents: number;
+  perNightCents: Cents[];
+  nightDates: Date[];
+} {
   return {
     priceCents: entry.priceCents,
     perNightCents: [...entry.perNightCents],
@@ -2147,6 +2156,36 @@ export async function calculateModificationChangeFee({
   return feeResult.feeCents;
 }
 
+/**
+ * The guest-write view of a PARKED edit (#3170).
+ *
+ * `applyGuestChanges` reads only per-guest rows out of a breakdown, so this is
+ * the whole of what it needs — and it deliberately carries NO
+ * `totalPriceCents`. There is no total to carry: what this edit does to the
+ * booking's money is the question the OPEN review task exists to answer, and a
+ * number here would be a caller's first opportunity to answer it wrongly.
+ *
+ * The guest ORDER is the one that branch indexes by: every existing strand in
+ * booking order, then every added guest in request order. It is composed through
+ * the same `guestNightBreakdown` the priced plan uses, so both write their
+ * night dates through the same normaliser (#3107) rather than one of them
+ * storing its nights a day early.
+ */
+export function parkedPriceBreakdown(plan: ParkedEditStructuralPlan): {
+  guests: Array<{
+    priceCents: number;
+    perNightCents: (number | null)[];
+    nightDates: Date[];
+  }>;
+} {
+  return {
+    guests: [
+      ...plan.proposedExistingGuests.map(guestNightBreakdown),
+      ...plan.proposedAddedGuests.map(guestNightBreakdown),
+    ],
+  };
+}
+
 export async function applyGuestChanges(
   tx: Prisma.TransactionClient,
   {
@@ -2187,8 +2226,21 @@ export async function applyGuestChanges(
         consentColumns?: MemberGuestConsentColumns;
       }
     >;
-    priceBreakdown: PricedModification["priceBreakdown"];
-    inProgressPlan: BookingEditGuestRangePlan | null;
+    /**
+     * #3170: the per-guest rows only, and `perNightCents` may be SPARSE — a
+     * `null` at position k is a night whose sold price is not known. Typed
+     * structurally rather than as `PricedModification["priceBreakdown"]` so a
+     * parked edit can be written from a breakdown that carries no booking
+     * total, because a parked edit has none to carry.
+     */
+    priceBreakdown: {
+      guests: Array<{
+        priceCents: number;
+        perNightCents: ReadonlyArray<number | null>;
+        nightDates: Date[];
+      }>;
+    };
+    inProgressPlan: BookingEditGuestRangePlan | ParkedEditStructuralPlan | null;
     /**
      * The resolved other-club rate election (Other Lodges epic), straight off the
      * plan that priced these rows. Optional so this function's existing unit

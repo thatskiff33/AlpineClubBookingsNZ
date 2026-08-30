@@ -466,7 +466,6 @@ describe("#3031 no magic zero reaches a night row", () => {
         proposedRemainingGuests: [],
         normalizedAddGuests: undefined,
         priceBreakdown: {
-          totalPriceCents: 3 * RATE,
           guests: [
             {
               priceCents: 3 * RATE,
@@ -503,7 +502,6 @@ describe("#3031 no magic zero reaches a night row", () => {
       proposedRemainingGuests: [],
       normalizedAddGuests: undefined,
       priceBreakdown: {
-        totalPriceCents: 3 * RATE,
         guests: [
           {
             priceCents: 3 * RATE,

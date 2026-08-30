@@ -505,6 +505,25 @@ export class BookingModifyReviewJustificationRequiredError extends ApiError {
  * terminology, and nothing that reads as the member's fault — the stored history
  * is the club's record, not theirs.
  */
+/**
+ * What the EDIT PANEL says when the quote it just asked for parks (#3170).
+ *
+ * The counterpart to the refusal below, and deliberately a different sentence:
+ * the refusal says nothing has changed and to ring the office, while this one
+ * says the change WILL be saved and that no money moves until a person has
+ * checked it. Telling a member "nothing has been changed yet" about a save that
+ * is about to go through would be worse than saying nothing.
+ *
+ * Bound by the same rules as the refusal: no estimate and no `$0` (the epic
+ * prohibits both), no "corrupt" or "invalid data" wording, and nothing that
+ * reads as the member's fault — the stored history is the club's record, not
+ * theirs. Rendered VERBATIM by the panel; it is never re-worded there.
+ */
+export const EDIT_FINANCIAL_REVIEW_QUOTE_NOTICE =
+  "The club needs to check the amount for this change. Your change will be saved, " +
+  "and nothing will be charged or refunded until someone from the office has " +
+  "confirmed it with you.";
+
 export class BookingEditFinancialReviewRequiredError extends ApiError {
   /** Machine-readable, in the style of `REVIEW_JUSTIFICATION_REQUIRED`. */
   readonly code = "FINANCIAL_REVIEW_REQUIRED";
