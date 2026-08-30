@@ -9,10 +9,23 @@
   Confirming the amount now sends it down whichever of the club's existing
   settlement routes fits the booking: a card refund where the booking was paid by
   card, a ledger entry where the club hands the money back by internet banking,
-  or account credit where nothing was ever captured. The member's booking history
-  says which of those happened — a refund is only ever recorded as a refund once
-  the card refund has actually issued, so nobody is told their money is back
-  while it is still in the club's account.
+  or account credit where nothing was ever captured. Where the booking has a Xero
+  invoice, the matching credit note is raised too, so the club's accounts and its
+  own records do not quietly drift apart. The member's booking history says which
+  of those happened — a refund is only ever recorded as a refund once the card
+  refund has actually issued, so nobody is told their money is back while it is
+  still in the club's account.
+
+  A card refund that cannot be sent — the card network is down, the payment has
+  already been refunded elsewhere — says so on screen instead of reporting
+  success, and the club is told it will be retried automatically. The retry is
+  recorded before the card is ever contacted, so even a server restart mid-refund
+  cannot lose it, and the retry can only ever complete the same refund rather
+  than send a second one.
+
+  An amount larger than the card payment can give back is refused before anything
+  is closed, so the review stays open and can be priced again — rather than being
+  marked settled with nothing actually moved.
 
   Two admins closing the same review at the same moment produce exactly one
   payment, and a retry of the original booking change reopens nothing. Both are
@@ -21,9 +34,11 @@
   until both attempts are queued behind it.
 
   Where the money cannot be settled automatically — the rare case where the
-  booking change it belongs to has already issued credit of its own — the club is
-  told plainly what to do instead, and the review stays open holding the
-  question, rather than closing as if it had been paid.
+  booking change it belongs to has already issued credit of its own — nothing is
+  closed and the club is told plainly to hand the amount back another way and
+  record what it paid on the review before closing it. The note is what the
+  record then rests on: a closed review never claims this system moved money it
+  did not move.
 
 - **A booking cannot be changed again in a way that affects its price while the
   club is still working out the money for the last change (#3032).** Otherwise
@@ -32,9 +47,12 @@
   read back. The refusal says the booking is unchanged and to try again once the
   review is finished.
 
+  The price preview refuses on exactly the same terms, so the member is never
+  shown a figure the save is going to reject.
+
   Deliberately narrow: correcting a guest's name, choosing how to use account
   credit, and an admin shifting the stay dates without repricing all still work
   normally, because none of them reads the booking's stored money. So does a
   member coming off a booking they never consented to be on — that must always be
-  possible, so it goes ahead and the club is left with a second amount to price
-  rather than the member being trapped on the booking.
+  possible, so it goes ahead rather than the member being trapped on the booking
+  until somebody prices an unrelated question.

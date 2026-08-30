@@ -509,9 +509,26 @@ let observerClient: PrismaClient;
     });
 
     it("a replay of a COMPLETED occurrence reopens nothing and issues no second credit", async () => {
-      // Continues from the previous test's COMPLETED task on purpose: a retry of
-      // the same structural edit after an admin has already priced and closed it
-      // is exactly the replay that must not produce a second adjustment.
+      // SELF-CONTAINED, deliberately. An earlier revision continued from the
+      // previous case's committed state, which is one `-t` filter, one `.only`
+      // or one shard boundary away from a false green - and a race proof that
+      // can pass vacuously is worse than none. It builds its own COMPLETED
+      // occurrence instead: a retry of the same structural edit after an admin
+      // has already priced and closed it is exactly the replay that must not
+      // produce a second adjustment.
+      await clearTasksAndCredits();
+      const priced = await prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+        return raiseEditFinancialReviewTask({ ...raiseInput(), store: tx });
+      });
+      await resolveManualRefundTask({
+        taskId: priced.taskId,
+        resolution: "completed",
+        note: "Priced from the booking's own payment history.",
+        actingMemberId: MEMBER_ID,
+        confirmedAmountCents: 4500,
+      });
+
       const replay = await prisma.$transaction(async (tx) => {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
         return raiseEditFinancialReviewTask({ ...raiseInput(), store: tx });

@@ -2560,9 +2560,38 @@ makes the settlement single-flight, so:
   and is not idempotent, so a caller placed beside the claim rather than
   downstream of it would silently double-consume the refundable headroom until
   the captured-cash cap tripped;
-- the Stripe call happens after the COMMIT, keyed
-  `${prefix}_${bookingModificationId}` like every other modification refund, and
-  enqueues the same durable recovery operation on failure.
+- the Stripe call happens after the COMMIT, and the refund DEBT is persisted
+  BEFORE it, inside the claim transaction — the frozen per-transaction allocation
+  plus the key prefix, exactly as `booking-cancel.ts` does it (#1349). Lock-free
+  is not the same as recovery-free: without that row a crash between the commit
+  and the provider call would leave a `COMPLETED` task, an untouched
+  `refundedAmountCents` and no trace that money was owed, because this route
+  writes no allocation of its own. The cron replays the frozen slices under the
+  stored prefix, Stripe answers the repeat with the original refund, and the
+  ledger dedupes on refund id.
+
+**The Stripe key and the recovery key are scoped to the TASK, not to the
+`BookingModification`.** Owner decision D-3032-1 settles a review against the
+ORIGINAL edit's modification row, and one edit can raise TWO review tasks — two
+unpriceable strands, one modification row. A modification-scoped Stripe prefix
+would give two same-amount refunds identical per-slice keys, so Stripe would
+answer the second with the FIRST refund and the caller would take the replayed id
+as success; a modification-scoped recovery key would let the two tasks upsert one
+another's row, and that upsert overwrites `amountCents` and `stripeKeyPrefix`.
+
+**The lockless path also needed one WRITE made safe.**
+`applyLocalRefundAllocation` computes an ABSOLUTE `refundedAmountCents` from a
+value it read a moment earlier, so two writers on one `PaymentTransaction`
+silently lose an update and OVERSTATE the refundable headroom. Until #3032 every
+caller either held `lock(1)` or ran only on a CANCELLED booking, so no two could
+race; a review completion is neither — it allocates against a LIVE booking with
+no lock, and while the fence keeps most concurrent edits off that booking, a
+consent-authority guest removal is exempt (owner decision D-14) and does move
+money. The write is now a compare-and-set on the exact value the slice was
+computed from, the same status-guarded-claim idiom used everywhere else here: it
+CANNOT lose the update, and a caller under `lock(1)` never sees it fire. The
+completion maps the refusal to a 409 with its transaction rolled back and its
+task still `OPEN`.
 
 `src/lib/__tests__/edit-financial-review-races.realdb.test.ts` proves both halves
 against a real server, forcing the interleaving with a third connection rather
@@ -2578,7 +2607,20 @@ adds no tier: it is a `findFirst` on the caller's transaction client, placed und
 the locks precisely so it cannot be answered by a task a concurrent completion
 was about to close. `adminShiftBookingDates` is the one edit path deliberately
 NOT fenced — it is price-preserving (`priceDiffCents: 0`, no refund, no credit),
-so it needs no money baseline.
+so it needs no money baseline. The predicate the three fenced services pass is
+each one's OWN repricing test, not a second expression beside it: the batch
+service passes `!pricePreservingModification`, the same value that chooses between
+the identity echo and the pricing engine twenty lines later. An earlier revision
+asked a similar-looking pair that differed by the other-lodge term, and a request
+carrying a name edit AND an other-lodge election — one the route's schema
+accepts — skipped the fence and then repriced.
+
+The preview takes the same fence, on the same predicate expressed in its own
+names (`src/app/api/bookings/[id]/modify-quote/route.ts`). It reads on the module
+client because a preview opens no transaction and writes nothing: a race with a
+completing review costs a stale quote, which the save then refuses under its
+locks. Without it the member would be shown a refund priced from a baseline the
+club has already said it cannot read, and the save would 409 on submit.
 
 Note what `softDeleteCancelledBooking` does NOT do here. It cancels the deleted
 booking's in-flight Stripe PaymentIntents **after** its transaction commits,

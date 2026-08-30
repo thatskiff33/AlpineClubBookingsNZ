@@ -1460,26 +1460,43 @@ OPEN -> COMPLETED   (#3030: the same finance:edit close, but the amount arrives
 OPEN -> COMPLETED   (#3032: and the confirmed amount now MOVES, down whichever of
                      the three existing settlement paths the booking's payment
                      says it belongs to - a canonical Stripe refund for a card
-                     payment, keyed to the edit's `BookingModification` and made
-                     AFTER the commit; the local ledger allocation for an
-                     internet-banking hand-back; or account credit through
+                     payment, made AFTER the commit; the local ledger allocation
+                     for an internet-banking hand-back; or account credit through
                      `createBookingModificationCredit` where nothing was captured.
                      The route is chosen and every refusal raised BEFORE the
                      status claim, so a refused completion leaves the task OPEN
-                     with nothing half-applied. Two refusals are possible: no
-                     `BookingModification` anchor to settle against, and an anchor
+                     with nothing half-applied. THREE refusals are possible: no
+                     `BookingModification` anchor to settle against; an anchor
                      whose credit key is already taken - owner decision D-3032-1's
                      obliged edge case, refused rather than reaching an untyped
-                     throw inside the credit writer. The member-facing event
-                     follows the money: REFUNDED only once Stripe returned a
-                     refund id, CREDITED where account credit was issued.)
+                     throw inside the credit writer; and a card amount larger than
+                     the booking's captured Stripe total, measured off the
+                     captured transactions rather than the `Payment.source`
+                     column, whose schema default would otherwise send a
+                     hand-settled booking down the card path. The member-facing
+                     event follows the money: REFUNDED only once Stripe returned a
+                     refund id, CREDITED where account credit was issued. The card
+                     route persists its refund DEBT - the frozen per-transaction
+                     slices and a TASK-scoped Stripe key prefix - inside the same
+                     transaction as the claim, before any provider call, so a
+                     crash in the commit-to-Stripe window is replayed by the
+                     recovery cron rather than lost. The prefix and the recovery
+                     operation are keyed to the TASK and not to the
+                     `BookingModification`, because one edit can raise two review
+                     tasks against one modification row. A Xero modification
+                     credit note for the same amount is queued on the same anchor
+                     after the commit, through `queueXeroBookingEditSettlement`.)
 OPEN -> DISMISSED   (#3030: for an `EDIT_FINANCIAL_REVIEW` task this means
-                     REVIEWED, NO ADJUSTMENT IS DUE for that occurrence - a real
-                     decision, which is why it is not the same thing as an
-                     unknown amount. It writes NO amount at all: putting a zero
-                     there would be the magic value this epic exists to remove.
-                     #3032: and it takes NO settlement route - no allocation, no
-                     credit, no Stripe call and no booking event - so nothing
+                     REVIEWED, AND THIS SYSTEM MOVED NO MONEY for that occurrence
+                     - a real decision, which is why it is not the same thing as
+                     an unknown amount. The REQUIRED note is what says which
+                     decision it was: nothing was owed, or the club settled it
+                     outside this task. Both are honest here and neither pretends
+                     money moved, which is the property requirement 7 asks for.
+                     It writes NO amount at all: putting a zero there would be the
+                     magic value this epic exists to remove. #3032: and it takes
+                     NO settlement route - no allocation, no credit, no Stripe
+                     call, no Xero note and no booking event - so nothing
                      downstream can read a dismissal as money having moved.)
 ```
 
@@ -1627,9 +1644,11 @@ There are FOUR creators, and only the first, second and fourth ever make an OPEN
   copied there: the admin surface links to the live one. #3032 adds the
   `bookingModificationId` the completion settles against (owner decision
   D-3032-1) to that context - a pointer to a row, deliberately NOT part of the
-  occurrence identity, so carrying it cannot re-identify a replay. Nothing raises
-  this task yet on `main`; the booking-edit path is wired by #3032 on the epic
-  branch.
+  occurrence identity, so carrying it cannot re-identify a replay. NOTHING RAISES
+  THIS TASK YET, on `main` or on the epic branch: the booking-edit path has to
+  decide an edit is unpriceable first, and that decision needs the discriminated
+  planner result #3031 introduces. #3030 shipped the state and #3032 the
+  settlement and the fence; the raise caller is #3031's.
 
 **#3032: while a review is OPEN, a second MONEY-AFFECTING edit to that booking is
 refused.** `assertNoPendingEditFinancialReview` (`src/lib/edit-financial-review.ts`)
@@ -1640,8 +1659,10 @@ a credit election and the price-preserving admin date shift are not fenced,
 because none of them reads the booking's stored money. Nor is a CONSENT-AUTHORITY
 removal (`CONSENT_DECLINE` / `CONSENT_EXPIRY`): owner decision D-14 says a member
 who never consented must always be able to come off a booking, so that removal
-proceeds and parks its own money as a second review task rather than being held
-behind a pricing question nobody has answered.
+proceeds rather than being held behind a pricing question nobody has answered.
+Once #3031 wires the raise, such a removal is intended to park its own money as a
+second review task - two occurrences, two keys, two amounts. Until then the
+exemption's only effect is that the fence does not refuse it.
 
 The transition is a status-fenced conditional update, so a double click can
 never double-apply the allocation, and the row is never processed by any cron —
