@@ -863,7 +863,6 @@ export function ManualRefundTaskQueue() {
    * (`INV-SSOT`): a screen with its own arithmetic would enable a button the
    * server then refuses, or the reverse.
    */
-  // NIGHT-PRICE REGION START (stored-night-price-repair-census)
   const unpricedNights =
     target !== null && target.task.unpricedNights
       ? target.task.unpricedNights
@@ -933,7 +932,6 @@ export function ManualRefundTaskQueue() {
     unpricedNights !== null &&
     nightBoxesTyped > 0 &&
     (nightPriceDeltaCents === null || nightPriceCheck?.ok !== true);
-  // NIGHT-PRICE REGION END (stored-night-price-repair-census)
 
   async function submit() {
     if (!target) return;
@@ -1211,11 +1209,31 @@ export function ManualRefundTaskQueue() {
                           // a review raised unpriced opens blank rather than at
                           // a figure nobody decided.
                           setDirection(null);
+                          /*
+                            #3191: the ONE thing in this file the night-price
+                            census does not scan, and it is five lines wide. It
+                            is the task's own settled amount rendered into its
+                            box - cents to dollars, the conversion every money
+                            input on this screen does - and no night price passes
+                            through it. EVERYTHING ELSE IN THIS FILE IS SCANNED,
+                            so a helper that could produce a per-night figure
+                            cannot be written anywhere in it, one line above the
+                            night-price code or a thousand lines below.
+
+                            Adding to the region is a real decision rather than
+                            paperwork: the census caps how large it may grow, and
+                            refuses a region that excludes nothing. Each marker
+                            sits on a line of its own and is a WHOLE comment, so
+                            removing the region cannot leave a half-open
+                            delimiter behind and blank the rest of the file.
+                          */
+                          /* MONEY-DISPLAY EXEMPTION START (stored-night-price-repair-census) */
                           setAmountInput(
                             task.amountCents === null
                               ? ""
                               : (task.amountCents / 100).toFixed(2),
                           );
+                          /* MONEY-DISPLAY EXEMPTION END (stored-night-price-repair-census) */
                           // #3191: always empty. See `nightPriceInputs`.
                           setNightPriceInputs({});
                           setTarget({ task, resolution: "completed" });
@@ -1394,7 +1412,6 @@ export function ManualRefundTaskQueue() {
                     could fill the blanks in, exactly those bookings would park
                     forever, which is the defect this issue exists to remove.
                   */}
-                  {/* NIGHT-PRICE REGION START (stored-night-price-repair-census) */}
                   {unpricedNights ? (
                     <UnpricedNightPriceFields
                       summary={unpricedNights}
@@ -1410,7 +1427,6 @@ export function ManualRefundTaskQueue() {
                       disabled={submitting || unverified !== null}
                     />
                   ) : null}
-                  {/* NIGHT-PRICE REGION END (stored-night-price-repair-census) */}
                   <div className="space-y-2">
                     <Label htmlFor="manual-refund-task-note">
                       Note{target.resolution === "dismissed" ? " (required)" : " (optional)"}

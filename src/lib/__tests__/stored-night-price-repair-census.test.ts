@@ -66,12 +66,24 @@ import { stripCommentsAndStrings } from "@/lib/__tests__/support/strip-comments"
  * the spelling.
  *
  * So that half is a BEHAVIOUR test and not a regex:
- * `manual-refund-task-queue-financial-review.test.tsx` -> "no box is ever filled
- * in by the screen, however many of the others are" fills every night but one on
- * the real screen and asserts the last stays empty. It is immune to how a
- * derivation is written, and it fails on one wherever in the two components it
- * is added. Neither instrument covers the other: this file catches a SECOND
- * WRITER appearing anywhere in the tree, which no behaviour test can see.
+ * `manual-refund-task-queue-financial-review.test.tsx` -> "no control on this
+ * screen fills a box in, and nothing it posts carries a night nobody typed".
+ * WHAT THAT TEST COVERS, EXACTLY, because an earlier draft of this paragraph
+ * overstated it and a review lens disproved it by building the thing and
+ * watching it pass: it fills every night but one on the real settle dialog,
+ * CLICKS EVERY OTHER BUTTON IN THE DIALOG and re-asserts the boxes, then asserts
+ * the confirm control is still disabled and that nothing was posted. So it
+ * catches a fill driven by a control whatever that control is CALLED - the
+ * earlier version matched button names against a regex, and a button reading
+ * "Use the balance" passed both instruments - and it catches a fill that never
+ * touches a box at all, by refusing to let the screen settle a set it completed
+ * for the officer.
+ *
+ * WHAT IT STILL DOES NOT COVER, stated rather than left to be found: a fill on a
+ * path that is not this dialog. That is what the scans below are for, and why
+ * neither instrument can be dropped - this file catches a SECOND WRITER
+ * appearing anywhere in the tree, and a reference to the target figure from
+ * outside this feature, neither of which any behaviour test can see.
  *
  * `vitest related` cannot reach this file - it reads the tree from disk and has
  * no import edge to what it scans - so it is selected by name.
@@ -90,64 +102,99 @@ const FEATURE_FILES = [
 ];
 
 /**
- * The settle screen, which is not a feature file and cannot be scanned whole.
+ * The settle screen. IT IS SCANNED WHOLE, minus one published exemption.
  *
- * IT IS WHERE THE ENTRIES ARE BUILT FROM THE BOXES, and therefore the natural
- * home for the "split it evenly" button this census exists to make unwritable -
- * so leaving it out would aim the whole check one file to the left of the
- * risk. It cannot simply join `FEATURE_FILES`: it also renders a task's amount
- * as `task.amountCents / 100`, and the division pattern would fail on money
- * arithmetic that has nothing to do with a night price.
+ * It cannot simply join `FEATURE_FILES`: it also renders a task's own settled
+ * amount as `task.amountCents / 100`, and the division pattern would fail on
+ * money arithmetic that has nothing to do with a night price.
  *
- * `INV-SSOT-001` requires a per-site exclusion to be published with what makes
- * it shrink, so the exclusion is SCOPED rather than silent: the file marks the
- * region that belongs to this feature, and the patterns run over that region
- * alone. The marker pair is what shrinks it - delete the night-price code and
- * the markers go with it.
+ * IT USED TO BE THE OTHER WAY ROUND - a marked night-price REGION, and the
+ * patterns run over that region alone - and a review lens measured what that
+ * really bought: `const evenNightGuess = (n, d) => Math.round(n / d)` written
+ * TWO LINES ABOVE the region marker, in the same component and callable from
+ * inside it, passed the scan. A region control that only requires two strings to
+ * appear inside it makes a split unwritable in about 70 of this file's 1530
+ * lines, which is not what the rule says. So the exclusion is inverted: the
+ * WHOLE file is scanned and a five-line exemption is cut out of it, which is a
+ * published exclusion in the `INV-SSOT-001` sense and is bounded below.
+ *
+ * The cost is honest and is the reason the region existed: an unrelated division
+ * or rounding added anywhere in this 1530-line component now fails an
+ * `INV-MOD-028` census. That friction is the point - whoever adds one has to say
+ * here that it is not a night-price derivation - and the failure message says so.
  */
 const SCOPED_FILE = "components/admin/manual-refund-task-queue.tsx";
-const REGION_START = "NIGHT-PRICE REGION START (stored-night-price-repair-census)";
-const REGION_END = "NIGHT-PRICE REGION END (stored-night-price-repair-census)";
+const EXEMPT_START = "MONEY-DISPLAY EXEMPTION START (stored-night-price-repair-census)";
+const EXEMPT_END = "MONEY-DISPLAY EXEMPTION END (stored-night-price-repair-census)";
 
 /**
- * The marked regions of a file, joined.
+ * How many lines of `SCOPED_FILE` may sit outside the scan, in total.
  *
- * The markers are COMMENTS, so they are located on the raw source and each
- * region is stripped afterwards - the other way round there would be nothing
- * left to find. Each marker sits on a line of its own and the region is the
- * WHOLE LINES between them, so no half of a comment delimiter can be carried
- * into the stripper. Throws rather than returning nothing when the pairing is
- * broken: a census that silently scans an empty string is the vacuous guard
- * this repository has shipped before.
+ * A CAP RATHER THAN A LIST, so the exemption cannot quietly grow back into the
+ * region it replaced. Five today; the ceiling leaves room for one more genuine
+ * money-display conversion and nothing like room for a helper.
  */
-function markedRegions(source: string): string {
-  const regions: string[] = [];
-  let cursor = 0;
-  for (;;) {
-    const start = source.indexOf(REGION_START, cursor);
-    if (start === -1) break;
-    const end = source.indexOf(REGION_END, start);
-    if (end === -1) {
-      throw new Error(
-        `${SCOPED_FILE}: a ${REGION_START} marker has no matching END. The night-price census cannot tell what it is meant to scan.`,
-      );
+const EXEMPT_LINE_BUDGET = 12;
+
+/**
+ * `source` with the exempt regions removed, then stripped.
+ *
+ * The markers are COMMENTS, so they are found on the raw source and the result
+ * is stripped afterwards - the other way round there would be nothing left to
+ * find. WHOLE LINES go, from the line holding a START marker through the line
+ * holding its END, and each marker is required to be a whole comment on a line
+ * of its own: cutting the middle out of a block comment would leave its opener
+ * behind and blank every line below it, which is the vacuous scan this census
+ * exists to avoid. Blank lines replace what is removed so a reported line number
+ * still points at the real line.
+ *
+ * Throws rather than returning nothing when the pairing is broken, for the same
+ * reason.
+ */
+function scannedSource(source: string): { code: string; exemptLines: number } {
+  const lines = source.split("\n");
+  const kept: string[] = [];
+  let exemptLines = 0;
+  let inside = false;
+  for (const [index, line] of lines.entries()) {
+    const hasStart = line.includes(EXEMPT_START);
+    const hasEnd = line.includes(EXEMPT_END);
+    if (hasStart || hasEnd) {
+      if (!/^\s*\/\*.*\*\/\s*$/.test(line)) {
+        throw new Error(
+          `${SCOPED_FILE}:${index + 1}: a night-price census exemption marker must be a WHOLE comment on a line of its own. Cutting the middle out of a block comment leaves its opener behind and blanks the rest of the file, which passes this census by having nothing to scan.`,
+        );
+      }
     }
-    const bodyStart = source.indexOf("\n", start);
-    const bodyEnd = source.lastIndexOf("\n", end);
-    if (bodyStart === -1 || bodyEnd <= bodyStart) {
-      throw new Error(
-        `${SCOPED_FILE}: the night-price census markers must each sit on a line of their own.`,
-      );
+    if (hasStart) {
+      if (inside) {
+        throw new Error(
+          `${SCOPED_FILE}:${index + 1}: a second ${EXEMPT_START} inside an open one. The night-price census cannot tell what it is meant to skip.`,
+        );
+      }
+      inside = true;
     }
-    regions.push(source.slice(bodyStart, bodyEnd));
-    cursor = end + REGION_END.length;
+    if (inside) {
+      exemptLines += 1;
+      kept.push("");
+    } else {
+      kept.push(line);
+    }
+    if (hasEnd) {
+      if (!inside) {
+        throw new Error(
+          `${SCOPED_FILE}:${index + 1}: an ${EXEMPT_END} with no matching START.`,
+        );
+      }
+      inside = false;
+    }
   }
-  if (regions.length === 0) {
+  if (inside) {
     throw new Error(
-      `${SCOPED_FILE}: no ${REGION_START} marker. Either the night-price code left this file - in which case remove this scoped scan - or somebody deleted the markers, in which case the derivation check has been silently switched off.`,
+      `${SCOPED_FILE}: an ${EXEMPT_START} marker has no matching END. The night-price census cannot tell what it is meant to skip.`,
     );
   }
-  return regions.map((region) => stripCommentsAndStrings(region)).join("\n");
+  return { code: stripCommentsAndStrings(kept.join("\n")), exemptLines };
 }
 
 function sourceFiles(): string[] {
@@ -238,32 +285,101 @@ describe("nothing in this feature can derive an amount", () => {
     });
   }
 
-  it(`${SCOPED_FILE}'s night-price region contains none either`, () => {
-    const code = markedRegions(readFileSync(join(SRC, SCOPED_FILE), "utf8"));
+  it(`the whole of ${SCOPED_FILE} contains none either`, () => {
+    const { code } = scannedSource(readFileSync(join(SRC, SCOPED_FILE), "utf8"));
     for (const { what, pattern } of DERIVATIONS) {
       expect(
         pattern.test(code),
-        `INV-MOD-028: the night-price region of ${SCOPED_FILE} appears to contain ${what}. This is where the entries posted to the server are built from the officer's boxes, so it is where a "split it evenly" control would go - and nothing on this path may produce a per-night amount.`,
+        `INV-MOD-028: ${SCOPED_FILE} appears to contain ${what}. This file builds the entries posted to the server out of the officer's boxes, so it is where a "split it evenly" control would go - and nothing in it may produce a per-night amount, however far from the night-price code it is written. If this really is money arithmetic that no night price passes through, move it inside the published MONEY-DISPLAY EXEMPTION region and say there why.`,
       ).toBe(false);
     }
   });
 
-  it("the scoped region is real code, and does not cover the whole file", () => {
-    // THE CONTROL, and it has two halves because the scoping can fail in two
-    // directions. A region that had shrunk to nothing would pass the assertion
-    // above by having nothing to scan; a region that had swallowed the file
-    // would fail it on `task.amountCents / 100`, which is the money arithmetic
-    // the exclusion exists for and has nothing to do with a night price.
+  it("scans the whole file apart from a small, load-bearing exemption", () => {
+    /*
+      THE CONTROL, and it has four halves because the scoping can fail in four
+      directions.
+
+      An exemption that had SWALLOWED the file would pass the assertion above by
+      having nothing left to scan, so the night-price code must still be in what
+      is scanned and the exempt line count is capped. An exemption that excluded
+      NOTHING would be habit rather than need, so what it removes has to be
+      something the patterns would otherwise fire on. And the scan has to reach
+      the END of the file: a cut that left a half-open comment delimiter behind
+      would blank every line below it, which is the vacuous scan this census
+      exists to avoid.
+    */
     const raw = readFileSync(join(SRC, SCOPED_FILE), "utf8");
-    const code = markedRegions(raw);
+    const { code, exemptLines } = scannedSource(raw);
     expect(code).toContain("nightPriceEntries");
     expect(code).toContain("nightPricesBlocked");
-    expect(code.length).toBeLessThan(raw.length / 2);
-    // The excluded remainder really does hold the division that made a
-    // whole-file scan impossible, so this exclusion is load-bearing rather
-    // than habit.
-    expect(stripCommentsAndStrings(raw)).toMatch(/amountCents\s*\/\s*100/);
+    // Rendered six hundred lines below the night-price code, on the file's last
+    // element: if the scan stops early, this is what says so. An identifier
+    // rather than a `data-testid`, because the stripper blanks string contents.
+    expect(code).toContain("<AutomaticRefundNoticesCard notices={autoRefunded}");
+    expect(
+      exemptLines,
+      `INV-SSOT-001: ${SCOPED_FILE}'s night-price exemption may not grow past ${EXEMPT_LINE_BUDGET} lines. An exclusion that keeps widening is how a scan ends up aimed one file to the left of the risk.`,
+    ).toBeLessThanOrEqual(EXEMPT_LINE_BUDGET);
+    expect(exemptLines).toBeGreaterThan(0);
+    // What is exempt really is something the patterns would fire on, so the
+    // exclusion is load-bearing rather than habit.
+    const whole = stripCommentsAndStrings(raw);
+    expect(whole).toMatch(/amountCents\s*\/\s*100/);
     expect(code).not.toMatch(/amountCents\s*\/\s*100/);
+  });
+
+  it("refuses a region whose markers are not whole comments on their own lines", () => {
+    // THE CONTROL for the delimiter rule. Removing whole lines out of the middle
+    // of a block comment leaves its opener behind, and the stripper then blanks
+    // everything below - a census that would pass by having nothing to read.
+    expect(() =>
+      scannedSource(
+        [
+          "const a = 1;",
+          `  /* ${EXEMPT_START}`,
+          "  const b = 2;",
+          `  ${EXEMPT_END} */`,
+        ].join("\n"),
+      ),
+    ).toThrow(/WHOLE comment on a line of its own/);
+    expect(() =>
+      scannedSource(`  /* ${EXEMPT_START} */\nconst a = 1;`),
+    ).toThrow(/has no matching END/);
+  });
+
+  it("lets only this feature reach the figure a remainder fill would need", () => {
+    /*
+      THE OTHER HALF OF THE INVERTED SCAN, and the reason the file boundary is
+      not the whole answer. Scanning this file whole stops the arithmetic being
+      lifted one line out of a region; it does not stop it being lifted one
+      MODULE out. A remainder fill needs exactly one value - what the blanks have
+      to come to - and `unpricedNightTargetCents` is the single definition of it
+      (there is no second one: this census's division pattern would fail on a
+      re-derivation written inside the feature).
+
+      So the reference itself is fenced. A helper in a new module cannot get the
+      target without naming this function, and naming it outside the four files
+      below fails here with its own file name.
+    */
+    const allowed = new Set([...FEATURE_FILES, SCOPED_FILE]);
+    const offenders: string[] = [];
+    for (const file of sourceFiles()) {
+      const code = stripCommentsAndStrings(readFileSync(file, "utf8"));
+      if (!/\bunpricedNightTargetCents\b/.test(code)) continue;
+      const rel = relative(SRC, file).split("\\").join("/");
+      if (allowed.has(rel)) continue;
+      offenders.push(rel);
+    }
+    expect(
+      offenders,
+      `INV-MOD-028: only this feature may read what the unpriced nights have to come to. A module that knows that figure can subtract the officer's typing from it and fill the last box in, which is the derivation no source pattern here can see. These modules reference it: ${offenders.join(", ")}`,
+    ).toEqual([]);
+    // THE CONTROL for the allowlist: the feature really does reference it, so a
+    // rename that emptied the scan would fail here rather than pass quietly.
+    expect(
+      stripCommentsAndStrings(readFileSync(join(SRC, SCOPED_FILE), "utf8")),
+    ).toMatch(/\bunpricedNightTargetCents\b/);
   });
 
   it("the stripper does not blind the patterns to real code", () => {
