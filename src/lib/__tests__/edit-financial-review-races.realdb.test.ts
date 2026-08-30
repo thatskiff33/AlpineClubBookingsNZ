@@ -175,13 +175,45 @@ let observerClient: PrismaClient;
       bookingModificationId: MODIFICATION_ID,
     });
 
-    async function clearTasksAndCredits() {
+    /**
+     * Everything a completed review writes, in FK order.
+     *
+     * A completion does not only touch the task and the credit: it also records a
+     * `BookingEvent` and an `AuditLog` row. `BookingEvent.booking` is
+     * `onDelete: Restrict`, so a run that leaves those events behind cannot then
+     * delete the booking, the lodge or the member — which is how this suite
+     * previously leaked `race-3032-member` into the shared scratch database and
+     * handed the induction baseline (#2361) a fifth "eligible" member.
+     */
+    async function clearReviewRunState() {
       await prisma.memberCredit.deleteMany({
         where: { sourceBookingModificationId: MODIFICATION_ID },
       });
       await prisma.manualRefundTask.deleteMany({
         where: { bookingId: BOOKING_ID },
       });
+      await prisma.bookingEvent.deleteMany({ where: { bookingId: BOOKING_ID } });
+      await prisma.auditLog.deleteMany({
+        where: {
+          OR: [
+            { memberId: MEMBER_ID },
+            { actorMemberId: MEMBER_ID },
+            { targetId: { in: [BOOKING_ID, MODIFICATION_ID] } },
+          ],
+        },
+      });
+    }
+
+    /** Every fixture row this suite owns, deepest child first. */
+    async function deleteReviewFixtures() {
+      await clearReviewRunState();
+      await prisma.bookingModification.deleteMany({
+        where: { id: MODIFICATION_ID },
+      });
+      await prisma.bookingGuest.deleteMany({ where: { id: GUEST_ID } });
+      await prisma.booking.deleteMany({ where: { id: BOOKING_ID } });
+      await prisma.lodge.deleteMany({ where: { id: LODGE_ID } });
+      await prisma.member.deleteMany({ where: { id: MEMBER_ID } });
     }
 
     /** How many backends are queued behind `blockerPid`, whatever they wait on. */
@@ -242,14 +274,7 @@ let observerClient: PrismaClient;
       observerClient = createSeparateClient("race-3032-observer");
       await Promise.all([lockHolderClient.$connect(), observerClient.$connect()]);
 
-      await clearTasksAndCredits();
-      await prisma.bookingModification.deleteMany({
-        where: { id: MODIFICATION_ID },
-      });
-      await prisma.bookingGuest.deleteMany({ where: { id: GUEST_ID } });
-      await prisma.booking.deleteMany({ where: { id: BOOKING_ID } });
-      await prisma.lodge.deleteMany({ where: { id: LODGE_ID } });
-      await prisma.member.deleteMany({ where: { id: MEMBER_ID } });
+      await deleteReviewFixtures();
 
       await prisma.member.create({
         data: {
@@ -308,26 +333,22 @@ let observerClient: PrismaClient;
         ),
       );
       if (typeof prisma !== "undefined") {
-        await clearTasksAndCredits().catch(() => {});
-        await prisma.bookingModification
-          .deleteMany({ where: { id: MODIFICATION_ID } })
-          .catch(() => {});
-        await prisma.bookingGuest
-          .deleteMany({ where: { id: GUEST_ID } })
-          .catch(() => {});
-        await prisma.booking
-          .deleteMany({ where: { id: BOOKING_ID } })
-          .catch(() => {});
-        await prisma.lodge.deleteMany({ where: { id: LODGE_ID } }).catch(() => {});
-        await prisma.member
-          .deleteMany({ where: { id: MEMBER_ID } })
-          .catch(() => {});
-        await prisma.$disconnect().catch(() => {});
+        // Deliberately NOT swallowed. This scratch database is shared with every
+        // other suite the #1881 harness imports, so a fixture this suite fails to
+        // remove is not a tidiness problem — it is a false result somewhere else.
+        // Swallowing the FK error here is exactly how `race-3032-member` survived
+        // into the induction baseline (#2361) and made it count five eligible
+        // members where four exist. A leak must fail THIS suite, here and loudly.
+        try {
+          await deleteReviewFixtures();
+        } finally {
+          await prisma.$disconnect().catch(() => {});
+        }
       }
     }, 60_000);
 
     it("FORCES the duplicate-raise interleaving: two applies of ONE occurrence queue on lock(1) and produce exactly one task", async () => {
-      await clearTasksAndCredits();
+      await clearReviewRunState();
 
       const lockHeld = deferred();
       const releaseLock = deferred();
@@ -409,7 +430,7 @@ let observerClient: PrismaClient;
     });
 
     it("FORCES the double-completion interleaving: two admins closing ONE task queue on its row and exactly one credit is issued", async () => {
-      await clearTasksAndCredits();
+      await clearReviewRunState();
 
       const raised = await prisma.$transaction(async (tx) => {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
@@ -516,7 +537,7 @@ let observerClient: PrismaClient;
       // occurrence instead: a retry of the same structural edit after an admin
       // has already priced and closed it is exactly the replay that must not
       // produce a second adjustment.
-      await clearTasksAndCredits();
+      await clearReviewRunState();
       const priced = await prisma.$transaction(async (tx) => {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
         return raiseEditFinancialReviewTask({ ...raiseInput(), store: tx });
