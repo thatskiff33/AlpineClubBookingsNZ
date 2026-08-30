@@ -112,6 +112,12 @@ const REVIEW_CONTEXT = {
   guestMemberId: "member-guest-9",
   bookingCheckIn: "2026-08-10",
   bookingCheckOut: "2026-08-12",
+  // Required by the context schema, and NULL is a legitimate value rather than a
+  // placeholder: it is the shape of a raise that had no `BookingModification`
+  // row to anchor against. Omitting the key entirely fails the `.strict()` parse,
+  // which turns every assertion below into "the evidence is unreadable" - a
+  // green-looking fixture measuring the wrong thing.
+  bookingModificationId: null,
 };
 
 const REVIEW_ROW = {

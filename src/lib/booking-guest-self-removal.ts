@@ -58,14 +58,23 @@ export type GuestSelfRemovalEligibility = {
  * election), so the page shows the action and the card surfaces the service's
  * plain-English 400 verbatim if it is refused.
  *
- * The second is #3031's evidence gate (INV-MOD-028): the booking's stored
- * sold-price rows cannot price the credit exactly, so the club has to confirm
- * the amount. Predicting it would mean loading every guest's
- * `BookingGuestNight` rows on every surface that offers the action — including
- * the member-night guard, which runs inside a booking-write transaction and must
- * not add a per-conflict query. Its 409 carries its own member-facing sentence
- * and is surfaced the same way. Both are DECLINED-with-an-explanation rather
- * than a silently missing control, which is the property that matters.
+ * The second USED TO BE #3031's evidence gate (INV-MOD-028), and is not any more:
+ * #3032 turned that gate from a refusal into a park, so a booking whose stored
+ * sold-price rows cannot price the credit no longer refuses the removal at all —
+ * the guest comes off and the amount is held for the club to confirm. There is no
+ * 409 left there to predict.
+ *
+ * What replaced it is the pending-review FENCE
+ * (`assertNoPendingEditFinancialReview`, `EDIT_FINANCIAL_REVIEW_PENDING`): a
+ * money-affecting change is refused while an EARLIER change to the same booking
+ * is still being priced. A self-removal is money-affecting, so it can meet that
+ * 409 — and predicting it is no more possible here than the gate it replaced,
+ * because it needs a live `ManualRefundTask` lookup on every surface that offers
+ * the action, including the member-night guard, which runs inside a booking-write
+ * transaction and must not add a per-conflict query. Its 409 carries its own
+ * member-facing sentence and is surfaced the same way. Both are
+ * DECLINED-with-an-explanation rather than a silently missing control, which is
+ * the property that matters.
  *
  * The quote-priced refusal (`isQuotePricedBooking`) IS predictable — one
  * indexed lookup — and callers that can afford it pass `isQuotePriced`. It

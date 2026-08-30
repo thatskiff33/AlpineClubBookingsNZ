@@ -56,6 +56,13 @@ import "./adult-member-hosting-queue-merge.realdb.test";
 // cancellation writers. Its own describe stays skipped unless the shared race
 // flag is set, and its uniquely-namespaced fixtures are cleaned independently.
 import "./bed-allocation-removal-races.realdb.test";
+// #3032 reuses the same guarded disposable PostgreSQL to prove the two race
+// properties the unpriceable-edit review lifecycle turns on and that no mock can
+// show: that two concurrent applies of ONE occurrence queue on lock(1) and raise
+// exactly one task, and that two admins completing ONE task queue on its row and
+// issue exactly one credit. Its own describe stays skipped unless the shared race
+// flag is set, and its uniquely-namespaced fixtures are cleaned independently.
+import "./edit-financial-review-races.realdb.test";
 // #2595 reuses the same guarded disposable PostgreSQL to prove that a member
 // merge cannot leave two people sharing a double bed with no confirmed
 // partnership, driving the real `executeMemberMerge` and the real

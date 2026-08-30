@@ -216,7 +216,16 @@ export function buildEditFinancialReviewReason(
       : nights.length === 1
         ? `the night of ${nights[0]}`
         : `${nights.length} nights: ${nights.join(", ")}`;
-  return `Booking edit gave back ${nightsPhrase}. The exact sold price could not be read from this booking's stored history, so the club must price the adjustment from the booking's own payment and rate history before any money moves.`.slice(
+  // #3032: the second sentence has to match the cause, because the two are read
+  // as instructions. "The exact sold price could not be read" is FALSE of a
+  // `COUNTERPART_STRAND_UNREADABLE` strand - its rows are complete and add up -
+  // and an admin told otherwise about a task that carries real per-night prices
+  // has been handed a contradiction while pricing real money.
+  const why =
+    occurrence.cause === "COUNTERPART_STRAND_UNREADABLE"
+      ? "This guest's own stored night prices are complete and add up, but another guest on the same booking has prices that cannot be read, so the booking's total could not be reworked automatically. Confirm the amount owed for the nights above before any money moves."
+      : "The exact sold price could not be read from this booking's stored history, so the club must price the adjustment from the booking's own payment and rate history before any money moves.";
+  return `Booking edit gave back ${nightsPhrase}. ${why}`.slice(
     0,
     MANUAL_REFUND_TASK_REASON_MAX,
   );
@@ -315,6 +324,7 @@ export async function raiseEditFinancialReviewTask({
   guestMemberId,
   bookingCheckIn,
   bookingCheckOut,
+  bookingModificationId,
   reason,
   paymentId = null,
   raisedAmountCents = null,
@@ -324,6 +334,20 @@ export async function raiseEditFinancialReviewTask({
   guestMemberId: string | null;
   bookingCheckIn: CalendarDate;
   bookingCheckOut: CalendarDate;
+  /**
+   * #3032 (owner decision D-3032-1): the `BookingModification` row this edit
+   * wrote, which is the anchor a confirmed amount settles against at completion.
+   * REQUIRED rather than defaulted: a default would let a caller lose the anchor
+   * silently, and the failure would then surface only when an admin tried to
+   * close the task, long after the edit committed. Pass `null` deliberately
+   * where there genuinely is no modification row.
+   *
+   * There is no production caller yet - the raise trigger arrives with #3031,
+   * which is what turns an unpriceable edit into a `financial_review_required`
+   * branch. Requiring the parameter NOW is what makes the future callers answer
+   * the question at the point they are written rather than inherit an answer.
+   */
+  bookingModificationId: string | null;
   /** Operator prose. Defaults to `buildEditFinancialReviewReason`. */
   reason?: string;
   /**
@@ -399,6 +423,7 @@ export async function raiseEditFinancialReviewTask({
     guestMemberId,
     bookingCheckIn,
     bookingCheckOut,
+    bookingModificationId,
   };
   // Parsed through the SAME schema the reader uses, at the WRITE site, because
   // the reader returns null on failure and does so deliberately (an admin must
@@ -504,6 +529,23 @@ function occurrenceKeyViolation(
  * `paymentId`, so a payment-scoped lookup would miss precisely the tasks this
  * feature creates.
  */
+/**
+ * What "this booking's money is still under review" MEANS, as a `where`
+ * fragment, and the one definition of it (`INV-SSOT`).
+ *
+ * Two readers ask that question, side by side in the same services: the FENCE
+ * below, on the caller's transaction client under the booking-edit locks, and
+ * `booking-financial-review-visibility.ts`, on the global client after the
+ * commit. Client, moment and shape all differ, so they stay two functions - but
+ * the predicate is one idea, and spelling it twice is how a later narrowing
+ * reaches the banner and not the fence. It lives here, with the module that
+ * mints the kind.
+ */
+export const OPEN_EDIT_FINANCIAL_REVIEW_TASK_FILTER = {
+  kind: ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW,
+  status: ManualRefundTaskStatus.OPEN,
+} as const;
+
 export async function findOpenEditFinancialReviewTask(
   bookingId: string,
   store: Prisma.TransactionClient,
@@ -520,11 +562,7 @@ export async function findOpenEditFinancialReviewTask(
   reviewContext: EditFinancialReviewContext | null;
 } | null> {
   const task = await store.manualRefundTask.findFirst({
-    where: {
-      bookingId,
-      kind: ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW,
-      status: ManualRefundTaskStatus.OPEN,
-    },
+    where: { bookingId, ...OPEN_EDIT_FINANCIAL_REVIEW_TASK_FILTER },
     select: {
       id: true,
       occurrenceKey: true,
@@ -552,4 +590,107 @@ export async function findOpenEditFinancialReviewTask(
     );
   }
   return { ...task, reviewContext };
+}
+
+/**
+ * #3032 (epic #2797): the pending-review FENCE.
+ *
+ * The epic's rule is *"a second money-affecting edit is fenced when it would
+ * require unresolved money as its baseline"*. This is the one place that rule is
+ * spelled, so every money-affecting door enforces the same thing rather than
+ * several things that agree today (`INV-SSOT`).
+ *
+ * THERE ARE FOUR DOORS, and the fourth was missed on the first pass. Three are
+ * services - the batch edit, the date edit and the single-guest removal - and the
+ * fourth is `POST /api/bookings/[id]/guests`, which does its own repricing inline
+ * in the route rather than through a service and so did not look like one. It
+ * reprices every existing guest, computes a delta against a stored total that is
+ * under review and writes the new total back, silently absorbing the very
+ * overstatement the review was holding. Count the doors by what WRITES a booking's
+ * money, never by what imports a service.
+ *
+ * ## Why it is needed
+ *
+ * An OPEN `EDIT_FINANCIAL_REVIEW` task means the system has already admitted it
+ * cannot say what this booking's last change was worth. A further edit that
+ * prices a refund or a charge has to start from the booking's stored money, and
+ * that stored money is exactly what is under review - so its answer would be a
+ * guess built on an unresolved guess, and the second guess would then be WRITTEN
+ * into the stored night rows and read back by the edit after it. That compounding
+ * is what the whole epic exists to stop.
+ *
+ * ## Why it is deliberately narrow
+ *
+ * `moneyAffecting: false` passes straight through, without so much as a query.
+ * Fencing a name correction, a credit election, or a price-preserving date shift
+ * behind an admin's pricing decision would trap a member on a booking they can
+ * see is wrong, for a reason that has nothing to do with their edit. The issue
+ * asks for exactly this split: *"identity-only changes remain independent where
+ * safe"*.
+ *
+ * A CONSENT-AUTHORITY removal is exempt too, and that exemption belongs to the
+ * caller rather than to this function, because only the caller can tell one.
+ * Owner decision D-14 says a member who never consented must ALWAYS be able to
+ * come off a booking; blocking that on a pricing question nobody has answered
+ * would trap them for as long as the review stayed open, which is a worse trap
+ * than the one this fence removes. The removal proceeds and parks its own money
+ * as a second review task - two occurrences, two keys, two amounts, each priced
+ * on its own evidence.
+ *
+ * ## Where to call it
+ *
+ * Inside the caller's transaction, AFTER the global and per-lodge locks and
+ * after the post-lock re-read, and before anything is written. A read taken
+ * before the locks could be answered by a task that a concurrent completion was
+ * about to close, or miss one it was about to open.
+ */
+export const EDIT_FINANCIAL_REVIEW_PENDING_CODE =
+  "EDIT_FINANCIAL_REVIEW_PENDING";
+
+/**
+ * Deliberately says what is true and what happens next, and blames nobody. The
+ * member did nothing wrong: the club's own records could not price their last
+ * change. #3033 owns the surfaces that render this; it is worded to be usable
+ * as-is in the meantime rather than leaving a raw 409 for whoever hits it first.
+ */
+export const EDIT_FINANCIAL_REVIEW_PENDING_MESSAGE =
+  "The club is still working out the money for the last change to this booking, so a further change that affects the price cannot be made yet. Your booking is unchanged. Please try again once the review is finished, or contact the club if it is urgent.";
+
+export class EditFinancialReviewPendingError extends EditFinancialReviewError {
+  /**
+   * A machine code, so a surface that can DO something about this - offer the
+   * finance queue, or explain the wait - can tell it apart from every other 409
+   * without matching on the sentence.
+   */
+  readonly code = EDIT_FINANCIAL_REVIEW_PENDING_CODE;
+
+  constructor() {
+    super(EDIT_FINANCIAL_REVIEW_PENDING_MESSAGE, 409);
+    this.name = "EditFinancialReviewPendingError";
+  }
+}
+
+export async function assertNoPendingEditFinancialReview({
+  bookingId,
+  moneyAffecting,
+  store,
+}: {
+  bookingId: string;
+  /**
+   * Whether THIS edit needs the booking's stored money as its baseline.
+   *
+   * REQUIRED with no default, and that is the point: a default of `true` would
+   * quietly fence identity edits the first time a caller forgot it, and a default
+   * of `false` would quietly let a money edit past. The compiler asks every call
+   * site the question instead (`INV-SSOT`'s "prefer unrepresentable over
+   * policed").
+   */
+  moneyAffecting: boolean;
+  store: Prisma.TransactionClient;
+}): Promise<void> {
+  if (!moneyAffecting) return;
+  const pending = await findOpenEditFinancialReviewTask(bookingId, store);
+  if (pending) {
+    throw new EditFinancialReviewPendingError();
+  }
 }

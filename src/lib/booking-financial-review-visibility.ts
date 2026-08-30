@@ -1,7 +1,7 @@
 import "server-only";
 
-import { ManualRefundTaskKind, ManualRefundTaskStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { OPEN_EDIT_FINANCIAL_REVIEW_TASK_FILTER } from "@/lib/edit-financial-review";
 
 /**
  * #3033 (epic #2797): which bookings currently have money held for review.
@@ -32,10 +32,16 @@ import { prisma } from "@/lib/prisma";
  * telling a member their booking change is under review because of one would be
  * false.
  */
-const OPEN_FINANCIAL_REVIEW = {
-  kind: ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW,
-  status: ManualRefundTaskStatus.OPEN,
-} as const;
+/**
+ * IMPORTED, not restated. The fence
+ * (`edit-financial-review.ts` -> `findOpenEditFinancialReviewTask`) asks this same
+ * question on the transaction client under the booking-edit locks, and this module
+ * asks it on the global client afterwards for the member's banner. Two spellings
+ * of one predicate is how a later narrowing reaches one of them and not the other,
+ * which on a money claim means the banner and the refusal disagreeing about
+ * whether a booking is under review (`INV-SSOT`).
+ */
+const OPEN_FINANCIAL_REVIEW = OPEN_EDIT_FINANCIAL_REVIEW_TASK_FILTER;
 
 /**
  * Which of these bookings have an OPEN financial review, as a set.

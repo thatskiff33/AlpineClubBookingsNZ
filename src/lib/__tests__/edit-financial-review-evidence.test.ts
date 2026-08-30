@@ -45,6 +45,10 @@ const CONTEXT: EditFinancialReviewContext = parseEditFinancialReviewContext({
   guestMemberId: "member-guest-9",
   bookingCheckIn: "2026-08-10",
   bookingCheckOut: "2026-08-12",
+  // Required by the context schema. NULL is the legitimate "no anchor" shape;
+  // OMITTING it fails the `.strict()` parse, which made this fixture null and
+  // both projection cases throw rather than assert.
+  bookingModificationId: null,
 })!;
 
 describe("the evidence projection an admin screen is built from (#3033)", () => {

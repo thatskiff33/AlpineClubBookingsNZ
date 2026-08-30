@@ -48,7 +48,7 @@ import {
 } from "../email-message-notes";
 import { CLUB_NAME } from "@/config/club-identity";
 import { EMAIL_DEFAULT_LODGE_NAME } from "@/lib/email-message-settings";
-import { FINANCIAL_REVIEW_EMAIL_NOTE } from "@/lib/booking-financial-review-copy";
+import { financialReviewEmailNote } from "@/lib/booking-financial-review-copy";
 import { formatCents as formatMoneyCents } from "@/lib/utils";
 import { loadEmailMessageSettingsForLodge } from "@/lib/email-message-settings";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
@@ -1299,11 +1299,17 @@ export async function sendBookingModifiedEmail(params: {
    * #3033 (epic #2797): this change saved and its refund or credit could not be
    * worked out from stored history, so the club is deciding it.
    *
-   * Optional and defaulting to false, so no existing caller changes behaviour.
-   * The raise path (#3032) is what sets it, at the one place that knows the edit
-   * was applied with its money unresolved.
+   * REQUIRED, with no default (#3032). It arrived optional-and-false so that
+   * #3033 could land the rendering without touching this lane's files, and that
+   * left the fix INERT: every production caller took the default, so the member
+   * whose adjustment was under review still got the silent money section the
+   * flag exists to prevent. A default here is not a convenience, it is a wrong
+   * answer that no call site has to look at - which is why this follows
+   * `confirmedAmountCents` and `assertNoPendingEditFinancialReview`'s
+   * `moneyAffecting` in making the compiler ask every caller the question
+   * instead (`INV-SSOT`, "prefer unrepresentable over policed").
    */
-  financialReviewPending?: boolean;
+  financialReviewPending: boolean;
   // Booking's lodge (multi-lodge phase 8): see sendBookingConfirmedEmail.
   lodgeId?: string | null;
 }) {
@@ -1345,7 +1351,13 @@ export async function sendBookingModifiedEmail(params: {
     zero, not the booking's new total, not an estimate.
   */
   const reviewNote = params.financialReviewPending
-    ? FINANCIAL_REVIEW_EMAIL_NOTE
+    ? financialReviewEmailNote({
+        // The two PAST-TENSE settlement arms below. "Nothing has been refunded
+        // or charged for it yet" cannot stand beside "a refund has been
+        // processed" in one email about one change.
+        moneyAlreadyMoved:
+          params.refundAmountCents > 0 || accountCreditAmountCents > 0,
+      })
     : "";
   const settlementNote =
     params.refundAmountCents > 0

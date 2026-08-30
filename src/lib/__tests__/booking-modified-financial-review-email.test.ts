@@ -61,6 +61,10 @@ function params(overrides: Record<string, unknown> = {}) {
     changeFeeCents: 0,
     refundAmountCents: 0,
     additionalAmountCents: 0,
+    // #3032 made this required, so the base fixture states the CONTROL value
+    // explicitly: this is the "no review is open" email every case below is
+    // measured against, not an absence the compiler filled in.
+    financialReviewPending: false,
     ...overrides,
   };
 }
@@ -145,6 +149,62 @@ describe("an unresolved adjustment no longer sends a silent money section (#3033
     expect(html).toMatch(/An additional payment of \$45\.00 is required/);
   });
 
+  it("drops 'nothing has moved' when the settlement note says money HAS moved", async () => {
+    /*
+      #3032 - THE ONE COMPOSITION THAT CONTRADICTS ITSELF.
+
+      Two of the settlement note's four arms are past tense about money: "A
+      refund of $X has been processed" and "Account credit of $X has been
+      added". Beside either of them, "Nothing has been refunded or charged for
+      it yet" is a flat contradiction in one email about one change, and the
+      member has no way to tell which sentence to believe. The
+      additional-payment arms are compatible - they are about money that has NOT
+      moved - and the case above requires the sentence to survive them.
+
+      NOT REACHABLE THROUGH ANY CURRENT PATH, and pinned anyway. A parked edit
+      settles nothing, so its refund, credit and additional amounts are all zero
+      by construction. The reachability is a property of today's callers, not of
+      the copy; the contradiction is removed where it is composed, so a future
+      caller cannot reintroduce it by being written.
+    */
+    for (const moved of [
+      { refundAmountCents: 5000 },
+      { accountCreditAmountCents: 5000 },
+    ]) {
+      const overrides = { financialReviewPending: true, ...moved };
+      const note = await paymentNoteFromSender(overrides);
+      const html = bookingModifiedTemplate(params(overrides));
+
+      // The honest half stays: the club is still working the amount out.
+      expect(note).toMatch(/working out what that change means/i);
+      expect(html).toMatch(/working out what that change means/i);
+      // The contradicting sentence is gone from both surfaces.
+      expect(note).not.toMatch(/nothing has been refunded or charged/i);
+      expect(html).not.toMatch(/nothing has been refunded or charged/i);
+      // And the settlement fact itself is untouched.
+      expect(note).toMatch(/has been (processed|added)/i);
+    }
+  });
+
+  it("keeps 'nothing has moved' when the settlement note is a request to PAY", async () => {
+    // THE CONTROL, and it is the half that would be lost by suppressing the
+    // sentence whenever any settlement note is present. "An additional payment
+    // is required" is about money that has not moved, so the two agree.
+    const overrides = {
+      financialReviewPending: true,
+      additionalAmountCents: 4500,
+      refundAmountCents: 0,
+      accountCreditAmountCents: 0,
+    };
+
+    expect(await paymentNoteFromSender(overrides)).toMatch(
+      /nothing has been refunded or charged/i,
+    );
+    expect(bookingModifiedTemplate(params(overrides))).toMatch(
+      /nothing has been refunded or charged/i,
+    );
+  });
+
   it("carries the invoice and reference an internet-banking payment needs", async () => {
     /*
       The suppressed branch was not merely a sentence — it is HOW the member
@@ -152,17 +212,41 @@ describe("an unresolved adjustment no longer sends a silent money section (#3033
       too, which is the difference between a member who can pay and one who
       cannot.
     */
-    const note = await paymentNoteFromSender({
+    const overrides = {
       financialReviewPending: true,
       additionalAmountCents: 4500,
       additionalPaymentMethod: "INTERNET_BANKING",
       xeroInvoiceNumber: "INV-0042",
       paymentReference: "TAC-1234",
-    });
+    };
+    const note = await paymentNoteFromSender(overrides);
 
     expect(note).toMatch(/working out what that change means/i);
     expect(note).toContain("Xero invoice INV-0042");
     expect(note).toContain("Payment reference: TAC-1234.");
+
+    /*
+      #3032: and the SAME composition in the HTML the member actually opens.
+      The flat body and the template build this from separate code, so asserting
+      only one of them leaves the other free to drop the how-to-pay half - which
+      is the exact shape of the #3033 defect, in the surface most members read.
+      This is also the case pinned byte-for-byte as
+      `bookingModifiedTemplate:financialReviewPendingWithPayment` in the
+      rendered-email corpus.
+    */
+    const html = bookingModifiedTemplate(params(overrides));
+
+    expect(html).toMatch(/working out what that change means/i);
+    expect(html).toMatch(
+      /An additional Internet Banking payment of \$45\.00 is required/,
+    );
+    expect(html).toContain("Xero invoice INV-0042");
+    expect(html).toContain("Payment reference: TAC-1234.");
+    // The two notes are SEPARATE boxes, and the review one comes first: the
+    // honest sentence must not be buried under the instruction to pay.
+    expect(html.indexOf("working out what that change means")).toBeLessThan(
+      html.indexOf("An additional Internet Banking payment"),
+    );
   });
 
   it("scopes 'nothing to do' to the change, so the payment instruction still stands", async () => {

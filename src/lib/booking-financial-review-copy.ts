@@ -75,9 +75,42 @@ export const FINANCIAL_REVIEW_NOTHING_TO_DO =
  * Composed here rather than at each of them, so the HTML email and the
  * admin-editable flat body cannot say different things — which was the original
  * defect this module fixes.
+ *
+ * ## Why `moneyAlreadyMoved` exists
+ *
+ * Both surfaces compose this note with a settlement note beside it, and two of
+ * that note's four arms are PAST TENSE ABOUT MONEY: "A refund of $X has been
+ * processed" and "Account credit of $X has been added". Beside them
+ * `FINANCIAL_REVIEW_NOTHING_MOVED` — "Nothing has been refunded or charged for
+ * it yet" — is a flat contradiction in one email about one change, and the
+ * member has no way to tell which sentence to believe.
+ *
+ * The remaining two arms are compatible and stay: "an additional payment is
+ * required" is about money that has NOT moved, which is what the sentence says.
+ *
+ * NOT REACHABLE TODAY, and built anyway. A parked edit settles nothing, so its
+ * refund, credit and additional amounts are all zero and no settlement arm fires
+ * — the two paths that can park (#3032's guest removal; the batch path still
+ * refuses, #3170) both produce zeros by construction. But "unreachable" is a
+ * property of today's callers rather than of the copy, and the cost of making the
+ * contradiction unrepresentable is one boolean, whereas the cost of discovering
+ * it is a member being told two opposite things about their own money. With
+ * `moneyAlreadyMoved: false` the string is byte-identical to what shipped before.
  */
-export const FINANCIAL_REVIEW_EMAIL_NOTE = [
-  FINANCIAL_REVIEW_WORKING_IT_OUT,
-  FINANCIAL_REVIEW_NOTHING_MOVED,
-  FINANCIAL_REVIEW_NOTHING_TO_DO,
-].join(" ");
+export function financialReviewEmailNote({
+  moneyAlreadyMoved,
+}: {
+  /**
+   * Whether the settlement note composed BESIDE this one says money has already
+   * moved — a refund processed or account credit added. Required with no
+   * default, so a third surface has to answer the question rather than inherit a
+   * silent "no" (`INV-SSOT`, "prefer unrepresentable over policed").
+   */
+  moneyAlreadyMoved: boolean;
+}): string {
+  return [
+    FINANCIAL_REVIEW_WORKING_IT_OUT,
+    ...(moneyAlreadyMoved ? [] : [FINANCIAL_REVIEW_NOTHING_MOVED]),
+    FINANCIAL_REVIEW_NOTHING_TO_DO,
+  ].join(" ");
+}

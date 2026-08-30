@@ -88,6 +88,10 @@ vi.mock("@/lib/admin-permissions", () => ({
 // effects" requirement is asserted, not assumed (see the zero-write suite).
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    // #3032: the preview half of the pending-review fence reads this. Empty by
+    // default - no financial review is open - so this suite asserts exactly what
+    // it asserted before.
+    manualRefundTask: { findFirst: vi.fn().mockResolvedValue(null) },
     booking: {
       findUnique: h.bookingFindUnique,
       findMany: h.bookingFindMany,

@@ -1222,14 +1222,30 @@ a contract here, and an invariant asserting a reach it does not have is worse
 than no invariant: the next reader stops checking.
 
 GATED — the rule above is enforced, and restoring an estimator makes a named test
-fail:
+fail. What a gated path DOES about an unpriceable edit differs, and #3032 is what
+made the two differ:
 
 - the IN-PROGRESS edit planner, `buildInProgressGuestRangePlan`
   (`src/lib/booking-edit-guest-ranges.ts`), reached from both the modify-quote
-  preview and the modify save whenever the stay is already under way;
+  preview and the modify save whenever the stay is already under way. It still
+  REFUSES (`FINANCIAL_REVIEW_REQUIRED`, 409) and moves nothing. The refusal is an
+  interim and is named as one: parking it needs a per-night integer for every
+  night each strand ends up holding, because `syncGuestNights` rewrites those rows
+  from `perNightCents` and refuses rather than defaulting, and a strand with no
+  usable stored price has no such number for a night it KEEPS. The three ways to
+  supply one are money decisions rather than implementation choices, and they are
+  open — see the throw site in `booking-batch-modification-service.ts`;
 - the single-guest removal, `removeBookingGuestInTransaction`
   (`src/lib/booking-guest-removal-service.ts`), reached from the guest DELETE
-  route.
+  route. It PARKS (#3032): the guest comes off, and the amount is held as an OPEN
+  `EDIT_FINANCIAL_REVIEW` task with a NULL amount under `INV-PAY-051`. A removal's
+  structural change is a row delete, so it is fully expressible with no valuation
+  at all. On that branch nothing is repriced, no promotion is recalculated, no
+  settlement options are computed, no remaining strand's price or rate snapshot is
+  rewritten, and the booking's stored total does not move — reducing it would mean
+  knowing by how much, which is the question under review. `priceDiffCents` is
+  zero because the booking did not move, NOT because zero was chosen as the
+  adjustment.
 
 NOT GATED, and named rather than left to be discovered:
 
@@ -1240,11 +1256,17 @@ NOT GATED, and named rather than left to be discovered:
   and that amount is written into the night rows. This is the busiest booking
   path, and widening the gate onto it is a product decision about refusing edits
   to a large share of live bookings, not a tidy-up. It is **#3166**.
-- **A consent DECLINE or EXPIRY removal.** Owner decision D-14 says such a
-  removal must ALWAYS be able to take its target off the booking, so it is exempt
-  from the removal gate: refusing it would trap a member on a booking they have
-  said no to. Its money still comes from the existing arithmetic until #3032
-  parks it. See the exemption in `removeBookingGuestInTransaction`.
+- ~~**A consent DECLINE or EXPIRY removal** is exempt from the removal gate.~~
+  **Closed by #3032, and the exemption is gone.** It existed because the gate
+  could only REFUSE, and owner decision D-14 says such a removal must ALWAYS be
+  able to take its target off the booking — refusing one traps a member on a
+  booking they have said no to, permanently, because the refusal rolls the
+  status-guarded claim back with `consentStatus` already written terminal. Parking
+  removes the guest and holds only the amount, which is what D-14 asked for and
+  what a refusal could not give, so there is nothing left to exempt. A consent
+  removal is now judged and parked exactly like any other. It remains exempt from
+  the SEPARATE pending-review fence (`INV-PAY-051`), which is a different rule
+  about a SECOND edit while an earlier review is open.
 - **The waitlist offer-time reprice** re-bases the whole stay at current rates by
   design (the offer is a new price the member has not yet accepted) and, since
   #3031, writes the per-night rows it prices so the next edit reads real
@@ -1263,4 +1285,10 @@ Pinned by `booking-edit-guest-ranges-sparse.test.ts` (the 960-case matrix and on
 refusal proof per removed estimator), `booking-edit-financial-review-parity.test.ts`,
 `booking-guest-removal-exact-credit.test.ts`,
 `guest-removal-minors-alert-route.test.ts` and the lenient-reader census in
-`in-progress-edit-sold-price-census.test.ts`.
+`in-progress-edit-sold-price-census.test.ts`. The removal PARK is pinned by
+`booking-guest-consent-authority.test.ts` (the consent decline and the expiry
+sweep, each against a priced control that raises nothing) and by
+`guest-removal-minors-alert-route.test.ts`, which drives the real route and
+asserts that the guest is deleted, that the tasks are raised with a null amount
+and this removal's `BookingModification` as their anchor, and that every
+settlement figure handed to the post-commit provider helpers is zero.

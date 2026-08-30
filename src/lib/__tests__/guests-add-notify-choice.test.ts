@@ -21,6 +21,15 @@ const mockMemberFindUnique = vi.fn();
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    /*
+      #3032: the modified email asks whether the club is still working out an
+      amount on this booking, through `bookingHasOpenFinancialReview`. That
+      reads the GLOBAL client after the transaction commits, which is a
+      different read from the fence's in-transaction `findFirst`. Empty by
+      default - no review is open - so every pre-#3032 assertion in this file
+      means exactly what it meant before.
+    */
+    manualRefundTask: { findMany: vi.fn().mockResolvedValue([]) },
     $transaction: (...args: unknown[]) => {
       const fn = args[0];
       if (typeof fn === "function") return (mockTransaction as any)(fn);
@@ -250,6 +259,13 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
       createMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
     bookingModification: { create: vi.fn().mockResolvedValue({ id: "mod1" }) },
+    // #3032: the pending-review fence reads this INSIDE the transaction, under
+    // both locks and after the post-lock re-read. `null` is "no review is open",
+    // so every pre-#3032 assertion in this file means what it always meant; the
+    // fence cases below point it at a row instead. Note this is a different read
+    // from the modified email's post-commit `manualRefundTask.findMany` on the
+    // global client, mocked at the top of the file.
+    manualRefundTask: { findFirst: vi.fn().mockResolvedValue(null) },
     bookingRequest: { findFirst: vi.fn().mockResolvedValue(null) },
     payment: { update: vi.fn().mockResolvedValue({}) },
     season: { findMany: vi.fn().mockResolvedValue(CURRENT_SEASON) },
@@ -403,5 +419,104 @@ describe("POST /api/bookings/[id]/guests notify choice (#1769b)", () => {
     expect(mockTransaction).not.toHaveBeenCalled();
     expect(mockedSendModifiedEmail).not.toHaveBeenCalled();
     expect(mockedLogAudit).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /api/bookings/[id]/guests is fenced while the money is under review (#3032)", () => {
+  /**
+   * THE FOURTH MONEY-AFFECTING DOOR. `assertNoPendingEditFinancialReview` was
+   * called from three services and not from here, and this route is the one that
+   * absorbs the damage silently rather than showing it.
+   *
+   * It reprices every existing guest, so an unreadable strand - which carries no
+   * locked night prices - is revalued at today's rate (the #3031 defect); it
+   * computes `priceDiffCents` against a `finalPriceCents` that is under review,
+   * charges only on a positive delta, and then WRITES the new `finalPriceCents`.
+   * The overstatement the review exists to hold is absorbed into the stored
+   * figure, and the admin who later completes the review credits the member
+   * against a total that has already had it taken out: the same money leaves
+   * twice.
+   *
+   * Driven through the REAL route and the REAL fence - the only thing arranged is
+   * the row the fence reads.
+   */
+  it("refuses with the fence's own machine code, and writes nothing", async () => {
+    const booking = makeBooking();
+    const tx = makeTx(booking);
+    tx.manualRefundTask.findFirst.mockResolvedValue({
+      id: "task-open",
+      occurrenceKey: "occ-1",
+      amountCents: null,
+      raisedAmountCents: null,
+      reviewContext: null,
+    });
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    const { POST } = await import("@/app/api/bookings/[id]/guests/route");
+
+    const res = await POST(guestsRequest({ guests: [NON_MEMBER_GUEST] }), params);
+
+    expect(res.status).toBe(409);
+    // The CODE, not merely the status. `EditFinancialReviewPendingError` extends
+    // the shared `ApiError`, so a handler answering it through the generic branch
+    // would return the right status and sentence with no `code` at all, and the
+    // surface that can explain the wait would show a bare error.
+    expect((await res.json()).code).toBe("EDIT_FINANCIAL_REVIEW_PENDING");
+
+    // Refused BEFORE any write: no guest row, no night rows, no new stored
+    // total, no modification row, and no email.
+    expect(tx.bookingGuest.create).not.toHaveBeenCalled();
+    expect(tx.bookingGuestNight.createMany).not.toHaveBeenCalled();
+    expect(tx.booking.update).not.toHaveBeenCalled();
+    expect(tx.bookingModification.create).not.toHaveBeenCalled();
+    expect(mockedSendModifiedEmail).not.toHaveBeenCalled();
+  });
+
+  it("still adds a guest when no review is open at all", async () => {
+    // THE CONTROL, and its empty result is stated here rather than inherited:
+    // `vi.clearAllMocks()` keeps implementations, so a control that said nothing
+    // about this read could silently run against the previous case's OPEN row and
+    // invert.
+    const booking = makeBooking();
+    const tx = makeTx(booking);
+    tx.manualRefundTask.findFirst.mockResolvedValue(null);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    const { POST } = await import("@/app/api/bookings/[id]/guests/route");
+
+    const res = await POST(guestsRequest({ guests: [NON_MEMBER_GUEST] }), params);
+
+    expect(res.status).toBe(200);
+    expect(tx.manualRefundTask.findFirst).toHaveBeenCalled();
+    expect(tx.bookingGuest.create).toHaveBeenCalled();
+    expect(tx.booking.update).toHaveBeenCalled();
+  });
+
+  it("answers a stranger with 403 rather than telling them a review is open", async () => {
+    // The fence sits BELOW the authorisation check on purpose: a 409 here would
+    // tell somebody with no business on this booking that the club is reviewing
+    // its money, and would be the wrong answer besides.
+    mockedAuth.mockResolvedValue({
+      user: {
+        id: "m-nobody",
+        role: "MEMBER",
+        accessRoles: [{ role: "USER" }],
+        email: "nobody@test.com",
+      },
+    } as any);
+    const booking = makeBooking();
+    const tx = makeTx(booking);
+    tx.manualRefundTask.findFirst.mockResolvedValue({
+      id: "task-open",
+      occurrenceKey: "occ-1",
+      amountCents: null,
+      raisedAmountCents: null,
+      reviewContext: null,
+    });
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    const { POST } = await import("@/app/api/bookings/[id]/guests/route");
+
+    const res = await POST(guestsRequest({ guests: [NON_MEMBER_GUEST] }), params);
+
+    expect(res.status).toBe(403);
+    expect(tx.manualRefundTask.findFirst).not.toHaveBeenCalled();
   });
 });

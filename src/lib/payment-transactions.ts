@@ -1037,6 +1037,48 @@ export async function refundPaymentTransactions({
   };
 }
 
+/**
+ * Raised when the compare-and-set below loses: another writer moved this
+ * transaction's `refundedAmountCents` between the read and the write.
+ *
+ * Exported so a caller can turn it into an answer its operator can act on
+ * ("refresh and try again") rather than a 500. It carries no amounts - the
+ * caller's own figures are the ones the operator needs.
+ */
+export class RefundAllocationRacedError extends Error {
+  constructor() {
+    super("Refund allocation raced another writer on the same payment");
+    this.name = "RefundAllocationRacedError";
+  }
+}
+
+/**
+ * Mirror a refund the club made by hand into the payment ledger.
+ *
+ * ## Why every write here is a COMPARE-AND-SET (#3032)
+ *
+ * This function computes an ABSOLUTE `refundedAmountCents` from a value it read
+ * a moment earlier, so two writers on one `PaymentTransaction` silently lose an
+ * update: a $30 refund recorded by one and a $50 allocation written by the other
+ * leave the row saying $50 instead of $80, which OVERSTATES the refundable
+ * headroom by $30 and lets a later refund exceed what was ever captured.
+ *
+ * That was unreachable until #3032. Every pre-#3032 caller either holds the
+ * global settlement key `lock(1)` (booking-cancel, the credit writers reached
+ * from the booking-edit services) or ran only on a CANCELLED booking, which no
+ * edit path will touch. #3032 adds a caller that is neither: completing an
+ * `EDIT_FINANCIAL_REVIEW` task allocates against a LIVE booking and deliberately
+ * holds no advisory lock, because serialising it would mean holding `lock(1)`
+ * across a Stripe round trip. The fence keeps most concurrent edits off that
+ * booking, but a consent-authority guest removal is exempt by owner decision
+ * D-14 and does move money.
+ *
+ * The guard is the repository's own idiom - a status-guarded claim, here guarded
+ * on the exact value the plan was computed from - and it FAILS LOUD instead of
+ * losing the update. Callers under `lock(1)` cannot race, so it never fires for
+ * them; the one caller that can race gets a refusal it can hand to an operator,
+ * with its transaction rolled back and its task left OPEN.
+ */
 export async function applyLocalRefundAllocation({
   paymentId,
   amountCents,
@@ -1083,8 +1125,14 @@ export async function applyLocalRefundAllocation({
     const nextRefundedAmountCents =
       transaction.refundedAmountCents + refundAmountForTransaction;
 
-    await store.paymentTransaction.update({
-      where: { id: transaction.id },
+    // Compare-and-set on the value this slice was computed from. See the
+    // docblock: an unguarded absolute write loses a concurrent writer's update
+    // and overstates the refundable headroom.
+    const claimed = await store.paymentTransaction.updateMany({
+      where: {
+        id: transaction.id,
+        refundedAmountCents: transaction.refundedAmountCents,
+      },
       data: {
         refundedAmountCents: nextRefundedAmountCents,
         status: applyRefundStatus(
@@ -1094,6 +1142,9 @@ export async function applyLocalRefundAllocation({
         ),
       },
     });
+    if (claimed.count === 0) {
+      throw new RefundAllocationRacedError();
+    }
     remainingAmountCents -= refundAmountForTransaction;
   }
 

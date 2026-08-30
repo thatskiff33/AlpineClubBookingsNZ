@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import path from "node:path";
+import { stripComments } from "@/lib/__tests__/support/strip-comments";
 
 const h = vi.hoisted(() => ({
   checkCapacityForGuestRanges: vi.fn(),
@@ -262,6 +265,13 @@ describe("#3031 quote and apply consume one discriminated result", () => {
     const context: EditFinancialReviewContext = {
       version: 1,
       occurrence: result.occurrences[0],
+      // #3032's D-3032-1 anchor: the ORIGINAL edit's BookingModification row, so
+      // a confirmed amount settles against the same record the edit already used
+      // for its credit and Stripe idempotency keys. Required, not defaulted -
+      // #3031 wrote this fixture before the field existed, and the merge is what
+      // surfaced it. It is deliberately NOT on the occurrence itself, so it
+      // cannot re-identify a replay.
+      bookingModificationId: "bm1",
       guestMemberId: "m1",
       bookingCheckIn: "2026-08-20" as EditFinancialReviewContext["bookingCheckIn"],
       bookingCheckOut:
@@ -290,6 +300,107 @@ describe("#3031 quote and apply consume one discriminated result", () => {
     // member's fault - the stored history is the club's record, not theirs.
     expect(refusal.message).toMatch(/nothing has been changed yet/i);
     expect(refusal.message).not.toMatch(/\$|corrupt|invalid|error|your data/i);
+  });
+});
+
+describe("#3032 every door that can raise the fence surfaces its code", () => {
+  /**
+   * The pending-review fence (`assertNoPendingEditFinancialReview`) refuses a
+   * second money-affecting edit with a 409 and a machine code. FOUR doors can
+   * raise it — the preview, the save, the guest removal and the guest ADD — and a
+   * member can meet the SAME refusal through any of them.
+   *
+   * WHY THIS IS A SOURCE SCAN. The property is an ORDERING one:
+   * `EditFinancialReviewPendingError` extends `ApiError`, so a handler's generic
+   * `ApiError` branch will happily catch it and answer with the right status, the
+   * right sentence, and NO `code`. Nothing fails, nothing logs, and the panel that
+   * would have offered "the club is pricing your last change" shows a bare error
+   * instead. That is precisely the shape a behavioural test on the happy path
+   * cannot see.
+   *
+   * WHAT THIS CENSUS GOT WRONG, AND WHY IT IS WORTH SAYING. The first version
+   * searched for the literal `err instanceof ApiError`. `modify-quote/route.ts`
+   * writes `error instanceof ApiError`, so for that door the match was -1, the
+   * ordering assertion sat behind `if (genericBranch > -1)` and never ran at all —
+   * a census passing because it matched nothing, which is the false green this
+   * repository keeps getting caught by. Two more holes went with it: the "does it
+   * surface the code" half accepted a bare `err.code` anywhere in the file, which
+   * any unrelated branch satisfies, and the "is the fence handled" half accepted
+   * the IMPORT of `EDIT_FINANCIAL_REVIEW_PENDING_CODE` at the top of the file,
+   * which is above everything by construction.
+   *
+   * So all three halves are now tied to what the code WRITES:
+   *
+   *  - both spellings of the receiver, and both the local and the aliased shared
+   *    `ApiError`, and the generic branch is REQUIRED rather than optional — a
+   *    door with none is a change somebody must come and look at;
+   *  - the fence must be handled at a real handling site (an `instanceof` branch,
+   *    or a response literal naming the code), never at an import; and
+   *  - the `code` must appear IN that handling site rather than anywhere in the
+   *    file.
+   *
+   * Comments are stripped first. This repository documents each defect at the
+   * site where it removed it, so the strings a scanner greps for are densest in
+   * exactly the files that no longer commit the defect — including this feature's
+   * own docblocks, which discuss the generic `ApiError` branch at length.
+   *
+   * The DELETE and the ADD routes additionally have real behavioural proofs, in
+   * `guest-removal-minors-alert-route.test.ts` and
+   * `guests-add-notify-choice.test.ts`; this is the census that stops the other
+   * two drifting away from them.
+   */
+  const DOORS = [
+    "src/app/api/bookings/[id]/modify-quote/route.ts",
+    "src/app/api/bookings/[id]/modify/route.ts",
+    "src/app/api/bookings/[id]/guests/[guestId]/route.ts",
+    "src/app/api/bookings/[id]/guests/route.ts",
+  ];
+
+  /** How far past the handling site the `code` it answers with may sit. */
+  const HANDLER_WINDOW = 600;
+
+  it.each(DOORS)("%s answers with the code, above the generic branch", (door) => {
+    const source = stripComments(
+      fs.readFileSync(path.resolve(process.cwd(), door), "utf8"),
+    );
+
+    // A HANDLING site, not an import: an `instanceof` branch on the error, or a
+    // response literal naming the code. `import { EDIT_FINANCIAL_REVIEW_PENDING_CODE }`
+    // matches neither.
+    const pendingBranch = source.search(
+      /instanceof EditFinancialReviewPendingError|code:\s*EDIT_FINANCIAL_REVIEW_PENDING_CODE/,
+    );
+    expect(
+      pendingBranch,
+      `${door} must handle the fence at a real handling site, not merely import its code`,
+    ).toBeGreaterThan(-1);
+
+    // The code itself, and IN the handling site: a branch that caught the error
+    // and answered without `code` would satisfy an `instanceof` check on its own,
+    // and an `err.code` in some unrelated branch elsewhere would satisfy a
+    // whole-file search.
+    const handler = source.slice(pendingBranch, pendingBranch + HANDLER_WINDOW);
+    expect(
+      handler,
+      `${door} must surface the fence's machine code where it answers it`,
+    ).toMatch(/code:/);
+
+    // Both receiver spellings (`err` and `error`) and both the local and the
+    // aliased shared class, because the doors differ on every one of those and
+    // a spelling this missed is an assertion that silently does not run.
+    const genericBranch = source.search(
+      /(?:err|error)\s+instanceof\s+(?:Shared)?ApiError(?![A-Za-z0-9_])/,
+    );
+    expect(
+      genericBranch,
+      `${door} has no generic ApiError branch this census can order against - ` +
+        "if that is deliberate, this census has to be told so explicitly",
+    ).toBeGreaterThan(-1);
+    expect(
+      pendingBranch,
+      `${door}: the fence branch must precede the generic ApiError branch, ` +
+        "which would otherwise swallow it and drop the code",
+    ).toBeLessThan(genericBranch);
   });
 });
 

@@ -1153,8 +1153,10 @@ one, check the other.
   claim as the status so it cannot apply twice; a figure differing from one the
   task already held is the audited amendment D2 permits on this kind alone, with
   `raisedAmountCents` preserving what it was raised with. DISMISSED means reviewed
-  and nothing is due, and writes no amount. Nothing moves at Stripe, in the
-  ledger, in Xero or as account credit until an admin confirms.
+  and this system moved no money, and writes no amount; its REQUIRED note is what
+  says whether nothing was owed or the club settled it outside the task. Nothing
+  moves at Stripe, in the ledger, in Xero or as account credit until an admin
+  confirms.
   - **A stored night price is not proof of a sold price, which is why a human
     prices this.** Two backfill migrations populated
     `BookingGuestNight.priceCents` by dividing a stored guest total by the night
@@ -1181,13 +1183,89 @@ one, check the other.
     without filtering on amount, so that event is chosen and shadows any genuine
     later one. "Reviewed, nothing is due" is DISMISSED. This is the same magic
     zero the epic exists to remove, arriving through the completion door.
-  - **A credit-only completion records no refund.** With `paymentId` NULL nothing
-    writes account credit, nothing moves in the ledger and
-    `Payment.refundedAmountCents` is untouched, so no `REFUNDED` booking event is
-    written either - that log is member-facing and must not claim money the
-    system did not return. The admin's action is recorded in the AUDIT log. When
-    the path that ISSUES the credit is wired (#3032/#3033), the booking event
-    belongs there, written where the money moves.
+  - **A credit-only completion records no refund.** With `paymentId` NULL there is
+    nothing to allocate against and `Payment.refundedAmountCents` is untouched, so
+    no `REFUNDED` booking event is written - that log is member-facing and must
+    not claim money the system did not return. Since #3032 such a completion does
+    ISSUE account credit, and records `CREDITED` after the commit, where the money
+    moved.
+  - **A confirmed amount is settled through the settlement path that already
+    exists, never a fourth one** (#3032). The booking's payment decides which: a
+    canonical Stripe refund for a card capture, made AFTER the commit; the local
+    ledger allocation for an internet-banking hand-back; or
+    `createBookingModificationCredit` where nothing was captured, whose
+    exactly-once key is the `BookingModification` id. A matching Xero modification
+    credit note is queued on the same anchor through
+    `queueXeroBookingEditSettlement`, the choke point the three booking-edit
+    services already use - a completion that moved money and dispatched no Xero
+    delta would leave an issued invoice and the ledger permanently disagreeing.
+    The route is chosen and every refusal raised BEFORE the status claim, so a
+    refused completion leaves the task OPEN and nothing half-applied; the Stripe
+    route writes no allocation of its own, because `refundPaymentTransactions`
+    writes it and doing both would consume the refundable headroom twice. The
+    completion holds no advisory lock - see `docs/CONCURRENCY_AND_LOCKING.md` for
+    why that is deliberate - so the status claim is the whole single-flight
+    guarantee.
+  - **The card route is capped before it claims, and keyed to the TASK.** The cap
+    is measured off the booking's captured `PaymentTransaction` rows, not off
+    `Payment.source` - that column DEFAULTS to `STRIPE`, so routing on it alone
+    sends a hand-settled booking with nothing captured down the card path. Both
+    the cap and the frozen per-transaction allocation are answered before the
+    claim, because `refundPaymentTransactions` refuses after the commit, where a
+    refusal leaves a permanently COMPLETED task with nothing moved. The Stripe
+    idempotency key prefix and the recovery operation are keyed to the TASK rather
+    than to the `BookingModification`: owner decision D-3032-1 settles a review
+    against the ORIGINAL edit's modification row, and one edit can raise TWO
+    review tasks, so a modification-scoped key would let two same-amount refunds
+    share one Stripe key (the second answered with the first refund, taken as
+    success) and let two tasks upsert one recovery row, whose update branch
+    overwrites `amountCents` and `stripeKeyPrefix`.
+  - **The refund debt is persisted inside the completion transaction, before any
+    provider call** - booking-cancel's #1349 arrangement, on the same
+    infrastructure. Because this path holds no advisory lock, its claim commits
+    before Stripe is called; without a durable row a crash in that window would
+    leave a COMPLETED task, an untouched `refundedAmountCents` and no trace at all
+    that money was owed, since this route writes no allocation of its own. The
+    cron replays the frozen slices under the stored task-scoped prefix, so Stripe
+    answers a repeat with the original refund and the ledger dedupes on refund id.
+  - **`applyLocalRefundAllocation` compare-and-sets** on the `refundedAmountCents`
+    it read (#3032). It writes an ABSOLUTE value computed in JavaScript, so two
+    writers on one `PaymentTransaction` silently lose an update and OVERSTATE the
+    refundable headroom. That was unreachable before this child - every caller
+    either held `lock(1)` or ran only on a cancelled booking - and a review
+    completion is neither: it allocates against a LIVE booking with no lock, while
+    a consent-authority removal is exempt from the fence and does move money. The
+    guard refuses loudly instead, and the completion turns that into a 409 with
+    its transaction rolled back and its task still OPEN.
+  - **The settlement anchor is the ORIGINAL edit's `BookingModification`** (owner
+    decision D-3032-1), carried on `reviewContext.bookingModificationId` and
+    deliberately NOT part of the occurrence identity: it points at a row rather
+    than describing which edit happened, so including it would re-identify every
+    replay. `MemberCredit.sourceBookingModificationId` is unique, so an anchor
+    that already carries a credit is refused with a typed 409 rather than reaching
+    an untyped throw inside the credit writer. ANY pre-existing credit is refused,
+    including one whose amount matches: a matching amount is indistinguishable
+    from a coincidence, and treating it as a replay would close the task having
+    moved nothing. (A genuine replay cannot reach that code: the credit write is
+    in the same transaction as the claim, so a second completion is refused by the
+    status check first.) The refusal tells the operator to settle the amount
+    another way and dismiss with a note - which is an honest terminal state under
+    the DISMISSED definition above, because the note carries what happened and
+    nothing in the row claims this system moved money.
+  - **While a review is OPEN, a second money-affecting edit to that booking is
+    refused** (#3032, `assertNoPendingEditFinancialReview`), because pricing one
+    would mean starting from the amount under review. **All FOUR money-affecting
+    doors are fenced**: the batch edit, the date edit, the single-guest removal,
+    and `POST /api/bookings/[id]/guests`, which reprices inline in the route
+    rather than through a service and was therefore missed on the first pass —
+    it revalues an unreadable strand at today's rate and writes the new
+    `finalPriceCents` back, so a later completion credits the member against a
+    total the same money had already been taken out of. Each is called inside the
+    transaction, after the locks and the post-lock re-read, below authorisation
+    and before any write, and each surfaces the 409 with its `code` above its
+    handler's generic `ApiError` branch. Identity-only edits, credit elections,
+    the price-preserving admin date shift and consent-authority removals (owner
+    decision D-14) are not fenced.
   - **Three database constraints, because prose is not enforcement** (migration
     `20260903010000`). An `EDIT_FINANCIAL_REVIEW` row must carry its
     `occurrenceKey` (`ManualRefundTask_edit_review_occurrence_key_present`) -
@@ -1203,11 +1281,39 @@ one, check the other.
     property of an UPDATE rather than of a row and is NOT enforced by the
     database; it holds because the column has one writer and every completion
     audits the previous and raised figures.
-  - **What #3030 enforces versus what #3032 wires.** #3030 ships the state, the
-    single occurrence-key mint, the raise, the DB constraints and the audited
-    completion. It ships NO caller: the booking-edit path that decides an edit is
-    unpriceable and calls the raise is #3032, and until it lands no production
-    path creates a row of this kind. Read the rules above as binding on any writer
-    of this kind rather than as a description of a live flow — which is also why
-    the current estimator behaviour in `INV-MOD-005` is still true today and is
-    #3031's to remove.
+  - **An OPEN review can block reversal of a manual settlement**, and that is
+    accepted as correct (owner decision D-3032-2). It falls out of `INV-PAY-045`
+    rather than being new behaviour - but raising this kind changes which
+    payments satisfy that condition, so it is stated here rather than shipped
+    quietly. MEASURED SCOPE, which is narrower than the decision assumed: that
+    guard reads `{ paymentId, status: OPEN }`, so it is scoped to the PAYMENT and
+    not to the booking. A review raised against a captured payment blocks a
+    reversal of that payment's manual settlement; the ordinary credit-only review
+    (`paymentId` NULL) blocks nothing.
+  - **What #3030 enforces versus what #3032 wires, and where the raise is called
+    from.** #3030 ships the state, the single occurrence-key mint, the raise, the
+    DB constraints and the audited completion. #3032 adds the settlement routing,
+    the anchor, the Xero leg, the pending-review fence — and ONE production raise
+    caller: `removeBookingGuestInTransaction`, where an unpriceable single-guest
+    removal now commits structurally and parks its money (`INV-MOD-028`). The
+    in-progress batch edit does NOT yet raise; it still refuses, for the structural
+    reason stated in `INV-MOD-028`. So a live club can now hold rows of this kind,
+    and they arrive from exactly one door.
+  - **One task per parked STRAND, and the DEPARTING strand is always one of
+    them.** The occurrence key is minted per strand, so per strand is what
+    "exactly one" can mean idempotently: a replay of the same edit re-derives the
+    same keys and creates nothing. A remaining strand is recorded when its own
+    rows cannot be read; it carries no surrendered nights, and its honest
+    resolution is often DISMISSED with a note, which is a defined state above and
+    claims no payment. **The strand actually leaving is recorded on every parked
+    removal, whether or not its own rows read cleanly** (#3032) — because nothing
+    settles on a parked removal and the delete destroys the guest's night rows,
+    so a departing strand that was skipped for being exact left its refund as a
+    figure no longer present anywhere in the database, behind a task about
+    somebody else that correctly read as "nothing to adjust". Where that strand's
+    rows ARE exact its cause is `COUNTERPART_STRAND_UNREADABLE`, its stored
+    evidence carries the real per-night prices, and no `amountCents` is written:
+    the money that goes back also depends on the cancellation tier and the promo
+    recalculation a parked removal skips, so the gross stored figure is evidence
+    for the admin rather than a settlement the system may assert. **The rule:
+    a parked edit never destroys a number the system could have known.**

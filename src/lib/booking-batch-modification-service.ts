@@ -41,6 +41,8 @@ import {
   requestIsOtherLodgeRateElectionOnly,
 } from "@/lib/booking-other-lodge-rate";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
+import { assertNoPendingEditFinancialReview } from "@/lib/edit-financial-review";
+import { bookingHasOpenFinancialReview } from "@/lib/booking-financial-review-visibility";
 import { linkModificationToOutstandingChangeRequest } from "@/lib/booking-change-request-linkage";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { assertBookingEnvelopeInvariants } from "@/lib/booking-envelope-invariants";
@@ -734,6 +736,32 @@ export async function modifyBookingBatch({
     const pricePreservingModification =
       (identityOnlyModification || requestIsCreditElectionOnly) &&
       !requestCarriesOtherLodgeElection(input);
+
+    // #3032 (epic #2797): refuse a second money-affecting edit while this
+    // booking's last one is still under financial review. Taken here - under both
+    // locks, on the post-lock re-read, and BEFORE `calculateModifiedPricing`
+    // below or any write - so a refused edit changes nothing at all.
+    //
+    // THE PREDICATE IS `pricePreservingModification` ITSELF, not a second
+    // expression that agrees with it today. An earlier revision fenced on
+    // `!identityOnly && !creditElectionOnly` and repriced on that pair MINUS the
+    // other-lodge term, so one request carrying `guestUpdates` AND
+    // `otherLodgeMemberGuestIds` - a shape the route's schema accepts - skipped
+    // the fence and then re-rated its guests off stored money that was under
+    // review. #2978 fixed the identical drift on the neighbouring predicate one
+    // revision earlier; two expressions for one question is the defect, so there
+    // is now exactly one (`INV-SSOT`).
+    //
+    // A name correction and a credit election pass through: neither reads the
+    // booking's stored money, so neither can compound an unresolved amount. The
+    // rule itself, and why it is this narrow, are in
+    // `assertNoPendingEditFinancialReview`.
+    await assertNoPendingEditFinancialReview({
+      bookingId,
+      moneyAffecting: !pricePreservingModification,
+      store: tx,
+    });
+
     const pricingResult = pricePreservingModification
       ? buildIdentityOnlyPricing(booking)
       : await calculateModifiedPricing(tx, {
@@ -770,8 +798,29 @@ export async function modifyBookingBatch({
     // structural change rolls back with it and the member is told nothing has
     // moved — which is what the refusal's own wording promises.
     //
-    // This is the seam #3032 re-routes: there the stay/guest change commits and
-    // one OPEN admin review task is created in the same transaction instead.
+    // #3032 PARKED THE REMOVAL PATH AND DELIBERATELY DID NOT PARK THIS ONE, and
+    // the difference is structural rather than a matter of effort. A removal's
+    // structural change is a row delete: it is fully expressible without any
+    // valuation, so the guest comes off and only the amount waits. This branch
+    // is reached ONLY from the in-progress planner
+    // (`buildInProgressGuestRangePlan`, via `calculateModifiedPricing`), whose
+    // structural change is a rewrite of every existing strand's night rows —
+    // `applyGuestChanges` -> `syncGuestNights` deletes them and recreates them
+    // from `perNightCents`, and `requiredNightPriceCents` REFUSES rather than
+    // defaulting, precisely so no magic zero can reach a sold-price row.
+    //
+    // So committing the stay change here needs a per-night integer for every
+    // night each strand ENDS UP holding, and for a `NO_STORED_NIGHT_PRICES` or
+    // `PARTIAL_STORED_NIGHT_PRICES` strand there is no honest number for a night
+    // it KEEPS. The three ways out are all money decisions, not implementation
+    // choices: invent the number (which the epic prohibits outright), discard
+    // the strand's night rows and keep their evidence only on the review task
+    // (destructive, and it changes what a later edit can read), or make
+    // `perNightCents` sparse and `BookingGuestNight.priceCents` nullable (a
+    // schema migration plus every consumer of the column). None is settled by
+    // #3032, so this path keeps the interim refusal and the choice goes to the
+    // owner rather than being made here. The refusal is honest in the meantime:
+    // it moves no money and it tells the member the truth, that nothing changed.
     if (pricingResult.kind === "financial_review_required") {
       throw new BookingEditFinancialReviewRequiredError(
         pricingResult.occurrences,
@@ -1525,6 +1574,30 @@ async function dispatchBatchPostTransactionSideEffects({
   });
   if (!member) return;
 
+  /*
+    #3032 (epic #2797): does this booking's money sit under review as this email
+    is written?
+
+    NOT "did this edit park money" - this path parks none. The batch park is
+    #3170, held on an owner money decision, so a value derived from THIS edit
+    would be a constant `false` dressed up as a computation, and would stay
+    `false` on the day #3170 lands. The question the member is owed is the one
+    every other member-facing surface answers: is the club still working out an
+    amount on this booking. Read from `bookingHasOpenFinancialReview`, the same
+    reader behind the booking-detail banner and the My Bookings row, so the
+    email cannot say one thing while the page the member opens says another
+    (`INV-SSOT`).
+
+    Read after the transaction commits, deliberately: this edit decided nothing
+    about the review, so the honest answer is the booking's state now, not a
+    value captured earlier in a transaction that never touched it. That is the
+    opposite of the removal path, where the transaction DID decide it and
+    carries the answer out on its result.
+  */
+  const financialReviewPending = await bookingHasOpenFinancialReview(
+    result.booking.id,
+  );
+
   sendBookingModifiedEmail({
     bookingId: result.booking.id,
     recipientMemberId: member.id,
@@ -1555,6 +1628,7 @@ async function dispatchBatchPostTransactionSideEffects({
     // #2390: if a usage cap stopped the promotion reaching somebody this edit
     // added, the email says so in the same words the member saw on screen.
     promoCoverageNote: result.promoCoverage?.message ?? null,
+    financialReviewPending,
     lodgeId: result.booking.lodgeId,
   }).catch((err) =>
     logger.error(

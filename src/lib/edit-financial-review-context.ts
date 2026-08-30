@@ -39,6 +39,13 @@ import type { CalendarDate } from "@/lib/club-time";
  * Deliberately about the EVIDENCE, never about the member: none of these is a
  * fault of theirs, and none of them may reach member-facing copy (#3033 forbids
  * "corruption terminology" and blaming the member).
+ *
+ * ADDING A VALUE IS SAFE; CHANGING WHAT IS HASHED IS NOT. The occurrence key's
+ * material is a fixed set of FIELDS (`editFinancialReviewOccurrenceKey`), and a
+ * new value of an existing field re-identifies nothing that already exists — an
+ * occurrence that hashed as `STORED_TOTAL_MISMATCH` yesterday still does. That
+ * is why `COUNTERPART_STRAND_UNREADABLE` below needed no namespace bump, and it
+ * is not a precedent for adding a FIELD, which would move every future key.
  */
 export const EDIT_FINANCIAL_REVIEW_CAUSES = [
   /** The guest strand carries no stored per-night price at all. */
@@ -47,6 +54,23 @@ export const EDIT_FINANCIAL_REVIEW_CAUSES = [
   "PARTIAL_STORED_NIGHT_PRICES",
   /** Stored night prices exist but do not reconcile to the stored guest total. */
   "STORED_TOTAL_MISMATCH",
+  /**
+   * #3032: THIS strand's own rows read perfectly. Another strand on the same
+   * booking does not, so the edit's money was parked as a whole and this
+   * strand's share went with it.
+   *
+   * It exists because the removal path settles a DIFFERENCE OF REPRICINGS: one
+   * unreadable strand anywhere on the booking makes the arithmetic unsafe for
+   * every strand, including the one whose nights are actually being given back.
+   * Before this cause existed such a strand was skipped entirely — it was
+   * "exact", so nothing raised it — and the departing guest's money, which the
+   * delete was about to destroy, was recorded nowhere at all.
+   *
+   * The distinction is what an admin needs: on this cause the stored evidence
+   * beside it is complete and adds up, so they are confirming a number the rows
+   * already show rather than reconstructing one.
+   */
+  "COUNTERPART_STRAND_UNREADABLE",
 ] as const;
 
 export type EditFinancialReviewCause =
@@ -148,6 +172,31 @@ export type EditFinancialReviewContext = {
   /** The booking's own stay window, for the "which rates applied then" question. */
   bookingCheckIn: CalendarDate;
   bookingCheckOut: CalendarDate;
+  /**
+   * #3032 (owner decision D-3032-1): the `BookingModification` row the edit that
+   * raised this review wrote, and the anchor a confirmed amount settles against
+   * later.
+   *
+   * WHY IT IS CARRIED AT ALL. Two of the three ways money can go back key their
+   * exactly-once on a modification id and nothing else: `MemberCredit`
+   * `.sourceBookingModificationId` is `@unique`, and the Stripe refund
+   * idempotency key is `${prefix}_${bookingModificationId}`. A completion that
+   * did not know the id would have to mint a fresh anchor - a second history row
+   * per edited booking, which the owner weighed and rejected - or invent a
+   * fourth settlement path, which the epic forbids outright.
+   *
+   * DELIBERATELY NOT ON `EditFinancialReviewOccurrence`. The occurrence is the
+   * identity the key is hashed from, and this value is a POINTER to a row, not a
+   * fact about which edit happened: two replays of one edit are the same
+   * occurrence whether or not they landed the same modification row. Putting it
+   * in the identity would re-identify every future occurrence and, worse, make a
+   * replay of one edit hash differently from the first attempt.
+   *
+   * NULL is legitimate and is the shape of a raise that had no modification row
+   * to point at. A completion that needs an anchor and finds none refuses before
+   * it claims anything, rather than guessing which row to settle against.
+   */
+  bookingModificationId: string | null;
 };
 
 const calendarDateSchema = z.custom<CalendarDate>(isCalendarDate, {
@@ -228,6 +277,7 @@ const contextSchema: z.ZodType<EditFinancialReviewContext> = z
     guestMemberId: z.string().min(1).nullable(),
     bookingCheckIn: calendarDateSchema,
     bookingCheckOut: calendarDateSchema,
+    bookingModificationId: z.string().min(1).nullable(),
   })
   .strict();
 
@@ -274,6 +324,8 @@ export const EDIT_FINANCIAL_REVIEW_CAUSE_LABEL: Record<
     "Only some of the nights given back carry a stored price, so the total cannot be worked out from what is stored.",
   STORED_TOTAL_MISMATCH:
     "The stored night prices do not add up to the stored total for this guest, so neither figure can be trusted on its own.",
+  COUNTERPART_STRAND_UNREADABLE:
+    "This guest's own stored night prices are complete and add up, but another guest on the same booking has prices that cannot be read — so the booking's total could not be reworked automatically. The figures shown here are what was stored for this guest.",
 };
 
 /**
