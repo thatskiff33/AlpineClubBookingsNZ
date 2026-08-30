@@ -164,6 +164,112 @@ describe("adult-member hosting policy route (#2364)", () => {
     });
   });
 
+  it("reports and stores Group Trip coverage, and treats turning it on as a real change (#3037)", async () => {
+    // Three things break silently if the new column is not carried the whole way
+    // through this route, and each of them looks like success to the admin.
+    const groupTripOff = {
+      ...stored,
+      hostScopeSameBooking: true,
+      hostScopeSameBookingOwner: false,
+      hostScopeSameGroupTrip: false,
+    };
+
+    // 1. The GET has to REPORT the stored value. If it does not, the checkbox
+    //    renders unticked and the admin's saved setting looks reverted.
+    mocks.findUnique.mockResolvedValue({
+      ...groupTripOff,
+      hostScopeSameGroupTrip: true,
+    });
+    const body = await (await GET(get())).json();
+    expect(body.hostScopes).toEqual({
+      sameBooking: true,
+      sameBookingOwner: false,
+      sameGroupTrip: true,
+    });
+    expect(body.effective.hostScopes.sameGroupTrip).toBe(true);
+
+    // 2. Turning it on has to be MATERIAL. Mode and capacity are unchanged here,
+    //    so a comparison that ignores the scope returns "unchanged": the admin is
+    //    told it saved, nothing is written, no audit entry, no reconciliation and
+    //    no cache bust.
+    vi.clearAllMocks();
+    mocks.requireAdmin.mockResolvedValue({
+      ok: true,
+      session: { user: { id: "admin-1" } },
+    });
+    mocks.executeRaw.mockResolvedValue(1);
+    mocks.txFindMany.mockResolvedValue([]);
+    mocks.enqueuePolicyReconciliation.mockResolvedValue(0);
+    mocks.settleHostingCoverage.mockResolvedValue(undefined);
+    mocks.updateMany.mockResolvedValue({ count: 1 });
+    mocks.findUnique
+      .mockResolvedValueOnce(groupTripOff)
+      .mockResolvedValue({ ...groupTripOff, hostScopeSameGroupTrip: true, version: 5 });
+    mocks.findMany.mockResolvedValue([
+      { ...groupTripOff, hostScopeSameGroupTrip: true, version: 5 },
+    ]);
+    const saved = await PUT(
+      put({
+        mode: "ADMIN_REVIEW_REQUIRED",
+        capacityMode: "HOLD",
+        version: 4,
+        hostScopes: {
+          sameBooking: true,
+          sameBookingOwner: false,
+          sameGroupTrip: true,
+        },
+      }),
+    );
+    expect(saved.status).toBe(200);
+    expect(mocks.updateMany).toHaveBeenCalledWith({
+      where: { scopeKey: "club-wide", version: 4 },
+      data: {
+        mode: "ADMIN_REVIEW_REQUIRED",
+        capacityMode: "HOLD",
+        hostScopeSameBooking: true,
+        hostScopeSameBookingOwner: false,
+        hostScopeSameGroupTrip: true,
+        version: 5,
+      },
+    });
+    expect(mocks.logAudit).toHaveBeenCalled();
+    expect(mocks.revalidate).toHaveBeenCalled();
+
+    // 3. The CONTROL: re-saving the identical set is still an unchanged no-op, so
+    //    the assertion above is about the scope moving and not about every write
+    //    being classified as material.
+    vi.clearAllMocks();
+    mocks.requireAdmin.mockResolvedValue({
+      ok: true,
+      session: { user: { id: "admin-1" } },
+    });
+    mocks.executeRaw.mockResolvedValue(1);
+    mocks.txFindMany.mockResolvedValue([]);
+    const unchangedRow = {
+      ...groupTripOff,
+      hostScopeSameGroupTrip: true,
+      version: 5,
+    };
+    mocks.findUnique.mockResolvedValue(unchangedRow);
+    mocks.findMany.mockResolvedValue([unchangedRow]);
+    const again = await PUT(
+      put({
+        mode: "ADMIN_REVIEW_REQUIRED",
+        capacityMode: "HOLD",
+        version: 5,
+        hostScopes: {
+          sameBooking: true,
+          sameBookingOwner: false,
+          sameGroupTrip: true,
+        },
+      }),
+    );
+    expect(again.status).toBe(200);
+    expect(mocks.updateMany).not.toHaveBeenCalled();
+    expect(mocks.logAudit).not.toHaveBeenCalled();
+    expect(mocks.revalidate).not.toHaveBeenCalled();
+  });
+
   it("gates reads on bookings:view and writes on bookings:edit", async () => {
     mocks.requireAdmin.mockResolvedValue({
       ok: false,
