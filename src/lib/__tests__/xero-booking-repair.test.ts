@@ -163,11 +163,18 @@ function createDependencies(state: {
   // applies that filter itself so a test can prove a terminally FAILED row does
   // NOT hold the repair off.
   editReviewChargeIntentRecoveries?: any[];
+  // #3187 fix round: the member paying WHILE the sweep runs. Called from inside
+  // the supplementary-invoice enqueue, which is exactly where the real window
+  // is - the plan was decided from the loader's snapshot minutes earlier, and
+  // the webhook's release finds no operation to release because none exists
+  // yet.
+  onSupplementaryInvoiceEnqueue?: () => void;
 }) {
   const links = state.links ?? [];
   const operations = state.operations ?? [];
 
   const enqueueXeroSupplementaryInvoiceOperation = vi.fn().mockImplementation(async (params: any) => {
+    state.onSupplementaryInvoiceEnqueue?.();
     // #3187: the real enqueue's NET GUARD, reproduced here on purpose. A
     // supplementary invoice exists only to bill a positive net
     // (`xero-operation-outbox.ts`), so an action queued with a net of 0 does
@@ -332,6 +339,38 @@ function createDependencies(state: {
       manualRefundTask: {
         findMany: vi.fn().mockResolvedValue(state.editReviewChargeShares ?? []),
       },
+      // #3187 fix round: the FRESH read the apply step takes after queueing a
+      // supplementary invoice parked on a PaymentIntent. It answers from the
+      // booking's transactions AS THEY STAND NOW rather than from a canned row,
+      // which is what lets a test flip a capture mid-sweep and see the tool
+      // notice; and it applies the same three criteria plus the intent id the
+      // real query does, so a test cannot pass on a row the real read would
+      // never have returned.
+      paymentTransaction: {
+        findFirst: vi.fn().mockImplementation(async ({ where }: any) => {
+          const booking = state.bookings.find(
+            (item) => item.id === where?.payment?.bookingId
+          );
+          const [row] = (booking?.payment?.transactions ?? [])
+            .filter(
+              (transaction: any) =>
+                transaction.kind === where.kind &&
+                transaction.source === where.source &&
+                transaction.reason === where.reason &&
+                (where.stripePaymentIntentId === undefined ||
+                  transaction.stripePaymentIntentId ===
+                    where.stripePaymentIntentId)
+            )
+            .sort(
+              (left: any, right: any) =>
+                new Date(right.createdAt).getTime() -
+                new Date(left.createdAt).getTime()
+            );
+          return row
+            ? { status: row.status, amountCents: row.amountCents }
+            : null;
+        }),
+      },
       payment: {
         update: vi.fn().mockImplementation(async ({ where, data }: any) => {
           const booking = state.bookings.find((item) => item.payment?.id === where.id);
@@ -374,6 +413,12 @@ function createDependencies(state: {
       queueOperationId: "queue_retry",
       message: "queued retry",
     }),
+    // #3187 fix round: the live settlement's own release, injected so a test can
+    // see whether the repair pass freed an invoice it parked on an intent that
+    // had already been captured.
+    releaseXeroSupplementaryInvoiceOperationsForPaymentIntent: vi
+      .fn()
+      .mockResolvedValue({ released: 1, queueOperationIds: ["queue_released"] }),
     processQueuedXeroOutboxOperations: vi.fn().mockResolvedValue({
       found: 0,
       processed: 0,
@@ -3322,6 +3367,126 @@ describe("runBookingXeroRepair - booking edits priced by a financial review (#31
     });
 
     expect(supplementaryFindingCodes(report)).toEqual([]);
+  });
+
+  it("releases a repaired invoice it parked on a card the member paid WHILE the sweep was running", async () => {
+    /**
+     * The window this closes. The plan is decided from the snapshot the loader
+     * took when the pass started; the enqueue happens minutes later. A member
+     * paying in between fires the webhook's release, which finds no
+     * WAITING_PAYMENT operation because none exists yet and does nothing - and
+     * then the sweep parks one on a confirmation that has already been and
+     * gone. Nothing else ever looks at it: the release runs only from the
+     * webhook and the confirm route, and the stale reaper matches only a failed
+     * transaction or a 14-day-old row, neither of which a succeeded intent is.
+     *
+     * The cost of leaving it: the club holds the money with no Xero invoice,
+     * and the NEXT run reads the anchor as BLOCKED_BY_XERO_OPERATION at warning
+     * severity, "waiting for its additional Stripe payment" - the tool
+     * concealing the finding it exists to raise, for a fortnight.
+     */
+    const booking = bookingWithReviewCharge({ status: "PENDING" });
+    const request = booking.payment.transactions[0];
+    const deps = createDependencies({
+      bookings: [booking],
+      editReviewChargeShares: [settledShare()],
+      onSupplementaryInvoiceEnqueue: () => {
+        request.status = "SUCCEEDED";
+      },
+    });
+
+    const report = await runBookingXeroRepair({
+      apply: true,
+      dependencies: deps,
+      scope: { all: true },
+    });
+
+    // Parked, correctly, on what the snapshot said...
+    expect(deps.enqueueXeroSupplementaryInvoiceOperation).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        waitForConfirmedAdditionalPayment: true,
+        paymentIntentId: "pi_review",
+      })
+    );
+    // ...and then freed, because by the time it was queued the card had paid.
+    expect(
+      deps.releaseXeroSupplementaryInvoiceOperationsForPaymentIntent
+    ).toHaveBeenCalledWith("pi_review");
+
+    const action = report.passes[0].bookings[0].actions.find(
+      (candidate) => candidate.type === "QUEUE_SUPPLEMENTARY_INVOICE"
+    );
+    expect(action?.status).toBe("queued");
+    expect(action?.resultMessage).toContain("released for sending");
+  });
+
+  it("CONTROL: an outstanding card request that is STILL outstanding is left parked, not released", async () => {
+    // The ordinary arrangement, and the one the release must never touch: the
+    // member has not paid, so the invoice waits for the webhook exactly as the
+    // live edit path's own does.
+    const booking = bookingWithReviewCharge({ status: "PENDING" });
+    const deps = createDependencies({
+      bookings: [booking],
+      editReviewChargeShares: [settledShare()],
+    });
+
+    const report = await runBookingXeroRepair({
+      apply: true,
+      dependencies: deps,
+      scope: { all: true },
+    });
+
+    expect(deps.enqueueXeroSupplementaryInvoiceOperation).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ waitForConfirmedAdditionalPayment: true })
+    );
+    expect(
+      deps.releaseXeroSupplementaryInvoiceOperationsForPaymentIntent
+    ).not.toHaveBeenCalled();
+    const action = report.passes[0].bookings[0].actions.find(
+      (candidate) => candidate.type === "QUEUE_SUPPLEMENTARY_INVOICE"
+    );
+    expect(action?.status).toBe("queued");
+  });
+
+  it("does NOT release a mid-sweep capture that came up SHORT of the settled total", async () => {
+    /**
+     * The same race, with the shortfall behind it: the card took $40 against an
+     * ask of $60. Releasing would send the $60 invoice AND book a $60 Stripe
+     * receipt for it - the overstatement the classify-time arm already refuses,
+     * arriving by a different door. It stays parked and goes to a person.
+     */
+    const booking = bookingWithReviewCharge({
+      status: "PENDING",
+      amountCents: 4000,
+    });
+    const request = booking.payment.transactions[0];
+    const deps = createDependencies({
+      bookings: [booking],
+      editReviewChargeShares: [
+        settledShare({ id: "task_1", amountCents: 4000 }),
+        settledShare({ id: "task_2", amountCents: 2000 }),
+      ],
+      onSupplementaryInvoiceEnqueue: () => {
+        request.status = "SUCCEEDED";
+      },
+    });
+
+    const report = await runBookingXeroRepair({
+      apply: true,
+      dependencies: deps,
+      scope: { all: true },
+    });
+
+    expect(
+      deps.releaseXeroSupplementaryInvoiceOperationsForPaymentIntent
+    ).not.toHaveBeenCalled();
+    const action = report.passes[0].bookings[0].actions.find(
+      (candidate) => candidate.type === "QUEUE_SUPPLEMENTARY_INVOICE"
+    );
+    expect(action?.status).toBe("manual_review");
+    expect(action?.resultMessage).toContain("4000 cents against an ask of 6000");
   });
 
   it("is idempotent: a second run over a repaired review-priced edit finds nothing", async () => {
