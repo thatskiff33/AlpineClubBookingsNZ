@@ -30,8 +30,9 @@
   turns a "not known" back into a figure by re-pricing it** — only a person
   supplying the amount can clear one. The waitlist offer, which re-prices a whole
   stay at today's rates when a spot comes free, now leaves such a booking at its
-  last agreed price rather than writing over the gap; approving a booking request
-  still sets the price, because there an officer has chosen it.
+  last agreed price rather than writing over the gap. Approving a booking request
+  still sets a price and needs no such fence: a booking held while a request is
+  being considered cannot be changed at all, so it can never have a gap in it.
 - Adding a person to a booking whose price history cannot be read no longer
   bills the member for somebody else's night. The new arrival is still priced
   and charged normally; what stopped is the rest of the booking being silently

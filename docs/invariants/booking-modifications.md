@@ -1347,11 +1347,17 @@ missing a writer is worse than no enumeration:
   guesses while the review task that wrote them was still open.
 - **The booking-request approval preservation path**
   (`src/lib/booking-request.ts`) deletes and recreates an existing hold's night
-  rows at the approval's own prices. It is NOT fenced, and is outside this rule
-  rather than an exception to it: an officer accepted a specific quote option at
-  a price they chose, and those are the figures written. That IS "a person
-  supplying the amount". Nothing on that path consults a rate table or re-derives
-  an amount, which is what separates a decision from a guess.
+  rows at the approval's own prices. It is NOT fenced, and the reason is that it
+  can never meet a blank: a blank is written only by a parked edit, a hold is
+  created and kept in `AWAITING_REVIEW`, and that status is in neither
+  `ADMIN_FUTURE_EDIT_STATUSES` nor `IN_PROGRESS_EDIT_STATUSES`, so every edit
+  door refuses it — `adminOverride` included. `booking-edit-policy.test.ts` →
+  "a booking-request hold is not editable" fails the day that stops being true.
+  It is **not** exempt on the ground that its figures are a person's: the school
+  approval pipeline writes engine prices off the season table whenever
+  `BookingRequest.priceCents` is null, and `buildApprovalGuestNights` falls back
+  to an even split of the total across the nights. Both are things this rule
+  prohibits; they are simply out of its reach here.
 
 NOT GATED, and named rather than left to be discovered. Both are outside this
 rule rather than exceptions to it, because neither values a historical night:
@@ -1365,7 +1371,7 @@ rule rather than exceptions to it, because neither values a historical night:
   design (the offer is a new price the member has not yet accepted) and, since
   #3031, writes the per-night rows it prices so the next edit reads real
   evidence. It values no historical night, so this rule does not reach it — but
-  it IS bound by the blank clause below, and is fenced accordingly (#3166).
+  it IS bound by the blank clause above, and is fenced accordingly (#3166).
 
 ### Three limits this rule does NOT close, named rather than left to be found
 

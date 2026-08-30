@@ -1913,19 +1913,39 @@ export async function reassignHeldBookingGuests(
    * rewriting nights cascades to nothing. Guest ids still survive the swap,
    * which is the property that preservation actually rests on.
    *
-   * ## It may overwrite a `NULL` night price, and that is not the thing
-   * `INV-MOD-028` forbids
+   * ## It cannot overwrite a `NULL` night price, because a hold can never carry
+   * one — which is why `INV-MOD-028` does not fence it
    *
-   * The hold this preserves can have been edited by an admin and PARKED, which
-   * writes `NULL` — "sold price not known" — onto a night (#3170). The rewrite
-   * below replaces it with an approval price, and the invariant's rule is that a
-   * blank is cleared only by A PERSON SUPPLYING THE AMOUNT, never by a reprice.
-   * An approval IS that person: an officer accepted a specific quote option for
-   * this stay, at a price they chose, and `planned` carries exactly that figure.
-   * Nothing here consults a rate table or re-derives an amount, which is what
-   * makes it a decision rather than a guess. The waitlist offer-time reprice is
-   * the opposite case and is fenced accordingly (#3166); this one is named in
-   * `INV-MOD-028` rather than gated.
+   * A blank night price — "sold price not known" (#3170) — is written by ONE
+   * thing: a parked edit. A hold is created `AWAITING_REVIEW`
+   * (`holdBookingRequestSlots`, `booking-request-quotes.ts`) and both callers of
+   * this function refuse unless the held booking is still in that status. And
+   * `AWAITING_REVIEW` is in neither `ADMIN_FUTURE_EDIT_STATUSES` nor
+   * `IN_PROGRESS_EDIT_STATUSES` (`booking-edit-policy.ts`), so
+   * `canModifyBookingStatusForRole` is false for it at every edit door — under
+   * `adminOverride` too, which is the one branch that lifts the date locks and
+   * the one somebody would reach for. No edit can park a hold, so there is no
+   * blank here to repair.
+   *
+   * WHAT THIS USED TO SAY, AND WHY IT MATTERS THAT IT WAS WRONG. It read: "an
+   * officer accepted a specific quote option at a price they chose … Nothing
+   * here consults a rate table or re-derives an amount." Both halves are false
+   * of this code. The SCHOOL approval pipeline reaches this write with engine
+   * prices whenever `BookingRequest.priceCents` is null — the totals come
+   * straight off `calculateBookingPrice`, the season rate table
+   * (`school-booking-request.ts`) — and nobody chose those figures. And even on
+   * the officer-total branch, `buildApprovalGuestNights`
+   * (`booking-request-shared.ts`) falls back to an even split of the total
+   * across the nights, `base + (index < remainder ? 1 : 0)`, which
+   * `INV-MOD-028` names in its own prohibited list. A right conclusion resting
+   * on a false reason is the dangerous combination: the day `AWAITING_REVIEW`
+   * becomes editable, that justification would still have said no fence was
+   * needed. The status argument is checkable, and
+   * `booking-edit-policy.test.ts` → "a booking-request hold is not editable"
+   * fails the moment it stops holding.
+   *
+   * The waitlist offer-time reprice is the genuinely opposite case — it CAN meet
+   * a blank — and is fenced accordingly (#3166).
    */
   if (existing.length > 0) {
     await tx.bookingGuestNight.deleteMany({
