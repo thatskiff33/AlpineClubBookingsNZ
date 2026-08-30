@@ -1332,13 +1332,17 @@ export default async function BookingDetailPage({
   /*
     #3033: the club's own explanation, beneath the banner's structural sentences.
 
-    Two messages and not one duplicate. The narrative owns the FACTS — your
-    change saved, these are your dates, nothing has moved — which are the same
-    for every club and are shared with the public payment-link page. This key
-    owns the club's EXPLANATION of what that means and how it will be handled,
-    which is the sentence the owner said has to be "honest without being
-    alarming" and therefore the one a club must be able to soften without a
-    release.
+    Two messages and not one duplicate, and the split is enforced by the wording
+    on each side rather than merely asserted here. The narrative owns the FACTS —
+    your change saved, these are your dates, the club will confirm the amount,
+    nothing has moved, there is nothing to do about it — which are the same for
+    every club, are shared with the public payment-link page, and live once in
+    `booking-financial-review-copy.ts`. This key owns only the club's
+    EXPLANATION of why the amount is being worked out by a person, which is the
+    part the owner said has to be "honest without being alarming" and therefore
+    the part a club must be able to soften without a release. It restates none
+    of the facts; an earlier draft of it repeated two of them, which is what a
+    second home looks like.
   */
   const financialReviewPendingDescription = renderBookingMessage(
     "booking.detail.financialReviewPending",

@@ -15,10 +15,23 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
  * the same member: a branch added to one and not the other means the HTML email
  * and the admin-editable body disagree about money.
  *
+ * AND THE SECOND HOLE, closed in the same place. The first fix made
+ * `financialReviewPending` a fourth arm of the same exclusive chain, checked
+ * first — which suppressed a real payment instruction. One edit can surrender
+ * nights that cannot be valued while adding nights that price normally, so a
+ * review-pending change can carry a genuine additional amount; the member was
+ * told "there is nothing for you to do" and shown no amount, no invoice number
+ * and no payment reference. They do not pay, the hold expires, the booking
+ * cancels. Both facts are true at once, so both are now rendered.
+ *
  * MUTATION PROOF. Remove either branch and its "says the amount is coming" test
- * fails. Move the branch below the additional-payment test and "the honest
- * sentence wins over a priced half of the same edit" fails in both paths. Put an
- * amount in the sentence and "names no amount" fails.
+ * fails. Make the review note exclusive with the settlement note in either
+ * direction — return early on the review, or fall through to it only when no
+ * amount is positive — and "says BOTH what is being worked out and what is owed"
+ * fails in that path. Widen `FINANCIAL_REVIEW_NOTHING_TO_DO` back to the whole
+ * email and "scopes 'nothing to do' to the change, so the payment instruction
+ * still stands" fails. Put an amount in the review sentence and "names no
+ * amount" fails.
  */
 
 const sendEmail = vi.hoisted(() => vi.fn(async () => ({ delivered: true })));
@@ -84,15 +97,15 @@ describe("an unresolved adjustment no longer sends a silent money section (#3033
 
     // The pre-#3033 behaviour, kept as the control: with no positive amount in
     // any of the three branches, the money section was empty.
-    expect(silent).not.toMatch(/working out what this change means/i);
-    expect(honest).toMatch(/working out what this change means/i);
+    expect(silent).not.toMatch(/working out what that change means/i);
+    expect(honest).toMatch(/working out what that change means/i);
     expect(honest).toMatch(/nothing has been refunded or charged/i);
   });
 
   it("the sender's flat body says the same thing", async () => {
     expect(await paymentNoteFromSender()).toBe("");
     expect(await paymentNoteFromSender({ financialReviewPending: true })).toMatch(
-      /working out what this change means/i,
+      /working out what that change means/i,
     );
   });
 
@@ -109,25 +122,70 @@ describe("an unresolved adjustment no longer sends a silent money section (#3033
     const note = await paymentNoteFromSender({ financialReviewPending: true });
 
     expect(note).not.toMatch(/has been processed|has been added|is required/i);
+    expect(note).toContain("Nothing has been refunded or charged for it yet.");
   });
 
-  it("the honest sentence wins over a priced half of the same edit", async () => {
+  it("says BOTH what is being worked out and what is owed, on the same edit", async () => {
     /*
-      Checked FIRST, not last, and that ordering is the test. An edit can
-      surrender nights it cannot value while adding nights that price normally
-      under current policy, so a review-pending change can still carry a positive
-      additional amount. Checked last, this branch would be shadowed and the
-      member would be told what to pay while hearing nothing about what they are
-      owed.
+      NOT AN EXCLUSIVE CHOICE, and that is the test. An edit can surrender nights
+      it cannot value while adding nights that price normally under current
+      policy, so a review-pending change can still carry a positive additional
+      amount. Whichever way round an exclusive chain is ordered, one of the two
+      true things is lost: the payment instruction shadows the honest sentence,
+      or — as the first fix did — the honest sentence suppresses an instruction
+      to pay $45.00 and the member never learns they owe it.
     */
     const overrides = { financialReviewPending: true, additionalAmountCents: 4500 };
+    const note = await paymentNoteFromSender(overrides);
+    const html = bookingModifiedTemplate(params(overrides));
 
-    expect(await paymentNoteFromSender(overrides)).toMatch(
-      /working out what this change means/i,
-    );
-    expect(bookingModifiedTemplate(params(overrides))).not.toMatch(
-      /An additional payment of/,
-    );
+    expect(note).toMatch(/working out what that change means/i);
+    expect(note).toMatch(/An additional payment of \$45\.00 is required/);
+    expect(html).toMatch(/working out what that change means/i);
+    expect(html).toMatch(/An additional payment of \$45\.00 is required/);
+  });
+
+  it("carries the invoice and reference an internet-banking payment needs", async () => {
+    /*
+      The suppressed branch was not merely a sentence — it is HOW the member
+      pays. Losing it lost the Xero invoice number and the payment reference
+      too, which is the difference between a member who can pay and one who
+      cannot.
+    */
+    const note = await paymentNoteFromSender({
+      financialReviewPending: true,
+      additionalAmountCents: 4500,
+      additionalPaymentMethod: "INTERNET_BANKING",
+      xeroInvoiceNumber: "INV-0042",
+      paymentReference: "TAC-1234",
+    });
+
+    expect(note).toMatch(/working out what that change means/i);
+    expect(note).toContain("Xero invoice INV-0042");
+    expect(note).toContain("Payment reference: TAC-1234.");
+  });
+
+  it("scopes 'nothing to do' to the change, so the payment instruction still stands", async () => {
+    /*
+      The two sentences sit side by side, so an unscoped "there is nothing for
+      you to do" would cancel the one beside it. It names what it is about.
+    */
+    const note = await paymentNoteFromSender({
+      financialReviewPending: true,
+      additionalAmountCents: 4500,
+    });
+
+    expect(note).toContain("There is nothing you need to do about that change.");
+    expect(note).not.toMatch(/there is nothing (for you to do|you need to do)\./i);
+  });
+
+  it("still says only the honest sentence when the edit priced nothing", async () => {
+    // The control for the composition above: no settlement note exists to
+    // compose with, so the review note is the whole of the money section.
+    const note = await paymentNoteFromSender({ financialReviewPending: true });
+
+    expect(note).toMatch(/working out what that change means/i);
+    expect(note).not.toMatch(/is required|has been processed|has been added/i);
   });
 
   it("leaves every existing branch exactly as it was", async () => {

@@ -22,6 +22,7 @@ import {
   unpaidCreditNoteInput,
   unpaidMoneySummaryRows,
 } from "@/lib/booking-money-lines";
+import { FINANCIAL_REVIEW_EMAIL_NOTE } from "@/lib/booking-financial-review-copy";
 import { escapeHtml } from "./escape";
 import {
   type BookingCalendarLinks,
@@ -501,30 +502,38 @@ export function bookingModifiedTemplate(params: {
     value: escapeHtml(row.value),
   }));
 
-  let paymentNote = "";
   /*
-    FIRST, not last, and that ordering is load-bearing (#3033).
+    TWO NOTES, COMPOSED — not one exclusive box (#3033).
 
     A booking whose adjustment is unresolved can still carry a positive
-    additional amount from the priced half of the same edit — new nights are
+    additional amount from the priced half of the same edit: new nights are
     priced normally under current policy while the surrendered ones are what
-    cannot be valued. Checked last, this branch would be shadowed by the
-    additional-payment one and the member would be told what to pay while being
-    told nothing about what they are owed. Checked first, the honest sentence
-    wins and the amounts stay in the change rows above, where they are true.
+    cannot be valued. The first shape of this checked `financialReviewPending`
+    as a fourth arm of the existing three-way chain, and that is wrong whichever
+    end it is put at — last, the payment instruction shadows the honest
+    sentence; first, the honest sentence suppresses a real instruction to pay,
+    and the member is told there is nothing to do while $45 goes uncollected and
+    the hold expires under them.
+
+    The question was never which branch wins. Both facts are true at once, so
+    both are rendered: the review note, then whichever settlement note applies.
+    The settlement notes remain mutually exclusive exactly as they always were.
+    `FINANCIAL_REVIEW_NOTHING_TO_DO` is scoped to the change rather than to the
+    email, which is what lets a "payment required" box sit under it without
+    contradiction.
   */
-  if (financialReviewPending) {
-    paymentNote = alertBox(
-      "The club is working out what this change means for the amount, and will confirm it with you. Nothing has been refunded or charged for it yet, and there is nothing for you to do.",
-      "info"
-    );
-  } else if (refundAmountCents > 0) {
-    paymentNote = alertBox(
+  const reviewNote = financialReviewPending
+    ? alertBox(FINANCIAL_REVIEW_EMAIL_NOTE, "info")
+    : "";
+
+  let settlementNote = "";
+  if (refundAmountCents > 0) {
+    settlementNote = alertBox(
       `A refund of ${formatCents(refundAmountCents)} has been processed to your original payment method.`,
       "success"
     );
   } else if (accountCreditAmountCents > 0) {
-    paymentNote = alertBox(
+    settlementNote = alertBox(
       `Account credit of ${formatCents(accountCreditAmountCents)} has been added for future bookings.`,
       "success"
     );
@@ -536,17 +545,19 @@ export function bookingModifiedTemplate(params: {
       const referenceContext = paymentReference
         ? ` Payment reference: ${escapeHtml(paymentReference)}.`
         : "";
-      paymentNote = alertBox(
+      settlementNote = alertBox(
         `An additional Internet Banking payment of ${formatCents(additionalAmountCents)} is required.${invoiceContext}${referenceContext} Xero reconciliation confirms the payment before it is treated as paid.`,
         "warning"
       );
     } else {
-      paymentNote = alertBox(
+      settlementNote = alertBox(
         `An additional payment of ${formatCents(additionalAmountCents)} is required.`,
         "warning"
       );
     }
   }
+
+  const paymentNote = `${reviewNote}${settlementNote}`;
 
   return layout(`
     ${heading("Booking Modified")}
