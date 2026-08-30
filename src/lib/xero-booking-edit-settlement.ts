@@ -304,6 +304,11 @@ export interface CompleteDeferredXeroSupplementaryInvoiceInput {
    */
   priceDiffCents: number;
   changeFeeCents: number;
+  /**
+   * THE EDIT'S answer, carried in - never a fresh read. See the convergence
+   * paragraph below for why the fresh read double-bills; the caller freezes this
+   * on the recovery row rather than deriving it when the cron runs.
+   */
   hasIssuedXeroInvoice: boolean;
   originalPaymentStatus?: PaymentStatus | string | null;
   createdByMemberId?: string;
