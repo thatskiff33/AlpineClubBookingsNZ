@@ -996,6 +996,10 @@ export async function POST(
       await raiseParkedEditFinancialReviewTasks({
         booking,
         guests: booking.guests,
+        // The whole point of this door: the guests just added, priced at what
+        // they are genuinely being sold for, against a booking total that is
+        // written back unchanged. That money is owed and nothing else records it.
+        addedGuests: createdGuests,
         occurrences: addEvidence.occurrences,
         bookingModificationId: bookingModification.id,
         store: tx,

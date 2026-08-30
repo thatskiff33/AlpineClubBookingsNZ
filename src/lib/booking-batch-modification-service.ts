@@ -1250,6 +1250,10 @@ export async function modifyBookingBatch({
     await raiseParkedEditFinancialReviewTasks({
       booking,
       guests: booking.guests,
+      // A batch edit can add guests in the same request. They are priced and
+      // written normally while the booking's own total is frozen, so the money
+      // is owed and only their rows record it.
+      addedGuests: createdGuests,
       occurrences: parked?.occurrences ?? [],
       bookingModificationId: bookingModification.id,
       store: tx,

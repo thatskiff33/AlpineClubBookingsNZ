@@ -1177,6 +1177,8 @@ export async function modifyBookingDates({
     await raiseParkedEditFinancialReviewTasks({
       booking,
       guests: booking.guests,
+      // A date change adds nobody.
+      addedGuests: [],
       occurrences: dateEditEvidence.occurrences,
       bookingModificationId: bookingModification.id,
       store: tx,

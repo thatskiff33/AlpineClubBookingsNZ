@@ -603,6 +603,34 @@ describe("#3166 adding a guest to a booking whose history cannot be read", () =>
     expect(raised.data.raisedAmountCents).toBeNull();
   });
 
+  it("tells the officer that guests were added and charged nothing (#3166)", async () => {
+    // The occurrence on this task describes the EXISTING unreadable guest, who
+    // gave back no nights and gained none. Everything the officer needs to know
+    // about the money that actually moved — a guest added at the real
+    // non-member rate, against a booking total written back unchanged — would
+    // otherwise be nowhere on their screen.
+    const tx = txWithReviewWriter(bookingWithABlankNight());
+    mockTransaction.mockImplementation((fn: (t: typeof tx) => unknown) => fn(tx));
+
+    await (
+      await import("@/app/api/bookings/[id]/guests/route")
+    ).POST(guestsRequest({ guests: [NON_MEMBER_GUEST] }), params);
+
+    const create = (tx.manualRefundTask as unknown as { create: ReturnType<typeof vi.fn> })
+      .create;
+    const context = (
+      create.mock.calls[0][0] as {
+        data: { reviewContext: { guestsAddedByEdit: unknown } };
+      }
+    ).data.reviewContext;
+    // Four nights at 8000, the figure the CONTROL above proves is what a
+    // readable booking would have billed.
+    expect(context.guestsAddedByEdit).toEqual({
+      count: 1,
+      totalPriceCents: 32000,
+    });
+  });
+
   it("CONTROL: the identical add on a fully readable booking still bills the new guest", async () => {
     // Without this the case above would pass against a gate that parked EVERY
     // guest add, which would stop the club charging for anybody.

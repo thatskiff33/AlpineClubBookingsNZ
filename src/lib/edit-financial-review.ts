@@ -469,6 +469,7 @@ export async function raiseEditFinancialReviewTask({
   bookingCheckIn,
   bookingCheckOut,
   bookingModificationId,
+  guestsAddedByEdit,
   reason,
   paymentId,
   raisedAmountCents = null,
@@ -492,6 +493,14 @@ export async function raiseEditFinancialReviewTask({
    * the question at the point they are written rather than inherit an answer.
    */
   bookingModificationId: string | null;
+  /**
+   * #3166: the guests this same edit added, and what they were priced at — null
+   * when it added none. REQUIRED rather than defaulted, for the same reason as
+   * the two arguments above: an add whose new guests were silently dropped from
+   * the evidence hands an admin a card that says the booking gained nothing.
+   * `EditFinancialReviewContext.guestsAddedByEdit` is where the reasoning lives.
+   */
+  guestsAddedByEdit: { count: number; totalPriceCents: number | null } | null;
   /** Operator prose. Defaults to `buildEditFinancialReviewReason`. */
   reason?: string;
   /**
@@ -575,6 +584,7 @@ export async function raiseEditFinancialReviewTask({
     guestMemberId,
     bookingCheckIn,
     bookingCheckOut,
+    guestsAddedByEdit,
     bookingModificationId,
   };
   // Parsed through the SAME schema the reader uses, at the WRITE site, because
@@ -684,6 +694,7 @@ export async function raiseEditFinancialReviewTask({
 export async function raiseParkedEditFinancialReviewTasks({
   booking,
   guests,
+  addedGuests,
   occurrences,
   bookingModificationId,
   store,
@@ -705,6 +716,12 @@ export async function raiseParkedEditFinancialReviewTasks({
    * the booking's remaining guest list.
    */
   guests: readonly { id: string; memberId?: string | null }[];
+  /**
+   * The guests THIS edit added, if any. Passed as the created rows rather than
+   * as a count so no caller has to state the rule twice; an add of nothing is an
+   * empty array and is recorded as null.
+   */
+  addedGuests: readonly { priceCents: number }[];
   occurrences: readonly EditFinancialReviewOccurrence[];
   /**
    * Owner decision D-3032-1: THIS edit's own `BookingModification`, so the
@@ -719,6 +736,23 @@ export async function raiseParkedEditFinancialReviewTasks({
     guests.map((guest) => [guest.id, guest.memberId ?? null]),
   );
   const paymentId = editReviewSettlementPaymentId(booking);
+  // Money the club is owed and has not taken: a parked edit writes the booking's
+  // total back unchanged, so an added guest's price lives only on their own row.
+  // A total that is not usable money is recorded as ABSENT rather than as a
+  // figure an admin might act on - the same rule the stored evidence follows.
+  const addedTotalCents = addedGuests.reduce(
+    (total, guest) => total + guest.priceCents,
+    0,
+  );
+  const guestsAddedByEdit =
+    addedGuests.length === 0
+      ? null
+      : {
+          count: addedGuests.length,
+          totalPriceCents: isNonNegativeIntegerCents(addedTotalCents)
+            ? addedTotalCents
+            : null,
+        };
   const taskIds: string[] = [];
   for (const occurrence of occurrences) {
     const raised = await raiseEditFinancialReviewTask({
@@ -727,6 +761,7 @@ export async function raiseParkedEditFinancialReviewTasks({
       bookingCheckIn: calendarDateOfDateOnlyInstant(booking.checkIn),
       bookingCheckOut: calendarDateOfDateOnlyInstant(booking.checkOut),
       bookingModificationId,
+      guestsAddedByEdit,
       paymentId,
       raisedAmountCents: null,
       store,

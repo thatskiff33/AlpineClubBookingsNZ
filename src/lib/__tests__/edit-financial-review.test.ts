@@ -104,8 +104,9 @@ const raiseInput = {
   bookingCheckOut: day("2026-08-04"),
   // #3032: the settlement anchor a confirmed amount closes against (D-3032-1).
   bookingModificationId: "mod-1",
-  // #3166: required, never defaulted — see `raiseEditFinancialReviewTask`.
+  // #3166: both required, never defaulted — see `raiseEditFinancialReviewTask`.
   paymentId: null,
+  guestsAddedByEdit: null,
 };
 
 beforeEach(() => {

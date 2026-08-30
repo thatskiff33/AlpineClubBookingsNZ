@@ -1088,6 +1088,8 @@ export async function removeBookingGuestInTransaction({
     // The DEPARTING strand is raised for too, and its row is not in the
     // booking's remaining guest list - so it is named here explicitly.
     guests: [guestToRemove, ...booking.guests],
+    // A removal adds nobody.
+    addedGuests: [],
     // Already empty when this removal did not park (see its own comment).
     occurrences: unpriceableStrands,
     bookingModificationId: bookingModification.id,

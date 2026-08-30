@@ -189,8 +189,9 @@ let observerClient: PrismaClient;
       bookingCheckIn: "2026-08-01" as CalendarDate,
       bookingCheckOut: "2026-08-03" as CalendarDate,
       bookingModificationId: MODIFICATION_ID,
-      // #3166: required, never defaulted — see `raiseEditFinancialReviewTask`.
+      // #3166: both required, never defaulted — see `raiseEditFinancialReviewTask`.
       paymentId: null,
+      guestsAddedByEdit: null,
     });
 
     /**

@@ -86,6 +86,8 @@ const REVIEW_TASK = {
     },
     bookingCheckIn: "2026-08-10",
     bookingCheckOut: "2026-08-12",
+    // This edit added nobody; the #3166 cases below supply their own.
+    guestsAddedByEdit: null,
   },
   reviewEvidenceUnreadable: false,
   ...STAY,
@@ -185,6 +187,40 @@ describe("the evidence an admin prices from (#3033, owner decision D3)", () => {
     const evidence = screen.getByTestId("manual-refund-task-review-evidence");
     expect(evidence).toHaveTextContent("10 Aug 2026 $60.00");
     expect(evidence).toHaveTextContent("11 Aug 2026 no stored price");
+  });
+
+  it("says that the same change added guests, and that they have not been charged (#3166)", async () => {
+    // The block above describes an existing guest nobody touched. Without this
+    // line the card reads "nights given back: none · nights added: none" while
+    // the booking has just gained two people worth $640 that a parked edit
+    // deliberately did not bill — money recorded only on their own rows.
+    await renderQueue({
+      tasks: [
+        {
+          ...REVIEW_TASK,
+          reviewEvidence: {
+            ...REVIEW_TASK.reviewEvidence!,
+            guestsAddedByEdit: { count: 2, totalPriceCents: 64000 },
+          },
+        },
+      ],
+      viewerCanViewBookings: true,
+    });
+
+    const evidence = screen.getByTestId("manual-refund-task-review-evidence");
+    expect(evidence).toHaveTextContent("This change also added 2 guests");
+    expect(evidence).toHaveTextContent("$640.00");
+    expect(evidence).toHaveTextContent(/has not been charged/);
+  });
+
+  it("says nothing about added guests when the change added none", async () => {
+    // The CONTROL. A line that appeared on every review would be furniture, and
+    // an admin would stop reading it.
+    await renderQueue({ tasks: [REVIEW_TASK], viewerCanViewBookings: true });
+
+    expect(
+      screen.getByTestId("manual-refund-task-review-evidence"),
+    ).not.toHaveTextContent("This change also added");
   });
 
   it("shows no evidence block on a hand-back row, which has none", async () => {
