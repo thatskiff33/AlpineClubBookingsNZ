@@ -15,7 +15,7 @@ would be rebuilt in a fortnight, which is the case
 `size-allowances.d/README.md` names as an allowance rather than a split.
 
 file: src/lib/booking-edit-guest-ranges.ts
-lines: 1867
+lines: 1907
 reason: the file that must NOT be split, and the file's own header says why in a
   way this change strengthens. `booking-guest-profile-gates.test.ts` compares
   string indexes WITHIN a single file to prove the pipeline stays in one place,
@@ -33,7 +33,7 @@ reason: the file that must NOT be split, and the file's own header says why in a
   it and records the removals at the sites they were at. The review round pulled
   it DOWN 42 lines against the first draft, by moving the duplicated occurrence
   builder, night-price projection and calendar-date narrowing into
-  `stored-sold-price-evidence.ts`. #3170 round (+338): the planner composes the STRUCTURAL half of an edit it cannot value - which beds, on which nights, with what on each - so the batch path commits and parks instead of refusing. One shared capacity-coverage function, extracted so the priced and parked plans cannot propose different beds; one required argument on the night-price composer, with no default because the two callers need opposite answers; and the paragraphs saying why a parked edit prices an ADDED guest and not an existing strand's new night. Every input is local state of this function. #3170 fix round (+18): the paragraph reconciling two positions that look contradictory - why a parked write blanks a damaged negative night row while the identity echo in the same change preserves one byte for byte - and the cost that difference carries.
+  `stored-sold-price-evidence.ts`. #3170 round (+338): the planner composes the STRUCTURAL half of an edit it cannot value - which beds, on which nights, with what on each - so the batch path commits and parks instead of refusing. One shared capacity-coverage function, extracted so the priced and parked plans cannot propose different beds; one required argument on the night-price composer, with no default because the two callers need opposite answers; and the paragraphs saying why a parked edit prices an ADDED guest and not an existing strand's new night. Every input is local state of this function. #3170 fix round (+18): the paragraph reconciling two positions that look contradictory - why a parked write blanks a damaged negative night row while the identity echo in the same change preserves one byte for byte - and the cost that difference carries. #3166 fix round 2 (+40): the two parked exits compose their occurrence lists through ONE function, because appending the destroyed-evidence record at only the first of them made the record depend on WHEN the failure was found - and the shared function has to de-duplicate, since a strand can legitimately be in both lists at the second exit and two occurrences for one strand raise two tasks for one guest. The measured shape that produced it is in the docblock, because nothing about the old one-line append looked wrong.
 
 file: src/lib/booking-modify-plan.ts
 lines: 2847

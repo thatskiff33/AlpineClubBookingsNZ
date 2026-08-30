@@ -13,14 +13,18 @@ corrected in place rather than duplicated here — the gate refuses one change
 carrying two allowances for one path.
 
 file: src/lib/booking-request.ts
-lines: 2881
-reason: fourteen lines of docblock on the approval preservation path, and no
-  code. `INV-MOD-028` says a blank night price is cleared only by a person
-  supplying the amount, never by a reprice — and this path deletes and recreates
-  an existing hold's night rows, which CAN overwrite a blank. It is outside the
-  rule rather than an exception to it, because an officer accepted a specific
-  quote option at a price they chose and those are the figures written. That
-  reasoning belongs at the write it exempts: a reader auditing the enumeration
-  from the invariant arrives here, and finding the write with nothing to say
-  would read as a writer nobody had considered. Splitting a 2,881-line module to
-  house fourteen lines of comment is not the better answer.
+lines: 2901
+reason: docblock on the approval preservation path, and no code. `INV-MOD-028`
+  says a blank night price is cleared only by a person supplying the amount,
+  never by a reprice — and this path deletes and recreates an existing hold's
+  night rows, so a reader auditing the invariant's enumeration arrives here and
+  needs to find the write with something to say. That reasoning belongs at the
+  write it exempts. Splitting a 2,900-line module to house it is not the better
+  answer. Fix round (+20): the first draft gave the WRONG reason — that an
+  officer chose the figures and nothing on the path re-derives an amount, both
+  of which are false of the code (the school pipeline writes engine prices off
+  the season table, and `buildApprovalGuestNights` falls back to an even split).
+  The true reason is that a hold is never editable, so it cannot be carrying a
+  blank; the growth is that argument plus the record of what the false one was,
+  because a justification that was quietly wrong is exactly what the next
+  reader needs to see corrected rather than silently replaced.
