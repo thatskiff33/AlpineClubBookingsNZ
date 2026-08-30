@@ -34,6 +34,7 @@ const {
   mockAttachIntentToWaitingOps,
   mockExecuteGroupSettlementRefundPlan,
   mockRecordDuplicateCaptureRefundEvent,
+  mockSyncEditFinancialReviewChargeRequest,
 } = vi.hoisted(() => ({
   mockPaymentRecoveryFindMany: vi.fn(),
   mockPaymentRecoveryFindUnique: vi.fn(),
@@ -69,6 +70,16 @@ const {
     .fn()
     .mockResolvedValue({ outcome: "refunded", mirroredChildren: 1 }),
   mockRecordDuplicateCaptureRefundEvent: vi.fn().mockResolvedValue(undefined),
+  mockSyncEditFinancialReviewChargeRequest: vi.fn(),
+}));
+
+/**
+ * #3170: reached through a DYNAMIC import inside the worker (the charge module
+ * imports this one), which `vi.mock` still intercepts.
+ */
+vi.mock("@/lib/edit-financial-review-charge", () => ({
+  syncEditFinancialReviewChargeRequest: (...args: unknown[]) =>
+    mockSyncEditFinancialReviewChargeRequest(...args),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -171,6 +182,12 @@ import {
   processPaymentRecoveryOperations,
   queueSupersededPaymentIntentRefundRecovery,
 } from "@/lib/payment-recovery";
+import {
+  bookingModificationIdForAdditionalIntentRecoveryKey,
+  buildAdditionalIntentRecoveryIdempotencyKey,
+  buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey,
+  buildEditFinancialReviewAdditionalIntentStripeKey,
+} from "@/lib/payment-recovery-keys";
 
 function makeOperation(overrides: Record<string, unknown> = {}) {
   return {
@@ -2146,5 +2163,156 @@ describe("#2262 L3 — the recovery dispatcher is exhaustive", () => {
         ),
       }),
     });
+  });
+});
+
+/**
+ * #3170 (epic #2797): the recovery half of ONE EDIT, ONE REQUEST.
+ *
+ * The worker used to derive a `BookingModification` id by slicing the ORDINARY
+ * edit key's prefix off whatever key the operation carried. That is correct for
+ * the ordinary key and silently wrong for every other shape - a review-charge key
+ * sliced to `"tent_recovery_<taskId>"`, and the Xero attach then looked for
+ * waiting operations under an id that cannot exist. The builder had been moved
+ * into `payment-recovery-keys.ts` and made a required argument; the parser was
+ * left behind, which is the half-move `INV-SSOT` exists to stop.
+ */
+describe("additional-intent recovery keys read back to their edit (#3170)", () => {
+  it("round-trips BOTH shapes of the key, and refuses anything else", () => {
+    expect(
+      bookingModificationIdForAdditionalIntentRecoveryKey(
+        buildAdditionalIntentRecoveryIdempotencyKey("mod-9"),
+      ),
+    ).toBe("mod-9");
+    expect(
+      bookingModificationIdForAdditionalIntentRecoveryKey(
+        buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey("mod-9"),
+      ),
+    ).toBe("mod-9");
+    // A CONTROL on the claim above: the two keys are genuinely different
+    // strings, so a parser that understood only one of them would have to fail
+    // here rather than agree by coincidence.
+    expect(buildAdditionalIntentRecoveryIdempotencyKey("mod-9")).not.toBe(
+      buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey("mod-9"),
+    );
+    // FAIL-CLOSED: an unrecognised key yields null and the caller does nothing,
+    // rather than a slice of a string that is not an id.
+    expect(
+      bookingModificationIdForAdditionalIntentRecoveryKey(
+        "payment_recovery_cancel_txn-1_pi_x",
+      ),
+    ).toBeNull();
+    expect(
+      bookingModificationIdForAdditionalIntentRecoveryKey(
+        "payment_recovery_additional_intent_",
+      ),
+    ).toBeNull();
+    expect(bookingModificationIdForAdditionalIntentRecoveryKey(null)).toBeNull();
+  });
+});
+
+describe("edit-financial-review charge recovery (#3170)", () => {
+  function chargeOperation(overrides: Record<string, unknown> = {}) {
+    return makeOperation({
+      id: "recovery-review-charge",
+      type: PaymentRecoveryOperationType.CREATE_ADDITIONAL_PAYMENT_INTENT,
+      amountCents: 20000,
+      paymentIntentId:
+        buildEditFinancialReviewAdditionalIntentStripeKey("mod-1"),
+      idempotencyKey:
+        buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey("mod-1"),
+      paymentTransactionId: null,
+      createdAt: new Date("2026-06-01T00:00:00.000Z"),
+      ...overrides,
+    });
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    const operation = chargeOperation();
+    mockPaymentRecoveryFindUnique.mockResolvedValue(operation);
+    mockPaymentRecoveryFindMany.mockImplementation(
+      (args?: { where?: { attempts?: { gte?: number } } }) => {
+        if (args?.where?.attempts && "gte" in args.where.attempts) {
+          return Promise.resolve([]);
+        }
+        return Promise.resolve([{ ...operation, status: "PENDING" }]);
+      },
+    );
+    mockPaymentRecoveryUpdateMany.mockImplementation(
+      ({ where }: { where?: { id?: string } }) =>
+        Promise.resolve({ count: where?.id ? 1 : 0 }),
+    );
+    mockPaymentRecoveryUpdate.mockResolvedValue({});
+    mockBookingFindUnique.mockResolvedValue({
+      status: "PAID",
+      member: {
+        id: "m1",
+        email: "alice@test.com",
+        firstName: "Alice",
+        lastName: "Smith",
+      },
+      payment: { stripeCustomerId: "cus_123" },
+    });
+    mockSyncEditFinancialReviewChargeRequest.mockResolvedValue({
+      paymentIntentId: "pi_additional_1",
+      totalCents: 23000,
+    });
+  });
+
+  it("re-derives the edit's combined total instead of replaying the frozen amount", async () => {
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result.succeeded).toBe(1);
+    // The replay asks the SHARES what is owed, so a row carrying a stale $200
+    // cannot mint for the wrong figure. That is what makes ONE edit-scoped
+    // recovery row safe where the first round needed one row per task.
+    expect(mockSyncEditFinancialReviewChargeRequest).toHaveBeenCalledWith({
+      bookingId: "booking-1",
+      bookingModificationId: "mod-1",
+      paymentId: "payment-1",
+      member: {
+        id: "m1",
+        email: "alice@test.com",
+        name: "Alice Smith",
+        stripeCustomerId: "cus_123",
+      },
+    });
+    // It must NOT fall through to the ordinary path, whose "a newer additional
+    // supersedes this one" check would see the request this very edit already
+    // minted and complete having minted nothing - exactly how the first round's
+    // second share was dropped.
+    expect(mockCreatePaymentIntent).not.toHaveBeenCalled();
+    expect(
+      mockQueueSupersededAdditionalIntentCancellations,
+    ).not.toHaveBeenCalled();
+    // The waiting supplementary Xero op is pointed at the request, under the
+    // anchor the shared parser read back - never a slice of the key.
+    expect(mockAttachIntentToWaitingOps).toHaveBeenCalledWith({
+      bookingModificationId: "mod-1",
+      paymentIntentId: "pi_additional_1",
+    });
+  });
+
+  it("mints nothing for a cancelled booking", async () => {
+    // #1358, applied to the charge: the cancel flow retired this booking's
+    // additional intents, so resurrecting one here would re-arm a collectable
+    // that must never be captured.
+    mockBookingFindUnique.mockResolvedValue({
+      status: "CANCELLED",
+      member: {
+        id: "m1",
+        email: "alice@test.com",
+        firstName: "Alice",
+        lastName: "Smith",
+      },
+      payment: { stripeCustomerId: "cus_123" },
+    });
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result.succeeded).toBe(1);
+    expect(mockSyncEditFinancialReviewChargeRequest).not.toHaveBeenCalled();
+    expect(mockAttachIntentToWaitingOps).not.toHaveBeenCalled();
   });
 });
