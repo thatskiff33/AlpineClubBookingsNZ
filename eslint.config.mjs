@@ -1510,7 +1510,7 @@ export const COMMENT_STRIPPER_ALLOWLIST = [
   {
     file: "src/lib/__tests__/support/strip-comments.ts",
     reason:
-      "THE canonical helper. The rule exists to send every other file here, and this one has to write the scanner somewhere — the same shape as `src/lib/date-only.ts`'s exemption from the date-encoding arm.",
+      "THE canonical helper. The rule exists to send every other file here, and this one has to write the scanner somewhere — the same shape as `src/lib/date-only.ts`'s exemption from the date-encoding arm. Since #3164's fix round it also holds `stripCssComments`, because three contracts had written the identical one-line CSS `replaceAll` at five call sites: length is not the test of whether something belongs here.",
   },
   {
     file: "src/lib/__tests__/xero-provider-date-boundary-census.test.ts",
@@ -1536,21 +1536,6 @@ export const COMMENT_STRIPPER_ALLOWLIST = [
     file: "src/lib/__tests__/data-migration-verification-gate.test.ts",
     reason:
       "SQL, not JavaScript. `stripSqlComments` leaves single-quoted, double-quoted and dollar-quoted bodies untouched, because a comment token inside a SQL string is data. It deliberately mirrors what the two splitters implement, which is `INV-SSOT-002` rather than a copy of this rule's subject.",
-  },
-  {
-    file: "src/components/ui/__tests__/placeholder-styling-contract.test.ts",
-    reason:
-      "CSS, not JavaScript — and CSS is the one language that shares JavaScript's block delimiter, which is why it reaches this list rather than passing unnoticed. The canonical helper lexes JavaScript strings, template literals and REGEX literals; run over CSS it reads the slash in `url(a/b)` as opening a regex and eats to the end of the line.",
-  },
-  {
-    file: "src/lib/__tests__/app-theme-layout-contract.test.ts",
-    reason:
-      "CSS, not JavaScript. Same reason as the placeholder contract above: this strips comments out of a `globals.css` rule body before counting declarations.",
-  },
-  {
-    file: "src/lib/__tests__/print-light-palette-contract.test.ts",
-    reason:
-      "CSS, not JavaScript. Three sites, all inside the print-stylesheet reader: a selector, a declaration list and a rule body.",
   },
   {
     file: "src/app/api/bookings/__tests__/rooms-unscoped-mode-has-no-internal-caller.test.ts",

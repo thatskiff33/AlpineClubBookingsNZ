@@ -239,9 +239,8 @@ are permanent: never renumbered, never reused.
   have BROKEN its census — so a behaviour sweep has to classify, not just match.
 - **The lists that say what is not a copy live in `eslint.config.mjs`, and there
   are two of them on purpose.** `COMMENT_STRIPPER_ALLOWLIST` is permanent: a
-  different concept the canonical helper cannot express — SQL comments, CSS
-  comments (the one other language sharing the block delimiter), a comment
-  EXTRACTOR, and the deliberate second form. `UNCONVERGED_COMMENT_SCANNERS` is a
+  different concept the canonical helper cannot express — SQL comments, a comment
+  EXTRACTOR, the deliberate second form, and the guard's own fixture file. `UNCONVERGED_COMMENT_SCANNERS` is a
   **ratchet** of five files that walk source and report offsets into the
   ORIGINAL text; `stripComments` preserves newlines but not columns and
   `stripCommentsAndStrings` replaces each string with a two-character `""`, so
@@ -259,6 +258,21 @@ are permanent: never renumbered, never reused.
   `endsWith("/*")`, whose margin is one character comparison and is pinned as a
   fixture for that reason), and `diagnostics/tools/define.ts`'s module-level SQL
   banlist. All are kept as fixtures so a later widening reopens them loudly.
+- **CSS is the one other language sharing JavaScript's block delimiter, and its
+  strip is a second FORM in the canonical module rather than three allowlist
+  entries.** `placeholder-styling-contract`, `app-theme-layout-contract` and
+  `print-light-palette-contract` each wrote the identical one-line `replaceAll`
+  at five call sites between them; since #3164 they import `stripCssComments`.
+  The reason CSS cannot simply use `stripComments` was also wrong where it was
+  first written, and the correction matters because the old one is not
+  reproducible: the JavaScript scanner does **not** read the slash in
+  `url(a/b)` as opening a regex and eat the line — a regex literal is copied
+  through verbatim, and `url(a/b.png)` and `url(/images/hero.png)` both come back
+  byte for byte. What it really eats is the LINE delimiter that CSS does not
+  have: `url(https://cdn.example/x.png)` unquoted loses everything from the
+  double slash onward. No stylesheet here writes one today, so the hazard is
+  **latent, not live** — the first unquoted absolute URL would silently shrink
+  whichever contract read that file.
 - **The rule reads the module body as well as every function, and the bar out
   there is higher.** Its first form recorded evidence only against a literal's
   enclosing function, so a stripper written beside a census's imports was

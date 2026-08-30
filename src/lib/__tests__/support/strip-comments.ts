@@ -261,3 +261,37 @@ export function stripComments(source: string): string {
 
   return out;
 }
+
+/**
+ * CSS with its comments removed — the one other language that shares
+ * JavaScript's block delimiter.
+ *
+ * ONE LINE OF CODE, AND IT LIVED IN THREE FILES AT FIVE CALL SITES until #3164:
+ * `placeholder-styling-contract`, `app-theme-layout-contract` and
+ * `print-light-palette-contract` each wrote the identical `replaceAll`. That is
+ * the population `stripComments` itself went from one to eighteen through, so
+ * length is not the test of whether something belongs here (`INV-SSOT-004`).
+ *
+ * WHY CSS CANNOT USE `stripComments`, measured rather than assumed. An earlier
+ * note here said the JavaScript scanner reads the slash in `url(a/b)` as opening
+ * a regex and eats the line. IT DOES NOT: a regex literal is copied through
+ * verbatim, so `url(a/b.png)` and `url(/images/hero.png)` come back byte for
+ * byte. The real hazard is the LINE delimiter, which CSS does not have and every
+ * absolute URL does. Run over `url(https://cdn.example/x.png)` the scanner sees
+ * `//`, opens a line comment and deletes the rest of the line — measured, the
+ * whole of `x.png); color: red; }` goes — and `url(//cdn.example/x.png)` goes
+ * the same way. Quoting the URL saves it, because a CSS string is a JavaScript
+ * string too. Nothing in `globals.css` or `display.css` writes an unquoted
+ * absolute URL today, so this is LATENT rather than live: the first one written
+ * would silently shrink whichever contract read that file.
+ *
+ * WHAT THIS DOES NOT HANDLE, and it is the mirror of the hazard above: a block
+ * delimiter inside a CSS string (`content: "/*"`) is treated as a comment
+ * opener, because this is a single regular expression and not a lexer. No
+ * stylesheet in this tree writes one. Both limits fail in opposite directions —
+ * the JavaScript scanner over CSS deletes too much on a shape a stylesheet
+ * really can grow, this deletes too much only on one no stylesheet here writes.
+ */
+export function stripCssComments(css: string): string {
+  return css.replaceAll(/\/\*[\s\S]*?\*\//g, "");
+}
