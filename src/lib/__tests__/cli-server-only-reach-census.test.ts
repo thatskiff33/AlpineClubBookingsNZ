@@ -4,56 +4,76 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 /**
- * NO OPERATOR SCRIPT MAY STATICALLY REACH A `server-only` MODULE
- * (CT-5, #2869; epic #2988).
+ * AN OPERATOR SCRIPT MAY REACH A `server-only` MODULE ONLY IF EVERY PUBLISHED
+ * WAY OF RUNNING IT PASSES `--conditions=react-server`
+ * (CT-5, #2869; epic #2988; premise inverted by #2850).
  *
- * ## The failure this prevents, measured
+ * ## What changed, and why the old rule had to go
  *
  * `server-only` throws on import under anything but the `react-server`
  * condition:
  *
- *     npx tsx -e "import('./src/lib/club-time/server.ts')"
+ *     npx tsx -e "import('./src/lib/prisma.ts')"
  *     -> This module cannot be imported from a Client Component module.
  *
  * A `tsx` operator script is not a client component and `server-only` cannot
  * tell the two apart, so the throw lands at IMPORT time — before the script
  * prints anything, before it parses its arguments, and with an error message
- * about React that names nothing the operator did. `npm run
- * finance:backfill-monthly-facts`, `npm run xero:booking-repair` and
- * `npm run config:self-heal` all traverse modules that a route also uses, so an
- * edge added for a route's benefit breaks a CLI that no route test covers.
+ * about React that names nothing the operator did.
  *
- * That is exactly why `club-time-zone-runtime.ts` exists rather than the CLI
- * modules importing CT-1's `server-only` reader, and this census is what keeps
- * that decision from being quietly undone.
+ * This census used to answer that by forbidding the reach outright, which had
+ * a price nobody had priced: `@/lib/prisma`, `@/lib/audit`, `@/lib/email`,
+ * `@/lib/xero` and `@/lib/stripe` could not carry `import "server-only"`, so
+ * the one boundary check that is NOT our own regular expression — the
+ * production build — did not cover the database client. #2850 closed that by
+ * paying for it properly: `server-only`'s own `exports` map resolves the
+ * `react-server` condition to an EMPTY module, so
  *
- * ## Why a census and not a recommendation
+ *     npx tsx --conditions=react-server -e "import('./src/lib/prisma.ts')"
  *
- * The first attempt at this guard was DELETED during CT-5 on the grounds that a
- * regex census over-reports on `import type`, and replaced with a note asking
- * future authors to be careful. A deleted guard plus a recommendation is
- * strictly weaker than a guard that works, and the premise was wrong twice
- * over: `client-server-boundary-census.test.ts` and
- * `.semgrep/rules/acb-client-server-boundary.yml` both already exclude
- * `import type` with the same `(?!type[\s{])` lookahead, and the real
- * over-report source is a LAZY DYNAMIC IMPORT — `await import("…")` inside a
- * function, as `module-settings.ts` writes — which never runs at module load
- * and therefore cannot break a CLI's startup.
+ * loads cleanly, and every operator command that reaches one of those modules
+ * now carries that flag. Measured on this tree when the change landed: 14 of
+ * 33 CLI roots reach `server-only`, all 14 through `@/lib/prisma`, and each was
+ * started under the flag far enough to reach its first real work.
  *
- * So this counts STATIC edges only. Measured on this tree: 0 violations across
- * every CLI root, which agrees exactly with running each entrypoint under
- * `tsx`; three separately-introduced `-> club-time/server` edges were each
- * caught with the shortest path printed; and a script importing neither is
- * correctly clean.
+ * ## What this census enforces now
  *
- * ## Its blind spot, stated
+ * The hazard did not disappear; it moved. It is no longer "a script reaches a
+ * marked module" but "a script reaches a marked module and is published
+ * WITHOUT the flag" — a runbook line an operator copies during an incident, a
+ * seed step in a shell script, a workflow step. That is the exact shape that
+ * killed the required `E2E multi-lodge` check on #3056, where a `server-only`
+ * edge added for a route's benefit reached a seed nobody had thought about.
  *
- * A script that reaches a `server-only` module only through a LAZY dynamic
- * import still slips through — and at runtime, if that code path is taken, it
- * will throw. That is deliberate: counting dynamic edges would report the many
- * legitimate lazy imports in this tree and the guard would be turned off within
- * a week. A guard that catches the class that actually breaks CLIs, and says so,
- * beats one nobody trusts.
+ * So this walks the import graph from every CLI root, and separately sweeps
+ * every place in the repository where a `tsx` entrypoint is NAMED — package
+ * scripts, `prisma.config.ts`, shell scripts, workflows, and the documentation
+ * an operator copies from. A root that reaches `server-only` must carry
+ * `--conditions=react-server` at EVERY one of those sites. The spelling is
+ * exact on purpose: one form is greppable, and a form this census does not
+ * recognise fails closed rather than passing on a fuzzy match.
+ *
+ * `next/headers` is judged by the OLD, absolute rule and the condition does not
+ * excuse it. Measured: `next/headers` imports fine under `tsx` either way, so
+ * the sentence this file used to carry — "it throws outside a request the same
+ * way" — was wrong about the mechanism. It throws when one of its functions is
+ * CALLED outside a request, which no resolution condition can repair, so a CLI
+ * root reaching it is a defect however the CLI is started.
+ *
+ * ## Static AND dynamic edges, which is also new
+ *
+ * The old census counted static edges only, on the grounds that a lazy
+ * `await import(…)` never runs at module load and so cannot break a CLI's
+ * startup. That reasoning held while the rule was "remove the edge", where a
+ * false positive cost a refactor. It does not hold now: the remedy is a flag
+ * that is free to add and safe everywhere, so the cheap and honest choice is to
+ * count every edge and be sound. It is not hypothetical either —
+ * `scripts/induction-baseline.ts` reaches `@/lib/prisma` through
+ * `await import("../src/lib/prisma")` and nothing else, so under the old rule
+ * this census could not see the one CLI that would have failed at its first
+ * write rather than at startup. Counting dynamic edges found it, and
+ * `prisma/seed.ts`, and nothing else;
+ * `client-server-boundary-census.test.ts` has always counted them.
  */
 
 const REPO_ROOT = path.resolve(process.cwd());
@@ -73,34 +93,53 @@ const EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs"];
  *
  * The lesson is the list, not the entry. A directory here is only as good as
  * whoever remembered to add it, so `covers every tsx invocation in the
- * repository` below derives the answer from the shell scripts and package
- * scripts instead, and fails when a `tsx` entrypoint exists that no root
- * covers.
+ * repository` below derives the answer from the invocation sweep instead, and
+ * fails when a `tsx` entrypoint is published that no root covers.
  */
 const CLI_ROOT_DIRECTORIES = ["scripts", "e2e/tools", "e2e/setup"] as const;
 /** Seed entrypoints, which `prisma db seed` also runs under `tsx`. */
 const CLI_ROOT_FILES = ["prisma/seed.ts", "prisma/demo-seed.ts"] as const;
 
 /**
- * The marker itself. `next/headers` is included because it throws outside a
- * request the same way, for the same kind of reason.
+ * Reaching this is fine PROVIDED every published invocation passes
+ * `--conditions=react-server`, under which it resolves to an empty module.
  */
-const FORBIDDEN_SPECIFIERS = new Set(["server-only", "next/headers"]);
+const CONDITION_EXCUSED_SPECIFIERS = new Set(["server-only"]);
 
 /**
- * Runtime module specifiers only, and STATIC ones only.
+ * Reaching this is a defect whatever the invocation does. `next/headers`
+ * resolves and imports happily under plain Node; it throws when `headers()` or
+ * `cookies()` is called outside a request, which is a request-scoped API in a
+ * batch script and not something a resolution condition can repair.
+ */
+const ALWAYS_FORBIDDEN_SPECIFIERS = new Set(["next/headers"]);
+
+/** The one spelling of the flag this repository publishes. */
+const REACT_SERVER_CONDITION = "--conditions=react-server";
+
+/**
+ * Runtime module specifiers, static and dynamic.
  *
  * `import type` / `export type` are erased before anything executes. The
  * negative lookahead is `type[\s{]` rather than `type\s` because TypeScript
  * accepts `import type{ Session } from …` with no space — the same spelling
  * `client-server-boundary-census.test.ts` and the matching Semgrep rule use.
- *
- * `await import(…)` is deliberately absent: a lazy import does not run at module
- * load, so it cannot break a CLI's startup, and counting it is what made an
- * earlier attempt at this guard over-report.
  */
 const STATIC_IMPORT =
   /^[ \t]*(?:import|export)\s+(?!type[\s{])(?:[^;'"]*?\bfrom\s+)?["']([^"']+)["']/gm;
+const DYNAMIC_IMPORT = /(?:\bimport|\brequire)\s*\(\s*["']([^"']+)["']\s*\)/g;
+
+/**
+ * A `tsx` invocation, with whatever flags sit between the binary and the
+ * entrypoint captured so this census can see whether the condition is there.
+ *
+ * The lookbehind is what lets `./node_modules/.bin/tsx scripts/x.ts` match —
+ * the induction runbook's spelling, which runs inside the Compose `migrate`
+ * service where the npm wrapper is not the published form — while keeping a
+ * filename that merely ends in `.tsx` from being read as the binary.
+ */
+const TSX_INVOCATION =
+  /(?<![\w.-])tsx\s+((?:--[\w-]+(?:=\S+)?\s+)*)([\w./-]+\.[cm]?tsx?)(?=[\s"';)]|$)/gm;
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
@@ -124,9 +163,11 @@ const specifierCache = new Map<string, string[]>();
 function specifiersOf(file: string): string[] {
   const cached = specifierCache.get(file);
   if (cached) return cached;
-  const value = [...readFileSync(file, "utf8").matchAll(STATIC_IMPORT)].map(
-    (match) => match[1],
-  );
+  const text = readFileSync(file, "utf8");
+  const value = [
+    ...[...text.matchAll(STATIC_IMPORT)].map((match) => match[1]),
+    ...[...text.matchAll(DYNAMIC_IMPORT)].map((match) => match[1]),
+  ];
   specifierCache.set(file, value);
   return value;
 }
@@ -153,7 +194,7 @@ function resolveSpecifier(fromFile: string, specifier: string): string | null {
 }
 
 /** Breadth-first, so the reported path is the shortest one that exists. */
-function findServerOnlyReach(entry: string): string[] | null {
+function findReach(entry: string, targets: Set<string>): string[] | null {
   const seen = new Set<string>([entry]);
   const queue: Array<{ file: string; trail: string[] }> = [
     { file: entry, trail: [entry] },
@@ -161,7 +202,7 @@ function findServerOnlyReach(entry: string): string[] | null {
   while (queue.length > 0) {
     const { file, trail } = queue.shift()!;
     for (const specifier of specifiersOf(file)) {
-      if (FORBIDDEN_SPECIFIERS.has(specifier)) return [...trail, specifier];
+      if (targets.has(specifier)) return [...trail, specifier];
       const next = resolveSpecifier(file, specifier);
       if (next !== null && !seen.has(next)) {
         seen.add(next);
@@ -172,16 +213,39 @@ function findServerOnlyReach(entry: string): string[] | null {
   return null;
 }
 
-/**
- * Files directly inside one directory, by extension. Shallow on purpose: the
- * places a `tsx` entrypoint is NAMED are flat (shell scripts, workflow files),
- * and a recursive walk here would pull in fixtures that merely mention one.
- */
-function walkShallow(directory: string, extension: string): string[] {
-  if (!existsSync(directory)) return [];
-  return readdirSync(directory, { withFileTypes: true })
+function describeTrail(trail: string[]): string {
+  return trail
+    .map((step) => (step.startsWith(REPO_ROOT) ? relative(step) : step))
+    .join("\n    -> ");
+}
+
+/** Files under one directory with one extension, recursively. */
+function filesUnder(directory: string, extension: string): string[] {
+  const absolute = path.join(REPO_ROOT, directory);
+  if (!existsSync(absolute)) return [];
+  const out: string[] = [];
+  const visit = (dir: string): void => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name === "node_modules") continue;
+        visit(full);
+      } else if (entry.name.endsWith(extension)) {
+        out.push(full);
+      }
+    }
+  };
+  visit(absolute);
+  return out.sort();
+}
+
+/** Files directly inside one directory, by extension. */
+function filesIn(directory: string, extension: string): string[] {
+  const absolute = path.join(REPO_ROOT, directory);
+  if (!existsSync(absolute)) return [];
+  return readdirSync(absolute, { withFileTypes: true })
     .filter((entry) => entry.isFile() && entry.name.endsWith(extension))
-    .map((entry) => path.join(directory, entry.name))
+    .map((entry) => path.join(absolute, entry.name))
     .sort();
 }
 
@@ -202,33 +266,126 @@ function cliRoots(): string[] {
 
 const CLI_ROOTS = cliRoots();
 
-describe("no CLI entrypoint statically reaches a server-only module", () => {
+/**
+ * Every file in this repository that NAMES a `tsx` entrypoint: the npm scripts
+ * and the Prisma seed hook an operator runs, the shell scripts and workflows CI
+ * runs, and the documentation an operator copies a command out of. The last of
+ * those is the reason the sweep exists at all — the acceptance bar for #2850
+ * was that a runbook line copied during a money-repair incident must work.
+ *
+ * `measurement/**` is swept for its shell runners even though it is
+ * deliberately outside CI: it seeds a real database the same way `scripts/`
+ * does, so a broken command there costs the same diagnosis.
+ */
+function invocationSources(): string[] {
+  return [
+    ...filesUnder("scripts", ".sh"),
+    ...filesUnder("measurement", ".sh"),
+    ...filesIn(".github/workflows", ".yml"),
+    ...filesIn(".", ".md"),
+    ...filesUnder("docs", ".md"),
+    path.join(REPO_ROOT, "package.json"),
+    path.join(REPO_ROOT, "prisma.config.ts"),
+  ].filter((file) => existsSync(file));
+}
+
+type Invocation = {
+  /** Repo-relative file the command was found in. */
+  source: string;
+  /** Repo-relative entrypoint, as written. */
+  entry: string;
+  /** Whether the flag sits between `tsx` and the entrypoint. */
+  hasCondition: boolean;
+};
+
+function sweepInvocations(): Invocation[] {
+  const found: Invocation[] = [];
+  for (const file of invocationSources()) {
+    const text = readFileSync(file, "utf8");
+    for (const match of text.matchAll(TSX_INVOCATION)) {
+      const flags = match[1] ?? "";
+      found.push({
+        source: relative(file),
+        entry: match[2].replace(/^\.\//, ""),
+        hasCondition: flags.split(/\s+/).includes(REACT_SERVER_CONDITION),
+      });
+    }
+  }
+  return found;
+}
+
+const INVOCATIONS = sweepInvocations();
+
+/** The roots whose graph reaches `server-only`, by any edge. */
+const ROOTS_REACHING_SERVER_ONLY = new Map<string, string[]>(
+  CLI_ROOTS.map(
+    (entry) =>
+      [
+        relative(entry),
+        findReach(entry, CONDITION_EXCUSED_SPECIFIERS),
+      ] as const,
+  ).filter((pair): pair is [string, string[]] => pair[1] !== null),
+);
+
+describe("CLI entrypoints and the `server-only` boundary", () => {
   it("found the entrypoints, so an empty census is not a silent pass", () => {
     // A moved directory or a changed extension filter would otherwise make this
     // whole file pass by checking nothing at all.
     expect(CLI_ROOTS.length).toBeGreaterThan(20);
   });
 
-  it("has no static path from any of them to `server-only`", () => {
+  it("found the places a tsx entrypoint is published", () => {
+    // The same non-vacuity floor for the other half of the join: if the sweep
+    // stops finding commands, "every command carries the flag" is trivially
+    // true and this file protects nothing.
+    expect(INVOCATIONS.length).toBeGreaterThan(10);
+    expect(INVOCATIONS.some((invocation) => invocation.hasCondition)).toBe(true);
+  });
+
+  it("has roots that DO reach `server-only`, which is what the flag is for", () => {
+    // If this ever drops to zero the marker has come off the protected modules
+    // and the rule below is checking nothing. It is the inverse of the
+    // assertion this census used to make, and it is the load-bearing one now.
+    expect(ROOTS_REACHING_SERVER_ONLY.size).toBeGreaterThan(0);
+  });
+
+  it("has no static or dynamic path from any of them to `next/headers`", () => {
+    // Absolute, and NOT excused by `--conditions=react-server`: this one
+    // resolves fine and throws when called, so no invocation flag repairs it.
     const violations: string[] = [];
     for (const entry of CLI_ROOTS) {
-      const trail = findServerOnlyReach(entry);
-      if (trail === null) continue;
+      const trail = findReach(entry, ALWAYS_FORBIDDEN_SPECIFIERS);
+      if (trail !== null) violations.push(describeTrail(trail));
+    }
+
+    expect(
+      violations,
+      "An operator script reaches `next/headers`, whose `headers()` and " +
+        "`cookies()` throw outside a request. `--conditions=react-server` " +
+        "does not excuse this one — move the request-scoped read behind the " +
+        "caller that has a request (CT-5, #2869).\n\n" +
+        violations.join("\n\n"),
+    ).toEqual([]);
+  });
+
+  it("publishes every `server-only`-reaching command with the condition", () => {
+    const violations: string[] = [];
+    for (const invocation of INVOCATIONS) {
+      const trail = ROOTS_REACHING_SERVER_ONLY.get(invocation.entry);
+      if (trail === undefined || invocation.hasCondition) continue;
       violations.push(
-        trail
-          .map((step) => (step.startsWith(REPO_ROOT) ? relative(step) : step))
-          .join("\n    -> "),
+        `${invocation.source}: tsx ${invocation.entry}\n    ${describeTrail(trail)}`,
       );
     }
 
     expect(
       violations,
-      "An operator script statically imports its way to a `server-only` " +
-        "module, which THROWS the moment the script starts — before it prints " +
-        "anything. Read the club timezone through " +
-        "`@/lib/club-time-zone-runtime` rather than `@/lib/club-time/server` " +
-        "or `@/lib/club-time-zone-settings`, and move any other route-only " +
-        "dependency behind a lazy `await import(...)` (CT-5, #2869).\n\n" +
+      "An operator command reaches a `server-only` module but is published " +
+        `without \`${REACT_SERVER_CONDITION}\`, so it THROWS the moment it ` +
+        "starts — before it prints anything, with an error about React Server " +
+        "Components that names nothing the operator did. Add the flag between " +
+        "`tsx` and the entrypoint, or publish the command as an `npm run` " +
+        "script that carries it (CT-5, #2869; #2850).\n\n" +
         violations.join("\n\n"),
     ).toEqual([]);
   });
@@ -236,11 +393,11 @@ describe("no CLI entrypoint statically reaches a server-only module", () => {
   it("would see the edge if one were added", () => {
     // The census is only worth its runtime if it can actually find a path, so
     // this drives the same search over a synthetic root: `club-time/server`
-    // carries `import "server-only"`, and every CLI root above must not reach
-    // it. Proving the search WORKS is what stops a silent all-clean.
+    // carries `import "server-only"`. Proving the search WORKS is what stops a
+    // silent all-clean.
     const serverBinding = path.join(SRC, "lib", "club-time", "server.ts");
     expect(existsSync(serverBinding)).toBe(true);
-    expect(findServerOnlyReach(serverBinding)).toEqual([
+    expect(findReach(serverBinding, CONDITION_EXCUSED_SPECIFIERS)).toEqual([
       serverBinding,
       "server-only",
     ]);
@@ -251,48 +408,24 @@ describe("no CLI entrypoint statically reaches a server-only module", () => {
     // directory to it, and on #3056 nobody had: `e2e/setup` was missing, the
     // multi-lodge E2E seed died on the `server-only` throw, and this census
     // stayed green throughout. So the roots are no longer trusted on their own
-    // — this derives the answer from the places a `tsx` entrypoint is actually
-    // NAMED, and fails when one exists that no root covers.
-    const searched: string[] = [];
-    for (const relative of [
-      ...walkShallow(path.join(REPO_ROOT, "scripts"), ".sh"),
-      path.join(REPO_ROOT, "package.json"),
-      ...walkShallow(path.join(REPO_ROOT, ".github", "workflows"), ".yml"),
-    ]) {
-      if (!existsSync(relative)) continue;
-      searched.push(relative);
-    }
-    // A non-vacuity floor: if the sweep stops finding files, it stops finding
-    // invocations too, and a green here would mean nothing.
-    expect(searched.length).toBeGreaterThan(5);
-
-    const invoked = new Set<string>();
-    for (const file of searched) {
-      const text = readFileSync(file, "utf8");
-      for (const match of text.matchAll(
-        /(?:^|[\s"'])tsx\s+(?:--[\w-]+(?:=\S+)?\s+)*([\w./-]+\.[cm]?tsx?)(?=[\s"';)]|$)/gm,
-      )) {
-        invoked.add(match[1].replace(/^\.\//, ""));
-      }
-    }
-    // The sweep must be able to see one, or the assertion below is vacuous.
-    expect(invoked.size).toBeGreaterThan(0);
-
-    const covered = new Set(
-      CLI_ROOTS.map((absolute) =>
-        path.relative(REPO_ROOT, absolute).split(path.sep).join("/"),
-      ),
-    );
-    const uncovered = [...invoked]
+    // — an entrypoint that is published somewhere but covered by no root has
+    // nothing judging whether it needs the flag.
+    const covered = new Set(CLI_ROOTS.map(relative));
+    const uncovered = [
+      ...new Set(INVOCATIONS.map((invocation) => invocation.entry)),
+    ]
       .filter((entry) => !covered.has(entry))
       .filter((entry) => existsSync(path.join(REPO_ROOT, entry)))
       .sort();
 
-    expect(uncovered, [
-      "A `tsx` entrypoint is invoked somewhere in this repository that no CLI",
-      "root covers, so nothing checks whether it reaches a `server-only`",
-      "module. Add its directory to CLI_ROOT_DIRECTORIES (or the file to",
-      "CLI_ROOT_FILES) and re-run.",
-    ].join(" ")).toEqual([]);
+    expect(
+      uncovered,
+      [
+        "A `tsx` entrypoint is published somewhere in this repository that no",
+        "CLI root covers, so nothing checks whether it reaches a `server-only`",
+        "module. Add its directory to CLI_ROOT_DIRECTORIES (or the file to",
+        "CLI_ROOT_FILES) and re-run.",
+      ].join(" "),
+    ).toEqual([]);
   });
 });
