@@ -1,6 +1,4 @@
-import {
-  getExplicitGuestBedNightKeys,
-} from "@/lib/booking-guest-stay-ranges";
+import { getExplicitGuestBedNightKeys } from "@/lib/booking-guest-stay-ranges";
 import { requireCalendarDate, type CalendarDate } from "@/lib/club-time";
 
 /**

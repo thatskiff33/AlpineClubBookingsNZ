@@ -45,7 +45,11 @@ import {
  * nothing, and reads no rate. It does not decide WHETHER an edit is unpriceable
  * - that is the planner (#3031) - and it does not call itself from the
  * booking-edit path - that is #3032, which composes the structural edit and this
- * raise into one local action.
+ * raise into one local action. Since #3166 it does not mint an occurrence's
+ * IDENTITY either: the key, its material, the recurrence walk that says where a
+ * new occurrence goes, and the operator prose derived from the same occurrence
+ * all live in `edit-financial-review-occurrence.ts`. The boundary is exactly one
+ * value - a key and a slot - so nothing here re-derives a key.
  *
  * ## Locking (`INV-LOCK-001`, `INV-LOCK-002`)
  *
