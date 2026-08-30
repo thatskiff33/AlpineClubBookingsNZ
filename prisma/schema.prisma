@@ -3410,6 +3410,14 @@ model AdultMemberHostingPolicy {
   // one NULL, so a three-way all-or-none CHECK would refuse an old-colour
   // policy create between migrate and cutover.
   //
+  // It is the BEST rule available rather than a complete one, and the residue is
+  // stated in the migration: an old-colour UPDATE that switches a row the new
+  // colour had decided back to "inherit" — nulling only the pair — leaves this
+  // column non-NULL beneath a NULL pair and is refused with 23514. No CHECK that
+  // ties this column to the pair can avoid that, the failure is a visible save
+  // error rather than a half-written policy, and dropping the constraint
+  // entirely would readmit the one shape that has no defensible reading.
+  //
   // NULL on a row that DID decide therefore reads as OFF, not as "inherit", and
   // that reading is what makes the upgrade a no-op: every existing row — the
   // ones with the pair set as much as the ones inheriting — keeps judging

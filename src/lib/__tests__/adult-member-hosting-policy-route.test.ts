@@ -539,16 +539,117 @@ describe("adult-member hosting policy route (#2364)", () => {
         capacityMode: "HOLD",
         hostScopeSameBooking: true,
         hostScopeSameBookingOwner: true,
-        // #3037. THE BODY DID NOT NAME IT, and it is stored as an explicit
-        // `false` rather than NULL. That is the whole default-OFF contract at the
-        // write boundary: a client that predates the scope — a browser tab loaded
-        // from the previous colour during a blue/green window — cannot turn Group
-        // Trip cover on by omission, and cannot leave the column in the "did not
-        // decide" state on a row that decided everything else either.
-        hostScopeSameGroupTrip: false,
+        // #3037. THE BODY DID NOT NAME IT, so the create names no value and the
+        // column is stored NULL — which `rowHostScopes` reads as OFF on a decided
+        // row, and which is exactly what a browser tab loaded from the previous
+        // colour would have written itself. That is the default-OFF contract at
+        // the write boundary: omission cannot turn Group Trip cover ON. Storing
+        // an explicit `false` here instead would assert a decision the caller
+        // never made, and is what made the UPDATE path able to clear another
+        // admin's opt-in.
         version: 1,
       },
     });
+  });
+
+  it("leaves a stored Group Trip decision alone when the body does not mention it (#3037)", async () => {
+    // THE BLUE/GREEN HAZARD THIS PINS. One admin turns Group Trip cover on. A
+    // second admin's tab, served by the DRAINING PREVIOUS COLOUR, saves an
+    // unrelated change: its body cannot name `sameGroupTrip` because that build
+    // has never heard of it. The compare-and-swap does NOT protect the field —
+    // that tab's GET simply does not select the column, so it holds the CURRENT
+    // version quite legitimately and the CAS passes. Under `.default(false)` the
+    // absent field was written as `false` and the first admin's opt-in vanished.
+    const groupTripOn = {
+      ...stored,
+      hostScopeSameBooking: true,
+      hostScopeSameBookingOwner: false,
+      hostScopeSameGroupTrip: true,
+    };
+    mocks.findUnique
+      .mockResolvedValueOnce(groupTripOn)
+      .mockResolvedValue({ ...groupTripOn, capacityMode: "NO_HOLD", version: 5 });
+    mocks.updateMany.mockResolvedValue({ count: 1 });
+
+    const response = await PUT(
+      put({
+        mode: "ADMIN_REVIEW_REQUIRED",
+        capacityMode: "NO_HOLD",
+        version: 4,
+        hostScopes: { sameBooking: true, sameBookingOwner: false },
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    // The column is ABSENT from the update, not written as false.
+    expect(mocks.updateMany).toHaveBeenCalledWith({
+      where: { scopeKey: "club-wide", version: 4 },
+      data: {
+        mode: "ADMIN_REVIEW_REQUIRED",
+        capacityMode: "NO_HOLD",
+        hostScopeSameBooking: true,
+        hostScopeSameBookingOwner: false,
+        version: 5,
+      },
+    });
+  });
+
+  it("does not treat an unmentioned Group Trip decision as a material change (#3037)", async () => {
+    // The control for the test above, and the other half of the same rule: if an
+    // absent field counted as `false` for MATERIALITY it would make an otherwise
+    // identical re-save look like a real edit — writing the row, bumping the
+    // version, logging an audit entry and busting the public cache for a change
+    // nobody made.
+    const groupTripOn = {
+      ...stored,
+      hostScopeSameBooking: true,
+      hostScopeSameBookingOwner: false,
+      hostScopeSameGroupTrip: true,
+    };
+    mocks.findUnique.mockResolvedValue(groupTripOn);
+    mocks.findMany.mockResolvedValue([groupTripOn]);
+
+    const response = await PUT(
+      put({
+        mode: "ADMIN_REVIEW_REQUIRED",
+        capacityMode: "HOLD",
+        version: 4,
+        hostScopes: { sameBooking: true, sameBookingOwner: false },
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.updateMany).not.toHaveBeenCalled();
+    expect(mocks.logAudit).not.toHaveBeenCalled();
+    expect(mocks.revalidate).not.toHaveBeenCalled();
+  });
+
+  it("still refuses a NEW-colour body at an OLD-colour route by strictness, not by silence", async () => {
+    // The reverse direction of the blue/green window, asserted here because the
+    // route docblock claims it: this build KNOWS `sameGroupTrip`, so the closest
+    // available proof that `.strict()` is what closes that direction is that an
+    // unknown scope key is still a 400 — see the #2575/#2576 test above — while a
+    // known one is accepted. Recorded so the pair of directions is visible
+    // together rather than only in prose.
+    mocks.findUnique.mockResolvedValue(null);
+    mocks.create.mockResolvedValue({ ...stored, version: 1 });
+    const accepted = await PUT(
+      put({
+        mode: "ADMIN_REVIEW_REQUIRED",
+        capacityMode: "HOLD",
+        hostScopes: {
+          sameBooking: true,
+          sameBookingOwner: false,
+          sameGroupTrip: true,
+        },
+      }),
+    );
+    expect(accepted.status).toBe(200);
+    expect(mocks.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ hostScopeSameGroupTrip: true }),
+      }),
+    );
   });
 
   it("refuses an explicit scope set with nothing ticked (#2569 §16)", async () => {

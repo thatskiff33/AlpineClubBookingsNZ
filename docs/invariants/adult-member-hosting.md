@@ -725,7 +725,13 @@ compliant indefinitely.
   `rowHasHostScopes` tests the pair alone and `rowHostScopes` reads the third
   column with `=== true`: a row written before this migration, or by the previous
   colour during a deploy, keeps the scope set it decided with Group Trip cover
-  simply off.
+  simply off. The weaker CHECK is the best rule available, not a complete one:
+  an old-colour UPDATE that returns a row the new colour had decided to
+  "inherit" nulls only the pair, leaves the Group Trip column set beneath it and
+  is refused with 23514. No constraint tying the column to the pair can avoid
+  that, it fails closed on one row rather than half-writing a policy, and the
+  only UPDATE-safe alternative — no constraint at all — readmits the shape that
+  has no reading.
 
 ### INV-HOST-043
 

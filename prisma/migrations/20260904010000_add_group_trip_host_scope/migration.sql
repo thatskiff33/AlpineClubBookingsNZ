@@ -59,7 +59,24 @@ ALTER TABLE "AdultMemberHostingPolicy"
 -- weaker, honest one: it may be NULL on any row, and it may be non-NULL only on
 -- a row that decided the pair. That refuses the one genuinely meaningless shape
 -- — "this row inherits the club's scope set, except for Group Trip, which it
--- decides itself" — while leaving every write the old colour can make legal.
+-- decides itself".
+--
+-- WHAT IT DOES NOT DO IS LEAVE EVERY OLD-COLOUR WRITE LEGAL, and the honest
+-- statement of the residue is this. INSERT is safe: the old colour never names
+-- this column, so it writes NULL and passes. ONE OLD-COLOUR UPDATE CAN FAIL —
+-- the new colour saves a decided scope set (writing this column non-NULL on
+-- every decided row it touches), an old-colour tab then switches that same row
+-- to "inherit" by setting only the pair to NULL, and the row is left with a
+-- non-NULL Group Trip flag under a NULL pair: constraint violation 23514.
+--
+-- That is accepted rather than hidden, for two reasons. It FAILS CLOSED — the
+-- admin sees a save error on one row during the cutover window and retries,
+-- rather than a policy silently half-written — and NO CHECK OF THIS SHAPE CAN
+-- AVOID IT: any constraint that ties this column to the pair is violated the
+-- moment a writer that cannot see the column nulls the pair beneath it, and the
+-- only UPDATE-safe alternative is no constraint at all, which readmits the
+-- meaningless shape above. Widening 20260803020000 to three columns would be
+-- strictly worse: it breaks old-colour INSERT as well.
 --
 -- Every existing row has all three NULL, so this validates against the current
 -- contents without a single violation.
@@ -88,6 +105,16 @@ ALTER TABLE "AdultMemberHostingPolicy"
 -- Old-colour safety: a draining old colour's UPDATE does not name the new
 -- column, so NEW and OLD agree on it and its writes are classified exactly as
 -- they were before this migration.
+--
+-- REVERSING THIS MIGRATION IS NOT "DROP THE COLUMN", and getting that wrong
+-- breaks EVERY policy update rather than only the new feature. plpgsql resolves
+-- NEW."hostScopeSameGroupTrip" at RUNTIME, not at CREATE FUNCTION time, so a
+-- bare `ALTER TABLE ... DROP COLUMN "hostScopeSameGroupTrip"` leaves this
+-- function in place naming a field that no longer exists and every subsequent
+-- UPDATE on "AdultMemberHostingPolicy" raises `record "new" has no field
+-- "hostScopeSameGroupTrip"`. A reverse must CREATE OR REPLACE this function back
+-- to the 20260803020000 two-column body FIRST, in the same transaction as the
+-- DROP CONSTRAINT and DROP COLUMN.
 CREATE OR REPLACE FUNCTION "version_adult_member_hosting_policy"()
 RETURNS trigger
 LANGUAGE plpgsql
