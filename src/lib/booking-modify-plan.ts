@@ -2571,8 +2571,9 @@ export async function applyGuestChanges(
           //
           // #3170: and a vector position that says `null` is a night whose price
           // is genuinely NOT KNOWN, which is now storable and is stored. The two
-          // absences are told apart by `nightPriceCentsToWrite`, whose docblock
-          // is the one place that rule is stated.
+          // absences are told apart by `nightPriceCentsToWrite`, which narrows
+          // `classifyNightPriceToWrite` (#3166) — the one place that rule is
+          // stated, and the same one the date path narrows.
           priceCents: nightPriceCentsToWrite(bg, k, stayDate),
         })),
       });
