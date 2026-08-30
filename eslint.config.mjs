@@ -1424,6 +1424,283 @@ export const SSOT_GUARD_ARMS = {
 };
 
 // ---------------------------------------------------------------------------
+// INV-SSOT-004 (#3164) — ONE comment stripper, and the rule keys on BEHAVIOUR
+// rather than on what the copy is called.
+// ---------------------------------------------------------------------------
+//
+// #3132 converged seventeen definitions spelled `stripComments` onto
+// `src/lib/__tests__/support/strip-comments.ts` and fixed a real defect in the
+// canonical one while doing it: an escaped forward slash inside a regex literal
+// (`.replace(/\//g, "_")`) puts two slashes adjacent, which a naive scanner
+// reads as the start of a line comment and follows to the end of the line,
+// DELETING REAL CODE.
+//
+// THAT SWEEP WAS SCOPED BY SYMBOL NAME, and the cost of that is why this rule
+// exists at all. Measured after it landed, seven more strippers were alive in
+// the tree under the name `withoutComments`, none of which had adopted the fix,
+// and #3164 then found more again as anonymous inline `.replace()` chains that
+// carry no name to sweep by. A guard keyed on a name misses every one of those,
+// and misses the next author who picks a third name or no name at all.
+//
+// So the rule reads what a function DOES. It reports a function whose own body
+// names a JAVASCRIPT BLOCK-COMMENT delimiter — as a regex literal matching one,
+// or as a string whose whole value is one — or which compares characters
+// against a slash and a star, which is the hand-written-scanner shape. Every
+// copy #3164 converged is one of those two shapes, and so is the canonical
+// helper.
+//
+// WHAT IT DELIBERATELY CANNOT CATCH, stated here and in the failure message so
+// nobody reads this guard as wider than it is:
+//
+//   * A stripper that handles ONLY line comments and writes them escaped inside
+//     a regex. That is byte-identical to the URL patterns this tree is full of
+//     (`/^https?:\/\//`, and the protocol-relative `href` check in
+//     `lodge-display/css-tokens.ts`), so firing on it would be a false positive
+//     on real code every time — and a guard that is wrong whenever it fires
+//     trains its reader to switch it off. The BLOCK delimiter is what separates
+//     a comment scanner from a URL, because no URL contains one.
+//   * A stripper written entirely through computed values — delimiters built by
+//     `String.fromCharCode`, or imported from another module. A lint rule has no
+//     symbol table and does no constant folding. This file's own rule
+//     implementation is written that way deliberately, so the guard cannot
+//     report itself; that is the shape of the hole, admitted rather than hidden.
+//   * A stripper for a DIFFERENT language's comments — SQL `--`, dotenv `#`,
+//     and (because CSS shares JavaScript's block delimiters) a CSS strip, which
+//     the allowlist below carries by file with its reason. #3164 measured three
+//     of those among the seven the issue asked it to converge, and converging
+//     any onto a JavaScript scanner would have BROKEN the census rather than
+//     repaired it.
+//
+// THE REMEDY IS ALWAYS THE SAME: import `stripComments` from
+// `@/lib/__tests__/support/strip-comments`. It is the only definition that
+// handles regex literals, template interpolations and string literals, and its
+// docblock states its two remaining imprecisions and the direction each fails
+// in. A copy starts life with none of that.
+
+/**
+ * The files allowed to define a comment scanner of their own, each with the
+ * reason it is not a copy of the canonical helper.
+ *
+ * THIS IS NOT AN EXEMPTION LIST IN THE USUAL SENSE, and the difference matters.
+ * An exemption shelters whatever a file grows later; every entry here is a
+ * DIFFERENT CONCEPT the canonical helper cannot express — a second FORM, or
+ * another language's comment syntax. A file whose stripper does the same job as
+ * `stripComments` does not belong here at any length of reason. It belongs
+ * converged.
+ *
+ * Exported so `ssot-comment-stripper-guard.test.ts` reads THIS list rather than
+ * keeping a copy — `INV-SSOT-004`: two instruments that do not share their
+ * input are one instrument and a rubber stamp.
+ */
+export const COMMENT_STRIPPER_ALLOWLIST = [
+  {
+    file: "src/lib/__tests__/support/strip-comments.ts",
+    reason:
+      "THE canonical helper. The rule exists to send every other file here, and this one has to write the scanner somewhere — the same shape as `src/lib/date-only.ts`'s exemption from the date-encoding arm.",
+  },
+  {
+    file: "src/lib/__tests__/xero-provider-date-boundary-census.test.ts",
+    reason:
+      'A permitted second FORM, not an exemption. `stripCommentsAndStrings` blanks the CONTENTS of every string as well as the comments, so a rule cannot fire on prose inside a quoted example, and it keeps an identifier-shaped bracket key (`invoice["dueDate"]`) because that spelling IS a property read. Its own tests pin both behaviours, and converging it onto `stripComments`, which keeps strings, would destroy the census rather than tidy it. It already imports the canonical `startsRegexLiteral` / `endOfRegexLiteral` predicates, so the two forms cannot disagree about where a regex literal ends (#3132).',
+  },
+  {
+    file: "src/lib/__tests__/config-transfer-cleaned-literals.test.ts",
+    reason:
+      "SQL, not JavaScript. `withoutSqlComments` drops `--` line comments from a migration's SQL text; the canonical helper does not know that delimiter and would hand the census a commented-out UPDATE as a live one. #3164 renamed it from `withoutComments` so the name says which language it is about.",
+  },
+  {
+    file: "src/lib/__tests__/email-delivery-boundary-census.test.ts",
+    reason:
+      "dotenv and YAML `#` comments, not JavaScript. `withoutDotenvComments` strips the way this repository's own dotenv reader does — a whole-line `#`, and an inline `#` preceded by whitespace — because `.env.example` EXPLAINS the capture rule in prose containing a live-looking `USE_LOCAL_CAPTURE=true`. The canonical helper would leave every one of those comments in place. #3164 renamed it and converged the separate JavaScript strip that lived in the same file.",
+  },
+];
+
+// The delimiters are built from character codes rather than written out, so no
+// function in this rule contains a literal comment delimiter and the rule
+// cannot report itself. Making the shape unrepresentable beats adding this file
+// to the list above (`INV-SSOT-001`).
+const CHAR_SLASH = String.fromCharCode(47);
+const CHAR_STAR = String.fromCharCode(42);
+const CHAR_BACKSLASH = String.fromCharCode(92);
+
+/** The two block delimiters and the line delimiter, as plain text. */
+const BLOCK_OPEN = CHAR_SLASH + CHAR_STAR;
+const BLOCK_CLOSE = CHAR_STAR + CHAR_SLASH;
+const LINE_DELIMITER = CHAR_SLASH + CHAR_SLASH;
+
+/**
+ * The block delimiters as they appear ESCAPED inside a regex literal's source,
+ * which is how every two-regex stripper in this tree writes them. A
+ * `new RegExp("...")` string carries the identical text as its VALUE, so one
+ * check covers both spellings.
+ */
+const ESCAPED_BLOCK_DELIMITERS = [
+  CHAR_BACKSLASH + CHAR_SLASH + CHAR_BACKSLASH + CHAR_STAR,
+  CHAR_BACKSLASH + CHAR_STAR + CHAR_BACKSLASH + CHAR_SLASH,
+];
+
+// BOTH characters have to be escaped, and that is a MEASURED narrowing rather
+// than caution. A first cut also accepted the half-escaped forms, on the theory
+// that somebody might write one — and `/<br\s*\/?>/` contains one of them, so
+// the rule reported `clubPostHtmlToText` and `htmlToLineText`, two HTML-to-text
+// converters that strip no comments at all. A quantifier followed by an escaped
+// slash is ordinary regex; only the fully escaped pair is a comment delimiter.
+
+const FUNCTION_NODE_TYPES = new Set([
+  "FunctionDeclaration",
+  "FunctionExpression",
+  "ArrowFunctionExpression",
+]);
+
+const COMMENT_STRIPPER_MESSAGE =
+  'INV-SSOT-004: This function scans source text for JavaScript COMMENT DELIMITERS, which makes it a second comment stripper. There is one, and importing it is the whole fix: `stripComments` from `src/lib/__tests__/support/strip-comments.ts`. A local copy is not a style question. The canonical helper recognises `.replace(/\\//g, "_")` as a regex literal; a copy without that branch reads the two adjacent slashes as a line comment and DELETES the rest of the line — measured across `src/` before #3155 repaired it, that silently truncated a dozen files and desynchronised `xero-contacts.ts` for a thousand lines after it. A census whose stripper under-reports goes FALSELY GREEN: it passes while the thing it exists to catch is sitting in the file. This rule keys on behaviour rather than on a name because #3132 swept by name and left seven copies alive under a second one. It still cannot see a stripper that handles only line comments, one whose delimiters are computed at runtime, or one written for another language. If yours strips SQL, dotenv or CSS comments, or is a deliberate second FORM of this one, add it to `COMMENT_STRIPPER_ALLOWLIST` in `eslint.config.mjs` with the reason it cannot be the canonical helper.';
+
+/**
+ * Repo-relative POSIX path for a linted file, so the allowlist can be written
+ * the way a person refers to a file.
+ */
+function repoRelativePath(filename) {
+  const normalised = String(filename).split("\\").join("/");
+  const root = String(import.meta.dirname).split("\\").join("/");
+  return normalised.startsWith(`${root}/`)
+    ? normalised.slice(root.length + 1)
+    : normalised;
+}
+
+/** The nearest enclosing function of `node`, or null at module top level. */
+function enclosingFunction(node) {
+  for (let current = node.parent; current; current = current.parent) {
+    if (FUNCTION_NODE_TYPES.has(current.type)) return current;
+  }
+  return null;
+}
+
+/**
+ * The behavioural rule itself.
+ *
+ * It is a real rule rather than a `no-restricted-syntax` arm for two structural
+ * reasons. `no-restricted-syntax` is switched OFF for every test file by the
+ * block at the bottom of this config, and test files are the entire population
+ * this guard has to cover. And "does this function strip comments" is a fact
+ * about a whole function body, which an esquery selector — matching one node at
+ * a time, with no memory of the others — cannot express.
+ */
+const noLocalCommentStripper = {
+  meta: {
+    type: "problem",
+    docs: {
+      description:
+        "Report a locally-defined JavaScript comment stripper; there is one canonical helper (INV-SSOT-004).",
+    },
+    schema: [],
+    messages: { copy: COMMENT_STRIPPER_MESSAGE },
+  },
+  create(context) {
+    const file = repoRelativePath(context.filename);
+    if (COMMENT_STRIPPER_ALLOWLIST.some((entry) => entry.file === file)) {
+      return {};
+    }
+
+    /**
+     * function node -> what its own literals say about it.
+     *
+     * `proof` is a delimiter nothing else writes. `slashes` and `stars` count
+     * the CHARACTER comparisons a hand-written scanner makes, and both counts
+     * have to reach two before that shape is called a stripper — the narrowing
+     * is measured, not cautious. One of each matches `globToRegExp` in
+     * `diagnostics/knowledge/allowlist.ts` (`c === "*"`, `glob[i + 1] === "/"`)
+     * and `matchScore` in `help/match.ts` (`endsWith("/*")`), neither of which
+     * has anything to do with comments. A scanner does not get away that
+     * cheaply: it has to recognise a line opener, a block opener AND a block
+     * closer, so it names a slash at least twice and a star at least twice.
+     */
+    const evidence = new Map();
+
+    function evidenceFor(node) {
+      const fn = enclosingFunction(node);
+      if (!fn) return null;
+      const found = evidence.get(fn) ?? { proof: null, slashes: 0, stars: 0 };
+      evidence.set(fn, found);
+      return found;
+    }
+
+    function inspectContainedText(node, text) {
+      if (typeof text !== "string") return;
+      if (
+        ESCAPED_BLOCK_DELIMITERS.some((delimiter) => text.includes(delimiter))
+      ) {
+        const found = evidenceFor(node);
+        if (found && !found.proof) found.proof = node;
+      }
+    }
+
+    /**
+     * A literal whose WHOLE value is a delimiter or one of its characters.
+     * Containment is deliberately not enough: a glob contains a block opener
+     * and is still a glob, and a fixture asserting on the canonical helper
+     * contains whatever it needed to assert about.
+     */
+    function inspectExactValue(node, value) {
+      if (typeof value !== "string") return;
+      const found = evidenceFor(node);
+      if (!found) return;
+      // A whole-value block CLOSER is proof by itself: it is meaningless in a
+      // path, a glob or a URL, and every char-scanning stripper writes it. The
+      // OPENER is not, because `entryPath.endsWith("/*")` is a real glob test
+      // in `help/match.ts`, so it counts as one slash and one star instead.
+      if (value === BLOCK_CLOSE) {
+        if (!found.proof) found.proof = node;
+        return;
+      }
+      if (value === BLOCK_OPEN) {
+        found.slashes += 1;
+        found.stars += 1;
+        return;
+      }
+      if (value === CHAR_SLASH || value === LINE_DELIMITER) found.slashes += 1;
+      else if (value === CHAR_STAR) found.stars += 1;
+    }
+
+    return {
+      Literal(node) {
+        if (node.regex) {
+          inspectContainedText(node, node.regex.pattern);
+          return;
+        }
+        inspectExactValue(node, node.value);
+        inspectContainedText(node, node.value);
+      },
+      TemplateElement(node) {
+        inspectExactValue(node, node.value?.cooked);
+        inspectContainedText(node, node.value?.cooked);
+      },
+      "Program:exit"() {
+        for (const [fn, found] of evidence) {
+          // Proof is reported where it is written, so the message lands on the
+          // delimiter rather than on a hundred-line function. The character
+          // counts have no single node to blame, so those report the function.
+          if (found.proof) {
+            context.report({ node: found.proof, messageId: "copy" });
+          } else if (found.slashes >= 2 && found.stars >= 2) {
+            context.report({ node: fn, messageId: "copy" });
+          }
+        }
+      },
+    };
+  },
+};
+
+/**
+ * This repository's own ESLint rules, as a flat-config plugin.
+ *
+ * Exported for `ssot-comment-stripper-guard.test.ts`, which lints fixtures
+ * through the SHIPPED config rather than through a copy of the rule.
+ */
+export const SSOT_LOCAL_RULES = {
+  rules: { "no-local-comment-stripper": noLocalCommentStripper },
+};
+
+// ---------------------------------------------------------------------------
 // Composition: every restriction that must survive in EVERY `src/**` block,
 // whatever else that block is there to lift.
 // ---------------------------------------------------------------------------
@@ -1954,6 +2231,19 @@ const eslintConfig = defineConfig([
     // code, and `raw-sql-shape-guard.test.ts` pins that inventory file by file.
     files: ["src/**/__tests__/**/*.{ts,tsx}", "src/**/*.test.{ts,tsx}"],
     rules: { "no-restricted-syntax": "off" },
+  },
+  {
+    // INV-SSOT-004 (#3164) — the behavioural comment-stripper guard, applied to
+    // EVERY linted file rather than to a src/ block.
+    //
+    // The population it guards is source-scanning TESTS, and the block above
+    // switches `no-restricted-syntax` off for every one of those — which is the
+    // second reason this is a rule of its own rather than another arm on
+    // `ALWAYS_RESTRICTED_IN_SRC`. Nothing here lifts it anywhere: the only way
+    // out is `COMMENT_STRIPPER_ALLOWLIST`, by file, with a written reason.
+    files: ["**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}"],
+    plugins: { ssot: SSOT_LOCAL_RULES },
+    rules: { "ssot/no-local-comment-stripper": "error" },
   },
   // Override default ignores of eslint-config-next.
   globalIgnores([
