@@ -1472,7 +1472,11 @@ describe("PUT /api/bookings/[id]/modify", () => {
     expect(mockEnqueueAdditionalPaymentIntentRecovery).toHaveBeenCalledWith({
       bookingId: "bk1",
       paymentId: "pay_1",
-      bookingModificationId: "mod_1",
+      // #3170: the recovery key is passed rather than derived inside, so a
+      // review-completion charge can scope its own to the TASK. The ordinary
+      // edit path still builds the modification-scoped key, and this pins the
+      // exact string it has always used.
+      idempotencyKey: "payment_recovery_additional_intent_mod_1",
       amountCents: 10000,
       stripeIdempotencyKey: "mod_batch_bk1_mod_1",
     });

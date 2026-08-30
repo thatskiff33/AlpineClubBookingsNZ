@@ -77,12 +77,6 @@ function buildBookingModificationRefundIdempotencyKey(
   return `payment_recovery_modification_refund_${bookingModificationId}`;
 }
 
-function buildAdditionalIntentRecoveryIdempotencyKey(
-  bookingModificationId: string,
-) {
-  return `payment_recovery_additional_intent_${bookingModificationId}`;
-}
-
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
@@ -263,30 +257,53 @@ export async function enqueueBookingModificationRefundRecovery({
 
 /**
  * Durable retry for a booking edit's additional PaymentIntent whose creation
- * failed transiently (#1096). One row per booking modification (unique
- * idempotency key), replayable by the recovery cron. `paymentIntentId` holds
- * the modification-scoped Stripe idempotency key until the intent exists —
- * Stripe answers a repeated key with the same intent, so a retry can never
- * mint a second collectable instrument — and is updated to the real intent id
- * once created.
+ * failed transiently (#1096). One row per charge debt (unique idempotency key),
+ * replayable by the recovery cron. `paymentIntentId` holds the Stripe
+ * idempotency key until the intent exists — Stripe answers a repeated key with
+ * the same intent, so a retry can never mint a second collectable instrument —
+ * and is updated to the real intent id once created.
+ *
+ * #3170: `idempotencyKey` is now a REQUIRED argument rather than derived from
+ * `bookingModificationId` inside. The ordinary edit path still passes the
+ * modification-scoped key and behaves identically; the review-completion charge
+ * passes a TASK-scoped one, because one edit can raise two review tasks over one
+ * `BookingModification` row and the modification-scoped key would make their two
+ * charge debts the same row. Passing the key rather than a flag is what stops a
+ * future caller getting the scoping wrong by omission (`INV-SSOT`: a required
+ * argument beats a rule).
+ *
+ * #3170 ALSO STOPPED THE UPSERT REWRITING `amountCents`. An `update` clause
+ * carrying the amount means a colliding second caller silently rewrites a debt
+ * the cron may already be part way through — the exact hazard
+ * `buildEditFinancialReviewRefundRecoveryIdempotencyKey` was task-scoped to avoid
+ * on the refund side, sitting unremarked on the charge side. Under a correct key
+ * a repeat carries the SAME amount, so dropping it from the update changes
+ * nothing that is right and makes the wrong thing unrepresentable. `bookingId`
+ * and `paymentId` stay, because a repeat cannot change either and refreshing them
+ * costs nothing.
  */
 export async function enqueueAdditionalPaymentIntentRecovery({
   bookingId,
   paymentId,
-  bookingModificationId,
+  idempotencyKey,
   amountCents,
   stripeIdempotencyKey,
   store = prisma,
 }: {
   bookingId: string;
   paymentId: string;
-  bookingModificationId: string;
+  /**
+   * The recovery-operation dedup key. Build it with
+   * `buildAdditionalIntentRecoveryIdempotencyKey` (an ordinary edit, scoped to
+   * its `BookingModification`) or
+   * `buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey` (a review
+   * completion, scoped to its task).
+   */
+  idempotencyKey: string;
   amountCents: number;
   stripeIdempotencyKey: string;
   store?: PaymentRecoveryStore;
 }) {
-  const idempotencyKey =
-    buildAdditionalIntentRecoveryIdempotencyKey(bookingModificationId);
   return store.paymentRecoveryOperation.upsert({
     where: { idempotencyKey },
     create: {
@@ -302,7 +319,6 @@ export async function enqueueAdditionalPaymentIntentRecovery({
     update: {
       bookingId,
       paymentId,
-      amountCents,
     },
   });
 }

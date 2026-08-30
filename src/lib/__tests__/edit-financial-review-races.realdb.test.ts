@@ -504,6 +504,7 @@ let observerClient: PrismaClient;
           note: "Priced from the booking's own payment history.",
           actingMemberId: MEMBER_ID,
           confirmedAmountCents: 4500,
+          direction: "REFUND_TO_MEMBER",
         });
 
       const settled = await Promise.allSettled([
@@ -575,6 +576,7 @@ let observerClient: PrismaClient;
         note: "Priced from the booking's own payment history.",
         actingMemberId: MEMBER_ID,
         confirmedAmountCents: 4500,
+        direction: "REFUND_TO_MEMBER",
       });
 
       const replay = await prisma.$transaction(async (tx) => {

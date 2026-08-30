@@ -1814,7 +1814,10 @@ describe("payment recovery worker", () => {
       await enqueueAdditionalPaymentIntentRecovery({
         bookingId: "booking-1",
         paymentId: "payment-1",
-        bookingModificationId: "mod-9",
+        // #3170: the key is passed rather than derived, so the review-completion
+        // charge can scope its own to the TASK. The ordinary edit path still
+        // builds the modification-scoped key and this asserts the same string.
+        idempotencyKey: "payment_recovery_additional_intent_mod-9",
         amountCents: 3000,
         stripeIdempotencyKey: "mod_guest_bk1_mod-9",
       });

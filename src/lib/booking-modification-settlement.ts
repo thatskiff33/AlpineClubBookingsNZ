@@ -9,7 +9,10 @@ import {
   enqueueBookingModificationRefundRecovery,
   processPaymentRecoveryOperations,
 } from "@/lib/payment-recovery";
-import { buildBookingModificationRefundMetadata } from "@/lib/payment-recovery-keys";
+import {
+  buildAdditionalIntentRecoveryIdempotencyKey,
+  buildBookingModificationRefundMetadata,
+} from "@/lib/payment-recovery-keys";
 import {
   PartialRefundError,
   refundPaymentTransactions,
@@ -124,17 +127,41 @@ export async function executeBookingModificationRefund({
   }
 }
 
+/**
+ * Mint the additional PaymentIntent that collects a booking edit's price
+ * increase, and write the PENDING `ADDITIONAL` PaymentTransaction the club's
+ * whole additional-payment machinery keys off - the chase reminders, the resend
+ * service, the member's /pay link and the Xero supplementary invoice's
+ * wait-for-payment.
+ *
+ * #3170 RE-ENTERS THIS RATHER THAN ADDING A COLLECTION PATH. A completed
+ * `EDIT_FINANCIAL_REVIEW` task whose officer decided the MEMBER owes the club
+ * comes through here with a task-scoped `idempotencyKey` and
+ * `recoveryIdempotencyKey`, so a review charge and an ordinary price increase are
+ * the same instrument, chased by the same cron and reconciled the same way. The
+ * epic forbids a fourth settlement mechanism, and this is the third's charging
+ * half.
+ */
 export async function createModificationAdditionalPaymentIntent({
   bookingId,
   result,
   reason,
   idempotencyKey,
+  recoveryIdempotencyKey,
   failureMessage,
 }: {
   bookingId: string;
   result: BookingModificationPaymentContext;
   reason: string;
   idempotencyKey: string;
+  /**
+   * #3170: the dedup key for the durable retry, when it must not be the
+   * modification-scoped default. One edit can raise TWO review tasks over one
+   * `BookingModification` row, so a review completion passes its TASK-scoped key
+   * and two reviews of one edit can never share a charge debt. Omitted by the
+   * ordinary edit paths, which are one-per-modification by construction.
+   */
+  recoveryIdempotencyKey?: string;
   failureMessage: string;
 }): Promise<{
   additionalPaymentClientSecret: string | undefined;
@@ -207,7 +234,11 @@ export async function createModificationAdditionalPaymentIntent({
     await enqueueAdditionalPaymentIntentRecovery({
       bookingId,
       paymentId: result.paymentId,
-      bookingModificationId: result.bookingModificationId,
+      idempotencyKey:
+        recoveryIdempotencyKey ??
+        buildAdditionalIntentRecoveryIdempotencyKey(
+          result.bookingModificationId,
+        ),
       amountCents: result.additionalAmountCents,
       stripeIdempotencyKey: idempotencyKey,
     }).catch((enqueueErr) =>

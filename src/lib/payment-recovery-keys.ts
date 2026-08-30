@@ -100,6 +100,51 @@ export function buildEditFinancialReviewRefundStripeKeyPrefix(taskId: string) {
   return `edit_financial_review_refund_${taskId}`;
 }
 
+// The recovery-operation dedup key for an ordinary booking edit's additional
+// PaymentIntent (#1096), scoped to the `BookingModification` that recorded the
+// price increase - one edit, one charge debt.
+//
+// #3170 MOVED IT HERE from `payment-recovery.ts`, where it was private. That
+// module initialises the Prisma client at load time; this one is deliberately
+// free of it so a caller can build a key without dragging the client into its
+// graph, which is why every other builder already lives here. The move is what
+// lets `createModificationAdditionalPaymentIntent` default the key without
+// importing the enqueue module's whole surface.
+export function buildAdditionalIntentRecoveryIdempotencyKey(
+  bookingModificationId: string,
+) {
+  return `payment_recovery_additional_intent_${bookingModificationId}`;
+}
+
+// #3170: the recovery-operation dedup key for the additional PaymentIntent a
+// completed EDIT_FINANCIAL_REVIEW task mints when the officer decides the MEMBER
+// owes the club. Keyed on the TASK for the same reason the refund side is, with
+// the same consequence: one edit can raise TWO review tasks over one
+// `BookingModification` row, and the ordinary additional-intent recovery key is
+// modification-scoped. Under that key the second review would upsert the FIRST
+// review's recovery row - and before #3170 that upsert rewrote `amountCents`, so
+// a pending $200 charge would silently become $30 and be minted for the wrong
+// figure. One task, one charge debt.
+export function buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey(
+  taskId: string,
+) {
+  return `edit_financial_review_additional_intent_recovery_${taskId}`;
+}
+
+// #3170: the Stripe idempotency key for that same additional PaymentIntent.
+// Task-scoped, and the sharper half of the pair: `createPaymentIntent` is a MINT,
+// so two reviews of one edit sharing a key would have Stripe answer the second
+// with the FIRST intent - the club would then hold one instrument for two
+// separate amounts and could only ever collect one of them, while both tasks read
+// as settled. The inline mint and the recovery replay share this key, which is
+// what makes a genuine replay of ONE task's charge converge on one intent instead
+// of minting a second.
+export function buildEditFinancialReviewAdditionalIntentStripeKey(
+  taskId: string,
+) {
+  return `edit_financial_review_additional_${taskId}`;
+}
+
 // #1494: the Stripe refund `metadata` for a booking-cancellation card refund.
 // The inline cancel path (which creates the Stripe refund) and the recovery
 // cron (which replays it under the shared `booking_cancel_refund_<bookingId>`
