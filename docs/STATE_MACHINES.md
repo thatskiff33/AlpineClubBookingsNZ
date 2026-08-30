@@ -1452,10 +1452,14 @@ OPEN -> COMPLETED   (#3030: the same finance:edit close, but the amount arrives
                      A note is REQUIRED on this arm, because the admin is pricing
                      real money from evidence. ZERO IS REFUSED: a completion at
                      $0.00 would record a refund the club did not make, and
-                     "reviewed, nothing is due" is DISMISSED. A credit-only task
-                     (`paymentId` NULL) writes no refund allocation AND no
-                     REFUNDED booking event - there is nothing to allocate
-                     against and nothing moved. Where the confirmed figure differs
+                     "reviewed, nothing is due" is DISMISSED. A task with
+                     `paymentId` NULL is not automatically a credit-only one
+                     since #3194: that column records the booking's captured
+                     money AT RAISE TIME and nothing backfills it, so the
+                     completion re-reads the BOOKING's own payment and routes on
+                     that. A completion that genuinely finds no captured money
+                     writes no refund allocation AND no REFUNDED booking event -
+                     there is nothing to allocate against and nothing moved. Where the confirmed figure differs
                      from one the task already carried, that is the audited
                      amendment of owner decision D2 and `raisedAmountCents` keeps
                      what it was raised with; on a legacy kind a differing figure
@@ -1466,6 +1470,14 @@ OPEN -> COMPLETED   (#3032: and the confirmed amount now MOVES, down whichever o
                      payment, made AFTER the commit; the local ledger allocation
                      for an internet-banking hand-back; or account credit through
                      `createBookingModificationCredit` where nothing was captured.
+                     #3194: "the booking's payment" is read AT COMPLETION when
+                     the task carries no payment id of its own, through the same
+                     captured-and-settled gate the raise sites use - so a member
+                     who pays after their edit was parked is refunded to the card
+                     they paid with instead of being handed club credit they
+                     never asked for. Where the task DOES carry a payment id that
+                     id still decides, so every existing cap and refusal is
+                     reached exactly as before.
                      The route is chosen and every refusal raised BEFORE the
                      status claim, so a refused completion leaves the task OPEN
                      with nothing half-applied. THREE refusals are possible: no

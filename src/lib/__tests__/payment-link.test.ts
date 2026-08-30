@@ -596,7 +596,9 @@ describe("getPaymentLinkContext under an open financial review", () => {
     nights that cannot be valued while adding nights that price normally. The
     booking's stored price is still due and this link is the only way this member
     can pay it - though that stored price is the PRE-change one, which is why the
-    wording says so rather than presenting it as settled (#3194 fix round). If the review flag were allowed to decide whether the
+    wording says so rather than presenting it as settled (#3194 fix round).
+
+    If the review flag were allowed to decide whether the
     page can take money, they would be shown a card saying "pay below" with
     nothing below it, pay nothing, and lose the booking when the hold expired -
     while not one cent of the money under review had moved either way.

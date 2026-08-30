@@ -1143,8 +1143,10 @@ one, check the other.
   stored sold-price evidence, the stay change completes and the money becomes an
   OPEN `ManualRefundTask` of kind `EDIT_FINANCIAL_REVIEW`. `amountCents` NULL
   means the amount is genuinely unknown and `0` may never be used to mean it;
-  `paymentId` NULL is a credit owed against no captured payment and completing
-  such a task writes no refund allocation. Identity is the `occurrenceKey`, minted
+  `paymentId` records the booking's captured money AT RAISE TIME and nothing
+  backfills it, so NULL there is not a claim that the booking has no money —
+  since #3194 the completion re-reads the booking's own payment and routes on
+  that. Identity is the `occurrenceKey`, minted
   only by `editFinancialReviewOccurrenceKey`
   (`src/lib/edit-financial-review.ts`), never a `reason` sentence — so a replay
   raises one task across OPEN, COMPLETED and DISMISSED, and both terminal states
@@ -1183,18 +1185,33 @@ one, check the other.
     without filtering on amount, so that event is chosen and shadows any genuine
     later one. "Reviewed, nothing is due" is DISMISSED. This is the same magic
     zero the epic exists to remove, arriving through the completion door.
-  - **A credit-only completion records no refund.** With `paymentId` NULL there is
-    nothing to allocate against and `Payment.refundedAmountCents` is untouched, so
-    no `REFUNDED` booking event is written - that log is member-facing and must
-    not claim money the system did not return. Since #3032 such a completion does
-    ISSUE account credit, and records `CREDITED` after the commit, where the money
-    moved.
+  - **A credit-only completion records no refund.** Where the booking genuinely
+    has no captured money there is nothing to allocate against,
+    `Payment.refundedAmountCents` is untouched, and no `REFUNDED` booking event is
+    written - that log is member-facing and must not claim money the system did
+    not return. Since #3032 such a completion does ISSUE account credit, and
+    records `CREDITED` after the commit, where the money moved. Since #3194 that
+    branch is reached by asking the BOOKING at completion rather than by reading
+    `ManualRefundTask.paymentId`, which is frozen when the review is raised: a
+    review parked before the member paid carried NULL for ever, so a card payment
+    made while the review was open could only ever come back as club credit.
   - **A confirmed amount is settled through the settlement path that already
     exists, never a fourth one** (#3032). The booking's payment decides which: a
     canonical Stripe refund for a card capture, made AFTER the commit; the local
     ledger allocation for an internet-banking hand-back; or
     `createBookingModificationCredit` where nothing was captured, whose
-    exactly-once key is the `BookingModification` id. A matching Xero modification
+    exactly-once key is the `BookingModification` id. **Which one is a question
+    about the booking, asked at completion** (#3194): a task carrying no payment
+    id re-reads the booking's own payment through `capturedBookingPayment` — the
+    single derivation both raise sites use — so a member's refund does not depend
+    on whether they happened to pay before or after an unrelated edit was parked.
+    A task that DOES carry a payment id is still routed by that id, because the
+    stored id reaches routes the live row no longer would (a reversed manual
+    settlement, a booking that has left the settled statuses) where the amount is
+    capped and an over-cap is REFUSED with the task left OPEN; re-deriving
+    unconditionally would turn each of those refusals into account credit. The
+    re-read writes nothing, so a replayed capture or webhook cannot produce a
+    second backfill or a second refund. A matching Xero modification
     credit note is queued on the same anchor through
     `queueXeroBookingEditSettlement`, the choke point the three booking-edit
     services already use - a completion that moved money and dispatched no Xero

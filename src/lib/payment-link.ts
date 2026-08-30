@@ -363,7 +363,20 @@ export async function getPaymentLinkContext(
 
     `paymentState` is WHAT THIS LINK CAN STILL DO, and a review changes nothing
     about that: the review is about an adjustment to a change, while the link
-    collects the booking's own price. Deriving `payable` from the review-aware
+    collects the booking's own STORED price.
+
+    That stored price is the PRE-CHANGE one, and saying so is the point rather
+    than a caveat (#3194 fix round). Both services that can park an edit write
+    `finalPriceCents` back unchanged - deliberately, so nothing settles on a
+    change whose money nobody could work out - while saving the new dates and
+    deleting the departing guest's row. So `payable` below is built from a
+    post-edit stay and a pre-edit amount, and the note the page renders directly
+    under that amount says exactly that
+    (`FINANCIAL_REVIEW_AMOUNT_PREDATES_THE_CHANGE`). The link stays armed
+    because the member still has to be able to pay and a hold that expires costs
+    them the booking - not because the figure is final.
+
+    Deriving `payable` from the review-aware
     state instead would have handed a CONFIRMED-unpaid member a page that says
     "pay by card or internet banking below" with nothing below it, and an
     expired-link member a page with no "email me a new link" button — they would

@@ -525,9 +525,10 @@ booking change is saved"*. It confirms the change first, names the new stay date
 says the club is checking what the change means for the amount, and says plainly
 that nothing has been refunded or charged for it yet. Its next step is that there
 is nothing for them to do. **No amount appears anywhere in it**: not a zero, not
-an estimate, and deliberately not the booking's own post-edit total, which the
-structural edit has already updated and which would read as authoritative beside a
-sentence saying the figure is unknown. Nothing internal appears either — no cause,
+an estimate, and deliberately not the booking's own stored total, which a parked
+edit writes back UNCHANGED — so it is the total from BEFORE the change while the
+dates and guest rows around it are the new ones, and it would read as
+authoritative beside a sentence saying the figure is unknown. Nothing internal appears either — no cause,
 no diagnostic category, and no clause that could read as the member's fault.
 
 Between the banner's facts and its next step sits the club's own explanation,
@@ -545,12 +546,13 @@ an earlier draft repeated two of them, which meant a club softening the key coul
 not change the narrative's copy, which was the whole justification for having the
 key. An amount must never be put in it.
 
-**On My Bookings**, the row keeps the post-edit total and qualifies it — *"· being
-checked"* beside the figure, and an info chip reading *"Adjustment being checked"*
-beside (never instead of) the booking status. Hiding the figure would leave the
-member with no number at all, and correcting it is the estimation this epic
-forbids; the booking status is unchanged and still true, so the chip sits next to
-it rather than overwriting it.
+**On My Bookings**, the row keeps the booking's stored total and qualifies it —
+*"· being checked"* beside the figure, and an info chip reading *"Adjustment being
+checked"* beside (never instead of) the booking status. That stored total is the
+PRE-change one, which is what the qualifier is there to say; hiding the figure
+would leave the member with no number at all, and correcting it is the estimation
+this epic forbids. The booking status is unchanged and still true, so the chip
+sits next to it rather than overwriting it.
 
 **By email**, the ordinary *Booking Modified* message carries the same sentences in
 its money section. Before #3033 that section rendered **empty** for this case — all
@@ -625,12 +627,26 @@ due, link expiry — so it shows the review half on its own from
 `financialReviewNoteBesideAnAmount`, directly under the amount and above the
 buttons, where it is read before the member decides. The card button, the
 internet banking reference and the *"email me a new link"* action all stay armed,
-because the booking's own price is genuinely due and this link is the only way an
+because the booking's stored price is still owed and this link is the only way an
 unregistered guest can pay it; disarming them would cost the member the booking
 when the hold expired without moving a cent of the money under review. The note
 also stays on screen after a card payment completes on the page, where the
 confirmation is composed by the page rather than by the server and would
 otherwise sign off with *"your booking is confirmed"*.
+
+**That amount is the one from BEFORE the change, and the page says so.** A parked
+edit saves the new dates and deletes the departing guest's row but writes
+`finalPriceCents` back unchanged — both parking services do, deliberately, so
+nothing settles on a change whose money nobody could work out. The payment card
+therefore shows a post-edit stay beside a pre-edit price, and a member who reads
+that as settled and pays it overpays by exactly the amount nobody could compute.
+So the note beside an amount still DUE opens with *"This amount does not yet
+reflect the change you made to this booking"*, while the note beside an amount
+already RECEIVED keeps *"whose amount is not part of that figure"* — money that
+arrived is a settled historical fact and a parked edit cannot make it stale.
+`financialReviewNoteBesideAnAmount` takes which kind of amount it stands next to,
+with no default, so a new surface has to answer the question rather than inherit
+the reassuring half.
 
 That means the page reads TWO facts off one payload and must not conflate them:
 `state` is the WORDING state, which a review changes, and `payable` /
@@ -677,6 +693,18 @@ somebody looked and nothing is owed — not as the hand-back card's *"declined t
 refund, or settled another way"*. **Recording an adjustment** on a review with no
 confirmed amount is disabled with the reason shown, because the server refuses such
 a completion and a control whose only outcome is a refusal is worse than none.
+
+**Where the money goes when they record an adjustment** is not a choice on the
+screen and never has been — the routes are mutually exclusive on facts. Money that
+came in on a card goes back to that card; money settled by hand is mirrored in the
+ledger; and where nothing was captured there is nothing to reverse, so the amount
+becomes account credit. Since #3194 that question is asked of the BOOKING at the
+moment the officer closes the review, rather than read off a note taken when the
+review was raised. It matters because a review can be parked on a booking nobody
+has paid yet — the member can still pay, deliberately — and the old note said
+"there is no card" for ever after, so a member who paid by card while their change
+was being worked out could only be handed club credit. Nothing about the officer's
+screen changed; the money simply goes where their money is.
 
 **On the booking's own page**, an admin also sees a *"Money waiting for review"*
 row on the Admin tools card, with a link to the settlement queue. It is read-only
