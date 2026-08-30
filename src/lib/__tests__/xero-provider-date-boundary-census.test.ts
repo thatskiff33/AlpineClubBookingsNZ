@@ -3,11 +3,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import {
-  endOfRegexLiteral,
-  lastSignificant,
-  startsRegexLiteral,
-} from "./support/strip-comments";
+import { stripCommentsAndStrings } from "./support/strip-comments";
 
 /**
  * The provider, job and export temporal boundary, enforced mechanically
@@ -41,7 +37,13 @@ import {
  * rule below is stated in this file's own docblock and in the docblocks of the
  * modules it guards, so a census that matched raw text would fail on its own
  * explanation — and the only way to make it pass would be to stop explaining.
- * `stripCommentsAndStrings` has its own tests below for exactly that reason.
+ * `stripCommentsAndStrings` has its own tests below for exactly that reason —
+ * kept here, next to the rules that depend on them, even though #3164 moved the
+ * scanner itself to `support/strip-comments` beside `stripComments`. It was
+ * written here for the #2869 review, and living here made it the second of two
+ * instruments reading the same tree by different methods, which is the defect
+ * `INV-SSOT-004` names. The two forms now share one home and one set of regex
+ * predicates.
  *
  * ## WHAT THE FIRST VERSION OF THIS CENSUS MISSED, and why each hole is now shut
  *
@@ -141,162 +143,6 @@ const SCHEDULED_JOB_MODULES = [
   "src/lib/finance-sync-cron.ts",
   "src/lib/finance-sync-diagnostics.ts",
 ] as const;
-
-// ---------------------------------------------------------------------------
-// Reading code without reading prose
-// ---------------------------------------------------------------------------
-
-interface ScanResult {
-  readonly code: string;
-  readonly next: number;
-}
-
-/**
- * A template literal, from its opening backtick.
- *
- * The literal TEXT is blanked like any other string, but a `${ … }`
- * interpolation is CODE and is kept — a `new Date(invoice.date)` inside one is
- * exactly as much of a defect as anywhere else. Newlines are preserved so a
- * reported line number still points at the right line.
- */
-function scanTemplateLiteral(source: string, start: number): ScanResult {
-  let out = '""';
-  let index = start + 1;
-  while (index < source.length) {
-    const char = source[index];
-    if (char === "\\") {
-      index += 2;
-      continue;
-    }
-    if (char === "\n") {
-      out += "\n";
-      index += 1;
-      continue;
-    }
-    if (char === "`") {
-      return { code: out, next: index + 1 };
-    }
-    if (char === "$" && source[index + 1] === "{") {
-      const inner = scanCode(source, index + 2, true);
-      out += ` ${inner.code} `;
-      index = inner.next;
-      continue;
-    }
-    index += 1;
-  }
-  return { code: out, next: index };
-}
-
-// `startsRegexLiteral` and `endOfRegexLiteral` were written here for the
-// #2869 review and are now shared (#3132). The shared scanner had the very
-// defect they were written to fix — `.replace(/\//g, "_")` read as a line
-// comment — so leaving a repaired copy here and a broken one there was
-// INV-SSOT-004 with the two instruments named.
-
-/**
- * What a string literal becomes once blanked — usually `""`, but the KEY of a
- * bracket access is kept.
- *
- * `invoice["dueDate"]` is a property read spelled with a string, and blanking it
- * would make that spelling invisible to every rule below. An identifier-shaped
- * key inside brackets cannot be prose, so keeping it cannot resurrect the #2813
- * class this stripper exists to prevent.
- */
-function keptBracketKey(codeSoFar: string, content: string): string {
-  if (lastSignificant(codeSoFar) !== "[") return '""';
-  return /^[A-Za-z_$][\w$]*$/.test(content) ? `"${content}"` : '""';
-}
-
-/**
- * Code, from `start`, with every comment and string literal replaced by
- * something inert of the same LINE COUNT.
- *
- * `stopAtCloseBrace` is for a template interpolation: it returns at the `}`
- * that closes the interpolation rather than at the end of the source, counting
- * nested braces on the way so an object literal inside one does not end it
- * early.
- */
-function scanCode(
-  source: string,
-  start: number,
-  stopAtCloseBrace: boolean,
-): ScanResult {
-  let out = "";
-  let index = start;
-  let depth = 0;
-  while (index < source.length) {
-    const two = source.slice(index, index + 2);
-    if (two === "//") {
-      const end = source.indexOf("\n", index);
-      index = end === -1 ? source.length : end;
-      continue;
-    }
-    if (two === "/*") {
-      const end = source.indexOf("*/", index + 2);
-      const stop = end === -1 ? source.length : end + 2;
-      // Keep the newlines, so a line number after a docblock is still right.
-      for (const char of source.slice(index, stop)) {
-        if (char === "\n") out += "\n";
-      }
-      index = stop;
-      continue;
-    }
-    const char = source[index];
-    if (char === "`") {
-      const template = scanTemplateLiteral(source, index);
-      out += template.code;
-      index = template.next;
-      continue;
-    }
-    if (char === "/" && startsRegexLiteral(out)) {
-      index = endOfRegexLiteral(source, index);
-      out += '""';
-      continue;
-    }
-    if (char === '"' || char === "'") {
-      const opened = index;
-      index += 1;
-      while (index < source.length) {
-        if (source[index] === "\\") {
-          index += 2;
-          continue;
-        }
-        if (source[index] === char) {
-          index += 1;
-          break;
-        }
-        if (source[index] === "\n") break;
-        index += 1;
-      }
-      out += keptBracketKey(out, source.slice(opened + 1, index - 1));
-      continue;
-    }
-    if (stopAtCloseBrace) {
-      if (char === "{") depth += 1;
-      else if (char === "}") {
-        if (depth === 0) return { code: out, next: index + 1 };
-        depth -= 1;
-      }
-    }
-    out += char;
-    index += 1;
-  }
-  return { code: out, next: index };
-}
-
-/**
- * Remove `//` and block comments and the contents of every string, so a rule
- * cannot fire on prose that describes it.
- *
- * Comments, quoted strings, template literals (whose `${…}` interpolations are
- * kept, because those are code) and REGEX LITERALS are all recognised, and the
- * line count is preserved so a reported line number still points at the right
- * line. Regex literals are recognised because one of them broke this — see
- * {@link startsRegexLiteral}.
- */
-export function stripCommentsAndStrings(source: string): string {
-  return scanCode(source, 0, false).code;
-}
 
 // ---------------------------------------------------------------------------
 // Finding a banned parse, however it is spelled

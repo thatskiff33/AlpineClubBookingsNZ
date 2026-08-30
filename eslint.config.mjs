@@ -1513,11 +1513,6 @@ export const COMMENT_STRIPPER_ALLOWLIST = [
       "THE canonical helper. The rule exists to send every other file here, and this one has to write the scanner somewhere — the same shape as `src/lib/date-only.ts`'s exemption from the date-encoding arm. Since #3164's fix round it also holds `stripCssComments`, because three contracts had written the identical one-line CSS `replaceAll` at five call sites: length is not the test of whether something belongs here.",
   },
   {
-    file: "src/lib/__tests__/xero-provider-date-boundary-census.test.ts",
-    reason:
-      'A permitted second FORM, not an exemption. `stripCommentsAndStrings` blanks the CONTENTS of every string as well as the comments, so a rule cannot fire on prose inside a quoted example, and it keeps an identifier-shaped bracket key (`invoice["dueDate"]`) because that spelling IS a property read. Its own tests pin both behaviours, and converging it onto `stripComments`, which keeps strings, would destroy the census rather than tidy it. It already imports the canonical `startsRegexLiteral` / `endOfRegexLiteral` predicates, so the two forms cannot disagree about where a regex literal ends (#3132).',
-  },
-  {
     file: "src/lib/__tests__/ssot-comment-stripper-guard.test.ts",
     reason:
       "FIXTURES, not a scanner. This is the rule's own suite, and its fixtures are module-level string constants holding the copies nobody has written yet — text a test hands to ESLint, which strips nothing. It is listed because it HAS to be: before the module-scope reach landed it was silent by ACCIDENT, and the accident was load-bearing, since moving one fixture inside an `it(...)` callback reported the file. Listing it says that out loud, and the suite's own `reports its own fixture text at any other path` case proves the listing is what silences it rather than some property of the file.",
@@ -1536,6 +1531,11 @@ export const COMMENT_STRIPPER_ALLOWLIST = [
     file: "src/lib/__tests__/data-migration-verification-gate.test.ts",
     reason:
       "SQL, not JavaScript. `stripSqlComments` leaves single-quoted, double-quoted and dollar-quoted bodies untouched, because a comment token inside a SQL string is data. It deliberately mirrors what the two splitters implement, which is `INV-SSOT-002` rather than a copy of this rule's subject.",
+  },
+  {
+    file: "src/lib/__tests__/family-group-role-retirement.test.ts",
+    reason:
+      "SQL and an EXTRACTOR, once its JavaScript half was converged. It had three scanners and was on the ratchet below; #3164's fix round moved `codeOnly` onto `stripCommentsAndStrings`, which reports the same on `member-merge.ts` and is stricter where the two differ. What is left is not convergeable and is not waiting on anything: `stringLiterals` COLLECTS every string literal with its offset so an offender can be reported at its real line — the same concept as `commentBlocks` below, which gathers rather than removes — and `blankSqlComments` steps over `--` and block comments inside those extracted literals while skipping single-quoted SQL strings.",
   },
   {
     file: "src/app/api/bookings/__tests__/rooms-unscoped-mode-has-no-internal-caller.test.ts",
@@ -1557,28 +1557,34 @@ export const COMMENT_STRIPPER_ALLOWLIST = [
  * to be added here is a new copy, which is exactly what this rule exists to
  * refuse.
  *
- * WHAT THEY HAVE IN COMMON. None of them produces stripped text at all. They
- * WALK source — counting brackets to find a call's argument list, or blanking a
- * region to spaces in place — and they step over comments and strings on the way
- * so a brace or a quote inside prose cannot derail the walk. Every offset they
- * report is an offset into the ORIGINAL text, which is what a reported line
- * number is made of. `stripComments` preserves newlines but not columns, and
- * `stripCommentsAndStrings` replaces each string with a two-character `""`, so
- * neither can serve a walker without moving what it points at.
+ * WHAT THREE OF THE FOUR HAVE IN COMMON — and the fourth is named, because a
+ * blanket claim that is false for one entry is worse than no claim. The first
+ * three produce no REDUCED text. They WALK source, counting brackets to find a
+ * call's argument list or blanking a region to spaces in place, stepping over
+ * comments and strings on the way so a brace or a quote inside prose cannot
+ * derail the walk. Every offset they report is an offset into the ORIGINAL
+ * text, which is what a reported line number is made of. `stripComments`
+ * preserves newlines but not columns, and `stripCommentsAndStrings` replaces
+ * each string with a two-character `""`, so neither can serve a walker without
+ * moving what it points at.
  *
- * THE REMEDY IS A THIRD FORM IN THE CANONICAL MODULE — a blanker that replaces
- * every comment and string with spaces of the same length, so that offsets,
- * columns and line numbers all survive, and these five walk the blanked text
- * instead of re-implementing the lexer. That is a design change to the canonical
- * module plus five conversions with their own censuses to re-measure, which is a
- * separate piece of work from this one and is filed as such.
+ * `advisory-lock-guard.test.ts` is NOT one of those three, and its own entry
+ * says what it is instead. An earlier draft of this preamble claimed the
+ * property for all five; measured, it was false for two of them — the other
+ * being `family-group-role-retirement.test.ts`'s `codeOnly`, which genuinely
+ * did produce reduced text and has since been converged onto the canonical
+ * second form. Only the per-file reasons are load-bearing; a shared sentence is
+ * a convenience and has to earn it.
+ *
+ * THE REMEDY FOR THE THREE IS A THIRD FORM IN THE CANONICAL MODULE (#3180) — a
+ * blanker that replaces every comment and string with spaces of the same length,
+ * so that offsets, columns and line numbers all survive, and they walk the
+ * blanked text instead of re-implementing the lexer. That is a design change to
+ * the canonical module plus three conversions with their own censuses to
+ * re-measure, which is a separate piece of work from this one and is filed as
+ * such.
  */
 export const UNCONVERGED_COMMENT_SCANNERS = [
-  {
-    file: "src/lib/__tests__/family-group-role-retirement.test.ts",
-    reason:
-      "Three scanners, and two of them are SQL. `stringLiterals` EXTRACTS every string literal with its offset, so an offender can be reported at its real line; `blankSqlComments` blanks `--` and block comments to spaces inside those extracted literals, skipping single-quoted SQL strings; the third keeps newlines while blanking. The extractor is arguably a permanent second concept rather than a ratchet entry, and is listed here rather than above because the file's three scanners should be decided together.",
-  },
   {
     file: "src/lib/__tests__/lock-bound-club-zone-outside-transaction.test.ts",
     reason:
@@ -1587,7 +1593,7 @@ export const UNCONVERGED_COMMENT_SCANNERS = [
   {
     file: "src/lib/__tests__/payment-link-expiry-club-zone.test.ts",
     reason:
-      "`transactionCallbackSpans` — the same bracket walk over `$transaction(`, with the same reported line number. It and the two above are near-identical and are the clearest argument for the shared blanker.",
+      "`transactionCallbackSpans` — the same bracket walk over `$transaction(`, with the same reported line number. It and the entry above are near-identical and are the clearest argument for the shared blanker.",
   },
   {
     file: "src/lib/__tests__/xero-object-url-write-guard.test.ts",
@@ -1597,7 +1603,7 @@ export const UNCONVERGED_COMMENT_SCANNERS = [
   {
     file: "src/lib/__tests__/advisory-lock-guard.test.ts",
     reason:
-      "`codeOnly` works a LINE at a time and blanks string literals EXCEPT the ones containing `SELECT`, because the raw SQL it hunts for lives inside those. A carve-out by content is not a form the canonical module should grow; this one probably converges on the blanker plus a caller-side filter.",
+      "THE ODD ONE OUT, and the preamble above says so rather than covering it. `codeOnly` DOES produce reduced text — it returns `null` for a whole-line comment and blanks double-quoted literals in place — so it is not offset-preserving and the shared property is not why it is here. It is here for its own reason, which is exact: it works a LINE at a time, and it blanks every double-quoted literal EXCEPT the ones containing `SELECT`, because the raw SQL it hunts for lives inside those while the prose it must ignore does not. A carve-out by CONTENT is not a form the canonical module should grow. It converges on the blanker plus a caller-side filter, which is the same #3180 the other three wait on and a different conversion.",
   },
 ];
 

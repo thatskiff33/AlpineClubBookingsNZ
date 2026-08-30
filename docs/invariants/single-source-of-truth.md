@@ -240,13 +240,32 @@ are permanent: never renumbered, never reused.
 - **The lists that say what is not a copy live in `eslint.config.mjs`, and there
   are two of them on purpose.** `COMMENT_STRIPPER_ALLOWLIST` is permanent: a
   different concept the canonical helper cannot express — SQL comments, a comment
-  EXTRACTOR, the deliberate second form, and the guard's own fixture file. `UNCONVERGED_COMMENT_SCANNERS` is a
-  **ratchet** of five files that walk source and report offsets into the
-  ORIGINAL text; `stripComments` preserves newlines but not columns and
-  `stripCommentsAndStrings` replaces each string with a two-character `""`, so
-  the form they need is an offset-preserving blanker that does not exist yet.
-  The length is pinned in `ssot-comment-stripper-guard.test.ts`, so the list can
-  shrink and cannot grow.
+  EXTRACTOR, and the guard's own fixture file. `UNCONVERGED_COMMENT_SCANNERS` is
+  a **ratchet** of four files, whose length is pinned in
+  `ssot-comment-stripper-guard.test.ts`, so the list can shrink and cannot grow.
+- **The canonical module holds three FORMS, and a claim made about a whole list
+  has to be true of every entry on it.** `stripComments` removes comments and
+  keeps strings; `stripCommentsAndStrings` also blanks string CONTENTS, which is
+  what a rule needs when its own subject is discussed in prose; `stripCssComments`
+  handles the one other language sharing the block delimiter. #3164 moved the
+  second form out of `xero-provider-date-boundary-census.test.ts`, where the
+  #2869 review had written it — one of two instruments reading the same tree by
+  different methods is exactly this ID, and a second form no other file could
+  import is why a ratchet entry could not converge onto it.
+- **The ratchet's preamble claimed a property two of its five entries did not
+  have, and that is the correction worth recording.** It said none produced
+  reduced text and all reported original-text offsets. Measured, that was false
+  twice: `family-group-role-retirement.test.ts`'s `codeOnly` really did reduce,
+  and has been converged onto the second form with **no change to what its
+  census reports** — `member-merge.ts` comes back without `maxFamilyRole` either
+  way, and the canonical form is the stricter of the two, since it keeps
+  `obj["maxFamilyRole"]` as the property read it is where the local one erased
+  it. `advisory-lock-guard.test.ts`'s works a line at a time and reduces too; it
+  stays, for its own accurate reason — a `SELECT` carve-out, because the raw SQL
+  it hunts for lives inside the double-quoted literals it otherwise blanks.
+  Three of the remaining four share the offset-preserving property; the fourth
+  is named as the exception rather than covered by the sentence. The blanker
+  they wait on is #3180.
 - **What the guard cannot catch is stated in its own failure message**, which is
   the honest form for an inexact rule: a stripper that handles only line
   comments (indistinguishable from the URL patterns this tree is full of), one

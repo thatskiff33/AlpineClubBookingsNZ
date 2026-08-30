@@ -396,21 +396,26 @@ describe("INV-SSOT-004: the two lists say what they are", () => {
   /*
     THE RATCHET, PINNED.
 
-    Five files still walk source with their own comment-aware scanner, and every
-    one of them reports offsets into the ORIGINAL text — a line number, or a
-    slice taken from the unstripped source. `stripComments` preserves newlines
-    but not columns and `stripCommentsAndStrings` replaces each string with a
+    Four files still walk source with their own comment-aware scanner. Three of
+    them report offsets into the ORIGINAL text — a line number, or a slice taken
+    from the unstripped source — and `stripComments` preserves newlines but not
+    columns while `stripCommentsAndStrings` replaces each string with a
     two-character `""`, so neither can serve a walker without moving what it
-    points at. The remedy is a third form in the canonical module: a blanker that
-    replaces every comment and string with spaces of the SAME LENGTH.
+    points at. Their remedy is a third form in the canonical module (#3180): a
+    blanker that replaces every comment and string with spaces of the SAME
+    LENGTH. The fourth, `advisory-lock-guard.test.ts`, is on the list for a
+    different reason its own entry states, and the preamble in `eslint.config.mjs`
+    says so rather than claiming the property for all four.
 
-    This number may go DOWN and may not go up. A sixth file needing an entry here
-    is a sixth copy, which is the thing the rule refuses.
+    It was five until #3164's fix round converged
+    `family-group-role-retirement.test.ts`'s `codeOnly` onto the canonical second
+    form. This number may go DOWN and may not go up: a fifth file needing an entry
+    here is a fifth copy, which is the thing the rule refuses.
   */
   it("keeps the unconverged list a ratchet", () => {
     expect(
       UNCONVERGED_COMMENT_SCANNERS.length,
-      "#3164 measured five. If you are adding a sixth, converge it instead: the canonical helper is `./support/strip-comments`, and if what you need is an offset-preserving blanker, add that FORM there rather than a private one here.",
-    ).toBeLessThanOrEqual(5);
+      "#3164 left four. If you are adding a fifth, converge it instead: the canonical module is `./support/strip-comments`, it holds three forms, and if what you need is the offset-preserving blanker, add that FORM there (#3180) rather than a private one here.",
+    ).toBeLessThanOrEqual(4);
   });
 });

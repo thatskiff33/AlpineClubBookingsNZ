@@ -121,8 +121,9 @@ function filesMatching(pattern: RegExp): string[] {
 }
 
 /**
- * TypeScript comments removed, so a census may match a BARE identifier without
- * being tripped by prose that merely mentions it.
+ * {@link filesMatching}, over code with its TypeScript comments removed, so a
+ * census may match a BARE identifier without being tripped by prose that merely
+ * mentions it.
  *
  * This is what lets the transport patterns widen from `createTransport\s*\(` to
  * the bare name (#3035 review). The narrow forms were evadable by an ordinary
@@ -132,7 +133,6 @@ function filesMatching(pattern: RegExp): string[] {
  * somebody wrote "we do not call createTransport here" in a docblock, which is a
  * false positive that teaches its reader to ignore the census.
  */
-/** {@link filesMatching}, over code with comments stripped. */
 function codeFilesMatching(pattern: RegExp): string[] {
   return SCAN_ROOTS.flatMap((root) => walk(root))
     .filter((file) =>
