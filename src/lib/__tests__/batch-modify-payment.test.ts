@@ -3014,4 +3014,183 @@ describe("PUT /api/bookings/[id]/modify", () => {
     const { sendBookingModifiedEmail } = await import("@/lib/email");
     expect(vi.mocked(sendBookingModifiedEmail)).not.toHaveBeenCalled();
   });
+
+  /**
+   * #3032 (epic #2797): the pending-review fence on the BATCH edit path.
+   *
+   * The rule is "a second money-affecting edit is fenced when it would need
+   * unresolved money as its baseline; identity-only changes stay independent where
+   * safe". The service's own name for that split is `pricePreservingModification`,
+   * and the fence asks it rather than re-deriving it — an earlier revision asked a
+   * second expression that differed by one term, which is the case pinned below.
+   */
+  describe("#3032 pending financial review fences a batch edit", () => {
+    const openReview = {
+      id: "task-open",
+      occurrenceKey: "edit-financial-review:v1:abc",
+      amountCents: null,
+      raisedAmountCents: null,
+      reviewContext: null,
+    };
+
+    function twoGuestBooking({
+      memberGuest = true,
+    }: { memberGuest?: boolean } = {}) {
+      return makeBooking({
+        status: "PAYMENT_PENDING",
+        payment: {
+          id: "p1",
+          bookingId: "bk1",
+          amountCents: 5000,
+          source: "STRIPE",
+          status: "PENDING",
+          stripePaymentIntentId: "pi_1",
+          xeroInvoiceId: null,
+          refundedAmountCents: 0,
+          changeFeeCents: 0,
+        },
+        guests: [
+          {
+            id: "g1",
+            bookingId: "bk1",
+            firstName: "Alice",
+            lastName: memberGuest ? "Member" : "Visitor",
+            ageTier: "ADULT",
+            isMember: memberGuest,
+            memberId: memberGuest ? "m1" : null,
+            priceCents: 2500,
+          },
+          {
+            id: "g2",
+            bookingId: "bk1",
+            firstName: "Bob",
+            lastName: "Guest",
+            ageTier: "ADULT",
+            isMember: false,
+            memberId: null,
+            priceCents: 2500,
+          },
+        ],
+      });
+    }
+
+    async function runBatch(
+      tx: ReturnType<typeof makeTx>,
+      input: Record<string, unknown>,
+    ) {
+      const { modifyBookingBatch } = await import(
+        "@/lib/booking-batch-modification-service"
+      );
+      return modifyBookingBatch({
+        todayAtClub: FIXTURE_CLUB_DAY,
+        bookingId: "bk1",
+        // ADMIN, because the other-lodge election below is officer-only. The fence
+        // is about the booking's money, not about who is asking, so using one
+        // actor throughout keeps the cases comparable.
+        actor: { id: "officer-1", role: "ADMIN" },
+        input: input as never,
+        ipAddress: "127.0.0.1",
+        tx: tx as never,
+      });
+    }
+
+    it("refuses a structural edit while the booking's money is under review", async () => {
+      const tx = makeTx(twoGuestBooking());
+      tx.manualRefundTask.findFirst.mockResolvedValue(openReview);
+
+      await expect(
+        runBatch(tx, {
+          addGuests: [
+            { firstName: "New", lastName: "Guest", ageTier: "ADULT", isMember: false },
+          ],
+        }),
+      ).rejects.toMatchObject({
+        status: 409,
+        code: "EDIT_FINANCIAL_REVIEW_PENDING",
+      });
+
+      // Refused BEFORE anything is priced or written, so the booking is untouched.
+      expect(mockCalculateBookingPrice).not.toHaveBeenCalled();
+      expect(tx.booking.update).not.toHaveBeenCalled();
+      expect(tx.bookingModification.create).not.toHaveBeenCalled();
+    });
+
+    it("lets a name correction through — it reads no stored money, so it compounds nothing", async () => {
+      const tx = makeTx(twoGuestBooking());
+      tx.manualRefundTask.findFirst.mockResolvedValue(openReview);
+
+      const result = await runBatch(tx, {
+        guestUpdates: [{ guestId: "g2", firstName: "Robert", lastName: "Smith" }],
+      });
+
+      expect(result.priceDiffCents).toBe(0);
+      expect(mockCalculateBookingPrice).not.toHaveBeenCalled();
+      // The fence never even queried: `moneyAffecting` is false, so it returns
+      // without a read.
+      expect(tx.manualRefundTask.findFirst).not.toHaveBeenCalled();
+    });
+
+    it("REGRESSION: a name correction carrying an other-lodge election IS fenced", async () => {
+      // The shape that slipped through. `requestedStructuralChange` deliberately
+      // excludes the other-lodge fields (#2978 kept them out so the quote-priced
+      // exemptions keep the meaning `modify-quote` gives them), so this request is
+      // "identity-only" by that test — and then reprices anyway, because an
+      // other-lodge election re-rates guests. A fence asking anything other than
+      // `pricePreservingModification` lets it past and re-rates the party off
+      // stored money that is under review. The route's own schema accepts both
+      // fields on one PUT, so this is a reachable request, not a contrived one.
+      // No member-flagged guest, so the eligibility resolver short-circuits with
+      // no query and the election reaches the fence on this harness.
+      const tx = Object.assign(makeTx(twoGuestBooking({ memberGuest: false })), {
+        otherLodge: {
+          findUnique: vi.fn().mockResolvedValue({ id: "lodge-other" }),
+        },
+      });
+      tx.manualRefundTask.findFirst.mockResolvedValue(openReview);
+
+      await expect(
+        runBatch(tx, {
+          guestUpdates: [{ guestId: "g2", firstName: "Robert", lastName: "Smith" }],
+          otherLodgeId: "lodge-other",
+          otherLodgeMemberGuestIds: ["g2"],
+        }),
+      ).rejects.toMatchObject({
+        status: 409,
+        code: "EDIT_FINANCIAL_REVIEW_PENDING",
+      });
+
+      expect(mockCalculateBookingPrice).not.toHaveBeenCalled();
+      expect(tx.booking.update).not.toHaveBeenCalled();
+    });
+
+    it("CONTROL: the same structural edit succeeds when no review is open", async () => {
+      // Without this the three cases above would still pass against a fence that
+      // refused every edit.
+      const tx = makeTx(twoGuestBooking());
+      tx.manualRefundTask.findFirst.mockResolvedValue(null);
+      mockCalculateBookingPrice.mockReturnValue({
+        totalPriceCents: 7500,
+        guests: [
+          { priceCents: 2500, perNightCents: [2500], nightDates: [] },
+          { priceCents: 2500, perNightCents: [2500], nightDates: [] },
+          { priceCents: 2500, perNightCents: [2500], nightDates: [] },
+        ],
+      });
+
+      const result = await runBatch(tx, {
+        addGuests: [
+          { firstName: "New", lastName: "Guest", ageTier: "ADULT", isMember: false },
+        ],
+      });
+
+      expect(result.priceDiffCents).toBe(2500);
+      expect(tx.booking.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ finalPriceCents: 7500 }),
+        }),
+      );
+      // The fence DID run and passed — it is not silently absent on this path.
+      expect(tx.manualRefundTask.findFirst).toHaveBeenCalledTimes(1);
+    });
+  });
 });
