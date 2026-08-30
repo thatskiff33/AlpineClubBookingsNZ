@@ -18,6 +18,7 @@ import {
   type BookingNarrative,
   type BookingNarrativeState,
   type NarrativeEvent,
+  type ResolveBookingNarrativeInput,
 } from "@/lib/booking-narrative";
 import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "@/lib/capacity";
 import { bookingHasCapacityOverride } from "@/lib/booking-status";
@@ -239,8 +240,24 @@ export interface PaymentLinkContext {
   firstName: string;
   /** Present only when the booking can still be paid via this link. */
   payable: PaymentLinkPayable | null;
-  /** True when the page should offer the "email me a fresh link" action. */
+  /**
+   * True when the page should offer the "email me a fresh link" action.
+   *
+   * READ THIS RATHER THAN `state === "expired_payable"` (#3194): `state` is the
+   * WORDING state and this is the LINK state, and on a booking under review they
+   * differ. `payable` above is the same shape of fact, read the same way.
+   */
   canRequestFreshLink: boolean;
+  /**
+   * #3194 (epic #2797): this booking has an OPEN financial review — a saved
+   * stay or guest change whose refund or charge the club is still working out.
+   *
+   * The pay page shows the review wording from this, composed from
+   * `booking-financial-review-copy.ts` — the booking-detail banner's own home
+   * for those sentences. Before this field the two pages answered one question
+   * differently, and the payment link was the one that had not checked.
+   */
+  financialReviewPending: boolean;
   /**
    * Name of the lodge THIS booking is at (#2919), so the public pay page's
    * confirmation copy names the right property in a multi-lodge club instead of
@@ -256,7 +273,31 @@ export interface PaymentLinkContext {
  * declined — never a generic error. Marks the link used (idempotently) once the
  * booking is paid/completed so it cannot be replayed.
  */
-export async function getPaymentLinkContext(token: string): Promise<PaymentLinkContext> {
+export interface PaymentLinkContextReaders {
+  /**
+   * Whether this booking has an OPEN financial review.
+   *
+   * INJECTED, and required with no default (#3194). The one canonical answer
+   * lives in `booking-financial-review-visibility.ts`, which carries
+   * `import "server-only"` — and this module deliberately does not: it takes the
+   * club's timezone through `readClubTimeZoneOutsideRequest` for exactly that
+   * reason, and `cli-server-only-reach-census.test.ts` fails any operator script
+   * that regains such an edge. So the read is done by the caller that is
+   * unambiguously a server request — `src/app/api/pay/[token]/route.ts` — and
+   * handed down, the same way `resolveBookingNarrative` takes the answer as data
+   * rather than reading it.
+   *
+   * No default, so a second caller has to answer the question rather than
+   * inherit a silent "no" about a member's money (`INV-SSOT`, "prefer
+   * unrepresentable over policed").
+   */
+  readOpenFinancialReview: (bookingId: string) => Promise<boolean>;
+}
+
+export async function getPaymentLinkContext(
+  token: string,
+  { readOpenFinancialReview }: PaymentLinkContextReaders,
+): Promise<PaymentLinkContext> {
   const link = await loadPaymentLinkRecord(token);
   const booking = link.booking;
   const now = new Date();
@@ -280,7 +321,9 @@ export async function getPaymentLinkContext(token: string): Promise<PaymentLinkC
   // import. Its stay dates are @db.Date lodge nights and take no zone.
   const club = bindClubTime(await readClubTimeZoneOutsideRequest());
 
-  const narrative = resolveBookingNarrative({
+  const financialReviewPending = await readOpenFinancialReview(booking.id);
+
+  const narrativeInput = {
     club,
     booking: {
       status: booking.status,
@@ -307,7 +350,38 @@ export async function getPaymentLinkContext(token: string): Promise<PaymentLinkC
       revokedAt: link.revokedAt,
     },
     now,
+  } satisfies ResolveBookingNarrativeInput;
+
+  /*
+    ONE PURE FUNCTION, ASKED TWO DIFFERENT QUESTIONS (#3194) — not a duplicated
+    call, and the difference between the two is what keeps a reviewed booking
+    payable.
+
+    `narrative` is WHAT THE MEMBER IS TOLD. It is review-aware, so a paid booking
+    under review stops saying "nothing more to do" and a payable one gains the
+    review sentences alongside its amount — which is the whole of this issue.
+
+    `paymentState` is WHAT THIS LINK CAN STILL DO, and a review changes nothing
+    about that: the review is about an adjustment to a change, while the link
+    collects the booking's own price. Deriving `payable` from the review-aware
+    state instead would have handed a CONFIRMED-unpaid member a page that says
+    "pay by card or internet banking below" with nothing below it, and an
+    expired-link member a page with no "email me a new link" button — they would
+    then pay nothing, the hold would expire, and the booking would cancel. That
+    is precisely the harm `FINANCIAL_REVIEW_NOTHING_TO_DO` is scoped to avoid,
+    reintroduced one layer down.
+
+    The second call is free of side effects and of I/O: `resolveBookingNarrative`
+    reads only its input (see its file header), so asking it twice costs one
+    object walk and cannot diverge from the first answer.
+  */
+  const narrative = resolveBookingNarrative({
+    ...narrativeInput,
+    financialReviewPending,
   });
+  const paymentState = financialReviewPending
+    ? resolveBookingNarrative(narrativeInput).state
+    : narrative.state;
 
   // A paid/completed booking burns the link so it cannot be replayed.
   if (isPaidLikeStatus(booking.status) && !link.usedAt) {
@@ -321,13 +395,13 @@ export async function getPaymentLinkContext(token: string): Promise<PaymentLinkC
   // Internet Banking is an optional module; only surface the bank-transfer
   // reference on the public pay page when the club has it enabled.
   const ibModules =
-    narrative.state === "payable" ? await loadEffectiveModuleFlags() : null;
+    paymentState === "payable" ? await loadEffectiveModuleFlags() : null;
   const internetBankingEnabled = Boolean(
     ibModules?.xeroIntegration && ibModules?.internetBankingPayments
   );
 
   const payable: PaymentLinkPayable | null =
-    narrative.state === "payable"
+    paymentState === "payable"
       ? {
           checkIn: booking.checkIn.toISOString(),
           checkOut: booking.checkOut.toISOString(),
@@ -350,8 +424,9 @@ export async function getPaymentLinkContext(token: string): Promise<PaymentLinkC
     narrative,
     firstName: booking.member.firstName,
     payable,
-    canRequestFreshLink: narrative.state === "expired_payable",
+    canRequestFreshLink: paymentState === "expired_payable",
     lodgeName: booking.lodge.name,
+    financialReviewPending,
   };
 }
 
