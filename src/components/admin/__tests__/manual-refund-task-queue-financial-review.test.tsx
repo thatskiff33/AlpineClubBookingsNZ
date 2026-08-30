@@ -705,9 +705,20 @@ describe("recording what the unpriced nights sold for (#3191)", () => {
     expect(
       screen.getByRole("button", { name: "Close with no adjustment" }),
     ).toBeDisabled();
+    const verdict = screen.getByTestId("unpriced-night-price-reconciliation");
+    expect(verdict).toHaveTextContent(/every night listed, or leave them all blank/);
+    /*
+      #3191 fix round: said as guidance, not as a rejection. This is what an
+      officer sees on their very first keystroke of a multi-night answer, and
+      warning colour there reads as "you have done something wrong" when they
+      have simply not finished. The sentence is unchanged; only its loudness is.
+    */
+    expect(verdict.className).toContain("text-muted-foreground");
+    fireEvent.change(nightBox("2026-08-12"), { target: { value: "1.00" } });
+    // Both boxes answered and the figures still wrong: now it is a rejection.
     expect(
-      screen.getByTestId("unpriced-night-price-reconciliation"),
-    ).toHaveTextContent(/every night listed, or leave them all blank/);
+      screen.getByTestId("unpriced-night-price-reconciliation").className,
+    ).toContain("text-warning-11");
   });
 
   it("settles once the figures add up, and posts exactly what was typed", async () => {
