@@ -5,6 +5,8 @@ import { describe, expect, it } from "vitest";
 import { PLACEHOLDER_CONTACT_EMAIL_DOMAINS } from "@/lib/placeholder-contact-email";
 import { XERO_SANDBOX_CONTACT_EMAIL_DOMAIN } from "@/lib/xero-sandbox-contact-email";
 
+import { stripComments } from "./support/strip-comments";
+
 /**
  * INV-CONFIG-005: no Xero contact write can put a member's real email address on
  * a contact without asking which installation this is (ENV-SAFETY 3, #3036;
@@ -120,13 +122,6 @@ function filesMatching(pattern: RegExp): string[] {
     .sort();
 }
 
-/** Line comments and block comments removed, so a comment cannot satisfy a case. */
-function withoutComments(source: string): string {
-  return source
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/(^|[^:])\/\/[^\n]*/g, "$1");
-}
-
 function readModule(relativePath: string): string {
   return readFileSync(path.resolve(process.cwd(), relativePath), "utf8");
 }
@@ -189,7 +184,7 @@ describe("Xero contact containment census (INV-CONFIG-005)", () => {
     const COPIED_FROM_A_READ = /^\s*[A-Za-z_$][\w$]*(?:\.[\w$]+)*\.emailAddress\b/;
     let inspected = 0;
     for (const file of NO_EMAIL_CONTACT_WRITERS) {
-      const source = withoutComments(readModule(file));
+      const source = stripComments(readModule(file));
       // Anti-vacuity: the file really is a contact writer, or this loop is
       // asserting something about a file that does nothing.
       expect(source, `${file} must still write a Xero contact`).toMatch(
@@ -221,7 +216,7 @@ describe("Xero contact containment census (INV-CONFIG-005)", () => {
   });
 
   it("puts an email address into a Xero contact payload only through the policy", () => {
-    const source = withoutComments(readModule(CONTACTS_MODULE));
+    const source = stripComments(readModule(CONTACTS_MODULE));
     const assignments = [...source.matchAll(/emailAddress:\s*([^\n]*)/g)];
     // Anti-vacuity in BOTH directions: the file really does hold the two
     // assignments this case is about (the create payload and the update
@@ -244,7 +239,7 @@ describe("Xero contact containment census (INV-CONFIG-005)", () => {
   });
 
   it("resolves the policy in every function that builds a contact payload", () => {
-    const source = withoutComments(readModule(CONTACTS_MODULE));
+    const source = stripComments(readModule(CONTACTS_MODULE));
     for (const fn of [
       "export async function findOrCreateXeroContact(",
       "export async function createXeroContactForMember(",
@@ -363,7 +358,7 @@ describe("Xero contact containment census (INV-CONFIG-005)", () => {
       is. Reaching for the delivery policy here would exempt exactly the
       installations the browser suite runs on.
     */
-    const containment = withoutComments(readModule(CONTAINMENT_MODULE));
+    const containment = stripComments(readModule(CONTAINMENT_MODULE));
     expect(
       containment,
       "the containment module must read the canonical environment role",
@@ -436,7 +431,7 @@ describe("Xero contact containment census (INV-CONFIG-005)", () => {
       "src/lib/xero-member-import.ts",
     ];
     for (const file of importers) {
-      const source = withoutComments(readModule(file));
+      const source = stripComments(readModule(file));
       // Anti-vacuity: the file really does create a Member from a contact.
       expect(source, `${file} must still create a member`).toMatch(
         /member\.create\(|\.member\.create\(/,

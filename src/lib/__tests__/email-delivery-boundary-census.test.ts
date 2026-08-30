@@ -161,7 +161,7 @@ type ConfigBlock = { id: string; text: string };
  * mutually-exclusive rule in prose containing `USE_LOCAL_CAPTURE=true`, and a
  * guard satisfied by its own documentation is a guard that has stopped working.
  */
-function withoutComments(text: string): string {
+function withoutDotenvComments(text: string): string {
   return text
     .split(/\r?\n/)
     .filter((line) => !/^\s*#/.test(line))
@@ -191,7 +191,7 @@ function captureCandidateBlocks(): ConfigBlock[] {
 
   for (const name of readdirSync(root).sort()) {
     if (!/^\.env($|\.)/.test(name)) continue;
-    blocks.push({ id: name, text: withoutComments(readRepoFile(name)) });
+    blocks.push({ id: name, text: withoutDotenvComments(readRepoFile(name)) });
   }
 
   const workflows = path.join(root, ".github", "workflows");
@@ -207,7 +207,7 @@ function captureCandidateBlocks(): ConfigBlock[] {
       const end = rest.indexOf("\nEOF");
       blocks.push({
         id: `.github/workflows/${name} -> ${match[1]} #${index}`,
-        text: withoutComments(end === -1 ? rest : rest.slice(0, end)),
+        text: withoutDotenvComments(end === -1 ? rest : rest.slice(0, end)),
       });
     }
   }
@@ -220,11 +220,11 @@ function captureCandidateBlocks(): ConfigBlock[] {
       const end = rest.search(/\n[^\s#]/);
       blocks.push({
         id: `${file} -> x-app-environment`,
-        text: withoutComments(end === -1 ? rest : rest.slice(0, end)),
+        text: withoutDotenvComments(end === -1 ? rest : rest.slice(0, end)),
       });
     }
     for (const [service, body] of composeServices(file)) {
-      blocks.push({ id: `${file} -> ${service}`, text: withoutComments(body) });
+      blocks.push({ id: `${file} -> ${service}`, text: withoutDotenvComments(body) });
     }
   }
 
