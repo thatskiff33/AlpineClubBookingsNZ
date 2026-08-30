@@ -202,7 +202,6 @@ export async function chooseEditReviewSettlementRoute(
     throw new ManualBookingPaymentError(REVIEW_CREDIT_ANCHOR_TAKEN_MESSAGE, 409);
   }
 
-
   return {
     kind: "account-credit",
     bookingModificationId,

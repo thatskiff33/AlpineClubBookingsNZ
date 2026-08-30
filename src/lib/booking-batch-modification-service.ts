@@ -684,21 +684,6 @@ export async function modifyBookingBatch({
       !quotePriced &&
       isBookingFullyPaidForGuestNameEdits(booking);
 
-    // #3032 (epic #2797): refuse a second money-affecting edit while this
-    // booking's last one is still under financial review. Taken here - under both
-    // locks, on the post-lock re-read, and BEFORE `calculateModifiedPricing`
-    // below or any write - so a refused edit changes nothing at all.
-    //
-    // A name correction and a credit election pass through: neither reads the
-    // booking's stored money, so neither can compound an unresolved amount. The
-    // rule itself, and why it is this narrow, are in
-    // `assertNoPendingEditFinancialReview`.
-    await assertNoPendingEditFinancialReview({
-      bookingId,
-      moneyAffecting: !identityOnlyModification && !requestIsCreditElectionOnly,
-      store: tx,
-    });
-
     // Identity-only modifications are price-preserving by construction
     // (#1099): the stored totals, per-guest prices, and night rows are echoed
     // back instead of running the pricing engine, so a name fix can never
@@ -722,6 +707,32 @@ export async function modifyBookingBatch({
     const pricePreservingModification =
       (identityOnlyModification || requestIsCreditElectionOnly) &&
       !requestCarriesOtherLodgeElection(input);
+
+    // #3032 (epic #2797): refuse a second money-affecting edit while this
+    // booking's last one is still under financial review. Taken here - under both
+    // locks, on the post-lock re-read, and BEFORE `calculateModifiedPricing`
+    // below or any write - so a refused edit changes nothing at all.
+    //
+    // THE PREDICATE IS `pricePreservingModification` ITSELF, not a second
+    // expression that agrees with it today. An earlier revision fenced on
+    // `!identityOnly && !creditElectionOnly` and repriced on that pair MINUS the
+    // other-lodge term, so one request carrying `guestUpdates` AND
+    // `otherLodgeMemberGuestIds` - a shape the route's schema accepts - skipped
+    // the fence and then re-rated its guests off stored money that was under
+    // review. #2978 fixed the identical drift on the neighbouring predicate one
+    // revision earlier; two expressions for one question is the defect, so there
+    // is now exactly one (`INV-SSOT`).
+    //
+    // A name correction and a credit election pass through: neither reads the
+    // booking's stored money, so neither can compound an unresolved amount. The
+    // rule itself, and why it is this narrow, are in
+    // `assertNoPendingEditFinancialReview`.
+    await assertNoPendingEditFinancialReview({
+      bookingId,
+      moneyAffecting: !pricePreservingModification,
+      store: tx,
+    });
+
     const pricing = pricePreservingModification
       ? buildIdentityOnlyPricing(booking)
       : await calculateModifiedPricing(tx, {

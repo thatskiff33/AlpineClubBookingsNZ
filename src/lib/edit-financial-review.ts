@@ -328,11 +328,15 @@ export async function raiseEditFinancialReviewTask({
   /**
    * #3032 (owner decision D-3032-1): the `BookingModification` row this edit
    * wrote, which is the anchor a confirmed amount settles against at completion.
-   * REQUIRED rather than defaulted, because every caller has one in hand at the
-   * point it calls this and a default would let a caller lose the anchor
-   * silently - the failure would then surface only when an admin tried to close
-   * the task, long after the edit committed. Pass `null` deliberately where
-   * there genuinely is no modification row.
+   * REQUIRED rather than defaulted: a default would let a caller lose the anchor
+   * silently, and the failure would then surface only when an admin tried to
+   * close the task, long after the edit committed. Pass `null` deliberately
+   * where there genuinely is no modification row.
+   *
+   * There is no production caller yet - the raise trigger arrives with #3031,
+   * which is what turns an unpriceable edit into a `financial_review_required`
+   * branch. Requiring the parameter NOW is what makes the future callers answer
+   * the question at the point they are written rather than inherit an answer.
    */
   bookingModificationId: string | null;
   /** Operator prose. Defaults to `buildEditFinancialReviewReason`. */
