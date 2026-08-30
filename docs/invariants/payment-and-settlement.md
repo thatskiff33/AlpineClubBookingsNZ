@@ -1230,11 +1230,15 @@ one, check the other.
     property of an UPDATE rather than of a row and is NOT enforced by the
     database; it holds because the column has one writer and every completion
     audits the previous and raised figures.
-  - **An OPEN review blocks reversal of a manual settlement**, and that is
-    accepted as correct (owner decision D-3032-2). It falls out of `INV-PAY-045`,
-    which already refuses a reversal while any `ManualRefundTask` is OPEN, rather
-    than being new behaviour - but raising this kind changes which bookings
-    satisfy that condition, so it is stated here rather than shipped quietly.
+  - **An OPEN review can block reversal of a manual settlement**, and that is
+    accepted as correct (owner decision D-3032-2). It falls out of `INV-PAY-045`
+    rather than being new behaviour - but raising this kind changes which
+    payments satisfy that condition, so it is stated here rather than shipped
+    quietly. MEASURED SCOPE, which is narrower than the decision assumed: that
+    guard reads `{ paymentId, status: OPEN }`, so it is scoped to the PAYMENT and
+    not to the booking. A review raised against a captured payment blocks a
+    reversal of that payment's manual settlement; the ordinary credit-only review
+    (`paymentId` NULL) blocks nothing.
   - **What #3030 enforces versus what #3032 wires.** #3030 ships the state, the
     single occurrence-key mint, the raise, the DB constraints and the audited
     completion. #3032 adds the settlement routing, the anchor and the
