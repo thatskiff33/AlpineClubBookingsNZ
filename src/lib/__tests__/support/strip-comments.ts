@@ -1,12 +1,28 @@
 /**
  * Source with every comment blanked out, newlines preserved.
  *
- * THE ONE DEFINITION IN THE TREE, and since #3132 that is a fact rather than an
- * aspiration: twenty test files and one CI script import this module, and no
- * local `stripComments` exists anywhere else. Nothing yet FAILS on a nineteenth
- * copy — the lint arm for that is deliberately left as a follow-up, because
- * `INV-SSOT-001` prefers deleting the copies to policing them and the deleting
- * came first. Until it exists, this is on review.
+ * THE ONE DEFINITION IN THE TREE, and since #3164 a rule ENFORCES that rather
+ * than review doing it: 48 test files and one CI script import this module, and
+ * `ssot/no-local-comment-stripper` in `eslint.config.mjs` reports a second
+ * scanner wherever one is written, in the editor.
+ *
+ * #3132's own claim to have converged the tree was true of the copies spelled
+ * `stripComments` and of nothing else. Measured on the day it landed, SEVEN more
+ * were alive under the name `withoutComments`, and #3164 then found twenty-one
+ * more with no name at all — written inline as a `.replace()` chain in a census
+ * — because a sweep keyed on a symbol cannot see an expression. That is why the
+ * rule keys on what a function DOES, and why the count above roughly doubled
+ * without a single new census being written.
+ *
+ * Two lists in `eslint.config.mjs` say what is not a copy.
+ * `COMMENT_STRIPPER_ALLOWLIST` holds the scanners that are a different CONCEPT
+ * — SQL and CSS comments, a comment EXTRACTOR, and `stripCommentsAndStrings`
+ * below. `UNCONVERGED_COMMENT_SCANNERS` is a ratchet of five files that walk
+ * source and report offsets into the ORIGINAL text, which neither form here can
+ * serve: this one preserves newlines but not columns, and the second replaces
+ * each string with a two-character `""`. The form that would serve them is an
+ * offset-preserving blanker, and it belongs HERE when it is written rather than
+ * five more times out there.
  *
  * It is shared rather than copied for a reason that cost this repository a real
  * blind spot (#3123). `club-time-escape-hatch-census.test.ts` strips comments
