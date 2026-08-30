@@ -958,26 +958,79 @@ suite that does not mock it. It discovers every admin page and every
 `/api/admin` route **from disk**, then puts each one to the real `requireAdmin`
 and the real `guardAdminLayout`, through the same `x-pathname` /
 `x-request-method` headers `src/proxy.ts` stamps on a real request, for sixteen
-access-role grids.
+access-role grids: fourteen single-area holders (seven areas at `view`, seven at
+`edit`), a Full Admin and a plain member. A deactivated Full Admin is built
+inside the one test that needs it and is a seventeenth.
+
+**What it measures is the gate that actually runs, which took two attempts.**
+A route's authorization has two definitions: the path-to-area map, and the
+`permission` literal the handler passes `requireAdmin`, which is the one that
+wins where a handler passes it — around 170 of the ~300 `/api/admin` routes do.
+The first cut called a bare `requireAdmin()` for every route and therefore
+measured the map everywhere and the real gate nowhere, which made it assert
+things that were false: that a finance-only grid is refused every admin API
+route outside Finance (`POST /api/admin/members/[id]/joining-fee/preview` is
+gated `finance:view` and answers it), and that a `support:view` grid is admitted
+to `/api/admin/club-time-zone` (it passes `permission: false` and admits only a
+Full Admin). Each sweep now reads the handler's own literal out of its source
+and hands it to the guard.
 
 Read its arrangement before adding to it, because the parts are deliberately not
 interchangeable:
 
-- the **sweeps** compute what they expect from `getAdminRouteRequirement`, so
-  they prove the guard consults the map and honours `view` versus `edit`, and
-  they are explicitly incapable of catching a map that is wrong;
-- the **anchor table** is the second opinion, hand-written for that reason: it
-  names which area a handful of unmistakable routes belong to, and a seeded
-  wrong mapping contradicts it by name. It is drift-guarded against the
-  enumeration, so it cannot rot into a list of routes that no longer exist;
+- the **sweeps** compute what they expect from `getAdminRouteRequirement` and
+  from those same literals, so they prove the guard honours the permission it is
+  given and consults the map when it is given none, and that `view` never buys
+  `edit` — and they are explicitly incapable of catching a map or a literal that
+  is wrong;
+- the **reviewed divergence table** is what catches a wrong literal. Every place
+  a handler's own `permission` disagrees with the map is listed with the reason
+  it is intended, and the list is asserted equal to what is on disk in both
+  directions — a new divergence fails, and a stale entry fails. This is the
+  control that catches the #2949 shape, where three routes were re-gated from
+  `finance:edit` to `overview:view` **in the route source** and 83 tests still
+  passed;
+- the **anchor table** is the second opinion about the map, hand-written for that
+  reason: it names which area a handful of unmistakable routes belong to, and a
+  seeded wrong mapping contradicts it by name. It lives in
+  `helpers/admin-route-area-anchors.ts` and `admin-route-area-matrix.test.ts`
+  asserts its frozen snapshot agrees with it, so the same reviewed fact cannot be
+  stated two ways. It is drift-guarded against the enumeration, so it cannot rot
+  into a list of routes that no longer exist;
 - the **floors** (`toBeGreaterThan`) exist because a broken walk would otherwise
   make every sweep pass by covering nothing — verified by pointing the walk at a
   directory that does not exist, which reddens five assertions rather than none.
+
+Two limits it states rather than implies. It measures the **admission** gate, so
+a handler that narrows further after `requireAdmin` — the config-transfer
+wrapper's second `isFullAdmin` check — is stricter in production than reported;
+narrowing only removes callers, so its refusals are sound and its admissions mean
+"reached the handler". And a handler shape the source reader cannot resolve is a
+**hard failure** rather than a fall back to path inference, because a reader that
+degraded silently would reintroduce the blindness it exists to remove.
 
 It reads `src/` from disk for the enumeration, so like the forwarding contract
 above it has no import edge to the routes it covers and `npm run test:related`
 will not select it. **Run it by name when you touch admin authorization, the
 route-to-area map, or either guard.**
 
-Writing a per-route suite does not oblige you to extend this file. Assert domain
-behaviour in the route suite; authorization is proved here, once, for everything.
+### It does NOT replace your route's own authorization fixtures
+
+Writing a per-route suite still obliges you to pin your route's own gate with
+`helpers/admin-area-gate-sessions.ts`, exactly as "Prove the gate, not the guard"
+above says. This suite proves the guard enforces what it is given and that no
+route's own literal diverges from the map unreviewed; your route suite proves the
+handler asks for the right thing in the first place, at the level of a single
+assertion a reviewer can read next to the code.
+
+That division is the #2949 control, and dropping either half reopens it. The
+downgrade there was made in the route source, and the suites that caught it were
+per-route area fixtures. The divergence table would now catch that particular
+shape as well — any edit to a literal that currently disagrees with the map, and
+any edit that starts disagreeing with it, is red — but it can only see the
+**admission** gate. A route that admits at `finance:view` and re-checks
+`finance:edit` inside the handler before it writes (`POST
+/api/admin/xero/member-grouping` is the live example) has its real write gate in
+the handler body, where nothing in this file looks. Weaken *that* check and this
+suite stays green in every one of its 24 tests. Your route's own fixtures are the
+only thing standing there.

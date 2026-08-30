@@ -207,13 +207,32 @@ These family rules are enforced by automated tests (issue #1132):
   `requireAdmin` itself. This suite discovers every admin page and `/api/admin`
   route from disk and puts each one to the real `requireAdmin` and the real
   `guardAdminLayout`, through the `x-pathname` / `x-request-method` headers
-  `src/proxy.ts` stamps, for sixteen access-role grids: single-area holders,
-  a Full Admin, a plain member and a deactivated administrator. It also proves
-  the #2984 boundary by attempt — a finance-only administrator is refused every
-  admin page outside Finance and every non-finance API route on GET, POST,
-  PATCH, PUT and DELETE. Its hand-written area-anchor table is the part a
-  seeded wrong route-to-permission mapping contradicts; the sweeps derive their
-  expectation from the map and are stated as unable to catch that on their own.
+  `src/proxy.ts` stamps, for sixteen access-role grids — fourteen single-area
+  holders (each of the seven areas at `view`, and again at `edit`), a Full Admin
+  and a plain member — plus a deactivated Full Admin built inside the one test
+  that needs it.
+
+  **What it proves is the guard against each route's own gate, plus a named list
+  of exceptions — not "everything".** Where a handler passes an explicit
+  `permission` to `requireAdmin`, that literal is what runs, and the suite reads
+  it out of the route's source and hands it to the guard rather than assuming the
+  path map applies. Every place such a literal disagrees with the map is
+  enumerated in the suite with the reason it is intended, and asserted equal to
+  what is on disk in both directions, so an unreviewed re-gating of a route in
+  its own source is a failure. Its hand-written area-anchor table is the separate,
+  second opinion about the map itself, which a seeded wrong route-to-permission
+  mapping contradicts; the sweeps derive their expectation from the map and from
+  those literals, and are stated as unable to catch either being wrong on their
+  own. It measures ADMISSION only: a handler that narrows further after the guard
+  is stricter in production than reported, and a weakened check inside a handler
+  body is outside what this suite can see.
+
+  It also proves the #2984 boundary by attempt — a finance-only administrator is
+  refused every admin page outside Finance and every non-finance API route on
+  GET, POST, PATCH, PUT and DELETE, save exactly three admissions that are named
+  and reasoned in the suite (the shared lodge vocabulary, the Diagnostics ask
+  route's ADR-002 admission, and the joining-fee preview, which is gated on
+  `finance:view` in its own source).
 
 ### Public or Provider-Signed Exceptions
 

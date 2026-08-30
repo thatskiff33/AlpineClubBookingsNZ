@@ -51,13 +51,25 @@ strength of admission alone.
 > accounts) remains possible without affecting any tool's own gate, but requires
 > a fresh owner decision.
 >
-> **This used to be wider than `hasAdminPortalAccess`, and since #2984 the two
-> agree.** That function excluded `finance`, so a finance-only account was not
-> counted an admin-portal user at all, and this ADR had to say the shell is not
-> the admin portal in order to admit them. The owner corrected the portal rule
-> itself: any one of the seven areas is standing to enter the shell, and
-> standing is not authorization for any area. Nothing about admission here
-> changes — the reasoning simply stopped being an exception.
+> **This used to be wider than `hasAdminPortalAccess`; since #2984 and #2975 the
+> two agree, and the code now says so.** That function excluded `finance`, so a
+> finance-only account was not counted an admin-portal user at all, and this ADR
+> had to say the shell is not the admin portal in order to admit them. The owner
+> corrected the portal rule itself: any one of the seven areas is standing to
+> enter the shell, and standing is not authorization for any area.
+>
+> The implementation followed rather than the reverse. Admission had been spelled
+> `{ area: "overview", level: "view" }` — "the level every admin grid carries" —
+> which was a fair approximation only while `finance`-only accounts had no portal
+> standing to contradict it. #2984 ended that, leaving the shipped "Finance
+> Viewer" grid an admitted administrator holding no `overview`: shown the
+> Diagnostics tab by the admin layout and refused a 403 on asking. Both surfaces
+> now use the explicit named predicate this section requires — the ask route
+> passes `requireAdmin({ permission: "any-admin" })`, and `canOpenAdminPath`
+> admits `/admin/ai-diagnostics` through `ANY_ADMIN_ADMISSION_PATHS`, both of
+> which resolve to "view or better on at least one area" and nothing else.
+> `admin-route-authorization-proof.test.ts` drives both through the real guards
+> for every single-area grid.
 
 ### 2. Every tool freshly re-checks its own `area:view` at call time
 

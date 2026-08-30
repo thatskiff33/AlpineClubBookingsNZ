@@ -60,9 +60,13 @@ flowchart TD
 The gate order in the route is itself the contract; none may be reordered without
 re-deciding the reason it sits where it does. In brief:
 
-1. **Admission** — any admitted administrator, encoded as `overview:view` (owner
-   decision Q6). Opening the route grants **zero** evidence access; every tool
-   re-checks its own area on every call.
+1. **Admission** — any admitted administrator, encoded as
+   `permission: "any-admin"` (owner decision Q6, ADR-002 §1): view or better on
+   at least one of the seven areas. Opening the route grants **zero** evidence
+   access; every tool re-checks its own area on every call. It was written
+   `overview:view` until #2984 made portal standing any one area, at which point
+   that spelling stopped meaning "any admitted admin" and started excluding the
+   shipped Finance Viewer grid.
 2. **Rate limits** — per-IP then per-admin, **before the body is parsed**, so an
    unparseable or oversized body is still throttled. Diagnostics has its own
    limiters, separate from Page help's.

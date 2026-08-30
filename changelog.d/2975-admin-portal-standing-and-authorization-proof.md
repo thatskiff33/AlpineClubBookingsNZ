@@ -21,18 +21,27 @@
 
   A Full Admin is unaffected in every respect.
 
-  Two smaller tightenings ship with it. The built-in help assistant used to
+  Three smaller tightenings ship with it. The built-in help assistant used to
   decide which help text to give an administrator by asking only "are you an
   administrator", which meant any administrator could ask it for the help page
   of any admin screen, including ones they cannot open. It now asks whether they
   could open that screen. Nobody loses anything by this — asking about the page
-  you are looking at always works. And the roster on the Notification Recipients
+  you are looking at always works. The roster on the Notification Recipients
   screen now lists finance-only administrators alongside everyone else; who
   actually receives which alert is unchanged, because every alert is still
-  matched to the recipient's own areas.
+  matched to the recipient's own areas. And AI Diagnostics — the "why is this
+  booking stuck" assistant — now opens for any administrator, which is what it
+  was always meant to do: it used to be offered to everyone in the admin area but
+  answered "forbidden" to anyone without the Overview permission, which after
+  this change is exactly the finance-only administrator the release exists for.
+  It still shows nobody anything their own permissions would not show them.
 
   Underneath, this release also adds a permanent check that the admin area's
   permissions really are enforced. It walks every admin screen and every admin
-  request the software has, and tries each one as sixteen different kinds of
-  administrator, so a future change that let the wrong role through — or shut
-  the right one out — fails the build instead of reaching a club.
+  request the software has and tries each one as sixteen different kinds of
+  administrator, using the real permission check each request performs rather
+  than an assumption about it, so a future change that let the wrong role
+  through — or shut the right one out — fails the build instead of reaching a
+  club. Where a request asks for something different from what its address
+  suggests, every one of those is now written down with the reason, and a new one
+  appearing without a reason fails too.

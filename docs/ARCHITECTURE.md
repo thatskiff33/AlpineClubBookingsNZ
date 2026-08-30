@@ -2276,13 +2276,25 @@ now buys nothing: `guardAdminLayout` still requires the **requested path's** own
 area, every `/api/admin` route still clears `requireAdmin` against its own area
 and level, and the sidebar and command palette still filter item by item through
 `canViewAdminHrefWithMatrix`. A finance-only administrator reaches the shell and
-Finance and nothing else. Only three callers may legitimately ask this question
-— the nav bar's Admin link, the admin-notification recipient roster, and
-`requireAdmin`'s explicit `permission: "any-admin"` — and a caller reasoning
-"they cleared the shell, therefore they may see X" is a privilege escalation as
-written. `src/lib/__tests__/admin-route-authorization-proof.test.ts` proves the
-negative by attempting every discovered admin page and `/api/admin` route as
-that user, through the real guards.
+Finance and nothing else. The callers that may legitimately ask this question are
+the nav bar's Admin link, the admin-notification recipient roster,
+`requireAdmin`'s explicit `permission: "any-admin"`, and ADR-002 §1's admission
+surface — and a caller reasoning "they cleared the shell, therefore they may see
+X" is a privilege escalation as written.
+`src/lib/__tests__/admin-route-authorization-proof.test.ts` proves the negative by
+attempting every discovered admin page and `/api/admin` route as that user,
+through the real guards.
+
+**"May this person open this admin path" has ONE implementation**
+(`canOpenAdminPath`, #2975): the route map's own area requirement, plus the two
+adjudicated special cases — the consolidated fee console, admitted on view of
+either `bookings` or `finance` (#1933), and the AI Diagnostics workspace,
+admitted on ADMISSION rather than on an area (ADR-002 §1, owner-ratified #2370).
+`guardAdminLayout` step 6 and `/api/help/chat`'s surface downgrade both call it.
+The composition had been written out four times before that, and the fee rule had
+two different spellings between the copies;
+`admin-layout-guard-adoption.test.ts` now forbids the symbol in any layout and
+asserts the function itself still performs each step.
 
 Finance-portal access derives from the merged `finance` area level (view ⇒
 finance viewer, edit ⇒ finance manager) via `hasFinanceViewerAccess` and
