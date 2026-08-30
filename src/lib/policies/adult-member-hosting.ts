@@ -347,6 +347,35 @@ export function hostScopeSetIsEmpty(scopes: AdultMemberHostScopeSet): boolean {
   );
 }
 
+/**
+ * Whether the enabled set is EXACTLY the built-in one — `SAME_BOOKING` and
+ * nothing else.
+ *
+ * ONE PREDICATE, TWO PIECES OF PROSE (`INV-SSOT-002`). The member-facing
+ * refusal sentence and the public policy page each have a narrow
+ * "on the same booking" wording that is only honest when no wider scope is on,
+ * and each used to spell the condition out for itself. #3037 found the second
+ * copy still branching on the #2569 pair alone: a club running `SAME_BOOKING`
+ * plus `SAME_GROUP_TRIP` PUBLISHED a narrower rule than it applied. Spelling the
+ * denial out a third time would only wait for the next scope, so both sites now
+ * ask here.
+ *
+ * DERIVED FROM `ADULT_MEMBER_HOST_SCOPES`, not from a hand-written list of
+ * denials. `enabledHostScopeList` filters the canonical constant through
+ * `hostScopeEnabled`, whose switch is exhaustive over the scope union — so a
+ * fourth scope is a typecheck error there, and until it is enabled this
+ * predicate already reports `false` for it. An explicit `!scopes.someNewScope`
+ * chain looks like it would make the same edit visible and does not: adding a
+ * field to `AdultMemberHostScopeSet` type-checks clean at every site that simply
+ * omits it, which is exactly how the public copy was missed.
+ */
+export function hostScopesAreSameBookingOnly(
+  scopes: AdultMemberHostScopeSet,
+): boolean {
+  const enabled = enabledHostScopeList(scopes);
+  return enabled.length === 1 && enabled[0] === "SAME_BOOKING";
+}
+
 /** Whether a resolved consequence actually evaluates the rule. */
 export function hostingModeIsActive(
   mode: EffectiveAdultMemberHostingMode,
@@ -605,14 +634,11 @@ export function formatAdultMemberHostingMessage(
 
   if (
     consequence === "ADMIN_REVIEW_REQUIRED" &&
-    scopes.sameBooking &&
-    !scopes.sameBookingOwner &&
-    // #3037: every scope beyond the built-in one has to be listed here, or a club
-    // that enabled Group Trip cover would still be told the same-booking-only
-    // sentence. The condition is written as an explicit denial of each wider
-    // scope rather than as an equality against the default set, because that is
-    // what makes adding a fourth scope a typecheck-visible edit here.
-    !scopes.sameGroupTrip
+    // The narrow sentence is only true while `SAME_BOOKING` is the whole rule
+    // (#3037). Asked through the shared predicate rather than denied scope by
+    // scope here, because the public policy page needs the same question
+    // answered the same way and the hand-written copy of it went stale.
+    hostScopesAreSameBookingOnly(scopes)
   ) {
     return (
       "This club asks that an adult member stays on the same booking as any " +
