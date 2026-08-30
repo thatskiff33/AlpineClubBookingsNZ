@@ -4,7 +4,7 @@ import {
   BOUNDARY_MESSAGE,
   BROWSER_LAYER,
   FIXTURE_PAGE,
-  PROTECTED_ROOT,
+  PROTECTED_ROOTS,
   problemsWithSeededBuild,
   splitErrorBlocks,
   stripAnsi,
@@ -26,6 +26,11 @@ import {
  * months). So the fixtures below are transcribed from real Turbopack output and
  * every one of them removes a single ingredient to prove the adjudicator
  * notices.
+ *
+ * Since #2850's second half the fixture reaches TWO protected roots, and the
+ * cases below check each independently: a marker coming off `@/lib/prisma`
+ * while `@/lib/auth` still carries one must fail this gate, because
+ * `@/lib/prisma` is the module the whole exercise was about.
  */
 
 const REAL_BOUNDARY_BLOCK = `
@@ -49,12 +54,27 @@ Import traces:
   Instrumentation:
     ./src/lib/auth.ts
     ./src/instrumentation.node.ts
+
+./src/lib/prisma.ts:9:1
+Error: You're importing a module that depends on "server-only". This API is only available in Server Components in the App Router, but you are using it in the Pages Router.
+    Learn more: https://nextjs.org/docs/app/building-your-application/rendering/server-components
+> 9 | import "server-only";
+    | ^^^^^^^^^^^^^^^^^^^^^
+
+Ecmascript file had an error
+
+Import traces:
+  Client Component Browser:
+    ./src/lib/prisma.ts [Client Component Browser]
+    ./src/app/server-only-boundary-selftest/bridge.ts [Client Component Browser]
+    ./src/app/server-only-boundary-selftest/page.tsx [Client Component Browser]
+    ./src/app/server-only-boundary-selftest/page.tsx [Server Component]
 `;
 
 /**
  * What the same seeded build prints once `import "server-only"` is taken off
- * `src/lib/auth.ts`: still red, still sixteen-ish errors, and not one of them
- * about the boundary. This is the string the gate has to reject.
+ * both roots: still red, still a dozen-ish errors, and not one of them about
+ * the boundary. This is the string the gate has to reject.
  */
 const COLLATERAL_ONLY = `
 > Build error occurred
@@ -70,6 +90,12 @@ Import traces:
     ./src/lib/auth.ts [Client Component Browser]
     ./src/app/server-only-boundary-selftest/page.tsx [Client Component Browser]
 `;
+
+/** Everything above the `./src/lib/prisma.ts:9:1` heading, and nothing below. */
+const AUTH_ONLY = REAL_BOUNDARY_BLOCK.slice(
+  0,
+  REAL_BOUNDARY_BLOCK.indexOf("./src/lib/prisma.ts:9:1"),
+);
 
 describe("server-only boundary self-test: adjudication", () => {
   it("accepts the real seeded-build output", () => {
@@ -96,7 +122,18 @@ describe("server-only boundary self-test: adjudication", () => {
       exitCode: 1,
       output: COLLATERAL_ONLY,
     });
+    expect(problems).toHaveLength(PROTECTED_ROOTS.length);
+    for (const problem of problems) expect(problem).toContain("unrelated reason");
+  });
+
+  it("rejects a build that proves only ONE of the two roots", () => {
+    // The regression this gate exists to catch after #2850's second half: the
+    // marker comes off `@/lib/prisma`, `@/lib/auth` still carries one, the
+    // build is still red for a genuine boundary reason — and the database
+    // client is silently back to being covered by the source censuses alone.
+    const problems = problemsWithSeededBuild({ exitCode: 1, output: AUTH_ONLY });
     expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain("./src/lib/prisma.ts");
     expect(problems[0]).toContain("unrelated reason");
   });
 
@@ -109,7 +146,8 @@ describe("server-only boundary self-test: adjudication", () => {
       "./src/components/some-other/",
     );
     const problems = problemsWithSeededBuild({ exitCode: 1, output });
-    expect(problems.join(" ")).toContain("not attributable");
+    expect(problems).toHaveLength(PROTECTED_ROOTS.length);
+    for (const problem of problems) expect(problem).toContain("not attributable");
   });
 
   it("rejects a trace that only reaches the root through a server layer", () => {
@@ -124,19 +162,26 @@ describe("server-only boundary self-test: adjudication", () => {
     expect(problems.join(" ")).toContain("not attributable");
   });
 
-  it("rejects an error attributed to the root without the boundary message", () => {
-    const output = REAL_BOUNDARY_BLOCK.replace(
+  it("rejects an error attributed to a root without the boundary message", () => {
+    const output = REAL_BOUNDARY_BLOCK.replaceAll(
       BOUNDARY_MESSAGE,
       "Something else went wrong.",
     );
     const problems = problemsWithSeededBuild({ exitCode: 1, output });
-    expect(problems.join(" ")).toContain("server-only boundary");
+    expect(problems).toHaveLength(PROTECTED_ROOTS.length);
+    for (const problem of problems)
+      expect(problem).toContain("server-only boundary");
   });
 
-  it("names the protected root and the fixture it expects", () => {
+  it("names the protected roots and the fixture it expects", () => {
     // Constants, not incidental strings: if the fixture is renamed and these
-    // are not, the gate silently stops matching its own output.
-    expect(PROTECTED_ROOT).toBe("./src/lib/auth.ts");
+    // are not, the gate silently stops matching its own output. `@/lib/prisma`
+    // is asserted by name because dropping it back to a one-root gate is the
+    // quiet way to undo #2850's second half.
+    expect(PROTECTED_ROOTS).toEqual([
+      "./src/lib/auth.ts",
+      "./src/lib/prisma.ts",
+    ]);
     expect(FIXTURE_PAGE).toBe(
       "./src/app/server-only-boundary-selftest/page.tsx",
     );
@@ -152,7 +197,10 @@ describe("server-only boundary self-test: output parsing", () => {
 
   it("splits on the file:line:col heading Turbopack uses per error", () => {
     const blocks = splitErrorBlocks(REAL_BOUNDARY_BLOCK);
-    expect(blocks.map((block) => block.file)).toEqual(["./src/lib/auth.ts"]);
+    expect(blocks.map((block) => block.file)).toEqual([
+      "./src/lib/auth.ts",
+      "./src/lib/prisma.ts",
+    ]);
     expect(blocks[0].lines.some((line) => line.includes(BOUNDARY_MESSAGE))).toBe(
       true,
     );

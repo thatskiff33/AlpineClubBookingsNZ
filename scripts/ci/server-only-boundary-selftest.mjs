@@ -19,10 +19,17 @@
  * friends, so the seeded build reports sixteen errors of which most are
  * collateral. A check that only asserted "the build failed" would still pass
  * with Next's server-only rule switched off entirely. So this asserts the
- * SPECIFIC error: Next's server-only message, attributed to the protected root
+ * SPECIFIC error: Next's server-only message, attributed to EACH protected root
  * itself, with an import trace in the browser layer that names the planted
  * fixture. Remove `import "server-only"` from `src/lib/auth.ts` and the build
  * still fails on `pg` — but that error block disappears and this fails.
+ *
+ * Two roots are planted, not one, and that is the whole point of #2850's second
+ * half. `@/lib/prisma` is the module everybody assumes is protected, and until
+ * the operator CLIs moved to `--conditions=react-server` it was the one module
+ * that could not carry the marker at all. A gate proving only `@/lib/auth`
+ * proves the mechanism works while leaving the database client to the source
+ * censuses, which is exactly the gap this was asked to close.
  *
  * ## The other half of the proof
  *
@@ -68,17 +75,19 @@ export const FIXTURE_PAGE = `./${FIXTURE_DIR.split(path.sep).join("/")}/page.tsx
 export const FIXTURE_BRIDGE = `./${FIXTURE_DIR.split(path.sep).join("/")}/bridge.ts`;
 
 /**
- * The protected root the fixture reaches. `@/lib/auth` carries
- * `import "server-only"`, and reaching it from the browser would ship NextAuth's
- * configuration, `bcrypt` and the database client to every visitor.
+ * The protected roots the fixture reaches, and BOTH must be reported. Each
+ * carries `import "server-only"`; reaching `@/lib/auth` from the browser would
+ * ship NextAuth's configuration and `bcrypt` to every visitor, and reaching
+ * `@/lib/prisma` would ship the database client and its connection string.
  *
- * `@/lib/prisma` is deliberately NOT used, and not because it would be a worse
- * proof: it does not carry `import "server-only"` at all, because fourteen
- * operator CLI entrypoints statically reach it and that marker throws at import
- * under plain Node. `cli-server-only-reach-census.test.ts` (CT-5, #2869) is the
- * invariant that says so. Prisma stays covered by the source census.
+ * `@/lib/prisma` was deliberately absent until #2850's second half, and why is
+ * worth keeping: it could not carry the marker while operator CLIs reached it
+ * under plain Node, where `server-only` throws at import. They now run with
+ * `--conditions=react-server`, under which it resolves to an empty module, so
+ * the marker went on. `cli-server-only-reach-census.test.ts` (CT-5, #2869)
+ * keeps the CLI half of that bargain.
  */
-export const PROTECTED_ROOT = "./src/lib/auth.ts";
+export const PROTECTED_ROOTS = ["./src/lib/auth.ts", "./src/lib/prisma.ts"];
 
 /**
  * Next's own wording. Quoted rather than matched loosely so a version bump that
@@ -132,45 +141,51 @@ export function problemsWithSeededBuild({ exitCode, output }) {
   if (exitCode === 0) {
     problems.push(
       "the production build SUCCEEDED with a client component reaching " +
-        `${PROTECTED_ROOT}. Next's server-only boundary is not being enforced.`,
+        `${PROTECTED_ROOTS.join(" and ")}. Next's server-only boundary is not ` +
+        "being enforced.",
     );
   }
 
   const blocks = splitErrorBlocks(output);
-  const rootBlocks = blocks.filter((block) => block.file === PROTECTED_ROOT);
-  if (rootBlocks.length === 0) {
-    problems.push(
-      `no Turbopack error was attributed to ${PROTECTED_ROOT}. The build may ` +
-        "have failed for an unrelated reason, which is not proof of anything.",
-    );
-    return problems;
-  }
+  // Every root, not the first one that passes: the point of planting two is
+  // that a marker coming off EITHER of them fails this gate.
+  for (const root of PROTECTED_ROOTS) {
+    const rootBlocks = blocks.filter((block) => block.file === root);
+    if (rootBlocks.length === 0) {
+      problems.push(
+        `no Turbopack error was attributed to ${root}. The build may have ` +
+          "failed for an unrelated reason, which is not proof of anything.",
+      );
+      continue;
+    }
 
-  const withMessage = rootBlocks.filter((block) =>
-    block.lines.some((line) => line.includes(BOUNDARY_MESSAGE)),
-  );
-  if (withMessage.length === 0) {
-    problems.push(
-      `${PROTECTED_ROOT} was reported, but not with the server-only boundary ` +
-        `message. Expected a line containing: ${BOUNDARY_MESSAGE}`,
+    const withMessage = rootBlocks.filter((block) =>
+      block.lines.some((line) => line.includes(BOUNDARY_MESSAGE)),
     );
-  }
+    if (withMessage.length === 0) {
+      problems.push(
+        `${root} was reported, but not with the server-only boundary message. ` +
+          `Expected a line containing: ${BOUNDARY_MESSAGE}`,
+      );
+      continue;
+    }
 
-  const attributed = withMessage.some((block) => {
-    const browserTrace = block.lines.some(
-      (line) => line.trim() === `${PROTECTED_ROOT} ${BROWSER_LAYER}`,
-    );
-    const namesFixture = block.lines.some(
-      (line) => line.trim() === `${FIXTURE_PAGE} ${BROWSER_LAYER}`,
-    );
-    return browserTrace && namesFixture;
-  });
-  if (withMessage.length > 0 && !attributed) {
-    problems.push(
-      "the server-only error carries no browser-layer import trace running " +
-        `from ${PROTECTED_ROOT} back to ${FIXTURE_PAGE}, so the failure is ` +
-        "not attributable to the planted violation.",
-    );
+    const attributed = withMessage.some((block) => {
+      const browserTrace = block.lines.some(
+        (line) => line.trim() === `${root} ${BROWSER_LAYER}`,
+      );
+      const namesFixture = block.lines.some(
+        (line) => line.trim() === `${FIXTURE_PAGE} ${BROWSER_LAYER}`,
+      );
+      return browserTrace && namesFixture;
+    });
+    if (!attributed) {
+      problems.push(
+        "the server-only error carries no browser-layer import trace running " +
+          `from ${root} back to ${FIXTURE_PAGE}, so the failure is not ` +
+          "attributable to the planted violation.",
+      );
+    }
   }
 
   return problems;
@@ -183,8 +198,9 @@ const BRIDGE_SOURCE = `// Planted by scripts/ci/server-only-boundary-selftest.mj
 // root is one hop further on — which is exactly the chain a single-file lint
 // rule cannot see.
 import { auth } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
 
-export const seededBoundaryProbe = typeof auth;
+export const seededBoundaryProbe = \`\${typeof auth}\${typeof prisma}\`;
 `;
 
 const PAGE_SOURCE = `// Planted by scripts/ci/server-only-boundary-selftest.mjs. Delete it.
@@ -242,7 +258,7 @@ function main() {
   if (problems.length === 0) {
     console.log(
       "ok: the production build refused a client component reaching " +
-        `${PROTECTED_ROOT}, and said so for the right reason.`,
+        `${PROTECTED_ROOTS.join(" and ")}, and said so for the right reason.`,
     );
     return;
   }
