@@ -16,6 +16,7 @@ const club = (
   version: 1,
   hostScopeSameBooking: true,
   hostScopeSameBookingOwner: false,
+  hostScopeSameGroupTrip: false,
   ...overrides,
 });
 
@@ -31,6 +32,7 @@ const lodge = (
   version: 1,
   hostScopeSameBooking: null,
   hostScopeSameBookingOwner: null,
+  hostScopeSameGroupTrip: null,
   ...overrides,
 });
 

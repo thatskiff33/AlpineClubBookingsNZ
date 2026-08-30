@@ -24,6 +24,11 @@ export const HOSTING_POLICY_RECONCILIATION_SELECT = {
   version: true,
   hostScopeSameBooking: true,
   hostScopeSameBookingOwner: true,
+  // #3037. A policy edit that only turns Group Trip cover on or off still changes
+  // which bookings are compliant, so it has to reach `incidentPolicyChanged` — an
+  // omitted column here would read as "this row did not decide" on BOTH sides of
+  // the before/after comparison and the edit would queue no re-evaluation at all.
+  hostScopeSameGroupTrip: true,
 } as const;
 
 export type HostingPolicyReconciliationSnapshot = {
@@ -35,6 +40,7 @@ export type HostingPolicyReconciliationSnapshot = {
   version: number;
   hostScopeSameBooking: boolean | null;
   hostScopeSameBookingOwner: boolean | null;
+  hostScopeSameGroupTrip: boolean | null;
 };
 
 type HostingPolicyReconciliationDb = Pick<

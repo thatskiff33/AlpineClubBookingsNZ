@@ -52,11 +52,21 @@ const CLUB_SCOPE_KEY = "club-wide";
  * STRICT, so a body naming a scope this build does not have — including the two
  * the owner removed from the model (#2575, #2576) — is a 400 rather than a silently
  * dropped key that would save a set the operator did not choose.
+ *
+ * `sameGroupTrip` (#3037) DEFAULTS TO FALSE rather than being required, and only
+ * that field does. Strictness is about unknown keys and is unweakened; what the
+ * default buys is a blue/green window in which a browser tab loaded from the
+ * previous colour can still save a policy — its body names the two fields it knows,
+ * and the omission means what an omission should mean for an off-by-default
+ * feature. It cannot be used to turn cover ON, and it cannot silently turn it off
+ * behind another admin's back either: the compare-and-swap `version` refuses any
+ * write from an editor that has not seen the current row.
  */
 const hostScopesSchema = z
   .object({
     sameBooking: z.boolean(),
     sameBookingOwner: z.boolean(),
+    sameGroupTrip: z.boolean().default(false),
   })
   .strict()
   .nullable();
@@ -123,10 +133,20 @@ export async function GET(request: NextRequest) {
   });
 }
 
-/** The stored scope set, or null where this row did not decide (#2569 §2). */
+/**
+ * The stored scope set, or null where this row did not decide (#2569 §2).
+ *
+ * THE #2569 PAIR DECIDES; `hostScopeSameGroupTrip` IS READ, NOT TESTED (#3037).
+ * It is legitimately NULL on a decided row — every row a draining previous colour
+ * writes, and every row that predates the #3037 migration — and NULL there means
+ * OFF, exactly as `rowHostScopes` reads it for the evaluator. Testing it would
+ * make those rows report "this scope inherits", which is a different setting from
+ * the one the admin saved.
+ */
 function storedHostScopes(policy: {
   hostScopeSameBooking: boolean | null;
   hostScopeSameBookingOwner: boolean | null;
+  hostScopeSameGroupTrip: boolean | null;
 }): AdultMemberHostScopeSet | null {
   if (
     policy.hostScopeSameBooking === null ||
@@ -137,6 +157,7 @@ function storedHostScopes(policy: {
   return {
     sameBooking: policy.hostScopeSameBooking,
     sameBookingOwner: policy.hostScopeSameBookingOwner,
+    sameGroupTrip: policy.hostScopeSameGroupTrip === true,
   };
 }
 
@@ -226,6 +247,10 @@ export async function PUT(request: NextRequest) {
   const scopeColumns = {
     hostScopeSameBooking: hostScopes ? hostScopes.sameBooking : null,
     hostScopeSameBookingOwner: hostScopes ? hostScopes.sameBookingOwner : null,
+    // Null together with the pair when this row inherits, which is what the
+    // migration's CHECK requires: the Group Trip column may be set only on a row
+    // that decided the rest of the set.
+    hostScopeSameGroupTrip: hostScopes ? hostScopes.sameGroupTrip : null,
   };
 
   const scopeKey = scopeKeyFor(lodgeId);
@@ -308,7 +333,13 @@ export async function PUT(request: NextRequest) {
         // old token and leave another admin's editor believing it was current.
         existing.hostScopeSameBooking === scopeColumns.hostScopeSameBooking &&
         existing.hostScopeSameBookingOwner ===
-          scopeColumns.hostScopeSameBookingOwner
+          scopeColumns.hostScopeSameBookingOwner &&
+        // #3037. Written as a strict comparison of the raw columns, so turning
+        // Group Trip cover on for a row stored with NULL here — the shape a
+        // previous colour writes — is correctly material rather than "false ===
+        // false, nothing changed". Every scope column belongs in this test, and
+        // the database revision trigger compares the same set.
+        existing.hostScopeSameGroupTrip === scopeColumns.hostScopeSameGroupTrip
       ) {
         // Nothing material changed. Return the row untouched rather than write
         // it: the revision trigger would hold the token anyway, but a no-op

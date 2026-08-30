@@ -632,6 +632,7 @@ export async function loadPublicBookingPolicy(slug?: string): Promise<PublicBook
         version: true,
         hostScopeSameBooking: true,
         hostScopeSameBookingOwner: true,
+        hostScopeSameGroupTrip: true,
       },
     }),
   ]);

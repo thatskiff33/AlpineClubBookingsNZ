@@ -39,7 +39,7 @@ import {
 } from "@/lib/policies/adult-member-hosting";
 import { AdultMemberHostingRequiredError, buildAdultMemberHostingRefusalBody } from "@/lib/adult-member-hosting-refusal";
 
-/** A row as it exists BEFORE this issue: both scope columns are NULL. */
+/** A row as it exists BEFORE this issue: every scope column is NULL. */
 function legacyRow(
   overrides: Partial<AdultMemberHostingPolicyLike> = {},
 ): AdultMemberHostingPolicyLike {
@@ -52,6 +52,10 @@ function legacyRow(
     version: 4,
     hostScopeSameBooking: null,
     hostScopeSameBookingOwner: null,
+    // #3037's column is NULL on a legacy row too, and — unlike the pair — it is
+    // ALSO null on a row that decided the pair before this migration. Both read
+    // as OFF, which is what makes the upgrade a no-op.
+    hostScopeSameGroupTrip: null,
     ...overrides,
   };
 }
@@ -60,14 +64,28 @@ function scopeColumns(scopes: AdultMemberHostScopeSet) {
   return {
     hostScopeSameBooking: scopes.sameBooking,
     hostScopeSameBookingOwner: scopes.sameBookingOwner,
+    hostScopeSameGroupTrip: scopes.sameGroupTrip,
   };
 }
 
 const SCOPES = {
-  sameBookingOnly: { sameBooking: true, sameBookingOwner: false },
-  sameOwnerOnly: { sameBooking: false, sameBookingOwner: true },
-  all: { sameBooking: true, sameBookingOwner: true },
-  none: { sameBooking: false, sameBookingOwner: false },
+  sameBookingOnly: {
+    sameBooking: true,
+    sameBookingOwner: false,
+    sameGroupTrip: false,
+  },
+  sameOwnerOnly: {
+    sameBooking: false,
+    sameBookingOwner: true,
+    sameGroupTrip: false,
+  },
+  sameGroupTripOnly: {
+    sameBooking: false,
+    sameBookingOwner: false,
+    sameGroupTrip: true,
+  },
+  all: { sameBooking: true, sameBookingOwner: true, sameGroupTrip: true },
+  none: { sameBooking: false, sameBookingOwner: false, sameGroupTrip: false },
 } satisfies Record<string, AdultMemberHostScopeSet>;
 
 function adult(
@@ -571,14 +589,21 @@ describe("scope-set helpers and the settled scope model", () => {
     expect(hostScopeSetIsEmpty(SCOPES.sameBookingOnly)).toBe(false);
   });
 
-  it("holds the model to the two scopes the owner settled on", () => {
-    // The spec named three. #2575 REMOVED the lodge-wide scope and #2576 REPLACED
-    // the nominated-host scope with same-owner coverage, both as removals rather
-    // than deferrals - so this list is the whole product model, and a value coming
-    // back has to come back through a decision rather than a typo.
+  it("holds the model to the scopes the owner settled on, in order", () => {
+    // #2569's spec named three scopes. #2575 REMOVED the lodge-wide scope and
+    // #2576 REPLACED the nominated-host scope with same-owner coverage, both as
+    // removals rather than deferrals - so a value coming back has to come back
+    // through a decision rather than a typo. #3037 (epic #2943) is such a
+    // decision: SAME_GROUP_TRIP is APPENDED, and this assertion is written as an
+    // ordered list rather than a set precisely so that appending is visible and
+    // REORDERING is a failure. The order is not cosmetic - `enabledHostScopeList`
+    // iterates this constant to sort `coveredByScopes` and `enabledHostScopes`
+    // onto frozen violation snapshots that two evaluations must produce
+    // byte-identically, so moving a value would rewrite snapshots nobody edited.
     expect([...ADULT_MEMBER_HOST_SCOPES]).toEqual([
       "SAME_BOOKING",
       "SAME_BOOKING_OWNER",
+      "SAME_GROUP_TRIP",
     ]);
     // Every scope has a label and an administrator-facing sentence, or the settings
     // card and the refusal wording would name an enum value.
@@ -595,6 +620,18 @@ describe("scope-set helpers and the settled scope model", () => {
       "Allow a qualifying adult member on another confirmed booking owned by " +
         "the same member account to provide coverage for the same lodge and nights.",
     );
+    // #3037. The description says "even when that booking belongs to a different
+    // member" because that is the whole difference from the scope above it, and
+    // it says "off unless you turn it on" because the default-OFF promise is the
+    // release invariant an administrator most needs to read on the card itself.
+    expect(ADULT_MEMBER_HOST_SCOPE_LABELS.SAME_GROUP_TRIP).toBe(
+      "Another booking in the same Group Trip",
+    );
+    expect(ADULT_MEMBER_HOST_SCOPE_DESCRIPTIONS.SAME_GROUP_TRIP).toBe(
+      "Allow a qualifying adult member on another confirmed booking in the same " +
+        "Group Trip to provide coverage for the same lodge and nights, even when " +
+        "that booking belongs to a different member. Off unless you turn it on.",
+    );
   });
 
   it("says which consequences actually evaluate the rule", () => {
@@ -610,9 +647,21 @@ describe("the plain-English preview the settings card shows (§16)", () => {
       describeAdultMemberHostingPolicy("ENFORCED", SCOPES.all),
     ).toBe(
       "This lodge stops bookings where non-member guests are not covered. " +
-        "Coverage may be supplied by an adult member staying on this booking or " +
+        "Coverage may be supplied by an adult member staying on this booking, " +
         "an adult member staying at the same lodge that night on another booking " +
-        "on your account.",
+        "on your account or an adult member staying at the same lodge that night " +
+        "on another booking in the same Group Trip.",
+    );
+    // #3037. The Group Trip clause names the RULE and never the source: no
+    // booking, no organiser, no member. The other booking may belong to somebody
+    // else, so anything more specific here would be a cross-account disclosure in
+    // a sentence rendered straight back to whoever was refused.
+    expect(
+      describeAdultMemberHostingPolicy("ENFORCED", SCOPES.sameGroupTripOnly),
+    ).toBe(
+      "This lodge stops bookings where non-member guests are not covered. " +
+        "Coverage may be supplied by an adult member staying at the same lodge " +
+        "that night on another booking in the same Group Trip.",
     );
     expect(
       describeAdultMemberHostingPolicy(

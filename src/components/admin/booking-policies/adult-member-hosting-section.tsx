@@ -53,6 +53,7 @@ const UNLOADED_SCOPE = "__unloaded__"
 const HOST_SCOPE_LABELS: Record<keyof AdultMemberHostScopeSetValue, string> = {
   sameBooking: "Eligible adult member on the same booking",
   sameBookingOwner: "Another booking on the same account",
+  sameGroupTrip: "Another booking in the same Group Trip",
 }
 
 const HOST_SCOPE_DESCRIPTIONS: Record<
@@ -63,9 +64,15 @@ const HOST_SCOPE_DESCRIPTIONS: Record<
     "Count a qualifying adult member who is staying on the booking itself for the nights they are there.",
   sameBookingOwner:
     "Allow a qualifying adult member on another confirmed booking owned by the same member account to provide coverage for the same lodge and nights.",
+  sameGroupTrip:
+    "Allow a qualifying adult member on another confirmed booking in the same Group Trip to provide coverage for the same lodge and nights, even when that booking belongs to a different member. Off unless you turn it on.",
 }
 
-const HOST_SCOPE_ORDER = ["sameBooking", "sameBookingOwner"] as const
+const HOST_SCOPE_ORDER = [
+  "sameBooking",
+  "sameBookingOwner",
+  "sameGroupTrip",
+] as const
 
 const SOURCE_LABELS: Record<string, string> = {
   LODGE: "set for this lodge",
@@ -119,7 +126,12 @@ function scopeSetsEqual(
   if (a === null || b === null) return a === b
   return (
     a.sameBooking === b.sameBooking &&
-    a.sameBookingOwner === b.sameBookingOwner
+    a.sameBookingOwner === b.sameBookingOwner &&
+    // #3037. Normalised through `=== true` on both sides, so an absent field from
+    // a previous colour's response and an explicit `false` compare equal — they
+    // mean the same setting, and treating them as different would mark a freshly
+    // loaded card dirty and offer a save that changes nothing.
+    (a.sameGroupTrip === true) === (b.sameGroupTrip === true)
   )
 }
 
@@ -188,6 +200,7 @@ export function AdultMemberHostingSection() {
     useState<AdultMemberHostScopeSetValue>({
       sameBooking: true,
       sameBookingOwner: false,
+      sameGroupTrip: false,
     })
   const scopeRef = useRef(scopeLodgeId)
   const modeHint = useFieldHint()
@@ -287,7 +300,8 @@ export function AdultMemberHostingSection() {
       draft.capacityMode !== "" &&
       (draft.hostScopes === null ||
         draft.hostScopes.sameBooking ||
-        draft.hostScopes.sameBookingOwner),
+        draft.hostScopes.sameBookingOwner ||
+        draft.hostScopes.sameGroupTrip === true),
   })
 
   const { draft, editing, saving, dirty, valid, error, success } = section
