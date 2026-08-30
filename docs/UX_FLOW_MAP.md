@@ -439,7 +439,12 @@ sentence showing; a box holding something that is not an amount at all -
 `1,200.00`, `$45`, `45.` - is refused by name rather than reported as a missing
 one; filling none of them is a valid answer and posts exactly the body this
 screen posted before #3191. When the figures cannot be made to add up honestly,
-the refusal itself says so and names clearing every box as the third way out.
+the refusal itself says so FIRST and names clearing every box as the third way
+out, before it offers to have either figure corrected - the officer facing
+exactly that case must not be steered into typing a price that reconciles and is
+false. The running line is muted while an answer is being typed and turns to a
+warning colour only once every box has been filled AND left, so a wrong figure
+half-entered is not shouted at mid-number.
 
 **A $0.00 settlement is refused with a sentence rather than a disabled button
 (#3195).** The confirm control was already disabled at zero and said nothing,

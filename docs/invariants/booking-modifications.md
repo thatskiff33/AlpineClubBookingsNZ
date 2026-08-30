@@ -1219,18 +1219,28 @@ for, under four conditions, none of which is optional:
 - **the officer types every figure.** A partial answer is refused rather than
   completed, and there is no derivation anywhere in that path - no even split, no
   rate lookup, no rounding, no defaulted zero. Two instruments, because neither
-  covers the other. `stored-night-price-repair-census.test.ts` reads the source:
-  it names the ONE module in the tree that may update a night row's price in
-  place, so a second writer appearing anywhere fails there with its own file
-  name, and it scans the two rules modules, the boxes component and the
-  night-price region of the settle screen for a division, a rounding, a split
-  helper, an average or a defaulted zero. What a source scan cannot see is a
-  REMAINDER FILL - `targetCents - enteredCents` is a subtraction and matches
-  none of those patterns, and the server cannot catch one either because it
-  arrives as a complete, reconciling vector - so that half is behaviour:
-  `manual-refund-task-queue-financial-review.test.tsx` fills every night but one
-  on the real screen and asserts the last box stays empty and the confirm button
-  stays disabled;
+  covers the other, and what each one really covers is worth stating precisely
+  because an earlier draft of this paragraph overstated both and a review lens
+  disproved it by building the thing and watching it pass.
+  `stored-night-price-repair-census.test.ts` reads the source three ways: it
+  names the ONE module in the tree that may update a night row's price in place,
+  so a second writer appearing anywhere fails there with its own file name; it
+  scans the two rules modules, the boxes component and **the whole of** the
+  settle screen - minus one five-line, capped, published money-display exemption
+  - for a division, a rounding, a split helper, an average or a defaulted zero;
+  and it fences the reference to `unpricedNightTargetCents`, the single
+  definition of what the blanks must come to, to those four files, so the
+  arithmetic cannot be lifted into a helper one module away. What a source scan
+  cannot see is a REMAINDER FILL - `targetCents - enteredCents` is a subtraction
+  and matches none of those patterns, and the server cannot catch one either
+  because it arrives as a complete, reconciling vector - so that half is
+  behaviour: `manual-refund-task-queue-financial-review.test.tsx` fills every
+  night but one on the real settle dialog, presses **every** control in that
+  dialog that is not a way out - so a fill button is caught whatever it is
+  called, which a name-matching regex was not - re-asserts the boxes, and then
+  asserts the confirm button is still disabled and that a press posts nothing,
+  which is what catches a fill made straight into the posted entries where there
+  is no box value to look at;
 - **the figures reconcile.** Together with the strand's already-priced nights
   they must come to `BookingGuest.priceCents` adjusted by the settled amount -
   minus a refund, plus a charge - which is what makes the strand exact under the

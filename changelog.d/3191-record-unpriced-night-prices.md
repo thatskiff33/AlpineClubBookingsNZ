@@ -34,6 +34,17 @@
   price" as the only way to make the arithmetic work. On a settlement like that
   the only figure which satisfies the check is a false one, and steering somebody
   towards typing it would put back exactly the invented number this work removes.
+  **And it says it first.** The sentence used to open by telling the officer to
+  change the night amounts and reach the honest answer two hundred characters
+  later, in small print - so the person facing exactly the case it was written
+  for was told first to do the thing that produces a false price. The order is
+  now the other way round, and the sentence carries the same warning the guide
+  does: do not change a night's price to make the arithmetic work.
+- The running total only turns to a warning colour once the officer has finished
+  and moved off a box. On a stay with a single unpriced night it used to go red
+  as they typed - the `4` of `45.00` was enough - which reads as "you have done
+  something wrong" when they have simply not finished. It always said what was
+  missing; now it says it quietly until there is something to be wrong about.
 - If a box holds something that is not an amount - `1,200.00`, `$45`, a stray
   letter - the screen now says which night it cannot read, instead of telling the
   officer to fill in every night while every night visibly holds a figure.
