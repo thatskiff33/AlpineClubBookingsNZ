@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 
+import { MEMBER_MESSAGE_MAX_LENGTH } from "@/lib/booking-exception-request-shared";
 import { parseCalendarDate, startOfClubDay } from "@/lib/club-time";
 import type { ClubTimeZone } from "@/lib/club-time";
 import {
@@ -32,6 +33,22 @@ import {
  *  - a **modification** request freezes the live booking's base footprint AND
  *    the full proposed result, and while held reserves ONLY the incremental
  *    per-night beds beyond the unchanged live booking.
+ *
+ * **Pure is not the same as browser-safe, and this module is only the first**
+ * (#2851). `computeProposalHash` needs a real SHA-256, so line 1 is
+ * `import { createHash } from "node:crypto"` and everything reachable from a
+ * `"use client"` component that imports ANY export here is compiled into the
+ * browser bundle — Node built-in and all. It used to be: four client entry
+ * points imported `MEMBER_MESSAGE_MAX_LENGTH` and
+ * `formatPolicyExceptionRequestAge` from here, so those two now live in
+ * `@/lib/booking-exception-request-shared`, which imports nothing, and this
+ * module is off the client graph entirely.
+ *
+ * So: **nothing a client component imports may be added here.** If the browser
+ * needs a new constant or formatter from this vocabulary, it goes in the shared
+ * module beside those two. `client-server-boundary-census.test.ts` fails the
+ * build the moment that slips, and it no longer carries an exception for this
+ * file to hide behind.
  */
 
 /** The request lifecycle #2365 adds, mirroring BookingChangeRequestStatus. */
@@ -193,40 +210,8 @@ export function firstReservedNight(
 }
 
 // ---------------------------------------------------------------------------
-// Request age (officer queue)
-// ---------------------------------------------------------------------------
-
-/**
- * How long a request has been waiting, in plain English (#2526 acceptance:
- * "queue shows request age").
- *
- * Age, not a timestamp, because the decision the officer is making is partly
- * "how long has this member been waiting?" — a date makes them do the
- * subtraction. Pure and clock-injected so it is unit-testable and renders
- * identically on the server and the client.
- */
-export function formatPolicyExceptionRequestAge(
-  createdAt: Date,
-  now: Date = new Date(),
-): string {
-  const minutes = Math.floor((now.getTime() - createdAt.getTime()) / 60_000);
-  // A clock skew (or a row created a moment ago) reads as "just now" rather
-  // than a negative age.
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes} min ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return hours === 1 ? "1 hour ago" : `${hours} hours ago`;
-  const days = Math.floor(hours / 24);
-  if (days < 14) return days === 1 ? "1 day ago" : `${days} days ago`;
-  const weeks = Math.floor(days / 7);
-  return weeks === 1 ? "1 week ago" : `${weeks} weeks ago`;
-}
-
-// ---------------------------------------------------------------------------
 // Member message
 // ---------------------------------------------------------------------------
-
-export const MEMBER_MESSAGE_MAX_LENGTH = 1000;
 
 export class PolicyExceptionMemberMessageError extends Error {
   constructor(message: string) {

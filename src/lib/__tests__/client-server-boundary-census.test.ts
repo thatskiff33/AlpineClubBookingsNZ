@@ -85,29 +85,32 @@ const NODE_BUILTINS = new Set([
 ]);
 
 /**
- * The one edge that exists today, named rather than tolerated.
+ * THERE IS NO ALLOWLIST HERE, AND ADDING ONE BACK IS A REVIEWABLE ACT.
  *
- * `src/lib/booking-exception-requests.ts` opens with
- * `import { createHash } from "node:crypto"`, for `computeProposalHash`, and
- * four client components import VALUES from it —
- * `MEMBER_MESSAGE_MAX_LENGTH` and `formatPolicyExceptionRequestAge` — so the
- * whole module, and its `node:crypto` import, is on the client graph. It builds
- * today, which means the bundler is shimming or dropping it; that is a bundler
- * implementation detail and not a guarantee.
+ * There used to be. When #2686 introduced this census it found one live edge —
+ * `src/lib/booking-exception-requests.ts -> node:crypto` — and named it in a
+ * `KNOWN_EDGES` set rather than fixing it, because the fix was a code move
+ * inside capacity-adjacent Critical code and did not belong in a CI-enforcement
+ * change. Four `"use client"` components imported `MEMBER_MESSAGE_MAX_LENGTH`
+ * and `formatPolicyExceptionRequestAge` from that module, so the whole module —
+ * `createHash` and all — was compiled into the browser bundle. It built anyway,
+ * which meant the bundler was shimming or dropping `node:crypto`: an
+ * implementation detail, not a guarantee.
  *
- * It is NOT fixed here on purpose. The fix is to move `computeProposalHash` and
- * its canonicalisation helpers into their own server-side module and re-point
- * `booking-exception-approval.ts` and `booking-exception-execution.ts` at it —
- * a code move inside the booking policy-exception workflow, which is
- * capacity-adjacent Critical code and needs its own review, not a drive-by edit
- * in a CI-enforcement change (#2686).
+ * #2851 did that code move: those two values now live in
+ * `@/lib/booking-exception-request-shared`, which imports nothing, and the
+ * workflow module is off the client graph. #2850 forbids baselining or
+ * allowlisting the known violation, so with its last entry gone the MECHANISM
+ * went too, deliberately. An empty exemption set is an invitation — it makes
+ * adding the next entry a one-line diff that reads as using an existing
+ * facility. Re-introducing the set is now a visible design change a reviewer
+ * has to agree to, which is the correct weight for "we are shipping a Node
+ * built-in to the browser on purpose".
  *
- * Every entry here is `<module under src/> -> <specifier>` and is a debt, not a
- * dispensation: nothing NEW joins this list without the same explanation.
+ * If you are here because a real edge cannot be removed: split the client-safe
+ * values into a pure module, as #2851 did. That is the fix, and it took one new
+ * file.
  */
-const KNOWN_EDGES = new Set([
-  "src/lib/booking-exception-requests.ts -> node:crypto",
-]);
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
@@ -163,19 +166,13 @@ function resolveSpecifier(fromFile: string, specifier: string): string | null {
   return null;
 }
 
-function edgeKey(fromFile: string, specifier: string) {
-  return `${path.relative(process.cwd(), fromFile).split(path.sep).join("/")} -> ${specifier}`;
-}
-
 function isForbiddenLeaf(fromFile: string, specifier: string): string | null {
   const forbidden =
     specifier === "server-only" ||
     specifier === "next/headers" ||
     specifier.startsWith("node:") ||
     NODE_BUILTINS.has(specifier.split("/")[0]);
-  if (forbidden) {
-    return KNOWN_EDGES.has(edgeKey(fromFile, specifier)) ? null : specifier;
-  }
+  if (forbidden) return specifier;
   const resolved = resolveSpecifier(fromFile, specifier);
   if (resolved === null) return null;
   const withoutExt = resolved.replace(/\.(tsx?|jsx?|mjs)$/, "");
@@ -292,21 +289,5 @@ describe("INV-OPS-013: no client module reaches server-only code, at any depth",
       violations,
       `A "use client" module reaches server-only code. Everything on the path below is compiled into the browser bundle:\n\n${violations.join("\n\n")}`,
     ).toEqual([]);
-  });
-
-  it("keeps the known-edge list from silently outliving the edges", () => {
-    // A stale exemption is the same defect as a stale suppression: it reads as
-    // a reviewed decision when it is really a leftover. Each entry must still
-    // describe a real import, so removing the last one fails here and gets the
-    // line deleted rather than left behind.
-    for (const edge of KNOWN_EDGES) {
-      const [file, specifier] = edge.split(" -> ");
-      const absolute = path.resolve(process.cwd(), file);
-      expect(existsSync(absolute), `${file} no longer exists; drop this entry`).toBe(true);
-      expect(
-        specifiersOf(absolute),
-        `${file} no longer imports ${specifier}; drop this entry`,
-      ).toContain(specifier);
-    }
   });
 });
