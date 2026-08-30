@@ -485,7 +485,9 @@ describe("lenient locked-night reader census (#3031, E6)", () => {
     const fence = source.search(/if \(!parkedFinancialReview\) \{/);
     const repriceCall = /await priceBookingGuestsWithMembershipTypePolicy\s*\(/;
     const reprice = source.search(repriceCall);
-    const raise = source.search(/await raiseEditFinancialReviewTask\s*\(/);
+    const raise = source.search(
+      /await raiseParkedEditFinancialReviewTasks\s*\(/,
+    );
 
     expect(
       strictCall,
@@ -515,5 +517,163 @@ describe("lenient locked-night reader census (#3031, E6)", () => {
     expect(fence).toBeLessThan(reprice);
     // Exactly one reprice, so a second unfenced call cannot hide behind it.
     expect([...source.matchAll(new RegExp(repriceCall, "g"))]).toHaveLength(1);
+  });
+});
+
+/**
+ * #3166: THE PRE-CHECK-IN GATE, ASSERTED THE WAY THE REMOVAL PATH'S IS.
+ *
+ * The `what` strings in the census above widened when #3166 landed — "closed by
+ * asking preCheckInEditEvidence first", "an unreadable strand now parks with
+ * NULL on every night", "the preview parks whenever the save would" — and
+ * NOTHING in that file measured any of it. Delete the gate from
+ * `booking-date-modification-service.ts` and the census stayed green while its
+ * own prose said that path parks. Prose in a census is documentation of a
+ * measurement, not the measurement.
+ *
+ * So this mirrors what the removal path already does, on the three sites #3166
+ * added plus the preview that has to agree with them, and for the same stated
+ * reason: a bare `toContain("preCheckInEditEvidence")` is satisfied by an IMPORT
+ * of the symbol, which is the likeliest way this regresses — nothing complains
+ * about an unused import until knip runs. Every marker below is therefore a CALL
+ * or an assignment, and the ORDER between them is asserted, because "the gate
+ * runs somewhere in this file" is not the property. The property is that it runs
+ * against the night sets the pricing pass produced and that its answer is what
+ * fences the write.
+ */
+const PRE_CHECK_IN_GATE_SITES = [
+  {
+    file: "src/lib/booking-modify-plan.ts",
+    what: "the SAVE. calculateModifiedPricing judges every existing strand after the pricing pass and returns the parked exit instead of a priced plan.",
+    /** In the order they must appear. */
+    markers: [
+      {
+        // The gate is the OUTER call and the assembly is its argument, so the
+        // gate reads first: this is a nesting, and the order asserts that.
+        label: "the gate is CALLED, not merely imported",
+        pattern: /preCheckInEditEvidence\s*\(\s*\{/,
+      },
+      {
+        label: "the strands are assembled from the pricing pass's own night sets",
+        pattern: /preCheckInEditStrands\s*\(/,
+      },
+      {
+        label: "an unreadable strand takes the parked exit",
+        pattern: /kind: "financial_review_required"/,
+      },
+      {
+        label: "the parked rows carry PRESERVED stored prices, never repriced ones",
+        pattern: /preservedNightPrices\s*\(/,
+      },
+    ],
+  },
+  {
+    file: "src/app/api/bookings/[id]/modify-quote/route.ts",
+    what: "the PREVIEW, which must park whenever the save would or it quotes money the save will not move.",
+    markers: [
+      {
+        // The gate is the OUTER call and the assembly is its argument, so the
+        // gate reads first: this is a nesting, and the order asserts that.
+        label: "the gate is CALLED, not merely imported",
+        pattern: /preCheckInEditEvidence\s*\(\s*\{/,
+      },
+      {
+        label: "the strands are assembled from the pricing pass's own night sets",
+        pattern: /preCheckInEditStrands\s*\(/,
+      },
+      {
+        label: "the preview answers with the parked quote",
+        pattern: /parkedQuoteResponse\s*\(/,
+      },
+    ],
+  },
+  {
+    file: "src/lib/booking-date-modification-service.ts",
+    what: "the DATE CHANGE, which read night prices through the lenient reader and wrote a blank back as an integer.",
+    markers: [
+      {
+        label: "the gate is CALLED, not merely imported",
+        pattern: /preCheckInEditEvidence\s*\(\s*\{/,
+      },
+      {
+        label: "its answer is kept, not discarded",
+        pattern: /const parked =\s*dateEditEvidence\.occurrences\.length > 0/,
+      },
+      {
+        label: "the night write uses PRESERVED stored prices when it parks",
+        pattern: /preservedNightPrices\s*\(/,
+      },
+      {
+        label: "an unusable strand is PARKED, not merely noted",
+        pattern: /await raiseParkedEditFinancialReviewTasks\s*\(/,
+      },
+    ],
+  },
+  {
+    file: "src/app/api/bookings/[id]/guests/route.ts",
+    what: "the GUEST ADD, which recomputed the booking's total from a full-party pass in which a blank night priced at today's rate.",
+    markers: [
+      {
+        label: "the gate is CALLED, not merely imported",
+        pattern: /preCheckInEditEvidence\s*\(\s*\{/,
+      },
+      {
+        label: "its answer is kept, not discarded",
+        pattern: /const parked = addEvidence\.occurrences\.length > 0/,
+      },
+      {
+        label: "the booking's total write-back is FENCED on that answer",
+        pattern: /const newTotalPriceCents = parked/,
+      },
+      {
+        label: "an unusable strand is PARKED, not merely noted",
+        pattern: /await raiseParkedEditFinancialReviewTasks\s*\(/,
+      },
+    ],
+  },
+] as const;
+
+describe("pre-check-in exact-evidence gate census (#3166)", () => {
+  it.each(PRE_CHECK_IN_GATE_SITES.map((site) => [site.file, site] as const))(
+    "%s keeps the gate, its answer, and the order between them",
+    (_file, site) => {
+      const source = stripComments(
+        fs.readFileSync(path.resolve(process.cwd(), site.file), "utf8"),
+      );
+      // Each marker is looked for in what is LEFT after the one before it, so
+      // "must come after" means an occurrence genuinely follows — rather than
+      // the first match in the file, which for these files is the in-progress
+      // branch's own parked exit several thousand characters earlier.
+      let previous = 0;
+      let previousLabel = "";
+      for (const marker of site.markers) {
+        const offset = source.slice(previous).search(marker.pattern);
+        expect(
+          offset,
+          previousLabel === ""
+            ? `${site.file}: ${marker.label} — ${site.what}`
+            : `${site.file}: "${marker.label}" must appear, and after "${previousLabel}" — ${site.what}`,
+        ).toBeGreaterThan(-1);
+        previous += offset + 1;
+        previousLabel = marker.label;
+      }
+    },
+  );
+
+  it("judges the SAVE and the PREVIEW against the same assembly, so they cannot park differently", () => {
+    // The one property no per-file assertion can state: both surfaces feed
+    // `preCheckInEditStrands` the pricing pass's own `priceBreakdown.guests`,
+    // which is the night set the save will actually write. A second derivation
+    // at either of them is how quote and apply come to disagree about one
+    // member's edit — the parity INV-MOD-028 exists to make impossible.
+    for (const file of [
+      "src/lib/booking-modify-plan.ts",
+      "src/app/api/bookings/[id]/modify-quote/route.ts",
+    ]) {
+      const source = stripComments(
+        fs.readFileSync(path.resolve(process.cwd(), file), "utf8"),
+      );
+      expect(source, file).toMatch(/pricedGuests: priceBreakdown\.guests/);
+    }
   });
 });
