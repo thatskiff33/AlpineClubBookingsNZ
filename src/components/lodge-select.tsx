@@ -163,15 +163,22 @@ export function initialLodgeIdFromLocation(): string | null {
  * an outage worth retrying (PR #2885 review, HIGH 2). A caller can offer a
  * refused role the club-wide read-only view instead of a dead error.
  *
- * WHO can still be refused changed in #2925. `/api/admin/lodges` no longer
- * needs `lodge:view`: it admits any admitted admin (`overview:view`) and
- * narrows its payload instead, so the two shipped presets this state was
- * written for — `ADMIN_MEMBERSHIP` and `FINANCE_ADMIN`, which hold
- * `bookings: "view"` and no `lodge` entry — now get a 200 carrying the lodge
- * names. `forbidden` is NOT dead code: every shipped admin preset carries
- * `overview`, but a club-edited or custom role can hold `bookings: "view"` with
- * `overview: "none"` and reach a bookings page, and that role is still refused
- * here. So the state stays, and so does every caller's handling of it.
+ * WHO can still be refused changed in #2925, and narrowed again in #2984.
+ * `/api/admin/lodges` no longer needs `lodge:view`: it admits any admitted admin
+ * (`permission: "any-admin"`) and narrows its payload instead, so the shipped
+ * presets this state was written for — `ADMIN_MEMBERSHIP` and `FINANCE_ADMIN`,
+ * which hold `bookings: "view"` and no `lodge` entry — now get a 200 carrying
+ * the lodge names. #2984 then made portal standing any ONE of the seven areas,
+ * so a club-edited or custom role holding `bookings: "view"` with
+ * `overview: "none"` is admitted too — that used to be the named example of a
+ * caller this state still had to serve, and it is not one any more.
+ *
+ * `forbidden` is still NOT dead code, for reasons that no longer depend on any
+ * particular grid: an ADMIN-scope caller whose roles were revoked mid-session
+ * gets a 403 on the next poll, and the MEMBER scope of this hook reads
+ * `/api/lodges`, which has its own gate. A refusal is a permissions fact and a
+ * failure is an outage; collapsing them would offer a retry that can only
+ * refuse again. So the state stays, and so does every caller's handling of it.
  */
 export function useLodgeOptions(scope: "member" | "admin" = "member") {
   const [lodges, setLodges] = useState<LodgeOption[]>([]);

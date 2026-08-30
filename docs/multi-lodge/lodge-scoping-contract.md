@@ -751,25 +751,34 @@ WHICH lodge it means, so its gate is a scoping decision and belongs here.
 Delivered by #2925 (owner decision, 17 Aug 2026); the route's own docblock
 carries the implementation reasoning and is not repeated.
 
-**Access.** Any admitted administrator, expressed as the explicit requirement
-`permission: { area: "overview", level: "view" }` — the documented "any admitted
-admin" shape in this codebase. It must stay EXPLICIT. A bare `requireAdmin()`
-does not mean "any admin": `inferAdminAccessRequirement` reads the `x-pathname`
-and `x-request-method` headers `proxy.ts` stamps on this route and resolves them
-through `getAdminRouteRequirement`, which maps `/api/admin/lodges` to
-`area: "lodge"` — so the old requirement returns by inference and nothing
-changes. That is exactly what happened on PR #2885, whose tests passed anyway
-because the shared `requireAdmin` mock fell back to `hasAdminPortalAccess` when
-given no options, a semantic the real guard has never had. The gate is therefore
-proved in `admin-lodges-access-gate.test.ts`, which mocks neither the guard nor
-the headers.
+**Access.** Any admitted administrator, expressed as the explicit option
+`permission: "any-admin"` — the guard's own "holds view or better on at least one
+of the seven areas" rule (`hasAdminPortalAccess`). It must stay EXPLICIT. A bare
+`requireAdmin()` does not mean "any admin": `inferAdminAccessRequirement` reads
+the `x-pathname` and `x-request-method` headers `proxy.ts` stamps on this route
+and resolves them through `getAdminRouteRequirement`, which maps
+`/api/admin/lodges` to `area: "lodge"` — so the old requirement returns by
+inference and nothing changes. That is exactly what happened on PR #2885, whose
+tests passed anyway because the shared `requireAdmin` mock fell back to
+`hasAdminPortalAccess` when given no options, a semantic the real guard has never
+had. The gate is therefore proved in `admin-lodges-access-gate.test.ts`, which
+mocks neither the guard nor the headers, and again across the whole route tree in
+`admin-route-authorization-proof.test.ts`, where this route is one of the three
+non-finance addresses a finance-only grid is allowed to reach.
 
-The presets this changed, all of which hold `overview: "view"` and no `lodge`
-entry: **`ADMIN_MEMBERSHIP`**, **`FINANCE_ADMIN`** and **`ADMIN_CONTENT`**. No
-preset was edited — adding `lodge:view` to them would have widened eighteen
-other read endpoints on upgrade. A 403 is still the answer for a caller who is
-not an admitted admin, and for a club-edited or custom role holding
-`overview: "none"`, which is why `useLodgeOptions` keeps its `forbidden` state.
+The presets this changed, all of which held `overview: "view"` and no `lodge`
+entry: **`ADMIN_MEMBERSHIP`**, **`FINANCE_ADMIN`** and **`ADMIN_CONTENT`** — and,
+since #2984, **`FINANCE_USER`** ("Finance Viewer"), which had no portal standing
+at all when #2925 shipped and so was still refused. No preset was edited — adding
+`lodge:view` to them would have widened eighteen other read endpoints on upgrade.
+
+**Who still gets a 403**, which #2984 narrowed: a caller who is not an admitted
+administrator. That is now the whole of the answer. A club-edited or custom role
+holding `overview: "none"` used to be refused as well, and is not any more —
+portal standing is any one of the seven areas, so a single-area grid of any kind
+reaches this route and receives the narrowed payload below. `useLodgeOptions`
+keeps its `forbidden` state for the callers who remain: a plain member, and a
+role whose grid is empty.
 
 **Payload, decided from nothing rather than trimmed from `lodgeSelect`.** A
 caller WITH `lodge:view` keeps the whole record. A caller without it receives

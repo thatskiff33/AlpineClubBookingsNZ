@@ -47,13 +47,11 @@ import { headers } from "next/headers";
 
 import { isFullAdmin } from "@/lib/access-roles";
 import {
+  canOpenAdminPath,
   getAdminPermissionMatrix,
-  getAdminRouteRequirement,
   getFirstAccessibleAdminHref,
-  hasAdminAreaAccess,
   hasAdminPortalAccess,
   hasFinanceViewerAccess,
-  isConsolidatedFeesPath,
   type AdminPermissionMatrix,
 } from "@/lib/admin-permissions";
 import { recordAuthBounce } from "@/lib/auth-diagnostics";
@@ -184,21 +182,16 @@ export async function guardAdminLayout(
   }
 
   // 6. AREA PERMISSION FOR THE REQUESTED PATH.
+  //
+  // `canOpenAdminPath` is the one implementation of that question (#2975). It
+  // used to be written out here — resolve the requirement, then short-circuit the
+  // two adjudicated special cases — and the same composition had been written out
+  // three more times elsewhere, with the fee console's OR rule spelled two
+  // different ways between them. The rule is the same rule wherever it is asked,
+  // so it is asked in one place.
   const requestedForGuard = requestedPath ?? fallbackPath;
-  const adminRequirement = getAdminRouteRequirement(requestedForGuard, "GET") ?? {
-    area: "overview" as const,
-    level: "view" as const,
-  };
 
-  // /admin/fees admits on view of EITHER bookings or finance (#1933, E7); its
-  // prefix resolves to bookings for the single-area drift guard, so the generic
-  // check would wrongly lock out a finance-only editor. Short-circuit here.
-  const admitted = isConsolidatedFeesPath(requestedForGuard)
-    ? hasAdminAreaAccess(member, { area: "bookings", level: "view" }) ||
-      hasAdminAreaAccess(member, { area: "finance", level: "view" })
-    : hasAdminAreaAccess(member, adminRequirement);
-
-  if (!admitted) {
+  if (!canOpenAdminPath(member, requestedForGuard)) {
     return {
       outcome: "redirect",
       destination: getFirstAccessibleAdminHref(member) ?? "/dashboard",

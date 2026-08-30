@@ -55,6 +55,13 @@ const createSchema = z
   shipped presets losing whole pages, so leaving one of them refused would have
   missed the point of it.
 
+  THAT LAST REFUSAL IS NOW GONE, and not by a change here. #2925 recorded it as
+  a question about `hasAdminPortalAccess` rather than about this endpoint and
+  filed it; #2984 answered it, so a finance-only grid has portal standing and
+  reaches this route like any other administrator. It gets the narrowed payload
+  below, because it holds no `lodge:view` - which is the whole reason the
+  relaxation was safe to make in the first place.
+
   It was also a REGRESSION for a second class, reachable through a custom grid
   rather than a preset: a role holding `lodge:view` without `overview:view`
   previously got the full list and would have started getting a 403.

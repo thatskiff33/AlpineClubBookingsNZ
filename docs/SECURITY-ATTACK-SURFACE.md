@@ -120,7 +120,7 @@ the row, not open work. Open findings now live in labelled GitHub issues
 | `/api/admin/communications/**`, `/api/admin/email-templates/**`, `/api/admin/email-settings`, `/api/admin/email-suppressions/**`, `/api/admin/email-failures/**`, `/api/admin/notification-delivery-policies`, `/api/admin/notifications` | Admin session via the shared `requireAdmin()` guard (per-method test-enforced, #1132). | Admin. | Email templates/settings, send history, suppressions, notification preferences, email failure review. | SES/SMTP email send. | Admin role plus active guard; communications send is rate-limited. | Audit logs for template/settings/suppression/notification changes; logger. | Admin-triggered bulk email and template injection risk. #616 should review SES/email boundaries and redaction. |
 | `/api/admin/audit-log`, `/api/admin/reports`, `/api/admin/members/export`, `/api/admin/members/import` | Admin session. | Admin. | Audit log, reports, member import/export data, bookings/payments/report aggregates. | Import may email login-enabled rows when invites are requested; non-login shared-email rows do not receive setup tokens. | Admin role plus active guard; import has API rate limit; exports select broad PII. | Logger and audit rows for import/export where implemented. | Large data extraction surface. #613/#614 should guard missing admin markers; #617/#619 should review export handling and storage. |
 | `/api/admin/access-roles/**` | Admin session via the shared `requireAdmin()` guard (support area); create/update/delete additionally require Full Admin via an explicit `isFullAdmin` check inside the handlers, because an editable definition could otherwise widen itself past the area gate. | Full Admin for mutations; any admin with support view for the read/options list. | Access-role definitions: labels, descriptions, per-area permission matrices, holder counts. | None. | Zod validation; deletion returns 409 while any member holds the role (including bare enum rows) with a Restrict FK backstop; protected system roles have no definition rows and cannot be touched. | Critical-severity structured audit entries for create/update/delete with before/after definitions. | Permission definitions are security-critical configuration: an edit applies to every holder on their next request. Full-Admin-only management plus the separation-of-duties gate on assignments keeps scoped admins from widening access. |
-| `/api/admin/lodge`, `/api/admin/chores/**`, `/api/admin/committee/**`, `/api/admin/hut-leaders/**`, `/api/admin/roster/**`, `/api/admin/issue-reports/**` | Admin session. | Admin. | Lodge config, chores, committee contacts, hut leader PIN/email data, roster, issue reports. | Email sends for hut-leader PIN/issue report workflows. | Shared `requireAdmin()` guard with active-account checks on every method. | Audit log for committee/issue/lodge changes; logger for failures. | Public-facing committee and lodge operational data. #618 should review kiosk and roster assumptions. |
+| `/api/admin/lodge`, `/api/admin/chores/**`, `/api/admin/committee/**`, `/api/admin/hut-leaders/**`, `/api/admin/roster/**`, `/api/admin/issue-reports/**` | Admin session. | Admin. | Lodge config, chores, committee contacts, hut leader PIN/email data, roster, issue reports. | Email sends for hut-leader PIN/issue report workflows. | Shared `requireAdmin()` guard with active-account checks on every method. `GET /api/admin/lodge` reads at `lodge:view`, but PROVISIONING the first kiosk account requires **Full Admin** (#2984 follow-through) — creating a `LODGE`-role login is an access-role write, which `POST` already refused to scoped admins (separation of duties, upstream #1012). Before that fix a `lodge:view` page load created it, so "Read-only Admin" could bring a login-capable account into existence. | Audit log for committee/issue/lodge changes; logger for failures. | Public-facing committee and lodge operational data. #618 should review kiosk and roster assumptions. |
 | `/api/admin/xero/**` | Admin session plus Xero OAuth state for connect/callback. | Admin. | Operational Xero tokens, contact groups, account/item mappings, contact links, sync operations, inbound events, duplicate/contact mismatch snapshots, Xero API usage. | Xero API and OAuth. | Admin role plus active guard; OAuth callback validates state cookie; feature gates through proxy/module state for many Xero paths. | Audit log for mutating admin Xero actions, Xero operation logs, Xero inbound event records, logger. | Sensitive integration surface. #613 should standardize guards; #616 should review OAuth state, token encryption, retry/replay controls, and webhook reconciliation. |
 | `/api/admin/lodges`, `/api/admin/lodges/[id]` | Admin session via the shared `requireAdmin()` guard (per-method test-enforced, #1132). The former `multiLodge` module flag was removed (ADR-005 / #128), so this surface is always-on and relies solely on `requireAdmin()` for authorisation; the data model is core (ADR-002), so the API is guarded on its own regardless. | Admin. | `Lodge` identity rows (name, slug, active, door code, travel note); the sole-active-lodge identity sync. | None. | Admin role plus active guard; Zod-validated strict schemas; deactivating the last active lodge is rejected with 409 (booking flows and the ADR-002 presentation rule assume one active lodge exists). | Structured audit logs for `LODGE_CREATED`/`LODGE_UPDATED`/`LODGE_ACTIVATED`/`LODGE_DEACTIVATED` with before/after identity. | Deactivation guards only the last-active-lodge case; it does not yet check future bookings, waitlist entries, hut-leader assignments, or kiosk STAFF bindings on the deactivated lodge (production-review §1.3). Kiosk/capacity resolvers do not read `Lodge.active`, so a kiosk bound to a deactivated lodge keeps operating. Door code and travel note are lodge-operational data behind the admin guard, not exposed on the member `/api/lodges` surface. |
 | `/api/lodges` | Authenticated active member (Auth.js session plus `requireActiveSessionUser()`). Not admin-gated: it is the booking-flow lodge selector. | Signed-in member. | Active lodges the member is eligible to book — id, name, and travel note only. Door codes and operational settings are deliberately not selected. | None. | Active-session guard; per-lodge eligibility filter (`isMemberEligibleToBookLodge`) so a `BOOKING_RESTRICTION`ed member never sees lodges they cannot book; only `active` lodges returned. Response hides the selector client-side when one lodge is returned (ADR-002). | None beyond DB errors if thrown. | Public-ish member-read surface. Keep the select list to identity-only fields; door codes and per-lodge operational settings must stay out of this response. Eligibility is enforced server-side, not just hidden client-side. |
@@ -200,6 +200,39 @@ These family rules are enforced by automated tests (issue #1132):
 - `src/lib/__tests__/finance-api-auth.test.ts` behaviourally tests the
   `/api/finance` guard pair, including that a full `ADMIN` without a finance
   role is rejected (the finance surface is separate from the admin portal).
+- `src/lib/__tests__/admin-route-authorization-proof.test.ts` is the one that
+  runs the real guards (#2975). The three above check that a route reaches a
+  guard, and that the map assigns the area somebody reviewed; every per-route
+  suite mocks `@/lib/session-guards` and therefore says nothing about
+  `requireAdmin` itself. This suite discovers every admin page and `/api/admin`
+  route from disk and puts each one to the real `requireAdmin` and the real
+  `guardAdminLayout`, through the `x-pathname` / `x-request-method` headers
+  `src/proxy.ts` stamps, for sixteen access-role grids — fourteen single-area
+  holders (each of the seven areas at `view`, and again at `edit`), a Full Admin
+  and a plain member — plus a deactivated Full Admin built inside the one test
+  that needs it.
+
+  **What it proves is the guard against each route's own gate, plus a named list
+  of exceptions — not "everything".** Where a handler passes an explicit
+  `permission` to `requireAdmin`, that literal is what runs, and the suite reads
+  it out of the route's source and hands it to the guard rather than assuming the
+  path map applies. Every place such a literal disagrees with the map is
+  enumerated in the suite with the reason it is intended, and asserted equal to
+  what is on disk in both directions, so an unreviewed re-gating of a route in
+  its own source is a failure. Its hand-written area-anchor table is the separate,
+  second opinion about the map itself, which a seeded wrong route-to-permission
+  mapping contradicts; the sweeps derive their expectation from the map and from
+  those literals, and are stated as unable to catch either being wrong on their
+  own. It measures ADMISSION only: a handler that narrows further after the guard
+  is stricter in production than reported, and a weakened check inside a handler
+  body is outside what this suite can see.
+
+  It also proves the #2984 boundary by attempt — a finance-only administrator is
+  refused every admin page outside Finance and every non-finance API route on
+  GET, POST, PATCH, PUT and DELETE, save exactly three admissions that are named
+  and reasoned in the suite (the shared lodge vocabulary, the Diagnostics ask
+  route's ADR-002 admission, and the joining-fee preview, which is gated on
+  `finance:view` in its own source).
 
 ### Public or Provider-Signed Exceptions
 

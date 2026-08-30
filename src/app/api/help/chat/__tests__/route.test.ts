@@ -13,8 +13,6 @@ const mocks = vi.hoisted(() => ({
   recordAiUsage: vi.fn(),
   answerHelpQuestion: vi.fn(),
   buildHelpGrounding: vi.fn(),
-  hasAdminPortalAccess: vi.fn(),
-  hasFinanceViewerAccess: vi.fn(),
   memberFindUnique: vi.fn(),
   reportAiError: vi.fn(),
 }));
@@ -54,10 +52,15 @@ vi.mock("@/lib/help/grounding", () => ({
 vi.mock("@/lib/access-role-definitions", () => ({
   MEMBER_ACCESS_ROLE_SELECT: {},
 }));
-vi.mock("@/lib/admin-permissions", () => ({
-  hasAdminPortalAccess: mocks.hasAdminPortalAccess,
-  hasFinanceViewerAccess: mocks.hasFinanceViewerAccess,
-}));
+/*
+  `@/lib/admin-permissions` IS DELIBERATELY NOT MOCKED (#2975). This file used to
+  stub `hasAdminPortalAccess`/`hasFinanceViewerAccess` with `vi.fn()`, so the two
+  surface-downgrade tests below asserted only that the route consulted *a*
+  boolean — the real question, "which grid actually reaches the admin help for
+  this page", was never asked, and the pathname was `/bookings`, which is not an
+  admin path at all. Everything below now runs the real permission matrix and
+  the real route-to-area map over real access-role grids.
+*/
 vi.mock("@/lib/prisma", () => ({
   prisma: { member: { findUnique: mocks.memberFindUnique } },
 }));
@@ -65,6 +68,11 @@ vi.mock("@/lib/observability-bridge", () => ({
   reportAiError: mocks.reportAiError,
 }));
 
+import type { AdminPermissionArea } from "@/lib/admin-permissions";
+import {
+  accessRoleDefinitionGrid,
+  type AccessRoleGridLevel,
+} from "@/lib/__tests__/helpers/access-role-definition-grid";
 import { POST } from "../route";
 
 function makeRequest(body: unknown, raw?: string) {
@@ -104,8 +112,6 @@ beforeEach(() => {
   });
   mocks.getOperationalAnthropicApiKey.mockResolvedValue("sk-ant-key");
   mocks.buildHelpGrounding.mockReturnValue("GROUNDING");
-  mocks.hasAdminPortalAccess.mockReturnValue(true);
-  mocks.hasFinanceViewerAccess.mockReturnValue(true);
   mocks.memberFindUnique.mockResolvedValue({ accessRoles: [] });
   mocks.recordAiUsage.mockResolvedValue(undefined);
   mocks.answerHelpQuestion.mockResolvedValue({
@@ -239,19 +245,113 @@ describe("POST /api/help/chat — gate order (each early exit leaves the provide
   });
 });
 
+/**
+ * Sign the request's member in with a real access-role grid, joined exactly as
+ * the route's own `select` asks for it. The definition row comes from the shared
+ * builder so its all-`NONE` baseline is DERIVED from `ADMIN_PERMISSION_AREAS`: a
+ * hand-written baseline leaves a newly added area `undefined` rather than `NONE`,
+ * and every "refused everywhere else" assertion quietly stops covering it.
+ */
+function signInWithGrid(
+  levels: Partial<Record<`${AdminPermissionArea}Level`, AccessRoleGridLevel>>,
+) {
+  mocks.memberFindUnique.mockResolvedValue({
+    accessRoles: [
+      {
+        role: null,
+        roleDefinitionId: "def-1",
+        roleDefinition: accessRoleDefinitionGrid(levels, "def-1"),
+      },
+    ],
+  });
+}
+
 describe("POST /api/help/chat — surface downgrade + happy path", () => {
-  it("downgrades a claimed admin surface to member when the DB member lacks admin access", async () => {
-    mocks.hasAdminPortalAccess.mockReturnValue(false);
-    await POST(makeRequest({ ...VALID_BODY, surface: "admin" }));
+  it("downgrades a claimed admin surface to member when the DB member holds no admin area", async () => {
+    mocks.memberFindUnique.mockResolvedValue({ accessRoles: [] });
+    await POST(
+      makeRequest({ ...VALID_BODY, surface: "admin", pathname: "/admin/members" }),
+    );
     expect(mocks.memberFindUnique).toHaveBeenCalledTimes(1);
     // grounding is built for the downgraded (member) surface, not the claim.
-    expect(mocks.buildHelpGrounding).toHaveBeenCalledWith("member", "/bookings");
+    expect(mocks.buildHelpGrounding).toHaveBeenCalledWith(
+      "member",
+      "/admin/members",
+    );
   });
 
-  it("keeps a claimed admin surface when the DB member actually has admin access", async () => {
-    mocks.hasAdminPortalAccess.mockReturnValue(true);
+  it("keeps a claimed admin surface for an admin asking about a page they may open", async () => {
+    signInWithGrid({ membershipLevel: "VIEW" });
+    await POST(
+      makeRequest({ ...VALID_BODY, surface: "admin", pathname: "/admin/members" }),
+    );
+    expect(mocks.buildHelpGrounding).toHaveBeenCalledWith(
+      "admin",
+      "/admin/members",
+    );
+  });
+
+  /*
+    #2984 gave a finance-only grid standing to enter the admin portal. THAT
+    STANDING IS NOT A KEY TO THE OTHER SIX AREAS, and this route is a direct API
+    attempt at exactly that: `pathname` is client-supplied and selects which
+    admin screen's help corpus grounds the answer, so "is this person an admin"
+    would have handed a Finance Viewer the page help for Members, Access Roles
+    and Site Content. It asks whether they could open the screen instead.
+  */
+  it("gives a finance-only admin the admin corpus for a finance page", async () => {
+    signInWithGrid({ financeLevel: "VIEW" });
+    await POST(
+      makeRequest({
+        ...VALID_BODY,
+        surface: "admin",
+        pathname: "/admin/payments",
+      }),
+    );
+    expect(mocks.buildHelpGrounding).toHaveBeenCalledWith(
+      "admin",
+      "/admin/payments",
+    );
+  });
+
+  it.each([
+    "/admin/members",
+    "/admin/access-roles",
+    "/admin/site-content",
+    "/admin/bookings",
+    "/admin/hut-leaders",
+    "/admin/dashboard",
+  ])(
+    "refuses a finance-only admin the admin corpus for %s",
+    async (pathname) => {
+      signInWithGrid({ financeLevel: "VIEW" });
+      await POST(makeRequest({ ...VALID_BODY, surface: "admin", pathname }));
+      expect(mocks.buildHelpGrounding).toHaveBeenCalledWith("member", pathname);
+    },
+  );
+
+  it("honours the consolidated fee console for a finance-only admin (#1933)", async () => {
+    // /admin/fees maps to `bookings` for the single-area drift guard but admits
+    // on EITHER bookings or finance, so the generic check would wrongly refuse.
+    signInWithGrid({ financeLevel: "VIEW" });
+    await POST(
+      makeRequest({ ...VALID_BODY, surface: "admin", pathname: "/admin/fees" }),
+    );
+    expect(mocks.buildHelpGrounding).toHaveBeenCalledWith("admin", "/admin/fees");
+  });
+
+  it("refuses a member path claimed as admin, whoever asks", async () => {
+    signInWithGrid({
+      overviewLevel: "EDIT",
+      bookingsLevel: "EDIT",
+      membershipLevel: "EDIT",
+      financeLevel: "EDIT",
+      lodgeLevel: "EDIT",
+      contentLevel: "EDIT",
+      supportLevel: "EDIT",
+    });
     await POST(makeRequest({ ...VALID_BODY, surface: "admin" }));
-    expect(mocks.buildHelpGrounding).toHaveBeenCalledWith("admin", "/bookings");
+    expect(mocks.buildHelpGrounding).toHaveBeenCalledWith("member", "/bookings");
   });
 
   it("answers and records usage with questionChars = question.length", async () => {

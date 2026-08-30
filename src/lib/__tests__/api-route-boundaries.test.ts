@@ -6,6 +6,7 @@ import {
   mixedMethodApiRoutes,
   type MixedMethodApiRouteMetadata,
 } from "@/lib/api-route-security";
+import { SHARED_ADMIN_GUARD_WRAPPERS } from "@/lib/__tests__/helpers/admin-route-explicit-permissions";
 
 function listRouteFiles(dir: string): string[] {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -49,13 +50,12 @@ const issue675MalformedJsonRoutes = [
 // closed list synchronized with the exported route guards; the defining module
 // must still call requireAdmin (asserted in the method-reachability test below),
 // so adding a wrapper cannot silently turn the allowlist into a bypass.
-const sharedAdminGuardWrappers: Record<string, string> = {
-  requireBedAllocationRead: "src/lib/admin-bed-allocation-routes.ts",
-  requireBedAllocationWrite: "src/lib/admin-bed-allocation-routes.ts",
-  requireBedInventoryRead: "src/lib/admin-bed-allocation-routes.ts",
-  requireBedInventoryWrite: "src/lib/admin-bed-allocation-routes.ts",
-  requireFullAdminForConfigTransfer: "src/lib/config-transfer/route-helpers.ts",
-};
+//
+// ONE HOME since #2975, in `helpers/admin-route-explicit-permissions.ts`. That
+// module follows the same wrappers to find WHICH permission the guard is given,
+// and two copies of the list would let this suite accept a wrapper the other
+// cannot read — a route whose gate nobody measures.
+const sharedAdminGuardWrappers = SHARED_ADMIN_GUARD_WRAPPERS;
 
 function hasAdminGuard(contents: string) {
   // Admin routes must use the shared requireAdmin helper (directly or via an
