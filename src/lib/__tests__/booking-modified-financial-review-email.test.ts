@@ -65,10 +65,10 @@ function senderParams(overrides: Record<string, unknown> = {}) {
 async function paymentNoteFromSender(overrides: Record<string, unknown> = {}) {
   sendEmail.mockClear();
   await sendBookingModifiedEmail(senderParams(overrides));
-  const call = sendEmail.mock.calls[0][0] as {
-    templateData: { paymentNote: string };
-  };
-  return call.templateData.paymentNote;
+  const [call] = sendEmail.mock.calls as unknown as [
+    [{ templateData: { paymentNote: string } }],
+  ];
+  return call[0].templateData.paymentNote;
 }
 
 beforeEach(() => {

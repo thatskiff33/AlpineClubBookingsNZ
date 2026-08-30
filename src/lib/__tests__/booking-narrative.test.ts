@@ -477,7 +477,13 @@ describe("a stay change that saved while its money is still being worked out (#3
 
     expect(result.message).not.toContain("$");
     expect(result.nextStep).not.toContain("$");
-    expect(result.message).not.toMatch(/0/);
+    // And no bare number of any kind, which is what an estimate would look
+    // like with its currency symbol dropped. The stay dates render as
+    // "1 Aug 2026", so digits DO legitimately appear — the assertion is over
+    // the sentence with its date range removed.
+    expect(result.message.replace("1 Aug 2026 to 3 Aug 2026", "")).not.toMatch(
+      /[0-9]/,
+    );
   });
 
   it("says nothing has moved, and never that settlement is complete", () => {
