@@ -7,6 +7,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -580,31 +581,89 @@ describe("recording what the unpriced nights sold for (#3191)", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("no box is ever filled in by the screen, however many of the others are", async () => {
+  it("no control fills a box in, and nothing it posts carries a night nobody typed", async () => {
     /*
-      THE HALF THE SOURCE CENSUS CANNOT SEE (#3191 fix round). A remainder fill
-      - `targetCents - enteredCents` into the last empty box - matches none of
+      THE HALF THE SOURCE CENSUS CANNOT SEE (#3191). A remainder fill -
+      `targetCents - enteredCents` into the last empty box - matches none of
       `stored-night-price-repair-census.test.ts`'s patterns, and the server
       cannot catch it either: it would arrive as a complete, reconciling vector
       the checker is obliged to accept. The property is about the RESULT, so it
       is asserted as behaviour on the real screen rather than as a regex over
       the source.
 
-      MUTATION PROOF: default the second box to the remaining balance and this
-      test fails; the census stays green.
-    */
-    await openSettleDialog(REVIEW_WITH_BLANKS, "No adjustment");
-    fireEvent.change(nightBox("2026-08-11"), { target: { value: "35.00" } });
+      THIS TEST USED TO MATCH BUTTON NAMES AGAINST A REGEX, and a review lens
+      disproved it by building the thing and watching it pass: a button reading
+      "Use the balance", writing the remainder into the last empty box, was green
+      on this test AND on all eight of the census's. The surviving defence was
+      the spelling of a button, which is exactly the weakness the census docblock
+      rejects a regex for. So the dialog's whole control inventory is pinned and
+      every control that is not a way out is PRESSED, whatever it is called.
 
+      Its second half covers a fill that never touches a box: `entries.push({
+      date: missing, priceCents: target - sum })` leaves the boxes empty, arms
+      the confirm button, and posts a price for a night nobody typed. Asserting
+      box values cannot see it; asserting that the screen will not SETTLE a set
+      it completed for the officer can.
+
+      MUTATION PROOF: either shape fails here. Both were built and run.
+    */
+    const fetchMock = stubLoad({
+      tasks: [REVIEW_WITH_BLANKS],
+      viewerCanViewBookings: true,
+    });
+    render(<ManualRefundTaskQueue />);
+    await waitFor(() =>
+      expect(screen.getByTestId("manual-refund-task-queue")).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "No adjustment" }));
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("unpriced-night-price-fields"),
+      ).toBeInTheDocument(),
+    );
+    // The note is filled in so that NOTHING but the night arithmetic is left
+    // holding the confirm button back.
+    fireEvent.change(screen.getByLabelText("Note (required)"), {
+      target: { value: "Nothing owed either way." },
+    });
     // One night left, one figure outstanding, and the arithmetic is forced -
     // which is exactly when a screen is tempted to be helpful.
-    expect(nightBox("2026-08-12")).toHaveValue("");
-    // And nothing offers to work it out either.
+    fireEvent.change(nightBox("2026-08-11"), { target: { value: "35.00" } });
+
+    const dialog = screen.getByRole("dialog");
+    const buttonName = (button: HTMLElement) =>
+      (button.textContent ?? "").trim();
+    /*
+      The inventory, pinned. A new control on this dialog fails HERE and has to
+      be added below - at which point the loop underneath presses it and proves
+      it does not fill a box in. Without this the loop would be a guard that only
+      arms itself once somebody has already added the thing it guards against.
+    */
     expect(
-      screen.queryByRole("button", {
-        name: /split|evenly|remainder|work (it|the rest) out|fill in/i,
-      }),
-    ).not.toBeInTheDocument();
+      new Set(within(dialog).getAllByRole("button").map(buttonName)),
+    ).toEqual(new Set(["Close", "Cancel", "Close with no adjustment"]));
+
+    const waysOut = new Set(["Close", "Cancel"]);
+    const confirm = within(dialog).getByRole("button", {
+      name: "Close with no adjustment",
+    });
+    for (const button of within(dialog).getAllByRole("button")) {
+      if (button === confirm || waysOut.has(buttonName(button))) continue;
+      fireEvent.click(button);
+    }
+
+    // Nothing was offered, and nothing was typed for the officer.
+    expect(nightBox("2026-08-11")).toHaveValue("35.00");
+    expect(nightBox("2026-08-12")).toHaveValue("");
+
+    // And the screen will not settle a set it completed for them either - which
+    // is the only thing that catches a fill made straight into the posted
+    // entries, where there is no box value to look at.
+    expect(confirm).toBeDisabled();
+    fireEvent.click(confirm);
+    expect(
+      fetchMock.mock.calls.filter((call) => call[1] !== undefined),
+    ).toHaveLength(0);
   });
 
   it("takes a typed 0.00 as a real price, not as an empty box", async () => {
