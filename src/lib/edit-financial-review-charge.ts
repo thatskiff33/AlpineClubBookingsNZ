@@ -1,18 +1,19 @@
 import "server-only";
 
 import {
-  ManualRefundTaskDirection,
-  ManualRefundTaskKind,
-  ManualRefundTaskStatus,
   PaymentSource,
   PaymentStatus,
   PaymentTransactionKind,
-  type Prisma,
 } from "@prisma/client";
 
 import { hasCapturedPayment } from "@/lib/booking-payment-state";
 import { createModificationAdditionalPaymentIntent } from "@/lib/booking-modification-settlement";
-import { parseEditFinancialReviewContext } from "@/lib/edit-financial-review-context";
+import {
+  findEditReviewChargeRequest,
+  hasIssuedSupplementaryInvoice,
+  sumEditReviewChargeSharesCents,
+  type EditReviewChargeStore,
+} from "@/lib/edit-financial-review-charge-request";
 import logger from "@/lib/logger";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
 import { prisma } from "@/lib/prisma";
@@ -229,134 +230,6 @@ export const REVIEW_CHARGE_REQUEST_ALREADY_PAID_MESSAGE =
 export const REVIEW_CHARGE_REQUEST_CLOSED_MESSAGE =
   "The club has already asked the member for this booking change, and that request can no longer be changed. Collect this amount another way, then dismiss this task with a note recording what was collected and how - the note is the record that the money was settled outside the system.";
 
-/** This edit's combined request as the ledger currently holds it. */
-export type EditReviewChargeRequest = {
-  paymentTransactionId: string;
-  stripePaymentIntentId: string | null;
-  amountCents: number;
-  status: PaymentStatus;
-};
-
-type ChargeStore = Prisma.TransactionClient | typeof prisma;
-
-/**
- * The combined request for ONE edit, found from the edit alone.
- *
- * Identified by the `reason` this module stamps on the `ADDITIONAL`
- * PaymentTransaction (`buildEditFinancialReviewChargeReason`), matched on exact
- * equality. A later share knows its `BookingModification` and nothing about the
- * share that came before it, so the request has to be findable from the anchor;
- * the ledger row carries no anchor column, and the payment's "latest additional"
- * is the wrong answer because an ORDINARY edit's price increase sits in the same
- * place and must never be restated as if it were part of this review.
- */
-export async function findEditReviewChargeRequest({
-  paymentId,
-  bookingModificationId,
-  store = prisma,
-}: {
-  paymentId: string;
-  bookingModificationId: string;
-  store?: ChargeStore;
-}): Promise<EditReviewChargeRequest | null> {
-  const row = await store.paymentTransaction.findFirst({
-    where: {
-      paymentId,
-      kind: PaymentTransactionKind.ADDITIONAL,
-      source: PaymentSource.STRIPE,
-      reason: buildEditFinancialReviewChargeReason(bookingModificationId),
-    },
-    orderBy: { createdAt: "desc" },
-    select: {
-      id: true,
-      stripePaymentIntentId: true,
-      amountCents: true,
-      status: true,
-    },
-  });
-  if (!row) return null;
-  return {
-    paymentTransactionId: row.id,
-    stripePaymentIntentId: row.stripePaymentIntentId,
-    amountCents: row.amountCents,
-    status: row.status,
-  };
-}
-
-/**
- * Has this edit's supplementary Xero invoice already been issued?
- *
- * An issued supplementary invoice is an ask that has left the building. The
- * outbox refuses to queue a second one for the same anchor (an active
- * `SUPPLEMENTARY_INVOICE` link), so a later share queued behind it would be
- * dropped SILENTLY - the failure this whole issue exists to remove. Asked before
- * the claim so the answer is a refusal the officer can act on instead.
- */
-async function hasIssuedSupplementaryInvoice({
-  bookingModificationId,
-  store = prisma,
-}: {
-  bookingModificationId: string;
-  store?: ChargeStore;
-}): Promise<boolean> {
-  const link = await store.xeroObjectLink.findFirst({
-    where: {
-      localModel: "BookingModification",
-      localId: bookingModificationId,
-      xeroObjectType: "INVOICE",
-      role: "SUPPLEMENTARY_INVOICE",
-      active: true,
-    },
-    select: { id: true },
-  });
-  return Boolean(link);
-}
-
-/**
- * The combined total this edit's request must ask for: the SUM of every share
- * already settled as money owed to the club against this same edit.
- *
- * DERIVED, NEVER INCREMENTED, and that is the whole concurrency argument for
- * obligation 3. A running figure raised by `+= share` double-counts a retry and
- * loses a share to a lost update; a sum over the rows that carry the shares can
- * do neither, because each task contributes exactly once and contributes from the
- * row its own status-fenced claim wrote.
- *
- * The shares are found by `bookingId` + kind + status + direction and then
- * filtered on the anchor through `parseEditFinancialReviewContext` - the one
- * parser (`INV-SSOT`, #3030) - rather than by indexing into the stored JSON in a
- * query. A booking has a handful of these rows, never a page of them.
- */
-export async function sumEditReviewChargeSharesCents({
-  bookingId,
-  bookingModificationId,
-  store = prisma,
-}: {
-  bookingId: string;
-  bookingModificationId: string;
-  store?: ChargeStore;
-}): Promise<number> {
-  const settled = await store.manualRefundTask.findMany({
-    where: {
-      bookingId,
-      kind: ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW,
-      status: ManualRefundTaskStatus.COMPLETED,
-      settlementDirection: ManualRefundTaskDirection.CHARGE_TO_MEMBER,
-      amountCents: { not: null },
-    },
-    select: { id: true, amountCents: true, reviewContext: true },
-  });
-
-  let total = 0;
-  for (const task of settled) {
-    const anchor = parseEditFinancialReviewContext(task.reviewContext)
-      ?.bookingModificationId;
-    if (anchor !== bookingModificationId) continue;
-    total += task.amountCents ?? 0;
-  }
-  return total;
-}
-
 /**
  * Decide how a charge will be collected, or throw the refusal that stops it.
  *
@@ -389,7 +262,7 @@ export async function chooseEditReviewChargeRoute({
     lastName: string;
   } | null;
   hasIssuedXeroInvoice: boolean;
-  store: ChargeStore;
+  store: EditReviewChargeStore;
 }): Promise<EditReviewChargeRoute> {
   if (!bookingModificationId) {
     throw new ManualBookingPaymentError(

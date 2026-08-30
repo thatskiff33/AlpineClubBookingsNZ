@@ -16,6 +16,7 @@ import {
   REVIEW_CHARGE_WRONG_KIND_MESSAGE,
   type EditReviewChargeRoute,
 } from "@/lib/edit-financial-review-charge";
+import { restateEditReviewChargeSupplementaryInvoice } from "@/lib/edit-financial-review-charge-request";
 import { parseEditFinancialReviewContext } from "@/lib/edit-financial-review-context";
 import logger from "@/lib/logger";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
@@ -30,7 +31,6 @@ import {
   type RefundAllocationSlice,
 } from "@/lib/payment-transactions";
 import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
-import { restatePendingSupplementaryInvoiceAmount } from "@/lib/xero-operation-outbox";
 
 /**
  * #3032 (epic #2797): WHERE a confirmed review amount goes when the task is
@@ -112,7 +112,8 @@ import { restatePendingSupplementaryInvoiceAmount } from "@/lib/xero-operation-o
  * instead; it re-enters `createModificationAdditionalPaymentIntent`, which is the
  * same function every ordinary price increase already goes through, so the
  * instrument, the ledger row, the chasing and the Xero leg are all the existing
- * ones. Which route a completion takes is a function of the officer's stated
+ * ones - and, since the fix round, one such request per EDIT rather than per
+ * task. Which route a completion takes is a function of the officer's stated
  * direction and the booking's own facts, never of a preference:
  *
  *  - `stripe-refund` - the booking was paid by card, so the money goes back the
@@ -151,9 +152,9 @@ export type EditReviewSettlementRoute =
       paymentId: string;
       /**
        * The `BookingModification` anchor, for the Xero credit note the caller
-       * queues after the commit. NULL on every pre-#3032 task kind, which is what
-       * keeps their behaviour byte-identical: they were raised for bookings with
-       * no edit behind them and no invoice line to correct.
+       * queues after the commit. NULL on every pre-#3032 task kind, keeping their
+       * behaviour byte-identical: they were raised for bookings with no edit
+       * behind them and no invoice line to correct.
        */
       bookingModificationId: string | null;
     }
@@ -166,16 +167,15 @@ export type EditReviewSettlementRoute =
        * allocation has to be written or a later cancellation refunds the same
        * cents a second time (#1031, and the reason
        * `createBookingModificationCredit` takes a payment id at all). Null when
-       * the booking has no captured payment, where there is nothing to allocate
-       * against.
+       * there is no captured payment to allocate against.
        */
       allocateAgainstPaymentId: string | null;
     }
   /**
    * #3170: the direction that did not exist before this issue - the MEMBER owes
-   * the CLUB. Defined in `edit-financial-review-charge.ts`, which is the whole
-   * of what a charge is; the three routes above are the whole of what a refund
-   * is; and this union is the one place that picks between them.
+   * the CLUB. Defined in `edit-financial-review-charge.ts`, which is the whole of
+   * what a charge is; the three above are the whole of what a refund is; and this
+   * union is the one place that picks between them.
    */
   | EditReviewChargeRoute;
 
@@ -263,19 +263,16 @@ export type EditReviewSettlementTask = {
       amountCents: number | null;
       refundedAmountCents: number | null;
       /**
-       * #3170: the CHARGE direction needs the booking payment's own source and
-       * Stripe customer, which the refund direction never did - it routed on the
-       * TASK's payment. A charge has no task payment to route on (the money is
-       * coming the other way), so it asks the booking's payment whether there is
-       * a card behind it.
+       * #3170: a CHARGE has no task payment to route on - the money is coming the
+       * other way - so it asks the BOOKING's payment whether there is a card
+       * behind it, and needs that payment's own source and Stripe customer.
        */
       source: PaymentSource;
       stripeCustomerId: string | null;
     } | null;
     /**
      * #3170: for `findOrCreateCustomer` when a charge has to mint a Stripe
-     * customer, on the booking's own member. Read inside the completion
-     * transaction with everything else rather than re-queried after the commit.
+     * customer. Read inside the completion transaction with everything else.
      */
     member: {
       id: string;
@@ -361,20 +358,19 @@ export async function chooseEditReviewSettlementRoute({
   const bookingModificationId = reviewContext?.bookingModificationId ?? null;
 
   if (direction === ManualRefundTaskDirection.CHARGE_TO_MEMBER) {
-    // #3170. Everything below this block hands money BACK; this is the one arm
-    // that asks for it, and it delegates rather than branching inline. A charge
-    // shares none of the refund machinery - no allocation, no cap against
-    // captured cash, no credit anchor - and the strongest guard against a charge
-    // quietly taking a refund path is that the two share no code at all.
+    // #3170. Everything below hands money BACK; this is the one arm that asks for
+    // it, and it delegates rather than branching inline - a charge shares none of
+    // the refund machinery, and the strongest guard against one quietly taking a
+    // refund path is that the two share no code at all.
     return chooseEditReviewChargeRoute({
       bookingModificationId,
       bookingPayment: task.booking.payment,
       member: task.booking.member,
       hasIssuedXeroInvoice,
-      // #3170: the same transaction the claim will run in. The charge route asks
-      // whether this EDIT already has a request open to another share, and that
-      // read has to see the snapshot the claim commits against - exactly the
-      // reason the credit-anchor read below takes the store too.
+      // #3170: the same transaction the claim runs in, because the charge route
+      // asks whether this EDIT already has a request open to a further share and
+      // that read must see the snapshot the claim commits against - the reason
+      // the credit-anchor read below takes the store too.
       store,
     });
   }
@@ -449,7 +445,6 @@ export async function chooseEditReviewSettlementRoute({
       : null,
   };
 }
-
 
 /**
  * #3032: everything a completed review has to do AFTER its transaction commits.
@@ -560,26 +555,23 @@ export async function executeEditReviewSettlement({
 
   /**
    * #3170: the charge direction, executed AFTER the commit for the same reason
-   * the refund is - `createPaymentIntent` is a provider round trip, and the
-   * locking guide forbids one inside a transaction.
+   * the refund is - the Stripe call is a provider round trip and the locking
+   * guide forbids one inside a transaction.
    *
-   * NOTHING IS TAKEN FROM THE MEMBER'S CARD HERE. This mints the REQUEST: an
-   * additional PaymentIntent and the PENDING `ADDITIONAL` PaymentTransaction row
-   * the club's whole additional-payment machinery keys off - the chase reminders,
-   * the resend service, the member's pay link. The member pays it themselves,
-   * exactly as they would for an ordinary check-out extension. That is why a
-   * failure here is recoverable rather than a lost charge: the debt is durable
-   * and the recovery cron re-mints under the same task-scoped Stripe key, which
-   * Stripe answers with the original intent rather than a second one.
+   * NOTHING IS TAKEN FROM THE MEMBER'S CARD HERE. This raises the REQUEST: one
+   * additional PaymentIntent per EDIT and the PENDING `ADDITIONAL`
+   * PaymentTransaction row the club's whole additional-payment machinery keys off
+   * - the chase reminders, the resend service, the member's pay link. The member
+   * pays it themselves, exactly as they would for an ordinary check-out
+   * extension. That is why a failure here is recoverable rather than a lost
+   * charge: the debt is durable and the recovery cron replays the same
+   * re-derivation under the same edit-scoped key.
    */
   let additionalPaymentIntentId: string | null = null;
-  /**
-   * #3170 (owner decision, 30 Aug 2026): the combined total of every share
-   * settled as money owed to the club against THIS EDIT - not `amountCents`,
-   * which is this one task's share. It is what the request asks for and what the
-   * supplementary Xero invoice bills, so the two legs of one edit can never
-   * disagree. Null on every route that is not a charge.
-   */
+  // #3170 (owner decision, 30 Aug 2026): the combined total of every share
+  // settled as money owed to the club against THIS EDIT - not `amountCents`,
+  // which is this one task's share. Both legs of the edit read it, so they can
+  // never disagree. Null on every route that is not a charge.
   let chargeTotalCents: number | null = null;
   if (route?.kind === "additional-charge") {
     const charged = await executeEditReviewCharge({
@@ -628,36 +620,26 @@ export async function executeEditReviewSettlement({
    */
   const xeroAnchorId = route?.bookingModificationId ?? null;
   const isCharge = route?.kind === "additional-charge";
-  /**
-   * #3170: the figure Xero is told about. A refund bills this task's own share; a
-   * CHARGE bills the edit's combined total, because there is one supplementary
-   * invoice per edit and it has to match the one request the member is asked to
-   * pay. Sending the share instead is how the Xero leg lost the second $30 -
-   * `enqueueXeroSupplementaryInvoiceOperation` refuses a second invoice for an
-   * anchor that already has an active one and returns quietly.
-   */
+  // #3170: a refund bills this task's own share; a CHARGE bills the edit's
+  // combined total, because there is one supplementary invoice per edit and it
+  // has to match the one request the member is asked to pay. Sending the share is
+  // how the Xero leg lost the second $30 - a second invoice for an anchor that
+  // already has an active one is refused quietly, not raised.
   const xeroAmountCents = isCharge ? chargeTotalCents : amountCents;
   if (xeroAnchorId && xeroAmountCents) {
-    if (isCharge) {
-      // Restate the invoice this edit ALREADY has queued, when it has one, rather
-      // than queueing a second: a share that arrives while the first is still
-      // PENDING or WAITING_PAYMENT raises that operation's amount to the combined
-      // total in place. Only when there is nothing to restate does the ordinary
-      // enqueue below run, which is the first share's path.
-      const restated = await restatePendingSupplementaryInvoiceAmount({
+    // Restate the invoice this edit ALREADY has queued rather than queueing a
+    // second. Nothing to restate is the FIRST share's answer, and the enqueue
+    // below is its path.
+    if (
+      isCharge &&
+      (await restateEditReviewChargeSupplementaryInvoice({
+        bookingId,
+        taskId,
         bookingModificationId: xeroAnchorId,
-        priceDiffCents: xeroAmountCents,
-        changeFeeCents: 0,
-      }).catch((err) => {
-        logger.error(
-          { err, bookingId, taskId },
-          "Failed to restate the queued Xero supplementary invoice for a completed edit financial review",
-        );
-        return { restated: 0 };
-      });
-      if (restated.restated > 0) {
-        return { stripeRefundId, additionalPaymentIntentId };
-      }
+        totalCents: xeroAmountCents,
+      }))
+    ) {
+      return { stripeRefundId, additionalPaymentIntentId };
     }
     void queueXeroBookingEditSettlement({
       bookingId,

@@ -35,3 +35,15 @@
 - If a booking has no card payment and no invoice to add to, the office is told
   plainly that the money has to be collected another way, and the review stays
   open — rather than being closed as though it had been collected.
+- One change to a booking can raise more than one of these reviews — one for
+  each person on it whose price history could not be read. When the office
+  settles two of them as money owed to the club, the member now gets **one bill
+  for the total** rather than two separate ones. Before this, the second request
+  cancelled the first: $200 followed by $30 collected $30, both reviews looked
+  settled, and the member's payment link showed $30.
+- Each review still records its own amount and which way it went, so the
+  combined bill can always be traced back to the two decisions behind it, and
+  the club's invoice for the change is raised once, for the total.
+- If the member has already paid the bill for that change, or the invoice for it
+  has already gone out, the office is told plainly and the review stays open
+  rather than a second request being raised behind the first.

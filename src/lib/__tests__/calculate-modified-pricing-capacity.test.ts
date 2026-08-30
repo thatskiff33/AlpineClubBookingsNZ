@@ -666,10 +666,10 @@ describe("calculateModifiedPricing in-progress per-night breakdown (#2736)", () 
     const [lodgeId, rangeStart, rangeEnd, proposed] =
       h.checkCapacityForGuestRanges.mock.calls[0];
     expect(lodgeId).toBe("lodge-1");
+    // The envelope start a reverted planner would pass is 2026-08-20, so pinning
+    // the start to 08-21 already excludes it - a second, negative assertion of
+    // the same fact adds nothing but a line to keep in step.
     expect(rangeStart).toEqual(D("2026-08-21"));
-    // Said the other way round too: the envelope start is what a reverted
-    // planner would pass, and it is not this.
-    expect(rangeStart).not.toEqual(D("2026-08-20"));
     expect(rangeEnd).toEqual(D("2026-08-25"));
     expect(proposed).toEqual([
       {

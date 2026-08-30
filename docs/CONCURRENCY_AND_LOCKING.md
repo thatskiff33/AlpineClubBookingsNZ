@@ -2579,6 +2579,40 @@ answer the second with the FIRST refund and the caller would take the replayed i
 as success; a modification-scoped recovery key would let the two tasks upsert one
 another's row, and that upsert overwrites `amountCents` and `stripeKeyPrefix`.
 
+**#3170's CHARGE keys are scoped the OTHER way — to the `BookingModification` —
+and that is not a contradiction, it is the same question answered about a
+different object.** A refund is money already SENT, so two refunds of one edit are
+two movements that must never converge; a charge is a REQUEST the member still has
+to act on, and the owner's 30 Aug 2026 decision on #3170 is that one edit raises
+exactly one of those, for the total of its shares. Two requests lose money without
+any race at all: minting an additional PaymentIntent queues every other
+outstanding `ADDITIONAL` transaction on that payment for cancellation, and
+`reconcilePaymentAggregates` carries a single `additionalAmountCents` rather than
+a sum. So a later share RAISES the existing intent's amount instead of minting,
+and both the Stripe key and the recovery key name the edit.
+
+**Two officers settling two shares at once is made safe by DERIVATION plus a
+compare-and-set, not by a lock** — which matters here because this path still has
+none, for the reason above. The combined total is summed from the settled task
+rows (`sumEditReviewChargeSharesCents`) at execution time, after the caller's
+transaction has committed, so:
+
+- **no double count** — each task contributes exactly once, from the row its own
+  status-fenced claim wrote, and never as an increment of a running figure;
+- **no lost share** — whichever completion commits LAST necessarily reads after
+  both commits, so at least one run always derives the true total;
+- **the stale run cannot win** — a settled share is terminal, so the derived total
+  only ever grows and a smaller figure is always the older answer. The write
+  REFUSES TO LOWER the recorded request, which makes the outcome independent of
+  the order the two provider calls happen to land in.
+
+The recovery replay is the same function, so a crash between the commit and the
+Stripe call costs a delay rather than a share: the row's stored `amountCents` is
+advisory and the replay re-derives. A review-charge recovery operation is
+therefore routed AWAY from the ordinary additional-intent worker, whose "a newer
+additional supersedes this one" check would otherwise see the request this very
+edit already minted and complete having minted nothing.
+
 **The lockless path also needed one WRITE made safe.**
 `applyLocalRefundAllocation` computes an ABSOLUTE `refundedAmountCents` from a
 value it read a moment earlier, so two writers on one `PaymentTransaction`

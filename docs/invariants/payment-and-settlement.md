@@ -1229,12 +1229,49 @@ one, check the other.
     the member pays it. The club has exactly two instruments - a captured card
     payment, or an issued Xero invoice to add a supplementary line to - and a
     booking with neither is REFUSED before the claim, with the task left OPEN,
-    rather than recorded as collected. Both the Stripe idempotency key and the
-    recovery operation are TASK-scoped for the reason the refund side is, with a
-    sharper consequence: `createPaymentIntent` mints, so two reviews of one edit
-    sharing a key would leave the club one instrument for two amounts. The Xero
-    leg is the same choke point with a POSITIVE `priceDiffCents`, which is the
-    only place the direction becomes a sign.
+    rather than recorded as collected. The Xero leg is the same choke point with a
+    POSITIVE `priceDiffCents`, which is the only place the direction becomes a
+    sign.
+  - **ONE BOOKING EDIT RAISES ONE CHARGE REQUEST, for the total of its shares**
+    (#3170, owner decision 30 Aug 2026). One edit raises one review task per guest
+    strand whose history could not be read, so two is ordinary, and an officer may
+    settle both as money owed to the club. Two separate requests LOSE MONEY:
+    minting an additional PaymentIntent queues every OTHER outstanding
+    `ADDITIONAL` transaction on that payment for cancellation, and
+    `reconcilePaymentAggregates` carries a single `additionalAmountCents` rather
+    than a sum, so $200 then $30 collected $30 of $230 with both tasks COMPLETED
+    and both audited as settled. So:
+    - **The REQUEST is anchored to the `BookingModification`** - one intent, one
+      `ADDITIONAL` row, one figure on the member's pay link - and BOTH the Stripe
+      idempotency key and the recovery operation are scoped to it. A later share
+      RAISES that intent's amount rather than minting a second, so nothing is ever
+      superseded between two shares of one edit. (The REFUND keys stay TASK-scoped,
+      and that is not an inconsistency: a refund is money already sent, so two
+      refunds of one edit are two movements that must never converge.)
+    - **The SHARE stays anchored to the task** - its `amountCents`, its
+      `settlementDirection` and its audit entry - so the combined figure remains
+      explainable back to the decisions that produced it.
+    - **The total is DERIVED from the settled shares, never incremented.** That is
+      the concurrency argument: each task contributes exactly once, from the row
+      its own status-fenced claim wrote, so two officers closing two tasks at once
+      cannot double-count. Whichever completion commits LAST reads after both
+      commits and therefore derives the true total; a settled share is terminal, so
+      the total only ever grows and a smaller figure is always the older answer.
+      The write refuses to LOWER the recorded request, which is what makes the
+      outcome independent of the order the two provider calls land in and is why
+      this path still needs no advisory lock.
+    - **A share may not be added to a request the member has already paid, or to
+      one whose supplementary invoice has already been issued.** Both are REFUSED
+      before the claim with the task left OPEN. Minting a remainder request instead
+      would be a second outstanding request against one edit - the arrangement that
+      lost the money - and the internet-banking route reaches the second case
+      routinely, because its supplementary invoice is raised unpaid and issues as
+      soon as the outbox runs.
+    - **The Xero leg bills the TOTAL, once.** A share arriving while this edit's
+      supplementary invoice operation is still PENDING or WAITING_PAYMENT RESTATES
+      that operation's amount; queueing a second one is silently dropped, because
+      the outbox refuses an anchor that already carries an active
+      `SUPPLEMENTARY_INVOICE` link and returns a message rather than an error.
   - **The card route is capped before it claims, and keyed to the TASK.** The cap
     is measured off the booking's captured `PaymentTransaction` rows, not off
     `Payment.source` - that column DEFAULTS to `STRIPE`, so routing on it alone

@@ -59,3 +59,23 @@ reason: the operator CLI that replays the pre-#1231 invoice maths was a missed
   cannot see that the two branch alike will re-introduce the divergence. The
   module was already over its 700-line budget before this change and is a single
   cohesive diagnostic - splitting a replay in half is how the halves drift.
+
+file: src/lib/xero-operation-outbox.ts
+lines: 2578
+reason: the fix round's Xero half of "one booking edit, one ask". An edit whose
+  money could not be valued can raise two review tasks, and the owner's 30 Aug
+  2026 decision is that both contribute to a single request for the total - so
+  the supplementary invoice has to bill $230 rather than $200 and then $30.
+  Queueing the second one is not available and is the defect: this module's own
+  `enqueueXeroSupplementaryInvoiceOperation` refuses an anchor that already
+  carries an active SUPPLEMENTARY_INVOICE link and returns a MESSAGE rather than
+  an error, so the second share is dropped in silence. What was added is one
+  restate - raise the PENDING or WAITING_PAYMENT operation's amount, and its
+  correlation key with it, because that key is built FROM the amount and a stale
+  one would let a later enqueue queue a duplicate. It belongs here and nowhere
+  else: it is the exact inverse of `attachPaymentIntentToWaitingSupplementaryInvoiceOperations`
+  a few lines below it, reads the same payload shape by the same JSON path, and
+  the two must agree about which states are still safe to edit. A caller-side
+  copy would be a second definition of "has this ask left the building". The
+  module was 1,776 lines over its 700-line budget before this change; it is the
+  single Xero outbox and a seam through it is a refactor of its own.
