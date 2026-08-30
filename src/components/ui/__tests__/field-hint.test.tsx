@@ -150,6 +150,23 @@ function conversionSources(dir = "src"): string[] {
  */
 const FIELD_HINT_MODULE = "src/components/ui/field-hint.tsx";
 
+let strippedSources: string[] | null = null;
+
+/**
+ * Every file under `src/`, read once and stripped once.
+ *
+ * MEMOISED because stripping is the expensive half and four needles are counted
+ * over the same ~1,500 files: walking the tree once per needle made this suite
+ * four scans deep and pushed it into the 5,000 ms timeout under parallel load,
+ * which on Windows presents as an unrelated-looking flake.
+ */
+function strippedSrc(): string[] {
+  strippedSources ??= conversionSources().map((path) =>
+    stripCommentsAndStrings(readFileSync(join(process.cwd(), path), "utf8")),
+  );
+  return strippedSources;
+}
+
 /**
  * How many times a needle appears in the CODE under `src/`.
  *
@@ -165,12 +182,10 @@ const FIELD_HINT_MODULE = "src/components/ui/field-hint.tsx";
  * wiring is most carefully explained.
  */
 function countAcrossSrc(needle: string): number {
-  return conversionSources().reduce((total, path) => {
-    const text = stripCommentsAndStrings(
-      readFileSync(join(process.cwd(), path), "utf8"),
-    );
-    return total + text.split(needle).length - 1;
-  }, 0);
+  return strippedSrc().reduce(
+    (total, text) => total + text.split(needle).length - 1,
+    0,
+  );
 }
 
 describe("FieldHint wiring contract", () => {

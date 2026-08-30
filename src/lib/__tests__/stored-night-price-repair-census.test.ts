@@ -137,6 +137,28 @@ const EXEMPT_END = "MONEY-DISPLAY EXEMPTION END (stored-night-price-repair-censu
 const EXEMPT_LINE_BUDGET = 12;
 
 /**
+ * Is this line ENTIRELY a comment that also closes on it?
+ *
+ * Asked of the canonical stripper rather than by matching delimiters here, and
+ * for two reasons. `INV-SSOT-004` bans a second scanner that reads comment
+ * delimiters, which is what a regex for them would be. And the stripper's answer
+ * is the one that matters: what this really needs to know is whether removing
+ * the line can change how the REST of the file is read, and the only authority
+ * on that is the thing that reads it.
+ *
+ * The sentinel is what makes an unterminated opener visible. A line holding one
+ * blanks itself either way; it is the line BELOW that tells the two apart,
+ * because an opener that never closes swallows it too.
+ */
+function isWholeCommentLine(line: string): boolean {
+  const sentinel = "exemptionMarkerProbe";
+  const [first, second] = stripCommentsAndStrings(`${line}\n${sentinel}`)
+    .split("\n")
+    .map((part) => part.trim());
+  return first === "" && second === sentinel;
+}
+
+/**
  * `source` with the exempt regions removed, then stripped.
  *
  * The markers are COMMENTS, so they are found on the raw source and the result
@@ -160,7 +182,7 @@ function scannedSource(source: string): { code: string; exemptLines: number } {
     const hasStart = line.includes(EXEMPT_START);
     const hasEnd = line.includes(EXEMPT_END);
     if (hasStart || hasEnd) {
-      if (!/^\s*\/\*.*\*\/\s*$/.test(line)) {
+      if (!isWholeCommentLine(line)) {
         throw new Error(
           `${SCOPED_FILE}:${index + 1}: a night-price census exemption marker must be a WHOLE comment on a line of its own. Cutting the middle out of a block comment leaves its opener behind and blanks the rest of the file, which passes this census by having nothing to scan.`,
         );

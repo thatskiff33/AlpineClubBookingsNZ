@@ -534,6 +534,11 @@ async function openSettleDialog(task: unknown, control: string) {
   );
 }
 
+/** How many settle POSTs the screen made. A load is a GET and has no init. */
+function postCount(fetchMock: { mock: { calls: unknown[][] } }): number {
+  return fetchMock.mock.calls.filter((call) => call[1] !== undefined).length;
+}
+
 function postBody(fetchMock: { mock: { calls: unknown[][] } }) {
   const post = fetchMock.mock.calls.find((call) => call[1] !== undefined);
   return JSON.parse((post?.[1] as { body: string }).body) as Record<
@@ -661,9 +666,7 @@ describe("recording what the unpriced nights sold for (#3191)", () => {
     // entries, where there is no box value to look at.
     expect(confirm).toBeDisabled();
     fireEvent.click(confirm);
-    expect(
-      fetchMock.mock.calls.filter((call) => call[1] !== undefined),
-    ).toHaveLength(0);
+    expect(postCount(fetchMock)).toBe(0);
   });
 
   it("takes a typed 0.00 as a real price, not as an empty box", async () => {
