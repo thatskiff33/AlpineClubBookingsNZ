@@ -52,7 +52,13 @@
  * unnoticed.
  */
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -139,6 +145,15 @@ export const BOUNDARY_MESSAGE =
 
 /** The browser layer's label in a Turbopack import trace. */
 export const BROWSER_LAYER = "[Client Component Browser]";
+
+/**
+ * What this prints when the proof held, and the string the `verify` job greps
+ * for. Exported so the two cannot drift: the CI step exists because an exit
+ * code alone was not evidence that anything ran, and a grep for a sentence this
+ * file no longer prints would put that hole straight back.
+ */
+export const SUCCESS_PREFIX =
+  "ok: the production build refused a client component reaching";
 
 /** Turbopack colours its output; the parsing below wants the plain text. */
 export function stripAnsi(text) {
@@ -296,7 +311,7 @@ function main() {
   const problems = problemsWithSeededBuild(build);
   if (problems.length === 0) {
     console.log(
-      "ok: the production build refused a client component reaching " +
+      `${SUCCESS_PREFIX} ` +
         `${PROTECTED_ROOTS.join(" and ")}, and said so for the right reason.`,
     );
     return;
@@ -312,6 +327,38 @@ function main() {
   process.exitCode = 1;
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+/**
+ * Was this file RUN, rather than imported by the unit test beside it?
+ *
+ * BOTH SIDES ARE REALPATHED, and that is not defensive noise. Node resolves
+ * `import.meta.url` through symlinks and hands back `process.argv[1]` exactly
+ * as the caller spelled it, so under a checkout reached through a link - a
+ * self-hosted runner whose workspace is one, a container bind-mount through
+ * one, macOS where `/tmp` is one - the two strings differ, `main()` never runs,
+ * and this exits 0 having proved nothing. Reproduced here with a Windows
+ * junction. Nothing downstream would have noticed: the CI step was a bare
+ * `node scripts/ci/server-only-boundary-selftest.mjs`, so the REQUIRED `verify`
+ * check would have gone green with the boundary proof never executed. That step
+ * now also greps for the success line, which is the same hole closed from the
+ * other side - a silent exit 0 must not be able to satisfy a required check.
+ *
+ * `realpathSync` throws on a path that does not exist, so each side falls back
+ * to its own resolved spelling rather than taking the process down.
+ */
+export function isDirectInvocation(argvPath, moduleUrl) {
+  if (!argvPath) return false;
+  const real = (candidate) => {
+    try {
+      return realpathSync(candidate);
+    } catch {
+      return candidate;
+    }
+  };
+  return (
+    real(path.resolve(argvPath)) === real(path.resolve(fileURLToPath(moduleUrl)))
+  );
+}
+
+if (isDirectInvocation(process.argv[1], import.meta.url)) {
   main();
 }

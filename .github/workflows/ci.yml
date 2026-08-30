@@ -650,8 +650,33 @@ jobs:
       # fixture, red with one. Same shape as `Prove the secret scanner still
       # fails on a planted secret` in the secret-scan job, and for the same
       # reason: a guard that cannot go red looks exactly like a clean repository.
+      # The grep is the point, not decoration. This step used to be a bare
+      # `node scripts/ci/server-only-boundary-selftest.mjs`, and a script that
+      # never reached `main()` would have exited 0 in silence - which under a
+      # checkout reached through a symlink is exactly what happened, because the
+      # run-directly guard compared a realpathed `import.meta.url` against a raw
+      # `process.argv[1]`. That guard is fixed, and this is the same hole closed
+      # from the other side: nothing read the output, so a REQUIRED check went
+      # green on a proof that never ran. Requiring the success line means the
+      # gate is satisfied by evidence rather than by an exit code, which is the
+      # same standard the self-test itself applies to the seeded build.
+      #
+      # No job-level `if:` or `needs:` on this, ever: GitHub counts a SKIPPED
+      # required check as satisfying branch protection, so a condition up there
+      # turns a security gate green by not running it.
       - name: Prove the server-only boundary still refuses a seeded client import
-        run: node scripts/ci/server-only-boundary-selftest.mjs
+        run: |
+          set -euo pipefail
+          log="${RUNNER_TEMP:-/tmp}/server-only-boundary-selftest.log"
+          if ! node scripts/ci/server-only-boundary-selftest.mjs >"$log" 2>&1; then
+            cat "$log"
+            exit 1
+          fi
+          cat "$log"
+          if ! grep -qF 'ok: the production build refused a client component reaching' "$log"; then
+            echo "::error::The server-only boundary self-test exited 0 without printing its success line, so it did not actually run. A silent exit 0 must never satisfy this gate (#2850, #3186)."
+            exit 1
+          fi
 
   migration-drift:
     name: Migration drift check

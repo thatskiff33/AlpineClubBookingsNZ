@@ -1,4 +1,16 @@
-import { describe, expect, it } from "vitest";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+import { afterAll, describe, expect, it } from "vitest";
 
 import {
   BOUNDARY_MESSAGE,
@@ -7,6 +19,8 @@ import {
   MARKED_ROOTS,
   MARKER_STATEMENT,
   PROTECTED_ROOTS,
+  SUCCESS_PREFIX,
+  isDirectInvocation,
   problemsWithSeededBuild,
   splitErrorBlocks,
   stripAnsi,
@@ -241,5 +255,73 @@ describe("server-only boundary self-test: the two root lists", () => {
     expect(new Set(MARKED_ROOTS).size).toBe(MARKED_ROOTS.length);
     expect([...MARKED_ROOTS].sort()).toEqual(MARKED_ROOTS);
     expect(MARKER_STATEMENT).toBe('import "server-only";');
+  });
+});
+
+const TEMPORARY_DIRECTORIES = [];
+afterAll(() => {
+  for (const directory of TEMPORARY_DIRECTORIES) {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+describe("server-only boundary self-test: the run-directly guard", () => {
+  it("still recognises the plain, unlinked spelling", () => {
+    const here = pathToFileURL(
+      path.join(process.cwd(), "scripts", "ci", "example.mjs"),
+    ).href;
+    expect(
+      isDirectInvocation(path.join("scripts", "ci", "example.mjs"), here),
+    ).toBe(true);
+    expect(
+      isDirectInvocation(path.join("scripts", "ci", "other.mjs"), here),
+    ).toBe(false);
+  });
+
+  it("returns false when there is no argv[1] at all", () => {
+    expect(isDirectInvocation(undefined, import.meta.url)).toBe(false);
+    expect(isDirectInvocation("", import.meta.url)).toBe(false);
+  });
+
+  it("recognises a checkout reached through a symlink", () => {
+    // The silent-green case, and the reason the guard realpaths BOTH sides.
+    // Node resolves `import.meta.url` through the link and hands
+    // `process.argv[1]` back as spelled, so comparing the raw strings decides
+    // "this file was imported, not run" - and the gate exits 0 without doing
+    // anything, while the CI step that runs it reports success. Live on a
+    // self-hosted runner whose workspace is a link, on a container bind-mount
+    // through one, and on macOS where `/tmp` is itself a symlink.
+    const root = mkdtempSync(path.join(tmpdir(), "server-only-selftest-"));
+    TEMPORARY_DIRECTORIES.push(root);
+    const real = path.join(root, "real");
+    mkdirSync(real);
+    writeFileSync(path.join(real, "gate.mjs"), "export const x = 1;", "utf8");
+    // `"junction"` is what works on Windows without elevation; every other
+    // platform ignores the type and makes an ordinary symlink.
+    symlinkSync(real, path.join(root, "link"), "junction");
+
+    expect(
+      isDirectInvocation(
+        path.join(root, "link", "gate.mjs"),
+        pathToFileURL(path.join(real, "gate.mjs")).href,
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("server-only boundary self-test: the CI step that runs it", () => {
+  it("greps for a line this script really prints", () => {
+    // The `verify` step asserts the success line rather than trusting the exit
+    // code, because a script that never reached `main()` exited 0 in silence
+    // and the required check went green on a proof that had not run. That only
+    // works while the two strings agree, and nothing else would notice if they
+    // stopped: the gate would simply fail every run, or - if the grep were
+    // loosened instead - go back to proving nothing.
+    const workflow = readFileSync(
+      path.join(process.cwd(), ".github", "workflows", "ci.yml"),
+      "utf8",
+    );
+    expect(workflow).toContain(`grep -qF '${SUCCESS_PREFIX}'`);
+    expect(SUCCESS_PREFIX).not.toContain("'");
   });
 });
