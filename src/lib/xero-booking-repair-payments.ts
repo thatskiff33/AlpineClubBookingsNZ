@@ -230,7 +230,9 @@ export function getOutstandingCapturedRefundAmountCents(
  *   * A CAPTURED request for LESS than the ask - a shortfall, not a receipt.
  *     Manual review: see below.
  *   * An OUTSTANDING request with an intent - the ordinary card arrangement.
- *     Park the invoice on that intent, exactly as the live path does.
+ *     Park the invoice on that intent, exactly as the live path does. This is
+ *     the one arm whose answer can go stale between here and the enqueue; see
+ *     "the member who pays mid-sweep" below.
  *   * An OUTSTANDING request with NO intent - nothing to park on, so raise it
  *     unpaid and let an operator record the payment when the card clears. The
  *     live path refuses to queue at all here; a repair run that has found the
@@ -271,7 +273,68 @@ export function getOutstandingCapturedRefundAmountCents(
  * `WAITING_PAYMENT` operations, and this one would be long COMPLETED. Xero
  * would read unpaid permanently, the Stripe clearing account would be short,
  * and the next repair run would see a matching amount and report nothing.
+ *
+ * ## The member who pays mid-sweep, and why the answer is not here (#3187 fix
+ * round)
+ *
+ * Every branch above is decided from the snapshot the sweep's loader took when
+ * the pass STARTED; the enqueue happens minutes later. So a request that reads
+ * PENDING here can be captured by the time the invoice is queued, and this
+ * function's own warning then bites the arm that wrote it: the release runs from
+ * the webhook, finds no `WAITING_PAYMENT` row because none exists yet, and the
+ * sweep then parks one on an intent whose confirmation has already been and
+ * gone. The 14-day reaper is the only thing that ever clears it, and until then
+ * the next run reads the anchor as `BLOCKED_BY_XERO_OPERATION` - warning, not
+ * auto-appliable, "waiting for its additional Stripe payment" - so the tool
+ * conceals the very finding it exists to raise. This window is not the live
+ * path's millisecond one: the sweep acts on requests outstanding for DAYS, so a
+ * member paying inside it is the ordinary case, not the exotic one.
+ *
+ * Re-reading here, just before the enqueue, would only NARROW that window -
+ * check-then-write always leaves one. `xero-booking-repair-passes.ts` therefore
+ * re-reads AFTER the enqueue and releases the row itself, which leaves no window
+ * at all: the row the webhook's release needs already exists before anybody
+ * looks at the capture, so whichever of the two observes it first, one of them
+ * releases it. It releases only on `covers-ask`, through the same
+ * `classifyEditReviewChargeCapture` this function asks, because releasing a
+ * `short-of-ask` capture would book the full net as received - the exact
+ * overstatement the section above refuses.
  */
+/**
+ * WHAT THIS EDIT'S CHARGE REQUEST SAYS ABOUT THE ASK, as one predicate (#3187
+ * fix round).
+ *
+ * It is asked TWICE and the two must never diverge: once by
+ * `planEditReviewChargeInvoicePayment` from the sweep's loaded snapshot, and
+ * once by `xero-booking-repair-passes.ts` from a fresh read taken AFTER the
+ * invoice has been queued, to catch a member who paid mid-sweep. Two spellings
+ * of "the card covered this ask" - one deciding whether to record a payment, one
+ * deciding whether to release a parked invoice - is exactly the pair that comes
+ * to disagree silently, in the accounting leg (`INV-SSOT`).
+ *
+ * `short-of-ask` is a distinct answer rather than folded into `not-captured`
+ * because the two demand opposite handling: a card that took LESS than the
+ * officer settled on must never have its invoice released, and must never be
+ * reported as merely unpaid.
+ */
+export type EditReviewChargeCaptureState =
+  | "covers-ask"
+  | "short-of-ask"
+  | "not-captured";
+
+export function classifyEditReviewChargeCapture(
+  request: { status: PaymentStatus; amountCents: number },
+  expectedNetAmountCents: number
+): EditReviewChargeCaptureState {
+  if (!isCapturedTransactionStatus(request.status)) {
+    return "not-captured";
+  }
+
+  return request.amountCents < expectedNetAmountCents
+    ? "short-of-ask"
+    : "covers-ask";
+}
+
 export type EditReviewChargeInvoicePaymentPlan =
   | {
       outcome: "queue";
@@ -325,15 +388,17 @@ export function planEditReviewChargeInvoicePayment({
     };
   }
 
-  if (isCapturedTransactionStatus(request.status)) {
-    if (request.amountCents < expectedNetAmountCents) {
-      return {
-        outcome: "manual-review",
-        reason: "capture-short-of-ask",
-        capturedAmountCents: request.amountCents,
-      };
-    }
+  const capture = classifyEditReviewChargeCapture(request, expectedNetAmountCents);
 
+  if (capture === "short-of-ask") {
+    return {
+      outcome: "manual-review",
+      reason: "capture-short-of-ask",
+      capturedAmountCents: request.amountCents,
+    };
+  }
+
+  if (capture === "covers-ask") {
     return {
       outcome: "queue",
       recordPayment: true,
