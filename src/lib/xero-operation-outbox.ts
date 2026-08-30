@@ -1224,6 +1224,108 @@ export async function releaseXeroSupplementaryInvoiceOperationsForPaymentIntent(
  * while intent creation was failing, so its payload carries a null
  * paymentIntentId that the payment-succeeded release could never match.
  */
+/**
+ * #3170 (epic #2797): raise what an already-queued supplementary invoice will
+ * bill, in place, instead of queueing a second one for the same booking edit.
+ *
+ * ONE EDIT, ONE ASK. A booking edit whose money could not be valued can raise TWO
+ * review tasks, and an officer may settle both as money owed to the club. The
+ * owner's 30 Aug 2026 decision on #3170 is that both contribute to a single
+ * request for the total, so the Xero leg has to move with it: the supplementary
+ * invoice must bill $230, not $200 and then $30.
+ *
+ * QUEUEING THE SECOND ONE DOES NOT WORK, which is why this exists rather than a
+ * second `enqueueXeroSupplementaryInvoiceOperation` call.
+ * `enqueueXeroSupplementaryInvoiceOperation` refuses an anchor that already has
+ * an active `SUPPLEMENTARY_INVOICE` link and returns a message rather than an
+ * error, so the second share would be dropped in silence; and where it did NOT
+ * refuse, the club would send two invoices for one edit while the member's card
+ * is asked for one combined figure.
+ *
+ * ONLY OPERATIONS THAT HAVE NOT RUN. PENDING and WAITING_PAYMENT are the two
+ * states in which nothing has reached Xero yet, so restating the amount changes
+ * what will be billed rather than contradicting what was. An operation in any
+ * other state - RUNNING, SUCCEEDED, FAILED - is left alone, and the caller's
+ * pre-claim refusal (`REVIEW_CHARGE_REQUEST_CLOSED_MESSAGE`) is what stops a
+ * share reaching an ask that has already gone out.
+ *
+ * The correlation key moves with the amount, because it is built FROM the amount:
+ * leaving it stale would let a later enqueue for the new total find no match and
+ * queue a duplicate.
+ *
+ * Returns how many operations were restated. Zero means "nothing was queued for
+ * this edit", which is the FIRST share's ordinary answer and tells the caller to
+ * enqueue normally.
+ */
+export async function restatePendingSupplementaryInvoiceAmount({
+  bookingModificationId,
+  priceDiffCents,
+  changeFeeCents,
+}: {
+  bookingModificationId: string;
+  priceDiffCents: number;
+  changeFeeCents: number;
+}): Promise<{ restated: number }> {
+  const operations = await prisma.xeroSyncOperation.findMany({
+    where: {
+      status: { in: ["PENDING", "WAITING_PAYMENT"] },
+      direction: "OUTBOUND",
+      entityType: "INVOICE",
+      operationType: "CREATE",
+      localModel: "BookingModification",
+      localId: bookingModificationId,
+      requestPayload: {
+        path: ["queueType"],
+        equals: XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE,
+      },
+    },
+    select: { id: true, requestPayload: true },
+  });
+
+  const correlationKey = buildXeroIdempotencyKey(
+    "booking-mod",
+    bookingModificationId,
+    "supplementary-invoice",
+    priceDiffCents,
+    changeFeeCents,
+    "v1"
+  );
+
+  let restated = 0;
+  for (const operation of operations) {
+    const payload =
+      operation.requestPayload &&
+      typeof operation.requestPayload === "object" &&
+      !Array.isArray(operation.requestPayload)
+        ? (operation.requestPayload as Record<string, unknown>)
+        : null;
+    if (!payload) continue;
+    if (
+      payload.priceDiffCents === priceDiffCents &&
+      payload.changeFeeCents === changeFeeCents
+    ) {
+      // Already asking for exactly this - a replay, which must change nothing.
+      restated += 1;
+      continue;
+    }
+    await prisma.xeroSyncOperation.update({
+      where: { id: operation.id },
+      data: {
+        requestPayload: {
+          ...payload,
+          priceDiffCents,
+          changeFeeCents,
+        } as Prisma.InputJsonValue,
+        idempotencyKey: correlationKey,
+        correlationKey,
+      },
+    });
+    restated += 1;
+  }
+
+  return { restated };
+}
+
 export async function attachPaymentIntentToWaitingSupplementaryInvoiceOperations({
   bookingModificationId,
   paymentIntentId,

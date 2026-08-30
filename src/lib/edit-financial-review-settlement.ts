@@ -30,6 +30,7 @@ import {
   type RefundAllocationSlice,
 } from "@/lib/payment-transactions";
 import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
+import { restatePendingSupplementaryInvoiceAmount } from "@/lib/xero-operation-outbox";
 
 /**
  * #3032 (epic #2797): WHERE a confirmed review amount goes when the task is
@@ -370,6 +371,11 @@ export async function chooseEditReviewSettlementRoute({
       bookingPayment: task.booking.payment,
       member: task.booking.member,
       hasIssuedXeroInvoice,
+      // #3170: the same transaction the claim will run in. The charge route asks
+      // whether this EDIT already has a request open to another share, and that
+      // read has to see the snapshot the claim commits against - exactly the
+      // reason the credit-anchor read below takes the store too.
+      store,
     });
   }
 
@@ -567,14 +573,22 @@ export async function executeEditReviewSettlement({
    * Stripe answers with the original intent rather than a second one.
    */
   let additionalPaymentIntentId: string | null = null;
+  /**
+   * #3170 (owner decision, 30 Aug 2026): the combined total of every share
+   * settled as money owed to the club against THIS EDIT - not `amountCents`,
+   * which is this one task's share. It is what the request asks for and what the
+   * supplementary Xero invoice bills, so the two legs of one edit can never
+   * disagree. Null on every route that is not a charge.
+   */
+  let chargeTotalCents: number | null = null;
   if (route?.kind === "additional-charge") {
-    additionalPaymentIntentId = await executeEditReviewCharge({
+    const charged = await executeEditReviewCharge({
       bookingId,
       taskId,
-      actingMemberId,
       route,
-      amountCents: amountCents ?? 0,
     });
+    additionalPaymentIntentId = charged.paymentIntentId;
+    chargeTotalCents = charged.totalCents;
   }
 
   if (route?.kind === "account-credit") {
@@ -614,7 +628,37 @@ export async function executeEditReviewSettlement({
    */
   const xeroAnchorId = route?.bookingModificationId ?? null;
   const isCharge = route?.kind === "additional-charge";
-  if (xeroAnchorId && amountCents) {
+  /**
+   * #3170: the figure Xero is told about. A refund bills this task's own share; a
+   * CHARGE bills the edit's combined total, because there is one supplementary
+   * invoice per edit and it has to match the one request the member is asked to
+   * pay. Sending the share instead is how the Xero leg lost the second $30 -
+   * `enqueueXeroSupplementaryInvoiceOperation` refuses a second invoice for an
+   * anchor that already has an active one and returns quietly.
+   */
+  const xeroAmountCents = isCharge ? chargeTotalCents : amountCents;
+  if (xeroAnchorId && xeroAmountCents) {
+    if (isCharge) {
+      // Restate the invoice this edit ALREADY has queued, when it has one, rather
+      // than queueing a second: a share that arrives while the first is still
+      // PENDING or WAITING_PAYMENT raises that operation's amount to the combined
+      // total in place. Only when there is nothing to restate does the ordinary
+      // enqueue below run, which is the first share's path.
+      const restated = await restatePendingSupplementaryInvoiceAmount({
+        bookingModificationId: xeroAnchorId,
+        priceDiffCents: xeroAmountCents,
+        changeFeeCents: 0,
+      }).catch((err) => {
+        logger.error(
+          { err, bookingId, taskId },
+          "Failed to restate the queued Xero supplementary invoice for a completed edit financial review",
+        );
+        return { restated: 0 };
+      });
+      if (restated.restated > 0) {
+        return { stripeRefundId, additionalPaymentIntentId };
+      }
+    }
     void queueXeroBookingEditSettlement({
       bookingId,
       bookingModificationId: xeroAnchorId,
@@ -626,7 +670,7 @@ export async function executeEditReviewSettlement({
       // reaches the supplementary-invoice branch, which is the same branch an
       // ordinary price increase takes. `amountCents` itself is a positive
       // magnitude on both.
-      priceDiffCents: isCharge ? amountCents : -amountCents,
+      priceDiffCents: isCharge ? xeroAmountCents : -xeroAmountCents,
       changeFeeCents: 0,
       // The structural edit that raised this review queued its own narration
       // update when it committed. This is the money leg alone; claiming the dates
@@ -642,7 +686,7 @@ export async function executeEditReviewSettlement({
       // Read only on the reduction branch (`settlementAmountCents ?? Math.abs`),
       // so a charge passes null and lets the positive delta speak for itself
       // rather than handing the credit-note arm an amount it must not use.
-      settlementAmountCents: isCharge ? null : amountCents,
+      settlementAmountCents: isCharge ? null : xeroAmountCents,
       // #3170: the supplementary invoice waits for the additional payment when
       // there is one to wait for, which is the ordinary price-increase
       // arrangement. On the `invoice` route no intent exists and the

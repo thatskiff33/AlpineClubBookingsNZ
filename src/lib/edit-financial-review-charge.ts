@@ -1,17 +1,36 @@
 import "server-only";
 
-import { PaymentSource } from "@prisma/client";
+import {
+  ManualRefundTaskDirection,
+  ManualRefundTaskKind,
+  ManualRefundTaskStatus,
+  PaymentSource,
+  PaymentStatus,
+  PaymentTransactionKind,
+  type Prisma,
+} from "@prisma/client";
 
 import { hasCapturedPayment } from "@/lib/booking-payment-state";
 import { createModificationAdditionalPaymentIntent } from "@/lib/booking-modification-settlement";
+import { parseEditFinancialReviewContext } from "@/lib/edit-financial-review-context";
+import logger from "@/lib/logger";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
+import { prisma } from "@/lib/prisma";
+import { enqueueAdditionalPaymentIntentRecovery } from "@/lib/payment-recovery";
 import {
   buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey,
   buildEditFinancialReviewAdditionalIntentStripeKey,
+  buildEditFinancialReviewChargeReason,
 } from "@/lib/payment-recovery-keys";
+import {
+  isCapturedTransactionStatus,
+  upsertPaymentIntentTransaction,
+} from "@/lib/payment-transactions";
+import { updatePaymentIntentAmount } from "@/lib/stripe";
 
 /**
- * #3170 (epic #2797): the one direction of a settled review that ASKS FOR MONEY.
+ * #3170 (epic #2797): the one direction of a settled review that ASKS FOR MONEY,
+ * and the rule that ONE BOOKING EDIT RAISES ONE REQUEST.
  *
  * ## Why this is its own module
  *
@@ -31,6 +50,36 @@ import {
  * share no code at all. The union that picks between them is still ONE function,
  * in the settlement module, so there is still exactly one place that decides.
  *
+ * ## ONE EDIT, ONE REQUEST (owner decision, #3170, 30 Aug 2026)
+ *
+ * One edit can raise TWO review tasks - one per guest strand whose history could
+ * not be read - and an officer may settle both as money owed to the club. The
+ * first #3170 round minted one request per TASK, and that lost money outright:
+ * minting an additional PaymentIntent queues every OTHER outstanding `ADDITIONAL`
+ * transaction on that payment for cancellation, and `reconcilePaymentAggregates`
+ * carries a single `additionalAmountCents` rather than a sum. $200 then $30
+ * collected $30 of $230, with both tasks COMPLETED and both audited as settled.
+ *
+ * The owner's answer: both reviews contribute to a SINGLE request for the total,
+ * each task recording its own share. So:
+ *
+ *   * THE REQUEST is anchored to the EDIT. One `BookingModification`, one Stripe
+ *     PaymentIntent, one PENDING `ADDITIONAL` PaymentTransaction, one figure on
+ *     the member's pay link. A second settlement RAISES that request's amount
+ *     rather than minting a second one, which is why nothing is superseded and
+ *     `queueSupersededAdditionalIntentCancellations` never runs between two shares
+ *     of one edit.
+ *   * THE SHARE stays anchored to the TASK: its `amountCents`, its
+ *     `settlementDirection` and its audit entry are untouched by this, so the
+ *     combined figure stays explainable back to the two decisions that produced
+ *     it.
+ *   * THE TOTAL IS DERIVED, NEVER INCREMENTED - `sumEditReviewChargeSharesCents`
+ *     re-reads the settled shares every time. Two officers closing two tasks at
+ *     the same moment therefore cannot double-count: each share is counted once
+ *     because it is counted from the row it lives on. See
+ *     `syncEditFinancialReviewChargeRequest` for why neither of them can lose a
+ *     share either.
+ *
  * ## What it is NOT
  *
  * It is not a fourth settlement mechanism, which the epic forbids outright.
@@ -40,37 +89,57 @@ import {
  * and the Xero supplementary invoice's wait-for-payment are all the existing
  * ones.
  *
- * And NOTHING IS TAKEN FROM THE MEMBER'S CARD HERE. The completion mints the
- * REQUEST; the member pays it themselves, exactly as they would for an ordinary
- * extension. That is why a provider failure is recoverable rather than a lost
- * charge, and why the admin copy is allowed to say so.
+ * And NOTHING IS TAKEN FROM THE MEMBER'S CARD HERE. The completion mints or
+ * raises the REQUEST; the member pays it themselves, exactly as they would for an
+ * ordinary extension. That is why a provider failure is recoverable rather than a
+ * lost charge, and why the admin copy is allowed to say so.
  */
 
-/** How the club will ask, decided from the booking's own facts rather than offered as a choice. */
-export type EditReviewChargeRoute = {
-  kind: "additional-charge";
-  bookingModificationId: string;
-  /**
-   * `stripe` when the booking has a CAPTURED card payment: an additional
-   * PaymentIntent is minted against it. `invoice` otherwise, which is the
-   * internet-banking booking: there is no intent to mint, so the supplementary
-   * Xero invoice is the ask and the club's existing additional-payment chasing
-   * carries it.
-   */
-  collectVia: "stripe" | "invoice";
-  /**
-   * The booking's payment row, when there is one to hang an `ADDITIONAL`
-   * transaction off.
-   */
-  paymentId: string | null;
-  /** Read inside the completion transaction, for `findOrCreateCustomer`. */
-  member: {
-    id: string;
-    email: string;
-    name: string;
-    stripeCustomerId: string | null;
-  } | null;
+/** The booking member a charge may need in order to mint a Stripe customer. */
+export type EditReviewChargeMember = {
+  id: string;
+  email: string;
+  name: string;
+  stripeCustomerId: string | null;
 };
+
+/**
+ * How the club will ask, decided from the booking's own facts rather than offered
+ * as a choice.
+ *
+ * A DISCRIMINATED UNION on `collectVia`, and deliberately so: the card arm cannot
+ * be constructed without a payment to hang the `ADDITIONAL` transaction off and a
+ * member to bill, because both are things `createModificationAdditionalPaymentIntent`
+ * requires. Before this they were nullable fields with `?? actingMemberId` and
+ * `?? ""` fallbacks at the call site, which would have minted a Stripe customer
+ * for the ADMIN with an empty email - dead in practice, because a booking's member
+ * is required, but a wrong answer written down where a refusal belongs.
+ */
+export type EditReviewChargeRoute =
+  | {
+      kind: "additional-charge";
+      /**
+       * The booking has a CAPTURED card payment, so an additional PaymentIntent
+       * is minted against it - or, when this edit already has one, raised to the
+       * new total.
+       */
+      collectVia: "stripe";
+      bookingModificationId: string;
+      paymentId: string;
+      member: EditReviewChargeMember;
+    }
+  | {
+      kind: "additional-charge";
+      /**
+       * The internet-banking booking: there is no intent to mint, so the
+       * supplementary Xero invoice IS the ask and the club's existing
+       * additional-payment chasing carries it.
+       */
+      collectVia: "invoice";
+      bookingModificationId: string;
+      paymentId: string | null;
+      member: EditReviewChargeMember | null;
+    };
 
 /**
  * #3170: the officer said the CLUB is owed, on a task kind that can only ever
@@ -104,13 +173,189 @@ export const REVIEW_CHARGE_NO_INSTRUMENT_MESSAGE =
 /**
  * #3170: a charge with no `BookingModification` to hang it on.
  *
- * The same anchor the refund side needs, and needed for the same reason plus one
+ * The same anchor the refund side needs, and needed for the same reason plus two
  * more: the supplementary invoice that corrects an issued Xero invoice is queued
  * against that row, so a charge with no anchor would collect money the club's
- * accounts never show as owed. Told plainly rather than guessed at.
+ * accounts never show as owed - and since the combined request is anchored to
+ * that row too, a charge without one could not be joined to its sibling share.
+ * Told plainly rather than guessed at.
  */
 export const REVIEW_CHARGE_ANCHOR_MISSING_MESSAGE =
   "This review is not linked to the booking change it came from, so the club cannot ask for the money automatically. Collect it another way, then dismiss this task with a note recording what was collected and how - the note is the record that the money was settled outside the system.";
+
+/**
+ * #3170 (owner decision, 30 Aug 2026): "a share may not be added to a request the
+ * member has already paid", answered as a REFUSAL rather than as a second
+ * request.
+ *
+ * The member has settled this edit's bill. Raising the paid intent's amount is
+ * not available - Stripe refuses an amount change on a succeeded PaymentIntent,
+ * and if it did not, the money is already taken and the figure would be a lie.
+ * The two alternatives were weighed:
+ *
+ *   * MINT A FRESH REQUEST FOR THE REMAINDER. Rejected. That is a second
+ *     outstanding request against one edit, which is exactly the arrangement this
+ *     decision removed: the moment two exist, minting the second queues the first
+ *     for cancellation and the payment record carries only the later figure. It
+ *     would reintroduce the money-losing mechanism in the one case where the club
+ *     has already been paid part of the money and can least afford to lose track
+ *     of the rest.
+ *   * UPDATE ANYWAY AND LET IT FAIL. Rejected outright - a settlement that
+ *     appears to succeed while collecting nothing is the `INV-PAY-051` failure.
+ *
+ * So the task stays OPEN, still holding the money question, and the officer is
+ * told what to do. This is a genuinely different case from the one the owner
+ * REJECTED ("refuse the second charge until the first is paid"): that would have
+ * blocked the ordinary two-shares-in-one-sitting flow, which is the flow this
+ * refusal leaves entirely alone.
+ */
+export const REVIEW_CHARGE_REQUEST_ALREADY_PAID_MESSAGE =
+  "The member has already paid the request for this booking change, so this amount cannot be added to it. Collect it another way, then dismiss this task with a note recording what was collected and how - the note is the record that the money was settled outside the system.";
+
+/**
+ * #3170: this edit's request exists but can no longer be restated - it was
+ * cancelled, or it failed, or its supplementary Xero invoice has already been
+ * issued and sent.
+ *
+ * The same refusal shape and the same reasoning as the already-paid case: there
+ * is one request per edit, this one is closed, and minting a second is the thing
+ * that loses money. It is the internet-banking route's ordinary ceiling rather
+ * than a rare edge - that route's supplementary invoice is raised UNPAID and
+ * issues as soon as the outbox runs, so a second share settled minutes later
+ * meets an invoice already with the member. Refused loudly, with the money still
+ * owed and the task still open, rather than queued into a dedupe that would
+ * silently drop it.
+ */
+export const REVIEW_CHARGE_REQUEST_CLOSED_MESSAGE =
+  "The club has already asked the member for this booking change, and that request can no longer be changed. Collect this amount another way, then dismiss this task with a note recording what was collected and how - the note is the record that the money was settled outside the system.";
+
+/** This edit's combined request as the ledger currently holds it. */
+export type EditReviewChargeRequest = {
+  paymentTransactionId: string;
+  stripePaymentIntentId: string | null;
+  amountCents: number;
+  status: PaymentStatus;
+};
+
+type ChargeStore = Prisma.TransactionClient | typeof prisma;
+
+/**
+ * The combined request for ONE edit, found from the edit alone.
+ *
+ * Identified by the `reason` this module stamps on the `ADDITIONAL`
+ * PaymentTransaction (`buildEditFinancialReviewChargeReason`), matched on exact
+ * equality. A later share knows its `BookingModification` and nothing about the
+ * share that came before it, so the request has to be findable from the anchor;
+ * the ledger row carries no anchor column, and the payment's "latest additional"
+ * is the wrong answer because an ORDINARY edit's price increase sits in the same
+ * place and must never be restated as if it were part of this review.
+ */
+export async function findEditReviewChargeRequest({
+  paymentId,
+  bookingModificationId,
+  store = prisma,
+}: {
+  paymentId: string;
+  bookingModificationId: string;
+  store?: ChargeStore;
+}): Promise<EditReviewChargeRequest | null> {
+  const row = await store.paymentTransaction.findFirst({
+    where: {
+      paymentId,
+      kind: PaymentTransactionKind.ADDITIONAL,
+      source: PaymentSource.STRIPE,
+      reason: buildEditFinancialReviewChargeReason(bookingModificationId),
+    },
+    orderBy: { createdAt: "desc" },
+    select: {
+      id: true,
+      stripePaymentIntentId: true,
+      amountCents: true,
+      status: true,
+    },
+  });
+  if (!row) return null;
+  return {
+    paymentTransactionId: row.id,
+    stripePaymentIntentId: row.stripePaymentIntentId,
+    amountCents: row.amountCents,
+    status: row.status,
+  };
+}
+
+/**
+ * Has this edit's supplementary Xero invoice already been issued?
+ *
+ * An issued supplementary invoice is an ask that has left the building. The
+ * outbox refuses to queue a second one for the same anchor (an active
+ * `SUPPLEMENTARY_INVOICE` link), so a later share queued behind it would be
+ * dropped SILENTLY - the failure this whole issue exists to remove. Asked before
+ * the claim so the answer is a refusal the officer can act on instead.
+ */
+async function hasIssuedSupplementaryInvoice({
+  bookingModificationId,
+  store = prisma,
+}: {
+  bookingModificationId: string;
+  store?: ChargeStore;
+}): Promise<boolean> {
+  const link = await store.xeroObjectLink.findFirst({
+    where: {
+      localModel: "BookingModification",
+      localId: bookingModificationId,
+      xeroObjectType: "INVOICE",
+      role: "SUPPLEMENTARY_INVOICE",
+      active: true,
+    },
+    select: { id: true },
+  });
+  return Boolean(link);
+}
+
+/**
+ * The combined total this edit's request must ask for: the SUM of every share
+ * already settled as money owed to the club against this same edit.
+ *
+ * DERIVED, NEVER INCREMENTED, and that is the whole concurrency argument for
+ * obligation 3. A running figure raised by `+= share` double-counts a retry and
+ * loses a share to a lost update; a sum over the rows that carry the shares can
+ * do neither, because each task contributes exactly once and contributes from the
+ * row its own status-fenced claim wrote.
+ *
+ * The shares are found by `bookingId` + kind + status + direction and then
+ * filtered on the anchor through `parseEditFinancialReviewContext` - the one
+ * parser (`INV-SSOT`, #3030) - rather than by indexing into the stored JSON in a
+ * query. A booking has a handful of these rows, never a page of them.
+ */
+export async function sumEditReviewChargeSharesCents({
+  bookingId,
+  bookingModificationId,
+  store = prisma,
+}: {
+  bookingId: string;
+  bookingModificationId: string;
+  store?: ChargeStore;
+}): Promise<number> {
+  const settled = await store.manualRefundTask.findMany({
+    where: {
+      bookingId,
+      kind: ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW,
+      status: ManualRefundTaskStatus.COMPLETED,
+      settlementDirection: ManualRefundTaskDirection.CHARGE_TO_MEMBER,
+      amountCents: { not: null },
+    },
+    select: { id: true, amountCents: true, reviewContext: true },
+  });
+
+  let total = 0;
+  for (const task of settled) {
+    const anchor = parseEditFinancialReviewContext(task.reviewContext)
+      ?.bookingModificationId;
+    if (anchor !== bookingModificationId) continue;
+    total += task.amountCents ?? 0;
+  }
+  return total;
+}
 
 /**
  * Decide how a charge will be collected, or throw the refusal that stops it.
@@ -121,11 +366,12 @@ export const REVIEW_CHARGE_ANCHOR_MISSING_MESSAGE =
  * moved" failure `INV-PAY-051` forbids, in the direction where the club is the
  * one left short.
  */
-export function chooseEditReviewChargeRoute({
+export async function chooseEditReviewChargeRoute({
   bookingModificationId,
   bookingPayment,
   member,
   hasIssuedXeroInvoice,
+  store,
 }: {
   bookingModificationId: string | null;
   bookingPayment: {
@@ -143,7 +389,8 @@ export function chooseEditReviewChargeRoute({
     lastName: string;
   } | null;
   hasIssuedXeroInvoice: boolean;
-}): EditReviewChargeRoute {
+  store: ChargeStore;
+}): Promise<EditReviewChargeRoute> {
   if (!bookingModificationId) {
     throw new ManualBookingPaymentError(
       REVIEW_CHARGE_ANCHOR_MISSING_MESSAGE,
@@ -156,7 +403,8 @@ export function chooseEditReviewChargeRoute({
   // hand-settled booking carries it with nothing captured behind it.
   const canChargeCard =
     hasCapturedPayment(bookingPayment) &&
-    bookingPayment?.source === PaymentSource.STRIPE;
+    bookingPayment?.source === PaymentSource.STRIPE &&
+    Boolean(member);
   // An ISSUED Xero invoice is the other instrument. It has to be ISSUED rather
   // than merely possible - with no invoice to add to,
   // `classifyXeroBookingEditSettlement` takes its `none` branch, so the
@@ -168,10 +416,60 @@ export function chooseEditReviewChargeRoute({
       409,
     );
   }
+
+  // #3170: is this edit's ONE request still open to a further share? Both
+  // answers below are refusals rather than a second request - see the two
+  // message docblocks for why, and why that is not the "refuse until the first
+  // is paid" option the owner rejected.
+  const existing = bookingPayment
+    ? await findEditReviewChargeRequest({
+        paymentId: bookingPayment.id,
+        bookingModificationId,
+        store,
+      })
+    : null;
+  if (existing) {
+    if (isCapturedTransactionStatus(existing.status)) {
+      throw new ManualBookingPaymentError(
+        REVIEW_CHARGE_REQUEST_ALREADY_PAID_MESSAGE,
+        409,
+      );
+    }
+    if (
+      existing.status !== PaymentStatus.PENDING &&
+      existing.status !== PaymentStatus.PROCESSING
+    ) {
+      throw new ManualBookingPaymentError(
+        REVIEW_CHARGE_REQUEST_CLOSED_MESSAGE,
+        409,
+      );
+    }
+  }
+  if (await hasIssuedSupplementaryInvoice({ bookingModificationId, store })) {
+    throw new ManualBookingPaymentError(
+      REVIEW_CHARGE_REQUEST_CLOSED_MESSAGE,
+      409,
+    );
+  }
+
+  if (canChargeCard && bookingPayment && member) {
+    return {
+      kind: "additional-charge",
+      collectVia: "stripe",
+      bookingModificationId,
+      paymentId: bookingPayment.id,
+      member: {
+        id: member.id,
+        email: member.email,
+        name: `${member.firstName} ${member.lastName}`,
+        stripeCustomerId: bookingPayment.stripeCustomerId,
+      },
+    };
+  }
   return {
     kind: "additional-charge",
+    collectVia: "invoice",
     bookingModificationId,
-    collectVia: canChargeCard ? "stripe" : "invoice",
     paymentId: bookingPayment?.id ?? null,
     member: member
       ? {
@@ -185,29 +483,126 @@ export function chooseEditReviewChargeRoute({
 }
 
 /**
- * Raise the request, AFTER the caller's transaction has committed - the same
- * placement the refund side uses, and for the same reason: `createPaymentIntent`
- * is a provider round trip and the locking guide forbids one inside a
- * transaction.
+ * Bring this EDIT's one request up to the total of the shares settled against it.
  *
- * Returns the minted intent id, or null - including on the `invoice` route,
- * where there is no intent to mint, and on a provider failure, which the caller
- * turns into an honest message rather than a receipt.
+ * THE SINGLE ENTRY POINT for both the inline completion and the recovery cron,
+ * which is what makes a crash between them converge rather than diverge: the
+ * replay is not "re-send what the route would have sent", it is this same
+ * function asking the same question of the same rows.
+ *
+ * ## Why two officers closing two tasks at once neither double-count nor lose a
+ * share
+ *
+ * The total is DERIVED from the settled shares (`sumEditReviewChargeSharesCents`)
+ * at the moment this runs, and this runs AFTER the caller's transaction has
+ * committed. So:
+ *
+ *   * NO DOUBLE COUNT. Each task contributes its share exactly once because the
+ *     share is read from the task row, and a task's status-fenced claim writes
+ *     that row exactly once. Two runs of this function for two tasks compute the
+ *     same kind of sum, never a sum plus an increment.
+ *   * NO LOST SHARE. Whichever completion COMMITS LAST necessarily reads after
+ *     both commits, so at least one run always sees the full set and derives the
+ *     true total. A run that started earlier may compute a smaller, stale total.
+ *   * THE STALE ONE CANNOT WIN. A settled share is terminal, so the derived total
+ *     only ever grows; a smaller figure is therefore always the older answer.
+ *     The write below REFUSES TO LOWER the recorded request, so whichever order
+ *     the two provider calls happen to land in, the request settles at the
+ *     largest - which is the newest - total. That compare-and-set is the reason
+ *     this needs no advisory lock, which matters because the completion path
+ *     deliberately holds none (`docs/CONCURRENCY_AND_LOCKING.md` forbids holding
+ *     `lock(1)` across a provider round trip).
+ *
+ * Returns the request's intent id and the total it now asks for.
  */
-export async function executeEditReviewCharge({
+export async function syncEditFinancialReviewChargeRequest({
   bookingId,
-  taskId,
-  actingMemberId,
-  route,
-  amountCents,
+  bookingModificationId,
+  paymentId,
+  member,
 }: {
   bookingId: string;
-  taskId: string;
-  actingMemberId: string;
-  route: EditReviewChargeRoute;
-  amountCents: number;
-}): Promise<string | null> {
-  if (route.collectVia !== "stripe") return null;
+  bookingModificationId: string;
+  paymentId: string;
+  member: EditReviewChargeMember | null;
+}): Promise<{ paymentIntentId: string | null; totalCents: number }> {
+  const totalCents = await sumEditReviewChargeSharesCents({
+    bookingId,
+    bookingModificationId,
+  });
+  if (totalCents <= 0) {
+    // No settled share to ask for. Reachable only from a recovery replay of an
+    // operation whose task was never claimed; minting for zero would be the
+    // magic-value failure this epic exists to remove.
+    return { paymentIntentId: null, totalCents: 0 };
+  }
+
+  const existing = await findEditReviewChargeRequest({
+    paymentId,
+    bookingModificationId,
+  });
+  const reason = buildEditFinancialReviewChargeReason(bookingModificationId);
+
+  if (existing?.stripePaymentIntentId) {
+    if (isCapturedTransactionStatus(existing.status)) {
+      // Paid while this was in flight. The pre-claim refusal is the ordinary
+      // guard; this is the race behind it, and it must not restate a paid ask.
+      logger.warn(
+        { bookingId, bookingModificationId, totalCents },
+        "Edit-financial-review charge request was paid before its combined total could be raised - the remaining share must be collected by hand",
+      );
+      return {
+        paymentIntentId: existing.stripePaymentIntentId,
+        totalCents: existing.amountCents,
+      };
+    }
+    if (totalCents <= existing.amountCents) {
+      // Either an exact replay (equal), which must change nothing at all, or a
+      // stale, smaller total, which must never lower a live ask.
+      return {
+        paymentIntentId: existing.stripePaymentIntentId,
+        totalCents: existing.amountCents,
+      };
+    }
+    // The one write that makes a second share join the first: the SAME intent,
+    // asking for more. Nothing is minted, so nothing is superseded, so
+    // `queueSupersededAdditionalIntentCancellations` never fires between two
+    // shares of one edit.
+    await updatePaymentIntentAmount(
+      existing.stripePaymentIntentId,
+      totalCents,
+    );
+    await upsertPaymentIntentTransaction({
+      paymentId,
+      kind: PaymentTransactionKind.ADDITIONAL,
+      paymentIntentId: existing.stripePaymentIntentId,
+      amountCents: totalCents,
+      status: PaymentStatus.PENDING,
+      reason,
+    });
+    return {
+      paymentIntentId: existing.stripePaymentIntentId,
+      totalCents,
+    };
+  }
+
+  // No request yet: mint through the same function every ordinary booking-edit
+  // price increase uses. Its guard on a captured card payment is answered with
+  // the payment as it stands NOW, re-read after the commit, rather than with a
+  // literal `true` - a constant there would make the minter's own guard
+  // permanently dead for this caller, which is the opposite of letting it remain
+  // the one definition.
+  const payment = await prisma.payment.findUnique({
+    where: { id: paymentId },
+    select: {
+      id: true,
+      status: true,
+      amountCents: true,
+      refundedAmountCents: true,
+      source: true,
+      stripeCustomerId: true,
+    },
+  });
   const minted = await createModificationAdditionalPaymentIntent({
     bookingId,
     result: {
@@ -215,31 +610,107 @@ export async function executeEditReviewCharge({
       // `BookingModificationPaymentContext` describes a refund it will not make
       // (`pendingRefundAmountCents` 0) and a settlement it does not choose.
       pendingRefundAmountCents: 0,
-      paymentId: route.paymentId,
-      additionalAmountCents: amountCents,
-      // The route already established a CAPTURED card payment on this booking;
-      // saying so again here is what lets the minter's own guard stay the one
-      // definition of "there is a card to charge".
-      hasSucceededPayment: true,
-      paymentCustomerId: route.member?.stripeCustomerId ?? null,
-      memberEmail: route.member?.email ?? "",
-      memberName: route.member?.name ?? "",
-      memberId: route.member?.id ?? actingMemberId,
-      bookingModificationId: route.bookingModificationId,
+      paymentId,
+      additionalAmountCents: totalCents,
+      hasSucceededPayment:
+        hasCapturedPayment(payment) && payment?.source === PaymentSource.STRIPE,
+      paymentCustomerId: payment?.stripeCustomerId ?? null,
+      memberEmail: member?.email ?? "",
+      memberName: member?.name ?? "",
+      memberId: member?.id ?? "",
+      bookingModificationId,
     },
-    reason: "edit_financial_review_charge",
-    // TASK-scoped, not modification-scoped, and for a sharper reason than the
-    // refund side's: `createPaymentIntent` MINTS. Two reviews of one edit sharing
-    // a key would have Stripe answer the second with the FIRST intent, leaving
-    // the club one instrument for two amounts - collectable once, while both
-    // tasks read as settled.
-    idempotencyKey: buildEditFinancialReviewAdditionalIntentStripeKey(taskId),
-    // Task-scoped for the same reason, and because the recovery row is where a
-    // colliding key would rewrite an amount.
+    // #3170: the request's identity in the ledger. A later share finds this row
+    // by exact match on it, which is why it is built rather than spelled.
+    reason,
+    // EDIT-scoped on both keys, which INVERTS the first #3170 round - see
+    // `payment-recovery-keys.ts` for the full reasoning and for which of the two
+    // (request vs share) each key belongs to. In short: the request is the thing
+    // being identified, there is one per edit, and a replay converging on the
+    // first intent is now the point rather than the hazard.
+    idempotencyKey:
+      buildEditFinancialReviewAdditionalIntentStripeKey(bookingModificationId),
     recoveryIdempotencyKey:
-      buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey(taskId),
+      buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey(
+        bookingModificationId,
+      ),
     failureMessage:
       "Failed to create the additional PaymentIntent for a completed edit financial review - the persisted recovery operation will replay it",
   });
-  return minted.additionalPaymentIntentId ?? null;
+  return {
+    paymentIntentId: minted.additionalPaymentIntentId ?? null,
+    totalCents,
+  };
+}
+
+/**
+ * Raise the request, AFTER the caller's transaction has committed - the same
+ * placement the refund side uses, and for the same reason: the Stripe call is a
+ * provider round trip and the locking guide forbids one inside a transaction.
+ *
+ * Returns the request's intent id and the combined total it now asks for. The
+ * intent id is null on the `invoice` route, where there is no intent to mint and
+ * the supplementary Xero invoice IS the ask, and on a provider failure, which the
+ * caller turns into an honest message rather than a receipt.
+ */
+export async function executeEditReviewCharge({
+  bookingId,
+  taskId,
+  route,
+}: {
+  bookingId: string;
+  taskId: string;
+  route: EditReviewChargeRoute;
+}): Promise<{ paymentIntentId: string | null; totalCents: number }> {
+  // Derived here as well as inside the sync, because BOTH arms need it and the
+  // failure arm needs it after the sync has thrown: the supplementary Xero
+  // invoice the caller queues must bill the whole edit rather than this one share
+  // of it, on the `invoice` route where there is no intent at all and on a
+  // provider failure where the intent has not been raised yet.
+  const totalCents = await sumEditReviewChargeSharesCents({
+    bookingId,
+    bookingModificationId: route.bookingModificationId,
+  });
+  if (route.collectVia !== "stripe") {
+    return { paymentIntentId: null, totalCents };
+  }
+  try {
+    return await syncEditFinancialReviewChargeRequest({
+      bookingId,
+      bookingModificationId: route.bookingModificationId,
+      paymentId: route.paymentId,
+      member: route.member,
+    });
+  } catch (err) {
+    // Only the UPDATE arm reaches here: the mint arm is
+    // `createModificationAdditionalPaymentIntent`, which swallows its own
+    // provider failure and enqueues the identical recovery row itself. Either
+    // way the debt becomes durable and the cron replays this same function,
+    // which re-derives the total - so a failure costs a delay, never a share.
+    logger.error(
+      { err, bookingId, taskId, bookingModificationId: route.bookingModificationId },
+      "Failed to raise the combined additional PaymentIntent for a completed edit financial review - the persisted recovery operation will replay it",
+    );
+    await enqueueAdditionalPaymentIntentRecovery({
+      bookingId,
+      paymentId: route.paymentId,
+      idempotencyKey:
+        buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey(
+          route.bookingModificationId,
+        ),
+      // Advisory only: the replay re-derives the total from the settled shares,
+      // so this figure is diagnostic rather than the debt.
+      amountCents: totalCents,
+      stripeIdempotencyKey:
+        buildEditFinancialReviewAdditionalIntentStripeKey(
+          route.bookingModificationId,
+        ),
+    }).catch((enqueueErr) =>
+      logger.error(
+        { err: enqueueErr, bookingId, taskId },
+        "Failed to enqueue additional PaymentIntent recovery for a completed edit financial review",
+      ),
+    );
+    return { paymentIntentId: null, totalCents };
+  }
 }

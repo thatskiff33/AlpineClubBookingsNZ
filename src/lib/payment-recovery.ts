@@ -375,7 +375,9 @@ import {
   buildEditFinancialReviewRefundRecoveryIdempotencyKey,
   buildEditFinancialReviewRefundStripeKeyPrefix,
   buildRefundRequestRefundMetadata,
+  bookingModificationIdForAdditionalIntentRecoveryKey,
   bookingModificationRefundReasonForKeyPrefix,
+  isEditFinancialReviewAdditionalIntentRecoveryKey,
 } from "./payment-recovery-keys";
 export {
   buildBookingCancellationRefundMetadata,
@@ -1641,6 +1643,98 @@ async function processBookingModificationRefundOperation(
 async function processCreateAdditionalPaymentIntentOperation(
   operation: PaymentRecoveryOperation,
 ) {
+  /**
+   * #3170 (epic #2797): the `BookingModification` this operation belongs to, read
+   * back through the ONE parser rather than by slicing a prefix off the key
+   * inline. The inline slice assumed the ordinary edit key's shape and produced a
+   * fragment (`"tent_recovery_<id>"`) for the review-charge key, because the
+   * builder had been moved into `payment-recovery-keys.ts` and made a required
+   * argument while the parser was left here. Fail-closed: null means "not a shape
+   * this knows", and every use below tests for it.
+   */
+  const bookingModificationId =
+    bookingModificationIdForAdditionalIntentRecoveryKey(
+      operation.idempotencyKey,
+    );
+
+  /**
+   * #3170: a completed EDIT_FINANCIAL_REVIEW charge replays DIFFERENTLY, and must
+   * not fall through to the ordinary path below.
+   *
+   * Two reasons, both of which cost money if ignored. First, its debt is not the
+   * amount frozen on this row - one booking edit can raise two review tasks and
+   * the request asks for their SUM, so the replay re-derives the total from the
+   * settled shares. Second, the "a newer additional supersedes this one" check
+   * below would see the request THIS EDIT ALREADY MINTED, treat it as a later
+   * edit's collectable and complete the operation having minted nothing - which
+   * is precisely how the first round's second share was dropped.
+   */
+  if (
+    bookingModificationId &&
+    isEditFinancialReviewAdditionalIntentRecoveryKey(operation.idempotencyKey)
+  ) {
+    // Dynamic import: edit-financial-review-charge imports this module.
+    const { syncEditFinancialReviewChargeRequest } = await import(
+      "@/lib/edit-financial-review-charge"
+    );
+    const booking = await prisma.booking.findUnique({
+      where: { id: operation.bookingId },
+      select: {
+        status: true,
+        member: {
+          select: { id: true, email: true, firstName: true, lastName: true },
+        },
+        payment: { select: { stripeCustomerId: true } },
+      },
+    });
+    if (!booking) {
+      throw new Error(
+        `Booking ${operation.bookingId} not found for edit-financial-review charge recovery`,
+      );
+    }
+    if (booking.status === BookingStatus.CANCELLED) {
+      // Same reasoning as the ordinary path's cancelled-booking skip (#1358):
+      // the cancel flow retired this booking's additional intents, so minting a
+      // live one here would resurrect a collectable that must never be captured.
+      logger.info(
+        { operationId: operation.id, bookingId: operation.bookingId },
+        "Skipping edit-financial-review charge recovery for cancelled booking",
+      );
+      await completePaymentRecoveryOperation(operation.id);
+      return;
+    }
+    const synced = await syncEditFinancialReviewChargeRequest({
+      bookingId: operation.bookingId,
+      bookingModificationId,
+      paymentId: operation.paymentId,
+      member: booking.member
+        ? {
+            id: booking.member.id,
+            email: booking.member.email,
+            name: `${booking.member.firstName} ${booking.member.lastName}`,
+            stripeCustomerId: booking.payment?.stripeCustomerId ?? null,
+          }
+        : null,
+    });
+    if (synced.paymentIntentId) {
+      await attachPaymentIntentToWaitingSupplementaryInvoiceOperations({
+        bookingModificationId,
+        paymentIntentId: synced.paymentIntentId,
+      }).catch((err) =>
+        logger.error(
+          { err, operationId: operation.id, paymentIntentId: synced.paymentIntentId },
+          "Failed to attach recovered additional intent to waiting Xero operations",
+        ),
+      );
+      await prisma.paymentRecoveryOperation.update({
+        where: { id: operation.id },
+        data: { paymentIntentId: synced.paymentIntentId },
+      });
+    }
+    await completePaymentRecoveryOperation(operation.id);
+    return;
+  }
+
   const payment = await prisma.payment.findUnique({
     where: { id: operation.paymentId },
     include: {
@@ -1735,19 +1829,19 @@ async function processCreateAdditionalPaymentIntentOperation(
 
   // A supplementary Xero invoice op enqueued at modification time waited on
   // an intent that never existed; point it at the recovered one so the
-  // payment webhook can release it.
-  const bookingModificationId = operation.idempotencyKey.slice(
-    "payment_recovery_additional_intent_".length,
-  );
-  await attachPaymentIntentToWaitingSupplementaryInvoiceOperations({
-    bookingModificationId,
-    paymentIntentId: pi.id,
-  }).catch((err) =>
-    logger.error(
-      { err, operationId: operation.id, paymentIntentId: pi.id },
-      "Failed to attach recovered additional intent to waiting Xero operations",
-    ),
-  );
+  // payment webhook can release it. The anchor comes from the shared parser at
+  // the top of this function, never from a prefix slice spelled here (#3170).
+  if (bookingModificationId) {
+    await attachPaymentIntentToWaitingSupplementaryInvoiceOperations({
+      bookingModificationId,
+      paymentIntentId: pi.id,
+    }).catch((err) =>
+      logger.error(
+        { err, operationId: operation.id, paymentIntentId: pi.id },
+        "Failed to attach recovered additional intent to waiting Xero operations",
+      ),
+    );
+  }
 
   await prisma.paymentRecoveryOperation.update({
     where: { id: operation.id },
