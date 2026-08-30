@@ -629,7 +629,9 @@ normally. Arguments go after `--`, for example
 `npm run xero:booking-repair -- --dry-run`. Environment variables go in front as
 usual: `DATABASE_URL=<non-prod copy> npm run payments:audit-ib-hold-clearing`.
 `src/lib/__tests__/cli-server-only-reach-census.test.ts` fails the build if a
-command that reaches one of those modules is ever published without the flag.
+command that reaches one of those modules is ever published without the flag —
+anywhere it is published, including inside a tool's own `--help` output, which
+is exactly where the bare form outlived every runbook (#2850).
 
 ### Recover a stranded $0 waitlist confirm (#2623)
 

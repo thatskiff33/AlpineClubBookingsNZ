@@ -311,19 +311,35 @@ rules first written here. #2765 extended it with the measured-audience half.
   map resolves Node's **`react-server` condition** to an empty module, so a
   command started as `tsx --conditions=react-server …` loads a marked module
   cleanly. Every published invocation that reaches one now carries that flag,
-  and the five money-repair commands the documentation used to publish as raw
-  `npx tsx` lines are npm scripts that carry it for the operator —
-  `npm run xero:booking-repair`, `npm run xero:refund-note-link-repair`,
+  and the money-repair and maintenance commands the documentation used to
+  publish as raw `npx tsx` lines are npm scripts that carry it for the
+  operator — `npm run xero:booking-repair`,
+  `npm run xero:refund-note-link-repair`,
+  `npm run xero:audit-invoice-rounding`,
   `npm run payments:backfill-orphaned-credits`,
-  `npm run payments:audit-ib-hold-clearing` and
+  `npm run payments:backfill-cancel-flattened`,
+  `npm run payments:audit-ib-hold-clearing`,
+  `npm run finance:backfill-monthly-facts` and
   `npm run calendar:diagnose-access`. That last part is a requirement, not a
   nicety: somebody copying a runbook line during a money-repair incident must
   not meet a confusing import failure.
+
+  **A tool's own `--help` is a published invocation too**, and it was the last
+  place still handing out the bare form (#2850): ask `xero-booking-repair` how
+  to run it and it printed back the `npx tsx …` line that aborts, to the one
+  reader most likely to be mid-incident. Each of these tools now prints its
+  `npm run` name in its usage text and its docblock examples, and the
+  `#!/usr/bin/env npx tsx` first line is gone from every CLI root that reaches
+  a marked module — those files are not executable, so the line was pure
+  instruction to run a command that cannot start.
+
   `cli-server-only-reach-census.test.ts` (CT-5, #2869) enforces the pairing —
   it walks every CLI root's import graph, sweeps every place a `tsx`
   entrypoint is named (package scripts, `prisma.config.ts`, shell runners,
-  workflows, and the documentation), and fails when a command that reaches a
-  marked module is published without the condition.
+  workflows, the documentation, and the CLI sources' own usage text), judges
+  each root's shebang separately because that one names no entrypoint
+  argument, and fails when a command that reaches a marked module is published
+  without the condition.
 
   `@/lib/club-time-zone-env`, `@/lib/environment-role-declaration` and
   `@/lib/environment-role` remain deliberately unmarked. The condition would
