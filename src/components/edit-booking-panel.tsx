@@ -30,6 +30,7 @@ import {
   type ExceptionOffer,
 } from "@/lib/booking-exception-offer";
 import { countNightsDateOnly, parseDateOnly } from "@/lib/date-only";
+import { promoChangeNotAppliedHeading } from "@/lib/promo-change-not-applied";
 import { type PromoResult } from "@/components/promo-code-input";
 import {
   hostingCoverageMutationSignature,
@@ -316,6 +317,21 @@ export function EditBookingPanel({
   const [savedPromoCoverage, setSavedPromoCoverage] = useState<string | null>(
     null,
   );
+  /**
+   * #3179: the sentence the SAVE came back with when the edit could not carry
+   * the promo-code change the member asked for.
+   *
+   * Held in its own state, and shown even when the preview already said the
+   * same thing, unlike `savedPromoCoverage` above. The two are different
+   * situations: a coverage split that has not changed since the preview is not
+   * news, whereas this one is the member's own request not happening, and the
+   * owner's decision on #3179 accepted a partial save only on the condition
+   * that it is impossible to miss. So it replaces Save with an acknowledgement
+   * rather than closing the panel out from under them.
+   */
+  const [savedPromoChangeNotApplied, setSavedPromoChangeNotApplied] = useState<
+    string | null
+  >(null);
   const [requestReason, setRequestReason] = useState("");
   const [requestSubmitting, setRequestSubmitting] = useState(false);
   const [requestError, setRequestError] = useState("");
@@ -1388,6 +1404,18 @@ export function EditBookingPanel({
         return;
       }
 
+      // #3179: the edit saved without the promo-code change it carried. Always
+      // held, never compared against the preview — see the state's own note.
+      const savedPromoChangeMessage =
+        typeof data?.promoChangeNotApplied?.message === "string"
+          ? (data.promoChangeNotApplied.message as string)
+          : null;
+      if (savedPromoChangeMessage) {
+        setSavedPromoChangeNotApplied(savedPromoChangeMessage);
+        router.refresh();
+        return;
+      }
+
       router.refresh();
       onDone();
     } catch {
@@ -1684,16 +1712,34 @@ export function EditBookingPanel({
           two reads. The change IS saved, so Save is replaced by an
           acknowledgement rather than offered again; the member reads why their
           total differs here, at the edit, instead of on the invoice. */}
-      {savedPromoCoverage ? (
+      {savedPromoCoverage || savedPromoChangeNotApplied ? (
         <div className="space-y-3">
-          <div
-            className="rounded-md bg-warning-3 p-3 text-sm text-warning-11"
-            role="status"
-            data-testid="saved-promo-coverage-notice"
-          >
-            <p className="font-medium">Your change is saved</p>
-            <p className="mt-1">{savedPromoCoverage}</p>
-          </div>
+          {savedPromoCoverage ? (
+            <div
+              className="rounded-md bg-warning-3 p-3 text-sm text-warning-11"
+              role="status"
+              data-testid="saved-promo-coverage-notice"
+            >
+              <p className="font-medium">Your change is saved</p>
+              <p className="mt-1">{savedPromoCoverage}</p>
+            </div>
+          ) : null}
+          {/* #3179: the promo-code half of the request did not happen. The
+              heading says so before the sentence does, because "Your change is
+              saved" on its own is exactly the impression the owner named as
+              the cost of this decision. */}
+          {savedPromoChangeNotApplied ? (
+            <div
+              className="rounded-md bg-warning-3 p-3 text-sm text-warning-11"
+              role="status"
+              data-testid="saved-promo-change-not-applied-notice"
+            >
+              <p className="font-medium">
+                {promoChangeNotAppliedHeading("saved")}
+              </p>
+              <p className="mt-1">{savedPromoChangeNotApplied}</p>
+            </div>
+          ) : null}
           <div className="flex gap-3">
             <Button onClick={onDone}>Done</Button>
           </div>

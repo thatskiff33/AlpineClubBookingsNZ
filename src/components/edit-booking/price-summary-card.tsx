@@ -1,6 +1,7 @@
 "use client";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { promoChangeNotAppliedHeading } from "@/lib/promo-change-not-applied";
 import { formatCents } from "@/lib/utils";
 import type { PromoAction } from "@/components/edit-booking/hooks/use-promo-selection";
 import type { PromoInfo, QuoteResult } from "@/components/edit-booking/types";
@@ -159,6 +160,28 @@ export function PriceSummaryCard({
             data-testid="financial-review-required-notice"
           >
             {quote.financialReviewNotice}
+          </div>
+        ) : null}
+
+        {/* #3179 (epic #2797) — this edit will save WITHOUT the promo-code
+            change the member just made. Placed directly under the review
+            notice, in warning colours rather than the info colours beside it,
+            and with a heading: the owner accepted the cost of a partial save on
+            the condition that the wording is impossible to skim past, and a
+            member who reads nothing here walks away believing they applied a
+            discount they did not. Rendered VERBATIM from the server, and read
+            straight off `quote` like its neighbours, so it dies with the quote
+            it came from. */}
+        {quote?.promoChangeNotApplied ? (
+          <div
+            className="rounded-md bg-warning-3 p-3 text-sm text-warning-11"
+            role="status"
+            data-testid="promo-change-not-applied-notice"
+          >
+            <p className="font-medium">
+              {promoChangeNotAppliedHeading("preview")}
+            </p>
+            <p className="mt-1">{quote.promoChangeNotApplied.message}</p>
           </div>
         ) : null}
 
