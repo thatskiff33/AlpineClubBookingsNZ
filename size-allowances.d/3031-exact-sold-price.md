@@ -45,7 +45,7 @@ reason: `PricingResult` becomes a discriminated union, so the priced fields move
   `booking-guest-profile-gates.test.ts`, which compares positions inside it. #3170 round (+195): the write itself. `syncGuestNights` now tells an explicit "not known" from a vector that is merely SHORT - writing NULL for the first and still throwing on the second - and that docblock is longer than the code it guards, because it is the paragraph a later reader is most likely to delete as redundant and the one whose loss turns every future wiring defect into a silently unpriced night. #3170 fix round (+18): the write-site docblock named ONE producer of a blank night price and claimed it only ever fired for a night the guest already held. Both were false against this same change, and it is the paragraph the reasoning above argues nobody may delete - a later reader trusting it could add a held-night assertion and silently revert the parked path to a refusal. It now names both producers and both arms.
 
 file: src/lib/booking-batch-modification-service.ts
-lines: 1795
+lines: 1797
 reason: the apply path narrows the pricing result once and refuses the review
   branch inside the transaction, so the structural change rolls back with it;
   plus the identity-only echo's `?? 0` becoming a refusal. The comment weight is
@@ -62,10 +62,10 @@ reason: the apply path narrows the pricing result once and refuses the review
   per-night integer that an unreadable strand does not have — and the three ways
   to supply one are money decisions rather than implementation choices. Twenty-one
   lines is what it takes to leave that open question stated instead of leaving the
-  next lane to re-derive it, or worse, to assume it was an oversight. #3170 round (+135): the branch that makes the epic's promise true on the busiest edit path - the change commits and the money parks. Every money door is closed individually (reprice, promotion, change fee, settlement options, refund, credit, Xero delta, stored totals), each with the sentence saying it is a decision rather than an omission, and the raise sits after the booking-modification row because it anchors to it. The branch's position inside the locked transaction is its safety property, so none of it can move. #3170 fix round (+21): why a promo-code change dropped on a parked edit is a stated limit of the whole in-progress edit path rather than a defect of the parked branch - the priced branch beside it answers identically, and fixing one alone would put the two into disagreement about the same member request.
+  next lane to re-derive it, or worse, to assume it was an oversight. #3170 round (+135): the branch that makes the epic's promise true on the busiest edit path - the change commits and the money parks. Every money door is closed individually (reprice, promotion, change fee, settlement options, refund, credit, Xero delta, stored totals), each with the sentence saying it is a decision rather than an omission, and the raise sits after the booking-modification row because it anchors to it. The branch's position inside the locked transaction is its safety property, so none of it can move. #3170 fix round (+21): why a promo-code change dropped on a parked edit is a stated limit of the whole in-progress edit path rather than a defect of the parked branch - the priced branch beside it answers identically, and fixing one alone would put the two into disagreement about the same member request. #3194 fix round (+2): the raise's payment derivation moved to the one shared helper (`capturedBookingPayment`) because the completion path now asks the same question, and three spellings of one rule is where a member's refund goes to the wrong place. The two lines are the note saying this value is a snapshot of that instant and that the completion re-asks rather than trusting it.
 
 file: src/lib/booking-guest-removal-service.ts
-lines: 1359
+lines: 1358
 reason: #3032's delta round added the rule that a parked removal always records
   the DEPARTING strand, readable or not — the filter used to skip it for being
   exact, and since nothing settles on a parked removal and the delete destroys

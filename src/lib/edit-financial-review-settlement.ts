@@ -132,12 +132,10 @@ import { dispatchEditReviewXeroSettlement } from "@/lib/edit-financial-review-xe
  *    `createBookingModificationCredit`, whose exactly-once key is the
  *    `BookingModification` id (owner decision D-3032-1).
  *
- * WHICH OF THE THREE IS A QUESTION ABOUT THE BOOKING, ASKED NOW (#3194). It used
- * to be a question about the TASK's `paymentId` column, which is written when the
- * review is raised and never again - so a review parked before the member paid
- * could only ever reach `account-credit`, even once their card money was sitting
- * in the club's account. A member's refund now depends on where their money
- * actually is rather than on the order two unrelated events happened in.
+ * WHICH OF THE THREE IS A QUESTION ABOUT THE BOOKING, ASKED NOW (#3194) - not
+ * about the TASK's `paymentId`, written when the review is raised and never
+ * again, so a review parked before the member paid could only ever reach
+ * `account-credit` even once their card money was in the club's account.
  *
  * `null` is the fourth outcome and means "nothing moves": a DISMISSED task, and
  * a legacy hand-back with no payment behind it.
@@ -179,13 +177,12 @@ export type EditReviewSettlementRoute =
        * there is no captured payment to allocate against.
        *
        * DELIBERATELY A LOOSER TEST than the one that picks this route (#3194):
-       * `hasCapturedPayment` alone, with no settled-status gate. Since #3194 a
-       * captured payment on a booking inside its payment lifecycle takes the
-       * card or ledger route instead, so what still arrives here holding money
-       * is the booking that has LEFT that lifecycle - cancelled, most obviously -
-       * and its captured cents are exactly as capable of being refunded twice.
-       * Widening this to match the route gate would drop the allocation on the
-       * one shape that still needs it.
+       * `hasCapturedPayment` alone, with no settled-status gate. A captured
+       * payment on a booking still inside its payment lifecycle now takes the
+       * card or ledger route, so what arrives here holding money is the booking
+       * that has LEFT it - cancelled, most obviously - whose cents are just as
+       * capable of being refunded twice. Matching the route gate would drop the
+       * allocation on the one shape that still needs it.
        */
       allocateAgainstPaymentId: string | null;
     }
@@ -272,9 +269,8 @@ export const REVIEW_REFUND_EXCEEDS_CAPTURED_MESSAGE =
  * Exactly what the route decision reads off the task, and nothing else.
  *
  * `paymentId` is the money behind the booking WHEN THE REVIEW WAS RAISED;
- * `booking.status` and `booking.payment` are the money behind it NOW. #3194 made
- * the second pair load-bearing rather than incidental - see the derivation in
- * `chooseEditReviewSettlementRoute` for why both are read and which one wins.
+ * `booking.status` and `booking.payment` are the money behind it NOW (#3194) -
+ * see `chooseEditReviewSettlementRoute` for why both are read and which wins.
  */
 export type EditReviewSettlementTask = {
   paymentId: string | null;
@@ -284,8 +280,7 @@ export type EditReviewSettlementTask = {
   booking: {
     /**
      * #3194: the booking's own lifecycle status, so the settle-time read of its
-     * captured money asks EXACTLY the question the raise sites asked - a
-     * `PENDING` payment row on a DRAFT booking has captured nothing. Already
+     * captured money asks exactly the question the raise sites asked. Already
      * selected by the caller for `hasIssuedPrimaryXeroInvoice`.
      */
     status: string;
@@ -411,41 +406,37 @@ export async function chooseEditReviewSettlementRoute({
    * #3194 (epic #2797): WHERE the money can go, asked AT COMPLETION rather than
    * read off a column frozen when the review was raised.
    *
-   * `task.paymentId` is a snapshot. Both raise sites record the booking's
-   * captured payment *at that instant*, and a review parked on a booking nobody
-   * had paid yet therefore carries NULL - permanently, because nothing
-   * backfills it. The member can still pay: the review does not disarm the
-   * payment link or the booking's own pay controls, deliberately, because a
-   * parked change can surrender unpriceable nights while the booking's own price
-   * stays due. So the ordinary sequence "edit parks, then the member pays by
-   * card" ends with a task whose column says there is no card - and the refund
-   * the officer eventually confirms can only ever become club credit, on money
-   * that arrived on a card and could have gone straight back to it.
+   * `task.paymentId` is a snapshot: both raise sites record the booking's
+   * captured payment at that instant, and nothing backfills it. A review parked
+   * on a booking nobody had paid yet therefore carries NULL for ever - and the
+   * member CAN still pay, deliberately, because a parked change can surrender
+   * unpriceable nights while the stay itself goes ahead. So the ordinary
+   * sequence "edit parks, then the member pays by card" ended with a task whose
+   * column said there was no card, and the officer's confirmed refund could only
+   * ever become club credit, on money that arrived on a card.
    *
-   * So a task WITHOUT a payment id re-asks the question here, against the
-   * booking's own row read inside this same transaction. The gate is the
-   * IDENTICAL one the raise sites use (`capturedBookingPayment`, `INV-SSOT`), so
-   * this answers exactly "what would have been recorded had the review been
-   * raised now" - which is the point: a member's refund must not depend on the
-   * accident of whether they paid before or after an unrelated edit was parked.
+   * A task WITHOUT a payment id therefore re-asks the question here, against the
+   * booking's own row on this same transaction, through the gate the raise sites
+   * use (`capturedBookingPayment`, `INV-SSOT`). That answers exactly "what would
+   * have been recorded had the review been raised now", which is the point: a
+   * refund must not depend on whether the member paid before or after an
+   * unrelated edit was parked.
    *
-   * ## Why the stored id still WINS when it is there, rather than being re-derived
-   *
-   * Re-deriving unconditionally was weighed and rejected. It is a bigger change
-   * than it looks: it does not only ADD the missing route, it REMOVES routes the
-   * stored id currently reaches. A booking whose manual settlement was later
+   * THE STORED ID STILL WINS WHERE IT EXISTS, and re-deriving unconditionally
+   * was weighed and rejected: it would not only add the missing route, it would
+   * REMOVE routes the stored id reaches. A booking whose manual settlement was
    * reversed, or whose status left the settled set, keeps its `paymentId` and
-   * today takes the card or ledger route, where the amount is capped against
-   * what is genuinely refundable and an over-cap is REFUSED with the task left
-   * OPEN. Re-deriving would silently turn each of those refusals into account
-   * credit - a quieter answer to a case an officer should be looking at. Every
-   * stale direction the stored id can take is already caught by a cap; the one
-   * it cannot recover from is the NULL, so the NULL is the only thing widened.
+   * takes the card or ledger route, where the amount is capped and an over-cap
+   * is REFUSED with the task left OPEN. Re-deriving turns each of those
+   * refusals into account credit - a quieter answer to a case an officer should
+   * be looking at. Every stale direction the stored id can take is already
+   * caught by a cap; the one it cannot recover from is the NULL, so the NULL is
+   * the only thing widened.
    *
-   * Nothing is written here and nothing is backfilled, which is what makes this
+   * Nothing is written and nothing is backfilled, which is what makes this
    * idempotent by construction: a replayed completion is refused by the status
-   * claim, and a second capture or webhook replay cannot produce a second
-   * backfill because there is no backfill to produce.
+   * claim, and a capture or webhook replay cannot duplicate a backfill that does
+   * not exist.
    */
   const backfilledPayment =
     task.paymentId === null ? capturedBookingPayment(task.booking) : null;

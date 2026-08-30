@@ -1,7 +1,7 @@
 # File-size allowances for #3194
 
 file: src/lib/payment-link.ts
-lines: 1336
+lines: 1349
 reason: the payment-link page and the booking page had to stop giving one
   member two answers about one booking's money, and the only place that can be
   fixed is where this file builds the public context. What was added is one
@@ -16,3 +16,11 @@ reason: the payment-link page and the booking page had to stop giving one
   paths shares `loadPaymentLinkRecord` and the same booking include, so a seam
   through it is a refactor of its own and was already 561 lines over its 700-line
   budget before this change.
+  Fix round (+13): the same docblock had justified keeping the payment armed with
+  "the link collects the booking's own price", and that claim is false in the way
+  that matters - a parked edit writes `finalPriceCents` back UNCHANGED while
+  saving the new dates and deleting the departing guest's row, so the card is
+  built from a post-edit stay and a pre-edit amount. The added paragraph corrects
+  it and says what the page does about it, on the two statements it governs: a
+  reader who believes the old sentence has no reason to keep the disclosure that
+  stops a member overpaying.

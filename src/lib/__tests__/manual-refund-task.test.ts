@@ -1617,6 +1617,9 @@ describe("#3194 - a review raised before the member paid still refunds to their 
       note: "Handed back in cash at the lodge.",
       actingMemberId: "admin-1",
       confirmedAmountCents: 9000,
+      // A legacy kind means REFUND_TO_MEMBER by its own definition; the field is
+      // required so nothing on this path can leave the direction implicit.
+      direction: null,
     });
 
     expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
