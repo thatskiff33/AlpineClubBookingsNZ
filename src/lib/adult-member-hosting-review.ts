@@ -1253,6 +1253,52 @@ export async function reconcileAdultMemberHostingReview(
 }
 
 /**
+ * Is any booking RELATED to this one at a lodge where the rule is active? (#3209)
+ *
+ * The question the mode gate has to ask before it may decide that nothing is owed.
+ * Clubs configure adult-member hosting per lodge, and `hostingSiblingWhere` — the
+ * #738 parent/child, same-member relation — carries no lodge clause, so a split
+ * sibling can in principle sit at a lodge with a different answer.
+ *
+ * TWO PLAIN READS, NO LOCK, and that is what keeps #2623 T5's property. It reads
+ * the sibling ids through the indexed `Booking(parentBookingId)` relation, then
+ * resolves the policy ONLY for lodges that are not the changed booking's own —
+ * that one has just been read by the caller and is why we are here. So a split
+ * pair at a single lodge, which is every pair the product can currently produce,
+ * costs one indexed read and no policy read at all, and a booking with no sibling
+ * costs the one read.
+ *
+ * Deliberately a BOOLEAN and not the sibling id list: the fan-out below re-reads
+ * the siblings after the fence, and handing it a list read before the Member rows
+ * were protected would quietly widen what this pre-fence read is trusted for.
+ */
+async function hasHostingSiblingAtActiveLodge(
+  booking: Pick<
+    LoadedHostingBooking,
+    "id" | "memberId" | "parentBookingId" | "lodgeId"
+  >,
+  db: AdultMemberHostingReviewDb,
+): Promise<boolean> {
+  const siblings = (await db.booking.findMany({
+    where: hostingSiblingWhere(booking),
+    select: { lodgeId: true },
+  })) as Array<{ lodgeId: string }>;
+  const otherLodgeIds = [
+    ...new Set(siblings.map((sibling) => sibling.lodgeId)),
+  ]
+    .filter((lodgeId) => lodgeId !== booking.lodgeId)
+    // Sorted so a club with several such lodges reads them in one reproducible
+    // order; nothing is locked here, but a stable order keeps a failure
+    // reproducible too.
+    .sort();
+  for (const lodgeId of otherLodgeIds) {
+    const resolved = await loadAdultMemberHostingPolicy(lodgeId, db);
+    if (hostingModeIsActive(resolved.mode)) return true;
+  }
+  return false;
+}
+
+/**
  * Reconcile a booking AND the split siblings whose answer depends on it (#2364).
  *
  * THE ENTRY POINT EVERY MUTATION PATH USES. `loadSiblingHosts` lets a #738 split
@@ -1271,9 +1317,11 @@ export async function reconcileAdultMemberHostingReview(
  * belongs to the booking they were making, never to a row reached through it, so
  * a hazard that appears on a sibling always opens PENDING.
  *
- * Costs no extra SIBLING work while the rule is off: the mode reported by the
- * first reconciliation is the same one it evaluated under, so a club that has
- * not turned the policy on never fans out.
+ * Costs no extra SIBLING work while the rule is off EVERYWHERE THAT MATTERS: the
+ * fan-out is skipped when this booking's lodge is inactive and no related booking
+ * sits at an active one, so a club that has not turned the policy on anywhere
+ * never fans out. See "WHICH LODGE'S MODE" below for why the second half of that
+ * test is not optional.
  *
  * AND IT NOW COSTS NO FENCE EITHER (#2623 T5). This used to acquire the
  * participant proof BEFORE reading the policy mode, so a club with hosting
@@ -1286,11 +1334,12 @@ export async function reconcileAdultMemberHostingReview(
  * would never be written.
  *
  * The mode is therefore read FIRST, as the sibling seam
- * `enqueueOwnHostingCoverageReevaluation` also does, and an inactive mode returns
- * through the plain single-booking reconciler — which is what the fenced path did
- * anyway once `outcome.mode` came back inactive, minus the lock. The single-id
- * reconciler still runs, because clearing a snapshot left behind by a lodge that
- * has since switched the rule off is exactly its job.
+ * `enqueueOwnHostingCoverageReevaluation` also does, and an inactive mode with
+ * nothing owed at another lodge returns through the plain single-booking
+ * reconciler — which is what the fenced path did anyway once `outcome.mode` came
+ * back inactive, minus the lock. The single-id reconciler still runs, because
+ * clearing a snapshot left behind by a lodge that has since switched the rule off
+ * is exactly its job.
  *
  * THE THRESHOLD IS NOT THE SIBLING'S, and the difference is deliberate rather than
  * drift (#2623 F5). That seam gates on `resolved.mode !== "ENFORCED"`, because all
@@ -1302,14 +1351,47 @@ export async function reconcileAdultMemberHostingReview(
  * the `ADMIN_REVIEW_REQUIRED` case in `adult-member-hosting-same-owner.test.ts`
  * fails if you try it.
  *
- * SKIPPING THE FENCE HERE IS SAFE, not merely cheap: with the mode inactive
- * `evaluateBookingAdultMemberHosting` takes no coverage-owner advisory key, so
- * there is no coverage-owner → Member ordering left to protect, and neither the
- * sibling fan-out nor `settleSameOwnerDependentCoverage` — the two things that
- * consume the proof — is reachable. A club that turns the rule ON between this
- * read and the reconciler's own read is covered the same way every other mode
- * gate in this module is: the policy write holds the policy-set key and enqueues
- * re-evaluation for the affected bookings itself.
+ * WHICH LODGE'S MODE (#3209). Clubs configure this rule PER LODGE, so "the lodge
+ * of the booking that changed has it off" answers nothing about the lodges of the
+ * bookings whose answer DEPENDS on it. `hostingSiblingWhere` is a parent/child +
+ * same-member relation with no lodge clause in it, so gating on this booking's
+ * lodge alone and returning skipped the sibling fan-out for a #738 split sibling
+ * at a lodge where the rule IS active — it lost its cover and nothing looked. The
+ * gate therefore asks the wider question, and skips only when this lodge is
+ * inactive AND no related booking sits at an active one.
+ *
+ * `settleSameOwnerDependentCoverage` needs no such widening, and that is a
+ * property of its query rather than an assumption:
+ * `sameOwnerCoverageDependentWhere` pins `lodgeId` to the CHANGED booking's lodge,
+ * so a same-owner dependent is always at THIS lodge, and the settle step re-reads
+ * this lodge's mode and returns on the same test. Pinned by "keeps the dependent
+ * cohort at the changed booking's own lodge" in
+ * `adult-member-hosting-same-owner.test.ts`, so that sentence cannot quietly stop
+ * being true.
+ *
+ * WHAT THE WIDER GATE COSTS A CLUB THAT OWES NOTHING: one indexed read of this
+ * booking's parent and children (`Booking(parentBookingId)`), no lock; and ZERO
+ * extra policy reads whenever every related booking is at this same lodge — which
+ * is every split pair the product can currently produce, since `booking-create.ts`
+ * writes the child at its parent's lodge and no writer moves a booking between
+ * lodges (`bed-allocation-lock-topology-contract.test.ts` fails the build on one
+ * that tries). The `FOR KEY SHARE NOWAIT` statement and its two under-lock
+ * re-reads are still not paid, which is the whole of #2623 T5's property; pinned
+ * by "takes no participant proof for a split pair at one DISABLED lodge".
+ *
+ * AND THE LOCK ORDER IS UNCHANGED (`INV-LOCK-002`). The widened gate decides only
+ * WHETHER the fenced body runs; when it runs it runs whole, so the Member rows are
+ * still taken before the first evaluation that can reach for a coverage-owner key
+ * — including the sibling loop, which acquires that key under the SIBLING's lodge
+ * policy for this same member, and which is exactly the ordering the old early
+ * return would have inverted had it ever fanned out. Deciding to SKIP acquires
+ * nothing at all — two plain reads — so a skip still cannot leave a key held out
+ * of order. With the mode inactive everywhere `evaluateBookingAdultMemberHosting`
+ * takes no coverage-owner key either, so there is no ordering left to protect. A
+ * club that turns the rule ON between this read and the reconciler's own read is
+ * covered the same way every other mode gate in this module is: the policy write
+ * holds the policy-set key and enqueues re-evaluation for the affected bookings
+ * itself.
  */
 export async function reconcileAdultMemberHostingReviewWithSiblings(
   bookingId: string,
@@ -1325,18 +1407,29 @@ export async function reconcileAdultMemberHostingReviewWithSiblings(
       id: true,
       memberId: true,
       lodgeId: true,
+      // #3209: the sibling relation, read HERE because the gate below needs it
+      // before it may decide that no fence is owed.
+      parentBookingId: true,
       checkIn: true,
       checkOut: true,
     },
-  })) as CoverageOwnerFacts | null;
+  })) as PlannedCoverageOwnerFacts | null;
   if (!plannedBooking) {
     return { action: "none", violation: null, mode: null };
   }
-  // #2623 T5: the mode gate comes BEFORE the fence. See the docstring above for
-  // why an inactive lodge must not pay a row lock, and why skipping it here
-  // cannot leave a coverage-owner key held out of order.
+  // #2623 T5 + #3209: the mode gate comes BEFORE the fence, and it is a gate on
+  // the lodges of the RELATED bookings as well as on this one's. See the
+  // docstring above for why an inactive lodge must not pay a row lock, why that
+  // is not this booking's lodge alone to decide, and why skipping here cannot
+  // leave a coverage-owner key held out of order.
   const planned = await loadAdultMemberHostingPolicy(plannedBooking.lodgeId, db);
-  if (!hostingModeIsActive(planned.mode)) {
+  const sourceLodgeActive = hostingModeIsActive(planned.mode);
+  // Read only when this lodge would otherwise skip: an active lodge already owes
+  // the whole body, so the extra read would answer a question nobody is asking.
+  const siblingOwedAtAnotherLodge =
+    !sourceLodgeActive &&
+    (await hasHostingSiblingAtActiveLodge(plannedBooking, db));
+  if (!sourceLodgeActive && !siblingOwedAtAnotherLodge) {
     return reconcileAdultMemberHostingReview(bookingId, db, options, true);
   }
   const actorMemberId = options.coverageChange?.actorMemberId ?? null;
@@ -1353,7 +1446,13 @@ export async function reconcileAdultMemberHostingReviewWithSiblings(
     true,
     { proof: participantProof, actorMemberId },
   );
-  if (outcome.mode === null || !hostingModeIsActive(outcome.mode)) return outcome;
+  if (outcome.mode === null) return outcome;
+  // #3209: `outcome.mode` is THIS lodge's, so it decides the fan-out only when
+  // this lodge is the reason the fan-out is owed. A sibling at an active lodge
+  // is owed its re-read whatever this lodge has switched off.
+  if (!hostingModeIsActive(outcome.mode) && !siblingOwedAtAnotherLodge) {
+    return outcome;
+  }
 
   for (const siblingId of await loadHostingSiblingIds(bookingId, db)) {
     // DEFAULT options, except that the caller's enforcement choice travels: an
@@ -1490,6 +1589,15 @@ export type CoverageOwnerFacts = {
   lodgeId: string;
   checkIn: Date;
   checkOut: Date;
+};
+
+/**
+ * The same columns plus the sibling relation the #3209 mode gate reads before it
+ * may decide that no fence is owed. Kept separate from `CoverageOwnerFacts`, which
+ * is the queue participant's shape and has no business carrying it.
+ */
+type PlannedCoverageOwnerFacts = CoverageOwnerFacts & {
+  parentBookingId: string | null;
 };
 
 /**
