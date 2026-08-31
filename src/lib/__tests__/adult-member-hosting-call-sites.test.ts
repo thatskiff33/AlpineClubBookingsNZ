@@ -380,6 +380,13 @@ describe("every refusing surface answers with something the caller can act on", 
       "src/app/api/bookings/[id]/guests/route.ts",
       "src/app/api/bookings/[id]/modify-dates/route.ts",
       "src/app/api/bookings/[id]/modify/route.ts",
+      // #3209: not a refusing SURFACE — the one place that refuses to refuse.
+      // `reconcileHostingReviewForSystemCancellation` catches the refusal on
+      // behalf of two authoritative system cancellations that have no caller to
+      // answer and no actor to ask, and escalates instead. It is in this list
+      // because it really does catch the error; it is carved out of the body
+      // assertion below because a body would have nobody to read it.
+      "src/lib/adult-member-hosting-system-cancellation.ts",
       "src/lib/group-booking.ts",
       "src/lib/waitlist-cross-lodge.ts",
       "src/lib/waitlist.ts",
@@ -398,6 +405,17 @@ describe("every refusing surface answers with something the caller can act on", 
     ];
     for (const file of CATCHERS) {
       const source = readRepoCode(file);
+      // The system-cancellation seam answers nobody at all: it swallows the
+      // refusal so an organiser's group cancel and an expired Internet Banking
+      // hold cannot be blocked, and records the escalation instead. What it owes
+      // is the fallback enqueue, pinned by
+      // "never lets a system cancellation be refused by the hosting rule".
+      if (file === "src/lib/adult-member-hosting-system-cancellation.ts") {
+        expect(source, file).toContain(
+          "await enqueueOwnHostingCoverageReevaluation(bookingId, tx, {",
+        );
+        continue;
+      }
       if (OFFICER_PATHS.includes(file)) {
         expect(source, file).toContain("code: err.code");
         expect(source, file).not.toContain("exceptionRequestPath");
@@ -540,6 +558,7 @@ describe("the same-owner refusal and the escalation seam (#2576 §6, §8, §9)",
       "src/app/api/bookings/[id]/waitlist-confirm/route.ts",
       "src/app/api/payments/switch-to-internet-banking/route.ts",
       "src/lib/adult-member-hosting-review.ts",
+      "src/lib/adult-member-hosting-system-cancellation.ts",
       "src/lib/booking-credit-election.ts",
       "src/lib/cron-confirm-pending.ts",
       "src/lib/cron-group-settlement-reaper.ts",
@@ -587,6 +606,112 @@ describe("the same-owner refusal and the escalation seam (#2576 §6, §8, §9)",
     }
   });
 
+  it("leaves no terminal status flip without a hosting seam at all (#3209)", () => {
+    // THE CANCELLING COUNTERPART of the confirming assertion above, and it exists
+    // because two writers passed every other check while never reaching the rule.
+    // `group-cancel.ts` and `internet-banking-payment-cron.ts` both freed the BEDS
+    // correctly — the cancellation read as fully reconciled — while CONFIRMED and
+    // PAID, the two statuses they flip out of, are precisely the statuses that
+    // qualify a booking as a `SAME_BOOKING_OWNER` coverage source. So each could
+    // remove the qualifying adult covering another booking of the same owner with
+    // no incident, no owner email and nothing in the officer queue.
+    //
+    // FOUND BY WHAT THEY WRITE, not by a hand-kept list of cancel paths, because a
+    // hand-kept list is exactly what failed here: both files predate the rule and
+    // nothing ever added them. `RELEASE_WHOLE_LODGE_HOLD_UPDATE` is this
+    // repository's own single source of truth for a terminal status flip — its
+    // docblock in `booking-status.ts` says it is spread into EVERY one of them —
+    // so a new cancelling writer is swept the day it is written.
+    //
+    // THE EXEMPTIONS ARE TRANSITIONS THAT CANNOT REMOVE A SOURCE, and each has to
+    // stay true rather than merely be listed. A booking only supplies cover from
+    // CONFIRMED or PAID.
+    const NOT_A_SOURCE_REMOVING_FLIP: Record<string, string> = {
+      // Releases the exclusive hold FIELDS and never writes `Booking.status`, so
+      // no attendance changes and nothing can stop covering anything.
+      "src/app/api/admin/bookings/[id]/exclusive-hold/route.ts":
+        "clears the hold fields without a status flip",
+      // `PAYMENT_PENDING -> WAITLISTED`. PAYMENT_PENDING never supplied cover, so
+      // this removes none. Its own docblock records that whether a RELEASE should
+      // re-evaluate cover is a question about all three release sites at once and
+      // is carried forward as its own issue — deliberately not answered here for
+      // one of them.
+      "src/app/api/admin/bookings/[id]/return-to-waitlist/route.ts":
+        "releases from PAYMENT_PENDING, which is not a coverage source",
+    };
+    const flips = sourceFilesNaming("RELEASE_WHOLE_LODGE_HOLD_UPDATE").filter(
+      (file) => file !== "src/lib/booking-status.ts",
+    );
+    // A sweep that found nothing would pass in silence, and the constant could be
+    // renamed out from under it without a single failure.
+    expect(flips.length).toBeGreaterThan(2);
+    for (const file of flips) {
+      if (file in NOT_A_SOURCE_REMOVING_FLIP) continue;
+      const source = readRepoCode(file);
+      const usesASeam =
+        source.includes("enqueueOwnHostingCoverageReevaluation(") ||
+        source.includes("reconcileAdultMemberHostingReviewWithSiblings(") ||
+        source.includes("reconcileHostingReviewForSystemCancellation(");
+      expect(
+        usesASeam,
+        `INV-HOST-041 (docs/invariants/adult-member-hosting.md): ${file} flips a ` +
+          "booking to a terminal status without reaching the hosting rule by any " +
+          "seam, so cancelling a CONFIRMED or PAID coverage source there strands " +
+          "the owner's other booking silently. Wire a seam, or add the file to " +
+          "NOT_A_SOURCE_REMOVING_FLIP with the reason its transition cannot " +
+          "remove a source.",
+      ).toBe(true);
+    }
+  });
+
+  it("never lets a system cancellation be refused by the hosting rule (#3209)", () => {
+    // INV-HOST-041 (docs/invariants/adult-member-hosting.md).
+    // The two callers are authoritative transitions with no actor: an organiser's
+    // group cancel and an expired Internet Banking hold. `INV-HOST-028` says
+    // nothing automated can ever be gated by this machinery, and the concrete
+    // failure is worse than a refused request — a rolled-back release re-reads the
+    // same rows next run and throws again, wedging the hold and its beds forever,
+    // while a rolled-back group child is stranded CONFIRMED after the group is
+    // already fenced CANCELLED. So they go through the seam that catches the
+    // refusal and escalates instead, never through the bare reconciler.
+    const CALLERS = [
+      "src/lib/group-cancel.ts",
+      "src/lib/internet-banking-payment-cron.ts",
+    ];
+    expect(
+      sourceFilesNaming("reconcileHostingReviewForSystemCancellation("),
+    ).toEqual(
+      [...CALLERS, "src/lib/adult-member-hosting-system-cancellation.ts"].sort(),
+    );
+    for (const file of CALLERS) {
+      const source = readRepoCode(file);
+      // The bare reconciler would refuse; the actor helper would ask an officer
+      // for a confirmation nobody is there to give.
+      expect(source, file).not.toContain(
+        "reconcileAdultMemberHostingReviewWithSiblings(",
+      );
+      expect(source, file).not.toContain("hostingCoverageActorOptions(");
+      // Inside the cancelling transaction, so the obligation commits with it.
+      expect(source, file).toContain(
+        "reconcileHostingReviewForSystemCancellation(",
+      );
+    }
+    // And the seam itself catches exactly the refusal, falling back to the
+    // enqueue-only path so the escalation the refusal interrupted is still
+    // recorded. Anything else — a participant retry, a database failure — is
+    // re-thrown to the callers' existing re-drive boundaries.
+    const body = readRepoCode(
+      "src/lib/adult-member-hosting-system-cancellation.ts",
+    );
+    const order = [
+      "await reconcileAdultMemberHostingReviewWithSiblings(bookingId, tx);",
+      "if (!(err instanceof AdultMemberHostingRequiredError)) throw err;",
+      "await enqueueOwnHostingCoverageReevaluation(bookingId, tx, {",
+    ].map((marker) => body.indexOf(marker));
+    expect(order.every((index) => index >= 0)).toBe(true);
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+  });
+
   /**
    * The files that DEFINE the enqueue seams, plus the transaction-scoped helpers that
    * run inside somebody else's `tx` and so have no commit of their own to drain
@@ -598,6 +723,11 @@ describe("the same-owner refusal and the escalation seam (#2576 §6, §8, §9)",
    */
   const TX_SCOPED_HELPERS = [
     "src/lib/adult-member-hosting-review.ts",
+    // #3209 split the system-cancellation seam out of the engine for the same
+    // reason #3128 split the ceilings out. It names two seams and runs inside its
+    // callers' transactions, so it has no commit of its own to drain after; its
+    // two callers are swept by the sweep above and by their own entrypoint below.
+    "src/lib/adult-member-hosting-system-cancellation.ts",
     // #3128 moved `enqueueMemberMergeHostingCoveragePlan`'s DECLARATION out of
     // the engine and into its own module. The engine was exempt here, the new
     // module was not, so the sweep began demanding that a pure planner drain a
@@ -630,6 +760,7 @@ describe("the same-owner refusal and the escalation seam (#2576 §6, §8, §9)",
       "enqueueHostingCoverageReevaluationForMember(",
       "enqueueMemberMergeHostingCoveragePlan(",
       "reconcileAdultMemberHostingReviewWithSiblings(",
+      "reconcileHostingReviewForSystemCancellation(",
     ];
     const seamUsers = new Set<string>();
     for (const seam of ENQUEUE_SEAMS) {
@@ -690,6 +821,9 @@ describe("the same-owner refusal and the escalation seam (#2576 §6, §8, §9)",
       // The seam definitions themselves; their callers are the sweep above.
       "src/lib/adult-member-hosting-review.ts": [],
       "src/lib/adult-member-hosting-merge-coverage-plan.ts": [],
+      "src/lib/adult-member-hosting-system-cancellation.ts": [
+        "reconcileHostingReviewForSystemCancellation(",
+      ],
     };
     for (const helper of TX_SCOPED_HELPERS) {
       const entrypoints = EXPORTED_TX_ENTRYPOINTS[helper];

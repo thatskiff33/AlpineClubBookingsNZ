@@ -367,6 +367,7 @@ Prefix `INV-HOST`.
 | `INV-HOST-038` | The inline drain is scoped to the booking just written; the cron drains everything |
 | `INV-HOST-039` | Every path that can enqueue must also drain, asserted tree-wide by a census |
 | `INV-HOST-040` | Dependent reads have their own ordered, logged ceiling, separate from the source read's |
+| `INV-HOST-041` | A system cancellation re-checks supervision through a seam that can never refuse it |
 
 ### Booking requests
 

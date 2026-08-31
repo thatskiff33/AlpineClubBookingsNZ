@@ -697,3 +697,43 @@ compliant indefinitely.
   somebody reasoning about the other one, both reads order by `checkIn` then `id` so
   the truncation is reproducible rather than whatever 25 rows Postgres returned, and
   `warnIfCoverageDependentCeilingBound` logs owner and lodge when it binds.
+
+### INV-HOST-041
+
+- **A cancellation NOBODY ASKED FOR re-checks supervision too, and can never be
+  refused for it** (#3209, §8). The confirming half above has a mirror: a booking
+  stops supplying cover the moment it leaves CONFIRMED or PAID, so a writer that
+  flips one to a terminal status owes the same re-read a confirming writer owes.
+  Two did not do it — the group organiser cancel and the Internet Banking hold
+  expiry — and both freed the beds correctly, so the cancellation read as fully
+  reconciled while the qualifying adult vanished from another booking of the same
+  owner with no incident, no owner email and nothing in the officer queue. Both now
+  reconcile inside their own cancelling transaction, so the obligation commits with
+  the cancellation, and drain afterwards scoped to the booking that was cancelled —
+  per child on a group cancel, because every joiner is a different owner and the
+  organiser's own drain cannot reach them.
+
+  They reconcile through `reconcileHostingReviewForSystemCancellation` rather than
+  the bare seam, and that is the second half of the rule. These transitions have no
+  actor to ask and no caller to answer, so `INV-HOST-028`'s "nothing automated can
+  ever be gated by this" has to hold as code and not only as intent. The dependent
+  disposition is the default `ESCALATE`; the booking itself is already terminal and
+  so has no hazard; what remains is the sibling loop, where a #738 split sibling
+  left uncovered by this very cancellation raises `AdultMemberHostingRequiredError`
+  at an ENFORCED lodge and would roll the cancellation back — wedging an expired
+  Internet Banking hold permanently, because the next run re-reads the same rows and
+  throws again, and stranding a CONFIRMED group child after the group is already
+  fenced CANCELLED, which no re-drive recovers. The seam catches exactly that
+  refusal, logs it, and falls back to the enqueue-only path so the escalation the
+  refusal interrupted is still recorded. A participant retry and a database failure
+  are re-thrown, because the first is a deliberate come-back-later signal and the
+  second has already aborted the transaction.
+
+  `adult-member-hosting-call-sites.test.ts` holds both halves. It finds terminal
+  status flips by `RELEASE_WHOLE_LODGE_HOLD_UPDATE`, this repository's own single
+  source of truth for one, so the NEXT cancelling writer is swept the day it is
+  written rather than the day somebody remembers it; the two exempt files are
+  transitions that cannot remove a source (one writes no status at all, the other
+  releases from PAYMENT_PENDING), each named with its reason. And it pins the seam's
+  two callers, that neither reaches the bare reconciler or the officer helper, and
+  the order of the catch itself.
