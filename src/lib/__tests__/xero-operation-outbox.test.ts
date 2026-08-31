@@ -200,6 +200,7 @@ vi.mock("@/lib/membership-cancellation-xero", () => ({
 }));
 
 import {
+  attachPaymentIntentToWaitingSupplementaryInvoiceOperations,
   enqueueXeroAccountCreditNoteOperation,
   enqueueXeroSecondSupplementaryInvoiceOperation,
   enqueueXeroBookingInvoiceOperation,
@@ -2964,6 +2965,18 @@ describe("enqueueXeroSecondSupplementaryInvoiceOperation: the second ask (#3193)
         ) {
           return false;
         }
+        // #3193 fix round: the attach read below filters on THIS payload path
+        // rather than on the anchor, which is why it is the one change-scoped
+        // read that could ever see a second ask.
+        if (
+          payloadFilter?.path?.[0] === "bookingModificationId" &&
+          operation.requestPayload.bookingModificationId !== payloadFilter.equals
+        ) {
+          return false;
+        }
+        if (where.status && typeof where.status === "string" && operation.status !== where.status) {
+          return false;
+        }
         return true;
       });
     };
@@ -3317,6 +3330,82 @@ describe("enqueueXeroSecondSupplementaryInvoiceOperation: the second ask (#3193)
     expect(
       operations.some((operation) => operation.localModel === "ManualRefundTask"),
     ).toBe(false);
+  });
+
+  /**
+   * THE ONE READ SCOPED TO THE CHANGE THAT COULD SEE A SECOND ASK (#3193 fix
+   * round).
+   *
+   * `attachPaymentIntentToWaitingSupplementaryInvoiceOperations` matches on the
+   * payload's `bookingModificationId`, not on the anchor - and a second ask
+   * carries that id, because the invoice it bills still belongs to that change.
+   * What kept it away was the wrapper hard-coding
+   * `waitForConfirmedAdditionalPayment: false`, a call-site value rather than a
+   * property of the anchor. A future caller flipping that flag would have parked
+   * an already-settled share's invoice on a PaymentIntent that is already paid,
+   * released by nothing and reaped fourteen days later with no invoice raised.
+   *
+   * The row below is therefore built in the WAITING_PAYMENT state the wrapper
+   * never produces. That is the point: the fence has to hold on the row, not on
+   * the caller.
+   */
+  it("never attaches a PaymentIntent to a second ask, even one left WAITING_PAYMENT", async () => {
+    operations.push(
+      {
+        id: "op_change",
+        localModel: "BookingModification",
+        localId: "mod_1",
+        status: "WAITING_PAYMENT",
+        queueType: "SUPPLEMENTARY_INVOICE",
+        correlationKey: "booking-mod:mod_1:20000:0",
+        requestPayload: {
+          queueType: "SUPPLEMENTARY_INVOICE",
+          bookingId: "booking_1",
+          bookingModificationId: "mod_1",
+          priceDiffCents: 20000,
+          changeFeeCents: 0,
+        },
+      },
+      {
+        id: "op_second_ask",
+        localModel: "ManualRefundTask",
+        localId: "task_2",
+        status: "WAITING_PAYMENT",
+        queueType: "SUPPLEMENTARY_INVOICE",
+        correlationKey: "review-task:task_2:3000:0",
+        requestPayload: {
+          queueType: "SUPPLEMENTARY_INVOICE",
+          bookingId: "booking_1",
+          bookingModificationId: "mod_1",
+          shortfallReviewTaskId: "task_2",
+          priceDiffCents: 3000,
+          changeFeeCents: 0,
+        },
+      },
+    );
+    mocks.updateOperation.mockImplementation(
+      async ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) => {
+        const target = operations.find((operation) => operation.id === where.id)!;
+        target.requestPayload = data.requestPayload as Record<string, unknown>;
+        return target;
+      },
+    );
+
+    await expect(
+      attachPaymentIntentToWaitingSupplementaryInvoiceOperations({
+        bookingModificationId: "mod_1",
+        paymentIntentId: "pi_1",
+      }),
+    ).resolves.toEqual({ attached: 1 });
+
+    expect(
+      operations.find((operation) => operation.id === "op_change")!.requestPayload
+        .paymentIntentId,
+    ).toBe("pi_1");
+    expect(
+      operations.find((operation) => operation.id === "op_second_ask")!
+        .requestPayload.paymentIntentId,
+    ).toBeUndefined();
   });
 
   /**
