@@ -1,7 +1,7 @@
 # File-size allowances for #3187
 
 file: src/lib/xero-booking-repair-classify.ts
-lines: 1504
+lines: 1521
 reason: the growth is one arm of the classifier learning that an edit's expected
   supplementary invoice is not always what its `BookingModification` row says,
   and it has to sit here because the whole point of #3187 is that the GATE and
@@ -25,3 +25,11 @@ reason: the growth is one arm of the classifier learning that an edit's expected
   the queue arm is trustworthy is that a reader can see the two refusals beside
   it. Moving them out would leave the payload and the conditions under which it
   must not be built in different files - the drift this change exists to close.
+  Delta round (+17): the paragraph recording that two parked edits on one
+  booking, hitting the same manual-review reason, collapse to a single action -
+  the key is built from the booking and the reason text, and neither summary
+  carries a modification id. It is left that way deliberately, because it is the
+  convention every other manual-review arm in this file follows, and a reader
+  who does not know that is one plausible edit away from giving this one arm a
+  unique key and a second convention. The number above was re-measured with
+  `wc -l` after merging the epic in, not incremented.

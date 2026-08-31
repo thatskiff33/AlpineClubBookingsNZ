@@ -27,3 +27,8 @@
   them would state something untrue about money: where the card took less than
   the officer settled on, and where the card request could not be created and is
   still waiting to be retried. Both are listed for a person to finish by hand.
+
+  If the member happens to pay while the sweep is running, the tool notices and
+  sends the invoice rather than leaving it held for a payment that has already
+  arrived — which would otherwise have sat unsent for a fortnight while the
+  booking reported as "waiting for payment" instead of as a problem.
