@@ -1260,13 +1260,13 @@ export async function reconcileAdultMemberHostingReview(
  * #738 parent/child, same-member relation — carries no lodge clause, so a split
  * sibling can in principle sit at a lodge with a different answer.
  *
- * TWO PLAIN READS, NO LOCK, and that is what keeps #2623 T5's property. It reads
- * the sibling ids through the indexed `Booking(parentBookingId)` relation, then
- * resolves the policy ONLY for lodges that are not the changed booking's own —
- * that one has just been read by the caller and is why we are here. So a split
- * pair at a single lodge, which is every pair the product can currently produce,
- * costs one indexed read and no policy read at all, and a booking with no sibling
- * costs the one read.
+ * PLAIN READS ONLY, NO LOCK, and that is what keeps #2623 T5's property. It reads
+ * the related bookings' LODGES through the indexed `Booking(parentBookingId)`
+ * relation, then resolves the policy only for lodges that are not the changed
+ * booking's own — that one the caller has just read, and is why we are here. So a
+ * split pair at a single lodge, which is every pair the product can currently
+ * produce, costs that one indexed read and no policy read at all; a booking with
+ * no sibling costs the same single read.
  *
  * Deliberately a BOOLEAN and not the sibling id list: the fan-out below re-reads
  * the siblings after the fence, and handing it a list read before the Member rows
