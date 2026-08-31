@@ -509,10 +509,17 @@ enforced by what the server BUILDS rather than by what a component renders.
   conditional on an unrelated adult-supervision setting is arbitrary. **The cost
   was accepted knowingly**: the "byte-identical payload when the option is off"
   property is gone, and a club that enabled nothing sees a new label after an
-  upgrade. What survives is the cheapness — linkage is resolved from the identity
-  relations the caller already selected with the booking, so an ordinary viewer's
-  response still issues **no extra query at all** beyond the bounded split-pair
-  carve-out. Each tier now answers from its own data: linkage from group
+  upgrade. What survives is most of the cheapness — linkage is resolved from the
+  identity relations the caller already selected with the booking, so an ordinary
+  viewer's response issues **no extra query on a day list with no #738 split
+  child on it, and exactly one bounded, indexed query when there is one**. Be
+  precise about that second half: an earlier round of this work claimed zero
+  unconditionally, and the claim was wrong twice over — a split child is created
+  for ANY party mixing member and non-member guests, which is precisely the
+  population the adult-supervision rule targets, and the identity read was then
+  issued once per card. `readInheritedSplitPairGroupTrips` answers the whole day
+  list in one read over already-loaded ids, which is what the issue's data
+  contract asks for. Each tier now answers from its own data: linkage from group
   membership, organiser and cover source from their own capability, and cover
   source additionally from whether a hosting requirement exists to report
   (`INV-HOST-045`). Do not reinstate the gate; the tests that pinned the old
@@ -520,17 +527,33 @@ enforced by what the server BUILDS rather than by what a component renders.
 
 - **Two privileged capabilities, granted and consulted separately.**
   `kioskGroupTripCapabilities` (`src/lib/kiosk-access.ts`) is the ONE definition
-  of who holds them, so the `/api/lodge/access` response and the guest-list
-  payload cannot disagree. `organiser` gates the organiser's display name and
-  which card is theirs; `coverSource` gates the canonical cover evidence
-  (`INV-HOST-045`). They are two booleans gating two payload keys and two
-  database reads, and they may not be collapsed into one flag however identical
-  today's holders are — collapsing them makes granting one without the other
-  impossible later. Both are held by `admin` and `hut-leader` only:
-  deliberately the narrower of the two capability sets that module already
+  of who holds them, and the guest-list route asks it rather than restating the
+  tier test. `organiser` gates the organiser's display name and which card is
+  theirs; `coverSource` gates the canonical cover evidence (`INV-HOST-045`).
+  They are two booleans gating two payload keys and two database reads, and they
+  may not be collapsed into one flag however identical today's holders are —
+  collapsing them makes granting one without the other impossible later. Both are
+  held by `admin` and `hut-leader` only: deliberately the same tiers as
+  `canManageRoster`, the narrower of the two capability sets that module already
   grants, and NOT the wider `canMarkAttendance` set that includes `lodge`,
   because a lodge wall device is shared and often unattended, and disclosure to
-  an unattended screen is disclosure to everybody in the room.
+  an unattended screen is disclosure to everybody in the room. That "deliberately
+  the same tiers" is a claim a test now checks across all five tiers, against
+  `kioskTierManagesRoster` — the two stay separate expressions, so granting cover
+  source to a non-roster tier later stays possible, but they cannot drift apart
+  unnoticed. **The `/api/lodge/access` response does NOT report the two
+  capabilities.** It briefly did; no client read them, and a flag telling a
+  browser which keys it was not sent is one more place for the disclosure rule to
+  drift from its definition, so the server simply omits what a viewer may not
+  have.
+
+- **Both privileged lines belong to a GROUP card.** The organiser line and the
+  cover line are attached only where the booking has canonical Group Trip
+  identity. #3040 opened the Group Trip surface and that is its boundary; a card
+  in no group gets neither. The cover line was briefly attached to every card on
+  the day list, which both went wider than owner decision D1 accepted and put the
+  cover line's amber states on every ungrouped booking. Adult cover for an
+  ungrouped booking is the admin review queue's job, not the kiosk's.
 
 - **An absent capability means an ABSENT KEY, not a hidden one.** "Send the full
   Group Trip object and hide the private fields in JSX" was rejected by name.
@@ -562,6 +585,27 @@ enforced by what the server BUILDS rather than by what a component renders.
   booking is affected — and the epic's kiosk contract is stricter: the ordinary
   kiosk tier sees linkage only. The two are not in conflict and the refusal's
   reasoning does not travel to a shared screen.
+
+- **"The wall device is an ordinary viewer" is true of the ACCOUNT, not of the
+  device.** A lodge account with no PIN session is the `lodge` tier and gets
+  linkage only. But `checkLodgeAuth` returns the `hut-leader` tier for that same
+  account while a hut leader's PIN session is active on it
+  (`src/lib/lodge-auth.ts`), so during that session the wall device shows both
+  privileged lines to whoever is standing in front of it. That is the intended
+  behaviour — the leader signed in to do exactly this work — and it is why the
+  PIN session's lifetime is a disclosure control rather than a convenience
+  setting. Do not read the operator guide's sentence about the kiosk account as
+  "the wall device never shows this"; how long such a session stays open is being
+  settled on its own branch, outside this issue.
+
+- **Withholding the Group Trip fields must never withhold the ROSTER.** The
+  enrichment runs on an unattended wall tablet, on the one screen a hut leader
+  uses to know who is in the building, and three of its reads were new to the
+  ordinary tier. A database error in any of them is caught: the cards are
+  returned exactly as they arrived, with no Group Trip fields at all, and the
+  error is logged. A transient failure that blanks the day list for every tier is
+  a worse outcome than a missing chip, and "fails closed" has to mean both
+  halves.
 
 - **Pinned, not left to a reviewer.**
   `src/lib/__tests__/kiosk-group-trip-privacy.test.ts` drives all four capability

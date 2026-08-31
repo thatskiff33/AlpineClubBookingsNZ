@@ -128,16 +128,30 @@ on those cards:
   Trip). Cover is decided night by night, so "2 of 3 nights covered" is a normal
   and useful thing to read, and the uncovered nights are listed.
 
+Both lines appear on Group Trip cards only. A booking that is not part of a
+group carries neither.
+
 The cover line is deliberately cautious. It reports what the club's adult-cover
 rule last worked out, and where that answer cannot be trusted it says so instead
 of claiming cover:
 
 | What you see | What it means |
 | --- | --- |
-| *Adult cover: 2 of 3 nights covered* | The rule has been evaluated and this is its answer |
-| *Adult cover: needs re-checking — the last check is out of date* | Something changed on a related booking; the last answer may no longer be right |
+| *Adult cover: 2 of 3 nights covered* | The rule found a problem with this booking, and this is what it found. There is always at least one night it could not cover — a booking with no problem has nothing recorded at all, so you will never see "3 of 3" |
+| *Adult cover: needs re-checking — the last check is out of date* | The last answer may no longer be right — because a related booking changed, because the recorded answer is waiting to be worked out again, or because the cover rested on another booking in the trip and we cannot yet confirm that booking has not changed |
 | *Adult cover: last check could not be read* | The stored answer is not in a shape the kiosk can read — worth telling a Booking Officer |
-| *Adult cover: not recorded for this booking* | Nothing has been recorded, which is the normal state for most bookings and is **not** the same as "covered" |
+| *Adult cover: no issue recorded for this booking* | Nothing has been recorded against this booking. That is the normal state for most bookings, and it is why this line is quiet grey rather than a warning. It is **not** a guarantee of cover |
+
+Where a Booking Officer has already looked at a recorded problem, the card says
+so underneath — *waiting for a Booking Officer's decision*, *a Booking Officer
+has approved this*, or *a Booking Officer declined this*. Without that line an
+arrangement an officer has already approved looks exactly like one nobody has
+dealt with.
+
+Until the Group Trip re-checking work is finished, cover that comes from another
+booking in the same trip is reported as *needs re-checking* rather than as
+cover. That is deliberate: the kiosk cannot yet tell whether that other booking
+has changed, and it will not claim supervision it cannot stand behind.
 
 **The cover line only appears at all where your club's adult member hosting
 requirement is switched on.** If your club does not use that requirement, or has
@@ -150,6 +164,14 @@ simply stops reporting it, because it is no longer the rule.
 A shared lodge wall device signed in as the kiosk account is treated as an
 ordinary viewer for all of this: it shows the chip and neither extra line,
 because anybody who walks past an unattended screen is that account.
+
+**Read that carefully, because it is about the account and not about the
+device.** The moment a hut leader signs in on that same wall tablet with their
+PIN, the screen is showing a hut leader's view — organiser name and cover line
+included — to whoever is standing in front of it, and it goes on doing so for as
+long as that PIN session lasts. So sign out, or lock the screen, when you walk
+away from it. How long a PIN session stays open before it locks itself is being
+changed separately; this page will say what the new behaviour is once it lands.
 
 The chip itself is not something you switch on. Any club that uses group
 bookings gets it, because it only says that these cards arrived together — it is
