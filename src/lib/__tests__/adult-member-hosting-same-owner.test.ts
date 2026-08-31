@@ -38,6 +38,8 @@ import {
 import { HostingSameOwnerSourceCeilingExceededError } from "@/lib/adult-member-hosting-coverage-ceilings";
 import { hostingCoverageStateKey } from "@/lib/adult-member-hosting-coverage-incidents";
 import { HostingCoverageParticipantRetryError } from "@/lib/adult-member-hosting-queue-participants";
+import { reconcileHostingReviewForSystemCancellation } from "@/lib/adult-member-hosting-system-cancellation";
+import { AdultMemberHostingRequiredError } from "@/lib/adult-member-hosting-refusal";
 
 /**
  * #3123 — the club's day now arrives at these lock-bound entry points as a
@@ -2537,5 +2539,163 @@ describe("the hosting fan-out takes the day it is given (#3123)", () => {
       expect(bound).not.toBe(CLUB_TODAY_DATE_ONLY.toISOString());
     }
     expect(new Set(bounds).size).toBe(1);
+  });
+});
+
+
+/**
+ * #3209 — the cancelling half, against the REAL reconciler.
+ *
+ * Everything else written for #3209 mocks the thing in question: the two caller
+ * suites mock the seam, and the seam suite mocks the review engine. Between them
+ * they prove the wiring and the request, and NOTHING proves what the engine does
+ * when a system path cancels a live coverage source — which is the issue's actual
+ * acceptance criterion. The fake store in this file applies real `where` clauses
+ * and runs the real `reconcileAdultMemberHostingReviewWithSiblings`, so it can.
+ *
+ * The first fix for #3209 passed every mocked test and still recorded NOTHING at
+ * the default host scope. It let the sibling loop refuse and caught the refusal,
+ * falling back to an enqueue against the CANCELLED SOURCE — but for a terminal
+ * source with `sameBookingOwner` off, the drain computes an empty dependent list,
+ * so the fallback was a no-op. The first test below is the one that fails against
+ * that fix and passes against the one that ships.
+ */
+describe("a system cancellation records the hazard instead of refusing it (#3209)", () => {
+  /**
+   * The club is ENFORCED, and `SAME_BOOKING_OWNER` is OFF — which is
+   * `DEFAULT_ADULT_MEMBER_HOST_SCOPES`, so this is what a club that simply turns
+   * adult-member hosting on gets. Only the #738 split-sibling relationship
+   * survives at this scope, and it is the relationship the sibling loop is about.
+   */
+  const DEFAULT_SCOPES = [policyRow({ hostScopeSameBookingOwner: false })];
+  const NIGHTS = ["2026-07-03", "2026-07-04"];
+
+  /**
+   * A #738 split pair: one member, one stay, two rows. The PARENT carries the
+   * qualifying adult; the CHILD carries the non-member guest who depends on them.
+   */
+  function splitPair() {
+    return [
+      booking({
+        id: "b-parent",
+        guests: [guestRow("adult", NIGHTS, memberRow({ id: "adult-1" }))],
+      }),
+      booking({
+        id: "b-child",
+        parentBookingId: "b-parent",
+        guests: [guestRow("kid", NIGHTS)],
+      }),
+    ];
+  }
+
+  it("refuses the split sibling when the bare reconciler is used, which is the hazard", async () => {
+    // The premise of the seam, asserted rather than assumed. Cancelling the parent
+    // takes the only qualifying adult out of the child's host pool
+    // (`hostingSiblingWhere` excludes CANCELLED rows), and the sibling loop's
+    // default `REFUSE` throws from inside the caller's transaction — which would
+    // roll the cancellation back. If this ever stops throwing, the seam below is
+    // solving a problem that no longer exists and should be re-examined rather
+    // than kept out of habit.
+    const { db, rowFor } = makeStore(splitPair(), { policies: DEFAULT_SCOPES });
+    rowFor("b-parent").status = "CANCELLED";
+
+    await expect(
+      reconcileAdultMemberHostingReviewWithSiblings("b-parent", db),
+    ).rejects.toBeInstanceOf(AdultMemberHostingRequiredError);
+  });
+
+  it("records the split sibling's hazard on the booking instead of throwing", async () => {
+    // THE FIX. The cancellation completes, and the obligation it would have
+    // interrupted is on the child's own row — PENDING, naming the exact nights, so
+    // the booking's page and the officer's booking view both show it.
+    const { db, rowFor } = makeStore(splitPair(), { policies: DEFAULT_SCOPES });
+    rowFor("b-parent").status = "CANCELLED";
+
+    await expect(
+      reconcileHostingReviewForSystemCancellation("b-parent", db),
+    ).resolves.toBeUndefined();
+
+    const child = rowFor("b-child");
+    expect(child.adultMemberHostingReviewStatus).toBe("PENDING");
+    expect(child.adultMemberHostingReview).toMatchObject({
+      reasonCode: "ADULT_MEMBER_HOSTING_REQUIRED",
+      affectedNights: NIGHTS,
+    });
+  });
+
+  it("still clears a sibling that another booking covers", async () => {
+    // The mutation that matters for the test above: `REVIEW_ONLY` must not turn
+    // into "record a hazard on every sibling of every cancellation". Here the
+    // child carries a qualifying adult of its OWN, so losing the parent's costs it
+    // nothing and nothing is recorded on it at all.
+    const rows = splitPair();
+    rows[1] = booking({
+      ...(rows[1] as Record<string, unknown>),
+      guests: [
+        guestRow("kid", NIGHTS),
+        guestRow("own-adult", NIGHTS, memberRow({ id: "adult-2" })),
+      ],
+    });
+    const { db, rowFor } = makeStore(rows, { policies: DEFAULT_SCOPES });
+    rowFor("b-parent").status = "CANCELLED";
+
+    await reconcileHostingReviewForSystemCancellation("b-parent", db);
+
+    expect(rowFor("b-child").adultMemberHostingReviewStatus).toBeNull();
+  });
+
+  it("opens a coverage incident against the dependent owner when the scope IS on", async () => {
+    // The issue's acceptance criterion, verbatim: "cancelling ... opens a coverage
+    // incident against the affected booking's owner, and the officer queue shows
+    // it". `b-source` was supplying `SAME_BOOKING_OWNER` cover to `b-main`; a
+    // system path cancels it.
+    const rows = [
+      booking({
+        id: "b-source",
+        guests: [guestRow("adult", NIGHTS, memberRow({ id: "adult-1" }))],
+      }),
+      booking({ id: "b-main", guests: [guestRow("kid", NIGHTS)] }),
+    ];
+    const { db, queued, incidents, rowFor } = makeStore(rows);
+    rowFor("b-source").status = "CANCELLED";
+
+    await reconcileHostingReviewForSystemCancellation("b-source", db);
+
+    // The bounded obligation, committed with the cancellation: the owner, the
+    // lodge, this booking's own nights, and no actor because nobody did this.
+    expect(queued).toHaveLength(1);
+    expect(queued[0]).toMatchObject({
+      memberId: "owner-1",
+      lodgeId: LODGE,
+      cause: "SYSTEM_CHANGE",
+      actorMemberId: null,
+      sourceBookingId: "b-source",
+    });
+    expect(queued[0].nights).toEqual(NIGHTS);
+
+    // And the drain's per-dependent step — the half that reaches the officer queue
+    // and the owner's inbox — opens the incident on `b-main`.
+    const outcome = await reconcileSameOwnerCoverageIncident(
+      { bookingId: "b-main", cause: "SYSTEM_CHANGE" },
+      db,
+    );
+    expect(outcome.action).toBe("opened");
+    expect(incidents).toHaveLength(1);
+    expect(incidents[0]).toMatchObject({ bookingId: "b-main" });
+    expect(rowFor("b-main").adultMemberHostingReviewStatus).toBe("PENDING");
+  });
+
+  it("cancels nothing and refuses nothing on its way through", async () => {
+    // §7 and §16: a coverage change never cancels a booking, and this seam is the
+    // one place a cancellation and the hosting engine meet — so the only status
+    // write in the whole call must be the one the CALLER already made.
+    const { db, rowFor } = makeStore(splitPair(), { policies: DEFAULT_SCOPES });
+    rowFor("b-parent").status = "CANCELLED";
+
+    await reconcileHostingReviewForSystemCancellation("b-parent", db);
+
+    expect(
+      db.booking.update.mock.calls.some((call: any) => "status" in call[0].data),
+    ).toBe(false);
   });
 });
