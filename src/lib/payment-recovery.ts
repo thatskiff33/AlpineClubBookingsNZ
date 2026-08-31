@@ -1964,10 +1964,10 @@ async function processCreateAdditionalPaymentIntentOperation(
         } = await import("@/lib/edit-financial-review-charge-request");
         if (attempt.status === "queued") {
           // The same record the inline dispatch writes, through the same
-          // function: `short` is the enqueue saying this edit's invoice had
-          // already left the queue and could not be raised to the settled total,
-          // which is money the club has to bill by hand. Deciding what counts as
-          // short belongs to that function, not to two callers (#3170).
+          // function: a short outcome is the enqueue saying this edit's invoice
+          // had left the queue and could not be raised to the settled total.
+          // What counts as short - and, since #3193, whether the difference can
+          // be billed on its own invoice - belongs there, not to two callers.
           await recordShortEditReviewChargeInvoice({
             outcome: attempt.outcome,
             bookingId: operation.bookingId,
@@ -2048,7 +2048,7 @@ async function processCreateAdditionalPaymentIntentOperation(
             memberId: booking.member?.id ?? null,
             derivedTotalCents: synced.totalCents,
             // No ask exists to be short of, so there is no figure to compare
-            // against - the same refusal to invent one the `short` record makes.
+            // against - the same refusal to invent one the shortfall record makes.
             requestedTotalCents: null,
           }).catch((err) =>
             logger.error(

@@ -391,7 +391,7 @@ export interface CompleteDeferredXeroSupplementaryInvoiceInput {
  * (`INV-SSOT`). The refund paths are `queueXeroBookingEditSettlement`'s to
  * dispatch, from the edit that decided on a refund.
  *
- * Returns the enqueue's own verdict so the caller can record a `short` ask. It
+ * Returns the enqueue's own verdict so the caller can record a short ask. It
  * does not catch: the caller owns what a failure to queue means for the recovery
  * operation it is processing.
  */

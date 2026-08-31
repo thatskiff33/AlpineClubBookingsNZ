@@ -1249,7 +1249,8 @@ describe("what the sync reports, and the trace it leaves (#3170 fix round)", () 
  * that restates too late is refused by the status guard, correctly, and falls
  * through to the ordinary enqueue - which finds the invoice already claimed for
  * sending (RUNNING) or already sent, refuses to queue a second one, and reports
- * `short`.
+ * `short-in-flight` or `short-sent`. Only the second buys a separate invoice;
+ * these cases are all the sent one.
  */
 describe("a share that could not join the Xero invoice (#3170 fix round, F2)", () => {
   function settleSecondShare(overrides: Record<string, unknown> = {}) {

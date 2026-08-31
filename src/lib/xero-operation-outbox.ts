@@ -1171,9 +1171,9 @@ export type XeroSupplementaryInvoiceEnqueueOutcome =
  * WHY IT CANNOT DOUBLE-BILL, which is the whole design and not a caveat:
  *
  *   * IT BILLS THE SHARE, NEVER THE TOTAL. This function is reached only when
- *     `enqueueXeroSupplementaryInvoiceOperation` answered `short`, and `short`
- *     means the caller's restate found nothing restatable AND nothing already
- *     covering - so this share is provably NOT in the invoice that went out.
+ *     `enqueueXeroSupplementaryInvoiceOperation` answered `short-sent`: an
+ *     invoice EXISTS and its amount is fixed forever, and a restate found
+ *     nothing restatable or already covering - so this share is provably NOT in it.
  *     Every settled share is therefore billed exactly once: by the change's
  *     invoice if it was in it, by its own invoice if it was not. The shares sum
  *     to the derived total by construction, with no figure read back off a sent
@@ -1224,11 +1224,11 @@ export async function enqueueXeroSecondSupplementaryInvoiceOperation(
       createdByMemberId: options?.createdByMemberId,
       /**
        * UNPAID AND SENT NOW, on both routes, and the card route is the one worth
-       * arguing. `short` on the card route requires the change's invoice to have
-       * left WAITING_PAYMENT, which only the additional payment confirming can
-       * do - so the card has already been taken at the EARLIER figure and this
-       * share is genuinely unbilled. Recording a payment against it would invent
-       * money nobody sent, and waiting for a payment would wait for a
+       * arguing. `short-sent` on the card route requires the change's invoice to
+       * have left WAITING_PAYMENT, which only the additional payment confirming
+       * can do - so the card has already been taken at the EARLIER figure and
+       * this share is genuinely unbilled. Recording a payment against it would
+       * invent money nobody sent, and waiting for a payment would wait for a
        * confirmation that has already happened.
        */
       recordPayment: false,

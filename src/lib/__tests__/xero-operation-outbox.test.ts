@@ -3135,9 +3135,9 @@ describe("enqueueXeroSecondSupplementaryInvoiceOperation: the second ask (#3193)
 
   /**
    * TWO SHARES RACING, which is the case that decides whether this can
-   * double-bill. Both settle after the change's invoice has gone out, both are
-   * `short`, and each bills ITSELF - so the club bills $200 + $30 + $50 for a
-   * $280 edit rather than two copies of one difference.
+   * double-bill. Both settle after the change's invoice has GONE OUT, so both
+   * are `short-sent`, and each bills ITSELF - the club bills $200 + $30 + $50
+   * for a $280 edit rather than two copies of one difference.
    */
   it("bills each racing share once, never the same difference twice", async () => {
     theChangesInvoiceHasGoneOut();
