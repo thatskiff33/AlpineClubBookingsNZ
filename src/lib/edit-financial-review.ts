@@ -407,7 +407,9 @@ export async function raiseEditFinancialReviewTask({
  * mirrored as a hand-settled allocation, or becomes account credit — so getting
  * it wrong does not fail, it routes real money down the wrong path weeks later
  * in front of an admin with no way to tell. It is derived through
- * `editReviewSettlementPaymentId`, the one home for that rule.
+ * `editReviewSettlementPaymentId`, the one home for that rule - a SNAPSHOT
+ * nothing backfills, which is why the COMPLETION re-asks the same question of
+ * the booking where the task carries no id (#3194).
  *
  * `raisedAmountCents` is not an argument at all, so no caller can pass a number:
  * a parked edit's amount is unknown, zero is a real financial decision, and a

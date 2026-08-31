@@ -2979,6 +2979,18 @@ model PaymentRecoveryOperation {
   // recovery replays the exact keys the route used — a refund that succeeded
   // on Stripe but was never recorded locally is replayed, not re-minted.
   stripeKeyPrefix      String?
+  // #3181: the value of `hasIssuedPrimaryXeroInvoice` AT THE MOMENT THE EDIT
+  // DISPATCHED, frozen so the recovery replay bills what the edit decided rather
+  // than what is true hours later. Only `CREATE_ADDITIONAL_PAYMENT_INTENT` rows
+  // carry it. It matters because the two answers can differ: a booking whose
+  // primary invoice had not been minted yet had no invoice to supplement, so the
+  // edit queued nothing and the primary invoice - minted later from CURRENT
+  // state - bills the edit itself. A replay re-deriving `true` there would queue
+  // a supplementary invoice for money the primary invoice already carries.
+  // NULL means "not recorded" (a row enqueued by code older than #3181), and the
+  // replay then raises nothing: an unrecorded invoice is surfaced by the
+  // booking-vs-Xero repair pass, while a duplicate one is surfaced by nobody.
+  hadIssuedXeroInvoice Boolean?
   idempotencyKey       String                         @unique
   attempts             Int                            @default(0)
   nextRetryAt          DateTime?                      @default(now())

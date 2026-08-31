@@ -525,9 +525,10 @@ booking change is saved"*. It confirms the change first, names the new stay date
 says the club is checking what the change means for the amount, and says plainly
 that nothing has been refunded or charged for it yet. Its next step is that there
 is nothing for them to do. **No amount appears anywhere in it**: not a zero, not
-an estimate, and deliberately not the booking's own post-edit total, which the
-structural edit has already updated and which would read as authoritative beside a
-sentence saying the figure is unknown. Nothing internal appears either — no cause,
+an estimate, and deliberately not the booking's own stored total, which a parked
+edit writes back UNCHANGED — so it is the total from BEFORE the change while the
+dates and guest rows around it are the new ones, and it would read as
+authoritative beside a sentence saying the figure is unknown. Nothing internal appears either — no cause,
 no diagnostic category, and no clause that could read as the member's fault.
 
 Between the banner's facts and its next step sits the club's own explanation,
@@ -545,12 +546,13 @@ an earlier draft repeated two of them, which meant a club softening the key coul
 not change the narrative's copy, which was the whole justification for having the
 key. An amount must never be put in it.
 
-**On My Bookings**, the row keeps the post-edit total and qualifies it — *"· being
-checked"* beside the figure, and an info chip reading *"Adjustment being checked"*
-beside (never instead of) the booking status. Hiding the figure would leave the
-member with no number at all, and correcting it is the estimation this epic
-forbids; the booking status is unchanged and still true, so the chip sits next to
-it rather than overwriting it.
+**On My Bookings**, the row keeps the booking's stored total and qualifies it —
+*"· being checked"* beside the figure, and an info chip reading *"Adjustment being
+checked"* beside (never instead of) the booking status. That stored total is the
+PRE-change one, which is what the qualifier is there to say; hiding the figure
+would leave the member with no number at all, and correcting it is the estimation
+this epic forbids. The booking status is unchanged and still true, so the chip
+sits next to it rather than overwriting it.
 
 **By email**, the ordinary *Booking Modified* message carries the same sentences in
 its money section. Before #3033 that section rendered **empty** for this case — all
@@ -574,18 +576,83 @@ and an unscoped version cancels them.
 
 The banner does **not** displace a cancellation, a release or a decline. Those
 describe what happened to the booking, which is the more important truth, and the
-review wording assumes a stay that is still going ahead. It does displace the paid
-narrative, whose "nothing more to do" is exactly the false reassurance this issue
-exists to remove.
+review wording assumes a stay that is still going ahead.
 
-It does **not** displace a payable one either — it is added to it. `PAYABLE_STATUSES`
-covers CONFIRMED, and a CONFIRMED-unpaid booking renders the member's **Complete
-Payment** card, so returning the review narrative outright put *"there is nothing
-you need to do"* directly beside a card asking for money. A payable booking with a
-review keeps its amount due and its instruction to pay, and gains the review's
-sentences plus the fact that joins them: the unpriced adjustment is not part of
-the figure being asked for. Gating the review branch to PAID would have resolved
-the contradiction by deleting the disclosure.
+It does **not** displace a payable narrative either — it is added to it.
+`PAYABLE_STATUSES` covers CONFIRMED, and a CONFIRMED-unpaid booking renders the
+member's **Complete Payment** card, so returning the review narrative outright put
+*"there is nothing you need to do"* directly beside a card asking for money. A
+payable booking with a review keeps its amount due and its instruction to pay, and
+gains the review's sentences plus the fact that joins them: the unpriced
+adjustment is not part of the figure being asked for. Gating the review branch to
+PAID would have resolved the contradiction by deleting the disclosure.
+
+**And it does not displace a paid one (#3194).** #3033 replaced that narrative
+outright, which removed *"nothing more to do"* — the false reassurance the epic is
+aimed at — but removed *"we've received your payment of $360.00 on 12 Aug"* along
+with it. That is the only sentence in the product that answers *"did my payment go
+through?"*, and on the emailed payment link the narrative is the whole page, so a
+member who paid by internet banking and opened the link to check was told nothing
+about their payment at all. A paid booking under review now keeps its
+confirmation, gains the same review sentences beside it, and has only the banned
+next step replaced: *"there is nothing you need to do about that change. We'll be
+in touch once the amount is confirmed."*
+
+The figure it keeps is money the club **has**, read off a durable payment event.
+The epic's no-amount rule is about the reviewed change's amount, which nobody
+knows; the bridging sentence says out loud that the two are different amounts,
+exactly as it does beside a payable narrative's *"$120.00 is due"*. The standalone
+review wording, where no amount of any kind appears, is what a booking that is
+neither payable nor paid still reads.
+
+**On the emailed payment link** (`/pay/<token>`), the member reads the same
+thing. Until #3194 they did not: that helper is `server-only`, the page is a
+client component, and nobody threaded the answer through — so a member who
+followed their emailed link saw the ordinary payment view and, on a booking that
+read as paid, was told there was nothing more to do, while the booking's own page
+said the money was with the office. The route handler now does the read and hands
+it down, and the sentences come from `booking-financial-review-copy.ts` rather
+than from a second set written for this page.
+
+A paid booking under review reaches this page through the **server's** narrative
+rather than the confirmation the page composes for a payment made on it, so both
+halves have to be in that narrative: the payment confirmed, and the review
+disclosed. `getPaymentLinkContext` loads the link structurally, so an already-used
+link still renders; and a redirect-based card method returns to this same URL and
+re-fetches. Same member, same booking, seconds apart — the page must not confirm
+the payment on the way in and forget it on the way back.
+
+The page keeps taking money. Its payment card is its own — dates, guests, amount
+due, link expiry — so it shows the review half on its own from
+`financialReviewNoteBesideAnAmount`, directly under the amount and above the
+buttons, where it is read before the member decides. The card button, the
+internet banking reference and the *"email me a new link"* action all stay armed,
+because the booking's stored price is still owed and this link is the only way an
+unregistered guest can pay it; disarming them would cost the member the booking
+when the hold expired without moving a cent of the money under review. The note
+also stays on screen after a card payment completes on the page, where the
+confirmation is composed by the page rather than by the server and would
+otherwise sign off with *"your booking is confirmed"*.
+
+**That amount is the one from BEFORE the change, and the page says so.** A parked
+edit saves the new dates and deletes the departing guest's row but writes
+`finalPriceCents` back unchanged — both parking services do, deliberately, so
+nothing settles on a change whose money nobody could work out. The payment card
+therefore shows a post-edit stay beside a pre-edit price, and a member who reads
+that as settled and pays it overpays by exactly the amount nobody could compute.
+So the note beside an amount still DUE opens with *"This amount does not yet
+reflect the change you made to this booking"*, while the note beside an amount
+already RECEIVED keeps *"whose amount is not part of that figure"* — money that
+arrived is a settled historical fact and a parked edit cannot make it stale.
+`financialReviewNoteBesideAnAmount` takes which kind of amount it stands next to,
+with no default, so a new surface has to answer the question rather than inherit
+the reassuring half.
+
+That means the page reads TWO facts off one payload and must not conflate them:
+`state` is the WORDING state, which a review changes, and `payable` /
+`canRequestFreshLink` are the LINK's own state, which it does not. Keying the
+payment card on the wording state hands a CONFIRMED-unpaid member a page saying
+*"pay by card or internet banking below"* with nothing below it.
 
 **In the booking's own Transaction History**, the modification row for the change
 keeps its figure and loses its colour. The signed price difference is real — it is
@@ -626,6 +693,18 @@ somebody looked and nothing is owed — not as the hand-back card's *"declined t
 refund, or settled another way"*. **Recording an adjustment** on a review with no
 confirmed amount is disabled with the reason shown, because the server refuses such
 a completion and a control whose only outcome is a refusal is worse than none.
+
+**Where the money goes when they record an adjustment** is not a choice on the
+screen and never has been — the routes are mutually exclusive on facts. Money that
+came in on a card goes back to that card; money settled by hand is mirrored in the
+ledger; and where nothing was captured there is nothing to reverse, so the amount
+becomes account credit. Since #3194 that question is asked of the BOOKING at the
+moment the officer closes the review, rather than read off a note taken when the
+review was raised. It matters because a review can be parked on a booking nobody
+has paid yet — the member can still pay, deliberately — and the old note said
+"there is no card" for ever after, so a member who paid by card while their change
+was being worked out could only be handed club credit. Nothing about the officer's
+screen changed; the money simply goes where their money is.
 
 **On the booking's own page**, an admin also sees a *"Money waiting for review"*
 row on the Admin tools card, with a link to the settlement queue. It is read-only
