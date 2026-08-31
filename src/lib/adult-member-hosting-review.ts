@@ -873,15 +873,12 @@ export type HostingReviewOutcome = (
  * later inherits the club's rule instead of quietly escaping it.
  *
  * `REVIEW_ONLY` — evaluate and record exactly as the review consequence does, and
- * never refuse. TWO reasons reach for it, and `INV-HOST-020`'s census exists to
- * make a new user say which. §13's SCHOOL AND ORGANISATION workflows, excluded
- * from this expanded enforcement in as many words: officer-managed, supervised by
- * teachers, leaders or custodians who do not map onto the adult club-member host
- * rule, so they keep the pre-#2569 behaviour. And the positions where there is
- * NOTHING LEFT TO REFUSE because the write the refusal exists to prevent is not
- * being made — the post-commit incident drain below, and #3209's cancellation
- * seam, where a throw would roll back the record that is the point of the call.
- * Neither exempts a member-owned flow: the hazard is still recorded and surfaced.
+ * never refuse. TWO reasons reach for it and `INV-HOST-020`'s census makes a new
+ * user say which: §13's SCHOOL AND ORGANISATION workflows, excluded in as many
+ * words because teachers, leaders and custodians do not map onto the adult
+ * club-member host rule; and the positions where there is NOTHING LEFT TO REFUSE
+ * because the write a refusal would prevent is not being made — the drain below,
+ * and #3209's cancellation seam. Neither exempts a member-owned flow.
  */
 export type HostingEnforcement = "REFUSE" | "REVIEW_ONLY";
 

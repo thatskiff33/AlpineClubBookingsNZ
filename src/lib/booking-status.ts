@@ -269,10 +269,17 @@ export const RELEASE_ADMIN_CAPACITY_HOLD_UPDATE = {
 
 /**
  * Prisma update-data fragment that releases an exclusive whole-lodge hold
- * (ADR-001, issue #177). Spread into every terminal status flip alongside
- * `RELEASE_ADMIN_CAPACITY_HOLD_UPDATE` — the exact same cancel paths and
- * cancel-like cron transitions — so no cancelled/bumped/expired booking keeps a
- * stale `wholeLodgeHold` record.
+ * (ADR-001, issue #177). Spread alongside `RELEASE_ADMIN_CAPACITY_HOLD_UPDATE` by
+ * the cancel paths and cancel-like cron transitions that can be releasing a hold,
+ * so no cancelled/bumped/expired booking keeps a stale `wholeLodgeHold` record.
+ *
+ * NOT "every terminal status flip", which is what this said until #3209 and what
+ * made it look usable as a census key for one. Measured then: SEVEN files spread
+ * it and TWELVE flip a booking to a terminal status, so ten cancelling writers
+ * spread neither fragment — correctly, because a booking that never held the
+ * lodge has no hold to release. A guard that needs to find terminal flips must
+ * read the status write itself; `adult-member-hosting-call-sites.test.ts` does,
+ * and keeps this constant only as a cross-check on that reader.
  *
  * Capacity correctness never depends on this. Enforcement is status-scoped:
  * `getLodgeHeldNights` and every masking index intersect the hold flag with

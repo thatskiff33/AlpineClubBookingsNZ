@@ -628,8 +628,9 @@ describe("releaseExpiredInternetBankingHolds adult-member hosting (#3209)", () =
   });
 
   it("leaves the hold unreleased for the next run when the reconcile fails outright", async () => {
-    // The seam catches the only refusal the hosting rule can raise, so what
-    // reaches here is a database or contention failure. That rolls the release
+    // The seam asks for `REVIEW_ONLY`, so the hosting rule cannot refuse this at
+    // all; what reaches here is a database failure or a participant retry. That
+    // rolls the release
     // back whole — the hold is NOT marked released, so the next run retries it —
     // and the loop moves on rather than starving the remaining candidates. What
     // must never happen is a released hold with the coverage question lost, and

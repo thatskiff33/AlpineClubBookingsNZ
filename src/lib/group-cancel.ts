@@ -590,14 +590,11 @@ export async function settleGroupBookingOnOrganiserCancel(
           // pre-existing best-effort `continue` below, and the reaper re-drives
           // that too — this fix adds no new reachable drift.
           //
-          // #3209 corrects what this comment used to say. It claimed the reaper
-          // "only re-drives not-yet-CANCELLED groups", and that is false:
-          // `resumeInterruptedOrganiserCancels` selects on the ORGANISER BOOKING
-          // being CANCELLED and on a still-active organiser-settled child, over
-          // `ORGANISER_CANCEL_ACTIVE_CHILD_STATUSES` — which is this module's own
-          // `ACTIVE_CHILD_STATUSES`, imported rather than re-listed so the two can
-          // never drift. `GroupBooking.status` is not in that query at all, so a
-          // group already fenced CANCELLED is re-driven like any other.
+          // #3209 corrects what this said. It claimed the reaper "only re-drives
+          // not-yet-CANCELLED groups", which is false: `resumeInterruptedOrganiser
+          // Cancels` selects on the ORGANISER BOOKING being CANCELLED plus a still
+          // -active organiser-settled child, over this module's own exported
+          // `ACTIVE_CHILD_STATUSES`. `GroupBooking.status` is not in that query.
           const queued = await enqueueXeroRefundCreditNoteOperation(
             child.payment.id,
             refundForChild,

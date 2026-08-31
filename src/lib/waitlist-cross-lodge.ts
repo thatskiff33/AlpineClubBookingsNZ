@@ -826,16 +826,13 @@ export async function confirmCrossLodgeWaitlistOffer(
           previousRange: { checkIn: newBooking.checkIn, checkOut: newBooking.checkOut },
         });
         // #3209 (`INV-HOST-041`). The beds are reconciled above; ADULT SUPERVISION
-        // was not. This unwind cancels the replacement booking at whatever status
-        // it was created with, and `createConfirmedBooking` writes PAID for a stay
-        // whose price came out at zero — PAID being one of the two statuses that
-        // qualify a booking as a `SAME_BOOKING_OWNER` coverage source. Worse than a
-        // plain omission: the creation moments ago RESTORED cover to the owner's
-        // other booking and resolved its incident, so unwinding without this leaves
-        // that incident closed while the cover is gone. Through the
-        // system-cancellation seam because a price-drift unwind has no actor to
-        // refuse — the member is already being told to look at the new price, and a
-        // refusal here would leave the drifted booking alive and paid for.
+        // was not. This cancels the replacement at whatever status it was created
+        // with, and `createConfirmedBooking` writes PAID when the price came out at
+        // zero — PAID being a coverage source. Worse than a plain omission: that
+        // creation may have RESTORED cover to the owner's other booking and closed
+        // its incident, so unwinding without this leaves the incident closed and
+        // the cover gone. Through the system-cancellation seam because a price
+        // drift has no actor to refuse.
         await reconcileHostingReviewForSystemCancellation(newBooking.id, tx);
         const refreshedOffer = await tx.booking.updateMany({
           where: {

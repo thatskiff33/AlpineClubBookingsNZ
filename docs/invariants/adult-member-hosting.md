@@ -704,36 +704,70 @@ compliant indefinitely.
   refused for it** (#3209, §8). The confirming half above has a mirror: a booking
   stops supplying cover the moment it leaves CONFIRMED or PAID, so a writer that
   flips one to a terminal status owes the same re-read a confirming writer owes.
-  Two did not do it — the group organiser cancel and the Internet Banking hold
-  expiry — and both freed the beds correctly, so the cancellation read as fully
+  Four did not do it — the group organiser cancel, the Internet Banking hold
+  expiry, the Stripe capacity-failed void and the cross-lodge price-drift unwind —
+  and the first two freed the beds correctly, so the cancellation read as fully
   reconciled while the qualifying adult vanished from another booking of the same
-  owner with no incident, no owner email and nothing in the officer queue. Both now
-  reconcile inside their own cancelling transaction, so the obligation commits with
-  the cancellation, and drain afterwards scoped to the booking that was cancelled —
-  per child on a group cancel, because every joiner is a different owner and the
-  organiser's own drain cannot reach them.
+  owner with no incident, no owner email and nothing in the officer queue. All four
+  now reconcile inside their own cancelling transaction, so the obligation commits
+  with the cancellation, and drain afterwards scoped to the booking that was
+  cancelled — per child on a group cancel, because every joiner is a different
+  owner and the organiser's own drain cannot reach them.
 
-  They reconcile through `reconcileHostingReviewForSystemCancellation` rather than
-  the bare seam, and that is the second half of the rule. These transitions have no
-  actor to ask and no caller to answer, so `INV-HOST-028`'s "nothing automated can
-  ever be gated by this" has to hold as code and not only as intent. The dependent
+  They reconcile through `reconcileHostingReviewForSystemCancellation`, and that is
+  the second half of the rule. These transitions have no actor to ask and no caller
+  to answer. `HostingDependentCoverageDisposition` in
+  `adult-member-hosting-review.ts` states the rule in as many words — "§8's list of
+  changes that cannot reasonably be blocked includes every automated path" — and
+  the seam is what makes it hold as code rather than only as intent. (`INV-HOST-028`
+  is a different rule and does not cover this: it is about
+  `SameOwnerCoverageOverrideRequiredError` and an authorised officer, not about
+  `AdultMemberHostingRequiredError`.)
+
+  **The seam REMOVES the refusal rather than catching it**, by passing
+  `enforcement: "REVIEW_ONLY"`, and the distinction is load-bearing. The dependent
   disposition is the default `ESCALATE`; the booking itself is already terminal and
-  so has no hazard; what remains is the sibling loop, where a #738 split sibling
-  left uncovered by this very cancellation raises `AdultMemberHostingRequiredError`
-  at an ENFORCED lodge and would roll the cancellation back — wedging an expired
-  Internet Banking hold permanently, because the next run re-reads the same rows and
-  throws again, and stranding a CONFIRMED group child after the group is already
-  fenced CANCELLED, which no re-drive recovers. The seam catches exactly that
-  refusal, logs it, and falls back to the enqueue-only path so the escalation the
-  refusal interrupted is still recorded. A participant retry and a database failure
-  are re-thrown, because the first is a deliberate come-back-later signal and the
-  second has already aborted the transaction.
+  so has no hazard of its own; what remains is the sibling loop, where a #738 split
+  sibling left uncovered by this very cancellation would otherwise raise
+  `AdultMemberHostingRequiredError` at an ENFORCED lodge and roll the cancellation
+  back — wedging an expired Internet Banking hold, because the next run re-reads the
+  same rows and refuses again, deterministically, every fifteen minutes. `REVIEW_ONLY`
+  travels into the sibling loop by design, so the sibling RECORDS its hazard in the
+  same transaction instead. Catching the refusal was tried first and was wrong: the
+  refusal is raised by the SIBLING while the fallback enqueued for the cancelled
+  SOURCE, and at the default host scope (`sameBookingOwner: false`) a terminal source
+  yields an empty dependent list — so at the configuration most clubs run, the catch
+  recorded nothing at all. This is the second position in the tree that reaches for
+  `REVIEW_ONLY` for that reason rather than for §13's school carve-out; the other is
+  the post-commit incident drain, where refusing would roll back the incident that is
+  the point of the call. `INV-HOST-020`'s census names all three and makes a fourth
+  state which it is. Nothing is caught: a participant retry and a database failure
+  propagate to the callers' existing re-drive boundaries.
 
   `adult-member-hosting-call-sites.test.ts` holds both halves. It finds terminal
-  status flips by `RELEASE_WHOLE_LODGE_HOLD_UPDATE`, this repository's own single
-  source of truth for one, so the NEXT cancelling writer is swept the day it is
-  written rather than the day somebody remembers it; the two exempt files are
-  transitions that cannot remove a source (one writes no status at all, the other
-  releases from PAYMENT_PENDING), each named with its reason. And it pins the seam's
-  two callers, that neither reaches the bare reconciler or the officer helper, and
-  the order of the catch itself.
+  status flips **by the write itself** — a `data:` object assigning CANCELLED,
+  EXPIRED or BUMPED inside a `booking.update`/`updateMany` — and requires a seam
+  within the **enclosing function**, not merely somewhere in the file. Both
+  refinements were paid for by real misses: keying on
+  `RELEASE_WHOLE_LODGE_HOLD_UPDATE`, which `booking-status.ts` claimed was "spread
+  into every terminal status flip", left ten cancelling writers invisible, and a
+  whole-file search passed `payment-reconciliation.ts` while its capacity-failed
+  void reached no seam at all. The constant is kept as a secondary signal: a file
+  that spreads it but shows no detected flip has to say why, so a flip written in a
+  shape the reader misses cannot make the sweep quietly vacuous. Exemptions are
+  keyed `file::function` and each names the status the writer really flips FROM.
+  What the sweep cannot do is prove the seam sits on the same control-flow branch as
+  the flip; that needs reachability analysis rather than text, so it is a floor and a
+  reviewer still decides.
+
+  **A re-drive DOES exist for the group case, and the argument above does not rest
+  on its absence.** `cron-group-settlement-reaper.ts` →
+  `resumeInterruptedOrganiserCancels` (#1236) selects `ORGANISER_PAYS` groups whose
+  ORGANISER BOOKING is CANCELLED, older than a short grace, still holding
+  `organiserSettled` children in the active set, and re-invokes the same idempotent
+  cleanup. `GroupBooking.status` is not in that query, so a group already fenced
+  CANCELLED is re-driven like any other, and the child status set it looks for is
+  `group-cancel.ts`'s own `ACTIVE_CHILD_STATUSES`, imported rather than re-listed
+  (`INV-SSOT`) so the two can never drift. The reason a refusal still must not reach
+  these paths is that it is DETERMINISTIC: a re-drive re-reads the same rows and
+  refuses again, forever, which is a wedge rather than a recovery.

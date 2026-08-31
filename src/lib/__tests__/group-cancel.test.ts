@@ -1394,8 +1394,9 @@ describe("adult-member hosting on an organiser cancel (#3209)", () => {
   });
 
   it("keeps one child's hosting failure from stopping the rest of the cleanup", async () => {
-    // The seam swallows the only refusal the hosting rule can raise, so what is
-    // left to reach here is a database or contention failure. It rolls that
+    // The seam asks for `REVIEW_ONLY`, so the hosting rule cannot refuse this at
+    // all; what is left to reach here is a database failure or a participant
+    // retry. It rolls that
     // child's transaction back exactly as any other in-transaction failure does —
     // the pre-existing best-effort `continue` — and the remaining children are
     // still cancelled, which is what "an organiser cancel always completes" means

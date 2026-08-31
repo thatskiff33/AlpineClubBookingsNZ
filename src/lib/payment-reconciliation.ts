@@ -1396,22 +1396,15 @@ async function settleBookingPaymentInTransaction(
       }
 
       // #3209 (`INV-HOST-041`). The beds are reconciled above; ADULT SUPERVISION
-      // was not. `PAYABLE_SUCCESS_STATUS_LIST` — the status set this void claims
-      // from — includes CONFIRMED, one of the two statuses that qualify a booking
-      // as a `SAME_BOOKING_OWNER` coverage source, so this cancel can take the
-      // qualifying adult off ANOTHER booking of the same member. The
-      // `enqueueOwnHostingCoverageReevaluation` further down this function is NOT
-      // this branch's: it sits on the mutually exclusive SETTLE path and this
-      // branch returns before reaching it. Last in the transaction, after the
-      // lodge capacity key and the per-member credit-ledger key
-      // `restoreCreditFromBooking` takes, because the coverage-owner key this may
-      // take is always acquired last (`INV-HOST-031`, `INV-LOCK-002`). Through the
-      // system-cancellation seam because a capacity-failed void has no actor to
-      // refuse: the member has already paid, the money is already being refunded,
-      // and a rolled-back void would leave a paid-for bed the lodge cannot supply.
-      // The post-commit drain is the unconditional `settleHostingCoverageAfterCommit`
-      // in `markBookingPaymentSucceeded`, which runs on every outcome including
-      // this one.
+      // was not. `PAYABLE_SUCCESS_STATUS_LIST` includes CONFIRMED — a coverage
+      // source — so this void can take the qualifying adult off another booking of
+      // the same member. The `enqueueOwnHostingCoverageReevaluation` further down
+      // is NOT this branch's: it is on the mutually exclusive settle path and this
+      // branch returns first, which is why a whole-file census passed here.
+      // Through the system-cancellation seam because a capacity-failed void has no
+      // actor to refuse, and last in the transaction because the coverage-owner key
+      // comes after the lodge and credit-ledger keys (`INV-LOCK-002`). Drained by
+      // `markBookingPaymentSucceeded`, which settles coverage on every outcome.
       await reconcileHostingReviewForSystemCancellation(booking.id, tx);
 
       return {
