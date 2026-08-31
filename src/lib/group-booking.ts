@@ -872,6 +872,16 @@ export async function joinGroupBookingAsMember(
     });
     const hostingViolation = await evaluateProposedAdultMemberHosting(prisma, {
       bookingOwnerMemberId: sessionUserId,
+      // #3038. The joiner's booking does not exist yet, but the Group Trip they
+      // are joining does, and its id came from the join code they redeemed — so
+      // where the club has `SAME_GROUP_TRIP` on, a qualifying adult travelling
+      // on a sibling booking can already be seen at PREFLIGHT rather than only
+      // once the row is written. Without this the member is told their party is
+      // short of cover, and the reconciler inside the creating transaction then
+      // finds it covered: the same booking answered two different ways a second
+      // apart. `createConfirmedBooking` writes the `GroupBookingJoin` row before
+      // it reconciles, so the persisted answer resolves the identical group.
+      groupBookingId: group.id,
       lodgeId: groupLodgeId,
       checkIn,
       checkOut,
@@ -1682,18 +1692,48 @@ export async function verifyAndCreateNonMemberJoin(
         select: { id: true },
       });
 
+      // #3038 — THE ROSTER ROW IS CLAIMED BEFORE THE HOSTING RULE IS ANSWERED,
+      // AND THE ORDER IS LOAD-BEARING.
+      //
+      // `GroupBookingJoin.bookingId` IS this booking's Group Trip identity
+      // (`INV-HOST-043`), so a reconciliation that ran before this write would
+      // read the joiner's brand-new booking as belonging to no Group Trip and
+      // would supply no `SAME_GROUP_TRIP` cover — silently, and only for the one
+      // evaluation that decides whether the join is refused at all. Every later
+      // evaluation of the same booking would find the cover and disagree with
+      // it. Writing the link as soon as the `Booking` row exists to point at
+      // makes the create path's answer the same one every subsequent read gives,
+      // which is the same ordering `createConfirmedBooking` already relies on
+      // for the member join.
+      //
+      // Both writes are in ONE transaction, so nothing outside it can observe
+      // the intermediate state, and a hosting refusal below still rolls the
+      // claim back with the booking.
+      await tx.groupBookingJoin.update({
+        where: { id: join.id },
+        data: { bookingId: booking.id, joinerMemberId: member.id },
+      });
+
       // #2364. A verified NON-MEMBER joiner booking is all non-member guests
-      // owned by a fresh non-login contact, so nobody on it can host. It hangs
+      // owned by a fresh non-login contact, so nobody ON IT can host. It hangs
       // off the organiser's booking by `parentBookingId`, but it belongs to a
       // DIFFERENT member, so the organiser's adults are deliberately not
-      // borrowed (see `loadSiblingHosts`): "an adult member on the same booking"
-      // keeps meaning what it says, and under the REVIEW consequence the review is
-      // how an admin decides whether the organiser's presence is good enough.
+      // borrowed as split siblings (see `loadSiblingHosts`): "an adult member on
+      // the same booking" keeps meaning what it says, and under the REVIEW
+      // consequence the review is how an admin decides whether the organiser's
+      // presence is good enough.
+      //
+      // #3038 changes what a club MAY choose, not what it gets by default. Where
+      // the club has ticked `SAME_GROUP_TRIP`, the organiser's qualifying adults
+      // now reach this booking as host-only participants under that scope — the
+      // roster row written just above is what makes them findable — while the
+      // beds, the price, the payment and the ownership stay entirely separate.
+      // A club that has not ticked it sees exactly the paragraph above.
       //
       // #2569: under the ENFORCED consequence this throws instead, which rolls the
-      // whole verified join back. Every non-member join at such a lodge is refused
-      // — see the catch below for why that is the rule working rather than an edge
-      // case, and for the generic sentence this unauthenticated path answers with.
+      // whole verified join back. Every uncovered non-member join at such a lodge
+      // is refused — see the catch below for the generic sentence this
+      // unauthenticated path answers with.
       await reconcileAdultMemberHostingReviewWithSiblings(booking.id, tx);
 
       await tx.payment.create({
@@ -1710,11 +1750,6 @@ export async function verifyAndCreateNonMemberJoin(
           tokenHash: payTokenHash,
           expiresAt: paymentLinkExpiresAt,
         },
-      });
-
-      await tx.groupBookingJoin.update({
-        where: { id: join.id },
-        data: { bookingId: booking.id, joinerMemberId: member.id },
       });
 
       return { bookingId: booking.id, memberId: member.id };
@@ -1742,9 +1777,13 @@ export async function verifyAndCreateNonMemberJoin(
     // right now", which is an outage message for a policy decision.
     //
     // A verified non-member join is the party this rule exists for — every guest
-    // is a non-member and the owner is a fresh non-login contact, so nobody on the
-    // booking can host — which means an ENFORCED lodge refuses ALL of them. That
-    // is the club's rule doing what it says, not an edge case.
+    // is a non-member and the owner is a fresh non-login contact, so nobody ON
+    // THE BOOKING can host. At a club running the built-in scope set that means
+    // an ENFORCED lodge refuses ALL of them, which is the club's rule doing what
+    // it says rather than an edge case. #3038 gives such a club a deliberate way
+    // out if it wants one: with `SAME_GROUP_TRIP` ticked, a qualifying adult
+    // genuinely travelling on a sibling Group Trip booking covers these nights,
+    // and only the joins with no such adult are refused.
     //
     // The detailed sentence, the uncovered nights and the frozen violation live in
     // this log line and only here, matching the minimum-stay refusal above: the

@@ -305,6 +305,25 @@ export const AID6B_HOSTING_SIBLING_CEILING = 25;
  */
 export const AID6B_HOSTING_SAME_OWNER_SOURCE_CEILING = 25;
 
+/**
+ * How many `SAME_GROUP_TRIP` coverage sources the hosting evidence read may
+ * consider (#3038, epic #2943).
+ *
+ * A THIRD ceiling, and the first one at a DIFFERENT number, because the third
+ * population is a different shape. Twenty-five other bookings on one account at
+ * one lodge is a data problem; twenty-five other bookings in one Group Trip is a
+ * club trip. A Group Trip is MEANT to be many separate bookings — one per family
+ * — so borrowing either number above would refuse the diagnostic on perfectly
+ * ordinary trips. It matches the writer's own
+ * `SAME_GROUP_TRIP_COVERAGE_SOURCE_LIMIT`, which is bounded above by the beds a
+ * lodge has.
+ *
+ * The failure direction is the one its siblings describe: the writer's bound
+ * errs towards flagging, which is safe for a writer and FABRICATES a live
+ * blocker for evidence, so this one refuses rather than truncating.
+ */
+export const AID6B_HOSTING_GROUP_TRIP_SOURCE_CEILING = 100;
+
 const UTC_DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
@@ -1310,6 +1329,18 @@ async function readBookingBlockState(
            * whose bindings mean different things to an operator.
            */
           sameOwnerSourceCeiling: AID6B_HOSTING_SAME_OWNER_SOURCE_CEILING,
+          /**
+           * AND THE THIRD, which the first two did not cover (#3038).
+           *
+           * `loadSameGroupTripHosts` is reached whenever the lodge has the Group
+           * Trip host scope on AND this booking is in a Group Trip, and its
+           * writer bound truncates for the same reason and with the same
+           * inversion. Three ceilings, because they bound three populations
+           * whose bindings mean three different things to an operator — and
+           * this one is the only one whose bind says "the trip is big", not
+           * "the data is odd".
+           */
+          groupTripSourceCeiling: AID6B_HOSTING_GROUP_TRIP_SOURCE_CEILING,
           subscriptionLockoutMode: requireResolvedLockoutMode(
             subscriptionLockoutMode,
           ),
