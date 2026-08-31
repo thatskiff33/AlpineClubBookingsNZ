@@ -3386,7 +3386,9 @@ describe("runBookingXeroRepair - booking edits priced by a financial review (#31
      * concealing the finding it exists to raise, for a fortnight.
      */
     const booking = bookingWithReviewCharge({ status: "PENDING" });
-    const request = booking.payment.transactions[0];
+    // `makeBooking`'s literal leaves `transactions` an empty array, so the
+    // element type widens to `never`; the row itself is the fixture above.
+    const request: any = booking.payment.transactions[0];
     const deps = createDependencies({
       bookings: [booking],
       editReviewChargeShares: [settledShare()],
@@ -3461,7 +3463,9 @@ describe("runBookingXeroRepair - booking edits priced by a financial review (#31
       status: "PENDING",
       amountCents: 4000,
     });
-    const request = booking.payment.transactions[0];
+    // `makeBooking`'s literal leaves `transactions` an empty array, so the
+    // element type widens to `never`; the row itself is the fixture above.
+    const request: any = booking.payment.transactions[0];
     const deps = createDependencies({
       bookings: [booking],
       editReviewChargeShares: [
