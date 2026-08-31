@@ -382,7 +382,7 @@ export const AUDIT_CENSUS_TOTALS = {
   // `UNCATEGORISED_AUDIT_WRITERS` below. Measured by RUNNING
   // `npm run audit:census` on this tree (464 sites, 2225 files scanned), not by
   // adding one to the literal.
-  writeSites: 464,
+  writeSites: 465,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -463,7 +463,7 @@ export const AUDIT_CENSUS_TOTALS = {
     // 117 -> 118 (#3191): the stored-night-price record above.
     // 117 -> 118 (#3193): its counterpart, the re-invoiced review share, in the
     // same module and the same form.
-    createAuditLog: { total: 118, uncategorised: 0 },
+    createAuditLog: { total: 119, uncategorised: 0 },
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -580,7 +580,7 @@ export const AUDIT_CENSUS_TOTALS = {
     // invoice for money a booking change's first invoice went out without, and
     // the person who answers a member asking why two invoices arrived is the one
     // who reconciles the club's money.
-    payment: 39,
+    payment: 40,
     // 27 -> 34 (#2581 child 2): the five family-group writers and the two
     // dependants writers. Both dependants writers also moved off a hand-built
     // Prisma literal and onto the audit boundary in the same change.

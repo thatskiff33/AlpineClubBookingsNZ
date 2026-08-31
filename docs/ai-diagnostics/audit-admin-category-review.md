@@ -584,9 +584,9 @@ land.
 manifest moving with it. The numbers this page was written against:
 
 ```
-row-producing sites:  464
+row-producing sites:  465
 uncategorised:        0
-category values: admin 104, booking 101, xero 34, family 35, payment 39,
+category values: admin 104, booking 101, xero 34, family 35, payment 40,
                  lodge 65, account 19, security 22, privacy 19,
                  communication 21, system 4
 ```
@@ -636,7 +636,9 @@ invoice already sent — because they are the same fact about the same edit; a
 what tells an officer which one to go and fix.
 
 Since then #3191 added the stored-night-price record
-(`payment` 38 → 39, 463 → 464): settling a review may also record what the
+(`payment` 38 → 39, 463 → 464 on its own branch; both this and the note below
+landed together, so the MERGED tree measures `payment` 40 and 465): settling a
+review may also record what the
 booking's unpriced nights sold for, which rewrites what a stay is stored as
 having been worth and is therefore a money-affecting act in its own right. It is
 a SECOND entry beside the completion's rather than metadata on it, because it can
@@ -646,7 +648,8 @@ merged tree rather than by adding one branch's delta to the other's total. The
 category values sum to 463 rather than 464 because one site forwards its category
 rather than naming one.
 what tells an officer which one to go and fix. Since then #3193 added that
-record's counterpart (`payment` 38 → 39, 463 → 464): the owner decided on
+record's counterpart (`payment` 39 → 40, 464 → 465 measured on the merged
+tree, not by adding one branch's delta to the other's total): the owner decided on
 31 Aug 2026 that the difference is BILLED, on a second separate invoice, rather
 than collected by hand, so `booking.editFinancialReview.chargeShareReinvoiced`
 records that it is on its way and the `chargeShareUncollected` row now fires only
