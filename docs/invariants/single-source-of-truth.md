@@ -263,8 +263,15 @@ are permanent: never renumbered, never reused.
   twelve minutes later in CI. **Use it; do not write a second.** The figure was
   published as 48 while the module's own docblock said 53 and the tree said 53,
   which is this ID applied to its own entry: two statements of one fact, and
-  nothing comparing them. Re-measured at #3180, after three conversions took it
-  to 56, and again at #3196, whose one conversion took it to 57.
+  nothing comparing them. It was re-measured at #3180, and at #3196 it was
+  INCREMENTED rather than measured — one added for the single file that lane
+  converged, on top of a figure that was itself one high. **Something compares
+  them now**: `ssot-comment-stripper-guard.test.ts` counts the importers in the
+  tree and requires both this sentence and the module's own docblock to state
+  that number, so the fourth drift fails a test instead of waiting for a
+  reviewer to notice. Measure it; never increment it — the module is imported
+  through four different path forms, and two further files name its path as data
+  without importing it.
 - **A population measured by NAME is not the population**, and the count above
   is the evidence. #3132 converged the copies spelled `stripComments` and closed;
   seven more were alive that day under the name `withoutComments`, and #3164

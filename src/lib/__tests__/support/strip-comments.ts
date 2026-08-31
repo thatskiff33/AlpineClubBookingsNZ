@@ -5,7 +5,13 @@
  * THE ONE DEFINITION IN THE TREE, and since #3164 a rule ENFORCES that rather
  * than review doing it: 56 test files and one CI script import this module, and
  * `ssot/no-local-comment-stripper` in `eslint.config.mjs` reports a second
- * scanner wherever one is written, in the editor.
+ * scanner wherever one is written, in the editor. That FIGURE is measured
+ * against the tree by `ssot-comment-stripper-guard.test.ts`, which also requires
+ * `docs/invariants/single-source-of-truth.md` to state the same number — it has
+ * drifted three times (published as 48 against a tree of 53, re-measured at
+ * #3180, incremented rather than measured at #3196), and INV-SSOT-004's own
+ * point is that two statements of one fact with nothing comparing them is the
+ * defect.
  *
  * #3132's own claim to have converged the tree was true of the copies spelled
  * `stripComments` and of nothing else. Measured on the day it landed, SEVEN more
@@ -31,9 +37,12 @@
  * choice in the tree, so a form's own docblock says what it is and sends you
  * here rather than restating the other four:
  *
- * - `stripComments` — you want the code as TEXT and will grep it.
+ * - `stripComments` — you want the code as TEXT and will grep it. It copies a
+ *   regex literal through VERBATIM, where both blank forms blank the body.
  * - `stripCommentsAndStrings` — the rule's own subject gets discussed in prose,
- *   including inside a quoted example, and must not fire on it.
+ *   including inside a quoted example, and must not fire on it. It alone keeps
+ *   an identifier-shaped bracket key (`invoice["dueDate"]`), which is a property
+ *   read spelled with a string rather than prose.
  * - `stripCssComments` — the file is CSS.
  * - `blankLiterals` — you are a WALKER: you report a line number, slice by
  *   index, or compare one match's position against another's.
@@ -45,6 +54,13 @@
  * The last one is a fifth export on a module whose value is that there is one
  * obvious choice per job, and that cost was taken knowingly (#3196) to get the
  * ratchet below to zero. The list above is what pays for it.
+ *
+ * TWO OF THOSE CLAUSES ARE NOT STYLE. A regex body and a bracket key are TEXT A
+ * SCANNER CAN MATCH, so moving a census from one form to another changes the
+ * ANSWER it reports, silently and without a line of its own code changing.
+ * `advisory-lock-guard.test.ts` rests on the first of them: its "does not count
+ * a needle that only appears inside a regex" case holds because the blank forms
+ * blank a regex body, and `stripComments` would count that needle.
  *
  * Two lists in `eslint.config.mjs` say what is not a copy.
  * `COMMENT_STRIPPER_ALLOWLIST` holds the scanners that are a different CONCEPT —
@@ -209,7 +225,10 @@ function endOfRegexLiteral(source: string, start: number): number {
   while (index < source.length) {
     const char = source[index];
     if (char === "\\") {
-      index += 2;
+      // CLAMPED for the reason given on `blankTemplateLiteral`'s escape branch:
+      // a source ending in a backslash would otherwise return one PAST the end,
+      // and `blankCode` pushes that as a `regex` span's `end`.
+      index = Math.min(index + 2, source.length);
       continue;
     }
     // A regex literal cannot span lines; if one appears to, the `/` was
@@ -570,7 +589,16 @@ function blankTemplateLiteral(
     const char = source[index];
     if (char === "\\") {
       out += blanked(source, index, index + 2);
-      index += 2;
+      // CLAMPED, and the clamp is the contract rather than tidiness. A source
+      // ending `` `ab\ `` leaves nothing after the backslash, so an unclamped
+      // `index += 2` exits this loop at `source.length + 1` and `endRun` below
+      // pushes a span whose `end` is OUTSIDE the source — contradicting
+      // {@link BlankedSpan}, whose whole promise is that `start`/`end` address
+      // the ORIGINAL text. `code` and the restore survive it (both slices clamp
+      // on their own), so it fails silently for anybody slicing and loudly for
+      // anybody doing ARITHMETIC on `end`. The string branch below has always
+      // clamped, with `Math.min(cursor, source.length)`.
+      index = Math.min(index + 2, source.length);
       continue;
     }
     if (char === "\n") {

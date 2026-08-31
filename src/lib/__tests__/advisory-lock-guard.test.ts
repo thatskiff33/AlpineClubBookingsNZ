@@ -1102,23 +1102,33 @@ function isTestFile(relPath: string): boolean {
  * Does this blanked run hold a RAW STATEMENT the census must be able to read,
  * rather than prose about one?
  *
- * DOUBLE-QUOTED LITERALS ARE NOT CODE for this purpose, and #2623 T9(d) is where
- * that started to matter: `adult-member-hosting-queue-participants.ts` names its
- * own protocol inside an error message ("… must never be issued without its FOR
- * KEY SHARE NOWAIT lock"), which is prose about a statement, not a statement. A
+ * A QUOTED LITERAL IS NOT CODE for this purpose, and #2623 T9(d) is where that
+ * started to matter: `adult-member-hosting-queue-participants.ts` names its own
+ * protocol inside an error message ("… must never be issued without its FOR KEY
+ * SHARE NOWAIT lock"), which is prose about a statement, not a statement. A
  * counter that scored it would put a number in the inventory below that no reader
  * could reconcile against the file, and would fail the census when somebody
  * reworded a sentence. Every raw statement in this repository is written as a
  * BACKTICK template, so template text is always restored.
  *
- * BUT ONLY PROSE, NOT SQL (#2623 F7). Suppressing every double-quoted literal
- * opened the same hole T9(d) exists to close, one level down: `$executeRawUnsafe`
- * takes a plain string, so `const SQL = "SELECT … FOR UPDATE"; await
+ * QUOTED MEANS EITHER QUOTE, and that is deliberate rather than an oversight of
+ * the double-quoted spelling this rule was written against.
+ * `blankLiteralsWithSpans` reports `"` and `'` alike as `kind: "string"`, so the
+ * test below is quote-agnostic and every clause here applies to both. Nothing
+ * would be gained by narrowing it to one quote: a single-quoted sentence is as
+ * much prose as a double-quoted one.
+ *
+ * BUT ONLY PROSE, NOT SQL (#2623 F7). Suppressing every quoted literal opened the
+ * same hole T9(d) exists to close, one level down: `$executeRawUnsafe` takes a
+ * plain string, so `const SQL = "SELECT … FOR UPDATE"; await
  * tx.$executeRawUnsafe(SQL)` would score ZERO and drop out of the census
  * silently. A literal containing `SELECT` is therefore restored and counted —
  * prose about the protocol does not contain it (the one live case, quoted above,
  * does not), and a raw statement always does. The narrower rule keeps the false
- * positive suppressed while refusing to suppress a real statement.
+ * positive suppressed while refusing to suppress a real statement. **Both
+ * spellings are counted**: `tx.$executeRawUnsafe('SELECT … FOR UPDATE')` scores
+ * exactly as its double-quoted twin does, which the cases below pin so nobody
+ * reads the paragraph above as a double-quote-only carve-out.
  *
  * A `comment` run is never restored, which is the whole point of masking, and a
  * `regex` run is never restored because a pattern is not a statement.
@@ -1753,6 +1763,16 @@ describe("the masking rule (#3196, INV-SSOT-004)", () => {
     expect(sites.map((site) => site.tier)).toEqual(["GLOBAL"]);
   });
 
+  it("counts a raw statement in a SINGLE-quoted literal too", () => {
+    // The rule is quote-agnostic because the blanker reports both quotes as
+    // `kind: "string"`. Pinned because the prose above was for a while written
+    // as if only the double-quoted spelling were in scope, and a reader who
+    // believed that would think `$executeRawUnsafe('SELECT … FOR UPDATE')` went
+    // uncounted. It does not.
+    expect(rowLocks("const SQL = 'SELECT 1 FROM x FOR UPDATE';")).toBe(1);
+    expect(rowLocks("throw new Error('never issued without its FOR KEY SHARE lock');")).toBe(0);
+  });
+
   it("does not count a needle that only appears inside a regex", () => {
     // A pattern is not a statement. `blankLiteralsWithSpans` reports the regex
     // body as its own kind and `holdsRawStatement` refuses it.
@@ -1791,6 +1811,39 @@ describe("the masking rule (#3196, INV-SSOT-004)", () => {
     }
     pieces.push(code.slice(cursor));
     expect(pieces.join("")).toBe(source);
+  });
+
+  /*
+    A SPAN NEVER ENDS PAST THE SOURCE — the other half of the contract the
+    restore above rests on, and the half that used to be breakable.
+    `blankTemplateLiteral` and `endOfRegexLiteral` each step TWO characters over
+    an escape, so a file whose last character is a backslash left the cursor one
+    PAST the end and reported a span addressing a character that does not exist.
+    Slicing survived it, because both slices clamp on their own — which is
+    precisely why it needs a test: it was invisible to `maskedSource` and would
+    have surfaced only in a caller doing ARITHMETIC on `end`.
+  */
+  it("never reports a span that ends past the end of the source", () => {
+    const sources = [
+      "`ab\\", // an unterminated template whose last character escapes
+      "const re = /a\\", // the same shape in a regex literal
+      'const s = "ab\\', // the string branch, which has always clamped
+      "/* an unterminated block comment",
+      "// an unterminated line comment",
+    ];
+
+    for (const source of sources) {
+      const { code, spans } = blankLiteralsWithSpans(source);
+      expect(code.length, source).toBe(source.length);
+
+      for (const span of spans) {
+        expect(
+          span.end,
+          `${JSON.stringify(source)} reported a ${span.kind} span ending at ${span.end}, outside a ${source.length}-character source. A span addresses the ORIGINAL text, so a caller may do arithmetic on it and not only slice with it.`,
+        ).toBeLessThanOrEqual(source.length);
+        expect(span.start, JSON.stringify(source)).toBeLessThanOrEqual(span.end);
+      }
+    }
   });
 
   it("keeps a lock site on the line it is written on", () => {

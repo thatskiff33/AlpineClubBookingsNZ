@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 import { ESLint } from "eslint";
@@ -42,6 +42,102 @@ vi.setConfig({
 const REPO_ROOT = path.resolve(__dirname, "../../..");
 const RULE_ID = "ssot/no-local-comment-stripper";
 const INVARIANT_ID = "INV-SSOT-004";
+const CANONICAL_MODULE = "src/lib/__tests__/support/strip-comments.ts";
+
+/**
+ * The two places the importer population is WRITTEN DOWN.
+ *
+ * Both must say the same number, and it must be the number the tree holds. The
+ * pair is the point: `INV-SSOT-004`'s own bullet was "two statements of one
+ * fact, and nothing comparing them", and the fact in question was this one.
+ */
+const POPULATION_PUBLISHERS = [
+  CANONICAL_MODULE,
+  "docs/invariants/single-source-of-truth.md",
+] as const;
+
+/** The published sentence, in the one wording both publishers use. */
+const PUBLISHED_POPULATION = /(\d+)\s+test files and\s+one CI script import\b/;
+
+/*
+  HOW AN IMPORTER IS COUNTED, because every previous count of this got it wrong
+  in a different way and the counting rule is the whole difficulty.
+
+  The module is reached through at least FOUR path forms — `@/lib/__tests__/
+  support/strip-comments`, `./support/strip-comments`, `../support/strip-comments`
+  and the CI script's `../../src/lib/__tests__/support/strip-comments.ts` — so a
+  grep for any one of them undercounts. Two further files name the path as DATA
+  rather than importing it: this file lints the canonical module's own text, and
+  `eslint.config.mjs` names it in the rule's message, so a grep for the path
+  OVERCOUNTS by two. Matching an import SPECIFIER rather than the path is what
+  gets both halves right, and the module never counts itself.
+
+  IT SCANS RAW TEXT, DELIBERATELY. Stripping comments first would be the tidier
+  instrument and it is refused here for a specific reason: this file would have
+  to import the canonical module to do it, which would make this guard the
+  fifty-seventh importer and move the very number it exists to measure. The
+  accepted cost is that a specifier written inside a comment would be counted;
+  measured across the tree, none is, and the failure message below prints the
+  file list so a spurious entry is visible rather than merely arithmetic.
+*/
+const IMPORT_SPECIFIER =
+  /(?:\bfrom\s*|\bimport\s*|\brequire\s*\(\s*)(["'])([^"'\n]+)\1/g;
+const CANONICAL_SPECIFIER =
+  /(?:^|\/)support\/strip-comments(?:\.(?:ts|tsx|js|jsx|mjs|cjs))?$/;
+
+const SCANNED_EXTENSION = /\.(?:ts|tsx|js|jsx|mjs|cjs)$/;
+const UNSCANNED_DIRECTORY = new Set([
+  "node_modules",
+  ".git",
+  ".next",
+  ".artifacts",
+  "coverage",
+  "dist",
+  "build",
+  "playwright-report",
+  "test-results",
+  "public",
+]);
+
+function scannableFiles(dir: string, found: string[] = []): string[] {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (entry.isDirectory()) {
+      if (UNSCANNED_DIRECTORY.has(entry.name)) continue;
+      scannableFiles(path.join(dir, entry.name), found);
+    } else if (SCANNED_EXTENSION.test(entry.name)) {
+      found.push(path.join(dir, entry.name));
+    }
+  }
+  return found;
+}
+
+/** Repo-relative paths of every file that IMPORTS the canonical module. */
+function measuredImporters(): { tests: string[]; others: string[] } {
+  const tests: string[] = [];
+  const others: string[] = [];
+
+  for (const absolute of scannableFiles(REPO_ROOT)) {
+    const file = path.relative(REPO_ROOT, absolute).split(path.sep).join("/");
+    if (file === CANONICAL_MODULE) continue;
+
+    const source = readFileSync(absolute, "utf8");
+    IMPORT_SPECIFIER.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    let imports = false;
+    while ((match = IMPORT_SPECIFIER.exec(source)) !== null) {
+      if (CANONICAL_SPECIFIER.test(match[2] ?? "")) {
+        imports = true;
+        break;
+      }
+    }
+    if (!imports) continue;
+
+    if (/\.(?:test|spec)\.(?:ts|tsx|js|jsx|mjs)$/.test(file)) tests.push(file);
+    else others.push(file);
+  }
+
+  return { tests: tests.sort(), others: others.sort() };
+}
 
 /** Where a fixture is pretended to live. Never a real file. */
 const FIXTURE_FILE = path.join(
@@ -424,5 +520,51 @@ describe("INV-SSOT-004: the two lists say what they are", () => {
       UNCONVERGED_COMMENT_SCANNERS.length,
       "#3196 took this to zero, and zero is where it stays. If you are adding an entry, converge instead: the canonical module is `./support/strip-comments`, it holds FIVE forms, and the two that exist for a walker are `blankLiterals` (offsets preserved) and `blankLiteralsWithSpans` (offsets preserved, plus the runs it blanked, for a caller that must restore some of them). If yours is a different CONCEPT rather than the same scanner again, it belongs on COMMENT_STRIPPER_ALLOWLIST with a reason that says why.",
     ).toBe(0);
+  });
+});
+
+/*
+  THE PUBLISHED POPULATION IS THE MEASURED ONE — the pin the bullet above did not
+  have, which is why the number has now drifted THREE times.
+
+  It was published as 48 while the module's docblock said 53 and the tree said
+  53; #3180 re-measured it; and #3196 then INCREMENTED it — added one to the
+  inherited figure for the one file it converged — while its own commit message
+  said it had measured. That the inherited figure was itself one high, so the
+  increment landed one high too, is not a coincidence worth relying on.
+
+  A reviewer caught each of those. A reviewer is not an instrument, and the
+  bullet being drifted from is the one that says two statements of a fact with
+  nothing comparing them IS the defect. This suite is the comparison.
+*/
+describe("INV-SSOT-004: the published importer count is measured, not inherited", () => {
+  it("agrees with the tree, and both publishers agree with each other", () => {
+    const { tests, others } = measuredImporters();
+
+    expect(
+      tests.length,
+      "No file imports the canonical stripper. Either the scan is broken or the module has moved, and every assertion here would otherwise pass vacuously.",
+    ).toBeGreaterThan(0);
+
+    expect(
+      others,
+      `The published sentence says "one CI script". Measured, the non-test importers are: ${others.join(", ") || "(none)"}. If a non-test importer has genuinely been added, reword the sentence in ${POPULATION_PUBLISHERS.join(" and ")} — do not widen this assertion to hide it.`,
+    ).toEqual(["scripts/ci/check-website-render-modes.mjs"]);
+
+    for (const publisher of POPULATION_PUBLISHERS) {
+      const published = PUBLISHED_POPULATION.exec(
+        readFileSync(path.join(REPO_ROOT, publisher), "utf8"),
+      );
+
+      expect(
+        published,
+        `${publisher} no longer contains the sentence "<n> test files and one CI script import…". It is one of the two places ${INVARIANT_ID} publishes this population; if the wording changed, change ${PUBLISHED_POPULATION} with it rather than letting this comparison quietly stop happening.`,
+      ).not.toBeNull();
+
+      expect(
+        Number(published?.[1]),
+        `${publisher} publishes ${published?.[1]} test files; the tree holds ${tests.length}. MEASURE the number, do not increment it: the module is imported through four different path forms, and two further files name the path as data without importing it. This has drifted three times. The other publisher is ${POPULATION_PUBLISHERS.filter((other) => other !== publisher).join(", ")}.`,
+      ).toBe(tests.length);
+    }
   });
 });
