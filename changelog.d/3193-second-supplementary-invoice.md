@@ -22,6 +22,16 @@
   where the alternative was being billed too little and then approached later for
   the rest.
 
+- **A second invoice is raised only once the first one has actually gone out.**
+  There is a brief moment where the first invoice has been picked up to send but
+  has not left — and an invoice in that state can still come back and be raised to
+  cover everything by the next pricing job settled. If a second invoice had been
+  raised during that moment as well, the same amount could have ended up on both,
+  and the member would have been billed more than the change cost. So in that
+  moment nothing extra is raised; the booking's history records what happened and
+  tells the office to check the invoices for the booking before billing anything.
+  That is the same position the club was in before this change, and never worse.
+
 - **The office gets a plain record either way.** The booking's history now says
   when a second invoice was raised and for how much, so whoever answers the
   member's "why have I got two of these?" has the answer in front of them. On the
@@ -31,6 +41,15 @@
   where the difference cannot be worked out from the booking alone, it says so
   and points at the Xero repair check rather than inviting a guess, because
   raising an invoice for the full amount there would bill the member twice.
+
+- **A second invoice that the accounting system rejects can now be found and
+  retried like any other.** It is deliberately filed against the pricing job it
+  bills rather than against the booking change, which is what stops it being
+  swept into the first invoice — but that also meant the admin screens did not
+  recognise it: it showed as an unnamed row with no page behind it, and the retry
+  button did not know how to replay it. It now opens, can be filtered for, and
+  replays exactly the amount it was raised with, refusing rather than guessing if
+  that amount is no longer on the record.
 
 - Running the same settlement twice, or two of them at once, still produces one
   invoice per amount owed and never a duplicate.

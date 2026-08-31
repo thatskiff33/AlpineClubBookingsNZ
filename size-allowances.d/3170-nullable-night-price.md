@@ -61,8 +61,23 @@ reason: the operator CLI that replays the pre-#1231 invoice maths was a missed
   cohesive diagnostic - splitting a replay in half is how the halves drift.
 
 file: src/lib/xero-operation-outbox.ts
-lines: 2992
-reason: (#3193 reconciliation - the number, not the argument. This allowance is
+lines: 3094
+reason: (#3193 fix round reconciliation - re-measured at 3094, was 2992. The
+  round split the enqueue's `short` verdict into `short-sent` and
+  `short-in-flight`, because one name was carrying two different facts: an
+  invoice that EXISTS, and a row the outbox has merely claimed. Only the first is
+  durable - a claimed row returns to PENDING un-attempted on a Xero cooldown
+  refusal, and the next settlement then raises it to the combined total, which
+  already contains any share billed separately in the meantime. The worked
+  sequence bills $310 for a $280 edit. The distinction has to live on the outcome
+  the enqueue returns, because the enqueue under its lock is the only place that
+  can tell the two apart at all. The same round fenced
+  `attachPaymentIntentToWaitingSupplementaryInvoiceOperations` on
+  `localModel: "BookingModification"` - it matches on the payload rather than the
+  anchor and was the one change-scoped read that could see a second ask - and
+  made `shortfallReviewTaskId` a parameter of a module-private implementation
+  rather than a public option, so "set only by the wrapper" is unrepresentable
+  rather than policed. Also the earlier note, kept: the number, not the argument. This allowance is
   still unmerged to `main`, so the ratchet judges the file against it rather than
   against the base ref, and 2877 was the length when #3170 wrote it. #3193 added
   the SECOND ASK - a named path over this same enqueue that raises a settled
