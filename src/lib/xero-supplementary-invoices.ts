@@ -59,8 +59,20 @@ export async function createXeroSupplementaryInvoice(params: {
    * cannot raise it to the combined total; it scopes the Xero idempotency key to
    * the task, so Xero does not answer this create with the earlier invoice; and
    * it changes what the member reads on the document. A caller able to take one
-   * without the others could bill the same money twice, so there is no way to
-   * ask for one (`INV-SSOT`).
+   * without the others could bill the same money twice, so the three arrive
+   * together or not at all (`INV-SSOT`).
+   *
+   * WHAT THAT DOES AND DOES NOT PREVENT, stated exactly (#3193 fix round - the
+   * previous wording claimed "there is no way to ask for one", which was true of
+   * the three effects and not of who may set the flag). This parameter is
+   * reachable: it is public, and a caller passing it with an edit's COMBINED
+   * total would get a task-anchored invoice for the whole amount on top of one
+   * already sent. What is closed is the route by which such a row could be
+   * QUEUED - `shortfallReviewTaskId` is no longer an option on the exported
+   * enqueue, only on the module-private implementation the second-ask wrapper
+   * calls. The two callers here are the outbox handler, which reads the value
+   * off a payload only that wrapper mints, and `xero-operation-retry.ts`, which
+   * never sets it.
    */
   shortfallReviewTaskId?: string;
   createdByMemberId?: string;

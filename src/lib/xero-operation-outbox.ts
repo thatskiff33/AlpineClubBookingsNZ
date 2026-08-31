@@ -1055,7 +1055,7 @@ const OUTSTANDING_SUPPLEMENTARY_INVOICE_STATUSES = [
  * with no other lock family, so no ordering cycle is possible. The Xero round
  * trip happens later, in the outbox worker, entirely outside this transaction.
  *
- * THE THREE CALLERS, NAMED, because "every caller is post-commit" was not true
+ * THE FOUR CALLERS, NAMED, because "every caller is post-commit" was not true
  * and a lock-ordering claim has to be checkable. An enumeration written to be
  * audited is worse than useless once it is silently incomplete, so a new caller
  * belongs in this list before it belongs in the tree.
@@ -1075,8 +1075,17 @@ const OUTSTANDING_SUPPLEMENTARY_INVOICE_STATUSES = [
  *      advisory lock when it arrives - and its Stripe round trip has completed
  *      long before this line.
  *
+ *   4. THE SECOND ASK (#3193, `raiseSecondEditReviewChargeInvoice` ->
+ *      `enqueueXeroSecondSupplementaryInvoiceOperation`), billing one settled
+ *      review share whose invoice had already gone out without it. It runs from
+ *      the settlement's own fire-and-forget continuation, after that
+ *      settlement's transaction has committed, so like caller 1 it arrives
+ *      holding nothing. It takes this same lock on a DIFFERENT key - the review
+ *      task's id rather than the change's - so it never contends with the ask it
+ *      follows, and it takes exactly one.
+ *
  * The conclusion is unchanged, and for a stronger reason than "they are all
- * post-commit": none of the three holds anything. This remains a single-lock
+ * post-commit": none of the four holds anything. This remains a single-lock
  * holder either way.
  *
  * ONE THING THIS TRANSACTION TAKES AWAY, recorded because it is easy to miss:
@@ -1107,18 +1116,43 @@ const XERO_SUPPLEMENTARY_INVOICE_LOCK_NAMESPACE = "xero-supplementary-invoice";
  *
  *   * `covers-total` - the ask bills at least the requested net, because this
  *     call queued it, raised it, or found it already asking for that much.
- *   * `short` - an invoice for this anchor exists and could NOT be raised: the
- *     outbox has claimed it (RUNNING), or it has already been sent and the anchor
- *     carries an active `SUPPLEMENTARY_INVOICE` link. Refusing to queue a second
- *     one is correct - two invoices for one edit is the failure this round
- *     removed - but the difference is now owed outside the invoice.
+ *   * `short-sent` - an invoice for this anchor HAS BEEN CREATED: the anchor
+ *     carries an active `SUPPLEMENTARY_INVOICE` link. What that invoice bills is
+ *     fixed forever, and this share is not in it.
+ *   * `short-in-flight` - an operation for this anchor exists and could not be
+ *     restated, because the outbox has claimed it (RUNNING). Nothing has reached
+ *     Xero yet, and that row may still come back.
  *   * `none` - no supplementary invoice is involved at all: nothing positive to
  *     bill, or the booking has no primary Xero invoice to supplement. Not a
  *     shortfall, and not a success either.
+ *
+ * WHY THE TWO SHORTFALLS ARE SEPARATE VALUES rather than one called `short`
+ * (#3193 fix round, the double-bill). They were one value, and that one name was
+ * two different facts: an invoice that EXISTS, and a row that is merely being
+ * executed. Only the first is durable evidence that a share went out without.
+ *
+ * A RUNNING row can return to PENDING WITHOUT EVER REACHING XERO. A Xero
+ * cooldown refuses it before any HTTP call and `processXeroOutbox` un-claims it;
+ * an operator Requeue or the repair pass does the same for a FAILED row. Once it
+ * is restatable again, the NEXT settlement of this edit raises it to the
+ * COMBINED total. So a caller that reacted to the earlier refusal by billing its
+ * share on a SEPARATE invoice has then billed that share twice: once on its own
+ * invoice, and once inside the total the returned row was raised to. Three
+ * shares of $200, $30 and $50 bill $310 for a $280 edit - worse than the
+ * shortfall being fixed, because before the second ask existed that sequence
+ * produced one correct $280 invoice.
+ *
+ * The change-anchored restate cannot cap itself against the separate invoice,
+ * because that invoice is anchored elsewhere BY DESIGN - the invisibility that
+ * makes a second ask idempotent is the same invisibility that hides it from the
+ * raise. So the distinction is made where it is actually true instead: a SENT
+ * invoice is a fact and can be safely supplemented; an in-flight row is not yet
+ * a fact and must not be. `INV-PAY-051`.
  */
 export type XeroSupplementaryInvoiceEnqueueOutcome =
   | "covers-total"
-  | "short"
+  | "short-sent"
+  | "short-in-flight"
   | "none";
 
 /**
@@ -1179,7 +1213,7 @@ export async function enqueueXeroSecondSupplementaryInvoiceOperation(
   },
   options?: { createdByMemberId?: string }
 ) {
-  return enqueueXeroSupplementaryInvoiceOperation(
+  return enqueueSupplementaryInvoiceForAnchor(
     {
       bookingId: params.bookingId,
       priceDiffCents: params.shareCents,
@@ -1205,21 +1239,54 @@ export async function enqueueXeroSecondSupplementaryInvoiceOperation(
   );
 }
 
+interface XeroSupplementaryInvoiceEnqueueParams {
+  bookingId: string;
+  priceDiffCents: number;
+  changeFeeCents: number;
+  bookingModificationId?: string;
+}
+
+interface XeroSupplementaryInvoiceEnqueueOptions {
+  createdByMemberId?: string;
+  paymentIntentId?: string | null;
+  waitForConfirmedAdditionalPayment?: boolean;
+  recordPayment?: boolean;
+}
+
+/**
+ * QUEUE THE BOOKING CHANGE'S OWN SUPPLEMENTARY INVOICE.
+ *
+ * The public entry point, and it cannot be asked for a task-anchored invoice
+ * (#3193 fix round, `INV-SSOT`). The anchor flag used to be an option on THIS
+ * signature, with a docblock asserting that only the second-ask wrapper set it -
+ * true of the code as written, and policed by nothing: any caller could have
+ * passed a review task id together with the edit's COMBINED total and got a
+ * second invoice for the whole amount on top of one already sent. It is now a
+ * parameter of the module-private implementation below, which the wrapper is the
+ * only thing that can reach, so the misuse is unrepresentable rather than
+ * discouraged.
+ */
 export async function enqueueXeroSupplementaryInvoiceOperation(
-  params: {
-    bookingId: string;
-    priceDiffCents: number;
-    changeFeeCents: number;
-    bookingModificationId?: string;
-  },
-  options?: {
-    createdByMemberId?: string;
-    paymentIntentId?: string | null;
-    waitForConfirmedAdditionalPayment?: boolean;
-    recordPayment?: boolean;
+  params: XeroSupplementaryInvoiceEnqueueParams,
+  options?: XeroSupplementaryInvoiceEnqueueOptions
+) {
+  return enqueueSupplementaryInvoiceForAnchor(params, options);
+}
+
+/**
+ * The one implementation behind both entry points, so there is still exactly one
+ * place that answers "does this ask already have an invoice going out?".
+ *
+ * Module-private: the only way to reach its `shortfallReviewTaskId` is
+ * `enqueueXeroSecondSupplementaryInvoiceOperation`, which supplies the share and
+ * the anchor together.
+ */
+async function enqueueSupplementaryInvoiceForAnchor(
+  params: XeroSupplementaryInvoiceEnqueueParams,
+  options?: XeroSupplementaryInvoiceEnqueueOptions & {
     /**
      * #3193: anchor this invoice on a review task instead of the booking change,
-     * because it bills that task's settled share alone. Set ONLY by
+     * because it bills that task's settled share alone. Reachable only through
      * `enqueueXeroSecondSupplementaryInvoiceOperation` above, which is where the
      * reasoning lives.
      */
@@ -1318,16 +1385,20 @@ export async function enqueueXeroSupplementaryInvoiceOperation(
     });
 
     if (existingLink) {
-      // `short`, not `covers-total`, and the caller acts on the difference.
+      // `short-sent`, not `covers-total`, and the caller acts on the difference.
       // The invoice has been SENT, so what it bills is whatever the payload said
       // when the worker picked it up - a figure this row no longer holds, because
       // the handler overwrote the payload with the Xero invoice body. An
       // edit-review share only reaches here after failing to restate, which on
       // that path means the ask went out before this share was settled; treating
       // that as covered would be the silent drop the whole round removed.
+      //
+      // THIS IS THE DURABLE HALF of what used to be one `short`. An active link
+      // means an invoice exists and what it bills can never change again, which
+      // is exactly what makes a second, separate invoice for this share safe.
       return {
         queueOperationId: null,
-        outcome: "short" as XeroSupplementaryInvoiceEnqueueOutcome,
+        outcome: "short-sent" as XeroSupplementaryInvoiceEnqueueOutcome,
         message: "Xero supplementary invoice already linked for this modification.",
       };
     }
@@ -1364,13 +1435,20 @@ export async function enqueueXeroSupplementaryInvoiceOperation(
       // Raised, or already asking for at least this much: either way the queued
       // invoice bills the requested net. Zero on BOTH counters is the one case
       // that does not - the operation is RUNNING, outside the restatable set, so
-      // the outbox is sending the earlier figure right now.
+      // the outbox is trying to send the earlier figure right now.
+      //
+      // `short-in-flight`, NOT `short-sent`, and the difference is load-bearing
+      // rather than descriptive: nothing has reached Xero, this row can be
+      // returned to PENDING un-attempted, and the next settlement would then
+      // raise it to the combined total. A separate invoice raised on the
+      // strength of this answer would be billed a second time inside that
+      // raise. The outcome type above carries the worked example.
       const coversTotal = raised.restated + raised.alreadyCovering > 0;
       return {
         queueOperationId: existingQueuedOperation.id,
         outcome: (coversTotal
           ? "covers-total"
-          : "short") as XeroSupplementaryInvoiceEnqueueOutcome,
+          : "short-in-flight") as XeroSupplementaryInvoiceEnqueueOutcome,
         message:
           raised.restated > 0
             ? "Xero supplementary invoice already queued for this change was raised to the combined amount."
@@ -1688,6 +1766,29 @@ export async function restatePendingSupplementaryInvoiceAmount({
   return { restated, alreadyCovering };
 }
 
+/**
+ * THE ONE CHANGE-SCOPED READ THAT MATCHES ON THE PAYLOAD, not on the anchor -
+ * and therefore the one that could see a second ask (#3193 fix round).
+ *
+ * A second ask is anchored on `ManualRefundTask/<taskId>`, which is what keeps
+ * it invisible to every read that decides whether this booking change already
+ * has an invoice going out. This read is the exception: it matches
+ * `requestPayload.bookingModificationId`, and a second ask carries that id in
+ * its payload because the invoice it bills still belongs to that change.
+ *
+ * Until now nothing but a constant stopped it. A second ask is enqueued with
+ * `waitForConfirmedAdditionalPayment: false`, so it is never `WAITING_PAYMENT`
+ * and never matched - but that is the wrapper's call-site value, not a property
+ * of the anchor, and a future caller flipping it would park an already-settled
+ * share's invoice on a PaymentIntent that is already paid, released by nothing
+ * and reaped after fourteen days with no invoice raised. That is precisely the
+ * shape #3202 exists to fix.
+ *
+ * `localModel: "BookingModification"` makes it structural instead. It changes
+ * nothing for existing rows: an operation anchored on the BOOKING carries a null
+ * `bookingModificationId` in its payload, so it never matched this filter
+ * anyway. `INV-SSOT` - unrepresentable beats policed.
+ */
 export async function attachPaymentIntentToWaitingSupplementaryInvoiceOperations({
   bookingModificationId,
   paymentIntentId,
@@ -1701,6 +1802,7 @@ export async function attachPaymentIntentToWaitingSupplementaryInvoiceOperations
       direction: "OUTBOUND",
       entityType: "INVOICE",
       operationType: "CREATE",
+      localModel: "BookingModification",
       requestPayload: {
         path: ["bookingModificationId"],
         equals: bookingModificationId,

@@ -4,14 +4,22 @@ import { buildXeroIdempotencyKey } from "@/lib/xero-sync";
  * THE ONE MINT of a supplementary invoice's correlation/idempotency key
  * (#3193, epic #2797).
  *
- * Its own module because three places need this exact string and they sit on
- * both sides of an import edge: `xero-operation-outbox.ts` writes it on the
- * outbox row, `restatePendingSupplementaryInvoiceAmount` rewrites it when it
+ * Three places need this exact string: `xero-operation-outbox.ts` writes it on
+ * the outbox row, `restatePendingSupplementaryInvoiceAmount` rewrites it when it
  * raises an amount (the key moves with the amount because it is built FROM the
  * amount), and `xero-supplementary-invoices.ts` sends it to Xero as the
- * create-invoice idempotency key. The outbox imports the invoice module, so
- * neither of those two can host the shared mint without a cycle, and
- * `xero-sync.ts` is 172 lines over its budget already.
+ * create-invoice idempotency key.
+ *
+ * WHY A MODULE OF ITS OWN, stated accurately (#3193 fix round - the first
+ * version of this note said neither module could host the mint without a cycle,
+ * and that was half wrong). The import edge runs one way: the outbox imports the
+ * invoice module and the invoice module imports nothing from the outbox. So
+ * hosting the mint in the OUTBOX would create a cycle, and hosting it in the
+ * invoice module would not. It sits here anyway, on cohesion and budget: the mint
+ * belongs to neither side of that edge in particular, `xero-sync.ts` (where it
+ * started) is 172 lines over its budget already, and a shared string with one
+ * obvious home is harder to fork than one living inside a large module that also
+ * does the sending.
  *
  * They used to build it from three copies of the same literal shape. #3170
  * already lost money to a supplementary-invoice key that did not mean what a
