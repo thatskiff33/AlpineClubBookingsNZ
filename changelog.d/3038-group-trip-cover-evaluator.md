@@ -25,10 +25,24 @@
   Those decide whether new bookings may still join; the people already booked are
   still travelling, and their own bookings are what say whether they are coming.
 
+  A party that mixes member and non-member guests is stored as two linked
+  bookings, and the second one carries the non-member guests. Both halves are one
+  party, so both are covered by the trip the member joined — the half that
+  actually needs the cover is the half that used to miss out on it.
+
   **Clubs that leave the box unticked see no change of any kind** — the same
-  bookings are compliant, the same bookings go to a Booking Officer, the wording
-  is unchanged to the letter, and the application does not even look for related
-  bookings.
+  bookings are compliant, the same bookings go to a Booking Officer, and the
+  wording is unchanged to the letter. The club is never asked which other
+  bookings might be related: that search is skipped entirely unless the box is
+  ticked and the booking really is part of a Group Trip.
+
+  One small thing does change for every club, ticked or not. Whenever the
+  application works out a booking's adult cover it now also loads the two pieces
+  of information that say which Group Trip, if any, that booking belongs to —
+  two extra columns on a read it was already doing. That is a deliberate trade
+  rather than an oversight: fetching them always means a booking can never be
+  read as "in no Group Trip" merely because somebody forgot to ask, which is a
+  mistake that would be invisible until a member was wrongly refused.
 
   This is the second of four parts. Keeping sibling bookings correct after one of
   them is changed, and the kiosk display of the linkage, arrive with the rest of

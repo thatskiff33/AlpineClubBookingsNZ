@@ -1,7 +1,7 @@
 # File-size allowances for #3038 (epic #2943)
 
 file: src/lib/adult-member-hosting-review.ts
-lines: 2814
+lines: 2916
 reason: TWO CHILDREN OF ONE EPIC, ONE DECLARATION. #3037 added a single line
   here — the new host-scope column in the policy loader's narrowed `select`,
   which the call-site census pins to the schema because an omitted column hands
@@ -25,7 +25,7 @@ reason: TWO CHILDREN OF ONE EPIC, ONE DECLARATION. #3037 added a single line
   than this change's.
 
 file: src/lib/diagnostics/tools/packs/booking-evidence.ts
-lines: 2209
+lines: 2219
 reason: thirty-one lines, and twenty-five of them are the docblock on a third
   ceiling constant. The evidence pack is where a bounded read's failure
   direction INVERTS — a writer's truncation errs towards the rule, a
@@ -49,3 +49,63 @@ reason: thirty-five lines, thirty of them comment, and the code change is a
   container id it already holds to its own preflight. Splitting a join flow that
   is one transaction from top to bottom would put the ordering rule and the
   statements it orders in different files.
+
+file: src/lib/booking-exception-request-service.ts
+lines: 2186
+reason: fifty-four lines, forty of them the reason. This file already carried
+  `resolveProposalBookingOwner` and `resolveProposalOperationalPresence` — two
+  functions that exist solely because a modification proposal must be re-judged
+  against the SAME facts the booking path judged, and the second one's docblock
+  says in as many words that "without this half a modification proposal would
+  raise a violation for a party the booking path allows". #3038 gave adult-member
+  hosting a third such fact and this adds the third resolver,
+  `resolveProposalGroupTrip`, beside its two siblings. Splitting it out would put
+  one member of a three-part set in another module while the two it exists to
+  match stayed here, and the pattern is only legible when a reader sees all three
+  in a row. Most of the added length is the hazard: this evaluation is FROZEN
+  into the request, shown to an officer as a live violation, used under `HOLD` to
+  reserve beds, and then reproduced at approval — so the #2525 drift gate
+  compares a phantom with itself and nothing downstream can catch a violation
+  invented here. That is the sentence the next person to add a proposal input
+  needs, and it belongs at the function.
+
+file: src/lib/booking-create.ts
+lines: 1969
+reason: seventeen lines, and the code change is a MOVE: the `GroupBookingJoin`
+  roster write now happens before the #738 split child is created rather than
+  after it. The ordering is load-bearing and invisible — that row IS the
+  booking's Group Trip identity, and the split child is reconciled against the
+  hosting rule the instant it is written, so with the write last the half
+  carrying the party's NON-MEMBER guests was recorded as uncovered while every
+  later evaluation of it found the cover. The rest is the comment saying so, and
+  it has to sit at the statement, inside the transaction, where somebody tidying
+  the block will read it. `verifyAndCreateNonMemberJoin` already orders itself
+  this way for the same reason; this makes the two join paths agree. Splitting a
+  creating transaction that is one sequence from capacity to reconciliation would
+  put the ordering rule and the statements it orders in different files.
+
+file: src/app/api/bookings/route.ts
+lines: 1383
+reason: nine lines, one of them code. #3038 made
+  `evaluateProposedAdultMemberHosting`'s `groupBookingId` REQUIRED rather than
+  optional, precisely so the compiler enumerates every call site and each has to
+  state its answer out loud — the previous arrangement let this route's omission
+  read as "no Group Trip" silently, which is the class of defect that produced
+  the blocker this pull request fixes. This route's answer is `groupBookingId:
+  null`, and the eight comment lines are why that is an answer and not a
+  placeholder: the route creates ordinary bookings, has no join path, and an
+  organiser's own booking has no container either. Deleting the note would make
+  the literal look like something to fill in later.
+
+file: src/lib/email/booking.ts
+lines: 1505
+reason: eight lines, all comment, no code. `sendHostingCoverageLostEmail`'s
+  docblock justified pointing the recipient at their own booking on the premise
+  that "the cover that went away was on their own account (#2576 §11)". Under
+  `SAME_GROUP_TRIP` that premise is false — the stay is on another member's
+  account — while the conclusion still holds for a different reason: the message
+  names nobody, and the link is to the RECIPIENT'S own booking. An invariant or a
+  docblock that asserts a rationale which no longer covers the live behaviour is
+  worse than one that says nothing, because the next change deletes the right
+  behaviour for the stated wrong reason. The correction has to be at the function
+  it justifies; there is nothing to split.

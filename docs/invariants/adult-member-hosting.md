@@ -264,15 +264,31 @@ reports where each came from.
 
 ### INV-HOST-019
 
-- **Host identities are never disclosed to the booking owner.** Member-facing
-  refusal bodies are built by `buildAdultMemberHostingRefusalBody`, which strips
+- **Host identities are never disclosed to the booking owner; the CATEGORY of
+  cover is disclosed deliberately.** Member-facing refusal bodies are built by
+  `buildAdultMemberHostingRefusalBody`, which strips
   `qualifyingHostsByNight[].memberIds` while keeping the nights and the scopes
   that covered them. The frozen snapshot an officer reviews keeps the ids in full
   for validation and audit. Applied under every scope, not only the wider one: a
-  redaction that fires under one setting is a redaction nobody tests. Under
-  `SAME_BOOKING_OWNER` the covering stay is on the member's own account, so the
-  member may be told that another of their bookings supplies or depends on cover
-  (#2576 §11) — what is withheld is the internal member id, not the fact.
+  redaction that fires under one setting is a redaction nobody tests.
+
+  **What is withheld is WHO, and only who.** Under `SAME_BOOKING_OWNER` that was
+  easy to justify — the covering stay is on the member's own account, so telling
+  them another of their bookings supplies or depends on cover (#2576 §11)
+  disclosed nothing they did not already know. **`SAME_GROUP_TRIP` (#3038) breaks
+  that premise and keeps the behaviour**, on an owner decision of 31 August 2026:
+  a member refused on a Group Trip booking learns, per night, that *another
+  account's* booking in their trip carried a qualifying adult. That is disclosed
+  on purpose. People travelling together on one trip already know roughly who is
+  present, and the member has a problem to fix — being told which night is short,
+  and that the trip is where cover comes from, is the kinder and more actionable
+  answer. The identity itself is still withheld, under this scope exactly as
+  under the others, and no message names a booking, a member or a household.
+
+  The rationale matters as much as the rule here: an invariant that justified the
+  disclosure on "it is their own account" would be asserting something false the
+  moment a third scope existed, and a wrong reason is how a later change deletes
+  the right behaviour.
 
 ### INV-HOST-020
 
@@ -744,7 +760,51 @@ compliant indefinitely.
   the single home, and `Booking.parentBookingId` is forbidden as an identity
   source: it is the #738 split-booking relationship, neither necessary nor
   sufficient for Group Trip membership, so reading grouping off it produces a
-  sibling set that is wrong in both directions. `GroupBooking.status`
+  sibling set that is wrong in both directions.
+
+  **ONE CARVE-OUT, WITH ITS FENCE NAMED: the second half of a #738 split pair
+  inherits the first half's Group Trip** (owner decision, 31 August 2026). A
+  member joining a Group Trip with a mixed party becomes two `Booking` rows —
+  `createConfirmedBooking` writes the member half, hangs the non-member half off
+  it by `parentBookingId`, and writes the `GroupBookingJoin` row against the
+  member half only, because one party is one joiner on the roster and the
+  `(groupBookingId, joinerMemberId)` unique pair says so. Without the carve-out
+  the half carrying the NON-MEMBER GUESTS, the rows this rule exists to judge,
+  belonged to no Group Trip and received no cover: the join preflight judged the
+  undivided party and said yes, and the reconciler judged the child and said no,
+  seconds apart. A split pair is one party, so its two halves share one trip.
+
+  **The fence, which is the whole safety of it.** `parentBookingId` is still
+  categorically not a Group Trip identity source, and a booking still never
+  borrows identity from an unrelated parent. Inheritance happens only from a row
+  that is already a `SAME_BOOKING` split sibling — `booking.parentBookingId`,
+  owned by the SAME member, not cancelled, not bumped, not soft-deleted — and is
+  followed ONE WAY, so a parent never inherits from a child. A #796 group
+  joiner, which hangs off the organiser's booking by the same column while
+  belonging to a different member, therefore inherits nothing and needs nothing:
+  it carries its own roster row. Inheriting also governs only what a booking
+  RECEIVES: the source and dependent sets are relation-based, so an inheriting
+  child supplies nothing and is not itself a Group Trip source — the right answer
+  as well as the safe one, since it carries only non-member guests. **What it
+  obliges of #3039:** the dependent set is relation-based too, so a Group Trip
+  fan-out finds the split PARENT and not the inheriting CHILD — the child is
+  reached only through the existing `SAME_BOOKING` sibling fan-out
+  (`loadHostingSiblingIds`, which `reconcileAdultMemberHostingReviewWithSiblings`
+  already walks), so the group fan-out must reconcile each dependent through
+  THAT entry point rather than reconciling the row directly, or the half carrying
+  the non-member guests is never re-evaluated.
+  `inheritedSplitPairGroupTrip` is the one
+  implementation, and `adult-member-hosting-group-trip-cover.test.ts` pins every
+  clause of this paragraph, including that a booking related by
+  `parentBookingId` in any OTHER configuration supplies and receives nothing.
+
+  The two write paths keep their roster row ahead of the rule for the same
+  reason: `createConfirmedBooking` claims the `GroupBookingJoin` row BEFORE it
+  creates and reconciles the split child, and `verifyAndCreateNonMemberJoin`
+  claims its row before it reconciles at all. A reconciliation that ran first
+  would read a brand-new booking as belonging to no Group Trip.
+
+  `GroupBooking.status`
   (`OPEN`/`CLOSED`/`CANCELLED`) decides whether new bookings may join; a CLOSED
   container is the normal state of a settled party and a cancelled container does
   not cancel the joiners' own bookings, so filtering the source or dependent set
@@ -793,11 +853,27 @@ compliant indefinitely.
   NOT the same-owner number.** Twenty-five bookings on one account at one lodge
   is a data problem; twenty-five bookings in one Group Trip is a club trip, so
   borrowing that ceiling would truncate ordinary large parties. One booking needs
-  at least one bed, so the population is bounded above by the lodge's capacity.
-  A writer truncates, which errs towards the rule; an evidence caller passes its
-  own ceiling, gets a total order, and is refused with
+  at least one bed, so the population is bounded above by the lodge's capacity —
+  the bound is argued from that shape and never from how big any particular
+  club's lodge is, which `INV-CONFIG-001` forbids the codebase to encode. A
+  writer truncates, which errs towards the rule; an evidence caller passes its
+  own ceiling and is refused with
   `HostingGroupTripSourceCeilingExceededError` rather than handed a quietly short
-  host list that would fabricate a live blocker.
+  host list that would fabricate a live blocker. The diagnostic pack IMPORTS the
+  writer's constant rather than restating the number beside a promise that the
+  two agree.
+
+  **Both cross-booking source reads are ONE read, ordered unconditionally.**
+  `loadSameBookingOwnerHosts` and `loadSameGroupTripHosts` are
+  `loadCoverageSourceHosts` with one relationship clause changed, so the guest
+  narrowing, the ordered-truncation protocol, the defensive guest-relation
+  filter and the `sourceIds` contract have one definition rather than two
+  (`INV-SSOT-001`). `COVERAGE_READ_ORDER` applies to a writer as well as to an
+  evidence caller: an unordered `take` lets the database return any N of the
+  matching rows, which leaves the ANSWER safe (fewer hosts errs towards the
+  rule) and the SNAPSHOT unstable — `adultMemberHostingStateKey` moves between
+  two evaluations of an unchanged booking, reopening the incident and
+  re-notifying an officer over nothing.
 
   **Member-owned and non-member-owned joins consume this cover on identical
   terms.** Nothing about who owns a source or a dependent booking is consulted —
