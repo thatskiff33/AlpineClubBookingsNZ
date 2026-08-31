@@ -132,6 +132,73 @@ describe("admin lodge route", () => {
     );
   });
 
+  /**
+   * The separation-of-duties half of #2984's follow-through. `POST` refuses a
+   * scoped admin because creating a LODGE-role account is an access-role write;
+   * this GET used to do the same thing on a plain page load at `lodge:view`.
+   *
+   * "Read-only Admin" is the role that made it real: view on all seven areas,
+   * edit on none, described to clubs as "Can view admin areas without making
+   * changes" — and it could bring a login-capable account into existence by
+   * opening a screen.
+   */
+  it("does not provision a kiosk account for a scoped admin who may not create one", async () => {
+    mockedAuth.mockResolvedValue(
+      adminSession({ id: "readonly-1", accessRoles: ["ADMIN_READONLY"] }),
+    );
+    vi.mocked(prisma.member.findMany).mockResolvedValue([] as never);
+    vi.mocked(prisma.lodge.findFirst).mockResolvedValue({ id: "default-lodge" } as never);
+    vi.mocked(prisma.lodge.findUnique).mockResolvedValue({ name: "Default Lodge" } as never);
+
+    const res = await GET();
+
+    // The READ is still allowed — looking at kiosk details is legitimately a
+    // read, and only the create was raised to Full Admin.
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.lodge).toBeNull();
+    expect(body.accounts).toEqual([]);
+    // Nothing was written: no account, no subscription seed, no audit row.
+    expect(prisma.member.create).not.toHaveBeenCalled();
+    expect(prisma.memberSubscription.upsert).not.toHaveBeenCalled();
+    expect(logAudit).not.toHaveBeenCalled();
+  });
+
+  it("still provisions for a Full Admin, so first-time kiosk setup keeps working", async () => {
+    // The auto-create is the ONLY way a club's first kiosk account comes into
+    // being — no seed, no setup wizard, no migration writes one — so raising it
+    // to Full Admin must not remove it.
+    mockedAuth.mockResolvedValue(adminSession({ id: "admin-1" }));
+    const createdRow = {
+      ...memberFactory({
+        id: "lodge-1",
+        email: "lodge@example.org",
+        role: "LODGE",
+        financeAccessLevel: "NONE",
+        canLogin: true,
+        createdAt: new Date("2026-04-11"),
+        updatedAt: new Date("2026-04-11"),
+      }),
+      lodgeAccess: [],
+    };
+    vi.mocked(prisma.member.findMany)
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([createdRow as never]);
+    vi.mocked(prisma.member.create).mockResolvedValue(createdRow as never);
+    vi.mocked(prisma.memberAccessRole.createMany).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(prisma.memberSubscription.upsert).mockResolvedValue({} as never);
+    vi.mocked(prisma.lodge.findFirst).mockResolvedValue({ id: "default-lodge" } as never);
+    vi.mocked(prisma.lodge.findUnique).mockResolvedValue({ name: "Default Lodge" } as never);
+
+    const res = await GET();
+
+    expect(res.status).toBe(200);
+    expect(prisma.member.create).toHaveBeenCalled();
+    expect(logAudit).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "LODGE_ACCOUNT_CREATED" }),
+    );
+  });
+
   it("normalizes finance access to NONE when updating the lodge account", async () => {
     mockedAuth.mockResolvedValue(adminSession({ id: "admin-1" }));
     vi.mocked(prisma.member.findFirst).mockResolvedValue(

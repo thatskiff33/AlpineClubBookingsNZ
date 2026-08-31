@@ -6,7 +6,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { MEMBER_MESSAGE_MAX_LENGTH } from "@/lib/booking-exception-requests";
+import { MEMBER_MESSAGE_MAX_LENGTH } from "@/lib/booking-exception-request-shared";
 import type { ExceptionOffer } from "@/lib/booking-exception-offer";
 import type { PolicyExceptionCapacityMode } from "@/lib/booking-policy-exceptions";
 import {

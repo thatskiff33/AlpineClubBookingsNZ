@@ -50,16 +50,18 @@ export function deriveSettledLodgeOptionScope(input: {
 
     The blank page the reversal targeted was REAL, and #2925 fixed it AT THE
     ROUTE, which is where one gate serves every consumer. `GET
-    /api/admin/lodges` now admits any admitted admin (`overview:view`) and
-    narrows its payload to `{ id, name, slug, active }` for a caller without
+    /api/admin/lodges` now admits any admitted admin (`permission: "any-admin"`)
+    and narrows its payload to `{ id, name, slug, active }` for a caller without
     `lodge:view`, so `ADMIN_MEMBERSHIP` and `FINANCE_ADMIN` get a real list and
     those surfaces no longer stop.
 
     This ordering still stands, and must not be re-reversed. `forbidden` remains
-    reachable — a custom role can hold `bookings: "view"` with `overview: "none"`
-    — and `failed` always was, so returning `all` from either state would still
-    unlock a create while the control that scopes it is hidden, which is the
-    silently mis-scoped write described above.
+    reachable — not through the grid this used to name, since #2984 gave a
+    `bookings: "view"` / `overview: "none"` role portal standing too, but through
+    a session whose roles were revoked between renders — and `failed` always was,
+    so returning `all` from either state would still unlock a create while the
+    control that scopes it is hidden, which is the silently mis-scoped write
+    described above.
 
     `empty` stays ahead of `all` deliberately. A club with no active lodge can
     scope nothing, so offering an unrestricted create there is vacuous at best;

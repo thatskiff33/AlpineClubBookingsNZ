@@ -57,7 +57,12 @@ const POPULATION_PUBLISHERS = [
 ] as const;
 
 /** The published sentence, in the one wording both publishers use. */
-const PUBLISHED_POPULATION = /(\d+)\s+test files and\s+one CI script import\b/;
+// Both publishers say "<n> test files, <a|one> test helper and one CI script
+// import". The middle clause is what #2975's helper forced: the KIND of importer
+// changed, not just the count, and a regex that only reached the number would
+// have gone on matching a sentence that had become false.
+const PUBLISHED_POPULATION =
+  /(\d+)\s+test files,\s+(?:a|one)\s+test\s+helper and\s+one CI script import\b/;
 
 /*
   HOW AN IMPORTER IS COUNTED, because every previous count of this got it wrong
@@ -548,8 +553,16 @@ describe("INV-SSOT-004: the published importer count is measured, not inherited"
 
     expect(
       others,
-      `The published sentence says "one CI script". Measured, the non-test importers are: ${others.join(", ") || "(none)"}. If a non-test importer has genuinely been added, reword the sentence in ${POPULATION_PUBLISHERS.join(" and ")} — do not widen this assertion to hide it.`,
-    ).toEqual(["scripts/ci/check-website-render-modes.mjs"]);
+      `The published sentence names these non-test importers and no others. Measured, they are: ${others.join(", ") || "(none)"}. If one has genuinely been added, name it in the sentence in ${POPULATION_PUBLISHERS.join(" and ")} AND here — do not widen this assertion to a length check or a prefix match to hide it.`,
+    ).toEqual([
+      // The one CI script, and one test helper. The helper arrived from `main`
+      // (#2975) while this epic was in flight, which is exactly the shape this
+      // assertion exists to surface: it is not a count moving, it is the KIND of
+      // importer changing, and a sentence saying "one CI script" would have gone
+      // on being false while every number in it stayed right.
+      "scripts/ci/check-website-render-modes.mjs",
+      "src/lib/__tests__/helpers/admin-route-explicit-permissions.ts",
+    ]);
 
     for (const publisher of POPULATION_PUBLISHERS) {
       const published = PUBLISHED_POPULATION.exec(

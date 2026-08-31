@@ -610,6 +610,34 @@ were off by two orders of magnitude.
 
 ## Operational Repair Tools
 
+### Run these through `npm run`, never `npx tsx`
+
+Every repair tool below is published as an `npm run` command, and that is the
+spelling to copy unless a runbook explicitly gives you another one. (One does:
+`docs/INDUCTION_BASELINE_RUNBOOK.md` runs the baseline inside the Compose
+`migrate` service, where the npm wrapper is not available, so it spells the
+command `./node_modules/.bin/tsx --conditions=react-server ...` in full. That is
+correct and supported — what is never correct is a bare `npx tsx`.) The reason
+is not tidiness.
+`@/lib/prisma`, `@/lib/audit`, `@/lib/email`, `@/lib/xero` and `@/lib/stripe`
+each carry `import "server-only"` (`INV-OPS-013`, #2850), which is what makes
+the production build refuse to ship any of them to a member's browser. That
+marker throws the moment it is loaded under plain Node, with a message about
+React Server Components that names nothing you did — so a script started with a
+bare `npx tsx scripts/<name>.ts` would abort before it printed anything, which
+during a money-repair incident is the worst possible time to meet a confusing
+import error.
+
+The `npm run` wrappers pass Node's `--conditions=react-server` resolution flag,
+under which `server-only` resolves to an empty module and the script runs
+normally. Arguments go after `--`, for example
+`npm run xero:booking-repair -- --dry-run`. Environment variables go in front as
+usual: `DATABASE_URL=<non-prod copy> npm run payments:audit-ib-hold-clearing`.
+`src/lib/__tests__/cli-server-only-reach-census.test.ts` fails the build if a
+command that reaches one of those modules is ever published without the flag —
+anywhere it is published, including inside a tool's own `--help` output, which
+is exactly where the bare form outlived every runbook (#2850).
+
 ### Recover a stranded $0 waitlist confirm (#2623)
 
 Admin -> Audit log, filtered to action `waitlist.confirm_offer_release_failed`
@@ -743,9 +771,9 @@ reviewing the affected bookings.
 Always start with a dry run:
 
 ```bash
-npx tsx scripts/xero-booking-repair.ts --dry-run
-npx tsx scripts/xero-booking-repair.ts --booking <bookingId> --dry-run
-npx tsx scripts/xero-booking-repair.ts --from <YYYY-MM-DD> --to <YYYY-MM-DD> --dry-run
+npm run xero:booking-repair -- --dry-run
+npm run xero:booking-repair -- --booking <bookingId> --dry-run
+npm run xero:booking-repair -- --from <YYYY-MM-DD> --to <YYYY-MM-DD> --dry-run
 ```
 
 `--from`/`--to` are **inclusive club calendar days**, and a booking is swept if
@@ -893,14 +921,13 @@ a second run finds nothing.
 Always start with a dry run (the default) against a non-production copy:
 
 ```bash
-DATABASE_URL=<non-prod copy> npx tsx scripts/backfill-cancel-flattened-payments.ts
-# or: npm run payments:backfill-cancel-flattened
+DATABASE_URL=<non-prod copy> npm run payments:backfill-cancel-flattened
 ```
 
 Only after reviewing the dry-run report, apply inside a transaction:
 
 ```bash
-DATABASE_URL=<non-prod copy> npx tsx scripts/backfill-cancel-flattened-payments.ts --apply
+DATABASE_URL=<non-prod copy> npm run payments:backfill-cancel-flattened -- --apply
 ```
 
 ### Backfill orphaned applied credit (#1547)
@@ -939,14 +966,14 @@ regression — diagnose before running this script.
 Always start with a dry run (the default) against a non-production copy:
 
 ```bash
-DATABASE_URL=<non-prod copy> npx tsx scripts/backfill-orphaned-applied-credits.ts
+DATABASE_URL=<non-prod copy> npm run payments:backfill-orphaned-credits
 ```
 
 Only after reviewing the dry-run report, apply (each booking in its own
 transaction):
 
 ```bash
-DATABASE_URL=<non-prod copy> npx tsx scripts/backfill-orphaned-applied-credits.ts --apply
+DATABASE_URL=<non-prod copy> npm run payments:backfill-orphaned-credits -- --apply
 ```
 
 ### Audit IB hold-expiry invoice under-clears (#1597)
@@ -969,8 +996,8 @@ local rows (no Xero calls); "actual" is `payment.amountCents`, frozen once the
 hold released, which is exactly what the pre-fix release enqueued.
 
 ```bash
-DATABASE_URL=<non-prod copy> npx tsx scripts/audit-ib-hold-clearing.ts
-DATABASE_URL=<non-prod copy> npx tsx scripts/audit-ib-hold-clearing.ts --json
+DATABASE_URL=<non-prod copy> npm run payments:audit-ib-hold-clearing
+DATABASE_URL=<non-prod copy> npm run payments:audit-ib-hold-clearing -- --json
 ```
 
 **The existing `xero-booking-repair.ts` CLI cannot express this repair.** Its

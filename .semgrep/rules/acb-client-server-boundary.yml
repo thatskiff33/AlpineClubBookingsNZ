@@ -25,15 +25,22 @@ rules:
       # of the rule: a module that is not spelled in it is not covered, however
       # server-only its own docblock says it is. `club-time-zone-env` (#2989) is
       # in it because it reads `process.env.TZ` and is deliberately not marked
-      # `server-only` — two of its callers are `tsx` entrypoints that such an
-      # import would abort. Next inlines `NEXT_PUBLIC_*`, so importing it from a
+      # `server-only`. That USED to be because `tsx` entrypoints reaching it
+      # would abort; since #2850 those commands run with
+      # `--conditions=react-server` and the marker is inert under it, so the
+      # three modules below could be marked and are deliberately not; the
+      # marking work is tracked as #3204, and the one home for the reasoning is
+      # docs/invariants/operations.md -> INV-OPS-013,
+      # "The three modules that stay unmarked". What keeps them out of a bundle
+      # meanwhile is this list. Next inlines `NEXT_PUBLIC_*`, so importing
+      # `club-time-zone-env` from a
       # client component answers from the BUILD-TIME `NEXT_PUBLIC_TZ` instead of
       # from the running server: the split-brain `INV-CONFIG-002` forbids. Its
       # pure sibling `club-time-zone` is NOT in the list, on purpose — the admin
       # panel needs its zone list. `environment-role-declaration` and
       # `environment-role` (#3034) join it on the same grounds: neither is
-      # `server-only` (the `tsx` `npm run setup` entrypoint reaches the resolver
-      # through `setup-readiness-db.ts`), the declaration module reads
+      # `server-only` (`setup-readiness-db.ts` reaches the resolver from the
+      # `npm run setup:check` entrypoint), the declaration module reads
       # `process.env.APP_ENVIRONMENT_ROLE`, and a non-public variable inlines as
       # `undefined` in a browser — so a client import would read "nothing has
       # declared this installation" while the server reads `production`, and what

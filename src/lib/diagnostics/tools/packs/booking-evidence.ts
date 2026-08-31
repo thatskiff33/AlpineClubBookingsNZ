@@ -497,7 +497,7 @@ async function requireStoredClubTimeZone(tx: Prisma.TransactionClient) {
   const zone = asClubTimeZone(row?.timeZone ?? null);
   if (!zone) {
     throw new Error(
-      "AI Diagnostics AID-6B: the club's timezone is not stored locally as a usable named zone, so the membership season the club is currently in cannot be resolved from stored state. Set the club's timezone at /admin/club-time (or run npm run setup) to make this evidence available.",
+      "AI Diagnostics AID-6B: the club's timezone is not stored locally as a usable named zone, so the membership season the club is currently in cannot be resolved from stored state. Set the club's timezone at /admin/club-time (or run npm run setup:wizard) to make this evidence available.",
     );
   }
   return zone;

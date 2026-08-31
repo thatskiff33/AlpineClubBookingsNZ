@@ -82,7 +82,7 @@ prepare() {
   ALLOW_DEMO_SEED=1 DATABASE_URL="$HOST_DATABASE_URL" npx tsx prisma/demo-seed.ts
 
   echo "==> Seeding base data"
-  DATABASE_URL="$HOST_DATABASE_URL" npx tsx prisma/seed.ts
+  DATABASE_URL="$HOST_DATABASE_URL" npx tsx --conditions=react-server prisma/seed.ts
 
   echo "==> Relativizing booking seasons so seeded fixtures never expire (#2117)"
   DATABASE_URL="$HOST_DATABASE_URL" npx tsx e2e/setup/relativize-seasons.ts
@@ -91,14 +91,14 @@ prepare() {
   DATABASE_URL="$HOST_DATABASE_URL" npx tsx e2e/setup/enable-e2e-modules.ts
 
   echo "==> Seeding Stripe test-mode credentials into the encrypted store (#2082; no-op unless test keys are set)"
-  DATABASE_URL="$HOST_DATABASE_URL" npx tsx e2e/setup/seed-stripe-credentials.ts
+  DATABASE_URL="$HOST_DATABASE_URL" npx tsx --conditions=react-server e2e/setup/seed-stripe-credentials.ts
 
   # Multi-lodge project only (E2E_MULTI_LODGE=1): provision a second active
   # lodge and enable the multiLodge module. Skipped by default, so the default
   # single-lodge suite is seeded byte-identically.
   if [[ "${E2E_MULTI_LODGE:-}" == "1" ]]; then
     echo "==> Provisioning second lodge (E2E_MULTI_LODGE=1)"
-    DATABASE_URL="$HOST_DATABASE_URL" npx tsx e2e/setup/seed-second-lodge.ts
+    DATABASE_URL="$HOST_DATABASE_URL" npx tsx --conditions=react-server e2e/setup/seed-second-lodge.ts
   fi
 
   echo "==> Starting app (http://localhost:${STAGING_HTTP_PORT})"

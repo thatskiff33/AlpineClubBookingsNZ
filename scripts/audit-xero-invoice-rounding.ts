@@ -1,4 +1,3 @@
-#!/usr/bin/env npx tsx
 /**
  * Read-only operator audit for historical Xero invoice rounding drift (#1318).
  *
@@ -12,12 +11,12 @@
  * SAFE USAGE — run against a NON-PRODUCTION copy of the database:
  *
  *   DATABASE_URL='postgresql://user:pass@127.0.0.1:5432/scratch_copy' \
- *     npx tsx scripts/audit-xero-invoice-rounding.ts
+ *     npm run xero:audit-invoice-rounding
  *
  * Exclude invoices issued after you deployed the #1231 fix (they are already
  * correct in Xero) with --issued-before:
  *
- *   ... npx tsx scripts/audit-xero-invoice-rounding.ts --issued-before 2026-07-04
+ *   ... npm run xero:audit-invoice-rounding -- --issued-before 2026-07-04
  *
  * A candidate is a LOCAL-data match only. Before treating one as a real error,
  * confirm in Xero that the invoice is still live (not voided/credited/
@@ -33,7 +32,7 @@ import {
 
 function printUsage() {
   console.log(`Usage:
-  DATABASE_URL=<non-prod copy> npx tsx scripts/audit-xero-invoice-rounding.ts [options]
+  DATABASE_URL=<non-prod copy> npm run xero:audit-invoice-rounding -- [options]
 
 Options:
   --issued-before <YYYY-MM-DD>  Only scan invoices whose payment.createdAt is

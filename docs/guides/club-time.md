@@ -37,7 +37,7 @@ own time. That part is already true.
 Changing the club time zone on this page is a **Full Administrator** job. It
 needs an explicit confirmation, and every such change is written to the audit log
 with who made it and what it was before. (The one other way it can be set is
-`npm run setup` at the command line, by whoever runs the server. That is not
+`npm run setup:wizard` at the command line, by whoever runs the server. That is not
 audited the same way, because there is no signed-in administrator to record.)
 
 ## When you'd use it

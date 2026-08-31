@@ -43,6 +43,18 @@
  * allowlist one entry long instead of growing it to cover a shared helper that
  * any client module could then import.
  *
+ * SINCE #2851 THIS IS HYGIENE RATHER THAN NECESSITY, and the change is recorded
+ * rather than left to be discovered. `booking-exception-requests.ts` is no
+ * longer reached from any `"use client"` entry point — the two constants the
+ * client actually wanted moved to `@/lib/booking-exception-request-shared` —
+ * so this module has zero client reach today and the census allowlist that
+ * named the single edge no longer exists. Everything above describes why the
+ * split was FORCED; what keeps it now is that the boundary moved once and can
+ * move back, and keeping a client-safe module client-safe costs nothing while
+ * re-establishing it costs a review. **Collapsing this into `stable-digest.ts`
+ * is #3218** — a production edit on a booking path and a reversal of a recorded
+ * decision, not something a branch sync may take.
+ *
  * What deliberately stays OUT of here: `canonicalStringify`, whose 2-space
  * indent and trailing newline are load-bearing for the diagnostics bundle's
  * on-disk bytes and its byte ceilings. That formatting is specific to that
