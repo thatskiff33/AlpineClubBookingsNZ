@@ -28,7 +28,10 @@
   A party that mixes member and non-member guests is stored as two linked
   bookings, and the second one carries the non-member guests. Both halves are one
   party, so both are covered by the trip the member joined — the half that
-  actually needs the cover is the half that used to miss out on it.
+  actually needs the cover is the half that used to miss out on it. That holds
+  wherever the question is asked, including when the member later proposes a
+  change to that booking and asks a Booking Officer to consider it: the answer
+  put in front of the officer is the same answer the booking itself has.
 
   **Clubs that leave the box unticked see no change of any kind** — the same
   bookings are compliant, the same bookings go to a Booking Officer, and the

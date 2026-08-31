@@ -1,7 +1,7 @@
 # File-size allowances for #3038 (epic #2943)
 
 file: src/lib/adult-member-hosting-review.ts
-lines: 2916
+lines: 2979
 reason: TWO CHILDREN OF ONE EPIC, ONE DECLARATION. #3037 added a single line
   here — the new host-scope column in the policy loader's narrowed `select`,
   which the call-site census pins to the schema because an omitted column hands
@@ -22,7 +22,16 @@ reason: TWO CHILDREN OF ONE EPIC, ONE DECLARATION. #3037 added a single line
   rather than a post-filter, and why the per-owner advisory lock deliberately
   does NOT widen to cover a scope whose sources belong to other members (#3039
   owns the per-group key). The file's existing length is #3128's business rather
-  than this change's.
+  than this change's. Review then added sixty-three lines more, and they are the
+  reason a second evaluator now gets the split-pair carve-out RIGHT rather than
+  a second copy of it: `readInheritedSplitPairGroupTrip` is the same
+  `hostingSiblingWhere` set through the same `inheritedSplitPairGroupTrip`, for
+  a caller that holds no sibling rows. Putting it anywhere else would be the
+  third answer to "what group is this booking in?", which is exactly what
+  `INV-SSOT-001` forbids; the rest is the docblock explaining why the carve-out
+  reaching only one of the two evaluators is a disagreement rather than a
+  smaller version of the same answer, and why the parameter type is the fence's
+  primary structural guard.
 
 file: src/lib/diagnostics/tools/packs/booking-evidence.ts
 lines: 2219
@@ -51,7 +60,7 @@ reason: thirty-five lines, thirty of them comment, and the code change is a
   statements it orders in different files.
 
 file: src/lib/booking-exception-request-service.ts
-lines: 2186
+lines: 2253
 reason: fifty-four lines, forty of them the reason. This file already carried
   `resolveProposalBookingOwner` and `resolveProposalOperationalPresence` — two
   functions that exist solely because a modification proposal must be re-judged
@@ -67,7 +76,16 @@ reason: fifty-four lines, forty of them the reason. This file already carried
   reserve beds, and then reproduced at approval — so the #2525 drift gate
   compares a phantom with itself and nothing downstream can catch a violation
   invented here. That is the sentence the next person to add a proposal input
-  needs, and it belongs at the function.
+  needs, and it belongs at the function. Review added sixty-seven lines on top,
+  and they NET OUT one database read: the owner resolver and the Group Trip
+  resolver were each `findUnique`-ing the same booking id, so they now share one
+  `PROPOSAL_BOOKING_SELECT` — which is also the only place `parentBookingId` can
+  be selected, without which this path structurally could not apply the
+  split-pair carve-out the persisted evaluator applies. The added prose is that
+  hazard stated once, at the resolver: for a split child, and only for a split
+  child, identity resolved from the two canonical relations alone is `null`, so
+  the two evaluators would disagree about precisely the booking the carve-out
+  exists for.
 
 file: src/lib/booking-create.ts
 lines: 1969

@@ -798,6 +798,32 @@ compliant indefinitely.
   clause of this paragraph, including that a booking related by
   `parentBookingId` in any OTHER configuration supplies and receives nothing.
 
+  **Two guards hold the fence, and the stronger one is the type.**
+  `inheritedSplitPairGroupTrip` takes its subject as
+  `Pick<LoadedHostingBooking, "parentBookingId">` — it is never handed the
+  evaluated booking's own `id`, so it cannot be widened to follow children
+  without someone changing the signature, which no accidental tidy does. The
+  behavioural fence is the second guard and catches what the type cannot: a
+  widening of the choice WITHIN the sibling set, such as taking the first sibling
+  rather than the parent, or the first sibling that happens to be in a trip.
+  Both of those shapes are pinned by fixtures that put a decoy sibling in a trip
+  beside a parent that is in none.
+
+  **EVERY evaluator applies the carve-out, or two of them disagree about the one
+  booking it exists for.** A split child is modifiable like any other booking, so
+  the persisted reconciler is not the only path that asks the hosting rule about
+  it: `evaluateProposalPartyViolations` re-judges a proposed party server-side
+  and FREEZES the answer into a policy-exception request, which an officer
+  reviews and which reserves beds under `HOLD`. An evaluator that resolves
+  identity from the two canonical relations alone answers "no Group Trip" for
+  precisely the split child — so it would invent a hosting violation on the one
+  shape the rule was taught to get right, and approval reproduces the same
+  evaluation, so the #2525 drift gate compares the phantom with itself. The
+  shared reader `readInheritedSplitPairGroupTrip` exists so the second path
+  applies the SAME fence rather than a second copy of it, and
+  `adult-member-hosting-call-sites.test.ts` pins that the exception path calls
+  it and that `inheritedSplitPairGroupTrip` has exactly one definition tree-wide.
+
   The two write paths keep their roster row ahead of the rule for the same
   reason: `createConfirmedBooking` claims the `GroupBookingJoin` row BEFORE it
   creates and reconciles the split child, and `verifyAndCreateNonMemberJoin`
@@ -819,9 +845,14 @@ compliant indefinitely.
   `src/lib/__tests__/adult-member-hosting-call-sites.test.ts` and
   `src/lib/__tests__/group-trip-identity.test.ts`, and behaviourally by
   `src/lib/__tests__/adult-member-hosting-group-trip-cover.test.ts`, which also
-  pins the two write orderings the pre-persist half depends on: the non-member
+  pins two of the write orderings the pre-persist half depends on: the non-member
   verify claims its `GroupBookingJoin` row before it reconciles hosting, and the
-  member join hands its preflight the container id it already holds.
+  member join hands its preflight the container id it already holds. The third —
+  `createConfirmedBooking` writing the roster row before it creates and
+  reconciles the split child — is pinned structurally in
+  `adult-member-hosting-call-sites.test.ts`, because both orders typecheck and
+  every behavioural suite passes either way, so a later tidy moving the block
+  back would otherwise be green everywhere.
 
 ### INV-HOST-044
 
