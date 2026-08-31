@@ -6,8 +6,10 @@ seam itself is a NEW module rather than more length on any of them, or on the
 3,000-line hosting engine, which is where the bulk of this change went.
 
 file: src/lib/group-cancel.ts
-lines: 929
-reason: two calls — one reconcile inside the per-child cancellation transaction
+lines: 915
+reason: net of the fourteen lines this change GAVE BACK, by moving the child
+  status set it shared with the reaper into `booking-status.ts`. What is left is
+  two calls — one reconcile inside the per-child cancellation transaction
   and one drain after it commits — plus the comment that stops the next reader
   deleting them. The comment earns its place because the defect it closes was
   invisible precisely by looking finished: this loop already frees the beds, so
