@@ -767,7 +767,8 @@ compliant indefinitely.
   `organiserSettled` children in the active set, and re-invokes the same idempotent
   cleanup. `GroupBooking.status` is not in that query, so a group already fenced
   CANCELLED is re-driven like any other, and the child status set it looks for is
-  `group-cancel.ts`'s own `ACTIVE_CHILD_STATUSES`, imported rather than re-listed
-  (`INV-SSOT`) so the two can never drift. The reason a refusal still must not reach
+  the same `ORGANISER_CANCEL_ACTIVE_CHILD_STATUSES` the cancel loop claims — one
+  declaration in `booking-status.ts` since #3209 rather than the identical copy in
+  each module (`INV-SSOT`), so the two can never drift. The reason a refusal still must not reach
   these paths is that it is DETERMINISTIC: a re-drive re-reads the same rows and
   refuses again, forever, which is a wedge rather than a recovery.

@@ -57,16 +57,14 @@ import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-cov
 import { enqueueOwnHostingCoverageReevaluation } from "@/lib/adult-member-hosting-review";
 import { prisma } from "@/lib/prisma";
 import {
+  // Shared with `group-cancel.ts`, which claims exactly this set (#3209,
+  // `INV-SSOT`): a re-drive must be able to find what a cancel could not finish.
+  ORGANISER_CANCEL_ACTIVE_CHILD_STATUSES,
   RELEASE_ADMIN_CAPACITY_HOLD_UPDATE,
   RELEASE_WHOLE_LODGE_HOLD_UPDATE,
 } from "@/lib/booking-status";
 import { cancelPaymentIntentIfCancellable } from "@/lib/stripe";
-import {
-  // The set an organiser cancel CLAIMS is the set a re-drive must still be able
-  // to FIND, so it is imported rather than re-listed here (#3209, `INV-SSOT`).
-  ACTIVE_CHILD_STATUSES as ORGANISER_CANCEL_ACTIVE_CHILD_STATUSES,
-  settleGroupBookingOnOrganiserCancel,
-} from "@/lib/group-cancel";
+import { settleGroupBookingOnOrganiserCancel } from "@/lib/group-cancel";
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import { recordBookingEvent } from "@/lib/booking-events";

@@ -80,6 +80,9 @@ import { reconcileBedAllocationsForBookingWithGlobalLockHeld } from "./bed-alloc
 import { reconcileHostingReviewForSystemCancellation } from "@/lib/adult-member-hosting-system-cancellation";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import {
+  // The set an organiser cancel CLAIMS is the set the reaper's resume phase must
+  // still be able to FIND, so both read one declaration (#3209, `INV-SSOT`).
+  ORGANISER_CANCEL_ACTIVE_CHILD_STATUSES as ACTIVE_CHILD_STATUSES,
   RELEASE_ADMIN_CAPACITY_HOLD_UPDATE,
   RELEASE_WHOLE_LODGE_HOLD_UPDATE,
 } from "./booking-status";
@@ -101,23 +104,6 @@ import { enqueueXeroGroupSettlementInvoiceVoidOperation } from "@/lib/xero-group
 import logger from "@/lib/logger";
 import { clubToday } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
-
-/**
- * Child booking statuses that an organiser cancel must clean up.
- *
- * Exported because `cron-group-settlement-reaper.ts` selects interrupted cleanups
- * by "the organiser booking is CANCELLED and a child is still in one of these"
- * (#1236). It carried its own identical copy until #3209; two copies of a set that
- * MUST agree — one deciding what a cancel claims, the other deciding what a
- * re-drive can still find — is the shape `INV-SSOT` forbids, and if they drifted
- * the resume phase would silently stop recovering the very children this loop had
- * failed on.
- */
-export const ACTIVE_CHILD_STATUSES = [
-  BookingStatus.PAYMENT_PENDING,
-  BookingStatus.CONFIRMED,
-  BookingStatus.PAID,
-] as const;
 
 // F3 (#1351): the recovery operation is enqueued BEFORE the inline Stripe
 // refund, so the cron must not claim it while this run is still executing.
@@ -593,8 +579,8 @@ export async function settleGroupBookingOnOrganiserCancel(
           // #3209 corrects what this said. It claimed the reaper "only re-drives
           // not-yet-CANCELLED groups", which is false: `resumeInterruptedOrganiser
           // Cancels` selects on the ORGANISER BOOKING being CANCELLED plus a still
-          // -active organiser-settled child, over this module's own exported
-          // `ACTIVE_CHILD_STATUSES`. `GroupBooking.status` is not in that query.
+          // -active organiser-settled child, over the same status set this loop
+          // claims. `GroupBooking.status` is not in that query at all.
           const queued = await enqueueXeroRefundCreditNoteOperation(
             child.payment.id,
             refundForChild,

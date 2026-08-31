@@ -262,6 +262,24 @@ export function bookingHasCapacityOverride(booking: {
  * stopped holding the moment it transitioned — but the shared release keeps
  * rows honest and the audit story simple ("cancel releases the hold").
  */
+/**
+ * The child bookings an ORGANISER_PAYS group cancel must clean up (#1236, #3209).
+ *
+ * Here rather than in `group-cancel.ts` because TWO modules must agree on it and
+ * neither may be the other's source: `group-cancel.ts` decides which children a
+ * cancel CLAIMS, and `cron-group-settlement-reaper.ts` decides which children a
+ * crash-interrupted cleanup can still be FOUND by. They carried identical copies
+ * until #3209 (`INV-SSOT`), and had they drifted the resume phase would silently
+ * have stopped recovering the very children the cancel loop failed on. This module
+ * is the leaf both already depend on, so sharing it here costs neither an import
+ * cycle nor a test double.
+ */
+export const ORGANISER_CANCEL_ACTIVE_CHILD_STATUSES = [
+  BookingStatus.PAYMENT_PENDING,
+  BookingStatus.CONFIRMED,
+  BookingStatus.PAID,
+] as const;
+
 export const RELEASE_ADMIN_CAPACITY_HOLD_UPDATE = {
   adminCapacityHoldAt: null,
   adminCapacityHoldByMemberId: null,
