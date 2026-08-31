@@ -44,7 +44,11 @@ import {
   evaluateBookingAdultMemberHosting,
   evaluatePersistedBookingAdultMemberHostingReadOnly,
 } from "@/lib/adult-member-hosting-review";
-import { groupTripCoverageSourceWhere } from "@/lib/group-trip-identity";
+import { evaluateProposalPartyViolations } from "@/lib/booking-exception-request-service";
+import {
+  groupTripCoverageDependentWhere,
+  groupTripCoverageSourceWhere,
+} from "@/lib/group-trip-identity";
 
 const LODGE = "lodge-a";
 const OTHER_LODGE = "lodge-b";
@@ -652,54 +656,136 @@ describe("group identity is the two canonical relations (INV-HOST-043)", () => {
     expect(violation, PARENT_ID_RULE).toBeNull();
   });
 
-  it("keeps the container's own status out of the source query entirely", async () => {
-    // Structural, because a behavioural test can only prove the container status
-    // this store happens to carry is ignored. The claim is that no clause names
-    // one at all, so a later edit cannot reintroduce a gate nobody tests.
-    const where = groupTripCoverageSourceWhere(
-      {
-        id: "b-main",
-        lodgeId: LODGE,
-        checkIn: new Date("2026-08-03T00:00:00.000Z"),
-        checkOut: new Date("2026-08-05T00:00:00.000Z"),
+  /**
+   * Every path at which a `status` key appears in a Prisma `where`, as a
+   * dotted string ("AND.0.status", "AND.1.OR.0.groupBookingJoin.is.status").
+   *
+   * A KEY WALK RATHER THAN A STRING SEARCH, because the string search this
+   * replaced did not discriminate. It asserted the serialised `where` contained
+   * neither `"CLOSED"` nor `"CANCELLED"` and did contain `"CONFIRMED"` — and a
+   * container gate written POSITIVELY, `groupBookingJoin: { is: { groupBooking:
+   * { status: "OPEN" } } }`, contains neither banned word while still carrying
+   * `"CONFIRMED"` from the Booking lifecycle filter, so all three assertions
+   * passed with the gate in place. Asserting the absence of `"OPEN"` as well
+   * would not have fixed it either: any status value would do.
+   *
+   * What the rule actually says is structural — `GroupBooking.status` may not be
+   * consulted AT ALL — so the assertion is structural too: a `status` key may
+   * appear only under logical combinators, never underneath a relation.
+   */
+  function statusKeyPaths(node: unknown, trail: string[] = []): string[] {
+    if (Array.isArray(node)) {
+      return node.flatMap((item, index) =>
+        statusKeyPaths(item, [...trail, String(index)]),
+      );
+    }
+    if (node === null || typeof node !== "object" || node instanceof Date) {
+      return [];
+    }
+    return Object.entries(node as Record<string, unknown>).flatMap(
+      ([key, value]) => {
+        const here = [...trail, key];
+        const nested = statusKeyPaths(value, here);
+        return key === "status" ? [here.join("."), ...nested] : nested;
       },
-      { groupBookingId: TRIP, role: "JOINER" },
     );
-    const serialised = JSON.stringify(where);
-    expect(
-      serialised,
-      "INV-HOST-043 (docs/invariants/adult-member-hosting.md): GroupBooking." +
-        "status governs JOINING, not cover. A CLOSED container is the normal " +
-        "state of a settled party and a cancelled container does not cancel " +
-        "the joiners' own bookings.",
-    ).not.toContain("CLOSED");
-    expect(serialised).not.toContain("CANCELLED");
-    // And `Booking.status` IS still filtered, so the assertion above cannot be
-    // satisfied by a query that had simply stopped filtering lifecycle at all.
-    expect(serialised).toContain("CONFIRMED");
-  });
+  }
 
-  it("still supplies cover when the Group Trip container is closed or cancelled", async () => {
-    // The behavioural half. The store carries a container status the production
-    // query never asks for; cover is unchanged either way.
-    for (const containerStatus of ["OPEN", "CLOSED", "CANCELLED"]) {
-      const rows = [
-        joinerNeedingCover({
-          groupBookingJoin: { groupBookingId: TRIP, status: containerStatus },
-        }),
+  const COMBINATORS = new Set(["AND", "OR", "NOT"]);
+
+  /** A `status` whose whole path is combinators is `Booking.status` itself. */
+  function isBookingLevel(path: string): boolean {
+    const segments = path.split(".");
+    return segments
+      .slice(0, -1)
+      .every((segment) => COMBINATORS.has(segment) || /^\d+$/.test(segment));
+  }
+
+  const CONTAINER_STATUS_RULE =
+    "INV-HOST-043 (docs/invariants/adult-member-hosting.md): GroupBooking." +
+    "status governs JOINING, not cover, so no clause may consult it. A CLOSED " +
+    "container is the normal state of a settled party and a cancelled " +
+    "container does not cancel the joiners' own bookings. Only Booking.status " +
+    "decides whether a booking is really happening.";
+
+  const WHERE_BUILDERS: Array<[string, typeof groupTripCoverageDependentWhere]> = [
+    ["the SOURCE builder", groupTripCoverageSourceWhere],
+    ["the DEPENDENT builder", groupTripCoverageDependentWhere],
+  ];
+
+  it.each(WHERE_BUILDERS)(
+    "keeps the container's own status out of %s entirely",
+    (_label, build) => {
+      const where = build(
+        {
+          id: "b-main",
+          lodgeId: LODGE,
+          checkIn: new Date("2026-08-03T00:00:00.000Z"),
+          checkOut: new Date("2026-08-05T00:00:00.000Z"),
+        },
+        { groupBookingId: TRIP, role: "JOINER" },
+      );
+      const paths = statusKeyPaths(where);
+      // NOT VACUOUS: `Booking.status` IS filtered, so "no status key under a
+      // relation" cannot be satisfied by a query that stopped filtering
+      // lifecycle altogether.
+      expect(paths.length, CONTAINER_STATUS_RULE).toBeGreaterThan(0);
+      expect(
+        paths.filter((path) => !isBookingLevel(path)),
+        CONTAINER_STATUS_RULE,
+      ).toEqual([]);
+    },
+  );
+
+  /** One source per branch of the membership `OR`, carrying a container status. */
+  const CONTAINER_SOURCES: Array<
+    [string, (nights: string[], containerStatus: string) => FakeBooking]
+  > = [
+    [
+      "the organiser's booking",
+      (nights, containerStatus) =>
         withAdult(
           organiserOf(TRIP, {
             groupBookingAsOrganiser: { id: TRIP, status: containerStatus },
           }),
-          ["2026-08-03", "2026-08-04"],
+          nights,
         ),
-      ];
-      expect(
-        (await evaluate(rows, GROUP_TRIP_ON)).violation,
-        `container status ${containerStatus} must not change cover`,
-      ).toBeNull();
-    }
-  });
+    ],
+    [
+      "another JOINER's booking",
+      (nights, containerStatus) =>
+        withAdult(
+          joinerOf(TRIP, "b-other-joiner", {
+            groupBookingJoin: {
+              groupBookingId: TRIP,
+              status: containerStatus,
+            },
+          }),
+          nights,
+        ),
+    ],
+  ];
+
+  it.each(CONTAINER_SOURCES)(
+    "still supplies cover from %s when the container is closed or cancelled",
+    async (_label, makeSource) => {
+      // The behavioural half, run down BOTH branches of the membership `OR`. A
+      // gate added to only one of the two relations would otherwise be invisible
+      // here, and the organiser branch alone was all this used to exercise.
+      for (const containerStatus of ["OPEN", "CLOSED", "CANCELLED"]) {
+        const rows = [
+          joinerNeedingCover({
+            groupBookingJoin: { groupBookingId: TRIP, status: containerStatus },
+          }),
+          makeSource(["2026-08-03", "2026-08-04"], containerStatus),
+        ];
+        expect(
+          (await evaluate(rows, GROUP_TRIP_ON)).violation,
+          `container status ${containerStatus}: ${CONTAINER_STATUS_RULE}`,
+        ).toBeNull();
+      }
+    },
+  );
 });
 
 describe("cross-booking hosts are host-only and counted once (INV-HOST-044)", () => {
@@ -988,9 +1074,17 @@ describe("the Group Trip source read is bounded (INV-HOST-044)", () => {
       JSON.stringify(args?.where ?? {}).includes("groupBooking"),
     );
     expect(groupRead?.[0].take).toBe(100);
-    // And no `orderBy`, which is what tells a reader this is the writer's
-    // truncating bound rather than an evidence caller's deterministic one.
-    expect(groupRead?.[0].orderBy).toBeUndefined();
+    // WHAT TELLS A WRITER APART FROM AN EVIDENCE CALLER IS THE BOUND AND THE
+    // REFUSAL, NEVER THE ORDER. This used to assert `orderBy` was absent, on the
+    // reasoning that a writer's truncation errs towards the rule and so gains
+    // nothing from reproducibility. That is true of the ANSWER and false of the
+    // SNAPSHOT: an unordered `take` lets Postgres return any 100 of the matching
+    // rows, so `adultMemberHostingStateKey` moves between two evaluations of an
+    // unchanged booking and the review row is rewritten — reopening the incident
+    // and re-notifying the officer — for no reason anybody can see. Both reads
+    // now order unconditionally (`COVERAGE_READ_ORDER`), and the writer is still
+    // the caller that truncates instead of refusing.
+    expect(groupRead?.[0].orderBy).toEqual([{ checkIn: "asc" }, { id: "asc" }]);
   });
 });
 
@@ -1022,6 +1116,9 @@ describe("pre-persist Group Trip cover for a join (#3038)", () => {
     );
     const violation = await evaluateProposedAdultMemberHosting(db, {
       bookingOwnerMemberId: "joining-member",
+      // Stated, not omitted — the field is required precisely so that "no Group
+      // Trip" is an answer a call site gives rather than one it falls into.
+      groupBookingId: null,
       lodgeId: LODGE,
       checkIn: new Date("2026-08-03T00:00:00.000Z"),
       checkOut: new Date("2026-08-05T00:00:00.000Z"),
@@ -1113,5 +1210,274 @@ describe("the non-member join writes its roster row before it asks the rule", ()
     // reconciliation.
     const occurrences = verify.split("tx.groupBookingJoin.update(").length - 1;
     expect(occurrences).toBe(1);
+  });
+});
+
+describe("a MODIFICATION exception proposal is judged with its Group Trip (INV-HOST-044)", () => {
+  /**
+   * THE PATH THAT RE-ASKS THE HOSTING RULE ABOUT A LIVE BOOKING, and the one
+   * that quietly did it group-blind.
+   *
+   * `evaluateProposalPartyViolations` re-evaluates a proposed party server-side
+   * and FREEZES the answer into the exception request: an officer reviews it,
+   * and where the club's capacity mode is `HOLD` the beds are reserved against
+   * it. Approval then reproduces the same evaluation, so the #2525 drift gate
+   * compares a phantom with itself and lets it through — nothing downstream can
+   * catch a violation that was invented here.
+   *
+   * The modification path already resolved the live booking's OWNER and its
+   * live guest rows for exactly this reason ("without this half a modification
+   * proposal would raise a violation for a party the booking path allows").
+   * #3038 added a third input and this is the guard that says so: the live
+   * booking's Group Trip is resolved from the two canonical relations and
+   * handed to the hosting evaluation, so a booking covered by a sibling
+   * booking's adult is not re-judged as uncovered.
+   *
+   * REMOVE THE `groupBookingId` ARGUMENT FROM `evaluatePartyViolations` AND THIS
+   * TEST GOES RED — a phantom `ADULT_MEMBER_HOSTING_REQUIRED` appears on a party
+   * the booking path allows.
+   */
+  const party = {
+    checkIn: "2026-08-03",
+    checkOut: "2026-08-05",
+    guests: [
+      {
+        firstName: "kid",
+        lastName: "Person",
+        ageTier: "CHILD",
+        isMember: false,
+        memberId: null,
+        nights: ["2026-08-03", "2026-08-04"],
+      },
+    ],
+  };
+
+  /** The store, plus the tables the shared proposal evaluation also reads. */
+  function proposalStore(rows: FakeBooking[], policies?: unknown[]) {
+    const { db } = makeStore(rows, policies);
+    db.minimumStayPolicy = { findMany: vi.fn(async () => []) };
+    db.bookingGuest = { findMany: vi.fn(async () => []) };
+    db.familyGroupMember = { findMany: vi.fn(async () => []) };
+    db.memberSubscription = { findMany: vi.fn(async () => []) };
+    db.membershipType = { findMany: vi.fn(async () => []) };
+    db.seasonalMembershipAssignment = { findMany: vi.fn(async () => []) };
+    return db;
+  }
+
+  const HOSTING = "ADULT_MEMBER_HOSTING_REQUIRED";
+
+  it("raises no hosting violation when a sibling Group Trip booking covers the nights", async () => {
+    const db = proposalStore(
+      [
+        joinerNeedingCover(),
+        withAdult(organiserOf(TRIP), ["2026-08-03", "2026-08-04"]),
+      ],
+      GROUP_TRIP_ON,
+    );
+    const violations = await evaluateProposalPartyViolations(
+      db,
+      LODGE,
+      party,
+      { bookingId: "b-main" },
+    );
+    expect(
+      violations.map((violation) => violation.reasonCode),
+      "INV-HOST-044 (docs/invariants/adult-member-hosting.md): a modification " +
+        "proposal is re-judged server-side and the answer is FROZEN into the " +
+        "request. Evaluating it without the live booking's Group Trip invents a " +
+        "hosting violation, puts it in front of an officer, and under HOLD " +
+        "reserves beds for a hazard nobody has.",
+    ).not.toContain(HOSTING);
+  });
+
+  it("still raises the violation when no sibling booking covers the nights", async () => {
+    // The other half, so the test above cannot pass merely because this path
+    // stopped evaluating hosting at all.
+    const db = proposalStore([joinerNeedingCover()], GROUP_TRIP_ON);
+    const violations = await evaluateProposalPartyViolations(
+      db,
+      LODGE,
+      party,
+      { bookingId: "b-main" },
+    );
+    expect(violations.map((violation) => violation.reasonCode)).toContain(HOSTING);
+  });
+
+  it("resolves nothing for a NEW-booking proposal, which has no booking to read", async () => {
+    // A new-booking proposal carries no `bookingId`, so there is no live row to
+    // resolve identity from — and a party only holds group identity before its
+    // booking exists inside a join flow, which this is not (`INV-HOST-043`).
+    const db = proposalStore(
+      [withAdult(organiserOf(TRIP), ["2026-08-03", "2026-08-04"])],
+      GROUP_TRIP_ON,
+    );
+    const violations = await evaluateProposalPartyViolations(db, LODGE, party, {
+      requestedByMemberId: "joining-member",
+    });
+    expect(violations.map((violation) => violation.reasonCode)).toContain(HOSTING);
+  });
+});
+
+describe("a #738 split pair is ONE party, and only that (INV-HOST-043)", () => {
+  /**
+   * THE ONE CARVE-OUT, AND THE FENCE AROUND IT (owner decision, 31 Aug 2026).
+   *
+   * A member joining a Group Trip with a mixed party becomes TWO booking rows:
+   * `createConfirmedBooking` writes the member half, hangs the non-member half
+   * off it by `parentBookingId`, and writes the `GroupBookingJoin` row against
+   * the member half only — one party is one joiner on the roster, and the
+   * `(groupBookingId, joinerMemberId)` unique pair says so. So the half carrying
+   * the NON-MEMBER GUESTS, the rows this whole rule exists to judge, resolved to
+   * no Group Trip and received no cover: the join preflight judged the undivided
+   * party and said yes, and the reconciler judged the child and said no.
+   *
+   * The second half therefore inherits the first half's Group Trip. This does
+   * NOT reopen `INV-HOST-043`: `parentBookingId` is still categorically not a
+   * Group Trip identity source, and the tests below are the fence. They are the
+   * whole safety of the carve-out — without them a later change widens it by
+   * accident and nothing says so.
+   */
+  const SPLIT_RULE =
+    "INV-HOST-043 (docs/invariants/adult-member-hosting.md): the ONLY booking " +
+    "that inherits a Group Trip through parentBookingId is the second half of " +
+    "a #738 split pair — the SAME member, live, and followed one way only. " +
+    "parentBookingId is not a Group Trip identity source in any other " +
+    "configuration.";
+
+  /** The member half of a split pair: in the trip, carrying no adult of its own. */
+  function splitParent(overrides: FakeBooking = {}) {
+    return joinerOf(TRIP, "b-parent", {
+      memberId: "owner-1",
+      guests: [],
+      ...overrides,
+    });
+  }
+
+  /** The non-member half: the rows the rule judges, and no group relation. */
+  function splitChild(overrides: FakeBooking = {}) {
+    return booking({
+      id: "b-child",
+      memberId: "owner-1",
+      parentBookingId: "b-parent",
+      guests: [guestRow("kid", ["2026-08-03", "2026-08-04"])],
+      ...overrides,
+    });
+  }
+
+  const tripAdult = () =>
+    withAdult(organiserOf(TRIP), ["2026-08-03", "2026-08-04"]);
+
+  it("covers the non-member half through the member half's Group Trip", async () => {
+    // The carve-out itself. The member half holds NO qualifying adult, so this
+    // cannot pass through the ordinary `SAME_BOOKING` split-sibling borrow — the
+    // only adult in the story is on the organiser's separate booking.
+    const { violation } = await evaluate(
+      [splitChild(), splitParent(), tripAdult()],
+      GROUP_TRIP_ON,
+    );
+    expect(
+      violation,
+      "A split pair is ONE party. Told yes by the join preflight and no by the " +
+        "reconciler, seconds apart, is not an answer.",
+    ).toBeNull();
+  });
+
+  it("inherits nothing when the parent belongs to a DIFFERENT member", async () => {
+    // The #796 shape: a group joiner's booking hangs off the ORGANISER's by the
+    // same column while belonging to somebody else. It needs nothing — a joiner
+    // always carries its own roster row — and it must borrow nothing.
+    const { violation } = await evaluate(
+      [
+        splitChild({ parentBookingId: `organiser-${TRIP}` }),
+        tripAdult(),
+      ],
+      GROUP_TRIP_ON,
+    );
+    expect(violation?.affectedNights, SPLIT_RULE).toEqual([
+      "2026-08-03",
+      "2026-08-04",
+    ]);
+  });
+
+  it.each([["CANCELLED"], ["BUMPED"]])(
+    "inherits nothing from a %s parent",
+    async (status) => {
+      // A dead booking cannot lend its trip to a live one.
+      const { violation } = await evaluate(
+        [splitChild(), splitParent({ status }), tripAdult()],
+        GROUP_TRIP_ON,
+      );
+      expect(violation?.affectedNights, SPLIT_RULE).toEqual([
+        "2026-08-03",
+        "2026-08-04",
+      ]);
+    },
+  );
+
+  it("inherits nothing from a soft-deleted parent", async () => {
+    const { violation } = await evaluate(
+      [
+        splitChild(),
+        splitParent({ deletedAt: new Date("2026-07-01T00:00:00.000Z") }),
+        tripAdult(),
+      ],
+      GROUP_TRIP_ON,
+    );
+    expect(violation?.affectedNights, SPLIT_RULE).toEqual([
+      "2026-08-03",
+      "2026-08-04",
+    ]);
+  });
+
+  it("follows the relation ONE WAY: a parent never inherits from its child", async () => {
+    // The child here carries a roster row it would never really have, precisely
+    // so the direction is pinned by behaviour rather than by the shape of the
+    // fixtures. Only `booking.parentBookingId` is followed.
+    const parent = booking({
+      id: "b-parent",
+      memberId: "owner-1",
+      guests: [guestRow("kid", ["2026-08-03", "2026-08-04"])],
+    });
+    const child = booking({
+      id: "b-child",
+      memberId: "owner-1",
+      parentBookingId: "b-parent",
+      groupBookingJoin: { groupBookingId: TRIP },
+      guests: [],
+    });
+    const { violation } = await evaluate(
+      [parent, child, tripAdult()],
+      GROUP_TRIP_ON,
+    );
+    expect(violation?.affectedNights, SPLIT_RULE).toEqual([
+      "2026-08-03",
+      "2026-08-04",
+    ]);
+  });
+
+  it("SUPPLIES nothing: an inheriting child is never read as a Group Trip source", async () => {
+    // Inheriting is about what the second half RECEIVES. The source and
+    // dependent reads are both relation-based, and the child has neither
+    // relation — which is the right answer as well as the safe one, since the
+    // child carries only non-member guests and has no adult to lend anybody.
+    const { violation } = await evaluate(
+      [
+        joinerNeedingCover(),
+        // The child of a member half that IS in the trip, carrying an adult it
+        // would never really carry, so "supplies nothing" is a fact about the
+        // query rather than about the fixture.
+        withAdult(
+          splitChild({ id: "b-child", guests: [] }),
+          ["2026-08-03", "2026-08-04"],
+          "adult-on-the-child",
+        ),
+        splitParent(),
+      ],
+      GROUP_TRIP_ON,
+    );
+    expect(violation?.affectedNights, SPLIT_RULE).toEqual([
+      "2026-08-03",
+      "2026-08-04",
+    ]);
   });
 });

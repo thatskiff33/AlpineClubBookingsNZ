@@ -457,6 +457,67 @@ describe("canonical Group Trip identity (#3037, epic #2943)", () => {
     expect(envelope).toContain("hostingCoverageSourceBookingFilter(");
   });
 
+  it("only ever hands the hosting rule a SERVER-RESOLVED Group Trip", () => {
+    // THE WHOLE AUTHORIZATION STORY FOR `SAME_GROUP_TRIP` IS THAT NOBODY CHOOSES
+    // THEIR OWN TRIP (#3038).
+    //
+    // `groupBookingId` decides which OTHER accounts' bookings may supply adult
+    // cover for this one. A caller that forwarded a request-supplied value would
+    // let anybody name any trip and borrow its adults — and nothing else in the
+    // system would notice, because every clause downstream is about lodges,
+    // dates and statuses, all of which the attacker's own booking satisfies. The
+    // id is safe today only because it is always resolved server-side, and that
+    // property lives in no type. So it lives here.
+    //
+    // Three producers, and each is pinned to WHAT it supplies rather than merely
+    // to the fact that it supplies something.
+    expect([...sourceFilesNaming("evaluateProposedAdultMemberHosting(")].sort()).toEqual([
+      "src/app/api/bookings/route.ts",
+      "src/lib/adult-member-hosting-proposed.ts",
+      "src/lib/booking-exception-request-service.ts",
+      "src/lib/group-booking.ts",
+    ]);
+
+    const suppliedRule =
+      "INV-HOST-043 (docs/invariants/adult-member-hosting.md): a party's Group " +
+      "Trip is resolved server-side — from the container a join code was " +
+      "redeemed for, or from the live booking's own canonical relations — and " +
+      "never from anything the requester sent. A request-supplied id would let " +
+      "any member borrow any trip's adult cover.";
+
+    // The ordinary create has no join path, so it says so with a literal.
+    expect(
+      readRepoCode("src/app/api/bookings/route.ts"),
+      suppliedRule,
+    ).toContain("groupBookingId: null,");
+
+    // The member join hands over the container it already resolved from the
+    // redeemed join code, never a body field.
+    expect(readRepoCode("src/lib/group-booking.ts"), suppliedRule).toContain(
+      "groupBookingId: group.id,",
+    );
+
+    // The exception path resolves the LIVE booking's own relations, through the
+    // one select constant that owns them.
+    const service = readRepoCode("src/lib/booking-exception-request-service.ts");
+    expect(service, suppliedRule).toContain(
+      "await resolveProposalGroupTrip(db, presence)",
+    );
+    expect(service, suppliedRule).toContain(
+      "select: GROUP_TRIP_IDENTITY_SELECT,",
+    );
+
+    // AND THE REQUEST LAYER NAMES IT IN EXACTLY ONE PLACE, where it is the
+    // literal above. Anything parsing one off the wire — a zod field, a body
+    // spread, a query parameter — adds a file here and trips this.
+    expect(
+      sourceFilesNaming("groupBookingId").filter((file) =>
+        file.startsWith("src/app/"),
+      ),
+      suppliedRule,
+    ).toEqual(["src/app/api/bookings/route.ts"]);
+  });
+
   it("never selects the group joinCode", () => {
     // The group's join credential. The epic's privacy contract keeps it out of
     // every payload and every tier, and identity resolution has no use for it -
