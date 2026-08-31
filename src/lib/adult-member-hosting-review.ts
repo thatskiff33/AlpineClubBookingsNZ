@@ -41,13 +41,22 @@ import {
 } from "@/lib/adult-member-hosting-same-owner";
 import { AdultMemberHostingRequiredError } from "@/lib/adult-member-hosting-refusal";
 import {
+  HostingGroupTripSourceCeilingExceededError,
   HostingSameOwnerSourceCeilingExceededError,
   HostingSiblingCeilingExceededError,
+  SAME_GROUP_TRIP_COVERAGE_SOURCE_LIMIT,
   SAME_OWNER_COVERAGE_DEPENDENT_LIMIT,
   SAME_OWNER_COVERAGE_DEPENDENT_ORDER,
   SAME_OWNER_COVERAGE_SOURCE_LIMIT,
   warnIfCoverageDependentCeilingBound,
 } from "@/lib/adult-member-hosting-coverage-ceilings";
+import {
+  GROUP_TRIP_IDENTITY_SELECT,
+  groupTripCoverageSourceWhere,
+  groupTripIdentityOf,
+  type GroupTripCoverageBooking,
+  type GroupTripIdentity,
+} from "@/lib/group-trip-identity";
 import type { AdultMemberHostingPolicyExceptionViolation } from "@/lib/booking-policy-exceptions";
 import {
   ACTIVE_BOOKING_STATUSES,
@@ -228,6 +237,13 @@ const BOOKING_HOSTING_SELECT = {
   id: true,
   memberId: true,
   parentBookingId: true,
+  // #3038 (epic #2943). Canonical Group Trip identity, spread from the ONE
+  // constant that owns it rather than re-typed here, so a relation name that
+  // drifts from the schema is a single edit instead of a per-call-site hunt.
+  // `groupTripIdentityOf` reads these two and nothing else; `parentBookingId`
+  // above is the #738 split-booking relationship and is NEVER group identity
+  // (`INV-HOST-043`).
+  ...GROUP_TRIP_IDENTITY_SELECT,
   lodgeId: true,
   checkIn: true,
   checkOut: true,
@@ -266,6 +282,15 @@ type LoadedHostingBooking = {
   id: string;
   memberId: string;
   parentBookingId: string | null;
+  /**
+   * What `GROUP_TRIP_IDENTITY_SELECT` produces. REQUIRED and nullable rather
+   * than optional, which is that module's deliberate choice and not an
+   * oversight: nullable is the data (a booking in no Group Trip has neither
+   * relation), while optional would be permission for a loader to omit the
+   * select — and an omitted select resolves to "no Group Trip" silently.
+   */
+  groupBookingAsOrganiser: { id: string } | null;
+  groupBookingJoin: { groupBookingId: string } | null;
   lodgeId: string;
   checkIn: Date;
   checkOut: Date;
@@ -466,7 +491,7 @@ export async function loadSameBookingOwnerHosts(
    * read is byte-identical to before.
    */
   sameOwnerSourceCeiling?: number,
-): Promise<HostingParticipant[]> {
+): Promise<{ participants: HostingParticipant[]; sourceIds: string[] }> {
   const where = sameBookingOwnerCoverageSourceWhere(booking);
   const sources = (await db.booking.findMany({
     where:
@@ -500,14 +525,153 @@ export async function loadSameBookingOwnerHosts(
     throw new HostingSameOwnerSourceCeilingExceededError(sameOwnerSourceCeiling);
   }
 
-  return sources
-    .filter((source) => Array.isArray(source.guests))
-    .flatMap((source) =>
-      toHostingParticipants(source, true).map((participant) => ({
-        ...participant,
-        hostScope: "SAME_BOOKING_OWNER" as const,
-      })),
-    );
+  return {
+    participants: sources
+      .filter((source) => Array.isArray(source.guests))
+      .flatMap((source) =>
+        toHostingParticipants(source, true).map((participant) => ({
+          ...participant,
+          hostScope: "SAME_BOOKING_OWNER" as const,
+        })),
+      ),
+    // WHY THE IDS COME BACK (#3038). `SAME_GROUP_TRIP` runs after this scope and
+    // must not load a booking this one already loaded — the same adult arriving
+    // twice under two scopes would put one person in the participant list twice
+    // and would report a night as covered by two scopes when one booking
+    // supplied it. `loadSiblingHosts` has returned its ids for exactly this
+    // reason since #2576; this now matches it, so all three cross-booking
+    // loaders have one shape and the exclusion chain is visible at the call
+    // site rather than hidden inside a scope module. Ids of the rows ACTUALLY
+    // READ, so a truncated read cannot exclude a booking nobody looked at.
+    sourceIds: sources.map((source) => source.id),
+  };
+}
+
+/**
+ * The qualifying-adult-member candidates attending ANOTHER live booking in the
+ * SAME GROUP TRIP, at the same lodge, over nights that overlap this stay
+ * (#3038, epic #2943).
+ *
+ * The third cross-booking loader, and deliberately the SAME SHAPE as
+ * `loadSameBookingOwnerHosts` down to the returned ids — because it is the same
+ * idea with one clause changed. Everything that carries the scope carries it in
+ * the same three ways:
+ *
+ *  - `hostScope: "SAME_GROUP_TRIP"` — the evaluator counts these people only
+ *    where the club has that scope switched on (`INV-HOST-017`). No branch of
+ *    the rule changed to add this scope, exactly as none changed for #2576.
+ *  - `hostOnly: true` — their own nights are NOT this booking's responsibility.
+ *    That is also the capacity answer the epic's release invariants demand: the
+ *    adult's REAL attendance on their own booking is recognised as evidence
+ *    here, and they are never duplicated as a guest on this one, so no bed,
+ *    participant or payment responsibility moves between two separately owned
+ *    bookings.
+ *  - the participant shape is `toHostingParticipants`' — the same live Member
+ *    facts, the same sparse `BookingGuestNight` nights, the same D-12 consent
+ *    predicate. There is deliberately no second definition of a qualifying
+ *    adult member: whether these people qualify is decided afterwards by
+ *    `participantQualifiesAsHost`, exactly as for the booking's own guests.
+ *
+ * OWNERSHIP IS NOT THE RELATIONSHIP HERE, which is the one real difference from
+ * its same-owner sibling. Group Trip sources belong to OTHER members — that is
+ * the entire point of the feature — so a member-owned join and a non-member
+ * join consume this cover on identical terms, and nothing about who owns a
+ * source booking is consulted.
+ *
+ * THE GUEST READ IS NARROWED TO MEMBER-LINKED ROWS, the same true narrowing the
+ * same-owner loader applies: a guest with no Member link can never host under
+ * any scope, so loading a source booking's non-member guests would be loading
+ * rows the evaluator is guaranteed to ignore. Their own nights are that
+ * booking's problem, judged when that booking is reconciled.
+ *
+ * `excludeBookingIds` IS THE DEDUPLICATION, and it is a query clause rather than
+ * a post-filter so a booking already read under a narrower scope is never read
+ * twice. The caller passes the split siblings (`SAME_BOOKING`) and the
+ * same-owner sources (`SAME_BOOKING_OWNER`) it has already loaded, so one adult
+ * cannot be counted through two scopes. Coverage itself would survive the
+ * duplicate — the evaluator counts hosts into a `Set` of member ids — but the
+ * frozen snapshot would not: `coveredByScopes` would name a scope that supplied
+ * nothing new, and #3040's kiosk cover-source display reads exactly that field.
+ *
+ * WHAT DECIDES THE SOURCE SET is `groupTripCoverageSourceWhere`: the canonical
+ * membership clause AND the shared coverage envelope, which is where the lodge,
+ * self-exclusion, half-open night overlap and `Booking.status` rules live. The
+ * container's own status is NOT among them (`INV-HOST-043`) — closing or
+ * cancelling a Group Trip governs who may still JOIN it, never whether the
+ * adults on the bookings that already joined are travelling.
+ */
+export async function loadSameGroupTripHosts(
+  booking: GroupTripCoverageBooking,
+  identity: GroupTripIdentity,
+  db: Pick<AdultMemberHostingReviewDb, "booking">,
+  excludeBookingIds: readonly string[],
+  /**
+   * A DETERMINISTIC CEILING, supplied only by a read-only evidence caller — the
+   * same distinction its two siblings draw, for the same reason, on a third host
+   * population.
+   *
+   * The writer's `SAME_GROUP_TRIP_COVERAGE_SOURCE_LIMIT` truncates, which is
+   * safe FOR A WRITER: fewer hosts are seen, so a night reads as uncovered and
+   * the booking is flagged or refused rather than quietly allowed. That argument
+   * inverts for evidence — a diagnostic that misses the sibling booking carrying
+   * the covering adult reports a LIVE BLOCKER on a booking that is actually
+   * covered — so an evidence caller passes a ceiling, gets a total order and
+   * `ceiling + 1` rows, and gets a refusal when the bound binds. Omitted by
+   * every writer.
+   */
+  groupTripSourceCeiling?: number,
+): Promise<{ participants: HostingParticipant[]; sourceIds: string[] }> {
+  const where = groupTripCoverageSourceWhere(booking, identity);
+  const sources = (await db.booking.findMany({
+    // COMPOSED UNDER `AND`, never spread. `groupTripCoverageSourceWhere` already
+    // returns an `AND` whose second element is the membership `OR`; a flat
+    // spread of two objects that each carry an `AND` keeps only the last, and
+    // dropping the membership clause would admit every booking at the lodge.
+    where:
+      excludeBookingIds.length > 0
+        ? { AND: [where, { id: { notIn: [...excludeBookingIds] } }] }
+        : where,
+    take:
+      groupTripSourceCeiling === undefined
+        ? SAME_GROUP_TRIP_COVERAGE_SOURCE_LIMIT
+        : groupTripSourceCeiling + 1,
+    ...(groupTripSourceCeiling === undefined
+      ? {}
+      : {
+          // A total order, so a bound that binds binds reproducibly rather than
+          // returning any N of the matching rows.
+          orderBy: [{ checkIn: "asc" as const }, { id: "asc" as const }],
+        }),
+    select: {
+      id: true,
+      guests: {
+        // Member-linked rows only — see the narrowing note above.
+        where: { memberId: { not: null } },
+        select: BOOKING_HOSTING_SELECT.guests.select,
+      },
+    },
+  })) as Array<{ id: string; guests: LoadedHostingBooking["guests"] }>;
+  if (
+    groupTripSourceCeiling !== undefined &&
+    sources.length > groupTripSourceCeiling
+  ) {
+    throw new HostingGroupTripSourceCeilingExceededError(groupTripSourceCeiling);
+  }
+
+  return {
+    participants: sources
+      // A source that arrived without its guest relation contributes no hosts.
+      // Dropping it is the safe direction: fewer borrowed hosts can only open a
+      // review for an admin to look at, never suppress one.
+      .filter((source) => Array.isArray(source.guests))
+      .flatMap((source) =>
+        toHostingParticipants(source, true).map((participant) => ({
+          ...participant,
+          hostScope: "SAME_GROUP_TRIP" as const,
+        })),
+      ),
+    sourceIds: sources.map((source) => source.id),
+  };
 }
 
 /**
@@ -572,6 +736,12 @@ async function evaluateLoadedBookingAdultMemberHosting(
    */
   sameOwnerSourceCeiling?: number,
   /**
+   * See `loadSameGroupTripHosts`. The THIRD host population, with its own
+   * ceiling because it is a third data question — a Group Trip is MEANT to be
+   * many separate bookings, so its writer bound sits well above the other two.
+   */
+  groupTripSourceCeiling?: number,
+  /**
    * How the #2543 subscription bridge reads the club's age-tier rule. Omitted by
    * every writer, which takes the cached reader that falls back to
    * `AGE_TIER_DEFAULTS`; supplied by a read-only evidence caller, whose strict
@@ -609,28 +779,60 @@ async function evaluateLoadedBookingAdultMemberHosting(
   //
   // The SAME-OWNER read is skipped on that principle and one more: a club with the
   // rule on but `SAME_BOOKING_OWNER` off pays nothing either, which is what keeps
-  // the #2569 upgrade a no-op on cost as well as on answers.
+  // the #2569 upgrade a no-op on cost as well as on answers. #3038's
+  // `SAME_GROUP_TRIP` read is skipped on the same two, plus a third that costs
+  // nothing to check: a booking in no Group Trip has no sibling set to read, so
+  // the query is skipped for every ordinary booking even at a club that HAS
+  // turned the scope on.
   let participants: HostingParticipant[] = [];
   if (hostingModeIsActive(resolved.mode)) {
     const siblings = await loadSiblingHosts(booking, db, siblingCeiling);
     // §9: hold the per-owner key before reading another booking as cover, so a
     // concurrent removal of that cover cannot interleave with this evaluation.
     // Re-entrant, so a caller that already took it (the settle step) pays nothing.
+    //
+    // DELIBERATELY STILL KEYED ON `SAME_BOOKING_OWNER` ALONE (#3038). This key is
+    // `booking.memberId` — the DEPENDENT's owner — and every Group Trip source
+    // belongs to somebody else, so taking it would neither exclude a concurrent
+    // removal of that cover nor tell a reader anything true. The lock a Group
+    // Trip needs is a per-GROUP key acquired ahead of the owner keys, which is
+    // #3039's subject along with the sibling reconciliation fan-out; inventing
+    // half of it here would leave a lock family registered in no census
+    // (`INV-LOCK-003`) and an ordering nothing enforces.
     if (resolved.hostScopes.sameBookingOwner && acquireCoverageOwnerLock) {
       await acquireCoverageOwnerLock();
     }
+    const sameOwner = resolved.hostScopes.sameBookingOwner
+      ? await loadSameBookingOwnerHosts(
+          booking,
+          db,
+          siblings.siblingIds,
+          sameOwnerSourceCeiling,
+        )
+      : { participants: [] as HostingParticipant[], sourceIds: [] };
+    // Resolved from the two canonical relations and nothing else; `null` for a
+    // booking in no Group Trip, which is the ordinary case (`INV-HOST-043`).
+    const groupTripIdentity = resolved.hostScopes.sameGroupTrip
+      ? groupTripIdentityOf(booking)
+      : null;
+    const groupTrip = groupTripIdentity
+      ? await loadSameGroupTripHosts(
+          booking,
+          groupTripIdentity,
+          db,
+          // The deduplication, in the order the scopes narrow: a split sibling
+          // is already a `SAME_BOOKING` host and a same-owner source is already
+          // a `SAME_BOOKING_OWNER` one, so neither is read again here.
+          [...siblings.siblingIds, ...sameOwner.sourceIds],
+          groupTripSourceCeiling,
+        )
+      : { participants: [] as HostingParticipant[], sourceIds: [] };
     participants = await withSubscriptionSettlement(
       [
         ...toHostingParticipants(booking),
         ...siblings.participants,
-        ...(resolved.hostScopes.sameBookingOwner
-          ? await loadSameBookingOwnerHosts(
-              booking,
-              db,
-              siblings.siblingIds,
-              sameOwnerSourceCeiling,
-            )
-          : []),
+        ...sameOwner.participants,
+        ...groupTrip.participants,
       ],
       db,
       seasonYear ?? seasonYearOfStoredDate(booking.checkIn),
@@ -709,6 +911,15 @@ export async function evaluatePersistedBookingAdultMemberHostingReadOnly(
      */
     sameOwnerSourceCeiling?: number;
     /**
+     * The same again, for the `SAME_GROUP_TRIP` coverage sources (#3038). A
+     * third ceiling rather than a reused one because it bounds a third
+     * population whose binding means something different to an operator: a
+     * Group Trip is MEANT to be many separate bookings, so its writer bound
+     * sits far above the other two and a bind here says the trip is larger than
+     * the diagnostic may read, not that an account is misshapen.
+     */
+    groupTripSourceCeiling?: number;
+    /**
      * How the subscription bridge reads the age-tier rule. Same split as
      * `seasonYear` and `subscriptionLockoutMode`: this form has no gated request
      * behind it, so it cannot accept a reader that answers a failed database read
@@ -733,6 +944,7 @@ export async function evaluatePersistedBookingAdultMemberHostingReadOnly(
     options?.subscriptionLockoutMode,
     options?.siblingCeiling,
     options?.sameOwnerSourceCeiling,
+    options?.groupTripSourceCeiling,
     options?.readAgeTierSettings,
   );
 }
