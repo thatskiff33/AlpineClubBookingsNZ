@@ -1229,7 +1229,8 @@ describe("a MODIFICATION exception proposal is judged with its Group Trip (INV-H
    * live guest rows for exactly this reason ("without this half a modification
    * proposal would raise a violation for a party the booking path allows").
    * #3038 added a third input and this is the guard that says so: the live
-   * booking's Group Trip is resolved from the two canonical relations and
+   * booking's Group Trip is resolved server-side — its two canonical relations,
+   * and the ONE split-pair carve-out the persisted evaluator also applies — and
    * handed to the hosting evaluation, so a booking covered by a sibling
    * booking's adult is not re-judged as uncovered.
    *
@@ -1301,6 +1302,83 @@ describe("a MODIFICATION exception proposal is judged with its Group Trip (INV-H
       { bookingId: "b-main" },
     );
     expect(violations.map((violation) => violation.reasonCode)).toContain(HOSTING);
+  });
+
+  it("applies the split-pair carve-out, so the half carrying the guests is judged like the other half", async () => {
+    // THE SHAPE THIS PATH GOT WRONG WHILE THE PERSISTED ONE GOT IT RIGHT, and
+    // the reason `resolveProposalGroupTrip` selects `parentBookingId` at all.
+    //
+    // A member joining a Group Trip with a mixed party becomes TWO rows: the
+    // member half carries the roster row, and the split child carries the
+    // NON-MEMBER guests — the rows this whole rule exists to judge — with no
+    // group relation of its own. Resolve identity from the two canonical
+    // relations ALONE and this booking, and only this booking, answers "no Group
+    // Trip": the persisted evaluator covers it through its parent's trip and the
+    // proposal re-evaluation refuses it, about the same booking, on the same
+    // nights. A split child is modifiable like any other booking (the route
+    // gates on ownership and the edit policy, never on `parentBookingId`), so
+    // the disagreement is reachable rather than theoretical.
+    //
+    // REMOVE THE `readInheritedSplitPairGroupTrip` FALLBACK FROM
+    // `resolveProposalGroupTrip` AND THIS TEST GOES RED.
+    const db = proposalStore(
+      [
+        // The split child. No adult of its own, and no roster row of its own.
+        booking({
+          id: "b-main",
+          memberId: "owner-1",
+          parentBookingId: "b-parent",
+        }),
+        // The member half: on the roster, and holding NO qualifying adult — so
+        // this cannot pass through the ordinary same-booking borrow either.
+        joinerOf(TRIP, "b-parent", { memberId: "owner-1", guests: [] }),
+        withAdult(organiserOf(TRIP), ["2026-08-03", "2026-08-04"]),
+      ],
+      GROUP_TRIP_ON,
+    );
+    const violations = await evaluateProposalPartyViolations(
+      db,
+      LODGE,
+      party,
+      { bookingId: "b-main" },
+    );
+    expect(
+      violations.map((violation) => violation.reasonCode),
+      "INV-HOST-043 (docs/invariants/adult-member-hosting.md): a #738 split " +
+        "pair is ONE party, and both evaluators must say so. The persisted " +
+        "evaluator covers the non-member half through its parent's Group Trip; " +
+        "a modification proposal that resolves identity without the carve-out " +
+        "freezes a phantom hosting violation on the same booking, puts it in " +
+        "front of an officer, and under HOLD reserves beds for a hazard nobody " +
+        "has.",
+    ).not.toContain(HOSTING);
+  });
+
+  it("carries the fence with it: no cover through a parent in no Group Trip", async () => {
+    // The other half, so the test above cannot pass by inheriting from ANY
+    // parent. The carve-out gives the child whatever its parent has, which here
+    // is nothing.
+    const db = proposalStore(
+      [
+        booking({
+          id: "b-main",
+          memberId: "owner-1",
+          parentBookingId: "b-parent",
+        }),
+        booking({ id: "b-parent", memberId: "owner-1", guests: [] }),
+        withAdult(organiserOf(TRIP), ["2026-08-03", "2026-08-04"]),
+      ],
+      GROUP_TRIP_ON,
+    );
+    const violations = await evaluateProposalPartyViolations(
+      db,
+      LODGE,
+      party,
+      { bookingId: "b-main" },
+    );
+    expect(violations.map((violation) => violation.reasonCode)).toContain(
+      HOSTING,
+    );
   });
 
   it("resolves nothing for a NEW-booking proposal, which has no booking to read", async () => {
@@ -1429,24 +1507,80 @@ describe("a #738 split pair is ONE party, and only that (INV-HOST-043)", () => {
     ]);
   });
 
-  it("follows the relation ONE WAY: a parent never inherits from its child", async () => {
-    // The child here carries a roster row it would never really have, precisely
-    // so the direction is pinned by behaviour rather than by the shape of the
-    // fixtures. Only `booking.parentBookingId` is followed.
-    const parent = booking({
-      id: "b-parent",
-      memberId: "owner-1",
-      guests: [guestRow("kid", ["2026-08-03", "2026-08-04"])],
-    });
-    const child = booking({
-      id: "b-child",
-      memberId: "owner-1",
-      parentBookingId: "b-parent",
-      groupBookingJoin: { groupBookingId: TRIP },
-      guests: [],
-    });
+  it("inherits from the PARENT, not from whichever sibling happens to be in a trip", async () => {
+    // THE FENCE'S KEY PREDICATE, AND UNTIL NOW NOTHING DISCRIMINATED IT. The
+    // carve-out is `splitSiblings.find((sibling) => sibling.id === parentId)`.
+    // Widen it to `splitSiblings[0]`, or to "the first sibling that is in a
+    // trip" — the two shapes a later author would plausibly write while tidying
+    // — and every other test in this file still passes: they either have a
+    // one-row sibling set that IS the parent, or an empty one, or they return
+    // at the null check.
+    //
+    // So this fixture puts a decoy in the set. The evaluated booking is the
+    // middle of a three-row chain: its real parent is live, same-member and in
+    // NO Group Trip, and its CHILD is live, same-member and in one. Correct code
+    // follows `parentBookingId`, finds the parent, and inherits nothing. Either
+    // widening finds the child and borrows the organiser's adult.
     const { violation } = await evaluate(
-      [parent, child, tripAdult()],
+      [
+        booking({
+          id: "b-mid",
+          memberId: "owner-1",
+          parentBookingId: "b-parent",
+          guests: [guestRow("kid", ["2026-08-03", "2026-08-04"])],
+        }),
+        // Listed FIRST among the siblings on purpose, so `splitSiblings[0]` is
+        // the decoy rather than the right answer by luck of insertion order.
+        booking({
+          id: "b-kid",
+          memberId: "owner-1",
+          parentBookingId: "b-mid",
+          groupBookingJoin: { groupBookingId: TRIP },
+          guests: [],
+        }),
+        booking({ id: "b-parent", memberId: "owner-1", guests: [] }),
+        tripAdult(),
+      ],
+      GROUP_TRIP_ON,
+    );
+    expect(violation?.affectedNights, SPLIT_RULE).toEqual([
+      "2026-08-03",
+      "2026-08-04",
+    ]);
+  });
+
+  it("follows the relation ONE WAY: a parent never inherits from its child", async () => {
+    // The direction, pinned by behaviour rather than by the shape of the
+    // fixtures. The evaluated booking HAS a `parentBookingId` — so the
+    // `if (!parentId) return null` guard is passed rather than being the whole
+    // test, which is how this case used to pass without discriminating anything
+    // — but its parent is CANCELLED and therefore not in the sibling set. The
+    // only row left in that set is its CHILD, carrying a roster row it would
+    // never really have. Only `booking.parentBookingId` is followed, so the
+    // child is not substituted for the parent that is missing.
+    const { violation } = await evaluate(
+      [
+        booking({
+          id: "b-mid",
+          memberId: "owner-1",
+          parentBookingId: "b-parent",
+          guests: [guestRow("kid", ["2026-08-03", "2026-08-04"])],
+        }),
+        booking({
+          id: "b-parent",
+          memberId: "owner-1",
+          status: "CANCELLED",
+          guests: [],
+        }),
+        booking({
+          id: "b-child",
+          memberId: "owner-1",
+          parentBookingId: "b-mid",
+          groupBookingJoin: { groupBookingId: TRIP },
+          guests: [],
+        }),
+        tripAdult(),
+      ],
       GROUP_TRIP_ON,
     );
     expect(violation?.affectedNights, SPLIT_RULE).toEqual([

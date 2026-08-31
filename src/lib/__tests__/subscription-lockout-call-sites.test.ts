@@ -737,7 +737,7 @@ describe("the booking OWNER reaches every evaluation (#2543, owner decision 3 Au
     // so the requester is who would own it.
     const source = readRepoFile("src/lib/booking-exception-request-service.ts");
     expect(source).toContain(
-      "const bookingOwnerMemberId = await resolveProposalBookingOwner(db, presence)",
+      "const bookingOwnerMemberId = resolveProposalBookingOwner(",
     );
     expect(source).toMatch(
       /evaluateProposedAdultMemberHosting\([\s\S]*?bookingOwnerMemberId,/,
@@ -745,8 +745,18 @@ describe("the booking OWNER reaches every evaluation (#2543, owner decision 3 Au
     expect(source).toMatch(
       /evaluateProposedPaidUpAdultPresence\([\s\S]*?bookingOwnerMemberId,/,
     );
-    expect(source).toContain("async function resolveProposalBookingOwner(");
-    expect(source).toContain("select: { memberId: true }");
+    expect(source).toContain("function resolveProposalBookingOwner(");
+    // #3038 folded the owner read together with the Group Trip read: both ask
+    // about the SAME live row, and both used to `findUnique` it separately. The
+    // property this test cares about is unchanged and is still asserted — the
+    // owner comes from the LIVE booking's own `memberId`, server-side — it is
+    // now carried on one select constant instead of an inline one.
+    expect(source).toContain("await loadProposalBooking(db, presence)");
+    expect(source).toMatch(
+      /const PROPOSAL_BOOKING_SELECT = \{[\s\S]*?memberId: true,/,
+    );
+    expect(source).toContain("select: PROPOSAL_BOOKING_SELECT,");
+    expect(source).toContain("return booking?.memberId ?? null;");
     expect(source).toContain("return presence?.requestedByMemberId?.trim() || null;");
   });
 
