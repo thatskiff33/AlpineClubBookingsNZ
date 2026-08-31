@@ -757,4 +757,50 @@ compliant indefinitely.
   (`PAID_UP_ADULT_MEMBER_REQUIRED`) remains per-booking and is not widened across
   a Group Trip. Enforced structurally by
   `src/lib/__tests__/adult-member-hosting-call-sites.test.ts` and
-  `src/lib/__tests__/group-trip-identity.test.ts`.
+  `src/lib/__tests__/group-trip-identity.test.ts`, and behaviourally by
+  `src/lib/__tests__/adult-member-hosting-group-trip-cover.test.ts`, which also
+  pins the two write orderings the pre-persist half depends on: the non-member
+  verify claims its `GroupBookingJoin` row before it reconciles hosting, and the
+  member join hands its preflight the container id it already holds.
+
+### INV-HOST-044
+
+- **A Group Trip host is HOST-ONLY, counted ONCE, and read under a bound of its
+  own.** Where a club has enabled `SAME_GROUP_TRIP`, qualifying adult members
+  attending another live booking in the same Group Trip enter the evaluation as
+  `hostScope: "SAME_GROUP_TRIP"`, `hostOnly: true` participants built by the
+  canonical `toHostingParticipants`. Three consequences, and each is a rule
+  rather than an implementation note.
+
+  **Host-only means no bed, participant, price, payment or responsibility
+  moves.** The adult's real attendance on their own booking is recognised as
+  evidence; they are never duplicated as a guest here, and their own booking's
+  uncovered guest-nights stay that booking's hazard, judged when it is
+  reconciled. Two separately owned bookings keep two separate lifecycles.
+
+  **Counted once means the source read excludes what a narrower scope already
+  loaded.** `loadSameGroupTripHosts` is passed the split-sibling ids
+  (`SAME_BOOKING`) and the same-owner source ids (`SAME_BOOKING_OWNER`) and
+  excludes them in the query. Coverage itself would survive a duplicate — hosts
+  are counted into a set of member ids — but the frozen snapshot would not:
+  `coveredByScopes` would credit a scope that supplied nothing new, and that
+  field is what the kiosk cover-source display reads. The exclusion is keyed on
+  the rows actually read, so with the same-owner scope OFF the same booking is
+  legitimately picked up as a Group Trip source instead; the union of cover is
+  the same either way, and only the credited scope differs.
+
+  **Bounded by `SAME_GROUP_TRIP_COVERAGE_SOURCE_LIMIT`, which is deliberately
+  NOT the same-owner number.** Twenty-five bookings on one account at one lodge
+  is a data problem; twenty-five bookings in one Group Trip is a club trip, so
+  borrowing that ceiling would truncate ordinary large parties. One booking needs
+  at least one bed, so the population is bounded above by the lodge's capacity.
+  A writer truncates, which errs towards the rule; an evidence caller passes its
+  own ceiling, gets a total order, and is refused with
+  `HostingGroupTripSourceCeilingExceededError` rather than handed a quietly short
+  host list that would fabricate a live blocker.
+
+  **Member-owned and non-member-owned joins consume this cover on identical
+  terms.** Nothing about who owns a source or a dependent booking is consulted —
+  that is `SAME_BOOKING_OWNER`'s question, not this one. Enforced by
+  `src/lib/__tests__/adult-member-hosting-group-trip-cover.test.ts`, whose
+  failure messages carry this id.

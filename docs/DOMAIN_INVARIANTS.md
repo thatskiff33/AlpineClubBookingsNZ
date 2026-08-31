@@ -370,6 +370,7 @@ Prefix `INV-HOST`.
 | `INV-HOST-041` | Third optional scope, appended never reordered, off until a club enables it |
 | `INV-HOST-042` | Outside the all-or-none CHECK; NULL on a decided row means off |
 | `INV-HOST-043` | Group identity is the organiser/join columns, never parentBookingId or container status |
+| `INV-HOST-044` | Group Trip hosts are host-only, deduplicated against narrower scopes, and read under their own ceiling |
 
 ### Booking requests
 
