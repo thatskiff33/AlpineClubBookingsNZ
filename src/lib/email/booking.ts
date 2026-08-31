@@ -1296,6 +1296,22 @@ export async function sendBookingModifiedEmail(params: {
   // carry the identical wording.
   promoCoverageNote?: string | null;
   /**
+   * #3179 (epic #2797): the promo-code change this edit saved WITHOUT, in the
+   * member's own words. Flows into the same shared change rows, so the HTML
+   * email, the admin-editable body, the edit panel and the booking's history
+   * all carry the identical sentence.
+   *
+   * OPTIONAL, unlike `financialReviewPending` below, and the difference is not
+   * an oversight. That flag is a question every caller of this sender can be in
+   * the middle of, so a default silently answered it wrongly for all of them.
+   * This one has exactly ONE caller that can ever have a value - the batch
+   * modify service - because it is the only edit door whose request schema
+   * accepts `promoCode`/`removePromoCode` at all. The guest-add, guest-remove
+   * and date-change senders have no promo input to drop, so asking them the
+   * question would be asking them to answer `null` by hand.
+   */
+  promoChangeNotAppliedNote?: string | null;
+  /**
    * #3033 (epic #2797): this change saved and its refund or credit could not be
    * worked out from stored history, so the club is deciding it.
    *

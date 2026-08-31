@@ -14,6 +14,7 @@ import {
   enqueueXeroRefundCreditNoteOperation,
   enqueueXeroSupplementaryInvoiceOperation,
   processQueuedXeroOutboxOperations,
+  releaseXeroSupplementaryInvoiceOperationsForPaymentIntent,
 } from "@/lib/xero-operation-outbox";
 import {
   enqueueXeroSyncOperationRetry,
@@ -37,6 +38,13 @@ export type RepairDependencies = {
   enqueueXeroRefundCreditNoteOperation: typeof enqueueXeroRefundCreditNoteOperation;
   enqueueXeroCreditNoteAllocationOperation: typeof enqueueXeroCreditNoteAllocationOperation;
   enqueueXeroSyncOperationRetry: typeof enqueueXeroSyncOperationRetry;
+  // #3187 fix round: the repair pass releases a supplementary invoice it has
+  // just parked on a PaymentIntent that turns out to be captured already - the
+  // member paid between the sweep's snapshot and its enqueue. Injected rather
+  // than imported directly so the tool's tests can observe the release, and it
+  // is the LIVE settlement's own release function so the two legs cannot come
+  // to disagree about what releasing means.
+  releaseXeroSupplementaryInvoiceOperationsForPaymentIntent: typeof releaseXeroSupplementaryInvoiceOperationsForPaymentIntent;
   processQueuedXeroOutboxOperations: typeof processQueuedXeroOutboxOperations;
   processQueuedXeroOperationRetries: typeof processQueuedXeroOperationRetries;
   upsertXeroObjectLink: typeof upsertXeroObjectLink;
@@ -57,6 +65,7 @@ const defaultDependencies: RepairDependencies = {
   enqueueXeroRefundCreditNoteOperation,
   enqueueXeroCreditNoteAllocationOperation,
   enqueueXeroSyncOperationRetry,
+  releaseXeroSupplementaryInvoiceOperationsForPaymentIntent,
   processQueuedXeroOutboxOperations,
   processQueuedXeroOperationRetries,
   upsertXeroObjectLink,

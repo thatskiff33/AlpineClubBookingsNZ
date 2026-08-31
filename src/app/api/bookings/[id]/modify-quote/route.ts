@@ -66,6 +66,10 @@ import {
   describePromoCapCoverage,
   type PromoCoverageNotice,
 } from "@/lib/promo-cap-coverage";
+import {
+  describePromoChangeNotApplied,
+  type PromoChangeNotAppliedNotice,
+} from "@/lib/promo-change-not-applied";
 import { selectedIndexesForStoredGuestTargets } from "@/lib/promo-stored-guest-targets";
 import {
   modifyQuoteSchema,
@@ -1589,6 +1593,14 @@ export async function POST(
    * strand ends up holding. Both are the same answer to the member and must
    * therefore be the same payload — a second literal here is how the two
    * previews would come to differ from each other, and from the save.
+   *
+   * #3179: AND IT SAYS WHAT IT IS NOT DOING WITH THE PROMO CODE. No promotion is
+   * re-run on this branch, so a request that also carries a promo-code change
+   * has that part dropped - and the member is reading a quote whose total looks
+   * settled. The sentence is built by the same function the save uses, from the
+   * same request fields, so the preview and the save cannot describe one
+   * member's request two ways (`INV-SSOT`). Null whenever the request carried no
+   * promo change at all.
    */
   const parkedQuoteResponse = (causes: readonly string[]) => {
     logger.info(
@@ -1618,6 +1630,21 @@ export async function POST(
       exceptionReview,
       promoStillValid: true,
       promoCoverage: null,
+      // #3179: the promo-code change this parked edit will not carry. The
+      // reason is chosen the same way the save chooses it - a stay already
+      // under way refuses a promo change outright a few hundred lines above,
+      // so the reachable case here is the parked one.
+      promoChangeNotApplied: describePromoChangeNotApplied({
+        requestedPromoCode: newPromoCode,
+        removePromoCodeRequested: Boolean(removePromoCode),
+        currentPromoCode: booking.promoRedemption?.promoCode?.code,
+        // The resolved removals, matching the save exactly - a preview that
+        // promised "who it covers has not changed" would be contradicted by the
+        // save it is previewing.
+        guestRemovalsRequested: removedGuests.length > 0,
+        reason: isInProgressEdit ? "STAY_IN_PROGRESS" : "AMOUNT_UNDER_REVIEW",
+        phase: "preview",
+      }),
       promoValidation: null,
       itemizedChanges: [],
       ...(partnerSharedReason !== null ? { partnerSharedReason } : {}),
@@ -2008,6 +2035,12 @@ export async function POST(
     discountCents?: number;
     promoAdjustmentCents?: number;
   } | null = null;
+  // #3179: the promo-code change this preview will not carry. Null on every
+  // ordinary quote; set only on the in-progress branch below, which prices the
+  // stay from prices already agreed and re-runs no promotion. (The PARKED
+  // preview never reaches here — it returns from `parkedQuoteResponse` long
+  // before this, and builds the same notice there.)
+  let promoChangeNotApplied: PromoChangeNotAppliedNotice | null = null;
 
   // Helper: get per-night rates per guest for promo calculation
   function getGuestNightRates() {
@@ -2024,6 +2057,30 @@ export async function POST(
   }
 
   if (inProgressPlan) {
+    // #3179: an in-progress edit prices from the nights already agreed and
+    // re-runs no promotion, so a promo-code change carried alongside it is
+    // dropped exactly as it is on a parked edit.
+    //
+    // TODAY THIS RESOLVES TO NULL, and it is wired anyway on purpose. A promo
+    // change on a stay already under way is refused outright above, with "Promo
+    // code changes are not available for in-progress bookings", and the save
+    // refuses it identically in `resolveTargetDates` - so this branch is only
+    // ever reached with nothing to report. Leaving it unwired on that reasoning
+    // is what would make relaxing either refusal re-open the silence: the
+    // wording alone does not warn anybody unless something calls for it. The
+    // save is wired the same way, off `promo.promoEngineRan`.
+    //
+    // The reason is fixed rather than chosen: `inProgressPlan` is produced only
+    // under `isInProgressEdit`, so `AMOUNT_UNDER_REVIEW` here would be a dead
+    // arm claiming something untrue if it ever came alive.
+    promoChangeNotApplied = describePromoChangeNotApplied({
+      requestedPromoCode: newPromoCode,
+      removePromoCodeRequested: Boolean(removePromoCode),
+      currentPromoCode: booking.promoRedemption?.promoCode?.code,
+      guestRemovalsRequested: removedGuests.length > 0,
+      reason: "STAY_IN_PROGRESS",
+      phase: "preview",
+    });
     newDiscountCents = inProgressPlan.newDiscountCents;
     newPromoAdjustmentCents = inProgressPlan.newPromoAdjustmentCents;
   } else if (removePromoCode) {
@@ -2191,6 +2248,9 @@ export async function POST(
     exceptionReview,
     promoStillValid,
     promoCoverage,
+    // #3179: null on every quote this route can currently produce here — see
+    // the in-progress branch above for why it is on the wire regardless.
+    promoChangeNotApplied,
     promoValidation,
     itemizedChanges,
     // Other Lodges epic: the per-person fees this edit would write, so the panel
