@@ -257,7 +257,7 @@ are permanent: never renumbered, never reused.
   evidenced in the tree, so the count is not restated here. Cite the record, not
   the tally.
 - **`src/lib/__tests__/support/strip-comments.ts` is the canonical
-  `stripComments`, and since #3164 a lint rule enforces it.** 59 test files, a test
+  `stripComments`, and since #3164 a lint rule enforces it.** 60 test files, a test
   helper and one CI script import it, and `ssot/no-local-comment-stripper` in
   `eslint.config.mjs` reports a second scanner as it is written rather than
   twelve minutes later in CI. **Use it; do not write a second.** The figure was

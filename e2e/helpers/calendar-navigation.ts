@@ -1,31 +1,23 @@
-import { expect, type Page } from "@playwright/test";
+import { expect, type Locator, type Page } from "@playwright/test";
 
-export type CalendarMonthDirection = "current" | "next" | "previous";
+/** The twelve month names the calendar heading can carry, in the club locale. */
+const MONTH_NAMES = Array.from({ length: 12 }, (_, index) =>
+  new Date(2026, index, 1).toLocaleDateString("en-NZ", { month: "long" }),
+);
 
-function monthOrdinal(dateOnly: string): number {
+/** `YYYY-MM` — the comparable form of a month. ISO order is string order. */
+type MonthKey = string;
+
+function monthKeyOfDateOnly(dateOnly: string): MonthKey {
   const match = /^(\d{4})-(\d{2})-\d{2}$/.exec(dateOnly);
   if (!match) {
     throw new Error(`Expected a YYYY-MM-DD date, received ${dateOnly}`);
   }
-
-  const year = Number(match[1]);
   const month = Number(match[2]);
   if (month < 1 || month > 12) {
     throw new Error(`Expected a valid month in ${dateOnly}`);
   }
-
-  return year * 12 + month - 1;
-}
-
-/** Direction from the month the calendar currently shows to the target month. */
-export function calendarMonthDirection(
-  displayedDateOnly: string,
-  targetDateOnly: string,
-): CalendarMonthDirection {
-  const displayed = monthOrdinal(displayedDateOnly);
-  const target = monthOrdinal(targetDateOnly);
-  if (target === displayed) return "current";
-  return target < displayed ? "previous" : "next";
+  return `${match[1]}-${match[2]}`;
 }
 
 /** The booking calendar's month heading, e.g. "August 2026". */
@@ -35,6 +27,20 @@ export function calendarMonthHeading(dateOnly: string): string {
     month: "long",
     year: "numeric",
   });
+}
+
+/** "August 2026" back to `2026-08`. Throws on anything that is not a heading. */
+export function monthKeyOfHeading(heading: string): MonthKey {
+  const match = /^([A-Za-z]+)\s+(\d{4})$/.exec(heading.trim());
+  const monthIndex = match ? MONTH_NAMES.indexOf(match[1]) : -1;
+  if (!match || monthIndex < 0) {
+    throw new Error(
+      `Expected a calendar month heading like "August 2026", received ` +
+        `"${heading}". The booking calendar renders one through ` +
+        `formatClubMonthYear (src/components/booking-calendar.tsx).`,
+    );
+  }
+  return `${match[2]}-${String(monthIndex + 1).padStart(2, "0")}`;
 }
 
 // How long ONE calendar click may spend becoming actionable (#2626) — a
@@ -68,16 +74,60 @@ export function calendarMonthHeading(dateOnly: string): string {
 export const CALENDAR_CLICK_TIMEOUT_MS = 15_000;
 
 /**
+ * The booking calendar's month heading, whatever month it is showing.
+ *
+ * `getByRole`, not `getByText` or a test id: the streamed (hidden) copy of a
+ * Suspense boundary is out of the accessibility tree, so this cannot resolve to
+ * the template. The name is the twelve real month names rather than a loose
+ * `\w+ \d{4}`, so it cannot pick up some other heading that happens to end in a
+ * year. Only `BookingCalendar` renders a bare month-year heading on `/book` and
+ * `/admin/book`; the admin occupancy and calendar views are other pages, which
+ * this walk is never used on.
+ */
+function calendarMonthLocator(page: Page): Locator {
+  // Test helper: the pattern is built from the twelve formatted month names, not
+  // from user input; no ReDoS.
+  // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp
+  const anyMonthHeading = new RegExp(`^(?:${MONTH_NAMES.join("|")}) \\d{4}$`);
+  return page.getByRole("heading", { name: anyMonthHeading });
+}
+
+/**
  * Walk the booking calendar to the month holding `target` and return how many
  * hops it spent. 0 means it was already there.
  *
- * Two failures are made loud, in the order they can happen:
- *  - the nav control never becomes actionable — the calendar is not on the page,
- *    or something (a modal overlay, an unmounted step) is sitting over it;
- *  - the bound is exhausted without arriving — fails naming the month it could
- *    not reach, rather than leaving the caller to time out on a day button.
+ * THE WALK DECIDES ITS OWN DIRECTION, by reading the month the calendar is
+ * actually showing (#3221). It used to take a `direction` the caller computed
+ * from the date it BELIEVED the calendar had opened on, and a caller can only
+ * ever get that right by guessing what day it is at the club — which is a
+ * different day from the CI runner's for the last ~12 hours of every UTC day.
+ * On the last day of a month it is a different MONTH: `main` failed at
+ * 2026-08-31T14:30Z (02:30 on 1 September in New Zealand) with the caller
+ * asserting August against a calendar that had correctly opened on September,
+ * and passed on the same commit that morning.
  *
- * `direction: "current"` clicks nothing at all and asserts arrival only.
+ * That argument could only ever be wrong, so it is gone rather than corrected.
+ * `e2e/helpers/stay-dates.ts` and `prisma/e2e-fixtures.ts` now count every date
+ * from the CLUB's day, which fixes the derivation — but a run that starts at
+ * 23:55 New Zealand time and reaches a spec ten minutes later would re-arm the
+ * identical failure with a perfectly correct reference date, because the suite
+ * freezes "today" once per process and the app derives it live. Reading the
+ * heading is what makes that harmless.
+ *
+ * **What was lost, and what replaces it.** The old signature asserted the
+ * caller's expectation was RIGHT — `direction: "current"` clicked nothing and
+ * failed if the calendar was elsewhere. `maxHops` now carries that: a caller
+ * that believes it is at most one month away passes `maxHops: 1`, and a walk
+ * that needs four fails naming the month it could not reach. Keep the bound
+ * tight, because it is the only check on the caller's belief that remains.
+ *
+ * Three failures are made loud, in the order they can happen:
+ *  - the calendar is not on the page at all — no month heading ever appears;
+ *  - the nav control never becomes actionable — something (a modal overlay, an
+ *    unmounted step) is sitting over it;
+ *  - the bound is exhausted without arriving — fails naming both the month it
+ *    could not reach and the one it is stuck on, rather than leaving the caller
+ *    to time out on a day button.
  *
  * @param maxHops the caller's own bound — the number of months it can need to
  *   cross, plus margin. Failing on it is the point, so keep it tight.
@@ -87,63 +137,62 @@ export async function walkCalendarToMonth(
   page: Page,
   {
     target,
-    direction,
     maxHops,
     context,
   }: {
     target: string;
-    direction: CalendarMonthDirection;
     maxHops: number;
     context: string;
   },
 ): Promise<number> {
+  const targetMonth = monthKeyOfDateOnly(target);
   const monthHeading = calendarMonthHeading(target);
-  // getByRole, not getByText: the streamed (hidden) copy of a Suspense boundary
-  // is out of the accessibility tree, so this cannot resolve to the template.
-  const heading = page.getByRole("heading", { name: monthHeading });
-  const control = direction === "previous" ? "Prev" : "Next";
-  const navigationButton = direction === "previous" ? /Prev/ : /Next/;
+  const heading = calendarMonthLocator(page);
 
-  // "current" has NO correct control to click: the caller is telling us the
-  // calendar is already on the target month, and both `Prev` and `Next` walk
-  // away from it. The loop's `heading.isVisible()` is a single, non-retrying
-  // probe, so one miss on a transient re-render used to become a `Next` click
-  // that left a month already on screen — and then the retrying arrival
-  // assertion failed with "walking current to July 2026". Skipping the loop
-  // entirely leaves that transient to the arrival assertion, which does retry.
-  // Not hypothetical: `selectPastCalendarDay`
-  // (`e2e/admin-retroactive-booking.spec.ts`) yields "current" whenever the
-  // check-out shares the check-in's month, which is the common case.
-  const clickableHops = direction === "current" ? 0 : maxHops;
+  // "The calendar is not reachable" fails as ITSELF, inside the expect budget,
+  // instead of as an unbounded click that outlives the test.
+  await expect(
+    heading,
+    `the booking calendar's month heading never appeared, so there is nothing ` +
+      `to walk (${context}). Either the calendar is not rendered on this page, ` +
+      `or something is over it — an open modal (the "Confirm member details" ` +
+      `onboarding gate is the usual one) puts the whole page behind an overlay ` +
+      `and out of the accessibility tree`,
+  ).toBeVisible();
 
   let hops = 0;
-  for (; hops < clickableHops; hops += 1) {
-    if (await heading.isVisible().catch(() => false)) {
-      break;
-    }
-    const nav = page.getByRole("button", { name: navigationButton });
-    // Assert the control is THERE and usable before clicking it, so "the
-    // calendar is not reachable" fails as itself inside the expect budget
-    // instead of as an unbounded click that outlives the test.
+  let shown = (await heading.innerText()).trim();
+
+  while (monthKeyOfHeading(shown) !== targetMonth && hops < maxHops) {
+    const forwards = monthKeyOfHeading(shown) < targetMonth;
+    const control = forwards ? "Next" : "Prev";
+    const nav = page.getByRole("button", { name: forwards ? /Next/ : /Prev/ });
     await expect(
       nav,
       `the booking calendar's "${control}" control never became actionable on ` +
-        `hop ${hops} while walking ${direction} to ${monthHeading} (${context}). ` +
-        `Either the calendar is not rendered on this page, or something is over ` +
-        `it — an open modal (the "Confirm member details" onboarding gate is the ` +
-        `usual one) puts the whole page behind an overlay and out of the ` +
-        `accessibility tree`,
+        `hop ${hops} while walking from ${shown} to ${monthHeading} (${context})`,
     ).toBeEnabled();
     await nav.click({ timeout: CALENDAR_CLICK_TIMEOUT_MS });
+
+    // Wait for the heading to actually MOVE before reading it again. A bare
+    // re-read is a single non-retrying probe, so a click sampled mid-render
+    // would read the month it just left, decide it had not moved, and hop
+    // again — walking past the target and then back, burning the bound. This
+    // retrying assertion is what makes one hop mean one month.
+    await expect(
+      heading,
+      `the booking calendar did not leave ${shown} after a "${control}" hop ` +
+        `(${context})`,
+    ).not.toHaveText(shown);
+
+    shown = (await heading.innerText()).trim();
+    hops += 1;
   }
 
   await expect(
     heading,
-    direction === "current"
-      ? `calendar is not showing ${monthHeading}, which the caller expected it to ` +
-          `be on already, and no "Prev"/"Next" hop can help (${context})`
-      : `calendar never reached ${monthHeading} within ${maxHops} "${control}" hops ` +
-          `(${context})`,
-  ).toBeVisible();
+    `calendar never reached ${monthHeading} within ${maxHops} hop(s) — it is ` +
+      `showing ${shown} (${context})`,
+  ).toHaveText(monthHeading);
   return hops;
 }

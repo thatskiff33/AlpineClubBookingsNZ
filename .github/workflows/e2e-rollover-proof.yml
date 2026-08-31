@@ -1,0 +1,257 @@
+name: E2E rollover proof
+
+# Runs the browser suite with the RUNNER'S OWN CLOCK parked in the window that
+# reddened `main` — the last day of a UTC month, after 12:00 UTC, when New
+# Zealand has already been in the next month for hours (#3221).
+#
+# ## Why this is a separate workflow from `Clock rollover canary`
+#
+# The unit canary shifts ONE PROCESS with `libfaketime`, chosen deliberately so
+# there are no VM-wide side effects and no fight with NTP. That cannot work here.
+# The app the browser suite drives is a CONTAINER, and a container reads the host
+# kernel clock, which `faketime` does not touch. Shifting only the Playwright
+# process would move the runner away from the app — which is the BUG this exists
+# to detect, not a test of it. So this job moves the whole VM: the Playwright
+# process, the database seed and the app container all advance together, and the
+# only thing left to disagree about the date is the code.
+#
+# ## Why it is dispatch-only
+#
+# Owner decision, 1 September 2026. Setting a VM's clock is heavier than
+# `libfaketime` and can produce failures of its own; a nightly nobody trusts is
+# worse than no nightly. The day-to-day protection is three guards that run on
+# every pull request — `e2e-club-day-census.test.ts` (no second way to ask what
+# day it is), `e2e-club-day-boundary.test.ts` (what the dates come out as at the
+# boundary) and `e2e-calendar-navigation.test.ts` (the walk reads the calendar
+# rather than being told). This job is the end-to-end PROOF, run when the
+# derivation changes or when a rollover is suspected.
+#
+# Adding `schedule:` here is all it would take. It has no `pull_request` trigger
+# and must never gain one: it can then never become a required check, and never
+# block unrelated work on a clock this repository does not control.
+#
+# See docs/TESTING.md → "The browser suite's clock discipline (it is NOT frozen)".
+
+on:
+  workflow_dispatch:
+    inputs:
+      instant:
+        description: >-
+          UTC instant to park the runner at, e.g. 2026-08-31T14:30:00Z. Leave
+          empty for the next month-end at 14:30 UTC, which is the shape that
+          fired.
+        required: false
+        type: string
+      scope:
+        description: Which specs to run under the shifted clock.
+        required: false
+        default: all
+        type: choice
+        options:
+          - all
+          - date-bearing
+
+permissions:
+  contents: read
+
+concurrency:
+  # Never cancel: each verdict stands on its own, and a cancelled proof reads as
+  # "no problem found" when nothing was actually checked.
+  group: e2e-rollover-proof-${{ github.ref }}-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  rollover-proof:
+    name: Browser suite at a month rollover
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      STRIPE_TEST_SECRET_KEY: ${{ secrets.STRIPE_TEST_SECRET_KEY }}
+      STRIPE_TEST_PUBLISHABLE_KEY: ${{ secrets.STRIPE_TEST_PUBLISHABLE_KEY }}
+      APP_IMAGE: tacbookings-e2e-app:ci
+      # The club's zone, as the E2E stack seeds it (docker-compose.yml → TZ).
+      # Named here so the proof step can say what it is comparing against.
+      CLUB_TIME_ZONE: Pacific/Auckland
+    steps:
+      # ---------------------------------------------------------------------
+      # Everything that needs the network happens BEFORE the clock moves. TLS
+      # certificate validation is time-sensitive, and a runner whose clock has
+      # jumped forward a month can fail a registry pull for reasons that have
+      # nothing to do with this repository.
+      # ---------------------------------------------------------------------
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        uses: ./.github/actions/playwright-browsers
+
+      - name: Write staging env file
+        run: bash scripts/ci/write-e2e-staging-env.sh
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+
+      - name: Build app image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        with:
+          context: .
+          file: ./Dockerfile
+          load: true
+          push: false
+          tags: tacbookings-e2e-app:ci
+          build-args: |
+            NEXT_PUBLIC_SENTRY_DSN=
+            RELEASE_ID=${{ github.sha }}
+          cache-from: |
+            type=gha,scope=alpineclubbookingsnz-app
+            type=gha,scope=alpineclubbookingsnz-e2e
+          cache-to: type=gha,mode=max,scope=alpineclubbookingsnz-e2e
+
+      # Pull the stack's other images now, while the clock is still real, so no
+      # registry round trip happens after the shift.
+      - name: Pre-pull stack images
+        run: |
+          docker compose --env-file .env.staging -p tacbookings-staging \
+            -f docker-compose.yml -f docker-compose.staging.yml \
+            pull postgres mailpit
+
+      # ---------------------------------------------------------------------
+      # The clock moves here, and nothing after this reaches the network.
+      # ---------------------------------------------------------------------
+      - name: Park the runner's clock in the rollover window
+        id: shift
+        run: |
+          set -euo pipefail
+          REQUESTED='${{ inputs.instant }}'
+          if [ -n "$REQUESTED" ]; then
+            TARGET="$REQUESTED"
+          else
+            # The last day of the current UTC month at 14:30Z — the shape that
+            # fired on 2026-08-31. If that instant has already passed, take next
+            # month's, so a dispatch late on the 31st still proves something.
+            MONTH_END="$(date -u -d "$(date -u +%Y-%m-01) +1 month -1 day" +%Y-%m-%d)"
+            TARGET="${MONTH_END}T14:30:00Z"
+            if [ "$(date -u -d "$TARGET" +%s)" -le "$(date -u +%s)" ]; then
+              MONTH_END="$(date -u -d "$(date -u +%Y-%m-01) +2 month -1 day" +%Y-%m-%d)"
+              TARGET="${MONTH_END}T14:30:00Z"
+            fi
+          fi
+          echo "Parking the runner at $TARGET (was $(date -u --iso-8601=seconds))"
+          sudo timedatectl set-ntp false || true
+          sudo systemctl stop systemd-timesyncd || true
+          sudo date -u -s "$TARGET"
+          echo "target=$TARGET" >> "$GITHUB_OUTPUT"
+
+      # A proof whose clock shift silently failed would report green while
+      # proving nothing — the same vacuous pass the unit canary guards against.
+      # Two things have to be true, and neither is implied by the step above
+      # exiting 0: the shift reached Node's `Date`, and it landed somewhere that
+      # actually exercises the hazard. If the runner's UTC month and the club's
+      # month agree, this run cannot tell a club-derived date from a
+      # runner-derived one, and saying so is the honest outcome.
+      - name: Prove the shift reaches Node, and that it means something
+        run: |
+          set -euo pipefail
+          node -e '
+            const now = new Date();
+            const club = new Intl.DateTimeFormat("en-CA", {
+              timeZone: process.env.CLUB_TIME_ZONE,
+              year: "numeric", month: "2-digit", day: "2-digit",
+            }).format(now);
+            const runner = now.toISOString().slice(0, 10);
+            console.log(`runner day ${runner}, club day ${club}`);
+            if (runner === club) {
+              console.error(
+                "The runner and the club are on the SAME day, so this run cannot " +
+                "distinguish a club-derived date from a runner-derived one. " +
+                "Refusing to report a meaningless pass — dispatch again with an " +
+                "instant between 12:00 and 24:00 UTC.",
+              );
+              process.exit(1);
+            }
+            if (runner.slice(0, 7) === club.slice(0, 7)) {
+              console.error(
+                "The runner and the club are on the same MONTH. That is a weaker " +
+                "run than the one that failed: the calendar walk crossing a month " +
+                "boundary is the case at issue. Dispatch with the last day of a " +
+                "month at 14:30Z.",
+              );
+              process.exit(1);
+            }
+          '
+
+      - name: Prepare staging stack (postgres, migrate, seed, app)
+        run: E2E_SKIP_APP_BUILD=1 bash scripts/e2e-stack.sh prepare
+
+      - name: Run the browser suite under the shifted clock
+        run: |
+          set -euo pipefail
+          if [ '${{ inputs.scope }}' = 'date-bearing' ]; then
+            # Derived from the imports, never a hand-kept list — a list of "the
+            # date-bearing specs" is stale the first time somebody adds one.
+            mapfile -t SPECS < <(grep -rlE \
+              'relDateOnly|stayWindow|walkCalendarToMonth|calendarDayLabel|lodgeNightLabel|DEMO_BOOKING_WINDOWS' \
+              e2e --include='*.spec.ts' | sort)
+            if [ "${#SPECS[@]}" -eq 0 ]; then
+              echo "No date-bearing specs matched — that is a broken selector, not a clean run." >&2
+              exit 1
+            fi
+            printf 'Running %d date-bearing spec(s):\n' "${#SPECS[@]}"
+            printf '  %s\n' "${SPECS[@]}"
+            bash scripts/e2e-stack.sh run "${SPECS[@]}"
+          else
+            bash scripts/e2e-stack.sh run
+          fi
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: playwright-rollover-proof-${{ github.run_id }}
+          path: playwright-report/
+          if-no-files-found: ignore
+
+      - name: Show app logs on failure
+        if: failure()
+        run: |
+          docker compose --env-file .env.staging -p tacbookings-staging \
+            -f docker-compose.yml -f docker-compose.staging.yml logs app | tail -200
+
+      - name: Tear down stack
+        if: always()
+        run: bash scripts/e2e-stack.sh down
+
+      # The runner is disposable, so this is belt and braces rather than
+      # housekeeping — but a step that uploads or reports with a month-old clock
+      # can fail confusingly, and restoring costs nothing.
+      - name: Restore the runner's clock
+        if: always()
+        run: |
+          sudo timedatectl set-ntp true || true
+          sudo systemctl start systemd-timesyncd || true
+          date -u --iso-8601=seconds
+
+      - name: Explain the verdict
+        if: always()
+        run: |
+          {
+            echo "## E2E rollover proof — ${{ steps.shift.outputs.target }}"
+            echo
+            echo "The runner's clock was parked at \`${{ steps.shift.outputs.target }}\`,"
+            echo "so the whole stack — Playwright, the seed and the app container —"
+            echo "ran with New Zealand already in the following month."
+            echo
+            echo "A failure here means a browser spec is deriving a calendar date"
+            echo "from the machine rather than from the club. The rule, and the three"
+            echo "guards that run on every pull request, are in"
+            echo "\`docs/TESTING.md\` → \"The browser suite's clock discipline\"."
+          } >> "$GITHUB_STEP_SUMMARY"

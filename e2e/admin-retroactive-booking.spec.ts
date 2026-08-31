@@ -15,11 +15,11 @@ import { personas } from "./helpers/personas";
 import {
   DEMO_BOOKING_WINDOWS,
   E2E_ADMIN,
+  relDateOnly,
   WAITLIST_FULL_WINDOW,
 } from "./helpers/fixtures";
 import {
   CALENDAR_CLICK_TIMEOUT_MS,
-  calendarMonthDirection,
   walkCalendarToMonth,
 } from "./helpers/calendar-navigation";
 import { cancelMemberBookingsOnDate } from "./helpers/reset";
@@ -49,15 +49,6 @@ let memberContext: BrowserContext;
 let adminContext: BrowserContext;
 let bedAllocationSettingsBefore: BedAllocationSettingsSnapshot | undefined;
 
-function isoDay(offsetDays: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() + offsetDays);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
-
 // Seeded windows the sliding past window must dodge (prisma/e2e-fixtures.ts,
 // now RELATIVE — issue #2117). The retroactive create would otherwise fail:
 // - Alice's own DRAFT booking counts for the member-night conflict check
@@ -73,30 +64,31 @@ const SEEDED_BLOCKED_RANGES: ReadonlyArray<readonly [string, string]> = [
 ];
 
 // A retroactive stay can cross a month boundary in EITHER direction: the walk to
-// the past check-in goes BACK from the run date's month, and the check-out two
-// nights later can then be in the NEXT month. Both are at most one hop, since the
-// -7…-15 band never spans more than one month boundary — this is the inherited
-// bound, kept as head-room. What is new is that exhausting it fails naming the
-// month it could not reach (#2626) instead of walking on to click a day button
-// that is not rendered.
+// the past check-in goes BACK from the month the calendar opened on, and the
+// check-out two nights later can then be in the NEXT month. Each is at most ONE
+// hop, since the -7…-15 attempt band never spans more than one month boundary,
+// and a two-night stay never spans more than one either.
 //
-// 14 for a one-hop worst case is looser than `walkCalendarToMonth`'s own "keep it
-// tight" instruction asks for; it is kept as inherited because the slack costs
-// nothing — the walk breaks on arrival, and each unnecessary hop is now bounded.
-const MAX_PAST_MONTH_HOPS = 14;
+// Tightened from 14 to 2 (#3221). The walk now derives its own direction from the
+// month the calendar is showing, so this bound is the ONLY remaining check that
+// the caller's belief about where the calendar is matches reality — 14 hops would
+// silently absorb a walk that had no business hopping at all. Two is the one-hop
+// worst case plus a single hop of margin, and exhausting it fails naming both the
+// month it could not reach and the one it is stuck on (#2626) rather than walking
+// on to click a day button that is not rendered.
+const MAX_PAST_MONTH_HOPS = 2;
 
 // Navigate from the month the calendar currently displays to the month holding
-// dateOnly, then click the day.
+// dateOnly, then click the day. The walk reads the displayed month itself, so
+// this no longer has to be told — or guess — where the calendar opened (#3221).
 async function selectPastCalendarDay(
   page: Page,
   dateOnly: string,
-  displayedDateOnly: string,
 ): Promise<void> {
   await walkCalendarToMonth(page, {
     target: dateOnly,
-    direction: calendarMonthDirection(displayedDateOnly, dateOnly),
     maxHops: MAX_PAST_MONTH_HOPS,
-    context: `retroactive stay day ${dateOnly}, from the month showing ${displayedDateOnly}`,
+    context: `retroactive stay day ${dateOnly}`,
   });
   // Bounded with the walk's own per-click budget. Every day here is in the PAST,
   // so this is the click most exposed to a day that resolves but is not
@@ -196,8 +188,8 @@ test("an admin records a past stay on behalf of a member without emailing them",
 
   // Opt into retroactive booking, then pick past dates inside the seeded season.
   await page.getByRole("checkbox", { name: /Record a past stay/ }).check();
-  await selectPastCalendarDay(page, pastCheckIn, isoDay(0));
-  await selectPastCalendarDay(page, pastCheckOut, pastCheckIn);
+  await selectPastCalendarDay(page, pastCheckIn);
+  await selectPastCalendarDay(page, pastCheckOut);
 
   // Quick-add the member themselves as the guest.
   await page
@@ -284,14 +276,13 @@ test("a member's own /book calendar keeps past days disabled", async () => {
 
   // Step back to a month whose every day is in the past, and which must therefore
   // be entirely disabled for a member (no retroactive flag on the member
-  // calendar). isoDay(-32) is one or two months back depending on the run date,
+  // calendar). relDateOnly(-32) is one or two months back depending on the run date,
   // so three hops is the bound — and, unlike before, running out of them now
   // fails on the month it could not reach instead of silently walking on to
   // assert against a day button that is not rendered.
-  const lastMonth = isoDay(-32);
+  const lastMonth = relDateOnly(-32);
   await walkCalendarToMonth(page, {
     target: lastMonth,
-    direction: "previous",
     maxHops: 3,
     context: `the fully-past month holding ${lastMonth}`,
   });
@@ -310,8 +301,8 @@ test("a member POST carrying allowPastDates is rejected 403", async ({}, testInf
     ),
     {
       data: {
-        checkIn: isoDay(30),
-        checkOut: isoDay(32),
+        checkIn: relDateOnly(30),
+        checkOut: relDateOnly(32),
         guests: [
           {
             firstName: "Alice",

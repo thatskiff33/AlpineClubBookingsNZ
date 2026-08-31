@@ -1,6 +1,15 @@
 // Disjoint Monday–Wednesday stay windows for the booking persona, starting a
-// few weeks out so they clear the demo seed's relative bookings. Windows are
-// pure date math (NZ date-only lodge nights); the wizard itself rejects a
+// few weeks out so they clear the demo seed's relative bookings.
+//
+// EVERY DATE HERE IS COUNTED FROM THE CLUB'S DAY, never the runner's. "Today" is
+// `E2E_TODAY_NZ` (via `relDateOnly`) — the one clock read the E2E date space
+// has, documented in `prisma/e2e-fixtures.ts`. This file used to do its own
+// `new Date()` + `getFullYear()/getMonth()/getDate()`, which is the CI runner's
+// zone (UTC) and therefore a DIFFERENT day from the app's for the last ~12 hours
+// of every UTC day. It also meant these windows and the seeded seasons they are
+// checked against were counted from two different "todays".
+//
+// Windows are pure date math (NZ date-only lodge nights); the wizard itself rejects a
 // window that falls outside a seeded season, which keeps failures loud. Since
 // issue #2117 the base seed's seasons are RELATIVE (a broad Winter band from
 // ~90 days back to ~240 days out, a ~30-day gap, then a Summer band), so a
@@ -8,7 +17,9 @@
 // SEEDED_SEASONS (prisma/e2e-fixtures.ts) and docs/E2E_PLAYWRIGHT.md.
 import {
   IB_WINDOW,
+  relDateOnly,
   SEEDED_SEASONS,
+  shiftDateOnly,
   WAITLIST_FULL_WINDOW,
   WAITLIST_OFFER_WINDOW,
 } from "../../prisma/e2e-fixtures";
@@ -98,11 +109,9 @@ export function pastStayWindowForAttempt(
   if (offsetDays === undefined) {
     throw new Error("retroactive retry must be an integer from 0 to 2");
   }
-  const checkInDate = addDays(new Date(), offsetDays);
-  const checkOutDate = addDays(checkInDate, 2);
-  const checkIn = toDateOnly(checkInDate);
-  const checkOut = toDateOnly(checkOutDate);
-  const nights = [checkIn, toDateOnly(addDays(checkInDate, 1))];
+  const checkIn = relDateOnly(offsetDays);
+  const checkOut = shiftDateOnly(checkIn, 2);
+  const nights = [checkIn, shiftDateOnly(checkIn, 1)];
   const overlapsBlockedRange = blockedRanges.some(
     ([start, end]) => checkIn < end && checkOut > start,
   );
@@ -155,25 +164,18 @@ export function pastStayWindowForAttempt(
 export function pastStayLeftoverCheckIns(): string[] {
   const oldest = Math.min(...PAST_RETRY_OFFSETS_DAYS) - 1;
   const newest = Math.max(...PAST_RETRY_OFFSETS_DAYS) + 1;
-  const today = new Date();
   const checkIns: string[] = [];
   for (let offset = oldest; offset <= newest; offset += 1) {
-    checkIns.push(toDateOnly(addDays(today, offset)));
+    checkIns.push(relDateOnly(offset));
   }
   return checkIns;
 }
 
-function toDateOnly(date: Date): string {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, "0");
-  const d = String(date.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
-}
-
-function addDays(date: Date, days: number): Date {
-  const next = new Date(date);
-  next.setDate(next.getDate() + days);
-  return next;
+// Day of week for a lodge night, 0 = Sunday, matching `Date.prototype.getDay`.
+// UTC-anchored on purpose: a date-only string names a club calendar day, and
+// reading its weekday must not depend on the runner's zone or on a DST edge.
+function dayOfWeek(dateOnly: string): number {
+  return new Date(`${dateOnly}T00:00:00.000Z`).getUTCDay();
 }
 
 // Window n = the (n+1)th usable Monday at least FIRST_WINDOW_OFFSET_DAYS from
@@ -181,9 +183,9 @@ function addDays(date: Date, days: number): Date {
 // is neither a reserved fixture check-in nor in a seeded-season gap. Each spec
 // uses its own index so bookings never collide on a member-night.
 export function stayWindow(index: number): StayWindow {
-  const earliest = addDays(new Date(), FIRST_WINDOW_OFFSET_DAYS);
-  const daysUntilMonday = (8 - earliest.getDay()) % 7; // getDay(): Monday === 1
-  let monday = addDays(earliest, daysUntilMonday);
+  const earliest = relDateOnly(FIRST_WINDOW_OFFSET_DAYS);
+  const daysUntilMonday = (8 - dayOfWeek(earliest)) % 7; // Monday === 1
+  let monday = shiftDateOnly(earliest, daysUntilMonday);
   let remaining = index;
   // Walk Mondays, skipping reserved fixture check-ins and any window that would
   // fall outside a seeded season (e.g. the October 2026 gap), until the index-th
@@ -191,27 +193,24 @@ export function stayWindow(index: number): StayWindow {
   // fails loudly (reseed required) instead of looping forever.
   const MAX_MONDAYS = 200;
   for (let step = 0; step < MAX_MONDAYS; step += 1) {
-    const nights = [toDateOnly(monday), toDateOnly(addDays(monday, 1))];
+    const nights = [monday, shiftDateOnly(monday, 1)];
     const usable =
-      !RESERVED_WINDOW_CHECKINS.has(toDateOnly(monday)) &&
-      isWindowInSeededSeason(nights);
+      !RESERVED_WINDOW_CHECKINS.has(monday) && isWindowInSeededSeason(nights);
     if (usable) {
       if (remaining === 0) {
-        const tuesday = addDays(monday, 1);
-        const wednesday = addDays(monday, 2);
         return {
-          checkIn: toDateOnly(monday),
-          checkOut: toDateOnly(wednesday),
+          checkIn: monday,
+          checkOut: shiftDateOnly(monday, 2),
           nights,
         };
       }
       remaining -= 1;
     }
-    monday = addDays(monday, 7);
+    monday = shiftDateOnly(monday, 7);
   }
   throw new Error(
     `stayWindow(${index}) found no in-season Monday within ${MAX_MONDAYS} weeks ` +
-      `of ${toDateOnly(addDays(new Date(), FIRST_WINDOW_OFFSET_DAYS))}. The seeded ` +
+      `of ${relDateOnly(FIRST_WINDOW_OFFSET_DAYS)}. The seeded ` +
       `seasons (see prisma/seed.ts and SEEDED_SEASONS) no longer cover the test ` +
       `horizon for this run date — reseed the booking seasons. See docs/E2E_PLAYWRIGHT.md.`,
   );
