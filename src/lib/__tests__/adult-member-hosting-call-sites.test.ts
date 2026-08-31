@@ -202,6 +202,15 @@ describe("one authoritative evaluator and one resolver (#2569 §6, §7)", () => 
       "src/lib/adult-member-hosting-proposed.ts",
       "src/lib/adult-member-hosting-review.ts",
     ]);
+    // #3038's third cross-booking loader, held to the same short list for the
+    // same reason: it reads OTHER PEOPLE'S bookings as cover, so a caller
+    // outside these two files is a hazard nothing else would catch. The
+    // persisted engine and the pre-persist join preflight are the two legitimate
+    // entry points, exactly as they are for its same-owner sibling.
+    expect(sourceFilesNaming("loadSameGroupTripHosts(")).toEqual([
+      "src/lib/adult-member-hosting-proposed.ts",
+      "src/lib/adult-member-hosting-review.ts",
+    ]);
     expect(sourceFilesNaming("withSubscriptionSettlement(")).toEqual([
       "src/lib/adult-member-hosting-proposed.ts",
       "src/lib/adult-member-hosting-review.ts",
