@@ -1,4 +1,3 @@
-#!/usr/bin/env npx tsx
 /**
  * One-off (re-runnable) historical backfill of the finance monthly fact
  * table (FinanceAccountMonthlyBalance) from Xero. Walks backwards from the
@@ -19,9 +18,9 @@ import { prisma } from "../src/lib/prisma";
 
 function printUsage() {
   console.log(`Usage:
-  npx tsx scripts/backfill-finance-monthly-facts.ts
-  npx tsx scripts/backfill-finance-monthly-facts.ts --from-month 2020-04
-  npx tsx scripts/backfill-finance-monthly-facts.ts --max-chunks 5
+  npm run finance:backfill-monthly-facts
+  npm run finance:backfill-monthly-facts -- --from-month 2020-04
+  npm run finance:backfill-monthly-facts -- --max-chunks 5
 
 Options:
   --from-month <YYYY-MM>  Stop after the chunk containing this month

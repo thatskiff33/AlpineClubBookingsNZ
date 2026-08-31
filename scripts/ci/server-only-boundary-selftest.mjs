@@ -1,0 +1,366 @@
+#!/usr/bin/env node
+/**
+ * Failure injection for the server/client boundary (`INV-OPS-013`, #2850).
+ *
+ * ## What this proves, and why a source scan could not
+ *
+ * `src/lib/__tests__/client-server-boundary-census.test.ts` walks the import
+ * graph with a regular expression and reports any `"use client"` module that
+ * reaches server-only code. It is cheap, it runs in the required `verify`
+ * check, and it is our own code — which is the whole problem. A source walk and
+ * a bundler can disagree, and when they do the source walk is the one that says
+ * everything is fine. #2850 asked for the gap to be closed by the bundler
+ * itself: plant a client component that transitively reaches a protected server
+ * root, run the REAL production build, and require it to refuse — for the
+ * boundary reason, not for something incidental.
+ *
+ * That distinction is not academic here. Dragging `@/lib/auth` into the browser
+ * layer also drags Prisma's `pg` driver, which fails to resolve `node:util` and
+ * friends, so the seeded build reports sixteen errors of which most are
+ * collateral. A check that only asserted "the build failed" would still pass
+ * with Next's server-only rule switched off entirely. So this asserts the
+ * SPECIFIC error: Next's server-only message, attributed to EACH protected root
+ * itself, with an import trace in the browser layer that names the planted
+ * fixture. Remove `import "server-only"` from `src/lib/auth.ts` and the build
+ * still fails on `pg` — but that error block disappears and this fails.
+ *
+ * Two roots are planted, not one, and that is the whole point of #2850's second
+ * half. `@/lib/prisma` is the module everybody assumes is protected, and until
+ * the operator CLIs moved to `--conditions=react-server` it was the one module
+ * that could not carry the marker at all. A gate proving only `@/lib/auth`
+ * proves the mechanism works while leaving the database client to the source
+ * censuses, which is exactly the gap this was asked to close.
+ *
+ * ## The other half of the proof
+ *
+ * A gate that always goes red is as useless as one that never does. The clean
+ * direction is proved by the `verify` job's own `Build` step, which runs before
+ * this one and must be green for the run to reach here at all. That is also why
+ * this step runs LAST: it clobbers `.next`, and the two prerender checks that
+ * read `.next` have finished by then. Running immediately after a successful
+ * build is also what makes it cheap — Turbopack's cache is warm and
+ * `--debug-build-paths` narrows the build to the planted route, which measured
+ * 3.4s locally against 101s for a cold full build.
+ *
+ * ## Running it yourself, exactly as CI does
+ *
+ *   npm run build && node scripts/ci/server-only-boundary-selftest.mjs
+ *
+ * The fixture is written at start and deleted at exit. It is deliberately NOT
+ * in `.gitignore`: if a run is killed mid-flight the leftover shows up in
+ * `git status`, and the boundary census fails on it too, so it cannot sit there
+ * unnoticed.
+ */
+import { spawnSync } from "node:child_process";
+import {
+  existsSync,
+  mkdirSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+export const REPO_ROOT = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+);
+
+/**
+ * The planted route. A real segment, not an underscore-prefixed one: the App
+ * Router treats `_name` as a PRIVATE folder and excludes it from routing
+ * entirely, so a fixture named that way is never compiled and the build passes
+ * — which is exactly the silent green this file exists to prevent. Measured the
+ * hard way while writing it.
+ */
+export const FIXTURE_SEGMENT = "server-only-boundary-selftest";
+export const FIXTURE_DIR = path.join("src", "app", FIXTURE_SEGMENT);
+export const FIXTURE_PAGE = `./${FIXTURE_DIR.split(path.sep).join("/")}/page.tsx`;
+export const FIXTURE_BRIDGE = `./${FIXTURE_DIR.split(path.sep).join("/")}/bridge.ts`;
+
+/**
+ * The protected roots the fixture reaches, and BOTH must be reported. Each
+ * carries `import "server-only"`; reaching `@/lib/auth` from the browser would
+ * ship NextAuth's configuration and `bcrypt` to every visitor, and reaching
+ * `@/lib/prisma` would ship the database client and its connection string.
+ *
+ * `@/lib/prisma` was deliberately absent until #2850's second half, and why is
+ * worth keeping: it could not carry the marker while operator CLIs reached it
+ * under plain Node, where `server-only` throws at import. They now run with
+ * `--conditions=react-server`, under which it resolves to an empty module, so
+ * the marker went on. `cli-server-only-reach-census.test.ts` (CT-5, #2869)
+ * keeps the CLI half of that bargain.
+ */
+export const PROTECTED_ROOTS = ["./src/lib/auth.ts", "./src/lib/prisma.ts"];
+
+/**
+ * The statement, exactly. Every marked module carries this line and nothing
+ * looser: fifteen files in this repository merely NAME `import "server-only"`
+ * inside a docblock explaining the boundary, so a substring search would count
+ * a paragraph about the marker as the marker itself.
+ */
+export const MARKER_STATEMENT = 'import "server-only";';
+
+/**
+ * The six `INV-OPS-013` ROOTS that carry `MARKER_STATEMENT` — the modules a
+ * browser bundle must never reach, which is a longer list than the two the
+ * fixture plants. NOT every file in the tree carrying the marker: a hundred and
+ * twelve do, and they are covered because they sit behind these.
+ *
+ * `PROTECTED_ROOTS` above is what this gate can prove with a build: the fixture
+ * imports those two, so those two are the ones Turbopack is made to complain
+ * about. That left the other four roots pinned by nothing — a reviewer deleted
+ * `import "server-only"` from `@/lib/audit`, `@/lib/email`, `@/lib/stripe` and
+ * `@/lib/xero` and every boundary suite stayed green, which is the same
+ * silent-green shape this whole file exists to prevent.
+ *
+ * So the list lives here, beside the two the build plants, and
+ * `src/lib/__tests__/client-server-boundary-census.test.ts` asserts every entry
+ * still carries the statement. Keeping both lists in one file is what stops
+ * them drifting: the unit test beside this one requires `PROTECTED_ROOTS` to be
+ * a SUBSET of this list, so a root cannot be planted by the build proof and
+ * absent from the census at the same time.
+ *
+ * Adding a root here is the whole cost of marking a new module. Removing one is
+ * a deliberate act that has to be argued for in review, because the module it
+ * names stops being refused by the production build the moment it happens.
+ */
+export const MARKED_ROOTS = [
+  "./src/lib/audit.ts",
+  "./src/lib/auth.ts",
+  "./src/lib/email.ts",
+  "./src/lib/prisma.ts",
+  "./src/lib/stripe.ts",
+  "./src/lib/xero.ts",
+];
+
+/**
+ * Next's own wording. Quoted rather than matched loosely so a version bump that
+ * reworded or dropped the rule fails here instead of passing on a fuzzy match.
+ * The "Pages Router" clause is Next's, and is wrong — this is the App Router —
+ * but it is what the compiler prints, so it is what this looks for.
+ */
+export const BOUNDARY_MESSAGE =
+  'You\'re importing a module that depends on "server-only".';
+
+/** The browser layer's label in a Turbopack import trace. */
+export const BROWSER_LAYER = "[Client Component Browser]";
+
+/**
+ * What this prints when the proof held, and the string the `verify` job greps
+ * for. Exported so the two cannot drift: the CI step exists because an exit
+ * code alone was not evidence that anything ran, and a grep for a sentence this
+ * file no longer prints would put that hole straight back.
+ */
+export const SUCCESS_PREFIX =
+  "ok: the production build refused a client component reaching";
+
+/** Turbopack colours its output; the parsing below wants the plain text. */
+export function stripAnsi(text) {
+  // `\u001B`, spelled as an escape rather than written as a literal ESC
+  // byte: a raw control character in a tracked file fails
+  // `npm run docs:indexcheck` (#3072) and is invisible in review.
+  return text.replace(/\u001B\[[0-9;]*m/g, "");
+}
+
+/**
+ * Split Turbopack's error report into blocks. Each block starts on a line that
+ * is just `./path/to/file.ts:LINE:COL`, which is how Turbopack heads every
+ * error it reports.
+ */
+export function splitErrorBlocks(output) {
+  const lines = stripAnsi(output).split(/\r?\n/);
+  const blocks = [];
+  let current = null;
+  for (const line of lines) {
+    const head = /^(\.\/[^\s:]+):(\d+):(\d+)$/.exec(line);
+    if (head) {
+      if (current) blocks.push(current);
+      current = { file: head[1], lines: [] };
+      continue;
+    }
+    if (current) current.lines.push(line);
+  }
+  if (current) blocks.push(current);
+  return blocks;
+}
+
+/**
+ * Everything that must be true for the seeded build to count as proof. Returns
+ * the list of problems, so a failure names all of them at once rather than
+ * making the reader re-run for each.
+ */
+export function problemsWithSeededBuild({ exitCode, output }) {
+  const problems = [];
+  if (exitCode === 0) {
+    problems.push(
+      "the production build SUCCEEDED with a client component reaching " +
+        `${PROTECTED_ROOTS.join(" and ")}. Next's server-only boundary is not ` +
+        "being enforced.",
+    );
+  }
+
+  const blocks = splitErrorBlocks(output);
+  // Every root, not the first one that passes: the point of planting two is
+  // that a marker coming off EITHER of them fails this gate.
+  for (const root of PROTECTED_ROOTS) {
+    const rootBlocks = blocks.filter((block) => block.file === root);
+    if (rootBlocks.length === 0) {
+      problems.push(
+        `no Turbopack error was attributed to ${root}. The build may have ` +
+          "failed for an unrelated reason, which is not proof of anything.",
+      );
+      continue;
+    }
+
+    const withMessage = rootBlocks.filter((block) =>
+      block.lines.some((line) => line.includes(BOUNDARY_MESSAGE)),
+    );
+    if (withMessage.length === 0) {
+      problems.push(
+        `${root} was reported, but not with the server-only boundary message. ` +
+          `Expected a line containing: ${BOUNDARY_MESSAGE}`,
+      );
+      continue;
+    }
+
+    const attributed = withMessage.some((block) => {
+      const browserTrace = block.lines.some(
+        (line) => line.trim() === `${root} ${BROWSER_LAYER}`,
+      );
+      const namesFixture = block.lines.some(
+        (line) => line.trim() === `${FIXTURE_PAGE} ${BROWSER_LAYER}`,
+      );
+      return browserTrace && namesFixture;
+    });
+    if (!attributed) {
+      problems.push(
+        "the server-only error carries no browser-layer import trace running " +
+          `from ${root} back to ${FIXTURE_PAGE}, so the failure is not ` +
+          "attributable to the planted violation.",
+      );
+    }
+  }
+
+  return problems;
+}
+
+const BRIDGE_SOURCE = `// Planted by scripts/ci/server-only-boundary-selftest.mjs. Delete it.
+//
+// No "use client" of its own: the transitive shape is the point. The page below
+// is the client module, this is an ordinary module it imports, and the server
+// root is one hop further on — which is exactly the chain a single-file lint
+// rule cannot see.
+import { auth } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
+
+export const seededBoundaryProbe = \`\${typeof auth}\${typeof prisma}\`;
+`;
+
+const PAGE_SOURCE = `// Planted by scripts/ci/server-only-boundary-selftest.mjs. Delete it.
+"use client";
+
+import { seededBoundaryProbe } from "./bridge";
+
+export default function SeededServerOnlyBoundaryViolation() {
+  return <div>{seededBoundaryProbe}</div>;
+}
+`;
+
+function plantFixture(root) {
+  const directory = path.join(root, FIXTURE_DIR);
+  if (existsSync(directory)) {
+    throw new Error(
+      `${FIXTURE_DIR} already exists. A previous run was interrupted; delete ` +
+        "it and try again rather than building against a fixture nobody wrote.",
+    );
+  }
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(path.join(directory, "bridge.ts"), BRIDGE_SOURCE, "utf8");
+  writeFileSync(path.join(directory, "page.tsx"), PAGE_SOURCE, "utf8");
+  return directory;
+}
+
+function runSeededBuild(root) {
+  const result = spawnSync(
+    process.execPath,
+    [
+      path.join(root, "node_modules", "next", "dist", "bin", "next"),
+      "build",
+      "--debug-build-paths",
+      `app/${FIXTURE_SEGMENT}/page.tsx`,
+    ],
+    { cwd: root, encoding: "utf8", env: process.env, maxBuffer: 64 * 1024 * 1024 },
+  );
+  if (result.error) throw result.error;
+  return {
+    exitCode: result.status ?? 1,
+    output: `${result.stdout ?? ""}\n${result.stderr ?? ""}`,
+  };
+}
+
+function main() {
+  const directory = plantFixture(REPO_ROOT);
+  let build;
+  try {
+    build = runSeededBuild(REPO_ROOT);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+
+  const problems = problemsWithSeededBuild(build);
+  if (problems.length === 0) {
+    console.log(
+      `${SUCCESS_PREFIX} ` +
+        `${PROTECTED_ROOTS.join(" and ")}, and said so for the right reason.`,
+    );
+    return;
+  }
+
+  console.error(
+    "FAIL: the seeded server-only violation did not produce the expected " +
+      "build failure.\n",
+  );
+  for (const problem of problems) console.error(`  - ${problem}`);
+  console.error("\n--- build output ---\n");
+  console.error(stripAnsi(build.output));
+  process.exitCode = 1;
+}
+
+/**
+ * Was this file RUN, rather than imported by the unit test beside it?
+ *
+ * BOTH SIDES ARE REALPATHED, and that is not defensive noise. Node resolves
+ * `import.meta.url` through symlinks and hands back `process.argv[1]` exactly
+ * as the caller spelled it, so under a checkout reached through a link - a
+ * self-hosted runner whose workspace is one, a container bind-mount through
+ * one, macOS where `/tmp` is one - the two strings differ, `main()` never runs,
+ * and this exits 0 having proved nothing. Reproduced here with a Windows
+ * junction. Nothing downstream would have noticed: the CI step was a bare
+ * `node scripts/ci/server-only-boundary-selftest.mjs`, so the REQUIRED `verify`
+ * check would have gone green with the boundary proof never executed. That step
+ * now also greps for the success line, which is the same hole closed from the
+ * other side - a silent exit 0 must not be able to satisfy a required check.
+ *
+ * `realpathSync` throws on a path that does not exist, so each side falls back
+ * to its own resolved spelling rather than taking the process down.
+ */
+export function isDirectInvocation(argvPath, moduleUrl) {
+  if (!argvPath) return false;
+  const real = (candidate) => {
+    try {
+      return realpathSync(candidate);
+    } catch {
+      return candidate;
+    }
+  };
+  return (
+    real(path.resolve(argvPath)) === real(path.resolve(fileURLToPath(moduleUrl)))
+  );
+}
+
+if (isDirectInvocation(process.argv[1], import.meta.url)) {
+  main();
+}

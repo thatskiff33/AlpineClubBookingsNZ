@@ -24,7 +24,7 @@ import {
   calendarDateOfSerialisedDbDateOrNull,
   formatClubDate,
 } from "@/lib/club-time";
-import { formatPolicyExceptionRequestAge } from "@/lib/booking-exception-requests";
+import { formatPolicyExceptionRequestAge } from "@/lib/booking-exception-request-shared";
 import type { PolicyExceptionReasonCode } from "@/lib/booking-policy-exceptions";
 import { HostingCoverageOverridePrompt } from "@/components/hosting-coverage-override-prompt";
 

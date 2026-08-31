@@ -35,9 +35,15 @@ import logger from "@/lib/logger";
  * The only thing this file imports from it is TYPES, which erase at compile time,
  * so there is no runtime import cycle between the two.
  *
- * Like `config-self-heal.ts`, this module stays free of `server-only`: the
- * out-of-band `npm run config:self-heal` tsx entrypoint pulls it in, and a
- * `server-only` import would abort that script.
+ * Like `config-self-heal.ts`, this module stays free of `server-only`. The
+ * reason recorded here used to be that the out-of-band
+ * `npm run config:self-heal` tsx entrypoint pulls it in and a `server-only`
+ * import would abort that script; since #2850 that command runs with
+ * `--conditions=react-server`, under which the marker is inert, so THAT REASON
+ * IS RETIRED. It stays unmarked because nothing needs it to be marked, and
+ * because marking a module is a decision of its own — see
+ * `docs/invariants/operations.md` -> `INV-OPS-013`, "The three modules that
+ * stay unmarked", where the sibling decision is recorded and tracked as #3204.
  */
 
 // ---------------------------------------------------------------------------
@@ -46,9 +52,12 @@ import logger from "@/lib/logger";
 
 // The ClubIdentitySettings singleton row id. Kept as a literal (mirrors
 // CLUB_IDENTITY_SETTINGS_ID in `src/lib/club-identity-settings.ts`) so this
-// boot module stays free of that module's `server-only` import — the
-// out-of-band `npm run config:self-heal` tsx entrypoint imports this file, and
-// a `server-only` import would abort it.
+// boot module stays free of that module's `server-only` import. Since #2850 the
+// out-of-band `npm run config:self-heal` entrypoint runs with
+// `--conditions=react-server` and would survive the import, so the literal is
+// no longer load-bearing for THAT reason (#3204 tracks the marking question
+// itself) — it is kept because importing a settings module for one string is a
+// dependency this boot path does not need.
 const CLUB_IDENTITY_SETTINGS_ID = "default";
 
 interface ClubIdentitySelfHealValue {
@@ -607,7 +616,7 @@ export const clubTimeZoneSelfHealStepDefinition: ConfigSelfHealStep<string> = {
           `and fixed offsets carry no daylight-saving rules, so no club's ` +
           `civil time can be read from one and there was nothing to preserve. ` +
           `If this club is not in ${decision.timeZone} an administrator must ` +
-          `set the club's timezone at /admin/club-time (or run npm run setup) ` +
+          `set the club's timezone at /admin/club-time (or run npm run setup:wizard) ` +
           `— it decides which day a lodge night falls on. The setup checklist ` +
           `reports this step as a warning until somebody confirms it.`,
       );

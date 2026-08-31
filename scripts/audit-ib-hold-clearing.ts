@@ -1,4 +1,3 @@
-#!/usr/bin/env npx tsx
 /**
  * Read-only audit of Internet-Banking hold-expiry invoice-clearing that was
  * under-sized before #1597 (the clearing credit note was sized at the
@@ -15,7 +14,7 @@
  * SAFE USAGE — run against a NON-PRODUCTION copy:
  *
  *   DATABASE_URL='postgresql://user:pass@127.0.0.1:5432/scratch_copy' \
- *     npx tsx scripts/audit-ib-hold-clearing.ts
+ *     npm run payments:audit-ib-hold-clearing
  */
 import "dotenv/config";
 import process from "node:process";
@@ -31,8 +30,8 @@ import { prisma } from "../src/lib/prisma";
 
 function printUsage() {
   console.log(`Usage:
-  npx tsx scripts/audit-ib-hold-clearing.ts          # read-only audit (default)
-  npx tsx scripts/audit-ib-hold-clearing.ts --json   # also emit machine-readable JSON
+  npm run payments:audit-ib-hold-clearing            # read-only audit (default)
+  npm run payments:audit-ib-hold-clearing -- --json  # also emit machine-readable JSON
 
 This audit is read-only. It never writes and never calls Xero/Stripe/SES. The
 operator repairs any finding by hand (see docs/MAINTENANCE.md).

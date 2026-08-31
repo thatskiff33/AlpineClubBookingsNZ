@@ -1,4 +1,3 @@
-#!/usr/bin/env npx tsx
 /**
  * One-off, idempotent backfill for account credit a member applied to a booking
  * that was never restored when the booking was cancelled (the pre-#1547
@@ -15,12 +14,12 @@
  * Dry run by default. SAFE USAGE — run against a NON-PRODUCTION copy first:
  *
  *   DATABASE_URL='postgresql://user:pass@127.0.0.1:5432/scratch_copy' \
- *     npx tsx scripts/backfill-orphaned-applied-credits.ts
+ *     npm run payments:backfill-orphaned-credits
  *
  * Only after reviewing the dry-run report, apply (each booking in its own
  * transaction):
  *
- *   ... npx tsx scripts/backfill-orphaned-applied-credits.ts --apply
+ *   ... npm run payments:backfill-orphaned-credits -- --apply
  */
 import "dotenv/config";
 import process from "node:process";
@@ -33,9 +32,9 @@ import { prisma } from "../src/lib/prisma";
 
 function printUsage() {
   console.log(`Usage:
-  npx tsx scripts/backfill-orphaned-applied-credits.ts            # dry run (default)
-  npx tsx scripts/backfill-orphaned-applied-credits.ts --dry-run  # explicit dry run
-  npx tsx scripts/backfill-orphaned-applied-credits.ts --apply    # restore orphaned credit
+  npm run payments:backfill-orphaned-credits               # dry run (default)
+  npm run payments:backfill-orphaned-credits -- --dry-run  # explicit dry run
+  npm run payments:backfill-orphaned-credits -- --apply    # restore orphaned credit
 
 Options:
   --apply         Restore the orphaned applied credit, each booking in its own

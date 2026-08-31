@@ -13,7 +13,6 @@ import {
   freezePolicyExceptionEvidence,
   isPolicyExceptionTransitionAllowed,
   isTerminalReleasingStatus,
-  MEMBER_MESSAGE_MAX_LENGTH,
   normalizeMemberMessage,
   parseFrozenEvidence,
   perNightBedDemand,
@@ -24,6 +23,7 @@ import {
   type ProposalGuest,
   type ProposalParty,
 } from "@/lib/booking-exception-requests";
+import { MEMBER_MESSAGE_MAX_LENGTH } from "@/lib/booking-exception-request-shared";
 
 // --- builders -------------------------------------------------------------
 
