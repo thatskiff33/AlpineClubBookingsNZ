@@ -202,6 +202,15 @@ describe("one authoritative evaluator and one resolver (#2569 §6, §7)", () => 
       "src/lib/adult-member-hosting-proposed.ts",
       "src/lib/adult-member-hosting-review.ts",
     ]);
+    // #3038's third cross-booking loader, held to the same short list for the
+    // same reason: it reads OTHER PEOPLE'S bookings as cover, so a caller
+    // outside these two files is a hazard nothing else would catch. The
+    // persisted engine and the pre-persist join preflight are the two legitimate
+    // entry points, exactly as they are for its same-owner sibling.
+    expect(sourceFilesNaming("loadSameGroupTripHosts(")).toEqual([
+      "src/lib/adult-member-hosting-proposed.ts",
+      "src/lib/adult-member-hosting-review.ts",
+    ]);
     expect(sourceFilesNaming("withSubscriptionSettlement(")).toEqual([
       "src/lib/adult-member-hosting-proposed.ts",
       "src/lib/adult-member-hosting-review.ts",
@@ -446,6 +455,139 @@ describe("canonical Group Trip identity (#3037, epic #2943)", () => {
     expect(envelope).not.toContain("groupBooking");
     expect(envelope).not.toContain("GroupBooking");
     expect(envelope).toContain("hostingCoverageSourceBookingFilter(");
+  });
+
+  it("only ever hands the hosting rule a SERVER-RESOLVED Group Trip", () => {
+    // THE WHOLE AUTHORIZATION STORY FOR `SAME_GROUP_TRIP` IS THAT NOBODY CHOOSES
+    // THEIR OWN TRIP (#3038).
+    //
+    // `groupBookingId` decides which OTHER accounts' bookings may supply adult
+    // cover for this one. A caller that forwarded a request-supplied value would
+    // let anybody name any trip and borrow its adults — and nothing else in the
+    // system would notice, because every clause downstream is about lodges,
+    // dates and statuses, all of which the attacker's own booking satisfies. The
+    // id is safe today only because it is always resolved server-side, and that
+    // property lives in no type. So it lives here.
+    //
+    // Three producers, and each is pinned to WHAT it supplies rather than merely
+    // to the fact that it supplies something.
+    expect([...sourceFilesNaming("evaluateProposedAdultMemberHosting(")].sort()).toEqual([
+      "src/app/api/bookings/route.ts",
+      "src/lib/adult-member-hosting-proposed.ts",
+      "src/lib/booking-exception-request-service.ts",
+      "src/lib/group-booking.ts",
+    ]);
+
+    const suppliedRule =
+      "INV-HOST-043 (docs/invariants/adult-member-hosting.md): a party's Group " +
+      "Trip is resolved server-side — from the container a join code was " +
+      "redeemed for, or from the live booking's own canonical relations — and " +
+      "never from anything the requester sent. A request-supplied id would let " +
+      "any member borrow any trip's adult cover.";
+
+    // The ordinary create has no join path, so it says so with a literal.
+    expect(
+      readRepoCode("src/app/api/bookings/route.ts"),
+      suppliedRule,
+    ).toContain("groupBookingId: null,");
+
+    // The member join hands over the container it already resolved from the
+    // redeemed join code, never a body field.
+    expect(readRepoCode("src/lib/group-booking.ts"), suppliedRule).toContain(
+      "groupBookingId: group.id,",
+    );
+
+    // The exception path resolves the LIVE booking's own relations, through the
+    // one select constant that owns them.
+    const service = readRepoCode("src/lib/booking-exception-request-service.ts");
+    expect(service, suppliedRule).toContain(
+      "await resolveProposalGroupTrip(db, proposalBooking)",
+    );
+    expect(service, suppliedRule).toContain(
+      "...GROUP_TRIP_IDENTITY_SELECT,",
+    );
+    // AND IT REACHES THE SPLIT-PAIR CARVE-OUT, which it structurally could not
+    // while its select carried the two relations alone. A split child holds
+    // neither, so identity resolved from them is `null` for exactly the booking
+    // the carve-out exists for — and this path FREEZES its answer into an
+    // exception request. The rule is not restated here: the shared reader in
+    // `adult-member-hosting-review.ts` applies the same fence the persisted
+    // evaluator does (`INV-SSOT-001`).
+    expect(
+      service,
+      "INV-HOST-043 (docs/invariants/adult-member-hosting.md): both evaluators " +
+        "apply the split-pair carve-out or they disagree about the one booking " +
+        "it exists for — the half carrying the party's non-member guests.",
+    ).toContain("readInheritedSplitPairGroupTrip(db, booking)");
+    expect(service).toContain("parentBookingId: true,");
+    // ONE definition of the carve-out, tree-wide.
+    expect(
+      sourceFilesNaming("inheritedSplitPairGroupTrip("),
+      "INV-SSOT-001: the fence around the #738 carve-out is one rule. A second " +
+        "spelling gives identical answers right up to the day one of them is " +
+        "widened.",
+    ).toEqual(["src/lib/adult-member-hosting-review.ts"]);
+
+    // AND THE REQUEST LAYER NAMES IT IN EXACTLY ONE PLACE, where it is the
+    // literal above. Anything parsing one off the wire — a zod field, a body
+    // spread, a query parameter — adds a file here and trips this.
+    //
+    // A LEGITIMATE new group-booking admin or API surface trips it too, and the
+    // message says so rather than accusing whoever added one of taking the id
+    // off the wire. The property this guard actually cares about is the second
+    // half: no route may READ a Group Trip id from the request. A new file that
+    // only ever resolves one server-side is safe, and the right response is to
+    // add it to this list with a note saying which.
+    expect(
+      sourceFilesNaming("groupBookingId").filter((file) =>
+        file.startsWith("src/app/"),
+      ),
+      `${suppliedRule}
+
+TWO WAYS TO REACH THIS FAILURE. Either a route now ` +
+        "takes a Group Trip id from the request — which is the hazard, and must " +
+        "be removed — or a new group-booking surface legitimately names the " +
+        "field while resolving it server-side, in which case read that file, " +
+        "confirm the id never comes from a body, query or path parameter, and " +
+        "add it here.",
+    ).toEqual(["src/app/api/bookings/route.ts"]);
+  });
+
+  it("writes the Group Trip roster row BEFORE the split child that depends on it", () => {
+    // ORDER INSIDE ONE TRANSACTION, AND IT IS LOAD-BEARING RATHER THAN TIDY.
+    //
+    // `createConfirmedBooking` writes the `GroupBookingJoin` row — which IS the
+    // booking's Group Trip identity (`INV-HOST-043`) — and then, for a mixed
+    // party, the #738 split child. The child is reconciled against the hosting
+    // rule the moment it is written. While the roster write came LAST, that
+    // reconciliation ran with no roster row in existence: the parent belonged to
+    // no Group Trip yet, so the child — the half carrying the party's
+    // NON-MEMBER guests, the rows the rule exists to judge — inherited nothing
+    // and was recorded as uncovered, and every later evaluation of the same
+    // booking disagreed with the stored answer.
+    //
+    // Nothing else pins this. Both writes typecheck in either order, every
+    // behavioural suite passes in either order, and a later tidy moving the
+    // block back to sit with the other post-write steps would be green
+    // everywhere. So the order is asserted here, on the source, which is the
+    // cheap instrument that actually discriminates it.
+    const source = readRepoCode("src/lib/booking-create.ts");
+    const rosterWrite = source.indexOf("if (groupJoin) {");
+    const splitChildWrite = source.indexOf("parentBookingId: newBooking.id");
+    expect(rosterWrite, "the group-join block moved or was renamed").toBeGreaterThan(-1);
+    expect(
+      splitChildWrite,
+      "the #738 split-child create moved or was renamed",
+    ).toBeGreaterThan(-1);
+    expect(
+      rosterWrite,
+      "INV-HOST-043 (docs/invariants/adult-member-hosting.md): the " +
+        "GroupBookingJoin row is the booking's Group Trip identity, and the " +
+        "#738 split child is reconciled against the hosting rule as soon as it " +
+        "is written. Create the child first and it is judged against a party " +
+        "that belongs to no Group Trip yet, and stored as uncovered while every " +
+        "later evaluation finds the cover.",
+    ).toBeLessThan(splitChildWrite);
   });
 
   it("never selects the group joinCode", () => {
@@ -1191,8 +1333,11 @@ describe("no policy read inside a booking transaction (#2569 §7)", () => {
       "src/lib/booking-exception-request-service.ts",
     );
     expect(exceptionRequest).toContain(
-      "bookingOwnerMemberId = await resolveProposalBookingOwner(db, presence)",
+      "bookingOwnerMemberId = resolveProposalBookingOwner(",
     );
+    // From the ONE read of the live booking, not from anything the requester
+    // sent, and not from a second `findUnique` of the same row.
+    expect(exceptionRequest).toContain("loadProposalBooking(db, presence)");
     expect(exceptionRequest).toContain("bookingOwnerMemberId,");
   });
 

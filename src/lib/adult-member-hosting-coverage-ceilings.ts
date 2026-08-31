@@ -2,11 +2,14 @@
  * The bounded-read ceilings the hosting-coverage reads apply, and what happens
  * when one binds.
  *
- * Split verbatim out of `adult-member-hosting-review.ts` (#3128). The two
+ * Split verbatim out of `adult-member-hosting-review.ts` (#3128). The first two
  * limits sit at the same number for OPPOSITE reasons and the docblocks below
  * are the whole point of keeping them together: a truncated source read errs
  * towards the rule, a truncated dependent read hides a stranded booking. The
- * engine imports this module; this module imports nothing back from it.
+ * third, `SAME_GROUP_TRIP_COVERAGE_SOURCE_LIMIT` (#3038), sits at a DIFFERENT
+ * number for a third reason, and keeping all three here is what makes the
+ * comparison readable. The engine imports this module; this module imports
+ * nothing back from it.
  */
 import { Prisma } from "@prisma/client";
 
@@ -49,8 +52,35 @@ export const SAME_OWNER_COVERAGE_SOURCE_LIMIT = 25;
  */
 export const SAME_OWNER_COVERAGE_DEPENDENT_LIMIT = 25;
 
-/** Deterministic truncation for both dependent reads. */
-export const SAME_OWNER_COVERAGE_DEPENDENT_ORDER = [
+/**
+ * DETERMINISTIC TRUNCATION FOR EVERY BOUNDED COVERAGE READ — both dependent
+ * reads and both cross-booking source reads.
+ *
+ * One constant rather than one per read, because the argument for it does not
+ * vary by read (`INV-SSOT-001`): `take` with no `orderBy` lets Postgres return
+ * ANY N of the matching rows, so the same booking can be answered differently on
+ * two runs with nothing on the row to say which N each saw.
+ *
+ * IT APPLIES TO WRITERS TOO, WHICH IS NOT THE OBVIOUS CALL (#3038). The source
+ * loaders used to order only when an evidence caller passed a ceiling, on the
+ * reasoning that a writer's truncation errs towards the rule and so buys nothing
+ * from reproducibility. That reasoning is about the ANSWER and misses the
+ * SNAPSHOT: an unordered truncation makes `adultMemberHostingStateKey` unstable
+ * above the bound, so the review row is rewritten, and the officer notified,
+ * every time the evaluation happens to see a different N. Ordering costs a
+ * writer nothing on a read that is already narrowed to one owner or one Group
+ * Trip and already indexed, so the two reads take it unconditionally.
+ *
+ * WHAT ORDERING DOES NOT FIX, stated so nobody reads it as more than it is. It
+ * changes WHICH rows a truncation returns, never how many, and never gives a
+ * result below the bound — but above the bound the bias becomes SYSTEMATIC
+ * rather than arbitrary: the earliest-arriving bookings are kept and the latest
+ * dropped, every time. That is the right trade (a reproducible answer beats a
+ * lottery, and the truncation still errs towards opening a review rather than
+ * suppressing one), and it is not a substitute for the ceilings being high
+ * enough that a real party never reaches them.
+ */
+export const COVERAGE_READ_ORDER = [
   { checkIn: "asc" },
   { id: "asc" },
 ] as const satisfies readonly Prisma.BookingOrderByWithRelationInput[];
@@ -114,5 +144,62 @@ export class HostingSameOwnerSourceCeilingExceededError extends Error {
       `Adult-member hosting evidence: more than ${ceiling} same-owner bookings at this lodge could cover these nights; refusing an inconclusive answer`,
     );
     this.name = "HostingSameOwnerSourceCeilingExceededError";
+  }
+}
+
+/**
+ * The ceiling on the `SAME_GROUP_TRIP` source read (#3038, epic #2943;
+ * `INV-HOST-044` is the rule and states the bound's place in it).
+ *
+ * A SEPARATE CONSTANT AT A DIFFERENT NUMBER, and the difference is the whole
+ * reason it exists. `SAME_OWNER_COVERAGE_SOURCE_LIMIT` is 25 because a member
+ * holding twenty-six live bookings at ONE lodge over ONE overlapping window is a
+ * data problem rather than a club member. A Group Trip is the opposite shape: it
+ * is a travelling party that is MEANT to be many separate bookings, one per
+ * family, and a club trip filling the lodge can legitimately be dozens of them.
+ * Borrowing the same-owner number would truncate a perfectly ordinary large trip
+ * and, because truncation errs towards the rule, would open reviews on bookings
+ * that really were covered.
+ *
+ * ONE BOOKING NEEDS AT LEAST ONE BED, so a Group Trip's bookings are bounded
+ * above by the lodge's capacity on the overlapping nights, and one booking
+ * usually holds several. A hundred separate bookings overlapping one stay is
+ * therefore a very large trip at a very large lodge — far enough above the shape
+ * this bound exists to catch (a runaway read) to leave ordinary club trips
+ * untouched, without any claim about how big THIS club's lodge is. That claim
+ * would not be ours to make: the codebase must never encode which club it serves
+ * (`INV-CONFIG-001`), and a 120-bed lodge is a deployment, not a data problem.
+ * The bound is deliberately NOT derived from the lodge's configured capacity
+ * either: that would put a settings read inside a hosting evaluation that
+ * already runs on every booking write, and a ceiling that moves when an operator
+ * edits a bed count is a ceiling nobody can reason about. If a club ever meets
+ * it, the writer's truncation errs towards the rule and the evidence read
+ * refuses outright, so the failure is visible rather than silent.
+ *
+ * FAILING SAFE STILL MEANS FAILING TOWARDS THE RULE for a writer: fewer hosts
+ * are seen, so a night reads as uncovered and the booking is flagged or refused
+ * rather than quietly allowed. It inverts for evidence, which is why an evidence
+ * caller passes its own ceiling and gets the refusal below instead.
+ */
+export const SAME_GROUP_TRIP_COVERAGE_SOURCE_LIMIT = 100;
+
+/**
+ * The same refusal for the THIRD host population, and a third class rather than
+ * a shared one, for the reason its two siblings are separate.
+ *
+ * An operator handed "I cannot tell you" needs to know WHICH population was too
+ * wide, because the three have different remedies: a bound sibling read means a
+ * #738 split family has grown implausibly wide, a bound same-owner read means
+ * one member holds too many active bookings at one lodge over one stay, and this
+ * one means a Group Trip has more overlapping live bookings than the diagnostic
+ * may read (`INV-HOST-044`). A single message naming all three would name the
+ * wrong one twice as often as it named the right one.
+ */
+export class HostingGroupTripSourceCeilingExceededError extends Error {
+  constructor(ceiling: number) {
+    super(
+      `Adult-member hosting evidence: more than ${ceiling} bookings in this Group Trip could cover these nights; refusing an inconclusive answer`,
+    );
+    this.name = "HostingGroupTripSourceCeilingExceededError";
   }
 }

@@ -36,15 +36,17 @@ reason: sixty-seven lines, and every one of them is the reason a reader needs at
   `minimum-stay/[id]/route.ts` — the house pattern for exactly this kind of
   policy singleton.
 
-file: src/lib/adult-member-hosting-review.ts
-lines: 2602
-reason: one line — the new scope column added to the policy loader's narrowed
-  `select`. That select is pinned to the schema by the call-site census for a
-  reason: an omitted column hands the resolver `undefined`, which it reads as
-  "this row did not decide", quietly widening or narrowing a lodge's rule with
-  a green typecheck. The column has to be named here; there is nothing to
-  split, and the file's existing length is #3128's business rather than this
-  change's.
+MOVED TO `size-allowances.d/3038-group-trip-cover-evaluator.md`, and this is
+prose rather than an entry on purpose. #3037 declared
+`src/lib/adult-member-hosting-review.ts` at 2,602 lines for one line of growth:
+the new scope column added to the policy loader's narrowed `select`, which the
+call-site census pins to the schema because an omitted column hands the resolver
+`undefined` and quietly widens or narrows a lodge's rule with a green typecheck.
+#3038 then grew the same file again on the same epic branch. Both children diff
+against `main`, so both allowances are live at once and the gate refuses two
+numbers for one file — correctly, since it cannot choose between them. The
+single live declaration therefore lives in #3038's fragment, at the length the
+epic actually reaches, and carries both reasons.
 
 file: src/lib/public-page-content-tokens.ts
 lines: 768

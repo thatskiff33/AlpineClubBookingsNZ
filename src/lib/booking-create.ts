@@ -1172,6 +1172,69 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
         db: tx,
       });
 
+      if (groupJoin) {
+        // Roster write is atomic with the child booking (#1039 item 2). The
+        // advisory lock above serialises booking creation, so this
+        // check-then-write cannot race; the (groupBookingId, joinerMemberId)
+        // unique pair backs it at the database as well.
+        //
+        // #3038 — AND IT RUNS BEFORE THE SPLIT CHILD IS CREATED, WHICH IS
+        // LOAD-BEARING RATHER THAN TIDY. This row IS the booking's Group Trip
+        // identity (`INV-HOST-043`), and the split child below is reconciled
+        // against the hosting rule the moment it is written. While this write
+        // came last, that reconciliation ran with no roster row in existence:
+        // the parent belonged to no Group Trip yet, so the child — the half
+        // carrying the party's NON-MEMBER guests, the rows the rule exists to
+        // judge — inherited nothing and was recorded as uncovered. Every later
+        // evaluation of the same booking, the join preflight included, found
+        // the cover and disagreed with it. `verifyAndCreateNonMemberJoin` claims
+        // its roster row before reconciling for exactly this reason; the member
+        // join now matches it.
+        //
+        // Both writes are in ONE transaction, so nothing outside it can see the
+        // intermediate state, and a hosting refusal below still rolls this
+        // claim back with the booking.
+        const existingJoin = await tx.groupBookingJoin.findUnique({
+          where: {
+            groupBookingId_joinerMemberId: {
+              groupBookingId: groupJoin.groupBookingId,
+              joinerMemberId: groupJoin.joinerMemberId,
+            },
+          },
+          include: {
+            booking: { select: { status: true, deletedAt: true } },
+          },
+        });
+        const existingJoinIsLive =
+          existingJoin?.booking &&
+          !existingJoin.booking.deletedAt &&
+          existingJoin.booking.status !== BookingStatus.CANCELLED &&
+          existingJoin.booking.status !== BookingStatus.BUMPED;
+        if (existingJoinIsLive) {
+          throw new GroupJoinConflictError();
+        }
+        if (existingJoin) {
+          await tx.groupBookingJoin.update({
+            where: { id: existingJoin.id },
+            data: {
+              bookingId: newBooking.id,
+              isMember: true,
+              verifiedAt: new Date(),
+            },
+          });
+        } else {
+          await tx.groupBookingJoin.create({
+            data: {
+              groupBookingId: groupJoin.groupBookingId,
+              bookingId: newBooking.id,
+              joinerMemberId: groupJoin.joinerMemberId,
+              isMember: true,
+              verifiedAt: new Date(),
+            },
+          });
+        }
+      }
+
       // Split booking (#738): create the linked provisional non-member booking
       // in the same transaction. It is PENDING and holds no capacity (it does
       // not run the capacity check or take payment in R2 — confirmed/charged or
@@ -1263,52 +1326,6 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
           id: childBooking.id,
           finalPriceCents: childBooking.finalPriceCents,
         };
-      }
-
-      if (groupJoin) {
-        // Roster write is atomic with the child booking (#1039 item 2). The
-        // advisory lock above serialises booking creation, so this
-        // check-then-write cannot race; the (groupBookingId, joinerMemberId)
-        // unique pair backs it at the database as well.
-        const existingJoin = await tx.groupBookingJoin.findUnique({
-          where: {
-            groupBookingId_joinerMemberId: {
-              groupBookingId: groupJoin.groupBookingId,
-              joinerMemberId: groupJoin.joinerMemberId,
-            },
-          },
-          include: {
-            booking: { select: { status: true, deletedAt: true } },
-          },
-        });
-        const existingJoinIsLive =
-          existingJoin?.booking &&
-          !existingJoin.booking.deletedAt &&
-          existingJoin.booking.status !== BookingStatus.CANCELLED &&
-          existingJoin.booking.status !== BookingStatus.BUMPED;
-        if (existingJoinIsLive) {
-          throw new GroupJoinConflictError();
-        }
-        if (existingJoin) {
-          await tx.groupBookingJoin.update({
-            where: { id: existingJoin.id },
-            data: {
-              bookingId: newBooking.id,
-              isMember: true,
-              verifiedAt: new Date(),
-            },
-          });
-        } else {
-          await tx.groupBookingJoin.create({
-            data: {
-              groupBookingId: groupJoin.groupBookingId,
-              bookingId: newBooking.id,
-              joinerMemberId: groupJoin.joinerMemberId,
-              isMember: true,
-              verifiedAt: new Date(),
-            },
-          });
-        }
       }
 
       // #2364, last inside the transaction so every guest row, split child and

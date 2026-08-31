@@ -937,6 +937,9 @@ describe("pre-persist evaluation for the create path (#2364)", () => {
     }) as any;
 
   const input = {
+    // #3038 made this REQUIRED rather than optional, so an ordinary create has
+    // to say "no Group Trip" out loud rather than by omission.
+    groupBookingId: null,
     lodgeId: "lodge-1",
     checkIn: new Date("2026-07-04T00:00:00.000Z"),
     checkOut: new Date("2026-07-06T00:00:00.000Z"),

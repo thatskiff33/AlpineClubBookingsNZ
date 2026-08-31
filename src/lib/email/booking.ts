@@ -1426,9 +1426,17 @@ export async function sendPolicyExceptionRequestExpiredEmail(params: {
  * transition again.
  *
  * The recipient is the booking's OWNER, which is also the authority the optional
- * booking link is resolved against. Under `SAME_BOOKING_OWNER` the cover that went
- * away was on their own account (§11), so pointing them at their own booking
- * discloses nothing.
+ * booking link is resolved against, and the link points at the RECIPIENT'S OWN
+ * booking — never at whichever booking the cover went away from.
+ *
+ * THAT DISTINCTION USED TO BE ARGUED FROM A PREMISE THAT IS NO LONGER TRUE. The
+ * old wording said the cover "was on their own account (§11), so pointing them
+ * at their own booking discloses nothing". Under `SAME_GROUP_TRIP` (#3038) the
+ * stay that went away is on ANOTHER member's account, so the premise is gone
+ * while the conclusion survives on its own terms: this message names nobody, and
+ * a link to the recipient's own booking discloses nothing about anybody else's
+ * whichever scope supplied the cover. What a member may and may not be told is
+ * `INV-HOST-019`, which is the one home for that rule.
  */
 export async function sendHostingCoverageLostEmail(params: {
   // Booking this message belongs to (#2258); see sendBookingConfirmedEmail.

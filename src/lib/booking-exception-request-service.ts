@@ -7,6 +7,12 @@ import { normalizeGuestStayRange } from "@/lib/booking-guest-stay-range-input";
 import { getStayNights } from "@/lib/policies/pricing";
 import { validateMinimumStay } from "@/lib/booking-policies";
 import { evaluateProposedAdultMemberHosting } from "@/lib/adult-member-hosting-proposed";
+import { readInheritedSplitPairGroupTrip } from "@/lib/adult-member-hosting-review";
+import {
+  GROUP_TRIP_IDENTITY_SELECT,
+  groupTripIdentityOf,
+  type GroupTripIdentityRow,
+} from "@/lib/group-trip-identity";
 import { evaluateProposedPaidUpAdultPresence } from "@/lib/subscription-lockout-enforcement";
 import type { AgeTierSettingsReader } from "@/lib/subscription-lockout-facts";
 import type { SubscriptionLockoutMode } from "@/lib/membership-lockout-settings";
@@ -794,10 +800,21 @@ async function evaluatePartyViolations(
     violations.push(...stay.violations);
   }
 
-  const bookingOwnerMemberId = await resolveProposalBookingOwner(db, presence);
+  // ONE read of the live booking behind a modification, shared by the two
+  // questions that ask about it (#3038 review). They used to `findUnique` the
+  // same id twice with two different selects.
+  const proposalBooking = await loadProposalBooking(db, presence);
+  const bookingOwnerMemberId = resolveProposalBookingOwner(
+    proposalBooking,
+    presence,
+  );
+  const groupBookingId = includeProposedHosting
+    ? await resolveProposalGroupTrip(db, proposalBooking)
+    : null;
   const hosting = includeProposedHosting
     ? await evaluateProposedAdultMemberHosting(db, {
         bookingOwnerMemberId,
+        groupBookingId,
         lodgeId,
         checkIn,
         checkOut,
@@ -863,20 +880,124 @@ async function evaluatePartyViolations(
  * presence — the proposal is frozen and hashed, and a new field would change every
  * existing proposal hash.
  */
-async function resolveProposalBookingOwner(
+function resolveProposalBookingOwner(
+  booking: Pick<ProposalBooking, "memberId"> | null,
+  presence:
+    | { requestedByMemberId?: string | null; bookingId?: string | null }
+    | undefined,
+): string | null {
+  if (presence?.bookingId) return booking?.memberId ?? null;
+  return presence?.requestedByMemberId?.trim() || null;
+}
+
+/**
+ * The live booking a MODIFICATION proposal is about, read ONCE.
+ *
+ * Both server-side resolutions above and below are about the SAME row, and they
+ * each used to fetch it: `select: { memberId: true }` for the owner and
+ * `GROUP_TRIP_IDENTITY_SELECT` for the trip. One read with one select is the
+ * same answer and one round trip, and it is also what makes the split-pair
+ * carve-out reachable from here at all — `parentBookingId` has to be selected
+ * beside the two identity relations, and a second select would have been a
+ * second place to remember that.
+ *
+ * `parentBookingId` IS NOT GROUP TRIP IDENTITY (`INV-HOST-043`), here or
+ * anywhere. It is read for the one named carve-out — the second half of a #738
+ * split pair inherits the first half's trip — and it is
+ * `readInheritedSplitPairGroupTrip` that applies the fence around it, not this
+ * select.
+ *
+ * `null` for a NEW-booking proposal, which names no booking, and for a booking
+ * id that resolves to nothing.
+ */
+const PROPOSAL_BOOKING_SELECT = {
+  id: true,
+  memberId: true,
+  parentBookingId: true,
+  ...GROUP_TRIP_IDENTITY_SELECT,
+} as const;
+
+type ProposalBooking = GroupTripIdentityRow & {
+  id: string;
+  memberId: string;
+  parentBookingId: string | null;
+};
+
+async function loadProposalBooking(
   db: PolicyEvaluationDb,
   presence:
     | { requestedByMemberId?: string | null; bookingId?: string | null }
     | undefined,
+): Promise<ProposalBooking | null> {
+  if (!presence?.bookingId) return null;
+  return (await db.booking.findUnique({
+    where: { id: presence.bookingId },
+    select: PROPOSAL_BOOKING_SELECT,
+  })) as ProposalBooking | null;
+}
+
+/**
+ * WHICH GROUP TRIP the booking behind a proposal belongs to (#3038, epic
+ * #2943) — the third half of making the override door real, and it is the same
+ * shape as the two beside it for the same reason.
+ *
+ * `resolveProposalBookingOwner` above reads the live booking's own `memberId`
+ * so a modification proposal is judged against the owner the booking paths
+ * judge; `resolveProposalOperationalPresence` below reads its live guest rows
+ * so, in its own words, "a modification proposal would raise a violation for a
+ * party the booking path allows" without it. Adult-member hosting gained a
+ * THIRD such input when #3038 added `SAME_GROUP_TRIP`, and a re-evaluation that
+ * does not supply it is group-blind: `evaluateProposedAdultMemberHosting` reads
+ * no group cover at all, so a booking whose only qualifying adult travels on a
+ * sibling Group Trip booking is re-judged as uncovered.
+ *
+ * That is not a cosmetic difference. This function's answer is FROZEN into the
+ * exception request, shown to a Booking Officer as a live violation, and —
+ * where the club's capacity mode is `HOLD` — used to reserve beds. It is then
+ * reproduced at approval by `evaluateCurrentViolations`, so the #2525 drift
+ * gate compares the phantom with itself and lets the approval through. The
+ * remedy is to answer the question rather than to skip it.
+ *
+ * A MODIFICATION IS JUDGED BY THE SAME RULE AS THE PERSISTED BOOKING, WHICH IS
+ * MORE THAN ITS TWO CANONICAL RELATIONS. It reads those relations first, and
+ * then — exactly as `evaluateLoadedBookingAdultMemberHosting` does — falls back
+ * to the ONE carve-out the owner decided on 31 Aug 2026: the second half of a
+ * #738 split pair inherits the first half's Group Trip
+ * (`readInheritedSplitPairGroupTrip`, `INV-HOST-043`).
+ *
+ * THAT FALLBACK IS NOT A REFINEMENT HERE, IT IS THE WHOLE CASE. The booking the
+ * carve-out exists for is a split child: it carries the party's NON-MEMBER
+ * guests, holds no qualifying adult of its own, has no roster row of its own,
+ * and is covered only through its parent's trip. Resolving identity from the two
+ * relations alone answers `null` for precisely that booking — so this path
+ * would raise a phantom hosting violation on the one shape the persisted path
+ * was taught to get right, which is the disagreement described above rather than
+ * a lesser version of it. A split child is modifiable like any other booking
+ * (the route gates on ownership and `getBookingEditPolicy`, not on
+ * `parentBookingId`), so the shape is reachable.
+ *
+ * The rule itself is NOT restated here: this calls the same
+ * `hostingSiblingWhere` set through the same `inheritedSplitPairGroupTrip`, so
+ * "what group is this booking in?" keeps one answer rather than gaining a third
+ * (`INV-SSOT-001`).
+ *
+ * A NEW booking proposal has no row and therefore no Group Trip — a member
+ * submitting a new-booking exception is not inside a join flow, which is the
+ * only way a party acquires group identity before its booking exists
+ * (`INV-HOST-043`). Selected through `GROUP_TRIP_IDENTITY_SELECT` (spread into
+ * `PROPOSAL_BOOKING_SELECT` above) rather than a hand-written `select`, because
+ * a relation name that drifts from the schema is a runtime validation failure
+ * here with a green typecheck.
+ */
+async function resolveProposalGroupTrip(
+  db: PolicyEvaluationDb,
+  booking: ProposalBooking | null,
 ): Promise<string | null> {
-  if (presence?.bookingId) {
-    const booking = await db.booking.findUnique({
-      where: { id: presence.bookingId },
-      select: { memberId: true },
-    });
-    return booking?.memberId ?? null;
-  }
-  return presence?.requestedByMemberId?.trim() || null;
+  if (!booking) return null;
+  const identity =
+    groupTripIdentityOf(booking) ??
+    (await readInheritedSplitPairGroupTrip(db, booking));
+  return identity?.groupBookingId ?? null;
 }
 
 /**

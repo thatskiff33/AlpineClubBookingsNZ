@@ -41,14 +41,27 @@ import {
 } from "@/lib/adult-member-hosting-same-owner";
 import { AdultMemberHostingRequiredError } from "@/lib/adult-member-hosting-refusal";
 import {
+  COVERAGE_READ_ORDER,
+  HostingGroupTripSourceCeilingExceededError,
   HostingSameOwnerSourceCeilingExceededError,
   HostingSiblingCeilingExceededError,
+  SAME_GROUP_TRIP_COVERAGE_SOURCE_LIMIT,
   SAME_OWNER_COVERAGE_DEPENDENT_LIMIT,
-  SAME_OWNER_COVERAGE_DEPENDENT_ORDER,
   SAME_OWNER_COVERAGE_SOURCE_LIMIT,
   warnIfCoverageDependentCeilingBound,
 } from "@/lib/adult-member-hosting-coverage-ceilings";
-import type { AdultMemberHostingPolicyExceptionViolation } from "@/lib/booking-policy-exceptions";
+import {
+  GROUP_TRIP_IDENTITY_SELECT,
+  groupTripCoverageSourceWhere,
+  groupTripIdentityOf,
+  type GroupTripCoverageBooking,
+  type GroupTripIdentity,
+  type GroupTripIdentityRow,
+} from "@/lib/group-trip-identity";
+import type {
+  AdultMemberHostingPolicyExceptionViolation,
+  AdultMemberHostScope,
+} from "@/lib/booking-policy-exceptions";
 import {
   ACTIVE_BOOKING_STATUSES,
   isHostingCoverageSourceBookingStatus,
@@ -228,6 +241,13 @@ const BOOKING_HOSTING_SELECT = {
   id: true,
   memberId: true,
   parentBookingId: true,
+  // #3038 (epic #2943). Canonical Group Trip identity, spread from the ONE
+  // constant that owns it rather than re-typed here, so a relation name that
+  // drifts from the schema is a single edit instead of a per-call-site hunt.
+  // `groupTripIdentityOf` reads these two and nothing else; `parentBookingId`
+  // above is the #738 split-booking relationship and is NEVER group identity
+  // (`INV-HOST-043`).
+  ...GROUP_TRIP_IDENTITY_SELECT,
   lodgeId: true,
   checkIn: true,
   checkOut: true,
@@ -262,7 +282,17 @@ const BOOKING_HOSTING_SELECT = {
   },
 } as const;
 
-type LoadedHostingBooking = {
+/**
+ * INTERSECTED WITH `GroupTripIdentityRow` RATHER THAN RESTATING IT (#3038).
+ * `group-trip-identity.ts` owns what `GROUP_TRIP_IDENTITY_SELECT` produces,
+ * including WHY both fields are required and nullable rather than optional; a
+ * second copy of that shape here would be a second thing to keep right. It also
+ * would not have stayed right for long: the reads below are `as
+ * LoadedHostingBooking[]` casts, so a relation narrowed or renamed in the select
+ * constant type-checks clean against a hand-written duplicate and fails at
+ * runtime. Intersecting makes the drift a compile error instead.
+ */
+type LoadedHostingBooking = GroupTripIdentityRow & {
   id: string;
   memberId: string;
   parentBookingId: string | null;
@@ -379,7 +409,19 @@ async function loadSiblingHosts(
    * Omitted by every writer, whose behaviour is therefore byte-identical.
    */
   siblingCeiling?: number,
-): Promise<{ participants: HostingParticipant[]; siblingIds: string[] }> {
+): Promise<{
+  participants: HostingParticipant[];
+  siblingIds: string[];
+  /**
+   * The rows themselves, because the #738 split pair is the ONE relationship
+   * that carries Group Trip identity across two `Booking` rows and the caller
+   * has to be able to read it (`inheritedSplitPairGroupTrip`). Returned rather
+   * than resolved here on purpose: this loader answers "who can host", and
+   * which Group Trip the party belongs to is decided at the call site where all
+   * three scopes meet, beside the identity question it is an exception to.
+   */
+  rows: LoadedHostingBooking[];
+}> {
   const siblings = (await db.booking.findMany({
     where: hostingSiblingWhere(booking),
     select: BOOKING_HOSTING_SELECT,
@@ -387,8 +429,13 @@ async function loadSiblingHosts(
       ? {}
       : {
           // A total order, so a bound that binds binds reproducibly rather than
-          // returning any N of the matching rows.
-          orderBy: [{ checkIn: "asc" as const }, { id: "asc" as const }],
+          // returning any N of the matching rows. `COVERAGE_READ_ORDER` is that
+          // order for every bounded coverage read in this file, and spelling it
+          // out a third time here is exactly the drift #3038 removed from the
+          // two source reads (`INV-SSOT-001`). Applied only when a ceiling is
+          // passed, unlike those two: a writer's sibling read is unbounded, so
+          // there is no truncation for an order to make reproducible.
+          orderBy: [...COVERAGE_READ_ORDER],
           take: siblingCeiling + 1,
         }),
   })) as LoadedHostingBooking[];
@@ -404,6 +451,223 @@ async function loadSiblingHosts(
       .filter((sibling) => Array.isArray(sibling.guests))
       .flatMap((sibling) => toHostingParticipants(sibling, true)),
     siblingIds: siblings.map((sibling) => sibling.id),
+    rows: siblings,
+  };
+}
+
+/**
+ * The Group Trip a booking INHERITS from the OTHER HALF OF ITS #738 SPLIT PAIR
+ * — the single exception to "a booking's Group Trip identity is its own two
+ * canonical relations", and a deliberately narrow carve-out rather than a
+ * softening of that rule (owner decision, 31 Aug 2026; `INV-HOST-043`).
+ *
+ * WHAT WENT WRONG WITHOUT IT. A member joining a Group Trip with a mixed party
+ * gets TWO booking rows: `createConfirmedBooking` writes the member half, hangs
+ * the non-member half off it by `parentBookingId`, and writes the
+ * `GroupBookingJoin` row against the member half only — because one party is
+ * one joiner on the roster, and the `(groupBookingId, joinerMemberId)` unique
+ * pair says so. So the half that carries the NON-MEMBER GUESTS, the rows the
+ * hosting rule exists to judge, resolved to no Group Trip and received no
+ * cover. The join preflight evaluates the undivided party and said yes; the
+ * reconciler evaluated the child and said no. Told yes, then told no, about one
+ * party, seconds apart.
+ *
+ * THE BOUNDARY, AND IT IS THE WHOLE SAFETY OF THE CARVE-OUT. `parentBookingId`
+ * remains categorically NOT a Group Trip identity source, and a booking still
+ * never borrows identity from an unrelated parent. Inheritance happens only
+ * from a row that is already a `SAME_BOOKING` split sibling under
+ * `hostingSiblingWhere` — the rows this function is handed — which is
+ * `booking.parentBookingId`, owned by the SAME member, not cancelled, not
+ * bumped and not soft-deleted. Three configurations are therefore excluded, and
+ * all three matter:
+ *
+ *  - A #796 GROUP JOINER hangs off the ORGANISER's booking by the same column
+ *    while belonging to a DIFFERENT member. It inherits nothing here (the
+ *    same-member filter drops it), and needs nothing: a joiner always carries
+ *    its own `GroupBookingJoin` row.
+ *  - A CANCELLED, BUMPED OR ARCHIVED parent is not in the sibling set, so a
+ *    dead booking cannot lend its trip to a live one.
+ *  - THE DIRECTION IS ONE-WAY. Only `booking.parentBookingId` is followed, so a
+ *    parent never inherits from a child. It has no need to — the roster row is
+ *    on the parent — and reading the relation both ways would make "the second
+ *    half of a split pair" mean any pair member.
+ *
+ * A booking with an identity of its own never reaches here: the caller asks
+ * `groupTripIdentityOf` first, and this answers only where that returned null.
+ *
+ * NOTHING FLOWS THE OTHER WAY. Inheriting is about what a split child RECEIVES;
+ * it supplies nothing, because the Group Trip source and dependent reads are
+ * both relation-based (`groupTripMembershipWhere`) and the child has neither
+ * relation. That is the right answer as well as the safe one: the child carries
+ * only non-member guests, so it has no adult to lend anybody.
+ *
+ * WHAT #3039 MUST DO WITH THAT. Being absent from the DEPENDENT set means a
+ * Group Trip fan-out finds this child's PARENT and not the child. The child is
+ * reached through the `SAME_BOOKING` sibling fan-out that already exists, so the
+ * reconciliation #3039 adds has to go through
+ * `reconcileAdultMemberHostingReviewWithSiblings` rather than reconciling each
+ * dependent row directly — otherwise the half carrying the non-member guests is
+ * the one half nobody re-evaluates.
+ */
+function inheritedSplitPairGroupTrip(
+  booking: Pick<LoadedHostingBooking, "parentBookingId">,
+  splitSiblings: readonly SplitPairSiblingRow[],
+): GroupTripIdentity | null {
+  const parentId = booking.parentBookingId;
+  if (!parentId) return null;
+  const parent = splitSiblings.find((sibling) => sibling.id === parentId);
+  return parent ? groupTripIdentityOf(parent) : null;
+}
+
+/**
+ * The least a row must carry to be judged as the other half of a split pair.
+ *
+ * `id` and the two canonical relations, and deliberately nothing else. The
+ * persisted evaluator hands over full `LoadedHostingBooking` rows it has already
+ * read; the exception-request path has no such rows and reads a two-column
+ * projection instead, so widening the parameter is what lets ONE rule serve both
+ * rather than a second copy growing on the proposal side (`INV-SSOT-001`).
+ *
+ * The `booking` parameter stays `Pick<LoadedHostingBooking, "parentBookingId">`,
+ * and that narrowness is the carve-out's PRIMARY structural guard: the function
+ * is never handed the evaluated booking's own `id`, so it cannot be widened to
+ * follow children without changing the signature — which no accidental edit
+ * does. The behavioural fence in
+ * `adult-member-hosting-group-trip-cover.test.ts` is the second guard, and the
+ * one that catches a widening of the `find` predicate itself.
+ */
+type SplitPairSiblingRow = GroupTripIdentityRow & { id: string };
+
+const SPLIT_PAIR_IDENTITY_SELECT = {
+  id: true,
+  ...GROUP_TRIP_IDENTITY_SELECT,
+} as const;
+
+/**
+ * The same carve-out for a caller that holds no sibling rows (#3038).
+ *
+ * `evaluateLoadedBookingAdultMemberHosting` has already read the `SAME_BOOKING`
+ * sibling set by the time it asks, so it calls `inheritedSplitPairGroupTrip`
+ * directly and the exception costs no extra query. The exception-request
+ * re-evaluation
+ * (`booking-exception-request-service.ts` -> `resolveProposalGroupTrip`) holds
+ * nothing: it resolves identity from a single `findUnique` on the live booking.
+ * Without this it could not apply the carve-out AT ALL — and being unable to is
+ * not a smaller version of the same answer, it is the two evaluators disagreeing
+ * about exactly the booking the carve-out exists to fix. A split child covered
+ * only through its parent's Group Trip would be re-judged as uncovered, and that
+ * phantom violation is FROZEN into the request, shown to an officer as live,
+ * used to reserve beds under `HOLD`, and reproduced at approval so the #2525
+ * drift gate compares it with itself.
+ *
+ * So the RULE lives once and this is a second way in, not a second answer: the
+ * same `hostingSiblingWhere` set, filtered by the same
+ * `inheritedSplitPairGroupTrip`. The read is skipped entirely for a booking with
+ * no `parentBookingId`, which is every ordinary booking.
+ */
+export async function readInheritedSplitPairGroupTrip(
+  db: Pick<AdultMemberHostingReadDb, "booking">,
+  booking: Pick<LoadedHostingBooking, "id" | "memberId" | "parentBookingId">,
+): Promise<GroupTripIdentity | null> {
+  if (!booking.parentBookingId) return null;
+  const splitSiblings = (await db.booking.findMany({
+    where: hostingSiblingWhere(booking),
+    select: SPLIT_PAIR_IDENTITY_SELECT,
+  })) as SplitPairSiblingRow[];
+  return inheritedSplitPairGroupTrip(booking, splitSiblings);
+}
+
+/**
+ * THE cross-booking coverage source read — one body, parameterised by the
+ * relationship clause and the scope it stamps (#3038, `INV-SSOT-001`).
+ *
+ * `SAME_BOOKING_OWNER` and `SAME_GROUP_TRIP` differ in exactly one thing: which
+ * bookings are eligible sources. Everything else about reading them is a
+ * property of "reading cover from another booking", and every one of those
+ * facts was written out twice before this function existed:
+ *
+ *  - THE GUEST NARROWING. Only member-linked guest rows are loaded. A true
+ *    narrowing rather than a policy: a guest with no `Member` link can never
+ *    host under any scope, so loading a source's non-member guests would be
+ *    loading rows the evaluator is guaranteed to ignore. Their own nights are
+ *    that booking's problem, judged when that booking is reconciled.
+ *  - THE ORDERED-TRUNCATION PROTOCOL. A writer takes the scope's own bound and
+ *    truncates; an evidence caller passes a ceiling, gets `ceiling + 1` rows so
+ *    that "there were more than I may read" is a distinguishable fact, and is
+ *    REFUSED rather than handed a quietly short list. The order is
+ *    `COVERAGE_READ_ORDER` and it is now applied unconditionally — see that
+ *    constant for why a writer wants it too.
+ *  - THE DEFENSIVE GUEST-RELATION FILTER. A source that arrived without its
+ *    guest relation contributes no hosts. Dropping it is the safe direction:
+ *    fewer borrowed hosts can only OPEN a review for an admin to look at, never
+ *    suppress one.
+ *  - THE `sourceIds` CONTRACT. The ids of the rows ACTUALLY READ, so a truncated
+ *    read cannot exclude a booking nobody looked at. They come back because the
+ *    scopes narrow in order and each must exclude what the last already loaded:
+ *    one adult arriving twice under two scopes would appear in the participant
+ *    list twice and would credit `coveredByScopes` with a scope that supplied
+ *    nothing new, which is the field #3040's kiosk cover-source display reads.
+ *
+ * THE EXCLUSION IS COMPOSED UNDER `AND`, NEVER SPREAD, and that is the drift
+ * this extraction removes rather than merely tidies. The same-owner read spread
+ * `{ ...where, id: { not, notIn } }`, which overwrote the `id` key its own
+ * envelope had already set and so had to RE-STATE the self-exclusion to avoid
+ * losing it; the Group Trip read composed under `AND` and needed no such
+ * restatement. Two spellings of one clause, one of them only correct because it
+ * repeated itself. `AND` cannot lose a key, so the envelope's self-exclusion
+ * stands on its own and the restatement is gone.
+ *
+ * `loadSiblingHosts` IS DELIBERATELY NOT FOLDED IN. It reads the FULL booking
+ * select rather than the narrowed one (its rows carry the split pair's Group
+ * Trip identity), it does not narrow guests to member-linked rows, it stamps no
+ * `hostScope` because a split sibling is `SAME_BOOKING`, and it is unbounded for
+ * a writer on purpose. A helper contorted to serve both shapes would be harder
+ * to read than the two it replaced.
+ */
+async function loadCoverageSourceHosts(args: {
+  db: Pick<AdultMemberHostingReviewDb, "booking">;
+  /** The scope's own eligibility clause, envelope included. */
+  where: Prisma.BookingWhereInput;
+  /** Bookings a NARROWER scope has already read; excluded in the query. */
+  excludeBookingIds: readonly string[];
+  /** Stamped on every participant, so the evaluator can gate on the club's set. */
+  hostScope: AdultMemberHostScope;
+  /** The bound a WRITER truncates at. */
+  writerLimit: number;
+  /** An evidence caller's bound, which refuses instead of truncating. */
+  ceiling: number | undefined;
+  ceilingError: (ceiling: number) => Error;
+}): Promise<{ participants: HostingParticipant[]; sourceIds: string[] }> {
+  const { db, where, excludeBookingIds, hostScope, ceiling } = args;
+  const sources = (await db.booking.findMany({
+    where:
+      excludeBookingIds.length > 0
+        ? { AND: [where, { id: { notIn: [...excludeBookingIds] } }] }
+        : where,
+    take: ceiling === undefined ? args.writerLimit : ceiling + 1,
+    orderBy: [...COVERAGE_READ_ORDER],
+    select: {
+      id: true,
+      guests: {
+        where: { memberId: { not: null } },
+        select: BOOKING_HOSTING_SELECT.guests.select,
+      },
+    },
+  })) as Array<{ id: string; guests: LoadedHostingBooking["guests"] }>;
+  if (ceiling !== undefined && sources.length > ceiling) {
+    throw args.ceilingError(ceiling);
+  }
+
+  return {
+    participants: sources
+      .filter((source) => Array.isArray(source.guests))
+      .flatMap((source) =>
+        toHostingParticipants(source, true).map((participant) => ({
+          ...participant,
+          hostScope,
+        })),
+      ),
+    sourceIds: sources.map((source) => source.id),
   };
 }
 
@@ -457,57 +721,105 @@ export async function loadSameBookingOwnerHosts(
    * refused rather than quietly allowed. That argument INVERTS for evidence. A
    * diagnostic that misses the sibling carrying the covering adult reports
    * `policy_adult_member_hosting` as a LIVE BLOCKER on a booking that is actually
-   * covered — a fabricated finding, which is the opposite of safe — and because the
-   * writer's read carries no `orderBy`, two invocations could disagree about the
-   * same booking with nothing on the row to say so.
+   * covered — a fabricated finding, which is the opposite of safe. Since #3038
+   * both reads carry `COVERAGE_READ_ORDER`, so a truncation is at least
+   * reproducible; that fixes the writer's snapshot churn and does nothing for the
+   * honesty of a short evidence answer.
    *
-   * So an evidence caller passes a ceiling, gets a total order and `ceiling + 1`
-   * rows, and gets a REFUSAL when the bound binds. Omitted by every writer, whose
-   * read is byte-identical to before.
+   * So an evidence caller passes a ceiling, gets `ceiling + 1` rows, and gets a
+   * REFUSAL when the bound binds. Omitted by every writer, which still truncates.
    */
   sameOwnerSourceCeiling?: number,
-): Promise<HostingParticipant[]> {
-  const where = sameBookingOwnerCoverageSourceWhere(booking);
-  const sources = (await db.booking.findMany({
-    where:
-      excludeBookingIds.length > 0
-        ? { ...where, id: { not: booking.id, notIn: [...excludeBookingIds] } }
-        : where,
-    take:
-      sameOwnerSourceCeiling === undefined
-        ? SAME_OWNER_COVERAGE_SOURCE_LIMIT
-        : sameOwnerSourceCeiling + 1,
-    ...(sameOwnerSourceCeiling === undefined
-      ? {}
-      : {
-          // A total order, so a bound that binds binds reproducibly rather than
-          // returning any N of the matching rows.
-          orderBy: [{ checkIn: "asc" as const }, { id: "asc" as const }],
-        }),
-    select: {
-      id: true,
-      guests: {
-        // Member-linked rows only — see the narrowing note above.
-        where: { memberId: { not: null } },
-        select: BOOKING_HOSTING_SELECT.guests.select,
-      },
-    },
-  })) as Array<{ id: string; guests: LoadedHostingBooking["guests"] }>;
-  if (
-    sameOwnerSourceCeiling !== undefined &&
-    sources.length > sameOwnerSourceCeiling
-  ) {
-    throw new HostingSameOwnerSourceCeilingExceededError(sameOwnerSourceCeiling);
-  }
+): Promise<{ participants: HostingParticipant[]; sourceIds: string[] }> {
+  return loadCoverageSourceHosts({
+    db,
+    where: sameBookingOwnerCoverageSourceWhere(booking),
+    excludeBookingIds,
+    hostScope: "SAME_BOOKING_OWNER",
+    writerLimit: SAME_OWNER_COVERAGE_SOURCE_LIMIT,
+    ceiling: sameOwnerSourceCeiling,
+    ceilingError: (ceiling) =>
+      new HostingSameOwnerSourceCeilingExceededError(ceiling),
+  });
+}
 
-  return sources
-    .filter((source) => Array.isArray(source.guests))
-    .flatMap((source) =>
-      toHostingParticipants(source, true).map((participant) => ({
-        ...participant,
-        hostScope: "SAME_BOOKING_OWNER" as const,
-      })),
-    );
+/**
+ * The qualifying-adult-member candidates attending ANOTHER live booking in the
+ * SAME GROUP TRIP, at the same lodge, over nights that overlap this stay
+ * (#3038, epic #2943).
+ *
+ * HOST-ONLY, COUNTED ONCE, AND READ UNDER A BOUND OF ITS OWN — that is
+ * `INV-HOST-044`, which is the rule's one home and states all three in full
+ * along with why. This docblock says how this function meets it, not what it
+ * says, and the id is what a reader follows for the rest.
+ *
+ * The third cross-booking loader, and deliberately the SAME SHAPE as
+ * `loadSameBookingOwnerHosts` — both are `loadCoverageSourceHosts` with one
+ * clause changed, which is what makes the three-scope symmetry checkable rather
+ * than promised. `hostScope: "SAME_GROUP_TRIP"` is what gates it on the club's
+ * setting (`INV-HOST-017`), `hostOnly: true` is what keeps beds, participants,
+ * price and responsibility on the source's own booking, and the participants are
+ * the canonical `toHostingParticipants`' — so whether these people actually
+ * qualify is decided afterwards by `participantQualifiesAsHost`, exactly as for
+ * the booking's own guests. There is deliberately no second definition of a
+ * qualifying adult member here.
+ *
+ * OWNERSHIP IS NOT THE RELATIONSHIP HERE, which is the one real difference from
+ * its same-owner sibling. Group Trip sources belong to OTHER members — that is
+ * the entire point of the feature — so a member-owned join and a non-member
+ * join consume this cover on identical terms, and nothing about who owns a
+ * source booking is consulted.
+ *
+ * `excludeBookingIds` IS THE DEDUPLICATION (`INV-HOST-044`), and it is a query
+ * clause rather than a post-filter so a booking already read under a narrower
+ * scope is never read twice. The caller passes the split siblings
+ * (`SAME_BOOKING`) and the same-owner sources (`SAME_BOOKING_OWNER`) it has
+ * already loaded.
+ *
+ * WHAT DECIDES THE SOURCE SET is `groupTripCoverageSourceWhere`: the canonical
+ * membership clause AND the shared coverage envelope, which is where the lodge,
+ * self-exclusion, half-open night overlap and `Booking.status` rules live. The
+ * container's own status is NOT among them (`INV-HOST-043`) — closing or
+ * cancelling a Group Trip governs who may still JOIN it, never whether the
+ * adults on the bookings that already joined are travelling.
+ *
+ * `sourceIds` COMES BACK UNCONSUMED TODAY, and that is a stated choice rather
+ * than an oversight: this is the last scope in the chain, so nothing narrower
+ * follows it, and #3039's reconciliation fan-out is what reads the shape. Its
+ * two siblings return the same field for the same reason, which is what lets a
+ * reader check the exclusion chain at the one call site where all three meet.
+ */
+export async function loadSameGroupTripHosts(
+  booking: GroupTripCoverageBooking,
+  identity: GroupTripIdentity,
+  db: Pick<AdultMemberHostingReviewDb, "booking">,
+  excludeBookingIds: readonly string[],
+  /**
+   * A DETERMINISTIC CEILING, supplied only by a read-only evidence caller — the
+   * same distinction its two siblings draw, for the same reason, on a third host
+   * population.
+   *
+   * The writer's `SAME_GROUP_TRIP_COVERAGE_SOURCE_LIMIT` truncates, which is
+   * safe FOR A WRITER: fewer hosts are seen, so a night reads as uncovered and
+   * the booking is flagged or refused rather than quietly allowed. That argument
+   * inverts for evidence — a diagnostic that misses the sibling booking carrying
+   * the covering adult reports a LIVE BLOCKER on a booking that is actually
+   * covered — so an evidence caller passes a ceiling, gets a total order and
+   * `ceiling + 1` rows, and gets a refusal when the bound binds. Omitted by
+   * every writer.
+   */
+  groupTripSourceCeiling?: number,
+): Promise<{ participants: HostingParticipant[]; sourceIds: string[] }> {
+  return loadCoverageSourceHosts({
+    db,
+    where: groupTripCoverageSourceWhere(booking, identity),
+    excludeBookingIds,
+    hostScope: "SAME_GROUP_TRIP",
+    writerLimit: SAME_GROUP_TRIP_COVERAGE_SOURCE_LIMIT,
+    ceiling: groupTripSourceCeiling,
+    ceilingError: (ceiling) =>
+      new HostingGroupTripSourceCeilingExceededError(ceiling),
+  });
 }
 
 /**
@@ -549,36 +861,55 @@ async function evaluateLoadedBookingAdultMemberHosting(
   db: AdultMemberHostingReadDb,
   acquireCoverageOwnerLock: (() => Promise<void>) | null,
   /**
-   * The season the subscription bridge judges settlement in, when the caller has
-   * already resolved it authoritatively. Omitted by every writer, which runs
-   * behind a gated request that has seeded the financial-year cache; supplied by
-   * read-only evidence callers, which cannot. See
-   * `evaluatePersistedBookingAdultMemberHostingReadOnly`.
+   * AN OPTIONS OBJECT RATHER THAN A POSITIONAL TAIL (#3038), and the reason is
+   * that the tail had reached six. Every one of them is optional, several are
+   * `number | undefined`, and #3038 inserted `groupTripSourceCeiling` in the
+   * MIDDLE of the run of ceilings — where its two neighbours have the same type,
+   * so an argument list that slipped by one would have type-checked clean and
+   * silently applied the sibling bound to the same-owner read. Named fields make
+   * that unrepresentable, and the read-only entry point below now forwards its
+   * own `options` unchanged rather than re-listing them in an order that has to
+   * match.
    */
-  seasonYear?: number,
-  /**
-   * The club's lockout mode, when the caller has read it authoritatively. Same
-   * reason as `seasonYear`: the bridge otherwise peeks it through readers that turn
-   * a database failure into `NO_BLOCK`, so an evidence caller would report a
-   * fabricated hosting answer for an enforcing club after one transient failure.
-   */
-  subscriptionLockoutMode?: SubscriptionLockoutMode,
-  /** See `loadSiblingHosts`; supplied only by a read-only evidence caller. */
-  siblingCeiling?: number,
-  /**
-   * See `loadSameBookingOwnerHosts`. The OTHER host population, with its own
-   * ceiling because it is a different population — a wide split family and a member
-   * holding many bookings at one lodge are different data problems.
-   */
-  sameOwnerSourceCeiling?: number,
-  /**
-   * How the #2543 subscription bridge reads the club's age-tier rule. Omitted by
-   * every writer, which takes the cached reader that falls back to
-   * `AGE_TIER_DEFAULTS`; supplied by a read-only evidence caller, whose strict
-   * reader rejects a failed read rather than judging a named member's hosting
-   * qualification against a tier rule nobody observed. See `AgeTierSettingsReader`.
-   */
-  readAgeTierSettings?: AgeTierSettingsReader,
+  options: {
+    /**
+     * The season the subscription bridge judges settlement in, when the caller has
+     * already resolved it authoritatively. Omitted by every writer, which runs
+     * behind a gated request that has seeded the financial-year cache; supplied by
+     * read-only evidence callers, which cannot. See
+     * `evaluatePersistedBookingAdultMemberHostingReadOnly`.
+     */
+    seasonYear?: number;
+    /**
+     * The club's lockout mode, when the caller has read it authoritatively. Same
+     * reason as `seasonYear`: the bridge otherwise peeks it through readers that turn
+     * a database failure into `NO_BLOCK`, so an evidence caller would report a
+     * fabricated hosting answer for an enforcing club after one transient failure.
+     */
+    subscriptionLockoutMode?: SubscriptionLockoutMode;
+    /** See `loadSiblingHosts`; supplied only by a read-only evidence caller. */
+    siblingCeiling?: number;
+    /**
+     * See `loadSameBookingOwnerHosts`. The OTHER host population, with its own
+     * ceiling because it is a different population — a wide split family and a member
+     * holding many bookings at one lodge are different data problems.
+     */
+    sameOwnerSourceCeiling?: number;
+    /**
+     * See `loadSameGroupTripHosts`. The THIRD host population, with its own
+     * ceiling because it is a third data question — a Group Trip is MEANT to be
+     * many separate bookings, so its writer bound sits well above the other two.
+     */
+    groupTripSourceCeiling?: number;
+    /**
+     * How the #2543 subscription bridge reads the club's age-tier rule. Omitted by
+     * every writer, which takes the cached reader that falls back to
+     * `AGE_TIER_DEFAULTS`; supplied by a read-only evidence caller, whose strict
+     * reader rejects a failed read rather than judging a named member's hosting
+     * qualification against a tier rule nobody observed. See `AgeTierSettingsReader`.
+     */
+    readAgeTierSettings?: AgeTierSettingsReader;
+  } = {},
 ): Promise<{
   violation: AdultMemberHostingPolicyExceptionViolation | null;
   resolved: ResolvedAdultMemberHostingPolicy;
@@ -609,33 +940,76 @@ async function evaluateLoadedBookingAdultMemberHosting(
   //
   // The SAME-OWNER read is skipped on that principle and one more: a club with the
   // rule on but `SAME_BOOKING_OWNER` off pays nothing either, which is what keeps
-  // the #2569 upgrade a no-op on cost as well as on answers.
+  // the #2569 upgrade a no-op on cost as well as on answers. #3038's
+  // `SAME_GROUP_TRIP` read is skipped on the same two, plus a third that costs
+  // nothing to check: a booking in no Group Trip has no sibling set to read, so
+  // the query is skipped for every ordinary booking even at a club that HAS
+  // turned the scope on.
   let participants: HostingParticipant[] = [];
   if (hostingModeIsActive(resolved.mode)) {
-    const siblings = await loadSiblingHosts(booking, db, siblingCeiling);
+    const siblings = await loadSiblingHosts(
+      booking,
+      db,
+      options.siblingCeiling,
+    );
     // §9: hold the per-owner key before reading another booking as cover, so a
     // concurrent removal of that cover cannot interleave with this evaluation.
     // Re-entrant, so a caller that already took it (the settle step) pays nothing.
+    //
+    // DELIBERATELY STILL KEYED ON `SAME_BOOKING_OWNER` ALONE (#3038). This key is
+    // `booking.memberId` — the DEPENDENT's owner — and every Group Trip source
+    // belongs to somebody else, so taking it would neither exclude a concurrent
+    // removal of that cover nor tell a reader anything true. The lock a Group
+    // Trip needs is a per-GROUP key acquired ahead of the owner keys, which is
+    // #3039's subject along with the sibling reconciliation fan-out; inventing
+    // half of it here would leave a lock family registered in no census
+    // (`INV-LOCK-003`) and an ordering nothing enforces.
     if (resolved.hostScopes.sameBookingOwner && acquireCoverageOwnerLock) {
       await acquireCoverageOwnerLock();
     }
+    const sameOwner = resolved.hostScopes.sameBookingOwner
+      ? await loadSameBookingOwnerHosts(
+          booking,
+          db,
+          siblings.siblingIds,
+          options.sameOwnerSourceCeiling,
+        )
+      : { participants: [] as HostingParticipant[], sourceIds: [] };
+    // Resolved from the two canonical relations and nothing else; `null` for a
+    // booking in no Group Trip, which is the ordinary case (`INV-HOST-043`).
+    //
+    // The ONE fallback is the other half of a #738 split pair, and it is a named
+    // carve-out with a boundary rather than a second identity source — see
+    // `inheritedSplitPairGroupTrip`, which is handed the sibling rows this
+    // evaluation has already read so the exception costs no extra query and can
+    // never reach past the `SAME_BOOKING` relationship.
+    const groupTripIdentity = resolved.hostScopes.sameGroupTrip
+      ? groupTripIdentityOf(booking) ??
+        inheritedSplitPairGroupTrip(booking, siblings.rows)
+      : null;
+    const groupTrip = groupTripIdentity
+      ? await loadSameGroupTripHosts(
+          booking,
+          groupTripIdentity,
+          db,
+          // The deduplication, in the order the scopes narrow: a split sibling
+          // is already a `SAME_BOOKING` host and a same-owner source is already
+          // a `SAME_BOOKING_OWNER` one, so neither is read again here.
+          [...siblings.siblingIds, ...sameOwner.sourceIds],
+          options.groupTripSourceCeiling,
+        )
+      : { participants: [] as HostingParticipant[], sourceIds: [] };
     participants = await withSubscriptionSettlement(
       [
         ...toHostingParticipants(booking),
         ...siblings.participants,
-        ...(resolved.hostScopes.sameBookingOwner
-          ? await loadSameBookingOwnerHosts(
-              booking,
-              db,
-              siblings.siblingIds,
-              sameOwnerSourceCeiling,
-            )
-          : []),
+        ...sameOwner.participants,
+        ...groupTrip.participants,
       ],
       db,
-      seasonYear ?? seasonYearOfStoredDate(booking.checkIn),
-      subscriptionLockoutMode,
-      readAgeTierSettings,
+      options.seasonYear ?? seasonYearOfStoredDate(booking.checkIn),
+      options.subscriptionLockoutMode,
+      options.readAgeTierSettings,
     );
   }
   const violation = evaluateAdultMemberHostingWithPolicy(participants, resolved);
@@ -704,10 +1078,19 @@ export async function evaluatePersistedBookingAdultMemberHostingReadOnly(
     /**
      * The same, for the SAME-OWNER coverage sources. Separate from
      * `siblingCeiling` because the populations are separate: the writer's own read
-     * TRUNCATES at 25 with no order, which errs towards flagging for a writer and
-     * towards a FABRICATED blocker for evidence.
+     * TRUNCATES at 25, which errs towards flagging for a writer and towards a
+     * FABRICATED blocker for evidence.
      */
     sameOwnerSourceCeiling?: number;
+    /**
+     * The same again, for the `SAME_GROUP_TRIP` coverage sources (#3038). A
+     * third ceiling rather than a reused one because it bounds a third
+     * population whose binding means something different to an operator: a
+     * Group Trip is MEANT to be many separate bookings, so its writer bound
+     * sits far above the other two and a bind here says the trip is larger than
+     * the diagnostic may read, not that an account is misshapen.
+     */
+    groupTripSourceCeiling?: number;
     /**
      * How the subscription bridge reads the age-tier rule. Same split as
      * `seasonYear` and `subscriptionLockoutMode`: this form has no gated request
@@ -725,16 +1108,10 @@ export async function evaluatePersistedBookingAdultMemberHostingReadOnly(
     select: BOOKING_HOSTING_SELECT,
   })) as LoadedHostingBooking | null;
   if (!booking) return null;
-  return evaluateLoadedBookingAdultMemberHosting(
-    booking,
-    db,
-    null,
-    options?.seasonYear,
-    options?.subscriptionLockoutMode,
-    options?.siblingCeiling,
-    options?.sameOwnerSourceCeiling,
-    options?.readAgeTierSettings,
-  );
+  // Forwarded WHOLE rather than unpacked into an argument list, which is the
+  // point of the options object: a field added here reaches the evaluator
+  // without an edit, and no ordering has to be kept in step.
+  return evaluateLoadedBookingAdultMemberHosting(booking, db, null, options);
 }
 
 
@@ -2297,7 +2674,7 @@ async function inspectSameOwnerDependents(
 }> {
   const dependents = (await db.booking.findMany({
     where: sameOwnerCoverageDependentWhere(booking),
-    orderBy: [...SAME_OWNER_COVERAGE_DEPENDENT_ORDER],
+    orderBy: [...COVERAGE_READ_ORDER],
     take: SAME_OWNER_COVERAGE_DEPENDENT_LIMIT,
     select: BOOKING_HOSTING_SELECT,
   })) as LoadedHostingBooking[];
@@ -2407,7 +2784,7 @@ export async function loadSameOwnerCoverageDependentIds(
       checkIn: first,
       checkOut: lastExclusive,
     }),
-    orderBy: [...SAME_OWNER_COVERAGE_DEPENDENT_ORDER],
+    orderBy: [...COVERAGE_READ_ORDER],
     take: SAME_OWNER_COVERAGE_DEPENDENT_LIMIT,
     select: { id: true },
   });
