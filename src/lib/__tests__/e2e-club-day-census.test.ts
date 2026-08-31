@@ -4,26 +4,6 @@ import { describe, expect, it } from "vitest";
 import { stripCommentsAndStrings } from "./support/strip-comments";
 
 /**
- * A file's CODE, with comments and string contents gone.
- *
- * This repository documents a defect at the site it removed it from, so the
- * files that are MOST correct are the ones whose comments quote the banned
- * shape — `e2e/helpers/stay-dates.ts` explains at the top of the file that it
- * used to call `new Date()`. A raw-text scanner fails hardest where the code is
- * cleanest. Strings go with them: a failure message quoting `new Date()` is
- * prose, not a call.
- *
- * The canonical stripper, never a local copy — `INV-SSOT-004`, enforced by the
- * `ssot/no-local-comment-stripper` lint rule, which caught the local copy this
- * file was first written with. A copy that misreads `.replace(/\//g, "_")` as a
- * line comment deletes the rest of that line, and a census whose stripper
- * under-reports goes FALSELY GREEN.
- */
-const codeOnly = (file: string): string =>
-  stripCommentsAndStrings(source(file));
-
-
-/**
  * The browser suite must ask the CLUB what day it is, never the machine running
  * it (#3221).
  *
@@ -61,6 +41,25 @@ const repoRoot = process.cwd();
 
 const source = (file: string): string =>
   fs.readFileSync(path.join(repoRoot, file), "utf8");
+
+/**
+ * A file's CODE, with comments and string contents gone.
+ *
+ * This repository documents a defect at the site it removed it from, so the
+ * files that are MOST correct are the ones whose comments quote the banned
+ * shape — `e2e/helpers/stay-dates.ts` explains at the top of the file that it
+ * used to call `new Date()`. A raw-text scanner fails hardest where the code is
+ * cleanest. Strings go with them: a failure message quoting `new Date()` is
+ * prose, not a call.
+ *
+ * The canonical stripper, never a local copy — `INV-SSOT-004`, enforced by the
+ * `ssot/no-local-comment-stripper` lint rule, which caught the local copy this
+ * file was first written with. A copy that misreads `.replace(/\//g, "_")` as a
+ * line comment deletes the rest of that line, and a census whose stripper
+ * under-reports goes FALSELY GREEN.
+ */
+const codeOnly = (file: string): string =>
+  stripCommentsAndStrings(source(file));
 
 /**
  * Every `.ts` file under `e2e/`, repo-relative and slash-separated.
@@ -167,8 +166,8 @@ describe("no second way to ask what day it is (#3221)", () => {
 
   it("keeps date-only arithmetic in one place", () => {
     // Five copies of "YYYY-MM-DD plus N days" lived under e2e/ before #3221, one
-    // of them built on a LOCAL-time Date, which is how the wrong-zone read
-    // survived a decade of review. `shiftDateOnly` is the one home (INV-SSOT).
+    // of them built on a LOCAL-time Date. Five near-identical helpers is how the
+    // wrong-zone one stayed invisible. `shiftDateOnly` is the one home (INV-SSOT).
     const handRolled = /setUTCDate\s*\(/;
     for (const file of files) {
       expect(
