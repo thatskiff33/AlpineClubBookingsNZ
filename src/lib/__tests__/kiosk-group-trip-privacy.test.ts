@@ -1235,6 +1235,25 @@ describe("#3040 adult-cover source is the canonical evaluation, honestly reporte
     expect(attached[2]).not.toHaveProperty("groupTripOrganiser");
   });
 
+  it("asks the club's policy nothing on a day with no Group Trip on it", async () => {
+    // The cover line goes on group cards only, so a day list with no group on
+    // it has no card that could carry one — and the reads that would decide
+    // what it said are skipped rather than issued for an answer nobody can be
+    // given. Out of season that is most days.
+    const rows = [
+      bookingRow({ id: "b-1" }),
+      bookingRow({ id: "b-2", memberId: "member-2" }),
+    ];
+    const store = fakeStore({ bookings: rows });
+    const { attached, calls } = await attach(rows, PRIVILEGED, store);
+    expect(calls.policyFindMany).toBe(0);
+    expect(calls.reevaluationFindMany).toBe(0);
+    expect(calls.incidentFindMany).toBe(0);
+    for (const entry of attached) {
+      expect(entry).not.toHaveProperty("adultCoverSource");
+    }
+  });
+
   it("returns the day list UNENRICHED rather than throwing when a read fails", async () => {
     // FAILS CLOSED, on the screen that matters most. Three of the reads this
     // module makes were new to the kiosk, and only the policy read was guarded —

@@ -398,7 +398,6 @@ async function readStalenessSignals(
   };
 }
 
-
 /**
  * Attach the tier-appropriate Group Trip fields to an already-narrowed card
  * list.
@@ -483,13 +482,18 @@ async function buildKioskGroupTripFields<T extends { bookingId: string }>(
       ])
     : new Map<string, string>();
   // ONE boolean, computed once, governing both the staleness reads and the
-  // payload key. The capability is asked first and short-circuits the policy
-  // read, so a tier that may not see cover source costs no query for it.
+  // payload key. The three tests are ordered cheapest-first and each
+  // short-circuits the next, so nothing is read for an answer that cannot be
+  // given: the capability, then whether any visible card is in a Group Trip at
+  // all (the cover line goes on group cards only, so a day list with no group
+  // on it asks the policy nothing), then the club's hosting mode.
+  const coverRows = visibleRows.filter((row) => identities.has(row.id));
   const coverSource =
     context.capabilities.coverSource &&
+    coverRows.length > 0 &&
     (await hostingRequirementInForce(context.db, context.lodgeId));
   const signals = coverSource
-    ? await readStalenessSignals(context.db, visibleRows, context.lodgeId)
+    ? await readStalenessSignals(context.db, coverRows, context.lodgeId)
     : { queuedOwners: new Set<string>(), incidentBookings: new Set<string>() };
   const rowById = new Map(visibleRows.map((row) => [row.id, row]));
 
