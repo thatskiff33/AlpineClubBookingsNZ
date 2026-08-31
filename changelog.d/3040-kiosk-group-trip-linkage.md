@@ -1,8 +1,7 @@
 - **The lodge kiosk now shows which bookings are travelling together, without
-  telling everybody in the room whose booking is covering whose (#3040).** Where
-  a club has turned on Group Trip adult cover, several separate bookings can be
-  one travelling party, and the day list has always shown them as unrelated
-  cards.
+  telling everybody in the room whose booking is covering whose (#3040).**
+  Several separate bookings can be one travelling party — a Group Trip — and the
+  day list has always shown them as unrelated cards.
 
   Each card that shares a trip with another card on the same day now carries a
   small **Group trip 1** chip. Cards with the same number are one party. The
@@ -32,6 +31,14 @@
   claiming cover. "Not recorded" is the normal state for most bookings and does
   not mean "covered".
 
-  Clubs that leave Group Trip adult cover switched off — the default — see no
-  change: no booking is in a Group Trip for this purpose, so no chip and no extra
-  line appears.
+  The chip is not tied to the Group Trip adult cover setting: any club that uses
+  group bookings gets it, because it says only that these cards arrived together.
+  That is a deliberate decision — group bookings came first, and a roster label
+  should not depend on an unrelated supervision setting — so a club that has never
+  enabled adult cover will see this new chip after upgrading. Nothing else about
+  their kiosk changes, and the chip costs their day list no extra database work.
+
+  The cover line is the part that does depend on a setting: it appears only where
+  the club's adult member hosting requirement is switched on. Clubs that do not
+  use that requirement see no cover line at all, rather than a row of
+  "not recorded" warnings about a rule they never turned on.

@@ -928,13 +928,36 @@ compliant indefinitely.
   **Four statuses, and only one of them may carry night rows.**
   `NOT_RECORDED` (no snapshot: the evaluator writes nothing whether the policy is
   off, the party has no non-member guest-nights, or every night is covered, and
-  the three are indistinguishable from the column), `UNREADABLE` (a snapshot that
+  the three are indistinguishable from the column — the kiosk withholds the line
+  altogether in the first of those cases, see below), `UNREADABLE` (a snapshot that
   is not the canonical shape — hand-edited, partially written, or frozen before
   per-night host evidence existed), `STALE`, and `EVALUATED`. The DTO carries an
   empty `nights` array and an empty `scopes` array for every status but
   `EVALUATED`, so no consumer can render a positive claim off evaluation it
   cannot trust. The rule is structural rather than a convention the component has
   to remember.
+
+  **No requirement in force means NO COVER LINE, not `NOT_RECORDED`.** Where the
+  club's resolved adult-member-hosting mode is not a consequence — `DISABLED`, no
+  policy row, or a malformed set the resolver refuses — the kiosk omits the
+  `adultCoverSource` key entirely, exactly as it does for a viewer without the
+  capability, and issues neither the staleness reads nor anything else on that
+  path. Two reasons, and they point the same way. The canonical evaluator writes
+  nothing when the mode is inactive
+  (`evaluateAdultMemberHostingWithPolicy` returns `null` on
+  `!hostingModeIsActive`), so there is no current evaluation to report — and a
+  snapshot frozen while the club DID enforce would otherwise render as current
+  cover for a rule since withdrawn, which is this invariant's own prohibition one
+  step further out. Reporting `NOT_RECORDED` instead would also put an amber
+  "Adult cover: not recorded for this booking" line on every card at every club
+  that does not use the feature, warning about a rule they never switched on. The
+  gate is the MODE and never the scope set: `SAME_GROUP_TRIP` decides whether a
+  sibling booking's adult may count towards cover, not whether cover is
+  evaluated, so a club with the requirement on and that scope off still has real
+  `SAME_BOOKING` evidence its hut leaders may read. This is the one club setting
+  the kiosk Group Trip surface still consults, and it governs the cover line
+  alone — owner decision D1 on #3040 settled that the linkage badge is gated on
+  nothing (`INV-PRIV-015`).
 
   **Two staleness signals, both indexed, both fail towards withholding.** A
   queued `HostingCoverageReevaluation` for the booking's owner at this lodge marks

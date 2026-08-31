@@ -98,9 +98,10 @@ difference to explain there and it says nothing.
 
 **Audience: operator.**
 
-When a club has turned on Group Trip adult cover, several separate bookings can
-belong to one travelling party. The day list says so, and how much it says
-depends on who is looking at the screen.
+Several separate bookings can belong to one travelling party — that is what a
+Group Trip is, and it works whether or not your club shares adult cover between
+those bookings. The day list says so, and how much it says depends on who is
+looking at the screen.
 
 **Anyone the kiosk shows the day list to** — including a guest who is staying
 and signed in — sees a small **Group trip 1** chip on each card that belongs to
@@ -138,9 +139,22 @@ of claiming cover:
 | *Adult cover: last check could not be read* | The stored answer is not in a shape the kiosk can read — worth telling a Booking Officer |
 | *Adult cover: not recorded for this booking* | Nothing has been recorded, which is the normal state for most bookings and is **not** the same as "covered" |
 
+**The cover line only appears at all where your club's adult member hosting
+requirement is switched on.** If your club does not use that requirement, or has
+switched it off, no cover line is shown on any card — rather than a row of
+"not recorded" warnings about a rule you never turned on. The chip and the
+organiser line are unaffected, because they do not depend on it. Switching the
+requirement off does not delete what was recorded while it was on; the kiosk
+simply stops reporting it, because it is no longer the rule.
+
 A shared lodge wall device signed in as the kiosk account is treated as an
 ordinary viewer for all of this: it shows the chip and neither extra line,
 because anybody who walks past an unattended screen is that account.
+
+The chip itself is not something you switch on. Any club that uses group
+bookings gets it, because it only says that these cards arrived together — it is
+not tied to the Group Trip adult cover setting, which is about who may supervise
+whom.
 
 ### Multi-lodge: bind and add kiosk accounts
 

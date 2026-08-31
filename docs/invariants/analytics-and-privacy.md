@@ -498,6 +498,26 @@ enforced by what the server BUILDS rather than by what a component renders.
   built it. There is no id field to leak, which is `INV-SSOT`'s "unrepresentable
   beats policed" applied to a privacy boundary.
 
+- **The linkage badge is NOT gated on the club's shared-cover option** (owner
+  decision D1 on #3040, 1 Sep 2026). It appears wherever a club uses group
+  bookings, whether or not `SAME_GROUP_TRIP` cover is switched on. The first
+  build of this surface gated the whole kiosk — badge included — on the club's
+  resolved `SAME_GROUP_TRIP` scope plus an active hosting mode, reading the
+  epic's "clubs that leave the option OFF see no behaviour change" as binding on
+  the badge too. It is not: group containers predate that scope (#796), and the
+  badge says only "these guests arrived together", so making a roster label
+  conditional on an unrelated adult-supervision setting is arbitrary. **The cost
+  was accepted knowingly**: the "byte-identical payload when the option is off"
+  property is gone, and a club that enabled nothing sees a new label after an
+  upgrade. What survives is the cheapness — linkage is resolved from the identity
+  relations the caller already selected with the booking, so an ordinary viewer's
+  response still issues **no extra query at all** beyond the bounded split-pair
+  carve-out. Each tier now answers from its own data: linkage from group
+  membership, organiser and cover source from their own capability, and cover
+  source additionally from whether a hosting requirement exists to report
+  (`INV-HOST-045`). Do not reinstate the gate; the tests that pinned the old
+  behaviour were rewritten to pin this one, in both suites named below.
+
 - **Two privileged capabilities, granted and consulted separately.**
   `kioskGroupTripCapabilities` (`src/lib/kiosk-access.ts`) is the ONE definition
   of who holds them, so the `/api/lodge/access` response and the guest-list
@@ -519,9 +539,10 @@ enforced by what the server BUILDS rather than by what a component renders.
   rendered or not. So the builder spreads only the permitted keys — there is no
   `null`, no empty string and no disabled flag — and the field name cannot appear
   in the serialized response at all. The reads are gated too: with `organiser`
-  false no `GroupBooking` row is fetched, and with `coverSource` false no
-  staleness signal is, so a capability nobody holds costs no query and has
-  nothing to leak. **Nor through a tooltip or an accessible name:** the kiosk
+  false no `GroupBooking` row is fetched, and with `coverSource` false neither
+  the hosting policy nor a staleness signal is, so a capability nobody holds
+  costs no query and has nothing to leak. The capability is tested BEFORE the
+  policy read for that reason. **Nor through a tooltip or an accessible name:** the kiosk
   Group Trip card carries no `title`, `aria-label` or `data-*` attribute at all,
   because a screen-reader label is as readable as body text and gets less review.
 
