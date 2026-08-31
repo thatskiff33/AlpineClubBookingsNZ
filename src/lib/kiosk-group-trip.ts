@@ -1,14 +1,15 @@
 import type { PrismaClient } from "@prisma/client";
 
+import logger from "@/lib/logger";
 import {
   loadAdultMemberHostingPolicy,
-  parseStoredHostingReview,
-  readInheritedSplitPairGroupTrip,
+  readInheritedSplitPairGroupTrips,
 } from "@/lib/adult-member-hosting-review";
 import {
-  ADULT_MEMBER_HOST_SCOPES,
-  type AdultMemberHostScope,
-} from "@/lib/booking-policy-exceptions";
+  deriveKioskAdultCoverSource,
+  type KioskAdultCoverDecision,
+  type KioskAdultCoverSource,
+} from "@/lib/kiosk-adult-cover";
 import { hostingModeIsActive } from "@/lib/policies/adult-member-hosting";
 import {
   groupTripIdentityOf,
@@ -34,6 +35,16 @@ import type { KioskGroupTripCapabilities } from "@/lib/kiosk-access";
  *     group's join credential.
  *  2. **Organiser context — one explicit capability.**
  *  3. **Adult-cover source — a SEPARATE explicit capability.**
+ *
+ * Both privileged halves are attached to a GROUP CARD ONLY. This issue opened
+ * the Group Trip surface and that is its boundary; a booking in no group carries
+ * neither line, which is what the operator guide and the UX flow map describe
+ * and what keeps the cover line's warning states off every unrelated card.
+ *
+ * WHAT COVER SOURCE MEANS is not decided here. `kiosk-adult-cover.ts` owns the
+ * reading of a canonical hosting snapshot as evidence (`INV-HOST-045`) — a
+ * different question, with a different failure mode: this module leaking is a
+ * privacy failure, that module overclaiming is a supervision failure.
  *
  * ## Each tier answers from its OWN data (owner decision D1, 1 Sep 2026)
  *
@@ -78,7 +89,7 @@ import type { KioskGroupTripCapabilities } from "@/lib/kiosk-access";
  * **No second answer to "what Group Trip is this booking in?"** Identity comes
  * from `groupTripIdentityOf` over `GROUP_TRIP_IDENTITY_SELECT`, and the #738
  * split-pair carve-out (owner decision D2 on #3038) comes from the canonical
- * seam `readInheritedSplitPairGroupTrip`. Nothing here reads
+ * seam `readInheritedSplitPairGroupTrips`. Nothing here reads
  * `Booking.parentBookingId` to decide grouping on its own.
  *
  * ## What is NOT imported from the refusal surface
@@ -122,118 +133,41 @@ export interface KioskGroupTripOrganiser {
 }
 
 /**
- * How much the canonical hosting evaluation can be trusted for this booking.
- *
- * The order matters: only `EVALUATED` may carry night rows, and every other
- * value carries an EMPTY `nights` array. That is what makes "stale, failed or
- * indeterminate evaluation never renders as positive cover" a property of the
- * data rather than a rule the UI has to remember.
- */
-export type KioskCoverEvidenceStatus =
-  /**
-   * No canonical snapshot on the booking. The evaluator writes nothing when the
-   * policy is off, when the party has no non-member guest-nights, AND when every
-   * such night is covered — the three are indistinguishable from the stored
-   * column, so the honest answer is that cover SOURCE is unknown here. It is
-   * emphatically not "covered".
-   */
-  | "NOT_RECORDED"
-  /**
-   * A snapshot exists but is not the canonical shape: hand-edited, partially
-   * written, or frozen before the per-night host evidence existed. Treated as a
-   * failed evaluation.
-   */
-  | "UNREADABLE"
-  /**
-   * The snapshot is readable but known to be out of date, so nothing it says may
-   * be shown as current cover. Two signals produce it, both cheap and both
-   * indexed: a queued `HostingCoverageReevaluation` for this booking's owner at
-   * this lodge, and an open `HostingCoverageIncident` on a booking whose snapshot
-   * reports nothing uncovered — a contradiction that can only mean one of the
-   * two is behind.
-   *
-   * WHY THIS MATTERS TODAY. #3039 (the Group Trip re-evaluation fan-out) is not
-   * built yet, so a sibling change genuinely can leave a snapshot stale with
-   * nothing correcting it. Reporting that plainly is the design the issue asks
-   * for, not a workaround for the missing child.
-   */
-  | "STALE"
-  /** Readable, and no staleness signal. `nights` is the canonical evidence. */
-  | "EVALUATED";
-
-/** One lodge-night of canonical cover evidence. */
-export interface KioskAdultCoverNight {
-  /** NZ lodge night, YYYY-MM-DD. */
-  night: string;
-  covered: boolean;
-  /**
-   * The scope CATEGORIES that supplied this night's cover — never who. Member
-   * ids live on the snapshot and are deliberately dropped here: the privileged
-   * kiosk need is "is this booking's supervision resting on another booking",
-   * and naming the adult on another account answers a question nobody asked.
-   */
-  scopes: AdultMemberHostScope[];
-}
-
-/**
- * Capability 2: where this booking's adult cover comes from, as last evaluated.
- *
- * DERIVED, NEVER RECALCULATED. Every field comes from the frozen violation
- * snapshot the canonical evaluator wrote (`Booking.adultMemberHostingReview`,
- * produced by `evaluateAdultMemberHostingWithPolicy` and read through
- * `parseStoredHostingReview`). The issue rejects independent recalculation for
- * display by name, and it is right to: a display that re-derives cover drifts
- * from the rule that actually decided compliance, and then two screens disagree
- * about whether a booking is legal.
- *
- * PARTIAL NIGHTS AND MULTIPLE SOURCES ARE THE NORMAL CASE, not an edge. Cover is
- * decided per night, so one booking can be covered on Friday by an adult on its
- * own booking and on Saturday by an adult in a sibling Group Trip booking, and
- * uncovered on Sunday. `nights` is therefore the whole answer and `scopes` is
- * only the union across covered nights — a convenience for a heading, never a
- * substitute for the rows.
- *
- * ABSENT ALTOGETHER in two cases, which read the same to a consumer and mean the
- * same thing: the viewer does not hold the `coverSource` capability, or the
- * club's adult-member-hosting requirement is not in force, so no evaluation of
- * this booking exists to report (`hostingRequirementInForce`).
- */
-export interface KioskAdultCoverSource {
-  status: KioskCoverEvidenceStatus;
-  /** Night rows in date order. EMPTY unless `status` is `EVALUATED`. */
-  nights: KioskAdultCoverNight[];
-  /** Union of `nights[].scopes`. EMPTY unless `status` is `EVALUATED`. */
-  scopes: AdultMemberHostScope[];
-}
-
-/**
  * The Booking columns this module needs, and the reason each one is required.
  *
  * The two identity relations come from `GROUP_TRIP_IDENTITY_SELECT` (required,
  * nullable, never optional — see `GroupTripIdentityRow` for why omission is made
  * impossible rather than made safe). `memberId` and `parentBookingId` are the
- * split-pair carve-out's inputs, and `adultMemberHostingReview` is the canonical
- * cover evidence. All required: a call site that forgot one is a compile error
- * rather than a card that quietly reports no Group Trip.
+ * split-pair carve-out's inputs, and `adultMemberHostingReview` with
+ * `adultMemberHostingReviewStatus` is the canonical cover evidence and the
+ * officer decision taken on it. All required: a call site that forgot one is a
+ * compile error rather than a card that quietly reports no Group Trip, or an
+ * approved exception that reads as an unapproved violation.
  */
 export type KioskGroupTripBookingRow = GroupTripIdentityRow & {
   id: string;
   memberId: string;
   parentBookingId: string | null;
   adultMemberHostingReview: unknown;
+  adultMemberHostingReviewStatus: KioskAdultCoverDecision | null;
 };
 
 /**
- * A hard ceiling on the split-pair identity lookups one kiosk response may make.
+ * A hard ceiling on how many split children one kiosk response resolves.
  *
- * The carve-out's canonical seam takes one booking at a time, so it is the only
- * per-booking read here. It runs ONLY for a visible card that has a
- * `parentBookingId` AND resolved to no Group Trip of its own, which is zero
- * bookings on an ordinary night; a split pair exists only where one party mixes
- * member and non-member guests. The ceiling bounds the pathological case rather
- * than the expected one, and binding it FAILS CLOSED: the affected cards get no
- * linkage, which under-discloses. Under-disclosure is the safe direction for
- * every tier this module serves.
+ * ONE QUERY, NOT ONE PER CARD. An earlier round of this file awaited the
+ * carve-out's singular seam once per card, which was a sequential N+1 the
+ * issue's data contract forbids by name — and the docblock's claim that it ran
+ * for "zero bookings on an ordinary night" was wrong twice over: a #738 split
+ * child is created for ANY party mixing member and non-member guests, which is
+ * precisely the population the adult-supervision rule targets, and both halves
+ * stay the same nights so both appear on the same day list.
+ * `readInheritedSplitPairGroupTrips` now answers the whole list in one indexed
+ * read over already-loaded ids, so this bounds the SIZE of that one `IN` list.
+ *
+ * Binding it FAILS CLOSED: the cards past the ceiling get no linkage, which
+ * under-discloses. Under-disclosure is the safe direction for every tier this
+ * module serves.
  */
 export const KIOSK_SPLIT_PAIR_IDENTITY_LOOKUP_LIMIT = 25;
 
@@ -311,10 +245,10 @@ async function hostingRequirementInForce(
 /**
  * The canonical Group Trip for each visible booking, split pair included.
  *
- * Two steps, and the second one usually does nothing. Direct identity is free —
- * the relations were selected with the booking — and only a booking with a
- * `parentBookingId` and no identity of its own asks the canonical carve-out
- * seam.
+ * Two steps, and the second one is ONE query for the whole list or none at all.
+ * Direct identity is free — the relations were selected with the booking — and
+ * only a booking with a `parentBookingId` and no identity of its own is handed
+ * to the canonical carve-out seam, which reads them together.
  */
 async function resolveGroupTrips(
   db: KioskGroupTripDb,
@@ -330,9 +264,13 @@ async function resolveGroupTrips(
     }
     if (row.parentBookingId) inherits.push(row);
   }
-  for (const row of inherits.slice(0, KIOSK_SPLIT_PAIR_IDENTITY_LOOKUP_LIMIT)) {
-    const inherited = await readInheritedSplitPairGroupTrip(db, row);
-    if (inherited) identities.set(row.id, inherited);
+  if (inherits.length === 0) return identities;
+  const inherited = await readInheritedSplitPairGroupTrips(
+    db,
+    inherits.slice(0, KIOSK_SPLIT_PAIR_IDENTITY_LOOKUP_LIMIT),
+  );
+  for (const [bookingId, identity] of inherited) {
+    identities.set(bookingId, identity);
   }
   return identities;
 }
@@ -382,6 +320,15 @@ function assignVisibleTripLabels(
  * already resolved to — never per booking. `joinCode` is not selected, and the
  * explicit `select` is the whole reason this is a narrow read rather than a
  * `findMany` that hands back every column the container has.
+ *
+ * NO LODGE CLAUSE, AND IT NEEDS NONE. The ids are not searched for: every one of
+ * them was resolved from a booking the caller has ALREADY put on this lodge's day
+ * list, through its own canonical identity relation. So the only containers this
+ * can reach are containers a visible booking belongs to, and a lodge filter here
+ * could remove a row but never admit one. That is a property of where the ids
+ * come from, not of the open "is a Group Trip confined to one lodge?" question in
+ * `docs/multi-lodge/lodge-scoping-contract.md` — the answer to which does not
+ * change what this read can see.
  */
 async function readOrganiserNames(
   db: KioskGroupTripDb,
@@ -416,6 +363,17 @@ async function readOrganiserNames(
  * `HostingCoverageIncident` is read only for its EXISTENCE. Nothing about an
  * incident reaches any payload — the issue forbids exposing incidents, and this
  * uses one solely to refuse to trust a snapshot that contradicts it.
+ *
+ * WHAT THIS READ IS BLIND TO, AND WHY THAT IS HANDLED ELSEWHERE. `ownerIds` are
+ * the visible bookings' OWN owners, and every enqueue site writes the owner of
+ * the booking that CHANGED. So when a Group Trip sibling in ANOTHER account
+ * changes, the queue row names their owner and this read never sees it — the one
+ * staleness class this epic itself introduces. Widening the read would not fix
+ * it either, because #3039's fan-out does not exist to enqueue anything: there
+ * is no row to find. The answer is therefore in
+ * `deriveKioskAdultCoverSource`, which refuses to assert cover that RESTS on a
+ * Group Trip sibling at all until #3039 lands. See the note there for what
+ * #3039 must do before that refusal is removed.
  */
 async function readStalenessSignals(
   db: KioskGroupTripDb,
@@ -440,68 +398,6 @@ async function readStalenessSignals(
   };
 }
 
-/**
- * The canonical snapshot, read as cover evidence for one booking.
- *
- * Pure, and exported so the privacy suite can drive every status without a
- * database. The `coveredByScopes` fallback is the field's own documented reading
- * (`QualifyingHostsForNight`): absent means the snapshot predates per-scope
- * evidence, when the only scope that existed was `SAME_BOOKING`. Inventing a
- * different reading here would be a second definition of what the column means.
- */
-export function deriveKioskAdultCoverSource(
-  review: unknown,
-  signals: { queuedReevaluation: boolean; openIncident: boolean },
-): KioskAdultCoverSource {
-  const empty = { nights: [], scopes: [] };
-  if (review === null || review === undefined) {
-    return { status: "NOT_RECORDED", ...empty };
-  }
-  const parsed = parseStoredHostingReview(review);
-  // `parseStoredHostingReview` validates the fields the RECONCILER compares and
-  // stops there, so `qualifyingHostsByNight` is still unvalidated JSON at this
-  // point — a snapshot frozen before the per-night host evidence existed has no
-  // such key at all. Re-widening to `unknown` is what keeps that a readable
-  // UNREADABLE rather than a runtime throw inside a kiosk response.
-  const hostsByNight: unknown = parsed?.requirements.qualifyingHostsByNight;
-  if (!parsed || !Array.isArray(hostsByNight)) {
-    return { status: "UNREADABLE", ...empty };
-  }
-  const nights: KioskAdultCoverNight[] = hostsByNight
-    .map((entry) => (entry ?? {}) as Record<string, unknown>)
-    .filter((row): row is Record<string, unknown> & { night: string } =>
-      typeof row.night === "string",
-    )
-    .map((row) => {
-      const memberIds = row.memberIds;
-      const covered = Array.isArray(memberIds) && memberIds.length > 0;
-      const declared = row.coveredByScopes;
-      const scopes: AdultMemberHostScope[] = !covered
-        ? []
-        : Array.isArray(declared) && declared.length > 0
-          ? ADULT_MEMBER_HOST_SCOPES.filter((scope) => declared.includes(scope))
-          : ["SAME_BOOKING"];
-      return { night: row.night, covered, scopes };
-    })
-    .sort((a, b) => a.night.localeCompare(b.night));
-
-  // The contradiction that makes an otherwise readable snapshot untrustworthy:
-  // an OPEN incident says this booking is carrying uncovered nights right now,
-  // and a snapshot reporting none disagrees with it. One of the two is behind,
-  // and a display must not pick the optimistic one.
-  const contradicted =
-    signals.openIncident && nights.every((night) => night.covered);
-  if (signals.queuedReevaluation || contradicted) {
-    return { status: "STALE", ...empty };
-  }
-  return {
-    status: "EVALUATED",
-    nights,
-    scopes: ADULT_MEMBER_HOST_SCOPES.filter((scope) =>
-      nights.some((night) => night.scopes.includes(scope)),
-    ),
-  };
-}
 
 /**
  * Attach the tier-appropriate Group Trip fields to an already-narrowed card
@@ -518,14 +414,25 @@ export function deriveKioskAdultCoverSource(
  * false neither the hosting policy nor a staleness signal is. A capability
  * nobody holds costs no query and has nothing to leak.
  *
- * SO THE ORDINARY TIER COSTS ZERO EXTRA QUERIES, still. Owner decision D1 gave
- * up the "byte-identical payload when the club's cover option is off" property
- * knowingly, and it is worth being precise about what that did and did not cost:
- * linkage is resolved from the identity relations the caller ALREADY selected
- * with the booking (`GROUP_TRIP_IDENTITY_SELECT`), so an ordinary viewer's
- * response issues no additional read at all — with the one bounded exception of
- * the split-pair carve-out below, which needs a booking that has a
- * `parentBookingId` and no group of its own.
+ * WHAT THE ORDINARY TIER COSTS, precisely. Owner decision D1 gave up the
+ * "byte-identical payload when the club's cover option is off" property
+ * knowingly. Linkage itself is resolved from the identity relations the caller
+ * ALREADY selected with the booking (`GROUP_TRIP_IDENTITY_SELECT`), so an
+ * ordinary viewer's response issues no additional read — EXCEPT on a day list
+ * carrying a #738 split child, which costs exactly one bounded, indexed query
+ * for the whole list (`resolveGroupTrips`). An earlier version of this docblock
+ * claimed zero unconditionally and was wrong: split children are common, not
+ * pathological, and the read was then one round trip per card.
+ *
+ * FAILS CLOSED ON ANY DATABASE ERROR. This runs on an unattended wall tablet, on
+ * the one screen a hut leader uses to know who is in the building. Three of the
+ * reads below are new to the ordinary tier, and letting one of them throw would
+ * turn a transient database error into a blank day list for every tier —
+ * withholding the roster itself, not merely the Group Trip fields. So the whole
+ * enrichment is wrapped: on failure the cards go back exactly as they arrived,
+ * with no Group Trip fields at all, and the error is logged. Under-disclosure is
+ * the safe direction for every tier this module serves, and so is showing the
+ * roster.
  */
 export async function attachKioskGroupTrip<T extends { bookingId: string }>(
   cards: readonly T[],
@@ -540,7 +447,26 @@ export async function attachKioskGroupTrip<T extends { bookingId: string }>(
   // split-pair and capability reads below would otherwise run on every one of
   // them.
   if (cards.length === 0) return [];
+  try {
+    return await buildKioskGroupTripFields(cards, rows, context);
+  } catch (err) {
+    logger.error(
+      { err, lodgeId: context.lodgeId },
+      "kiosk Group Trip enrichment failed; returning the day list unenriched",
+    );
+    return cards.map((card) => ({ ...card }) as T & KioskBookingGroupTripFields);
+  }
+}
 
+async function buildKioskGroupTripFields<T extends { bookingId: string }>(
+  cards: readonly T[],
+  rows: readonly KioskGroupTripBookingRow[],
+  context: {
+    db: KioskGroupTripDb;
+    lodgeId: string;
+    capabilities: KioskGroupTripCapabilities;
+  },
+): Promise<Array<T & KioskBookingGroupTripFields>> {
   const visibleIds = new Set(cards.map((card) => card.bookingId));
   const visibleRows = rows.filter((row) => visibleIds.has(row.id));
   const identities = await resolveGroupTrips(context.db, visibleRows);
@@ -587,7 +513,14 @@ export async function attachKioskGroupTrip<T extends { bookingId: string }>(
             },
           }
         : {}),
-      ...(coverSource && row
+      // ON A GROUP CARD ONLY, like the organiser line above. #3040 opened the
+      // Group Trip surface, and `docs/guides/lodge.md` and `docs/UX_FLOW_MAP.md`
+      // both describe these as two extra lines on THOSE cards. Attaching the
+      // cover line to every card would also widen the amber warning states onto
+      // every ungrouped booking on the list, which is noise on the one screen
+      // that has to stay worth reading. Adult cover for an ungrouped booking is
+      // the admin review queue's job, not the kiosk's.
+      ...(coverSource && row && identity
         ? {
             adultCoverSource: deriveKioskAdultCoverSource(
               row.adultMemberHostingReview,
@@ -595,6 +528,7 @@ export async function attachKioskGroupTrip<T extends { bookingId: string }>(
                 queuedReevaluation: signals.queuedOwners.has(row.memberId),
                 openIncident: signals.incidentBookings.has(row.id),
               },
+              row.adultMemberHostingReviewStatus,
             ),
           }
         : {}),

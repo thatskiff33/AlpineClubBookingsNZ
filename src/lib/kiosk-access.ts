@@ -19,14 +19,25 @@ export interface KioskAccess {
   canManageRoster: boolean;
   canMarkAttendance: boolean;
   canCompleteChores: boolean;
-  /**
-   * The two Group Trip disclosure capabilities (#3040, epic #2943). Reported
-   * here so the kiosk client knows what it will be sent, and derived from the
-   * ONE definition below so this endpoint and the guest-list route cannot
-   * disagree about who may see what.
-   */
-  canViewGroupTripOrganiser: boolean;
-  canViewAdultCoverSource: boolean;
+}
+
+/**
+ * Does this tier manage the roster? The `canManageRoster` flag's own rule,
+ * pulled out so it can be READ (#3040).
+ *
+ * `kioskGroupTripCapabilities` below documents that it grants to deliberately
+ * this same set of tiers. That claim sat in a docblock with nothing checking it,
+ * so the two could drift apart silently; `kiosk-group-trip-privacy.test.ts` now
+ * asserts the coincidence across all five tiers against this function.
+ *
+ * DELIBERATELY NOT CALLED by `kioskGroupTripCapabilities`. Sharing the expression
+ * would make the coincidence a dependency — granting cover source to a tier that
+ * does not manage the roster would then be impossible without untangling them
+ * first, which is the same mistake as collapsing the two capabilities into one
+ * flag. Two rules, asserted equal today.
+ */
+export function kioskTierManagesRoster(tier: KioskTier): boolean {
+  return tier === "admin" || tier === "hut-leader";
 }
 
 /**
@@ -248,15 +259,17 @@ export async function getKioskAccessInfo(
 ): Promise<KioskAccess> {
   const tier = await getKioskAccessTier(user, date);
   const dateRange = await getKioskDateRange(user, date);
-  const groupTrip = kioskGroupTripCapabilities(tier);
 
+  // The two Group Trip capabilities (#3040) are deliberately NOT reported here.
+  // No client reads them: the guest-list route applies them server-side and
+  // simply omits the keys a viewer may not have, so a flag telling the browser
+  // what it was not sent would be a field with no reader and one more place for
+  // the disclosure rule to drift from `kioskGroupTripCapabilities`.
   return {
     tier,
     dateRange,
-    canManageRoster: tier === "admin" || tier === "hut-leader",
+    canManageRoster: kioskTierManagesRoster(tier),
     canMarkAttendance: tier === "admin" || tier === "hut-leader" || tier === "lodge",
     canCompleteChores: tier === "admin" || tier === "hut-leader" || tier === "lodge",
-    canViewGroupTripOrganiser: groupTrip.organiser,
-    canViewAdultCoverSource: groupTrip.coverSource,
   };
 }
