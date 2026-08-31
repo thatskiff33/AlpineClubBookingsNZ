@@ -772,3 +772,59 @@ compliant indefinitely.
   each module (`INV-SSOT`), so the two can never drift. The reason a refusal still must not reach
   these paths is that it is DETERMINISTIC: a re-drive re-reads the same rows and
   refuses again, forever, which is a wedge rather than a recovery.
+### INV-HOST-042
+
+- **WHICH LODGE decides that no supervision work is owed is a question about the
+  RELATED bookings, not only the changed one** (#3209). Clubs configure adult-member
+  hosting per lodge — a lodge row overrides the club-wide row — so one member can
+  hold a booking at a lodge that has the rule off and another, related to it, at a
+  lodge that enforces it. The #738 split-sibling relation the engine fans out over
+  (`hostingSiblingWhere`: direct parent or direct child, same member) carries no
+  lodge clause at all, so "the booking that just changed is at a lodge with the rule
+  off" says nothing about the booking whose answer depends on it.
+
+  `reconcileAdultMemberHostingReviewWithSiblings` used to return on exactly that
+  half-question, before the sibling fan-out ran, so the related booking at the
+  enforcing lodge was never re-read when this change took its cover away: no review
+  recorded on it, nothing in the officer queue, and the member never told. All eleven
+  writers that reach the engine through that entry point inherited the gap, which is
+  why the fix is in the entry point and in no writer. The gate now skips only when
+  this booking's lodge is inactive **and** no related booking sits at an active one.
+
+  **The same-owner half needs no such widening, and that is a property of the query
+  rather than an assumption.** `sameOwnerCoverageDependentWhere` pins `lodgeId` to
+  the changed booking's own lodge, so a same-owner dependent is always at this lodge,
+  and `settleSameOwnerDependentCoverage` re-reads this lodge's mode and returns on
+  the same test — skipping it under an inactive lodge can therefore miss nothing.
+  "keeps the dependent cohort at the changed booking's own lodge" in
+  `adult-member-hosting-same-owner.test.ts` pins the clause so that sentence cannot
+  quietly stop being true.
+
+  **Reachable today?** No, and the honest answer matters more than a scary one. Every
+  parent/child pair the product can currently create is written at one lodge —
+  `booking-create.ts` sets the split child's `lodgeId` to its parent's, and a group
+  joiner's booking belongs to a different member and so is not a sibling at all — and
+  `Booking.lodgeId` is never written after create, which
+  `bed-allocation-lock-topology-contract.test.ts` -> "no writer moves a Booking
+  between lodges" fails the build over. So this was latent: a wrong rule that the
+  current data shape happened not to exercise, found while fixing `INV-HOST-041` and
+  fixed in the same pull request rather than filed, because the next feature that
+  relates two bookings across lodges would have shipped the silent failure.
+
+  **`INV-LOCK-002` and #2623 T5 both survive it, deliberately.** The gate must not
+  start charging a club that owes nothing the `Member FOR KEY SHARE NOWAIT`
+  participant proof — that is the whole of T5, and paying it would put the fixed
+  `HOSTING_COVERAGE_PARTICIPANT_RETRY` 409, which tells a member to check their
+  payment status, back in front of ordinary booking writes at every non-participating
+  lodge. So the widened question is answered with reads that take no lock: one
+  indexed read of this booking's parent and children over `Booking(parentBookingId)`,
+  and a policy read only for lodges that are **not** this booking's own — which is
+  none at all for a pair at one lodge. When the answer is yes the fenced body runs
+  whole, so the Member rows are still acquired before any coverage-owner advisory key
+  (including the one the sibling's own evaluation takes under the sibling's lodge
+  policy), and deciding to skip acquires nothing and so can leave nothing held out of
+  order. Both halves are pinned behaviourally in
+  `adult-member-hosting-same-owner.test.ts` -> "the mode gate reads the RELATED
+  bookings' lodges too", and the skip's `failFastCoverageOwner` flag structurally in
+  `adult-member-hosting-call-sites.test.ts` -> "keeps the un-fenced return fail-fast
+  on the coverage-owner key".

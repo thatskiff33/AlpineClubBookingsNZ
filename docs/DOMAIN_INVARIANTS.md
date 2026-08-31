@@ -368,6 +368,7 @@ Prefix `INV-HOST`.
 | `INV-HOST-039` | Every path that can enqueue must also drain, asserted tree-wide by a census |
 | `INV-HOST-040` | Dependent reads have their own ordered, logged ceiling, separate from the source read's |
 | `INV-HOST-041` | A system cancellation re-checks supervision through a seam that can never refuse it |
+| `INV-HOST-042` | The mode gate that skips the coverage fan-out reads the related bookings' lodges, not only the changed booking's |
 
 ### Booking requests
 

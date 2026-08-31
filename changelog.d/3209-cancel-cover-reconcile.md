@@ -26,3 +26,19 @@
   the status change itself rather than for a helper such a path might happen to
   use, because the helper the first version of the guard looked for is used by
   only about half of them.
+- **A club that runs the adult-supervision rule at some of its lodges and not
+  others now has its other lodges re-checked too (#3209).** Where a club splits one
+  stay across two bookings, the adult on one of them can be what satisfies the rule
+  on the other. The check that decided whether any of this was worth doing only ever
+  looked at the lodge of the booking that had just changed — so if that lodge had
+  the rule switched off, the check stopped there and the related booking, at a lodge
+  that *does* run the rule, was never looked at. It lost its adult and nothing said
+  so.
+
+  It now asks the wider question: is any related booking somewhere the rule is on?
+  Only when the answer is no does it stop. Clubs that do not use the rule at all are
+  unaffected and pay nothing extra for it — that was the point of an earlier change
+  and it still holds. No club can have hit this yet, because both halves of a split
+  stay are always created at the same lodge today; it was found while fixing the
+  cancellation gap above and fixed here rather than left for the first feature that
+  would have made it real.

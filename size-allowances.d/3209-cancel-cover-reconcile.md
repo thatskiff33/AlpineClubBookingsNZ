@@ -39,3 +39,19 @@ reason: one call in the price-drift unwind transaction and one drain after it,
   have RESTORED cover to another booking of the same owner and closed its
   incident. Without the note the two calls read as defensive noise on a booking
   that "was only just created", which is exactly the reading that left the gap.
+file: src/lib/adult-member-hosting-review.ts
+lines: 2709
+reason: the cross-lodge coverage gap this pull request also closes. Forty-odd
+  lines are the new `hasHostingSiblingAtActiveLodge` read and its docblock; the
+  rest is the mode gate's own rationale, REWRITTEN rather than added to. That
+  rationale is #2623 T5's, and it was the load-bearing part: it argued in as many
+  words that skipping the fence was safe because "neither the sibling fan-out nor
+  `settleSameOwnerDependentCoverage` is reachable", which was true of the second
+  and false of the first — and the next reader following that argument would
+  reinstate the defect. Replacing it costs more lines than adding a clause because
+  it now has to say which lodge decides, why the same-owner half needs no widening
+  and how the lock property survives, each of which a reader has to have at the
+  gate rather than two files away. Splitting a 2,700-line engine that eleven
+  writers reach through one entry point is a real refactor and does not belong in
+  a supervision fix; `INV-HOST-042` carries the same argument for anyone reading
+  the rule rather than the code.

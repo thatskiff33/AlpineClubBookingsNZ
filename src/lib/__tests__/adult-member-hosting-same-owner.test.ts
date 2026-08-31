@@ -2701,7 +2701,7 @@ describe("a system cancellation records the hazard instead of refusing it (#3209
 });
 
 /**
- * #3209 — WHICH LODGE'S MODE decides that nothing is owed.
+ * #3209 — WHICH LODGE'S MODE decides that nothing is owed (`INV-HOST-042`).
  *
  * Adult-member hosting is configured PER LODGE, and the fan-out relation this
  * engine reads — `hostingSiblingWhere`, the #738 parent/child of one member — has
