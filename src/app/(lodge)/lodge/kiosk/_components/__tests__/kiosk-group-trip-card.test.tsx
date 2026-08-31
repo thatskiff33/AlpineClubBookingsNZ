@@ -70,24 +70,51 @@ describe("#3040 the kiosk Group Trip block", () => {
         cover={{
           status: "EVALUATED",
           nights: [
-            { night: "2026-08-01", covered: true, scopes: ["SAME_GROUP_TRIP"] },
+            { night: "2026-08-01", covered: true, scopes: ["SAME_BOOKING_OWNER"] },
             { night: "2026-08-02", covered: false, scopes: [] },
           ],
-          scopes: ["SAME_GROUP_TRIP"],
+          scopes: ["SAME_BOOKING_OWNER"],
+          decision: null,
         }}
       />,
     );
     expect(screen.getByText(/1 of 2 nights covered/)).toBeInTheDocument();
     expect(
-      screen.getByText(/Another booking in the same Group Trip/),
+      screen.getByText(/Another booking on the same account/),
     ).toBeInTheDocument();
     expect(screen.getByText(/Not covered: 2026-08-02/)).toBeInTheDocument();
+    // No officer decision recorded, so no line claiming one either.
+    expect(screen.queryByText(/Booking Officer/)).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["PENDING" as const, "Waiting for a Booking Officer's decision"],
+    ["APPROVED" as const, "A Booking Officer has approved this"],
+    ["REJECTED" as const, "A Booking Officer declined this"],
+  ])("says what an officer decided about the violation (%s)", (decision, wording) => {
+    // An approved hosting exception keeps its violation snapshot, so without
+    // this the screen shows the identical red count whether an officer approved
+    // the arrangement or nobody has looked at it.
+    render(
+      <KioskAdultCoverSourceLine
+        cover={{
+          status: "EVALUATED",
+          nights: [
+            { night: "2026-08-01", covered: true, scopes: ["SAME_BOOKING"] },
+            { night: "2026-08-02", covered: false, scopes: [] },
+          ],
+          scopes: ["SAME_BOOKING"],
+          decision,
+        }}
+      />,
+    );
+    expect(screen.getByText(wording)).toBeInTheDocument();
   });
 
   it.each([
     ["STALE" as const, /needs re-checking/],
     ["UNREADABLE" as const, /could not be read/],
-    ["NOT_RECORDED" as const, /not recorded/],
+    ["NOT_RECORDED" as const, /no issue recorded/],
   ])("never renders %s as cover", (status, wording) => {
     const { container } = render(
       <KioskAdultCoverSourceLine
@@ -100,6 +127,33 @@ describe("#3040 the kiosk Group Trip block", () => {
       "INV-HOST-045 (docs/invariants/adult-member-hosting.md): a " +
         `${status} evaluation must not read as covered`,
     ).not.toMatch(/covered/);
+  });
+
+  it("warns for the two statuses that need attention, and NOT for the ordinary one", () => {
+    // WHY THIS IS A TEST AND NOT A DETAIL. All three non-evaluated statuses used
+    // to share the identical amber warning box — and `NOT_RECORDED` is the
+    // MAJORITY state, because the canonical evaluator writes a snapshot only
+    // when it finds a violation. So nearly every card on the day list carried a
+    // warning, which is how a hut leader learns to stop reading the box that
+    // carries the real signal.
+    const warningClass = "bg-kiosk-warning-bg";
+    for (const status of ["STALE", "UNREADABLE"] as const) {
+      const { container } = render(
+        <KioskAdultCoverSourceLine cover={{ status, nights: [], scopes: [] }} />,
+      );
+      expect(container.innerHTML).toContain(warningClass);
+    }
+    const { container: ordinary } = render(
+      <KioskAdultCoverSourceLine
+        cover={{ status: "NOT_RECORDED", nights: [], scopes: [] }}
+      />,
+    );
+    expect(
+      ordinary.innerHTML,
+      "INV-HOST-045: 'no issue recorded' is the normal state of most bookings " +
+        "and must not be dressed as a warning, or the warning stops meaning " +
+        "anything",
+    ).not.toContain(warningClass);
   });
 
   it("renders nothing at all when the cover capability was not granted", () => {

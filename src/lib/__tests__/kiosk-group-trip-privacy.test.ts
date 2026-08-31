@@ -21,7 +21,7 @@
 //
 // WHY A FAKE STORE THAT REALLY APPLIES `where`. The split-pair carve-out (owner
 // decision D2 on #3038) is reached through the canonical seam
-// `readInheritedSplitPairGroupTrip`, which issues a real query. A double that
+// `readInheritedSplitPairGroupTrips`, which issues a real query. A double that
 // ignored the clauses would make "a booking related only by `parentBookingId`
 // inherits nothing" pass as a fact about the fake instead of a fact about the
 // rule, so `matchBookingWhere` applies the predicates and THROWS on an operator
@@ -33,17 +33,24 @@ vi.mock("server-only", () => ({}));
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
+import { AgeTier } from "@prisma/client";
+
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
+import { deriveKioskAdultCoverSource } from "@/lib/kiosk-adult-cover";
 import {
   attachKioskGroupTrip,
-  deriveKioskAdultCoverSource,
   KIOSK_SPLIT_PAIR_IDENTITY_LOOKUP_LIMIT,
   type KioskGroupTripBookingRow,
 } from "@/lib/kiosk-group-trip";
 import {
   kioskGroupTripCapabilities,
+  kioskTierManagesRoster,
   type KioskTier,
 } from "@/lib/kiosk-access";
+import {
+  evaluateAdultMemberHostingWithPolicy,
+  resolveAdultMemberHostingPolicy,
+} from "@/lib/policies/adult-member-hosting";
 
 const LODGE = "lodge-a";
 const TRIP = "group-trip-1";
@@ -85,6 +92,7 @@ function bookingRow(overrides: Partial<StoreBooking> = {}): StoreBooking {
     memberId: "member-1",
     parentBookingId: null,
     adultMemberHostingReview: null,
+    adultMemberHostingReviewStatus: null,
     groupBookingAsOrganiser: null,
     groupBookingJoin: null,
     status: "CONFIRMED",
@@ -101,6 +109,50 @@ const joinerOf = (groupBookingId: string) => ({
   groupBookingAsOrganiser: null,
   groupBookingJoin: { groupBookingId },
 });
+
+/**
+ * A snapshot in a shape a REAL WRITER CAN PERSIST, derived from the nights.
+ *
+ * This exists because the raw builder below let four tests assert against states
+ * the writer cannot produce — most importantly an all-covered snapshot, which
+ * `evaluateAdultMemberHostingWithPolicy` never returns (it returns `null` when
+ * nothing is uncovered) and `reconcileAdultMemberHostingReview` deletes. One
+ * test asserting the kiosk's incident/snapshot contradiction rule was built on
+ * exactly that state and could never have failed.
+ *
+ * So this derives `uncovered` from the nights instead of taking it, and THROWS
+ * on a fully covered set rather than quietly building the impossible thing. Use
+ * `snapshot` directly only to construct a snapshot deliberately malformed or
+ * deliberately inconsistent.
+ */
+function canonicalSnapshot(
+  rows: Array<{
+    night: string;
+    memberIds?: string[];
+    coveredByScopes?: string[];
+  }>,
+) {
+  const uncovered = rows
+    .filter((row) => (row.memberIds ?? []).length === 0)
+    .map((row) => ({ night: row.night, guestRef: "guest-1" }));
+  if (uncovered.length === 0) {
+    throw new Error(
+      "canonicalSnapshot: a snapshot with every night covered is one no writer " +
+        "can persist — the evaluator returns null and the reconciler clears the " +
+        "column. Add an uncovered night, or use `snapshot` and say why.",
+    );
+  }
+  return snapshot(
+    rows.map((row) => ({
+      night: row.night,
+      memberIds: row.memberIds ?? [],
+      coveredByScopes:
+        row.coveredByScopes ??
+        ((row.memberIds ?? []).length > 0 ? ["SAME_BOOKING"] : []),
+    })),
+    uncovered,
+  );
+}
 
 /**
  * A frozen hosting violation snapshot in the shape the canonical evaluator
@@ -147,6 +199,12 @@ function matchBookingWhere(
         }
         if ("notIn" in op) {
           if ((op.notIn as string[]).includes(actual)) return false;
+          continue;
+        }
+        // The batched split-pair reader's key: one `id IN (parents)` for the
+        // whole day list instead of one query per card.
+        if ("in" in op) {
+          if (!(op.in as string[]).includes(actual)) return false;
           continue;
         }
         throw new Error(`unmodelled operator on ${key}: ${JSON.stringify(op)}`);
@@ -221,6 +279,11 @@ function fakeStore(options: {
           .filter((row) => matchBookingWhere(row, args.where))
           .map((row) => ({
             id: row.id,
+            // The batched reader applies the same-member test to the ROWS
+            // rather than to the query, so the fake has to hand it over — and
+            // the "inherits nothing from a parent owned by a different member"
+            // case below is what proves it is really applied.
+            memberId: row.memberId,
             groupBookingAsOrganiser: row.groupBookingAsOrganiser,
             groupBookingJoin: row.groupBookingJoin,
           }));
@@ -339,8 +402,9 @@ describe("#3040 ordinary staying-guest tier: linkage only", () => {
       bookingRow({
         id: "b-organiser",
         ...organiserOf(TRIP),
-        adultMemberHostingReview: snapshot([
+        adultMemberHostingReview: canonicalSnapshot([
           { night: "2026-08-01", memberIds: ["adult-9"], coveredByScopes: ["SAME_GROUP_TRIP"] },
+          { night: "2026-08-02" },
         ]),
       }),
       bookingRow({ id: "b-joiner", memberId: "member-2", ...joinerOf(TRIP) }),
@@ -399,8 +463,9 @@ describe("#3040 the club's hosting settings gate the cover line, never the badge
     bookingRow({
       id: "b-organiser",
       ...organiserOf(TRIP),
-      adultMemberHostingReview: snapshot([
+      adultMemberHostingReview: canonicalSnapshot([
         { night: "2026-08-01", memberIds: ["adult-1"], coveredByScopes: ["SAME_BOOKING"] },
+        { night: "2026-08-02" },
       ]),
     }),
     bookingRow({ id: "b-joiner", memberId: "member-2", ...joinerOf(TRIP) }),
@@ -508,8 +573,12 @@ describe("#3040 the club's hosting settings gate the cover line, never the badge
         "with the requirement on still has real SAME_BOOKING evidence to show",
     ).toEqual({
       status: "EVALUATED",
-      nights: [{ night: "2026-08-01", covered: true, scopes: ["SAME_BOOKING"] }],
+      nights: [
+        { night: "2026-08-01", covered: true, scopes: ["SAME_BOOKING"] },
+        { night: "2026-08-02", covered: false, scopes: [] },
+      ],
       scopes: ["SAME_BOOKING"],
+      decision: null,
     });
   });
 });
@@ -523,8 +592,9 @@ describe("#3040 the two privileged capabilities are independent", () => {
     bookingRow({
       id: "b-organiser",
       ...organiserOf(TRIP),
-      adultMemberHostingReview: snapshot([
+      adultMemberHostingReview: canonicalSnapshot([
         { night: "2026-08-01", memberIds: ["adult-1"], coveredByScopes: ["SAME_BOOKING"] },
+        { night: "2026-08-02" },
       ]),
     }),
     bookingRow({ id: "b-joiner", memberId: "member-2", ...joinerOf(TRIP) }),
@@ -624,6 +694,18 @@ describe("#3040 the two privileged capabilities are independent", () => {
         kioskGroupTripCapabilities(tier as KioskTier),
         `INV-PRIV-015: kiosk tier ${tier}`,
       ).toEqual({ organiser: privileged, coverSource: privileged });
+      // AND THE DOCBLOCK'S CLAIMED COINCIDENCE, checked rather than asserted in
+      // prose: `kioskGroupTripCapabilities` says it grants to deliberately the
+      // same tiers as `canManageRoster`, and nothing verified that. The two are
+      // separate expressions on purpose (see `kioskTierManagesRoster`), so if a
+      // later change moves one the claim stops being true silently.
+      expect(
+        kioskTierManagesRoster(tier as KioskTier),
+        `INV-PRIV-015: the two Group Trip capabilities are documented as going ` +
+          `to exactly the roster-managing tiers, and ${tier} now disagrees. ` +
+          `Either restore the coincidence or rewrite the docblock that claims ` +
+          `it.`,
+      ).toBe(privileged);
     }
   });
 });
@@ -634,6 +716,65 @@ describe("#3040 the two privileged capabilities are independent", () => {
 
 describe("#3040 adult-cover source is the canonical evaluation, honestly reported", () => {
   const fresh = { queuedReevaluation: false, openIncident: false };
+
+  it("the writer never persists an all-covered snapshot, which is what the STALE rule below rests on", () => {
+    // A PREMISE GUARD, not a re-test of the evaluator. `deriveKioskAdultCoverSource`
+    // treats a readable snapshot with nothing uncovered as STALE, on the grounds
+    // that no writer can produce one. That is a fact about ANOTHER module, so it
+    // is asserted here against the real evaluator: if a later change starts
+    // recording positive-only evidence, this fails and names the kiosk rule that
+    // has to change with it, rather than the kiosk silently reporting fresh data
+    // as out of date.
+    const resolved = resolveAdultMemberHostingPolicy(
+      [
+        {
+          id: "policy-club",
+          scopeKey: "club-wide",
+          lodgeId: null,
+          mode: "ADMIN_REVIEW_REQUIRED",
+          capacityMode: "NO_HOLD",
+          version: 7,
+          hostScopeSameBooking: true,
+          hostScopeSameBookingOwner: false,
+          hostScopeSameGroupTrip: false,
+        },
+      ],
+      LODGE,
+    );
+    const adult = {
+      guestRef: "host-1",
+      guestName: "A Adult",
+      member: {
+        id: "member-adult",
+        ageTier: AgeTier.ADULT,
+        active: true,
+        cancelledAt: null,
+        archivedAt: null,
+      },
+      nights: ["2026-08-01"],
+    };
+    const guest = {
+      guestRef: "guest-1",
+      guestName: "G Guest",
+      member: null,
+      nights: ["2026-08-01"],
+    };
+
+    expect(
+      evaluateAdultMemberHostingWithPolicy([adult, guest], resolved),
+      "INV-HOST-045 (docs/invariants/adult-member-hosting.md): the kiosk reads a " +
+        "stored all-covered snapshot as STALE because the evaluator returns null " +
+        "instead of writing one. If that changed, deriveKioskAdultCoverSource " +
+        "must change with it.",
+    ).toBeNull();
+    // And the same party with the guest uncovered DOES produce one, so the rule
+    // above is not vacuously true of every input.
+    const violation = evaluateAdultMemberHostingWithPolicy([guest], resolved);
+    expect(violation).not.toBeNull();
+    expect(
+      violation!.requirements.qualifyingHostsByNight.map((row) => row.memberIds),
+    ).toEqual([[]]);
+  });
 
   it("reports NOT_RECORDED, with no nights, when the booking carries no snapshot", () => {
     for (const value of [null, undefined]) {
@@ -664,24 +805,147 @@ describe("#3040 adult-cover source is the canonical evaluation, honestly reporte
     }
   });
 
+  it("FAILS CLOSED on a snapshot it can only PARTLY read", () => {
+    // The hazard this closes: the reader used to silently drop a malformed night
+    // row and keep the status EVALUATED, so a half-unreadable snapshot rendered
+    // as "1 of 1 nights covered" — and one where every row was malformed
+    // rendered as a clean bill of health. Both are positive claims off a failed
+    // evaluation, which is exactly what this invariant forbids.
+    // EACH CASE IS CARRIED BY EXACTLY ONE GUARD, deliberately. Written the
+    // obvious way, most of these are caught by two or three checks at once, and
+    // a probe that removes any single one then still passes — so the suite would
+    // report "discriminating" while proving nothing about the line it is meant
+    // to hold down. Every fixture below is therefore built to slip past every
+    // check except the one it is named for.
+    const partial: Array<[string, unknown]> = [
+      [
+        "one night row has no readable date, and the rest agrees with the list",
+        snapshot(
+          [
+            { nite: "2026-08-01", memberIds: [] },
+            { night: "2026-08-02", memberIds: [], coveredByScopes: [] },
+          ],
+          [{ night: "2026-08-02", guestRef: "guest-1" }],
+        ),
+      ],
+      [
+        "every night row is malformed, so dropping them leaves a clean bill",
+        snapshot([{ nite: "2026-08-01" }], []),
+      ],
+      [
+        "a night row has no member list at all",
+        snapshot(
+          [{ night: "2026-08-01" }],
+          [{ night: "2026-08-01", guestRef: "guest-1" }],
+        ),
+      ],
+      [
+        "a night row's member list is not a list",
+        snapshot(
+          [
+            { night: "2026-08-01", memberIds: "adult-1" },
+            { night: "2026-08-02", memberIds: [], coveredByScopes: [] },
+          ],
+          [{ night: "2026-08-02", guestRef: "guest-1" }],
+        ),
+      ],
+      [
+        "the uncovered list names a night the evidence says was covered",
+        snapshot(
+          [
+            {
+              night: "2026-08-01",
+              memberIds: ["adult-1"],
+              coveredByScopes: ["SAME_BOOKING"],
+            },
+            { night: "2026-08-02", memberIds: [], coveredByScopes: [] },
+          ],
+          [{ night: "2026-08-01", guestRef: "guest-1" }],
+        ),
+      ],
+      [
+        "the evidence has an uncovered night the uncovered list does not",
+        snapshot(
+          [
+            {
+              night: "2026-08-01",
+              memberIds: ["adult-1"],
+              coveredByScopes: ["SAME_BOOKING"],
+            },
+            { night: "2026-08-02", memberIds: [], coveredByScopes: [] },
+          ],
+          [],
+        ),
+      ],
+      [
+        "the same night appears twice",
+        snapshot(
+          [
+            { night: "2026-08-01", memberIds: [], coveredByScopes: [] },
+            { night: "2026-08-01", memberIds: [], coveredByScopes: [] },
+          ],
+          [{ night: "2026-08-01", guestRef: "guest-1" }],
+        ),
+      ],
+      [
+        "a covered night names hosts but no scope that supplied them",
+        snapshot(
+          [
+            { night: "2026-08-01", memberIds: ["adult-1"], coveredByScopes: [] },
+            { night: "2026-08-02", memberIds: [], coveredByScopes: [] },
+          ],
+          [{ night: "2026-08-02", guestRef: "guest-1" }],
+        ),
+      ],
+      [
+        "a covered night names only a scope this deployment does not have",
+        snapshot(
+          [
+            {
+              night: "2026-08-01",
+              memberIds: ["adult-1"],
+              coveredByScopes: ["SAME_CARAVAN"],
+            },
+            { night: "2026-08-02", memberIds: [], coveredByScopes: [] },
+          ],
+          [{ night: "2026-08-02", guestRef: "guest-1" }],
+        ),
+      ],
+      [
+        "an uncovered-list entry has no readable night",
+        snapshot(
+          [{ night: "2026-08-01", memberIds: [], coveredByScopes: [] }],
+          [{ nite: "2026-08-01", guestRef: "guest-1" } as never],
+        ),
+      ],
+    ];
+    for (const [why, value] of partial) {
+      const derived = deriveKioskAdultCoverSource(value, fresh);
+      expect(
+        derived.status,
+        `INV-HOST-045: ${why} — a snapshot the kiosk can only partly read is a ` +
+          `FAILED evaluation. Dropping the rows it cannot read and keeping the ` +
+          `rest reports cover the snapshot does not support.`,
+      ).toBe("UNREADABLE");
+      expect(derived.nights).toEqual([]);
+    }
+  });
+
   it("reports per-night cover and the scope categories, partial nights included", () => {
     const derived = deriveKioskAdultCoverSource(
-      snapshot(
-        [
-          { night: "2026-08-03", memberIds: [], coveredByScopes: [] },
-          {
-            night: "2026-08-01",
-            memberIds: ["adult-1", "adult-2"],
-            coveredByScopes: ["SAME_GROUP_TRIP", "SAME_BOOKING"],
-          },
-          {
-            night: "2026-08-02",
-            memberIds: ["adult-1"],
-            coveredByScopes: ["SAME_BOOKING_OWNER"],
-          },
-        ],
-        [{ night: "2026-08-03", guestRef: "guest-1" }],
-      ),
+      canonicalSnapshot([
+        { night: "2026-08-03" },
+        {
+          night: "2026-08-01",
+          memberIds: ["adult-1", "adult-2"],
+          coveredByScopes: ["SAME_BOOKING_OWNER", "SAME_BOOKING"],
+        },
+        {
+          night: "2026-08-02",
+          memberIds: ["adult-1"],
+          coveredByScopes: ["SAME_BOOKING_OWNER"],
+        },
+      ]),
       fresh,
     );
 
@@ -692,25 +956,77 @@ describe("#3040 adult-cover source is the canonical evaluation, honestly reporte
         night: "2026-08-01",
         covered: true,
         // Sorted through the canonical scope list, not as stored.
-        scopes: ["SAME_BOOKING", "SAME_GROUP_TRIP"],
+        scopes: ["SAME_BOOKING", "SAME_BOOKING_OWNER"],
       },
       { night: "2026-08-02", covered: true, scopes: ["SAME_BOOKING_OWNER"] },
       { night: "2026-08-03", covered: false, scopes: [] },
     ]);
-    expect(derived.scopes).toEqual([
-      "SAME_BOOKING",
-      "SAME_BOOKING_OWNER",
-      "SAME_GROUP_TRIP",
-    ]);
+    expect(derived.scopes).toEqual(["SAME_BOOKING", "SAME_BOOKING_OWNER"]);
+  });
+
+  it("WITHHOLDS a cover claim that rests on a Group Trip sibling, while #3039 is unbuilt", () => {
+    // The hole this closes, and it is the one this epic itself opens. The
+    // re-evaluation queue is keyed on the owner of the booking that CHANGED, so
+    // when a sibling in another account cancels, the queued row names THEIR
+    // owner — and `readStalenessSignals` reads this booking's own owner. Nothing
+    // marks the dependent stale, so a snapshot resting on that sibling would go
+    // on reporting positive cover indefinitely: the precise thing INV-HOST-045
+    // forbids. Until #3039's fan-out exists, such a claim is unverifiable and is
+    // withheld whole.
+    const derived = deriveKioskAdultCoverSource(
+      canonicalSnapshot([
+        {
+          night: "2026-08-01",
+          memberIds: ["adult-1"],
+          coveredByScopes: ["SAME_GROUP_TRIP"],
+        },
+        { night: "2026-08-02" },
+      ]),
+      fresh,
+    );
+    expect(
+      derived,
+      "INV-HOST-045 (docs/invariants/adult-member-hosting.md): a night covered " +
+        "by an adult in a SIBLING Group Trip booking can be invalidated by a " +
+        "change on another account that nothing here can see until #3039 lands. " +
+        "An unverifiable claim is not shown as cover.",
+    ).toEqual({ status: "STALE", nights: [], scopes: [] });
+
+    // The mixed case too: one night resting on a sibling poisons the snapshot,
+    // because the display cannot show half of a per-night answer.
+    expect(
+      deriveKioskAdultCoverSource(
+        canonicalSnapshot([
+          {
+            night: "2026-08-01",
+            memberIds: ["a"],
+            coveredByScopes: ["SAME_BOOKING"],
+          },
+          {
+            night: "2026-08-02",
+            memberIds: ["b"],
+            coveredByScopes: ["SAME_GROUP_TRIP"],
+          },
+          { night: "2026-08-03" },
+        ]),
+        fresh,
+      ).status,
+    ).toBe("STALE");
   });
 
   it("never carries a covering member's id", () => {
     const derived = deriveKioskAdultCoverSource(
-      snapshot([
-        { night: "2026-08-01", memberIds: ["adult-secret"], coveredByScopes: ["SAME_GROUP_TRIP"] },
+      canonicalSnapshot([
+        {
+          night: "2026-08-01",
+          memberIds: ["adult-secret"],
+          coveredByScopes: ["SAME_BOOKING"],
+        },
+        { night: "2026-08-02" },
       ]),
       fresh,
     );
+    expect(derived.status).toBe("EVALUATED");
     expect(
       JSON.stringify(derived),
       "INV-PRIV-015: the kiosk reports the cover SOURCE CATEGORY, never which " +
@@ -718,59 +1034,140 @@ describe("#3040 adult-cover source is the canonical evaluation, honestly reporte
     ).not.toContain("adult-secret");
   });
 
-  it("reads a covered night with no recorded scope as SAME_BOOKING, the field's documented meaning", () => {
+  it("reads a covered night with NO coveredByScopes key as SAME_BOOKING, the field's documented meaning", () => {
     const derived = deriveKioskAdultCoverSource(
-      snapshot([{ night: "2026-08-01", memberIds: ["adult-1"] }]),
+      snapshot(
+        [
+          { night: "2026-08-01", memberIds: ["adult-1"] },
+          { night: "2026-08-02", memberIds: [] },
+        ],
+        [{ night: "2026-08-02", guestRef: "guest-1" }],
+      ),
       fresh,
     );
     expect(derived.nights).toEqual([
       { night: "2026-08-01", covered: true, scopes: ["SAME_BOOKING"] },
+      { night: "2026-08-02", covered: false, scopes: [] },
     ]);
   });
 
-  it("reports STALE, with no nights, when a re-evaluation is queued", () => {
-    const derived = deriveKioskAdultCoverSource(
-      snapshot([
-        { night: "2026-08-01", memberIds: ["adult-1"], coveredByScopes: ["SAME_GROUP_TRIP"] },
+  it("reports STALE, with no nights, when a re-evaluation is queued — snapshot or not", () => {
+    for (const review of [
+      canonicalSnapshot([
+        {
+          night: "2026-08-01",
+          memberIds: ["adult-1"],
+          coveredByScopes: ["SAME_BOOKING"],
+        },
+        { night: "2026-08-02" },
       ]),
-      { queuedReevaluation: true, openIncident: false },
-    );
-    expect(
-      derived,
-      "INV-HOST-045: a snapshot with queued re-evaluation behind it is STALE, " +
-        "and stale must never render as positive cover",
-    ).toEqual({ status: "STALE", nights: [], scopes: [] });
+      // AND WITH NO SNAPSHOT AT ALL. The queue says the recorded answer is
+      // pending recomputation, and an absent snapshot is a recorded answer —
+      // "no violation" — exactly as much as a present one is. The check used to
+      // sit BELOW the early return for this case, so a booking whose cover was
+      // being recomputed reported the reassuring "nothing recorded" instead.
+      null,
+      undefined,
+    ]) {
+      expect(
+        deriveKioskAdultCoverSource(review, {
+          queuedReevaluation: true,
+          openIncident: false,
+        }),
+        "INV-HOST-045: a booking with re-evaluation queued behind it is STALE, " +
+          "and stale must never render as positive cover — nor as a reassuring " +
+          "'nothing recorded'",
+      ).toEqual({ status: "STALE", nights: [], scopes: [] });
+    }
   });
 
-  it("reports STALE when an OPEN incident contradicts an all-covered snapshot", () => {
-    const derived = deriveKioskAdultCoverSource(
-      snapshot([
-        { night: "2026-08-01", memberIds: ["adult-1"], coveredByScopes: ["SAME_BOOKING"] },
-      ]),
-      { queuedReevaluation: false, openIncident: true },
-    );
-    expect(
-      derived.status,
-      "INV-HOST-045: an open coverage incident says this booking IS carrying " +
-        "uncovered nights; a snapshot claiming none disagrees, and the display " +
-        "must not choose the optimistic side",
-    ).toBe("STALE");
-    expect(derived.nights).toEqual([]);
+  it("reports STALE when an OPEN incident contradicts an EMPTY column", () => {
+    // THE CONTRADICTION THAT IS ACTUALLY REACHABLE. An open incident says this
+    // booking is carrying uncovered nights right now; an empty column says the
+    // writer found nothing to record. One of the two is behind. The previous
+    // version of this test used an all-covered snapshot instead — a state no
+    // writer can persist — so it proved nothing, and the reachable case returned
+    // NOT_RECORDED from an early return before either signal was consulted.
+    for (const review of [null, undefined]) {
+      expect(
+        deriveKioskAdultCoverSource(review, {
+          queuedReevaluation: false,
+          openIncident: true,
+        }),
+        "INV-HOST-045: an open coverage incident says this booking IS carrying " +
+          "uncovered nights; an empty column claiming none disagrees, and the " +
+          "display must not choose the optimistic side",
+      ).toEqual({ status: "STALE", nights: [], scopes: [] });
+    }
   });
 
   it("keeps an open incident's own snapshot readable when the two AGREE", () => {
     const derived = deriveKioskAdultCoverSource(
-      snapshot(
-        [
-          { night: "2026-08-01", memberIds: ["adult-1"], coveredByScopes: ["SAME_BOOKING"] },
-          { night: "2026-08-02", memberIds: [], coveredByScopes: [] },
-        ],
-        [{ night: "2026-08-02", guestRef: "guest-1" }],
-      ),
+      canonicalSnapshot([
+        {
+          night: "2026-08-01",
+          memberIds: ["adult-1"],
+          coveredByScopes: ["SAME_BOOKING"],
+        },
+        { night: "2026-08-02" },
+      ]),
       { queuedReevaluation: false, openIncident: true },
     );
     expect(derived.status).toBe("EVALUATED");
     expect(derived.nights.map((night) => night.covered)).toEqual([true, false]);
+  });
+
+  it("reports a READABLE snapshot with nothing uncovered as STALE, never as full cover", () => {
+    // Signal 3, and the reason the display has no "all covered" wording at all:
+    // the evaluator returns null when nothing is uncovered and the reconciler
+    // clears the column, so a stored snapshot claiming full cover is one the
+    // world has moved past. The premise is pinned by the first test in this
+    // block.
+    for (const review of [
+      snapshot([
+        {
+          night: "2026-08-01",
+          memberIds: ["adult-1"],
+          coveredByScopes: ["SAME_BOOKING"],
+        },
+      ]),
+      snapshot([]),
+    ]) {
+      expect(
+        deriveKioskAdultCoverSource(review, fresh),
+        "INV-HOST-045: a persisted snapshot always records at least one " +
+          "uncovered night, so one recording none is out of date rather than " +
+          "good news",
+      ).toEqual({ status: "STALE", nights: [], scopes: [] });
+    }
+  });
+
+  it("carries the officer's decision, so an APPROVED exception is not read as an unapproved violation", () => {
+    // An approved hosting exception leaves the violation snapshot exactly where
+    // it is — only `adultMemberHostingReviewStatus` moves — so without this the
+    // kiosk shows the identical red "1 of 2 nights covered / Not covered: ..."
+    // whether an officer approved the arrangement or nobody has looked at it.
+    const review = canonicalSnapshot([
+      {
+        night: "2026-08-01",
+        memberIds: ["adult-1"],
+        coveredByScopes: ["SAME_BOOKING"],
+      },
+      { night: "2026-08-02" },
+    ]);
+    for (const decision of ["PENDING", "APPROVED", "REJECTED"] as const) {
+      const derived = deriveKioskAdultCoverSource(review, fresh, decision);
+      expect(derived.status).toBe("EVALUATED");
+      expect(
+        derived.status === "EVALUATED" ? derived.decision : undefined,
+        "INV-HOST-045: matching the canonical evaluation includes the officer " +
+          "decision taken on it",
+      ).toBe(decision);
+    }
+    const undecided = deriveKioskAdultCoverSource(review, fresh);
+    expect(
+      undecided.status === "EVALUATED" ? undecided.decision : "missing",
+    ).toBeNull();
   });
 
   it("routes the queue signal by OWNER and lodge, and the incident signal by booking", async () => {
@@ -779,16 +1176,26 @@ describe("#3040 adult-cover source is the canonical evaluation, honestly reporte
         id: "b-1",
         memberId: "owner-queued",
         ...organiserOf(TRIP),
-        adultMemberHostingReview: snapshot([
-          { night: "2026-08-01", memberIds: ["adult-1"], coveredByScopes: ["SAME_BOOKING"] },
+        adultMemberHostingReview: canonicalSnapshot([
+          {
+            night: "2026-08-01",
+            memberIds: ["adult-1"],
+            coveredByScopes: ["SAME_BOOKING"],
+          },
+          { night: "2026-08-02" },
         ]),
       }),
       bookingRow({
         id: "b-2",
         memberId: "owner-clean",
         ...joinerOf(TRIP),
-        adultMemberHostingReview: snapshot([
-          { night: "2026-08-01", memberIds: ["adult-2"], coveredByScopes: ["SAME_BOOKING"] },
+        adultMemberHostingReview: canonicalSnapshot([
+          {
+            night: "2026-08-01",
+            memberIds: ["adult-2"],
+            coveredByScopes: ["SAME_BOOKING"],
+          },
+          { night: "2026-08-02" },
         ]),
       }),
     ];
@@ -800,6 +1207,74 @@ describe("#3040 adult-cover source is the canonical evaluation, honestly reporte
     const { attached } = await attach(rows, PRIVILEGED, store);
     expect(attached[0].adultCoverSource?.status).toBe("STALE");
     expect(attached[1].adultCoverSource?.status).toBe("EVALUATED");
+  });
+
+  it("attaches the cover line to a GROUP card only", async () => {
+    // The organiser line was gated on group identity and this one was not, so it
+    // appeared on every card on the day list — including bookings in no Group
+    // Trip at all, which is outside the surface #3040 opened and outside what
+    // `docs/guides/lodge.md` and `docs/UX_FLOW_MAP.md` describe. It also put the
+    // amber warning states on every ungrouped booking.
+    const rows = [
+      bookingRow({ id: "b-organiser", ...organiserOf(TRIP) }),
+      bookingRow({ id: "b-joiner", memberId: "member-2", ...joinerOf(TRIP) }),
+      bookingRow({ id: "b-alone", memberId: "member-3" }),
+    ];
+    const store = fakeStore({
+      bookings: rows,
+      groups: [{ id: TRIP, organiser: "Olivia" }],
+    });
+    const { attached } = await attach(rows, PRIVILEGED, store);
+    expect(attached[0]).toHaveProperty("adultCoverSource");
+    expect(attached[1]).toHaveProperty("adultCoverSource");
+    expect(
+      attached[2],
+      "INV-PRIV-015: the two privileged lines belong to the Group Trip surface " +
+        "#3040 opened; a booking in no group gets neither",
+    ).not.toHaveProperty("adultCoverSource");
+    expect(attached[2]).not.toHaveProperty("groupTripOrganiser");
+  });
+
+  it("returns the day list UNENRICHED rather than throwing when a read fails", async () => {
+    // FAILS CLOSED, on the screen that matters most. Three of the reads this
+    // module makes were new to the kiosk, and only the policy read was guarded —
+    // so a transient database error on the organiser or staleness read threw
+    // straight out of the route and blanked the whole day list, for every tier,
+    // on an unattended wall tablet. Withholding the Group Trip fields is the
+    // right failure; withholding the roster is not.
+    const rows = [
+      bookingRow({ id: "b-organiser", ...organiserOf(TRIP) }),
+      bookingRow({ id: "b-joiner", memberId: "member-2", ...joinerOf(TRIP) }),
+    ];
+    const store = fakeStore({ bookings: rows });
+    const exploding = {
+      ...(store.db as unknown as Record<string, unknown>),
+      groupBooking: {
+        findMany: async () => {
+          throw new Error("connection terminated unexpectedly");
+        },
+      },
+    };
+    const attached = await attachKioskGroupTrip(
+      rows.map((row) => card(row.id)),
+      rows,
+      {
+        db: exploding as unknown as Parameters<
+          typeof attachKioskGroupTrip
+        >[2]["db"],
+        lodgeId: LODGE,
+        capabilities: PRIVILEGED,
+      },
+    );
+    expect(attached.map((entry) => entry.bookingId)).toEqual([
+      "b-organiser",
+      "b-joiner",
+    ]);
+    for (const entry of attached) {
+      expect(entry).not.toHaveProperty("groupTrip");
+      expect(entry).not.toHaveProperty("groupTripOrganiser");
+      expect(entry).not.toHaveProperty("adultCoverSource");
+    }
   });
 });
 
@@ -825,7 +1300,7 @@ describe("#3040 the split-pair carve-out reaches the kiosk through its one canon
         "is one party, so the half carrying the non-member guests is in the same " +
         "Group Trip as the half that joined it",
     ).toEqual({ label: 1 });
-    // One lookup, for the one booking that needed it.
+    // One lookup, for the whole day list.
     expect(calls.bookingFindMany).toBe(1);
   });
 
@@ -894,10 +1369,20 @@ describe("#3040 the split-pair carve-out reaches the kiosk through its one canon
     );
     const rows = [...parents, ...children];
     const { attached, calls } = await attach(rows, ORDINARY);
-    expect(calls.bookingFindMany).toBe(KIOSK_SPLIT_PAIR_IDENTITY_LOOKUP_LIMIT);
+    // ONE query for the whole list, however many split children are on it. This
+    // used to read `toBe(KIOSK_SPLIT_PAIR_IDENTITY_LOOKUP_LIMIT)` — twenty-five
+    // sequential round trips — which is the N+1 the issue's data contract
+    // forbids by name, and which the ceiling merely bounded rather than avoided.
+    expect(
+      calls.bookingFindMany,
+      "#3040 data contract: one indexed query over already-loaded Booking ids, " +
+        "never one per card",
+    ).toBe(1);
     const withoutLinkage = attached.filter(
       (entry) => !Object.prototype.hasOwnProperty.call(entry, "groupTrip"),
     );
+    // The ceiling still binds, and still fails CLOSED: the cards past it get no
+    // linkage rather than a lookup.
     expect(withoutLinkage.length).toBe(3);
   });
 });
@@ -908,6 +1393,7 @@ describe("#3040 the split-pair carve-out reaches the kiosk through its one canon
 
 const KIOSK_SURFACES = [
   "src/lib/kiosk-group-trip.ts",
+  "src/lib/kiosk-adult-cover.ts",
   "src/lib/kiosk-access.ts",
   "src/app/api/lodge/guests/[date]/route.ts",
   "src/app/api/lodge/week/route.ts",
@@ -934,7 +1420,7 @@ describe("#3040 source fences on the kiosk Group Trip surfaces", () => {
   it("resolves Group Trip identity through the canonical helpers only", () => {
     const source = readSurface("src/lib/kiosk-group-trip.ts");
     expect(source).toContain("groupTripIdentityOf(");
-    expect(source).toContain("readInheritedSplitPairGroupTrip(");
+    expect(source).toContain("readInheritedSplitPairGroupTrips(");
     // A second identity read would be a second answer to "what group is this
     // booking in?" — the exact thing `INV-SSOT` and the epic's identity rule
     // forbid. The two relation names appear ONLY inside
@@ -949,13 +1435,20 @@ describe("#3040 source fences on the kiosk Group Trip surfaces", () => {
   });
 
   it("keeps the tier-to-capability decision in exactly one place", () => {
-    const access = readSurface("src/lib/kiosk-access.ts");
-    expect(access).toContain("kioskGroupTripCapabilities(tier)");
+    // The definition lives in `kiosk-access.ts` and the ONE consumer asks it for
+    // an answer. The access endpoint deliberately does not report the two
+    // capabilities to the browser — no client read them, and a flag telling a
+    // viewer what it was not sent is a second place for the rule to drift — so
+    // this pins the definition and the ask, not a second copy of the answer.
+    expect(
+      readSurface("src/lib/kiosk-access.ts"),
+      "INV-SSOT-001: the tier-to-capability decision is defined once, here",
+    ).toContain("export function kioskGroupTripCapabilities(");
     const route = readSurface("src/app/api/lodge/guests/[date]/route.ts");
     expect(
       route,
       "INV-SSOT-001: the guest-list route must ASK for the capabilities rather " +
-        "than restate the tier test, or the access endpoint and the payload can " +
+        "than restate the tier test, or the payload and the definition can " +
         "disagree about who may see what",
     ).toContain("kioskGroupTripCapabilities(tier)");
   });
