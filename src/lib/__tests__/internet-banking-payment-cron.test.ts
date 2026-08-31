@@ -21,6 +21,8 @@ const mocks = vi.hoisted(() => ({
   kickQueuedXeroOutboxOperationsIfConnected: vi.fn(),
   findUnconvergedAppliedCreditDeallocation: vi.fn(),
   repairLegacyAppliedCreditNoteAllocationsForBooking: vi.fn(),
+  reconcileHostingReviewForSystemCancellation: vi.fn(),
+  settleHostingCoverageAfterCommit: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -30,6 +32,15 @@ vi.mock("@/lib/prisma", () => ({
     },
     $transaction: mocks.transaction,
   },
+}));
+
+vi.mock("@/lib/adult-member-hosting-system-cancellation", () => ({
+  reconcileHostingReviewForSystemCancellation:
+    mocks.reconcileHostingReviewForSystemCancellation,
+}));
+
+vi.mock("@/lib/adult-member-hosting-coverage-drain", () => ({
+  settleHostingCoverageAfterCommit: mocks.settleHostingCoverageAfterCommit,
 }));
 
 vi.mock("@/lib/audit", () => ({
@@ -178,6 +189,10 @@ describe("releaseExpiredInternetBankingHolds credit-note durability (#1357)", ()
     mocks.kickQueuedXeroOutboxOperationsIfConnected.mockResolvedValue(null);
     mocks.findUnconvergedAppliedCreditDeallocation.mockResolvedValue(null);
     mocks.repairLegacyAppliedCreditNoteAllocationsForBooking.mockResolvedValue(0);
+    mocks.reconcileHostingReviewForSystemCancellation.mockResolvedValue(
+      undefined,
+    );
+    mocks.settleHostingCoverageAfterCommit.mockResolvedValue(undefined);
   });
 
   it("enqueues the invoice-clearing credit note through the release transaction client", async () => {
@@ -364,6 +379,10 @@ describe("releaseExpiredInternetBankingHolds invoice-clearing sizing (#1597)", (
     mocks.kickQueuedXeroOutboxOperationsIfConnected.mockResolvedValue(null);
     mocks.findUnconvergedAppliedCreditDeallocation.mockResolvedValue(null);
     mocks.repairLegacyAppliedCreditNoteAllocationsForBooking.mockResolvedValue(0);
+    mocks.reconcileHostingReviewForSystemCancellation.mockResolvedValue(
+      undefined,
+    );
+    mocks.settleHostingCoverageAfterCommit.mockResolvedValue(undefined);
   });
 
   it("clears the full finalPrice even when the booking carried applied credit (no double-count)", async () => {
@@ -492,5 +511,137 @@ describe("releaseExpiredInternetBankingHolds invoice-clearing sizing (#1597)", (
     expect(mocks.txMemberCreditAggregate).not.toHaveBeenCalled();
     expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
     expect(mocks.kickQueuedXeroOutboxOperationsIfConnected).not.toHaveBeenCalled();
+  });
+});
+
+// #3209: the release frees the beds and, until now, never re-checked adult
+// supervision. The guard set above requires `booking.status === CONFIRMED`, and
+// CONFIRMED is one of the two statuses that qualify a booking as a
+// `SAME_BOOKING_OWNER` coverage source — so an expired hold could take the
+// qualifying adult off ANOTHER booking of the same member with no incident, no
+// owner email and nothing in the officer queue.
+describe("releaseExpiredInternetBankingHolds adult-member hosting (#3209)", () => {
+  const txRef: { current: unknown } = { current: null };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    txRef.current = null;
+    mocks.transaction.mockImplementation(
+      async (callback: (tx: unknown) => Promise<unknown>) => {
+        const tx = {
+          $executeRaw: mocks.txExecuteRaw,
+          payment: {
+            findUnique: mocks.txPaymentFindUnique,
+            update: mocks.txPaymentUpdate,
+          },
+          booking: { update: mocks.txBookingUpdate },
+          memberCreditNoteAllocation: {
+            aggregate: mocks.txMemberCreditAggregate,
+          },
+          paymentTransaction: { findMany: mocks.txPaymentTransactionFindMany },
+        };
+        txRef.current = tx;
+        return callback(tx);
+      },
+    );
+    mocks.paymentFindMany.mockResolvedValue([makeExpiredPayment()]);
+    mocks.txPaymentFindUnique.mockResolvedValue(makeExpiredPayment());
+    mocks.revokePaymentLinksForBooking.mockResolvedValue(undefined);
+    mocks.reconcileBedAllocationsForBooking.mockResolvedValue(undefined);
+    mocks.recordBookingEvent.mockResolvedValue(undefined);
+    mocks.createAuditLog.mockResolvedValue(undefined);
+    mocks.sendBookingCancelledEmail.mockResolvedValue(undefined);
+    mocks.restoreCreditFromBooking.mockResolvedValue(0);
+    mocks.lockMemberCreditLedger.mockResolvedValue(undefined);
+    mocks.txMemberCreditAggregate.mockResolvedValue({ _sum: { amountCents: 0 } });
+    mocks.txPaymentTransactionFindMany.mockResolvedValue([]);
+    mocks.processWaitlistForDates.mockResolvedValue(undefined);
+    mocks.enqueueXeroRefundCreditNoteOperation.mockResolvedValue({
+      queueOperationId: "op_refund_note_1",
+    });
+    mocks.kickQueuedXeroOutboxOperationsIfConnected.mockResolvedValue(null);
+    mocks.findUnconvergedAppliedCreditDeallocation.mockResolvedValue(null);
+    mocks.repairLegacyAppliedCreditNoteAllocationsForBooking.mockResolvedValue(0);
+    mocks.reconcileHostingReviewForSystemCancellation.mockResolvedValue(undefined);
+    mocks.settleHostingCoverageAfterCommit.mockResolvedValue(undefined);
+  });
+
+  it("reconciles hosting inside the release transaction and drains after it commits", async () => {
+    const result = await releaseExpiredInternetBankingHolds(NOW);
+
+    expect(result.released).toBe(1);
+    // The release transaction's own client, so the obligation the reconcile
+    // records commits atomically with the cancellation.
+    expect(txRef.current).not.toBeNull();
+    expect(
+      mocks.reconcileHostingReviewForSystemCancellation,
+    ).toHaveBeenCalledWith("booking_ib_1", txRef.current);
+    // And the drain runs AFTER, on the module client: inside the transaction it
+    // would read the uncommitted rows it exists to re-read, and send email from a
+    // transaction that can still roll back.
+    expect(mocks.settleHostingCoverageAfterCommit).toHaveBeenCalledWith({
+      bookingId: "booking_ib_1",
+    });
+  });
+
+  it("takes the coverage-owner key last, after the lodge and credit-ledger keys", async () => {
+    // `INV-HOST-031` / `INV-LOCK-002`: the per-owner coverage key is always
+    // acquired last. Placing the reconcile at the end of the transaction is what
+    // makes that true here, and a future edit that hoists it above the credit
+    // ledger lock inverts the order without any other test noticing.
+    const order: string[] = [];
+    mocks.lockMemberCreditLedger.mockImplementation(async () => {
+      order.push("credit-ledger");
+    });
+    mocks.reconcileBedAllocationsForBooking.mockImplementation(async () => {
+      order.push("beds");
+    });
+    mocks.reconcileHostingReviewForSystemCancellation.mockImplementation(
+      async () => {
+        order.push("hosting");
+      },
+    );
+
+    await releaseExpiredInternetBankingHolds(NOW);
+
+    expect(order).toEqual(["credit-ledger", "beds", "hosting"]);
+  });
+
+  it("does not reconcile or drain for a candidate the guard set skips", async () => {
+    // Not CONFIRMED, so nothing was cancelled and no cover was removed.
+    mocks.txPaymentFindUnique.mockResolvedValue(
+      makeExpiredPayment({
+        booking: {
+          ...makeExpiredPayment().booking,
+          status: "CANCELLED",
+        },
+      }),
+    );
+
+    const result = await releaseExpiredInternetBankingHolds(NOW);
+
+    expect(result.skipped).toBe(1);
+    expect(
+      mocks.reconcileHostingReviewForSystemCancellation,
+    ).not.toHaveBeenCalled();
+    expect(mocks.settleHostingCoverageAfterCommit).not.toHaveBeenCalled();
+  });
+
+  it("leaves the hold unreleased for the next run when the reconcile fails outright", async () => {
+    // The seam catches the only refusal the hosting rule can raise, so what
+    // reaches here is a database or contention failure. That rolls the release
+    // back whole — the hold is NOT marked released, so the next run retries it —
+    // and the loop moves on rather than starving the remaining candidates. What
+    // must never happen is a released hold with the coverage question lost, and
+    // the drain not running proves nothing was reported as done.
+    mocks.reconcileHostingReviewForSystemCancellation.mockRejectedValue(
+      new Error("participants contended"),
+    );
+
+    const result = await releaseExpiredInternetBankingHolds(NOW);
+
+    expect(result.failed).toBe(1);
+    expect(result.released).toBe(0);
+    expect(mocks.settleHostingCoverageAfterCommit).not.toHaveBeenCalled();
   });
 });

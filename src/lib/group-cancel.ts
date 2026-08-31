@@ -77,6 +77,8 @@ import {
   loadCancellationPolicy,
 } from "./cancellation";
 import { reconcileBedAllocationsForBookingWithGlobalLockHeld } from "./bed-allocation-lifecycle";
+import { reconcileHostingReviewForSystemCancellation } from "@/lib/adult-member-hosting-system-cancellation";
+import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import {
   RELEASE_ADMIN_CAPACITY_HOLD_UPDATE,
   RELEASE_WHOLE_LODGE_HOLD_UPDATE,
@@ -520,6 +522,7 @@ export async function settleGroupBookingOnOrganiserCancel(
     let childClaimed = false;
     try {
       queuedCreditNoteOperationId = await prisma.$transaction(async (tx) => {
+        let queuedOperationId: string | null = null;
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
         const cancelled = await tx.booking.updateMany({
           where: { id: child.id, status: { in: [...ACTIVE_CHILD_STATUSES] } },
@@ -581,9 +584,22 @@ export async function settleGroupBookingOnOrganiserCancel(
             refundForChild,
             { createdByMemberId: sessionUserId, store: tx }
           );
-          return queued.queueOperationId;
+          queuedOperationId = queued.queueOperationId;
         }
-        return null;
+
+        // #3209 (`INV-HOST-041`). The beds are reconciled above; ADULT SUPERVISION
+        // was not. `ACTIVE_CHILD_STATUSES` includes CONFIRMED and PAID, the two
+        // statuses that qualify a booking as a `SAME_BOOKING_OWNER` coverage
+        // source, so cancelling this child can leave ANOTHER booking of the SAME
+        // JOINER without a qualifying adult on the exact nights its non-member
+        // guests are there — and nothing here ever looked. In this transaction so
+        // the obligation commits with the cancellation, and through the
+        // system-cancellation seam, whose docblock carries the argument for why an
+        // organiser cancel must never be refusable. Fan-out stays one booking's
+        // worth per child: `hostingSiblingWhere` is same-member only, so a joiner
+        // never drags in the organiser or the other joiners.
+        await reconcileHostingReviewForSystemCancellation(child.id, tx);
+        return queuedOperationId;
       });
     } catch (err) {
       logger.error(
@@ -676,6 +692,13 @@ export async function settleGroupBookingOnOrganiserCancel(
         "Failed to process waitlist after group joiner cancellation"
       )
     );
+
+    // #3209 §7's immediate half: re-read the now-committed facts, open or resolve
+    // the incident, notify the owner once. Scoped to THIS child because the drain
+    // claims by owner and lodge and every joiner is a different owner, so the
+    // organiser's own drain in `booking-cancel.ts` cannot reach them. It never
+    // throws, and the cron sweep remains the authority on completion.
+    await settleHostingCoverageAfterCommit({ bookingId: child.id });
   }
 
   // The group was fenced CANCELLED before provider calls and child cleanup.

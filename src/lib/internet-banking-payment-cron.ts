@@ -5,6 +5,8 @@ import {
   PaymentStatus,
 } from "@prisma/client";
 import { createAuditLog } from "@/lib/audit";
+import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
+import { reconcileHostingReviewForSystemCancellation } from "@/lib/adult-member-hosting-system-cancellation";
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import { recordBookingEvent } from "@/lib/booking-events";
@@ -217,6 +219,24 @@ function releaseOneHold(paymentId: string, now: Date) {
         queueOperationId = queued.queueOperationId;
       }
 
+      // #3209 / #2576 §8. The beds are reconciled above; ADULT SUPERVISION was
+      // not. The guard set this branch runs under requires
+      // `fresh.booking.status === BookingStatus.CONFIRMED`, and CONFIRMED is one
+      // of the two statuses that qualify a booking as a `SAME_BOOKING_OWNER`
+      // coverage source — so an expired hold can remove the qualifying adult who
+      // was covering ANOTHER booking of the same member at this lodge, on the
+      // exact nights its non-member guests are there, and nothing anywhere
+      // noticed: no incident, no owner email, nothing in the officer queue.
+      //
+      // Last in the transaction, after the lodge capacity key and the per-member
+      // credit-ledger key, because the coverage-owner key this takes is always
+      // acquired last (`INV-HOST-031`, `INV-LOCK-002`). In the transaction so the
+      // obligation commits with the release, and through the system-cancellation
+      // seam so it can never refuse one: a hold expiry has no actor to answer, and
+      // a rolled-back release is re-attempted by the next run against the same
+      // rows, so a refusal here would wedge the hold — and the beds — permanently.
+      await reconcileHostingReviewForSystemCancellation(fresh.bookingId, tx);
+
       return {
         type: "released" as const,
         payment: fresh,
@@ -375,6 +395,13 @@ export async function releaseExpiredInternetBankingHolds(
         "Failed to process waitlist after expired Internet Banking hold release",
       ),
     );
+
+    // #3209 / #2576 §7. The release transaction recorded WHAT has to be re-read;
+    // this is the immediate half — re-read the now-committed facts, open or
+    // resolve the incident, and notify the owner once. Never throws (it logs and
+    // returns EMPTY), so a failing drain cannot fail a release that has already
+    // committed, and the cron sweep remains the authority on completion.
+    await settleHostingCoverageAfterCommit({ bookingId: payment.bookingId });
   }
 
   return result;
