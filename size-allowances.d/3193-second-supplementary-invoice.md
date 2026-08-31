@@ -19,8 +19,18 @@ were far over budget independently of this change, and both are single cohesive
 dispatchers whose value is that every case is readable in one place.
 
 file: src/lib/xero-operation-retry.ts
-lines: 1379
-reason: a second supplementary invoice that Xero rejected had no retry at all -
+lines: 1390
+reason: (second pass, re-measured at 1390, was 1379. The eleven lines are the
+  correction to this branch's own premise. It was written believing the payload
+  survives a failed attempt; it did not, because `createXeroSupplementaryInvoice`
+  records the Xero invoice body on the operation BEFORE calling Xero - so the
+  branch was DEAD in the one case it exists for, a Xero rejection, and the
+  refusal beside it was the ordinary ending rather than the last resort. The
+  create path now preserves a second ask's queued payload, and the paragraph
+  saying so has to sit on the branch that depends on it, because the next reader
+  of a refusal message about "overwritten amounts" will otherwise reach exactly
+  the wrong conclusion about which code guarantees what.) The original entry,
+  unchanged: a second supplementary invoice that Xero rejected had no retry at all -
   this screen's only supplementary-invoice branch matched `BookingModification`,
   so a `ManualRefundTask`-anchored row sat FAILED forever while the booking's
   history said the amount was being billed. The growth is one branch in the

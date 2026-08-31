@@ -414,8 +414,8 @@ export async function recordShortEditReviewChargeInvoice({
     bookingModificationId,
     memberId,
     derivedTotalCents: totalCents,
-    // Unknowable by design - the handler overwrites the payload with the Xero
-    // invoice body when it sends - so the record says "short of this total"
+    // Unknowable by design - the handler replaces this ask's payload with the
+    // Xero invoice body when it sends - so the record says "short of this total"
     // rather than inventing the difference.
     requestedTotalCents: null,
   });
@@ -601,9 +601,9 @@ export async function recordUncollectedEditReviewChargeShare({
   /**
    * What the ask actually holds, when that is knowable. The card leg reads it
    * off the `ADDITIONAL` ledger row; the accounting leg CANNOT, because
-   * `createXeroSupplementaryInvoice` overwrites the operation's `requestPayload`
-   * with the Xero invoice body at dispatch, so once the row is claimed the
-   * queued amount is gone. Null says "short by an amount this record cannot
+   * `createXeroSupplementaryInvoice` replaces THIS ask's `requestPayload` with
+   * the Xero invoice body at dispatch, so once the row is claimed the queued
+   * amount is gone. (A second ask keeps its own; a different row, not this one.) Null says "short by an amount this record cannot
    * state" rather than inventing one.
    */
   requestedTotalCents: number | null;

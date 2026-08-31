@@ -1111,8 +1111,9 @@ const XERO_SUPPLEMENTARY_INVOICE_LOCK_NAMESPACE = "xero-supplementary-invoice";
  * billed and one the club has to collect by hand. Deciding that HERE, where the
  * link check, the queued check and the restate all happen under one lock, is the
  * only place it can be decided at all - the caller can no longer tell afterwards,
- * because `createXeroSupplementaryInvoice` overwrites the operation's payload
- * with the Xero invoice body at dispatch.
+ * because `createXeroSupplementaryInvoice` replaces THIS anchor's payload with
+ * the Xero invoice body at dispatch. (A second ask's payload survives, but that
+ * is a different row on a different anchor, never the one read here.)
  *
  *   * `covers-total` - the ask bills at least the requested net, because this
  *     call queued it, raised it, or found it already asking for that much.
@@ -1425,7 +1426,7 @@ async function enqueueSupplementaryInvoiceForAnchor(
       // `short-sent`, not `covers-total`, and the caller acts on the difference.
       // The invoice has been SENT, so what it bills is whatever the payload said
       // when the worker picked it up - a figure this row no longer holds, because
-      // the handler overwrote the payload with the Xero invoice body. An
+      // the handler replaced this anchor's payload with the Xero invoice body. An
       // edit-review share only reaches here after failing to restate, which on
       // that path means the ask went out before this share was settled; treating
       // that as covered would be the silent drop the whole round removed.

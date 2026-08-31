@@ -80,6 +80,7 @@ vi.mock("@/lib/xero-contacts", () => ({
 import { createXeroSupplementaryInvoice } from "@/lib/xero-supplementary-invoices";
 import { readQueuedOutboxPayload } from "@/lib/xero-operation-outbox-payload";
 import { getXeroOperationRetryMeta } from "@/lib/xero-operation-retry";
+import type { Prisma } from "@prisma/client";
 import { lineTotalCents } from "@/lib/__tests__/helpers";
 
 describe("createXeroSupplementaryInvoice idempotency-key discriminator (#1234, L2)", () => {
@@ -447,9 +448,11 @@ describe("a second ask survives a Xero rejection replayably (#3193)", () => {
     operationType: "CREATE" as const,
     localModel: "ManualRefundTask",
     localId: "task_2",
-    requestPayload,
+    requestPayload: requestPayload as Prisma.JsonValue,
     responsePayload: null,
-    correlationKey: "review-task:task_2:supplementary-shortfall-invoice:3000:0:v1",
+    xeroObjectId: null,
+    xeroObjectNumber: null,
+    queueType: "SUPPLEMENTARY_INVOICE",
   });
 
   beforeEach(() => {

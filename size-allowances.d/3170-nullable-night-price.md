@@ -61,8 +61,24 @@ reason: the operator CLI that replays the pre-#1231 invoice maths was a missed
   cohesive diagnostic - splitting a replay in half is how the halves drift.
 
 file: src/lib/xero-operation-outbox.ts
-lines: 3094
-reason: (#3193 fix round reconciliation - re-measured at 3094, was 2992. The
+lines: 3132
+reason: (#3193 fix round SECOND PASS - re-measured at 3132, was 3094. Two
+  corrections, both to claims this file had already made. The exported enqueue
+  now forwards its options FIELD BY FIELD instead of passing the object on: the
+  first pass narrowed the parameter type and then claimed the misuse was
+  unrepresentable, which it was not, because TypeScript's excess-property check
+  fires only on a fresh object literal - a caller assembling its options into a
+  variable, the ordinary shape as soon as one field is conditional, compiled
+  clean with `shortfallReviewTaskId` still on the object and the private
+  implementation read it, queueing an edit's COMBINED total as a task-anchored
+  invoice on top of the one already sent. And the paragraph enumerating how a
+  RUNNING row returns to PENDING named three routes of which two were wrong: an
+  operator Requeue and the repair pass both leave the original FAILED and replay
+  a separate REQUEUE row, and the stale-RUNNING reset writes FAILED. The cooldown
+  route alone still carries the argument, so the verdict split is unchanged - but
+  this file's own standard is that a list written to be audited is worse
+  incorrect than incomplete, and both corrections belong at the sites that made
+  the claims. Earlier reconciliation, kept: re-measured at 3094, was 2992. The
   round split the enqueue's `short` verdict into `short-sent` and
   `short-in-flight`, because one name was carrying two different facts: an
   invoice that EXISTS, and a row the outbox has merely claimed. Only the first is
