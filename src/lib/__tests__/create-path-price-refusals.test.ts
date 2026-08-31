@@ -18,11 +18,12 @@
  * `waitlist.test.ts`.
  *
  * TWO WRITE POINTS ARE DELIBERATELY NOT COVERED, and the full reason is in
- * `required-price-cents.ts`'s header rather than repeated here:
- * `booking-modify-plan.ts` is a THREE-way decision (#3170 — an explicit `null`
- * means "not known") that a two-way helper cannot express, and
- * `booking-date-modification-service.ts` is a two-way copy whose convergence is
- * a follow-on round of #3167 itself, once #3166 has landed. A THIRD site was read by the #3167 census and left alone on
+ * `required-price-cents.ts`'s header rather than repeated here: both
+ * `booking-modify-plan.ts` and `booking-date-modification-service.ts` make a
+ * THREE-way decision (#3170 — an explicit `null` means "not known") that a
+ * two-way helper cannot express, and since #3166 both narrow the ONE definition
+ * of it, `classifyNightPriceToWrite`. Neither is a copy of anything in this
+ * file's subject, and neither is awaiting a conversion. A THIRD site was read by the #3167 census and left alone on
  * the merits: `booking-request-quotes.ts`'s `totalCents: split[guestIndex] ?? 0`,
  * which builds a quote option's `guestBreakdown` — quote JSON shown to the
  * requester, not a price column, and approval re-splits from the request's own

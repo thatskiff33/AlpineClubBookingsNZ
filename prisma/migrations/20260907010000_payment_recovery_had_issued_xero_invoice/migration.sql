@@ -1,0 +1,12 @@
+-- #3181 (epic #2797): freeze the edit's own `hasIssuedPrimaryXeroInvoice` on the
+-- additional-payment recovery row, so the replay that raises the deferred
+-- supplementary invoice bills what the EDIT decided rather than what happens to
+-- be true when the cron reaches it. The two differ on exactly the booking whose
+-- primary invoice had not been minted yet: that edit queued nothing, and the
+-- primary invoice - minted later from current state - already bills it.
+--
+-- Additive and nullable, so the deployed old colour keeps reading and writing
+-- this table unchanged (expand-safe per BLUE_GREEN_MIGRATION_POLICY). NULL is
+-- the honest value for every row enqueued before this column existed, and the
+-- replay treats NULL as "not recorded" and raises no invoice.
+ALTER TABLE "PaymentRecoveryOperation" ADD COLUMN "hadIssuedXeroInvoice" BOOLEAN;

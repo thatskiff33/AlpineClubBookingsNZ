@@ -22,7 +22,7 @@ import {
   unpaidCreditNoteInput,
   unpaidMoneySummaryRows,
 } from "@/lib/booking-money-lines";
-import { financialReviewEmailNote } from "@/lib/booking-financial-review-copy";
+import { financialReviewNote } from "@/lib/booking-financial-review-copy";
 import { escapeHtml } from "./escape";
 import {
   type BookingCalendarLinks,
@@ -536,7 +536,7 @@ export function bookingModifiedTemplate(params: {
   */
   const reviewNote = financialReviewPending
     ? alertBox(
-        financialReviewEmailNote({
+        financialReviewNote({
           // The two PAST-TENSE settlement arms below. "Nothing has been refunded
           // or charged for it yet" cannot stand beside "a refund has been
           // processed" in one email about one change. The additional-payment
