@@ -17,10 +17,12 @@
   and the message says exactly what became of each code involved. A code that was
   never applied is still free to use on another booking. A member who asked to
   REMOVE one is told it is still on this booking. A member who re-entered the
-  code they already had is told it stays exactly as it was, discount and all,
+  code they already had is told it stays on this booking, discount and all,
   rather than being told it is unused — and where one code was being swapped for
   another, the message names both, so nobody is left wondering why their total
-  still shows a discount. What a member is told is written in one place, so
+  still shows a discount. Where the same edit also took somebody off the booking,
+  the message stops short of promising that who the code covers is unchanged,
+  because taking a guest off does quietly narrow it. What a member is told is written in one place, so
   softening the wording is one edit that every screen and email follows.
 
   This closes the silence; it does not make the promotional code apply. Applying
