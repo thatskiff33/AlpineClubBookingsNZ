@@ -919,6 +919,21 @@ const SCOPED_ADVISORY_LOCK_INVENTORY: Record<string, number> = {
   // - a NEW keyspace in its own namespace, keyed on the `BookingModification`
   // the invoice corrects.
   //
+  // STILL ONE SITE AFTER #3193, and the count is the interesting part. The
+  // second ask - a review share's own small invoice, raised when the change's
+  // invoice had already gone out without it - reaches the SAME statement through
+  // `enqueueXeroSecondSupplementaryInvoiceOperation`, which is a named wrapper
+  // over this enqueue rather than a second copy of its link-check ->
+  // queued-check -> write. So there is still exactly one place that decides
+  // whether an ask already has an invoice going out, which is the property
+  // #3170 was fixing; a second locked decision elsewhere would be the same
+  // defect wearing a different anchor. The KEYSPACE widens rather than the site
+  // count: the anchor is now the `BookingModification` OR the `ManualRefundTask`
+  // whose share the invoice bills. Two anchors never contend, and a second ask
+  // is invisible to every read scoped to the change - which is what stops the
+  // change's own restate raising a $30 follow-on to the $230 combined total on
+  // top of an invoice already with the member.
+  //
   // WHY IT EXISTS. The owner's 30 Aug 2026 decision makes two review settlements
   // of ONE booking edit contribute to one combined total, and the Xero leg has to
   // move with it. Deciding "does this edit already have a supplementary invoice

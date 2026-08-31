@@ -1345,19 +1345,113 @@ one, check the other.
       point meets an ask that has left the building. The enqueue then refuses to
       queue a second invoice behind the first - correct, because two invoices for
       one edit is the failure this all exists to remove - so the invoice bills the
-      earlier figure and the club collects the difference by hand. That is a
-      recoverable shortfall rather than lost money only because it is RECORDED:
-      `enqueueXeroSupplementaryInvoiceOperation` returns `outcome: "short"` and the
-      settlement writes `booking.editFinancialReview.chargeShareUncollected` with
-      leg `xero-invoice`. Closing the window itself would mean voiding and
-      reissuing an invoice already with the member, which is a different decision
-      from this one. Since #3187 the booking-vs-Xero repair tool finds that
-      shortfall STRUCTURALLY as well as through the audit row: it reads the
-      expected supplementary-invoice total from the settled review shares rather
-      than from the `BookingModification` row (which a parked edit leaves at
-      zero), so a missing invoice is queued for the settled total and one that
-      went out short is reported as `XERO_AMOUNT_MISMATCH` for a person to
-      correct.
+      earlier figure. That is a recoverable shortfall rather than lost money
+      because it is RECORDED: `enqueueXeroSupplementaryInvoiceOperation` returns
+      `outcome: "short-sent"` when the invoice exists and `"short-in-flight"` when
+      the worker has merely claimed the row, which is the one moment anyone can
+      tell.
+    - **THAT DIFFERENCE IS BILLED, ON A SECOND SEPARATE INVOICE - it is not
+      collected by hand** (#3193, owner decision 31 Aug 2026). Everything is
+      billed through the system, so the accounts and the amount actually owed
+      cannot drift apart and the shortfall cannot be forgotten because nobody
+      worked a list. **No invoice already in a member's hands is altered or
+      voided.**
+
+      **This NARROWS "one booking edit, one ask" above; it does not overturn it,
+      and the two are read together.** While the change's invoice is still in the
+      queue a later share RAISES it and the member is asked once - that is the
+      rule above, unchanged, and it stays the ordinary case. Only once the invoice
+      has been SENT does the difference become its own ask. So a member sees two
+      requests only in the narrow window where the alternative was being billed
+      too little and chased by hand. The cost was
+      accepted knowingly: two requests for one change, and small-value invoices
+      with their own accounting overhead.
+
+      **ONLY A SENT INVOICE BUYS A SECOND ASK, and that is the other half of the
+      safety argument** (#3193 fix round). `short-sent` is durable evidence: an
+      active `SUPPLEMENTARY_INVOICE` link means an invoice exists and what it
+      bills can never change again. `short-in-flight` is NOT evidence of anything
+      - the outbox has claimed the row, nothing has reached Xero, and a claimed
+      row can be returned to PENDING un-attempted, by exactly one route: a
+      process-global Xero cooldown refusal, which the outbox un-claims because
+      nothing was sent. (An operator Requeue - and the repair pass, which calls
+      the same helper - leaves the original FAILED and replays a separate
+      `REQUEUE` row inline; the stale-RUNNING reset writes FAILED. Neither
+      returns this row to PENDING, and the cooldown route alone is enough.) The
+      NEXT
+      settlement then raises that row to the COMBINED total, which already
+      contains any share billed separately in the meantime - and because a second
+      ask is anchored elsewhere by design, the change-anchored restate cannot see
+      it and cannot cap itself. Three shares of $200, $30 and $50 would bill $310
+      for a $280 edit, worse than the shortfall being fixed. So `short-in-flight`
+      raises nothing and takes the recorded-shortfall path instead, and the record
+      tells the officer to compare this booking against Xero rather than to bill.
+      The cost is accepted and stated: a share settled inside that window, whose
+      send then succeeds, is recorded for collection rather than billed - exactly
+      what happened before #3193, never worse.
+
+      **It bills the SHARE, never the total, and that is the whole safety
+      argument.** `short-sent` is only reached after a restate found nothing restatable
+      and nothing already covering, so the settled share is provably absent from
+      the invoice that went out; billing it alone adds exactly what is missing.
+      Billing the combined total would ask for money the member has already been
+      asked for - strictly worse than the defect being fixed. Every share is
+      therefore billed exactly once, by the change's invoice if it was in it and by
+      its own invoice if it was not, and no figure is ever read back off a sent
+      invoice or inferred from one.
+
+      **It is anchored and idempotent like the first, through the SAME locked
+      decision.** `enqueueXeroSecondSupplementaryInvoiceOperation` is a NAMED path
+      over `enqueueXeroSupplementaryInvoiceOperation` rather than a relaxation of
+      its refusal or a second copy of it, so one place still answers "does this ask
+      already have an invoice going out?". The anchor is the `ManualRefundTask`
+      whose share it bills: one invoice per share, whatever order shares settle in,
+      safe to run twice, and invisible to every read that decides whether the
+      booking change already has an invoice going out - which is what stops the
+      change's own restate raising a $30 follow-on to the $230 combined total on
+      top of an invoice already sent. One read is scoped by PAYLOAD rather than by
+      anchor and so could have seen it -
+      `attachPaymentIntentToWaitingSupplementaryInvoiceOperations`, which matches
+      `requestPayload.bookingModificationId`. It also filters
+      `localModel: "BookingModification"`, so that separation is structural rather
+      than a consequence of the wrapper passing
+      `waitForConfirmedAdditionalPayment: false`.
+      Two shares racing after the invoice went out queue two invoices for two
+      different amounts, never two copies of one difference. It attaches to no
+      PaymentIntent and is queued PENDING rather than WAITING_PAYMENT: on the card
+      route `short-sent` requires the change's invoice to have left WAITING_PAYMENT,
+      which only the additional payment confirming can do, so the card was taken at
+      the earlier figure and this share is genuinely unbilled.
+
+      **Both endings are recorded, and they carry opposite instructions.** A raised
+      second ask writes `booking.editFinancialReview.chargeShareReinvoiced` -
+      `payment`, `info`, `success` - because a member about to receive two invoices
+      for one change will ask why and the office has to be able to answer.
+      `booking.editFinancialReview.chargeShareUncollected` now fires only when the
+      second invoice was NOT raised, and its prose says why: `failed` means raise
+      one by hand for the difference only; `withheld` means the change's own
+      invoice had not gone out yet, so check this booking against Xero before
+      billing anything, because raising one now could bill the same money twice;
+      `unavailable` means the difference cannot be worked out automatically, so do
+      NOT raise one and run the booking-vs-Xero repair instead; `nothing-to-bill`
+      means the share is not a positive amount and there is no difference to
+      carry. The recovery replay is the one caller in the `unavailable` position -
+      it holds the edit's combined total and no single share, so the only figure it
+      could invoice is the whole total, which would bill the member twice. Refusing
+      there is the same refusal to guess a historical figure this whole epic is
+      built on. Its instruction also says what to do when the repair pass reports
+      nothing, because that pass cannot yet see a booking whose charge came from a
+      review of this kind (#3187).
+      **#3187's structural finding still matters, and now covers a different
+      case.** The booking-vs-Xero repair tool reads the expected
+      supplementary-invoice total from the settled review shares rather than from
+      the `BookingModification` row, which a parked edit leaves at zero - so a
+      missing invoice is queued for the settled total and one that went out short
+      is reported as `XERO_AMOUNT_MISMATCH` for a person to correct. Before
+      #3193 that was the instrument for the shortfall itself. It is now the
+      instrument for the case #3193 deliberately does NOT bill: a share withheld
+      while the change's invoice was in flight, where nobody can yet say whether
+      it went out.
     - **A durable retry closes the debt only when the ask EXISTS afterwards.** The
       recovery replay re-derives the total through the same sync the inline
       completion uses, and that sync reports which of four things happened
@@ -1443,7 +1537,10 @@ one, check the other.
       with a `leg` of `payment-request` or `xero-invoice` in its metadata and its
       prose)
       naming the shortfall, so an officer can find what has to be collected by
-      hand.
+      hand. Since #3193 the `xero-invoice` leg reaches that row only when the
+      second, separate invoice for the difference could not be raised; when it was
+      raised the trace is `chargeShareReinvoiced` instead, so "no row" never has to
+      be read as "probably fine" and neither row is ever a guess about the other.
   - **The card route is capped before it claims, and keyed to the TASK.** The cap
     is measured off the booking's captured `PaymentTransaction` rows, not off
     `Payment.source` - that column DEFAULTS to `STRIPE`, so routing on it alone

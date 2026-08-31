@@ -417,6 +417,11 @@ export async function syncEditFinancialReviewChargeRequest({
         leg: "payment-request",
         // The ask exists and is paid: closed, not missing (#3181).
         cause: "ask-closed",
+        // #3193: a second Xero invoice is not this leg's remedy. What closed
+        // here is the member's CARD request; the club's books are correct, and
+        // the accounting leg raises its own second ask when its own window is
+        // the one that closed.
+        secondAsk: null,
         bookingId,
         bookingModificationId,
         memberId: member?.id ?? null,

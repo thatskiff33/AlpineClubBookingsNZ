@@ -61,8 +61,47 @@ reason: the operator CLI that replays the pre-#1231 invoice maths was a missed
   cohesive diagnostic - splitting a replay in half is how the halves drift.
 
 file: src/lib/xero-operation-outbox.ts
-lines: 2877
-reason: the fix round's Xero half of "one booking edit, one ask". An edit whose
+lines: 3132
+reason: (#3193 fix round SECOND PASS - re-measured at 3132, was 3094. Two
+  corrections, both to claims this file had already made. The exported enqueue
+  now forwards its options FIELD BY FIELD instead of passing the object on: the
+  first pass narrowed the parameter type and then claimed the misuse was
+  unrepresentable, which it was not, because TypeScript's excess-property check
+  fires only on a fresh object literal - a caller assembling its options into a
+  variable, the ordinary shape as soon as one field is conditional, compiled
+  clean with `shortfallReviewTaskId` still on the object and the private
+  implementation read it, queueing an edit's COMBINED total as a task-anchored
+  invoice on top of the one already sent. And the paragraph enumerating how a
+  RUNNING row returns to PENDING named three routes of which two were wrong: an
+  operator Requeue and the repair pass both leave the original FAILED and replay
+  a separate REQUEUE row, and the stale-RUNNING reset writes FAILED. The cooldown
+  route alone still carries the argument, so the verdict split is unchanged - but
+  this file's own standard is that a list written to be audited is worse
+  incorrect than incomplete, and both corrections belong at the sites that made
+  the claims. Earlier reconciliation, kept: re-measured at 3094, was 2992. The
+  round split the enqueue's `short` verdict into `short-sent` and
+  `short-in-flight`, because one name was carrying two different facts: an
+  invoice that EXISTS, and a row the outbox has merely claimed. Only the first is
+  durable - a claimed row returns to PENDING un-attempted on a Xero cooldown
+  refusal, and the next settlement then raises it to the combined total, which
+  already contains any share billed separately in the meantime. The worked
+  sequence bills $310 for a $280 edit. The distinction has to live on the outcome
+  the enqueue returns, because the enqueue under its lock is the only place that
+  can tell the two apart at all. The same round fenced
+  `attachPaymentIntentToWaitingSupplementaryInvoiceOperations` on
+  `localModel: "BookingModification"` - it matches on the payload rather than the
+  anchor and was the one change-scoped read that could see a second ask - and
+  made `shortfallReviewTaskId` a parameter of a module-private implementation
+  rather than a public option, so "set only by the wrapper" is unrepresentable
+  rather than policed. Also the earlier note, kept: the number, not the argument. This allowance is
+  still unmerged to `main`, so the ratchet judges the file against it rather than
+  against the base ref, and 2877 was the length when #3170 wrote it. #3193 added
+  the SECOND ASK - a named path over this same enqueue that raises a settled
+  review share's own small invoice when the change's invoice had already gone out
+  without it. It is a wrapper rather than a second locked decision precisely so
+  this file keeps exactly one place that answers "does this ask already have an
+  invoice going out?", which is the property #3170 was fixing; a copy elsewhere
+  would be smaller here and worse everywhere. Re-measured, not guessed.) the fix round's Xero half of "one booking edit, one ask". An edit whose
   money could not be valued can raise two review tasks, and the owner's 30 Aug
   2026 decision is that both contribute to a single request for the total - so
   the supplementary invoice has to bill $230 rather than $200 and then $30.

@@ -13,6 +13,7 @@ import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { formatCents } from "@/lib/utils";
 import {
+  enqueueXeroSecondSupplementaryInvoiceOperation,
   restatePendingSupplementaryInvoiceAmount,
   type XeroSupplementaryInvoiceEnqueueOutcome,
 } from "@/lib/xero-operation-outbox";
@@ -182,37 +183,21 @@ export async function sumEditReviewChargeSharesCents({
  *
  * TRUE COVERS TWO CASES, and conflating them was the bug. `restated` is an
  * invoice this call RAISED; `alreadyCovering` is one already asking for at least
- * this much, which happens on an exact replay and when a STALE, smaller total
- * arrives after a larger one. Both mean "do not queue a second invoice", and
- * neither writes anything in the second case, because
- * `restatePendingSupplementaryInvoiceAmount` refuses to lower an ask.
+ * this much - an exact replay, or a stale smaller total arriving after a larger
+ * one. Both mean "do not queue a second invoice", and the second writes nothing,
+ * because that function refuses to lower an ask.
  *
- * WHAT THE ACCOUNTING LEG NOW GUARANTEES, stated exactly rather than as "never
- * two invoices":
- *
- *   * A queued supplementary invoice for one edit is only ever RAISED, never
- *     lowered, whichever order two concurrent settlements land in.
- *   * At most one supplementary invoice is queued per edit. The enqueue decides
- *     that under a per-anchor advisory lock and scoped to the anchor rather than
- *     to the amount, so a second settlement racing this one finds the first
- *     invoice and raises it instead of queueing its own.
- *   * A restate that WRITES is a restate that GOES OUT. The outbox worker used
- *     to read an operation's payload from its scan and claim the row a Xero
- *     round trip later; in that window the row is still PENDING, so a restate
- *     matched, wrote, and reported success while the send used the scanned
- *     figure - and this function's caller returned early believing the combined
- *     total was billed. The worker now re-reads after the claim, so `restated`
- *     means what it says (#3170 fix round, F1).
- *   * NOT guaranteed: that a restate can land AT ALL. Once the worker has
- *     claimed the operation it is RUNNING, and once the invoice has been sent
- *     the anchor carries an active `SUPPLEMENTARY_INVOICE` link; a share settled
- *     after either point meets an ask that has left the building. This function
- *     then reports nothing restated, the caller falls through to the ordinary
- *     enqueue, and the enqueue refuses to queue a second invoice - correctly,
- *     but the invoice bills the earlier figure and the difference has to be
- *     collected by hand. The enqueue says so in its `outcome`, and the
- *     settlement writes the audit row below with leg `xero-invoice`, so the
- *     shortfall is a record an officer can find rather than a silence.
+ * WHAT THE ACCOUNTING LEG GUARANTEES - only raised and never lowered, at most
+ * one invoice per anchor decided under an advisory lock, and a restate that
+ * writes being one that goes out - is stated once, on
+ * `restatePendingSupplementaryInvoiceAmount` and in `INV-PAY-051`, not restated
+ * here. What matters to THIS caller is the one thing NOT guaranteed: that a
+ * restate can land at all. A share settled after the worker claimed the
+ * operation, or after the invoice was sent, meets an ask it cannot join. This
+ * function then reports nothing restated, the caller falls through to the
+ * ordinary enqueue, and `recordShortEditReviewChargeInvoice` below decides what
+ * the enqueue's verdict means - which since #3193 is a second invoice for a sent
+ * ask, and a record to check for an in-flight one.
  *
  * Best-effort: a Xero outage must not undo a completion whose money question is
  * already settled, so a failure is logged and treated as "nothing restated". The
@@ -245,14 +230,13 @@ export async function restateEditReviewChargeSupplementaryInvoice({
 
 /**
  * WHICH ASK a settled share failed to join. There are two, they fail in
- * different windows, and an officer reading the audit log has to be told which
- * one so they know what to do next.
+ * different windows, and an officer reading the audit log has to be told which.
  *
  *   * `payment-request` - the card side. The member's additional PaymentIntent
  *     was already PAID when this share arrived, so the amount could not be added
  *     to it. The member owes the club the difference.
- *   * `xero-invoice` - the accounting side. This edit's supplementary invoice had
- *     already been claimed for sending, or already sent, so it bills the earlier
+ *   * `xero-invoice` - the accounting side. This edit's supplementary invoice
+ *     had been claimed for sending or already sent, so it bills the earlier
  *     figure. On the internet-banking route that invoice IS the ask, so this is
  *     money the club has not asked for; on the card route the card request is
  *     correct and it is the books that are short.
@@ -263,9 +247,8 @@ export type UncollectedEditReviewChargeLeg = "payment-request" | "xero-invoice";
  * WHY the settled share never reached that ask, which is a different question
  * from which ask it was and needs a different sentence (#3181).
  *
- *   * `ask-closed` - an ask EXISTS and could not take this share. The card
- *     request was already paid; the supplementary invoice was already claimed
- *     for sending. The club is short by the difference.
+ *   * `ask-closed` - an ask EXISTS and could not take this share: the card
+ *     request was already paid, or the supplementary invoice already claimed.
  *   * `ask-not-raised` - NO ask was made at all. The recovery replay that owed
  *     this edit a supplementary invoice could not queue one, so the accounts hold
  *     nothing for the charge rather than holding too little.
@@ -281,10 +264,9 @@ export type UncollectedEditReviewChargeLeg = "payment-request" | "xero-invoice";
  *     booking against Xero and can answer the question this record cannot.
  *
  * Four of the six combinations are produced today: the card leg only ever closes
- * (its ask is the intent, which exists by the time this can happen), and the
- * accounting leg produces all three. The rest are not refused, because a
- * leg/cause pair is a description of what happened rather than a claim about
- * what can.
+ * (its ask is the intent, which exists by then) and the accounting leg produces
+ * all three. The rest are not refused, because a leg/cause pair describes what
+ * happened rather than claiming what can.
  */
 export type UncollectedEditReviewChargeCause =
   | "ask-closed"
@@ -292,53 +274,261 @@ export type UncollectedEditReviewChargeCause =
   | "ask-owed-unknown";
 
 /**
- * The accounting leg's half of that record, decided from the enqueue's own
- * verdict (#3170 fix round, F2).
+ * WHAT HAPPENED TO THE DIFFERENCE a settled share could not add to this edit's
+ * Xero invoice (#3193).
  *
- * `short` is the enqueue saying it found an invoice for this edit and could NOT
- * raise it: the outbox has claimed the operation, or it has already been sent.
- * Refusing to queue a second invoice behind it is right - two invoices for one
- * edit is the failure this round removed - but the invoice then bills the earlier
- * figure and the club collects the difference by hand, so the difference has to
- * be findable.
+ *   * `raised` - it is being billed, on a second small invoice of its own.
+ *   * `failed` - a second invoice was owed and could not be queued. Somebody has
+ *     to bill it by hand.
+ *   * `withheld` - a second invoice was DELIBERATELY not raised, because the
+ *     change's own invoice had not gone out yet and can still be raised to
+ *     cover this share (#3193 fix round; the mechanism is on
+ *     `XeroSupplementaryInvoiceEnqueueOutcome`). Which way it went is not
+ *     knowable here, so the record says what to check rather than what to do.
+ *   * `unavailable` - the caller holds no single settled share to bill, so
+ *     raising anything would mean inventing a figure. The recovery replay is the
+ *     one caller in that position: it holds the edit's COMBINED total and cannot
+ *     say which part the sent invoice already carries. Named rather than folded
+ *     into `failed`, because only one of the two can be retried.
+ *   * `nothing-to-bill` - the share is not a positive amount, so there is no
+ *     difference to carry. Separate from `unavailable`, whose sentence sends an
+ *     officer to work a difference out.
+ */
+export type EditReviewSecondAskOutcome =
+  | "raised"
+  | "failed"
+  | "withheld"
+  | "unavailable"
+  | "nothing-to-bill";
+
+/**
+ * The accounting leg's half of that record, decided from the enqueue's own
+ * verdict (#3170 fix round, F2) - and, since #3193, the place the difference is
+ * BILLED rather than merely recorded.
+ * Both short outcomes are the enqueue saying it found an ask for this edit and
+ * could NOT raise it - correctly, because the figure is already with the member
+ * or on its way. Until #3193 the difference was then billed nowhere; the owner's
+ * 31 Aug 2026 decision is that it becomes its own ask, a second and separate
+ * supplementary invoice for THIS SHARE alone.
+ *
+ * ONLY `short-sent` BUYS THAT SECOND INVOICE (#3193 fix round). A sent invoice
+ * is fixed forever, so adding this share beside it adds exactly what is missing.
+ * `short-in-flight` is a row the outbox has merely CLAIMED: nothing has reached
+ * Xero, it can come back un-attempted, and the next settlement would then raise
+ * it to the combined total - which already contains this share. That refusal
+ * therefore takes the recorded-shortfall path instead. The mechanism, and the
+ * worked $310-for-$280 sequence, are on
+ * `XeroSupplementaryInvoiceEnqueueOutcome`; they are not restated here.
+ *
+ * THE SHARE, NOT THE TOTAL, is the rest of the safety argument. `short-sent`
+ * follows a restate that found nothing restatable and nothing already covering,
+ * so this share is provably absent from the invoice that went out. Billing the
+ * total would ask for money the member has already been asked for - strictly
+ * worse than the defect being fixed. `shareCents` is null on the caller holding
+ * only a combined total, and that caller raises nothing.
  *
  * It lives HERE rather than at the dispatch site because the question and its
- * answer are one idea: `covers-total` and `none` are silence, `short` is a
- * record, and a caller re-deriving that mapping is how the two legs come to
- * disagree about what counts as a shortfall.
+ * answer are one idea: `covers-total` and `none` are silence, either shortfall is
+ * a record and one of them is also an ask, and a caller re-deriving that mapping
+ * is how the two legs come to disagree about what counts as a shortfall.
  *
- * Returns whether a record was written, so a test can tell "no shortfall" from
- * "never asked".
+ * Returns whether this share needed anything doing about it, so a test can tell
+ * "no shortfall" from "never asked".
  */
 export async function recordShortEditReviewChargeInvoice({
   outcome,
   bookingId,
   bookingModificationId,
+  reviewTaskId,
   memberId,
   totalCents,
+  shareCents,
+  createdByMemberId,
 }: {
   outcome: XeroSupplementaryInvoiceEnqueueOutcome;
   bookingId: string;
   bookingModificationId: string;
+  /**
+   * The review task whose settled share this is, which becomes the second ask's
+   * anchor. Null on the recovery replay, which holds a combined total and no
+   * single share.
+   */
+  reviewTaskId: string | null;
   memberId: string | null;
   totalCents: number;
+  /**
+   * THIS TASK'S OWN SETTLED SHARE - the amount the second invoice bills, and the
+   * only amount it may bill. Null with `reviewTaskId`, and the two are checked
+   * together so a caller cannot supply an anchor without a figure or a figure
+   * without an anchor.
+   */
+  shareCents: number | null;
+  createdByMemberId?: string;
 }): Promise<boolean> {
-  if (outcome !== "short") return false;
+  if (outcome !== "short-sent" && outcome !== "short-in-flight") return false;
+
+  // #3193 fix round: an in-flight ask is not evidence that this share went
+  // unbilled, so it buys no second invoice. Docblock above.
+  const secondAsk: EditReviewSecondAskOutcome =
+    outcome === "short-in-flight"
+      ? "withheld"
+      : await raiseSecondEditReviewChargeInvoice({
+          bookingId,
+          bookingModificationId,
+          reviewTaskId,
+          shareCents,
+          createdByMemberId,
+        });
+
+  if (secondAsk === "raised" && shareCents !== null) {
+    await recordSecondEditReviewChargeInvoice({
+      bookingId,
+      bookingModificationId,
+      memberId,
+      derivedTotalCents: totalCents,
+      shareCents,
+    });
+    return true;
+  }
+
   await recordUncollectedEditReviewChargeShare({
     leg: "xero-invoice",
-    // `short` is by definition an ask that exists and could not be raised.
+    // Both short outcomes are an ask that exists and could not be raised. Which
+    // one travels in `secondAsk`, because that is what changes the officer's
+    // next move rather than the shape of the fact.
     cause: "ask-closed",
+    secondAsk,
     bookingId,
     bookingModificationId,
     memberId,
     derivedTotalCents: totalCents,
-    // Unknowable by design: the outbox handler overwrites the operation's
-    // payload with the Xero invoice body when it sends, so the figure the invoice
-    // actually bills is no longer on the row. The record says "short of this
-    // total" rather than inventing the difference.
+    // Unknowable by design - the handler replaces this ask's payload with the
+    // Xero invoice body when it sends - so the record says "short of this total"
+    // rather than inventing the difference.
     requestedTotalCents: null,
   });
   return true;
+}
+
+/**
+ * Queue the second ask, or say why it could not be queued (#3193).
+ *
+ * Best-effort like everything else on this leg: the settlement's money question
+ * is already answered and committed, so a Xero outage must leave a RECORD rather
+ * than undo the completion. A failure falls through to the uncollected-share
+ * audit row, which is the officer's instrument.
+ *
+ * It asks the outbox no question of its own: whether this share already has an
+ * invoice going out is decided inside
+ * `enqueueXeroSecondSupplementaryInvoiceOperation`'s advisory-locked
+ * transaction, scoped to the task anchor. A caller-side copy of that question is
+ * how two answers came to disagree in #3170.
+ *
+ * EVERY non-`none` outcome means the share is billed, which reads oddly until
+ * the anchor is held in mind: on a TASK anchor a shortfall says "this share's
+ * own invoice has already gone out", not "this share is short" - there is
+ * nothing behind it to fall short of. Only `none` means no invoice exists.
+ */
+async function raiseSecondEditReviewChargeInvoice({
+  bookingId,
+  bookingModificationId,
+  reviewTaskId,
+  shareCents,
+  createdByMemberId,
+}: {
+  bookingId: string;
+  bookingModificationId: string;
+  reviewTaskId: string | null;
+  shareCents: number | null;
+  createdByMemberId?: string;
+}): Promise<EditReviewSecondAskOutcome> {
+  // Both or neither. A share with no anchor could not be made idempotent and an
+  // anchor with no share has nothing to bill, so neither half alone gets here.
+  if (reviewTaskId === null || shareCents === null) return "unavailable";
+  // A DIFFERENT ANSWER, deliberately: `unavailable` sends an officer to work
+  // out a difference, and here there is none. Sharing the value handed an inline
+  // caller the recovery replay's instruction for a figure nobody needs.
+  if (shareCents <= 0) return "nothing-to-bill";
+
+  try {
+    const queued = await enqueueXeroSecondSupplementaryInvoiceOperation(
+      {
+        bookingId,
+        bookingModificationId,
+        reviewTaskId,
+        shareCents,
+      },
+      { createdByMemberId },
+    );
+    return queued.outcome === "none" ? "failed" : "raised";
+  } catch (err) {
+    logger.error(
+      { err, bookingId, bookingModificationId, reviewTaskId },
+      "Failed to queue the second Xero supplementary invoice for a settled edit-financial-review share",
+    );
+    return "failed";
+  }
+}
+
+/**
+ * The durable record that the difference IS being billed (#3193).
+ *
+ * A member receiving two invoices for one booking change will ask why, and the
+ * booking's history is where an officer looks to answer them. It is also the
+ * counterpart to `recordUncollectedEditReviewChargeShare` below: between them,
+ * every settled share that could not join this edit's invoice leaves a trace
+ * saying which happened, so "no record" is never read as "probably fine".
+ *
+ * `info` and `success`, not `important`/`failure`: nothing is owed outside the
+ * system and nobody has to act. Best-effort and never rethrown, for the same
+ * reason as its counterpart - the invoice is already queued, and an audit insert
+ * failing must not undo a completion whose money question is settled.
+ */
+async function recordSecondEditReviewChargeInvoice({
+  bookingId,
+  bookingModificationId,
+  memberId,
+  derivedTotalCents,
+  shareCents,
+}: {
+  bookingId: string;
+  bookingModificationId: string;
+  memberId: string | null;
+  derivedTotalCents: number;
+  shareCents: number;
+}) {
+  logger.info(
+    { bookingId, bookingModificationId, derivedTotalCents, shareCents },
+    "Raised a second Xero supplementary invoice for an edit-financial-review share the change's invoice had already gone out without",
+  );
+  try {
+    await createAuditLog({
+      action: "booking.editFinancialReview.chargeShareReinvoiced",
+      subjectMemberId: memberId,
+      targetId: bookingId,
+      entityType: "Booking",
+      entityId: bookingId,
+      category: "payment",
+      severity: "info",
+      outcome: "success",
+      summary: `A second Xero invoice for ${formatCents(shareCents)} was raised for this booking change`,
+      // Written when the second invoice is QUEUED, not when it is sent, so it
+      // must not promise that it went out (#3193 fix round). A Xero rejection
+      // now leaves a findable, retryable row against this booking review.
+      details: `An admin settled a booking-change review as money the member owes the club, and the reviews for that change now total ${formatCents(derivedTotalCents)}. The Xero invoice for the change had already been sent, so it could not be raised to include this ${formatCents(shareCents)}. A second, separate invoice for that amount alone has been raised instead - the first invoice is unchanged and still stands. The member will receive two invoices for this one change, and the second one says why. Nothing needs collecting by hand, unless that second invoice fails to reach Xero: it is queued rather than sent, and a failure shows up in the Xero operations screen against this booking review, where it can be retried.`,
+      metadata: {
+        leg: "xero-invoice",
+        bookingModificationId,
+        derivedTotalCents,
+        shareCents,
+      },
+    });
+  } catch (err) {
+    logger.error(
+      { err, bookingId, bookingModificationId },
+      "Failed to record the audit trace for a second edit-financial-review supplementary invoice",
+    );
+  }
 }
 
 /**
@@ -367,6 +557,7 @@ export async function recordShortEditReviewChargeInvoice({
 export async function recordUncollectedEditReviewChargeShare({
   leg,
   cause,
+  secondAsk,
   bookingId,
   bookingModificationId,
   memberId,
@@ -381,19 +572,27 @@ export async function recordUncollectedEditReviewChargeShare({
    * that an invoice they do not have bills too little.
    */
   cause: UncollectedEditReviewChargeCause;
+  /**
+   * #3193: what happened to the second ask, when this record is about the
+   * accounting leg's closed ask. Required rather than defaulted, and on BOTH
+   * legs, for the reason `cause` is - the officer instruction turns on it, and a
+   * default would hand them whichever sentence was written first. The values and
+   * what each one tells an officer to do are on `EditReviewSecondAskOutcome`.
+   * `null` on the card leg, where a second Xero invoice is not the remedy: the
+   * member's card request is the ask that closed, and the books are correct.
+   */
+  secondAsk: EditReviewSecondAskOutcome | null;
   bookingId: string;
   bookingModificationId: string;
   memberId: string | null;
   derivedTotalCents: number;
   /**
-   * What the ask actually holds, when that is knowable.
-   *
-   * The card leg reads it straight off the `ADDITIONAL` ledger row. The
-   * accounting leg CANNOT: `createXeroSupplementaryInvoice` overwrites the
-   * operation's `requestPayload` with the Xero invoice body at dispatch, so once
-   * the row has been claimed the amount it was queued with is gone. Null says
-   * "short by an amount this record cannot state" rather than inventing one -
-   * the same refusal to guess a figure the whole epic is built on.
+   * What the ask actually holds, when that is knowable. The card leg reads it
+   * off the `ADDITIONAL` ledger row; the accounting leg CANNOT, because
+   * `createXeroSupplementaryInvoice` replaces THIS ask's `requestPayload` with
+   * the Xero invoice body at dispatch, so once the row is claimed the queued
+   * amount is gone. (A second ask keeps its own; a different row, not this one.) Null says "short by an amount this record cannot
+   * state" rather than inventing one.
    */
   requestedTotalCents: number | null;
 }) {
@@ -404,10 +603,27 @@ export async function recordUncollectedEditReviewChargeShare({
   const invoiceNeverRaised = leg === "xero-invoice" && cause === "ask-not-raised";
   const invoiceOwedUnknown =
     leg === "xero-invoice" && cause === "ask-owed-unknown";
+  // #3193: the closed-ask case has several endings needing different
+  // instructions. `unavailable` is the recovery replay, holding a combined total
+  // and unable to say which part the sent invoice carries. `withheld` (fix
+  // round) is the invoice that had not actually gone out yet, where billing
+  // separately could bill the same money twice.
+  const secondAskWithheld = secondAsk === "withheld";
+  const secondAskSentence =
+    leg !== "xero-invoice" || cause !== "ask-closed"
+      ? ""
+      : secondAsk === "unavailable"
+        ? " A second invoice for the difference was NOT raised: the difference cannot be worked out automatically. What the sent invoice bills is in Xero rather than in this record, so the two have to be compared by a person. Do not raise one for the full total - the member has already been invoiced for most of it. Run the booking-vs-Xero repair for this booking, which compares the booking against Xero, and record what was done. If that report shows nothing, compare this booking against Xero by hand: it cannot yet see a booking whose charge came from a review of this kind."
+        : secondAskWithheld
+          ? " No second invoice was raised, and that is deliberate rather than a failure. The invoice for this change had been picked up for sending but had not gone out, and an invoice in that state can still come back to the queue and be raised to the full amount by the next settlement - so raising a separate one now risks billing this amount twice. Check the Xero invoices for this booking against the total above: if they already come to that total, nothing is owed. If they fall short, bill the difference by hand and record what was done."
+          : secondAsk === "nothing-to-bill"
+            ? " No second invoice was raised because this share is not a positive amount, so there is no difference for one to carry."
+            : " A second invoice for the difference should have been raised automatically and could not be. Raise one by hand for the difference only, and record what was done.";
   logger.warn(
     {
       leg,
       cause,
+      secondAsk,
       bookingId,
       bookingModificationId,
       derivedTotalCents,
@@ -419,7 +635,9 @@ export async function recordUncollectedEditReviewChargeShare({
         ? "Edit-financial-review charge carries no record of whether a supplementary Xero invoice was owed - none was raised, and only the booking-vs-Xero repair pass can say whether one is missing"
         : invoiceNeverRaised
           ? "Edit-financial-review supplementary invoice could not be queued at all - the whole settled total must be billed by hand"
-          : "Edit-financial-review supplementary invoice had already left the queue before its combined total could be raised - the difference must be billed by hand",
+          : secondAskWithheld
+            ? "Edit-financial-review supplementary invoice was being sent when a further share settled, so no second invoice was raised for it - whether the sent invoice covers the settled total has to be checked against Xero"
+            : "Edit-financial-review supplementary invoice had already left the queue before its combined total could be raised - the difference must be billed by hand",
   );
   try {
     await createAuditLog({
@@ -438,7 +656,9 @@ export async function recordUncollectedEditReviewChargeShare({
             ? `Whether a Xero invoice was owed for this booking change's settled total of ${formatCents(derivedTotalCents)} is not recorded`
             : invoiceNeverRaised
               ? `No Xero invoice was raised for this booking change's settled total of ${formatCents(derivedTotalCents)}`
-              : `This booking change's Xero invoice could not be raised to the settled total of ${formatCents(derivedTotalCents)}`,
+              : secondAskWithheld
+                ? `This booking change's Xero invoice was being sent and could not be raised to the settled total of ${formatCents(derivedTotalCents)}`
+                : `This booking change's Xero invoice could not be raised to the settled total of ${formatCents(derivedTotalCents)}`,
       details:
         leg === "payment-request"
           ? `An admin settled a booking-change review as money the member owes the club, but the request for that change had already been paid, so ${formatCents(shortfallCents ?? derivedTotalCents)} was not added to it. The reviews settled to ${formatCents(derivedTotalCents)} in total and the member was asked for ${formatCents(requestedTotalCents ?? 0)}. Collect the difference another way and record what was collected.`
@@ -446,10 +666,13 @@ export async function recordUncollectedEditReviewChargeShare({
             ? `An admin settled a booking-change review as money the member owes the club, and the reviews for that change now total ${formatCents(derivedTotalCents)}. The member has been asked for it. Whether a Xero supplementary invoice was owed for the charge was never recorded, so none was raised - and one may not have been needed: if the booking's main Xero invoice had not yet been sent when the change was made, that invoice bills this charge itself, and adding a supplementary invoice on top would bill the member twice. Do not raise one by hand on the strength of this note. Run the booking-vs-Xero repair for this booking, which compares the booking against Xero and will say whether an invoice is actually missing, and record what was done.`
             : invoiceNeverRaised
               ? `An admin settled a booking-change review as money the member owes the club, and the reviews for that change now total ${formatCents(derivedTotalCents)}. The member has been asked for it, but no Xero supplementary invoice could be raised for the charge at all - so the club's accounts hold no record of it, rather than an out-of-date one. Raise the invoice by hand, or run the booking-vs-Xero repair for this booking, and record what was done.`
-              : `An admin settled a booking-change review as money the member owes the club, and the reviews for that change now total ${formatCents(derivedTotalCents)}. The Xero supplementary invoice for the change had already been picked up for sending, so it bills the earlier, smaller figure and could not be raised. If the member is paying by internet banking that invoice is the ask, so this is money the club has not asked for; if they are paying by card the card request is correct and it is the Xero invoice that is short. Check the invoice, bill or correct the difference by hand, and record what was done.`,
+              : secondAskWithheld
+                ? `An admin settled a booking-change review as money the member owes the club, and the reviews for that change now total ${formatCents(derivedTotalCents)}. The Xero supplementary invoice for the change had just been picked up for sending, so it could not be raised to include this. It may have gone out at the earlier, smaller figure, or it may have come back to the queue and been raised since - this record cannot tell which. If the member is paying by internet banking that invoice is the ask, so any shortfall is money the club has not asked for; if they are paying by card the card request is correct and it is the Xero invoice that would be short.${secondAskSentence}`
+                : `An admin settled a booking-change review as money the member owes the club, and the reviews for that change now total ${formatCents(derivedTotalCents)}. The Xero supplementary invoice for the change had already been sent, so it bills the earlier, smaller figure and could not be raised. If the member is paying by internet banking that invoice is the ask, so this is money the club has not asked for; if they are paying by card the card request is correct and it is the Xero invoice that is short.${secondAskSentence}`,
       metadata: {
         leg,
         cause,
+        secondAsk,
         bookingModificationId,
         derivedTotalCents,
         requestedTotalCents,

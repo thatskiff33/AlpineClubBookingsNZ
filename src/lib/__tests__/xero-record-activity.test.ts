@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   findUniquePayment: vi.fn(),
   findUniqueBooking: vi.fn(),
   findUniqueBookingModification: vi.fn(),
+  findUniqueManualRefundTask: vi.fn(),
   findUniqueSubscription: vi.fn(),
   findManyOperations: vi.fn(),
   countOperations: vi.fn(),
@@ -28,6 +29,9 @@ vi.mock("@/lib/prisma", () => ({
     },
     bookingModification: {
       findUnique: mocks.findUniqueBookingModification,
+    },
+    manualRefundTask: {
+      findUnique: mocks.findUniqueManualRefundTask,
     },
     memberSubscription: {
       findUnique: mocks.findUniqueSubscription,
@@ -207,6 +211,56 @@ describe("getXeroRecordActivity", () => {
       },
       orderBy: { createdAt: "desc" },
       take: 25,
+    });
+  });
+
+  /**
+   * #3193 fix round: THE SECOND ASK HAS A PAGE.
+   *
+   * A second supplementary invoice is anchored on the review task whose settled
+   * share it bills, so the booking change's own reads cannot find it and raise it
+   * to the combined total. `ManualRefundTask` was not a Xero local model, so this
+   * returned null: the record page 404'd and the operations panel rendered the
+   * row as untitled plain text. A second ask that Xero rejected was then
+   * findable only by somebody with no reason to look, while the booking's audit
+   * trail already said the amount was being billed.
+   */
+  it("builds review-task scope activity for a second supplementary invoice", async () => {
+    mocks.findUniqueManualRefundTask.mockResolvedValue({
+      id: "task_2",
+      status: "COMPLETED",
+      amountCents: 3000,
+      booking: {
+        id: "book_1",
+        checkIn: new Date("2026-05-01T00:00:00.000Z"),
+        checkOut: new Date("2026-05-03T00:00:00.000Z"),
+        payment: { id: "pay_1", amountCents: 12345 },
+      },
+    });
+    mocks.findManyOperations.mockResolvedValue([]);
+
+    const result = await getXeroRecordActivity("ManualRefundTask", "task_2", 10);
+
+    expect(result).not.toBeNull();
+    // The SCOPE is the task alone, so the page shows this ask's own operations
+    // and links rather than the whole booking's.
+    expect(result?.scopeRecords).toEqual([
+      expect.objectContaining({ localModel: "ManualRefundTask", localId: "task_2" }),
+    ]);
+    expect(result?.relatedRecords).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ localModel: "Booking", localId: "book_1" }),
+        expect.objectContaining({ localModel: "Payment", localId: "pay_1" }),
+      ])
+    );
+    expect(result?.rootRecord.label).toContain("$30.00");
+    // And the row is OPENABLE. A `localModel` the admin link builder does not
+    // know renders as plain text with no page behind it, which is how a failed
+    // second ask stayed invisible.
+    expect(result?.rootRecord.url).toBe("/admin/xero/records/ManualRefundTask/task_2");
+    expect(result?.backLink).toEqual({
+      href: "/admin/xero/records/Booking/book_1",
+      label: "Booking Activity",
     });
   });
 

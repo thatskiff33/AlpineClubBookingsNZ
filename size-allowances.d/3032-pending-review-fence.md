@@ -23,8 +23,13 @@ than ridden in on a money-correctness fix. Each was over budget independently of
 this change and stays over it by the same margin plus its one call.
 
 file: src/lib/payment-recovery.ts
-lines: 2471
-reason: one more durable-recovery pair - enqueue and happy-path close - for the
+lines: 2498
+reason: (#3193 reconciliation - the number, not the argument. This allowance is
+  still unmerged to `main`, so the ratchet judges the file against it rather than
+  against the base ref, and 2471 was the length when #3032 wrote it. The epic has
+  moved the file since; #3193 added the paragraph on the review fork's REFUSAL to
+  raise a second supplementary invoice, which it cannot do without inventing a
+  figure. Re-measured, not guessed.) one more durable-recovery pair - enqueue and happy-path close - for the
   completed edit-financial-review refund, in the file where all nine of its
   siblings live. The alternative was reusing the modification-scoped pair, and
   that is the defect this change fixes: two review tasks can share one

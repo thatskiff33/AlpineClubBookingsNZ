@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Prisma } from "@prisma/client";
 
 const mocks = vi.hoisted(() => ({
+  createAuditLog: vi.fn(),
   findFirstLink: vi.fn(),
   findUniqueBooking: vi.fn(),
   findUniqueMember: vi.fn(),
@@ -45,6 +46,18 @@ const mocks = vi.hoisted(() => ({
   syncXeroMembershipCancellationContact: vi.fn(),
   isXeroConnected: vi.fn().mockResolvedValue(false),
   executeRaw: vi.fn(),
+}));
+
+/**
+ * #3193 fix round: the double-bill regression below drives the REAL
+ * `recordShortEditReviewChargeInvoice` - the function that decides whether a
+ * refused ask buys a second invoice - because a test that re-states that rule
+ * locally would pass against the bug it exists to catch. That module writes
+ * audit rows, and nothing else in this file touches `@/lib/audit`, so the double
+ * is inert for every other test here.
+ */
+vi.mock("@/lib/audit", () => ({
+  createAuditLog: mocks.createAuditLog,
 }));
 
 // #3170 fix round: `enqueueXeroSupplementaryInvoiceOperation` now decides
@@ -97,6 +110,12 @@ vi.mock("@/lib/logger", () => ({
   },
 }));
 
+// #3193: the ONE mint of a supplementary invoice's key now has its own module,
+// because the outbox imports the invoice module and neither could host it
+// without a cycle. Left UNMOCKED and importing the stubbed
+// `buildXeroIdempotencyKey` above, so the assertions below read the real key
+// shape - three of them are about that shape, that a second ask can never
+// collide with the invoice it follows.
 vi.mock("@/lib/xero-sync", () => ({
   buildXeroIdempotencyKey: (...parts: Array<string | number | boolean | null | undefined>) =>
     parts
@@ -181,7 +200,9 @@ vi.mock("@/lib/membership-cancellation-xero", () => ({
 }));
 
 import {
+  attachPaymentIntentToWaitingSupplementaryInvoiceOperations,
   enqueueXeroAccountCreditNoteOperation,
+  enqueueXeroSecondSupplementaryInvoiceOperation,
   enqueueXeroBookingInvoiceOperation,
   enqueueXeroBookingInvoiceUpdateOperation,
   enqueueXeroCreditNoteAllocationOperation,
@@ -493,6 +514,10 @@ describe("enqueueXeroSupplementaryInvoiceOperation", () => {
           recordPayment: true,
           paymentIntentId: null,
           waitForConfirmedAdditionalPayment: false,
+          // #3193: null on the ordinary path - this row IS the booking change's
+          // supplementary invoice, not a follow-on for a share it went out
+          // without.
+          shortfallReviewTaskId: null,
         },
       })
     );
@@ -1709,8 +1734,61 @@ describe("processQueuedXeroOutboxOperations", () => {
       changeFeeCents: 500,
       bookingModificationId: "mod_1",
       recordPayment: true,
+      // #3193: undefined on the ordinary path. The handler branches on it, so
+      // "absent" has to reach it as absent.
+      shortfallReviewTaskId: undefined,
       createdByMemberId: "admin_1",
       syncOperationId: "op_supplementary_1",
+    });
+  });
+
+  /**
+   * #3193: a SECOND ASK row reaches the handler with its anchor intact.
+   *
+   * Two ways this fails and both are silent. Dropping the marker sends the
+   * handler down the ordinary path, which writes the invoice's link onto the
+   * booking change and keys the create the way the change's own invoice is keyed
+   * - so Xero answers with the invoice already sent and the difference is never
+   * billed. And the row is anchored on `ManualRefundTask`, so the claim guard
+   * has to accept that model or the operation is skipped on every pass forever.
+   */
+  it("claims and processes a second-ask supplementary invoice (#3193)", async () => {
+    mocks.findManyOperations.mockResolvedValue([
+      {
+        id: "op_second_ask_1",
+        localId: "task_2",
+        localModel: "ManualRefundTask",
+        createdByMemberId: "admin_1",
+        requestPayload: {
+          queueType: "SUPPLEMENTARY_INVOICE",
+          bookingId: "booking_1",
+          priceDiffCents: 3000,
+          changeFeeCents: 0,
+          bookingModificationId: "mod_1",
+          recordPayment: false,
+          shortfallReviewTaskId: "task_2",
+        },
+      },
+    ]);
+    mocks.createXeroSupplementaryInvoice.mockResolvedValue("inv_second");
+
+    await expect(processQueuedXeroOutboxOperations({ limit: 5 })).resolves.toEqual({
+      found: 1,
+      processed: 1,
+      succeeded: 1,
+      failed: 0,
+      skipped: 0,
+    });
+
+    expect(mocks.createXeroSupplementaryInvoice).toHaveBeenCalledWith({
+      bookingId: "booking_1",
+      priceDiffCents: 3000,
+      changeFeeCents: 0,
+      bookingModificationId: "mod_1",
+      recordPayment: false,
+      shortfallReviewTaskId: "task_2",
+      createdByMemberId: "admin_1",
+      syncOperationId: "op_second_ask_1",
     });
   });
 
@@ -2816,6 +2894,650 @@ describe("enqueueXeroSupplementaryInvoiceOperation: one invoice per anchor (#317
 });
 
 /**
+ * #3193 (epic #2797): THE SECOND ASK - a settled review share's OWN invoice,
+ * raised because the booking change's invoice had already gone out without it.
+ *
+ * The owner's 31 Aug 2026 decision bills the difference through the system
+ * rather than leaving it to be collected by hand. It NARROWS #3170's "one
+ * booking edit, one ask" rather than overturning it: while the change's invoice
+ * is still in the queue a later share RAISES it and the member is asked once,
+ * which the block above pins and which these tests must not disturb.
+ *
+ * A STATEFUL ROW STORE, deliberately, not a per-call `mockResolvedValue`. Every
+ * property here is about what the enqueue's OWN link-check and queued-check
+ * decide when the rows they read are the rows earlier calls wrote - and a double
+ * that answers each read from a script cannot fail the way the real thing can.
+ * The store below filters on exactly the columns Prisma would, and nothing in it
+ * knows anything about second asks.
+ */
+describe("enqueueXeroSecondSupplementaryInvoiceOperation: the second ask (#3193)", () => {
+  type StoredOperation = {
+    id: string;
+    localModel: string;
+    localId: string;
+    status: string;
+    queueType: string;
+    correlationKey: string;
+    requestPayload: Record<string, unknown>;
+  };
+  type StoredLink = { localModel: string; localId: string; role: string; active: boolean };
+
+  let operations: StoredOperation[];
+  let links: StoredLink[];
+  let nextOperationId: number;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    operations = [];
+    links = [];
+    nextOperationId = 1;
+
+    mocks.findUniqueBooking.mockResolvedValue({
+      id: "booking_1",
+      payment: { xeroInvoiceId: "inv_existing" },
+    });
+    mocks.executeRaw.mockResolvedValue(1);
+
+    mocks.findFirstLink.mockImplementation(
+      async ({ where }: { where: Record<string, unknown> }) =>
+        links.find(
+          (link) =>
+            link.localModel === where.localModel &&
+            link.localId === where.localId &&
+            link.role === where.role &&
+            link.active === where.active,
+        ) ?? null,
+    );
+
+    const matchOperations = (where: Record<string, unknown>) => {
+      const status = where.status as { in?: string[] } | undefined;
+      const payloadFilter = where.requestPayload as
+        | { path?: string[]; equals?: unknown }
+        | undefined;
+      return operations.filter((operation) => {
+        if (where.localModel && operation.localModel !== where.localModel) return false;
+        if (where.localId && operation.localId !== where.localId) return false;
+        if (where.queueType && operation.queueType !== where.queueType) return false;
+        if (status?.in && !status.in.includes(operation.status)) return false;
+        if (
+          payloadFilter?.path?.[0] === "queueType" &&
+          operation.requestPayload.queueType !== payloadFilter.equals
+        ) {
+          return false;
+        }
+        // #3193 fix round: the attach read below filters on THIS payload path
+        // rather than on the anchor, which is why it is the one change-scoped
+        // read that could ever see a second ask.
+        if (
+          payloadFilter?.path?.[0] === "bookingModificationId" &&
+          operation.requestPayload.bookingModificationId !== payloadFilter.equals
+        ) {
+          return false;
+        }
+        if (where.status && typeof where.status === "string" && operation.status !== where.status) {
+          return false;
+        }
+        return true;
+      });
+    };
+
+    mocks.findFirstOperation.mockImplementation(
+      async ({ where }: { where: Record<string, unknown> }) =>
+        matchOperations(where)[0] ?? null,
+    );
+    mocks.findManyOperations.mockImplementation(
+      async ({ where }: { where: Record<string, unknown> }) => matchOperations(where),
+    );
+    mocks.updateManyOperation.mockImplementation(
+      async ({
+        where,
+        data,
+      }: {
+        where: Record<string, unknown>;
+        data: Record<string, unknown>;
+      }) => {
+        const status = where.status as { in?: string[] } | undefined;
+        const target = operations.find(
+          (operation) =>
+            operation.id === where.id &&
+            (!status?.in || status.in.includes(operation.status)),
+        );
+        if (!target) return { count: 0 };
+        if (data.requestPayload) {
+          target.requestPayload = data.requestPayload as Record<string, unknown>;
+        }
+        if (typeof data.correlationKey === "string") {
+          target.correlationKey = data.correlationKey;
+        }
+        return { count: 1 };
+      },
+    );
+    mocks.startXeroSyncOperation.mockImplementation(
+      async (input: {
+        localModel: string;
+        localId: string;
+        status: string;
+        correlationKey: string;
+        requestPayload: Record<string, unknown>;
+      }) => {
+        const created: StoredOperation = {
+          id: `op_${nextOperationId++}`,
+          localModel: input.localModel,
+          localId: input.localId,
+          status: input.status,
+          queueType: input.requestPayload.queueType as string,
+          correlationKey: input.correlationKey,
+          requestPayload: input.requestPayload,
+        };
+        operations.push(created);
+        return { id: created.id };
+      },
+    );
+  });
+
+  /** The change's own invoice, already sent: an active link on the anchor. */
+  function theChangesInvoiceHasGoneOut() {
+    links.push({
+      localModel: "BookingModification",
+      localId: "mod_1",
+      role: "SUPPLEMENTARY_INVOICE",
+      active: true,
+    });
+  }
+
+  const secondAsk = (shareCents: number, reviewTaskId = "task_2") =>
+    enqueueXeroSecondSupplementaryInvoiceOperation({
+      bookingId: "booking_1",
+      bookingModificationId: "mod_1",
+      reviewTaskId,
+      shareCents,
+    });
+
+  it("queues one invoice anchored on the review task, for the share alone", async () => {
+    theChangesInvoiceHasGoneOut();
+
+    await expect(secondAsk(3000)).resolves.toMatchObject({
+      outcome: "covers-total",
+    });
+
+    expect(operations).toHaveLength(1);
+    const [queued] = operations;
+    // The ANCHOR is what makes this safe. On the change's own anchor this row
+    // would be found by the change's restate and raised to the combined total,
+    // on top of an invoice already sent.
+    expect(queued.localModel).toBe("ManualRefundTask");
+    expect(queued.localId).toBe("task_2");
+    expect(queued.requestPayload).toMatchObject({
+      bookingId: "booking_1",
+      bookingModificationId: "mod_1",
+      shortfallReviewTaskId: "task_2",
+      // THE SHARE, NEVER THE TOTAL.
+      priceDiffCents: 3000,
+      changeFeeCents: 0,
+      // Unpaid and sent now: on the card route the card was taken at the
+      // earlier figure, so there is no payment to wait for or to record.
+      recordPayment: false,
+      waitForConfirmedAdditionalPayment: false,
+      paymentIntentId: null,
+    });
+    // PENDING, never WAITING_PAYMENT, and that is the property to hold rather
+    // than a detail. A supplementary invoice parked on an intent is released
+    // only when that intent's webhook fires; parked on one that has ALREADY
+    // been paid it is never released at all, and the 14-day reaper cancels it
+    // with no invoice raised - so the shortfall this whole path exists to bill
+    // would be hidden for a fortnight and then silently dropped (#3187). This
+    // path attaches to no intent, so it cannot reach that state at all.
+    expect(queued.status).toBe("PENDING");
+  });
+
+  /**
+   * THE ORDINARY ENQUEUE CANNOT BE TALKED INTO A TASK ANCHOR (#3193 fix round,
+   * second pass), and this test exists because the type alone did not stop it.
+   *
+   * `shortfallReviewTaskId` was moved off the exported entry point's options
+   * type, and a docblock then claimed the misuse was unrepresentable. It was
+   * not: TypeScript's excess-property check fires only on a FRESH OBJECT
+   * LITERAL at the call site, so a caller that assembles its options into a
+   * variable first - the ordinary shape the moment one field is conditional -
+   * compiled clean with the flag still on the object, and the exported function
+   * forwarded that object wholesale to the implementation, which read the key.
+   * The variable below is that caller, and it type-checks; only the field-by-
+   * field forward makes it harmless.
+   *
+   * The money at stake is the reason: the flag anchors the row on the task and
+   * makes it invisible to every change-scoped read BY DESIGN, so an edit's
+   * COMBINED total queued through here would be raised as a whole second
+   * invoice on top of the one already sent - $560 billed for a $280 edit.
+   */
+  it("ignores a review-task anchor smuggled in on a pre-built options object", async () => {
+    // Assembled first, exactly as a caller with a conditional field would. No
+    // literal reaches the call, so nothing rejects it at compile time.
+    const builtOptions = {
+      createdByMemberId: "admin_1",
+      shortfallReviewTaskId: "task_2",
+    };
+
+    await enqueueXeroSupplementaryInvoiceOperation(
+      {
+        bookingId: "booking_1",
+        priceDiffCents: 28000,
+        changeFeeCents: 0,
+        bookingModificationId: "mod_1",
+      },
+      builtOptions,
+    );
+
+    expect(operations).toHaveLength(1);
+    const [queued] = operations;
+    expect(queued.localModel).toBe("BookingModification");
+    expect(queued.localId).toBe("mod_1");
+    // `null`, the ordinary path's value, rather than the id that was smuggled.
+    expect(queued.requestPayload.shortfallReviewTaskId).toBeNull();
+    // And therefore it is a row the change's own reads CAN see, which is what
+    // stops a second invoice for the same money.
+    expect(queued.correlationKey).toBe(
+      "booking-mod:mod_1:supplementary-invoice:28000:0:v1",
+    );
+  });
+
+  /**
+   * The key sent to Xero as the create-invoice idempotency key. If the second ask
+   * shared a key with the invoice it follows, Xero would answer the create with
+   * the EARLIER invoice and the difference would never be billed - a silent
+   * failure wearing a successful response.
+   */
+  it("mints a key Xero cannot confuse with the change's own invoice", async () => {
+    theChangesInvoiceHasGoneOut();
+    await secondAsk(3000);
+
+    expect(operations[0].correlationKey).toBe(
+      "review-task:task_2:supplementary-shortfall-invoice:3000:0:v1",
+    );
+    expect(operations[0].correlationKey).not.toContain("mod_1");
+  });
+
+  /**
+   * SAFE TO RUN TWICE. The settlement dispatches this fire-and-forget, so a
+   * retried completion arrives here again with the same share.
+   */
+  it("queues nothing on a second run for the same share", async () => {
+    theChangesInvoiceHasGoneOut();
+    await secondAsk(3000);
+    await secondAsk(3000);
+
+    expect(operations).toHaveLength(1);
+  });
+
+  /** And nothing once this share's own invoice has itself been sent. */
+  it("queues nothing once this share's own invoice has gone out", async () => {
+    theChangesInvoiceHasGoneOut();
+    links.push({
+      localModel: "ManualRefundTask",
+      localId: "task_2",
+      role: "SUPPLEMENTARY_INVOICE",
+      active: true,
+    });
+
+    await secondAsk(3000);
+
+    expect(operations).toHaveLength(0);
+  });
+
+  /**
+   * TWO SHARES RACING, which is the case that decides whether this can
+   * double-bill. Both settle after the change's invoice has GONE OUT, so both
+   * are `short-sent`, and each bills ITSELF - the club bills $200 + $30 + $50
+   * for a $280 edit rather than two copies of one difference.
+   */
+  it("bills each racing share once, never the same difference twice", async () => {
+    theChangesInvoiceHasGoneOut();
+
+    await secondAsk(3000, "task_2");
+    await secondAsk(5000, "task_3");
+
+    expect(operations).toHaveLength(2);
+    expect(
+      operations.map((operation) => operation.requestPayload.priceDiffCents),
+    ).toEqual([3000, 5000]);
+    expect(operations.map((operation) => operation.localId)).toEqual([
+      "task_2",
+      "task_3",
+    ]);
+  });
+
+  /**
+   * THE ASSERTION THAT PROTECTS #3170, and the one this design would be unsafe
+   * without. A pending second ask must be invisible to the booking change's own
+   * restate: found there, a $30 row would be RAISED to the $230 combined total,
+   * on top of the $200 invoice already with the member.
+   */
+  it("is invisible to the booking change's own restate", async () => {
+    theChangesInvoiceHasGoneOut();
+    await secondAsk(3000);
+
+    await expect(
+      restatePendingSupplementaryInvoiceAmount({
+        bookingModificationId: "mod_1",
+        priceDiffCents: 23000,
+        changeFeeCents: 0,
+      }),
+    ).resolves.toEqual({ restated: 0, alreadyCovering: 0 });
+
+    expect(operations[0].requestPayload.priceDiffCents).toBe(3000);
+  });
+
+  /**
+   * CONTROL, on the same store: the ordinary path still finds and raises its OWN
+   * queued invoice. Without this the test above would pass just as well if the
+   * restate had stopped working altogether.
+   */
+  it("CONTROL: the change's restate still raises the change's own queued invoice", async () => {
+    await enqueueXeroSupplementaryInvoiceOperation({
+      bookingId: "booking_1",
+      priceDiffCents: 20000,
+      changeFeeCents: 0,
+      bookingModificationId: "mod_1",
+    });
+
+    await expect(
+      restatePendingSupplementaryInvoiceAmount({
+        bookingModificationId: "mod_1",
+        priceDiffCents: 23000,
+        changeFeeCents: 0,
+      }),
+    ).resolves.toEqual({ restated: 1, alreadyCovering: 0 });
+
+    expect(operations[0].requestPayload.priceDiffCents).toBe(23000);
+  });
+
+  /**
+   * And the ordinary enqueue never sees a second ask either, so a third share
+   * arriving later still reports `short-sent` and raises its own rather than
+   * being told the difference is already covered by somebody else's row.
+   */
+  it("is invisible to the change's own enqueue", async () => {
+    theChangesInvoiceHasGoneOut();
+    await secondAsk(3000);
+
+    await expect(
+      enqueueXeroSupplementaryInvoiceOperation({
+        bookingId: "booking_1",
+        priceDiffCents: 28000,
+        changeFeeCents: 0,
+        bookingModificationId: "mod_1",
+      }),
+    ).resolves.toMatchObject({ outcome: "short-sent" });
+  });
+
+  it("takes the advisory lock on the TASK, so two edits never contend", async () => {
+    theChangesInvoiceHasGoneOut();
+    await secondAsk(3000);
+
+    expect(mocks.executeRaw).toHaveBeenCalledTimes(1);
+    const [, ...values] = mocks.executeRaw.mock.calls[0] as [
+      TemplateStringsArray,
+      ...unknown[],
+    ];
+    expect(values).toEqual(["xero-supplementary-invoice", "task_2"]);
+  });
+
+  /**
+   * `none` is the one answer that leaves the difference unbilled, and the
+   * settlement turns it into the officer-findable audit row. A booking with no
+   * primary Xero invoice has nothing to supplement.
+   */
+  it("reports `none` when the booking has no invoice to supplement", async () => {
+    mocks.findUniqueBooking.mockResolvedValue({ id: "booking_1", payment: null });
+
+    await expect(secondAsk(3000)).resolves.toMatchObject({ outcome: "none" });
+    expect(operations).toHaveLength(0);
+  });
+
+  /**
+   * THE DOUBLE-BILL, and the reason a refused ask is TWO outcomes rather than
+   * one (#3193 fix round).
+   *
+   * A single `short` meant two different facts: an invoice that exists, and a
+   * row the outbox has merely CLAIMED. Only the first is durable. A RUNNING row
+   * returns to PENDING without ever reaching Xero when a cooldown refuses it
+   * before any HTTP call - `processXeroOutbox` un-claims it precisely so an
+   * outage does not condemn un-attempted work - and the next settlement then
+   * raises it to the COMBINED total, which already contains any share billed
+   * separately in the meantime. The change-anchored restate cannot see that
+   * separate invoice to cap itself, because the task anchor that makes a second
+   * ask idempotent is the same anchor that hides it.
+   *
+   * Three shares, one edit: $200, then $30 while the row is RUNNING, then $50
+   * after it comes back. The member owes $280. Before this round they were
+   * billed $310 - worse than the shortfall the second ask exists to remove,
+   * because without a second ask at all this sequence produced ONE correct $280
+   * invoice.
+   *
+   * It drives the real `recordShortEditReviewChargeInvoice` rather than
+   * asserting the enqueue's outcome string, because the outcome is only half the
+   * rule: what makes this safe is that the settlement raises a second invoice on
+   * `short-sent` and never on `short-in-flight`, and a test that re-stated that
+   * rule here would pass against the bug.
+   */
+  it("never bills a share twice when the change's invoice comes back to the queue", async () => {
+    const { recordShortEditReviewChargeInvoice } = await import(
+      "@/lib/edit-financial-review-charge-request"
+    );
+    const settle = async (
+      totalCents: number,
+      reviewTaskId: string,
+      shareCents: number,
+    ) => {
+      const queued = await enqueueXeroSupplementaryInvoiceOperation({
+        bookingId: "booking_1",
+        priceDiffCents: totalCents,
+        changeFeeCents: 0,
+        bookingModificationId: "mod_1",
+      });
+      await recordShortEditReviewChargeInvoice({
+        outcome: queued.outcome,
+        bookingId: "booking_1",
+        bookingModificationId: "mod_1",
+        reviewTaskId,
+        memberId: "member_1",
+        totalCents,
+        shareCents,
+      });
+      return queued.outcome;
+    };
+
+    // T1 settles $200. The change's own invoice is queued and still PENDING.
+    await expect(settle(20000, "task_1", 20000)).resolves.toBe("covers-total");
+    expect(operations).toHaveLength(1);
+    const changeInvoice = operations[0];
+
+    // The worker claims it. A Xero call is in flight and the amount is frozen.
+    changeInvoice.status = "RUNNING";
+
+    // T2 settles $30. The restate cannot touch a RUNNING row, so the ask is
+    // refused - but nothing has been SENT, so this share must not be billed on
+    // its own invoice.
+    await expect(settle(23000, "task_2", 3000)).resolves.toBe("short-in-flight");
+
+    // Xero's cooldown refused the row BEFORE any HTTP call, so the outbox
+    // returned it to PENDING un-attempted. Nothing reached the member.
+    changeInvoice.status = "PENDING";
+
+    // T3 settles $50. The combined total is $280 and the restate can land now.
+    await expect(settle(28000, "task_3", 5000)).resolves.toBe("covers-total");
+
+    // WHAT THE MEMBER IS BILLED, summed across every row that will send. One
+    // invoice, for exactly the edit's total.
+    const billedCents = operations.reduce(
+      (sum, operation) =>
+        sum +
+        (operation.requestPayload.priceDiffCents as number) +
+        (operation.requestPayload.changeFeeCents as number),
+      0,
+    );
+    expect(billedCents).toBe(28000);
+    expect(operations).toHaveLength(1);
+    expect(
+      operations.some((operation) => operation.localModel === "ManualRefundTask"),
+    ).toBe(false);
+  });
+
+  /**
+   * THE ONE READ SCOPED TO THE CHANGE THAT COULD SEE A SECOND ASK (#3193 fix
+   * round).
+   *
+   * `attachPaymentIntentToWaitingSupplementaryInvoiceOperations` matches on the
+   * payload's `bookingModificationId`, not on the anchor - and a second ask
+   * carries that id, because the invoice it bills still belongs to that change.
+   * What kept it away was the wrapper hard-coding
+   * `waitForConfirmedAdditionalPayment: false`, a call-site value rather than a
+   * property of the anchor. A future caller flipping that flag would have parked
+   * an already-settled share's invoice on a PaymentIntent that is already paid,
+   * released by nothing and reaped fourteen days later with no invoice raised.
+   *
+   * The row below is therefore built in the WAITING_PAYMENT state the wrapper
+   * never produces. That is the point: the fence has to hold on the row, not on
+   * the caller.
+   */
+  it("never attaches a PaymentIntent to a second ask, even one left WAITING_PAYMENT", async () => {
+    operations.push(
+      {
+        id: "op_change",
+        localModel: "BookingModification",
+        localId: "mod_1",
+        status: "WAITING_PAYMENT",
+        queueType: "SUPPLEMENTARY_INVOICE",
+        correlationKey: "booking-mod:mod_1:20000:0",
+        requestPayload: {
+          queueType: "SUPPLEMENTARY_INVOICE",
+          bookingId: "booking_1",
+          bookingModificationId: "mod_1",
+          priceDiffCents: 20000,
+          changeFeeCents: 0,
+        },
+      },
+      {
+        id: "op_second_ask",
+        localModel: "ManualRefundTask",
+        localId: "task_2",
+        status: "WAITING_PAYMENT",
+        queueType: "SUPPLEMENTARY_INVOICE",
+        correlationKey: "review-task:task_2:3000:0",
+        requestPayload: {
+          queueType: "SUPPLEMENTARY_INVOICE",
+          bookingId: "booking_1",
+          bookingModificationId: "mod_1",
+          shortfallReviewTaskId: "task_2",
+          priceDiffCents: 3000,
+          changeFeeCents: 0,
+        },
+      },
+    );
+    mocks.updateOperation.mockImplementation(
+      async ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) => {
+        const target = operations.find((operation) => operation.id === where.id)!;
+        target.requestPayload = data.requestPayload as Record<string, unknown>;
+        return target;
+      },
+    );
+
+    await expect(
+      attachPaymentIntentToWaitingSupplementaryInvoiceOperations({
+        bookingModificationId: "mod_1",
+        paymentIntentId: "pi_1",
+      }),
+    ).resolves.toEqual({ attached: 1 });
+
+    expect(
+      operations.find((operation) => operation.id === "op_change")!.requestPayload
+        .paymentIntentId,
+    ).toBe("pi_1");
+    expect(
+      operations.find((operation) => operation.id === "op_second_ask")!
+        .requestPayload.paymentIntentId,
+    ).toBeUndefined();
+  });
+
+  /**
+   * THE CONTROL, and it is what stops the fix above from being "never raise a
+   * second ask". Once the invoice has actually been SENT its amount is fixed
+   * forever, so the share IS billed separately - which is the whole of #3193.
+   */
+  it("still bills the share separately once the change's invoice has gone out", async () => {
+    const { recordShortEditReviewChargeInvoice } = await import(
+      "@/lib/edit-financial-review-charge-request"
+    );
+    theChangesInvoiceHasGoneOut();
+
+    const queued = await enqueueXeroSupplementaryInvoiceOperation({
+      bookingId: "booking_1",
+      priceDiffCents: 23000,
+      changeFeeCents: 0,
+      bookingModificationId: "mod_1",
+    });
+    expect(queued.outcome).toBe("short-sent");
+
+    await recordShortEditReviewChargeInvoice({
+      outcome: queued.outcome,
+      bookingId: "booking_1",
+      bookingModificationId: "mod_1",
+      reviewTaskId: "task_2",
+      memberId: "member_1",
+      totalCents: 23000,
+      shareCents: 3000,
+    });
+
+    expect(operations).toHaveLength(1);
+    expect(operations[0].localModel).toBe("ManualRefundTask");
+    expect(operations[0].localId).toBe("task_2");
+    // THE SHARE, NEVER THE TOTAL.
+    expect(operations[0].requestPayload.priceDiffCents).toBe(3000);
+  });
+
+  /**
+   * And the in-flight refusal is RECORDED rather than silent, with the officer
+   * instruction the uncertainty demands: nobody can yet say whether the invoice
+   * went out at the earlier figure, so the record says what to check instead of
+   * telling anyone to bill.
+   */
+  it("records the in-flight refusal as withheld, not as money to collect", async () => {
+    const { recordShortEditReviewChargeInvoice } = await import(
+      "@/lib/edit-financial-review-charge-request"
+    );
+    await enqueueXeroSupplementaryInvoiceOperation({
+      bookingId: "booking_1",
+      priceDiffCents: 20000,
+      changeFeeCents: 0,
+      bookingModificationId: "mod_1",
+    });
+    operations[0].status = "RUNNING";
+
+    await recordShortEditReviewChargeInvoice({
+      outcome: "short-in-flight",
+      bookingId: "booking_1",
+      bookingModificationId: "mod_1",
+      reviewTaskId: "task_2",
+      memberId: "member_1",
+      totalCents: 23000,
+      shareCents: 3000,
+    });
+
+    expect(mocks.createAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "booking.editFinancialReview.chargeShareUncollected",
+        metadata: expect.objectContaining({ secondAsk: "withheld" }),
+      }),
+    );
+    const [row] = mocks.createAuditLog.mock.calls.map(
+      (call) => call[0] as { details: string },
+    );
+    // The instruction turns on the uncertainty rather than hiding it.
+    expect(row.details).toContain("Check the Xero invoices for this booking");
+    expect(row.details).not.toContain("Raise one by hand for the difference only");
+  });
+});
+
+/**
  * #3170 FIX ROUND, F1: THE WORKER RE-READS THE PAYLOAD AFTER IT CLAIMS THE ROW.
  *
  * The scan loads every row's `requestPayload` in ONE query and the loop then
@@ -3010,7 +3732,7 @@ describe("enqueueXeroSupplementaryInvoiceOperation: does the ask cover the total
    * enough that a second invoice must not be queued behind it, but outside the
    * restatable set, so its amount can no longer be raised.
    */
-  it("reports `short` when the invoice is already being sent and cannot be raised", async () => {
+  it("reports `short-in-flight` when the invoice is already being sent and cannot be raised", async () => {
     mocks.findFirstOperation.mockResolvedValue({ id: "op_supplementary_1" });
     // RUNNING, so the restate's status-guarded read matches nothing.
     mocks.findManyOperations.mockResolvedValue([]);
@@ -3024,17 +3746,19 @@ describe("enqueueXeroSupplementaryInvoiceOperation: does the ask cover the total
       })
     ).resolves.toEqual({
       queueOperationId: "op_supplementary_1",
-      outcome: "short",
+      outcome: "short-in-flight",
       message:
         "Xero supplementary invoice for this change is already being sent and could not be raised.",
     });
 
-    // Still exactly one invoice: `short` is a shortfall to record, never a
-    // licence to queue a second ask.
+    // Still exactly one invoice: a shortfall is something to record, never a
+    // licence to queue a second ask. And `short-in-flight` specifically is not
+    // even that yet - nothing has reached Xero, so this row may still come back
+    // and be raised to the combined total (#3193 fix round).
     expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
   });
 
-  it("reports `short` when the invoice has already been sent and linked", async () => {
+  it("reports `short-sent` when the invoice has already been sent and linked", async () => {
     mocks.findFirstLink.mockResolvedValue({ id: "link_1" });
 
     await expect(
@@ -3044,7 +3768,7 @@ describe("enqueueXeroSupplementaryInvoiceOperation: does the ask cover the total
         changeFeeCents: 0,
         bookingModificationId: "mod_1",
       })
-    ).resolves.toMatchObject({ queueOperationId: null, outcome: "short" });
+    ).resolves.toMatchObject({ queueOperationId: null, outcome: "short-sent" });
 
     expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
   });
@@ -3338,14 +4062,14 @@ describe("a recovered additional payment raises exactly one supplementary invoic
 
   /**
    * CONTROL. An invoice that has already been SENT carries an active link on the
-   * anchor, and the enqueue refuses to queue a second behind it. `short` rather
-   * than `covers-total` is what tells the caller the difference is owed outside
-   * the invoice; reporting success here would hide it.
+   * anchor, and the enqueue refuses to queue a second behind it. `short-sent`
+   * rather than `covers-total` is what tells the caller the difference is owed
+   * outside the invoice; reporting success here would hide it.
    */
   it("refuses a second invoice for an anchor that already has a sent one", async () => {
     mocks.findFirstLink.mockResolvedValue({ id: "link_1" });
 
-    await expect(recoverIntent()).resolves.toBe("short");
+    await expect(recoverIntent()).resolves.toBe("short-sent");
     expect(supplementaryRowsFor("mod_1")).toHaveLength(0);
   });
 

@@ -2807,19 +2807,34 @@ describe("edit-financial-review charge recovery (#3170)", () => {
 
   /**
    * The enqueue's own verdict, recorded through the one function that decides
-   * what counts as short. `short` means this edit's invoice had already left the
-   * queue and could not be raised to the settled total, so the difference has to
-   * be billed by hand and an officer has to be able to find that.
+   * what counts as short. `short-sent` means this edit's invoice had already
+   * gone out and could not be raised to the settled total, so the difference has
+   * to be billed by hand and an officer has to be able to find that.
    */
   it("records a short ask when the invoice had already left the queue", async () => {
-    mockCompleteDeferredSupplementaryInvoice.mockResolvedValueOnce("short");
+    mockCompleteDeferredSupplementaryInvoice.mockResolvedValueOnce("short-sent");
 
     await processPaymentRecoveryOperations({ limit: 1 });
 
     expect(mockRecordShortEditReviewChargeInvoice).toHaveBeenCalledWith({
-      outcome: "short",
+      outcome: "short-sent",
       bookingId: "booking-1",
       bookingModificationId: "mod-1",
+      /**
+       * #3193: BOTH NULL, and that is a refusal rather than an omission.
+       *
+       * Since the owner's 31 Aug 2026 decision a sent-short ask raises a SECOND,
+       * separate invoice for the difference - but only where the caller holds
+       * the single settled share to bill, because billing anything else asks
+       * the member for money they have already been asked for. This replay
+       * holds no task: it re-derives the edit's COMBINED total across every
+       * share and cannot say which part of it the sent invoice already carries,
+       * so the only figure it could invoice is the whole $230 on top of the
+       * $200 already with the member. Passing the total here would be the
+       * double-bill the decision is explicitly bounded away from.
+       */
+      reviewTaskId: null,
+      shareCents: null,
       memberId: "m1",
       totalCents: 23000,
     });
@@ -2852,6 +2867,10 @@ describe("edit-financial-review charge recovery (#3170)", () => {
       // Not `ask-closed`: no invoice exists to bill the earlier figure, so the
       // whole settled total is unbilled rather than under-billed.
       cause: "ask-not-raised",
+      // #3193: no ask exists here for a second one to follow, so the second-ask
+      // question does not arise at all. `null`, not `unavailable`, which is
+      // specifically "an ask exists and its difference cannot be worked out".
+      secondAsk: null,
       bookingId: "booking-1",
       bookingModificationId: "mod-1",
       memberId: "m1",
