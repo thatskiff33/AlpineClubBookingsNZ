@@ -926,6 +926,15 @@ export async function POST(request: NextRequest) {
   if (!adultMemberHostingReason) {
     const hostingViolation = await evaluateProposedAdultMemberHosting(prisma, {
       bookingOwnerMemberId: effectiveMemberId,
+      // #3038. `null`, and stated rather than omitted, because the field is
+      // required: this route creates ordinary bookings and has no join path, so
+      // there is no Group Trip to resolve. A party only acquires group identity
+      // before its booking exists by redeeming a join code, which happens in
+      // `group-booking.ts`; the ORGANISER's own booking has none either, since
+      // the container is opened on a booking that already exists
+      // (`INV-HOST-043`). A split pair created here inherits nothing because
+      // there is nothing to inherit.
+      groupBookingId: null,
       lodgeId: bookingLodgeId,
       checkIn,
       checkOut,

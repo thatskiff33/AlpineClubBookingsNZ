@@ -7,6 +7,10 @@ import { normalizeGuestStayRange } from "@/lib/booking-guest-stay-range-input";
 import { getStayNights } from "@/lib/policies/pricing";
 import { validateMinimumStay } from "@/lib/booking-policies";
 import { evaluateProposedAdultMemberHosting } from "@/lib/adult-member-hosting-proposed";
+import {
+  GROUP_TRIP_IDENTITY_SELECT,
+  groupTripIdentityOf,
+} from "@/lib/group-trip-identity";
 import { evaluateProposedPaidUpAdultPresence } from "@/lib/subscription-lockout-enforcement";
 import type { AgeTierSettingsReader } from "@/lib/subscription-lockout-facts";
 import type { SubscriptionLockoutMode } from "@/lib/membership-lockout-settings";
@@ -795,9 +799,13 @@ async function evaluatePartyViolations(
   }
 
   const bookingOwnerMemberId = await resolveProposalBookingOwner(db, presence);
+  const groupBookingId = includeProposedHosting
+    ? await resolveProposalGroupTrip(db, presence)
+    : null;
   const hosting = includeProposedHosting
     ? await evaluateProposedAdultMemberHosting(db, {
         bookingOwnerMemberId,
+        groupBookingId,
         lodgeId,
         checkIn,
         checkOut,
@@ -877,6 +885,52 @@ async function resolveProposalBookingOwner(
     return booking?.memberId ?? null;
   }
   return presence?.requestedByMemberId?.trim() || null;
+}
+
+/**
+ * WHICH GROUP TRIP the booking behind a proposal belongs to (#3038, epic
+ * #2943) — the third half of making the override door real, and it is the same
+ * shape as the two beside it for the same reason.
+ *
+ * `resolveProposalBookingOwner` above reads the live booking's own `memberId`
+ * so a modification proposal is judged against the owner the booking paths
+ * judge; `resolveProposalOperationalPresence` below reads its live guest rows
+ * so, in its own words, "a modification proposal would raise a violation for a
+ * party the booking path allows" without it. Adult-member hosting gained a
+ * THIRD such input when #3038 added `SAME_GROUP_TRIP`, and a re-evaluation that
+ * does not supply it is group-blind: `evaluateProposedAdultMemberHosting` reads
+ * no group cover at all, so a booking whose only qualifying adult travels on a
+ * sibling Group Trip booking is re-judged as uncovered.
+ *
+ * That is not a cosmetic difference. This function's answer is FROZEN into the
+ * exception request, shown to a Booking Officer as a live violation, and —
+ * where the club's capacity mode is `HOLD` — used to reserve beds. It is then
+ * reproduced at approval by `evaluateCurrentViolations`, so the #2525 drift
+ * gate compares the phantom with itself and lets the approval through. The
+ * remedy is to answer the question rather than to skip it.
+ *
+ * A MODIFICATION reads the live booking's two canonical relations, exactly as
+ * the persisted evaluator does; a NEW booking proposal has no row and therefore
+ * no Group Trip — a member submitting a new-booking exception is not inside a
+ * join flow, which is the only way a party acquires group identity before its
+ * booking exists (`INV-HOST-043`). Selected through
+ * `GROUP_TRIP_IDENTITY_SELECT` rather than a hand-written `select`, because a
+ * relation name that drifts from the schema is a runtime validation failure
+ * here with a green typecheck.
+ */
+async function resolveProposalGroupTrip(
+  db: PolicyEvaluationDb,
+  presence:
+    | { requestedByMemberId?: string | null; bookingId?: string | null }
+    | undefined,
+): Promise<string | null> {
+  if (!presence?.bookingId) return null;
+  const booking = await db.booking.findUnique({
+    where: { id: presence.bookingId },
+    select: GROUP_TRIP_IDENTITY_SELECT,
+  });
+  if (!booking) return null;
+  return groupTripIdentityOf(booking)?.groupBookingId ?? null;
 }
 
 /**

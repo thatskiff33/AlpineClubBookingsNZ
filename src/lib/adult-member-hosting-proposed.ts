@@ -65,11 +65,24 @@ export async function evaluateProposedAdultMemberHosting(
      * `GroupBookingJoin` this becomes will carry this same `groupBookingId`
      * (`INV-HOST-043`).
      *
-     * Absent for every ordinary create, including the ORGANISER's own booking —
+     * REQUIRED, AND NULLABLE RATHER THAN OPTIONAL — the same choice, for the
+     * same reason, that `GroupTripIdentityRow` makes about its two relations.
+     * `null` is an ANSWER ("this party is joining no Group Trip"); optional
+     * would be permission to say nothing, and saying nothing resolves to "no
+     * Group Trip" SILENTLY. That silence is not hypothetical: this function
+     * gained its third scope while `booking-exception-request-service.ts` kept
+     * calling it with the two it already knew about, so a modification proposal
+     * on a group-covered booking was re-judged group-blind and froze a hosting
+     * violation that does not exist — put in front of an officer, and under
+     * `HOLD` reserving beds for a hazard nobody has. With the field required the
+     * compiler enumerates every call site and each has to state its answer out
+     * loud. Unrepresentable beats policed (`INV-SSOT`).
+     *
+     * `null` for every ordinary create, including the ORGANISER's own booking —
      * a `GroupBooking` is opened on a booking that already exists, so at create
      * time there is no container and no siblings.
      */
-    groupBookingId?: string | null;
+    groupBookingId: string | null;
     lodgeId: string;
     checkIn: Date;
     checkOut: Date;
