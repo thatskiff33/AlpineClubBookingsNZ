@@ -1,7 +1,11 @@
 // Scope-where construction and audit-data loading (bookings, links, operations)
 // for the booking-vs-Xero repair tool. Extracted verbatim from
 // xero-booking-repair.ts (#1208 item 2).
-import { Prisma } from "@prisma/client";
+import {
+  PaymentRecoveryOperationStatus,
+  PaymentRecoveryOperationType,
+  Prisma,
+} from "@prisma/client";
 import {
   bookingRepairSelect,
   xeroObjectLinkSelect,
@@ -12,7 +16,17 @@ import {
   type XeroObjectLinkRecord,
   type XeroOperationRecord,
 } from "./xero-booking-repair-types";
-import { buildBookingCancellationRefundIdempotencyKey } from "./payment-recovery-keys";
+import {
+  buildBookingCancellationRefundIdempotencyKey,
+  buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey,
+  isEditFinancialReviewAdditionalIntentRecoveryKey,
+} from "./payment-recovery-keys";
+import {
+  editReviewChargeShareTaskSelect,
+  editReviewChargeShareTaskWhere,
+  sumEditReviewChargeSharesByAnchor,
+  type EditReviewChargeShareRow,
+} from "@/lib/edit-financial-review-charge-shape";
 import type { RepairDependencies } from "./xero-booking-repair-deps";
 import { makeLocalKey, parseRepairScopeDay } from "./xero-booking-repair-utils";
 import {
@@ -27,6 +41,51 @@ import {
   type ClubTimeZone,
 } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+
+/** A settled edit-review charge share, carrying the booking it was raised on. */
+type EditReviewChargeShareRecord = EditReviewChargeShareRow & {
+  bookingId: string;
+};
+
+/**
+ * An edit-review charge whose additional PaymentIntent has NOT been minted yet
+ * and is still owed by the recovery replay (#3187 fix round).
+ *
+ * Only PENDING and PROCESSING count as open. A FAILED row is terminal - nothing
+ * will replay it - and the #1491 cancellation arm already treats FAILED that
+ * way, so a terminal row must not hold the repair tool off forever. SUCCEEDED
+ * means the intent exists, and the request row it minted answers the question
+ * on its own.
+ *
+ * WHAT "NOT FOREVER" COSTS, stated rather than implied (#3187 fix round). Once
+ * the row is FAILED this tool stops deferring and will queue the invoice
+ * UNPAID, and completing it closes the anchor: there is no `WAITING_PAYMENT`
+ * row left, so `releaseXeroSupplementaryInvoiceOperationsForPaymentIntent` has
+ * nothing to act on ever again. If a LATER share is then settled on the same
+ * edit and its mint succeeds, a live PaymentIntent exists against an invoice
+ * that was raised unpaid and has already been sent - the member can pay the
+ * card while Xero reads unpaid permanently and the Stripe clearing account
+ * stays short.
+ *
+ * That is accepted, not solved, and it is accepted because the alternative is
+ * deferring the repair of every failed mint forever - permanent silence on
+ * money that is genuinely owed. It is also VISIBLE rather than silent since
+ * #3181: the later share's own dispatch finds the existing anchor, the enqueue
+ * returns `short` rather than queueing a second invoice, and
+ * `recordShortEditReviewChargeInvoice` writes the durable audit row an officer
+ * can find. Visible is not fixed; an operator who applies this arm on a booking
+ * whose retry has failed is taking on a receivable to collect and record by
+ * hand, which `docs/MAINTENANCE.md` says in the operator's own words.
+ */
+const OPEN_PAYMENT_RECOVERY_STATUSES = [
+  PaymentRecoveryOperationStatus.PENDING,
+  PaymentRecoveryOperationStatus.PROCESSING,
+] as const;
+
+type EditReviewChargeIntentRecoveryRecord = {
+  bookingId: string;
+  idempotencyKey: string;
+};
 
 /**
  * The club calendar day after `day`, as `yyyy-MM-dd`.
@@ -194,7 +253,28 @@ export async function loadAuditData(
     });
   }
 
-  const [links, operations, cancellationRefundRecoveryOperations] = await Promise.all([
+  /**
+   * The recovery key each loaded edit would have written had its intent mint
+   * failed, so the query below matches by EXACT key and reads the anchor back
+   * out of this map rather than by slicing a prefix off a string - the mistake
+   * `bookingModificationIdForAdditionalIntentRecoveryKey` documents.
+   */
+  const modificationIdByIntentRecoveryKey = new Map<string, string>(
+    modificationIds.map((modificationId) => [
+      buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey(
+        modificationId
+      ),
+      modificationId,
+    ])
+  );
+
+  const [
+    links,
+    operations,
+    cancellationRefundRecoveryOperations,
+    editReviewChargeShares,
+    editReviewChargeIntentRecoveries,
+  ] = await Promise.all([
     linkScopes.length > 0
       ? deps.prisma.xeroObjectLink.findMany({
           where: {
@@ -241,6 +321,40 @@ export async function loadAuditData(
           },
         })
       : Promise.resolve([] as BookingCancellationRefundRecoveryRecord[]),
+    // #3187: the money a parked booking edit actually owes. It is on the review
+    // TASKS, never on the `BookingModification` row the edit wrote - parking
+    // exists so the structural change can commit while the money stays
+    // unresolved, so that row's `priceDiffCents` is 0 and stays 0. Scoped to the
+    // bookings this sweep loaded, and selected through the charge feature's own
+    // criteria (`editReviewChargeShareTaskWhere`) so the repair tool and the
+    // settlement it audits cannot disagree about which rows count as owed.
+    bookingIds.length > 0
+      ? deps.prisma.manualRefundTask.findMany({
+          where: {
+            bookingId: { in: bookingIds },
+            ...editReviewChargeShareTaskWhere,
+          },
+          select: { bookingId: true, ...editReviewChargeShareTaskSelect },
+        })
+      : Promise.resolve([] as EditReviewChargeShareRecord[]),
+    // #3187 fix round: an edit whose additional PaymentIntent mint FAILED at the
+    // provider. `edit-financial-review-charge.ts` writes this row and returns
+    // `not-raised`, and the live settlement then queues no supplementary invoice
+    // at all - "deferred, not short". The repair tool has to be able to tell
+    // that state from the internet-banking route, which looks identical from the
+    // ledger (no request row) and needs the opposite answer.
+    modificationIdByIntentRecoveryKey.size > 0
+      ? deps.prisma.paymentRecoveryOperation.findMany({
+          where: {
+            type: PaymentRecoveryOperationType.CREATE_ADDITIONAL_PAYMENT_INTENT,
+            status: { in: [...OPEN_PAYMENT_RECOVERY_STATUSES] },
+            idempotencyKey: {
+              in: [...modificationIdByIntentRecoveryKey.keys()],
+            },
+          },
+          select: { bookingId: true, idempotencyKey: true },
+        })
+      : Promise.resolve([] as EditReviewChargeIntentRecoveryRecord[]),
   ]);
 
   const linksByLocalKey = new Map<string, XeroObjectLinkRecord[]>();
@@ -262,6 +376,52 @@ export async function loadAuditData(
     const list = cancellationRecoveryByBookingId.get(operation.bookingId) ?? [];
     list.push(operation);
     cancellationRecoveryByBookingId.set(operation.bookingId, list);
+  }
+
+  /**
+   * Per BOOKING, then per anchor. Grouping by booking first is not decoration:
+   * the anchor is read out of a stored JSON context, and a context naming a
+   * modification that belongs to a DIFFERENT booking must not contribute to that
+   * booking's expected invoice. Summing globally would let one unreadable or
+   * mis-written row move another booking's money.
+   */
+  const editReviewChargeSharesByBookingId = new Map<
+    string,
+    EditReviewChargeShareRecord[]
+  >();
+  for (const share of editReviewChargeShares) {
+    const list = editReviewChargeSharesByBookingId.get(share.bookingId) ?? [];
+    list.push(share);
+    editReviewChargeSharesByBookingId.set(share.bookingId, list);
+  }
+
+  /**
+   * Per BOOKING again, and for the same reason as the shares above: a recovery
+   * row is joined to its edit through a key, and a key naming a modification on
+   * a DIFFERENT booking must not defer this one's repair.
+   */
+  const editReviewChargeIntentRecoveriesByBookingId = new Map<
+    string,
+    Set<string>
+  >();
+  for (const recovery of editReviewChargeIntentRecoveries) {
+    // Redundant with the exact-key `in` filter above, and deliberately kept: if
+    // that query is ever widened, an ORDINARY edit's recovery row must not be
+    // read as a review charge's. Fail closed rather than defer the wrong edit.
+    if (!isEditFinancialReviewAdditionalIntentRecoveryKey(recovery.idempotencyKey)) {
+      continue;
+    }
+    const modificationId = modificationIdByIntentRecoveryKey.get(
+      recovery.idempotencyKey
+    );
+    if (!modificationId) {
+      continue;
+    }
+    const anchors =
+      editReviewChargeIntentRecoveriesByBookingId.get(recovery.bookingId) ??
+      new Set<string>();
+    anchors.add(modificationId);
+    editReviewChargeIntentRecoveriesByBookingId.set(recovery.bookingId, anchors);
   }
 
   const operationsByLocalKey = new Map<string, XeroOperationRecord[]>();
@@ -299,5 +459,11 @@ export async function loadAuditData(
     ),
     cancellationRefundRecoveryOperations:
       cancellationRecoveryByBookingId.get(booking.id) ?? [],
+    editReviewChargeCentsByModificationId: sumEditReviewChargeSharesByAnchor(
+      editReviewChargeSharesByBookingId.get(booking.id) ?? []
+    ),
+    openEditReviewChargeIntentRecoveryModificationIds:
+      editReviewChargeIntentRecoveriesByBookingId.get(booking.id) ??
+      new Set<string>(),
   }));
 }

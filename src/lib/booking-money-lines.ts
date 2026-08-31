@@ -29,6 +29,7 @@
  */
 import { emailCalendarDay } from "@/lib/email-templates-club-time";
 import { type BookingPaymentDueCredit } from "@/lib/email-message-notes";
+import { PROMO_CHANGE_NOT_APPLIED_LABEL } from "@/lib/promo-change-not-applied";
 import { formatCents as formatMoneyCents } from "@/lib/utils";
 
 /**
@@ -477,6 +478,11 @@ export function bookingModificationSummaryRows(params: {
   // body cannot end up telling different stories about the same split — the
   // whole reason this helper exists.
   promoCoverageNote?: string | null;
+  // #3179: present only when the edit saved but could not carry the promo-code
+  // change the same request asked for. Added as a row here for exactly the
+  // reason above: the hand-built HTML email and the admin-editable flat body
+  // both compose from these rows, so neither can be the one that stays silent.
+  promoChangeNotAppliedNote?: string | null;
 }): Array<{ label: string; value: string }> {
   // #3123: `oldCheckIn`/`newCheckIn`/`oldCheckOut`/`newCheckOut` are all
   // `Booking.checkIn`/`checkOut` values — `DateTime @db.Date` lodge nights.
@@ -542,6 +548,20 @@ export function bookingModificationSummaryRows(params: {
   // Last, deliberately: it explains the New Total above it.
   if (params.promoCoverageNote && params.promoCoverageNote.trim().length > 0) {
     rows.push({ label: "Promo coverage", value: params.promoCoverageNote });
+  }
+
+  // #3179: and last of all, because it explains something the figures above do
+  // NOT show — a discount the member asked for that is not in them. The two are
+  // mutually exclusive in practice (a parked or in-progress edit runs no cap),
+  // but neither suppresses the other: if both ever arrive, the member reads both.
+  if (
+    params.promoChangeNotAppliedNote &&
+    params.promoChangeNotAppliedNote.trim().length > 0
+  ) {
+    rows.push({
+      label: PROMO_CHANGE_NOT_APPLIED_LABEL,
+      value: params.promoChangeNotAppliedNote,
+    });
   }
 
   return rows;

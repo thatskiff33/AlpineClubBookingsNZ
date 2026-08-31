@@ -1,20 +1,16 @@
 import "server-only";
 
-import {
-  ManualRefundTaskDirection,
-  ManualRefundTaskKind,
-  ManualRefundTaskStatus,
-  PaymentSource,
-  PaymentTransactionKind,
-  type PaymentStatus,
-  type Prisma,
-} from "@prisma/client";
+import { type PaymentStatus, type Prisma } from "@prisma/client";
 
 import { createAuditLog } from "@/lib/audit";
-import { parseEditFinancialReviewContext } from "@/lib/edit-financial-review-context";
+import {
+  editReviewChargeRequestCriteria,
+  editReviewChargeShareTaskSelect,
+  editReviewChargeShareTaskWhere,
+  sumEditReviewChargeSharesByAnchor,
+} from "@/lib/edit-financial-review-charge-shape";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
-import { buildEditFinancialReviewChargeReason } from "@/lib/payment-recovery-keys";
 import { formatCents } from "@/lib/utils";
 import {
   enqueueXeroSecondSupplementaryInvoiceOperation,
@@ -52,6 +48,13 @@ import {
  *     decision under a per-anchor advisory lock, so the two together are what
  *     stop two concurrent settlements sending two invoices; this function alone
  *     never could.
+ *
+ * #3187 MOVED THE PURE SHAPES those questions are asked from - which review
+ * tasks carry a settled share, how they total per edit, and which ledger row is
+ * the combined request - into `edit-financial-review-charge-shape.ts`, which
+ * carries no `server-only`. The booking-vs-Xero repair tool needs the same three
+ * answers and runs from an operator CLI, which a `server-only` import kills at
+ * startup. The answers stay single-sourced; only the file they live in changed.
  */
 
 export type EditReviewChargeStore = Prisma.TransactionClient | typeof prisma;
@@ -88,9 +91,7 @@ export async function findEditReviewChargeRequest({
   const row = await store.paymentTransaction.findFirst({
     where: {
       paymentId,
-      kind: PaymentTransactionKind.ADDITIONAL,
-      source: PaymentSource.STRIPE,
-      reason: buildEditFinancialReviewChargeReason(bookingModificationId),
+      ...editReviewChargeRequestCriteria(bookingModificationId),
     },
     orderBy: { createdAt: "desc" },
     select: {
@@ -164,24 +165,11 @@ export async function sumEditReviewChargeSharesCents({
   store?: EditReviewChargeStore;
 }): Promise<number> {
   const settled = await store.manualRefundTask.findMany({
-    where: {
-      bookingId,
-      kind: ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW,
-      status: ManualRefundTaskStatus.COMPLETED,
-      settlementDirection: ManualRefundTaskDirection.CHARGE_TO_MEMBER,
-      amountCents: { not: null },
-    },
-    select: { id: true, amountCents: true, reviewContext: true },
+    where: { bookingId, ...editReviewChargeShareTaskWhere },
+    select: editReviewChargeShareTaskSelect,
   });
 
-  let total = 0;
-  for (const task of settled) {
-    const anchor = parseEditFinancialReviewContext(task.reviewContext)
-      ?.bookingModificationId;
-    if (anchor !== bookingModificationId) continue;
-    total += task.amountCents ?? 0;
-  }
-  return total;
+  return sumEditReviewChargeSharesByAnchor(settled).get(bookingModificationId) ?? 0;
 }
 
 /**

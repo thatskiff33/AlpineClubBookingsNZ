@@ -1301,6 +1301,41 @@ transaction, under the locks already held, anchored to that edit's own
 `BookingModification`. `priceDiffCents` falls out as 0 because the booking's
 money genuinely did not move, NOT because 0 was chosen as the adjustment.
 
+**"No promotion is recalculated" includes one the member asked for in the same
+request, and they are told so** (#3179). A parked edit re-runs no promotion, so a
+`promoCode` or `removePromoCode` carried alongside the structural change is
+dropped and the booking's stored discount figures are written back untouched.
+That half of the request used to end in an HTTP 200 with nothing said - a member
+walking away believing they had applied a discount they had not. The edit still
+saves: the owner's decision on #3179 was to save what can be honoured and warn
+clearly about what cannot, because refusing the date change too would remove
+something that works in order to fix something that does not. The preview, the
+save response, the "Booking Modified" email, the booking's history and the audit
+row now all carry ONE sentence, composed in
+`src/lib/promo-change-not-applied.ts` (`INV-SSOT`). It does not make the promo
+change happen; applying a promotion to a stay whose money is already with a
+person is separate work, and money-shaped enough to deserve its own review.
+
+A stay already **under way** produces that sentence too, and today it always
+comes out empty. Both surfaces refuse a promo change on an in-progress stay
+outright — `resolveTargetDates` on the save, and the `isInProgressEdit` block in
+the modify-quote route, with "Promo code changes are not available for
+in-progress bookings" — so there is never anything to report. They build the
+notice on that branch regardless, because wording nothing calls for warns nobody:
+**relaxing either refusal cannot re-open the silence**, which is the whole reason
+the in-progress arm exists.
+
+That wiring reads a flag the promotion helper itself sets
+(`PromoChangeResult.promoEngineRan`) rather than the caller's pricing branch,
+because THERE ARE TWO STUBS. The batch service stubs the promotion figures for a
+price-preserving echo and for a parked edit; `applyPromoCodeChanges` stubs them
+again, internally, for any in-progress plan. An in-progress edit that prices
+normally takes neither of the caller's branches, calls the helper, and receives
+the stub — so a predicate written at the call site would have covered the parked
+branch and left that one silent.
+
+**The five paths that park**, and what is peculiar to each:
+
 - the IN-PROGRESS edit planner, `buildInProgressGuestRangePlan`
   (`src/lib/booking-edit-guest-ranges.ts`), reached from both the modify-quote
   preview and the modify save whenever the stay is already under way (#3031,

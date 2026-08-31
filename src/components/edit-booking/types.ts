@@ -263,6 +263,19 @@ export interface QuoteResult {
     excludedNames: string[];
     message: string;
   } | null;
+  /**
+   * #3179: present only when this edit cannot carry the promo-code change the
+   * request is asking for — today, an edit whose money parks for review. The
+   * edit still saves; the promotional part of it does not, and the member is
+   * told so here rather than discovering it on the invoice. The sentence is the
+   * SERVER's and is rendered verbatim.
+   */
+  promoChangeNotApplied?: {
+    requested: "apply" | "remove";
+    reason: "STAY_IN_PROGRESS" | "AMOUNT_UNDER_REVIEW";
+    promoCode: string;
+    message: string;
+  } | null;
   promoValidation: {
     valid: boolean;
     error?: string;

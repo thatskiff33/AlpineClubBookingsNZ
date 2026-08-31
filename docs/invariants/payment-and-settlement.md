@@ -1430,6 +1430,16 @@ one, check the other.
       built on. Its instruction also says what to do when the repair pass reports
       nothing, because that pass cannot yet see a booking whose charge came from a
       review of this kind (#3187).
+      **#3187's structural finding still matters, and now covers a different
+      case.** The booking-vs-Xero repair tool reads the expected
+      supplementary-invoice total from the settled review shares rather than from
+      the `BookingModification` row, which a parked edit leaves at zero - so a
+      missing invoice is queued for the settled total and one that went out short
+      is reported as `XERO_AMOUNT_MISMATCH` for a person to correct. Before
+      #3193 that was the instrument for the shortfall itself. It is now the
+      instrument for the case #3193 deliberately does NOT bill: a share withheld
+      while the change's invoice was in flight, where nobody can yet say whether
+      it went out.
     - **A durable retry closes the debt only when the ask EXISTS afterwards.** The
       recovery replay re-derives the total through the same sync the inline
       completion uses, and that sync reports which of four things happened
