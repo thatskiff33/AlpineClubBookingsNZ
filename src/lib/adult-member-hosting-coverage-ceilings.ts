@@ -70,6 +70,15 @@ export const SAME_OWNER_COVERAGE_DEPENDENT_LIMIT = 25;
  * every time the evaluation happens to see a different N. Ordering costs a
  * writer nothing on a read that is already narrowed to one owner or one Group
  * Trip and already indexed, so the two reads take it unconditionally.
+ *
+ * WHAT ORDERING DOES NOT FIX, stated so nobody reads it as more than it is. It
+ * changes WHICH rows a truncation returns, never how many, and never gives a
+ * result below the bound — but above the bound the bias becomes SYSTEMATIC
+ * rather than arbitrary: the earliest-arriving bookings are kept and the latest
+ * dropped, every time. That is the right trade (a reproducible answer beats a
+ * lottery, and the truncation still errs towards opening a review rather than
+ * suppressing one), and it is not a substitute for the ceilings being high
+ * enough that a real party never reaches them.
  */
 export const COVERAGE_READ_ORDER = [
   { checkIn: "asc" },

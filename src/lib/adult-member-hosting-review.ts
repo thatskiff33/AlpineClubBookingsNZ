@@ -429,8 +429,13 @@ async function loadSiblingHosts(
       ? {}
       : {
           // A total order, so a bound that binds binds reproducibly rather than
-          // returning any N of the matching rows.
-          orderBy: [{ checkIn: "asc" as const }, { id: "asc" as const }],
+          // returning any N of the matching rows. `COVERAGE_READ_ORDER` is that
+          // order for every bounded coverage read in this file, and spelling it
+          // out a third time here is exactly the drift #3038 removed from the
+          // two source reads (`INV-SSOT-001`). Applied only when a ceiling is
+          // passed, unlike those two: a writer's sibling read is unbounded, so
+          // there is no truncation for an order to make reproducible.
+          orderBy: [...COVERAGE_READ_ORDER],
           take: siblingCeiling + 1,
         }),
   })) as LoadedHostingBooking[];
@@ -506,12 +511,70 @@ async function loadSiblingHosts(
  */
 function inheritedSplitPairGroupTrip(
   booking: Pick<LoadedHostingBooking, "parentBookingId">,
-  splitSiblings: readonly LoadedHostingBooking[],
+  splitSiblings: readonly SplitPairSiblingRow[],
 ): GroupTripIdentity | null {
   const parentId = booking.parentBookingId;
   if (!parentId) return null;
   const parent = splitSiblings.find((sibling) => sibling.id === parentId);
   return parent ? groupTripIdentityOf(parent) : null;
+}
+
+/**
+ * The least a row must carry to be judged as the other half of a split pair.
+ *
+ * `id` and the two canonical relations, and deliberately nothing else. The
+ * persisted evaluator hands over full `LoadedHostingBooking` rows it has already
+ * read; the exception-request path has no such rows and reads a two-column
+ * projection instead, so widening the parameter is what lets ONE rule serve both
+ * rather than a second copy growing on the proposal side (`INV-SSOT-001`).
+ *
+ * The `booking` parameter stays `Pick<LoadedHostingBooking, "parentBookingId">`,
+ * and that narrowness is the carve-out's PRIMARY structural guard: the function
+ * is never handed the evaluated booking's own `id`, so it cannot be widened to
+ * follow children without changing the signature — which no accidental edit
+ * does. The behavioural fence in
+ * `adult-member-hosting-group-trip-cover.test.ts` is the second guard, and the
+ * one that catches a widening of the `find` predicate itself.
+ */
+type SplitPairSiblingRow = GroupTripIdentityRow & { id: string };
+
+const SPLIT_PAIR_IDENTITY_SELECT = {
+  id: true,
+  ...GROUP_TRIP_IDENTITY_SELECT,
+} as const;
+
+/**
+ * The same carve-out for a caller that holds no sibling rows (#3038).
+ *
+ * `evaluateLoadedBookingAdultMemberHosting` has already read the `SAME_BOOKING`
+ * sibling set by the time it asks, so it calls `inheritedSplitPairGroupTrip`
+ * directly and the exception costs no extra query. The exception-request
+ * re-evaluation
+ * (`booking-exception-request-service.ts` -> `resolveProposalGroupTrip`) holds
+ * nothing: it resolves identity from a single `findUnique` on the live booking.
+ * Without this it could not apply the carve-out AT ALL — and being unable to is
+ * not a smaller version of the same answer, it is the two evaluators disagreeing
+ * about exactly the booking the carve-out exists to fix. A split child covered
+ * only through its parent's Group Trip would be re-judged as uncovered, and that
+ * phantom violation is FROZEN into the request, shown to an officer as live,
+ * used to reserve beds under `HOLD`, and reproduced at approval so the #2525
+ * drift gate compares it with itself.
+ *
+ * So the RULE lives once and this is a second way in, not a second answer: the
+ * same `hostingSiblingWhere` set, filtered by the same
+ * `inheritedSplitPairGroupTrip`. The read is skipped entirely for a booking with
+ * no `parentBookingId`, which is every ordinary booking.
+ */
+export async function readInheritedSplitPairGroupTrip(
+  db: Pick<AdultMemberHostingReadDb, "booking">,
+  booking: Pick<LoadedHostingBooking, "id" | "memberId" | "parentBookingId">,
+): Promise<GroupTripIdentity | null> {
+  if (!booking.parentBookingId) return null;
+  const splitSiblings = (await db.booking.findMany({
+    where: hostingSiblingWhere(booking),
+    select: SPLIT_PAIR_IDENTITY_SELECT,
+  })) as SplitPairSiblingRow[];
+  return inheritedSplitPairGroupTrip(booking, splitSiblings);
 }
 
 /**
