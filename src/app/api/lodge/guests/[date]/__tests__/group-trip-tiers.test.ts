@@ -192,9 +192,14 @@ describe("#3040 GET /api/lodge/guests/[date] — Group Trip disclosure by tier",
           `kiosk tier's JSON body contains "${forbidden}"`,
       ).not.toContain(forbidden);
     }
-    // The privileged reads never ran, so there was nothing to leak.
+    // The privileged reads never ran, so there was nothing to leak — and the
+    // ordinary tier's own label cost no extra query at all, because the identity
+    // relations came back with the booking.
     expect(mockPrisma.groupBooking.findMany).not.toHaveBeenCalled();
     expect(mockPrisma.hostingCoverageIncident.findMany).not.toHaveBeenCalled();
+    expect(
+      mockPrisma.adultMemberHostingPolicy.findMany,
+    ).not.toHaveBeenCalled();
   });
 
   it("gives the shared LODGE wall device the ordinary tier's disclosure too", async () => {
@@ -230,19 +235,55 @@ describe("#3040 GET /api/lodge/guests/[date] — Group Trip disclosure by tier",
     ).not.toContain("adult-secret");
   });
 
-  it("adds nothing at all when the club has not enabled Group Trip cover", async () => {
+  // This test used to assert the route added NOTHING — no chip either — when the
+  // club had not enabled Group Trip cover. Owner decision D1 on #3040 overturned
+  // that for the chip: group bookings predate the cover scope, so a roster label
+  // saying "these guests arrived together" is not conditional on an unrelated
+  // supervision setting. The two halves are now pinned separately, because they
+  // answer to different facts.
+  it("still labels the linkage when the club has not enabled Group Trip cover", async () => {
     harness.tier = "admin";
     mockPrisma.adultMemberHostingPolicy.findMany.mockResolvedValue([
       { ...SCOPE_ON_POLICY, hostScopeSameGroupTrip: false },
     ]);
     const body = await callRoute();
+    expect(
+      body.bookings.map((entry) => entry.groupTrip),
+      "INV-PRIV-015 (docs/invariants/analytics-and-privacy.md): owner decision " +
+        "D1 on #3040 — the linkage label follows group membership, not the " +
+        "club's shared-cover option",
+    ).toEqual([{ label: 1 }, { label: 1 }]);
+    // And the scope being off does not withhold the cover line either: it
+    // decides whether a SIBLING booking's adult may count, not whether cover is
+    // evaluated at all.
+    expect(body.bookings[0].adultCoverSource).toMatchObject({
+      status: "EVALUATED",
+    });
+  });
+
+  it("withholds the cover line entirely when the club's hosting requirement is off", async () => {
+    harness.tier = "admin";
+    mockPrisma.adultMemberHostingPolicy.findMany.mockResolvedValue([
+      { ...SCOPE_ON_POLICY, mode: "DISABLED" },
+    ]);
+    const body = await callRoute();
     for (const entry of body.bookings) {
-      expect(entry).not.toHaveProperty("groupTrip");
-      expect(entry).not.toHaveProperty("groupTripOrganiser");
-      expect(entry).not.toHaveProperty("adultCoverSource");
+      expect(entry.groupTrip).toEqual({ label: 1 });
+      expect(
+        entry,
+        "INV-HOST-045 (docs/invariants/adult-member-hosting.md): with the " +
+          "adult-member-hosting requirement not in force the canonical " +
+          "evaluator writes nothing, so there is no cover to report and the " +
+          "key is absent — never a frozen snapshot shown as current cover",
+      ).not.toHaveProperty("adultCoverSource");
     }
-    expect(mockPrisma.groupBooking.findMany).not.toHaveBeenCalled();
-    expect(mockPrisma.hostingCoverageIncident.findMany).not.toHaveBeenCalled();
+    expect(JSON.stringify(body)).not.toContain("SAME_GROUP_TRIP");
+    expect(
+      mockPrisma.hostingCoverageIncident.findMany,
+    ).not.toHaveBeenCalled();
+    expect(
+      mockPrisma.hostingCoverageReevaluation.findMany,
+    ).not.toHaveBeenCalled();
   });
 
   it("never shows a stale evaluation as cover, at any tier", async () => {

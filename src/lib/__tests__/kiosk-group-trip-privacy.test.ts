@@ -53,10 +53,14 @@ const OTHER_TRIP = "group-trip-2";
 const JOIN_CODE = "ZZ9TRP";
 
 /**
- * A club-wide policy row with the Group Trip scope ON, which is what every test
- * below assumes unless it is about the toggle itself. The whole feature — the
- * ordinary tier's chip included — is behind this option, because the epic's
- * contract opens with "clubs that leave the option OFF see no behaviour change".
+ * A club-wide policy row with the hosting requirement ACTIVE and the Group Trip
+ * scope ON, which is what every test below assumes unless it is about the club's
+ * settings themselves.
+ *
+ * Owner decision D1 on #3040: the ordinary linkage badge is NOT behind this
+ * option — it appears whenever a club uses group bookings. What the policy still
+ * governs is the privileged COVER-SOURCE line, and only through its `mode`: with
+ * the requirement not in force there is no evaluation of any booking to report.
  */
 const SCOPE_ON_POLICY = {
   id: "policy-club",
@@ -182,7 +186,10 @@ function fakeStore(options: {
   groups?: Array<{ id: string; organiser: string }>;
   queuedOwnerIds?: string[];
   openIncidentBookingIds?: string[];
-  /** The club's resolved Group Trip cover option. ON unless a test says otherwise. */
+  /**
+   * The club's adult-member-hosting policy rows. Active with every scope on
+   * unless a test says otherwise. Read ONLY by the cover-source tier.
+   */
   policyRows?: Array<Record<string, unknown>>;
 } = {}): FakeStore {
   const bookings = options.bookings ?? [];
@@ -366,6 +373,9 @@ describe("#3040 ordinary staying-guest tier: linkage only", () => {
       ).not.toContain(forbidden);
     }
     // And the reads themselves never happened, so there was nothing to leak.
+    // The policy read is one of them: it belongs to the cover-source tier, so an
+    // ordinary viewer's response does not issue it either.
+    expect(calls.policyFindMany).toBe(0);
     expect(calls.groupBookingFindMany).toBe(0);
     expect(calls.reevaluationFindMany).toBe(0);
     expect(calls.incidentFindMany).toBe(0);
@@ -373,10 +383,18 @@ describe("#3040 ordinary staying-guest tier: linkage only", () => {
 });
 
 // ---------------------------------------------------------------------------
-// The club's toggle governs the whole surface, chip included
+// What the club's hosting settings do and do not gate (owner decision D1)
 // ---------------------------------------------------------------------------
 
-describe("#3040 a club that has not enabled Group Trip cover sees no change", () => {
+// These were four cases asserting that a club without the `SAME_GROUP_TRIP`
+// cover option got NOTHING — no chip, no organiser, no cover line. Owner
+// decision D1 on #3040 overturned the chip half of that: group bookings predate
+// the cover scope, the badge says only "these guests arrived together", and a
+// roster label may not be conditional on an unrelated supervision setting. The
+// other half is untouched and is the privacy property, so the same four club
+// shapes are still driven here — asserting the new rule for the badge, and the
+// unchanged rule for the cover line.
+describe("#3040 the club's hosting settings gate the cover line, never the badge", () => {
   const rows = () => [
     bookingRow({
       id: "b-organiser",
@@ -392,40 +410,108 @@ describe("#3040 a club that has not enabled Group Trip cover sees no change", ()
     { ...SCOPE_ON_POLICY, ...overrides },
   ];
 
-  it.each([
-    ["the scope is off", off({ hostScopeSameGroupTrip: false })],
+  /** The club shapes that leave the hosting REQUIREMENT not in force. */
+  const NOT_IN_FORCE: Array<[string, Array<Record<string, unknown>>]> = [
     ["the policy mode is DISABLED", off({ mode: "DISABLED" })],
     ["there is no policy row at all", []],
     [
       "the policy set is malformed, so the resolver throws",
       [SCOPE_ON_POLICY, { ...SCOPE_ON_POLICY, id: "policy-club-2" }],
     ],
+  ];
+
+  it.each([
+    ["the Group Trip cover scope is off", off({ hostScopeSameGroupTrip: false })],
+    ...NOT_IN_FORCE,
   ])(
-    "adds nothing to any card, at ANY tier, when %s",
+    "still gives both cards the linkage label, at ANY tier, when %s",
     async (_case, policyRows) => {
       const all = rows();
       for (const capabilities of [ORDINARY, PRIVILEGED]) {
         const store = fakeStore({
           bookings: all,
-          policyRows: policyRows as Array<Record<string, unknown>>,
+          policyRows,
           groups: [{ id: TRIP, organiser: "Olivia" }],
         });
-        const { attached, calls } = await attach(all, capabilities, store);
+        const { attached } = await attach(all, capabilities, store);
         expect(
-          attached,
-          "INV-PRIV-015 (docs/invariants/analytics-and-privacy.md): with the " +
-            "Group Trip cover option OFF the kiosk payload must be identical to " +
-            "the pre-#3040 one — no chip, no organiser, no cover source",
-        ).toEqual(all.map((row) => card(row.id)));
-        // And nothing beyond the one policy read was issued.
-        expect(calls.policyFindMany).toBe(1);
-        expect(calls.bookingFindMany).toBe(0);
-        expect(calls.groupBookingFindMany).toBe(0);
-        expect(calls.reevaluationFindMany).toBe(0);
-        expect(calls.incidentFindMany).toBe(0);
+          attached.map((entry) => entry.groupTrip),
+          "INV-PRIV-015 (docs/invariants/analytics-and-privacy.md): owner " +
+            "decision D1 on #3040 — the linkage badge follows whether the " +
+            "bookings are in one group, NOT the club's shared-cover option",
+        ).toEqual([{ label: 1 }, { label: 1 }]);
       }
     },
   );
+
+  it("costs an ordinary viewer no policy read at all, whatever the club's settings", async () => {
+    const all = rows();
+    for (const [, policyRows] of NOT_IN_FORCE) {
+      const store = fakeStore({ bookings: all, policyRows });
+      const { attached, calls } = await attach(all, ORDINARY, store);
+      // Linkage comes from the identity relations the caller already selected,
+      // so decoupling the badge did NOT buy the ordinary tier a query.
+      expect(calls.policyFindMany).toBe(0);
+      expect(calls.bookingFindMany).toBe(0);
+      expect(calls.groupBookingFindMany).toBe(0);
+      expect(calls.reevaluationFindMany).toBe(0);
+      expect(calls.incidentFindMany).toBe(0);
+      for (const entry of attached) {
+        expect(entry).not.toHaveProperty("groupTripOrganiser");
+        expect(entry).not.toHaveProperty("adultCoverSource");
+      }
+    }
+  });
+
+  it.each(NOT_IN_FORCE)(
+    "shows a PRIVILEGED viewer no cover source at all when %s",
+    async (_case, policyRows) => {
+      const all = rows();
+      const store = fakeStore({
+        bookings: all,
+        policyRows,
+        groups: [{ id: TRIP, organiser: "Olivia" }],
+      });
+      const { attached, calls } = await attach(all, PRIVILEGED, store);
+      for (const entry of attached) {
+        expect(
+          entry,
+          "INV-HOST-045 (docs/invariants/adult-member-hosting.md): with the " +
+            "adult-member-hosting requirement not in force there is no " +
+            "evaluation of this booking to report, so the key is ABSENT — a " +
+            "frozen snapshot from a policy since withdrawn is not current cover",
+        ).not.toHaveProperty("adultCoverSource");
+      }
+      // The staleness reads are gated with the payload key, so nothing was read.
+      expect(calls.reevaluationFindMany).toBe(0);
+      expect(calls.incidentFindMany).toBe(0);
+      // Organiser context follows its OWN capability and is unaffected.
+      expect(attached[0].groupTripOrganiser).toEqual({
+        isOrganiser: true,
+        organiserName: "Olivia Organiser",
+      });
+    },
+  );
+
+  it("does show a PRIVILEGED viewer the cover source when the requirement is in force but the Group Trip scope is off", async () => {
+    const all = rows();
+    const store = fakeStore({
+      bookings: all,
+      policyRows: off({ hostScopeSameGroupTrip: false }),
+      groups: [{ id: TRIP, organiser: "Olivia" }],
+    });
+    const { attached } = await attach(all, PRIVILEGED, store);
+    expect(
+      attached[0].adultCoverSource,
+      "INV-HOST-045: the SAME_GROUP_TRIP scope decides whether a sibling " +
+        "booking's adult may COUNT, not whether cover is evaluated — a club " +
+        "with the requirement on still has real SAME_BOOKING evidence to show",
+    ).toEqual({
+      status: "EVALUATED",
+      nights: [{ night: "2026-08-01", covered: true, scopes: ["SAME_BOOKING"] }],
+      scopes: ["SAME_BOOKING"],
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -470,8 +556,10 @@ describe("#3040 the two privileged capabilities are independent", () => {
           "separately from organiser context",
       ).toBe(wantCover);
 
-      // A capability nobody holds costs no query.
+      // A capability nobody holds costs no query — the cover tier's policy read
+      // included, which is why the capability is tested before it.
       expect(calls.groupBookingFindMany > 0).toBe(wantOrganiser);
+      expect(calls.policyFindMany > 0).toBe(wantCover);
       expect(calls.reevaluationFindMany > 0).toBe(wantCover);
       expect(calls.incidentFindMany > 0).toBe(wantCover);
 
