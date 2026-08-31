@@ -361,7 +361,17 @@ export const AUDIT_CENSUS_TOTALS = {
   // the site, so it does not join `UNCATEGORISED_AUDIT_WRITERS` below. Measured by
   // RUNNING `npm run audit:census` on this tree (463 sites, 2220 files scanned),
   // not by adding one to the literal.
-  writeSites: 463,
+  // 463 -> 464 (#3191): settling a review may also record what its unpriced
+  // nights sold for, and that is a money-affecting act in its own right - so it
+  // writes `booking-payment.stored-night-price.record` through the awaited
+  // `createAuditLog`, inside the completion's own transaction. A SECOND entry
+  // rather than metadata on the completion beside it, because the two are
+  // different acts and this one can happen on a DISMISSAL, whose entry says in
+  // as many words that nothing moved. Categorised `payment` at the site, so it
+  // does not join `UNCATEGORISED_AUDIT_WRITERS` below. Measured by RUNNING
+  // `npm run audit:census` on this tree (464 sites, 2229 files scanned), not by
+  // adding one to the literal.
+  writeSites: 464,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -439,7 +449,8 @@ export const AUDIT_CENSUS_TOTALS = {
     // them rather than introducing another form.
     // 116 -> 117 (#3170): the uncollected review share, above, written through
     // `createAuditLog` like the payment writers around it.
-    createAuditLog: { total: 117, uncategorised: 0 },
+    // 117 -> 118 (#3191): the stored-night-price record above.
+    createAuditLog: { total: 118, uncategorised: 0 },
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -550,7 +561,8 @@ export const AUDIT_CENSUS_TOTALS = {
     // argument as the two rows above it - it says money the club is owed was not
     // asked for, and the only person who can settle that is the one who reconciles
     // the club's money.
-    payment: 38,
+    // 38 -> 39 (#3191): the stored-night-price record above.
+    payment: 39,
     // 27 -> 34 (#2581 child 2): the five family-group writers and the two
     // dependants writers. Both dependants writers also moved off a hand-built
     // Prisma literal and onto the audit boundary in the same change.

@@ -6,8 +6,8 @@ import {
   ManualRefundTaskKind,
   ManualRefundTaskStatus,
 } from "@prisma/client";
-import { createAuditLog } from "@/lib/audit";
 import { recordBookingEvent } from "@/lib/booking-events";
+import { recordManualRefundTaskClosureAudit } from "@/lib/manual-refund-task-audit";
 import { hasIssuedPrimaryXeroInvoice } from "@/lib/booking-payment-state";
 import { isNonNegativeIntegerCents } from "@/lib/edit-financial-review-context";
 import {
@@ -27,6 +27,15 @@ import {
   RefundAllocationRacedError,
 } from "@/lib/payment-transactions";
 import { prisma } from "@/lib/prisma";
+// #3195: the $0 refusal is said by the settle SCREEN as well as thrown here, and
+// this module is `server-only` - so the sentence lives in a client-safe home and
+// both read it (`INV-SSOT`).
+import { zeroCompletionRefusal } from "@/lib/manual-refund-task-copy";
+import type { RecordedNightPrice } from "@/lib/stored-night-price-repair";
+import {
+  planStoredNightPriceRepair,
+  recordStoredNightPriceRepair,
+} from "@/lib/stored-night-price-repair-store";
 
 /**
  * B5 (#2262) guard 4, and since #3030 the completion door of epic #2797: closing
@@ -114,6 +123,15 @@ export type ManualRefundTaskResolution =
        * is exactly the task where an unstated default is a guess.
        */
       direction: ManualRefundTaskDirection | null;
+      /**
+       * #3191: what the officer says each of this review's UNPRICED NIGHTS sold
+       * for, or null for "not recording those now" - which is an ordinary answer
+       * and settles exactly as this path did before #3191. REQUIRED rather than
+       * optional for the reason the two fields above are. Why it is optional
+       * rather than mandatory, and why a partial answer is refused rather than
+       * completed, is `stored-night-price-repair.ts` and `INV-MOD-028`.
+       */
+      recordedNightPrices: RecordedNightPrice[] | null;
     }
   | {
       taskId: string;
@@ -121,6 +139,14 @@ export type ManualRefundTaskResolution =
       note: string | null;
       actingMemberId: string;
       confirmedAmountCents?: never;
+      /**
+       * #3191: a dismissal records them too, and has to be able to - a parked
+       * edit whose strand kept the same nights owes nothing either way, so if
+       * only a completion could fill the blanks in, exactly the bookings with
+       * nothing to settle would park forever. Nothing moves, so the figures must
+       * come to the strand's stored total unchanged.
+       */
+      recordedNightPrices: RecordedNightPrice[] | null;
       /**
        * A dismissal moves no money, so there is no direction to record and none
        * may be sent. The database says the same thing
@@ -356,8 +382,12 @@ export async function resolveManualRefundTask(
         // zero-amount task (both guard on a positive refund), and a row that
         // somehow carried one is still DISMISSABLE - which is the state it should
         // have been in.
+        //
+        // #3195 question 1 put the rule itself back to the owner, who kept it -
+        // and required the refusal to name the way out. `zeroCompletionRefusal`
+        // is where that sentence lives and why there are two of them.
         throw new ManualBookingPaymentError(
-          "A completed refund must be more than zero — if nothing is due, dismiss the task with a note instead.",
+          zeroCompletionRefusal(isEditReview),
           400
         );
       }
@@ -384,6 +414,23 @@ export async function resolveManualRefundTask(
           store: tx,
         })
       : null;
+
+    // #3191: what the officer says the booking's unpriced nights sold for,
+    // checked BEFORE the claim so a refusal leaves the task OPEN and its money
+    // question intact. `stored-night-price-repair-store.ts` owns the rules, the
+    // re-read of the blanks and the refusals; null in means null out, and the
+    // strand is not touched at all.
+    const nightPriceRepair = await planStoredNightPriceRepair({
+      task,
+      requested: input.recordedNightPrices,
+      settled: settlement
+        ? {
+            direction: settlementDirection,
+            amountCents: settlement.amountCents,
+          }
+        : null,
+      store: tx,
+    });
 
     const now = new Date();
     const claimed = await tx.manualRefundTask.updateMany({
@@ -517,60 +564,31 @@ export async function resolveManualRefundTask(
       }
     }
 
-    await createAuditLog(
-      {
-        action:
-          resolution === "completed"
-            ? "booking-payment.manual-refund-task.complete"
-            : "booking-payment.manual-refund-task.dismiss",
-        memberId: actingMemberId,
-        actorMemberId: actingMemberId,
-        subjectMemberId: task.booking.memberId,
-        targetId: task.bookingId,
-        entityType: "ManualRefundTask",
-        entityId: task.id,
-        category: "payment",
-        severity: "important",
-        outcome: "success",
-        summary:
-          resolution === "completed"
-            ? "Manual booking refund paid back by hand"
-            : "Manual booking refund task dismissed",
-        details: trimmedNote,
-        metadata: {
-          taskId: task.id,
-          bookingId: task.bookingId,
-          paymentId: task.paymentId,
-          // #3030: three amounts, not one, because "audited amendment" (owner
-          // decision D2) is only auditable if the entry says what the figure was
-          // before and after. `raisedAmountCents` is what the task was raised
-          // with, `previousAmountCents` what it carried when this admin opened
-          // it, and `amountCents` what it closed at.
-          amountCents: settlement?.amountCents ?? null,
-          previousAmountCents: task.amountCents,
-          raisedAmountCents: task.raisedAmountCents,
-          amountAmended: settlement?.amended ?? false,
-          kind: task.kind,
-          resolution,
-          // #3032: WHICH settlement path this amount went down, and the anchor it
-          // settled against. Without these the entry says an amount was closed
-          // but not whether that meant a card refund, a ledger mirror of a hand
-          // -back, or freshly minted account credit - three materially different
-          // claims about the club's money.
-          settlementRoute: settlementRoute?.kind ?? null,
-          settlementBookingModificationId:
-            settlementRoute && settlementRoute.kind !== "local-allocation"
-              ? settlementRoute.bookingModificationId
-              : null,
-          // #3170: WHICH WAY, recorded beside the route. The route says how the
-          // money travelled and the direction says who ended up with it, and
-          // "additional-charge" is the only route where those two answers differ
-          // from every entry written before this issue.
-          settlementDirection: settlement ? settlementDirection : null,
-        },
-      },
-      tx
-    );
+    // #3191: the blanks become numbers, after the claim and inside it, so a lost
+    // claim writes no prices. It records its OWN audit entry rather than adding
+    // to the one below - see `recordStoredNightPriceRepair` for why that is not
+    // tidiness.
+    if (nightPriceRepair) {
+      await recordStoredNightPriceRepair({
+        plan: nightPriceRepair,
+        task,
+        actingMemberId,
+        resolution,
+        note: trimmedNote,
+        store: tx,
+      });
+    }
+
+    await recordManualRefundTaskClosureAudit({
+      task,
+      resolution,
+      actingMemberId,
+      note: trimmedNote,
+      settlement,
+      settlementRoute,
+      settlementDirection,
+      store: tx,
+    });
 
     return {
       taskId: task.id,
@@ -580,6 +598,12 @@ export async function resolveManualRefundTask(
       raisedAmountCents: task.raisedAmountCents,
       amountAmended: settlement?.amended ?? false,
       kind: task.kind,
+      /**
+       * #3191: how many of this booking's blank nights this decision filled in,
+       * so the operator's receipt can say it happened. Zero when none were sent,
+       * which is the ordinary case and is not a failure.
+       */
+      recordedNightPriceCount: nightPriceRepair?.entries.length ?? 0,
       /**
        * #3030: the refund this completion actually MADE, or null.
        *

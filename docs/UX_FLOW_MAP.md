@@ -423,6 +423,42 @@ the member, the amount, the day the money went back, the stay dates, the booking
 identifier as plain text, and both the reason the payment was queued and the note
 saying it is already settled.
 
+**The settle box asks a second question when the booking has unpriced nights
+(#3191).** A financial-review row whose guest strand holds nights with no stored
+price carries a list of those nights inside the settle dialog, one money box each,
+on BOTH controls - the adjustment one and the no-adjustment one, because a change
+that owes nothing is one of the commonest to have this problem. Nothing is
+pre-filled and there is no control that produces a figure: `INV-MOD-028` forbids
+deriving a historical amount, and a box arriving with a number in it is a
+derivation an officer accepts by pressing a button. Under the boxes is a running
+line saying what the figures come to and what they have to come to - the strand's
+stored total adjusted by the amount being settled - and until the officer has
+chosen a direction and an amount it says instead that the target cannot be worked
+out yet. Filling some boxes and not others disables the confirm button with that
+sentence showing; a box holding something that is not an amount at all -
+`1,200.00`, `$45`, `45.` - is refused by name rather than reported as a missing
+one; filling none of them is a valid answer and posts exactly the body this
+screen posted before #3191. When the figures cannot be made to add up honestly,
+the refusal itself says so FIRST and names clearing every box as the third way
+out, before it offers to have either figure corrected - the officer facing
+exactly that case must not be steered into typing a price that reconciles and is
+false. The running line is muted while an answer is being typed and turns to a
+warning colour only once every box has been filled AND left, so a wrong figure
+half-entered is not shouted at mid-number.
+
+**A $0.00 settlement is refused with a sentence rather than a disabled button
+(#3195).** The confirm control was already disabled at zero and said nothing,
+which is the bare refusal the owner's 31 Aug 2026 decision rejected. The dialog
+now prints the refusal beneath the amount box, from the same string the server
+would have thrown, naming **No adjustment** - the control that does say "nothing
+to adjust". Only a financial review has an amount box on this screen, so that is
+the only wording the browser ever prints; the hand-back wording, which names
+**Dismiss**, belongs to the server's own refusal and reaches the officer as an
+error after posting. Both the $0.00 refusal and the night-price verdict below it
+are live regions, and each is listed ahead of its box's worked example in
+`aria-describedby` - the confirm button is disabled behind both sentences, so a
+reader who cannot hear one is back at the bare refusal.
+
 **Two groups inside that one card, deleted first (#2760).** The record covers every
 auto-refunded late capture, and since #2760 that includes bookings which are
 cancelled but still on file — where the refund is usually the expected outcome of

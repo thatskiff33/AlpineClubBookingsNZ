@@ -1223,6 +1223,106 @@ strand already held whose row carried no usable money, or one the edit newly put
 that strand on while its stored total is frozen. A night an edit BUYS at a price
 the member is charged always carries that integer.
 
+**A `NULL` may be filled in afterwards by a PERSON, and by nothing else** (#3191,
+epic #2797; owner decision 31 Aug 2026). Without that the rule was a ratchet: a
+booking parked once parked forever, because no path could ever clear a blank and
+every later edit read the same absent evidence. Settling the review that the park
+raised may now also record what each of that guest strand's unpriced nights sold
+for, under four conditions, none of which is optional:
+
+- **the officer types every figure.** A partial answer is refused rather than
+  completed, and there is no derivation anywhere in that path - no even split, no
+  rate lookup, no rounding, no defaulted zero. Two instruments, because neither
+  covers the other, and what each one really covers is worth stating precisely
+  because an earlier draft of this paragraph overstated both and a review lens
+  disproved it by building the thing and watching it pass.
+  `stored-night-price-repair-census.test.ts` reads the source three ways: it
+  names the ONE module in the tree that may update a night row's price in place,
+  so a second writer appearing anywhere fails there with its own file name; it
+  scans the two rules modules, the boxes component and **the whole of** the
+  settle screen - minus one five-line, capped, published money-display exemption
+  - for a division, a rounding, a split helper, an average or a defaulted zero;
+  and it fences the reference to `unpricedNightTargetCents`, the single
+  definition of what the blanks must come to, to those four files, so the
+  arithmetic cannot be lifted into a helper one module away. What a source scan
+  cannot see is a REMAINDER FILL - `targetCents - enteredCents` is a subtraction
+  and matches none of those patterns, and the server cannot catch one either
+  because it arrives as a complete, reconciling vector - so that half is
+  behaviour: `manual-refund-task-queue-financial-review.test.tsx` fills every
+  night but one on the real settle dialog, presses **every** control in that
+  dialog that is not a way out - so a fill button is caught whatever it is
+  called, which a name-matching regex was not - re-asserts the boxes, and then
+  asserts the confirm button is still disabled and that a press posts nothing,
+  which is what catches a fill made straight into the posted entries where there
+  is no box value to look at;
+- **the figures reconcile.** Together with the strand's already-priced nights
+  they must come to `BookingGuest.priceCents` adjusted by the settled amount -
+  minus a refund, plus a charge - which is what makes the strand exact under the
+  definition above, and is therefore what stops it parking again. The strand's
+  stored total is re-based to that sum in the same write, so what it is worth and
+  what its nights say cannot disagree afterwards;
+- **an existing price is never rewritten.** Every write is fenced on
+  `priceCents: null`, so a night that already carries a figure - a real stored
+  `0` included - cannot be touched by this path at all, and a race becomes a
+  refusal rather than a lost update. The strand's total is fenced on its previous
+  value the same way. `src/lib/stored-night-price-repair-store.ts` is the one
+  module in the tree permitted to update an existing night row's price in place;
+- **it is audited as a money-affecting act**, in its own entry
+  (`booking-payment.stored-night-price.record`, category `payment`) rather than
+  as metadata on the settlement beside it - it can also happen on a DISMISSAL,
+  whose entry says in as many words that nothing moved.
+
+It is OPTIONAL, and that is a decision rather than an omission. A settled amount
+is not always a restatement of what the nights were worth - a change fee, or a
+hand-back reduced by policy, will not reconcile - so requiring it would let a
+repair that is optional by nature hold a money question open. What is NOT
+optional is the asking: the settle screen lists the blanks and says that leaving
+them means the booking is sent for review again next time anybody changes it.
+
+**Four things this deliberately does not repair.** A strand with a negative or
+fractional stored row is not offered the boxes at all: those rows are an absence
+of usable evidence too, but they are not `NULL`, so filling the blanks beside
+them would leave the strand still unable to reconcile - a promise of a repair
+that is not one. Rewriting them is #2745's audited decision. Nor does anything
+here create a missing night ROW, which is a different act from filling one in.
+A `STORED_TOTAL_MISMATCH` strand - every night priced, and those prices not
+summing to `BookingGuest.priceCents` - gets no boxes either, and for a different
+reason from the other two: it has no blanks, so the summary is `null` and the
+screen stays silent. That strand parks on every edit for as long as it exists,
+exactly as it did before #3191, because what it needs is a decision about which
+of two stored numbers is wrong rather than a number nobody has.
+`Booking.totalPriceCents` is likewise untouched: the park froze it and the
+settlement moves the money through the club's own instruments, so re-basing the
+booking's headline total is a separate question from recording what a stay sold
+for. A parked edit already leaves the booking's headline total and its guest rows
+disagreeing by design, and nothing in the tree asserts that they agree.
+
+**What the re-based `BookingGuest.priceCents` is read by, since "only the
+booking's headline total is frozen" would leave that unsaid.** The strand total
+this repair moves is a Xero input, and the repair also flips a strand out of the
+whole-stay fallback into per-night runs (`buildInvoiceLineItems` sends a guest
+holding any unknown night down the legacy branch, #3170). Three consumers, and
+none of them restates an amount already billed:
+
+- **the primary booking invoice** is a date-and-narration update and nothing
+  else. `updateXeroBookingInvoiceForBooking` copies `quantity`, `unitAmount` and
+  `lineAmount` from the invoice as Xero currently holds it and takes only the
+  DESCRIPTION from the rebuilt line items, so no re-pricing of that document is
+  reachable from here at all - not from the settle itself, which classifies as
+  `datesChanged: false, guestIdentityChanged: false` and queues no update, and
+  not from a later date-change edit, which queues one that moves no money. Pinned
+  by `xero-booking-invoice.test.ts` -> "updates primary invoice dates and guest
+  line narration without changing amounts";
+- **a group settlement invoice** does build its amounts from `priceCents`, but it
+  is raised ONCE from current state and re-asserts its existing link on every
+  later attempt. A repair therefore lands either before it is raised, where it
+  bills the corrected figure, or after, where it changes nothing;
+- **the finance revenue reconciliation** counts a `NULL` night as excluded rather
+  than as zero, so an unpriced strand shows as a positive variance against Xero
+  and the OPEN review is the system's record of why. Recording the prices closes
+  that variance, which is the report working as intended rather than a number
+  moving under it.
+
 The test is RECONCILIATION and not provenance: two of the three events that populated that table were themselves
 even splits (migrations `20260704150000` #1098 and `20260810010000` #2739), there
 is no provenance column and `createdAt` does not separate a backfilled row from a
@@ -1502,3 +1602,12 @@ sweep, each against a priced control that raises nothing) and by
 asserts that the guest is deleted, that the tasks are raised with a null amount
 and this removal's `BookingModification` as their anchor, and that every
 settlement figure handed to the post-commit provider helpers is zero.
+
+The REPAIR is pinned by `stored-night-price-repair.test.ts`, whose last block is
+the proof that matters: it takes a strand this rule's own classifier calls
+`unusable`, runs the real writer over a store that applies the same fences the
+database does, and asks the same classifier again - so "a booking whose blanks
+are all cleared stops parking" is measured rather than asserted. The
+no-derivation and reconciliation rules are mutation-verified in the two blocks
+above it, and `stored-night-price-repair-census.test.ts` is what stops a second
+writer appearing.

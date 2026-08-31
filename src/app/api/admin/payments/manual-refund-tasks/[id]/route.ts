@@ -6,6 +6,11 @@ import { requireAdmin } from "@/lib/session-guards";
 // `INV-SSOT` (#3030): the one non-negative-integer-cents rule, not a fourth
 // inline `.number().int().nonnegative()`.
 import { nonNegativeCentsSchema } from "@/lib/edit-financial-review-context";
+import { recordedNightPricesSchema } from "@/lib/stored-night-price-repair";
+import {
+  completionMessage,
+  nightPricesRecordedMessage,
+} from "@/lib/manual-refund-task-copy";
 import {
   ManualBookingPaymentError,
   MANUAL_PAYMENT_NOTE_MAX,
@@ -29,12 +34,22 @@ const confirmedField = z.literal(true);
  * means when it posts no amount. The pricing input that will send a real figure
  * is #3033's.
  *
- * ZERO IS REFUSED (`INV-PAY-051`). "Reviewed, nothing is due" is DISMISSED, not a
- * completion at $0.00 — a $0 completion records a refund the club did not make.
- * The rule is enforced in `resolveManualRefundTask` too, which is the real
- * boundary; this refuses it a step earlier so the operator gets a validation
- * message rather than a thrown one, and so the two layers cannot drift into
- * disagreeing about what an amount may be.
+ * ZERO IS REFUSED (`INV-PAY-051`), BUT NOT HERE ANY MORE (#3195 question 1).
+ * "Reviewed, nothing is due" is DISMISSED, not a completion at $0.00 — a $0
+ * completion records a refund the club did not make. This schema used to refuse
+ * it a step earlier, on the reasoning that a validation message beat a thrown
+ * one and that two layers agreeing could not drift.
+ *
+ * The owner's 31 Aug 2026 decision kept the rule and rejected the BARE refusal
+ * that came with it, and that is what moved the check. A zod failure here answers
+ * "Invalid refund task request." with a field dump — which says nothing about
+ * dismissing, and is exactly the outcome the decision names as the worst version
+ * of this behaviour. Worse, the sentence has to name the control the officer can
+ * actually see, and those are two different controls on the two task kinds — a
+ * fact this route does not read. So the refusal belongs where the kind is known,
+ * in `zeroCompletionRefusal`, and this schema stops at non-negative whole cents.
+ * The drift the old arrangement guarded against is gone rather than managed:
+ * there is one layer refusing a zero now, not two.
  */
 const bodySchema = z.discriminatedUnion("resolution", [
   z
@@ -42,10 +57,7 @@ const bodySchema = z.discriminatedUnion("resolution", [
       resolution: z.literal("completed"),
       note: noteField,
       confirmed: confirmedField,
-      confirmedAmountCents: nonNegativeCentsSchema
-        .positive()
-        .optional()
-        .nullable(),
+      confirmedAmountCents: nonNegativeCentsSchema.optional().nullable(),
       /**
        * #3170: WHICH WAY the confirmed amount goes. A positive magnitude plus an
        * explicit direction, never a signed amount - the sign of a money value is
@@ -62,6 +74,13 @@ const bodySchema = z.discriminatedUnion("resolution", [
         .enum(["REFUND_TO_MEMBER", "CHARGE_TO_MEMBER"])
         .optional()
         .nullable(),
+      /**
+       * #3191: what the officer says each of this review's unpriced nights sold
+       * for. Optional over HTTP and defaulted to null, which means "not
+       * recording those now" and is the body every client sent before this
+       * issue.
+       */
+      recordedNightPrices: recordedNightPricesSchema.optional().nullable(),
     })
     .strict(),
   z
@@ -69,6 +88,14 @@ const bodySchema = z.discriminatedUnion("resolution", [
       resolution: z.literal("dismissed"),
       note: noteField,
       confirmed: confirmedField,
+      /**
+       * #3191: ON A DISMISSAL TOO, and that is not symmetry for its own sake. A
+       * parked edit whose guest kept the same nights owes nothing either way, so
+       * "no adjustment" is its ordinary ending - and if only a completion could
+       * fill the blanks in, exactly those bookings would park forever, which is
+       * the defect this issue exists to remove.
+       */
+      recordedNightPrices: recordedNightPricesSchema.optional().nullable(),
     })
     .strict(),
 ]);
@@ -103,45 +130,6 @@ const bodySchema = z.discriminatedUnion("resolution", [
  * false receipt: the money is still in the club's account, and the operator who
  * reads it has no reason to look again.
  */
-/**
- * What the operator is told a completion actually did.
- *
- * One sentence per route, because the four outcomes are materially different
- * claims about the club's money and only one of them is "paid back by hand". The
- * failed-card case is the one that matters most: the refund did not go, the
- * durable recovery operation will retry it, and saying so is the difference
- * between an operator who checks back and one who does not.
- */
-function completionMessage(result: {
-  amountAmended: boolean;
-  settlementRoute: { kind: string; collectVia?: "stripe" | "invoice" } | null;
-  stripeRefundId: string | null;
-  additionalPaymentIntentId: string | null;
-}) {
-  const amended = result.amountAmended ? " at the confirmed amount" : "";
-  if (result.settlementRoute?.kind === "stripe-refund") {
-    return result.stripeRefundId
-      ? `Refund sent back to the card${amended}.`
-      : "The card refund could not be sent just now. It has been recorded and will be retried automatically — check this booking's payment history before handing the money back another way.";
-  }
-  if (result.settlementRoute?.kind === "account-credit") {
-    return `Account credit issued to the member${amended}.`;
-  }
-  // #3170: the direction that asks for money rather than returning it. Its two
-  // sentences say what the member will actually receive, because "adjustment
-  // recorded" over a request that was never sent is the same false receipt the
-  // failed-card case above exists to avoid - in the opposite direction.
-  if (result.settlementRoute?.kind === "additional-charge") {
-    if (result.settlementRoute.collectVia === "invoice") {
-      return `Added to this booking's invoice for the member to pay${amended}.`;
-    }
-    return result.additionalPaymentIntentId
-      ? `The member has been asked to pay this${amended}. It is on the booking as an additional payment and they will be reminded until it is paid.`
-      : "The request for payment could not be raised just now. It has been recorded and will be retried automatically — check this booking's payment history before asking the member another way.";
-  }
-  return `Refund recorded as paid back by hand${amended}.`;
-}
-
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -178,12 +166,14 @@ export async function POST(
             actingMemberId: guard.session.user.id,
             confirmedAmountCents: parsed.data.confirmedAmountCents ?? null,
             direction: parsed.data.direction ?? null,
+            recordedNightPrices: parsed.data.recordedNightPrices ?? null,
           }
         : {
             taskId: id,
             resolution: "dismissed",
             note: parsed.data.note ?? null,
             actingMemberId: guard.session.user.id,
+            recordedNightPrices: parsed.data.recordedNightPrices ?? null,
           },
     );
     revalidatePath("/admin/payments");
@@ -191,10 +181,11 @@ export async function POST(
     return NextResponse.json({
       success: true,
       task: result,
-      message:
+      message: `${
         parsed.data.resolution === "completed"
           ? completionMessage(result)
-          : "Refund task dismissed.",
+          : "Refund task dismissed."
+      }${nightPricesRecordedMessage(result.recordedNightPriceCount)}`,
     });
   } catch (error) {
     if (error instanceof ManualBookingPaymentError) {
