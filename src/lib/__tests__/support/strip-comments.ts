@@ -5,7 +5,13 @@
  * THE ONE DEFINITION IN THE TREE, and since #3164 a rule ENFORCES that rather
  * than review doing it: 56 test files and one CI script import this module, and
  * `ssot/no-local-comment-stripper` in `eslint.config.mjs` reports a second
- * scanner wherever one is written, in the editor.
+ * scanner wherever one is written, in the editor. That FIGURE is measured
+ * against the tree by `ssot-comment-stripper-guard.test.ts`, which also requires
+ * `docs/invariants/single-source-of-truth.md` to state the same number — it has
+ * drifted three times (published as 48 against a tree of 53, re-measured at
+ * #3180, incremented rather than measured at #3196), and INV-SSOT-004's own
+ * point is that two statements of one fact with nothing comparing them is the
+ * defect.
  *
  * #3132's own claim to have converged the tree was true of the copies spelled
  * `stripComments` and of nothing else. Measured on the day it landed, SEVEN more
@@ -15,33 +21,64 @@
  * rule keys on what a function DOES, and why the count above roughly doubled
  * without a single new census being written.
  *
- * FOUR FORMS LIVE HERE, and that is the point of the module rather than an
+ * FIVE FORMS LIVE HERE, and that is the point of the module rather than an
  * accident of where things landed. `stripComments` keeps strings and removes
  * comments; `stripCommentsAndStrings` (#3164 moved it here from the Xero census
  * that wrote it) also blanks the CONTENTS of every string, so a rule cannot fire
  * on prose inside a quoted example; `stripCssComments` reads CSS, the one other
- * language sharing JavaScript's block delimiter; and `blankLiterals` (#3180)
+ * language sharing JavaScript's block delimiter; `blankLiterals` (#3180)
  * returns text of the SAME LENGTH, so a caller that reports a line number or
- * slices by index still points at what it named. A caller picks a form. It does
- * not write a fifth.
+ * slices by index still points at what it named; and `blankLiteralsWithSpans`
+ * (#3196) is that same blanking with the blanked runs reported back, for the one
+ * caller that has to put some of them again. A caller picks a form. It does not
+ * write a sixth.
  *
- * WHICH ONE, in a sentence: `stripComments` if you want the code as text and
- * will grep it; `stripCommentsAndStrings` if the rule's own subject gets
- * discussed in prose; `blankLiterals` if you are a WALKER and an offset is your
- * answer; `stripCssComments` if the file is CSS.
+ * WHICH ONE, IN ONE SENTENCE EACH — and this list is the ONE statement of that
+ * choice in the tree, so a form's own docblock says what it is and sends you
+ * here rather than restating the other four:
+ *
+ * - `stripComments` — you want the code as TEXT and will grep it. It copies a
+ *   regex literal through VERBATIM, where both blank forms blank the body.
+ * - `stripCommentsAndStrings` — the rule's own subject gets discussed in prose,
+ *   including inside a quoted example, and must not fire on it. It alone keeps
+ *   an identifier-shaped bracket key (`invoice["dueDate"]`), which is a property
+ *   read spelled with a string rather than prose.
+ * - `stripCssComments` — the file is CSS.
+ * - `blankLiterals` — you are a WALKER: you report a line number, slice by
+ *   index, or compare one match's position against another's.
+ * - `blankLiteralsWithSpans` — you are a walker AND some of what blanking
+ *   removes is the very thing you are hunting, so you need to put those runs
+ *   back yourself. It is the escape hatch, not the default: reach for
+ *   `blankLiterals` unless you can name the runs you will restore.
+ *
+ * The last one is a fifth export on a module whose value is that there is one
+ * obvious choice per job, and that cost was taken knowingly (#3196) to get the
+ * ratchet below to zero. The list above is what pays for it.
+ *
+ * TWO OF THOSE CLAUSES ARE NOT STYLE. A regex body and a bracket key are TEXT A
+ * SCANNER CAN MATCH, so moving a census from one form to another changes the
+ * ANSWER it reports, silently and without a line of its own code changing.
+ * `advisory-lock-guard.test.ts` rests on the first of them: its "does not count
+ * a needle that only appears inside a regex" case holds because the blank forms
+ * blank a regex body, and `stripComments` would count that needle.
  *
  * Two lists in `eslint.config.mjs` say what is not a copy.
  * `COMMENT_STRIPPER_ALLOWLIST` holds the scanners that are a different CONCEPT —
  * SQL comments, a comment EXTRACTOR, and the guard's own fixture file.
- * `UNCONVERGED_COMMENT_SCANNERS` is a ratchet, and #3180 took it from four files
- * to one. The three it converged walked source and reported offsets into the
- * ORIGINAL text, which neither of the first two forms can serve: one preserves
- * newlines but not columns, the other replaces each string with a two-character
- * `""`. `blankLiterals` is the form they were waiting on, and it was written
- * HERE rather than three more times out there. The one entry left never shared
- * that property; its own reason says what it needs instead, because a list's
- * shared sentence has to be true of every row or the row it is false about is
- * the one nobody re-reads.
+ * `UNCONVERGED_COMMENT_SCANNERS` is a ratchet, and it is now EMPTY: #3180 took
+ * it from four files to one, and #3196 took the last one. The three #3180
+ * converged walked source and reported offsets into the ORIGINAL text, which
+ * neither of the first two forms can serve: one preserves newlines but not
+ * columns, the other replaces each string with a two-character `""`.
+ * `blankLiterals` is the form they were waiting on, and it was written HERE
+ * rather than three more times out there. The last entry,
+ * `advisory-lock-guard.test.ts`, never shared that property: it hunts raw SQL,
+ * which lives inside string literals, while the prose it must ignore lives
+ * inside string literals too, so blanking both would have dropped its pinned
+ * lock inventory. `blankLiteralsWithSpans` is what let it converge without this
+ * module growing an opinion about SQL. An empty ratchet is not a dead list — it
+ * is what makes "no second scanner exists" a checked fact, and
+ * `ssot-comment-stripper-guard.test.ts` pins it at zero.
  *
  * It is shared rather than copied for a reason that cost this repository a real
  * blind spot (#3123). `club-time-escape-hatch-census.test.ts` strips comments
@@ -188,7 +225,10 @@ function endOfRegexLiteral(source: string, start: number): number {
   while (index < source.length) {
     const char = source[index];
     if (char === "\\") {
-      index += 2;
+      // CLAMPED for the reason given on `blankTemplateLiteral`'s escape branch:
+      // a source ending in a backslash would otherwise return one PAST the end,
+      // and `blankCode` pushes that as a `regex` span's `end`.
+      index = Math.min(index + 2, source.length);
       continue;
     }
     // A regex literal cannot span lines; if one appears to, the `/` was
@@ -485,20 +525,80 @@ export function stripCommentsAndStrings(source: string): string {
 // ---------------------------------------------------------------------------
 
 /**
+ * One run of characters {@link blankLiteralsWithSpans} replaced with spaces,
+ * addressed in the ORIGINAL source so `source.slice(start, end)` is exactly what
+ * was removed and is exactly the same LENGTH as what stands in its place.
+ *
+ * `kind` is what the blanker was reading, and the four differ in where the
+ * DELIMITERS fall, which a caller restoring by span has to know:
+ *
+ * - `comment` — the WHOLE comment, both delimiters included, line or block.
+ * - `string` — a quoted literal's CONTENTS, WITHOUT its quotes, which survive in
+ *   `code` at their own offsets.
+ * - `template` — one stretch of literal text inside a backtick template. A
+ *   template holding interpolations reports several, one per stretch between
+ *   them, and never the interpolations themselves: those are code and were
+ *   never blanked.
+ * - `regex` — everything after the opening `/`, which survives.
+ *
+ * Runs are reported in source order and never overlap, so a caller may restore a
+ * chosen subset in one left-to-right pass.
+ */
+export interface BlankedSpan {
+  readonly kind: "comment" | "string" | "template" | "regex";
+  /** First blanked index, in the ORIGINAL source. */
+  readonly start: number;
+  /** One past the last blanked index, in the ORIGINAL source. */
+  readonly end: number;
+}
+
+/** What {@link blankLiteralsWithSpans} returns. */
+export interface BlankedSource {
+  /** Byte-for-byte what {@link blankLiterals} returns for the same input. */
+  readonly code: string;
+  readonly spans: readonly BlankedSpan[];
+}
+
+/**
  * A template literal, from its opening backtick, blanked in place.
  *
  * The backtick and every `${` / `}` survive at their own offsets; the literal
  * TEXT becomes spaces; a `${ … }` interpolation is CODE and is walked, because a
  * `$transaction(` written inside one opens a real transaction.
+ *
+ * `spans` collects the literal TEXT runs — one per stretch between the opening
+ * backtick and the first `${`, between a `}` and the next `${`, and so on. An
+ * interpolation is never in a run, because it was never blanked, so a caller
+ * that restores every run of one template gets that template's text back and
+ * nothing else.
  */
-function blankTemplateLiteral(source: string, start: number): ScanResult {
+function blankTemplateLiteral(
+  source: string,
+  start: number,
+  spans: BlankedSpan[],
+): ScanResult {
   let out = "`";
   let index = start + 1;
+  let runStart = index;
+  const endRun = (runEnd: number): void => {
+    if (runEnd > runStart) {
+      spans.push({ kind: "template", start: runStart, end: runEnd });
+    }
+  };
   while (index < source.length) {
     const char = source[index];
     if (char === "\\") {
       out += blanked(source, index, index + 2);
-      index += 2;
+      // CLAMPED, and the clamp is the contract rather than tidiness. A source
+      // ending `` `ab\ `` leaves nothing after the backslash, so an unclamped
+      // `index += 2` exits this loop at `source.length + 1` and `endRun` below
+      // pushes a span whose `end` is OUTSIDE the source — contradicting
+      // {@link BlankedSpan}, whose whole promise is that `start`/`end` address
+      // the ORIGINAL text. `code` and the restore survive it (both slices clamp
+      // on their own), so it fails silently for anybody slicing and loudly for
+      // anybody doing ARITHMETIC on `end`. The string branch below has always
+      // clamped, with `Math.min(cursor, source.length)`.
+      index = Math.min(index + 2, source.length);
       continue;
     }
     if (char === "\n") {
@@ -507,17 +607,21 @@ function blankTemplateLiteral(source: string, start: number): ScanResult {
       continue;
     }
     if (char === "`") {
+      endRun(index);
       return { code: `${out}\``, next: index + 1 };
     }
     if (char === "$" && source[index + 1] === "{") {
-      const inner = blankCode(source, index + 2, true);
+      endRun(index);
+      const inner = blankCode(source, index + 2, true, spans);
       out += `\${${inner.code}`;
       index = inner.next;
+      runStart = index;
       continue;
     }
     out += " ";
     index += 1;
   }
+  endRun(index);
   return { code: out, next: index };
 }
 
@@ -542,6 +646,7 @@ function blankCode(
   source: string,
   start: number,
   stopAtCloseBrace: boolean,
+  spans: BlankedSpan[],
 ): ScanResult {
   let out = "";
   let index = start;
@@ -555,6 +660,7 @@ function blankCode(
       const newline = source.indexOf("\n", index);
       const end = newline === -1 ? source.length : newline;
       out += blanked(source, index, end);
+      spans.push({ kind: "comment", start: index, end });
       index = end;
       continue;
     }
@@ -562,11 +668,12 @@ function blankCode(
       const close = source.indexOf("*/", index + 2);
       const end = close === -1 ? source.length : close + 2;
       out += blanked(source, index, end);
+      spans.push({ kind: "comment", start: index, end });
       index = end;
       continue;
     }
     if (character === "`") {
-      const template = blankTemplateLiteral(source, index);
+      const template = blankTemplateLiteral(source, index, spans);
       out += template.code;
       index = template.next;
       continue;
@@ -578,6 +685,9 @@ function blankCode(
     if (character === "/" && startsRegexLiteral(out)) {
       const end = endOfRegexLiteral(source, index);
       out += "/" + blanked(source, index + 1, end);
+      if (end > index + 1) {
+        spans.push({ kind: "regex", start: index + 1, end });
+      }
       index = end;
       continue;
     }
@@ -599,6 +709,9 @@ function blankCode(
       const closed = source[cursor] === character;
       const contentEnd = Math.min(cursor, source.length);
       out += character + blanked(source, index + 1, contentEnd);
+      if (contentEnd > index + 1) {
+        spans.push({ kind: "string", start: index + 1, end: contentEnd });
+      }
       if (closed) out += character;
       index = closed ? cursor + 1 : cursor;
       continue;
@@ -622,13 +735,15 @@ function blankCode(
  * contents blanked, so that every offset, column and line number still points
  * at what it did.
  *
- * WHICH FORM TO PICK, in one sentence each. Use {@link stripComments} when you
- * want the code as TEXT and will grep it. Use {@link stripCommentsAndStrings}
- * when a rule's own subject is discussed in prose that must not fire it. Use
- * THIS one when you are a WALKER: when you report a line number, slice by
+ * USE THIS ONE when you are a WALKER: when you report a line number, slice by
  * index, or compare one match's position against another's, because those are
- * the callers the other two silently break — the first preserves newlines but
- * not columns, and the second replaces each string with a two-character `""`.
+ * the callers the text-producing forms silently break — `stripComments`
+ * preserves newlines but not columns, and `stripCommentsAndStrings` replaces
+ * each string with a two-character `""`. The five-way choice is stated once, in
+ * this module's own docblock; the one form easily confused with this one is
+ * {@link blankLiteralsWithSpans}, which returns THE SAME `code` plus the runs it
+ * blanked. Take that one only if you will restore some of them — a caller that
+ * ignores `spans` wanted this.
  *
  * Delimiters survive and contents do not, which is what lets a walker still see
  * that an argument was there: `create({ xeroObjectUrl: "https://x" })` comes
@@ -646,5 +761,50 @@ function blankCode(
  * scans `src/`, where that shape is live.
  */
 export function blankLiterals(source: string): string {
-  return blankCode(source, 0, false).code;
+  return blankCode(source, 0, false, []).code;
+}
+
+/**
+ * {@link blankLiterals}, plus the runs it blanked, so a caller can put back the
+ * ones that were the very thing it was hunting.
+ *
+ * `code` is byte-for-byte what {@link blankLiterals} returns — this is not a
+ * second scanner, it is the same one with its working shown, which is the whole
+ * reason it lives here rather than in the caller (`INV-SSOT-004`: two
+ * instruments reading one tree by two methods agree where both are blind).
+ *
+ * WHEN TO REACH FOR IT, and it is narrow. Blanking is a suppression: it stops a
+ * scanner firing on prose. That is right until the thing being hunted lives
+ * inside a literal too, and then the same blanking that suppresses the prose
+ * suppresses the evidence. `advisory-lock-guard.test.ts` is the case this was
+ * written for: raw SQL in this repository is written as a backtick template or,
+ * where `$executeRawUnsafe` takes a plain string, a double-quoted literal
+ * containing `SELECT` — while the prose it must ignore is ordinary double-quoted
+ * error-message text. Blanking everything hides `FOR UPDATE`; blanking nothing
+ * counts a sentence describing `FOR UPDATE` as a lock. The census restores the
+ * two kinds it can name and leaves the rest blanked.
+ *
+ * THE RESTORE BELONGS TO THE CALLER, deliberately. A `SELECT`-shaped carve-out
+ * is one census's policy about SQL, not a fact about JavaScript, and a helper
+ * reshaped to carry another caller's policy is the contortion `INV-SSOT-001`
+ * names. So this returns evidence and takes no view: the module gained a
+ * capability, not a rule.
+ *
+ * RESTORING IS SAFE FOR OFFSETS because every span is the same length as the
+ * spaces standing in for it, so putting any subset back moves nothing. Restore
+ * left to right; the spans arrive in source order and do not overlap.
+ *
+ *     const { code, spans } = blankLiteralsWithSpans(source);
+ *     const pieces: string[] = [];
+ *     let cursor = 0;
+ *     for (const span of spans) {
+ *       if (!wanted(span)) continue;
+ *       pieces.push(code.slice(cursor, span.start), source.slice(span.start, span.end));
+ *       cursor = span.end;
+ *     }
+ *     const restored = pieces.join("") + code.slice(cursor);
+ */
+export function blankLiteralsWithSpans(source: string): BlankedSource {
+  const spans: BlankedSpan[] = [];
+  return { code: blankCode(source, 0, false, spans).code, spans };
 }
