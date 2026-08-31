@@ -138,6 +138,21 @@ export const PROMO_CHANGE_NOT_APPLIED_LABEL = "Promo code not applied";
  *    the total on screen, which a sentence naming only the new code leaves the
  *    member to guess at.
  *  - neither — no promotion on the booking, which is the plain case.
+ *
+ * ONE CLAUSE IS CONDITIONAL ON SOMETHING ELSE THE SAME REQUEST DID. "as it was"
+ * and "who it covers has not changed" are claims about the redemption's
+ * BENEFICIARIES, and a guest removal in the same request quietly falsifies both:
+ * `PromoRedemptionGuestTarget.bookingGuest` is `onDelete: Cascade`, and a parked
+ * edit still deletes the rows for the guests it removes, so their target rows go
+ * with them while the stored discount is written back untouched. Coverage really
+ * did narrow. Nobody is misled into acting WRONGLY by it — the panel builds the
+ * promo selection from the guests that remain, so coverage can only ever shrink
+ * to a subset the member's own request already excluded — but a sentence that is
+ * sometimes false is worse than one sentence fewer, so `guestRemovalsRequested`
+ * drops the claim rather than qualifying it. It is dropped and not replaced with
+ * a narrower one because saying exactly who is left would mean reading
+ * `PromoRedemptionGuestTarget` rows, and this module is pure and synchronous by
+ * contract (see `describePromoChangeNotApplied`).
  */
 type PromoChangeShape = "resent" | "swap" | "plain";
 
@@ -190,17 +205,25 @@ function consequenceOf(
   requested: PromoChangeRequested,
   shape: PromoChangeShape,
   currentPromoCode: string | null | undefined,
+  guestRemovalsRequested: boolean,
 ): string {
   if (requested === "remove") {
     return "The price still includes it, and the code stays on this booking rather than being free to use on another one.";
   }
   if (shape === "resent") {
-    return "The code stays on this booking exactly as it was, and the price still includes its discount. Who it covers has not changed either.";
+    return guestRemovalsRequested
+      ? "The code stays on this booking, and the price still includes its discount."
+      : "The code stays on this booking exactly as it was, and the price still includes its discount. Who it covers has not changed either.";
   }
   const unused =
     "The price does not include a discount for it, and the code has not been used, so it is still available for another booking.";
   if (shape === "swap") {
-    return `${unused} Promo code ${normaliseCode(currentPromoCode)} stays on this booking as it was, and the price still includes its discount.`;
+    // The OLD code carries the identical claim, and loses it for the identical
+    // reason: its own target rows cascade away with the removed guest too.
+    const stillThere = guestRemovalsRequested
+      ? `Promo code ${normaliseCode(currentPromoCode)} stays on this booking, and the price still includes its discount.`
+      : `Promo code ${normaliseCode(currentPromoCode)} stays on this booking as it was, and the price still includes its discount.`;
+    return `${unused} ${stillThere}`;
   }
   return unused;
 }
@@ -230,13 +253,27 @@ export function promoChangeNotAppliedMessage(input: {
    * message that states two false things. See `shapeOf`.
    */
   currentPromoCode?: string | null;
+  /**
+   * Whether the SAME request removed a guest from the booking. Required rather
+   * than defaulted, because a caller that forgets it would answer "no removals"
+   * silently and re-state the coverage claim this exists to suppress. See
+   * `PromoChangeShape`.
+   */
+  guestRemovalsRequested: boolean;
 }): string {
-  const { requested, reason, promoCode, phase, currentPromoCode } = input;
+  const {
+    requested,
+    reason,
+    promoCode,
+    phase,
+    currentPromoCode,
+    guestRemovalsRequested,
+  } = input;
   const shape = shapeOf(requested, promoCode, currentPromoCode);
   return [
     headlineOf(requested, phase, promoCode, shape),
     reasonOf(reason),
-    consequenceOf(requested, shape, currentPromoCode),
+    consequenceOf(requested, shape, currentPromoCode, guestRemovalsRequested),
     closingOf(phase),
   ].join(" ");
 }
@@ -275,6 +312,15 @@ export function describePromoChangeNotApplied(input: {
   removePromoCodeRequested: boolean;
   /** The code on the booking right now, if any. */
   currentPromoCode: string | null | undefined;
+  /**
+   * Whether this same request removes a guest from the booking — the resolved
+   * removals, not the raw ids, so an id naming nobody cannot suppress anything.
+   *
+   * REQUIRED, and deliberately not defaulted: a new call site that omitted it
+   * would answer "no removals" by omission and print a coverage claim its own
+   * request had just falsified (`PromoChangeShape`).
+   */
+  guestRemovalsRequested: boolean;
   reason: PromoChangeNotAppliedReason;
   phase: PromoChangePhase;
 }): PromoChangeNotAppliedNotice | null {
@@ -293,6 +339,7 @@ export function describePromoChangeNotApplied(input: {
         reason,
         promoCode: current,
         phase,
+        guestRemovalsRequested: input.guestRemovalsRequested,
       }),
     };
   }
@@ -311,6 +358,7 @@ export function describePromoChangeNotApplied(input: {
       // swapped code, and without it the sentence tells a member holding a live
       // discount that their code is unused and free for another booking.
       currentPromoCode: current,
+      guestRemovalsRequested: input.guestRemovalsRequested,
     }),
   };
 }

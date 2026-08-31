@@ -55,15 +55,25 @@ const PROMO_CHANGE_PREVIEW = promoChangeNotAppliedMessage({
   reason: "AMOUNT_UNDER_REVIEW",
   promoCode: "SUMMER25",
   phase: "preview",
+  guestRemovalsRequested: false,
 });
 const PROMO_CHANGE_SAVED = promoChangeNotAppliedMessage({
   requested: "apply",
   reason: "AMOUNT_UNDER_REVIEW",
   promoCode: "SUMMER25",
   phase: "saved",
+  guestRemovalsRequested: false,
 });
 
-function quotePayload(coverageMessage: string | null) {
+// BOTH notices arrive as parameters. An earlier shape took the coverage
+// sentence as an argument and read the promo-change sentence off module scope,
+// which worked only because the sole caller sits inside the fetch mock - two
+// sibling notices plumbed two ways is how a confusing failure gets written
+// later.
+function quotePayload(
+  coverageMessage: string | null,
+  promoChangeMessage: string | null,
+) {
   return {
     newTotalPriceCents: 15000,
     newDiscountCents: 2000,
@@ -84,12 +94,12 @@ function quotePayload(coverageMessage: string | null) {
           message: coverageMessage,
         }
       : null,
-    promoChangeNotApplied: quotePromoChangeMessage
+    promoChangeNotApplied: promoChangeMessage
       ? {
           requested: "apply" as const,
           reason: "AMOUNT_UNDER_REVIEW" as const,
           promoCode: "SUMMER25",
-          message: quotePromoChangeMessage,
+          message: promoChangeMessage,
         }
       : null,
     promoValidation: null,
@@ -114,7 +124,9 @@ function installFetch() {
       return jsonResponse({ settings: [] });
     }
     if (url.includes("/modify-quote")) {
-      return jsonResponse(quotePayload(quoteCoverageMessage));
+      return jsonResponse(
+        quotePayload(quoteCoverageMessage, quotePromoChangeMessage),
+      );
     }
     if (url.endsWith(`/api/bookings/${BOOKING_ID}/modify`)) {
       return modifyResponse();

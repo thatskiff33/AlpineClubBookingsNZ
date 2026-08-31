@@ -1638,6 +1638,10 @@ export async function POST(
         requestedPromoCode: newPromoCode,
         removePromoCodeRequested: Boolean(removePromoCode),
         currentPromoCode: booking.promoRedemption?.promoCode?.code,
+        // The resolved removals, matching the save exactly - a preview that
+        // promised "who it covers has not changed" would be contradicted by the
+        // save it is previewing.
+        guestRemovalsRequested: removedGuests.length > 0,
         reason: isInProgressEdit ? "STAY_IN_PROGRESS" : "AMOUNT_UNDER_REVIEW",
         phase: "preview",
       }),
@@ -2073,6 +2077,7 @@ export async function POST(
       requestedPromoCode: newPromoCode,
       removePromoCodeRequested: Boolean(removePromoCode),
       currentPromoCode: booking.promoRedemption?.promoCode?.code,
+      guestRemovalsRequested: removedGuests.length > 0,
       reason: "STAY_IN_PROGRESS",
       phase: "preview",
     });

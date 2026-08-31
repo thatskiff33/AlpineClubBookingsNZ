@@ -971,6 +971,12 @@ export async function modifyBookingBatch({
           requestedPromoCode: input.promoCode,
           removePromoCodeRequested: Boolean(input.removePromoCode),
           currentPromoCode: booking.promoRedemption?.promoCode?.code,
+          // The RESOLVED removals, not `input.removeGuestIds`: a resent code's
+          // sentence claims who it covers has not changed, and a removed guest
+          // takes their `PromoRedemptionGuestTarget` row with them (cascade)
+          // while the stored discount is written back untouched. An id naming
+          // nobody on the booking removes nothing and must suppress nothing.
+          guestRemovalsRequested: guestPlan.removedGuests.length > 0,
           reason: dates.isInProgressEdit
             ? "STAY_IN_PROGRESS"
             : "AMOUNT_UNDER_REVIEW",

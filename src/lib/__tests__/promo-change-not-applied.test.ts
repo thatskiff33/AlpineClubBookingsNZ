@@ -41,12 +41,21 @@ import { stripComments } from "@/lib/__tests__/support/strip-comments";
  * 2. the email carrying it, on BOTH composed bodies (the hand-built HTML and the
  *    admin-editable flat body), which is the durable copy for a member who
  *    closed the panel; and
- * 3. the WIRING, by reading the two call sites off disk: the save's stub branch
- *    and the preview's parked response must each build the notice from the one
- *    shared function, or a future edit can make the drop silent again without
- *    any test noticing. That third block has no import edge to what it scans —
- *    the known blind spot of source-scanning contracts here — so it is written
- *    to name the file and the missing text in its failure message.
+ * 3. the WIRING, by reading THREE call sites off disk - the save's gate, the
+ *    parked preview and the in-progress preview - plus a fourth assertion on the
+ *    plan module. Each must build the notice from the one shared function, or a
+ *    future edit can make the drop silent again without any test noticing.
+ *
+ *    NOTE the save's gate is on `promo.promoEngineRan`, NOT on the caller's own
+ *    stub branch. Gating it on the branch is the pre-fix shape and it is worth
+ *    knowing why it was wrong: the notice was built only where the FIGURES were
+ *    stubbed, so an in-progress PRICED edit — the one a future relaxation of the
+ *    refusal would create — would have dropped the change with no notice
+ *    anywhere.
+ *
+ *    That third block has no import edge to what it scans — the known blind spot
+ *    of source-scanning contracts here — so it is written to name the file and
+ *    the missing text in its failure message.
  *
  * MUTATION PROOF (each verified by breaking it, watching the named test fail,
  * and restoring):
@@ -66,7 +75,10 @@ import { stripComments } from "@/lib/__tests__/support/strip-comments";
  *    "says nothing when the member's request was not dropped" fails;
  *  - drop the `currentPromoCode` argument in `describePromoChangeNotApplied`'s
  *    apply arm and "never tells a member holding a live discount that their
- *    code is unused" fails.
+ *    code is unused" fails;
+ *  - ignore `guestRemovalsRequested` in the resent arm (say "who it covers has
+ *    not changed either" unconditionally) and "stops claiming who the code
+ *    covers is unchanged when the same request removed a guest" fails.
  */
 
 const sendEmail = vi.hoisted(() => vi.fn(async () => ({ delivered: true })));
@@ -103,6 +115,7 @@ describe("the sentence a member reads when a promo-code change was dropped (#317
       requestedPromoCode: "spring24",
       removePromoCodeRequested: false,
       currentPromoCode: null,
+      guestRemovalsRequested: false,
       reason: "AMOUNT_UNDER_REVIEW",
       phase: "saved",
     });
@@ -127,12 +140,14 @@ describe("the sentence a member reads when a promo-code change was dropped (#317
       reason: "STAY_IN_PROGRESS",
       promoCode: "SPRING24",
       phase: "saved",
+      guestRemovalsRequested: false,
     });
     const parked = promoChangeNotAppliedMessage({
       requested: "apply",
       reason: "AMOUNT_UNDER_REVIEW",
       promoCode: "SPRING24",
       phase: "saved",
+      guestRemovalsRequested: false,
     });
 
     expect(inProgress).toMatch(/stay that has already started/i);
@@ -148,6 +163,7 @@ describe("the sentence a member reads when a promo-code change was dropped (#317
       requestedPromoCode: null,
       removePromoCodeRequested: true,
       currentPromoCode: "SPRING24",
+      guestRemovalsRequested: false,
       reason: "AMOUNT_UNDER_REVIEW",
       phase: "saved",
     });
@@ -165,6 +181,7 @@ describe("the sentence a member reads when a promo-code change was dropped (#317
       requested: "apply" as const,
       reason: "AMOUNT_UNDER_REVIEW" as const,
       promoCode: "SPRING24",
+      guestRemovalsRequested: false,
     };
 
     expect(promoChangeNotAppliedMessage({ ...shared, phase: "preview" })).toContain(
@@ -184,6 +201,7 @@ describe("the sentence a member reads when a promo-code change was dropped (#317
         requestedPromoCode: null,
         removePromoCodeRequested: false,
         currentPromoCode: "SPRING24",
+        guestRemovalsRequested: false,
         reason: "AMOUNT_UNDER_REVIEW",
         phase: "saved",
       }),
@@ -197,6 +215,7 @@ describe("the sentence a member reads when a promo-code change was dropped (#317
         requestedPromoCode: null,
         removePromoCodeRequested: true,
         currentPromoCode: null,
+        guestRemovalsRequested: false,
         reason: "AMOUNT_UNDER_REVIEW",
         phase: "saved",
       }),
@@ -208,6 +227,7 @@ describe("the sentence a member reads when a promo-code change was dropped (#317
         requestedPromoCode: "   ",
         removePromoCodeRequested: false,
         currentPromoCode: null,
+        guestRemovalsRequested: false,
         reason: "STAY_IN_PROGRESS",
         phase: "saved",
       }),
@@ -227,6 +247,7 @@ describe("the sentence a member reads when a promo-code change was dropped (#317
       requestedPromoCode: "spring24",
       removePromoCodeRequested: false,
       currentPromoCode: "SPRING24",
+      guestRemovalsRequested: false,
       reason: "AMOUNT_UNDER_REVIEW",
       phase: "saved",
     });
@@ -251,6 +272,7 @@ describe("the sentence a member reads when a promo-code change was dropped (#317
       requestedPromoCode: "winter30",
       removePromoCodeRequested: false,
       currentPromoCode: "SPRING24",
+      guestRemovalsRequested: false,
       reason: "AMOUNT_UNDER_REVIEW",
       phase: "saved",
     });
@@ -264,6 +286,68 @@ describe("the sentence a member reads when a promo-code change was dropped (#317
     expect(notice?.message).toMatch(/price still includes its discount/i);
   });
 
+  it("stops claiming who the code covers is unchanged when the same request removed a guest", () => {
+    // REACHABLE THROUGH THE ORDINARY PANEL, and only ever in the safe
+    // direction. `PromoRedemptionGuestTarget.bookingGuest` is
+    // `onDelete: Cascade` and a PARKED edit still deletes the rows for the
+    // guests it removes, so a booking whose SPRING24 covered Ann and Bob loses
+    // Bob's target row when the member removes Bob and re-sends SPRING24 in the
+    // same request. The stored discount is written back untouched — nothing is
+    // repriced — but who the code covers really did narrow, so
+    // "Who it covers has not changed either" was false.
+    //
+    // Nobody is misled into acting WRONGLY by it: the panel builds the promo
+    // selection from the guests that REMAIN, so coverage can only ever shrink to
+    // a subset the member's own request already excluded. It is still a sentence
+    // that is sometimes false, which is worse than one sentence fewer.
+    const withRemoval = describePromoChangeNotApplied({
+      requestedPromoCode: "SPRING24",
+      removePromoCodeRequested: false,
+      currentPromoCode: "SPRING24",
+      guestRemovalsRequested: true,
+      reason: "AMOUNT_UNDER_REVIEW",
+      phase: "saved",
+    });
+
+    expect(withRemoval?.message).not.toMatch(/who it covers/i);
+    // "exactly as it was" makes the same claim in weaker words, so it goes too.
+    expect(withRemoval?.message).not.toMatch(/exactly as it was/i);
+    // What is still true is still said — the clause is dropped, not the notice.
+    expect(withRemoval?.message).toMatch(/stays on this booking/i);
+    expect(withRemoval?.message).toMatch(/price still includes its discount/i);
+
+    // THE CONTROL. A resent code with NO removals still gets the clause, or the
+    // change above would be a blanket deletion wearing a condition.
+    const withoutRemoval = describePromoChangeNotApplied({
+      requestedPromoCode: "SPRING24",
+      removePromoCodeRequested: false,
+      currentPromoCode: "SPRING24",
+      guestRemovalsRequested: false,
+      reason: "AMOUNT_UNDER_REVIEW",
+      phase: "saved",
+    });
+
+    expect(withoutRemoval?.message).toMatch(/who it covers has not changed/i);
+    expect(withoutRemoval?.message).toMatch(/stays on this booking exactly as it was/i);
+
+    // A SWAP says "as it was" about the OLD code, which its own cascading target
+    // rows falsify in exactly the same way, so it drops the same claim.
+    const swapWithRemoval = describePromoChangeNotApplied({
+      requestedPromoCode: "WINTER30",
+      removePromoCodeRequested: false,
+      currentPromoCode: "SPRING24",
+      guestRemovalsRequested: true,
+      reason: "AMOUNT_UNDER_REVIEW",
+      phase: "saved",
+    });
+
+    expect(swapWithRemoval?.message).toContain("SPRING24 stays on this booking,");
+    expect(swapWithRemoval?.message).not.toMatch(/as it was/i);
+    // ...and the requested code's own half is untouched by any of this.
+    expect(swapWithRemoval?.message).toContain("WINTER30 was not applied");
+    expect(swapWithRemoval?.message).toMatch(/still available for another booking/i);
+  });
+
   it("keeps the plain wording when the booking carries no promotion — the CONTROL", () => {
     // Nothing to be still-true about, so neither of the two arms above may
     // fire: an unqualified "the code is still available for another booking" is
@@ -272,6 +356,7 @@ describe("the sentence a member reads when a promo-code change was dropped (#317
       requestedPromoCode: "SPRING24",
       removePromoCodeRequested: false,
       currentPromoCode: null,
+      guestRemovalsRequested: false,
       reason: "AMOUNT_UNDER_REVIEW",
       phase: "saved",
     });
@@ -291,6 +376,7 @@ describe("the sentence a member reads when a promo-code change was dropped (#317
       requestedPromoCode: "OTHER10",
       removePromoCodeRequested: true,
       currentPromoCode: "SPRING24",
+      guestRemovalsRequested: false,
       reason: "AMOUNT_UNDER_REVIEW",
       phase: "saved",
     });
@@ -310,6 +396,7 @@ const NOTE = promoChangeNotAppliedMessage({
   reason: "AMOUNT_UNDER_REVIEW",
   promoCode: "SPRING24",
   phase: "saved",
+  guestRemovalsRequested: false,
 });
 
 function emailParams(overrides: Record<string, unknown> = {}) {
@@ -481,6 +568,19 @@ describe("neither surface can drop a promo-code change silently again (#3179)", 
     ).toContain("promoChangeNotApplied = describePromoChangeNotApplied(");
     // ...and put it on the wire, or the panel never sees it.
     expect(source).toMatch(/promoCoverage,\s+promoChangeNotApplied,/);
+  });
+
+  it("both surfaces answer the coverage question from the removals the request really made", () => {
+    expect(
+      executableSource(SAVE_SERVICE),
+      `${SAVE_SERVICE} must pass guestRemovalsRequested from the RESOLVED removals (guestPlan.removedGuests). A resent code's sentence claims who it covers has not changed; PromoRedemptionGuestTarget.bookingGuest is onDelete: Cascade and a parked edit still deletes the removed guest rows, so an edit carrying a removal narrows the coverage while the stored discount is written back untouched (#3179).`,
+    ).toContain("guestRemovalsRequested: guestPlan.removedGuests.length > 0");
+
+    const quote = executableSource(QUOTE_ROUTE);
+    expect(
+      quote.split("guestRemovalsRequested: removedGuests.length > 0").length - 1,
+      `${QUOTE_ROUTE} must pass the same resolved removals on BOTH branches that build the notice (the parked response and the in-progress preview), or the preview promises a coverage the save it is previewing then narrows (#3179).`,
+    ).toBe(2);
   });
 
   it("both surfaces compose it from the one shared module, never their own words", () => {
