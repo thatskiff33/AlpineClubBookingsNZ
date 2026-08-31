@@ -61,8 +61,16 @@ reason: the operator CLI that replays the pre-#1231 invoice maths was a missed
   cohesive diagnostic - splitting a replay in half is how the halves drift.
 
 file: src/lib/xero-operation-outbox.ts
-lines: 2877
-reason: the fix round's Xero half of "one booking edit, one ask". An edit whose
+lines: 2992
+reason: (#3193 reconciliation - the number, not the argument. This allowance is
+  still unmerged to `main`, so the ratchet judges the file against it rather than
+  against the base ref, and 2877 was the length when #3170 wrote it. #3193 added
+  the SECOND ASK - a named path over this same enqueue that raises a settled
+  review share's own small invoice when the change's invoice had already gone out
+  without it. It is a wrapper rather than a second locked decision precisely so
+  this file keeps exactly one place that answers "does this ask already have an
+  invoice going out?", which is the property #3170 was fixing; a copy elsewhere
+  would be smaller here and worse everywhere. Re-measured, not guessed.) the fix round's Xero half of "one booking edit, one ask". An edit whose
   money could not be valued can raise two review tasks, and the owner's 30 Aug
   2026 decision is that both contribute to a single request for the total - so
   the supplementary invoice has to bill $230 rather than $200 and then $30.

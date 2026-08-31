@@ -16,9 +16,9 @@ import {
 import { prisma } from "./prisma";
 import logger from "@/lib/logger";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
+import { buildXeroSupplementaryInvoiceKey } from "@/lib/xero-supplementary-invoice-key";
 import {
   buildXeroIdempotencyKey,
-  buildXeroSupplementaryInvoiceKey,
   completeXeroSyncOperation,
   failXeroSyncOperation,
   sanitizeForJson,

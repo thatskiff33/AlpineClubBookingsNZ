@@ -10,15 +10,17 @@ import { claimXeroSyncOperationToRunning } from "@/lib/xero-operation-claim";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { clubSeasonYear } from "@/lib/financial-year";
 import {
-  buildXeroIdempotencyKey,
   buildXeroSupplementaryInvoiceKey,
+  type XeroSupplementaryInvoiceAnchorModel,
+} from "@/lib/xero-supplementary-invoice-key";
+import {
+  buildXeroIdempotencyKey,
   completeXeroSyncOperation,
   failXeroSyncOperation,
   findCanonicalPaymentRefundCreditNote,
   startXeroSyncOperation,
   sumCoveredRefundCreditNoteCents,
   upsertXeroObjectLink,
-  type XeroSupplementaryInvoiceAnchorModel,
 } from "@/lib/xero-sync";
 import {
   createXeroInvoiceForBooking,

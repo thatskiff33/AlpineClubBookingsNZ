@@ -97,41 +97,18 @@ vi.mock("@/lib/logger", () => ({
   },
 }));
 
+// #3193: the ONE mint of a supplementary invoice's key now has its own module,
+// because the outbox imports the invoice module and neither could host it
+// without a cycle. Left UNMOCKED and importing the stubbed
+// `buildXeroIdempotencyKey` above, so the assertions below read the real key
+// shape - three of them are about that shape, that a second ask can never
+// collide with the invoice it follows.
 vi.mock("@/lib/xero-sync", () => ({
   buildXeroIdempotencyKey: (...parts: Array<string | number | boolean | null | undefined>) =>
     parts
       .filter((part): part is string | number | boolean => part !== null && part !== undefined && part !== "")
       .map((part) => String(part))
       .join(":"),
-  // #3193: the ONE mint of a supplementary invoice's key, shared by the enqueue,
-  // the restate and the Xero create. Reproduced rather than stubbed, because
-  // three assertions below are about the key's SHAPE - that a second ask can
-  // never collide with the invoice it follows.
-  buildXeroSupplementaryInvoiceKey: ({
-    localModel,
-    localId,
-    priceDiffCents,
-    changeFeeCents,
-  }: {
-    localModel: string;
-    localId: string;
-    priceDiffCents: number;
-    changeFeeCents: number;
-  }) =>
-    [
-      localModel === "BookingModification"
-        ? "booking-mod"
-        : localModel === "ManualRefundTask"
-          ? "review-task"
-          : "booking",
-      localId,
-      localModel === "ManualRefundTask"
-        ? "supplementary-shortfall-invoice"
-        : "supplementary-invoice",
-      priceDiffCents,
-      changeFeeCents,
-      "v1",
-    ].join(":"),
   startXeroSyncOperation: mocks.startXeroSyncOperation,
   completeXeroSyncOperation: mocks.completeXeroSyncOperation,
   failXeroSyncOperation: mocks.failXeroSyncOperation,
