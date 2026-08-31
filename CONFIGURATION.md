@@ -58,7 +58,7 @@ The config loader (`src/config/club.ts`) never throws, so an absent or broken
 - **Malformed `club.json`** (present but invalid JSON or failing schema
   validation) → the app degrades to the built-in `SAFE_DEFAULT_CONFIG` and logs
   a warning. The `club.example.json` fallback is intentionally **skipped** in
-  this case so a broken primary is not silently masked, and `npm run setup`
+  this case so a broken primary is not silently masked, and `npm run setup:check`
   reports the Club Config step as **blocked**. Fix `config/club.json`.
 - **Absent `club.json`** → falls back to a valid `config/club.example.json`; if
   the example is also absent or malformed, the app boots on

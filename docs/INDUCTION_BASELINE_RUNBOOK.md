@@ -39,6 +39,16 @@ Arrange a maintenance window and confirm all of the following:
 - Every open Draft or In Progress induction reported by the dry run has been
   resolved through the normal Induction Register workflow.
 
+**Copy the commands below exactly, including `--conditions=react-server`.** The
+baseline command loads the database module, which carries `import "server-only"`
+so the production build can never ship it to a member's browser
+(`INV-OPS-013`, #2850). That marker throws the instant it is loaded under plain
+Node, before the command prints anything, with a message about React Server
+Components that names nothing you did. The flag resolves it to an empty module
+and the command runs normally. Outside a container, `npm run induction:baseline`
+passes the flag for you; inside the Compose `migrate` service the runbook calls
+the `tsx` binary directly, so the flag is written out.
+
 The population is limited at the database query to active, non-archived,
 non-cancelled real-member records whose member role is `USER` or `ADMIN`.
 Login is deliberately not required for this population, so non-login
@@ -384,7 +394,7 @@ REHEARSAL_BASELINE_ARGS=(
 REHEARSAL_EVIDENCE_DIR="$(mktemp -d)"
 
 "${REHEARSAL_COMPOSE[@]}" run --rm migrate \
-  ./node_modules/.bin/tsx scripts/induction-baseline.ts \
+  ./node_modules/.bin/tsx --conditions=react-server scripts/induction-baseline.ts \
   "${REHEARSAL_BASELINE_ARGS[@]}" \
   --json | tee "$REHEARSAL_EVIDENCE_DIR/dry-run.txt"
 
@@ -441,7 +451,7 @@ REHEARSAL_AUDITS_BEFORE="$(
 [ "$REHEARSAL_AUDITS_BEFORE" = "0" ]
 
 "${REHEARSAL_COMPOSE[@]}" run --rm migrate \
-  ./node_modules/.bin/tsx scripts/induction-baseline.ts \
+  ./node_modules/.bin/tsx --conditions=react-server scripts/induction-baseline.ts \
   --apply \
   "${REHEARSAL_BASELINE_ARGS[@]}" \
   --confirm-club-name "$REHEARSAL_CLUB_NAME" \
@@ -454,7 +464,7 @@ grep -Eq '^Applied [1-9][0-9]* completed baseline row\(s\)\.$' \
   "$REHEARSAL_EVIDENCE_DIR/apply.txt"
 
 "${REHEARSAL_COMPOSE[@]}" run --rm migrate \
-  ./node_modules/.bin/tsx scripts/induction-baseline.ts \
+  ./node_modules/.bin/tsx --conditions=react-server scripts/induction-baseline.ts \
   "${REHEARSAL_BASELINE_ARGS[@]}" \
   --json | tee "$REHEARSAL_EVIDENCE_DIR/verify-rerun.txt"
 
@@ -519,7 +529,7 @@ a new database port or require Node/npm on the host:
 
 ```bash
 "${PRODUCTION_COMPOSE[@]}" run --rm migrate \
-  ./node_modules/.bin/tsx scripts/induction-baseline.ts \
+  ./node_modules/.bin/tsx --conditions=react-server scripts/induction-baseline.ts \
   "${BASELINE_ARGS[@]}" \
   --json
 ```
@@ -617,7 +627,7 @@ exact Compose context on the apply itself:
 
 ```bash
 "${PRODUCTION_COMPOSE[@]}" run --rm migrate \
-  ./node_modules/.bin/tsx scripts/induction-baseline.ts \
+  ./node_modules/.bin/tsx --conditions=react-server scripts/induction-baseline.ts \
   --apply \
   "${BASELINE_ARGS[@]}" \
   --confirm-club-name "$CONFIRM_CLUB_NAME" \
@@ -674,7 +684,7 @@ Keep the writer freeze in place through this verification:
 
    ```bash
    "${PRODUCTION_COMPOSE[@]}" run --rm migrate \
-     ./node_modules/.bin/tsx scripts/induction-baseline.ts \
+     ./node_modules/.bin/tsx --conditions=react-server scripts/induction-baseline.ts \
      "${BASELINE_ARGS[@]}" \
      --json
    ```

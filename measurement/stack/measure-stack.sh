@@ -174,7 +174,7 @@ prepare_database() {
   SEED_ADMIN_EMAIL="$(env_value SEED_ADMIN_EMAIL)" \
   SEED_ADMIN_PASSWORD="$(env_value SEED_ADMIN_PASSWORD)" \
   SEED_LODGE_PASSWORD="$(env_value SEED_LODGE_PASSWORD)" \
-  DATABASE_URL="$HOST_DATABASE_URL" npx tsx prisma/seed.ts
+  DATABASE_URL="$HOST_DATABASE_URL" npx tsx --conditions=react-server prisma/seed.ts
 }
 
 require_absolute_file_path() {

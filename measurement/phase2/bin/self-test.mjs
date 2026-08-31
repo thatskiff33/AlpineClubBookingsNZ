@@ -101,6 +101,16 @@ const requireOrdered = (source, markers, message) => {
     cursor = next;
   }
 };
+// These literals mirror `measure-stack.sh` so this file can assert the ORDER its
+// preparation runs in. They are also, today, the ONLY raw `tsx` invocations in any
+// `.mjs` file in the tree — which makes them load-bearing twice over. The invocation
+// census (`cli-server-only-reach-census.test.ts`, #2850/#3186) keeps a per-kind
+// non-vacuity floor requiring at least one `tsx` command in some `.mjs`, so that it
+// cannot go blind to a whole class of published command and stay green. Delete this
+// directory, or rewrite the seed line into an `npm run` form, and the REQUIRED
+// `verify` check fails with "the sweep found no tsx invocation in any `.mjs` file" —
+// which reads as a boundary defect when the real cause is housekeeping here. Move the
+// floor's evidence before you move these.
 const assertStackPreparationOrdering = (source) => {
   const reset = sourceSection(source, "prepare_database() {", "require_absolute_file_path() {");
   requireOrdered(reset, [
@@ -109,7 +119,7 @@ const assertStackPreparationOrdering = (source) => {
     "DROP SCHEMA public CASCADE",
     "npx prisma migrate deploy",
     "npx tsx prisma/demo-seed.ts",
-    "npx tsx prisma/seed.ts",
+    "npx tsx --conditions=react-server prisma/seed.ts",
   ], "stack preparation must stop app and caddy before reset, migration and both seeds");
 
   const dump = sourceSection(source, "create_canonical_dump() (", "prepare_stack() (");

@@ -629,11 +629,46 @@ export function getAdminPermissionLevel(
   return getAdminPermissionMatrix(input)[area];
 }
 
+/**
+ * STANDING TO ENTER THE ADMIN PORTAL SHELL: any ONE of the seven admin-area
+ * permissions (#2984, owner-gated privilege-model correction).
+ *
+ * This used to read `&& area.key !== "finance"`, so a finance-only grid had no
+ * standing at all — while `getFirstAccessibleAdminHref` below happily sent the
+ * same grid to `/admin/payments`. The module disagreed with itself, and #2925
+ * hit the disagreement from the other side: `GET /api/admin/lodges` admits "any
+ * admitted admin" and therefore refused "Finance Viewer" the lodge NAMES it
+ * needs to label a payment, with the refusal recorded as a decision about this
+ * function rather than about that endpoint. This is that decision.
+ *
+ * STANDING IS NOT AUTHORISATION, and the distinction is the whole of the
+ * correction. Entering the shell grants nothing: every admin page still clears
+ * `guardAdminLayout` step 6 (area permission for the REQUESTED path), every
+ * `/api/admin` route still clears `requireAdmin` against its own area/level,
+ * and the sidebar and command palette still filter item by item through
+ * `canViewAdminHrefWithMatrix`. A finance-only user reaches the shell and the
+ * Finance area and nothing else, which
+ * `admin-route-authorization-proof.test.ts` proves by attempting every
+ * discovered admin page and `/api/admin` route as that user (#2975).
+ *
+ * So the ONLY callers this function is correct for are the ones asking "is this
+ * person an administrator at all" — the nav bar's Admin link, the
+ * admin-notification recipient roster, and `requireAdmin`'s explicit
+ * `permission: "any-admin"`. It is never a substitute for an area check, and a
+ * caller that reasons "they cleared the shell, therefore they may see X" is a
+ * privilege escalation as written.
+ */
 export function hasAdminPortalAccess(input: AdminPermissionInput) {
-  const matrix = getAdminPermissionMatrix(input);
-  return ADMIN_PERMISSION_AREAS.some(
-    (area) => matrix[area.key] !== "none" && area.key !== "finance",
-  );
+  return hasAnyAdminAreaFromMatrix(getAdminPermissionMatrix(input));
+}
+
+/**
+ * The same question against an already-resolved matrix, for the callers that
+ * hold one: the layout guard, and the ADR-002 admission rule below. One
+ * definition, so "any one area" cannot come to mean two different things.
+ */
+export function hasAnyAdminAreaFromMatrix(matrix: AdminPermissionMatrix) {
+  return ADMIN_PERMISSION_AREAS.some((area) => matrix[area.key] !== "none");
 }
 
 export function hasAdminAreaAccess(
@@ -699,9 +734,67 @@ export function getAdminRouteRequirement(
   };
 }
 
-export function canViewAdminHref(input: AdminPermissionInput, href: string) {
-  const requirement = getAdminRouteRequirement(href, "GET");
-  return requirement ? hasAdminAreaAccess(input, requirement) : false;
+/**
+ * Admin paths admitted on ADMISSION rather than on an area (ADR-002 §1, owner-
+ * ratified on #2370, 2 August 2026).
+ *
+ * The AI Diagnostics workspace is the one such surface: "any account that holds
+ * `view` or better on at least one admin permission area may open the Diagnostics
+ * shell", because the shell exposes no evidence at all — its readiness panel is
+ * tiered server-side on `support:view` and its budget card refuses without it,
+ * while every tool re-checks its own area freshly at invocation.
+ *
+ * Its map area stays `overview`, because that is what the sidebar and command
+ * palette resolve for the LINK. What changed with #2984 is that "any admitted
+ * admin" and `overview:view` stopped being the same set: a finance-only grid now
+ * has portal standing and does not hold `overview`, so a rule written as
+ * `overview:view` had quietly become a permission carve-out instead of the
+ * admission rule the owner ratified. Narrowing admission again remains possible
+ * without touching any tool's gate, but requires a fresh owner decision.
+ */
+export const ANY_ADMIN_ADMISSION_PATHS = ["/admin/ai-diagnostics"] as const;
+
+export function isAnyAdminAdmissionPath(pathname: string): boolean {
+  const normalized = normalizePathname(pathname);
+  return ANY_ADMIN_ADMISSION_PATHS.some(
+    (prefix) => normalized === prefix || normalized.startsWith(`${prefix}/`),
+  );
+}
+
+/**
+ * MAY THIS PERSON OPEN THIS ADMIN PATH — the one implementation (#2975).
+ *
+ * The whole admission rule for a requested admin path, composed once: the two
+ * adjudicated special cases first, then the route map's own area requirement.
+ * `guardAdminLayout` step 6 and `/api/help/chat`'s surface downgrade both call
+ * this, so the question "could they open this screen" has one answer wherever it
+ * is asked. It was written out by hand in four places before this, and the fee
+ * console's OR rule had two different spellings between them.
+ *
+ * A path the map cannot resolve is REFUSED rather than defaulted. Every admin
+ * path resolves today — `/admin` and `/api/admin` are the map's catch-all, which
+ * `admin-route-map-drift.test.ts` fails if that stops being true — so this is the
+ * behaviour of an unreachable branch, and fail-closed is the right way for an
+ * unreachable branch in an authorization decision to behave.
+ *
+ * It is the ADMISSION decision only. It says nothing about the level a WRITE
+ * needs: `requireAdmin` resolves that per request method, and this always asks
+ * the `GET` question because opening a screen is a read.
+ */
+export function canOpenAdminPath(
+  input: AdminPermissionInput,
+  pathname: string,
+) {
+  const matrix = getAdminPermissionMatrix(input);
+  if (isAnyAdminAdmissionPath(pathname)) {
+    return hasAnyAdminAreaFromMatrix(matrix);
+  }
+  if (isConsolidatedFeesPath(pathname)) {
+    return canAccessConsolidatedFeesPage(matrix);
+  }
+  const requirement = getAdminRouteRequirement(pathname, "GET");
+  if (!requirement) return false;
+  return LEVEL_RANK[matrix[requirement.area]] >= LEVEL_RANK[requirement.level];
 }
 
 /**

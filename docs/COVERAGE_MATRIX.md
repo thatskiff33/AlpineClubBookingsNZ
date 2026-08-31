@@ -80,7 +80,7 @@ a `GAP`, replace it with a relative link to that file (e.g.
 | `family-groups` | membership | `ARCHITECTURE.md` (family groups / billing) | [guide](guides/family-groups.md) | 2 |
 | `family-suggestions` | membership | `ARCHITECTURE.md` (hidden family suggestions) | [guide](guides/family-suggestions.md) | 2 |
 | `fee-configuration` | finance | `AUTHORITATIVE_FEES.md` | [guide](guides/fees.md) (redirect → Fees) | 2 |
-| `fees` | finance | `AUTHORITATIVE_FEES.md` | [guide](guides/fees.md) | 2 |
+| `fees` | finance (see note) | `AUTHORITATIVE_FEES.md` | [guide](guides/fees.md) | 2 |
 | `health` | support | — | [guide](guides/health.md) | 4 |
 | `hut-leaders` | lodge | `ARCHITECTURE.md` (hut-leader auto-assign cron) | [guide](guides/hut-leaders.md) | 3 |
 | `image-manager` | content | — | [guide](guides/image-manager.md) | 4 |
@@ -179,6 +179,14 @@ page, matching the batch-1 pattern:
 
 - `fee-configuration` is a pure `redirect()` to `/admin/fees`, so its row links to
   the [Fees](guides/fees.md) guide (redirect noted).
+- **`fees` is the one row whose Permission area is not a single area.** The
+  consolidated fee console (#1933) puts Hut Fees (historically bookings) and
+  Joining/Annual Fees (historically finance) on one screen, so it admits on view
+  of **either** — `canAccessConsolidatedFeesPage`, applied by `canOpenAdminPath`.
+  Its prefix resolves to `bookings` in `ROUTE_AREA_PREFIXES` (which is what the
+  single-area drift guard sees), and each section still gates its own edit
+  controls by its historical area. The column says `finance` because that is the
+  half most readers arrive from; neither single word is the rule.
 - `membership-cancellation` (singular) is a small **settings** panel (cancellation
   copy + Xero handling) reached from **Notifications & Email**, distinct from the
   `membership-cancellations` (plural) review queue. To avoid a confusing
