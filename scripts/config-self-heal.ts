@@ -1,4 +1,3 @@
-#!/usr/bin/env npx tsx
 /**
  * Out-of-band config self-heal (epic #1943, child C2).
  *

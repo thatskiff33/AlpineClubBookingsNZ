@@ -1,3 +1,15 @@
+/**
+ * `import "server-only"` makes the production build REFUSE this module in a
+ * browser bundle, at any depth (`INV-OPS-013`, #2850): a `"use client"` module
+ * that reaches NextAuth's configuration, `bcrypt` and the credential callbacks
+ * fails `next build` with the import chain printed.
+ * `scripts/ci/server-only-boundary-selftest.mjs` plants exactly that and proves
+ * the build still catches it, for this module and for `@/lib/prisma`.
+ * `docs/invariants/operations.md` → `INV-OPS-013` lists every marked root and
+ * why the operator CLIs that reach them run with `--conditions=react-server`.
+ */
+import "server-only";
+
 import NextAuth, { CredentialsSignin, type NextAuthConfig } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import Google from "next-auth/providers/google";

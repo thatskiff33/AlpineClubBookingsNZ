@@ -44,10 +44,16 @@
  * WHY THIS IS ITS OWN MODULE, separate from the resolver, is the reason
  * `club-time-zone-env.ts` gives for the same split: a `process.env` read that
  * can reach the client bundle is a latent second authority. This module is
- * deliberately NOT marked `server-only` — `setup-readiness-db.ts` reaches the
- * resolver from the `tsx` entrypoint `npm run setup`, which a `server-only`
- * import would abort — so it is kept off the client graph by being NAMED as a
- * forbidden leaf in both halves of `INV-OPS-013`: `FORBIDDEN_MODULES` in
+ * deliberately NOT marked `server-only`. The reason recorded here used to be
+ * that `setup-readiness-db.ts` reaches the resolver from the `tsx` entrypoint
+ * `npm run setup:check`, which a `server-only` import would abort; since #2850
+ * that command carries `--conditions=react-server` and the marker is inert
+ * under it, so THAT REASON IS RETIRED and marking this module is technically
+ * possible. It is deliberately not done, and the marking work is tracked as
+ * #3204; why lives in one place: `docs/invariants/operations.md` ->
+ * `INV-OPS-013`, "The three modules that stay unmarked".
+ * Meanwhile it is kept off the client graph by being NAMED as a forbidden leaf
+ * in both halves of `INV-OPS-013`: `FORBIDDEN_MODULES` in
  * `src/lib/__tests__/client-server-boundary-census.test.ts`, which walks the
  * real import graph out of every `"use client"` module, and the `$MOD`
  * alternation in `.semgrep/rules/acb-client-server-boundary.yml`. Both are FIXED

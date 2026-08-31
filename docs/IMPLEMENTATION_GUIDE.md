@@ -139,7 +139,7 @@ docker compose --env-file .env.staging -p tacbookings-staging \
 docker compose --env-file .env.staging -p tacbookings-staging \
   -f docker-compose.yml -f docker-compose.staging.yml run --rm migrate
 docker compose --env-file .env.staging -p tacbookings-staging \
-  -f docker-compose.yml -f docker-compose.staging.yml exec app npx tsx prisma/seed.ts
+  -f docker-compose.yml -f docker-compose.staging.yml exec app npx tsx --conditions=react-server prisma/seed.ts
 ```
 
 The Docker-only app listens on `http://localhost:3001` by default.

@@ -14,7 +14,7 @@ import {
 /*
   TYPE-ONLY, and it has to stay that way. `environment-role.ts` imports
   `@/lib/prisma`, and this module is imported by the `tsx` entrypoints
-  `npm run setup` / `npm run setup:check` as well as by the admin API. An
+  `npm run setup:wizard` / `npm run setup:check` as well as by the admin API. An
   `import type` is erased before anything runs, so the resolution arrives here as
   DATA on the injected snapshot (`SetupDatabaseSnapshot.environmentRole`,
   resolved in `setup-readiness-db.ts`) and `buildSetupReadiness` stays
@@ -848,7 +848,7 @@ function buildClubTimeZoneCheck(
           details: [
             "Source: none — nothing is stored in the database yet.",
             `The TZ / NEXT_PUBLIC_TZ value in the environment is "${raw}". UTC, GMT and fixed offsets such as Etc/GMT-12 name no place, so they carry no daylight-saving rules and no club's civil time can be read from one.`,
-            `To be stored: ${CLUB_TIME_ZONE_FALLBACK}, the built-in New Zealand default — there was nothing in the environment to preserve, so this is a default and not the zone this deployment was using. If the club is somewhere else, set it at /admin/club-time (or run npm run setup) before or after the next start; a stored zone is never overwritten.`,
+            `To be stored: ${CLUB_TIME_ZONE_FALLBACK}, the built-in New Zealand default — there was nothing in the environment to preserve, so this is a default and not the zone this deployment was using. If the club is somewhere else, set it at /admin/club-time (or run npm run setup:wizard) before or after the next start; a stored zone is never overwritten.`,
             CLUB_VERSUS_SERVER_TIME_ZONE_DETAIL,
           ],
         },

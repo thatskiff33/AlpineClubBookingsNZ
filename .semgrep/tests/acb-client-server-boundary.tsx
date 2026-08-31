@@ -52,9 +52,13 @@ import { recordAudit } from "@/lib/audit";
 import { getXeroClient } from "@/lib/xero";
 
 // The club-timezone environment seed (#2989). It reads `process.env.TZ` and is
-// deliberately NOT marked `server-only`, because two of its callers are `tsx`
-// entrypoints a `server-only` import would abort — so this rule and the census
-// test are the only things keeping it off the browser graph. Next inlines
+// deliberately NOT marked `server-only` — no longer because a `tsx` entrypoint
+// would abort (since #2850 those commands carry `--conditions=react-server`,
+// under which the marker is inert) but as a decision of its own, recorded in
+// docs/invariants/operations.md -> INV-OPS-013, "The three modules that stay
+// unmarked", and tracked for sealing as #3204. While it is unmarked, this rule
+// and the census test are the only
+// things keeping it off the browser graph. Next inlines
 // `NEXT_PUBLIC_*` into the bundle, so a client component importing it would
 // answer from the BUILD-TIME `NEXT_PUBLIC_TZ` rather than from the running
 // server: two authorities for one club's civil time (INV-CONFIG-002).
@@ -62,8 +66,10 @@ import { getXeroClient } from "@/lib/xero";
 import { classifyEnvironmentClubTimeZoneSeed } from "@/lib/club-time-zone-env";
 
 // The environment-role declaration and its resolver (#3034, epic #2986). Neither
-// is `server-only` — `setup-readiness-db.ts` reaches the resolver from the `tsx`
-// `npm run setup` entrypoint — and the declaration module reads
+// is `server-only`, for the same retired-and-replaced reason as above:
+// `setup-readiness-db.ts` reaches the resolver from the `npm run setup:check`
+// entrypoint, which since #2850 carries the condition and would survive the
+// marker. The declaration module reads
 // `process.env.APP_ENVIRONMENT_ROLE`, which is deliberately NOT `NEXT_PUBLIC_*`
 // and therefore inlines as `undefined` in a browser. A client import would read
 // "nothing has declared this installation" while the server reads `production`,

@@ -2,6 +2,11 @@ import { existsSync, readFileSync, readdirSync, statSync } from "fs";
 import path from "path";
 import { describe, expect, it } from "vitest";
 
+import {
+  MARKED_ROOTS,
+  MARKER_STATEMENT,
+} from "../../../scripts/ci/server-only-boundary-selftest.mjs";
+
 /**
  * INV-OPS-013, with transitive reach (#2686).
  *
@@ -13,34 +18,60 @@ import { describe, expect, it } from "vitest";
  * import would, and no regex over a single file can know that.
  *
  * Next.js does have a build-time answer — `import "server-only"` in the leaf
- * module makes the compiler refuse the whole chain — and that remains the better
- * long-term fix. It is not this pull request's change to make: `server-only`
- * throws when evaluated outside a React Server Component, this suite runs in
- * Node, and 122 test files already carry `vi.mock("server-only", …)` for the
- * modules that have it today. Putting it on `@/lib/prisma` would put that
- * requirement on essentially every test in the repository, and the only proof
- * the change was safe would be a full `next build`.
+ * module makes the compiler refuse the whole chain — and since #2850 this
+ * repository uses it, proven by a real production build in
+ * `scripts/ci/server-only-boundary-selftest.mjs`. Its second half then put the
+ * marker on `@/lib/prisma`, `@/lib/audit`, `@/lib/email`, `@/lib/xero` and
+ * `@/lib/stripe` as well, which had been impossible while fourteen operator CLI
+ * entrypoints reached the database client under plain Node, where `server-only`
+ * throws at import. Those commands now run with `--conditions=react-server`,
+ * under which the marker resolves to an empty module, and
+ * `cli-server-only-reach-census.test.ts` (CT-5, #2869) fails any published
+ * command that reaches a marked module without it.
  *
- * So the reach is asserted here instead, where it is cheap and where it runs
- * inside the REQUIRED `verify` check. This walks the real import graph from
- * every `"use client"` module and fails with the shortest path it found.
+ * That does not make this census redundant. Three of the modules below still
+ * cannot carry the marker — `@/lib/club-time-zone-env`,
+ * `@/lib/environment-role-declaration` and `@/lib/environment-role` — and this
+ * is the only guard that covers a module the moment somebody creates it, with
+ * no marker and no build to notice.
+ *
+ * The reason recorded here before #2850 was different and was WRONG: that 122
+ * test files carry `vi.mock("server-only", …)` and marking `@/lib/prisma` would
+ * put that on every test. `vitest.setup.ts` has stubbed the marker globally for
+ * every test file since 22 Jul 2026, three weeks before that sentence was
+ * written, and the full suite with the marker on six protected roots reported
+ * zero `server-only` failures. A cost nobody re-measured had been keeping a
+ * guard off for a year.
+ *
+ * So this census carries the modules the build cannot, and carries every module
+ * cheaply, inside the REQUIRED `verify` check. It walks the real import graph
+ * from every `"use client"` module and fails with the shortest path it found.
+ * `@/lib/session` and `@/lib/env` below name no file that exists; they stay so
+ * that creating one starts out protected rather than starting out invisible.
  */
 
 const SRC = path.resolve(process.cwd(), "src");
 const EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs"];
 
 /**
- * The leaves a browser bundle must never reach. `@/lib/prisma` and `@/lib/auth`
- * are the two that do NOT fail the Next build today, because neither imports
- * `server-only` — so they are the two that would ship silently.
+ * The leaves a browser bundle must never reach. Since #2850 six of them —
+ * `@/lib/auth`, `@/lib/prisma`, `@/lib/audit`, `@/lib/email`, `@/lib/xero` and
+ * `@/lib/stripe` — also fail the Next build on their own. The three
+ * environment readers at the end of the list do not, so those are the ones
+ * that would ship silently if this census missed them.
  *
  * THIS LIST IS THE GUARD. It is not a sample of the server-only modules and
  * there is no rule that adds new ones automatically, so a module that is not
  * named here is not protected by this census however plainly its own docblock
  * says it is. `@/lib/club-time-zone-env` (#2989) is here for that reason: it
- * reads `process.env.TZ` and is deliberately NOT marked `server-only`, because
- * two of its callers are `tsx` entrypoints that a `server-only` import would
- * abort. Next inlines `NEXT_PUBLIC_*` into the browser bundle, so a
+ * reads `process.env.TZ` and is deliberately NOT marked `server-only`. Its
+ * `tsx` callers would survive the marker now that they carry
+ * `--conditions=react-server` (#2850), so the "an entrypoint would abort"
+ * reason those docblocks used to give is RETIRED; it is unmarked as a decision
+ * instead, recorded once in `docs/invariants/operations.md` -> `INV-OPS-013`,
+ * "The three modules that stay unmarked" — where the sealing work is tracked
+ * as #3204 — and not restated here. Next inlines
+ * `NEXT_PUBLIC_*` into the browser bundle, so a
  * `"use client"` component importing it would silently answer from the
  * BUILD-TIME `NEXT_PUBLIC_TZ` rather than from the running server — the
  * split-brain second authority `INV-CONFIG-002` forbids and the one that module
@@ -50,8 +81,10 @@ const EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs"];
  *
  * `@/lib/environment-role-declaration` and `@/lib/environment-role` (#3034,
  * epic #2986) are here for the same reason and a sharper one. Neither is
- * `server-only` — `setup-readiness-db.ts` reaches the resolver from the `tsx`
- * entrypoint `npm run setup`, which such an import would abort — and the
+ * `server-only` — `setup-readiness-db.ts` reaches the resolver from the
+ * `npm run setup:check` entrypoint, which carries the condition and would
+ * survive the marker, and the same deliberate-decision answer above applies —
+ * and the
  * declaration module reads `process.env.APP_ENVIRONMENT_ROLE`. A client
  * component importing it would answer from whatever the bundler inlined at
  * build time for a NON-public variable, which is `undefined`: the browser would
@@ -85,29 +118,32 @@ const NODE_BUILTINS = new Set([
 ]);
 
 /**
- * The one edge that exists today, named rather than tolerated.
+ * THERE IS NO ALLOWLIST HERE, AND ADDING ONE BACK IS A REVIEWABLE ACT.
  *
- * `src/lib/booking-exception-requests.ts` opens with
- * `import { createHash } from "node:crypto"`, for `computeProposalHash`, and
- * four client components import VALUES from it —
- * `MEMBER_MESSAGE_MAX_LENGTH` and `formatPolicyExceptionRequestAge` — so the
- * whole module, and its `node:crypto` import, is on the client graph. It builds
- * today, which means the bundler is shimming or dropping it; that is a bundler
- * implementation detail and not a guarantee.
+ * There used to be. When #2686 introduced this census it found one live edge —
+ * `src/lib/booking-exception-requests.ts -> node:crypto` — and named it in a
+ * `KNOWN_EDGES` set rather than fixing it, because the fix was a code move
+ * inside capacity-adjacent Critical code and did not belong in a CI-enforcement
+ * change. Seven `"use client"` modules reached it for `MEMBER_MESSAGE_MAX_LENGTH`
+ * and `formatPolicyExceptionRequestAge`, so the whole module —
+ * `createHash` and all — was compiled into the browser bundle. It built anyway,
+ * which meant the bundler was shimming or dropping `node:crypto`: an
+ * implementation detail, not a guarantee.
  *
- * It is NOT fixed here on purpose. The fix is to move `computeProposalHash` and
- * its canonicalisation helpers into their own server-side module and re-point
- * `booking-exception-approval.ts` and `booking-exception-execution.ts` at it —
- * a code move inside the booking policy-exception workflow, which is
- * capacity-adjacent Critical code and needs its own review, not a drive-by edit
- * in a CI-enforcement change (#2686).
+ * #2851 did that code move: those two values now live in
+ * `@/lib/booking-exception-request-shared`, which imports nothing, and the
+ * workflow module is off the client graph. #2850 forbids baselining or
+ * allowlisting the known violation, so with its last entry gone the MECHANISM
+ * went too, deliberately. An empty exemption set is an invitation — it makes
+ * adding the next entry a one-line diff that reads as using an existing
+ * facility. Re-introducing the set is now a visible design change a reviewer
+ * has to agree to, which is the correct weight for "we are shipping a Node
+ * built-in to the browser on purpose".
  *
- * Every entry here is `<module under src/> -> <specifier>` and is a debt, not a
- * dispensation: nothing NEW joins this list without the same explanation.
+ * If you are here because a real edge cannot be removed: split the client-safe
+ * values into a pure module, as #2851 did. That is the fix, and it took one new
+ * file.
  */
-const KNOWN_EDGES = new Set([
-  "src/lib/booking-exception-requests.ts -> node:crypto",
-]);
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
@@ -163,24 +199,18 @@ function resolveSpecifier(fromFile: string, specifier: string): string | null {
   return null;
 }
 
-function edgeKey(fromFile: string, specifier: string) {
-  return `${path.relative(process.cwd(), fromFile).split(path.sep).join("/")} -> ${specifier}`;
-}
-
 function isForbiddenLeaf(fromFile: string, specifier: string): string | null {
   const forbidden =
     specifier === "server-only" ||
     specifier === "next/headers" ||
     specifier.startsWith("node:") ||
     NODE_BUILTINS.has(specifier.split("/")[0]);
-  if (forbidden) {
-    return KNOWN_EDGES.has(edgeKey(fromFile, specifier)) ? null : specifier;
-  }
+  if (forbidden) return specifier;
   const resolved = resolveSpecifier(fromFile, specifier);
   if (resolved === null) return null;
   const withoutExt = resolved.replace(/\.(tsx?|jsx?|mjs)$/, "");
   if (!FORBIDDEN_MODULES.has(withoutExt)) return null;
-  // Prisma and auth are never exemptable — an exemption for either is a
+  // No exemption exists to consult: reaching any of these from the client is a
   // credential or a database client in a browser bundle, which is the thing
   // this census exists to make impossible.
   return specifier;
@@ -293,20 +323,88 @@ describe("INV-OPS-013: no client module reaches server-only code, at any depth",
       `A "use client" module reaches server-only code. Everything on the path below is compiled into the browser bundle:\n\n${violations.join("\n\n")}`,
     ).toEqual([]);
   });
+});
 
-  it("keeps the known-edge list from silently outliving the edges", () => {
-    // A stale exemption is the same defect as a stale suppression: it reads as
-    // a reviewed decision when it is really a leftover. Each entry must still
-    // describe a real import, so removing the last one fails here and gets the
-    // line deleted rather than left behind.
-    for (const edge of KNOWN_EDGES) {
-      const [file, specifier] = edge.split(" -> ");
-      const absolute = path.resolve(process.cwd(), file);
-      expect(existsSync(absolute), `${file} no longer exists; drop this entry`).toBe(true);
+/**
+ * The other half of `INV-OPS-013`, and the half that had nothing holding it
+ * down until #3186.
+ *
+ * `scripts/ci/server-only-boundary-selftest.mjs` proves the production build
+ * refuses a client component reaching `@/lib/auth` or `@/lib/prisma`, because
+ * those are the two roots its fixture imports. The other four roots this
+ * invariant names — `@/lib/audit`, `@/lib/email`, `@/lib/stripe` and
+ * `@/lib/xero` — carry the same marker, and nothing checked that they still
+ * did. Measured: delete it from all four and every boundary suite in this
+ * repository stays green.
+ *
+ * So the list of marked roots lives in the self-test beside the two it plants,
+ * and this asserts each entry still carries the statement. The two lists cannot
+ * drift, because `server-only-boundary-selftest.test.mjs` requires
+ * `PROTECTED_ROOTS` to be a subset of `MARKED_ROOTS`.
+ *
+ * ANCHORED, not a substring search, and that distinction is the whole check.
+ * Fifteen files here NAME `import "server-only"` inside a docblock explaining
+ * the boundary — including the roots themselves, whose docblocks open by
+ * quoting the statement they carry. A substring match would be satisfied by the
+ * paragraph ABOUT the marker surviving while the marker itself was deleted,
+ * which is precisely the mutation this exists to catch.
+ */
+const MARKER_LINE = new RegExp(
+  `^${MARKER_STATEMENT.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
+  "m",
+);
+
+function carriesMarker(text: string): boolean {
+  return MARKER_LINE.test(text.replace(/\r\n/g, "\n"));
+}
+
+describe("INV-OPS-013: the six marked roots still carry the marker", () => {
+  it("names six roots, all of which exist", () => {
+    // Non-vacuity, in the one shape that would make the assertion below pass by
+    // checking nothing: a rename, a deletion, or a truncated list. The count is
+    // asserted in `server-only-boundary-selftest.test.mjs` too; repeated here
+    // so this file cannot be read as trusting a list it never looked at.
+    expect(MARKED_ROOTS).toHaveLength(6);
+    for (const root of MARKED_ROOTS) {
       expect(
-        specifiersOf(absolute),
-        `${file} no longer imports ${specifier}; drop this entry`,
-      ).toContain(specifier);
+        existsSync(path.resolve(process.cwd(), root)),
+        `${root} is listed as a server-only root but no such file exists, ` +
+          "so the marker assertion below is checking nothing",
+      ).toBe(true);
     }
+  });
+
+  it("finds the marker as a real statement in each of them", () => {
+    const missing = MARKED_ROOTS.filter(
+      (root) =>
+        !carriesMarker(readFileSync(path.resolve(process.cwd(), root), "utf8")),
+    );
+
+    expect(
+      missing,
+      "A module listed as a server-only root no longer carries " +
+        `\`${MARKER_STATEMENT}\`, so the production build will happily compile ` +
+        "it into a browser bundle. Restore the statement, or remove the module " +
+        "from MARKED_ROOTS in scripts/ci/server-only-boundary-selftest.mjs and " +
+        "say in review why shipping it to visitors is acceptable " +
+        "(INV-OPS-013, #2850, #3186).\n\n" +
+        missing.join("\n"),
+    ).toEqual([]);
+  });
+
+  it("is not satisfied by a docblock that merely mentions the marker", () => {
+    // The mutation the anchor exists to survive, run as a fixture rather than
+    // left to whoever remembers to try it by hand. Every one of these roots
+    // opens with a docblock quoting the statement, so an unanchored search
+    // would call a stripped module marked.
+    const docblockOnly = [
+      "/**",
+      ` * \`${MARKER_STATEMENT}\` makes the production build REFUSE this module`,
+      " * in a browser bundle, at any depth.",
+      " */",
+      "export const value = 1;",
+    ].join("\n");
+    expect(carriesMarker(docblockOnly)).toBe(false);
+    expect(carriesMarker(`${docblockOnly}\n${MARKER_STATEMENT}\n`)).toBe(true);
   });
 });
