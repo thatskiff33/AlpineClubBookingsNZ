@@ -1,8 +1,8 @@
 "use client";
 
 import { ADULT_MEMBER_HOST_SCOPE_LABELS } from "@/lib/policies/adult-member-hosting";
+import type { KioskAdultCoverSource } from "@/lib/kiosk-adult-cover";
 import type {
-  KioskAdultCoverSource,
   KioskGroupTripLabel,
   KioskGroupTripOrganiser,
 } from "@/lib/kiosk-group-trip";
@@ -72,20 +72,55 @@ export function KioskGroupTripOrganiserLine({
 }
 
 /**
+ * The exact words each non-evaluated cover status puts on the screen.
+ *
+ * ONE HOME for them (`INV-SSOT`), because they were written out inline here and
+ * again in the operator guide's table. `docs/guides/lodge.md` still restates them
+ * for the reader it is written for — that is prose, not a second definition — but
+ * it restates THESE, so a change here is a change there in the same pull request.
+ * The component test asserts the literal strings rather than importing this
+ * constant, so a silent rewording fails a named test instead of quietly agreeing
+ * with itself.
+ */
+export const KIOSK_ADULT_COVER_WORDING = {
+  STALE: "Adult cover: needs re-checking — the last check is out of date",
+  UNREADABLE: "Adult cover: last check could not be read",
+  NOT_RECORDED: "Adult cover: no issue recorded for this booking",
+} as const;
+
+/** What an officer has decided about a recorded adult-cover problem. */
+const KIOSK_ADULT_COVER_DECISION_WORDING = {
+  PENDING: "Waiting for a Booking Officer's decision",
+  APPROVED: "A Booking Officer has approved this",
+  REJECTED: "A Booking Officer declined this",
+} as const;
+
+/**
  * Capability 2's line: adult cover, exactly as the canonical rule last
  * evaluated it.
  *
- * FOUR STATUSES, AND ONLY ONE OF THEM MAY LOOK LIKE COVER. `nights` is empty
- * for the other three by construction (see `KioskCoverEvidenceStatus`), so this
+ * FOUR STATUSES, AND ONLY ONE OF THEM MAY LOOK LIKE COVER. `nights` is the empty
+ * tuple for the other three IN THE TYPE (see `KioskAdultCoverSource`), so this
  * component cannot render a positive claim off stale, failed or unrecorded
  * evaluation even if somebody rewrites the branches below.
  *
- * The counts are honest about PARTIAL nights: "2 of 3 nights" is the normal
- * shape of a real stay, because cover is decided per night and different nights
- * can be covered by different sources. The scope labels are the club-facing
- * strings the admin settings card already uses
- * (`ADULT_MEMBER_HOST_SCOPE_LABELS`), not a second set of words for the same
- * three categories.
+ * ONLY TWO OF THEM ARE A WARNING. `NOT_RECORDED` is the ORDINARY state of a
+ * booking with no recorded adult-cover problem — the majority of cards, since the
+ * canonical evaluator writes a snapshot only when it finds a violation and the
+ * reconciler clears it when the violation goes away. An earlier round of this
+ * component gave all three non-evaluated statuses the identical amber warning
+ * box, which put a warning on nearly every card and so taught a hut leader to
+ * ignore the box that carries the real signal. Muted text for the normal state,
+ * amber for the two that mean something needs looking at.
+ *
+ * The counts are honest about PARTIAL nights: "2 of 3 nights" is the normal shape
+ * of a recorded problem, because cover is decided per night and different nights
+ * can be covered by different sources. There is deliberately no "all covered"
+ * variant: a fully covered booking has no snapshot at all
+ * (`KioskCoverEvidenceStatus`), so an `EVALUATED` value always names at least one
+ * uncovered night. The scope labels are the club-facing strings the admin
+ * settings card already uses (`ADULT_MEMBER_HOST_SCOPE_LABELS`), not a second set
+ * of words for the same three categories.
  */
 export function KioskAdultCoverSourceLine({
   cover,
@@ -94,39 +129,29 @@ export function KioskAdultCoverSourceLine({
 }) {
   if (!cover) return null;
 
-  if (cover.status !== "EVALUATED") {
-    const wording =
-      cover.status === "STALE"
-        ? "Adult cover: needs re-checking — the last check is out of date"
-        : cover.status === "UNREADABLE"
-          ? "Adult cover: last check could not be read"
-          : "Adult cover: not recorded for this booking";
+  if (cover.status === "NOT_RECORDED") {
     return (
-      <p className="mt-2 rounded-lg border border-kiosk-warning-border bg-kiosk-warning-bg px-3 py-1 text-sm text-kiosk-warning-fg">
-        {wording}
+      <p className="mt-2 text-sm text-kiosk-muted-fg">
+        {KIOSK_ADULT_COVER_WORDING.NOT_RECORDED}
       </p>
     );
   }
 
-  if (cover.nights.length === 0) {
+  if (cover.status !== "EVALUATED") {
     return (
-      <p className="mt-2 text-sm text-kiosk-muted-fg">
-        Adult cover: no nights need an adult member on this booking
+      <p className="mt-2 rounded-lg border border-kiosk-warning-border bg-kiosk-warning-bg px-3 py-1 text-sm text-kiosk-warning-fg">
+        {KIOSK_ADULT_COVER_WORDING[cover.status]}
       </p>
     );
   }
 
   const covered = cover.nights.filter((night) => night.covered).length;
   const total = cover.nights.length;
-  const allCovered = covered === total;
+  const uncovered = cover.nights.filter((night) => !night.covered);
 
   return (
     <div className="mt-2 text-sm">
-      <p
-        className={
-          allCovered ? "text-kiosk-success-fg" : "text-kiosk-danger-fg"
-        }
-      >
+      <p className="text-kiosk-danger-fg">
         Adult cover: {covered} of {total}{" "}
         {total === 1 ? "night" : "nights"} covered
       </p>
@@ -137,13 +162,17 @@ export function KioskAdultCoverSourceLine({
           From: {cover.scopes.map((s) => ADULT_MEMBER_HOST_SCOPE_LABELS[s]).join("; ")}
         </p>
       )}
-      {!allCovered && (
+      {uncovered.length > 0 && (
         <p className="text-kiosk-muted-fg">
-          Not covered:{" "}
-          {cover.nights
-            .filter((night) => !night.covered)
-            .map((night) => night.night)
-            .join(", ")}
+          Not covered: {uncovered.map((night) => night.night).join(", ")}
+        </p>
+      )}
+      {/* An APPROVED exception leaves the violation snapshot in place, so
+          without this an officer-approved arrangement and an unapproved one read
+          identically — the same red count, the same uncovered nights. */}
+      {cover.decision !== null && (
+        <p className="text-kiosk-muted-fg">
+          {KIOSK_ADULT_COVER_DECISION_WORDING[cover.decision]}
         </p>
       )}
     </div>

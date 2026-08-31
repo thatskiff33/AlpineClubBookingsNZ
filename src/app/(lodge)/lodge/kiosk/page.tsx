@@ -27,8 +27,8 @@ import {
   KioskGroupTripBadge,
   KioskGroupTripOrganiserLine,
 } from "./_components/kiosk-group-trip-card";
+import type { KioskAdultCoverSource } from "@/lib/kiosk-adult-cover";
 import type {
-  KioskAdultCoverSource,
   KioskGroupTripLabel,
   KioskGroupTripOrganiser,
 } from "@/lib/kiosk-group-trip";
