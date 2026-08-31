@@ -584,9 +584,9 @@ land.
 manifest moving with it. The numbers this page was written against:
 
 ```
-row-producing sites:  463
+row-producing sites:  464
 uncategorised:        0
-category values: admin 104, booking 101, xero 34, family 35, payment 38,
+category values: admin 104, booking 101, xero 34, family 35, payment 39,
                  lodge 65, account 19, security 22, privacy 19,
                  communication 21, system 4
 ```
@@ -633,10 +633,18 @@ find, and it was a log line rather than a record until then. ONE write site
 serves both asks — the card request already paid, and the Xero supplementary
 invoice already sent — because they are the same fact about the same edit; a
 `leg` of `payment-request` or `xero-invoice` in the metadata and in the prose is
-what tells an officer which one to go and fix. That
+what tells an officer which one to go and fix. Since then #3193 added that
+record's counterpart (`payment` 38 → 39, 463 → 464): the owner decided on
+31 Aug 2026 that the difference is BILLED, on a second separate invoice, rather
+than collected by hand, so `booking.editFinancialReview.chargeShareReinvoiced`
+records that it is on its way and the `chargeShareUncollected` row now fires only
+when that second invoice could not be raised. Two write sites rather than one
+here, unlike the two asks above, because the two carry opposite instructions: one
+says chase this money, the other says nothing needs chasing and explains the
+second document the member is about to receive. That
 is the figure above, and it was taken from `npm run audit:census` on the merged
 tree rather than by adding one branch's delta to the other's total. The category
-values sum to 462 rather than 463 because one site forwards its category rather
+values sum to 463 rather than 464 because one site forwards its category rather
 than naming one.
 
 The 22 moves are pinned **per site**, not only by that

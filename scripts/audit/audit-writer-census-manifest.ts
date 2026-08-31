@@ -361,7 +361,19 @@ export const AUDIT_CENSUS_TOTALS = {
   // the site, so it does not join `UNCATEGORISED_AUDIT_WRITERS` below. Measured by
   // RUNNING `npm run audit:census` on this tree (463 sites, 2220 files scanned),
   // not by adding one to the literal.
-  writeSites: 463,
+  // 463 -> 464 (#3193): the OTHER ending of that same shortfall. Since the
+  // owner's 31 Aug 2026 decision the difference is billed on a second, separate
+  // supplementary invoice rather than collected by hand, so
+  // `booking.editFinancialReview.chargeShareReinvoiced` records that it IS being
+  // asked for - the counterpart to the `chargeShareUncollected` row above, which
+  // now fires only when that second invoice could not be raised. Two rows rather
+  // than one because they carry opposite instructions: one says chase this, the
+  // other says an invoice is on its way and explains the second document a member
+  // is about to receive. Categorised `payment` at the site, so it does not join
+  // `UNCATEGORISED_AUDIT_WRITERS` below. Measured by RUNNING
+  // `npm run audit:census` on this tree (464 sites, 2225 files scanned), not by
+  // adding one to the literal.
+  writeSites: 464,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -439,7 +451,9 @@ export const AUDIT_CENSUS_TOTALS = {
     // them rather than introducing another form.
     // 116 -> 117 (#3170): the uncollected review share, above, written through
     // `createAuditLog` like the payment writers around it.
-    createAuditLog: { total: 117, uncategorised: 0 },
+    // 117 -> 118 (#3193): its counterpart, the re-invoiced review share, in the
+    // same module and the same form.
+    createAuditLog: { total: 118, uncategorised: 0 },
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -550,7 +564,12 @@ export const AUDIT_CENSUS_TOTALS = {
     // argument as the two rows above it - it says money the club is owed was not
     // asked for, and the only person who can settle that is the one who reconciles
     // the club's money.
-    payment: 38,
+    // 38 -> 39 (#3193): `booking.editFinancialReview.chargeShareReinvoiced`. The
+    // same audience for the same reason - it says the club has raised a second
+    // invoice for money a booking change's first invoice went out without, and
+    // the person who answers a member asking why two invoices arrived is the one
+    // who reconciles the club's money.
+    payment: 39,
     // 27 -> 34 (#2581 child 2): the five family-group writers and the two
     // dependants writers. Both dependants writers also moved off a hand-built
     // Prisma literal and onto the audit boundary in the same change.

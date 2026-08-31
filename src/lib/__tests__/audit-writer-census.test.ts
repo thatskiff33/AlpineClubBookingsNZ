@@ -1275,7 +1275,14 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // than incremented — the arithmetic in the line above was left stale by the
     // round that changed this assertion, which is exactly the drift these bump
     // lines exist to prevent.
-    ).toEqual({ pinned: 127, unpinned: 336 });
+    // 336 -> 337 (#3193): one new writer,
+    // `booking.editFinancialReview.chargeShareReinvoiced` - the record that the
+    // difference the row above used to describe is now BILLED, on a second,
+    // separate supplementary invoice. Categorised `payment` at the site and named
+    // in none of the four per-site maps, so it lands unpinned. 464 sites measured
+    // minus 127 pinned; `pinned` is unchanged, so no existing classification
+    // moved.
+    ).toEqual({ pinned: 127, unpinned: 337 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {
