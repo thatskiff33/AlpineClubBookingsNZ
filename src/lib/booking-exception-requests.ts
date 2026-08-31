@@ -388,13 +388,22 @@ export function canonicalizeProposalSnapshot(
 export function computeProposalHash(snapshot: ExceptionProposalSnapshot): string {
   const canonical = canonicalizeProposalSnapshot(snapshot);
   // `node:crypto` is imported DIRECTLY here rather than through a shared digest
-  // helper, and that is the deliberate shape. This module is on the client
-  // graph (seven `"use client"` entry points reach it), so this import is the
-  // single allowlisted `INV-OPS-013` edge named in
-  // `client-server-boundary-census.test.ts`. Routing it through
-  // `@/lib/stable-digest` would move that edge onto a shared helper and license
-  // every future client importer of it. The digest is byte-identical to
-  // `stableDigest`, and pinned by test so the two cannot drift.
+  // helper. That WAS load-bearing and is now hygiene, and the difference is
+  // recorded rather than quietly kept: this module used to be on the client
+  // graph, so the import was the single allowlisted `INV-OPS-013` edge, and
+  // routing it through `@/lib/stable-digest` would have licensed every future
+  // client importer of that helper. #2851 moved the two constants the client
+  // actually wanted into `@/lib/booking-exception-request-shared`, so nothing
+  // under `"use client"` reaches here any more and the allowlist it named no
+  // longer exists.
+  //
+  // It stays split anyway, and the reason is weaker than it was: the boundary
+  // moved once and can move back, and keeping a client-safe module client-safe
+  // costs nothing while re-establishing it costs a review. The digest is
+  // byte-identical to `stableDigest` and pinned by test, so the duplication
+  // cannot drift while it lasts. **Collapsing the two is #3218** — a production
+  // edit on a booking path and a reversal of a recorded decision, which is not
+  // something a branch sync may decide.
   return createHash("sha256")
     .update(stableStringify(canonical), "utf8")
     .digest("hex");

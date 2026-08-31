@@ -31,6 +31,17 @@
  * drift between them fails loudly instead of silently re-identifying stored
  * rows.
  *
+ * SINCE #2851 THE BOUNDARY THIS RESTS ON IS GONE, and the accepted exception
+ * above now stands on a weaker footing than it did. `booking-exception-requests.ts`
+ * is no longer reached from any `"use client"` entry point, so `stable-json.ts`
+ * has zero client reach and the census allowlist that named the single edge no
+ * longer exists — nothing forces `computeProposalHash` to keep its own
+ * `node:crypto` import. The duplication survives because the boundary moved
+ * once and can move back, not because it is impossible to remove; the
+ * fixed-digest tests still make a drift between the two fail loudly.
+ * **Collapsing them is #3218**, which is a production edit on a booking path
+ * and a reversal of this decision rather than a correction to it.
+ *
  * Server-only callers — `edit-financial-review.ts` (#3030) and the diagnostics
  * knowledge bundle — use this module.
  */
