@@ -61,7 +61,12 @@ import {
   RELEASE_WHOLE_LODGE_HOLD_UPDATE,
 } from "@/lib/booking-status";
 import { cancelPaymentIntentIfCancellable } from "@/lib/stripe";
-import { settleGroupBookingOnOrganiserCancel } from "@/lib/group-cancel";
+import {
+  // The set an organiser cancel CLAIMS is the set a re-drive must still be able
+  // to FIND, so it is imported rather than re-listed here (#3209, `INV-SSOT`).
+  ACTIVE_CHILD_STATUSES as ORGANISER_CANCEL_ACTIVE_CHILD_STATUSES,
+  settleGroupBookingOnOrganiserCancel,
+} from "@/lib/group-cancel";
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import { recordBookingEvent } from "@/lib/booking-events";
@@ -121,11 +126,6 @@ const REAPABLE_SETTLEMENT_STATUSES = [
   PaymentStatus.FAILED,
 ] as const;
 
-const ORGANISER_CANCEL_ACTIVE_CHILD_STATUSES = [
-  BookingStatus.PAYMENT_PENDING,
-  BookingStatus.CONFIRMED,
-  BookingStatus.PAID,
-] as const;
 
 export async function reapStaleGroupSettlements(
   now: Date = new Date()

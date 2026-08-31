@@ -1,5 +1,6 @@
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { enqueueOwnHostingCoverageReevaluation } from "@/lib/adult-member-hosting-review";
+import { reconcileHostingReviewForSystemCancellation } from "@/lib/adult-member-hosting-system-cancellation";
 import { prisma } from "@/lib/prisma";
 import {
   BookingEventType,
@@ -1393,6 +1394,25 @@ async function settleBookingPaymentInTransaction(
           store: tx,
         });
       }
+
+      // #3209 (`INV-HOST-041`). The beds are reconciled above; ADULT SUPERVISION
+      // was not. `PAYABLE_SUCCESS_STATUS_LIST` — the status set this void claims
+      // from — includes CONFIRMED, one of the two statuses that qualify a booking
+      // as a `SAME_BOOKING_OWNER` coverage source, so this cancel can take the
+      // qualifying adult off ANOTHER booking of the same member. The
+      // `enqueueOwnHostingCoverageReevaluation` further down this function is NOT
+      // this branch's: it sits on the mutually exclusive SETTLE path and this
+      // branch returns before reaching it. Last in the transaction, after the
+      // lodge capacity key and the per-member credit-ledger key
+      // `restoreCreditFromBooking` takes, because the coverage-owner key this may
+      // take is always acquired last (`INV-HOST-031`, `INV-LOCK-002`). Through the
+      // system-cancellation seam because a capacity-failed void has no actor to
+      // refuse: the member has already paid, the money is already being refunded,
+      // and a rolled-back void would leave a paid-for bed the lodge cannot supply.
+      // The post-commit drain is the unconditional `settleHostingCoverageAfterCommit`
+      // in `markBookingPaymentSucceeded`, which runs on every outcome including
+      // this one.
+      await reconcileHostingReviewForSystemCancellation(booking.id, tx);
 
       return {
         outcome: "capacity_failed" as const,

@@ -102,8 +102,18 @@ import logger from "@/lib/logger";
 import { clubToday } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 
-/** Child booking statuses that an organiser cancel must clean up. */
-const ACTIVE_CHILD_STATUSES = [
+/**
+ * Child booking statuses that an organiser cancel must clean up.
+ *
+ * Exported because `cron-group-settlement-reaper.ts` selects interrupted cleanups
+ * by "the organiser booking is CANCELLED and a child is still in one of these"
+ * (#1236). It carried its own identical copy until #3209; two copies of a set that
+ * MUST agree — one deciding what a cancel claims, the other deciding what a
+ * re-drive can still find — is the shape `INV-SSOT` forbids, and if they drifted
+ * the resume phase would silently stop recovering the very children this loop had
+ * failed on.
+ */
+export const ACTIVE_CHILD_STATUSES = [
   BookingStatus.PAYMENT_PENDING,
   BookingStatus.CONFIRMED,
   BookingStatus.PAID,
@@ -577,8 +587,17 @@ export async function settleGroupBookingOnOrganiserCancel(
           // with a written refund mirror but no queued credit-note op (the
           // invariant this closes). On a genuine crash the reaper re-drives the
           // still-ACTIVE child; a caught-but-survived error follows the same
-          // pre-existing best-effort `continue` below (the reaper only re-drives
-          // not-yet-CANCELLED groups) — this fix adds no new reachable drift.
+          // pre-existing best-effort `continue` below, and the reaper re-drives
+          // that too — this fix adds no new reachable drift.
+          //
+          // #3209 corrects what this comment used to say. It claimed the reaper
+          // "only re-drives not-yet-CANCELLED groups", and that is false:
+          // `resumeInterruptedOrganiserCancels` selects on the ORGANISER BOOKING
+          // being CANCELLED and on a still-active organiser-settled child, over
+          // `ORGANISER_CANCEL_ACTIVE_CHILD_STATUSES` — which is this module's own
+          // `ACTIVE_CHILD_STATUSES`, imported rather than re-listed so the two can
+          // never drift. `GroupBooking.status` is not in that query at all, so a
+          // group already fenced CANCELLED is re-driven like any other.
           const queued = await enqueueXeroRefundCreditNoteOperation(
             child.payment.id,
             refundForChild,

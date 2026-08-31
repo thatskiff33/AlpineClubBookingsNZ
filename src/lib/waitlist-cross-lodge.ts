@@ -31,6 +31,8 @@ import { resolveSubscriptionLockoutMode } from "@/lib/member-subscription-eligib
 import { formatMissingPaidUpAdultWaitlistRefusal } from "@/lib/policies/subscription-lockout-pricing";
 import { formatAdultMemberHostingWaitlistRefusal } from "@/lib/policies/adult-member-hosting";
 import { AdultMemberHostingRequiredError, buildAdultMemberHostingRefusalBody } from "@/lib/adult-member-hosting-refusal";
+import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
+import { reconcileHostingReviewForSystemCancellation } from "@/lib/adult-member-hosting-system-cancellation";
 import {
   HOSTING_COVERAGE_RETRY_CODE,
   HOSTING_COVERAGE_RETRY_MESSAGE,
@@ -823,6 +825,18 @@ export async function confirmCrossLodgeWaitlistOffer(
           db: tx,
           previousRange: { checkIn: newBooking.checkIn, checkOut: newBooking.checkOut },
         });
+        // #3209 (`INV-HOST-041`). The beds are reconciled above; ADULT SUPERVISION
+        // was not. This unwind cancels the replacement booking at whatever status
+        // it was created with, and `createConfirmedBooking` writes PAID for a stay
+        // whose price came out at zero — PAID being one of the two statuses that
+        // qualify a booking as a `SAME_BOOKING_OWNER` coverage source. Worse than a
+        // plain omission: the creation moments ago RESTORED cover to the owner's
+        // other booking and resolved its incident, so unwinding without this leaves
+        // that incident closed while the cover is gone. Through the
+        // system-cancellation seam because a price-drift unwind has no actor to
+        // refuse — the member is already being told to look at the new price, and a
+        // refusal here would leave the drifted booking alive and paid for.
+        await reconcileHostingReviewForSystemCancellation(newBooking.id, tx);
         const refreshedOffer = await tx.booking.updateMany({
           where: {
             id: entry.id,
@@ -837,6 +851,11 @@ export async function confirmCrossLodgeWaitlistOffer(
         });
         return refreshedOffer.count === 1;
       });
+      // #2576 §7's immediate half, after the unwind has committed: re-read the
+      // now-committed facts, open or resolve the incident, notify the owner once.
+      // Before the early return below, because the obligation is owed whether or
+      // not the offer's own quote could be refreshed. Never throws.
+      await settleHostingCoverageAfterCommit({ bookingId: newBooking.id });
       if (!refreshedCurrentOffer) {
         logger.warn(
           { bookingId, newBookingId: newBooking.id },
