@@ -19,6 +19,59 @@ export interface KioskAccess {
   canManageRoster: boolean;
   canMarkAttendance: boolean;
   canCompleteChores: boolean;
+  /**
+   * The two Group Trip disclosure capabilities (#3040, epic #2943). Reported
+   * here so the kiosk client knows what it will be sent, and derived from the
+   * ONE definition below so this endpoint and the guest-list route cannot
+   * disagree about who may see what.
+   */
+  canViewGroupTripOrganiser: boolean;
+  canViewAdultCoverSource: boolean;
+}
+
+/**
+ * The two privileged Group Trip capabilities, carried separately because they
+ * ARE separate (#3040).
+ *
+ * The issue requires organiser context and adult-cover source to be
+ * "independently authorized", so they are two booleans, consulted at two
+ * places, gating two payload keys and two database reads. They are granted to
+ * the same tiers today; that is a policy coincidence and NOT a licence to
+ * collapse them into one flag, because collapsing them would make it impossible
+ * to grant one without the other later.
+ * `src/lib/__tests__/kiosk-group-trip-privacy.test.ts` drives all four
+ * combinations.
+ */
+export interface KioskGroupTripCapabilities {
+  organiser: boolean;
+  coverSource: boolean;
+}
+
+/**
+ * Which kiosk tiers hold the two privileged Group Trip capabilities.
+ *
+ * `admin` and `hut-leader` only — deliberately the same set as
+ * `canManageRoster`, the narrower of the two capability sets this module
+ * already grants, and NOT the wider `canMarkAttendance` set that includes
+ * `lodge`.
+ *
+ * The `lodge` tier is a shared, often unattended wall device: anybody who walks
+ * up to it is that tier. Marking a guest arrived from it is an operational
+ * action the club wants available that way; learning who organised another
+ * member's trip, or which account's adult supplies a booking's cover, is
+ * cross-account DISCLOSURE, and disclosure to an unattended screen is
+ * disclosure to everybody in the room. `staying-guest` and `none` hold neither
+ * capability — that is the ordinary tier the whole privacy split exists for,
+ * and it sees Group Trip LINKAGE only.
+ */
+export function kioskGroupTripCapabilities(
+  tier: KioskTier,
+): KioskGroupTripCapabilities {
+  const privileged = tier === "admin" || tier === "hut-leader";
+  // Two fields, written out, rather than one shared boolean reference. A single
+  // expression assigned to both would read as "these are the same capability",
+  // which is exactly what this must not become.
+  return { organiser: privileged, coverSource: privileged };
 }
 
 export type KioskAccessSubject = AccessRoleInput & {
@@ -195,6 +248,7 @@ export async function getKioskAccessInfo(
 ): Promise<KioskAccess> {
   const tier = await getKioskAccessTier(user, date);
   const dateRange = await getKioskDateRange(user, date);
+  const groupTrip = kioskGroupTripCapabilities(tier);
 
   return {
     tier,
@@ -202,5 +256,7 @@ export async function getKioskAccessInfo(
     canManageRoster: tier === "admin" || tier === "hut-leader",
     canMarkAttendance: tier === "admin" || tier === "hut-leader" || tier === "lodge",
     canCompleteChores: tier === "admin" || tier === "hut-leader" || tier === "lodge",
+    canViewGroupTripOrganiser: groupTrip.organiser,
+    canViewAdultCoverSource: groupTrip.coverSource,
   };
 }
