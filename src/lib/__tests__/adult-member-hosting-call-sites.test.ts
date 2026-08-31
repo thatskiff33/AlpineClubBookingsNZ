@@ -1160,8 +1160,14 @@ describe("the participant fence is gated on the hosting policy (#2623 T5)", () =
     // per-lodge capacity locks — the #2623 T6 hazard relocated, and invisible
     // to every behavioural test because the window needs two interleaved
     // policy reads to open.
+    //
+    // #3209 widened the CONDITION — the return is now taken only when this lodge
+    // is inactive AND no related booking sits at an active one — and left this
+    // property exactly as it was: whatever decides to skip, the call it skips to
+    // still passes `true`. That is why the assertion names the flag rather than
+    // the test that sets it.
     expect(readRepoCode(REVIEW_SERVICE)).toMatch(
-      /if \(!hostingModeIsActive\(planned\.mode\)\) \{\s*return reconcileAdultMemberHostingReview\(\s*bookingId,\s*db,\s*options,\s*true,?\s*\);/,
+      /if \(!sourceLodgeActive && !siblingOwedAtAnotherLodge\) \{\s*return reconcileAdultMemberHostingReview\(\s*bookingId,\s*db,\s*options,\s*true,?\s*\);/,
     );
   });
 
