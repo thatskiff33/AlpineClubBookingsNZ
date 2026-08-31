@@ -35,6 +35,19 @@ import {
   type BookingModificationPaymentContext,
 } from "@/lib/booking-modification-settlement";
 import {
+  assertNoPendingEditFinancialReview,
+  raiseParkedEditFinancialReviewTasks,
+} from "@/lib/edit-financial-review";
+import {
+  preCheckInEditEvidence,
+  preCheckInEditStrands,
+} from "@/lib/stored-sold-price-evidence";
+import {
+  classifyNightPriceToWrite,
+  preservedNightPrices,
+} from "@/lib/stored-night-price-write";
+import { bookingHasOpenFinancialReview } from "@/lib/booking-financial-review-visibility";
+import {
   acquireLodgeCapacityLock,
   checkCapacity,
   checkCapacityForGuestRanges,
@@ -328,6 +341,18 @@ export async function modifyBookingDates({
     }
     await assertBookingNotQuotePriced(tx, bookingId);
 
+    // #3032 (epic #2797): a date change always reprices - it is the path this
+    // fence exists for. Taken under both locks, on the post-lock re-read, and
+    // before any write, so a refused edit leaves the booking untouched. There is
+    // no identity-only shape here to exempt: `adminShiftBookingDates` is the
+    // price-preserving date path (`priceDiffCents: 0`, no refund, no credit) and
+    // is deliberately NOT fenced.
+    await assertNoPendingEditFinancialReview({
+      bookingId,
+      moneyAffecting: true,
+      store: tx,
+    });
+
     // Under an admin override the fully-past COMPLETED status is editable too
     // (issue #1668); the standard path keeps the active-lifecycle allowlist.
     const allowedStatuses = adminOverride
@@ -587,7 +612,67 @@ export async function modifyBookingDates({
       today: clubTodayDateOnly,
     });
 
-    const newTotalPriceCents = priceBreakdown.totalPriceCents;
+    /**
+     * #3166 (epic #2797): THE DATE PATH EVIDENCE GATE, and the reason it could
+     * not be left for later.
+     *
+     * This service reads night prices through the LENIENT
+     * `lockedNightPricesForGuest`, so a night whose stored price is blank gets
+     * no lock, is repriced at today's rate by the pass above, and — before this
+     * — was written back into `BookingGuestNight.priceCents` as a real integer.
+     * The only thing standing in front of that was
+     * `assertNoPendingEditFinancialReview`, which fences a second edit only
+     * while a review is still OPEN. Nothing ever CLEARS a blank: settling a
+     * review writes an amount to the task, never a price to the night row. So
+     * the first date change after a review closed silently converted "not known"
+     * into a guess, and wrote that guess into the very column the next edit
+     * reads as evidence.
+     *
+     * #3170 is what manufactures those blanks — before it the column could not
+     * hold one — so this had to land in the same epic rather than after it.
+     *
+     * It PARKS rather than refuses, which is the same answer the batch edit path
+     * and the guest removal give. #3170 deleted the member-facing refusal
+     * outright, on the grounds that an unpriceable edit now commits its
+     * structural half everywhere this rule reaches; re-introducing one here
+     * would put two paths into disagreement about one member request and revive
+     * a sentence the epic had already decided was false.
+     *
+     * Judged against `priceBreakdown.guests[i].nightDates` — the array the write
+     * loop below consumes — so the gate and the writer cannot disagree about
+     * which nights this edit proposes (`INV-SSOT`).
+     */
+    const dateEditEvidence = preCheckInEditEvidence({
+      bookingId,
+      booking: { checkIn: booking.checkIn, checkOut: booking.checkOut },
+      // THE SAME ASSEMBLY the modify save and the modify preview use, so all
+      // three judge a strand the same way (`INV-SSOT`). A date change removes
+      // nobody, and the pricing pass is index-aligned with the booking's own
+      // guest list here.
+      strands: preCheckInEditStrands({
+        bookingGuests: booking.guests,
+        guestsForPricing: booking.guests.map((guest) => ({
+          bookingGuestId: guest.id,
+        })),
+        pricedGuests: priceBreakdown.guests,
+      }),
+    });
+    /**
+     * True when this booking's own history cannot price the date change.
+     *
+     * From here on it withholds every money decision and NOTHING ELSE: the dates
+     * move, each guest is re-ranged, and every night row is rewritten with the
+     * stored price where there is one and `NULL` where there is not. No reprice,
+     * no promotion recalculation, no change fee, no settlement options, no
+     * refund, no credit and no Xero delta — `priceDiffCents` falls out as 0
+     * because the booking's money genuinely did not move, NOT because 0 was
+     * chosen as the adjustment.
+     */
+    const parked = dateEditEvidence.occurrences.length > 0;
+
+    const newTotalPriceCents = parked
+      ? booking.totalPriceCents
+      : priceBreakdown.totalPriceCents;
     const guestNightRates = guestsForPricing.map((guest, index) => ({
       bookingGuestId: guest.bookingGuestId,
       memberId: guest.memberId ?? null,
@@ -605,7 +690,14 @@ export async function modifyBookingDates({
     let promoRemoved = false;
     let promoCoverage: PromoCoverageNotice | null = null;
 
-    if (booking.promoRedemption?.promoCode) {
+    if (parked) {
+      // #3166: the booking's stored promotion figures, written back untouched.
+      // A parked edit re-runs no cap and re-allocates nothing, exactly as the
+      // batch path parked branch does — and for the same reason: the discount is
+      // a function of a price nobody has worked out yet.
+      newDiscountCents = booking.discountCents;
+      newPromoAdjustmentCents = booking.promoAdjustmentCents;
+    } else if (booking.promoRedemption?.promoCode) {
       // Row-lock the promo code and re-read its usage counter before the caps
       // are checked (#2299). This reprice can release a total-redemptions slot
       // (the new dates leave the promo with no benefit) or re-take one, so
@@ -672,14 +764,28 @@ export async function modifyBookingDates({
       }
     }
 
-    const newFinalPriceCents = newTotalPriceCents + newPromoAdjustmentCents;
+    // #3166: on a parked edit the booking's stored final price is written back
+    // unchanged rather than recomposed from the parked figures. The two agree by
+    // construction today, and deriving it would make this line quietly depend on
+    // that agreement holding — `priceDiffCents` below is the number every
+    // settlement decision reads, and it must be zero because the booking did not
+    // move, not because two expressions happened to cancel. (The batch path and
+    // the removal path state the same reasoning at the same place.)
+    const newFinalPriceCents = parked
+      ? booking.finalPriceCents
+      : newTotalPriceCents + newPromoAdjustmentCents;
     const priceDiffCents = newFinalPriceCents - booking.finalPriceCents;
 
     let changeFeeCents = 0;
     const checkInChanged =
       newCheckIn.getTime() !== new Date(booking.checkIn).getTime();
 
-    if (checkInChanged) {
+    // #3166: NO CHANGE FEE ON A PARKED EDIT. The fee is a policy amount this
+    // service could work out, but charging it would move money on an edit whose
+    // whole adjustment a person has yet to price — and it would move through the
+    // settlement call the parked branch is skipping. The admin settles the
+    // entire adjustment, fee included, when they resolve the task.
+    if (!parked && checkInChanged) {
       const policy = await loadCancellationPolicy(booking.checkIn, booking.lodgeId, tx);
       const feeResult = calculateChangeFee({
         // #3123 — one club day for both operands.
@@ -699,12 +805,21 @@ export async function modifyBookingDates({
     // member shorten a booking inside the cancellation window and recover more
     // than cancelling or removing guests for the same nights would return.
     const netChargeCents = priceDiffCents + changeFeeCents;
-    const settlementOptions = await calculateModificationSettlementOptions({
-      booking: booking as unknown as LoadedBookingForModify,
-      netChargeCents,
-      db: tx, // locked transaction; see `CancellationPolicyDb`
-      todayAtClub,
-    });
+    // NULL ON A PARKED EDIT, which is what keeps `applyPaymentAdjustments`
+    // inert below rather than a second zero literal beside it: with no options
+    // and a `priceDiffCents` of 0 its net amount is 0, so it takes no refund
+    // branch, no credit branch and no additional-charge branch, updates no
+    // payment row, and returns zeros for both Xero legs. The existing machinery
+    // is what proves nothing moved, rather than a parallel hand-built result
+    // that could drift from it.
+    const settlementOptions = parked
+      ? null
+      : await calculateModificationSettlementOptions({
+          booking: booking as unknown as LoadedBookingForModify,
+          netChargeCents,
+          db: tx, // locked transaction; see `CancellationPolicyDb`
+          todayAtClub,
+        });
     if (settlementOptions?.requiresSettlementMethod && !settlementMethod) {
       throw new ApiError(
         "Choose a refund or account credit before saving",
@@ -772,8 +887,12 @@ export async function modifyBookingDates({
     // date change on a booking under review does not refund credit pre-approval
     // (F4, #1887); the clamp runs once the booking is released to PAYMENT_PENDING.
     let zeroDollarAutoPaid = false;
+    // #3166: and not on a parked edit either. `newFinalPriceCents` is the
+    // booking own stored figure there, so a clamp against it could only act on a
+    // state this edit did not create — and settling it at $0 would be a
+    // financial statement about an amount nobody has worked out.
     const isRepriceablePrePayment =
-      newStatus === "PENDING" || newStatus === "PAYMENT_PENDING";
+      !parked && (newStatus === "PENDING" || newStatus === "PAYMENT_PENDING");
     const appliedBeforeClamp = isRepriceablePrePayment
       ? await deriveBookingAppliedCreditCents(bookingId, tx)
       : 0;
@@ -826,7 +945,12 @@ export async function modifyBookingDates({
           data: {
             stayStart: newCheckIn,
             stayEnd: newCheckOut,
-            priceCents: priceBreakdown.guests[i].priceCents,
+            // #3166: on a parked edit the strand keeps its STORED total. Not a
+            // recomputed one, not a delta, not a zero — how much this date
+            // change alters it is the question the OPEN task exists to answer.
+            priceCents: parked
+              ? g.priceCents
+              : priceBreakdown.guests[i].priceCents,
             // A date change re-bases every guest at current rates (#1930, E4):
             // overwrite the rate-type snapshot with the newly priced total —
             // EXCEPT where the new range keeps nights the guest already bought,
@@ -834,23 +958,94 @@ export async function modifyBookingDates({
             // cannot describe a stay that mixes locked member-rate nights with
             // newly priced non-member ones, so there the stored snapshot stands
             // (#2543). See `rateSnapshotUpdateForRepricedGuest`.
-            rateMembershipTypeId: rateSnapshotUpdateForRepricedGuest(
-              priceBreakdown.guests[i],
-              guestsForPricing[i]?.lockedNightPrices,
-            ),
+            //
+            // #3166: and on a parked edit the snapshot is left alone outright.
+            // It is written from what pricing CHARGED this guest, and a parked
+            // edit charged nobody anything — `undefined` leaves the stored value
+            // untouched, which is what keeps the rate snapshot frozen alongside
+            // the money.
+            rateMembershipTypeId: parked
+              ? undefined
+              : rateSnapshotUpdateForRepricedGuest(
+                  priceBreakdown.guests[i],
+                  guestsForPricing[i]?.lockedNightPrices,
+                ),
           },
         });
         await tx.bookingGuestNight.deleteMany({
           where: { bookingGuestId: g.id },
         });
         const nightDates = priceBreakdown.guests[i].nightDates ?? [];
+        // #3166: THE PER-NIGHT VECTOR THIS EDIT WRITES. On a parked edit it is
+        // built from what is STORED against each night and nothing else — the
+        // integer where the row carried one, byte for byte, and `NULL` where it
+        // did not, including for a night this date change newly puts the strand
+        // on. That is what stops the defect this issue is about: the pass above
+        // has a today's-rate number for every one of those nights, and writing
+        // it would repair a blank into a guess the next edit reads as evidence.
+        //
+        // A BLANK IS NEVER REPAIRED BY A REPRICE, on this path or any other. It
+        // is cleared only by a person supplying the amount.
+        const perNightCents = parked
+          ? preservedNightPrices(
+              dateEditEvidence.soldNightPriceByGuestId.get(g.id),
+              nightDates,
+            )
+          : priceBreakdown.guests[i].perNightCents;
         if (nightDates.length > 0) {
           await tx.bookingGuestNight.createMany({
-            data: nightDates.map((stayDate, k) => ({
-              bookingGuestId: g.id,
-              stayDate,
-              priceCents: priceBreakdown.guests[i].perNightCents[k] ?? 0,
-            })),
+            data: nightDates.map((stayDate, k) => {
+              // #3031: NO `?? 0`. These rows ARE the booking's sold-price
+              // history from here on, and a default would write a magic zero
+              // onto a real night — an amount epic #2797 prohibits, and one a
+              // later edit would read back as evidence the member paid nothing
+              // for it. A per-night vector shorter than the night list is a
+              // defect in whoever built the breakdown, so refuse.
+              //
+              // #3170/#3166: an explicit `null` is different — it is a decision
+              // that the price is NOT KNOWN, which is storable and is stored.
+              // Only the parked composer above produces one; a short vector from
+              // the pricing engine still throws.
+              //
+              // THE DECISION IS NOT MADE HERE. All three answers come from
+              // `classifyNightPriceToWrite` (#3166), which `nightPriceCentsToWrite`
+              // in `booking-modify-plan.ts` narrows too — so a change to what a
+              // night price may BE is one edit, in one file, and the two
+              // three-way writers cannot drift apart. What is local to this site
+              // is only the FAILURE: an `ApiError(400)` whose sentence is
+              // member-visible and is pinned by `phase8b-booking-mods.test.ts`,
+              // against the modify plan's internal `Error`. `INV-SSOT-001`
+              // permits that — one definition, two derivations.
+              //
+              // THE #3167 HAND-OFF THAT USED TO SIT HERE IS DISCHARGED. It said
+              // this site was a two-way copy of `required-price-cents.ts`'s
+              // predicate, to be converged in a follow-on round once #3166 had
+              // landed. #3166 landed first and converged the decision itself, so
+              // that round found nothing left to move and corrected the claim
+              // instead. This site is NOT convergeable onto those helpers and is
+              // not waiting to be: they are two-way by design — every writer they
+              // guard is selling the night it writes — and `requiredNightPriceCents`
+              // cannot express the not-known arm at all. That module's header
+              // names this site and says the same thing from the other end.
+              //
+              // What must not be lost: someone later making an unpriceable date
+              // change PARK instead of refuse edits the shared classifier, not
+              // this arm — otherwise quote and apply disagree about one member's
+              // edit, which is the parity this epic keeps re-fixing.
+              const decision = classifyNightPriceToWrite(perNightCents[k]);
+              if (decision.kind === "unstated") {
+                throw new ApiError(
+                  "The new dates could not be priced night by night",
+                  400,
+                );
+              }
+              return {
+                bookingGuestId: g.id,
+                stayDate,
+                priceCents:
+                  decision.kind === "not-known" ? null : decision.priceCents,
+              };
+            }),
           });
         }
       }),
@@ -955,6 +1150,31 @@ export async function modifyBookingDates({
         priceDiffCents,
         changeFeeCents,
       },
+    });
+
+    /**
+     * #3166: one OPEN review task per unreadable strand, inside this same
+     * transaction and under the locks it already holds.
+     *
+     * Raised AFTER the `BookingModification` row exists, because the task
+     * settles against that record — the same anchoring the batch path and the
+     * removal path use, so a confirmed amount reaches the settlement machinery
+     * by one route rather than four.
+     *
+     * The raise ITSELF - the settlement payment id, the strand's member, the
+     * null amount, and the booking's PRE-EDIT dates so the task describes the
+     * stay the unreadable evidence belongs to - is
+     * `raiseParkedEditFinancialReviewTasks`, stated once there (#3166,
+     * `INV-SSOT`).
+     */
+    await raiseParkedEditFinancialReviewTasks({
+      booking,
+      guests: booking.guests,
+      // A date change adds nobody.
+      addedGuests: [],
+      occurrences: dateEditEvidence.occurrences,
+      bookingModificationId: bookingModification.id,
+      store: tx,
     });
 
     if (accountCreditAmountCents > 0) {
@@ -1203,6 +1423,33 @@ async function dispatchDatePostTransactionSideEffects({
       })
     : null;
   if (member) {
+    /*
+      #3032 (epic #2797): whether the club is still working out an amount on
+      this booking as the email is written. The booking's CURRENT state rather
+      than something this edit decided, read through the same
+      `bookingHasOpenFinancialReview` the booking-detail banner and the My
+      Bookings row use, so the email and the page the member clicks through to
+      cannot disagree (`INV-SSOT`).
+
+      #3166 CHANGED WHAT THIS READ FINDS, and the paragraph that used to sit
+      here said the opposite. It said a date change "dispatches no review of its
+      own, so there is nothing of this edit's to carry out", and that a review
+      was therefore never open when this path emailed. Both were true of #3032's
+      date path and are false of this one: an unpriceable date change now parks
+      and raises a task inside the transaction that just committed, so this read
+      finds THIS edit's own review and the member is told about it in the same
+      email that tells them their dates moved. That is the intended outcome — it
+      is why the read was never hard-coded — but a stale claim at a live read
+      site is how the next reader concludes the branch is dead.
+
+      The pending-review fence above (`moneyAffecting: true`) still turns away a
+      SECOND repricing date change while a review is open, so what this cannot
+      find is a review some earlier edit left open.
+    */
+    const financialReviewPending = await bookingHasOpenFinancialReview(
+      result.booking.id,
+    );
+
     sendBookingModifiedEmail({
       bookingId: result.booking.id,
       recipientMemberId: member.id,
@@ -1232,6 +1479,7 @@ async function dispatchDatePostTransactionSideEffects({
       xeroInvoiceNumber: result.xeroInvoiceNumber,
       // #2390: same words as the edit preview and the booking history.
       promoCoverageNote: result.promoCoverage?.message ?? null,
+      financialReviewPending,
       lodgeId: result.booking.lodgeId,
     }).catch((err) =>
       logger.error({ err, bookingId }, "Failed to send booking modified email"),
@@ -1307,11 +1555,18 @@ export async function adminShiftBookingDates({
 
   const result = await prisma.$transaction(async (tx) => {
     // Two-tier lock protocol (#1881): this admin date move claims capacity for
-    // the new range and can move money (recalculate mode), so it takes BOTH
-    // locks — global lock(1) FIRST (mutual exclusion with cancel / settlement),
-    // then the per-lodge lock. Even a frozen-cent shift takes lock(1) so its
-    // status/date commit can never clobber a booking a concurrent cancel just
-    // terminated.
+    // the new range, so it takes BOTH locks - global lock(1) FIRST (mutual
+    // exclusion with cancel / settlement), then the per-lodge lock.
+    //
+    // IT MOVES NO MONEY. Every exit from this function reports
+    // `priceDiffCents: 0` with no refund, no account credit, no additional
+    // charge and no Xero delta; the cents are frozen by construction, which is
+    // what separates it from `modifyBookingDates` above and is why #3032's
+    // pending-review fence deliberately does not stand in front of it. It still
+    // takes lock(1) so its status/date commit can never clobber a booking a
+    // concurrent cancel just terminated. (This comment used to say the shift
+    // "can move money (recalculate mode)"; the recalculate mode belongs to
+    // `modifyBookingDates`, not here.)
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
     // Pre-lock read of only the lodge lock key; lodgeId is immutable.
     const lockTarget = await tx.booking.findUnique({
@@ -1703,6 +1958,20 @@ export async function adminShiftBookingDates({
   // Owner decision (#1668 review): the admin explicitly chose in the override
   // dialog whether to send the change email; the choice is audited above.
   if (notifyMember) {
+    /*
+      #3032 (epic #2797). This path is DELIBERATELY not fenced - an admin date
+      shift preserves the price, so it never prices against money under review
+      and is never turned away by one. That makes it the one modified-email path
+      where an open review is genuinely reachable: a booking can sit under
+      review and still have its dates moved. Telling that member their booking
+      changed while saying nothing about the amount the club still owes them a
+      figure for is exactly the silent money section #3033 removed, so the read
+      belongs here more than anywhere else on this file.
+    */
+    const financialReviewPending = await bookingHasOpenFinancialReview(
+      result.booking.id,
+    );
+
     sendBookingModifiedEmail({
       bookingId: result.booking.id,
       recipientMemberId: result.memberId,
@@ -1724,6 +1993,7 @@ export async function adminShiftBookingDates({
       additionalPaymentMethod: undefined,
       paymentReference: result.paymentReference,
       xeroInvoiceNumber: result.xeroInvoiceNumber,
+      financialReviewPending,
       lodgeId: result.lodgeId,
     }).catch((err) =>
       logger.error({ err, bookingId }, "Failed to send admin override date-shift email"),

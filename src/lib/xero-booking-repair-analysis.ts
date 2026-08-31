@@ -37,6 +37,40 @@ export function getModificationNetAmountCents(
   return modification.priceDiffCents + modification.changeFeeCents;
 }
 
+/**
+ * WHAT THIS EDIT'S SUPPLEMENTARY XERO INVOICE SHOULD BILL - the components and
+ * the net, as ONE object, so the gate, the queued payload and the finding's
+ * detail cannot come from three separate expressions (#3187).
+ *
+ * They used to be three reads of `modification.priceDiffCents` /
+ * `.changeFeeCents`, which agreed only because they were copies of each other.
+ * The moment part of the ask comes from somewhere ELSE - a completed financial
+ * review, whose money is on the review task and not on the modification row -
+ * three copies is three chances to widen the gate without widening the action,
+ * and a critical finding whose action silently does nothing is worse than the
+ * silence it replaced: it teaches an operator to ignore the tool.
+ *
+ * The review total joins `priceDiffCents` rather than `changeFeeCents` because
+ * that is the component the live settlement dispatches it as
+ * (`edit-financial-review-xero-leg.ts` sends `priceDiffCents: <combined total>,
+ * changeFeeCents: 0`), and the invoice bills their sum either way. On a parked
+ * edit both modification components are 0 by construction, so the ask IS the
+ * review total; on every booking with no review the review total is 0 and this
+ * returns exactly what the modification row always said.
+ */
+export function getExpectedSupplementaryInvoiceAsk(
+  modification: Pick<BookingModificationRecord, "priceDiffCents" | "changeFeeCents">,
+  editReviewChargeCents: number
+) {
+  const priceDiffCents = modification.priceDiffCents + editReviewChargeCents;
+  return {
+    priceDiffCents,
+    changeFeeCents: modification.changeFeeCents,
+    netAmountCents: priceDiffCents + modification.changeFeeCents,
+    editReviewChargeCents,
+  };
+}
+
 function modificationChangedBookingDates(modification: BookingModificationRecord) {
   if (modification.modificationType === "DATE_CHANGE") {
     return true;

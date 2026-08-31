@@ -149,6 +149,8 @@ import {
 } from "../booking-state";
 import { DIAGNOSTICS_FINANCE_AUDIT_HISTORY_TOOL_ID } from "../finance-records";
 import { FINANCE_UNPARSEABLE_VALUE, countOf } from "../finance-shared";
+
+import { stripComments } from "@/lib/__tests__/support/strip-comments";
 import {
   DIAGNOSTICS_AID6B_MEMBERSHIP_RECORD_TOOLS,
   DIAGNOSTICS_MEMBER_AUDIT_HISTORY_TOOL_ID,
@@ -2689,9 +2691,7 @@ describe("AID-6B booking/membership pack: read-only (#2376)", () => {
     // is in `tools/__tests__/read-only-transaction.test.ts`; keeping a copy here
     // is deliberate, because this is the pack census a booking-pack author reads.
     const evidence = packSource("booking-evidence.ts");
-    const code = evidence
-      .replace(/\/\*[\s\S]*?\*\//g, "")
-      .replace(/^[ \t]*\/\/.*$/gm, "");
+    const code = stripComments(evidence);
     expect(code.match(/prisma\.[A-Za-z$]+/g)).toBeNull();
     expect(code).not.toContain('from "@/lib/prisma"');
     // Non-vacuous: the stripped code still holds the module and the import of the
@@ -2758,9 +2758,7 @@ describe("AID-6B booking/membership pack: read-only (#2376)", () => {
     // cannot police, so it is banned outright here: one arithmetic day-span
     // MEASUREMENT is allowed (it is what bounds a corrupt envelope BEFORE anything
     // is expanded) and it is the only place the day constant may be divided by.
-    const code = evidence
-      .replace(/\/\*[\s\S]*?\*\//g, "")
-      .replace(/^[ \t]*\/\/.*$/gm, "");
+    const code = stripComments(evidence);
     expect(code.match(/UTC_DAY_MS/g)).toHaveLength(2);
     expect(code.match(/Date\.UTC\(/g)).toHaveLength(2);
     expect(code).toContain("function dateOnlyNightSpan(");

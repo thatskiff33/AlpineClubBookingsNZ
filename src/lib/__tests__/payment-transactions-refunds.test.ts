@@ -14,10 +14,12 @@ vi.mock("@/lib/stripe", () => ({
 }));
 
 import {
+  applyLocalRefundAllocation,
   markPaymentIntentTransactionFailed,
   PartialRefundError,
   planStripeRefundAllocation,
   recordInternetBankingPaymentTransaction,
+  RefundAllocationRacedError,
   refundPaymentTransactions,
   syncRefundsFromStripeCharge,
 } from "@/lib/payment-transactions";
@@ -125,6 +127,23 @@ function createRefundStore() {
           transactions.find((item) => item.id === where.id) ?? transaction;
         Object.assign(target, data);
         return { ...target };
+      }),
+      // #3032: a FAITHFUL compare-and-set, not an alias for `update`. The row is
+      // written only when every field in the `where` still matches, and the
+      // caller is told how many rows matched - which is the whole mechanism
+      // `applyLocalRefundAllocation` now relies on, so a double that ignored the
+      // guard would make its test pass for the wrong reason.
+      updateMany: vi.fn(async ({ where, data }: any) => {
+        const target = transactions.find((item) => item.id === where.id);
+        if (!target) return { count: 0 };
+        if (
+          where.refundedAmountCents !== undefined &&
+          target.refundedAmountCents !== where.refundedAmountCents
+        ) {
+          return { count: 0 };
+        }
+        Object.assign(target, data);
+        return { count: 1 };
       }),
     },
     paymentRefund: {
@@ -697,5 +716,67 @@ describe("planStripeRefundAllocation (#1349)", () => {
       { paymentTransactionId: "txn_1", amountCents: 4000 },
     ]);
     expect(plannedAmountCents).toBe(4000);
+  });
+});
+
+/**
+ * #3032: the local allocation is a compare-and-set, because it can now race.
+ *
+ * `applyLocalRefundAllocation` computes an ABSOLUTE `refundedAmountCents` from a
+ * value it read a moment earlier. Every caller before this epic either held the
+ * global settlement key `lock(1)` or ran only on a CANCELLED booking, so no two
+ * could ever interleave; completing an `EDIT_FINANCIAL_REVIEW` task is neither -
+ * it allocates against a LIVE booking and deliberately holds no lock. A lost
+ * update there does not just mislay a number: it UNDER-records what has been
+ * refunded, which OVERSTATES the refundable headroom and lets a later refund
+ * exceed what was ever captured.
+ */
+describe("#3032 - applyLocalRefundAllocation cannot lose an update", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("CONTROL: records the allocation and the resulting status when nothing races it", async () => {
+    const { store, transaction, payment } = createRefundStore();
+
+    await applyLocalRefundAllocation({
+      paymentId: "payment_1",
+      amountCents: 2000,
+      store: store as never,
+    });
+
+    expect(transaction.refundedAmountCents).toBe(2000);
+    expect(transaction.status).toBe(PaymentStatus.PARTIALLY_REFUNDED);
+    expect(payment.refundedAmountCents).toBe(2000);
+  });
+
+  it("MUTATION: refuses - and keeps the other writer's value - when the row moved under it", async () => {
+    const { store, transaction } = createRefundStore();
+
+    // Another writer records a $30 refund on the same transaction between this
+    // call's read and its write. Simulated at the write itself so the two are
+    // guaranteed to interleave rather than raced for.
+    let interfered = false;
+    const guardedUpdateMany = store.paymentTransaction.updateMany;
+    store.paymentTransaction.updateMany = vi.fn(async (args: any) => {
+      if (!interfered) {
+        interfered = true;
+        transaction.refundedAmountCents = 3000;
+      }
+      return guardedUpdateMany(args);
+    }) as typeof store.paymentTransaction.updateMany;
+
+    await expect(
+      applyLocalRefundAllocation({
+        paymentId: "payment_1",
+        amountCents: 1000,
+        store: store as never,
+      }),
+    ).rejects.toBeInstanceOf(RefundAllocationRacedError);
+
+    // The other writer's $30 survives. An unguarded absolute write would have
+    // replaced it with $10 - the whole $30 refund gone from the ledger, and $30
+    // of phantom headroom created.
+    expect(transaction.refundedAmountCents).toBe(3000);
   });
 });

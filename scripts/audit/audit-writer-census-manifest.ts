@@ -353,7 +353,36 @@ export const AUDIT_CENSUS_TOTALS = {
   // disjoint -- upstream's two auditLog.create writers and this branch's seven
   // communication writers -- and the figure is from `npm run audit:census` on
   // the MERGED tree, the method this file prescribes.
-  writeSites: 462,
+  // 462 -> 463 (#3170): a settled review share that could not be added to this
+  // booking edit's already-paid request now writes
+  // `booking.editFinancialReview.chargeShareUncollected` through the awaited
+  // `createAuditLog`. It was a `logger.warn` and nothing else, and a log line is
+  // not a queue: the club is owed money nobody can find. Categorised `payment` at
+  // the site, so it does not join `UNCATEGORISED_AUDIT_WRITERS` below. Measured by
+  // RUNNING `npm run audit:census` on this tree (463 sites, 2220 files scanned),
+  // not by adding one to the literal.
+  // 463 -> 464 (#3191): settling a review may also record what its unpriced
+  // nights sold for, and that is a money-affecting act in its own right - so it
+  // writes `booking-payment.stored-night-price.record` through the awaited
+  // `createAuditLog`, inside the completion's own transaction. A SECOND entry
+  // rather than metadata on the completion beside it, because the two are
+  // different acts and this one can happen on a DISMISSAL, whose entry says in
+  // as many words that nothing moved. Categorised `payment` at the site, so it
+  // does not join `UNCATEGORISED_AUDIT_WRITERS` below. Measured by RUNNING
+  // `npm run audit:census` on this tree (464 sites, 2229 files scanned), not by
+  // 463 -> 464 (#3193): the OTHER ending of that same shortfall. Since the
+  // owner's 31 Aug 2026 decision the difference is billed on a second, separate
+  // supplementary invoice rather than collected by hand, so
+  // `booking.editFinancialReview.chargeShareReinvoiced` records that it IS being
+  // asked for - the counterpart to the `chargeShareUncollected` row above, which
+  // now fires only when that second invoice could not be raised. Two rows rather
+  // than one because they carry opposite instructions: one says chase this, the
+  // other says an invoice is on its way and explains the second document a member
+  // is about to receive. Categorised `payment` at the site, so it does not join
+  // `UNCATEGORISED_AUDIT_WRITERS` below. Measured by RUNNING
+  // `npm run audit:census` on this tree (464 sites, 2225 files scanned), not by
+  // adding one to the literal.
+  writeSites: 465,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -429,7 +458,12 @@ export const AUDIT_CENSUS_TOTALS = {
     // 113 -> 116 (local database backups): the restore endpoint's three
     // rows, written through `createAuditLog` like the backups routes around
     // them rather than introducing another form.
-    createAuditLog: { total: 116, uncategorised: 0 },
+    // 116 -> 117 (#3170): the uncollected review share, above, written through
+    // `createAuditLog` like the payment writers around it.
+    // 117 -> 118 (#3191): the stored-night-price record above.
+    // 117 -> 118 (#3193): its counterpart, the re-invoiced review share, in the
+    // same module and the same form.
+    createAuditLog: { total: 119, uncategorised: 0 },
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -536,7 +570,17 @@ export const AUDIT_CENSUS_TOTALS = {
     // who reconciles the club's money. `support` + `finance` is exactly who the
     // matching unmuteable alert is addressed to, so the audit trail and the mail
     // reach the same audience rather than one being visible to a wider set.
-    payment: 37,
+    // 37 -> 38 (#3170): `booking.editFinancialReview.chargeShareUncollected`. Same
+    // argument as the two rows above it - it says money the club is owed was not
+    // asked for, and the only person who can settle that is the one who reconciles
+    // the club's money.
+    // 38 -> 39 (#3191): the stored-night-price record above.
+    // 38 -> 39 (#3193): `booking.editFinancialReview.chargeShareReinvoiced`. The
+    // same audience for the same reason - it says the club has raised a second
+    // invoice for money a booking change's first invoice went out without, and
+    // the person who answers a member asking why two invoices arrived is the one
+    // who reconciles the club's money.
+    payment: 40,
     // 27 -> 34 (#2581 child 2): the five family-group writers and the two
     // dependants writers. Both dependants writers also moved off a hand-built
     // Prisma literal and onto the audit boundary in the same change.

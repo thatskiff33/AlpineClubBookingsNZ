@@ -869,6 +869,19 @@ jobs:
           BOOKING_GUEST_RANGE_TRIGGER_TEST_DATABASE_URL: ${{ env.DATABASE_URL }}
         run: npx vitest run src/lib/__tests__/booking-guest-range-triggers.test.ts
 
+      # #3030 (epic #2797): the ManualRefundTask money constraints. A CHECK
+      # asserted against a mocked Prisma client is not tested - the mock accepts
+      # whatever it is given - so the rows are offered to a real Postgres and the
+      # error code and constraint name are read back. It also proves the hole
+      # 20260903010000 exists to close: a unique index does NOT stop two rows that
+      # both leave "occurrenceKey" NULL. Same disposable-schema pattern as the
+      # steps above; the suite describe.skip's itself when the env var is absent,
+      # so this step MUST stay wired.
+      - name: Test ManualRefundTask money constraints against PostgreSQL
+        env:
+          MANUAL_REFUND_TASK_CONSTRAINT_TEST_DATABASE_URL: ${{ env.DATABASE_URL }}
+        run: npx vitest run src/lib/__tests__/manual-refund-task-constraints.test.ts
+
       # Fails (exit 2) if the committed migrations do not reproduce
       # schema.prisma — the parity gate enforced at deploy time. See issue #760.
       - name: Check migrations reproduce schema.prisma

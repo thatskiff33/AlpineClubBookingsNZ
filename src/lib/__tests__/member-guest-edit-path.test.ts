@@ -137,7 +137,6 @@ describe("D-13: an edit never revisits a consent that has already been given", (
         >[1]["proposedRemainingGuests"],
         normalizedAddGuests: undefined,
         priceBreakdown: {
-          totalPriceCents: 8000,
           guests: [
             {
               priceCents: 8000,

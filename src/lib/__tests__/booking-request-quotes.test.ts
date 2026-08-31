@@ -75,6 +75,11 @@ const mocks = vi.hoisted(() => ({
   sendMemberGuestAddNotifications: vi.fn(),
   sendMemberGuestWithdrawnNotifications: vi.fn(),
   lockActiveBookingRequestLinkedMembers: vi.fn(),
+  // #3167: an override for `splitPriceAcrossGuests`, so one test can hand the
+  // hold a split SHORTER than the guest list and prove the writer refuses
+  // instead of putting a zero in `BookingGuest.priceCents`. `vi.clearAllMocks`
+  // does not reset a plain value, so `beforeEach` puts it back to null.
+  shortPriceSplit: { value: null as number[] | null },
 }));
 
 const mockApproveBookingRequest = mocks.mockApproveBookingRequest;
@@ -134,6 +139,11 @@ vi.mock("@/lib/booking-request", () => {
           : []
       ),
     splitPriceAcrossGuests: (totalCents: number, guestCount: number) => {
+      // #3167: a test may force a DELIBERATELY SHORT split here, to reach the
+      // hold's guest-total refusal. Null (the default, restored in beforeEach)
+      // means every other test in this file gets the faithful implementation it
+      // always got.
+      if (mocks.shortPriceSplit.value !== null) return mocks.shortPriceSplit.value;
       if (guestCount <= 0) return [];
       const base = Math.floor(totalCents / guestCount);
       const remainder = totalCents - base * guestCount;
@@ -403,6 +413,9 @@ beforeEach(() => {
   // free-text names owes nobody a withdrawal notice.
   vi.mocked(prisma.bookingGuest.findMany).mockResolvedValue([] as never);
   mocks.lockActiveBookingRequestLinkedMembers.mockResolvedValue(undefined);
+  // #3167: back to the faithful split for every test that does not ask for a
+  // short one.
+  mocks.shortPriceSplit.value = null;
 });
 
 describe("createBookingRequestQuote", () => {
@@ -1741,6 +1754,69 @@ describe("holdBookingRequestSlots owner role", () => {
     // Restore the suite defaults (clearAllMocks does not reset implementations).
     armMemberFindMany();
     vi.mocked(prisma.seasonalMembershipAssignment.findMany).mockResolvedValue([] as never);
+  });
+
+  // #3167 (epic #2797). The hold used to write `guestPriceCents[index] ?? 0`
+  // into `BookingGuest.priceCents`. The #3167 census found that fallback
+  // unreachable — and unreachable by TAUTOLOGY, the strongest of the three
+  // verdicts: the split is taken over `guests.length` and the loop that reads it
+  // iterates that same `guests` const fourteen lines later, with nothing in
+  // between that mutates it. Its sibling writer on the same pipeline
+  // (`buildApprovalGuestCreates`) has never carried a fallback at all.
+  //
+  // So this pair does not defend against a caller that exists. It pins that the
+  // prohibited construct is gone and that the writer still puts the officer's
+  // real split on the rows — the control being the half that matters, since a
+  // refusal test alone would pass against a writer that had simply broken.
+  it("CONTROL: writes the officer's real per-guest split onto the held guests (#3167)", async () => {
+    vi.mocked(prisma.bookingRequest.findUnique).mockResolvedValue(
+      baseRequest({
+        type: BookingRequestType.GENERAL,
+        priceCents: 12_001,
+        quotes: [],
+        guests: [
+          { firstName: "Ann", lastName: "One", ageTier: AgeTier.ADULT },
+          { firstName: "Bo", lastName: "Two", ageTier: AgeTier.ADULT },
+        ],
+        linkedGuestMembers: [],
+      }) as never
+    );
+
+    await holdBookingRequestSlots({ requestId: "req-1", adminMemberId: "admin-1" });
+
+    const bookingArgs = vi.mocked(prisma.booking.create).mock.calls[0][0]
+      .data as Record<string, unknown>;
+    const created = (bookingArgs.guests as { create: Array<Record<string, unknown>> })
+      .create;
+    // The odd cent lands on the first guest and the rows sum to the total
+    // exactly — no zero anywhere, and nothing rounded away.
+    expect(created.map((guest) => guest.priceCents)).toEqual([6_001, 6_000]);
+  });
+
+  it("REFUSAL: throws rather than writing a zero when the split is shorter than the guest list (#3167)", async () => {
+    vi.mocked(prisma.bookingRequest.findUnique).mockResolvedValue(
+      baseRequest({
+        type: BookingRequestType.GENERAL,
+        priceCents: 12_000,
+        quotes: [],
+        guests: [
+          { firstName: "Ann", lastName: "One", ageTier: AgeTier.ADULT },
+          { firstName: "Bo", lastName: "Two", ageTier: AgeTier.ADULT },
+        ],
+        linkedGuestMembers: [],
+      }) as never
+    );
+    // One entry for two guests: the shape only a caller defect could produce.
+    mocks.shortPriceSplit.value = [12_000];
+
+    await expect(
+      holdBookingRequestSlots({ requestId: "req-1", adminMemberId: "admin-1" })
+    ).rejects.toThrow(
+      "No priced amount for guest 2 in the booking-request capacity hold (#3167)"
+    );
+
+    // And it refused BEFORE the write, so no held booking carries the zero.
+    expect(vi.mocked(prisma.booking.create)).not.toHaveBeenCalled();
   });
 
   it("rejects holding onto a login-capable member (#1255 guard)", async () => {

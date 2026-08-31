@@ -8,6 +8,15 @@ export const BOOKING_MESSAGE_KEYS = [
   // "your Xero invoice has been emailed" is untrue.
   "booking.detail.internetBanking.pendingNoXero",
   "booking.detail.switchToInternetBanking",
+  // #3033 (epic #2797): the club's EXPLANATION of why a stay change is waiting on
+  // a person, beneath the banner that states the facts. Configurable because the
+  // owner named this wording as the cost of decision D1 — it "has to be honest
+  // without being alarming" — and how alarming an explanation sounds is a
+  // judgement each club makes about its own members. The FACTS beside it are not
+  // configurable and are not restated here: they are identical for every club,
+  // are shared with the public payment-link page, and live once in
+  // `booking-financial-review-copy.ts` (`INV-SSOT`).
+  "booking.detail.financialReviewPending",
   "paymentLink.internetBanking.description",
   "cancellation.refundAppeal.description",
   "groupBooking.settle.description",
@@ -124,6 +133,16 @@ export const BOOKING_MESSAGE_DEFINITIONS: readonly BookingMessageDefinition[] = 
     description: "Shown beside the button that changes an unpaid card booking to Internet Banking.",
     defaultBody:
       "Prefer to pay by internet banking? We will email a Xero invoice and confirm the booking after the payment is reconciled.",
+    tokens: ALL_TOKENS,
+  },
+  {
+    key: "booking.detail.financialReviewPending",
+    section: "Booking Detail",
+    label: "Adjustment being reviewed",
+    description:
+      "The club's own explanation of why a booking change is waiting on a person, shown inside the banner on the booking page. The banner already states the facts around it — that the change saved, that the club will confirm the amount, that nothing has moved and that there is nothing to do — so this is the explanation only, and repeating those facts here would say them twice. Never state or imply an amount, and never say money has already moved: the whole point of the message is that the amount is not yet known.",
+    defaultBody:
+      "We keep a record of what every stay was sold for, and for this booking that record is not clear enough to work the amount out from. Rather than put a figure on it that was never actually charged, somebody here goes through it by hand.",
     tokens: ALL_TOKENS,
   },
   {

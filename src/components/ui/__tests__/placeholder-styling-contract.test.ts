@@ -2,6 +2,8 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { stripCssComments } from "@/lib/__tests__/support/strip-comments";
+
 // #2257 (D7/D12) — "Greyed out text as Example text looks like a field is
 // already filled in."
 //
@@ -118,8 +120,7 @@ describe("#2257 placeholder text never reads as content", () => {
     // each, with all five placeholder ones in the wrong blocks, would pass.
     // Assert the PAIRING instead — every muted declaration is immediately
     // followed by its placeholder twin, which can only hold inside one rule.
-    const lines = globals
-      .replaceAll(/\/\*[\s\S]*?\*\//g, "")
+    const lines = stripCssComments(globals)
       .split("\n")
       .map((line) => line.trim())
       .filter(Boolean);

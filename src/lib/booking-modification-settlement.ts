@@ -9,7 +9,10 @@ import {
   enqueueBookingModificationRefundRecovery,
   processPaymentRecoveryOperations,
 } from "@/lib/payment-recovery";
-import { buildBookingModificationRefundMetadata } from "@/lib/payment-recovery-keys";
+import {
+  buildAdditionalIntentRecoveryIdempotencyKey,
+  buildBookingModificationRefundMetadata,
+} from "@/lib/payment-recovery-keys";
 import {
   PartialRefundError,
   refundPaymentTransactions,
@@ -25,6 +28,21 @@ export type BookingModificationPaymentContext = {
   paymentId: string | null;
   additionalAmountCents: number;
   hasSucceededPayment: boolean;
+  /**
+   * #3181: whether this booking's PRIMARY Xero invoice had already been issued
+   * when this edit dispatched. Read only when the mint FAILS, to freeze the
+   * edit's own answer on the recovery row - the replay that later raises the
+   * deferred supplementary invoice must bill what the edit decided, not what is
+   * true when the cron reaches it. Required rather than optional so a new caller
+   * cannot omit it into a silent `false` (`INV-SSOT`).
+   *
+   * `null` ONLY from the recovery replay's own re-entry, where the recovery row
+   * already exists and this value is therefore never written. It is not a third
+   * answer to the question; it is "the row that carries the answer is already
+   * there". Every ordinary edit path passes the boolean it fed
+   * `queueXeroBookingEditSettlement`.
+   */
+  hasIssuedXeroInvoice: boolean | null;
   paymentCustomerId: string | null;
   memberEmail: string;
   memberName: string;
@@ -124,17 +142,60 @@ export async function executeBookingModificationRefund({
   }
 }
 
+/**
+ * Mint the additional PaymentIntent that collects a booking edit's price
+ * increase, and write the PENDING `ADDITIONAL` PaymentTransaction the club's
+ * whole additional-payment machinery keys off - the chase reminders, the resend
+ * service, the member's /pay link and the Xero supplementary invoice's
+ * wait-for-payment.
+ *
+ * #3170 RE-ENTERS THIS RATHER THAN ADDING A COLLECTION PATH. A completed
+ * `EDIT_FINANCIAL_REVIEW` task whose officer decided the MEMBER owes the club
+ * comes through here, so a review charge and an ordinary price increase are the
+ * same instrument, chased by the same cron and reconciled the same way. The epic
+ * forbids a fourth settlement mechanism, and this is the third's charging half.
+ *
+ * IT PASSES EDIT-SCOPED KEYS, NOT TASK-SCOPED ONES, and an earlier draft of this
+ * docblock said the opposite. The owner's 30 Aug 2026 decision is that one
+ * booking edit raises ONE request, so both of a review's two tasks contribute
+ * shares to a single ask anchored to the `BookingModification`. Task-scoping
+ * these keys would mint a second intent for the second share, and minting queues
+ * every other outstanding additional on that payment for cancellation - which is
+ * how $230 of debt became a $30 ask. `payment-recovery-keys.ts` holds the full
+ * reasoning and both builders.
+ *
+ * THE CALLER READS THE RESULT, and must. This function swallows a provider
+ * failure by design - the ordinary edit path has to return the member's saved
+ * change, and the recovery row it writes is the retry. A caller for whom
+ * "minted nothing" is not an acceptable outcome (the review charge's recovery
+ * replay is the one such caller) has to test `additionalPaymentIntentId` rather
+ * than wait for an exception that never comes.
+ */
 export async function createModificationAdditionalPaymentIntent({
   bookingId,
   result,
   reason,
   idempotencyKey,
+  recoveryIdempotencyKey,
   failureMessage,
 }: {
   bookingId: string;
   result: BookingModificationPaymentContext;
   reason: string;
   idempotencyKey: string;
+  /**
+   * #3170: the dedup key for the durable retry, when it must not be the
+   * modification-scoped default.
+   *
+   * The review-charge caller passes
+   * `buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey`, which is
+   * EDIT-scoped - a different namespace from the ordinary edit's key over the
+   * same `BookingModification`, so the two paths' debts stay separate rows, but
+   * deliberately the SAME row for both review tasks of one edit, because they
+   * are two shares of one debt. Omitted by the ordinary edit paths, which are
+   * one-per-modification by construction.
+   */
+  recoveryIdempotencyKey?: string;
   failureMessage: string;
 }): Promise<{
   additionalPaymentClientSecret: string | undefined;
@@ -207,9 +268,16 @@ export async function createModificationAdditionalPaymentIntent({
     await enqueueAdditionalPaymentIntentRecovery({
       bookingId,
       paymentId: result.paymentId,
-      bookingModificationId: result.bookingModificationId,
+      idempotencyKey:
+        recoveryIdempotencyKey ??
+        buildAdditionalIntentRecoveryIdempotencyKey(
+          result.bookingModificationId,
+        ),
       amountCents: result.additionalAmountCents,
       stripeIdempotencyKey: idempotencyKey,
+      // #3181: the EDIT's answer, frozen here because this is the last moment it
+      // is known. The replay reads it back rather than re-deriving one.
+      hadIssuedXeroInvoice: result.hasIssuedXeroInvoice,
     }).catch((enqueueErr) =>
       logger.error(
         { err: enqueueErr, bookingId },

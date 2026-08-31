@@ -191,6 +191,27 @@ interface PartyGuest {
 }
 
 /** What a guest's stored night rows say they have paid so far. */
+/**
+ * The pricing result, insisting it priced (#3031).
+ *
+ * `calculateModifiedPricing` answers with a discriminated result now, so a
+ * fixture whose stored rows stop reconciling fails HERE, naming the causes,
+ * rather than later on an expectation about a number that was never produced.
+ */
+async function pricedPricing(
+  ...args: Parameters<typeof calculateModifiedPricing>
+) {
+  const result = await calculateModifiedPricing(...args);
+  if (result.kind !== "priced") {
+    throw new Error(
+      `Expected a priced modification, got financial review: ${result.occurrences
+        .map((occurrence) => occurrence.cause)
+        .join(", ")}`,
+    );
+  }
+  return result;
+}
+
 function storedPriceOf(guest: PartyGuest): number {
   return (guest.nights ?? []).reduce((sum, night) => sum + night.priceCents, 0);
 }
@@ -260,6 +281,18 @@ const FIVE_NON_MEMBERS: PartyGuest[] = [1, 2, 3, 4, 5].map((n) => ({
   isMember: false,
   stayStart: D("2026-09-10"),
   stayEnd: D("2026-09-12"),
+  // #3166: the two nights they already hold, each carrying what it was sold
+  // for, so the strand's rows reconcile with the total `storedPriceOf` derives
+  // from them. Without stored rows this party has no readable sold-price
+  // history and every ordinary-planner case below now parks for financial
+  // review rather than pricing — which is the gate working, not a discount
+  // question. These are the nights the edit KEEPS, so they lock at their stored
+  // price in both switch states and the only night either state can move is the
+  // one the extension buys, which is exactly what the assertions measure.
+  nights: [D("2026-09-10"), D("2026-09-11")].map((stayDate) => ({
+    stayDate,
+    priceCents: NON_MEMBER_RATE_CENTS,
+  })),
 }));
 
 describe.each(SEASON_SHAPES)(
@@ -274,7 +307,7 @@ describe.each(SEASON_SHAPES)(
      */
     async function extendByOneNight(state: "disabled" | "on" | "off") {
       const party = FIVE_NON_MEMBERS;
-      const result = await calculateModifiedPricing(txFor(state, summerOnly), {
+      const result = await pricedPricing(txFor(state, summerOnly), {
         booking: bookingOf(party, D("2026-09-10"), D("2026-09-12"), 0),
         bookingId: "b1",
         isInProgressEdit: false,
@@ -299,17 +332,24 @@ describe.each(SEASON_SHAPES)(
         extendByOneNight("off"),
       ]);
 
-      // Three nights × five non-members, undiscounted.
+      // Three nights × five non-members, undiscounted. Two of the three were
+      // already bought at the non-member rate and keep it (#3166 gave this
+      // party the stored rows it needs to be priceable at all), so the figure is
+      // unchanged even though its composition is not.
       expect(disabled.newTotalPriceCents).toBe(
         3 * 5 * NON_MEMBER_RATE_CENTS,
       );
 
       // The load-bearing assertion, and the one an inert gate cannot pass: the
-      // switch is worth real money on these nights.
+      // switch is worth real money on the night this edit BUYS. It reaches that
+      // night only — the two already bought keep their stored price in every
+      // state (INV-MOD-005), which is the neighbouring case's subject.
       expect(on.newTotalPriceCents).toBeLessThan(off.newTotalPriceCents);
-      expect(on.newTotalPriceCents).toBe(3 * 5 * MEMBER_RATE_CENTS);
+      expect(on.newTotalPriceCents).toBe(
+        2 * 5 * NON_MEMBER_RATE_CENTS + 5 * MEMBER_RATE_CENTS,
+      );
       expect(off.newTotalPriceCents - on.newTotalPriceCents).toBe(
-        3 * 5 * DISCOUNT_PER_NIGHT_CENTS,
+        5 * DISCOUNT_PER_NIGHT_CENTS,
       );
 
       // Off is the ABSENCE of a discount, not a second discount rule: byte-for-byte
@@ -327,7 +367,12 @@ describe.each(SEASON_SHAPES)(
             expect(Number.isInteger(cents)).toBe(true);
           }
           expect(
-            guest.perNightCents.reduce((sum, cents) => sum + cents, 0),
+            guest.perNightCents.reduce<number>(
+              // #3170: NaN, never 0 — an unknown night must FAIL this sum, not
+              // satisfy it. A `?? 0` here would let a null pass as a comped night.
+              (sum, cents) => sum + (cents ?? Number.NaN),
+              0,
+            ),
           ).toBe(guest.priceCents);
         }
       }
@@ -347,7 +392,7 @@ describe.each(SEASON_SHAPES)(
       }));
 
       const run = (state: "disabled" | "on" | "off") =>
-        calculateModifiedPricing(txFor(state, summerOnly), {
+        pricedPricing(txFor(state, summerOnly), {
           booking: bookingOf(party, D("2026-09-10"), D("2026-09-12"), 0),
           bookingId: "b1",
           isInProgressEdit: false,
@@ -389,7 +434,7 @@ describe.each(SEASON_SHAPES)(
         stayEnd: D("2026-09-13"),
       }));
       const run = (state: "disabled" | "on" | "off") =>
-        calculateModifiedPricing(txFor(state, summerOnly), {
+        pricedPricing(txFor(state, summerOnly), {
           booking: bookingOf(party, D("2026-09-10"), D("2026-09-12"), 0),
           bookingId: "b1",
           isInProgressEdit: false,
@@ -442,7 +487,7 @@ describe.each(SEASON_SHAPES)(
           priceCents: NON_MEMBER_RATE_CENTS,
         })),
       }));
-      return calculateModifiedPricing(txFor(state, summerOnly), {
+      return pricedPricing(txFor(state, summerOnly), {
         booking: bookingOf(party, D("2026-06-28"), D("2026-07-03")),
         bookingId: "b1",
         isInProgressEdit: true,
@@ -506,7 +551,12 @@ describe.each(SEASON_SHAPES)(
             expect(Number.isInteger(cents)).toBe(true);
           }
           expect(
-            guest.perNightCents.reduce((sum, cents) => sum + cents, 0),
+            guest.perNightCents.reduce<number>(
+              // #3170: NaN, never 0 — an unknown night must FAIL this sum, not
+              // satisfy it. A `?? 0` here would let a null pass as a comped night.
+              (sum, cents) => sum + (cents ?? Number.NaN),
+              0,
+            ),
           ).toBe(guest.priceCents);
         }
       }

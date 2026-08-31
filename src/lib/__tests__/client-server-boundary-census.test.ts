@@ -6,6 +6,7 @@ import {
   MARKED_ROOTS,
   MARKER_STATEMENT,
 } from "../../../scripts/ci/server-only-boundary-selftest.mjs";
+import { stripComments } from "./support/strip-comments";
 
 /**
  * INV-OPS-013, with transitive reach (#2686).
@@ -245,34 +246,21 @@ function specifiersOf(file: string): string[] {
  * analysis regardless of whether the branches can actually overlap. Arguing with a
  * checker that only runs in CI is a poor trade for a helper this small.
  *
- * A scanner has no backtracking to reason about at all. Every branch below
- * advances `i` strictly, and `indexOf` is linear, so this is O(n) by
- * construction rather than by argument. That it also reads more plainly than the
- * regex is a bonus.
+ * A scanner has no backtracking to reason about at all, and since #3164 it is
+ * the CANONICAL scanner rather than a fourteenth private one written here
+ * (`INV-SSOT-004`). It advances strictly and uses `indexOf`, so this stays O(n)
+ * by construction rather than by argument, and it now also understands the
+ * string and regex literals a hand-written skip did not — which is what the
+ * measurement in `support/strip-comments.ts` says is the difference between a
+ * scanner and a scanner that silently eats code.
+ *
+ * `head` is a 400-character slice, so it can end mid-comment. An unterminated
+ * comment strips to nothing and the directive is absent, which is the same
+ * answer the hand-written skip returned.
  */
 function startsWithUseClientDirective(head: string): boolean {
-  let i = 0;
-  while (i < head.length) {
-    const ch = head[i];
-    if (ch === " " || ch === "\t" || ch === "\r" || ch === "\n") {
-      i += 1;
-      continue;
-    }
-    if (ch === "/" && head[i + 1] === "/") {
-      const newline = head.indexOf("\n", i + 2);
-      if (newline === -1) return false;
-      i = newline + 1;
-      continue;
-    }
-    if (ch === "/" && head[i + 1] === "*") {
-      const close = head.indexOf("*/", i + 2);
-      if (close === -1) return false;
-      i = close + 2;
-      continue;
-    }
-    return head.startsWith('"use client"', i) || head.startsWith("'use client'", i);
-  }
-  return false;
+  const code = stripComments(head).trimStart();
+  return code.startsWith('"use client"') || code.startsWith("'use client'");
 }
 
 const clientModules = files.filter((file) =>

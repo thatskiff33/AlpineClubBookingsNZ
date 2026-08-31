@@ -2,6 +2,8 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { blankLiterals } from "./support/strip-comments";
+
 // #2314: `XeroObjectLink.xeroObjectUrl` and `XeroSyncOperation.xeroObjectUrl`
 // are stored ORGANISATION-AGNOSTIC. A short code baked into a row is wrong the
 // moment the club reconnects to a different Xero organisation, and nothing
@@ -104,62 +106,6 @@ function collectSourceFiles(dir: string, out: string[]): string[] {
   return out;
 }
 
-/** Index just past the string literal starting at `start`. */
-function endOfString(source: string, start: number): number {
-  const quote = source[start];
-  let i = start + 1;
-  while (i < source.length) {
-    const ch = source[i];
-    if (ch === "\\") {
-      i += 2;
-      continue;
-    }
-    if (ch === quote) return i + 1;
-    i += 1;
-  }
-  return i;
-}
-
-/**
- * The same text with string contents and comments replaced by spaces, so
- * brace/paren depth and property scanning cannot be confused by a `{` in a
- * comment or a `,` inside a URL. Length and offsets are preserved.
- */
-function maskLiterals(source: string): string {
-  const out = source.split("");
-  let i = 0;
-  const blank = (from: number, to: number) => {
-    for (let j = from; j < to && j < out.length; j += 1) {
-      if (out[j] !== "\n") out[j] = " ";
-    }
-  };
-  while (i < source.length) {
-    const ch = source[i];
-    if (ch === '"' || ch === "'" || ch === "`") {
-      const end = endOfString(source, i);
-      blank(i + 1, end - 1);
-      i = end;
-      continue;
-    }
-    if (ch === "/" && source[i + 1] === "/") {
-      let end = source.indexOf("\n", i);
-      if (end < 0) end = source.length;
-      blank(i, end);
-      i = end;
-      continue;
-    }
-    if (ch === "/" && source[i + 1] === "*") {
-      const close = source.indexOf("*/", i + 2);
-      const end = close < 0 ? source.length : close + 2;
-      blank(i, end);
-      i = end;
-      continue;
-    }
-    i += 1;
-  }
-  return out.join("");
-}
-
 /** The balanced `(...)` argument text starting at the `(` at `openIndex`. */
 function readCallArguments(masked: string, openIndex: number): string {
   let depth = 0;
@@ -247,9 +193,26 @@ interface WriteSite {
   payload: string;
 }
 
-/** Every direct Prisma write to the two models in one file's source. */
+/**
+ * Every direct Prisma write to the two models in one file's source.
+ *
+ * It reads a BLANKED copy: the same text with every comment and every literal's
+ * CONTENTS replaced by spaces, so brace and paren depth and the property scan
+ * cannot be confused by a `{` in a comment or a `,` inside a URL. Length and
+ * offsets are preserved, which is what lets the line number below be a real
+ * line number and `readCallArguments` slice by index.
+ *
+ * ONE DEFINITION, SHARED (#3180, `INV-SSOT-004`). This file wrote its own until
+ * then, as did `lock-bound-club-zone-outside-transaction.test.ts` and
+ * `payment-link-expiry-club-zone.test.ts`, and none of the three recognised a
+ * REGEX LITERAL — the defect #3155 removed from the shared scanner, where
+ * `.replace(/\//g, "_")` reads as a line comment and the rest of the line
+ * disappears. The delimiters survive and only the contents are blanked, so
+ * `{ xeroObjectUrl: "https://x" }` still reads as a key with a string value
+ * rather than as a key with a hole where its value was.
+ */
 function findWriteSites(relPath: string, source: string): WriteSite[] {
-  const masked = maskLiterals(source);
+  const masked = blankLiterals(source);
   const sites: WriteSite[] = [];
   WRITE_CALL.lastIndex = 0;
   let match: RegExpExecArray | null;
@@ -362,6 +325,26 @@ describe("xeroObjectUrl write guard (#2314)", () => {
   // empty set forever.
   it("actually finds the known writers (extraction canary)", () => {
     expect(sites.length).toBeGreaterThan(20);
+
+    // THE SCANNER MUST NOT GO BLIND AFTER A REGEX LITERAL, and this is pinned
+    // against the file that proved it can. `xero-contacts.ts` writes
+    // `.replace(/"/g, "")` while building a Xero `where` clause. The private
+    // masker this file carried until #3180 had no regex branch, read that
+    // quote as a string opener and desynchronised, so this file's
+    // `prisma.xeroSyncOperation.update(...)` was INVISIBLE to the census.
+    // Measured on the conversion: 58 write sites became 59, and this file went
+    // from contributing none to contributing one. The recovered write carries
+    // no `xeroObjectUrl` today, so the guard was passing rather than wrong —
+    // live but LATENT, one added property from being otherwise. Restoring a
+    // regex-blind masker makes this line fail, which is the point of it.
+    expect(
+      sites.filter((site) => site.file === "src/lib/xero-contacts.ts").length,
+      "No write site found in src/lib/xero-contacts.ts. Either that file " +
+        "stopped writing XeroSyncOperation directly — in which case delete " +
+        "this check and say so — or the masker has gone blind at the regex " +
+        "literal in the Xero contact search, which is the #3155 defect and " +
+        "the reason this guard shares `blankLiterals` (#3180, INV-SSOT-004).",
+    ).toBeGreaterThan(0);
     for (const file of KNOWN_URL_WRITER_FILES) {
       const urlWrites = sites.filter(
         (site) =>
@@ -412,6 +395,18 @@ describe("xeroObjectUrl write guard (#2314)", () => {
         `await prisma.xeroObjectLink.updateMany({ data: { active: false }, select: { xeroObjectUrl: true } });`,
         true,
       ],
+      // A REGEX LITERAL ON THE WRITE'S OWN LINE. A masker without a regex
+      // branch — which all three private copies were until #3180 — reads the
+      // two adjacent slashes as a line comment and blanks the rest of the
+      // line, so the write vanishes and this census reports nothing about
+      // it. That is the #3155 defect, it is what hid a real
+      // `xeroSyncOperation.update` in `xero-contacts.ts` from this guard
+      // until now, and one line is what makes the case bite: split across
+      // two, the damage stays on the first and the guard passes either way.
+      [
+        `const slug = raw.replace(/\\//g, \"_\"); await prisma.xeroSyncOperation.update({ data: { xeroObjectUrl: row.xeroObjectUrl } });`,
+        false,
+      ],
       // A comment or a string mentioning the column must not be mistaken for a
       // write, in either direction.
       [
@@ -430,3 +425,4 @@ describe("xeroObjectUrl write guard (#2314)", () => {
     }
   });
 });
+
