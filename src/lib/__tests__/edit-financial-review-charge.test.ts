@@ -1300,7 +1300,7 @@ describe("a share that could not join the Xero invoice (#3170 fix round, F2)", (
    */
   it("raises a second invoice for THIS SHARE, never the combined total", async () => {
     mocks.queueXeroBookingEditSettlement.mockResolvedValue({
-      supplementaryInvoice: "short",
+      supplementaryInvoice: "short-sent",
     });
 
     await settleSecondShare();
@@ -1330,7 +1330,7 @@ describe("a share that could not join the Xero invoice (#3170 fix round, F2)", (
    */
   it("records that the difference is being billed, not that it is uncollected", async () => {
     mocks.queueXeroBookingEditSettlement.mockResolvedValue({
-      supplementaryInvoice: "short",
+      supplementaryInvoice: "short-sent",
     });
 
     await settleSecondShare();
@@ -1373,7 +1373,7 @@ describe("a share that could not join the Xero invoice (#3170 fix round, F2)", (
 
   it("writes the durable record when the second invoice could not be raised either", async () => {
     mocks.queueXeroBookingEditSettlement.mockResolvedValue({
-      supplementaryInvoice: "short",
+      supplementaryInvoice: "short-sent",
     });
     // `none` from the second ask is the one outcome that leaves the difference
     // unbilled: no primary invoice to supplement, or nothing positive to bill.
@@ -1436,7 +1436,7 @@ describe("a share that could not join the Xero invoice (#3170 fix round, F2)", (
    */
   it("records the shortfall when queueing the second invoice throws", async () => {
     mocks.queueXeroBookingEditSettlement.mockResolvedValue({
-      supplementaryInvoice: "short",
+      supplementaryInvoice: "short-sent",
     });
     mocks.enqueueXeroSecondSupplementaryInvoiceOperation.mockRejectedValue(
       new Error("Xero is down"),
@@ -1584,7 +1584,7 @@ describe("a share that could not join the Xero invoice (#3170 fix round, F2)", (
 
   /**
    * A THIRD CONTROL, and the one that stops this firing on the wrong direction.
-   * A REFUND settles its own amount and queues a credit note; `short` cannot
+   * A REFUND settles its own amount and queues a credit note; a shortfall cannot
    * describe it, and a row saying the club is owed money would be exactly
    * backwards.
    */
@@ -1600,7 +1600,7 @@ describe("a share that could not join the Xero invoice (#3170 fix round, F2)", (
       refunds: [{ refundId: "re_2" }],
     });
     mocks.queueXeroBookingEditSettlement.mockResolvedValue({
-      supplementaryInvoice: "short",
+      supplementaryInvoice: "short-sent",
     });
 
     await settleSecondShare({ direction: "REFUND_TO_MEMBER" });

@@ -2807,23 +2807,23 @@ describe("edit-financial-review charge recovery (#3170)", () => {
 
   /**
    * The enqueue's own verdict, recorded through the one function that decides
-   * what counts as short. `short` means this edit's invoice had already left the
-   * queue and could not be raised to the settled total, so the difference has to
-   * be billed by hand and an officer has to be able to find that.
+   * what counts as short. `short-sent` means this edit's invoice had already
+   * gone out and could not be raised to the settled total, so the difference has
+   * to be billed by hand and an officer has to be able to find that.
    */
   it("records a short ask when the invoice had already left the queue", async () => {
-    mockCompleteDeferredSupplementaryInvoice.mockResolvedValueOnce("short");
+    mockCompleteDeferredSupplementaryInvoice.mockResolvedValueOnce("short-sent");
 
     await processPaymentRecoveryOperations({ limit: 1 });
 
     expect(mockRecordShortEditReviewChargeInvoice).toHaveBeenCalledWith({
-      outcome: "short",
+      outcome: "short-sent",
       bookingId: "booking-1",
       bookingModificationId: "mod-1",
       /**
        * #3193: BOTH NULL, and that is a refusal rather than an omission.
        *
-       * Since the owner's 31 Aug 2026 decision a `short` ask raises a SECOND,
+       * Since the owner's 31 Aug 2026 decision a sent-short ask raises a SECOND,
        * separate invoice for the difference - but only where the caller holds
        * the single settled share to bill, because billing anything else asks
        * the member for money they have already been asked for. This replay
