@@ -385,6 +385,7 @@ this (#1208). Shared JSON-guard micro-helpers (`asRecord`/`readString`/
 | `xero-operation-claim` | The shared `claimXeroSyncOperationToRunning(id, guard)` single-flight (#1272 part 2): one conditional `updateMany` that flips a PENDING row to RUNNING (with the four error/timestamp resets) only when `count === 1`. Both the outbox scan and the retry scan delegate their claim to it; only the caller's guard predicate differs. |
 | `xero-booking-invoice-queue` | Thin helper: enqueue booking invoice + immediate kick, for callers that want one line. |
 | `xero-booking-edit-settlement` | Classifies an admin booking edit into the right financial follow-up (update invoice / supplementary invoice / credit note) and queues it. |
+| Supplementary-invoice anchors | One booking change gets ONE supplementary invoice, anchored on its `BookingModification` — that anchor is what the enqueue's link-check and queued-check are scoped to, and what makes "one invoice per change" true rather than asserted. Since #3193 there is a second anchor: a `ManualRefundTask`, for the SECOND ASK — a settled financial-review share's own small invoice, raised when the change's invoice had already been sent and could not be raised to include it. It bills that share alone, never a total, and being on its own anchor is what keeps it out of every read scoped to the change. Same queue type, same handler, same advisory key namespace. |
 
 ### Financial document builders (called only by the outbox worker and repair)
 

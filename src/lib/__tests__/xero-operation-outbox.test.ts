@@ -3077,6 +3077,13 @@ describe("enqueueXeroSecondSupplementaryInvoiceOperation: the second ask (#3193)
       waitForConfirmedAdditionalPayment: false,
       paymentIntentId: null,
     });
+    // PENDING, never WAITING_PAYMENT, and that is the property to hold rather
+    // than a detail. A supplementary invoice parked on an intent is released
+    // only when that intent's webhook fires; parked on one that has ALREADY
+    // been paid it is never released at all, and the 14-day reaper cancels it
+    // with no invoice raised - so the shortfall this whole path exists to bill
+    // would be hidden for a fortnight and then silently dropped (#3187). This
+    // path attaches to no intent, so it cannot reach that state at all.
     expect(queued.status).toBe("PENDING");
   });
 
