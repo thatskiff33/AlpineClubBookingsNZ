@@ -16,6 +16,7 @@ import {
 import { prisma } from "./prisma";
 import logger from "@/lib/logger";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
+import { asRecord } from "@/lib/xero-json";
 import { buildXeroSupplementaryInvoiceKey } from "@/lib/xero-supplementary-invoice-key";
 import {
   buildXeroIdempotencyKey,
@@ -70,9 +71,14 @@ export async function createXeroSupplementaryInvoice(params: {
    * already sent. What is closed is the route by which such a row could be
    * QUEUED - `shortfallReviewTaskId` is no longer an option on the exported
    * enqueue, only on the module-private implementation the second-ask wrapper
-   * calls. The two callers here are the outbox handler, which reads the value
-   * off a payload only that wrapper mints, and `xero-operation-retry.ts`, which
-   * never sets it.
+   * calls, AND that exported entry forwards its options field by field. The
+   * second half is the load-bearing one: narrowing the type alone did not close
+   * anything, because TypeScript's excess-property check fires only on a fresh
+   * object literal, so a caller assembling its options into a variable first
+   * compiled clean and the key was read (#3193 fix round, second pass). The two
+   * callers here are the outbox handler, which reads the value off a payload
+   * only that wrapper mints, and `xero-operation-retry.ts`, which sets it only
+   * from a payload that already carried it.
    */
   shortfallReviewTaskId?: string;
   createdByMemberId?: string;
@@ -247,8 +253,61 @@ export async function createXeroSupplementaryInvoice(params: {
     priceDiffCents,
     changeFeeCents,
   });
+  /**
+   * A SECOND ASK KEEPS ITS QUEUED PAYLOAD; every other supplementary invoice
+   * still replaces it (#3193 fix round - the retry that was dead on arrival).
+   *
+   * This function records the Xero invoice body on the operation BEFORE the
+   * create call, so a Xero rejection leaves a FAILED row whose only content is
+   * the request Xero refused. For the booking change's own invoice that costs
+   * nothing: `xero-operation-retry.ts` rebuilds the amounts from the
+   * `BookingModification` row, which is their record, and four comments around
+   * this code correctly rely on the overwrite happening.
+   *
+   * A SECOND ASK HAS NO SUCH RECORD. It bills one settled review share, and
+   * that figure exists only in the payload the outbox queued - so overwriting it
+   * made the `ManualRefundTask` replay branch UNREACHABLE in the exact case it
+   * was written for. Xero rejects the create (archived contact, bad account
+   * code, a validation refusal); the payload is already gone; the officer whom
+   * the booking's own audit row sent to the retry button is told the amounts
+   * were overwritten and to bill by hand - which is the state this issue exists
+   * to remove.
+   *
+   * PRESERVED, NOT REBUILT. The queued row is re-read and the Xero body added
+   * beside it, rather than the queued fields being re-derived from `params`
+   * here. A re-derivation would be a second copy of the payload shape that goes
+   * stale the day a field is added to it (`INV-SSOT`); "keep what was queued"
+   * cannot. Re-reading is safe without a lock because the outbox has already
+   * committed `status: RUNNING`, which is outside the restatable set, so nothing
+   * else may write this row. `readQueuedOutboxPayload` reads named keys and
+   * ignores the extra `invoices`, so the row stays both a diagnosable Xero
+   * request and a replayable instruction; a legacy row already flattened by an
+   * earlier attempt merges to exactly what it holds today, so this is a no-op
+   * for anything already on disk.
+   *
+   * Only on the OUTBOX path. A direct call mints its row below through
+   * `startXeroSyncOperation`, which denormalises `queueType` out of the payload
+   * into the indexed column the pending scan and the booking-vs-Xero repair pass
+   * read - so writing a queued shape onto a row that was never queued would make
+   * it look queued to both.
+   */
   let operationId = syncOperationId ?? null;
-  const requestPayload = { invoices: [buildInvoice(contactId)] };
+  const queuedRequestPayload =
+    syncOperationId && shortfallReviewTaskId
+      ? asRecord(
+          (
+            await prisma.xeroSyncOperation.findUnique({
+              where: { id: syncOperationId },
+              select: { requestPayload: true },
+            })
+          )?.requestPayload,
+        )
+      : null;
+  const buildStoredPayload = (resolvedContactId: string) => ({
+    ...(queuedRequestPayload ?? {}),
+    invoices: [buildInvoice(resolvedContactId)],
+  });
+  const requestPayload = buildStoredPayload(contactId);
 
   if (operationId) {
     await prisma.xeroSyncOperation.update({
@@ -280,9 +339,10 @@ export async function createXeroSupplementaryInvoice(params: {
       operationId: operationId!,
       repairExistingLink,
       createdByMemberId,
-      buildRequestPayload: (resolvedContactId) => ({
-        invoices: [buildInvoice(resolvedContactId)],
-      }),
+      // The contact-repair rewrite carries the same preserved payload: a repair
+      // that then failed in Xero would otherwise re-open the hole above.
+      buildRequestPayload: (resolvedContactId) =>
+        buildStoredPayload(resolvedContactId),
       run: ({ contactId: resolvedContactId }) =>
         callXeroApi(
           () =>

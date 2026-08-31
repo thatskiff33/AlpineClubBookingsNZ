@@ -3091,6 +3091,56 @@ describe("enqueueXeroSecondSupplementaryInvoiceOperation: the second ask (#3193)
   });
 
   /**
+   * THE ORDINARY ENQUEUE CANNOT BE TALKED INTO A TASK ANCHOR (#3193 fix round,
+   * second pass), and this test exists because the type alone did not stop it.
+   *
+   * `shortfallReviewTaskId` was moved off the exported entry point's options
+   * type, and a docblock then claimed the misuse was unrepresentable. It was
+   * not: TypeScript's excess-property check fires only on a FRESH OBJECT
+   * LITERAL at the call site, so a caller that assembles its options into a
+   * variable first - the ordinary shape the moment one field is conditional -
+   * compiled clean with the flag still on the object, and the exported function
+   * forwarded that object wholesale to the implementation, which read the key.
+   * The variable below is that caller, and it type-checks; only the field-by-
+   * field forward makes it harmless.
+   *
+   * The money at stake is the reason: the flag anchors the row on the task and
+   * makes it invisible to every change-scoped read BY DESIGN, so an edit's
+   * COMBINED total queued through here would be raised as a whole second
+   * invoice on top of the one already sent - $560 billed for a $280 edit.
+   */
+  it("ignores a review-task anchor smuggled in on a pre-built options object", async () => {
+    // Assembled first, exactly as a caller with a conditional field would. No
+    // literal reaches the call, so nothing rejects it at compile time.
+    const builtOptions = {
+      createdByMemberId: "admin_1",
+      shortfallReviewTaskId: "task_2",
+    };
+
+    await enqueueXeroSupplementaryInvoiceOperation(
+      {
+        bookingId: "booking_1",
+        priceDiffCents: 28000,
+        changeFeeCents: 0,
+        bookingModificationId: "mod_1",
+      },
+      builtOptions,
+    );
+
+    expect(operations).toHaveLength(1);
+    const [queued] = operations;
+    expect(queued.localModel).toBe("BookingModification");
+    expect(queued.localId).toBe("mod_1");
+    // `null`, the ordinary path's value, rather than the id that was smuggled.
+    expect(queued.requestPayload.shortfallReviewTaskId).toBeNull();
+    // And therefore it is a row the change's own reads CAN see, which is what
+    // stops a second invoice for the same money.
+    expect(queued.correlationKey).toBe(
+      "booking-mod:mod_1:supplementary-invoice:28000:0:v1",
+    );
+  });
+
+  /**
    * The key sent to Xero as the create-invoice idempotency key. If the second ask
    * shared a key with the invoice it follows, Xero would answer the create with
    * the EARLIER invoice and the difference would never be billed - a silent

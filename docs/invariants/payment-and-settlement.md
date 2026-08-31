@@ -1360,8 +1360,13 @@ one, check the other.
       active `SUPPLEMENTARY_INVOICE` link means an invoice exists and what it
       bills can never change again. `short-in-flight` is NOT evidence of anything
       - the outbox has claimed the row, nothing has reached Xero, and a claimed
-      row can be returned to PENDING un-attempted (a Xero cooldown refusal does
-      exactly that; so does an operator Requeue on a FAILED row). The NEXT
+      row can be returned to PENDING un-attempted, by exactly one route: a
+      process-global Xero cooldown refusal, which the outbox un-claims because
+      nothing was sent. (An operator Requeue - and the repair pass, which calls
+      the same helper - leaves the original FAILED and replays a separate
+      `REQUEUE` row inline; the stale-RUNNING reset writes FAILED. Neither
+      returns this row to PENDING, and the cooldown route alone is enough.) The
+      NEXT
       settlement then raises that row to the COMBINED total, which already
       contains any share billed separately in the meantime - and because a second
       ask is anchored elsewhere by design, the change-anchored restate cannot see

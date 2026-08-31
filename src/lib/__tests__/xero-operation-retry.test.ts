@@ -868,6 +868,17 @@ describe("retryXeroSyncOperation", () => {
    * supplementary-invoice branch (`BookingModification`) did not match and a
    * failed second ask had no retry at all, while the booking's audit trail
    * already said the amount was being billed.
+   *
+   * THIS TEST IS THE BRANCH, NOT THE ROUTE TO IT (second pass). The payload
+   * below is hand-built, so on its own it proves only that the replay sends the
+   * queued share. That a Xero rejection actually LEAVES such a payload behind is
+   * the other half, and it was false when this branch was written: the create
+   * path replaced the payload with the Xero body before calling Xero, so this
+   * branch was unreachable for the very failure it was added for. That half is
+   * proven from the real create path in
+   * `xero-supplementary-invoices.test.ts` -> "a second ask survives a Xero
+   * rejection replayably (#3193)", and the shape below is what that run writes:
+   * the queued fields with the refused `invoices` body beside them.
    */
   it("replays a second supplementary invoice from its queued payload (#3193)", async () => {
     mocks.findUniqueOperation.mockResolvedValue(
@@ -884,6 +895,10 @@ describe("retryXeroSyncOperation", () => {
           bookingModificationId: "mod_123",
           shortfallReviewTaskId: "task_2",
           recordPayment: false,
+          // The refused Xero body the create path records beside the queued
+          // fields. Present here so this row is the shape a real rejection
+          // leaves, rather than a cleaner one that never reaches this screen.
+          invoices: [{ total: 30 }],
         },
       })
     );
@@ -917,6 +932,11 @@ describe("retryXeroSyncOperation", () => {
    * cannot, because the share it bills lives only in the payload. Rebuilding
    * from the task's current amount would be a claim about what this row was
    * queued with.
+   *
+   * This is now the LAST RESORT rather than the ordinary Xero-rejection ending,
+   * which is what it silently was before the create path stopped replacing the
+   * payload. It stays pinned because the refusal must never quietly become a
+   * rebuild.
    */
   it("refuses to replay a second supplementary invoice whose payload was overwritten", async () => {
     mocks.findUniqueOperation.mockResolvedValue(

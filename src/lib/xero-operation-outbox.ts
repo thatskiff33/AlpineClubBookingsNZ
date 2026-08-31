@@ -1131,10 +1131,20 @@ const XERO_SUPPLEMENTARY_INVOICE_LOCK_NAMESPACE = "xero-supplementary-invoice";
  * two different facts: an invoice that EXISTS, and a row that is merely being
  * executed. Only the first is durable evidence that a share went out without.
  *
- * A RUNNING row can return to PENDING WITHOUT EVER REACHING XERO. A Xero
- * cooldown refuses it before any HTTP call and `processXeroOutbox` un-claims it;
- * an operator Requeue or the repair pass does the same for a FAILED row. Once it
- * is restatable again, the NEXT settlement of this edit raises it to the
+ * A RUNNING row can return to PENDING WITHOUT EVER REACHING XERO, by exactly ONE
+ * route (#3193 fix round, second pass - the first version of this list named
+ * three and two of them were wrong, and a list written to be audited is worse
+ * incorrect than incomplete). A process-global Xero cooldown - the transient
+ * outage breaker or the daily-limit gate - refuses the operation before any HTTP
+ * call, and `processXeroOutbox` un-claims it, matching RUNNING or the FAILED a
+ * self-failing handler left. That one route is enough for everything below.
+ *
+ * The two that are NOT routes, so nobody re-derives them: an operator Requeue
+ * (and the repair pass's `REQUEUE_XERO_OPERATION`, which calls the same helper)
+ * leaves the original row FAILED and creates a SEPARATE `REQUEUE` row that
+ * replays inline; and the stale-RUNNING reset writes FAILED, not PENDING.
+ *
+ * Once it is restatable again, the NEXT settlement of this edit raises it to the
  * COMBINED total. So a caller that reacted to the earlier refusal by billing its
  * share on a SEPARATE invoice has then billed that share twice: once on its own
  * invoice, and once inside the total the returned row was raised to. Three
@@ -1264,13 +1274,40 @@ interface XeroSupplementaryInvoiceEnqueueOptions {
  * second invoice for the whole amount on top of one already sent. It is now a
  * parameter of the module-private implementation below, which the wrapper is the
  * only thing that can reach, so the misuse is unrepresentable rather than
- * discouraged.
+ * discouraged - but only because the options are forwarded FIELD BY FIELD
+ * below, which is the half that actually closes it.
  */
 export async function enqueueXeroSupplementaryInvoiceOperation(
   params: XeroSupplementaryInvoiceEnqueueParams,
   options?: XeroSupplementaryInvoiceEnqueueOptions
 ) {
-  return enqueueSupplementaryInvoiceForAnchor(params, options);
+  /**
+   * NOT `options` (#3193 fix round, second pass). Narrowing the parameter to a
+   * type without `shortfallReviewTaskId` does NOT stop a value reaching the
+   * implementation: TypeScript's excess-property check fires only on a FRESH
+   * OBJECT LITERAL at the call site. A caller that assembles its options into a
+   * variable first - the ordinary shape as soon as one field is conditional -
+   * or spreads one, passes the check with the flag still on the object, and
+   * forwarding the object wholesale then hands it straight to the private
+   * implementation, which reads the key. Verified against this project's own
+   * `tsc --strict`: both a pre-built variable and a spread compile clean.
+   *
+   * The cost of that is the whole reason the flag is fenced. A caller reaching
+   * it with an edit's COMBINED total gets a task-anchored invoice for the whole
+   * amount - invisible to every change-scoped read by design - on top of the one
+   * already sent: $560 billed for a $280 edit. Listing the four legitimate
+   * options is what makes the misuse unrepresentable rather than merely typed
+   * against.
+   *
+   * Each is passed as `undefined` when absent, which every read below treats
+   * identically to omitting it (`?? default`).
+   */
+  return enqueueSupplementaryInvoiceForAnchor(params, {
+    createdByMemberId: options?.createdByMemberId,
+    paymentIntentId: options?.paymentIntentId,
+    waitForConfirmedAdditionalPayment: options?.waitForConfirmedAdditionalPayment,
+    recordPayment: options?.recordPayment,
+  });
 }
 
 /**

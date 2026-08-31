@@ -698,10 +698,19 @@ export function getXeroOperationRetryMeta(operation: RetryableOperation): XeroOp
      *
      * Retryable only from its QUEUED payload. A second ask bills one settled
      * share, and that figure lives nowhere else - unlike the change's own
-     * invoice, which can be rebuilt from the `BookingModification` row when a
-     * prior attempt overwrote the payload with the Xero invoice body. Rebuilding
-     * from the task's current `amountCents` would be a guess about what this row
-     * was queued with, so it refuses and says so instead.
+     * invoice, which can be rebuilt from the `BookingModification` row.
+     * Rebuilding from the task's current `amountCents` would be a guess about
+     * what this row was queued with, so it refuses and says so instead.
+     *
+     * AND THE PAYLOAD IS THERE TO READ, which the first version of this branch
+     * assumed and did not check (#3193 fix round, second pass).
+     * `createXeroSupplementaryInvoice` records the Xero invoice body on the row
+     * BEFORE it calls Xero, so a rejection used to leave a FAILED row holding
+     * only the refused request - making this branch dead in the one case it was
+     * written for. That handler now keeps a second ask's queued payload and adds
+     * the Xero body beside it, so the ordinary Xero-rejection path arrives here
+     * replayable. The refusal below is what remains: a row whose payload was
+     * destroyed some other way. It is deliberately not a rebuild.
      */
     if (operation.localModel === "ManualRefundTask" && operation.localId) {
       const queuedSecondAsk = readQueuedOutboxPayload(operation.requestPayload);
@@ -1135,9 +1144,11 @@ export async function retryXeroSyncOperation(
 
     if (operation.localModel === "ManualRefundTask") {
       // #3193 fix round: replay a SECOND ASK exactly as it was queued. The
-      // payload is the only record of the share it bills, so `getXeroOperationRetryMeta`
-      // has already refused the row if it no longer holds one; this re-check is
-      // the type narrowing, not a second policy.
+      // payload is the only record of the share it bills - which is why the
+      // create path preserves it through a failed attempt rather than replacing
+      // it with the refused Xero body. `getXeroOperationRetryMeta` has already
+      // refused the row if it no longer holds one; this re-check is the type
+      // narrowing, not a second policy.
       const queuedPayload = readQueuedOutboxPayload(operation.requestPayload);
       const secondAsk =
         queuedPayload?.queueType === XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE &&
