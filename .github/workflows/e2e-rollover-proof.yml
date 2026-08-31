@@ -129,9 +129,16 @@ jobs:
       # ---------------------------------------------------------------------
       - name: Park the runner's clock in the rollover window
         id: shift
+        # The dispatch input reaches the script through the ENVIRONMENT, never
+        # through `${{ }}` interpolation into the shell text. Interpolation
+        # splices an attacker-chosen string into the script before bash parses
+        # it, which is a script-injection hole even on a dispatch-only workflow;
+        # an env var is data.
+        env:
+          REQUESTED_INSTANT: ${{ inputs.instant }}
         run: |
           set -euo pipefail
-          REQUESTED='${{ inputs.instant }}'
+          REQUESTED="$REQUESTED_INSTANT"
           if [ -n "$REQUESTED" ]; then
             TARGET="$REQUESTED"
           else
@@ -193,9 +200,11 @@ jobs:
         run: E2E_SKIP_APP_BUILD=1 bash scripts/e2e-stack.sh prepare
 
       - name: Run the browser suite under the shifted clock
+        env:
+          RUN_SCOPE: ${{ inputs.scope }}
         run: |
           set -euo pipefail
-          if [ '${{ inputs.scope }}' = 'date-bearing' ]; then
+          if [ "$RUN_SCOPE" = 'date-bearing' ]; then
             # Derived from the imports, never a hand-kept list — a list of "the
             # date-bearing specs" is stale the first time somebody adds one.
             mapfile -t SPECS < <(grep -rlE \
