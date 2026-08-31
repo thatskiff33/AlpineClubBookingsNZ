@@ -11,6 +11,7 @@ import {
   toAutoRefundedManualRefundTaskPayload,
   toOpenManualRefundTaskPayload,
 } from "@/lib/manual-refund-task-queue-payload";
+import { unpricedNightsSummariesForQueue } from "@/lib/stored-night-price-repair-store";
 
 /**
  * GET /api/admin/payments/manual-refund-tasks
@@ -210,6 +211,15 @@ export async function GET() {
     ),
   ]);
 
+  // #3191: which reviews have unpriced nights the settle screen can offer to fill
+  // in. Keyed by TASK id so no payload has to hold a guest-strand id to find its
+  // own; fails closed on its own rather than taking the money queue down with it.
+  // Both reasons are on `unpricedNightsSummariesForQueue`.
+  const unpricedNights = await unpricedNightsSummariesForQueue({
+    tasks,
+    store: prisma,
+  });
+
   return NextResponse.json({
     // #3033: whether the "open the booking's payment and rate history" link is
     // offered at all. Sent as an explicit boolean, never inferred by the card
@@ -221,7 +231,11 @@ export async function GET() {
       column never crosses the wire.
     */
     tasks: tasks.map((task) =>
-      toOpenManualRefundTaskPayload(task, guard.session.user.id),
+      toOpenManualRefundTaskPayload(
+        task,
+        guard.session.user.id,
+        unpricedNights.get(task.id) ?? null,
+      ),
     ),
     // True only when the notices read itself failed. The surface says so in a
     // line of its own rather than showing an empty card, because "no automatic

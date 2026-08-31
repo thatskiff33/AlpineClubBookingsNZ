@@ -3,6 +3,7 @@ import {
   toEditFinancialReviewEvidence,
   type EditFinancialReviewEvidence,
 } from "@/lib/edit-financial-review-context";
+import type { UnpricedNightsSummary } from "@/lib/stored-night-price-repair";
 
 /**
  * What the finance settlement queue's loader sends to the browser, and the one
@@ -75,6 +76,18 @@ export type OpenManualRefundTaskPayload = {
   viewerOwnsBooking: boolean;
   reviewEvidence: EditFinancialReviewEvidence | null;
   reviewEvidenceUnreadable: boolean;
+  /**
+   * #3191: the nights on this review's guest whose stored price is blank, and
+   * the two totals the officer's figures have to reconcile against. NULL when
+   * there is nothing this screen can repair, which is most rows.
+   *
+   * READ LIVE by the route rather than taken from the stored context, and the
+   * difference matters: the context records the evidence as it stood BEFORE the
+   * edit, while a blank is something the edit left behind. Showing the first as
+   * if it were the second would ask an officer to price nights that are no
+   * longer there.
+   */
+  unpricedNights: UnpricedNightsSummary | null;
 };
 
 function memberName(booking: QueueBookingSummary): string {
@@ -96,10 +109,15 @@ function memberName(booking: QueueBookingSummary): string {
  *
  * @param viewerMemberId the signed-in admin's member id — `session.user.id`,
  *   which is what the booking page's own `isBookingOwner` compares against.
+ * @param unpricedNights #3191: this row's blank night prices, already read and
+ *   projected by the route. Passed in rather than looked up here because it is a
+ *   live database read and this module is a pure projection — and because the
+ *   route reads them for the whole page in one query.
  */
 export function toOpenManualRefundTaskPayload(
   task: OpenManualRefundTaskRow,
   viewerMemberId: string | null | undefined,
+  unpricedNights: UnpricedNightsSummary | null,
 ): OpenManualRefundTaskPayload {
   const reviewContext = parseEditFinancialReviewContext(task.reviewContext);
 
@@ -143,6 +161,7 @@ export function toOpenManualRefundTaskPayload(
       section and assume none was ever taken.
     */
     reviewEvidenceUnreadable: task.reviewContext !== null && !reviewContext,
+    unpricedNights,
   };
 }
 

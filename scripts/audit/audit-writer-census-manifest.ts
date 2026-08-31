@@ -361,6 +361,15 @@ export const AUDIT_CENSUS_TOTALS = {
   // the site, so it does not join `UNCATEGORISED_AUDIT_WRITERS` below. Measured by
   // RUNNING `npm run audit:census` on this tree (463 sites, 2220 files scanned),
   // not by adding one to the literal.
+  // 463 -> 464 (#3191): settling a review may also record what its unpriced
+  // nights sold for, and that is a money-affecting act in its own right - so it
+  // writes `booking-payment.stored-night-price.record` through the awaited
+  // `createAuditLog`, inside the completion's own transaction. A SECOND entry
+  // rather than metadata on the completion beside it, because the two are
+  // different acts and this one can happen on a DISMISSAL, whose entry says in
+  // as many words that nothing moved. Categorised `payment` at the site, so it
+  // does not join `UNCATEGORISED_AUDIT_WRITERS` below. Measured by RUNNING
+  // `npm run audit:census` on this tree (464 sites, 2229 files scanned), not by
   // 463 -> 464 (#3193): the OTHER ending of that same shortfall. Since the
   // owner's 31 Aug 2026 decision the difference is billed on a second, separate
   // supplementary invoice rather than collected by hand, so
@@ -451,6 +460,7 @@ export const AUDIT_CENSUS_TOTALS = {
     // them rather than introducing another form.
     // 116 -> 117 (#3170): the uncollected review share, above, written through
     // `createAuditLog` like the payment writers around it.
+    // 117 -> 118 (#3191): the stored-night-price record above.
     // 117 -> 118 (#3193): its counterpart, the re-invoiced review share, in the
     // same module and the same form.
     createAuditLog: { total: 118, uncategorised: 0 },
@@ -564,6 +574,7 @@ export const AUDIT_CENSUS_TOTALS = {
     // argument as the two rows above it - it says money the club is owed was not
     // asked for, and the only person who can settle that is the one who reconciles
     // the club's money.
+    // 38 -> 39 (#3191): the stored-night-price record above.
     // 38 -> 39 (#3193): `booking.editFinancialReview.chargeShareReinvoiced`. The
     // same audience for the same reason - it says the club has raised a second
     // invoice for money a booking change's first invoice went out without, and

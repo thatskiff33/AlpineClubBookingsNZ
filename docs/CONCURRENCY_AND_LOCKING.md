@@ -2571,6 +2571,32 @@ makes the settlement single-flight, so:
   stored prefix, Stripe answers the repeat with the original refund, and the
   ledger dedupes on refund id.
 
+**#3191 WRITES A SECOND KIND OF ROW ON THAT SAME LOCKLESS PATH, AND ALSO ADDS NO
+KEY.** Settling a review may now also record what the booking's unpriced nights
+sold for, which writes `BookingGuestNight.priceCents` for that guest strand and
+re-bases `BookingGuest.priceCents` to the sum. The same reasoning applies twice
+over: this rides inside the completion's transaction, whose single-flight
+guarantee is the status claim above, and adding `lock(1)` here would put the
+global key over the Stripe round trip that follows the commit.
+
+What makes it safe against a CONCURRENT BOOKING EDIT - which rewrites those very
+rows, in its own transaction, under its own locks - is a **compare-and-set on
+every row it touches**, not a lock:
+
+- each night is written with `updateMany` fenced on `priceCents: null`, so a
+  night that has since acquired a price cannot be overwritten. `update` on the
+  unique key would have found the row and written over whatever it then held;
+- the strand's total is written with `updateMany` fenced on the value the plan
+  was read against;
+- a `count` of anything but 1 raises a 409 and rolls the whole completion back,
+  so the task is still `OPEN` and its money question survives - the same answer
+  `RefundAllocationRacedError` gives one row over.
+
+The validation runs BEFORE the claim and the writes AFTER it, for the reasons
+listed above; and the blanks are re-read on the caller's transaction rather than
+trusted from the browser, so a screen minutes old cannot price a night the
+booking no longer holds. `INV-MOD-028` carries the rest of the rule.
+
 **#3194 ADDS A READ TO THAT SAME LOCKLESS TRANSACTION AND STILL NO KEY.** Where
 the task carries no `paymentId` of its own — a review parked before the member
 paid — the route decision re-reads the BOOKING's payment on the caller's

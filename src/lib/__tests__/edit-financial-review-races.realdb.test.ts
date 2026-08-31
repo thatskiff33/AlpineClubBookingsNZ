@@ -572,6 +572,7 @@ let observerClient: PrismaClient;
           actingMemberId: MEMBER_ID,
           confirmedAmountCents: 4500,
           direction: "REFUND_TO_MEMBER",
+          recordedNightPrices: null,
         });
 
       const settled = await Promise.allSettled([
@@ -818,6 +819,7 @@ let observerClient: PrismaClient;
         actingMemberId: MEMBER_ID,
         confirmedAmountCents: 4500,
         direction: "REFUND_TO_MEMBER",
+        recordedNightPrices: null,
       });
 
       const next = await raiseInOwnTransaction();

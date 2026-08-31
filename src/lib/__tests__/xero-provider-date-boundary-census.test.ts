@@ -375,6 +375,37 @@ describe("the census can tell code from prose", () => {
     expect(stripped).toContain("const ok = 1;");
   });
 
+  it("does not read a JSX closing or self-closing tag as a regex", () => {
+    /*
+      #3191 fix round, and MEASURED on `finance-fees-sections.tsx`, whose fee
+      rows are written one element per line. `<` is not a value token, so the `/`
+      of `</Label>` opened a phantom regex that ran forward to the `/` of the
+      next `/>`; that `/` then opened another one. The deleted spans held both
+      `.fieldProps` spreads while both `.hintProps` spreads survived, so
+      `field-hint.test.tsx` read 91 hooks against 89 fieldProps and reported a
+      half-wiring failure against a file that is wired correctly.
+
+      Deleting real code is the UNSAFE direction for a scanner whose job is to
+      stop a guard passing vacuously - the two imprecisions this module still
+      documents both fail the other way, toward keeping text.
+    */
+    const line =
+      '<div><Label htmlFor="a">A</Label><Input id="a" {...hint.fieldProps} />' +
+      "<FieldHint {...hint.hintProps}>Example</FieldHint></div>";
+    const stripped = stripCommentsAndStrings(line);
+    expect(stripped).toContain("hint.fieldProps");
+    expect(stripped).toContain("hint.hintProps");
+  });
+
+  it("still reads a real regex literal as one", () => {
+    // THE CONTROL for the two conditions above. Neither may swallow an ordinary
+    // regex: `split(/>/)` puts the `/` after `(`, and `/>=/` after an `=`, so
+    // neither is the JSX shape and both must still be blanked.
+    expect(stripCommentsAndStrings("s.split(/>/)")).not.toContain(">");
+    expect(stripCommentsAndStrings("const re = />=/;")).not.toContain(">=");
+    expect(stripCommentsAndStrings('x.replace(/"/g, "")')).toContain("replace");
+  });
+
   it("keeps the code it is meant to judge", () => {
     expect(stripCommentsAndStrings("const d = new Date(invoice.date);")).toContain(
       "new Date(invoice.date)",

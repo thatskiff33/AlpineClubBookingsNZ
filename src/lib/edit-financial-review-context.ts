@@ -228,7 +228,15 @@ export type EditFinancialReviewContext = {
   bookingModificationId: string | null;
 };
 
-const calendarDateSchema = z.custom<CalendarDate>(isCalendarDate, {
+/**
+ * A club calendar date on the wire.
+ *
+ * EXPORTED since #3191, which needed the same rule for the per-night amounts an
+ * officer posts back. A second `z.custom(isCalendarDate)` beside this one would
+ * be a second spelling of the same boundary, and the two are free to drift on
+ * the message or on which predicate they use (`INV-SSOT`).
+ */
+export const calendarDateSchema = z.custom<CalendarDate>(isCalendarDate, {
   message: "Expected a yyyy-mm-dd calendar date.",
 });
 

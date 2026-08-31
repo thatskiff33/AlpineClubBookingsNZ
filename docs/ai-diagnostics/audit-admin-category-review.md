@@ -633,6 +633,18 @@ find, and it was a log line rather than a record until then. ONE write site
 serves both asks — the card request already paid, and the Xero supplementary
 invoice already sent — because they are the same fact about the same edit; a
 `leg` of `payment-request` or `xero-invoice` in the metadata and in the prose is
+what tells an officer which one to go and fix.
+
+Since then #3191 added the stored-night-price record
+(`payment` 38 → 39, 463 → 464): settling a review may also record what the
+booking's unpriced nights sold for, which rewrites what a stay is stored as
+having been worth and is therefore a money-affecting act in its own right. It is
+a SECOND entry beside the completion's rather than metadata on it, because it can
+also happen on a DISMISSAL, whose entry says in as many words that nothing moved.
+That is the figure above, and it was taken from `npm run audit:census` on the
+merged tree rather than by adding one branch's delta to the other's total. The
+category values sum to 463 rather than 464 because one site forwards its category
+rather than naming one.
 what tells an officer which one to go and fix. Since then #3193 added that
 record's counterpart (`payment` 38 → 39, 463 → 464): the owner decided on
 31 Aug 2026 that the difference is BILLED, on a second separate invoice, rather
