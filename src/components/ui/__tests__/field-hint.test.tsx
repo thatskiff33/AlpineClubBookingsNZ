@@ -180,6 +180,17 @@ function strippedSrc(): string[] {
  * wrong half of the tree to bend. This repository documents each defect at the
  * site it removed it from, so a raw-text scanner here misfires worst where the
  * wiring is most carefully explained.
+ *
+ * THE STRIPPER'S OWN JSX CARVE-OUT is what makes this count trustworthy, and it
+ * is controlled somewhere else on purpose. Wrapping this count in the stripper
+ * first REFUSED - 91 hooks against 89 `.fieldProps` - because `</Label>` opened
+ * a phantom regex that ran to the next `/>` and deleted the code between, which
+ * on `finance-fees-sections.tsx` was both spreads. The two conditions that fix
+ * it live on `startsRegexLiteral` in the stripper, and their controls live with
+ * the rest of the stripper's behaviour tests in
+ * `xero-provider-date-boundary-census.test.ts` rather than here - so that is the
+ * suite which fails first if they regress, and this contract is the second
+ * instrument that would then go out of balance.
  */
 function countAcrossSrc(needle: string): number {
   return strippedSrc().reduce(

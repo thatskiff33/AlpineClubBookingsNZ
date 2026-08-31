@@ -257,14 +257,23 @@ are permanent: never renumbered, never reused.
   evidenced in the tree, so the count is not restated here. Cite the record, not
   the tally.
 - **`src/lib/__tests__/support/strip-comments.ts` is the canonical
-  `stripComments`, and since #3164 a lint rule enforces it.** 56 test files and
+  `stripComments`, and since #3164 a lint rule enforces it.** 57 test files and
   one CI script import it, and `ssot/no-local-comment-stripper` in
   `eslint.config.mjs` reports a second scanner as it is written rather than
   twelve minutes later in CI. **Use it; do not write a second.** The figure was
   published as 48 while the module's own docblock said 53 and the tree said 53,
   which is this ID applied to its own entry: two statements of one fact, and
   nothing comparing them. Re-measured at #3180, after three conversions took it
-  to 56.
+  to 56, and again at #3191, which added two importers.
+- **Count that figure by IMPORT SPECIFIER, not by path text**, because the two
+  statements of it can only agree if they are measured the same way — which is
+  this ID again. The module is reached through three spellings
+  (`./support/strip-comments`, `@/lib/__tests__/support/strip-comments`, and the
+  CI script's relative path with its `.ts` extension), and three further files
+  name that path as DATA rather than importing it: `eslint.config.mjs` inside
+  the rule's own message, `ssot-comment-stripper-guard.test.ts` as the lint
+  target it feeds ESLint, and `support/member-merge-family.ts` in prose. A grep
+  for the path text counts all three, and the module's own docblock as well.
 - **A population measured by NAME is not the population**, and the count above
   is the evidence. #3132 converged the copies spelled `stripComments` and closed;
   seven more were alive that day under the name `withoutComments`, and #3164

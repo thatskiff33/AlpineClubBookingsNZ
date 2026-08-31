@@ -3,9 +3,16 @@
  * preserved, plus the two other forms a scanner in this tree ever needs.
  *
  * THE ONE DEFINITION IN THE TREE, and since #3164 a rule ENFORCES that rather
- * than review doing it: 56 test files and one CI script import this module, and
+ * than review doing it: 57 test files and one CI script import this module, and
  * `ssot/no-local-comment-stripper` in `eslint.config.mjs` reports a second
- * scanner wherever one is written, in the editor.
+ * scanner wherever one is written, in the editor. COUNT BY IMPORT SPECIFIER
+ * rather than by path text, because a grep for the path over-reports three ways.
+ * The module is reached through three spellings — `./support/strip-comments`,
+ * `@/lib/__tests__/support/strip-comments`, and the CI script's relative path
+ * with its `.ts` extension — and three further files NAME that path without
+ * importing it: `eslint.config.mjs` inside the rule's own message,
+ * `ssot-comment-stripper-guard.test.ts` as the lint target it feeds ESLint, and
+ * `support/member-merge-family.ts` in prose.
  *
  * #3132's own claim to have converged the tree was true of the copies spelled
  * `stripComments` and of nothing else. Measured on the day it landed, SEVEN more
@@ -115,22 +122,58 @@
  * a half-wired file that is wired correctly. The condition and its controls are
  * on `startsRegexLiteral` and in `xero-provider-date-boundary-census.test.ts`.
  *
+ * THE REACH OF THAT CARVE-OUT IS MEASURED rather than asserted, because "it
+ * changes nothing" is exactly the claim a later reader skips re-checking. Both
+ * versions of the scanner were run over all 3,924 files under `src/` in all
+ * three JavaScript forms and their outputs diffed, line by line.
+ * `stripCommentsAndStrings` changed 897 of those files and `blankLiterals` the
+ * same 897, recovering 19,519 and 22,513 lines of JSX respectively, and NOT ONE
+ * LINE anywhere came back with less text than before. `stripComments` moved the
+ * other way on five files — the `email-templates/` modules — where 79 lines the
+ * old version wrongly KEPT are now stripped, and every one of those lines is
+ * docblock prose rather than code. Line counts matched on every file and
+ * `blankLiterals` kept its length promise on every file. So the honest summary
+ * is not "no blast radius": it is that the fix recovers a great deal of real
+ * code, loses none, and additionally repairs five files it was not aimed at.
+ *
  * It is still not a full parser, and what it does not attempt is stated so
  * nobody has to rediscover it: it does not check that a regex is well-formed,
  * and a `/` following a string literal (`"abc" / 2`) is read as opening a regex
- * rather than dividing. Neither shape occurs on the scanned surface, and both
- * fail toward keeping text rather than deleting it — which is the safe direction
- * for an instrument whose job is to stop a guard passing vacuously.
+ * rather than dividing. Neither shape occurs on the scanned surface — but WHICH
+ * WAY A PHANTOM REGEX FAILS DEPENDS ON THE FORM, and an earlier version of this
+ * paragraph claimed both shapes "fail toward keeping text" as though it did not.
+ * `stripComments` copies a phantom regex through verbatim and so does keep text;
+ * `stripCommentsAndStrings` replaces its whole span with `""` and
+ * `blankLiterals` blanks it, so in those two the code between the two slashes is
+ * DELETED. Measured on `const x = "abc" / 2; // trailing`, the `2;` survives the
+ * first form and is gone from the other two. That is the same class as the #3191
+ * defect above, which is why it needed a carve-out rather than an argument.
  *
- * Two imprecisions are pinned rather than hidden, and they fail in opposite
- * directions.
+ * Three imprecisions are pinned rather than hidden, and they do not all fail in
+ * the same direction.
  *
  * An odd apostrophe in JSX prose (`<p>It's the club clock</p>`) opens a string
  * that never closes, so a comment after it is NOT stripped. That over-reports,
  * which is visible as a failure rather than as a false pass, and
  * `member-public-club-time-convergence.test.ts` asserts both halves of it.
  *
- * The other one under-reports, so it is the one to know about. JSX TEXT is
+ * The `</Tag>` carve-out over-reports the same way, and saying so is better than
+ * the flat "neither condition can hide a real regex literal" this docblock used
+ * to carry. A regex CAN legally be written after a `<`: `a < /"/.test(b)` is
+ * valid JavaScript, the carve-out reads that `/` as division, the quote inside
+ * is then scanned as a string opener, and `stripComments` desynchronises for the
+ * rest of the file — the `xero-contacts.ts` failure, reopened for one shape.
+ * Measured, a line comment written below such a statement comes back UNSTRIPPED.
+ * Two things make it acceptable rather than merely admitted: it fails toward
+ * keeping text, so a census meets its own prose and reports a FAILURE rather
+ * than a silent green; and the whole-tree diff above bounds how live it is. Only
+ * a regex holding a QUOTE or a comment delimiter can desynchronise anything —
+ * `a < /x/.test(b)` is copied through unchanged by either version — and such a
+ * regex would have moved `stripComments`'s output. It moved on five files, every
+ * changed line a docblock the old version wrongly kept, so no such shape is live
+ * under `src/` today.
+ *
+ * The third one under-reports, so it is the one to know about. JSX TEXT is
  * neither code nor a string literal, so a `//` written in prose inside an
  * element is read as a line comment and the rest of that line is deleted.
  * Measured live in two files: `backups-client.tsx` renders
@@ -187,8 +230,11 @@ function startsRegexLiteral(codeSoFar: string, next: string): boolean {
     THE TWO JSX SHAPES, and they are a MEASURED defect rather than pedantry
     (#3191 fix round). Both delete real code on a single-line element, which is
     the unsafe direction for an instrument whose job is to stop a guard passing
-    vacuously - the two imprecisions this module already documents both fail the
-    other way, toward keeping text.
+    vacuously. A phantom regex is not equally harmless in every form: this
+    function is shared, and while `stripComments` copies one through verbatim and
+    keeps text, `stripCommentsAndStrings` replaces its whole span with `""` and
+    `blankLiterals` blanks it - so in those two the code between the two slashes
+    is GONE, which is how this defect deleted the `.fieldProps` spreads below.
 
     `</Label>` is a closing tag, and `<` is not one of the value tokens below, so
     the old rule opened a regex on it and ran forward to the next `/` - the `/>`
@@ -200,11 +246,20 @@ function startsRegexLiteral(codeSoFar: string, next: string): boolean {
     read 91 hooks against 89 fieldProps - a half-wiring failure reported against
     a file that is wired correctly.
 
-    Neither condition can hide a real regex literal. A regex written after `<`
-    (`a < /x/.test(b)`) is legal JavaScript and does not occur on this surface;
-    and `/>` is refused only where a JSX self-close puts a value token before it,
-    so `split(/>/)` - whose `/` follows `(` - is untouched, as is `/>=/` after an
-    `=`.
+    THE `<` CONDITION CAN SUPPRESS A REAL REGEX, and the honest claim is about
+    which way that fails rather than that it cannot happen. `a < /"/.test(b)` is
+    legal JavaScript; the condition reads that `/` as division, the quote inside
+    is then scanned as a string opener, and `stripComments` desynchronises for
+    the rest of the file - the `xero-contacts.ts` class, reopened for one shape.
+    It fails toward KEEPING text, so a census meets its own prose and reports a
+    failure rather than a silent green, and only a regex carrying a QUOTE or a
+    comment delimiter can desynchronise anything at all - the whole-tree diff
+    recorded in the module docblock found none of those live under `src/`. It is
+    listed there as the third pinned imprecision rather than argued away. The
+    `/>` condition
+    is narrower again: it is refused only where a JSX self-close puts a value
+    token before it, so `split(/>/)` - whose `/` follows `(` - is untouched, as
+    is `/>=/` after an `=`.
   */
   if (previous === "<") return false;
   if (next === ">" && /["'}]/.test(previous)) return false;
