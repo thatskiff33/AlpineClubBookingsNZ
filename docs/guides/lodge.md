@@ -94,6 +94,54 @@ day colours *are* lodge days, the panel spells that difference out on screen;
 the hut-leader assignment calendar is night-based throughout, so there is no
 difference to explain there and it says nothing.
 
+### Group Trips on the day list
+
+**Audience: operator.**
+
+When a club has turned on Group Trip adult cover, several separate bookings can
+belong to one travelling party. The day list says so, and how much it says
+depends on who is looking at the screen.
+
+**Anyone the kiosk shows the day list to** — including a guest who is staying
+and signed in — sees a small **Group trip 1** chip on each card that belongs to
+one trip. Cards carrying the same number are one party; different numbers are
+different parties. The number is only a label for the list on screen: it is
+counted from the top of that day's list, it changes from day to day, and it is
+not the group's own reference. A card gets no chip at all unless another card in
+front of you belongs to the same trip, because a lone chip would link to
+nothing.
+
+That chip is the whole of it for an ordinary guest. They are not told who
+organised the trip, which booking or which adult is providing the required adult
+cover, or the trip's join code — none of that reaches their screen, and it is not
+hidden behind a tap or a tooltip either. It simply is not sent.
+
+**A hut leader signed in with their PIN, and a full admin,** see two extra lines
+on those cards:
+
+- **who organises the trip** — the organiser's name, and which card is theirs.
+  Nothing else about that account: no email, no phone number.
+- **where the adult cover comes from** — how many of the booking's nights have a
+  qualifying adult, and which kind of booking supplies them (the booking itself,
+  another booking on the same account, or another booking in the same Group
+  Trip). Cover is decided night by night, so "2 of 3 nights covered" is a normal
+  and useful thing to read, and the uncovered nights are listed.
+
+The cover line is deliberately cautious. It reports what the club's adult-cover
+rule last worked out, and where that answer cannot be trusted it says so instead
+of claiming cover:
+
+| What you see | What it means |
+| --- | --- |
+| *Adult cover: 2 of 3 nights covered* | The rule has been evaluated and this is its answer |
+| *Adult cover: needs re-checking — the last check is out of date* | Something changed on a related booking; the last answer may no longer be right |
+| *Adult cover: last check could not be read* | The stored answer is not in a shape the kiosk can read — worth telling a Booking Officer |
+| *Adult cover: not recorded for this booking* | Nothing has been recorded, which is the normal state for most bookings and is **not** the same as "covered" |
+
+A shared lodge wall device signed in as the kiosk account is treated as an
+ordinary viewer for all of this: it shows the chip and neither extra line,
+because anybody who walks past an unattended screen is that account.
+
 ### Multi-lodge: bind and add kiosk accounts
 
 1. With more than one lodge, each account gains an **Operates lodge** selector.

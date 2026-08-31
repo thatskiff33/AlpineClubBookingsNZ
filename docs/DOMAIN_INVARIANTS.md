@@ -371,6 +371,7 @@ Prefix `INV-HOST`.
 | `INV-HOST-042` | Outside the all-or-none CHECK; NULL on a decided row means off |
 | `INV-HOST-043` | Group identity is the organiser/join columns, never parentBookingId or container status |
 | `INV-HOST-044` | Group Trip hosts are host-only, deduplicated against narrower scopes, and read under their own ceiling |
+| `INV-HOST-045` | Kiosk cover-source display is derived from the canonical snapshot; stale, failed or unrecorded evaluation never renders as cover |
 
 ### Booking requests
 
@@ -583,6 +584,7 @@ Prefix `INV-PRIV`.
 | `INV-PRIV-012` | Audit category follows the affected domain; member visibility declared separately; rows already written are `INV-OPS-012` |
 | `INV-PRIV-013` | `admin` writers move only to close a split; fifteen keeps, `lockers` settled (#2777) |
 | `INV-PRIV-014` | Diagnostics page filters and typed search reach the provider, ungated by either tick |
+| `INV-PRIV-015` | Kiosk Group Trip disclosure: ordinary tier sees a per-response linkage ordinal only; organiser and cover source are two separate capabilities; no tier gets `joinCode` |
 
 ## Membership Lifecycle
 

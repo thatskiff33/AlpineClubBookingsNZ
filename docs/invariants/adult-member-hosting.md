@@ -911,3 +911,73 @@ compliant indefinitely.
   that is `SAME_BOOKING_OWNER`'s question, not this one. Enforced by
   `src/lib/__tests__/adult-member-hosting-group-trip-cover.test.ts`, whose
   failure messages carry this id.
+
+### INV-HOST-045
+
+- **The kiosk's adult-cover display is DERIVED from the canonical evaluation,
+  and a stale, failed or unrecorded evaluation never renders as cover** (#3040,
+  epic #2943). The privileged kiosk tier may show where a booking's adult
+  supervision comes from. Every value it shows is read out of the frozen
+  violation snapshot the canonical evaluator wrote
+  (`Booking.adultMemberHostingReview`, parsed by `parseStoredHostingReview`) by
+  `deriveKioskAdultCoverSource` in `src/lib/kiosk-group-trip.ts`. Nothing about
+  cover is recomputed for display, because a display that re-derives the rule
+  drifts from the rule that actually decided compliance, and two screens then
+  disagree about whether a booking is legal.
+
+  **Four statuses, and only one of them may carry night rows.**
+  `NOT_RECORDED` (no snapshot: the evaluator writes nothing whether the policy is
+  off, the party has no non-member guest-nights, or every night is covered, and
+  the three are indistinguishable from the column), `UNREADABLE` (a snapshot that
+  is not the canonical shape — hand-edited, partially written, or frozen before
+  per-night host evidence existed), `STALE`, and `EVALUATED`. The DTO carries an
+  empty `nights` array and an empty `scopes` array for every status but
+  `EVALUATED`, so no consumer can render a positive claim off evaluation it
+  cannot trust. The rule is structural rather than a convention the component has
+  to remember.
+
+  **Two staleness signals, both indexed, both fail towards withholding.** A
+  queued `HostingCoverageReevaluation` for the booking's owner at this lodge marks
+  every one of that owner's visible bookings `STALE`; the queued item's night list
+  is deliberately not intersected, because over-marking can only withhold a
+  positive claim while a parse can be wrong. An open `HostingCoverageIncident` on
+  a booking whose snapshot reports NOTHING uncovered is a contradiction — one of
+  the two is behind — and resolves to `STALE` rather than to the optimistic side.
+  Where the incident and the snapshot AGREE, the snapshot stays `EVALUATED`,
+  because that is the normal state of a booking an officer is already looking at.
+  Nothing about the incident itself reaches any payload.
+
+  **The POLICY REVISION is deliberately NOT a staleness signal, and adding one
+  would be a regression.** A snapshot frozen under an earlier
+  `AdultMemberHostingPolicy.version` looks stale and mostly is not: this
+  repository's own considered position is that a revision bump is immaterial to
+  whether an existing coverage instrument is valid
+  (`HOSTING_POLICY_RECONCILIATION_SELECT`'s docblock says so, and
+  `incidentPolicyChanged` compares the mode and the enabled scope SET rather than
+  the version). So an immaterial edit — a capacity-mode change, say — queues no
+  re-evaluation, and a version comparison here would mark every card with a
+  snapshot `STALE` permanently, with nothing able to clear it. The queue is the
+  correct signal precisely because the reconciler populates it when, and only
+  when, the rule materially changed.
+
+  **This matters most while #3039 is unbuilt.** There is no Group Trip
+  re-evaluation fan-out yet, so a sibling change genuinely can leave a snapshot
+  stale with nothing correcting it. Reporting that plainly is the required
+  behaviour, not a workaround for the missing child.
+
+  **Multiple sources and partial nights are the normal case.** Cover is decided
+  per night, so one booking can be covered on one night by an adult on its own
+  booking and on the next by an adult in a sibling Group Trip booking, and
+  uncovered on a third. The per-night rows are the answer; the union of scopes is
+  a heading, never a substitute. `coveredByScopes` absent on a covered night reads
+  as `SAME_BOOKING`, which is that field's own documented meaning
+  (`QualifyingHostsForNight`) and not a second reading invented here.
+
+  **The categories travel; the people do not.** `qualifyingHostsByNight` carries
+  the covering members' ids and the kiosk drops them: which adult, on whose
+  account, is not a kiosk question. That half of the rule is `INV-PRIV-015`.
+
+  Enforced by `src/lib/__tests__/kiosk-group-trip-privacy.test.ts`,
+  `src/app/api/lodge/guests/[date]/__tests__/group-trip-tiers.test.ts` and
+  `src/app/(lodge)/lodge/kiosk/_components/__tests__/kiosk-group-trip-card.test.tsx`,
+  whose failure messages carry this id.

@@ -477,3 +477,77 @@ question, ungated by either tick**.
   when a tick is off — or if either tick starts gating it. The same guard pins the
   governed boundary in contrast: the record's personal-detail disclosure line
   flips with the record tick while the view lines do not.
+
+## INV-PRIV-015
+
+What the lodge kiosk may say about a Group Trip, and to whom (#3040, epic
+#2943). Once separate bookings can share adult supervision (#3038) the kiosk
+holds relationship information it never held before, and most of it belongs to
+somebody else's account. The disclosure splits in three, and the split is
+enforced by what the server BUILDS rather than by what a component renders.
+
+- **Ordinary staying-guest tier: linkage only.** Anyone the kiosk shows the day
+  list to may learn that two cards in front of them belong to one Group Trip.
+  They may not learn who organised it, which booking or adult supplies the adult
+  cover, or the group's join code. `KioskGroupTripLabel` is that tier's whole
+  disclosure: a **1-based ordinal assigned per response**, in order of first
+  appearance among the visible cards, emitted only where at least two visible
+  cards share a trip. It is deliberately NOT `GroupBooking.id` — a durable
+  container id is a handle a guest could carry to another surface and correlate
+  across days, while the ordinal is meaningless outside the one response that
+  built it. There is no id field to leak, which is `INV-SSOT`'s "unrepresentable
+  beats policed" applied to a privacy boundary.
+
+- **Two privileged capabilities, granted and consulted separately.**
+  `kioskGroupTripCapabilities` (`src/lib/kiosk-access.ts`) is the ONE definition
+  of who holds them, so the `/api/lodge/access` response and the guest-list
+  payload cannot disagree. `organiser` gates the organiser's display name and
+  which card is theirs; `coverSource` gates the canonical cover evidence
+  (`INV-HOST-045`). They are two booleans gating two payload keys and two
+  database reads, and they may not be collapsed into one flag however identical
+  today's holders are — collapsing them makes granting one without the other
+  impossible later. Both are held by `admin` and `hut-leader` only:
+  deliberately the narrower of the two capability sets that module already
+  grants, and NOT the wider `canMarkAttendance` set that includes `lodge`,
+  because a lodge wall device is shared and often unattended, and disclosure to
+  an unattended screen is disclosure to everybody in the room.
+
+- **An absent capability means an ABSENT KEY, not a hidden one.** "Send the full
+  Group Trip object and hide the private fields in JSX" was rejected by name.
+  This is a Next.js application: anything reachable from a client component's
+  props or an RSC flight payload is readable in the browser whether it is
+  rendered or not. So the builder spreads only the permitted keys — there is no
+  `null`, no empty string and no disabled flag — and the field name cannot appear
+  in the serialized response at all. The reads are gated too: with `organiser`
+  false no `GroupBooking` row is fetched, and with `coverSource` false no
+  staleness signal is, so a capability nobody holds costs no query and has
+  nothing to leak. **Nor through a tooltip or an accessible name:** the kiosk
+  Group Trip card carries no `title`, `aria-label` or `data-*` attribute at all,
+  because a screen-reader label is as readable as body text and gets less review.
+
+- **`joinCode` is selected by no tier, in no query, in no DTO.**
+  `GROUP_TRIP_IDENTITY_SELECT` already refuses it at the identity layer, and no
+  kiosk surface names it.
+
+- **The cover source is a CATEGORY, never a person.** The canonical snapshot
+  carries the covering members' ids; the kiosk drops them. Which adult, on whose
+  account, is supplying supervision is not a kiosk question, and naming them
+  would disclose another account's participant to a screen the whole lodge reads.
+
+- **Owner decision D1 on #3038 is NOT imported here.** That decision deliberately
+  keeps the per-night cover CATEGORY in the member-facing booking-refusal body, on
+  the reasoning that a member who has to fix the problem deserves the fullest
+  explanation. It was about the refusal — addressed to the one member whose
+  booking is affected — and the epic's kiosk contract is stricter: the ordinary
+  kiosk tier sees linkage only. The two are not in conflict and the refusal's
+  reasoning does not travel to a shared screen.
+
+- **Pinned, not left to a reviewer.**
+  `src/lib/__tests__/kiosk-group-trip-privacy.test.ts` drives all four capability
+  combinations and asserts on `JSON.stringify` of the built payload;
+  `src/app/api/lodge/guests/[date]/__tests__/group-trip-tiers.test.ts` does the
+  same on the route's real JSON body, once per tier; and a source fence fails any
+  kiosk surface that names `joinCode`, resolves group identity without the
+  canonical helpers, restates the tier test instead of asking for the
+  capabilities, or puts a value in a `title` / `aria-label` / `data-*` attribute.
+  Every one of those assertions names this id.
