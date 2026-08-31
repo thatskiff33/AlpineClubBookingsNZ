@@ -9,10 +9,7 @@ import {
   ADULT_MEMBER_HOST_SCOPES,
   type AdultMemberHostScope,
 } from "@/lib/booking-policy-exceptions";
-import {
-  hostScopeEnabled,
-  hostingModeIsActive,
-} from "@/lib/policies/adult-member-hosting";
+import { hostingModeIsActive } from "@/lib/policies/adult-member-hosting";
 import {
   groupTripIdentityOf,
   type GroupTripIdentity,
@@ -37,6 +34,21 @@ import type { KioskGroupTripCapabilities } from "@/lib/kiosk-access";
  *     group's join credential.
  *  2. **Organiser context — one explicit capability.**
  *  3. **Adult-cover source — a SEPARATE explicit capability.**
+ *
+ * ## Each tier answers from its OWN data (owner decision D1, 1 Sep 2026)
+ *
+ * Linkage asks "is this booking in a group at all?" and nothing else. It is
+ * deliberately NOT gated on the club's `SAME_GROUP_TRIP` cover option, which an
+ * earlier round of this file did gate it on: group containers predate that scope
+ * (#796), the badge says only "these guests arrived together", and coupling a
+ * roster label to an unrelated adult-supervision setting is arbitrary. The
+ * accepted cost is that a club which never enabled anything sees a new label
+ * after an upgrade.
+ *
+ * The two privileged halves each keep their own separate capability, and the
+ * cover-source half additionally asks whether the club's adult-member-hosting
+ * requirement is in force at all — because that is ITS own data, in the same
+ * way that group membership is linkage's (see `hostingRequirementInForce`).
  *
  * The rejected design was "send the whole Group Trip object and hide fields in
  * JSX". This is a Next.js application: anything reachable from a client
@@ -180,6 +192,11 @@ export interface KioskAdultCoverNight {
  * uncovered on Sunday. `nights` is therefore the whole answer and `scopes` is
  * only the union across covered nights — a convenience for a heading, never a
  * substitute for the rows.
+ *
+ * ABSENT ALTOGETHER in two cases, which read the same to a consumer and mean the
+ * same thing: the viewer does not hold the `coverSource` capability, or the
+ * club's adult-member-hosting requirement is not in force, so no evaluation of
+ * this booking exists to report (`hostingRequirementInForce`).
  */
 export interface KioskAdultCoverSource {
   status: KioskCoverEvidenceStatus;
@@ -238,48 +255,54 @@ export type KioskGroupTripDb = Pick<
 >;
 
 /**
- * Is the club's Group Trip cover option ON at this lodge?
+ * Is the club's adult-member-hosting requirement in force at this lodge?
  *
- * THE WHOLE FEATURE IS BEHIND ONE TOGGLE, AND THAT INCLUDES THE KIOSK. The
- * epic's settled owner contract opens with "clubs that leave the option OFF see
- * no behaviour change", so a club that has not enabled `SAME_GROUP_TRIP` gets no
- * chip, no organiser line, no cover line and — the part that makes the claim
- * true rather than merely stated — no extra query at all. The response is
- * byte-identical to the pre-#3040 one, which is the disabled-scope equivalence
- * the epic's definition of done names.
+ * THIS GATES THE COVER-SOURCE TIER ONLY, AND IT IS NOT THE GROUP TRIP OPTION.
+ * Owner decision D1 on #3040 settled that the ordinary linkage badge is not
+ * gated on the shared-cover option, and this function is consulted only where
+ * the `coverSource` capability is already held — never for linkage, and never
+ * for organiser context.
  *
- * The linkage chip is gated too, not only the two privileged halves. Group
- * containers exist independently of this scope (#796 predates it), so linkage
- * information is available whether or not a club turned cover on — which is
- * exactly why the gate has to be deliberate. The issue derives the kiosk's new
- * relationship information FROM the shared-cover feature ("once separate
- * bookings can share adult cover, the kiosk has more relationship information
- * available than before"), and the epic lists what guests may see under "when
- * enabled". Showing a club a new chip because of a feature it declined would
- * break the first line of the contract.
+ * WHY THE COVER TIER STILL ASKS SOMETHING. `KioskAdultCoverSource` claims to
+ * report what the canonical rule last decided about this booking. The canonical
+ * evaluator writes NOTHING when the mode is not a consequence
+ * (`evaluateAdultMemberHostingWithPolicy` returns `null` on
+ * `!hostingModeIsActive`), so at a club whose requirement is off there is no
+ * current evaluation to report at all — and a snapshot frozen while the club DID
+ * enforce would otherwise render as current cover for a rule that no longer
+ * exists. That is "stale or indeterminate evaluation must never render as
+ * positive cover" (`INV-HOST-045`) one step further out: not a stale snapshot,
+ * but a snapshot whose whole policy has been withdrawn.
  *
- * BOTH DIMENSIONS, because either one off means no shared cover: the policy's
- * consequence has to be active AND the scope enabled. A `DISABLED` policy
- * evaluates nothing, so a scope set left switched on underneath it is not the
- * feature being on.
+ * ABSENT, NOT `NOT_RECORDED`. Where the requirement is not in force the key is
+ * omitted entirely, exactly as for a viewer without the capability. Reporting
+ * `NOT_RECORDED` instead would put an amber "Adult cover: not recorded for this
+ * booking" line on every card at every club that does not use the feature — a
+ * warning about a rule they never switched on, which is noise rather than
+ * honesty. An omitted key says "this club does not evaluate adult cover", which
+ * is the true statement.
+ *
+ * THE MODE, NOT THE SCOPE SET. `SAME_GROUP_TRIP` decides whether an adult in a
+ * sibling booking may count towards cover, not whether cover is evaluated. A
+ * club with the requirement on and that scope off still has real per-night
+ * evidence — `SAME_BOOKING` cover — and its hut leaders may see it. Gating the
+ * cover line on the Group Trip scope, as an earlier round of this file did, would
+ * withhold cover information that has nothing to do with Group Trips.
  *
  * FAILS CLOSED, deliberately. A club with a malformed policy set (two club-wide
  * rows, an unresolvable lodge) makes the resolver throw. On a booking write path
  * that throw is correct — refuse rather than guess. On an unattended wall tablet
- * it would blank the day list, so here it resolves to "off": the kiosk shows
- * what it showed before #3040 and discloses nothing. Withholding is always the
- * safe direction for this module.
+ * it would blank the day list, so here it resolves to "not in force": the cover
+ * line is withheld and nothing is claimed. Withholding is always the safe
+ * direction for this module.
  */
-async function groupTripCoverEnabled(
+async function hostingRequirementInForce(
   db: KioskGroupTripDb,
   lodgeId: string,
 ): Promise<boolean> {
   try {
     const resolved = await loadAdultMemberHostingPolicy(lodgeId, db);
-    return (
-      hostingModeIsActive(resolved.mode) &&
-      hostScopeEnabled(resolved.hostScopes, "SAME_GROUP_TRIP")
-    );
+    return hostingModeIsActive(resolved.mode);
   } catch {
     return false;
   }
@@ -492,8 +515,17 @@ export function deriveKioskAdultCoverSource(
  *
  * The capability gates are applied to the READS as well as to the payload: with
  * `organiser` false no `GroupBooking` row is fetched, and with `coverSource`
- * false no staleness signal is. A capability nobody holds costs no query and has
- * nothing to leak.
+ * false neither the hosting policy nor a staleness signal is. A capability
+ * nobody holds costs no query and has nothing to leak.
+ *
+ * SO THE ORDINARY TIER COSTS ZERO EXTRA QUERIES, still. Owner decision D1 gave
+ * up the "byte-identical payload when the club's cover option is off" property
+ * knowingly, and it is worth being precise about what that did and did not cost:
+ * linkage is resolved from the identity relations the caller ALREADY selected
+ * with the booking (`GROUP_TRIP_IDENTITY_SELECT`), so an ordinary viewer's
+ * response issues no additional read at all — with the one bounded exception of
+ * the split-pair carve-out below, which needs a booking that has a
+ * `parentBookingId` and no group of its own.
  */
 export async function attachKioskGroupTrip<T extends { bookingId: string }>(
   cards: readonly T[],
@@ -505,15 +537,9 @@ export async function attachKioskGroupTrip<T extends { bookingId: string }>(
   },
 ): Promise<Array<T & KioskBookingGroupTripFields>> {
   // An empty day asks nothing at all. Out of season that is most days, and the
-  // policy read below would otherwise run on every one of them.
+  // split-pair and capability reads below would otherwise run on every one of
+  // them.
   if (cards.length === 0) return [];
-
-  // The toggle first, and before any other read: with the option off this
-  // returns the caller's own cards untouched, so the payload is byte-identical
-  // to the pre-#3040 one for every club that has not enabled the feature.
-  if (!(await groupTripCoverEnabled(context.db, context.lodgeId))) {
-    return cards.map((card) => ({ ...card }));
-  }
 
   const visibleIds = new Set(cards.map((card) => card.bookingId));
   const visibleRows = rows.filter((row) => visibleIds.has(row.id));
@@ -530,7 +556,13 @@ export async function attachKioskGroupTrip<T extends { bookingId: string }>(
         ),
       ])
     : new Map<string, string>();
-  const signals = context.capabilities.coverSource
+  // ONE boolean, computed once, governing both the staleness reads and the
+  // payload key. The capability is asked first and short-circuits the policy
+  // read, so a tier that may not see cover source costs no query for it.
+  const coverSource =
+    context.capabilities.coverSource &&
+    (await hostingRequirementInForce(context.db, context.lodgeId));
+  const signals = coverSource
     ? await readStalenessSignals(context.db, visibleRows, context.lodgeId)
     : { queuedOwners: new Set<string>(), incidentBookings: new Set<string>() };
   const rowById = new Map(visibleRows.map((row) => [row.id, row]));
@@ -555,7 +587,7 @@ export async function attachKioskGroupTrip<T extends { bookingId: string }>(
             },
           }
         : {}),
-      ...(context.capabilities.coverSource && row
+      ...(coverSource && row
         ? {
             adultCoverSource: deriveKioskAdultCoverSource(
               row.adultMemberHostingReview,
