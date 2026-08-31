@@ -18,6 +18,20 @@ import {
   type KioskWeekDaySummary,
   weekHasAccessibleDay,
 } from "./_components/kiosk-week-view";
+// #3040 (epic #2943) — the Group Trip block. The TIER SPLIT IS SERVER-SIDE: an
+// ordinary staying guest is not SENT the organiser or the cover source, so the
+// fields below are simply absent for them and these components render nothing.
+// Never widen them into "send it and hide it in JSX" — that ships the data.
+import {
+  KioskAdultCoverSourceLine,
+  KioskGroupTripBadge,
+  KioskGroupTripOrganiserLine,
+} from "./_components/kiosk-group-trip-card";
+import type {
+  KioskAdultCoverSource,
+  KioskGroupTripLabel,
+  KioskGroupTripOrganiser,
+} from "@/lib/kiosk-group-trip";
 
 interface Guest {
   id: string;
@@ -57,6 +71,12 @@ interface BookingGroup {
   // #1422: a booking held by a pending admin review is shown but blocked from
   // check-in — arrival is disabled here and the server rejects it too.
   blockedFromCheckin?: boolean;
+  // #3040 — all three are OPTIONAL because the server omits the key entirely
+  // for a viewer without the capability. Absent means "not disclosed to this
+  // viewer", which is why none of them is nullable instead.
+  groupTrip?: KioskGroupTripLabel;
+  groupTripOrganiser?: KioskGroupTripOrganiser;
+  adultCoverSource?: KioskAdultCoverSource;
   guests: Guest[];
 }
 
@@ -894,9 +914,12 @@ export default function KioskPage() {
                           className="bg-kiosk-card rounded-xl p-4"
                         >
                           <div className="flex items-center justify-between mb-2">
-                            <p className="text-sm text-kiosk-muted-fg">
-                              Booked by {booking.memberName}
-                            </p>
+                            <div className="flex items-center gap-3 flex-wrap">
+                              <p className="text-sm text-kiosk-muted-fg">
+                                Booked by {booking.memberName}
+                              </p>
+                              <KioskGroupTripBadge groupTrip={booking.groupTrip} />
+                            </div>
                             {booking.expectedArrivalTime && booking.guests.some((g) => g.isArriving) && (
                               <span className="text-sm text-kiosk-accent font-medium">
                                 Arriving {formatArrivalTime(booking.expectedArrivalTime)}
@@ -913,6 +936,12 @@ export default function KioskPage() {
                               Blocked from Check-In — see Booking Officer
                             </p>
                           )}
+                          <KioskGroupTripOrganiserLine
+                            organiser={booking.groupTripOrganiser}
+                          />
+                          <KioskAdultCoverSourceLine
+                            cover={booking.adultCoverSource}
+                          />
                           <div className="space-y-2">
                             {booking.guests.map((guest) => (
                               <div
