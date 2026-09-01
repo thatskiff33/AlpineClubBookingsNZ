@@ -2448,7 +2448,7 @@ const GROUP_TRIP_COVERAGE_SOURCE_SELECT = {
 
 /**
  * The bookings in this booking's Group Trip whose own compliance may depend on it
- * (#3039, `INV-HOST-046`).
+ * (#3039, `INV-HOST-045`).
  *
  * `null` — not an empty plan — when there is nothing to do at all: the lodge is not
  * on `SAME_GROUP_TRIP`, or the booking is in no trip. The distinction is
@@ -2530,7 +2530,7 @@ function groupTripDependentFingerprint(
 
 /**
  * Freeze one Group Trip's membership, then prove the plan still describes it
- * (#3039; `INV-LOCK-002`, `INV-HOST-046`).
+ * (#3039; `INV-LOCK-002`, `INV-HOST-045`).
  *
  * WHY A RE-READ AND NOT JUST A LOCK. This is the issue's own reasoning and it is
  * worth keeping next to the code: rereading siblings WITHOUT a shared serialisation
@@ -2573,7 +2573,7 @@ async function lockAndVerifyGroupTripCoverageDependents(
 
 /**
  * Record the bounded re-evaluation this change owes the OTHER accounts in its Group
- * Trip (#3039; the epic's settled lifecycle rule, and `INV-HOST-046`).
+ * Trip (#3039; the epic's settled lifecycle rule, and `INV-HOST-045`).
  *
  * IT NEVER REFUSES, AND THAT IS THE RULE RATHER THAN AN IMPLEMENTATION CHOICE. The
  * owner's contract is explicit: if an actor's valid change strands another account's

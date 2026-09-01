@@ -1162,6 +1162,108 @@ describe("the same-owner refusal and the escalation seam (#2576 §6, §8, §9)",
   });
 });
 
+describe("no Booking writer can bypass Group Trip reconciliation (#3039)", () => {
+  const REVIEW_SERVICE = "src/lib/adult-member-hosting-review.ts";
+
+  /** The whole body of a top-level function, declaration to its column-0 brace. */
+  function topLevelFunctionBody(source: string, name: string): string | null {
+    const start = source.indexOf(`function ${name}(`);
+    if (start === -1) return null;
+    const closing = /\r?\n\}(?=\r?\n|$)/.exec(source.slice(start));
+    if (!closing) return null;
+    return source.slice(start, start + closing.index + closing[0].length);
+  }
+
+  it("puts the fan-out inside the two seams, so no writer has to know about trips", () => {
+    // THE CENSUS THAT MAKES THE REST FREE. Thirty-odd booking writers reach the
+    // hosting rule through exactly two seams — `reconcileAdultMemberHostingReviewWithSiblings`
+    // (reconcile, which can refuse) and `enqueueOwnHostingCoverageReevaluation`
+    // (enqueue, for the confirming paths that must not be refused). The Group Trip
+    // fan-out lives inside BOTH, so a writer that participates in the hosting rule
+    // participates in the fan-out automatically and a NEW writer cannot forget it.
+    //
+    // The alternative — a third seam each writer had to call — is the arrangement
+    // `INV-SSOT-001` refuses: thirty call sites to keep right, and the failure mode
+    // is a stranded booking on somebody else's account that nobody hears about.
+    const review = readRepoCode(REVIEW_SERVICE);
+    for (const seam of [
+      "reconcileAdultMemberHostingReviewWithSiblings",
+      "enqueueOwnHostingCoverageReevaluation",
+    ]) {
+      const body = topLevelFunctionBody(review, seam);
+      expect(body, seam).not.toBeNull();
+      expect(
+        body ?? "",
+        `INV-HOST-045 (docs/invariants/adult-member-hosting.md): ${seam} must run the Group Trip fan-out, or every writer reaching it silently skips the trip`,
+      ).toContain("settleGroupTripDependentCoverage(");
+      expect(
+        body ?? "",
+        `INV-LOCK-002 (docs/invariants/operations.md): ${seam} must take the per-trip key through the shared plan/lock/verify helper`,
+      ).toContain("lockAndVerifyGroupTripCoverageDependents(");
+    }
+  });
+
+  it("plans the trip's dependents BEFORE the participant fence, in both seams", () => {
+    // NOT A STYLE POINT, it is what makes the queue writes legal.
+    // `assertHostingCoverageQueueParticipantsLocked` demands that every owner an item
+    // names is in the runtime-issued proof, and the proof locks exactly the owners it
+    // was handed. So the sibling owners have to be discovered BEFORE the proof is
+    // acquired; planning after it produces a proof that cannot admit the items the
+    // fan-out is about to write, and every group edit would answer the stable retry
+    // 409 forever.
+    const review = readRepoCode(REVIEW_SERVICE);
+    for (const seam of [
+      "reconcileAdultMemberHostingReviewWithSiblings",
+      "enqueueOwnHostingCoverageReevaluation",
+    ]) {
+      const body = topLevelFunctionBody(review, seam) ?? "";
+      const plan = body.indexOf("planGroupTripCoverageDependents(");
+      const proof = body.indexOf("acquireOrValidateQueueParticipantProof(");
+      const key = body.indexOf("lockAndVerifyGroupTripCoverageDependents(");
+      expect(plan, seam).toBeGreaterThan(-1);
+      expect(proof, seam).toBeGreaterThan(-1);
+      expect(
+        plan,
+        `INV-HOST-045: ${seam} must plan the Group Trip dependents before the participant fence, or their owners are outside the proof`,
+      ).toBeLessThan(proof);
+      // ...and the key after the fence, keeping the documented
+      // participant-rows -> group -> owner order.
+      expect(key, seam).toBeGreaterThan(proof);
+    }
+  });
+
+  it("keeps the fan-out inside the engine, so nobody re-implements it", () => {
+    // Every one of these is engine-internal. A second implementation anywhere in
+    // `src/` would be a second definition of which bookings are in a trip and which
+    // are stranded — and the two would drift in the direction that loses a dependent.
+    for (const internal of [
+      "planGroupTripCoverageDependents",
+      "lockAndVerifyGroupTripCoverageDependents",
+      "settleGroupTripDependentCoverage",
+      "groupTripDependentFingerprint",
+    ]) {
+      expect(sourceFilesNaming(internal), internal).toEqual([REVIEW_SERVICE]);
+    }
+    // The per-trip key itself is minted in exactly one module, the same way the
+    // per-lodge and per-owner keys are (`INV-LOCK-002`).
+    expect(sourceFilesNaming("hosting-coverage-group")).toEqual([
+      "src/lib/adult-member-hosting-coverage-lock.ts",
+    ]);
+  });
+
+  it("resolves the sibling owners for the inline drain in exactly one place", () => {
+    // The post-commit half. `settleHostingCoverageAfterCommit` is the ONE caller, so
+    // the thirty-odd writers that already call it need no change at all — which is
+    // also why the resolution had to go into the wrapper rather than its parameters.
+    expect(
+      sourceFilesNaming("loadGroupTripCoverageDependentOwnerIds"),
+    ).toEqual([
+      "src/lib/adult-member-hosting-coverage-drain.ts",
+      "src/lib/adult-member-hosting-review.ts",
+    ]);
+  });
+});
+
 describe("the participant fence is gated on the hosting policy (#2623 T5)", () => {
   const REVIEW_SERVICE = "src/lib/adult-member-hosting-review.ts";
 

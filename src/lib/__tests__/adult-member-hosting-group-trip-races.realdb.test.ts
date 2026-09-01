@@ -673,7 +673,7 @@ let HOSTING_COVERAGE_RETRY_CODE: (typeof import("@/lib/adult-member-hosting-queu
       );
       expect(
         sibling,
-        "INV-HOST-046: the sibling owner's re-evaluation item must name the sibling as its own source",
+        "INV-HOST-045: the sibling owner's re-evaluation item must name the sibling as its own source",
       ).toEqual([
         {
           memberId: IDS.joinerMember,

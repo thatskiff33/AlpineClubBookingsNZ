@@ -1,7 +1,7 @@
 // #3039 (epic #2943) — reconciling the OTHER accounts in a Group Trip when a
 // change may have taken away the adult they were relying on.
 //
-// ENFORCES INV-HOST-046 (allow the actor's change, escalate the sibling, disclose
+// ENFORCES INV-HOST-045 (allow the actor's change, escalate the sibling, disclose
 // nothing) and INV-LOCK-002 (the per-trip key is taken before the sorted owner
 // keys) from `docs/invariants/`. Every assertion that carries one of those rules
 // repeats the id in its failure message, so whoever trips it is handed the rule
@@ -499,7 +499,7 @@ describe("the per-trip coverage lock (#3039, INV-LOCK-002)", () => {
   });
 });
 
-describe("the Group Trip reconciliation fan-out (#3039, INV-HOST-046)", () => {
+describe("the Group Trip reconciliation fan-out (#3039, INV-HOST-045)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -589,7 +589,7 @@ describe("the Group Trip reconciliation fan-out (#3039, INV-HOST-046)", () => {
     );
     expect(
       siblingItems.map((item) => [item.sourceBookingId, item.memberId]).sort(),
-      "INV-HOST-046 (docs/invariants/adult-member-hosting.md): every Group Trip sibling owner must receive its own bounded re-evaluation item",
+      "INV-HOST-045 (docs/invariants/adult-member-hosting.md): every Group Trip sibling owner must receive its own bounded re-evaluation item",
     ).toEqual([
       ["joiner-a", "joiner-member-joiner-a"],
       ["joiner-b", "joiner-member-joiner-b"],
@@ -645,7 +645,7 @@ describe("the Group Trip reconciliation fan-out (#3039, INV-HOST-046)", () => {
           db,
           actor,
         ),
-        "INV-HOST-046: a change that strands another account's Group Trip booking must proceed, not refuse",
+        "INV-HOST-045: a change that strands another account's Group Trip booking must proceed, not refuse",
       ).resolves.toBeDefined();
       expect(queued.length).toBeGreaterThan(0);
     }
@@ -676,7 +676,7 @@ describe("the Group Trip reconciliation fan-out (#3039, INV-HOST-046)", () => {
     ).rejects.toMatchObject({ code: HOSTING_COVERAGE_RETRY_CODE });
     expect(
       queued,
-      "INV-HOST-046: a sibling set that moved between the plan and the trip key must roll the change back, never enqueue against an unlocked owner",
+      "INV-HOST-045: a sibling set that moved between the plan and the trip key must roll the change back, never enqueue against an unlocked owner",
     ).toEqual([]);
   });
 
@@ -695,7 +695,7 @@ describe("the Group Trip reconciliation fan-out (#3039, INV-HOST-046)", () => {
     );
     expect(
       siblingSources(queued),
-      "INV-HOST-046: cancelling a Group Trip booking must still re-evaluate its siblings",
+      "INV-HOST-045: cancelling a Group Trip booking must still re-evaluate its siblings",
     ).toEqual(["joiner-a", "joiner-b"]);
   });
 
@@ -851,7 +851,7 @@ describe("what the actor is told, and what the owner queue resolves (#3039)", ()
     ]) {
       expect(
         serialised,
-        "INV-HOST-046: the actor's answer must not carry a sibling booking's identity or compliance state",
+        "INV-HOST-045: the actor's answer must not carry a sibling booking's identity or compliance state",
       ).not.toContain(secret);
     }
     // ...while the officer queue does get told.
@@ -881,7 +881,7 @@ describe("what the actor is told, and what the owner queue resolves (#3039)", ()
     ]) {
       expect(
         body,
-        `INV-HOST-046: the Group Trip fan-out must not ${
+        `INV-HOST-045: the Group Trip fan-out must not ${
           name === "throw" ? "throw at all" : `reach ${name}`
         } — it can refuse nothing`,
       ).not.toContain(name);
@@ -938,7 +938,7 @@ describe("hard delete and the SetNull path (#3039)", () => {
     expect(deletes).toContain("BookingStatus.CANCELLED");
     expect(
       deletes,
-      "INV-HOST-046: a booking-delete path that can delete a live booking would need a Group Trip reconciliation seam",
+      "INV-HOST-045: a booking-delete path that can delete a live booking would need a Group Trip reconciliation seam",
     ).not.toContain("BookingStatus.CONFIRMED");
     const status = readRepoFile("src/lib/booking-status.ts");
     const sourceStatuses = status.slice(
@@ -990,7 +990,7 @@ describe("the inline drain reaches the sibling owners (#3039)", () => {
     expect(body).toContain("loadGroupTripCoverageDependentOwnerIds(");
     expect(
       body,
-      "INV-HOST-046: the inline drain must claim the sibling owners' items, not only the written booking's owner",
+      "INV-HOST-045: the inline drain must claim the sibling owners' items, not only the written booking's owner",
     ).toContain("memberIds");
     const queue = readRepoCode("src/lib/adult-member-hosting-coverage-queue.ts");
     expect(queue).toContain("memberId: { in: [...new Set(options.memberIds)] }");

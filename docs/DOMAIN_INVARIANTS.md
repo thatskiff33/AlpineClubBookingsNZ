@@ -373,6 +373,7 @@ Prefix `INV-HOST`.
 | `INV-HOST-042` | Outside the all-or-none CHECK; NULL on a decided row means off |
 | `INV-HOST-043` | Group identity is the organiser/join columns, never parentBookingId or container status |
 | `INV-HOST-044` | Group Trip hosts are host-only, deduplicated against narrower scopes, and read under their own ceiling |
+| `INV-HOST-045` | Stranding another account's Group Trip booking allows the change, escalates the sibling, and discloses nothing |
 
 ### Booking requests
 

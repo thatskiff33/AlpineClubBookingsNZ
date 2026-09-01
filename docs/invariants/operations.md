@@ -125,6 +125,24 @@ rules first written here. #2765 extended it with the measured-audience half.
   cohort, not a general licence: a writer whose contention domain is genuinely
   scoped takes the narrow tier alone by default (`INV-LOCK-001`) and needs no
   decision at all.
+- **Among the adult-member-hosting coverage families, the per-TRIP key comes
+  before the per-OWNER key (#3039).** `hosting-coverage-group`, keyed on
+  `GroupBooking.id`, is acquired immediately above `hosting-coverage-owner`, so
+  the composed order at a booking writer is global → per-lodge → roster-date →
+  member-night → member-credit → queue-participant `Member` rows →
+  coverage-group → coverage-owner, with every path omitting the tiers it does not
+  use. Group first because the trip's membership is what decides WHICH owners the
+  reconciliation fan-out will name: the owner set is not known until the trip key
+  is held, so taking the owner keys first would take them against a sibling set
+  that could still move. The owner key was documented as "always last" before
+  this; it is now the second of the last two, and every statement of the old form
+  was rewritten rather than left standing, because an ordering claim that no
+  longer describes the tree is what makes the next lane compose a new key on the
+  wrong side. Both spellings of the trip key are minted only in
+  `adult-member-hosting-coverage-lock.ts`, and every acquisition tries it
+  fail-fast before taking it blocking — one transaction can legitimately discover
+  two trip keys (a booking in one trip whose same-owner dependent sits in
+  another), so sorting within a call cannot order keys discovered in two.
 
 ## INV-LOCK-003
 

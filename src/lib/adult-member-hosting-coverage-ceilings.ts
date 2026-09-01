@@ -189,7 +189,7 @@ export const SAME_GROUP_TRIP_COVERAGE_SOURCE_LIMIT = 100;
 /**
  * The ceiling on the Group Trip DEPENDENT read — the set #3039 fans out to when a
  * change to one booking may have removed the cover another booking in the trip was
- * relying on (`INV-HOST-046`).
+ * relying on (`INV-HOST-045`).
  *
  * THE SAME NUMBER AS ITS SOURCE SIBLING, AND THAT IS THE POINT rather than a
  * coincidence: it is the same population read from the other end. If a trip may
