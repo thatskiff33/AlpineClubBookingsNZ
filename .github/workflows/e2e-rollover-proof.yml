@@ -94,6 +94,22 @@ jobs:
       - name: Install Playwright browsers
         uses: ./.github/actions/playwright-browsers
 
+      # Counting and listing the specs below IMPORTS every spec file, and
+      # `e2e/pre-setup/` reaches `@prisma/client` at module scope through
+      # `e2e/helpers/setup-state.ts`. Without this the listing dies on an
+      # ungenerated client, which is a confusing way to fail a step that is only
+      # counting files (measured on dispatch 33565401713). The staging stack
+      # generates its own client again later against the real host URL; this one
+      # exists so the count can be taken before the clock moves.
+      #
+      # `prisma generate` reads the schema and writes a client. It opens NO
+      # connection, so the placeholder below is never dialled — it is there
+      # because the config loader insists the variable resolves to something.
+      - name: Generate the Prisma client, so the specs can be imported
+        env:
+          DATABASE_URL: postgresql://placeholder:placeholder@127.0.0.1:1/placeholder
+        run: npx prisma generate
+
       # ---------------------------------------------------------------------
       # Which specs this clock can honestly run — settled BEFORE it moves.
       #
@@ -113,21 +129,6 @@ jobs:
       # spec is excluded whole, so any non-payment test sharing its file goes
       # with it. `docs/TESTING.md` records both.
       # ---------------------------------------------------------------------
-      # Listing the tests IMPORTS every spec file, and `e2e/pre-setup/` reaches
-      # `@prisma/client` at module scope through `e2e/helpers/setup-state.ts`.
-      # Without this the listing dies on an ungenerated client, which is a
-      # confusing way to fail a step that is only counting files. The staging
-      # stack generates its own client again later against the real host URL;
-      # this one exists so the count can be taken before the clock moves.
-      #
-      # `prisma generate` reads the schema and writes a client. It opens NO
-      # connection, so the placeholder below is never dialled — it is there
-      # because the config loader insists the variable resolves to something.
-      - name: Generate the Prisma client, so the specs can be imported
-        env:
-          DATABASE_URL: postgresql://placeholder:placeholder@127.0.0.1:1/placeholder
-        run: npx prisma generate
-
       - name: Work out which specs this clock can honestly run
         env:
           RUN_SCOPE: ${{ inputs.scope }}
@@ -138,8 +139,15 @@ jobs:
           # written down as names is stale the first time somebody writes a
           # third one, and it goes stale silently — in the direction of a red
           # that the next reader has to diagnose from scratch.
+          #
+          # Anchored on the `from "…"` clause rather than on the bare string,
+          # because this repository documents its defects at the site it removed
+          # them and a raw-text scan misfires worst where the code is cleanest.
+          # A comment reading "see helpers/stripe for why" would otherwise hold
+          # an innocent spec out of the proof — and unlike a scanner that
+          # over-reports, this one over-EXCLUDES, which is the silent direction.
           mapfile -t EXCLUDED < <(
-            grep -rl 'helpers/stripe' e2e --include='*.spec.ts' \
+            grep -rlE 'from "[^"]*helpers/stripe"' e2e --include='*.spec.ts' \
               | sed 's#^e2e/##' | sort
           )
           mapfile -t ALL_SPECS < <(find e2e -name '*.spec.ts' | sed 's#^e2e/##' | sort)
