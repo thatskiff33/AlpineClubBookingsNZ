@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { checkLodgeAuth, kioskLodgeAuthErrorResponse, resolveKioskLodgeId } from "@/lib/lodge-auth";
 import { getBookingGuestDisplayAgeTier } from "@/lib/booking-guests";
+import { GROUP_TRIP_IDENTITY_SELECT } from "@/lib/group-trip-identity";
+import { attachKioskGroupTrip } from "@/lib/kiosk-group-trip";
+import { kioskGroupTripCapabilities } from "@/lib/kiosk-access";
 import { parseDateOnly } from "@/lib/date-only";
 import { lodgeNullTolerantScope } from "@/lib/lodges";
 import { OPERATIONALLY_PRESENT_GUEST_WHERE } from "@/lib/member-guest-consent";
@@ -163,6 +166,8 @@ export async function GET(
         },
       },
       member: { select: { firstName: true, lastName: true } },
+      // #3040: canonical Group Trip identity; tier split in `kiosk-group-trip.ts`.
+      ...GROUP_TRIP_IDENTITY_SELECT,
     },
     orderBy: { checkIn: "asc" },
   });
@@ -230,10 +235,15 @@ export async function GET(
     })
     .filter((booking) => booking.guests.length > 0);
 
+  // #3040: after the filter, so linkage is asked of the list the reader sees.
+  const withGroupTrip = await attachKioskGroupTrip(result, bookings, {
+    db: prisma, lodgeId, capabilities: kioskGroupTripCapabilities(tier),
+  });
+
   return NextResponse.json({
     date: dateStr,
     tier,
-    bookings: result,
+    bookings: withGroupTrip,
     totalGuests: result.reduce((sum, b) => sum + b.guests.length, 0),
   });
 }

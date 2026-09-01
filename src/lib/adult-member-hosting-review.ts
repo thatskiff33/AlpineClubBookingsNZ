@@ -390,11 +390,25 @@ function hostingSiblingWhere(
   return {
     OR: relatedIds,
     memberId: booking.memberId,
-    deletedAt: null,
-    status: { notIn: [BookingStatus.CANCELLED, BookingStatus.BUMPED] },
+    ...HOSTING_SIBLING_LIFECYCLE_WHERE,
     id: { not: booking.id },
   };
 }
+
+/**
+ * Which sibling rows are still real: the lifecycle half of the clause above,
+ * spelled once (`INV-SSOT-001`).
+ *
+ * Extracted because the batched split-pair reader below needs the identical
+ * filter over a different key set — `id IN (...)` rather than the parent/child
+ * `OR` — and two hand-written copies of "cancelled, bumped and soft-deleted are
+ * out" is exactly the arrangement where one of them later admits a cancelled
+ * booking as somebody's Group Trip.
+ */
+const HOSTING_SIBLING_LIFECYCLE_WHERE: Prisma.BookingWhereInput = {
+  deletedAt: null,
+  status: { notIn: [BookingStatus.CANCELLED, BookingStatus.BUMPED] },
+};
 
 async function loadSiblingHosts(
   booking: LoadedHostingBooking,
@@ -581,6 +595,70 @@ export async function readInheritedSplitPairGroupTrip(
   })) as SplitPairSiblingRow[];
   return inheritedSplitPairGroupTrip(booking, splitSiblings);
 }
+
+/**
+ * The same carve-out for MANY bookings at once, in ONE query (#3040).
+ *
+ * The singular reader above answers for one booking and issues one query, which
+ * is right for the paths that hold one booking. The kiosk day list holds up to a
+ * lodge-full of them, and calling the singular in a loop made a sequential N+1
+ * on a read the issue's own data contract bounds at "one indexed query over
+ * already-loaded Booking ids". Worse, it did so on a population that is NOT
+ * rare: a #738 split child exists wherever one party mixes member and non-member
+ * guests, and both halves appear on the same day list.
+ *
+ * A SECOND WAY IN, NOT A SECOND ANSWER, exactly as the singular is for the
+ * exception-request path. The verdict is still `inheritedSplitPairGroupTrip` —
+ * the one fence — and the lifecycle filter is still
+ * `HOSTING_SIBLING_LIFECYCLE_WHERE`. What differs is only the key: `id IN
+ * (parents)` instead of one booking's parent/child `OR`, with the same-member
+ * test applied to the loaded rows rather than to the query, because the batch
+ * spans many members and a per-member clause would rebuild the N queries this
+ * exists to remove.
+ *
+ * A booking with no `parentBookingId` asks nothing, so a day list with no split
+ * child issues no query at all.
+ */
+export async function readInheritedSplitPairGroupTrips(
+  db: Pick<AdultMemberHostingReadDb, "booking">,
+  bookings: readonly Pick<
+    LoadedHostingBooking,
+    "id" | "memberId" | "parentBookingId"
+  >[],
+): Promise<Map<string, GroupTripIdentity>> {
+  const children = bookings.filter((booking) => booking.parentBookingId);
+  const identities = new Map<string, GroupTripIdentity>();
+  if (children.length === 0) return identities;
+
+  const parentIds = [
+    ...new Set(children.map((child) => child.parentBookingId as string)),
+  ];
+  const parents = (await db.booking.findMany({
+    where: { ...HOSTING_SIBLING_LIFECYCLE_WHERE, id: { in: parentIds } },
+    select: BATCHED_SPLIT_PAIR_IDENTITY_SELECT,
+  })) as Array<SplitPairSiblingRow & { memberId: string }>;
+
+  for (const child of children) {
+    // The same-member filter the singular reader puts in its `where`. A joiner's
+    // booking hangs off the organiser's, so without it a Group Trip would leak
+    // across accounts through `parentBookingId` — the one column `INV-HOST-043`
+    // forbids as an identity source.
+    const inherited = inheritedSplitPairGroupTrip(
+      child,
+      parents.filter(
+        (parent) => parent.memberId === child.memberId && parent.id !== child.id,
+      ),
+    );
+    if (inherited) identities.set(child.id, inherited);
+  }
+  return identities;
+}
+
+/** `SPLIT_PAIR_IDENTITY_SELECT` plus the owner the batched reader filters on. */
+const BATCHED_SPLIT_PAIR_IDENTITY_SELECT = {
+  ...SPLIT_PAIR_IDENTITY_SELECT,
+  memberId: true,
+} as const;
 
 /**
  * THE cross-booking coverage source read — one body, parameterised by the

@@ -21,6 +21,70 @@ export interface KioskAccess {
   canCompleteChores: boolean;
 }
 
+/**
+ * Does this tier manage the roster? The `canManageRoster` flag's own rule,
+ * pulled out so it can be READ (#3040).
+ *
+ * `kioskGroupTripCapabilities` below documents that it grants to deliberately
+ * this same set of tiers. That claim sat in a docblock with nothing checking it,
+ * so the two could drift apart silently; `kiosk-group-trip-privacy.test.ts` now
+ * asserts the coincidence across all five tiers against this function.
+ *
+ * DELIBERATELY NOT CALLED by `kioskGroupTripCapabilities`. Sharing the expression
+ * would make the coincidence a dependency — granting cover source to a tier that
+ * does not manage the roster would then be impossible without untangling them
+ * first, which is the same mistake as collapsing the two capabilities into one
+ * flag. Two rules, asserted equal today.
+ */
+export function kioskTierManagesRoster(tier: KioskTier): boolean {
+  return tier === "admin" || tier === "hut-leader";
+}
+
+/**
+ * The two privileged Group Trip capabilities, carried separately because they
+ * ARE separate (#3040).
+ *
+ * The issue requires organiser context and adult-cover source to be
+ * "independently authorized", so they are two booleans, consulted at two
+ * places, gating two payload keys and two database reads. They are granted to
+ * the same tiers today; that is a policy coincidence and NOT a licence to
+ * collapse them into one flag, because collapsing them would make it impossible
+ * to grant one without the other later.
+ * `src/lib/__tests__/kiosk-group-trip-privacy.test.ts` drives all four
+ * combinations.
+ */
+export interface KioskGroupTripCapabilities {
+  organiser: boolean;
+  coverSource: boolean;
+}
+
+/**
+ * Which kiosk tiers hold the two privileged Group Trip capabilities.
+ *
+ * `admin` and `hut-leader` only — deliberately the same set as
+ * `canManageRoster`, the narrower of the two capability sets this module
+ * already grants, and NOT the wider `canMarkAttendance` set that includes
+ * `lodge`.
+ *
+ * The `lodge` tier is a shared, often unattended wall device: anybody who walks
+ * up to it is that tier. Marking a guest arrived from it is an operational
+ * action the club wants available that way; learning who organised another
+ * member's trip, or which account's adult supplies a booking's cover, is
+ * cross-account DISCLOSURE, and disclosure to an unattended screen is
+ * disclosure to everybody in the room. `staying-guest` and `none` hold neither
+ * capability — that is the ordinary tier the whole privacy split exists for,
+ * and it sees Group Trip LINKAGE only.
+ */
+export function kioskGroupTripCapabilities(
+  tier: KioskTier,
+): KioskGroupTripCapabilities {
+  const privileged = tier === "admin" || tier === "hut-leader";
+  // Two fields, written out, rather than one shared boolean reference. A single
+  // expression assigned to both would read as "these are the same capability",
+  // which is exactly what this must not become.
+  return { organiser: privileged, coverSource: privileged };
+}
+
 export type KioskAccessSubject = AccessRoleInput & {
   id: string;
 };
@@ -196,10 +260,15 @@ export async function getKioskAccessInfo(
   const tier = await getKioskAccessTier(user, date);
   const dateRange = await getKioskDateRange(user, date);
 
+  // The two Group Trip capabilities (#3040) are deliberately NOT reported here.
+  // No client reads them: the guest-list route applies them server-side and
+  // simply omits the keys a viewer may not have, so a flag telling the browser
+  // what it was not sent would be a field with no reader and one more place for
+  // the disclosure rule to drift from `kioskGroupTripCapabilities`.
   return {
     tier,
     dateRange,
-    canManageRoster: tier === "admin" || tier === "hut-leader",
+    canManageRoster: kioskTierManagesRoster(tier),
     canMarkAttendance: tier === "admin" || tier === "hut-leader" || tier === "lodge",
     canCompleteChores: tier === "admin" || tier === "hut-leader" || tier === "lodge",
   };
