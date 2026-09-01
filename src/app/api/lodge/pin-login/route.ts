@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { noStoreLodgeResponse } from "@/lib/lodge-cache-headers";
 import { z } from "zod";
 import {
   clearLodgePinFailures,
@@ -39,6 +40,11 @@ function rateLimitResponse(message: string, retryAfter: number) {
 }
 
 export async function POST(req: NextRequest) {
+  // #3228 — nothing here may be cached; `src/lib/lodge-cache-headers.ts` says why.
+  return noStoreLodgeResponse(await handlePost(req));
+}
+
+async function handlePost(req: NextRequest) {
   const session = await auth();
   if (!session?.user) {
     return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
