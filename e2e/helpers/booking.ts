@@ -140,7 +140,6 @@ export async function selectCalendarDay(page: Page, dateOnly: string): Promise<v
   // time bound at all (#2626, where one such click ate a whole 90 s test budget).
   await walkCalendarToMonth(page, {
     target: dateOnly,
-    direction: "next",
     maxHops: MAX_MONTH_HOPS,
     context:
       `stay day ${dateOnly}, walking forward from the run date's month — see ` +

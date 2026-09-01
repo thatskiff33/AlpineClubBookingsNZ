@@ -690,6 +690,41 @@ Nothing in a spec may hardcode a calendar date. Stay windows come from
 `lodgeNightLabel` / `calendarDayLabel`. A hardcoded date produces an assertion
 that can only pass in the week it was written.
 
+### 3a. The runner's day is not the club's day (issue #3221)
+
+Deriving a date *relatively* is only half of it. **Relative to what?** The
+Playwright process runs on the CI runner, whose zone is UTC. The app runs in the
+compose stack and derives its civil date through `club-time` from
+`ClubTimeSettings.timeZone`, which the E2E seed fills from `TZ=Pacific/Auckland`.
+For roughly the last twelve hours of every UTC day those two are on different
+days — and on the last day of a month, different **months**.
+
+So a spec never asks the machine what day it is:
+
+```ts
+// WRONG — the runner's calendar. Reads 31 August while the club is on 1 September.
+const d = new Date();
+const today = `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+
+// RIGHT — the club's calendar, one clock read for the whole suite.
+import { relDateOnly, shiftDateOnly } from "./helpers/fixtures";
+const today = relDateOnly(0);
+const inAFortnight = shiftDateOnly(today, 14);
+```
+
+`E2E_TODAY_NZ` / `relDateOnly` (in `prisma/e2e-fixtures.ts`, re-exported by
+`e2e/helpers/fixtures.ts`) is **the** clock read, frozen once per process and
+formatted through `Intl` with an explicit zone. `shiftDateOnly` is the only
+date arithmetic. `src/lib/__tests__/e2e-club-day-census.test.ts` sweeps `e2e/`
+and fails a second one; `docs/TESTING.md` → "The browser suite's clock
+discipline" is the full rule, and
+`.github/workflows/e2e-rollover-proof.yml` is how it is proved at a real
+boundary.
+
+This is what made `Playwright E2E` red on `main` at 2026-08-31T14:30Z — three
+attempts, three different target days, green on the same commit that morning —
+and it is the fifth clock-rollover incident in this repository.
+
 ### 4. A pointer drag that resolves one row off
 
 `DndContext` resolves the drop with `closestCenter`, and the rect it centres is
@@ -780,9 +815,16 @@ Two rules follow:
   click** you make on arrival with the same exported `CALENDAR_CLICK_TIMEOUT_MS`:
   arrival being asserted means the month is right, but a day that resolves and is
   not actionable — disabled as past, out of season, availability still loading —
-  is an unbounded click all over again. Pass `direction: "current"` when the
-  calendar should already be on the target month; the walk then clicks nothing and
-  asserts arrival only, because there is no control that keeps it where it is.
+  is an unbounded click all over again.
+
+  **It takes no `direction` — it reads the month the calendar is showing and
+  decides for itself (#3221).** It used to be told, by a caller that computed the
+  direction from the date it *believed* the calendar had opened on, and a caller
+  can only get that right by guessing the club's day (see 3a above). The argument
+  is gone rather than corrected. What went with it — the old assertion that the
+  caller's expectation was right — is now `maxHops`: pass the number of boundaries
+  you really expect to cross, because a loose bound silently absorbs a walk that
+  had no business hopping at all.
 
 Note how this one hid: it **passes in hosted CI**. The full suite runs
 `admin-override-dates.spec.ts` first, and that spec's `bookSelfToReviewStep`

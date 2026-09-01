@@ -2,6 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { stripComments } from "./support/strip-comments";
+
 /**
  * Census: there is ONE night-occupancy calculation, and it counts every term
  * (#2681).
@@ -242,23 +244,6 @@ function mentions(source: string, symbol: string): boolean {
   return new RegExp(`\\b${symbol}\\b`).test(source);
 }
 
-/**
- * Source with block and line comments removed.
- *
- * Every assertion in this file that asks "is this term still summed?" runs over
- * the stripped text. Otherwise a comment is enough to satisfy it: deleting
- * `+ reservationCount(night)` from the sum while leaving
- * `// reservationCount(night) is handled elsewhere now` would pass, which is
- * precisely the "documented but not enforced" failure this census exists to
- * stop. Stripping also frees the docblocks to name the helpers in prose without
- * moving any count.
- */
-function withoutComments(source: string): string {
-  return source
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/(^|[^:])\/\/[^\n]*/g, "$1");
-}
-
 /** The body of `computeNightOccupancy`, up to the next top-level declaration. */
 function computeNightOccupancySource(): string {
   const source = readRepoFile(CAPACITY_MODULE);
@@ -272,7 +257,7 @@ function computeNightOccupancySource(): string {
     source.indexOf("\n/**", start + 1),
   ].filter((index) => index > -1);
   const end = candidates.length > 0 ? Math.min(...candidates) : source.length;
-  return withoutComments(source.slice(start, end));
+  return stripComments(source.slice(start, end));
 }
 
 describe("#2681 night-occupancy census: one calculation, every term", () => {
@@ -292,7 +277,7 @@ describe("#2681 night-occupancy census: one calculation, every term", () => {
   it("sums each term exactly once in capacity.ts, so the four engines cannot diverge again", () => {
     // Comments stripped, so a docblock is free to name any of these in prose
     // without moving a count — and cannot satisfy one either.
-    const source = withoutComments(readRepoFile(CAPACITY_MODULE));
+    const source = stripComments(readRepoFile(CAPACITY_MODULE));
     const countOf = (needle: string) => source.split(needle).length - 1;
 
     // One call each. Before #2681 these read 4, 4 and 4: one per engine.

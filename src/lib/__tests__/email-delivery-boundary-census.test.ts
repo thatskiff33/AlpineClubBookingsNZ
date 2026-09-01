@@ -1,6 +1,9 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { ciEnvHeredocs } from "./helpers/ci-env-heredocs";
+
+import { stripComments } from "@/lib/__tests__/support/strip-comments";
 
 import {
   composeFiles,
@@ -119,8 +122,9 @@ function filesMatching(pattern: RegExp): string[] {
 }
 
 /**
- * TypeScript comments removed, so a census may match a BARE identifier without
- * being tripped by prose that merely mentions it.
+ * {@link filesMatching}, over code with its TypeScript comments removed, so a
+ * census may match a BARE identifier without being tripped by prose that merely
+ * mentions it.
  *
  * This is what lets the transport patterns widen from `createTransport\s*\(` to
  * the bare name (#3035 review). The narrow forms were evadable by an ordinary
@@ -130,17 +134,10 @@ function filesMatching(pattern: RegExp): string[] {
  * somebody wrote "we do not call createTransport here" in a docblock, which is a
  * false positive that teaches its reader to ignore the census.
  */
-function withoutTypeScriptComments(source: string): string {
-  return source
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/(^|[^:"'`\\])\/\/.*$/gm, "$1");
-}
-
-/** {@link filesMatching}, over code with comments stripped. */
 function codeFilesMatching(pattern: RegExp): string[] {
   return SCAN_ROOTS.flatMap((root) => walk(root))
     .filter((file) =>
-      pattern.test(withoutTypeScriptComments(readFileSync(file, "utf8"))),
+      pattern.test(stripComments(readFileSync(file, "utf8"))),
     )
     .map(repoRelative)
     .sort();
@@ -161,7 +158,7 @@ type ConfigBlock = { id: string; text: string };
  * mutually-exclusive rule in prose containing `USE_LOCAL_CAPTURE=true`, and a
  * guard satisfied by its own documentation is a guard that has stopped working.
  */
-function withoutComments(text: string): string {
+function withoutDotenvComments(text: string): string {
   return text
     .split(/\r?\n/)
     .filter((line) => !/^\s*#/.test(line))
@@ -191,25 +188,18 @@ function captureCandidateBlocks(): ConfigBlock[] {
 
   for (const name of readdirSync(root).sort()) {
     if (!/^\.env($|\.)/.test(name)) continue;
-    blocks.push({ id: name, text: withoutComments(readRepoFile(name)) });
+    blocks.push({ id: name, text: withoutDotenvComments(readRepoFile(name)) });
   }
 
-  const workflows = path.join(root, ".github", "workflows");
-  for (const name of readdirSync(workflows).sort()) {
-    if (!/\.ya?ml$/.test(name)) continue;
-    const text = readFileSync(path.join(workflows, name), "utf8");
-    const opener = /cat > ([^\s]+) <<'?EOF'?/g;
-    let match: RegExpExecArray | null;
-    let index = 0;
-    while ((match = opener.exec(text)) !== null) {
-      index += 1;
-      const rest = text.slice(match.index + match[0].length);
-      const end = rest.indexOf("\nEOF");
-      blocks.push({
-        id: `.github/workflows/${name} -> ${match[1]} #${index}`,
-        text: withoutComments(end === -1 ? rest : rest.slice(0, end)),
-      });
-    }
+  // The heredoc scan is `helpers/ci-env-heredocs.ts` — one home (#3221,
+  // `INV-SSOT`). This file used to carry a byte-identical copy, including the
+  // same terminator bug, and it now also reaches `scripts/ci/*.sh`, where the
+  // E2E stack's `.env.staging` writer moved.
+  for (const heredoc of ciEnvHeredocs(root)) {
+    blocks.push({
+      id: `${heredoc.file} -> ${heredoc.target} #${heredoc.index}`,
+      text: withoutDotenvComments(heredoc.body),
+    });
   }
 
   for (const file of composeFiles) {
@@ -220,11 +210,11 @@ function captureCandidateBlocks(): ConfigBlock[] {
       const end = rest.search(/\n[^\s#]/);
       blocks.push({
         id: `${file} -> x-app-environment`,
-        text: withoutComments(end === -1 ? rest : rest.slice(0, end)),
+        text: withoutDotenvComments(end === -1 ? rest : rest.slice(0, end)),
       });
     }
     for (const [service, body] of composeServices(file)) {
-      blocks.push({ id: `${file} -> ${service}`, text: withoutComments(body) });
+      blocks.push({ id: `${file} -> ${service}`, text: withoutDotenvComments(body) });
     }
   }
 
@@ -346,9 +336,11 @@ describe("email delivery boundary census (INV-CONFIG-004)", () => {
     expect(blocks.length, "no configuration blocks were discovered").toBeGreaterThan(6);
     expect(declaring).toEqual([
       ".env.staging.example",
-      ".github/workflows/e2e.yml -> .env.staging #1",
-      ".github/workflows/e2e.yml -> .env.staging #2",
+      // One writer, three callers, since #3221 — it was two copied workflow
+      // heredocs whose values were byte-identical while their comments had
+      // already drifted.
       "measurement/stack/docker-compose.measure.yml -> app",
+      'scripts/ci/write-e2e-staging-env.sh -> "$OUT" #1',
     ]);
 
     const offenders: string[] = [];
@@ -412,9 +404,7 @@ describe("email delivery boundary census (INV-CONFIG-004)", () => {
         they deliberately QUOTE the wrong sentence in order to explain why it is
         wrong.
       */
-      const stripped = source
-        .replace(/\/\*[\s\S]*?\*\//g, "")
-        .replace(/^[ \t]*\/\/.*$/gm, "");
+      const stripped = stripComments(source);
       const start = stripped.indexOf("function describeWithheldEmail");
       expect(start, `${file} should still define describeWithheldEmail`).toBeGreaterThan(-1);
       const rest = stripped.slice(start + 1);

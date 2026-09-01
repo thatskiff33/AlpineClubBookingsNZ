@@ -15,6 +15,7 @@ import {
   enqueueXeroSupplementaryInvoiceOperation,
   kickQueuedXeroOutboxOperationsIfConnected,
   recordSkippedXeroBookingInvoiceUpdateOperation,
+  type XeroSupplementaryInvoiceEnqueueOutcome,
 } from "@/lib/xero-operation-outbox";
 
 type XeroBookingEditFinancialAction =
@@ -52,6 +53,25 @@ export interface XeroBookingEditSettlementDecision {
   originalInvoiceUnsafe: boolean;
   financialAction: XeroBookingEditFinancialAction;
   primaryInvoiceUpdateAction: XeroBookingEditPrimaryUpdateAction;
+}
+
+/**
+ * What the classification decided, plus what the accounting ask actually did
+ * about it (#3170 fix round, F2).
+ *
+ * The decision alone says what this dispatcher INTENDED. `supplementaryInvoice`
+ * says what the enqueue then found under its per-anchor lock, which is the only
+ * moment anyone can tell whether a settled share reached the invoice: once the
+ * outbox worker has claimed the operation, `createXeroSupplementaryInvoice`
+ * overwrites its payload with the Xero invoice body, so the queued amount is
+ * gone. `"none"` on every branch that does not queue a supplementary invoice at
+ * all - including the deferred one below, where the invoice is waiting for an
+ * additional PaymentIntent that does not exist yet and no ask has been made to
+ * fall short of.
+ */
+export interface XeroBookingEditSettlementResult
+  extends XeroBookingEditSettlementDecision {
+  supplementaryInvoice: XeroSupplementaryInvoiceEnqueueOutcome;
 }
 
 export interface ClassifyXeroBookingEditSettlementInput {
@@ -183,8 +203,9 @@ async function kickQueuedXeroOperation(queued: { queueOperationId: string | null
 
 export async function queueXeroBookingEditSettlement(
   input: QueueXeroBookingEditSettlementInput
-) {
+): Promise<XeroBookingEditSettlementResult> {
   const decision = classifyXeroBookingEditSettlement(input);
+  let supplementaryInvoice: XeroSupplementaryInvoiceEnqueueOutcome = "none";
 
   if (decision.financialAction.type === "primary-invoice") {
     const queued = await enqueueXeroBookingInvoiceOperation(input.bookingId, {
@@ -196,6 +217,9 @@ export async function queueXeroBookingEditSettlement(
       input.requiresAdditionalStripePayment &&
       !decision.financialAction.waitForPaymentIntentId
     ) {
+      // Deferred, not short: nothing has been asked for yet, so there is no ask
+      // for a share to fall short of. The intent's recovery replay is what
+      // eventually mints one.
       logger.warn(
         {
           bookingId: input.bookingId,
@@ -220,6 +244,7 @@ export async function queueXeroBookingEditSettlement(
           recordPayment: decision.financialAction.recordPayment,
         }
       );
+      supplementaryInvoice = queued.outcome;
       await kickQueuedXeroOperation(queued);
     }
   } else if (decision.financialAction.type === "modification-credit-note") {
@@ -262,5 +287,132 @@ export async function queueXeroBookingEditSettlement(
     });
   }
 
-  return decision;
+  return { ...decision, supplementaryInvoice };
+}
+
+export interface CompleteDeferredXeroSupplementaryInvoiceInput {
+  bookingId: string;
+  /** The `BookingModification` the deferred invoice is anchored to. */
+  bookingModificationId: string;
+  /** The intent the recovery replay minted or found. Never null: see below. */
+  paymentIntentId: string;
+  /**
+   * The edit's signed components, as the `BookingModification` row holds them.
+   * The same pair the booking-vs-Xero repair pass reads when it offers to queue
+   * this very invoice by hand, so an automatic completion and an operator's
+   * repair bill the same figure.
+   */
+  priceDiffCents: number;
+  changeFeeCents: number;
+  /**
+   * THE EDIT'S answer, carried in - never a fresh read. See the convergence
+   * paragraph below for why the fresh read double-bills; the caller freezes this
+   * on the recovery row rather than deriving it when the cron runs.
+   */
+  hasIssuedXeroInvoice: boolean;
+  originalPaymentStatus?: PaymentStatus | string | null;
+  createdByMemberId?: string;
+}
+
+/**
+ * COMPLETE THE SUPPLEMENTARY INVOICE THE EDIT PATH DEFERRED (#3181, epic #2797).
+ *
+ * `queueXeroBookingEditSettlement` above SKIPS the supplementary invoice when an
+ * edit needs an additional Stripe payment whose intent could not be minted. That
+ * is right in the moment - there is nothing to invoice against yet - and its log
+ * line says the intent's recovery replay is what eventually mints one. It was
+ * half a sentence. The replay minted the intent and only ever ATTACHED it to an
+ * operation already waiting, and no operation was ever queued, because the inline
+ * attempt had skipped it. So the "later" never arrived: the member was asked for
+ * the money and could pay it, and the club's accounts never heard of the charge.
+ *
+ * This is the other half. The recovery worker calls it once the intent exists,
+ * and it re-enters the same dispatcher with the same inputs, differing only in
+ * that `additionalPaymentIntentId` is now set - so a recovered edit converges on
+ * exactly the arrangement a first-time-successful mint would have produced,
+ * rather than on a second arrangement that has to be kept in step with it.
+ *
+ * THAT CONVERGENCE IS ONLY TRUE BECAUSE `hasIssuedXeroInvoice` IS THE EDIT'S OWN
+ * ANSWER, and it is worth saying why, because the obvious implementation breaks
+ * it silently. Re-deriving the flag from the payment row at replay time is a
+ * DIFFERENT question - "does this booking have a primary invoice NOW" - and on a
+ * booking whose primary invoice was still queued when the edit committed the two
+ * answers differ. There the edit classified `none` and queued nothing, correctly,
+ * because the primary invoice reads the booking's CURRENT state when the worker
+ * finally mints it and therefore bills the edit itself. A replay deriving `true`
+ * would add a supplementary invoice on top of that, and the club would record
+ * more income than the booking is worth plus a receivable nobody owes. So the
+ * caller freezes the value on the recovery row (`PaymentRecoveryOperation.
+ * hadIssuedXeroInvoice`) at enqueue time and passes it back in here; this
+ * function never reads it for itself, and must not start.
+ *
+ * ONE INVOICE, AND THIS IS WHY IT CANNOT BE TWO. It never asks "does this edit
+ * already have an invoice going out". `enqueueXeroSupplementaryInvoiceOperation`
+ * answers that under its per-anchor advisory lock, refusing an anchor that
+ * carries an active `SUPPLEMENTARY_INVOICE` link and finding any
+ * PENDING/RUNNING/WAITING_PAYMENT operation for the same anchor. A caller-side
+ * copy of that question is exactly how two answers came to disagree in #3170, so
+ * there is not one here. It is also what makes this safe to run twice, which a
+ * replay path has to be.
+ *
+ * `requiresAdditionalStripePayment` is TRUE rather than a parameter, and the
+ * guarantee is the ARGUMENT IN HAND, not the row that led here. An earlier draft
+ * of this paragraph argued from the recovery row - "it exists only because a mint
+ * was attempted and failed" - and that is false: `syncEditFinancialReviewCharge
+ * Request` enqueues one when its `hasSucceededPayment`/`paymentId` guard answers
+ * false on the re-read, which returns BEFORE its `try` with nothing attempted at
+ * all. Reasoning from the row is therefore reasoning from something that is not
+ * true.
+ *
+ * The real guarantee is narrower and holds unconditionally: `paymentIntentId` is
+ * a REQUIRED, non-null argument, so by the time this function runs a live
+ * additional PaymentIntent exists for this edit. An additional intent IS the card
+ * route - it is minted only against a captured Stripe payment - so the invoice
+ * must wait for that intent to confirm and must record its payment when it does,
+ * which is exactly what this flag plus `additionalPaymentIntentId` select. A
+ * caller with no intent has nothing to pass and cannot reach here; where the
+ * inline dispatch instead queued an UNPAID invoice, this call finds that
+ * operation under the enqueue's per-anchor lock and queues nothing.
+ *
+ * THE DATE/NARRATION LEGS ARE DELIBERATELY FALSE. A failed mint does not stop the
+ * edit's own dispatch, which already ran them when the edit committed; claiming
+ * them again here would queue a second, redundant primary-invoice update. For
+ * the same reason no primary invoice is created when one is missing - the
+ * recovery of a collectable is not the place to decide a booking needs its first
+ * invoice.
+ *
+ * A NON-POSITIVE NET RETURNS BEFORE THE DISPATCHER, and that guard is the point
+ * of this paragraph rather than an aside. Handed a reduction, the dispatcher does
+ * not do nothing - it classifies `modification-credit-note` and queues a REFUND
+ * to the member. A function called "complete the deferred supplementary invoice",
+ * reached only from a replay whose whole subject is money the member OWES, must
+ * not be able to issue one; today no caller can reach it with a reduction, and
+ * making that unrepresentable is cheaper than a rule saying they must not
+ * (`INV-SSOT`). The refund paths are `queueXeroBookingEditSettlement`'s to
+ * dispatch, from the edit that decided on a refund.
+ *
+ * Returns the enqueue's own verdict so the caller can record a short ask. It
+ * does not catch: the caller owns what a failure to queue means for the recovery
+ * operation it is processing.
+ */
+export async function completeDeferredXeroSupplementaryInvoice(
+  input: CompleteDeferredXeroSupplementaryInvoiceInput
+): Promise<XeroSupplementaryInvoiceEnqueueOutcome> {
+  if (input.priceDiffCents + input.changeFeeCents <= 0) {
+    return "none";
+  }
+  const settled = await queueXeroBookingEditSettlement({
+    bookingId: input.bookingId,
+    bookingModificationId: input.bookingModificationId,
+    createdByMemberId: input.createdByMemberId,
+    hasIssuedXeroInvoice: input.hasIssuedXeroInvoice,
+    originalPaymentStatus: input.originalPaymentStatus,
+    priceDiffCents: input.priceDiffCents,
+    changeFeeCents: input.changeFeeCents,
+    datesChanged: false,
+    guestIdentityChanged: false,
+    requiresAdditionalStripePayment: true,
+    additionalPaymentIntentId: input.paymentIntentId,
+  });
+  return settled.supplementaryInvoice;
 }

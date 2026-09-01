@@ -48,6 +48,7 @@ import {
 } from "../email-message-notes";
 import { CLUB_NAME } from "@/config/club-identity";
 import { EMAIL_DEFAULT_LODGE_NAME } from "@/lib/email-message-settings";
+import { financialReviewNote } from "@/lib/booking-financial-review-copy";
 import { formatCents as formatMoneyCents } from "@/lib/utils";
 import { loadEmailMessageSettingsForLodge } from "@/lib/email-message-settings";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
@@ -1294,6 +1295,37 @@ export async function sendBookingModifiedEmail(params: {
   // admin-editable body, the edit preview and the booking's own history all
   // carry the identical wording.
   promoCoverageNote?: string | null;
+  /**
+   * #3179 (epic #2797): the promo-code change this edit saved WITHOUT, in the
+   * member's own words. Flows into the same shared change rows, so the HTML
+   * email, the admin-editable body, the edit panel and the booking's history
+   * all carry the identical sentence.
+   *
+   * OPTIONAL, unlike `financialReviewPending` below, and the difference is not
+   * an oversight. That flag is a question every caller of this sender can be in
+   * the middle of, so a default silently answered it wrongly for all of them.
+   * This one has exactly ONE caller that can ever have a value - the batch
+   * modify service - because it is the only edit door whose request schema
+   * accepts `promoCode`/`removePromoCode` at all. The guest-add, guest-remove
+   * and date-change senders have no promo input to drop, so asking them the
+   * question would be asking them to answer `null` by hand.
+   */
+  promoChangeNotAppliedNote?: string | null;
+  /**
+   * #3033 (epic #2797): this change saved and its refund or credit could not be
+   * worked out from stored history, so the club is deciding it.
+   *
+   * REQUIRED, with no default (#3032). It arrived optional-and-false so that
+   * #3033 could land the rendering without touching this lane's files, and that
+   * left the fix INERT: every production caller took the default, so the member
+   * whose adjustment was under review still got the silent money section the
+   * flag exists to prevent. A default here is not a convenience, it is a wrong
+   * answer that no call site has to look at - which is why this follows
+   * `confirmedAmountCents` and `assertNoPendingEditFinancialReview`'s
+   * `moneyAffecting` in making the compiler ask every caller the question
+   * instead (`INV-SSOT`, "prefer unrepresentable over policed").
+   */
+  financialReviewPending: boolean;
   // Booking's lodge (multi-lodge phase 8): see sendBookingConfirmedEmail.
   lodgeId?: string | null;
 }) {
@@ -1312,7 +1344,38 @@ export async function sendBookingModifiedEmail(params: {
   const paymentReferenceContext = params.paymentReference
     ? ` Payment reference: ${params.paymentReference}.`
     : "";
-  const paymentNote =
+  /*
+    #3033: TWO NOTES, COMPOSED. Kept in step with `bookingModifiedTemplate`,
+    which composes the same two for the same member out of the same shared
+    clauses — a change made to one and not the other means the HTML email and
+    the admin-editable body disagree about money.
+
+    Before this, an unresolved adjustment fell through all three settlement
+    tests (each of which requires a positive amount, which it has none of by
+    construction) and {{paymentNote}} rendered EMPTY — a "Booking Modified"
+    email with a silent money section, on precisely the change where the member
+    most needs to hear that a figure is coming.
+
+    The review note does not REPLACE a settlement note, because both can be
+    true: the same edit can surrender nights that cannot be valued while adding
+    nights that price normally, and suppressing the payment instruction would
+    tell a member to do nothing while money went uncollected. The three
+    settlement notes stay mutually exclusive among themselves, exactly as
+    before.
+
+    No amount is named in the review half, because there is not one to name. Not
+    zero, not the booking's new total, not an estimate.
+  */
+  const reviewNote = params.financialReviewPending
+    ? financialReviewNote({
+        // The two PAST-TENSE settlement arms below. "Nothing has been refunded
+        // or charged for it yet" cannot stand beside "a refund has been
+        // processed" in one email about one change.
+        moneyAlreadyMoved:
+          params.refundAmountCents > 0 || accountCreditAmountCents > 0,
+      })
+    : "";
+  const settlementNote =
     params.refundAmountCents > 0
       ? `A refund of ${formatMoneyCents(params.refundAmountCents)} has been processed to your original payment method.`
       : accountCreditAmountCents > 0
@@ -1322,6 +1385,7 @@ export async function sendBookingModifiedEmail(params: {
             ? `An additional Internet Banking payment of ${formatMoneyCents(params.additionalAmountCents)} is required.${xeroInvoicePaymentContext}${paymentReferenceContext} Xero reconciliation confirms the payment before it is treated as paid.`
             : `An additional payment of ${formatMoneyCents(params.additionalAmountCents)} is required.`
           : "";
+  const paymentNote = [reviewNote, settlementNote].filter(Boolean).join(" ");
 
   await sendEmail({
     to: params.email,

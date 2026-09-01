@@ -128,6 +128,7 @@ import {
 } from "@/lib/payment-link";
 
 import { divergentClubZone } from "./helpers/club-time-zone";
+import { blankLiterals } from "./support/strip-comments";
 
 /** A check-in comfortably after the repository's frozen `2026-07-01T00:00Z`. */
 const CHECK_IN_DAY = "2026-08-01";
@@ -425,11 +426,20 @@ describe("no zone read happens under a held lock", () => {
  * the line the call starts on.
  *
  * It is a paren matcher rather than a regex because the thing being asked is
- * "is this call INSIDE that callback", which no regex can answer. String
- * literals, template literals, regex-looking slashes and both comment forms are
- * skipped, so a `)` in a message or a `//` in a URL cannot end a span early and
- * let a real offender hide behind it. That mattered: these four files contain
- * plenty of both.
+ * "is this call INSIDE that callback", which no regex can answer. The comments
+ * and literals that would otherwise derail the match are handled by the shared
+ * offset-preserving blanker (#3180) before the walk begins, so a `)` in a
+ * message or a `//` in a URL still cannot end a span early — and a REGEX
+ * LITERAL, which the private copy this file used to carry did NOT recognise,
+ * cannot eat a line either. That mattered: these four files contain plenty of
+ * both.
+ *
+ * `blankLiterals` returns text of the SAME LENGTH, so every offset, column and
+ * line number below still points at what it did in the original. Reporting the
+ * blanked body rather than the raw one is deliberate: a
+ * `readClubTimeZoneOutsideRequest()` written in a DOCBLOCK inside a callback is
+ * prose about the rule, not a breach of it, and this repository documents each
+ * defect at the site where it removed it.
  *
  * A parser would be more correct still. This is deliberately not one — a
  * hand-rolled TypeScript parser in a guard is a larger liability than the
@@ -439,42 +449,21 @@ describe("no zone read happens under a held lock", () => {
 function transactionCallbackSpans(
   source: string,
 ): Array<{ line: number; body: string }> {
+  const masked = blankLiterals(source);
   const spans: Array<{ line: number; body: string }> = [];
   const NEEDLE = "$transaction(";
 
-  for (let at = source.indexOf(NEEDLE); at !== -1; at = source.indexOf(NEEDLE, at + 1)) {
+  for (
+    let at = masked.indexOf(NEEDLE);
+    at !== -1;
+    at = masked.indexOf(NEEDLE, at + 1)
+  ) {
     const open = at + NEEDLE.length - 1;
     let depth = 0;
-    let i = open;
     let end = -1;
 
-    for (; i < source.length; i++) {
-      const c = source[i];
-      const next = source[i + 1];
-
-      if (c === "/" && next === "/") {
-        const nl = source.indexOf("\n", i);
-        i = nl === -1 ? source.length : nl;
-        continue;
-      }
-      if (c === "/" && next === "*") {
-        const close = source.indexOf("*/", i + 2);
-        i = close === -1 ? source.length : close + 1;
-        continue;
-      }
-      if (c === '"' || c === "'" || c === "`") {
-        const quote = c;
-        i += 1;
-        for (; i < source.length; i++) {
-          if (source[i] === "\\") {
-            i += 1;
-            continue;
-          }
-          if (source[i] === quote) break;
-        }
-        continue;
-      }
-
+    for (let i = open; i < masked.length; i++) {
+      const c = masked[i];
       if (c === "(") depth += 1;
       else if (c === ")") {
         depth -= 1;
@@ -487,8 +476,8 @@ function transactionCallbackSpans(
 
     if (end === -1) continue;
     spans.push({
-      line: source.slice(0, at).split("\n").length,
-      body: source.slice(open + 1, end),
+      line: masked.slice(0, at).split("\n").length,
+      body: masked.slice(open + 1, end),
     });
   }
 
@@ -624,3 +613,4 @@ describe("every payment-link expiry goes through the one helper", () => {
     }
   });
 });
+

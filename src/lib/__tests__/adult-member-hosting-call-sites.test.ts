@@ -42,6 +42,8 @@ import { describe, expect, it } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
+import { stripComments } from "./support/strip-comments";
+
 function readRepoFile(relativePath: string): string {
   return readFileSync(path.resolve(process.cwd(), relativePath), "utf8");
 }
@@ -82,11 +84,7 @@ function readRepoCode(relativePath: string): string {
   const key = relativePath.split(path.sep).join("/");
   const cached = repoCodeCache.get(key);
   if (cached !== undefined) return cached;
-  const code = readRepoFile(relativePath)
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .split("\n")
-    .filter((line) => !/^\s*(\/\/|\*)/.test(line))
-    .join("\n");
+  const code = stripComments(readRepoFile(relativePath));
   repoCodeCache.set(key, code);
   return code;
 }

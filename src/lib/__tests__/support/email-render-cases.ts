@@ -730,9 +730,19 @@ const GENERATED_CASES: EmailRenderCase[] = [
   { id: "bookingModificationTypeLabel:minimal", fn: "bookingModificationTypeLabel", render: () =>
     bookingModificationTypeLabel("modificationType-1") },
   { id: "bookingModifiedTemplate:minimal", fn: "bookingModifiedTemplate", render: () =>
-    bookingModifiedTemplate({ firstName: "firstName-1", modificationType: "modificationType-2", oldCheckIn: new Date("2026-03-04T00:00:00.000Z"), oldCheckOut: new Date("2026-03-05T00:00:00.000Z"), newCheckIn: new Date("2026-03-06T00:00:00.000Z"), newCheckOut: new Date("2026-03-07T00:00:00.000Z"), oldGuestCount: 107, newGuestCount: 108, oldFinalPriceCents: 109, newFinalPriceCents: 110, changeFeeCents: 111, refundAmountCents: 112, additionalAmountCents: 113 }) },
+    bookingModifiedTemplate({ firstName: "firstName-1", modificationType: "modificationType-2", oldCheckIn: new Date("2026-03-04T00:00:00.000Z"), oldCheckOut: new Date("2026-03-05T00:00:00.000Z"), newCheckIn: new Date("2026-03-06T00:00:00.000Z"), newCheckOut: new Date("2026-03-07T00:00:00.000Z"), oldGuestCount: 107, newGuestCount: 108, oldFinalPriceCents: 109, newFinalPriceCents: 110, changeFeeCents: 111, refundAmountCents: 112, additionalAmountCents: 113, financialReviewPending: false }) },
   { id: "bookingModifiedTemplate:full", fn: "bookingModifiedTemplate", render: () =>
-    bookingModifiedTemplate({ firstName: "firstName-1", modificationType: "modificationType-2", oldCheckIn: new Date("2026-03-04T00:00:00.000Z"), oldCheckOut: new Date("2026-03-05T00:00:00.000Z"), newCheckIn: new Date("2026-03-06T00:00:00.000Z"), newCheckOut: new Date("2026-03-07T00:00:00.000Z"), oldGuestCount: 107, newGuestCount: 108, oldFinalPriceCents: 109, newFinalPriceCents: 110, changeFeeCents: 111, refundAmountCents: 112, accountCreditAmountCents: 113, additionalAmountCents: 114, additionalPaymentMethod: "INTERNET_BANKING", paymentReference: "paymentReference-15", xeroInvoiceNumber: "xeroInvoiceNumber-16", promoCoverageNote: "promoCoverageNote-17" }) },
+    bookingModifiedTemplate({ firstName: "firstName-1", modificationType: "modificationType-2", oldCheckIn: new Date("2026-03-04T00:00:00.000Z"), oldCheckOut: new Date("2026-03-05T00:00:00.000Z"), newCheckIn: new Date("2026-03-06T00:00:00.000Z"), newCheckOut: new Date("2026-03-07T00:00:00.000Z"), oldGuestCount: 107, newGuestCount: 108, oldFinalPriceCents: 109, newFinalPriceCents: 110, changeFeeCents: 111, refundAmountCents: 112, accountCreditAmountCents: 113, additionalAmountCents: 114, additionalPaymentMethod: "INTERNET_BANKING", paymentReference: "paymentReference-15", xeroInvoiceNumber: "xeroInvoiceNumber-16", promoCoverageNote: "promoCoverageNote-17", financialReviewPending: false }) },
+  /*
+    #3032: the review note is a rendered shape of its own, so it gets its own
+    pin rather than riding on `:full`. Deliberately COMPOSED - review pending
+    AND a positive internet-banking amount with its invoice and reference -
+    because that is the combination #3033's review found the email getting
+    wrong, and the one a member pays for if it silently regresses. `:minimal`
+    and `:full` keep `false`, so their pins are byte-identical to before.
+  */
+  { id: "bookingModifiedTemplate:financialReviewPendingWithPayment", fn: "bookingModifiedTemplate", render: () =>
+    bookingModifiedTemplate({ firstName: "firstName-1", modificationType: "modificationType-2", oldCheckIn: new Date("2026-03-04T00:00:00.000Z"), oldCheckOut: new Date("2026-03-05T00:00:00.000Z"), newCheckIn: new Date("2026-03-06T00:00:00.000Z"), newCheckOut: new Date("2026-03-07T00:00:00.000Z"), oldGuestCount: 107, newGuestCount: 108, oldFinalPriceCents: 109, newFinalPriceCents: 110, changeFeeCents: 111, refundAmountCents: 0, accountCreditAmountCents: 0, additionalAmountCents: 114, additionalPaymentMethod: "INTERNET_BANKING", paymentReference: "paymentReference-15", xeroInvoiceNumber: "xeroInvoiceNumber-16", promoCoverageNote: "promoCoverageNote-17", financialReviewPending: true }) },
   { id: "accountDeletionApprovedTemplate:minimal", fn: "accountDeletionApprovedTemplate", render: () =>
     accountDeletionApprovedTemplate("firstName-1") },
   { id: "familyGroupInvitationTemplate:minimal", fn: "familyGroupInvitationTemplate", render: () =>
