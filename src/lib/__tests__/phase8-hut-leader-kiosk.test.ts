@@ -1582,7 +1582,13 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
     expect(content).toContain("canMarkAttendance && guest.canMarkDeparted");
     expect(content).not.toContain("canMarkAttendance && guest.isArriving");
     expect(content).not.toContain("canMarkAttendance && guest.isDeparting");
-    expect(content).toContain("120000");
+    // #3228 — the two-minute refresh cadence is no longer a literal here. It
+    // moved into `@/lib/lodge-pin-session-timing`, which is where the PIN
+    // session's rules are stated AGAINST it ("background refreshes do not extend
+    // the session"), and both the page and the tests of that rule now read the
+    // same constant instead of keeping private copies.
+    expect(content).toContain("KIOSK_DATA_REFRESH_MS");
+    expect(content).not.toContain("120000");
     expect(content).toContain("Manage Today's Roster");
     expect(content).not.toContain("Manage Today&apos;s Roster");
   });

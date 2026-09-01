@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 
@@ -16,7 +17,9 @@ import {
   HUT_LEADER_PIN_INTERACTION_RENEW_INTERVAL_MS,
   HUT_LEADER_PIN_SESSION_IDLE_MINUTES,
   HUT_LEADER_PIN_SESSION_IDLE_SECONDS,
+  HUT_LEADER_PIN_SESSION_MAX_TOTAL_SECONDS,
 } from "../lodge-pin-session-timing";
+import { NO_STORE_HEADER_NAME, NO_STORE_HEADER_VALUE } from "../lodge-cache-headers";
 
 /**
  * #3228 — A HUT LEADER'S PIN MUST NOT LEAVE A SHARED SCREEN PRIVILEGED ALL DAY.
@@ -322,7 +325,13 @@ describe("hut-leader PIN session: background traffic does not extend it (#3228)"
 });
 
 describe("hut-leader PIN session: renewal is the server's decision (#3228)", () => {
-  it("slides the window forward when a person interacts, and the old cookie dies with it", async () => {
+  /*
+    RETITLED DELIBERATELY. This case proves the old cookie EXPIRES on its own
+    original schedule — it does not prove renewal invalidates it. Inside the
+    window both values are valid at once, which is inherent to a stateless signed
+    cookie and is what the absolute ceiling below exists to bound.
+  */
+  it("slides the window forward when a person interacts, and the old cookie still expires on its own original deadline", async () => {
     const session = issueSession();
     const { POST } = await import("@/app/api/lodge/pin-session/route");
     const { NextRequest } = await import("next/server");
@@ -499,6 +508,336 @@ describe("hut-leader PIN session: renewal is the server's decision (#3228)", () 
   });
 });
 
+/*
+  A SIGNED PAYLOAD OF OUR OWN CHOOSING.
+
+  The signing key is the auth secret this file sets, so the tests below can mint
+  cookies the production code would never produce — a missing `iat`, a deadline
+  of `Infinity` — and prove the reader refuses them. Anything arriving UNSIGNED is
+  already refused by the signature check, so forging with the key is the only way
+  to reach the payload validation at all.
+*/
+function signedCookie(payload: Record<string, unknown>): string {
+  const part = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+  const signature = createHmac("sha256", process.env.AUTH_SECRET as string)
+    .update(part)
+    .digest("base64url");
+  return `${part}.${signature}`;
+}
+
+function nowSeconds() {
+  return Math.floor(Date.now() / 1000);
+}
+
+/**
+ * The two fields a forged payload needs for the TIER check to accept it.
+ *
+ * `decodePayload` does not look at either, so a case that only asserts refusal
+ * can leave them out. A case asserting ACCEPTANCE cannot: the tier resolver
+ * re-derives the PIN version from the live hash and the binding from the
+ * signed-in account, and refuses a payload missing either. Derived here rather
+ * than exported from the module under test, so a change to how they are derived
+ * fails this file rather than being silently agreed with.
+ */
+function derivedPayloadFields(sessionUserId = LODGE_ACCOUNT_ID) {
+  const secret = process.env.AUTH_SECRET as string;
+  return {
+    pinVersion: createHmac("sha256", secret).update(pinHash).digest("base64url"),
+    sessionUserBinding: createHmac("sha256", secret)
+      .update(`lodge-pin-session:${sessionUserId}`)
+      .digest("base64url"),
+  };
+}
+
+/** The fields a valid payload carries, so a case can vary exactly one of them. */
+function validPayloadFields() {
+  return {
+    assignmentId: ASSIGNMENT_ID,
+    memberId: HUT_LEADER_ID,
+    exp: nowSeconds() + HUT_LEADER_PIN_SESSION_IDLE_SECONDS,
+    iat: nowSeconds(),
+  };
+}
+
+describe("hut-leader PIN session: the twelve-hour ceiling (#3228)", () => {
+  /*
+    WHY THE CEILING IS STILL HERE.
+
+    The idle window is the control against an UNATTENDED tablet, and it is no
+    control at all against a cookie somebody COPIED — a minute's work at the
+    device, from the same devtools panel that holds the sign-in cookie. Renewal
+    re-states the same authority with a later deadline and asks nothing else of
+    the caller, so without a ceiling a thief renews it from their own laptop for
+    as long as the assignment runs. Lock clears the cookie in the browser that
+    asked and revokes nothing server-side, so a copy taken beforehand is
+    untouched by it.
+
+    Twelve hours from the PIN entry is exactly the deadline the idle window
+    replaced, kept as a bound rather than dropped. It costs a genuine all-day
+    shift one extra PIN entry, and it is the only bound the copied-cookie and
+    injected-touch cases have at all.
+  */
+  it("cannot be renewed past twelve hours from the PIN entry, however busy the screen is", async () => {
+    let current = issueSession().value;
+    const minutes = HUT_LEADER_PIN_SESSION_MAX_TOTAL_SECONDS / 60;
+
+    // Somebody using the kiosk once a minute, all day. Every renewal succeeds...
+    let lastGoodMinute = 0;
+    for (let minute = 1; minute <= minutes + 30; minute += 1) {
+      atFrozenPlus(minute * 60_000);
+      const renewed = renewLodgePinSession(current);
+      if (renewed === null) break;
+      current = renewed.value;
+      lastGoodMinute = minute;
+    }
+
+    // ...until the ceiling, and not one minute past it.
+    expect(lastGoodMinute).toBe(minutes - 1);
+    atFrozenPlus(HUT_LEADER_PIN_SESSION_MAX_TOTAL_SECONDS * 1000);
+    expect(renewLodgePinSession(current)).toBeNull();
+    expect(await tierFor(current)).toBe("lodge");
+  });
+
+  it("clamps the cookie it issues to the ceiling, so `Max-Age` cannot outlast the session", () => {
+    const signedInAt = nowSeconds();
+
+    /*
+      Five minutes short of the ceiling, holding a session that is still inside
+      its idle window — which is what a hut leader who has been using the kiosk
+      all day is holding. Forged rather than reached by renewing 719 times, so the
+      case says what it is about; the sibling case above walks the whole day
+      minute by minute and is the one that proves the ceiling itself.
+    */
+    atFrozenPlus((HUT_LEADER_PIN_SESSION_MAX_TOTAL_SECONDS - 300) * 1000);
+    const nearCeiling = renewLodgePinSession(
+      signedCookie({
+        assignmentId: ASSIGNMENT_ID,
+        memberId: HUT_LEADER_ID,
+        iat: signedInAt,
+        exp: nowSeconds() + HUT_LEADER_PIN_SESSION_IDLE_SECONDS,
+      })
+    );
+    expect(nearCeiling).not.toBeNull();
+    const clamped = nearCeiling as NonNullable<typeof nearCeiling>;
+
+    expect(clamped.maxAge).toBeLessThanOrEqual(300);
+    expect(clamped.expiresAt.getTime()).toBe(
+      (signedInAt + HUT_LEADER_PIN_SESSION_MAX_TOTAL_SECONDS) * 1000
+    );
+
+    // ...and the control: an ordinary renewal well inside the ceiling still gets
+    // a full window, so the clamp is not quietly shortening every session.
+    atFrozenPlus(60_000);
+    const ordinary = renewLodgePinSession(issueSession().value);
+    expect((ordinary as NonNullable<typeof ordinary>).maxAge).toBe(
+      HUT_LEADER_PIN_SESSION_IDLE_SECONDS
+    );
+  });
+
+  it("refuses a session already past the ceiling even when its own deadline looks live", async () => {
+    /*
+      THE CASE THAT REACHES THE CEILING CHECK ITSELF, and it took a mutation probe
+      to find that nothing did.
+
+      Removing the ceiling comparison left every other case in this file green,
+      because the clamp above already stops a NORMAL renewal chain: the last
+      cookie issued carries `exp = iat + 12h`, so at the ceiling the ordinary
+      `exp <= now` check refuses it. Redundancy is fine; an untested branch is
+      not, and this one is the branch that holds when the clamp has not run —
+      which is any cookie that did not come out of `renewLodgePinSession`.
+
+      A second past the ceiling, with a deadline five minutes out. Only the
+      ceiling comparison refuses this: `exp` is in the future, and it is inside
+      the sanity bound (`iat + 12h + 10m`) as well.
+    */
+    const signedInAt = nowSeconds() - HUT_LEADER_PIN_SESSION_MAX_TOTAL_SECONDS - 1;
+    const pastTheCeiling = signedCookie({
+      assignmentId: ASSIGNMENT_ID,
+      memberId: HUT_LEADER_ID,
+      iat: signedInAt,
+      exp: nowSeconds() + 300,
+    });
+
+    expect(await tierFor(pastTheCeiling)).toBe("lodge");
+    expect(renewLodgePinSession(pastTheCeiling)).toBeNull();
+
+    // ...and the control, one second the OTHER side of it: the same shape, still
+    // inside twelve hours, is accepted. Without this the case above would pass
+    // for a reader that refused everything.
+    const insideTheCeiling = signedCookie({
+      assignmentId: ASSIGNMENT_ID,
+      memberId: HUT_LEADER_ID,
+      iat: signedInAt + 3,
+      exp: nowSeconds() + 300,
+      ...derivedPayloadFields(),
+    });
+    expect(await tierFor(insideTheCeiling)).toBe("hut-leader");
+    expect(renewLodgePinSession(insideTheCeiling)).not.toBeNull();
+  });
+
+  it("refuses a pre-#3228 cookie, which carried no `iat` and a twelve-hour deadline", async () => {
+    // The deploy that lands the idle window must also END the long-lived
+    // sessions already out there, rather than honouring them for the rest of
+    // their twelve hours. A hut leader mid-shift re-enters their PIN once.
+    const legacy = signedCookie({
+      assignmentId: ASSIGNMENT_ID,
+      memberId: HUT_LEADER_ID,
+      exp: nowSeconds() + 12 * 60 * 60,
+    });
+
+    expect(await tierFor(legacy)).toBe("lodge");
+    expect(renewLodgePinSession(legacy)).toBeNull();
+  });
+
+  it("refuses a deadline or a sign-in time that is not a real, reachable number", async () => {
+    // `1e999` parses out of JSON as `Infinity`, which passes `typeof === "number"`
+    // and never satisfies `exp <= now` — a deadline that can never pass. Not
+    // reachable while only the server holds the key; refused anyway, because this
+    // is a security boundary and the check costs nothing.
+    const fields = validPayloadFields();
+    const literalInfinite = signedCookie(
+      JSON.parse(
+        '{"assignmentId":"' +
+          ASSIGNMENT_ID +
+          '","memberId":"' +
+          HUT_LEADER_ID +
+          '","exp":1e999,"iat":' +
+          String(fields.iat) +
+          "}"
+      ) as Record<string, unknown>
+    );
+
+    expect(await tierFor(literalInfinite)).toBe("lodge");
+    expect(renewLodgePinSession(literalInfinite)).toBeNull();
+
+    // A fractional deadline is not a whole second either.
+    expect(
+      renewLodgePinSession(signedCookie({ ...fields, exp: fields.exp + 0.5 }))
+    ).toBeNull();
+    // An `iat` in the future would push the ceiling out with it.
+    expect(
+      renewLodgePinSession(
+        signedCookie({ ...fields, iat: fields.iat + 24 * 60 * 60 })
+      )
+    ).toBeNull();
+    // A deadline further out than one idle window past the ceiling cannot have
+    // come from either mint.
+    expect(
+      renewLodgePinSession(
+        signedCookie({
+          ...fields,
+          exp:
+            fields.iat +
+            HUT_LEADER_PIN_SESSION_MAX_TOTAL_SECONDS +
+            HUT_LEADER_PIN_SESSION_IDLE_SECONDS +
+            1,
+        })
+      )
+    ).toBeNull();
+    // ...and the control: the same payload, untouched, is accepted.
+    expect(renewLodgePinSession(signedCookie(fields))).not.toBeNull();
+  });
+});
+
+describe("hut-leader PIN session: renewal cannot be starved from the network (#3228)", () => {
+  it("is not refused because a shared address has spent a budget", async () => {
+    /*
+      THE LOCKOUT LEVER THIS REMOVED. `applyMemberScopedRateLimit` checks
+      `ip:<addr>` first, at ten times the per-account budget. That key is
+      reachable by any caller who gets past `checkLodgeAuth` with a tier — a
+      guest staying the night, on the lodge's own wifi — so ten requests a second
+      from a stranger's phone would answer the tablet's renewals with 429 until
+      the window rolled, and time a working hut leader out mid-roster. The signed
+      cookie plus the account key is the real control; the address key bought
+      nothing on a route that reads nothing and reveals nothing.
+
+      Driven by spending that exact key far past its limit and requiring the
+      tablet's renewal to succeed anyway. It fails the moment an address-keyed
+      check comes back.
+    */
+    const session = issueSession();
+    const { POST } = await import("@/app/api/lodge/pin-session/route");
+    const { NextRequest } = await import("next/server");
+
+    _testStore.set(rateLimiters.lodgePinSession.id + ":ip:10.0.0.30", {
+      count: rateLimiters.lodgePinSession.limit * 100,
+      resetAt: Date.now() + 60_000,
+    });
+
+    const res = await POST(
+      new NextRequest("http://localhost/api/lodge/pin-session", {
+        method: "POST",
+        headers: {
+          "x-forwarded-for": "10.0.0.30",
+          cookie: `${HUT_LEADER_PIN_SESSION_COOKIE}=${session.value}`,
+        },
+      })
+    );
+
+    expect(res.status).toBe(200);
+    expect(pinCookieFrom(res)).toBeTruthy();
+  });
+});
+
+describe("hut-leader PIN session: nothing the kiosk re-asks may be cached (#3228)", () => {
+  /*
+    The Lock guarantee is "end the session, then re-ask the same URLs and get an
+    ordinary lodge answer". A cached privileged payload defeats it silently: the
+    page has already dropped what it held, so it has nothing to compare against
+    and no reason to ask again for two minutes.
+  */
+  it("sets no-store on the access response, unlocked and locked alike", async () => {
+    const session = issueSession();
+    const { GET } = await import("@/app/api/lodge/access/route");
+    const { NextRequest } = await import("next/server");
+
+    const ask = () =>
+      GET(
+        new NextRequest("http://localhost/api/lodge/access?date=2026-04-13", {
+          headers: {
+            cookie: `${HUT_LEADER_PIN_SESSION_COOKIE}=${session.value}`,
+          },
+        })
+      );
+
+    const unlocked = await ask();
+    expect(unlocked.headers.get(NO_STORE_HEADER_NAME)).toBe(
+      NO_STORE_HEADER_VALUE
+    );
+
+    atFrozenPlus(IDLE_MS + 1000);
+    const locked = await ask();
+    expect(locked.headers.get(NO_STORE_HEADER_NAME)).toBe(NO_STORE_HEADER_VALUE);
+  });
+
+  it("sets no-store on every pin-session answer, including the refusals", async () => {
+    const session = issueSession();
+    const { POST, DELETE } = await import("@/app/api/lodge/pin-session/route");
+    const { NextRequest } = await import("next/server");
+
+    const request = (method: string, ip: string, withCookie = true) =>
+      new NextRequest("http://localhost/api/lodge/pin-session", {
+        method,
+        headers: {
+          "x-forwarded-for": ip,
+          ...(withCookie
+            ? { cookie: `${HUT_LEADER_PIN_SESSION_COOKIE}=${session.value}` }
+            : {}),
+        },
+      });
+
+    const renewed = await POST(request("POST", "10.0.0.31"));
+    const refused = await POST(request("POST", "10.0.0.32", false));
+    const locked = await DELETE(request("DELETE", "10.0.0.33"));
+
+    expect(renewed.status).toBe(200);
+    expect(refused.status).toBe(403);
+    for (const res of [renewed, refused, locked]) {
+      expect(res.headers.get(NO_STORE_HEADER_NAME)).toBe(NO_STORE_HEADER_VALUE);
+    }
+  });
+});
+
 describe("hut-leader PIN session: the Lock control (#3228)", () => {
   it("clears the cookie immediately, with the same name, path and attributes", async () => {
     const session = issueSession();
@@ -630,11 +969,188 @@ describe("hut-leader PIN session: only one place can extend it (#3228)", () => {
     expect(HUT_LEADER_PIN_INTERACTION_RENEW_INTERVAL_MS).toBeGreaterThan(0);
   });
 
+  /*
+    THE COOKIE-NAME CENSUS, and it is the one the helper census above does NOT
+    give you.
+
+    That census greps for CALLS of `setLodgePinSessionCookie` /
+    `clearLodgePinSessionCookie`, which proves where the helpers are used and
+    nothing more. A new route writing
+    `response.cookies.set({ name: HUT_LEADER_PIN_SESSION_COOKIE, ... })` by hand
+    matches neither pattern — and that is not a hypothetical shape, it is exactly
+    what `pin-login/route.ts` did until this change moved the attributes into the
+    session module. Naming the cookie is the real capability, so the cookie's
+    NAME is what gets counted.
+  */
+  it("names this cookie in exactly one module, so nobody can write it by hand", () => {
+    const namers = files
+      .filter(({ contents }) =>
+        /HUT_LEADER_PIN_SESSION_COOKIE|tac_hut_leader_pin_session/.test(contents)
+      )
+      .map(({ file }) => file)
+      .sort();
+
+    expect(namers).toEqual(["src/lib/lodge-pin-session.ts"]);
+    /*
+      And the count inside it, so a hand-written write ADDED to this file — past
+      the attribute helper, and past the reader — is a change somebody has to
+      explain rather than one that hides among the existing mentions.
+
+      FIVE matches across FOUR lines: the declaration line names the constant AND
+      the literal string, then the request reader, the attribute set, and the
+      `cookies()` reader name it once each. Both figures are asserted because
+      "five on four lines" is the fact that makes a sixth suspicious.
+    */
+    const own = files.find(
+      ({ file }) => file === "src/lib/lodge-pin-session.ts"
+    );
+    expect(own).toBeDefined();
+    const ownContents = (own as NonNullable<typeof own>).contents;
+    expect(
+      ownContents.match(/HUT_LEADER_PIN_SESSION_COOKIE|tac_hut_leader_pin_session/g)
+    ).toHaveLength(5);
+    expect(
+      ownContents
+        .split("\n")
+        .filter((line) =>
+          /HUT_LEADER_PIN_SESSION_COOKIE|tac_hut_leader_pin_session/.test(line)
+        )
+    ).toHaveLength(4);
+  });
+
+  it("lets only the sign-in route mint a fresh window", () => {
+    // `createLodgePinSessionWithVersion` is exported and starts a NEW ten-minute
+    // window from nothing, which is a bigger capability than renewal. A second
+    // caller of it is a second door, so it is censused alongside the writers.
+    const minters = files
+      .filter(({ contents }) =>
+        /\bcreateLodgePinSessionWithVersion\s*\(/.test(contents)
+      )
+      .map(({ file }) => file)
+      .sort();
+
+    expect(minters).toEqual([
+      "src/app/api/lodge/pin-login/route.ts",
+      "src/lib/lodge-pin-session.ts",
+    ]);
+  });
+
+  it("refuses caching on every lodge route the kiosk and the wizard re-ask", () => {
+    // The behavioural half is above (`access` and `pin-session`, including their
+    // refusals). This is the coverage half: the routes those two pages poll must
+    // all opt in, because the Lock guarantee is about re-asking THESE URLs.
+    const mustNotCache = [
+      "src/app/api/lodge/access/route.ts",
+      "src/app/api/lodge/week/route.ts",
+      "src/app/api/lodge/guests/[date]/route.ts",
+      "src/app/api/lodge/roster/[date]/route.ts",
+      "src/app/api/lodge/pin-login/route.ts",
+      "src/app/api/lodge/pin-session/route.ts",
+    ];
+
+    for (const route of mustNotCache) {
+      const entry = files.find(({ file }) => file === route);
+      expect(entry, route).toBeDefined();
+      expect(
+        /\bnoStoreLodgeResponse\s*\(/.test(
+          (entry as NonNullable<typeof entry>).contents
+        ),
+        route
+      ).toBe(true);
+    }
+  });
+
+  /*
+    THE MOUNT POINT, censused because the tests that prove renewal WORKS cannot
+    prove it is REACHED.
+
+    Both the kiosk suite and the roster-wizard suite mount
+    `LodgePinSessionProvider` themselves, which is what lets them drive the rule.
+    Neither can tell you whether the application mounts it, and that is exactly
+    the gap the first cut of #3228 fell into: renewal existed, worked, and was
+    wired to one of the two pages that needed it. So two things are asserted from
+    the tree instead.
+
+    One: the lodge-area layout — the only ancestor both pages share — mounts the
+    provider and reads the cookie to arm it. Two: the interaction event list is
+    declared in exactly one module, which rules out the "fix it by copying the
+    listener block into the other page" answer, and the second copy of the rule
+    that comes with it (`INV-SSOT`).
+  */
+  it("mounts the renewal once, from the layout both lodge pages share", () => {
+    const layout = files.find(
+      ({ file }) => file === "src/app/(lodge)/layout.tsx"
+    );
+    expect(layout).toBeDefined();
+    const contents = (layout as NonNullable<typeof layout>).contents;
+    expect(contents).toMatch(/<LodgePinSessionProvider\b/);
+    expect(contents).toMatch(/hasAnyActiveLodgePinSession\s*\(/);
+  });
+
+  it("declares what counts as a person being here in exactly one module", () => {
+    const declarers = files
+      .filter(({ contents }) =>
+        /"pointerdown"[\s\S]{0,120}"touchstart"/.test(contents)
+      )
+      .map(({ file }) => file)
+      .sort();
+
+    expect(declarers).toEqual(["src/components/lodge-pin-session.tsx"]);
+  });
+
   it("keeps the timing module free of imports, so a browser bundle can hold it", () => {
     const contents = readFileSync(
       path.join(SRC, "lib/lodge-pin-session-timing.ts"),
       "utf8"
     );
+    // `/^\s*import\s/m` alone was too narrow: it misses `require(`, a dynamic
+    // `import(`, and `export { x } from "./y"`, all of which pull a module graph
+    // in just as effectively.
     expect(contents).not.toMatch(/^\s*import\s/m);
+    expect(contents).not.toMatch(/\brequire\s*\(/);
+    expect(contents).not.toMatch(/\bimport\s*\(/);
+    expect(contents).not.toMatch(/^\s*export\s+[^;]*\bfrom\s/m);
+  });
+
+  it("states a whole number of minutes, so the on-screen copy cannot round a lie", () => {
+    // `Math.round(seconds / 60)` used to derive the copy, which prints
+    // "2 minutes" for a ninety-second window. The division is now exact, so the
+    // window itself has to be whole minutes — and a future change to it has to
+    // face the copy rather than silently mis-state it.
+    expect(Number.isInteger(HUT_LEADER_PIN_SESSION_IDLE_MINUTES)).toBe(true);
+    expect(HUT_LEADER_PIN_SESSION_IDLE_SECONDS % 60).toBe(0);
+  });
+
+  /*
+    THE OPERATOR-FACING NUMBER, in the documents a person actually reads.
+
+    The kiosk copy is derived from the constant, so it cannot drift. Hand-typed
+    prose can and does: change the window to fifteen minutes and every sentence
+    below would go on promising ten, with nothing failing. This does not check
+    that the prose is GOOD — only that the number in it is still the number the
+    server enforces, which is the half a test can hold.
+  */
+  it("keeps the guides and the attack-surface doc on the same number as the server", () => {
+    const docs = [
+      "docs/guides/lodge.md",
+      "docs/guides/hut-leaders.md",
+      "docs/SECURITY-ATTACK-SURFACE.md",
+      "docs/UX_FLOW_MAP.md",
+    ];
+    const expected = `${HUT_LEADER_PIN_SESSION_IDLE_MINUTES} minutes`;
+    const ceilingHours = HUT_LEADER_PIN_SESSION_MAX_TOTAL_SECONDS / 3600;
+
+    for (const doc of docs) {
+      const contents = readFileSync(path.join(process.cwd(), doc), "utf8");
+      expect(contents, doc).toContain(expected);
+    }
+
+    // The ceiling is stated in only one of them, and it is the one a reviewer
+    // goes to when asking "how long can this session possibly live?".
+    const attackSurface = readFileSync(
+      path.join(process.cwd(), "docs/SECURITY-ATTACK-SURFACE.md"),
+      "utf8"
+    );
+    expect(attackSurface).toContain(`${ceilingHours} hours`);
   });
 });
