@@ -16,6 +16,7 @@
  */
 import { Prisma } from "@prisma/client";
 
+import { createAuditLog, type AuditLogClient } from "@/lib/audit";
 import logger from "@/lib/logger";
 
 /**
@@ -189,7 +190,7 @@ export const SAME_GROUP_TRIP_COVERAGE_SOURCE_LIMIT = 100;
 /**
  * The ceiling on the Group Trip DEPENDENT read — the set #3039 fans out to when a
  * change to one booking may have removed the cover another booking in the trip was
- * relying on (`INV-HOST-045`).
+ * relying on (`INV-HOST-046`).
  *
  * THE SAME NUMBER AS ITS SOURCE SIBLING, AND THAT IS THE POINT rather than a
  * coincidence: it is the same population read from the other end. If a trip may
@@ -223,20 +224,43 @@ export const SAME_GROUP_TRIP_COVERAGE_SOURCE_LIMIT = 100;
 export const GROUP_TRIP_COVERAGE_DEPENDENT_LIMIT = 100;
 
 /**
- * Say so when the Group Trip dependent read filled its ceiling.
+ * Say so DURABLY when the Group Trip dependent read filled its ceiling.
  *
- * A separate function from `warnIfCoverageDependentCeilingBound` rather than a
- * parameterised one, because the two log lines have to name different limits and
- * different remedies: an operator reading "hit its ceiling" needs to know whether
- * to look at one member's bookings or at one trip's, and the same-owner message
- * would send them to the wrong place. The `groupBookingId` is in the payload for
- * the same reason `memberId` is in the other one — so the anomaly is findable.
+ * A LOG LINE IS NOT ENOUGH HERE, and that is the difference from
+ * `warnIfCoverageDependentCeilingBound` above. What a bound ceiling costs is stated
+ * in `GROUP_TRIP_COVERAGE_DEPENDENT_LIMIT`'s own docblock: a booking is missed
+ * ENTIRELY — no queue item, so no re-evaluation, no incident, no owner notice and
+ * nothing in the officer queue — for a booking that really was stranded. Handling a
+ * loss of that shape with a `logger.warn` means nobody finds out unless somebody is
+ * reading logs at the moment it happens, and this epic has twice had to come back and
+ * replace exactly that arrangement. So the bind is written as an audit row that an
+ * officer can find afterwards, in the same transaction as the change that caused it,
+ * alongside the log line for whoever IS watching.
+ *
+ * KEYED ON THE TRIP, because that is the subject. `GroupBooking` is the entity whose
+ * party grew past the bound; naming one booking would point an officer at whichever
+ * member happened to make the edit. `severity: "important"` rather than `"critical"`:
+ * the read is still correct for everything it returned and no booking is known to be
+ * uncovered, but somebody has to look — the club's remedy is to examine a very large
+ * trip, not to fix a fault.
+ *
+ * A separate function from its same-owner sibling rather than a parameterised one,
+ * because the two have to name different limits and different remedies: an operator
+ * reading "hit its ceiling" needs to know whether to look at one member's bookings or
+ * at one trip's, and the same-owner message would send them to the wrong place.
+ *
+ * CALLED ONCE PER TRIP PER TRANSACTION, from `settleGroupTripDependentCoverage`
+ * rather than from the dependent read itself. The read runs at least twice on the way
+ * to one fan-out — the unlocked plan and the under-lock re-verify — and again on the
+ * post-commit drain-scope read, so reporting at the read produced two or three
+ * warnings for one truncation and would have produced two or three audit rows.
  */
-export function warnIfGroupTripDependentCeilingBound(
+export async function reportGroupTripDependentCeilingBound(
   where: { groupBookingId: string; lodgeId: string },
   returned: number,
   read: string,
-): void {
+  db: AuditLogClient,
+): Promise<void> {
   if (returned < GROUP_TRIP_COVERAGE_DEPENDENT_LIMIT) return;
   logger.warn(
     {
@@ -246,6 +270,28 @@ export function warnIfGroupTripDependentCeilingBound(
       read,
     },
     "Group Trip hosting coverage dependent read hit its ceiling; a sibling booking may not have been re-evaluated",
+  );
+  await createAuditLog(
+    {
+      action: "booking.hostingCoverage.groupTripFanoutTruncated",
+      entityType: "GroupBooking",
+      entityId: where.groupBookingId,
+      actorMemberId: null,
+      category: "booking",
+      severity: "important",
+      outcome: "success",
+      summary:
+        `Group Trip adult-cover re-evaluation was truncated at ${GROUP_TRIP_COVERAGE_DEPENDENT_LIMIT} ` +
+        "bookings; any booking in this trip beyond that was not re-evaluated and may be " +
+        "left without its required adult",
+      metadata: {
+        lodgeId: where.lodgeId,
+        limit: GROUP_TRIP_COVERAGE_DEPENDENT_LIMIT,
+        returned,
+        read,
+      },
+    },
+    db,
   );
 }
 

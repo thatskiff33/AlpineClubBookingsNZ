@@ -1,7 +1,7 @@
 import { Prisma } from "@prisma/client";
 
 import {
-  coverageDependentEnvelopeWhere,
+  coverageDependentEnvelopeAcrossNightsWhere,
   coverageEnvelopeWhere,
   type CoverageEnvelopeBooking,
 } from "@/lib/adult-member-hosting-coverage-envelope";
@@ -272,11 +272,26 @@ export function groupTripCoverageSourceWhere(
  * #3039 has to re-evaluate when this booking's rows change.
  *
  * The mirror of the source builder: the same membership clause, wrapped in
- * `coverageDependentEnvelopeWhere` instead. That envelope carries the one
- * deliberate difference — the wider `ACTIVE_BOOKING_STATUSES` cohort, because the
- * rule judges a `PAYMENT_PENDING` or `AWAITING_REVIEW` booking too — and the
- * reasoning for it, and for the deliberately absent guest-composition filter.
- * Both are stated once, there.
+ * `coverageDependentEnvelopeAcrossNightsWhere` instead. That envelope carries two
+ * deliberate differences from the source side, both stated once at their
+ * definition: the wider `ACTIVE_BOOKING_STATUSES` cohort, because the rule judges a
+ * `PAYMENT_PENDING` or `AWAITING_REVIEW` booking too, and the deliberately absent
+ * guest-composition filter.
+ *
+ * AND ONE SUBTRACTION, WHICH IS THE THIRD: NO NIGHT-OVERLAP CLAUSE. Every writer
+ * calls the hosting seam AFTER it has written the booking, so `booking.checkIn` and
+ * `booking.checkOut` here are the POST-change dates. A dependent that was relying
+ * on this booking over its OLD dates would fail an overlap test against the new
+ * ones and drop out of the set entirely — no item, no re-evaluation, no incident,
+ * no notice — which is precisely the stranding this rule exists to catch. Booking A
+ * carries the trip's only qualifying adult on nights 10-11, booking B on another
+ * account is compliant only through this scope, A moves to nights 20-21, and B
+ * stays marked compliant forever. So the dependent direction asks "is this booking
+ * in the same trip at the same lodge and still live", and lets the per-dependent
+ * re-evaluation decide the rest. Over-wide costs one idempotent re-read per extra
+ * row; too narrow loses a stranded booking silently. The SOURCE builder above keeps
+ * its night clause, because it answers "who is covering these nights" about a
+ * booking whose dates are the ones being asked about.
  *
  * `AND`, NEVER A FLAT SPREAD, and here that is not hypothetical. The membership
  * clause IS an `OR` today, so spreading it beside an envelope that ever grew an
@@ -297,7 +312,7 @@ export function groupTripCoverageDependentWhere(
 ): Prisma.BookingWhereInput {
   return {
     AND: [
-      coverageDependentEnvelopeWhere(booking),
+      coverageDependentEnvelopeAcrossNightsWhere(booking),
       groupTripMembershipWhere(identity),
     ],
   };
