@@ -1034,6 +1034,11 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.toEqual({
       tier: "hut-leader",
+      // #3228 — this device is at the hut-leader tier BY PIN on a shared kiosk
+      // account, which is what the ten-minute idle window and the Lock control
+      // govern. A hut leader signed in with their own account reads the same
+      // tier and does not carry this flag.
+      pinSessionActive: true,
       dateRange: {
         minDate: "2026-04-12",
         maxDate: "2026-04-16",
