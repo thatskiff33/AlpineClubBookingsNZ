@@ -64,22 +64,58 @@ Now:
   tablet left on a bench goes back to the ordinary view whether anybody
   remembers it or not.
 - **Using it keeps it unlocked, for as long as you like.** Somebody working
-  through a full lodge is never dropped part-way. The clock only runs while
-  nobody is touching the screen.
+  through a full lodge is never dropped part-way — and that includes the
+  **chore-roster wizard**, which is a separate screen the kiosk sends you to.
+  Touching either screen counts, so a long stretch of setting up a roster keeps
+  the unlock alive right through to **Confirm Roster**.
 - **There is a Lock button** at the top of the kiosk whenever the controls are
   unlocked — *Lock hut leader controls*. Press it when you walk away and the
   tablet is an ordinary screen again immediately, without waiting for the 10
   minutes.
+- **It will not stay unlocked past 12 hours** from when the PIN was typed,
+  however busy the screen is. Somebody on an all-day shift types the PIN a second
+  time; see "Why there is also a 12-hour limit" below for what that is for.
 
 When the tablet locks itself, or you press Lock, it goes straight back to what a
 guest sees. Nothing a hut leader could see is left on the screen, and the PIN box
 comes back so the next person who needs it can unlock it again.
 
+**If you were part-way through setting up a roster** when the screen locked
+itself, nothing is lost. The wizard stays exactly where it was, with everybody
+still allocated to the chores you put them on, and asks for the PIN at the top of
+the page. Type it in and the step you were on carries straight on — including the
+save, if that is what you had just pressed.
+
+**If Lock does not work** — the tablet is off the network, say — the kiosk tells
+you rather than pretending. Either it shows *Failed to load data*, or a red
+*Could not lock the screen* banner stays next to the Lock button until a lock
+actually succeeds. Do not walk away from a screen showing either of those: the
+controls are still unlocked.
+
 **Two things worth telling your hut leaders.** The lock does not sign the tablet
 out — the kiosk account stays signed in, so the guest list and the week strip
 carry on showing as normal. And a hut leader who signs in on their own phone or
-laptop with their own account is not affected by any of this: the 10 minutes and
-the Lock button are about the shared tablet only.
+laptop with their own account is not affected by any of this: the 10 minutes, the
+12-hour limit and the Lock button are about the shared tablet only.
+
+#### Why there is also a 12-hour limit
+
+The 10 minutes handles the situation this was really about: a tablet left on a
+bench with nobody near it. It cannot help with two others, and the 12-hour limit
+is the answer to both.
+
+**A screen that touches itself.** Some tablets are set up with software that taps
+the screen periodically to stop it sleeping, and a wet or failing touchscreen does
+the same thing by accident. The tablet cannot tell those taps from a person's, so
+on such a device the 10 minutes would never run out. If you run anti-sleep
+software on a lodge tablet, **assume the unlock lasts the full 12 hours** and use
+the Lock button rather than the timer.
+
+**A copied unlock.** Somebody with a minute alone at the tablet can copy the
+unlock out of the browser and use it from their own laptop, and pressing Lock on
+the tablet does not reach that copy — it only clears the tablet's own. The
+12-hour limit is what ends it. If you think that has happened, changing the hut
+leader's PIN in Admin ends every unlock made with the old one immediately.
 
 ### What "here today" means on the kiosk
 

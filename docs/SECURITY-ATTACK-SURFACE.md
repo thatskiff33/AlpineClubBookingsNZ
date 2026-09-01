@@ -549,31 +549,71 @@ without an accountable member.
 Current mitigations are `checkLodgeAuth()`, active-account checks, date scoping,
 PIN rate limits, and audit logs for operational changes.
 
-**Session lifetime, since #3228.** The PIN session cookie carries a deadline of
-**ten minutes** inside its HMAC-signed payload, and that deadline is measured
-from the last time a PERSON touched the kiosk — not from sign-in, and not from
-the last request. Renewal exists in exactly one place, `POST
-/api/lodge/pin-session`, which the kiosk calls on a trusted `pointerdown`,
-`keydown`, `touchstart` or `wheel` and never on its own two-minute data refresh;
-a source census fails any other module that writes or slides this cookie.
-`DELETE /api/lodge/pin-session` is the kiosk's **Lock** control and clears it at
-once. Renewal cannot resurrect an expired session, cannot change whose session it
-is (the assignment, member, PIN version and account binding are carried through
-verbatim and re-verified against live state on the next request), and requires
-the cookie it renews — which is `SameSite=Lax`, so a cross-site POST arrives
-without it.
+**Session lifetime, since #3228.** Two deadlines, and both are inside the
+HMAC-signed cookie payload so the browser can edit neither.
 
-It replaces a **twelve-hour** deadline that nothing in the tree could end early:
-one PIN entry left a shared wall screen privileged for the rest of the day.
+- **An idle window of 10 minutes** (`exp`), measured from the last time a PERSON
+  touched the screen — not from sign-in, and not from the last request. Renewal
+  exists in exactly one place, `POST /api/lodge/pin-session`, called on a trusted
+  `pointerdown`, `keydown`, `touchstart` or `wheel` and never on either lodge
+  page's own data traffic; a source census fails any other module that writes,
+  names or slides this cookie. Renewal cannot resurrect an expired session,
+  cannot change whose session it is (the assignment, member, PIN version and
+  account binding are carried through verbatim and re-verified against live state
+  on the next request), and requires the cookie it renews — which is
+  `SameSite=Lax`, so a cross-site POST arrives without it.
+- **An absolute ceiling of 12 hours** (`iat`), which no amount of renewal moves,
+  because `iat` records the PIN entry and is carried through unchanged. Past it
+  both the reader and the renewal endpoint refuse, and the last cookie issued has
+  its own `Max-Age` clamped to it. **This is the twelve-hour deadline the idle
+  window replaced, KEPT as a bound rather than dropped** — see "What it does not
+  prevent" below for the case it is the only bound on. A genuine all-day shift
+  re-enters a six-digit PIN once.
 
-**What it does not prevent.** Somebody standing at an unlocked tablet can keep
-the session open — by tapping the screen every few minutes, or from the
-browser's console by calling the renewal endpoint on a timer. No signal a
-browser sends about its own user can be authenticated against the person holding
-the device, so the controls against that case are the Lock button, the ten-minute
-window, and physical control of the room; not the interaction signal. What the
-window does close is the unattended case, which is the one this surface actually
-suffers from.
+A cookie minted before #3228 carries no `iat` and is refused outright, so the
+deploy that lands the idle window also ends the long-lived sessions already out
+there rather than honouring the rest of their twelve hours.
+
+Renewal is rate-limited on the **kiosk account** and deliberately has no
+shared-address backstop: every tablet at a lodge is signed in as that one
+account, and an address-keyed budget on this route is reachable by anyone else on
+the lodge's connection — a staying guest included — which makes it a way to time
+a working hut leader out rather than a protection. The route reads nothing and
+reveals nothing, and refuses anything not already holding a valid signed session,
+so the account key is the whole of what that limiter was for.
+
+`DELETE /api/lodge/pin-session` is the kiosk's **Lock** control. **It clears the
+cookie in the browser that asked, and revokes nothing server-side** — there is no
+session store to revoke against. So Lock ends the session on that tablet and has
+no effect on a copy of the cookie taken beforehand; the 12-hour ceiling is what
+bounds that copy.
+
+Every response these routes give carries `Cache-Control: no-store`
+(`src/lib/lodge-cache-headers.ts`), on the same reasoning as the display feed
+(#176) plus one specific to Lock: its guarantee is "end the session, then re-ask
+the same URLs and get an ordinary lodge answer", and a cached privileged payload
+would defeat that silently.
+
+**What it does not prevent.** Three cases, all of them about a device somebody
+else is holding or standing at:
+
+- **A person at an unlocked tablet** can keep the session open by tapping the
+  screen every few minutes, or from the browser's console by calling the renewal
+  endpoint on a timer.
+- **A screen that touches itself.** Kiosk anti-sleep tooling that injects taps at
+  the OS level, condensation, and a failing digitiser all produce **trusted**
+  touch events, and there is no property of a `touchstart` that distinguishes one
+  from a finger. On such a device the idle window never closes on its own.
+- **A copied cookie.** The value sits in the same devtools panel as the sign-in
+  cookie, so lifting it is a minute's work at the tablet, and renewal asks the
+  holder for nothing but the cookie itself.
+
+No signal a browser sends about its own user can be authenticated against the
+person holding the device, so the controls are the Lock button, the ten-minute
+window, physical control of the room — and, for the second and third cases, the
+12-hour ceiling, which is the only thing that ends a session nobody chooses to
+end. What the idle window closes outright is the unattended case, which is the
+one this surface actually suffers from.
 
 ### Cron Caller
 
@@ -858,10 +898,12 @@ Verified controls already present and intentionally preserved:
 Residual risks to keep visible:
 
 - Lodge and admin shared-device sessions still depend on physical device
-  control, sign-out habits, and the existing 12-hour hut-leader PIN session
-  lifetime. **Superseded in part by #3228**, which replaced that twelve-hour
-  lifetime with ten minutes of inactivity plus a Lock control; the physical
-  device-control half of this risk stands.
+  control and sign-out habits. **Reduced but not removed by #3228**, which put a
+  10-minute idle window and a Lock control in front of the hut-leader PIN
+  session's 12-hour ceiling. What stands: the physical device-control half; a
+  session held open by injected taps or by somebody at the screen, bounded only
+  by the 12-hour ceiling; and a cookie copied off the device, which Lock cannot
+  revoke because there is no server-side session to revoke.
 - Adult phone numbers remain available to operational lodge tiers because the
   current kiosk workflow uses them for same-day arrival/departure coordination.
 - The legacy dashboard export remains a bearer-token bridge for compatibility;

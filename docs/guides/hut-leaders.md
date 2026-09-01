@@ -128,7 +128,10 @@ row, so you never have to delete an assignment to change its bed:
 
 > The PIN unlocks the shared kiosk for **10 minutes of no use** at a time, and
 > there is a **Lock** button on the kiosk for walking away sooner. Continuous use
-> keeps it unlocked, so nobody is dropped mid-roster. See
+> keeps it unlocked — including all the way through the chore-roster wizard, so
+> nobody is dropped mid-roster and nothing part-finished is lost. It will not
+> stay unlocked past 12 hours from when the PIN was typed. Changing a PIN here
+> ends every unlock made with the old one at once. See
 > [Lodge Kiosk → When a hut leader unlocks the kiosk with their PIN](lodge.md#when-a-hut-leader-unlocks-the-kiosk-with-their-pin).
 
 ## Settings reference
