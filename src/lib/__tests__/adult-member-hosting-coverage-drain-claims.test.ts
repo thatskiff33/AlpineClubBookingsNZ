@@ -74,7 +74,10 @@ vi.mock("@/lib/logger", () => ({
 
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 
-import { drainHostingCoverageReevaluations } from "@/lib/adult-member-hosting-coverage-drain";
+import {
+  drainHostingCoverageReevaluations,
+  settleHostingCoverageAfterCommit,
+} from "@/lib/adult-member-hosting-coverage-drain";
 
 const CLAIMED_ITEM = {
   id: "queue-1",
@@ -106,6 +109,17 @@ function makeDb() {
     $transaction: vi.fn(async (callback: (tx: unknown) => Promise<unknown>) =>
       callback(tx),
     ),
+  } as any;
+}
+
+/**
+ * The same double plus the one read `settleHostingCoverageAfterCommit` does before
+ * it claims: resolving the written booking to its owner and lodge.
+ */
+function makeCommitDb(booking: { memberId: string; lodgeId: string } | null) {
+  return {
+    ...makeDb(),
+    booking: { findUnique: vi.fn(async () => booking) },
   } as any;
 }
 
@@ -388,6 +402,72 @@ describe("hosting coverage drain claim fences (#2596)", () => {
       expect.anything(),
     );
     expect(mocks.resolveIncidents).not.toHaveBeenCalled();
+  });
+
+  it("claims the Group Trip sibling owners' items inline, not only the writer's (#3039)", async () => {
+    // THE DEFECT THIS CLOSES, and it is behavioural rather than structural because a
+    // source-text assertion cannot see it: `settleHostingCoverageAfterCommit` resolved
+    // the written booking to ONE owner and narrowed the claim to it, so every item the
+    // Group Trip fan-out had just written for ANOTHER account was skipped and waited
+    // up to three hours for the cron. Removing the widening leaves the file's
+    // `const memberIds = ...` line in place, so a test that merely greps for the name
+    // passes — which is exactly what happened before this test existed.
+    // The drain claims one row at a time, so the caller's bound shows up as HOW MANY
+    // claims it makes rather than as a `limit` on any single call. An endless supply
+    // of distinct items makes that observable.
+    let serial = 0;
+    mocks.claim.mockReset().mockImplementation(async () => {
+      serial += 1;
+      return [{ ...CLAIMED_ITEM, id: `queue-${serial}`, claimToken: `token-${serial}` }];
+    });
+    mocks.loadClaimed.mockImplementation(async (claim: { id: string; claimToken: string }) => ({
+      ...CLAIMED_ITEM,
+      ...claim,
+    }));
+    mocks.loadGroupOwners.mockResolvedValue(["sibling-owner-1", "sibling-owner-2"]);
+
+    const result = await settleHostingCoverageAfterCommit(
+      { bookingId: "booking-1" },
+      makeCommitDb({ memberId: "owner-1", lodgeId: "lodge-a" }),
+    );
+
+    expect(mocks.claim).toHaveBeenCalled();
+    const [options] = mocks.claim.mock.calls[0] as [Record<string, unknown>];
+    expect(
+      [...((options.memberIds as string[] | undefined) ?? [])].sort(),
+      "INV-HOST-045 (docs/invariants/adult-member-hosting.md): the inline drain must claim the sibling owners' items, not only the written booking's owner",
+    ).toEqual(["owner-1", "sibling-owner-1", "sibling-owner-2"]);
+    expect(options.memberId).toBeUndefined();
+    expect(options.lodgeId).toBe("lodge-a");
+    // The larger inline bound, because this commit legitimately created more than one
+    // item. A trip larger than this leaves its tail to the cron.
+    expect(result.claimed).toBe(10);
+  });
+
+  it("leaves the single-owner claim exactly as it was when no trip is involved", async () => {
+    // The ordinary case at every club, including one that HAS enabled the scope for a
+    // booking in no trip: one owner, one lodge, the original small bound. This is the
+    // half that says the widening is not a behaviour change for anybody else.
+    let serial = 0;
+    mocks.claim.mockReset().mockImplementation(async () => {
+      serial += 1;
+      return [{ ...CLAIMED_ITEM, id: `queue-${serial}`, claimToken: `token-${serial}` }];
+    });
+    mocks.loadClaimed.mockImplementation(async (claim: { id: string; claimToken: string }) => ({
+      ...CLAIMED_ITEM,
+      ...claim,
+    }));
+    mocks.loadGroupOwners.mockResolvedValue([]);
+
+    const result = await settleHostingCoverageAfterCommit(
+      { bookingId: "booking-1" },
+      makeCommitDb({ memberId: "owner-1", lodgeId: "lodge-a" }),
+    );
+
+    const [options] = mocks.claim.mock.calls[0] as [Record<string, unknown>];
+    expect(options.memberIds).toBeUndefined();
+    expect(options.memberId).toBe("owner-1");
+    expect(result.claimed).toBe(5);
   });
 
   it("reconciles the source's #738 split half too, on the scope-off branch (#3039)", async () => {
