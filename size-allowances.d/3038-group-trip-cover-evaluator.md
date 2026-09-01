@@ -1,8 +1,22 @@
 # File-size allowances for #3038 (epic #2943)
 
 file: src/lib/adult-member-hosting-review.ts
-lines: 2979
-reason: TWO CHILDREN OF ONE EPIC, ONE DECLARATION. #3037 added a single line
+lines: 3057
+reason: THREE CHILDREN OF ONE EPIC, ONE DECLARATION. Every child of #2943 diffs
+  against `main` until the epic merges, so all of their allowances are live at
+  once and the gate rightly refuses two numbers for one file — which is why this
+  single entry carries #3037's, #3038's and now #3040's growth, and why the
+  number moved from 2979 to 3057 in #3040's pull request rather than in a
+  fragment of its own. #3040 added `readInheritedSplitPairGroupTrips`, the
+  batched form of the split-pair carve-out: the kiosk day list holds a lodge-full
+  of bookings and calling the singular reader once per card was a sequential N+1
+  the kiosk issue forbids by name. It belongs HERE and nowhere else, because the
+  verdict it applies is `inheritedSplitPairGroupTrip` — the one fence, which the
+  call-site census pins to this file — and its lifecycle filter is the same
+  `HOSTING_SIBLING_LIFECYCLE_WHERE` the singular reader uses, extracted in the
+  same change so the two cannot drift into disagreeing about whether a cancelled
+  parent counts. Putting the batched read in the kiosk module instead would have
+  been a second spelling of exactly that. #3037 added a single line
   here — the new host-scope column in the policy loader's narrowed `select`,
   which the call-site census pins to the schema because an omitted column hands
   the resolver `undefined` and quietly widens or narrows a lodge's rule with a

@@ -911,3 +911,175 @@ compliant indefinitely.
   that is `SAME_BOOKING_OWNER`'s question, not this one. Enforced by
   `src/lib/__tests__/adult-member-hosting-group-trip-cover.test.ts`, whose
   failure messages carry this id.
+
+### INV-HOST-045
+
+- **The kiosk's adult-cover display is DERIVED from the canonical evaluation,
+  and a stale, failed or unrecorded evaluation never renders as cover** (#3040,
+  epic #2943). The privileged kiosk tier may show where a booking's adult
+  supervision comes from, on a Group Trip card. Every value it shows is read out
+  of the frozen violation snapshot the canonical evaluator wrote
+  (`Booking.adultMemberHostingReview`, parsed by `parseStoredHostingReview`) by
+  `deriveKioskAdultCoverSource` in `src/lib/kiosk-group-trip.ts`. Nothing about
+  cover is recomputed for display, because a display that re-derives the rule
+  drifts from the rule that actually decided compliance, and two screens then
+  disagree about whether a booking is legal.
+
+  **What a snapshot IS. This is the fact everything below rests on.** The
+  evaluator records a VIOLATION and nothing else:
+  `evaluateAdultMemberHostingWithPolicy` returns `null` when the party has no
+  non-member guest-nights and when every one of them is covered, and
+  `reconcileAdultMemberHostingReview` then writes `Prisma.DbNull` over any
+  snapshot already there. So a stored snapshot ALWAYS records at least one
+  uncovered night, and "fully covered" is recorded as the ABSENCE of a snapshot
+  rather than as a positive one. There is no canonical record anywhere that says
+  a booking is compliant, so the kiosk has none to show, and the display has no
+  "all covered" wording at all. The premise is pinned against the real evaluator
+  by a named test in `kiosk-group-trip-privacy.test.ts`, so a later change that
+  starts recording positive evidence fails there instead of silently turning
+  fresh data into `STALE`.
+
+  **Four statuses, and only one of them may carry night rows.**
+
+  - `NOT_RECORDED` — no snapshot and no signal against it. With the requirement
+    in force (the only case reported at all, see below) that means the evaluator
+    recorded no violation, so it is the ORDINARY state of most bookings and is
+    rendered as muted text reading *"Adult cover: no issue recorded for this
+    booking"*. It is deliberately not a warning: the first build gave all three
+    non-evaluated statuses the identical amber box, which put a warning on nearly
+    every card and so trains a hut leader to ignore the box that carries the real
+    signal. It is equally not a positive claim — the column cannot distinguish
+    "evaluated and clean" from "never evaluated since the club switched the rule
+    on".
+  - `UNREADABLE` — a snapshot that is not the canonical shape, or that disagrees
+    with itself. Rendered amber.
+  - `STALE` — what is recorded cannot be trusted as current. Rendered amber.
+  - `EVALUATED` — a recorded problem with its per-night evidence, at least one
+    night and at least one of them uncovered.
+
+  The DTO is a DISCRIMINATED UNION whose three non-`EVALUATED` members carry the
+  empty tuple for `nights` and `scopes`, so "empty unless `EVALUATED`" is a
+  property of the type rather than of one function and three tests. It was
+  described as structural here before it was; it now is (`INV-SSOT`,
+  unrepresentable beats policed).
+
+  **Four staleness signals, and the ORDER they are consulted in is part of the
+  rule.**
+
+  1. A queued `HostingCoverageReevaluation` for the booking's owner at this
+     lodge — the reconciler itself saying the recorded answer is pending
+     recomputation. Consulted FIRST, before the snapshot is read at all, because
+     it invalidates the ABSENCE of a snapshot exactly as much as one that is
+     present. The queued item's night list is deliberately not intersected:
+     over-marking can only withhold a positive claim, while a parse can be wrong.
+  2. An open `HostingCoverageIncident` on a booking with NO snapshot. The
+     incident says this booking is carrying uncovered nights right now and the
+     empty column says the writer found nothing to record; one of the two is
+     behind, and the display must not choose the optimistic side. Where a
+     snapshot IS present it necessarily reports uncovered nights, so the two
+     agree and the snapshot stands — that is the normal state of a booking an
+     officer is already looking at. Nothing about the incident reaches any
+     payload.
+  3. A readable snapshot with nothing uncovered. No writer produces one (see
+     "What a snapshot IS"), so its continued existence means the recorded answer
+     is behind the facts.
+  4. A covered night resting on `SAME_GROUP_TRIP`, while #3039 is unbuilt — see
+     below.
+
+  **The first build had signals 1 and 2 the wrong way round, and it mattered.**
+  Both were consulted only AFTER the snapshot had been read and parsed, so the
+  contradiction rule was written as "an open incident against an all-covered
+  snapshot" — a state signal 3 shows no writer can produce, making the whole
+  positive side of the check unreachable, while the contradiction that IS
+  reachable (an incident against an empty column) returned the reassuring
+  `NOT_RECORDED` from an early return before either signal was looked at. The
+  test covering it used a snapshot no writer can persist. Order the checks the
+  way they are ordered.
+
+  **A partially readable snapshot is UNREADABLE, not a partial answer.** A
+  malformed night row is never skipped: dropping one and keeping `EVALUATED`
+  reports "1 of 1 nights covered" from a half-unreadable snapshot, and dropping
+  them all reports a clean bill of health from rubble. The reader also
+  cross-checks the per-night evidence against the snapshot's own `uncovered`
+  list — on canonical data the set of uncovered nights is equal in both
+  directions — and rejects duplicate nights, a covered night with no scope that
+  supplied it, and a scope list naming nothing this deployment has. Each of those
+  guards is mutation-verified by a fixture that slips past every other one.
+
+  **`SAME_GROUP_TRIP` cover is WITHHELD until #3039 lands, and this is a
+  coordination note for whoever builds it.** A night covered by an adult in a
+  sibling booking can be invalidated by a change on that sibling's account, and
+  nothing sees it: every enqueue site writes the owner of the booking that
+  CHANGED, so the queued row names the sibling's owner, and the kiosk's staleness
+  read is keyed on the visible bookings' own owners. Widening that read would not
+  help while #3039 does not exist, because there is no row to find. So a cover
+  claim resting on a Group Trip sibling is unverifiable, and the whole snapshot
+  reports `STALE` rather than showing it. Deliberately whole-snapshot rather than
+  per-night: marking the night `covered: false` would put a fabricated
+  *"Not covered: <date>"* on a child-supervision screen, and a false alarm there
+  is how a screen stops being read. **Before removing that refusal, #3039 must
+  either enqueue a re-evaluation row for every DEPENDENT owner — so the
+  own-owner read finds it — or extend `readStalenessSignals` to the owners of the
+  whole group.** Removing it without one of those in place restores exactly the
+  hole it closes.
+
+  **No requirement in force means NO COVER LINE, not `NOT_RECORDED`.** Where the
+  club's resolved adult-member-hosting mode is not a consequence — `DISABLED`, no
+  policy row, or a malformed set the resolver refuses — the kiosk omits the
+  `adultCoverSource` key entirely, exactly as it does for a viewer without the
+  capability, and issues neither the staleness reads nor anything else on that
+  path. Two reasons, and they point the same way. The canonical evaluator writes
+  nothing when the mode is inactive
+  (`evaluateAdultMemberHostingWithPolicy` returns `null` on
+  `!hostingModeIsActive`), so there is no current evaluation to report — and a
+  snapshot frozen while the club DID enforce would otherwise render as current
+  cover for a rule since withdrawn, which is this invariant's own prohibition one
+  step further out. Reporting `NOT_RECORDED` instead would also put a line about
+  adult cover on every card at every club that does not use the feature. The gate
+  is the MODE and never the scope set: `SAME_GROUP_TRIP` decides whether a
+  sibling booking's adult may count towards cover, not whether cover is
+  evaluated, so a club with the requirement on and that scope off still has real
+  `SAME_BOOKING` evidence its hut leaders may read. This is the one club setting
+  the kiosk Group Trip surface still consults, and it governs the cover line
+  alone — owner decision D1 on #3040 settled that the linkage badge is gated on
+  nothing (`INV-PRIV-015`).
+
+  **The POLICY REVISION is deliberately NOT a staleness signal, and adding one
+  would be a regression.** A snapshot frozen under an earlier
+  `AdultMemberHostingPolicy.version` looks stale and mostly is not: this
+  repository's own considered position is that a revision bump is immaterial to
+  whether an existing coverage instrument is valid
+  (`HOSTING_POLICY_RECONCILIATION_SELECT`'s docblock says so, and
+  `incidentPolicyChanged` compares the mode and the enabled scope SET rather than
+  the version). So an immaterial edit — a capacity-mode change, say — queues no
+  re-evaluation, and a version comparison here would mark every card with a
+  snapshot `STALE` permanently, with nothing able to clear it. The queue is the
+  correct signal precisely because the reconciler populates it when, and only
+  when, the rule materially changed.
+
+  **The officer's decision travels with the evidence.** An approved hosting
+  exception leaves the violation snapshot exactly where it is — only
+  `Booking.adultMemberHostingReviewStatus` moves — so without it the kiosk shows
+  the identical red count and uncovered nights whether an officer approved the
+  arrangement or nobody has looked at it. "Matches canonical evaluation" includes
+  the decision taken on it, so `EVALUATED` carries `PENDING` / `APPROVED` /
+  `REJECTED` or `null` and the screen says which.
+
+  **Multiple sources and partial nights are the normal case.** Cover is decided
+  per night, so one booking can be covered on one night by an adult on its own
+  booking and on the next by an adult in a sibling Group Trip booking, and
+  uncovered on a third. The per-night rows are the answer; the union of scopes is
+  a heading, never a substitute. `coveredByScopes` ABSENT on a covered night reads
+  as `SAME_BOOKING`, which is that field's own documented meaning
+  (`QualifyingHostsForNight`) and not a second reading invented here; an EMPTY
+  list is a different thing and is `UNREADABLE`, because the writer fills the
+  scope set from the same hosts it counted.
+
+  **The categories travel; the people do not.** `qualifyingHostsByNight` carries
+  the covering members' ids and the kiosk drops them: which adult, on whose
+  account, is not a kiosk question. That half of the rule is `INV-PRIV-015`.
+
+  Enforced by `src/lib/__tests__/kiosk-group-trip-privacy.test.ts`,
+  `src/app/api/lodge/guests/[date]/__tests__/group-trip-tiers.test.ts` and
+  `src/app/(lodge)/lodge/kiosk/_components/__tests__/kiosk-group-trip-card.test.tsx`,
+  whose failure messages carry this id.
