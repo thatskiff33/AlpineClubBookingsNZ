@@ -130,18 +130,22 @@ const HOSTING_COVERAGE_GROUP_LOCK_NAMESPACE = "hosting-coverage-group";
  * `Prisma.TransactionClient` both satisfy it; the narrow delegate-only picks the
  * hosting modules pass around do not, which is what the runtime guard below is
  * for.
+ *
+ * Named for the module rather than for the owner key: since #3039 both families use
+ * them, and a `CoverageOwnerLockClient` guarding a GROUP-key acquisition reads as
+ * though the wrong key were being taken.
  */
-type CoverageOwnerLockClient = {
+type CoverageLockClient = {
   $executeRaw: Prisma.TransactionClient["$executeRaw"];
 };
 
-type CoverageOwnerTryLockClient = {
+type CoverageTryLockClient = {
   $queryRaw: Prisma.TransactionClient["$queryRaw"];
 };
 
-const COVERAGE_OWNER_TRY_LOCK_ROW = z.object({ locked: z.boolean() });
+const COVERAGE_TRY_LOCK_ROW = z.object({ locked: z.boolean() });
 
-function hasExecuteRaw(db: unknown): db is CoverageOwnerLockClient {
+function hasExecuteRaw(db: unknown): db is CoverageLockClient {
   return (
     typeof db === "object" &&
     db !== null &&
@@ -149,7 +153,7 @@ function hasExecuteRaw(db: unknown): db is CoverageOwnerLockClient {
   );
 }
 
-function hasQueryRaw(db: unknown): db is CoverageOwnerTryLockClient {
+function hasQueryRaw(db: unknown): db is CoverageTryLockClient {
   return (
     typeof db === "object" &&
     db !== null &&
@@ -176,25 +180,80 @@ function sortedUniqueKeys(
 }
 
 /**
- * Serialise every reader and writer of one owner's same-owner coverage.
+ * TAKE a sorted set of keys in one namespace, blocking.
  *
- * SILENT NO-OP WITHOUT `$executeRaw`, deliberately, and this is the one judgement
- * in the module. The hosting modules accept a narrow delegate-only client so they
- * can be driven by an in-memory store in tests, and `lockBookingMemberNights`
- * takes the same approach for the same reason. Throwing here would make the
- * policy untestable without a live Postgres; skipping loses only the lock, and
- * every caller still has the status-guarded claims and the idempotent
- * reconciliation that were protecting it before. In production the client is
- * always a real `Prisma.TransactionClient`, so the lock is always taken.
+ * ONE STATEMENT FOR BOTH FAMILIES (`INV-SSOT-001`). The owner key and the trip key
+ * differ in exactly two facts: the namespace constant, and (for the fail-fast form
+ * below) the label a decode failure is reported under. Everything that makes an
+ * acquisition correct is identical — `pg_advisory_xact_lock` rather than the
+ * session-scoped form, the two-argument `hashtext` spelling that keeps each family in
+ * its own keyspace, and the sorted de-duplicated key list. Written out per family,
+ * that was two copies of the blocking form and two of the fail-fast one, each relying
+ * on somebody noticing when another moved — and a family whose statement drifted to
+ * `pg_advisory_lock(` would leak a session lock on a pooled connection with every
+ * other test in the tree still green. It is also what keeps this file at TWO entries
+ * in the advisory-lock inventory rather than four, and ONE in the raw-read inventory
+ * rather than two.
+ *
+ * SILENT NO-OP WITHOUT `$executeRaw`, deliberately, and this is the one judgement in
+ * the module. The hosting modules accept a narrow delegate-only client so they can be
+ * driven by an in-memory store in tests, and `lockBookingMemberNights` takes the same
+ * approach for the same reason. Throwing here would make the policy untestable
+ * without a live Postgres; skipping loses only the lock, and every caller still has
+ * the status-guarded claims, the participant proof and the idempotent post-commit
+ * reconciliation that were protecting it before. In production the client is always a
+ * real `Prisma.TransactionClient`, so the lock is always taken.
  */
+async function lockCoverageKeys(
+  db: unknown,
+  namespace: string,
+  ids: readonly (string | null | undefined)[],
+): Promise<void> {
+  if (!hasExecuteRaw(db)) return;
+  for (const id of sortedUniqueKeys(ids)) {
+    await db.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${namespace}), hashtext(${id}))`;
+  }
+}
+
+/**
+ * TRY a sorted set of keys in one namespace, fail-fast, stopping at the first loss.
+ *
+ * The counterpart of the blocking primitive above, one statement for the same reason.
+ * A lost key stops the sequence rather than continuing, so a caller never holds a
+ * partial set it would then have to release in order; `false` means the caller rolls
+ * its WHOLE outer transaction back. Any later blocking acquisition of a key this call
+ * won is re-entrant on the same PostgreSQL session and costs a round trip and no wait.
+ *
+ * `decodeLabel` is the second and last per-family fact. A malformed row has to be
+ * reported against the family whose key it was, because an operator handed a message
+ * naming both cannot tell whether to look at one member's bookings or one trip's.
+ */
+async function tryLockCoverageKeys(
+  db: unknown,
+  namespace: string,
+  ids: readonly (string | null | undefined)[],
+  decodeLabel: string,
+): Promise<boolean> {
+  if (!hasQueryRaw(db)) return true;
+  for (const id of sortedUniqueKeys(ids)) {
+    const returned = await db.$queryRaw`
+      SELECT pg_try_advisory_xact_lock(
+        hashtext(${namespace}),
+        hashtext(${id})
+      ) AS "locked"
+    `;
+    const rows = decodeRawRows(returned, COVERAGE_TRY_LOCK_ROW, decodeLabel);
+    if (rows[0]?.locked !== true) return false;
+  }
+  return true;
+}
+
+/** Serialise every reader and writer of one owner's same-owner coverage. */
 export async function lockHostingCoverageOwners(
   db: unknown,
   memberIds: readonly (string | null | undefined)[],
 ): Promise<void> {
-  if (!hasExecuteRaw(db)) return;
-  for (const memberId of sortedUniqueKeys(memberIds)) {
-    await db.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${HOSTING_COVERAGE_OWNER_LOCK_NAMESPACE}), hashtext(${memberId}))`;
-  }
+  await lockCoverageKeys(db, HOSTING_COVERAGE_OWNER_LOCK_NAMESPACE, memberIds);
 }
 
 /** The single-owner case, which is every caller but the merge path. */
@@ -208,34 +267,22 @@ export async function lockHostingCoverageOwner(
 /**
  * Fail-fast counterpart used by #2597's per-seam participant protocol.
  *
- * A bulk transaction may call one producer several times. Member KEY SHARE
- * locks are mutually compatible, so their NOWAIT clause cannot by itself stop
- * two transactions that already hold different coverage-owner keys from
- * waiting on one another's later key. Trying each sorted owner key closes that
- * remaining hold-and-wait edge: false makes the caller roll its WHOLE outer
- * transaction back. Any later blocking acquisition of the same key is
- * re-entrant on the same PostgreSQL session.
+ * A bulk transaction may call one producer several times. Member KEY SHARE locks are
+ * mutually compatible, so their NOWAIT clause cannot by itself stop two transactions
+ * that already hold different coverage-owner keys from waiting on one another's later
+ * key. Trying each sorted owner key closes that remaining hold-and-wait edge: false
+ * makes the caller roll its WHOLE outer transaction back.
  */
 export async function tryLockHostingCoverageOwners(
   db: unknown,
   memberIds: readonly (string | null | undefined)[],
 ): Promise<boolean> {
-  if (!hasQueryRaw(db)) return true;
-  for (const memberId of sortedUniqueKeys(memberIds)) {
-    const returned = await db.$queryRaw`
-      SELECT pg_try_advisory_xact_lock(
-        hashtext(${HOSTING_COVERAGE_OWNER_LOCK_NAMESPACE}),
-        hashtext(${memberId})
-      ) AS "locked"
-    `;
-    const rows = decodeRawRows(
-      returned,
-      COVERAGE_OWNER_TRY_LOCK_ROW,
-      "hosting coverage owner try-lock",
-    );
-    if (rows[0]?.locked !== true) return false;
-  }
-  return true;
+  return tryLockCoverageKeys(
+    db,
+    HOSTING_COVERAGE_OWNER_LOCK_NAMESPACE,
+    memberIds,
+    "hosting coverage owner try-lock",
+  );
 }
 
 export async function tryLockHostingCoverageOwner(
@@ -248,23 +295,16 @@ export async function tryLockHostingCoverageOwner(
 /**
  * Serialise every reader and writer of one Group Trip's cross-account coverage
  * (#3039).
- *
- * Silent no-op without `$executeRaw`, for the single stated reason its owner-key
- * sibling above is: the hosting modules accept a narrow delegate-only client so the
- * policy can be driven by an in-memory store in tests, and throwing here would make
- * it untestable without a live Postgres. Skipping loses only the lock — every caller
- * still has its status-guarded claims, its participant proof and the idempotent
- * post-commit reconciliation. In production the client is always a real
- * `Prisma.TransactionClient`, so the lock is always taken.
  */
 export async function lockHostingCoverageGroups(
   db: unknown,
   groupBookingIds: readonly (string | null | undefined)[],
 ): Promise<void> {
-  if (!hasExecuteRaw(db)) return;
-  for (const groupBookingId of sortedUniqueKeys(groupBookingIds)) {
-    await db.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${HOSTING_COVERAGE_GROUP_LOCK_NAMESPACE}), hashtext(${groupBookingId}))`;
-  }
+  await lockCoverageKeys(
+    db,
+    HOSTING_COVERAGE_GROUP_LOCK_NAMESPACE,
+    groupBookingIds,
+  );
 }
 
 /** The single-trip case, which is every caller today. */
@@ -276,38 +316,34 @@ export async function lockHostingCoverageGroup(
 }
 
 /**
- * Fail-fast counterpart — and for the group key this is the PRIMARY form rather
- * than a hardening extra.
+ * Fail-fast counterpart — and for the group key this is the PRIMARY form rather than
+ * a hardening extra.
  *
- * A trip's siblings belong to other accounts, so a blocking wait here is one
- * member's booking transaction stalled by another member's edit. Worse, two
- * transactions that discover their trip keys in different orders (a booking in one
- * trip whose same-owner dependent sits in another) can each hold one and wait for
- * the other, and sorting within a call cannot fix that because the calls are
- * separate. `false` therefore means the caller rolls its WHOLE outer transaction
- * back and answers the stable `HOSTING_COVERAGE_PARTICIPANT_RETRY` 409; any later
- * blocking acquisition of the same key is re-entrant on the same session.
+ * A trip's siblings belong to other accounts, so a blocking wait here is one member's
+ * booking transaction stalled by another member's edit. Worse, two transactions that
+ * discover their trip keys in different orders (a booking in one trip whose same-owner
+ * dependent sits in another) can each hold one and wait for the other, and sorting
+ * within a call cannot fix that because the calls are separate. `false` therefore
+ * means the caller rolls its WHOLE outer transaction back and answers the stable
+ * `HOSTING_COVERAGE_PARTICIPANT_RETRY` 409.
+ *
+ * AND BECAUSE THE TRY NEVER WAITS while an xact lock cannot be released before commit,
+ * the blocking acquisition that follows a successful try is a re-entrant no-op — so no
+ * transaction ever WAITS on a trip key, and the group tier cannot appear in a wait-for
+ * cycle at all, whatever order it is taken in. `acquireHostingCoverageGroupKey` in
+ * `adult-member-hosting-review.ts` is the single place that composes the two calls and
+ * states that guarantee in full.
  */
 export async function tryLockHostingCoverageGroups(
   db: unknown,
   groupBookingIds: readonly (string | null | undefined)[],
 ): Promise<boolean> {
-  if (!hasQueryRaw(db)) return true;
-  for (const groupBookingId of sortedUniqueKeys(groupBookingIds)) {
-    const returned = await db.$queryRaw`
-      SELECT pg_try_advisory_xact_lock(
-        hashtext(${HOSTING_COVERAGE_GROUP_LOCK_NAMESPACE}),
-        hashtext(${groupBookingId})
-      ) AS "locked"
-    `;
-    const rows = decodeRawRows(
-      returned,
-      COVERAGE_OWNER_TRY_LOCK_ROW,
-      "hosting coverage group try-lock",
-    );
-    if (rows[0]?.locked !== true) return false;
-  }
-  return true;
+  return tryLockCoverageKeys(
+    db,
+    HOSTING_COVERAGE_GROUP_LOCK_NAMESPACE,
+    groupBookingIds,
+    "hosting coverage group try-lock",
+  );
 }
 
 export async function tryLockHostingCoverageGroup(
