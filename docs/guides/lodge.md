@@ -170,8 +170,8 @@ device.** The moment a hut leader signs in on that same wall tablet with their
 PIN, the screen is showing a hut leader's view — organiser name and cover line
 included — to whoever is standing in front of it, and it goes on doing so for as
 long as that PIN session lasts. So sign out, or lock the screen, when you walk
-away from it. How long a PIN session stays open before it locks itself is being
-changed separately; this page will say what the new behaviour is once it lands.
+away from it. How long a PIN session stays open, and how to end one deliberately,
+is described where that session is set up rather than repeated here — see #3228.
 
 The chip itself is not something you switch on. Any club that uses group
 bookings gets it, because it only says that these cards arrived together — it is
