@@ -653,18 +653,30 @@ describe("split-pair reconciliation (#2364 review finding)", () => {
   });
 
   it("costs a club that has not turned the rule on nothing at all", async () => {
-    // The fan-out and every write are what a disabled club must not pay for, and
-    // neither happens. The participant fence's own lock and re-read DO still run
-    // ahead of the policy read on this seam — that asymmetry against the two
-    // coverage seams, which both check the mode first, is tracked separately as
-    // T5 on #2623 and is not this test's subject.
+    // The fan-out, the participant fence and every write are what a disabled club
+    // must not pay for, and none of them happens.
+    //
+    // What it DOES pay since #3209 is one unlocked read of its own split siblings'
+    // lodges, because the rule is configured per lodge and "is any related booking
+    // somewhere the rule IS on" is a question this gate has to answer before it may
+    // decide nothing is owed. For a split pair at one lodge — every pair the
+    // product can currently produce — that single `lodgeId` read is the entire
+    // cost: no policy read for a second lodge, no sibling evaluation, no
+    // `FOR KEY SHARE NOWAIT`, no write. The `select` is what tells the three reads
+    // apart: `{ lodgeId }` is this gate, `{ id }` is the fan-out, and the borrow
+    // asks for the whole hosting shape.
     const family = makeFamilyDb(
       splitPair(["2026-07-04"], ["2026-07-04", "2026-07-05"]),
       [CLUB_OFF],
     );
     await reconcileAdultMemberHostingReviewWithSiblings("parent-1", family.db);
-    expect(family.siblingFindMany).not.toHaveBeenCalled();
+    expect(
+      family.siblingFindMany.mock.calls.map(
+        (call: unknown[]) => (call[0] as { select: unknown }).select,
+      ),
+    ).toEqual([{ lodgeId: true }]);
     expect(family.update).not.toHaveBeenCalled();
+    expect(family.db.$executeRaw).not.toHaveBeenCalled();
   });
 
   it("fans out one level only, and only over live same-member siblings", async () => {

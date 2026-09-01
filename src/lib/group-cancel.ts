@@ -77,7 +77,12 @@ import {
   loadCancellationPolicy,
 } from "./cancellation";
 import { reconcileBedAllocationsForBookingWithGlobalLockHeld } from "./bed-allocation-lifecycle";
+import { reconcileHostingReviewForSystemCancellation } from "@/lib/adult-member-hosting-system-cancellation";
+import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import {
+  // The set an organiser cancel CLAIMS is the set the reaper's resume phase must
+  // still be able to FIND, so both read one declaration (#3209, `INV-SSOT`).
+  ORGANISER_CANCEL_ACTIVE_CHILD_STATUSES as ACTIVE_CHILD_STATUSES,
   RELEASE_ADMIN_CAPACITY_HOLD_UPDATE,
   RELEASE_WHOLE_LODGE_HOLD_UPDATE,
 } from "./booking-status";
@@ -99,13 +104,6 @@ import { enqueueXeroGroupSettlementInvoiceVoidOperation } from "@/lib/xero-group
 import logger from "@/lib/logger";
 import { clubToday } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
-
-/** Child booking statuses that an organiser cancel must clean up. */
-const ACTIVE_CHILD_STATUSES = [
-  BookingStatus.PAYMENT_PENDING,
-  BookingStatus.CONFIRMED,
-  BookingStatus.PAID,
-] as const;
 
 // F3 (#1351): the recovery operation is enqueued BEFORE the inline Stripe
 // refund, so the cron must not claim it while this run is still executing.
@@ -520,6 +518,7 @@ export async function settleGroupBookingOnOrganiserCancel(
     let childClaimed = false;
     try {
       queuedCreditNoteOperationId = await prisma.$transaction(async (tx) => {
+        let queuedOperationId: string | null = null;
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
         const cancelled = await tx.booking.updateMany({
           where: { id: child.id, status: { in: [...ACTIVE_CHILD_STATUSES] } },
@@ -574,16 +573,35 @@ export async function settleGroupBookingOnOrganiserCancel(
           // with a written refund mirror but no queued credit-note op (the
           // invariant this closes). On a genuine crash the reaper re-drives the
           // still-ACTIVE child; a caught-but-survived error follows the same
-          // pre-existing best-effort `continue` below (the reaper only re-drives
-          // not-yet-CANCELLED groups) — this fix adds no new reachable drift.
+          // pre-existing best-effort `continue` below, and the reaper re-drives
+          // that too — this fix adds no new reachable drift.
+          //
+          // #3209 corrects what this said. It claimed the reaper "only re-drives
+          // not-yet-CANCELLED groups", which is false: `resumeInterruptedOrganiser
+          // Cancels` selects on the ORGANISER BOOKING being CANCELLED plus a still
+          // -active organiser-settled child, over the same status set this loop
+          // claims. `GroupBooking.status` is not in that query at all.
           const queued = await enqueueXeroRefundCreditNoteOperation(
             child.payment.id,
             refundForChild,
             { createdByMemberId: sessionUserId, store: tx }
           );
-          return queued.queueOperationId;
+          queuedOperationId = queued.queueOperationId;
         }
-        return null;
+
+        // #3209 (`INV-HOST-041`). The beds are reconciled above; ADULT SUPERVISION
+        // was not. `ACTIVE_CHILD_STATUSES` includes CONFIRMED and PAID, the two
+        // statuses that qualify a booking as a `SAME_BOOKING_OWNER` coverage
+        // source, so cancelling this child can leave ANOTHER booking of the SAME
+        // JOINER without a qualifying adult on the exact nights its non-member
+        // guests are there — and nothing here ever looked. In this transaction so
+        // the obligation commits with the cancellation, and through the
+        // system-cancellation seam, whose docblock carries the argument for why an
+        // organiser cancel must never be refusable. Fan-out stays one booking's
+        // worth per child: `hostingSiblingWhere` is same-member only, so a joiner
+        // never drags in the organiser or the other joiners.
+        await reconcileHostingReviewForSystemCancellation(child.id, tx);
+        return queuedOperationId;
       });
     } catch (err) {
       logger.error(
@@ -676,6 +694,13 @@ export async function settleGroupBookingOnOrganiserCancel(
         "Failed to process waitlist after group joiner cancellation"
       )
     );
+
+    // #3209 §7's immediate half: re-read the now-committed facts, open or resolve
+    // the incident, notify the owner once. Scoped to THIS child because the drain
+    // claims by owner and lodge and every joiner is a different owner, so the
+    // organiser's own drain in `booking-cancel.ts` cannot reach them. It never
+    // throws, and the cron sweep remains the authority on completion.
+    await settleHostingCoverageAfterCommit({ bookingId: child.id });
   }
 
   // The group was fenced CANCELLED before provider calls and child cleanup.

@@ -57,6 +57,9 @@ import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-cov
 import { enqueueOwnHostingCoverageReevaluation } from "@/lib/adult-member-hosting-review";
 import { prisma } from "@/lib/prisma";
 import {
+  // Shared with `group-cancel.ts`, which claims exactly this set (#3209,
+  // `INV-SSOT`): a re-drive must be able to find what a cancel could not finish.
+  ORGANISER_CANCEL_ACTIVE_CHILD_STATUSES,
   RELEASE_ADMIN_CAPACITY_HOLD_UPDATE,
   RELEASE_WHOLE_LODGE_HOLD_UPDATE,
 } from "@/lib/booking-status";
@@ -121,11 +124,6 @@ const REAPABLE_SETTLEMENT_STATUSES = [
   PaymentStatus.FAILED,
 ] as const;
 
-const ORGANISER_CANCEL_ACTIVE_CHILD_STATUSES = [
-  BookingStatus.PAYMENT_PENDING,
-  BookingStatus.CONFIRMED,
-  BookingStatus.PAID,
-] as const;
 
 export async function reapStaleGroupSettlements(
   now: Date = new Date()
