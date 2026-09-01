@@ -15,8 +15,10 @@ import {
   type HostingCoverageIncidentResolution,
 } from "@/lib/adult-member-hosting-coverage-incidents";
 import {
+  lockHostingCoverageGroup,
   lockHostingCoverageOwner,
   lockHostingCoverageOwners,
+  tryLockHostingCoverageGroup,
   tryLockHostingCoverageOwner,
   tryLockHostingCoverageOwners,
 } from "@/lib/adult-member-hosting-coverage-lock";
@@ -42,6 +44,7 @@ import {
 import { AdultMemberHostingRequiredError } from "@/lib/adult-member-hosting-refusal";
 import {
   COVERAGE_READ_ORDER,
+  GROUP_TRIP_COVERAGE_DEPENDENT_LIMIT,
   HostingGroupTripSourceCeilingExceededError,
   HostingSameOwnerSourceCeilingExceededError,
   HostingSiblingCeilingExceededError,
@@ -49,9 +52,11 @@ import {
   SAME_OWNER_COVERAGE_DEPENDENT_LIMIT,
   SAME_OWNER_COVERAGE_SOURCE_LIMIT,
   warnIfCoverageDependentCeilingBound,
+  warnIfGroupTripDependentCeilingBound,
 } from "@/lib/adult-member-hosting-coverage-ceilings";
 import {
   GROUP_TRIP_IDENTITY_SELECT,
+  groupTripCoverageDependentWhere,
   groupTripCoverageSourceWhere,
   groupTripIdentityOf,
   type GroupTripCoverageBooking,
@@ -861,6 +866,21 @@ async function evaluateLoadedBookingAdultMemberHosting(
   db: AdultMemberHostingReadDb,
   acquireCoverageOwnerLock: (() => Promise<void>) | null,
   /**
+   * Take the per-TRIP key for one resolved Group Trip identity (#3039).
+   *
+   * A SECOND CALLBACK RATHER THAN A WIDENED FIRST ONE, because the two keys are
+   * acquired at different points and in a fixed order: this one first, the owner
+   * key second (`INV-LOCK-002`). Folding them into one acquisition would make the
+   * order an implementation detail of that helper rather than something the
+   * ordering test can read at this call site, and the group id is not known until
+   * the split-pair fallback has run.
+   *
+   * `null` from the read-only evidence entry point, which takes no advisory lock at
+   * all — the same treatment `acquireCoverageOwnerLock` gets there and for the same
+   * reason: a diagnostic must never join a writer lock cohort.
+   */
+  acquireCoverageGroupLock: ((groupBookingId: string) => Promise<void>) | null,
+  /**
    * AN OPTIONS OBJECT RATHER THAN A POSITIONAL TAIL (#3038), and the reason is
    * that the tail had reached six. Every one of them is optional, several are
    * `number | undefined`, and #3038 inserted `groupTripSourceCeiling` in the
@@ -952,18 +972,40 @@ async function evaluateLoadedBookingAdultMemberHosting(
       db,
       options.siblingCeiling,
     );
-    // §9: hold the per-owner key before reading another booking as cover, so a
-    // concurrent removal of that cover cannot interleave with this evaluation.
-    // Re-entrant, so a caller that already took it (the settle step) pays nothing.
+    // Resolved from the two canonical relations and nothing else; `null` for a
+    // booking in no Group Trip, which is the ordinary case (`INV-HOST-043`).
     //
-    // DELIBERATELY STILL KEYED ON `SAME_BOOKING_OWNER` ALONE (#3038). This key is
-    // `booking.memberId` — the DEPENDENT's owner — and every Group Trip source
-    // belongs to somebody else, so taking it would neither exclude a concurrent
-    // removal of that cover nor tell a reader anything true. The lock a Group
-    // Trip needs is a per-GROUP key acquired ahead of the owner keys, which is
-    // #3039's subject along with the sibling reconciliation fan-out; inventing
-    // half of it here would leave a lock family registered in no census
-    // (`INV-LOCK-003`) and an ordering nothing enforces.
+    // The ONE fallback is the other half of a #738 split pair, and it is a named
+    // carve-out with a boundary rather than a second identity source — see
+    // `inheritedSplitPairGroupTrip`, which is handed the sibling rows this
+    // evaluation has already read so the exception costs no extra query and can
+    // never reach past the `SAME_BOOKING` relationship.
+    //
+    // RESOLVED HERE, ABOVE BOTH LOCKS, since #3039. It is I/O-free apart from the
+    // sibling rows already in hand, and the per-trip key cannot be taken before the
+    // trip is known — so hoisting it is what makes group-before-owner expressible
+    // at all rather than an ordering somebody has to remember.
+    const groupTripIdentity = resolved.hostScopes.sameGroupTrip
+      ? groupTripIdentityOf(booking) ??
+        inheritedSplitPairGroupTrip(booking, siblings.rows)
+      : null;
+    // §9 and #3039: hold the per-TRIP key BEFORE the per-owner key, then both
+    // before any cross-booking cover is read. Order is `INV-LOCK-002`; the reason
+    // group comes first is in `HOSTING_COVERAGE_GROUP_LOCK_NAMESPACE`'s docblock —
+    // the trip's membership is what decides which owners are involved, so it has to
+    // be frozen before the owner set is even known.
+    //
+    // THE GROUP KEY IS WHAT #3038 DELIBERATELY DID NOT INVENT HERE. Its comment at
+    // this line said the owner key is `booking.memberId` — the DEPENDENT's owner —
+    // while every Group Trip source belongs to somebody else, so the owner key
+    // neither excludes a concurrent removal of that cover nor tells a reader
+    // anything true, and the lock a trip needs is a per-GROUP key acquired ahead of
+    // the owner keys. That is this line, with the family registered in the census
+    // and the ordering pinned by a test (`INV-LOCK-003`).
+    if (groupTripIdentity && acquireCoverageGroupLock) {
+      await acquireCoverageGroupLock(groupTripIdentity.groupBookingId);
+    }
+    // Re-entrant, so a caller that already took it (the settle step) pays nothing.
     if (resolved.hostScopes.sameBookingOwner && acquireCoverageOwnerLock) {
       await acquireCoverageOwnerLock();
     }
@@ -975,18 +1017,6 @@ async function evaluateLoadedBookingAdultMemberHosting(
           options.sameOwnerSourceCeiling,
         )
       : { participants: [] as HostingParticipant[], sourceIds: [] };
-    // Resolved from the two canonical relations and nothing else; `null` for a
-    // booking in no Group Trip, which is the ordinary case (`INV-HOST-043`).
-    //
-    // The ONE fallback is the other half of a #738 split pair, and it is a named
-    // carve-out with a boundary rather than a second identity source — see
-    // `inheritedSplitPairGroupTrip`, which is handed the sibling rows this
-    // evaluation has already read so the exception costs no extra query and can
-    // never reach past the `SAME_BOOKING` relationship.
-    const groupTripIdentity = resolved.hostScopes.sameGroupTrip
-      ? groupTripIdentityOf(booking) ??
-        inheritedSplitPairGroupTrip(booking, siblings.rows)
-      : null;
     const groupTrip = groupTripIdentity
       ? await loadSameGroupTripHosts(
           booking,
@@ -1031,15 +1061,52 @@ export async function evaluateBookingAdultMemberHosting(
   violation: AdultMemberHostingPolicyExceptionViolation | null;
   resolved: ResolvedAdultMemberHostingPolicy;
 }> {
-  return evaluateLoadedBookingAdultMemberHosting(booking, db, async () => {
-    if (!failFastCoverageOwner) {
-      await lockHostingCoverageOwner(db, booking.memberId);
-      return;
-    }
-    if (!(await tryLockHostingCoverageOwner(db, booking.memberId))) {
+  return evaluateLoadedBookingAdultMemberHosting(
+    booking,
+    db,
+    async () => {
+      if (!failFastCoverageOwner) {
+        await lockHostingCoverageOwner(db, booking.memberId);
+        return;
+      }
+      if (!(await tryLockHostingCoverageOwner(db, booking.memberId))) {
+        throw new HostingCoverageParticipantRetryError();
+      }
+    },
+    acquireHostingCoverageGroupKey(db),
+  );
+}
+
+/**
+ * The per-trip acquisition every writer uses: try, then take.
+ *
+ * ALWAYS FAIL-FAST FIRST, WITH NO `failFastCoverageOwner`-STYLE ESCAPE, and the
+ * asymmetry with the owner key above is deliberate. The owner key can be taken
+ * blocking because it is the caller's OWN account: waiting on it means waiting for
+ * another change to the same member's bookings, which is contention the member
+ * caused. A trip key is shared with other accounts, and two transactions can
+ * legitimately discover two trip keys in opposite orders — one reconciling a booking
+ * in trip A whose same-owner dependent sits in trip B, the other the reverse — so a
+ * blocking acquisition here is a real deadlock edge that no sorting within a single
+ * call can remove. Failing immediately turns that into the stable
+ * `HOSTING_COVERAGE_PARTICIPANT_RETRY` 409 and rolls the outer transaction back,
+ * which is the same answer #2597 chose for repeated owner-key acquisition.
+ *
+ * The blocking call afterwards is re-entrant on the same PostgreSQL session, so it
+ * costs a round trip and no wait. It is retained rather than dropped because it is
+ * the acquisition the census and the lock inventory recognise, and because on a
+ * client that has `$executeRaw` but not `$queryRaw` the try form is a no-op that
+ * returns `true` — there, this is the call that actually takes the key.
+ */
+function acquireHostingCoverageGroupKey(
+  db: AdultMemberHostingReadDb,
+): (groupBookingId: string) => Promise<void> {
+  return async (groupBookingId: string) => {
+    if (!(await tryLockHostingCoverageGroup(db, groupBookingId))) {
       throw new HostingCoverageParticipantRetryError();
     }
-  });
+    await lockHostingCoverageGroup(db, groupBookingId);
+  };
 }
 
 /**
@@ -1111,7 +1178,16 @@ export async function evaluatePersistedBookingAdultMemberHostingReadOnly(
   // Forwarded WHOLE rather than unpacked into an argument list, which is the
   // point of the options object: a field added here reaches the evaluator
   // without an edit, and no ordering has to be kept in step.
-  return evaluateLoadedBookingAdultMemberHosting(booking, db, null, options);
+  // BOTH lock callbacks are `null` here, and that is the read-only contract rather
+  // than an omission: a diagnostic read may span READ COMMITTED instants and must
+  // report that limitation, but it must never join a writer lock cohort.
+  return evaluateLoadedBookingAdultMemberHosting(
+    booking,
+    db,
+    null,
+    null,
+    options,
+  );
 }
 
 
@@ -1699,28 +1775,72 @@ export async function reconcileAdultMemberHostingReviewWithSiblings(
   // the later settle step would invert coverage-owner -> Member against merge.
   const plannedBooking = (await db.booking.findUnique({
     where: { id: bookingId },
-    select: {
-      id: true,
-      memberId: true,
-      lodgeId: true,
-      checkIn: true,
-      checkOut: true,
-    },
-  })) as CoverageOwnerFacts | null;
+    select: GROUP_TRIP_COVERAGE_SOURCE_SELECT,
+  })) as GroupTripCoverageSourceFacts | null;
   if (!plannedBooking) {
     return { action: "none", violation: null, mode: null };
   }
   // #2623 T5: the mode gate comes BEFORE the fence. See the docstring above for
   // why an inactive lodge must not pay a row lock, and why skipping it here
   // cannot leave a coverage-owner key held out of order.
+  //
+  // ==== GROUP-TRIP LODGE AWARENESS: DELIBERATELY NOTHING (#3039) ====
+  //
+  // A separately-named block because a competing change is in flight on this exact
+  // gate. #3209 teaches it to ask whether any RELATED booking sits at a lodge with
+  // an active mode (`hasHostingSiblingAtActiveLodge`), because a #738 split sibling
+  // can legitimately live at a DIFFERENT lodge — `hostingSiblingWhere` carries no
+  // lodge clause — so the changed booking's own lodge does not speak for the pair.
+  //
+  // THE GROUP TRIP CASE NEEDS NO SUCH WIDENING, and that is a proof rather than a
+  // decision deferred. Group Trip cover is same-lodge by construction: every group
+  // read composes `groupTripMembershipWhere` INSIDE the shared coverage envelope,
+  // whose first clause is `lodgeId: booking.lodgeId` (see
+  // `adult-member-hosting-coverage-envelope.ts`, and `groupTripCoverageDependentWhere`
+  // for the dependent direction). So a Group Trip sibling that can supply or receive
+  // cover is always at THIS lodge, under THIS lodge's policy, and this booking's own
+  // resolved mode is the whole answer for it. That is the same fact #3038's
+  // concurrency review relied on when it established that a trip is confined to one
+  // lodge and the two-member write skew therefore cannot occur today.
+  //
+  // Two consequences worth stating so the eventual hand-merge composes rather than
+  // producing a gate that checks split siblings and not group siblings: #3209's
+  // widening is CORRECT and this block must not be read as arguing against it, and
+  // adding a group clause to it would be dead code that no group read could ever
+  // exercise. If a later lane ever makes group cover cross lodges, this block is the
+  // place that stops being true.
   const planned = await loadAdultMemberHostingPolicy(plannedBooking.lodgeId, db);
   if (!hostingModeIsActive(planned.mode)) {
     return reconcileAdultMemberHostingReview(bookingId, db, options, true);
   }
   const actorMemberId = options.coverageChange?.actorMemberId ?? null;
+  // #3039: plan the Group Trip dependents BEFORE the participant fence, because the
+  // fence has to lock every owner the queue will name and those owners are exactly
+  // what this read discovers. The plan is unlocked and is therefore a hypothesis;
+  // `lockAndVerifyGroupTripCoverageDependents` below turns it into a fact under the
+  // per-trip key, or fails the whole transaction as a safe retry.
+  const plannedGroupTrip = await planGroupTripCoverageDependents(
+    plannedBooking,
+    planned,
+    db,
+  );
   const participantProof = await acquireOrValidateQueueParticipantProof(
-    [sourceParticipant(plannedBooking)],
+    [
+      sourceParticipant(plannedBooking),
+      ...(plannedGroupTrip?.dependents ?? []).map(sourceParticipant),
+    ],
     actorMemberId,
+    db,
+  );
+
+  // The per-TRIP key, then the plan re-verified under it (`INV-LOCK-002`: group
+  // before owner). It is taken here rather than left to the evaluator one call
+  // deeper so that the fan-out's own dependent read is protected too, and the
+  // evaluator's acquisition is then a re-entrant no-op.
+  const verifiedGroupTrip = await lockAndVerifyGroupTripCoverageDependents(
+    plannedBooking,
+    planned,
+    plannedGroupTrip,
     db,
   );
 
@@ -1757,6 +1877,19 @@ export async function reconcileAdultMemberHostingReviewWithSiblings(
     db,
     options,
     participantProof,
+  );
+
+  // #3039: and this booking's rows can decide whether a booking on ANOTHER ACCOUNT
+  // in the same Group Trip is compliant. Last of all, and after the same-owner
+  // settle, for the same reason that one runs last: it is a question about the
+  // resulting state. It can refuse nothing, so it cannot change the outcome the
+  // caller is about to receive — see `settleGroupTripDependentCoverage`.
+  await settleGroupTripDependentCoverage(
+    plannedBooking,
+    verifiedGroupTrip,
+    actorMemberId,
+    participantProof,
+    db,
   );
   return outcome;
 }
@@ -2289,6 +2422,267 @@ function resolveDependentDisposition(
 }
 
 /**
+ * The changed booking as the Group Trip fan-out needs it: the coverage facts, the
+ * two canonical identity relations, and `parentBookingId` for the split-pair
+ * carve-out.
+ *
+ * The identity relations are REQUIRED rather than optional for the reason
+ * `GroupTripIdentityRow` states in full: for a DEPENDENT set, a booking wrongly
+ * read as ungrouped is a booking nobody re-evaluates, so a genuinely stranded
+ * booking is never reconciled and never escalated. With the fields required, a
+ * caller that forgot `GROUP_TRIP_IDENTITY_SELECT` is a compile error rather than a
+ * silent wrong answer.
+ */
+type GroupTripCoverageSourceFacts = CoverageOwnerFacts &
+  GroupTripIdentityRow & { parentBookingId: string | null };
+
+const GROUP_TRIP_COVERAGE_SOURCE_SELECT = {
+  id: true,
+  memberId: true,
+  lodgeId: true,
+  checkIn: true,
+  checkOut: true,
+  parentBookingId: true,
+  ...GROUP_TRIP_IDENTITY_SELECT,
+} as const;
+
+/**
+ * The bookings in this booking's Group Trip whose own compliance may depend on it
+ * (#3039, `INV-HOST-046`).
+ *
+ * `null` — not an empty plan — when there is nothing to do at all: the lodge is not
+ * on `SAME_GROUP_TRIP`, or the booking is in no trip. The distinction is
+ * load-bearing at the call site, because `null` is what says "take no per-trip key
+ * and add no participants", while an empty `dependents` list on a real identity
+ * still means the key IS owed: the trip exists, and a sibling could join it between
+ * this plan and the caller's commit.
+ *
+ * IDENTITY FIRST, THEN ONE INDEXED READ. Identity comes from the canonical
+ * relations, with `readInheritedSplitPairGroupTrip` as the one named fallback so
+ * the #738 half carrying the non-member guests resolves to the same trip its
+ * parent does (`INV-HOST-043`'s carve-out, and the reason the fan-out is
+ * meaningful for such a booking at all). The dependent read is
+ * `groupTripCoverageDependentWhere` — the trip's membership clause inside the
+ * shared dependent envelope, so the lodge, self-exclusion, half-open night overlap
+ * and active-status cohort are byte-for-byte the ones every other coverage read
+ * uses (`INV-SSOT-002`).
+ *
+ * ORDERED AND CAPPED, and the order is not decoration: it is what makes the
+ * plan/verify comparison below meaningful, because an unordered truncation would
+ * return a different N under the lock than it did in the plan and every edit at a
+ * trip above the ceiling would fail as a spurious retry.
+ */
+async function planGroupTripCoverageDependents(
+  booking: GroupTripCoverageSourceFacts,
+  resolved: ResolvedAdultMemberHostingPolicy,
+  db: AdultMemberHostingReviewDb,
+): Promise<{
+  identity: GroupTripIdentity;
+  dependents: CoverageOwnerFacts[];
+} | null> {
+  if (!resolved.hostScopes.sameGroupTrip) return null;
+  const identity =
+    groupTripIdentityOf(booking) ??
+    (await readInheritedSplitPairGroupTrip(db, booking));
+  if (!identity) return null;
+
+  const dependents = (await db.booking.findMany({
+    where: groupTripCoverageDependentWhere(booking, identity),
+    orderBy: [...COVERAGE_READ_ORDER],
+    take: GROUP_TRIP_COVERAGE_DEPENDENT_LIMIT,
+    select: {
+      id: true,
+      memberId: true,
+      lodgeId: true,
+      checkIn: true,
+      checkOut: true,
+    },
+  })) as CoverageOwnerFacts[];
+  warnIfGroupTripDependentCeilingBound(
+    { groupBookingId: identity.groupBookingId, lodgeId: booking.lodgeId },
+    dependents.length,
+    "group-trip-fanout",
+  );
+  return { identity, dependents };
+}
+
+/**
+ * The exact identity of a planned Group Trip fan-out, for the under-lock re-verify.
+ *
+ * Owner and lodge are in the fingerprint as well as the booking id because they are
+ * what the queue item and the participant fence are keyed on: a sibling booking
+ * that changed hands between the plan and the lock would otherwise pass a
+ * comparison on ids alone and then be enqueued against a `Member` row this
+ * transaction never locked.
+ */
+function groupTripDependentFingerprint(
+  plan: { identity: GroupTripIdentity; dependents: readonly CoverageOwnerFacts[] } | null,
+): string {
+  if (!plan) return "";
+  return [
+    plan.identity.groupBookingId,
+    ...plan.dependents.map(
+      (dependent) =>
+        `${dependent.id}:${dependent.memberId}:${dependent.lodgeId}`,
+    ),
+  ].join("\n");
+}
+
+/**
+ * Freeze one Group Trip's membership, then prove the plan still describes it
+ * (#3039; `INV-LOCK-002`, `INV-HOST-046`).
+ *
+ * WHY A RE-READ AND NOT JUST A LOCK. This is the issue's own reasoning and it is
+ * worth keeping next to the code: rereading siblings WITHOUT a shared serialisation
+ * point is insufficient, because at READ COMMITTED each of two concurrent writers
+ * can observe a state the other has already invalidated. The plan above runs
+ * unlocked — it has to, because the owners it discovers are what the participant
+ * fence must lock, and the fence comes before this key. So the plan is a
+ * hypothesis; this is where it becomes a fact. A drift is a safe retry rather than a
+ * guess: the caller's whole outer transaction rolls back and the actor is told to
+ * reload.
+ *
+ * IT IS THE SAME PLAN → LOCK → RE-VERIFY → RETRY PROTOCOL
+ * `enqueueHostingCoverageReevaluationForMember` uses for its own candidate set, and
+ * deliberately so. A second protocol for the same hazard is a second thing to get
+ * right.
+ */
+async function lockAndVerifyGroupTripCoverageDependents(
+  booking: GroupTripCoverageSourceFacts,
+  resolved: ResolvedAdultMemberHostingPolicy,
+  planned: { identity: GroupTripIdentity; dependents: CoverageOwnerFacts[] } | null,
+  db: AdultMemberHostingReviewDb,
+): Promise<{ identity: GroupTripIdentity; dependents: CoverageOwnerFacts[] } | null> {
+  if (!planned) return null;
+  // Fail-fast first: a conflicting trip key rolls this transaction back rather than
+  // waiting inside it. See `acquireHostingCoverageGroupKey`.
+  if (!(await tryLockHostingCoverageGroup(db, planned.identity.groupBookingId))) {
+    throw new HostingCoverageParticipantRetryError();
+  }
+  await lockHostingCoverageGroup(db, planned.identity.groupBookingId);
+
+  const verified = await planGroupTripCoverageDependents(booking, resolved, db);
+  if (
+    groupTripDependentFingerprint(verified) !==
+    groupTripDependentFingerprint(planned)
+  ) {
+    throw new HostingCoverageParticipantRetryError();
+  }
+  return verified;
+}
+
+/**
+ * Record the bounded re-evaluation this change owes the OTHER accounts in its Group
+ * Trip (#3039; the epic's settled lifecycle rule, and `INV-HOST-046`).
+ *
+ * IT NEVER REFUSES, AND THAT IS THE RULE RATHER THAN AN IMPLEMENTATION CHOICE. The
+ * owner's contract is explicit: if an actor's valid change strands another account's
+ * booking, allow the change, reconcile and escalate for officers, and disclose
+ * nothing about the other account to the actor. So there is no group counterpart to
+ * `SameOwnerCoverageWouldBreakError` and no group counterpart to the officer's
+ * override prompt — no new refusal type, no new error body, no new member-facing
+ * sentence and no route change. Blocking would make one account able to control
+ * another's booking, and even the REFUSAL would disclose that somebody else depends
+ * on them.
+ *
+ * IT ALSO DOES NOT EVALUATE. `inspectSameOwnerDependents` evaluates each dependent
+ * because it has to decide whether to REFUSE; nothing here refuses, so evaluating
+ * inside the actor's transaction would buy nothing and would answer against rows
+ * that have not committed. The drain re-reads after commit and is the only thing
+ * that opens an incident — which is also what keeps the officer's queue honest when
+ * the actor's change rolls back for an unrelated reason.
+ *
+ * ONE ITEM PER DEPENDENT BOOKING, AND WHY NOT PER OWNER. The epic asks for one
+ * bounded item per affected owner rather than an unbounded group-wide record, and
+ * per-booking is the strictly tighter form of that: in the ordinary trip every owner
+ * holds one booking, so the two coincide, and where an owner holds two the two have
+ * DIFFERENT nights, so a single item could not name both honestly. It also satisfies
+ * the participant fence exactly — `assertHostingCoverageQueueParticipantsLocked`
+ * demands a source whose `bookingId` is the item's `sourceBookingId` AND whose
+ * `ownerMemberId` is the item's `memberId`, so `{memberId: siblingOwner,
+ * sourceBookingId: theActorsBooking}` is REFUSED. Each item names the sibling as its
+ * own source, which is the shape
+ * `enqueueHostingCoverageReevaluationForMember` already uses for the same reason.
+ *
+ * THE NIGHTS ARE THE CHANGED BOOKING'S, NOT THE DEPENDENT'S (§10). A change to this
+ * booking cannot affect a night it never touched, so this IS the bound rather than a
+ * heuristic narrowing — the same sentence the same-owner item carries. The dependent
+ * is guaranteed to overlap them, because the dependent envelope's half-open night
+ * clause is what selected it.
+ *
+ * THE CAUSE IS ALWAYS `SYSTEM_CHANGE`, even when the actor's own change was an
+ * officer override. An override is authority over stranding on the account the
+ * officer was working on; it is not a decision about a third party's booking, and
+ * recording it as one would put an officer's name and reason against an incident
+ * they never considered. The actor is still recorded, so the audit trail says who
+ * did it.
+ */
+async function settleGroupTripDependentCoverage(
+  booking: CoverageOwnerFacts,
+  verified: { identity: GroupTripIdentity; dependents: CoverageOwnerFacts[] } | null,
+  actorMemberId: string | null,
+  participantProof: HostingCoverageQueueParticipantProof,
+  db: AdultMemberHostingReviewDb,
+): Promise<number> {
+  if (!verified || verified.dependents.length === 0) return 0;
+  const nights = eachDateOnlyInRange(booking.checkIn, booking.checkOut).map(
+    formatDateOnly,
+  );
+  let queued = 0;
+  for (const dependent of verified.dependents) {
+    const id = await enqueueHostingCoverageReevaluation(
+      {
+        memberId: dependent.memberId,
+        lodgeId: dependent.lodgeId,
+        nights,
+        cause: "SYSTEM_CHANGE",
+        sourceBookingId: dependent.id,
+        actorMemberId,
+        reason: null,
+      },
+      participantProof,
+      db,
+    );
+    if (id) queued += 1;
+  }
+  return queued;
+}
+
+/**
+ * The owners a committed change's Group Trip fan-out will have written items for, so
+ * the post-commit inline drain can claim them (#3039).
+ *
+ * READ AFTER THE COMMIT, OUTSIDE ANY TRANSACTION, by
+ * `settleHostingCoverageAfterCommit`. It takes no lock deliberately: it is choosing
+ * which queue rows to settle NOW rather than in up to three hours, and a wrong
+ * answer costs a delay, never a lost obligation — the cron claims everything
+ * unfiltered. Taking the trip key here would put a lock acquisition on the response
+ * path of every booking write at a club that runs group trips, for a decision that
+ * does not need one.
+ *
+ * Returns an empty list for the ordinary case — the scope off, or a booking in no
+ * trip — so a club that has not enabled `SAME_GROUP_TRIP` pays one cached policy
+ * read and nothing else.
+ */
+export async function loadGroupTripCoverageDependentOwnerIds(
+  bookingId: string,
+  db: AdultMemberHostingReviewDb,
+): Promise<string[]> {
+  const booking = (await db.booking.findUnique({
+    where: { id: bookingId },
+    select: GROUP_TRIP_COVERAGE_SOURCE_SELECT,
+  })) as GroupTripCoverageSourceFacts | null;
+  if (!booking) return [];
+  const resolved = await loadAdultMemberHostingPolicy(booking.lodgeId, db);
+  if (!hostingModeIsActive(resolved.mode)) return [];
+  const plan = await planGroupTripCoverageDependents(booking, resolved, db);
+  if (!plan) return [];
+  return [
+    ...new Set(plan.dependents.map((dependent) => dependent.memberId)),
+  ].sort();
+}
+
+/**
  * Record the re-evaluation this booking's OWN nights need, without evaluating and
  * without refusing anything (#2576 §8, §9).
  *
@@ -2327,36 +2721,39 @@ export async function enqueueOwnHostingCoverageReevaluation(
 ): Promise<string | null> {
   const plannedBooking = (await db.booking.findUnique({
     where: { id: bookingId },
-    select: {
-      id: true,
-      memberId: true,
-      lodgeId: true,
-      checkIn: true,
-      checkOut: true,
-    },
-  })) as CoverageOwnerFacts | null;
+    select: GROUP_TRIP_COVERAGE_SOURCE_SELECT,
+  })) as GroupTripCoverageSourceFacts | null;
   if (!plannedBooking) return null;
 
   const resolved = await loadAdultMemberHostingPolicy(plannedBooking.lodgeId, db);
   if (resolved.mode !== "ENFORCED") return null;
 
   const actorMemberId = context.actorMemberId ?? null;
+  // #3039: THIS SEAM OWES THE GROUP FAN-OUT TOO, and the reaper is the case that
+  // proves it. Confirming ADDS attendance, so it can restore a sibling's cover; the
+  // group-settlement reaper's `CONFIRMED -> PAYMENT_PENDING` revert REMOVES it, and
+  // a revert is exactly a de-confirmation of a coverage source. Without the fan-out
+  // here, an automated path could take the last qualifying adult out of a trip and
+  // no sibling booking would ever be re-evaluated — the same gap that made this
+  // seam's own existence necessary, one account further out.
+  const plannedGroupTrip = await planGroupTripCoverageDependents(
+    plannedBooking,
+    resolved,
+    db,
+  );
   const participantProof = await acquireOrValidateQueueParticipantProof(
-    [sourceParticipant(plannedBooking)],
+    [
+      sourceParticipant(plannedBooking),
+      ...(plannedGroupTrip?.dependents ?? []).map(sourceParticipant),
+    ],
     actorMemberId,
     db,
     suppliedParticipantProof,
   );
   const booking = (await db.booking.findUnique({
     where: { id: plannedBooking.id },
-    select: {
-      id: true,
-      memberId: true,
-      lodgeId: true,
-      checkIn: true,
-      checkOut: true,
-    },
-  })) as CoverageOwnerFacts | null;
+    select: GROUP_TRIP_COVERAGE_SOURCE_SELECT,
+  })) as GroupTripCoverageSourceFacts | null;
   if (!booking) throw new HostingCoverageParticipantRetryError();
   assertHostingCoverageQueueParticipantsLocked(participantProof, {
     memberId: booking.memberId,
@@ -2365,9 +2762,16 @@ export async function enqueueOwnHostingCoverageReevaluation(
     actorMemberId,
   });
 
-  // §9. Confirming paths use this seam instead of evaluating, so this is where they
-  // join the owner-key discipline: the queue row and the confirmation commit
-  // together, and a concurrent removal of the cover cannot slip between them.
+  // §9 and `INV-LOCK-002`. Confirming paths use this seam instead of evaluating, so
+  // this is where they join the key discipline: the queue rows and the confirmation
+  // commit together, and a concurrent removal of the cover cannot slip between them.
+  // GROUP FIRST, then owner — the same order every other holder takes.
+  const verifiedGroupTrip = await lockAndVerifyGroupTripCoverageDependents(
+    booking,
+    resolved,
+    plannedGroupTrip,
+    db,
+  );
   if (resolved.hostScopes.sameBookingOwner) {
     if (!(await tryLockHostingCoverageOwner(db, booking.memberId))) {
       throw new HostingCoverageParticipantRetryError();
@@ -2375,7 +2779,7 @@ export async function enqueueOwnHostingCoverageReevaluation(
     await lockHostingCoverageOwner(db, booking.memberId);
   }
 
-  return enqueueHostingCoverageReevaluation(
+  const ownItemId = await enqueueHostingCoverageReevaluation(
     {
       memberId: booking.memberId,
       lodgeId: booking.lodgeId,
@@ -2390,6 +2794,16 @@ export async function enqueueOwnHostingCoverageReevaluation(
     participantProof,
     db,
   );
+  await settleGroupTripDependentCoverage(
+    booking,
+    verifiedGroupTrip,
+    actorMemberId,
+    participantProof,
+    db,
+  );
+  // The OWN item's id, unchanged: callers use it to log what they recorded for the
+  // booking they were confirming, and a sibling's item is not that.
+  return ownItemId;
 }
 
 /**
