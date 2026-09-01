@@ -1232,6 +1232,43 @@ describe("no Booking writer can bypass Group Trip reconciliation (#3039)", () =>
     }
   });
 
+  it("takes the trip key before the seam does anything that takes an owner key", () => {
+    // WHY THIS IS A SEPARATE ASSERTION FROM THE BEHAVIOURAL ORDER TEST, and it was
+    // added because a mutation escaped. Moving
+    // `lockAndVerifyGroupTripCoverageDependents` BELOW the reconcile call leaves the
+    // behavioural order test GREEN: the evaluator one call deeper takes the two keys
+    // in the right order itself, so the recorded acquisition sequence is unchanged.
+    // What that mutation really breaks is subtler — the fan-out's own dependent read
+    // and its plan/verify would run after the reconcile had already evaluated and
+    // written under the owner key, so the set the fan-out enqueues against would not
+    // have been frozen for the evaluation that consumed it. Only a positional
+    // assertion at the seam can see that.
+    const review = readRepoCode(REVIEW_SERVICE);
+    const seams: Record<string, string> = {
+      reconcileAdultMemberHostingReviewWithSiblings:
+        "reconcileAdultMemberHostingReview(",
+      enqueueOwnHostingCoverageReevaluation: "enqueueHostingCoverageReevaluation(",
+    };
+    for (const [seam, ownerKeyTaker] of Object.entries(seams)) {
+      const body = topLevelFunctionBody(review, seam) ?? "";
+      const proof = body.indexOf("acquireOrValidateQueueParticipantProof(");
+      const key = body.indexOf("lockAndVerifyGroupTripCoverageDependents(");
+      // FROM THE PROOF ONWARDS, not from the start of the body.
+      // `reconcileAdultMemberHostingReviewWithSiblings` calls the single-id
+      // reconciler in its INACTIVE-MODE early return, above the fence and above any
+      // key — that call takes nothing, and anchoring on it would make this assertion
+      // unsatisfiable rather than strict.
+      const consumer = body.indexOf(ownerKeyTaker, proof);
+      expect(proof, seam).toBeGreaterThan(-1);
+      expect(key, seam).toBeGreaterThan(-1);
+      expect(consumer, seam).toBeGreaterThan(-1);
+      expect(
+        key,
+        `INV-LOCK-002 (docs/invariants/operations.md): ${seam} must freeze the Group Trip under its per-trip key BEFORE ${ownerKeyTaker}, which reaches the per-owner key`,
+      ).toBeLessThan(consumer);
+    }
+  });
+
   it("keeps the fan-out inside the engine, so nobody re-implements it", () => {
     // Every one of these is engine-internal. A second implementation anywhere in
     // `src/` would be a second definition of which bookings are in a trip and which
