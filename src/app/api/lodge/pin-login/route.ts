@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import {
-  HUT_LEADER_PIN_SESSION_COOKIE,
   clearLodgePinFailures,
   createLodgePinSessionWithVersion,
   findActiveHutLeaderAssignmentByPin,
   getLodgePinLockout,
   recordLodgePinFailure,
+  setLodgePinSessionCookie,
 } from "@/lib/lodge-pin-session";
 import {
   applyRateLimit,
@@ -197,16 +197,12 @@ export async function POST(req: NextRequest) {
     memberName: `${assignment.member.firstName} ${assignment.member.lastName}`,
   });
 
-  response.cookies.set({
-    name: HUT_LEADER_PIN_SESSION_COOKIE,
-    value: pinSession.value,
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    expires: pinSession.expiresAt,
-    maxAge: pinSession.maxAge,
-    path: "/",
-  });
+  // #3228 — the attribute set lives with the session, not here, so the three
+  // routes that write this cookie (sign in, renew, lock) cannot disagree about
+  // `httpOnly`, `path` or `sameSite`. The deadline it carries is now TEN
+  // MINUTES OF INACTIVITY rather than twelve hours from this moment; the kiosk
+  // slides it forward when somebody touches the screen.
+  setLodgePinSessionCookie(response.cookies, pinSession);
 
   return response;
 }

@@ -57,6 +57,15 @@ export async function GET(req: NextRequest) {
   if ("pinSession" in authResult && authResult.pinSession) {
     return NextResponse.json({
       tier: "hut-leader",
+      // #3228 — this device reached the hut-leader tier by PIN on a SHARED
+      // account, which is the case the ten-minute idle window and the Lock
+      // control govern. A hut leader signed in with their OWN account also
+      // reads `tier: "hut-leader"` and must not be swept into either: their
+      // session is theirs, on their own device, and dropping them out of it
+      // every ten minutes would be a new defect. The flag is what lets the
+      // kiosk tell the two apart, and it says nothing the holder of the cookie
+      // does not already know from its own tier.
+      pinSessionActive: true,
       dateRange: authResult.pinSession.dateRange,
       canManageRoster: true,
       canMarkAttendance: true,
