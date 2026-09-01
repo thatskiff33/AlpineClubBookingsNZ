@@ -438,7 +438,7 @@ describe("canonical Group Trip identity (#3037, epic #2943)", () => {
     // canonical helper. Without this the assertion above would also pass on a
     // module that had simply stopped filtering by booking status at all.
     expect(identity).toContain("coverageEnvelopeWhere(");
-    expect(identity).toContain("coverageDependentEnvelopeWhere(");
+    expect(identity).toContain("coverageDependentEnvelopeAcrossNightsWhere(");
 
     // And the envelope itself is about bookings, never about containers, so the
     // rule cannot be reintroduced one module along either.
@@ -1162,7 +1162,7 @@ describe("the same-owner refusal and the escalation seam (#2576 §6, §8, §9)",
   });
 });
 
-describe("no Booking writer can bypass Group Trip reconciliation (#3039)", () => {
+describe("no writer can bypass Group Trip reconciliation (#3039)", () => {
   const REVIEW_SERVICE = "src/lib/adult-member-hosting-review.ts";
 
   /** The whole body of a top-level function, declaration to its column-0 brace. */
@@ -1174,27 +1174,55 @@ describe("no Booking writer can bypass Group Trip reconciliation (#3039)", () =>
     return source.slice(start, start + closing.index + closing[0].length);
   }
 
-  it("puts the fan-out inside the two seams, so no writer has to know about trips", () => {
-    // THE CENSUS THAT MAKES THE REST FREE. Thirty-odd booking writers reach the
-    // hosting rule through exactly two seams — `reconcileAdultMemberHostingReviewWithSiblings`
-    // (reconcile, which can refuse) and `enqueueOwnHostingCoverageReevaluation`
-    // (enqueue, for the confirming paths that must not be refused). The Group Trip
-    // fan-out lives inside BOTH, so a writer that participates in the hosting rule
-    // participates in the fan-out automatically and a NEW writer cannot forget it.
+  /**
+   * EVERY seam that reaches the hosting rule, and the count is THREE rather than two.
+   *
+   * The first two are the booking-write doors:
+   * `reconcileAdultMemberHostingReviewWithSiblings` (reconcile, which can refuse) and
+   * `enqueueOwnHostingCoverageReevaluation` (enqueue, for the confirming paths that
+   * must not be refused).
+   *
+   * THE THIRD IS THE ONE THAT WAS MISSED, and it was missed because nothing about a
+   * membership change looks like a booking change.
+   * `enqueueHostingCoverageReevaluationForMember` is where the membership lifecycle
+   * arrives — deactivation, archive, membership cancellation, consent decline, the
+   * Xero lapse sync, account deletion, manual subscription payment. Host
+   * qualification DEPENDS on membership standing (`participantQualifiesAsHost`
+   * returns false for an inactive, cancelled or archived member and for an unsettled
+   * subscription), so a lapse removes cover from every booking relying on that
+   * person — including bookings on OTHER ACCOUNTS in the same Group Trip. Without the
+   * fan-out here the seam enqueued for the bookings this person attends and nothing
+   * else, and the stranded sibling was never reached: PERMANENTLY, because there is no
+   * periodic full re-evaluation in this system — the three-hourly cron drains the
+   * queue and nothing more.
+   *
+   * This list is what makes `INV-HOST-046`'s claim ("every writer that reaches the
+   * hosting rule participates automatically") true rather than aspirational, so a
+   * FOURTH seam belongs in it before it belongs in the tree.
+   */
+  const GROUP_FANOUT_SEAMS = [
+    "reconcileAdultMemberHostingReviewWithSiblings",
+    "enqueueOwnHostingCoverageReevaluation",
+    "enqueueHostingCoverageReevaluationForMember",
+  ];
+
+  it("puts the fan-out inside every seam, so no writer has to know about trips", () => {
+    // THE CENSUS THAT MAKES THE REST FREE. Thirty-odd booking writers and a dozen
+    // membership writers reach the hosting rule through the three seams above. The
+    // Group Trip fan-out lives inside ALL of them, so a writer that participates in
+    // the hosting rule participates in the fan-out automatically and a NEW writer
+    // cannot forget it.
     //
-    // The alternative — a third seam each writer had to call — is the arrangement
-    // `INV-SSOT-001` refuses: thirty call sites to keep right, and the failure mode
+    // The alternative — a separate seam each writer had to call — is the arrangement
+    // `INV-SSOT-001` refuses: forty call sites to keep right, and the failure mode
     // is a stranded booking on somebody else's account that nobody hears about.
     const review = readRepoCode(REVIEW_SERVICE);
-    for (const seam of [
-      "reconcileAdultMemberHostingReviewWithSiblings",
-      "enqueueOwnHostingCoverageReevaluation",
-    ]) {
+    for (const seam of GROUP_FANOUT_SEAMS) {
       const body = topLevelFunctionBody(review, seam);
       expect(body, seam).not.toBeNull();
       expect(
         body ?? "",
-        `INV-HOST-045 (docs/invariants/adult-member-hosting.md): ${seam} must run the Group Trip fan-out, or every writer reaching it silently skips the trip`,
+        `INV-HOST-046 (docs/invariants/adult-member-hosting.md): ${seam} must run the Group Trip fan-out, or every writer reaching it silently skips the trip`,
       ).toContain("settleGroupTripDependentCoverage(");
       expect(
         body ?? "",
@@ -1203,7 +1231,7 @@ describe("no Booking writer can bypass Group Trip reconciliation (#3039)", () =>
     }
   });
 
-  it("plans the trip's dependents BEFORE the participant fence, in both seams", () => {
+  it("plans the trip's dependents BEFORE the participant fence, in every seam", () => {
     // NOT A STYLE POINT, it is what makes the queue writes legal.
     // `assertHostingCoverageQueueParticipantsLocked` demands that every owner an item
     // names is in the runtime-issued proof, and the proof locks exactly the owners it
@@ -1212,10 +1240,7 @@ describe("no Booking writer can bypass Group Trip reconciliation (#3039)", () =>
     // fan-out is about to write, and every group edit would answer the stable retry
     // 409 forever.
     const review = readRepoCode(REVIEW_SERVICE);
-    for (const seam of [
-      "reconcileAdultMemberHostingReviewWithSiblings",
-      "enqueueOwnHostingCoverageReevaluation",
-    ]) {
+    for (const seam of GROUP_FANOUT_SEAMS) {
       const body = topLevelFunctionBody(review, seam) ?? "";
       const plan = body.indexOf("planGroupTripCoverageDependents(");
       const proof = body.indexOf("acquireOrValidateQueueParticipantProof(");
@@ -1224,7 +1249,7 @@ describe("no Booking writer can bypass Group Trip reconciliation (#3039)", () =>
       expect(proof, seam).toBeGreaterThan(-1);
       expect(
         plan,
-        `INV-HOST-045: ${seam} must plan the Group Trip dependents before the participant fence, or their owners are outside the proof`,
+        `INV-HOST-046: ${seam} must plan the Group Trip dependents before the participant fence, or their owners are outside the proof`,
       ).toBeLessThan(proof);
       // ...and the key after the fence, keeping the documented
       // participant-rows -> group -> owner order.
@@ -1248,6 +1273,11 @@ describe("no Booking writer can bypass Group Trip reconciliation (#3039)", () =>
       reconcileAdultMemberHostingReviewWithSiblings:
         "reconcileAdultMemberHostingReview(",
       enqueueOwnHostingCoverageReevaluation: "enqueueHostingCoverageReevaluation(",
+      // The membership seam's owner-key consumer is the plural helper: it locks every
+      // affected booking OWNER together, in sorted order, and the trip keys must be
+      // held before that (`INV-LOCK-002`).
+      enqueueHostingCoverageReevaluationForMember:
+        "tryLockHostingCoverageOwners(",
     };
     for (const [seam, ownerKeyTaker] of Object.entries(seams)) {
       const body = topLevelFunctionBody(review, seam) ?? "";
@@ -1288,12 +1318,12 @@ describe("no Booking writer can bypass Group Trip reconciliation (#3039)", () =>
     ]);
   });
 
-  it("resolves the sibling owners for the inline drain in exactly one place", () => {
+  it("resolves the trip's dependent bookings for the inline drain in exactly one place", () => {
     // The post-commit half. `settleHostingCoverageAfterCommit` is the ONE caller, so
     // the thirty-odd writers that already call it need no change at all — which is
     // also why the resolution had to go into the wrapper rather than its parameters.
     expect(
-      sourceFilesNaming("loadGroupTripCoverageDependentOwnerIds"),
+      sourceFilesNaming("loadGroupTripCoverageDependentBookingIds"),
     ).toEqual([
       "src/lib/adult-member-hosting-coverage-drain.ts",
       "src/lib/adult-member-hosting-review.ts",
@@ -1328,9 +1358,17 @@ describe("the participant fence is gated on the hosting policy (#2623 T5)", () =
     const sites = [
       ...service.matchAll(/await acquireOrValidateQueueParticipantProof\(/g),
     ].map((match) => match.index ?? 0);
-    // The three enqueue seams. A change to this number is a new fence: gate it,
-    // then say so here.
-    expect(sites).toHaveLength(3);
+    // FOUR SITES ACROSS THE THREE ENQUEUE SEAMS. A change to this number is a new
+    // fence: gate it, then say so here.
+    //
+    // The fourth is not a fourth seam. `enqueueOwnHostingCoverageReevaluation`
+    // acquires its proof TWICE on one path since #3039: once over the booking plus its
+    // Group Trip dependents, and — only in `bestEffort` mode, only after that first
+    // acquisition was refused by a third party's contention — once over the booking
+    // alone, so a `PAID` claim for an already-paid invoice is not rolled back by
+    // somebody else's edit. Both sit inside the same mode-gated function, which is
+    // what this test's per-site check requires.
+    expect(sites).toHaveLength(4);
 
     for (const site of sites) {
       const enclosing = Math.max(

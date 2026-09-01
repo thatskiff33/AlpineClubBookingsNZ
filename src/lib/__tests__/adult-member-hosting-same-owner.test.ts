@@ -2463,7 +2463,15 @@ describe("the dependent reads truncate reproducibly (#2576 §10)", () => {
       ([args]: [any]) =>
         typeof args?.take === "number" && !args?.select?.guests?.where,
     );
-    expect(dependentReads).toHaveLength(2);
+    // THREE SINCE #3039, and the third one is an improvement rather than a new
+    // hazard. `loadHostingSiblingIds` used to run the #738 split-pair relation
+    // through its own `findMany` with NEITHER `take` NOR `orderBy` — an unbounded,
+    // unordered sibling read on every booking write, which is precisely the shape
+    // these ceilings exist to prevent. It now delegates to the batched
+    // `loadHostingCoverageSplitSiblingIds`, so the relation has one definition and
+    // that read is bounded and ordered like its two siblings. The loop below holds it
+    // to the same order.
+    expect(dependentReads).toHaveLength(3);
     for (const [args] of dependentReads) {
       expect(args.orderBy, JSON.stringify(args.where)).toEqual([
         { checkIn: "asc" },

@@ -13,11 +13,18 @@
 // pass every test below for the wrong reason. `matchesWhere` therefore applies
 // the real predicates and THROWS on an operator it does not model, which is what
 // makes "this booking supplies no cover" a fact about the query rather than a
-// fact about the fake. It is deliberately a sibling of the store in
-// `adult-member-hosting-same-owner.test.ts` rather than an import of it: that
-// one models one member's own bookings and knows nothing about the two Group
-// Trip relations, and widening it would make one file answer for two scopes.
-import { AgeTier, type MemberGuestConsentStatus } from "@prisma/client";
+// fact about the fake.
+//
+// THE ROW BUILDERS AND THE PREDICATE ENGINE NOW LIVE IN
+// `support/hosting-fake-booking-store.ts` (#3039 review). They were written here as
+// a deliberate sibling of the store in `adult-member-hosting-same-owner.test.ts`
+// rather than an import of it — and then #3039 made a THIRD copy, by which point the
+// copies had diverged: `guestRow` took a member id in one and a whole member row in
+// another, and only one modelled the `some` relation filter. That is the divergence
+// that makes a coverage double stop meaning anything, so the shared parts moved. What
+// stays here is this file's own `makeStore`, which records the `where` clauses the
+// evaluator was handed — that recording is what this file is FOR.
+import { AgeTier } from "@prisma/client";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
@@ -37,6 +44,17 @@ vi.mock("@/lib/member-subscription-eligibility", () => ({
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
+import {
+  booking as bookingRow,
+  guestRow,
+  joinerOf as joinerOfLodge,
+  matchesWhere,
+  memberRow,
+  organiserOf as organiserOfLodge,
+  policyRow as basePolicyRow,
+  project,
+  type FakeBooking,
+} from "@/lib/__tests__/support/hosting-fake-booking-store";
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
 import { HostingGroupTripSourceCeilingExceededError } from "@/lib/adult-member-hosting-coverage-ceilings";
 import { evaluateProposedAdultMemberHosting } from "@/lib/adult-member-hosting-proposed";
@@ -56,95 +74,25 @@ const TRIP = "group-trip-1";
 const OTHER_TRIP = "group-trip-2";
 
 /**
- * A club-wide policy row. `ADMIN_REVIEW_REQUIRED` so an uncovered night produces
- * a violation to inspect rather than a throw, with `SAME_BOOKING` on (the
- * built-in rule) and the two cross-booking scopes off unless a test turns one on.
+ * A club-wide policy row over the shared column list.
+ *
+ * `ADMIN_REVIEW_REQUIRED` so an uncovered night produces a violation to inspect
+ * rather than a throw, with `SAME_BOOKING` on (the built-in rule) and the two
+ * cross-booking scopes off unless a test turns one on. That is the shared module's
+ * own default, so this is a re-export under this file's name rather than an
+ * override — kept as a named function so a scenario can still spread over it.
  */
 function policyRow(overrides: Record<string, unknown> = {}) {
-  return {
-    id: "policy-club",
-    scopeKey: "club-wide",
-    lodgeId: null,
-    mode: "ADMIN_REVIEW_REQUIRED",
-    capacityMode: "NO_HOLD",
-    version: 7,
-    hostScopeSameBooking: true,
-    hostScopeSameBookingOwner: false,
-    hostScopeSameGroupTrip: false,
-    ...overrides,
-  };
+  return basePolicyRow(overrides);
 }
 
-function memberRow(overrides: Record<string, unknown> = {}) {
-  return {
-    id: "adult-1",
-    ageTier: AgeTier.ADULT,
-    active: true,
-    cancelledAt: null,
-    archivedAt: null,
-    ...overrides,
-  };
-}
-
-function guestRow(
-  id: string,
-  nights: string[],
-  member: ReturnType<typeof memberRow> | null = null,
-  consentStatus: MemberGuestConsentStatus | null = null,
-) {
-  return {
-    id,
-    firstName: id,
-    lastName: "Person",
-    memberId: member?.id ?? null,
-    stayStart: new Date(`${nights[0]}T00:00:00.000Z`),
-    stayEnd: new Date(`${nights[nights.length - 1]}T00:00:00.000Z`),
-    consentStatus,
-    nights: nights.map((night) => ({
-      stayDate: new Date(`${night}T00:00:00.000Z`),
-    })),
-    member,
-  };
-}
-
-type FakeBooking = Record<string, unknown>;
-
-/**
- * A booking row with every column and relation the coverage predicates read.
- *
- * `groupBookingAsOrganiser` and `groupBookingJoin` are the two authoritative
- * Group Trip relations; `parentBookingId` is present and deliberately unrelated
- * to them, so a test can set a `parentBookingId` link across two DIFFERENT trips
- * and still expect no cover — a store that omitted the column could not tell
- * "the predicate ignores this" from "the column was never there".
- */
 function booking(overrides: FakeBooking = {}): FakeBooking {
-  return {
-    id: "b-main",
-    memberId: "owner-1",
-    parentBookingId: null,
-    groupBookingAsOrganiser: null,
-    groupBookingJoin: null,
-    lodgeId: LODGE,
-    status: "CONFIRMED",
-    deletedAt: null,
-    checkIn: new Date("2026-08-03T00:00:00.000Z"),
-    checkOut: new Date("2026-08-05T00:00:00.000Z"),
-    adultMemberHostingReview: null,
-    adultMemberHostingReviewStatus: null,
-    guests: [],
-    ...overrides,
-  };
+  return bookingRow(LODGE, overrides);
 }
 
 /** The organiser's booking in `trip`. */
 function organiserOf(trip: string, overrides: FakeBooking = {}): FakeBooking {
-  return booking({
-    id: `organiser-${trip}`,
-    memberId: `organiser-member-${trip}`,
-    groupBookingAsOrganiser: { id: trip },
-    ...overrides,
-  });
+  return organiserOfLodge(LODGE, trip, overrides);
 }
 
 /** A joined booking in `trip`. */
@@ -153,97 +101,7 @@ function joinerOf(
   id: string,
   overrides: FakeBooking = {},
 ): FakeBooking {
-  return booking({
-    id,
-    memberId: `joiner-member-${id}`,
-    groupBookingJoin: { groupBookingId: trip },
-    ...overrides,
-  });
-}
-
-/**
- * Apply a Prisma-shaped `where` to a plain row.
- *
- * Supports exactly the operators the Group Trip coverage predicates use, and
- * THROWS on anything else. Throwing rather than ignoring is the point: a clause
- * this fake silently skipped would make a "not related" test pass while the
- * production query related the two bookings.
- */
-function matchesWhere(row: FakeBooking, where: Record<string, unknown>): boolean {
-  for (const [key, condition] of Object.entries(where)) {
-    if (key === "AND") {
-      const clauses = condition as Array<Record<string, unknown>>;
-      if (!clauses.every((clause) => matchesWhere(row, clause))) return false;
-      continue;
-    }
-    if (key === "OR") {
-      const clauses = condition as Array<Record<string, unknown>>;
-      if (!clauses.some((clause) => matchesWhere(row, clause))) return false;
-      continue;
-    }
-    const value = row[key];
-    if (condition === null || typeof condition !== "object") {
-      if (value !== condition) return false;
-      continue;
-    }
-    const operators = condition as Record<string, unknown>;
-    // A to-one relation filter: `groupBookingJoin: { is: { groupBookingId } }`.
-    // A null relation matches nothing, which is the whole reason a booking in no
-    // Group Trip supplies no Group Trip cover.
-    if ("is" in operators) {
-      const nested = operators.is as Record<string, unknown> | null;
-      if (nested === null) {
-        if (value != null) return false;
-        continue;
-      }
-      if (value == null) return false;
-      if (!matchesWhere(value as FakeBooking, nested)) return false;
-      continue;
-    }
-    for (const [operator, operand] of Object.entries(operators)) {
-      switch (operator) {
-        case "not":
-          if (value === operand) return false;
-          break;
-        case "in":
-          if (!(operand as unknown[]).includes(value)) return false;
-          break;
-        case "notIn":
-          if ((operand as unknown[]).includes(value)) return false;
-          break;
-        case "lt":
-          if (!((value as Date) < (operand as Date))) return false;
-          break;
-        case "gt":
-          if (!((value as Date) > (operand as Date))) return false;
-          break;
-        case "gte":
-          if (!((value as Date) >= (operand as Date))) return false;
-          break;
-        default:
-          throw new Error(`fake store cannot apply operator ${operator}`);
-      }
-    }
-  }
-  return true;
-}
-
-/**
- * Return only the columns and relations a `select` asked for.
- *
- * NOT A DETAIL. The Group Trip relations reach the evaluator through
- * `BOOKING_HOSTING_SELECT`, and Prisma does not typecheck `select` keys through
- * the hand-written client interfaces the hosting paths use — so a select that
- * quietly stopped naming them would hand the resolver `undefined` and every
- * booking would read as belonging to no Group Trip, with a green typecheck. A
- * store that returned whole rows regardless of the select cannot see that at
- * all: it answers with data the production query never asked for.
- */
-function project(row: FakeBooking, select: Record<string, unknown> | undefined) {
-  if (!select) return row;
-  const out: FakeBooking = {};
-  for (const key of Object.keys(select)) out[key] = row[key];
-  return out;
+  return joinerOfLodge(LODGE, trip, id, overrides);
 }
 
 function makeStore(rows: FakeBooking[], policies?: unknown[]) {

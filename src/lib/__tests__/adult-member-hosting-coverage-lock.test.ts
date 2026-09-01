@@ -22,9 +22,13 @@ import path from "node:path";
 vi.mock("server-only", () => ({}));
 
 import {
+  HOSTING_COVERAGE_GROUP_LOCK_NAMESPACE_FOR_TESTS,
   HOSTING_COVERAGE_OWNER_LOCK_NAMESPACE_FOR_TESTS,
+  lockHostingCoverageGroup,
+  lockHostingCoverageGroups,
   lockHostingCoverageOwner,
   lockHostingCoverageOwners,
+  tryLockHostingCoverageGroups,
 } from "@/lib/adult-member-hosting-coverage-lock";
 
 function readRepoFile(relativePath: string): string {
@@ -79,6 +83,157 @@ function recordingClient() {
     }),
   };
 }
+
+describe("the per-trip coverage lock (#3039, INV-LOCK-002)", () => {
+  // MOVED HERE FROM `adult-member-hosting-group-trip-reconciliation.test.ts` (#3039
+  // review). That file had copied `topLevelFunctionBody` without the docblock that
+  // makes it correct — the CRLF guard and the null-return-rather-than-fall-back
+  // reasoning — and the helper plus its reasoning already live in this file, which is
+  // also where the OTHER coverage lock family's unit tests are. One home for both
+  // families (`INV-SSOT-001`), and the reconciliation file keeps only the assertions
+  // that need its fan-out harness.
+  it("takes a transaction-scoped advisory lock in its own namespace, keyed on the trip", async () => {
+    const db = recordingClient();
+    await lockHostingCoverageGroup(db, "group-trip-1");
+    expect(db.calls).toHaveLength(1);
+    const [call] = db.calls;
+    // TRANSACTION-scoped: a session lock would outlive the transaction and never be
+    // released by a pooled connection.
+    expect(call.sql).toContain("pg_advisory_xact_lock");
+    expect(call.sql).not.toContain("pg_advisory_lock(");
+    expect(call.values).toEqual([
+      HOSTING_COVERAGE_GROUP_LOCK_NAMESPACE_FOR_TESTS,
+      "group-trip-1",
+    ]);
+    expect(HOSTING_COVERAGE_GROUP_LOCK_NAMESPACE_FOR_TESTS).toBe(
+      "hosting-coverage-group",
+    );
+    // Its own keyspace. A namespace shared with the owner key would make one member's
+    // account collide with an unrelated trip whose id happened to hash the same, and
+    // would silently serialise them against each other.
+    expect(HOSTING_COVERAGE_GROUP_LOCK_NAMESPACE_FOR_TESTS).not.toBe(
+      HOSTING_COVERAGE_OWNER_LOCK_NAMESPACE_FOR_TESTS,
+    );
+  });
+
+  it("acquires several trips in sorted order, so composing can never deadlock", async () => {
+    const db = recordingClient();
+    await lockHostingCoverageGroups(db, ["trip-z", "trip-a", "trip-m"]);
+    expect(db.calls.map((call) => call.values[1])).toEqual([
+      "trip-a",
+      "trip-m",
+      "trip-z",
+    ]);
+  });
+
+  it("de-duplicates and ignores absent trips", async () => {
+    const db = recordingClient();
+    await lockHostingCoverageGroups(db, [
+      "group-trip-1",
+      "group-trip-1",
+      null,
+      undefined,
+      "",
+    ]);
+    expect(db.calls).toHaveLength(1);
+    const empty = recordingClient();
+    await lockHostingCoverageGroups(empty, [null, undefined]);
+    expect(empty.calls).toHaveLength(0);
+  });
+
+  it("is a no-op on a client that cannot run raw SQL, rather than throwing", async () => {
+    await expect(
+      lockHostingCoverageGroup({}, "group-trip-1"),
+    ).resolves.toBeUndefined();
+    await expect(
+      lockHostingCoverageGroup(null, "group-trip-1"),
+    ).resolves.toBeUndefined();
+    await expect(
+      tryLockHostingCoverageGroups({}, ["group-trip-1"]),
+    ).resolves.toBe(true);
+  });
+
+  it("reports a lost race as false rather than waiting", async () => {
+    const db = { $queryRaw: vi.fn(async () => [{ locked: false }]) };
+    await expect(
+      tryLockHostingCoverageGroups(db, ["group-trip-1"]),
+    ).resolves.toBe(false);
+    // One statement, not three: a lost key stops the sequence, so the caller never
+    // holds a partial set it would then have to release in order.
+    expect(db.$queryRaw).toHaveBeenCalledTimes(1);
+  });
+
+  it("mints both families through ONE blocking and ONE fail-fast statement", () => {
+    // `INV-SSOT-001`. The owner key and the trip key differ in exactly two facts —
+    // the namespace constant and the decode label — so a second hand-written pair of
+    // statements per family is two more places for the `pg_advisory_xact_lock`
+    // spelling, the two-argument `hashtext` form or the `AS "locked"` alias to drift.
+    // A family that drifted to the SESSION-scoped `pg_advisory_lock(` would leak a
+    // lock on a pooled connection with every other test in the tree still green.
+    const lock = readRepoFile("src/lib/adult-member-hosting-coverage-lock.ts");
+    expect(
+      lock.match(/await db\.\$executeRaw`SELECT pg_advisory_xact_lock\(/g) ?? [],
+      "INV-SSOT-001: both coverage lock families must take their key through one blocking statement",
+    ).toHaveLength(1);
+    expect(
+      lock.match(/pg_try_advisory_xact_lock\(/g) ?? [],
+      "INV-SSOT-001: both coverage lock families must try their key through one fail-fast statement",
+    ).toHaveLength(1);
+  });
+
+  it("acquires the trip key ONLY through the one try-then-take protocol", () => {
+    // F1, AND IT IS THE WHOLE DEADLOCK DEFENCE. `tryLockHostingCoverageGroup` before
+    // the blocking form is what makes a trip key un-waitable: the try never waits, an
+    // xact lock cannot be released before commit, so the blocking call after a
+    // successful try is a re-entrant no-op and no transaction ever WAITS on a trip
+    // key. Delete that one `if` and a real deadlock exists — T1 holds trip G and
+    // blocks on owner M1 while T2 holds trip H, wins owner M1, then reaches trip G
+    // through `inspectSameOwnerDependents` — and PostgreSQL answers `40P01`, which is
+    // neither `55P03` nor the retry error, so it surfaces as a raw 500 rather than
+    // the stable 409.
+    //
+    // THE BEHAVIOURAL ORDER TESTS CANNOT SEE THAT DELETION, which is why this exists.
+    // They assert the FIRST acquisition of the recorded sequence is a try, and the
+    // seam runs before the evaluator — so removing the evaluator's try still leaves
+    // `[try, block, block]` and a green suite. A per-SITE census sees it wherever it
+    // happens, exercised or not.
+    const review = readRepoFile("src/lib/adult-member-hosting-review.ts");
+    const protocol = topLevelFunctionBody(review, "acquireHostingCoverageGroupKey");
+    expect(protocol, "acquireHostingCoverageGroupKey").not.toBeNull();
+    const body = protocol ?? "";
+    const tryIndex = body.indexOf("await tryLockHostingCoverageGroup(");
+    const blockIndex = body.indexOf("await lockHostingCoverageGroup(");
+    expect(
+      tryIndex,
+      "INV-LOCK-002 (docs/invariants/operations.md): acquireHostingCoverageGroupKey must TRY the trip " +
+        "key fail-fast before taking it blocking — without that try the coverage-group tier can enter " +
+        "a wait-for cycle and PostgreSQL answers 40P01, which surfaces as a raw 500",
+    ).toBeGreaterThan(-1);
+    expect(body).toContain("throw new HostingCoverageParticipantRetryError()");
+    expect(
+      blockIndex,
+      "INV-LOCK-002: the blocking acquisition must come AFTER the try, or the try proves nothing",
+    ).toBeGreaterThan(tryIndex);
+
+    // AND NOWHERE ELSE MAY TAKE IT. Outside the minting module, every textual
+    // acquisition of the blocking form has to be inside that one protocol function —
+    // so a second call site cannot reintroduce the copy this census replaced, and
+    // cannot omit the try while doing it.
+    const outside = [
+      ...review.matchAll(/await lockHostingCoverageGroups?\(/g),
+    ].map((match) => match.index ?? -1);
+    expect(outside.length).toBeGreaterThan(0);
+    const protocolStart = review.indexOf(body);
+    for (const site of outside) {
+      expect(
+        site >= protocolStart && site < protocolStart + body.length,
+        "INV-SSOT-001: the per-trip key may be acquired only inside " +
+          "acquireHostingCoverageGroupKey, which is the one place the try-then-take protocol is " +
+          `written; found an acquisition at offset ${site}`,
+      ).toBe(true);
+    }
+  });
+});
 
 describe("the per-owner coverage lock (#2576 §9)", () => {
   it("takes a transaction-scoped advisory lock in its own namespace", () => {
@@ -161,12 +316,25 @@ describe("the per-owner coverage lock (#2576 §9)", () => {
     }
   });
 
-  it("is documented as the last key in the tree's acquisition order", () => {
-    // Deadlock-freedom is an ordering property, and an ordering property that is not
-    // written down is one the next lane breaks. `global -> lodge -> member-night ->
-    // coverage-owner` has to be stated where the other keys are stated.
+  it("is documented as the SECOND of the last two keys, after the per-trip one", () => {
+    // THE TITLE USED TO SAY "the last key in the tree's acquisition order", and it
+    // stayed there after #3039 put the per-TRIP `hosting-coverage-group` key above
+    // this one. The body only asserted that the string `hosting-coverage-owner`
+    // appeared somewhere in the document, so the test passed while its own name
+    // asserted something false — which is worse than no test, because a reader
+    // checking whether the order is pinned finds a green test claiming it is.
+    //
+    // The assertion now requires the document to state the ORDER, not merely to
+    // mention the key. Deadlock-freedom is an ordering property, and an ordering
+    // property that is not written down is one the next lane breaks.
     const doc = readRepoFile("docs/CONCURRENCY_AND_LOCKING.md");
     expect(doc).toContain("hosting-coverage-owner");
+    expect(doc).toContain("hosting-coverage-group");
+    expect(
+      doc,
+      "docs/CONCURRENCY_AND_LOCKING.md must state the coverage-group -> coverage-owner order " +
+        "explicitly (INV-LOCK-002), not merely name both keys",
+    ).toContain("coverage-group -> coverage-owner");
   });
 
   it("pins drain reconciliation to policy, lifecycle, Member row, refresh, then owner", () => {
@@ -212,7 +380,7 @@ describe("the per-owner coverage lock (#2576 §9)", () => {
     expect(actorLock).toBeGreaterThan(policyLock);
     expect(ownerReconciliation).toBeGreaterThan(actorLock);
     expect(body).toContain(
-      "policy-set -> Member KEY SHARE -> coverage-owner",
+      "policy-set -> Member KEY SHARE -> coverage-GROUP ->",
     );
 
     const doc = readRepoFile("docs/CONCURRENCY_AND_LOCKING.md");

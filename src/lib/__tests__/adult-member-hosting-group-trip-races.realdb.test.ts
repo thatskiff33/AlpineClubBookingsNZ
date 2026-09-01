@@ -33,6 +33,7 @@ import { Prisma, type PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
+import { assertSafeRaceDbUrl } from "@/lib/__tests__/support/race-db-url";
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
@@ -66,38 +67,16 @@ const BOOKING_IDS = [
 ];
 
 /**
- * The same loopback/port/name guard every other suite on this database applies,
- * restated rather than imported so this file cannot be pointed at a real database
- * by an import going missing.
+ * The shared loopback/port/name guard, from `support/race-db-url.ts`.
+ *
+ * IT USED TO BE RESTATED HERE, "so this file cannot be pointed at a real database by
+ * an import going missing". That reason does not describe a reachable failure — a
+ * missing import is a module-load error, so the suite does not run at all, which is
+ * fail-CLOSED. What it did produce was a twelfth copy of one `INV-OPS` safety fact,
+ * and a safety fact with twelve copies is one that gets tightened eleven times.
  */
 export function assertSafeGroupTripRaceDbUrl(url: string): void {
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    throw new Error(
-      "Group Trip race tests need a valid CONCURRENCY_RACE_DATABASE_URL.",
-    );
-  }
-  const port = Number.parseInt(parsed.port, 10);
-  if (!Number.isFinite(port) || port === 5432 || port < 55442) {
-    throw new Error(
-      `Refusing Group Trip race DB port ${parsed.port || "(none)"}: use a throwaway PostgreSQL on 55442+ (never 5432).`,
-    );
-  }
-  if (
-    !["localhost", "127.0.0.1", "::1", "[::1]"].includes(
-      parsed.hostname.toLowerCase(),
-    )
-  ) {
-    throw new Error("Group Trip race DB must be loopback-only.");
-  }
-  const databaseName = decodeURIComponent(parsed.pathname.replace(/^\//, ""));
-  if (!databaseName.includes("concurrency_race_1881")) {
-    throw new Error(
-      "Group Trip race DB name must contain 'concurrency_race_1881'.",
-    );
-  }
+  assertSafeRaceDbUrl(url, "Group Trip");
 }
 
 function deferred() {
@@ -130,8 +109,19 @@ function createRecordingClient(
   client: PrismaClient,
   recorded: RecordedLock[],
   pauseBeforeGroupKey?: { reached: ReturnType<typeof deferred>; release: ReturnType<typeof deferred> },
+  /**
+   * Pause immediately AFTER the first per-trip acquisition instead of before it.
+   *
+   * The two are opposite proofs and conflating them is how a test ends up asserting
+   * the reverse of its own title. Pausing BEFORE the key proves fail-fast under
+   * contention: another connection grabs the trip key first, and this writer loses
+   * rather than waiting. Pausing AFTER it proves the HOLD: this writer already owns
+   * the key, and the other connection is the one that must lose.
+   */
+  pauseAfterGroupKey?: { reached: ReturnType<typeof deferred>; release: ReturnType<typeof deferred> },
 ): PrismaClient {
   let paused = false;
+  let pausedAfter = false;
   return new Proxy(client, {
     get(target, property) {
       if (property === "$transaction") {
@@ -160,11 +150,17 @@ function createRecordingClient(
                       await pauseBeforeGroupKey.release.promise;
                     }
                     if (isAdvisory) recorded.push({ namespace, blocking });
-                    return Reflect.apply(
+                    const result = await Reflect.apply(
                       txTarget[txProperty as "$executeRaw"],
                       txTarget,
                       [query, ...values],
                     );
+                    if (isGroupKey && pauseAfterGroupKey && !pausedAfter) {
+                      pausedAfter = true;
+                      pauseAfterGroupKey.reached.resolve();
+                      await pauseAfterGroupKey.release.promise;
+                    }
+                    return result;
                   };
                 }
                 const value = Reflect.get(txTarget, txProperty);
@@ -525,7 +521,13 @@ let HOSTING_COVERAGE_RETRY_CODE: (typeof import("@/lib/adult-member-hosting-queu
       expect(coverage[firstGroup]?.blocking).toBe(false);
     });
 
-    it("holds the trip key for the whole reconciliation, so a sibling writer retries", async () => {
+    it("loses the trip key fail-fast rather than waiting, when another writer holds it", async () => {
+      // THE TITLE USED TO SAY "holds the trip key for the whole reconciliation", and
+      // this test proves the opposite direction: the pause fires BEFORE writer A takes
+      // the key, so writer B grabs it first and A is the one that loses. That is a real
+      // and important property — a member's booking transaction must never WAIT on
+      // another account's trip key — but it is not a proof that the key is held. The
+      // next test is.
       const reached = deferred();
       const release = deferred();
       const recorded: RecordedLock[] = [];
@@ -572,6 +574,56 @@ let HOSTING_COVERAGE_RETRY_CODE: (typeof import("@/lib/adult-member-hosting-queu
           where: { memberId: IDS.joinerMember },
         }),
       ).resolves.toBe(0);
+    });
+
+    it("HOLDS the trip key for the rest of the reconciliation, so the other writer loses", async () => {
+      // THE OTHER DIRECTION, and the one the previous test's old title claimed. The
+      // pause fires AFTER writer A has taken the trip key, so A genuinely owns it while
+      // B asks — and B, which is the production fail-fast acquisition, must lose. A
+      // transaction-scoped advisory lock cannot be released before commit, so if this
+      // ever passed by B WAITING instead of losing, the 300ms budget below would expire
+      // and B would still be pending; a `false` from `pg_try_advisory_xact_lock` is the
+      // only way it can finish first.
+      const reached = deferred();
+      const release = deferred();
+      const recorded: RecordedLock[] = [];
+      const holding = createRecordingClient(writerA, recorded, undefined, {
+        reached,
+        release,
+      });
+      const first = holding.$transaction(async (tx) => {
+        await reconcileAdultMemberHostingReviewWithSiblings(
+          IDS.organiserBooking,
+          tx as never,
+          {
+            dependentCoverage: "ESCALATE",
+            coverageActorMemberId: IDS.organiserMember,
+            coverageChange: {
+              cause: "SYSTEM_CHANGE",
+              actorMemberId: IDS.organiserMember,
+              reason: null,
+            },
+          },
+        );
+      });
+      await reached.promise;
+      // A owns the trip key. B's production acquisition must return false.
+      const contended = await writerB.$transaction(async (tx) =>
+        tryLockHostingCoverageGroup(tx, IDS.group),
+      );
+      expect(
+        contended,
+        "INV-LOCK-002 (docs/invariants/operations.md): the per-trip key must be HELD for the whole " +
+          "reconciliation, so a concurrent writer's fail-fast acquisition returns false",
+      ).toBe(false);
+      release.resolve();
+      await first;
+      // And A finished its own obligation: the sibling owner has its item.
+      await expect(
+        primary.hostingCoverageReevaluation.count({
+          where: { memberId: IDS.joinerMember },
+        }),
+      ).resolves.toBeGreaterThan(0);
     });
 
     it("re-reads the sibling set under the key, and rolls back if a joiner arrived", async () => {
@@ -673,7 +725,7 @@ let HOSTING_COVERAGE_RETRY_CODE: (typeof import("@/lib/adult-member-hosting-queu
       );
       expect(
         sibling,
-        "INV-HOST-045: the sibling owner's re-evaluation item must name the sibling as its own source",
+        "INV-HOST-046: the sibling owner's re-evaluation item must name the sibling as its own source",
       ).toEqual([
         {
           memberId: IDS.joinerMember,

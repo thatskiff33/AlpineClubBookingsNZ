@@ -835,10 +835,15 @@ const SCOPED_ADVISORY_LOCK_INVENTORY: Record<string, number> = {
   // Counterpart analysis and compatibility evidence in
   // docs/CONCURRENCY_AND_LOCKING.md → "Same-owner coverage takes a per-owner key".
   //
-  // FOUR SINCE #3039, because this file now mints a SECOND family: the per-TRIP
+  // STILL TWO AFTER #3039 MINTED A SECOND FAMILY HERE — the per-TRIP
   // `pg_advisory_xact_lock(hashtext('hosting-coverage-group'), hashtext(<GroupBooking.id>))`,
-  // in both the blocking and the fail-fast spelling, for the same
-  // count-every-spelling reason #2722 gave above.
+  // in both the blocking and the fail-fast spelling. The count did not go to four
+  // because the two families differ in exactly two facts, the namespace constant and
+  // the decode label, so both go through ONE blocking primitive
+  // (`lockCoverageKeys`) and ONE fail-fast primitive (`tryLockCoverageKeys`)
+  // parameterised on those (`INV-SSOT-001`). Two statements in the file, both counted,
+  // both scanned — and a family that drifted to the session-scoped
+  // `pg_advisory_lock(` spelling is now impossible to introduce for one family alone.
   //
   // WHY A SECOND FAMILY AT ALL. `SAME_GROUP_TRIP` (#3038) makes one booking's
   // compliance a function of a booking on ANOTHER ACCOUNT. The owner key is
@@ -867,7 +872,7 @@ const SCOPED_ADVISORY_LOCK_INVENTORY: Record<string, number> = {
   // take nothing unless `SAME_GROUP_TRIP` is on and the booking is in a trip.
   // Counterpart analysis in docs/CONCURRENCY_AND_LOCKING.md → "Group Trip coverage
   // takes a per-trip key, above the owner key".
-  "src/lib/adult-member-hosting-coverage-lock.ts": 4,
+  "src/lib/adult-member-hosting-coverage-lock.ts": 2,
   // AI Diagnostics budget reserve (AID-2, #2371). Both writers take the SAME
   // per-month key `pg_advisory_xact_lock(hashtext('diagnostics-budget-reserve'),
   // hashtext(<month>))`: `reserveDiagnosticsBudget` (the guarded spend claim) and
