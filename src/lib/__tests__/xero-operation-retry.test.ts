@@ -859,6 +859,102 @@ describe("retryXeroSyncOperation", () => {
     });
   });
 
+  /**
+   * #3193 fix round: A SECOND ASK that Xero rejected.
+   *
+   * It is anchored on the review task whose settled share it bills - the anchor
+   * that keeps the booking change's own reads from raising it to the combined
+   * total. Nothing here knew that anchor, so this screen's only
+   * supplementary-invoice branch (`BookingModification`) did not match and a
+   * failed second ask had no retry at all, while the booking's audit trail
+   * already said the amount was being billed.
+   *
+   * THIS TEST IS THE BRANCH, NOT THE ROUTE TO IT (second pass). The payload
+   * below is hand-built, so on its own it proves only that the replay sends the
+   * queued share. That a Xero rejection actually LEAVES such a payload behind is
+   * the other half, and it was false when this branch was written: the create
+   * path replaced the payload with the Xero body before calling Xero, so this
+   * branch was unreachable for the very failure it was added for. That half is
+   * proven from the real create path in
+   * `xero-supplementary-invoices.test.ts` -> "a second ask survives a Xero
+   * rejection replayably (#3193)", and the shape below is what that run writes:
+   * the queued fields with the refused `invoices` body beside them.
+   */
+  it("replays a second supplementary invoice from its queued payload (#3193)", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        entityType: "INVOICE",
+        operationType: "CREATE",
+        localModel: "ManualRefundTask",
+        localId: "task_2",
+        requestPayload: {
+          queueType: "SUPPLEMENTARY_INVOICE",
+          bookingId: "book_123",
+          priceDiffCents: 3000,
+          changeFeeCents: 0,
+          bookingModificationId: "mod_123",
+          shortfallReviewTaskId: "task_2",
+          recordPayment: false,
+          // The refused Xero body the create path records beside the queued
+          // fields. Present here so this row is the shape a real rejection
+          // leaves, rather than a cleaner one that never reaches this screen.
+          invoices: [{ total: 30 }],
+        },
+      })
+    );
+
+    await expect(
+      retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" })
+    ).resolves.toEqual({
+      message:
+        "Retried the second Xero supplementary invoice for a settled booking-review share.",
+    });
+
+    expect(mocks.createXeroSupplementaryInvoice).toHaveBeenCalledWith({
+      bookingId: "book_123",
+      // THE SHARE, NEVER THE TOTAL, on the replay as on the original.
+      priceDiffCents: 3000,
+      changeFeeCents: 0,
+      bookingModificationId: "mod_123",
+      shortfallReviewTaskId: "task_2",
+      createdByMemberId: "admin_1",
+      // A second ask is raised only because the change's invoice had already
+      // gone out, so on the card route the card was taken at the earlier figure
+      // and nothing has been paid against this one.
+      recordPayment: false,
+      repairExistingLink: true,
+    });
+  });
+
+  /**
+   * AND IT REFUSES RATHER THAN GUESSES when the payload is gone. The change's
+   * own invoice can be rebuilt from the `BookingModification` row; a second ask
+   * cannot, because the share it bills lives only in the payload. Rebuilding
+   * from the task's current amount would be a claim about what this row was
+   * queued with.
+   *
+   * This is now the LAST RESORT rather than the ordinary Xero-rejection ending,
+   * which is what it silently was before the create path stopped replacing the
+   * payload. It stays pinned because the refusal must never quietly become a
+   * rebuild.
+   */
+  it("refuses to replay a second supplementary invoice whose payload was overwritten", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        entityType: "INVOICE",
+        operationType: "CREATE",
+        localModel: "ManualRefundTask",
+        localId: "task_2",
+        requestPayload: { invoices: [{ total: 30 }] },
+      })
+    );
+
+    await expect(
+      retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" })
+    ).rejects.toThrow(/cannot be replayed from this screen/);
+    expect(mocks.createXeroSupplementaryInvoice).not.toHaveBeenCalled();
+  });
+
   // #1356: a surviving queued payload wins over the modification record — the
   // Xero idempotency key embeds the amounts, so replaying the stored values
   // keeps the retry deduplicable against the original attempt (a pre-#1356

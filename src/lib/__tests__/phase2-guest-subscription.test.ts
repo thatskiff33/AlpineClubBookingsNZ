@@ -42,6 +42,10 @@ vi.mock("@/lib/prisma", () => ({
     // #2364: the hosting review is reconciled inside the booking write, so
     // every prisma/tx double a booking path runs against needs this client.
     adultMemberHostingPolicy: { findMany: vi.fn().mockResolvedValue([]) },
+    // #3032: the preview half of the pending-review fence reads this. Empty by
+    // default - no financial review is open - so this suite asserts exactly what
+    // it asserted before.
+    manualRefundTask: { findFirst: vi.fn().mockResolvedValue(null) },
     booking: {
       findUnique: vi.fn(),
       findMany: vi.fn(),
@@ -720,6 +724,19 @@ describe("P2.3: Guest subscription check", () => {
           stayStart: checkIn,
           stayEnd: checkOut,
           priceCents: 5000,
+          // #3166: the two nights this guest holds, carrying what they were sold
+          // for. Every edit path is now judged on exact stored sold-price
+          // evidence, so a strand with no night rows PARKS the quote for
+          // financial review and no settlement figure is quoted at all — which
+          // is the gate working, not the range or refund question these cases
+          // are about.
+          nights: [
+            { stayDate: checkIn, priceCents: 2500 },
+            {
+              stayDate: new Date("2026-12-02T00:00:00.000Z"),
+              priceCents: 2500,
+            },
+          ],
         },
         {
           id: "existing-2",
@@ -731,6 +748,19 @@ describe("P2.3: Guest subscription check", () => {
           stayStart: checkIn,
           stayEnd: checkOut,
           priceCents: 5000,
+          // #3166: the two nights this guest holds, carrying what they were sold
+          // for. Every edit path is now judged on exact stored sold-price
+          // evidence, so a strand with no night rows PARKS the quote for
+          // financial review and no settlement figure is quoted at all — which
+          // is the gate working, not the range or refund question these cases
+          // are about.
+          nights: [
+            { stayDate: checkIn, priceCents: 2500 },
+            {
+              stayDate: new Date("2026-12-02T00:00:00.000Z"),
+              priceCents: 2500,
+            },
+          ],
         },
       ],
       payment: null,
@@ -824,6 +854,19 @@ describe("P2.3: Guest subscription check", () => {
           stayStart: checkIn,
           stayEnd: checkOut,
           priceCents: 5000,
+          // #3166: the two nights this guest holds, carrying what they were sold
+          // for. Every edit path is now judged on exact stored sold-price
+          // evidence, so a strand with no night rows PARKS the quote for
+          // financial review and no settlement figure is quoted at all — which
+          // is the gate working, not the range or refund question these cases
+          // are about.
+          nights: [
+            { stayDate: checkIn, priceCents: 2500 },
+            {
+              stayDate: new Date("2026-12-02T00:00:00.000Z"),
+              priceCents: 2500,
+            },
+          ],
         },
         {
           id: "existing-2",
@@ -835,6 +878,19 @@ describe("P2.3: Guest subscription check", () => {
           stayStart: checkIn,
           stayEnd: checkOut,
           priceCents: 5000,
+          // #3166: the two nights this guest holds, carrying what they were sold
+          // for. Every edit path is now judged on exact stored sold-price
+          // evidence, so a strand with no night rows PARKS the quote for
+          // financial review and no settlement figure is quoted at all — which
+          // is the gate working, not the range or refund question these cases
+          // are about.
+          nights: [
+            { stayDate: checkIn, priceCents: 2500 },
+            {
+              stayDate: new Date("2026-12-02T00:00:00.000Z"),
+              priceCents: 2500,
+            },
+          ],
         },
       ],
       payment: {
@@ -954,5 +1010,99 @@ describe("P2.3: Guest subscription check", () => {
       })
     );
     expect(mockPrisma.memberSubscription.findMany).not.toHaveBeenCalled();
+  });
+
+  it("parks the preview of a pre-check-in edit whose stored history cannot price it (#3166)", async () => {
+    // THE PREVIEW HALF of INV-MOD-028's quote/apply parity requirement, on the
+    // path #3166 widened. The save now parks a not-yet-started edit whose strand
+    // carries no readable sold-price history; a preview that went on quoting a
+    // refund or a charge would show the member money the save will not move.
+    //
+    // The strand is the ordinary two-night one, with its night rows removed —
+    // a legacy booking, or one created by approving a request (#2739).
+    mockAuth.mockResolvedValue({
+      user: { id: "member-1", role: "MEMBER", accessRoles: [{ role: "USER" }] },
+    });
+    const { calculateBookingPrice } = await import("@/lib/pricing");
+    vi.mocked(calculateBookingPrice).mockReturnValue({
+      totalPriceCents: 5000,
+      guests: [
+        {
+          ageTier: "ADULT" as const,
+          isMember: true,
+          rateMembershipTypeId: "type-member",
+          nights: 2,
+          priceCents: 5000,
+          perNightCents: [2500, 2500],
+          nightDates: [],
+        },
+      ],
+    });
+    mockPrisma.booking.findUnique.mockResolvedValue({
+      id: "booking-1",
+      memberId: "member-1",
+      checkIn,
+      checkOut,
+      status: "CONFIRMED",
+      totalPriceCents: 10000,
+      discountCents: 0,
+      promoAdjustmentCents: 0,
+      finalPriceCents: 10000,
+      guests: [
+        {
+          id: "existing-1",
+          firstName: "Alice",
+          lastName: "Smith",
+          ageTier: "ADULT",
+          isMember: true,
+          memberId: "member-1",
+          stayStart: checkIn,
+          stayEnd: checkOut,
+          priceCents: 5000,
+          nights: [],
+        },
+        {
+          id: "existing-2",
+          firstName: "Bob",
+          lastName: "Smith",
+          ageTier: "ADULT",
+          isMember: true,
+          memberId: null,
+          stayStart: checkIn,
+          stayEnd: checkOut,
+          priceCents: 5000,
+          nights: [],
+        },
+      ],
+      payment: {
+        id: "payment-1",
+        amountCents: 10000,
+        refundedAmountCents: 0,
+        status: "SUCCEEDED",
+      },
+      promoRedemption: null,
+    });
+
+    const res = await getModifyQuote(
+      makeModifyQuoteRequest({ removeGuestIds: ["existing-2"] }),
+      { params: Promise.resolve({ id: "booking-1" }) },
+    );
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    // It says so, and it quotes NOTHING: every money field is the booking's own
+    // stored figure and every delta is zero, because the booking's money does
+    // not move on this save. A `$0` refund is a real financial statement and is
+    // not what this is — `settlementOptions` is null, so the panel offers no
+    // election for a movement that is not happening.
+    expect(body.financialReviewRequired).toBe(true);
+    expect(body.settlementOptions).toBeNull();
+    expect(body.priceDiffCents).toBe(0);
+    expect(body.netChargeCents).toBe(0);
+    expect(body.changeFeeCents).toBe(0);
+    expect(body.newFinalPriceCents).toBe(10000);
+    // The CONTROL is the case above: the identical removal on the identical
+    // booking WITH night rows quotes a -5000 net and a full settlement option
+    // set. Only a real evidence read passes both.
   });
 });

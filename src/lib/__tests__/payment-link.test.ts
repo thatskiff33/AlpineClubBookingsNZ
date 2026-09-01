@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { BookingStatus, PaymentStatus } from "@prisma/client";
+import { BookingEventType, BookingStatus, PaymentStatus } from "@prisma/client";
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
@@ -102,7 +102,14 @@ import {
   sendBookingRequestApprovedEmail,
   sendSplitGuestPaymentLinkEmail,
 } from "@/lib/email";
-import { requireClubTimeZone } from "@/lib/club-time";
+import { bindClubTime, requireClubTimeZone } from "@/lib/club-time";
+import { resolveBookingNarrative } from "@/lib/booking-narrative";
+import {
+  FINANCIAL_REVIEW_NOTHING_MOVED,
+  FINANCIAL_REVIEW_AMOUNT_PREDATES_THE_CHANGE,
+  FINANCIAL_REVIEW_NOT_IN_THAT_FIGURE,
+  FINANCIAL_REVIEW_WORKING_IT_OUT,
+} from "@/lib/booking-financial-review-copy";
 import {
   createPaymentIntentForPaymentLink,
   getPaymentLinkContext,
@@ -256,6 +263,20 @@ describe("resolvePaymentLink", () => {
   });
 });
 
+/**
+ * The financial-review read `getPaymentLinkContext` now REQUIRES (#3194).
+ *
+ * A spy rather than a literal, so every case below has to state its own answer
+ * and the call itself can be asserted. The parameter has no default in the
+ * source for the same reason: a silent "no" about a member's money is what this
+ * issue is removing, not something to reintroduce as a convenience.
+ */
+function reviewReader(answer: boolean) {
+  return vi.fn<(bookingId: string) => Promise<boolean>>(async () => answer);
+}
+
+const noReview = () => ({ readOpenFinancialReview: reviewReader(false) });
+
 describe("getPaymentLinkContext", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -270,7 +291,7 @@ describe("getPaymentLinkContext", () => {
   it("returns a payable context for a PENDING booking without marking the link used", async () => {
     mockedFindUnique.mockResolvedValue(baseLink() as never);
 
-    const context = await getPaymentLinkContext(RAW_TOKEN);
+    const context = await getPaymentLinkContext(RAW_TOKEN, noReview());
 
     expect(context.state).toBe("payable");
     expect(context.payable?.amountCents).toBe(12000);
@@ -294,7 +315,7 @@ describe("getPaymentLinkContext", () => {
       }) as never
     );
 
-    const context = await getPaymentLinkContext(RAW_TOKEN);
+    const context = await getPaymentLinkContext(RAW_TOKEN, noReview());
 
     expect(context.lodgeName).toBe("Second Lodge");
   });
@@ -302,7 +323,7 @@ describe("getPaymentLinkContext", () => {
   it("asks the database for the booking's lodge name and nothing else about the lodge", async () => {
     mockedFindUnique.mockResolvedValue(baseLink() as never);
 
-    await getPaymentLinkContext(RAW_TOKEN);
+    await getPaymentLinkContext(RAW_TOKEN, noReview());
 
     const include = mockedFindUnique.mock.calls[0]?.[0] as unknown as {
       include: { booking: { include: Record<string, unknown> } };
@@ -321,7 +342,7 @@ describe("getPaymentLinkContext", () => {
     });
     mockedFindUnique.mockResolvedValue(baseLink() as never);
 
-    const context = await getPaymentLinkContext(RAW_TOKEN);
+    const context = await getPaymentLinkContext(RAW_TOKEN, noReview());
 
     expect(context.state).toBe("payable");
     expect(context.payable?.internetBankingReference).toBeUndefined();
@@ -333,7 +354,7 @@ describe("getPaymentLinkContext", () => {
     );
     mockedUpdate.mockResolvedValue({} as never);
 
-    const context = await getPaymentLinkContext(RAW_TOKEN);
+    const context = await getPaymentLinkContext(RAW_TOKEN, noReview());
 
     expect(context.state).toBe("paid");
     expect(context.payable).toBeNull();
@@ -352,7 +373,7 @@ describe("getPaymentLinkContext", () => {
       }) as never
     );
 
-    const context = await getPaymentLinkContext(RAW_TOKEN);
+    const context = await getPaymentLinkContext(RAW_TOKEN, noReview());
 
     expect(context.state).toBe("paid");
     // Link already marked used — not re-marked.
@@ -367,7 +388,7 @@ describe("getPaymentLinkContext", () => {
       }) as never
     );
 
-    const context = await getPaymentLinkContext(RAW_TOKEN);
+    const context = await getPaymentLinkContext(RAW_TOKEN, noReview());
 
     expect(context.state).toBe("paid");
     expect(mockedUpdate).not.toHaveBeenCalled();
@@ -378,7 +399,7 @@ describe("getPaymentLinkContext", () => {
       baseLink({ expiresAt: new Date("2000-01-01T00:00:00.000Z") }) as never
     );
 
-    const context = await getPaymentLinkContext(RAW_TOKEN);
+    const context = await getPaymentLinkContext(RAW_TOKEN, noReview());
 
     expect(context.state).toBe("expired_payable");
     expect(context.canRequestFreshLink).toBe(true);
@@ -399,7 +420,7 @@ describe("getPaymentLinkContext", () => {
       },
     ] as never);
 
-    const context = await getPaymentLinkContext(RAW_TOKEN);
+    const context = await getPaymentLinkContext(RAW_TOKEN, noReview());
 
     expect(context.state).toBe("bumped");
     expect(context.narrative.message).toMatch(/filled up/i);
@@ -410,10 +431,312 @@ describe("getPaymentLinkContext", () => {
       baseLink({ booking: baseBooking({ status: BookingStatus.CANCELLED }) }) as never
     );
 
-    const context = await getPaymentLinkContext(RAW_TOKEN);
+    const context = await getPaymentLinkContext(RAW_TOKEN, noReview());
 
     expect(context.state).toBe("cancelled_pre_payment");
     expect(context.narrative.message).toMatch(/cancelled/i);
+  });
+});
+
+/**
+ * #3194 (epic #2797): THE PAYMENT LINK MUST NOT TELL A MEMBER THEIR BOOKING IS
+ * SETTLED WHILE THE CLUB IS STILL WORKING OUT WHAT THEY OWE.
+ *
+ * The booking's own page has said so since #3033. This page did not, because
+ * `bookingHasOpenFinancialReview` is `server-only` and nobody threaded the
+ * answer through - so one member got two answers about one booking, and the
+ * reassuring one was the uninformed one.
+ *
+ * Every case here carries its CONTROL: the same fixture with the review closed
+ * must produce the context this route has always produced, because "a booking
+ * with no open review is completely unchanged" is an acceptance criterion and
+ * not an assumption.
+ */
+describe("getPaymentLinkContext under an open financial review", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedBookingEventFindMany.mockResolvedValue([] as never);
+    loadEffectiveModuleFlagsMock.mockResolvedValue({
+      xeroIntegration: true,
+      internetBankingPayments: true,
+    });
+  });
+
+  it("asks the injected reader about THIS booking, exactly once", async () => {
+    mockedFindUnique.mockResolvedValue(baseLink() as never);
+    const readOpenFinancialReview = reviewReader(false);
+
+    await getPaymentLinkContext(RAW_TOKEN, { readOpenFinancialReview });
+
+    expect(readOpenFinancialReview).toHaveBeenCalledTimes(1);
+    expect(readOpenFinancialReview).toHaveBeenCalledWith("booking-1");
+  });
+
+  it("stops a PAID booking saying there is nothing more to do", async () => {
+    mockedFindUnique.mockResolvedValue(
+      baseLink({ booking: baseBooking({ status: BookingStatus.PAID }) }) as never,
+    );
+    mockedUpdate.mockResolvedValue({} as never);
+
+    const context = await getPaymentLinkContext(RAW_TOKEN, {
+      readOpenFinancialReview: reviewReader(true),
+    });
+
+    expect(context.financialReviewPending).toBe(true);
+    expect(context.state).toBe("financial_review_pending");
+    expect(
+      `${context.narrative.message} ${context.narrative.nextStep}`,
+    ).not.toMatch(/nothing more to do/i);
+    expect(context.narrative.message).toContain(FINANCIAL_REVIEW_WORKING_IT_OUT);
+    expect(context.narrative.message).toContain(FINANCIAL_REVIEW_NOTHING_MOVED);
+    // No amount, anywhere: the epic's rule, and the post-edit total on the
+    // booking is exactly the authoritative-looking figure it forbids.
+    expect(
+      `${context.narrative.headline} ${context.narrative.message} ${context.narrative.nextStep}`,
+    ).not.toContain("$");
+  });
+
+  /*
+    THE QUESTION THIS PAGE EXISTS TO ANSWER: "did my payment go through?"
+
+    The case above has no payment event, so the paid narrative names no figure
+    and the page loses nothing by it. This one is the real member: they paid by
+    internet banking, the club recorded it, and they opened the link to check.
+    `getPaymentLinkContext` reads through `loadPaymentLinkRecord`, so a link
+    already marked used still renders - and `PaymentForm` returns to this same URL
+    after a redirect-based method, so the page is re-fetched seconds after paying
+    on it.
+
+    Before #3194's fix the whole page was the standalone review narrative, which
+    says nothing about a payment: same member, same booking, minutes apart, the
+    payment confirmed on the way in and unmentioned on the way back.
+  */
+  it("still confirms the payment on a PAID booking under review", async () => {
+    mockedFindUnique.mockResolvedValue(
+      baseLink({ booking: baseBooking({ status: BookingStatus.PAID }) }) as never,
+    );
+    mockedUpdate.mockResolvedValue({} as never);
+    mockedBookingEventFindMany.mockResolvedValue([
+      {
+        type: BookingEventType.MEMBER_PAID,
+        occurredAt: new Date("2026-06-20T02:00:00.000Z"),
+        amountCents: 12000,
+        reason: null,
+        snapshot: null,
+      },
+    ] as never);
+
+    const context = await getPaymentLinkContext(RAW_TOKEN, {
+      readOpenFinancialReview: reviewReader(true),
+    });
+
+    expect(context.state).toBe("financial_review_pending");
+    expect(context.narrative.headline).toBe("Payment received");
+    expect(context.narrative.message).toContain(
+      "we've received your payment of $120.00",
+    );
+    // And the review is disclosed in the same breath, with the sentence that
+    // keeps the two amounts apart.
+    expect(context.narrative.message).toContain(
+      FINANCIAL_REVIEW_NOT_IN_THAT_FIGURE,
+    );
+    expect(context.narrative.message).toContain(FINANCIAL_REVIEW_WORKING_IT_OUT);
+    expect(
+      `${context.narrative.message} ${context.narrative.nextStep}`,
+    ).not.toMatch(/nothing more to do/i);
+    // Exactly one figure: money the club HAS. No amount is invented for the
+    // change, which is the thing nobody knows yet.
+    expect(context.narrative.message.match(/\$/g)).toHaveLength(1);
+  });
+
+  it("CONTROL: the same paid booking with no review says only that it is paid", async () => {
+    mockedFindUnique.mockResolvedValue(
+      baseLink({ booking: baseBooking({ status: BookingStatus.PAID }) }) as never,
+    );
+    mockedUpdate.mockResolvedValue({} as never);
+    mockedBookingEventFindMany.mockResolvedValue([
+      {
+        type: BookingEventType.MEMBER_PAID,
+        occurredAt: new Date("2026-06-20T02:00:00.000Z"),
+        amountCents: 12000,
+        reason: null,
+        snapshot: null,
+      },
+    ] as never);
+
+    const context = await getPaymentLinkContext(RAW_TOKEN, noReview());
+
+    expect(context.state).toBe("paid");
+    expect(context.narrative.message).toContain(
+      "we've received your payment of $120.00",
+    );
+    expect(context.narrative.message).not.toContain(
+      FINANCIAL_REVIEW_NOT_IN_THAT_FIGURE,
+    );
+    expect(context.narrative.nextStep).toMatch(/nothing more to do/i);
+  });
+
+  it("CONTROL: the same PAID booking with no open review is unchanged", async () => {
+    mockedFindUnique.mockResolvedValue(
+      baseLink({ booking: baseBooking({ status: BookingStatus.PAID }) }) as never,
+    );
+    mockedUpdate.mockResolvedValue({} as never);
+
+    const context = await getPaymentLinkContext(RAW_TOKEN, noReview());
+
+    expect(context.financialReviewPending).toBe(false);
+    expect(context.state).toBe("paid");
+    expect(context.narrative.nextStep).toMatch(/nothing more to do/i);
+  });
+
+  /*
+    THE CASE THAT COSTS A MEMBER THEIR BOOKING IF IT IS GOT WRONG.
+
+    A CONFIRMED-unpaid booking can carry an open review: one edit can surrender
+    nights that cannot be valued while adding nights that price normally. The
+    booking's stored price is still due and this link is the only way this member
+    can pay it - though that stored price is the PRE-change one, which is why the
+    wording says so rather than presenting it as settled (#3194 fix round).
+
+    If the review flag were allowed to decide whether the
+    page can take money, they would be shown a card saying "pay below" with
+    nothing below it, pay nothing, and lose the booking when the hold expired -
+    while not one cent of the money under review had moved either way.
+  */
+  it("keeps a CONFIRMED-unpaid booking payable, with the review disclosed", async () => {
+    mockedFindUnique.mockResolvedValue(
+      baseLink({
+        booking: baseBooking({ status: BookingStatus.CONFIRMED }),
+      }) as never,
+    );
+
+    const context = await getPaymentLinkContext(RAW_TOKEN, {
+      readOpenFinancialReview: reviewReader(true),
+    });
+
+    expect(context.financialReviewPending).toBe(true);
+    expect(context.state).toBe("financial_review_pending");
+    // The payment card's own data survives intact.
+    expect(context.payable).not.toBeNull();
+    expect(context.payable?.amountCents).toBe(12000);
+    expect(context.payable?.status).toBe(BookingStatus.CONFIRMED);
+    expect(context.payable?.internetBankingReference).toBe("BOOKING-BOOKING-");
+    // And both facts are in the wording: the amount due, and - since the #3194
+    // fix round - that the amount is the one from BEFORE this member's change,
+    // because a parked edit writes `finalPriceCents` back unchanged while saving
+    // the new dates and deleting the departing guest's row. "Not part of that
+    // figure" is the sentence for money already RECEIVED, which cannot go stale.
+    expect(context.narrative.message).toContain("$120.00");
+    expect(context.narrative.message).toContain(
+      FINANCIAL_REVIEW_AMOUNT_PREDATES_THE_CHANGE,
+    );
+    expect(context.narrative.message).not.toContain(
+      FINANCIAL_REVIEW_NOT_IN_THAT_FIGURE,
+    );
+  });
+
+  it("CONTROL: the same CONFIRMED booking with no open review is unchanged", async () => {
+    mockedFindUnique.mockResolvedValue(
+      baseLink({
+        booking: baseBooking({ status: BookingStatus.CONFIRMED }),
+      }) as never,
+    );
+
+    const context = await getPaymentLinkContext(RAW_TOKEN, noReview());
+
+    expect(context.state).toBe("payable");
+    expect(context.payable?.amountCents).toBe(12000);
+    expect(context.narrative.message).not.toContain(
+      FINANCIAL_REVIEW_NOT_IN_THAT_FIGURE,
+    );
+    expect(context.narrative.message).not.toContain(
+      FINANCIAL_REVIEW_AMOUNT_PREDATES_THE_CHANGE,
+    );
+  });
+
+  it("keeps the fresh-link offer on an expired link that is under review", async () => {
+    mockedFindUnique.mockResolvedValue(
+      baseLink({ expiresAt: new Date("2000-01-01T00:00:00.000Z") }) as never,
+    );
+
+    const context = await getPaymentLinkContext(RAW_TOKEN, {
+      readOpenFinancialReview: reviewReader(true),
+    });
+
+    // The wording state moves; the LINK's own state does not, and the member
+    // still needs the button that emails them a new one.
+    expect(context.state).toBe("financial_review_pending");
+    expect(context.canRequestFreshLink).toBe(true);
+    expect(context.narrative.message).toMatch(/expired/i);
+    expect(context.narrative.message).toContain(FINANCIAL_REVIEW_WORKING_IT_OUT);
+  });
+
+  it("leaves a CANCELLED booking's own narrative in charge", async () => {
+    mockedFindUnique.mockResolvedValue(
+      baseLink({
+        booking: baseBooking({ status: BookingStatus.CANCELLED }),
+      }) as never,
+    );
+
+    const context = await getPaymentLinkContext(RAW_TOKEN, {
+      readOpenFinancialReview: reviewReader(true),
+    });
+
+    // What happened to the booking outranks the review, which assumes a stay
+    // that is still going ahead (#3033's ordering, unchanged here).
+    expect(context.state).toBe("cancelled_pre_payment");
+    expect(context.financialReviewPending).toBe(true);
+  });
+
+  /*
+    WHAT THIS CHECKS, EXACTLY (renamed in review, #3194): that this module hands
+    the review answer to the shared resolver and then adds NO WORDING OF ITS OWN.
+    Both sides below are the same pure function over the same facts, so it is a
+    pin on `payment-link.ts`, not on the booking-detail page - it renders none of
+    that page and would not notice a change to it.
+
+    It is kept rather than deleted because the second assertion gives it teeth:
+    the same resolver asked WITHOUT the review returns something different, so a
+    payment link that stopped threading the flag - or that composed its own
+    sentences on top - fails here rather than passing on a tautology.
+
+    The claim the acceptance criteria actually rest on, that the two SURFACES
+    cannot come to say different things, is held by
+    `booking-financial-review-copy.test.ts`, which derives what each narrative
+    adds and pins the pay page's own composition against it.
+  */
+  it("hands the review flag to the shared resolver and adds no wording of its own", async () => {
+    const booking = baseBooking({ status: BookingStatus.PAID });
+    mockedFindUnique.mockResolvedValue(baseLink({ booking }) as never);
+    mockedUpdate.mockResolvedValue({} as never);
+
+    const context = await getPaymentLinkContext(RAW_TOKEN, {
+      readOpenFinancialReview: reviewReader(true),
+    });
+
+    const resolverInput = {
+      club: bindClubTime(requireClubTimeZone("Pacific/Auckland")),
+      booking: {
+        status: booking.status,
+        finalPriceCents: booking.finalPriceCents,
+        checkIn: booking.checkIn,
+        checkOut: booking.checkOut,
+        firstName: booking.member.firstName,
+        adminReviewStatus: null,
+        adminReviewNotes: null,
+        adminReviewReason: null,
+      },
+      events: [],
+    };
+
+    expect(context.narrative).toEqual(
+      resolveBookingNarrative({ ...resolverInput, financialReviewPending: true }),
+    );
+    // The flag really reached it: the same facts without the review resolve to
+    // different wording, so this cannot pass on a dropped flag.
+    expect(context.narrative).not.toEqual(
+      resolveBookingNarrative({ ...resolverInput, financialReviewPending: false }),
+    );
   });
 });
 

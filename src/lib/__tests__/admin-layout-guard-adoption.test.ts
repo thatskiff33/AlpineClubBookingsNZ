@@ -31,6 +31,8 @@ import { join, sep } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { stripComments } from "./support/strip-comments";
+
 const APP_DIR = join(import.meta.dirname, "..", "..", "app");
 
 /**
@@ -203,9 +205,7 @@ const ADMIN_ADMISSION_SYMBOLS = [
  * in the file. Stripping imports is what makes "performs" mean performs.
  */
 function executableCode(source: string): string {
-  return source
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/^[ 	]*\/\/.*$/gm, "")
+  return stripComments(source)
     .replace(/^import\s+[\s\S]*?from\s+["'][^"']+["'];$/gm, "")
     .replace(/^import\s+["'][^"']+["'];$/gm, "");
 }
@@ -253,9 +253,7 @@ describe("the admin security preamble has exactly one implementation (#2378)", (
     "%s does not perform any preamble step itself",
     (group) => {
       const source = readFileSync(join(APP_DIR, group, "layout.tsx"), "utf8");
-      const code = source
-        .replace(/\/\*[\s\S]*?\*\//g, "")
-        .replace(/^[ \t]*\/\/.*$/gm, "");
+      const code = stripComments(source);
 
       for (const symbol of FORBIDDEN_IN_LAYOUT) {
         expect(
@@ -326,9 +324,7 @@ describe("the admin security preamble has exactly one implementation (#2378)", (
       // layouts are swept too (#2975) — the finance shell is one, it reads
       // `hasAdminPortalAccess`, and until this widened it was invisible here.
       const source = readFileSync(join(APP_DIR, ...layout.split("/")), "utf8");
-      const code = source
-        .replace(/\/\*[\s\S]*?\*\//g, "")
-        .replace(/^[ 	]*\/\/.*$/gm, "");
+      const code = stripComments(source);
       for (const symbol of ADMIN_ADMISSION_SYMBOLS) {
         expect(
           code,
@@ -347,9 +343,7 @@ describe("the admin security preamble has exactly one implementation (#2378)", (
       join(import.meta.dirname, "..", "admin-layout-guard.ts"),
       "utf8",
     );
-    const code = guard
-      .replace(/\/\*[\s\S]*?\*\//g, "")
-      .replace(/^[ \t]*\/\/.*$/gm, "");
+    const code = stripComments(guard);
     expect(code).not.toContain("redirect(");
     expect(code).not.toContain('from "next/navigation"');
   });

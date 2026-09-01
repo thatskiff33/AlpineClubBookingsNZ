@@ -103,6 +103,21 @@ interface QueuedSupplementaryInvoiceOutboxPayload {
   recordPayment?: boolean;
   paymentIntentId?: string;
   waitForConfirmedAdditionalPayment?: boolean;
+  /**
+   * THE SECOND ASK (#3193, epic #2797): this row is not the booking change's
+   * supplementary invoice - it is one settled review share's OWN small invoice,
+   * raised because the change's invoice had already left the queue and could not
+   * be raised to include it.
+   *
+   * Present means three things at once, which is why it is ONE field rather than
+   * three: the outbox row and the resulting `XeroObjectLink` anchor on this
+   * `ManualRefundTask` instead of the `BookingModification`, the Xero
+   * idempotency key is scoped to the task, and the invoice tells the member why
+   * they are being asked twice. Splitting them would let a caller take the
+   * anchor without the wording, or the wording without the anchor - and the
+   * anchor is the whole reason a second invoice cannot double-bill.
+   */
+  shortfallReviewTaskId?: string;
 }
 
 interface QueuedModificationCreditNoteOutboxPayload {
@@ -197,6 +212,10 @@ export interface QueuedOutboxExpectedOperation {
     | "GroupBookingSettlement"
     | "MembershipSubscriptionCharge"
     | "MemberCreditNoteAllocation"
+    // #3193: a second-ask supplementary invoice anchors on the review task whose
+    // settled share it bills, so the claim guard has to accept that model or the
+    // row is skipped on every pass and never sent.
+    | "ManualRefundTask"
   >;
 }
 
@@ -306,6 +325,8 @@ export function readQueuedOutboxPayload(
         typeof payload.waitForConfirmedAdditionalPayment === "boolean"
           ? payload.waitForConfirmedAdditionalPayment
           : undefined,
+      shortfallReviewTaskId:
+        readString(payload.shortfallReviewTaskId) ?? undefined,
     };
   }
 
@@ -546,7 +567,10 @@ export function getQueuedOutboxExpectedOperation(
       queueType === XERO_OUTBOX_BOOKING_INVOICE_TYPE
         ? ["Payment"]
         : queueType === XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE
-          ? ["Booking", "BookingModification"]
+          ? // "ManualRefundTask" (#3193): a second-ask invoice for a review
+            // share the booking change's own invoice could not take anchors on
+            // that share's task, so one edit's asks never collide on one key.
+            ["Booking", "BookingModification", "ManualRefundTask"]
           : queueType === XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_TYPE
             ? ["GroupBookingSettlement"]
             : queueType === XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE

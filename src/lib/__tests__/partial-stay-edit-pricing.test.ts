@@ -21,6 +21,15 @@ const mockMemberFindUnique = vi.fn();
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    /*
+      #3032: the modified email asks whether the club is still working out an
+      amount on this booking, through `bookingHasOpenFinancialReview`. That
+      reads the GLOBAL client after the transaction commits, which is a
+      different read from the fence's in-transaction `findFirst`. Empty by
+      default - no review is open - so every pre-#3032 assertion in this file
+      means exactly what it meant before.
+    */
+    manualRefundTask: { findMany: vi.fn().mockResolvedValue([]) },
     $transaction: (...args: unknown[]) => {
       const fn = args[0];
       if (typeof fn === "function") return (mockTransaction as any)(fn);
@@ -178,8 +187,49 @@ vi.mock("@/lib/booking-events", () => ({
   recordBookingEvent: vi.fn().mockResolvedValue(undefined),
 }));
 
+/**
+ * #3167: a seam for TRUNCATING the pricing engine's per-night vector for one
+ * guest, so the add-guest route's night-row refusal can be reached at all.
+ *
+ * Null (the default, restored in `beforeEach`) passes the real breakdown
+ * straight through, so every other test in this file prices exactly as it did.
+ * The partial mock keeps the real module via `importOriginal` — the route also
+ * reads `assertMembershipTypeBookingAllowed` and the policy error class from
+ * here, and replacing the module outright would take those with it.
+ */
+const shortenPricing = vi.hoisted(() => ({ guestIndex: null as number | null }));
+vi.mock("@/lib/membership-type-policy", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/membership-type-policy")>();
+  return {
+    ...actual,
+    priceBookingGuestsWithMembershipTypePolicy: async (
+      ...args: Parameters<typeof actual.priceBookingGuestsWithMembershipTypePolicy>
+    ) => {
+      const breakdown = await actual.priceBookingGuestsWithMembershipTypePolicy(
+        ...args,
+      );
+      const index = shortenPricing.guestIndex;
+      if (index === null) return breakdown;
+      const guest = breakdown.guests[index];
+      // Drop the LAST per-night amount only. `nightDates` is untouched, which is
+      // exactly the disagreeing pair the breakdown type permits and nothing
+      // currently produces.
+      return {
+        ...breakdown,
+        guests: breakdown.guests.map((g, i) =>
+          i === index
+            ? { ...g, perNightCents: guest.perNightCents.slice(0, -1) }
+            : g,
+        ),
+      };
+    },
+  };
+});
+
 import { auth } from "@/lib/auth";
 import { checkCapacity, checkCapacityForGuestRanges } from "@/lib/capacity";
+import logger from "@/lib/logger";
 
 /**
  * #3123 — the club's day now arrives at these lock-bound entry points as a
@@ -422,6 +472,17 @@ function makeTx(
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
       createMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
+    // #3032: the pending-review fence reads this under the booking-edit locks.
+    // Empty by default - no financial review is open - so every pre-#3032 test
+    // asserts exactly what it asserted before.
+    manualRefundTask: {
+      findFirst: vi.fn().mockResolvedValue(null),
+      // #3032: the modified email asks whether the club is still working
+      // out an amount on this booking (`bookingHasOpenFinancialReview`).
+      // Empty by default - no review is open - so every pre-#3032
+      // assertion in this file means exactly what it meant before.
+      findMany: vi.fn().mockResolvedValue([]),
+    },
     bookingModification: { create: vi.fn().mockResolvedValue({ id: "mod1" }) },
     bookingRequest: { findFirst: vi.fn().mockResolvedValue(null) },
     payment: { update: vi.fn().mockResolvedValue({}) },
@@ -482,6 +543,9 @@ beforeEach(() => {
   mockedAuth.mockResolvedValue(makeSession() as any);
   mockedCheckCapacity.mockResolvedValue({ available: true, availableBeds: 20 } as any);
   mockedCheckCapacityForGuestRanges.mockResolvedValue({ available: true, minAvailable: 20, nightDetails: [] } as any);
+  // #3167: back to the engine's real breakdown for every test that does not ask
+  // for a truncated one (`vi.clearAllMocks` does not reset a plain value).
+  shortenPricing.guestIndex = null;
 });
 
 afterEach(() => {
@@ -518,6 +582,75 @@ describe("guest add prices existing guests over their stored nights (#1093)", ()
     const createArgs = tx.bookingGuest.create.mock.calls[0][0].data;
     expect(createArgs.nights.create).toHaveLength(4);
     expect(createArgs.nights.create.map((n: any) => n.priceCents)).toEqual([8000, 8000, 8000, 8000]);
+  });
+});
+
+/**
+ * #3167 (epic #2797). This is the sharpest of the three writers the issue
+ * names: it puts night rows on an EXISTING booking, alongside rows that already
+ * carry real sold prices. Under #3031 those rows are read back as sold-price
+ * evidence, and a strand whose rows do not reconcile to its guest total sends a
+ * later edit to manual review — so a magic zero here does not surface as the
+ * caller bug it is. It surfaces months later, on someone else's day.
+ *
+ * The #3167 census found the old `?? 0` unreachable on every current caller, on
+ * a STRUCTURAL invariant rather than a tautology: `calculateBookingPrice` builds
+ * `perNightCents` and `nightDates` in one loop that pushes exactly once per
+ * iteration, and the route iterates the other half of that same object. Real,
+ * but the breakdown type declares no length relation, so a second producer whose
+ * halves disagreed would type-check. The seam above manufactures exactly that
+ * producer, which is the only way to reach the guard at all.
+ */
+describe("the add-guest route refuses a short per-night vector (#3167)", () => {
+  it("CONTROL: still writes the engine's real per-night amounts when the vector is complete", async () => {
+    const booking = makeBooking();
+    const tx = makeTx(booking);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    const { POST } = await import("@/app/api/bookings/[id]/guests/route");
+
+    const req = new NextRequest("http://localhost/api/bookings/bk1/guests", {
+      method: "POST",
+      body: JSON.stringify({
+        guests: [{ firstName: "Bob", lastName: "Jones", ageTier: "ADULT", isMember: true }],
+      }),
+    });
+    const res = await POST(req, { params: Promise.resolve({ id: "bk1" }) });
+
+    expect(res.status).toBe(200);
+    const createArgs = tx.bookingGuest.create.mock.calls[0][0].data;
+    expect(createArgs.nights.create.map((n: any) => n.priceCents)).toEqual([8000, 8000, 8000, 8000]);
+    // No zero reached a row on the happy path — the assertion the refusal test
+    // cannot make for itself.
+    expect(createArgs.nights.create.every((n: any) => n.priceCents > 0)).toBe(true);
+  });
+
+  it("REFUSAL: writes no guest and no night row when the vector is one short", async () => {
+    const booking = makeBooking();
+    const tx = makeTx(booking);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    // The added guest is appended after the booking's two existing guests.
+    shortenPricing.guestIndex = booking.guests.length;
+    const { POST } = await import("@/app/api/bookings/[id]/guests/route");
+
+    const req = new NextRequest("http://localhost/api/bookings/bk1/guests", {
+      method: "POST",
+      body: JSON.stringify({
+        guests: [{ firstName: "Bob", lastName: "Jones", ageTier: "ADULT", isMember: true }],
+      }),
+    });
+    const res = await POST(req, { params: Promise.resolve({ id: "bk1" }) });
+
+    // #1888: the raw message never reaches the member, so the refusal is read
+    // off the log the route writes before answering.
+    expect(res.status).toBe(400);
+    const logged = vi.mocked(logger.error).mock.calls.at(-1);
+    expect((logged?.[0] as { err: Error }).err.message).toMatch(
+      /No priced amount for the night of .* in the add-guest route \(#3031\)/,
+    );
+
+    // The refusal happens while the create payload is being BUILT, so nothing
+    // was written at all: no guest row, and no night row carrying a zero.
+    expect(tx.bookingGuest.create).not.toHaveBeenCalled();
   });
 });
 

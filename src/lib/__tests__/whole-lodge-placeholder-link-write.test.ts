@@ -97,7 +97,6 @@ describe("#2337: the recalculate write stamps the member's name onto the linked 
           ],
         ]),
         priceBreakdown: {
-          totalPriceCents: 3000,
           guests: [
             {
               priceCents: 3000,
@@ -165,7 +164,6 @@ describe("#2337: the recalculate write stamps the member's name onto the linked 
           ["bg-ph2", { memberId: "member-x", firstName: null, lastName: null }],
         ]),
         priceBreakdown: {
-          totalPriceCents: 3000,
           guests: [
             { priceCents: 3000, perNightCents: [3000], nightDates: [CHECK_IN] },
           ],

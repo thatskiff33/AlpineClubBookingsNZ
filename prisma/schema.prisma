@@ -2088,7 +2088,15 @@ model BookingGuestNight {
   id             String   @id @default(cuid())
   bookingGuestId String
   stayDate       DateTime @db.Date
-  priceCents     Int
+  // #3170 (epic #2797): NULLABLE, and the null is a first-class value rather
+  // than a gap. It means "what this night was sold for is NOT KNOWN" - never
+  // zero, never an estimate, never a row that was deleted to hide the question.
+  // Written only by a parked edit, which commits the structural change and
+  // holds the money as an OPEN EDIT_FINANCIAL_REVIEW task for a person to
+  // price. Every reader treats it as an ABSENCE of evidence (the same answer it
+  // already gives a missing row), and `?? 0` on this column is prohibited
+  // outright: a comped night stores 0, and 0 is a real sold price.
+  priceCents     Int?
   createdAt      DateTime @default(now())
 
   bookingGuest BookingGuest @relation(fields: [bookingGuestId], references: [id], onDelete: Cascade)
@@ -2753,6 +2761,30 @@ enum ManualRefundTaskKind {
   EDIT_FINANCIAL_REVIEW
 }
 
+/// #3170 (epic #2797): WHICH WAY a completed task's money went.
+///
+/// Every kind that existed before this one can only ever hand money BACK, so
+/// "refund task" said the direction on its own and no column was needed. The
+/// `EDIT_FINANCIAL_REVIEW` kind broke that: #3170 is the first change that parks
+/// an edit which can move the price UP - a check-out extension, or a guest added
+/// - so an officer pricing one may conclude the CLUB is owed. A row recording
+/// `amountCents = 20000` with no direction cannot say whether $200 was paid back
+/// or collected, and those are opposite claims about the club's money.
+///
+/// NULLABLE on the model: null on every OPEN row (nobody has decided yet), on
+/// every DISMISSED row (nothing moved, so there is no direction to record) and on
+/// every row completed before this column existed. It is written once, by the
+/// completion, inside the same status-fenced claim as the amount.
+enum ManualRefundTaskDirection {
+  /// The club owes the member. The pre-#3170 behaviour of every task, and still
+  /// the only direction a legacy kind may take.
+  REFUND_TO_MEMBER
+  /// The member owes the club. Collected through the ordinary additional-payment
+  /// path (a Stripe additional PaymentIntent on a card booking, a supplementary
+  /// Xero invoice otherwise) - never by a fourth settlement mechanism.
+  CHARGE_TO_MEMBER
+}
+
 model ManualRefundTask {
   id        String @id @default(cuid())
   bookingId String
@@ -2766,16 +2798,36 @@ model ManualRefundTask {
   /// #2797 (owner decision D2): OPTIONAL while OPEN, because an edit can raise a
   /// task whose amount is genuinely unknown and `0` would be a magic value another
   /// consumer could read as "assessed at nothing". It becomes a required
-  /// non-negative integer at COMPLETED — enforced by `resolveManualRefundTask`
-  /// and by the `ManualRefundTask_completed_amount_present` check constraint, so
-  /// no path can close one without a number.
+  /// POSITIVE integer at COMPLETED — enforced by `resolveManualRefundTask` and by
+  /// the `ManualRefundTask_completed_amount_present` check constraint, so no path
+  /// can close one without a number. Zero is refused there too (`INV-PAY-051`):
+  /// "reviewed, nothing is due" is DISMISSED, and a $0 completion would record a
+  /// refund the club did not make.
+  ///
+  /// #3030: OPTIONAL FOR THE `EDIT_FINANCIAL_REVIEW` KIND ALONE. Every other kind
+  /// must carry an amount, by the `ManualRefundTask_non_edit_review_amount_present`
+  /// check (migration 20260903010000) — those amounts come from cancellation or
+  /// capture policy and an operator closing the task does not get to reprice them,
+  /// which the stale-screen guard can only enforce on a row that HAS an amount to
+  /// compare against.
   amountCents Int?
-  /// #2797 (owner decision D2, the AUDIT half): what the task was RAISED with,
-  /// written once at creation and never amended. `amountCents` above carries the
-  /// live figure and is what the admin confirms; this is what it was before they
-  /// touched it, so the row itself — not only the audit log — says whether the
-  /// amount moved and by how much. Null exactly when the task was raised with no
-  /// amount at all.
+  /// #2797 (owner decision D2, the AUDIT half): what the task was RAISED with.
+  /// `amountCents` above carries the live figure and is what the admin confirms;
+  /// this is what it was before they touched it, so the row itself — not only
+  /// the audit log — says whether the amount moved and by how much. Null exactly
+  /// when the task was raised with no amount at all.
+  ///
+  /// #3030, on what is and is not ENFORCED, because the two halves differ.
+  /// PAIRED: a non-null value here requires a non-null `amountCents`, by the
+  /// `ManualRefundTask_raised_amount_requires_amount` check (migration
+  /// 20260903010000) — so "raised with 5000, amount now unknown" is
+  /// unrepresentable. The converse is deliberately unconstrained, because null
+  /// here with a figure in `amountCents` is the ordinary shape of a review task
+  /// raised unpriced and completed at a confirmed amount. IMMUTABLE ONLY BY
+  /// CONVENTION: a CHECK constrains a row, not an UPDATE, so "never amended"
+  /// would need a trigger and does not have one. It holds because the column has
+  /// exactly one writer (creation), and every completion records both this and
+  /// the previous amount in its audit entry.
   raisedAmountCents Int?
   /// #2797: the typed reason this task exists. See `ManualRefundTaskKind`.
   kind ManualRefundTaskKind?
@@ -2784,6 +2836,15 @@ model ManualRefundTask {
   /// and DISMISSED. Unique where present; NULL for every row that predates the
   /// column (Postgres permits many NULLs under a unique index), and NULL for the
   /// legacy kinds, which carry their own idempotency in their writers.
+  ///
+  /// #3030: because NULL is exempt from the unique index above, an
+  /// EDIT_FINANCIAL_REVIEW row that omitted the key would silently opt OUT of the
+  /// duplicate fence, so a check constraint makes that unrepresentable for that
+  /// kind alone. WHERE the key is minted, what counts as "the same structural
+  /// edit", and which constraint enforces what are all stated once, in
+  /// `INV-PAY-051` (`docs/invariants/payment-and-settlement.md`) — not restated
+  /// here, because a rename that fixed one copy and left the others lying is
+  /// exactly what three homes for one rule produces.
   occurrenceKey String?
   /// #2797 (owner decision D3): the evidence an admin needs to price the
   /// adjustment fairly, captured at raise time because the rows it describes are
@@ -2792,6 +2853,16 @@ model ManualRefundTask {
   /// existed, and the booking/edit dates. The payment and rate history is NOT
   /// copied here: the admin surface links to the booking's own, which is live.
   reviewContext       Json?
+  /// #3170 (epic #2797): which way this completion's money went. See
+  /// `ManualRefundTaskDirection`.
+  ///
+  /// TWO CHECKS BACK IT, and they are deliberately different strengths
+  /// (migration 20260906010000). `ManualRefundTask_direction_only_when_completed`
+  /// is VALIDATED - the column is new, so the population it polices is provably
+  /// empty. `ManualRefundTask_completed_edit_review_has_direction` is NOT VALID,
+  /// because rows completed before this column existed carry no direction and
+  /// must stay legal; it constrains every row written from here on.
+  settlementDirection ManualRefundTaskDirection?
   reason              String                 @db.VarChar(500)
   status              ManualRefundTaskStatus @default(OPEN)
   completedByMemberId String?
@@ -2908,6 +2979,18 @@ model PaymentRecoveryOperation {
   // recovery replays the exact keys the route used — a refund that succeeded
   // on Stripe but was never recorded locally is replayed, not re-minted.
   stripeKeyPrefix      String?
+  // #3181: the value of `hasIssuedPrimaryXeroInvoice` AT THE MOMENT THE EDIT
+  // DISPATCHED, frozen so the recovery replay bills what the edit decided rather
+  // than what is true hours later. Only `CREATE_ADDITIONAL_PAYMENT_INTENT` rows
+  // carry it. It matters because the two answers can differ: a booking whose
+  // primary invoice had not been minted yet had no invoice to supplement, so the
+  // edit queued nothing and the primary invoice - minted later from CURRENT
+  // state - bills the edit itself. A replay re-deriving `true` there would queue
+  // a supplementary invoice for money the primary invoice already carries.
+  // NULL means "not recorded" (a row enqueued by code older than #3181), and the
+  // replay then raises nothing: an unrecorded invoice is surfaced by the
+  // booking-vs-Xero repair pass, while a duplicate one is surfaced by nobody.
+  hadIssuedXeroInvoice Boolean?
   idempotencyKey       String                         @unique
   attempts             Int                            @default(0)
   nextRetryAt          DateTime?                      @default(now())

@@ -56,6 +56,17 @@ vi.mock("@/lib/prisma", () => ({
       update: mockUpdate,
       delete: mockDelete,
     },
+    // #3032: the pending-review fence reads this under the booking-edit locks.
+    // Empty by default - no financial review is open - so every pre-#3032 test
+    // asserts exactly what it asserted before.
+    manualRefundTask: {
+      findFirst: vi.fn().mockResolvedValue(null),
+      // #3032: the modified email asks whether the club is still working
+      // out an amount on this booking (`bookingHasOpenFinancialReview`).
+      // Empty by default - no review is open - so every pre-#3032
+      // assertion in this file means exactly what it meant before.
+      findMany: vi.fn().mockResolvedValue([]),
+    },
     bookingModification: { create: mockCreate },
     bookingRequest: { findFirst: vi.fn().mockResolvedValue(null) },
     promoRedemption: { delete: mockDelete },
@@ -261,25 +272,78 @@ afterEach(() => {
  * "shape production cannot emit" this whole helper exists to stop.
  */
 function completeHostingGuestRows<
-  T extends { memberId?: string | null; ageTier?: string },
+  T extends { memberId?: string | null; ageTier?: string; priceCents?: number },
 >(guests: readonly T[], checkIn: Date, checkOut: Date) {
-  return guests.map((guest) => ({
-    // A guest with no stay window of its own stays the whole booking, which is
-    // what every route in this file assumes when it reprices the full party.
-    stayStart: checkIn,
-    stayEnd: checkOut,
-    nights: [] as Array<{ stayDate: Date }>,
-    // `null` = no consent was ever needed, which is operationally present (D-12)
-    // and the right default for an ordinary guest row.
-    consentStatus: null as string | null,
-    ...guest,
-    member:
-      typeof guest.memberId === "string"
-        ? hostingMemberRow(
-            guest.memberId,
-            guest.ageTier ? { ageTier: guest.ageTier } : {},
-          )
-        : null,
+  return guests.map((guest) => {
+    const stayStart = (guest as { stayStart?: Date }).stayStart ?? checkIn;
+    const stayEnd = (guest as { stayEnd?: Date }).stayEnd ?? checkOut;
+    return {
+      // A guest with no stay window of its own stays the whole booking, which is
+      // what every route in this file assumes when it reprices the full party.
+      stayStart,
+      stayEnd,
+      // #3031: and a per-night SOLD PRICE that reconciles to the guest's stored
+      // total. `[]` used to be the default, and it was the pre-#713 row shape -
+      // legitimate then, and the unpriceable case now: an edit that gives a
+      // night back reads what it was sold for off these rows and refuses to
+      // invent an amount when there is nothing to read. Production has carried
+      // rows for every guest since the #2739 backfill, so filling them in makes
+      // these fixtures MORE like a live booking, not less. A fixture that states
+      // its own `nights` still wins, including one that deliberately states none.
+      nights: syntheticSoldNightRows(stayStart, stayEnd, guest.priceCents),
+      // `null` = no consent was ever needed, which is operationally present (D-12)
+      // and the right default for an ordinary guest row.
+      consentStatus: null as string | null,
+      ...guest,
+      member:
+        typeof guest.memberId === "string"
+          ? hostingMemberRow(
+              guest.memberId,
+              guest.ageTier ? { ageTier: guest.ageTier } : {},
+            )
+          : null,
+    };
+  });
+}
+
+/**
+ * `BookingGuestNight` rows for `[stayStart, stayEnd)` that sum EXACTLY to
+ * `priceCents` (#3031).
+ *
+ * AN EVEN SPLIT, DELIBERATELY, and it is not the estimator #3031 removes. It
+ * mirrors what migrations `20260704150000` (#1098) and `20260810010000` (#2739)
+ * really wrote into this table for guests who had no rows: the stored total
+ * divided by the night count with the remainder on the first night. So a fixture
+ * built this way is the shape a large share of live bookings genuinely carries,
+ * which is exactly why INV-MOD-028 tests RECONCILIATION rather than provenance —
+ * these rows reconcile, and the invariant says in as many words that an evenly
+ * split backfilled strand prices as exact.
+ *
+ * What matters here is that the rows reconcile to the stored total, because that
+ * is the test an edit applies before it will price anything. A guest with no
+ * stored total gets no rows - there is nothing to allocate - and that fixture is
+ * then deliberately in the unpriceable case.
+ */
+function syntheticSoldNightRows(
+  stayStart: Date,
+  stayEnd: Date,
+  priceCents: number | undefined,
+): Array<{ stayDate: Date; priceCents: number }> {
+  if (typeof priceCents !== "number") return [];
+  const nights: Date[] = [];
+  for (
+    let night = new Date(stayStart);
+    night < stayEnd;
+    night = new Date(night.getTime() + 86_400_000)
+  ) {
+    nights.push(new Date(night));
+  }
+  if (nights.length === 0) return [];
+  const base = Math.floor(priceCents / nights.length);
+  const remainder = priceCents - base * nights.length;
+  return nights.map((stayDate, index) => ({
+    stayDate,
+    priceCents: base + (index === 0 ? remainder : 0),
   }));
 }
 
@@ -376,6 +440,17 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
     bookingGuestNight: {
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
       createMany: vi.fn().mockResolvedValue({ count: 0 }),
+    },
+    // #3032: the pending-review fence reads this under the booking-edit locks.
+    // Empty by default - no financial review is open - so every pre-#3032 test
+    // asserts exactly what it asserted before.
+    manualRefundTask: {
+      findFirst: vi.fn().mockResolvedValue(null),
+      // #3032: the modified email asks whether the club is still working
+      // out an amount on this booking (`bookingHasOpenFinancialReview`).
+      // Empty by default - no review is open - so every pre-#3032
+      // assertion in this file means exactly what it meant before.
+      findMany: vi.fn().mockResolvedValue([]),
     },
     bookingModification: {
       create: vi.fn().mockResolvedValue({ id: "mod1" }),
@@ -735,6 +810,96 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
     expect(body.changeFeeCents).toBe(0);
   });
 
+  it("writes the moved range's night rows at the amounts it priced (#3031)", async () => {
+    // THE CONTROL for the refusal below, and the reason the refusal cannot pass
+    // against a function that simply always throws: given a complete per-night
+    // vector, this writer stores exactly those amounts against exactly those
+    // nights. `BookingGuestNight` rows ARE the booking's sold-price history from
+    // here on, so what lands here is what the NEXT edit reads back as evidence
+    // (INV-MOD-028).
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
+    const booking = makeBooking();
+    const tx = makeTx(booking);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCheckCapacity.mockResolvedValue({ available: true, minAvailable: 10, nightDetails: [] });
+    const movedNights = [
+      new Date("2026-06-05T00:00:00.000Z"),
+      new Date("2026-06-06T00:00:00.000Z"),
+      new Date("2026-06-07T00:00:00.000Z"),
+    ];
+    // Deliberately UNEQUAL: an even split of 15000 across three nights would be
+    // 5000/5000/5000 and would satisfy a weaker assertion just as well.
+    mockedCalcPrice.mockReturnValue({
+      guests: [
+        { ageTier: "ADULT" as const, isMember: true, rateMembershipTypeId: "type-member", nights: 3, priceCents: 15000, perNightCents: [4000, 5000, 6000], nightDates: movedNights },
+        { ageTier: "ADULT" as const, isMember: true, rateMembershipTypeId: "type-member", nights: 3, priceCents: 15000, perNightCents: [4000, 5000, 6000], nightDates: movedNights },
+      ],
+      totalPriceCents: 30000,
+    });
+    mockedCalcChangeFee.mockReturnValue({ feeCents: 0, fromTierRefundPct: 100, toTierRefundPct: 100 });
+    mockedDaysUntilDate.mockReturnValue(30);
+    mockedLoadPolicy.mockResolvedValue([{ daysBeforeStay: 14, refundPercentage: 100 }]);
+    mockedGetHoldDays.mockResolvedValue(7);
+    mockFindUnique.mockResolvedValue({ id: "m1", active: true, email: "alice@test.com", firstName: "Alice" });
+
+    const req = new NextRequest("http://localhost/api/bookings/bk1/modify-dates", {
+      method: "PUT",
+      body: JSON.stringify({ checkIn: "2026-06-05", checkOut: "2026-06-08" }),
+    });
+    const res = await PUT(req, { params: Promise.resolve({ id: "bk1" }) });
+
+    expect(res.status).toBe(200);
+    expect(tx.bookingGuestNight.createMany).toHaveBeenCalledWith({
+      data: [
+        { bookingGuestId: "g1", stayDate: movedNights[0], priceCents: 4000 },
+        { bookingGuestId: "g1", stayDate: movedNights[1], priceCents: 5000 },
+        { bookingGuestId: "g1", stayDate: movedNights[2], priceCents: 6000 },
+      ],
+    });
+  });
+
+  it("refuses to write a moved night the reprice put no amount against (#3031)", async () => {
+    // The prohibited answer is `?? 0`, which this writer carried until #3031: a
+    // per-night vector shorter than the night list would put a REAL night into
+    // the sold-price history at zero, and the next edit would credit it back at
+    // nothing. Refusing is the only answer that neither invents money nor
+    // silently loses it. Nothing must be committed either.
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
+    const booking = makeBooking();
+    const tx = makeTx(booking);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCheckCapacity.mockResolvedValue({ available: true, minAvailable: 10, nightDetails: [] });
+    const movedNights = [
+      new Date("2026-06-05T00:00:00.000Z"),
+      new Date("2026-06-06T00:00:00.000Z"),
+      new Date("2026-06-07T00:00:00.000Z"),
+    ];
+    mockedCalcPrice.mockReturnValue({
+      guests: [
+        { ageTier: "ADULT" as const, isMember: true, rateMembershipTypeId: "type-member", nights: 3, priceCents: 15000, perNightCents: [5000, 5000], nightDates: movedNights },
+        { ageTier: "ADULT" as const, isMember: true, rateMembershipTypeId: "type-member", nights: 3, priceCents: 15000, perNightCents: [5000, 5000], nightDates: movedNights },
+      ],
+      totalPriceCents: 30000,
+    });
+    mockedCalcChangeFee.mockReturnValue({ feeCents: 0, fromTierRefundPct: 100, toTierRefundPct: 100 });
+    mockedDaysUntilDate.mockReturnValue(30);
+    mockedLoadPolicy.mockResolvedValue([{ daysBeforeStay: 14, refundPercentage: 100 }]);
+    mockedGetHoldDays.mockResolvedValue(7);
+    mockFindUnique.mockResolvedValue({ id: "m1", active: true, email: "alice@test.com", firstName: "Alice" });
+
+    const req = new NextRequest("http://localhost/api/bookings/bk1/modify-dates", {
+      method: "PUT",
+      body: JSON.stringify({ checkIn: "2026-06-05", checkOut: "2026-06-08" }),
+    });
+    const res = await PUT(req, { params: Promise.resolve({ id: "bk1" }) });
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe(
+      "The new dates could not be priced night by night",
+    );
+    expect(tx.bookingGuestNight.createMany).not.toHaveBeenCalled();
+  });
+
   it("processes Stripe refund on price decrease for confirmed+paid booking", async () => {
     mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
     const booking = makeBooking();
@@ -968,6 +1133,53 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
       expect.objectContaining({ action: "booking.modify.dates" })
     );
     expect(sendBookingModifiedEmail).toHaveBeenCalled();
+  });
+
+  it("tells the member whether their money is still being worked out (#3032)", async () => {
+    /*
+      THE WIRE #3033 LEFT DEAD on the standard date path. The parameter arrived
+      optional and defaulting to false, and no production caller set it, so the
+      sentence #3033 added could never reach a member from here.
+
+      This path raises no review of its own, so the honest value is whether the
+      booking is under one now - read through `bookingHasOpenFinancialReview`.
+      Both directions are asserted in one test off the SAME fixture, so neither
+      a hard-coded `true` nor a hard-coded `false` can pass.
+    */
+    const { prisma } = await import("@/lib/prisma");
+
+    async function emailFlagForReviewRows(rows: Array<{ bookingId: string }>) {
+      vi.clearAllMocks();
+      mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
+      const tx = makeTx(makeBooking());
+      mockTransaction.mockImplementation((fn: any) => fn(tx));
+      mockedCheckCapacity.mockResolvedValue({ available: true, minAvailable: 10, nightDetails: [] });
+      mockedCalcPrice.mockReturnValue({
+        guests: [
+          { ageTier: "ADULT" as const, isMember: true, rateMembershipTypeId: "type-member", nights: 2, priceCents: 5000, perNightCents: [5000, 5000], nightDates: [] },
+          { ageTier: "ADULT" as const, isMember: true, rateMembershipTypeId: "type-member", nights: 2, priceCents: 5000, perNightCents: [5000, 5000], nightDates: [] },
+        ],
+        totalPriceCents: 10000,
+      });
+      mockedCalcChangeFee.mockReturnValue({ feeCents: 0, fromTierRefundPct: 100, toTierRefundPct: 100 });
+      mockedDaysUntilDate.mockReturnValue(30);
+      mockedLoadPolicy.mockResolvedValue([]);
+      mockedGetHoldDays.mockResolvedValue(7);
+      mockFindUnique.mockResolvedValue({ id: "m1", active: true, email: "a@t.com", firstName: "A" });
+      vi.mocked(prisma.manualRefundTask.findMany).mockResolvedValue(rows as never);
+
+      const req = new NextRequest("http://localhost/api/bookings/bk1/modify-dates", {
+        method: "PUT",
+        body: JSON.stringify({ checkOut: "2026-06-05" }),
+      });
+      await PUT(req, { params: Promise.resolve({ id: "bk1" }) });
+      expect(sendBookingModifiedEmail).toHaveBeenCalledTimes(1);
+      return vi.mocked(sendBookingModifiedEmail).mock.calls[0][0]
+        .financialReviewPending;
+    }
+
+    expect(await emailFlagForReviewRows([{ bookingId: "bk1" }])).toBe(true);
+    expect(await emailFlagForReviewRows([])).toBe(false);
   });
 
   it("returns 400 for PENDING with non-members modified to check-in within 7 days auto-confirms", async () => {
@@ -1784,6 +1996,41 @@ describe("POST /api/bookings/[id]/guests", () => {
       expect.objectContaining({ action: "booking.modify.guests.add" })
     );
     expect(sendBookingModifiedEmail).toHaveBeenCalled();
+  });
+
+  it("tells the member whether their money is still being worked out (#3032)", async () => {
+    /*
+      The FIFTH call site, and the one no hand-written list of them mentioned -
+      the compiler found it when `financialReviewPending` became required. A
+      guest addition raises no review of its own, so the honest value is again
+      whether the booking is under one now. Both directions off the same
+      fixture, so no hard-coded literal passes.
+    */
+    const { prisma } = await import("@/lib/prisma");
+
+    async function emailFlagForReviewRows(rows: Array<{ bookingId: string }>) {
+      vi.clearAllMocks();
+      mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
+      const tx = makeTx(makeBooking());
+      mockTransaction.mockImplementation((fn: any) => fn(tx));
+      mockedCheckCapacityForGuestRanges.mockResolvedValue({ available: true, minAvailable: 5, nightDetails: [] });
+      mockedCalcPrice.mockReturnValueOnce({ guests: [{ ageTier: "ADULT" as const, isMember: true, rateMembershipTypeId: "type-member", nights: 2, priceCents: 5000, perNightCents: [5000, 5000], nightDates: [] }, { ageTier: "ADULT" as const, isMember: true, rateMembershipTypeId: "type-member", nights: 2, priceCents: 5000, perNightCents: [5000, 5000], nightDates: [] }, { ageTier: "ADULT" as const, isMember: true, rateMembershipTypeId: "type-member", nights: 2, priceCents: 5000, perNightCents: [5000, 5000], nightDates: [] }], totalPriceCents: 15000 });
+      mockedGetHoldDays.mockResolvedValue(7);
+      mockFindUnique.mockResolvedValue({ id: "m1", active: true, email: "a@t.com", firstName: "A" });
+      vi.mocked(prisma.manualRefundTask.findMany).mockResolvedValue(rows as never);
+
+      const req = new NextRequest("http://localhost/api/bookings/bk1/guests", {
+        method: "POST",
+        body: JSON.stringify({ guests: [{ firstName: "New", lastName: "Guest", ageTier: "ADULT", isMember: true }] }),
+      });
+      await POST(req, { params: Promise.resolve({ id: "bk1" }) });
+      expect(sendBookingModifiedEmail).toHaveBeenCalledTimes(1);
+      return vi.mocked(sendBookingModifiedEmail).mock.calls[0][0]
+        .financialReviewPending;
+    }
+
+    expect(await emailFlagForReviewRows([{ bookingId: "bk1" }])).toBe(true);
+    expect(await emailFlagForReviewRows([])).toBe(false);
   });
 });
 
@@ -2829,6 +3076,9 @@ describe("bookingModifiedTemplate", () => {
       changeFeeCents: 0,
       refundAmountCents: 0,
       additionalAmountCents: 0,
+      // #3032: required, and this suite is not about the review note.
+      // False is the control state for every assertion here.
+      financialReviewPending: false,
     });
     expect(html).toContain("Booking Modified");
     expect(html).toContain("Alice");
@@ -2853,6 +3103,9 @@ describe("bookingModifiedTemplate", () => {
       changeFeeCents: 0,
       refundAmountCents: 0,
       additionalAmountCents: 5000,
+      // #3032: required, and this suite is not about the review note.
+      // False is the control state for every assertion here.
+      financialReviewPending: false,
     });
     expect(html).toContain("Guests Added");
     expect(html).toContain("Previous Guests");
@@ -2876,6 +3129,9 @@ describe("bookingModifiedTemplate", () => {
       changeFeeCents: 0,
       refundAmountCents: 5000,
       additionalAmountCents: 0,
+      // #3032: required, and this suite is not about the review note.
+      // False is the control state for every assertion here.
+      financialReviewPending: false,
     });
     expect(html).toContain("Guest Removed");
     expect(html).toContain("refund");
@@ -2898,6 +3154,9 @@ describe("bookingModifiedTemplate", () => {
       changeFeeCents: 5000,
       refundAmountCents: 0,
       additionalAmountCents: 5000,
+      // #3032: required, and this suite is not about the review note.
+      // False is the control state for every assertion here.
+      financialReviewPending: false,
     });
     expect(html).toContain("Change Fee");
     expect(html).toContain("$50.00");
@@ -2923,6 +3182,9 @@ describe("bookingModifiedTemplate", () => {
       additionalPaymentMethod: "INTERNET_BANKING",
       paymentReference: "BOOKING-IB-1",
       xeroInvoiceNumber: "INV-1001",
+      // #3032: required, and this suite is not about the review note.
+      // False is the control state for every assertion here.
+      financialReviewPending: false,
     });
 
     expect(html).toContain("additional Internet Banking payment");
@@ -2947,6 +3209,9 @@ describe("bookingModifiedTemplate", () => {
       changeFeeCents: 0,
       refundAmountCents: 0,
       additionalAmountCents: 0,
+      // #3032: required, and this suite is not about the review note.
+      // False is the control state for every assertion here.
+      financialReviewPending: false,
     });
     expect(html).not.toContain("<script>");
     expect(html).toContain("&lt;script&gt;");

@@ -368,6 +368,9 @@ describe("EML-01: bookingModifiedTemplate", () => {
       changeFeeCents: 5000,
       refundAmountCents: 0,
       additionalAmountCents: 10000,
+      // #3032: required, and this suite is not about the review note.
+      // False is the control state for every assertion here.
+      financialReviewPending: false,
     });
 
     expect(html).toContain("Booking Modified");
@@ -396,6 +399,9 @@ describe("EML-01: bookingModifiedTemplate", () => {
       changeFeeCents: 0,
       refundAmountCents: 0,
       additionalAmountCents: 10000,
+      // #3032: required, and this suite is not about the review note.
+      // False is the control state for every assertion here.
+      financialReviewPending: false,
     });
 
     expect(html).toContain("Guests Added");
@@ -423,6 +429,9 @@ describe("EML-01: bookingModifiedTemplate", () => {
       changeFeeCents: 0,
       refundAmountCents: 10000,
       additionalAmountCents: 0,
+      // #3032: required, and this suite is not about the review note.
+      // False is the control state for every assertion here.
+      financialReviewPending: false,
     });
 
     expect(html).toContain("Guest Removed");
@@ -448,6 +457,9 @@ describe("EML-01: bookingModifiedTemplate", () => {
       changeFeeCents: 0,
       refundAmountCents: 0,
       additionalAmountCents: 0,
+      // #3032: required, and this suite is not about the review note.
+      // False is the control state for every assertion here.
+      financialReviewPending: false,
     });
 
     expect(html).not.toContain("<script>");
@@ -473,6 +485,9 @@ describe("EML-01: bookingModifiedTemplate", () => {
       changeFeeCents: 0,
       refundAmountCents: 0,
       additionalAmountCents: 0,
+      // #3032: required, and this suite is not about the review note.
+      // False is the control state for every assertion here.
+      financialReviewPending: false,
     });
 
     // Should show "Total" not "Previous Total" / "New Total"

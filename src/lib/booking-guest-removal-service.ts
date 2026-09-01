@@ -54,6 +54,15 @@ import {
   type LoadedBookingForModify,
 } from "@/lib/booking-modify";
 import type { SupersededPrimaryPaymentIntent } from "@/lib/booking-payment-cleanup";
+import {
+  assertNoPendingEditFinancialReview,
+  raiseParkedEditFinancialReviewTasks,
+} from "@/lib/edit-financial-review";
+import {
+  counterpartStrandReviewOccurrence,
+  editFinancialReviewOccurrence,
+  storedSoldPriceEvidenceForGuest,
+} from "@/lib/stored-sold-price-evidence";
 import { createBookingModificationCredit } from "@/lib/member-credit";
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
 import { lockRosterDates } from "@/lib/roster-lock";
@@ -113,6 +122,24 @@ export type RemoveBookingGuestResult = {
   choreWarnings: string[];
   oldGuestCount: number;
   bookingModificationId: string;
+  /**
+   * #3032 (epic #2797): this removal's money was PARKED rather than settled -
+   * the guest came off the booking and an OPEN `EDIT_FINANCIAL_REVIEW` task now
+   * holds the amount for a person to price.
+   *
+   * ON THE RESULT RATHER THAN LEFT FOR THE ROUTE TO RE-DERIVE, because the route
+   * has to tell the member about it and the only honest source of "is this
+   * booking's adjustment under review" is the transaction that decided it. A
+   * route reading the tasks back afterwards would be answering a different
+   * question - one another lane's edit could have changed in between.
+   */
+  financialReviewPending: boolean;
+  /**
+   * The tasks this removal raised or found already on file, in occurrence order.
+   * Empty on every priced removal. One entry per unpriceable strand - see the
+   * raise itself for why that is one task per strand and not one per removal.
+   */
+  financialReviewTaskIds: string[];
   zeroDollarAutoPaid: boolean;
   supersededPrimaryPaymentIntents: SupersededPrimaryPaymentIntent[];
   // #1372: this removal newly dropped a paid (capacity-holding) booking into the
@@ -400,6 +427,38 @@ export async function removeBookingGuestInTransaction({
     throw new BookingGuestRemovalError("Forbidden", 403);
   }
 
+  /**
+   * #3032 (epic #2797): refuse a second money-affecting edit while this booking's
+   * last one is still under financial review. Taken under both locks, on the
+   * post-lock re-read, and before any write, so a refused removal leaves the
+   * booking exactly as it was.
+   *
+   * THE CONSENT-AUTHORITY EXEMPTION IS NOT A CLAIM THAT THE REMOVAL MOVES NO
+   * MONEY. It does - it gives nights back like any other removal. It is owner
+   * decision D-14: a member who never consented must always be able to come off
+   * a booking, and holding that behind a pricing question nobody has answered
+   * would trap them for as long as the review stayed open. So the structural
+   * removal proceeds even while the earlier review is unresolved.
+   *
+   * WHAT THIS BRANCH DOES ABOUT THE MONEY THAT REMOVAL OWES. It parks it, like
+   * any other unpriceable removal - the strand check below no longer exempts a
+   * consent removal, because it no longer refuses one. So an exempted removal can
+   * raise a SECOND review task beside the one already open, and that is the
+   * intended shape: two occurrences, two keys, two amounts, each settled on its
+   * own evidence. This exemption's only remaining effect is that such a removal
+   * is not turned away by the fence while an earlier review is unresolved.
+   *
+   * DELIBERATELY BELOW THE AUTHORISATION CHECKS. A caller with no business
+   * touching this booking must get the same 403 they got before this issue -
+   * telling a stranger that the club is reviewing a booking's money is a leak,
+   * and a 409 where a 403 belongs is also a wrong answer.
+   */
+  await assertNoPendingEditFinancialReview({
+    bookingId,
+    moneyAffecting: !consentAuthorityApplies,
+    store: tx,
+  });
+
   if (
     !isSelfRemoval &&
     !["PENDING", "PAYMENT_PENDING", "CONFIRMED", "PAID"].includes(booking.status)
@@ -466,6 +525,130 @@ export async function removeBookingGuestInTransaction({
   }
 
   await assertBookingNotQuotePriced(tx, bookingId);
+
+  // #3031 (epic #2797), INV-MOD-028: CAN THIS BOOKING'S HISTORY PRICE THE
+  // REMOVAL EXACTLY?
+  //
+  // Removing a guest gives back every night that guest holds, so the credit is
+  // historical money and must come from what was actually sold. This path never
+  // computed it that way: it repriced the REMAINING guests and took the
+  // difference against the booking's stored total. Where a remaining guest's
+  // rows carry no usable price, that reprice values THEIR nights at today's
+  // rate, and the whole of that movement lands inside what the member is told is
+  // the departing guest's credit — a rate rise on somebody else's stay changing
+  // the amount refunded for this one.
+  //
+  // Requiring every strand to reconcile is what makes the existing arithmetic
+  // exact rather than replacing it: with every remaining night locked, the
+  // reprice returns each remaining guest's stored total unchanged, so the
+  // difference IS the departing guest's own stored price. That equality is
+  // asserted below rather than assumed.
+  //
+  // Judged before any write, so the decision below is taken against the booking
+  // exactly as it stands.
+  //
+  // #3032 (BFI 3): THIS NO LONGER REFUSES. The hand-off #3031 left here is
+  // discharged — the structural removal commits, and the money it owes back is
+  // PARKED as an OPEN `EDIT_FINANCIAL_REVIEW` task for a person to price, rather
+  // than settled from a difference of repricings this booking's history cannot
+  // support. `parkedFinancialReview` below is what carries that through the rest
+  // of this function: no reprice, no promo recalculation, no settlement, no
+  // credit, no Xero delta, and the booking's stored money untouched.
+  //
+  // JUDGED FOR EVERY REMOVAL, INCLUDING A CONSENT-AUTHORITY ONE, and dropping
+  // that exemption is the point rather than a side effect. Owner decision D-14
+  // says a DECLINE or an EXPIRY must ALWAYS be able to take its target off the
+  // booking, and #3031 honoured it by exempting the strand check from a gate that
+  // could only REFUSE. There is nothing left to exempt it from: parking removes
+  // the guest and holds only the amount, which is exactly what D-14 asks for and
+  // what a refusal could not give. Leaving the exemption would now be the harmful
+  // branch — a consent removal from a booking whose rows do not reconcile would
+  // settle an invented amount while every other removal parked.
+  const strandEvidence = [guestToRemove, ...booking.guests]
+    .filter(
+      (guest, index, all) =>
+        all.findIndex((other) => other.id === guest.id) === index,
+    )
+    .map((guest) => ({
+      guest,
+      evidence: storedSoldPriceEvidenceForGuest(guest, booking),
+    }));
+  /**
+   * Is this removal's money unknowable from the booking's own history?
+   *
+   * ONE STRAND IS ENOUGH, and it does not have to be the departing one. The
+   * credit this path settles is a DIFFERENCE OF REPRICINGS — the booking's
+   * stored total less a reprice of whoever is left — so a REMAINING guest whose
+   * rows carry no usable price has their nights revalued at today's rate, and the
+   * whole of that movement lands inside what the member is told is the departing
+   * guest's credit. That is the defect #3031 named, and it is not confined to the
+   * guest who is leaving, which is why the check above judges every strand.
+   */
+  const parkedFinancialReview = strandEvidence.some(
+    (strand) => strand.evidence.kind !== "exact",
+  );
+  /**
+   * The strands this removal parks, and why the DEPARTING one is always among
+   * them.
+   *
+   * A REMAINING strand is recorded when its own rows cannot be read - that is a
+   * separate question for the admin, and it carries no surrendered nights
+   * because nothing of that guest's is being given back.
+   *
+   * THE DEPARTING STRAND IS RECORDED WHENEVER THIS REMOVAL PARKS, READABLE OR
+   * NOT, and that is a defect fix rather than symmetry. Filtering it out when its
+   * own rows happened to be exact lost real money: nothing settles on a parked
+   * removal (`priceDiffCents` is 0, and the booking's stored total does not
+   * move), `tx.bookingGuest.delete` below destroys the guest row and every night
+   * row behind it, and `BookingModification.previousData` keeps only name, age
+   * tier and membership. So on a booking where the LEAVING guest reconciles and a
+   * REMAINING one does not, the only task raised named the remaining guest, said
+   * "gave back no nights", and read - correctly, for what it described - as
+   * "reviewed, nothing to adjust". An admin dismissing it cleared the banner, and
+   * the departing member's refund was a figure no longer present anywhere in the
+   * database.
+   *
+   * Its evidence is exact, so the number IS knowable and is preserved on the
+   * task: the real per-night prices, the stored guest total, and the nights this
+   * removal surrenders. `COUNTERPART_STRAND_UNREADABLE` says which of the two
+   * situations an admin is looking at, and `counterpartStrandReviewOccurrence`
+   * carries the rest of the reasoning - including why no AMOUNT is written even
+   * though the rows add up.
+   */
+  const unpriceableStrands = !parkedFinancialReview
+    ? []
+    : strandEvidence.flatMap(({ guest, evidence }) => {
+        // A removal surrenders every night the departing guest holds and adds
+        // none; a remaining guest surrenders nothing. Recorded from the rows
+        // this service can still see, because the delete below destroys them.
+        const surrenderedNightDates =
+          guest.id === guestId
+            ? evidence.nightPrices.map((night) => night.date)
+            : [];
+        if (evidence.kind === "unusable") {
+          return [
+            editFinancialReviewOccurrence({
+              bookingId,
+              bookingGuestId: guest.id,
+              evidence,
+              guestTotalCents: guest.priceCents,
+              surrenderedNightDates,
+              addedNightDates: [],
+            }),
+          ];
+        }
+        if (guest.id !== guestId) return [];
+        return [
+          counterpartStrandReviewOccurrence({
+            bookingId,
+            bookingGuestId: guest.id,
+            evidence,
+            guestTotalCents: guest.priceCents,
+            surrenderedNightDates,
+            addedNightDates: [],
+          }),
+        ];
+      });
 
   const choreWarnings = await removeGuestChoreAssignments(tx, guestId);
 
@@ -556,46 +739,6 @@ export async function removeBookingGuestInTransaction({
     }
   }
 
-  const groupDiscountSetting = await tx.groupDiscountSetting.findUnique({
-    where: { id: "default" },
-  });
-  const priceBreakdown = await priceBookingGuestsWithMembershipTypePolicy(tx, {
-    ownerMemberId: booking.memberId,
-    checkIn: booking.checkIn,
-    checkOut: booking.checkOut,
-    guests: guestsForPricing,
-    seasons: seasonRateData,
-    // Group discount applies to any newly priced nights (#1095); remaining
-    // guests' locked nights keep their booked (discount-inclusive) prices, so
-    // a party dropping below the minimum never loses a discount it bought.
-    //
-    // Edit-time mapper (#2770, INV-MOD-026). A removal buys nothing, so on a
-    // healthy booking every remaining night is locked and the switch cannot
-    // move a cent either way. It is still gated here rather than left on the
-    // creation mapper, because ONE value per edit is the invariant: a club with
-    // the switch off must not have its add priced one way and its removal
-    // another. Where it can be observed is the documented degradation both
-    // INV-MOD-005 and INV-MOD-025 already name — a legacy guest with no stored
-    // night rows, whose nights price at current rates; with the switch off
-    // those rates are undiscounted, which is the club's stated intent for the
-    // edit rather than a reprice of history (no stored price is overwritten).
-    groupDiscount: toEditTimeGroupDiscountConfig(groupDiscountSetting),
-    seasonYear,
-    skipAuthorization: actorRole === "ADMIN",
-  });
-  const guestNightRates = guestsForPricing.map((guest, index) => ({
-    bookingGuestId: guest.bookingGuestId,
-    memberId: guest.memberId ?? null,
-    isMember: guest.isMember,
-    perNightRates: priceBreakdown.guests[index].perNightCents,
-    nightDates: priceBreakdown.guests[index].nightDates,
-    // nightDates carry each guest's actual priced nights (partial stays
-    // included); firstNight remains the booking's check-in so internal
-    // work-party promos date their window from the stay start.
-    firstNight: booking.checkIn,
-  }));
-
-  const newTotalPriceCents = priceBreakdown.totalPriceCents;
   // #3123 — the SAME club day the caller resolved before it opened this
   // transaction, re-expressed as the calendar day the promo window and the
   // refund tier are written in. `today` arrives as the UTC-midnight `@db.Date`
@@ -604,15 +747,121 @@ export async function removeBookingGuestInTransaction({
   // inverse, so this is one day in two encodings and NOT a second reading of
   // the club's clock.
   const todayAtClub = calendarDateOfDateOnlyInstant(today);
-  const promoResult = await recalculateBookingPromo({
-    tx,
-    bookingId,
-    booking,
-    newTotalPriceCents,
-    guestNightRates,
-    todayAtClub,
-  });
-  const newFinalPriceCents = newTotalPriceCents + promoResult.newPromoAdjustmentCents;
+
+  /**
+   * #3032 (epic #2797): THE MONEY BLOCK, AND THE ONE BRANCH THAT SKIPS IT.
+   *
+   * A parked removal performs no reprice, no promotion recalculation and no
+   * settlement, and every value below therefore starts at what the booking
+   * already stores. That is not a shortcut around the arithmetic — it IS the
+   * decision. The credit this path would otherwise compute is a difference of
+   * repricings, and on a booking whose stored rows cannot be read that
+   * difference is a valuation taken by arithmetic, which epic #2797 prohibits.
+   *
+   * NOTHING HERE IS ZERO-AS-A-DECISION either, and the distinction is the one
+   * the epic makes by name. `priceDiffCents` falls out as 0 because the
+   * booking's total genuinely does not move, not because 0 was chosen as the
+   * adjustment: the adjustment is UNKNOWN and is recorded as an OPEN task with
+   * a null amount, which is what "not yet known" looks like in this schema. A
+   * `$0` credit, a `$0` refund and a `$0` raised amount are all real financial
+   * statements and none of them is written here.
+   *
+   * WHY THE BOOKING'S STORED TOTAL IS LEFT ALONE. Reducing it would require
+   * knowing by how much, which is the very question under review; the epic's
+   * *"finance state must distinguish pending financial review from a final
+   * reconciled booking"* is carried by the OPEN task rather than by a total
+   * this function guessed. The guest is off the booking either way — that is
+   * the structural half, and it commits.
+   */
+  let priceBreakdown: Awaited<
+    ReturnType<typeof priceBookingGuestsWithMembershipTypePolicy>
+  > | null = null;
+  let newTotalPriceCents = booking.totalPriceCents;
+  let promoResult: Awaited<ReturnType<typeof recalculateBookingPromo>> = {
+    newDiscountCents: booking.discountCents,
+    newPromoAdjustmentCents: booking.promoAdjustmentCents,
+    promoRemoved: false,
+    promoCoverage: null,
+  };
+
+  if (!parkedFinancialReview) {
+    const groupDiscountSetting = await tx.groupDiscountSetting.findUnique({
+      where: { id: "default" },
+    });
+    priceBreakdown = await priceBookingGuestsWithMembershipTypePolicy(tx, {
+      ownerMemberId: booking.memberId,
+      checkIn: booking.checkIn,
+      checkOut: booking.checkOut,
+      guests: guestsForPricing,
+      seasons: seasonRateData,
+      // Group discount applies to any newly priced nights (#1095); remaining
+      // guests' locked nights keep their booked (discount-inclusive) prices, so
+      // a party dropping below the minimum never loses a discount it bought.
+      //
+      // Edit-time mapper (#2770, INV-MOD-026). A removal buys nothing, so on a
+      // healthy booking every remaining night is locked and the switch cannot
+      // move a cent either way. It is still gated here rather than left on the
+      // creation mapper, because ONE value per edit is the invariant: a club with
+      // the switch off must not have its add priced one way and its removal
+      // another. Where it can be observed is the documented degradation both
+      // INV-MOD-005 and INV-MOD-025 already name — a legacy guest with no stored
+      // night rows, whose nights price at current rates; with the switch off
+      // those rates are undiscounted, which is the club's stated intent for the
+      // edit rather than a reprice of history (no stored price is overwritten).
+      groupDiscount: toEditTimeGroupDiscountConfig(groupDiscountSetting),
+      seasonYear,
+      skipAuthorization: actorRole === "ADMIN",
+    });
+    const repriced = priceBreakdown;
+    const guestNightRates = guestsForPricing.map((guest, index) => ({
+      bookingGuestId: guest.bookingGuestId,
+      memberId: guest.memberId ?? null,
+      isMember: guest.isMember,
+      perNightRates: repriced.guests[index].perNightCents,
+      nightDates: repriced.guests[index].nightDates,
+      // nightDates carry each guest's actual priced nights (partial stays
+      // included); firstNight remains the booking's check-in so internal
+      // work-party promos date their window from the stay start.
+      firstNight: booking.checkIn,
+    }));
+
+    newTotalPriceCents = repriced.totalPriceCents;
+    // #3031: THE CREDIT IS THE DEPARTING GUEST'S OWN STORED PRICE, and the gate
+    // above is what makes it so rather than an assertion here.
+    //
+    // `newTotalPriceCents` is a reprice of the REMAINING guests, and the credit is
+    // the difference against the booking's stored total. That was the defect: a
+    // remaining guest whose rows carried no usable price had their nights valued
+    // at today's rate, and the whole of that movement landed inside what the
+    // member was told was the departing guest's credit.
+    //
+    // Every remaining night is now locked at what it was sold for before this
+    // point is reached, and a locked night short-circuits the season lookup, so
+    // the reprice returns each remaining guest's stored total unchanged and the
+    // difference is exactly `guestToRemove.priceCents`. It is structural, not
+    // policed - there is no state left in which the reprice could move - and it is
+    // proved against the REAL pricing engine in
+    // `booking-guest-removal-exact-credit.test.ts` rather than re-checked here
+    // against a number this function has just derived.
+    promoResult = await recalculateBookingPromo({
+      tx,
+      bookingId,
+      booking,
+      newTotalPriceCents,
+      guestNightRates,
+      todayAtClub,
+    });
+  }
+
+  // Written from the STORED total on the parked branch rather than recomposed
+  // from the parked promotion figures. The two agree by construction today, and
+  // deriving it would make this line quietly depend on that agreement holding -
+  // `priceDiffCents` below is the number every settlement decision reads, and it
+  // must be zero on this branch because the booking did not move, not because
+  // two expressions happened to cancel.
+  const newFinalPriceCents = parkedFinancialReview
+    ? booking.finalPriceCents
+    : newTotalPriceCents + promoResult.newPromoAdjustmentCents;
   const priceDiffCents = newFinalPriceCents - booking.finalPriceCents;
   // Owner rule (#1100): a booking left with only non-adults must go through
   // admin approval, even if it was previously paid and approved for a
@@ -633,13 +882,23 @@ export async function removeBookingGuestInTransaction({
   // member must choose card vs credit. Previously this path refunded the full
   // guest cost with no policy tier, bypassing the cancellation window that the
   // batch endpoint enforces for the identical economic change.
-  const settlementOptions = await calculateModificationSettlementOptions({
-    booking: booking as unknown as LoadedBookingForModify,
-    netChargeCents: priceDiffCents,
-    db: tx, // locked transaction; see `CancellationPolicyDb`
-    // #3123 — the refund tier for this reduction, on the club's day.
-    todayAtClub,
-  });
+  //
+  // NULL ON A PARKED REMOVAL, and that is what keeps `applyPaymentAdjustments`
+  // inert below rather than a second zero literal beside it: with no options and
+  // a `priceDiffCents` of 0 its net amount is 0, so it takes no refund branch, no
+  // credit branch and no additional-charge branch, updates no payment row, and
+  // returns zeros for both Xero legs. The existing machinery is what proves
+  // nothing moved, rather than a parallel hand-built result that could drift from
+  // it.
+  const settlementOptions = parkedFinancialReview
+    ? null
+    : await calculateModificationSettlementOptions({
+        booking: booking as unknown as LoadedBookingForModify,
+        netChargeCents: priceDiffCents,
+        db: tx, // locked transaction; see `CancellationPolicyDb`
+        // #3123 — the refund tier for this reduction, on the club's day.
+        todayAtClub,
+      });
   if (settlementOptions?.requiresSettlementMethod && !settlementMethod) {
     // A settled booking needs an explicit card/credit election. The only
     // body-less caller is a linked guest self-removing to resolve a night
@@ -677,25 +936,32 @@ export async function removeBookingGuestInTransaction({
     reviewUpdate,
   });
 
-  await Promise.all(
-    remainingGuests.map((guest, index) =>
-      tx.bookingGuest.update({
-        where: { id: guest.id },
-        // Overwrite the rate-type snapshot alongside the repriced total
-        // (#1930, E4) — unless this guest kept a locked night, in which case the
-        // stored snapshot stays, because one item code per guest cannot describe
-        // a stay that mixes locked member-rate nights with newly priced ones
-        // (#2543). See `rateSnapshotUpdateForRepricedGuest`.
-        data: {
-          priceCents: priceBreakdown.guests[index].priceCents,
-          rateMembershipTypeId: rateSnapshotUpdateForRepricedGuest(
-            priceBreakdown.guests[index],
-            guestsForPricing[index]?.lockedNightPrices,
-          ),
-        },
-      })
-    )
-  );
+  // NOT WRITTEN ON A PARKED REMOVAL. Every remaining strand keeps the price and
+  // the rate snapshot it already carries: there was no reprice, so there is
+  // nothing to write, and writing anything here would be the revaluation of a
+  // stay nobody edited that the park exists to prevent.
+  const repricedGuests = priceBreakdown;
+  if (repricedGuests) {
+    await Promise.all(
+      remainingGuests.map((guest, index) =>
+        tx.bookingGuest.update({
+          where: { id: guest.id },
+          // Overwrite the rate-type snapshot alongside the repriced total
+          // (#1930, E4) — unless this guest kept a locked night, in which case
+          // the stored snapshot stays, because one item code per guest cannot
+          // describe a stay that mixes locked member-rate nights with newly
+          // priced ones (#2543). See `rateSnapshotUpdateForRepricedGuest`.
+          data: {
+            priceCents: repricedGuests.guests[index].priceCents,
+            rateMembershipTypeId: rateSnapshotUpdateForRepricedGuest(
+              repricedGuests.guests[index],
+              guestsForPricing[index]?.lockedNightPrices,
+            ),
+          },
+        })
+      )
+    );
+  }
 
   const updatedBooking = await tx.booking.update({
     where: { id: bookingId },
@@ -773,6 +1039,63 @@ export async function removeBookingGuestInTransaction({
     },
   });
 
+  /**
+   * #3032 (epic #2797), REQUIREMENT 1: park the money, atomically with the
+   * structural removal that is already written above.
+   *
+   * INSIDE THIS TRANSACTION AND UNDER THE LOCKS THIS FUNCTION ALREADY HOLDS.
+   * `tx` is the caller's interactive transaction, so the guest delete, the
+   * booking row, the `BookingModification` anchor and these tasks either all
+   * commit or none of them do - which is the first of the two failure modes the
+   * issue names ("saving the booking change but losing the fact that money still
+   * needs review"). `raiseParkedEditFinancialReviewTasks` re-takes
+   * `pg_advisory_xact_lock(1)`, which this function took as its FIRST lock at the
+   * top; a transaction-scoped advisory lock is re-entrant, so that costs nothing
+   * and adds no ordering edge (`INV-LOCK-002` still reads global -> lodge here).
+   *
+   * IT CANNOT ROLL THE REMOVAL BACK. The raise is a find-then-create under that
+   * lock with a P2002 catch on the occurrence-key index, so a replay returns the
+   * task already on file rather than throwing a unique violation out of this
+   * transaction callback - which, with no global P2002 mapping in this
+   * repository, would surface as a 500 AND undo the structural removal. That is
+   * the headline requirement, and it is the reason the raise is shaped that way
+   * rather than as a bare `create`.
+   *
+   * ONE TASK PER PARKED STRAND, not one per removal, and the difference is
+   * deliberate. The occurrence key is minted per strand, so per-strand is what
+   * "exactly one" can mean idempotently: a replay of this removal re-derives the
+   * same keys and creates nothing.
+   *
+   * THE DEPARTING STRAND IS ALWAYS ONE OF THEM when this removal parks - see
+   * `unpriceableStrands` above, where dropping it because its own rows read
+   * cleanly is what silently destroyed the departing member's refund. So the task
+   * carrying the surrendered nights, and therefore the money, is raised on every
+   * parked removal.
+   *
+   * Where a REMAINING strand is unreadable it gets its own task beside it,
+   * because it is a separate question for the admin: that one carries no
+   * surrendered nights, and its honest resolution is often DISMISSED ("reviewed,
+   * nothing to adjust"), which is a state this feature already has and does not
+   * pretend is a payment. Dismissing it no longer discards anything, because the
+   * departing guest's money is on its own task.
+   *
+   * The raise ITSELF - the settlement payment id, the strand's member, the null
+   * amount - is `raiseParkedEditFinancialReviewTasks`, and is stated once there
+   * rather than four times across the four parked doors (#3166, `INV-SSOT`).
+   */
+  const financialReviewTaskIds = await raiseParkedEditFinancialReviewTasks({
+    booking,
+    // The DEPARTING strand is raised for too, and its row is not in the
+    // booking's remaining guest list - so it is named here explicitly.
+    guests: [guestToRemove, ...booking.guests],
+    // A removal adds nobody.
+    addedGuests: [],
+    // Already empty when this removal did not park (see its own comment).
+    occurrences: unpriceableStrands,
+    bookingModificationId: bookingModification.id,
+    store: tx,
+  });
+
   if (paymentImpact.accountCreditAmountCents > 0) {
     await createBookingModificationCredit(
       booking.memberId,
@@ -827,6 +1150,8 @@ export async function removeBookingGuestInTransaction({
     choreWarnings,
     oldGuestCount: booking.guests.length,
     bookingModificationId: bookingModification.id,
+    financialReviewPending: parkedFinancialReview,
+    financialReviewTaskIds,
     zeroDollarAutoPaid: lifecycle.zeroDollarAutoPaid,
     supersededPrimaryPaymentIntents: lifecycle.supersededPrimaryPaymentIntents,
     minorsOnlyReviewNewlyFlagged,

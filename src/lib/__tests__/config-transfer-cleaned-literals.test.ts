@@ -507,11 +507,14 @@ describe("value-scoped content cleanups stay tied to the registry (#2511)", () =
 
   /** Does any UPDATE statement's WHERE clause pin a guarded column's byte value? */
   function valuePinsGuardedColumn(sql: string): boolean {
-    const withoutComments = sql
+    // SQL line comments, not JavaScript ones (#3164). The canonical
+    // `stripComments` helper does not know this delimiter, so a census that
+    // used it here would read a commented-out UPDATE as a live one.
+    const withoutSqlComments = sql
       .split("\n")
       .filter((line) => !line.trimStart().startsWith("--"))
       .join("\n");
-    for (const stmt of withoutComments.split(";")) {
+    for (const stmt of withoutSqlComments.split(";")) {
       if (!/\bUPDATE\b/i.test(stmt)) continue;
       const whereIdx = stmt.search(/\bWHERE\b/i);
       if (whereIdx < 0) continue;

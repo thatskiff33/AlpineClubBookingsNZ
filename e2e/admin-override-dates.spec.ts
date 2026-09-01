@@ -2,7 +2,7 @@ import { type BrowserContext, expect, test, type Page } from "@playwright/test";
 import { bookSelfToReviewStep, confirmBookingToPaymentStep } from "./helpers/booking";
 import { bookingCreateIsolation } from "./helpers/booking-create-client-ip";
 import { personas } from "./helpers/personas";
-import { E2E_ADMIN } from "./helpers/fixtures";
+import { E2E_ADMIN, relDateOnly, shiftDateOnly } from "./helpers/fixtures";
 import { storageStatePath } from "./helpers/auth";
 import { cancelMemberBookingsOnDate } from "./helpers/reset";
 import { stayWindow } from "./helpers/stay-dates";
@@ -40,7 +40,7 @@ const window = stayWindow(5);
 //
 // Where can the leftover be? On `window.checkIn` if the group got as far as
 // parking it back (or failed before the first shift), otherwise on whichever
-// override target the failing attempt stopped at: isoDay(-5), (-4), (-1) or (0).
+// override target the failing attempt stopped at: relDateOnly(-5), (-4), (-1) or (0).
 // The sweep below covers -6…+1, one day of slack either side so an attempt and
 // its retry that straddle NZ midnight still line up. Every date is matched
 // against the booker as OWNER, so this can only ever clear a booking this file
@@ -51,22 +51,6 @@ const OVERRIDE_LEFTOVER_OFFSETS = [-6, -5, -4, -3, -2, -1, 0, 1];
 let memberContext: BrowserContext;
 let adminContext: BrowserContext;
 let bookingId = "";
-
-function isoDay(offsetDays: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() + offsetDays);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
-
-// dateOnly + N days, pure date math (matches the panel's derived check-out).
-function isoShiftFrom(dateOnly: string, days: number): string {
-  const d = new Date(`${dateOnly}T00:00:00.000Z`);
-  d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().slice(0, 10);
-}
 
 // The bold "Total" row on the booking Payment card, reduced to its digits so a
 // frozen price can be compared across shifts.
@@ -95,7 +79,7 @@ async function adminShiftTo(
   await page.locator("#edit-checkin").fill(newCheckIn);
   // Shift mode derives the check-out from the check-in, preserving the length.
   await expect(page.locator("#edit-checkout")).toHaveValue(
-    isoShiftFrom(newCheckIn, window.nights.length),
+    shiftDateOnly(newCheckIn, window.nights.length),
   );
 
   const save = page.getByRole("button", { name: "Save Changes" });
@@ -144,11 +128,11 @@ test.beforeAll(async ({ browser }) => {
 
   // Re-runs on every attempt (a retry restarts the worker); a clean first
   // attempt cancels nothing. Full admin matters here: the started-stay block
-  // (#2029) is waived only for ADMIN, and a leftover parked on isoDay(-5) has
+  // (#2029) is waived only for ADMIN, and a leftover parked on relDateOnly(-5) has
   // started.
   await cancelMemberBookingsOnDate(adminContext.request, {
     memberName: `${personas.booker.firstName} ${personas.booker.lastName}`,
-    checkIn: [window.checkIn, ...OVERRIDE_LEFTOVER_OFFSETS.map(isoDay)],
+    checkIn: [window.checkIn, ...OVERRIDE_LEFTOVER_OFFSETS.map(relDateOnly)],
   });
 });
 
@@ -184,7 +168,7 @@ test("admin shifts a future booking into an in-progress stay with the price froz
   // i.e. checkIn <= today < checkOut — a genuinely in-progress booking. This
   // one exercises the "Save and email member" dialog path; the later shifts
   // take "Save without emailing".
-  await adminShiftTo(page, isoDay(-1), { emailMember: true });
+  await adminShiftTo(page, relDateOnly(-1), { emailMember: true });
 
   await page.reload();
   await expect(page.getByRole("button", { name: "Edit Booking" })).toBeVisible();
@@ -192,7 +176,7 @@ test("admin shifts a future booking into an in-progress stay with the price froz
   expect(await readTotalDigits(page)).toBe(totalBefore);
   // Re-open the editor to confirm the persisted check-in moved.
   await page.getByRole("button", { name: "Edit Booking" }).click();
-  await expect(page.locator("#edit-checkin")).toHaveValue(isoDay(-1));
+  await expect(page.locator("#edit-checkin")).toHaveValue(relDateOnly(-1));
   await page.close();
 });
 
@@ -201,11 +185,11 @@ test("admin shifts the in-progress booking forward one night (the motivating cas
   await page.goto(`/bookings/${bookingId}`);
   const totalBefore = await readTotalDigits(page);
 
-  await adminShiftTo(page, isoDay(0)); // check-in = today
+  await adminShiftTo(page, relDateOnly(0)); // check-in = today
 
   await page.reload();
   await page.getByRole("button", { name: "Edit Booking" }).click();
-  await expect(page.locator("#edit-checkin")).toHaveValue(isoDay(0));
+  await expect(page.locator("#edit-checkin")).toHaveValue(relDateOnly(0));
   // Frozen price survives a second shift too.
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
   expect(await readTotalDigits(page)).toBe(totalBefore);
@@ -236,15 +220,15 @@ test("admin moves the booking fully into the past, then shifts it again", async 
 
   // Fully past: check-in 5 days ago → a 2-night stay ends 3 days ago (checkOut
   // <= today), which the member-facing edit window refuses outright.
-  await adminShiftTo(page, isoDay(-5));
+  await adminShiftTo(page, relDateOnly(-5));
 
   await page.reload();
   await page.getByRole("button", { name: "Edit Booking" }).click();
-  await expect(page.locator("#edit-checkin")).toHaveValue(isoDay(-5));
+  await expect(page.locator("#edit-checkin")).toHaveValue(relDateOnly(-5));
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
 
   // Move the fully-past record again (+1 day) — the fully-past path end to end.
-  await adminShiftTo(page, isoDay(-4));
+  await adminShiftTo(page, relDateOnly(-4));
   await page.reload();
   await expect(page.getByRole("button", { name: "Edit Booking" })).toBeVisible();
   expect(await readTotalDigits(page)).toBe(totalBefore);

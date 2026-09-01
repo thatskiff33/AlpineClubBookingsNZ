@@ -30,6 +30,8 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { stripComments } from "./support/strip-comments";
+
 const SRC_DIR = join(import.meta.dirname, "..", "..");
 
 /**
@@ -75,9 +77,7 @@ function repoRelative(absolute: string): string {
  * direction: a module that names the SDK in a comment has not acquired a client.
  */
 function executableCode(source: string): string {
-  return source
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/^[ \t]*\/\/.*$/gm, "");
+  return stripComments(source);
 }
 
 /**

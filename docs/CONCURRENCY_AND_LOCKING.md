@@ -150,6 +150,7 @@ are the literal `1`.
 | **Xero member contact link (legacy key)** | `hashtext(<memberId>)` | short local-link transactions (`xero-contacts.ts`) | — | First-writer-wins local `Member.xeroContactId` linking after provider work. This legacy unnamespaced key is shared by both Xero contact-link writers; do not copy it for new domains. |
 | **Diagnostics budget reserve (per month)** | `hashtext("diagnostics-budget-reserve"), hashtext(<month>)` | `reserveDiagnosticsBudget` **and** `settleDiagnosticsRoundtrip` (`ai-diagnostics-usage.ts`, AID-2 #2371) | — | Serialises every AI Diagnostics budget RESERVE **and** SETTLE for one billing month so the reserve's read-check-insert (sum live reservations + settled spend, compare to budget, insert reservation) is atomic against concurrent reservers AND against a settle's reservation-delete + `settledCents` increment. A burst of paid diagnostics roundtrips therefore cannot push `settled + reserved` over the monthly budget, and a settle can never commit mid-reserve to under-count committed spend; a lost claim (over budget) inserts nothing and denies the paid call. Different months do not contend. Held only for the milliseconds of each short transaction; the provider call runs entirely OUTSIDE both. Both take ONLY this key (no second lock), so no ordering cycle is possible. See "Composition: diagnostics budget reserve" below. |
 | **Backup run claim** | `hashtext("backup:run-lock")` | `claimBackupRun` (`backup-run.ts`, #2095) | — | Single-flights managed database backups across containers (nightly cron vs admin run-now). Held only for the milliseconds of the reap-stale → active-check → insert-RUNNING claim transaction; the `pg_dump`/upload pipeline runs entirely outside any transaction, so a crashed run can never wedge the lock (a dead RUNNING row is reaped by heartbeat age on the next claim). Single-lock holder; composes with no other family. The config-transfer pre-apply safety backup deliberately bypasses this claim (it must run inline; concurrent dumps are independent snapshots writing uniquely-named files). |
+| **Xero supplementary invoice per anchor** | `hashtext("xero-supplementary-invoice"), hashtext(<BookingModification id, or ManualRefundTask id for a second ask>)` | `enqueueXeroSupplementaryInvoiceOperation` (`xero-operation-outbox.ts`, #3170) | anchor | Single-flights "does this booking change already have a supplementary invoice going out?" so one edit can never send two. Held only for the milliseconds of the link-check -> queued-check -> raise-or-create transaction; the Xero round trip happens later, in the outbox worker, entirely outside it. Single-lock holder, composing with no other family, and its FOUR callers all arrive holding nothing: the edit-settlement callers reach it post-commit through a fire-and-forget `queueXeroBookingEditSettlement`; the booking-vs-Xero repair pass (`xero-booking-repair-passes.ts`, `QUEUE_SUPPLEMENTARY_INVOICE`) calls it DIRECTLY from an operator-driven admin/CLI action that opens no transaction and takes no advisory lock; and since #3181 the payment-recovery worker calls it through `completeDeferredXeroSupplementaryInvoice` when it raises the supplementary invoice a failed additional-payment mint deferred - that worker claims its recovery row with a status-guarded `updateMany` rather than a transaction and holds no advisory lock, and its Stripe round trip has completed before this line; and since #3193 the SECOND ASK (`raiseSecondEditReviewChargeInvoice` -> `enqueueXeroSecondSupplementaryInvoiceOperation`) takes it on a review task's id, from the settlement's own fire-and-forget continuation after that settlement has committed, so it too holds nothing and takes exactly one. So no ordering cycle is possible. This enumeration is written to be audited, so a new caller belongs in it before it belongs in the tree. It exists because #3170 made two review settlements of ONE edit contribute to one combined total: both restate first, both find nothing queued, and the queued-operation lookup deduped on a `correlationKey` BUILT FROM THE AMOUNT - so $200 and $30 were two keys, two operations and two invoices. The lookup is now scoped to the anchor, and an operation asking for less is RAISED through `restatePendingSupplementaryInvoiceAmount`, which refuses to lower. Note that `startXeroSyncOperation` runs on this transaction's client, so its P2002 fallback (re-read the winner's row) cannot run here - a unique violation aborts the surrounding transaction. Under this key that fallback is unreachable rather than needed: a concurrent enqueue for the same anchor is serialised behind us and finds our row through the queued-check. Residual, stated: a share settled AFTER the worker has claimed the operation (RUNNING) or after the invoice has been sent cannot join it, so the invoice bills the earlier figure and the difference is collected by hand. The enqueue reports that as `outcome: "short-sent"` (the invoice exists) or `outcome: "short-in-flight"` (the worker has merely claimed the row) and the settlement writes `booking.editFinancialReview.chargeShareUncollected` (leg `xero-invoice`) so an officer can find it - one invoice, never two, and never a silent shortfall. Proven against real PostgreSQL by the "FORCES the two-settlement interleaving" case in `edit-financial-review-races.realdb.test.ts`, which the #1881 harness runs in CI. Since #3193 that stated residual is BILLED rather than collected by hand, and the way it is billed does not add a lock site: `enqueueXeroSecondSupplementaryInvoiceOperation` is a named wrapper over this same enqueue, so the link-check -> queued-check -> write stays the one place that decides whether an ask already has an invoice going out. What widens is the KEYSPACE - the anchor is now the `BookingModification`, or the `ManualRefundTask` whose settled share the invoice bills. A second ask therefore contends with nothing: it is fenced against its own replays and invisible to every read that decides whether the booking change already has an invoice going out, which is what stops the change's own restate raising a $30 follow-on to the $230 combined total on top of an invoice already sent. One read is scoped by PAYLOAD rather than by anchor and so could have seen it - `attachPaymentIntentToWaitingSupplementaryInvoiceOperations`, which matches `requestPayload.bookingModificationId`; since the #3193 fix round it also filters `localModel: "BookingModification"`, so the separation is structural rather than a consequence of the wrapper's call-site flags. It bills that ONE share, never a difference, so two shares settling concurrently after the invoice went out queue two independent invoices for two different amounts rather than two copies of one difference. ONLY `short-sent` buys a second ask (#3193 fix round). A RUNNING row can be returned to PENDING un-attempted by exactly one route - a process-global Xero cooldown refusal, which `processXeroOutbox` un-claims because nothing was sent (an operator Requeue, and the repair pass's `REQUEUE_XERO_OPERATION` through the same helper, leave the original FAILED and replay a separate `REQUEUE` row inline; the stale-RUNNING reset writes FAILED) - and the next settlement then raises it to the COMBINED total, which already contains any share billed separately in the meantime. Since the second ask is anchored elsewhere by design, that restate cannot see it and cannot cap itself, so shares of $200/$30/$50 would bill $310 for a $280 edit. `short-in-flight` therefore raises nothing and takes the recorded-shortfall path, and the record tells the officer to compare the booking against Xero rather than to bill. |
 
 ### Composition: lodge admission, deactivation and hut-leader assignments (#2701)
 
@@ -2542,6 +2543,159 @@ The fence read is NOT wrapped in a catch: a read that cannot answer must not be
 turned into either answer, so the rejection reaches the webhook's outer catch, the
 processed-event marker is cleared and Stripe redelivers against the same idempotent
 refund keys.
+
+**#3032 SETTLES MONEY ON THAT SAME LOCKLESS PATH, AND DELIBERATELY ADDS NO KEY TO
+IT.** Completing an `EDIT_FINANCIAL_REVIEW` task now issues a Stripe refund, a
+local allocation or account credit for the amount an admin confirms. The obvious
+instinct is to serialise that against a concurrent edit or capture with `lock(1)`
+— and it is the same instinct this section already refuses, for the same reason:
+the Stripe refund is a provider round trip, and holding the global key across one
+is exactly what the bounded-exception rule forbids. The guarantee is a **durable
+claim, not a lock**. The existing status-guarded `updateMany` on `OPEN` is what
+makes the settlement single-flight, so:
+
+- every refusal is raised BEFORE the claim, so a refused completion leaves the
+  task `OPEN` with nothing half-applied;
+- the ledger writes sit AFTER it inside the same transaction, so a lost claim
+  writes nothing — `applyLocalRefundAllocation` INCREMENTS `refundedAmountCents`
+  and is not idempotent, so a caller placed beside the claim rather than
+  downstream of it would silently double-consume the refundable headroom until
+  the captured-cash cap tripped;
+- the Stripe call happens after the COMMIT, and the refund DEBT is persisted
+  BEFORE it, inside the claim transaction — the frozen per-transaction allocation
+  plus the key prefix, exactly as `booking-cancel.ts` does it (#1349). Lock-free
+  is not the same as recovery-free: without that row a crash between the commit
+  and the provider call would leave a `COMPLETED` task, an untouched
+  `refundedAmountCents` and no trace that money was owed, because this route
+  writes no allocation of its own. The cron replays the frozen slices under the
+  stored prefix, Stripe answers the repeat with the original refund, and the
+  ledger dedupes on refund id.
+
+**#3191 WRITES A SECOND KIND OF ROW ON THAT SAME LOCKLESS PATH, AND ALSO ADDS NO
+KEY.** Settling a review may now also record what the booking's unpriced nights
+sold for, which writes `BookingGuestNight.priceCents` for that guest strand and
+re-bases `BookingGuest.priceCents` to the sum. The same reasoning applies twice
+over: this rides inside the completion's transaction, whose single-flight
+guarantee is the status claim above, and adding `lock(1)` here would put the
+global key over the Stripe round trip that follows the commit.
+
+What makes it safe against a CONCURRENT BOOKING EDIT - which rewrites those very
+rows, in its own transaction, under its own locks - is a **compare-and-set on
+every row it touches**, not a lock:
+
+- each night is written with `updateMany` fenced on `priceCents: null`, so a
+  night that has since acquired a price cannot be overwritten. `update` on the
+  unique key would have found the row and written over whatever it then held;
+- the strand's total is written with `updateMany` fenced on the value the plan
+  was read against;
+- a `count` of anything but 1 raises a 409 and rolls the whole completion back,
+  so the task is still `OPEN` and its money question survives - the same answer
+  `RefundAllocationRacedError` gives one row over.
+
+The validation runs BEFORE the claim and the writes AFTER it, for the reasons
+listed above; and the blanks are re-read on the caller's transaction rather than
+trusted from the browser, so a screen minutes old cannot price a night the
+booking no longer holds. `INV-MOD-028` carries the rest of the rule.
+
+**#3194 ADDS A READ TO THAT SAME LOCKLESS TRANSACTION AND STILL NO KEY.** Where
+the task carries no `paymentId` of its own — a review parked before the member
+paid — the route decision re-reads the BOOKING's payment on the caller's
+transaction and routes on that, so a card payment made while the review was open
+is refunded to the card rather than turned into account credit. It composes no
+tier: it writes nothing, backfills nothing and takes no key, so it can neither
+deadlock against another writer nor produce a second refund. A capture committing
+between that read and the claim is the same benign race the section above
+describes — the completion simply sees the pre-capture snapshot and routes to
+account credit, which is the answer it gave before this change; the anchor-taken
+refusal still prevents a second credit on the same `BookingModification`. The
+opposite ordering cannot arise: routing to the card at all requires the capture to
+have been visible already.
+
+**The Stripe key and the recovery key are scoped to the TASK, not to the
+`BookingModification`.** Owner decision D-3032-1 settles a review against the
+ORIGINAL edit's modification row, and one edit can raise TWO review tasks — two
+unpriceable strands, one modification row. A modification-scoped Stripe prefix
+would give two same-amount refunds identical per-slice keys, so Stripe would
+answer the second with the FIRST refund and the caller would take the replayed id
+as success; a modification-scoped recovery key would let the two tasks upsert one
+another's row, and that upsert overwrites `amountCents` and `stripeKeyPrefix`.
+
+**#3170's CHARGE keys are scoped the OTHER way — to the `BookingModification` —
+and that is not a contradiction, it is the same question answered about a
+different object.** A refund is money already SENT, so two refunds of one edit are
+two movements that must never converge; a charge is a REQUEST the member still has
+to act on, and the owner's 30 Aug 2026 decision on #3170 is that one edit raises
+exactly one of those, for the total of its shares. Two requests lose money without
+any race at all: minting an additional PaymentIntent queues every other
+outstanding `ADDITIONAL` transaction on that payment for cancellation, and
+`reconcilePaymentAggregates` carries a single `additionalAmountCents` rather than
+a sum. So a later share RAISES the existing intent's amount instead of minting,
+and both the Stripe key and the recovery key name the edit.
+
+**Two officers settling two shares at once is made safe by DERIVATION plus a
+compare-and-set, not by a lock** — which matters here because this path still has
+none, for the reason above. The combined total is summed from the settled task
+rows (`sumEditReviewChargeSharesCents`) at execution time, after the caller's
+transaction has committed, so:
+
+- **no double count** — each task contributes exactly once, from the row its own
+  status-fenced claim wrote, and never as an increment of a running figure;
+- **no lost share** — whichever completion commits LAST necessarily reads after
+  both commits, so at least one run always derives the true total;
+- **the stale run cannot win** — a settled share is terminal, so the derived total
+  only ever grows and a smaller figure is always the older answer. The write
+  REFUSES TO LOWER the recorded request, which makes the outcome independent of
+  the order the two provider calls happen to land in.
+
+The recovery replay is the same function, so a crash between the commit and the
+Stripe call costs a delay rather than a share: the row's stored `amountCents` is
+advisory and the replay re-derives. A review-charge recovery operation is
+therefore routed AWAY from the ordinary additional-intent worker, whose "a newer
+additional supersedes this one" check would otherwise see the request this very
+edit already minted and complete having minted nothing.
+
+**The lockless path also needed one WRITE made safe.**
+`applyLocalRefundAllocation` computes an ABSOLUTE `refundedAmountCents` from a
+value it read a moment earlier, so two writers on one `PaymentTransaction`
+silently lose an update and OVERSTATE the refundable headroom. Until #3032 every
+caller either held `lock(1)` or ran only on a CANCELLED booking, so no two could
+race; a review completion is neither — it allocates against a LIVE booking with
+no lock, and while the fence keeps most concurrent edits off that booking, a
+consent-authority guest removal is exempt (owner decision D-14) and does move
+money. The write is now a compare-and-set on the exact value the slice was
+computed from, the same status-guarded-claim idiom used everywhere else here: it
+CANNOT lose the update, and a caller under `lock(1)` never sees it fire. The
+completion maps the refusal to a 409 with its transaction rolled back and its
+task still `OPEN`.
+
+`src/lib/__tests__/edit-financial-review-races.realdb.test.ts` proves both halves
+against a real server, forcing the interleaving with a third connection rather
+than hoping for it: two concurrent applies of one occurrence queue on `lock(1)`
+and raise exactly one task, and two concurrent completions queue on the task ROW
+and issue exactly one credit.
+
+**And one new READ inside the booking-edit lock envelope.**
+`assertNoPendingEditFinancialReview` is called by `modifyBookingBatch`,
+`modifyBookingDates` and `removeBookingGuestInTransaction` after both locks and
+after the post-lock re-read, on the caller's `tx`. It takes no key of its own and
+adds no tier: it is a `findFirst` on the caller's transaction client, placed under
+the locks precisely so it cannot be answered by a task a concurrent completion
+was about to close. `adminShiftBookingDates` is the one edit path deliberately
+NOT fenced — it is price-preserving (`priceDiffCents: 0`, no refund, no credit),
+so it needs no money baseline. The predicate the three fenced services pass is
+each one's OWN repricing test, not a second expression beside it: the batch
+service passes `!pricePreservingModification`, the same value that chooses between
+the identity echo and the pricing engine twenty lines later. An earlier revision
+asked a similar-looking pair that differed by the other-lodge term, and a request
+carrying a name edit AND an other-lodge election — one the route's schema
+accepts — skipped the fence and then repriced.
+
+The preview takes the same fence, on the same predicate expressed in its own
+names (`src/app/api/bookings/[id]/modify-quote/route.ts`). It reads on the module
+client because a preview opens no transaction and writes nothing: a race with a
+completing review costs a stale quote, which the save then refuses under its
+locks. Without it the member would be shown a refund priced from a baseline the
+club has already said it cannot read, and the save would 409 on submit.
 
 Note what `softDeleteCancelledBooking` does NOT do here. It cancels the deleted
 booking's in-flight Stripe PaymentIntents **after** its transaction commits,

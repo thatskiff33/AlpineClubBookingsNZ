@@ -263,6 +263,19 @@ export interface QuoteResult {
     excludedNames: string[];
     message: string;
   } | null;
+  /**
+   * #3179: present only when this edit cannot carry the promo-code change the
+   * request is asking for — today, an edit whose money parks for review. The
+   * edit still saves; the promotional part of it does not, and the member is
+   * told so here rather than discovering it on the invoice. The sentence is the
+   * SERVER's and is rendered verbatim.
+   */
+  promoChangeNotApplied?: {
+    requested: "apply" | "remove";
+    reason: "STAY_IN_PROGRESS" | "AMOUNT_UNDER_REVIEW";
+    promoCode: string;
+    message: string;
+  } | null;
   promoValidation: {
     valid: boolean;
     error?: string;
@@ -271,6 +284,20 @@ export interface QuoteResult {
     promoAdjustmentCents?: number;
   } | null;
   itemizedChanges: ItemizedChange[];
+  /**
+   * #3170: this edit's money cannot be read from the booking's own stored
+   * history, so the save will COMMIT the change and park the amount as an open
+   * review task. Every money field above is the booking's stored figure and
+   * every delta is zero — not because zero is the adjustment, but because the
+   * booking's money does not move on this save.
+   */
+  financialReviewRequired?: boolean;
+  /**
+   * The server's own member-facing sentence for the case above, rendered
+   * verbatim. Never re-worded in the panel — see
+   * `EDIT_FINANCIAL_REVIEW_QUOTE_NOTICE`.
+   */
+  financialReviewNotice?: string;
   /**
    * Other Lodges epic: the per-person fees this edit would write, keyed by
    * existing guest id, so each name can show its recalculated fee before the

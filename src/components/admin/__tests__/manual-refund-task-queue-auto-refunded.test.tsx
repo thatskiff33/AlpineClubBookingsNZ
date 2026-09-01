@@ -478,6 +478,9 @@ describe("ManualRefundTaskQueue — automatically refunded late captures (#2750)
     stubLoad({
       tasks: [OPEN_TASK],
       autoRefunded: [AUTO_REFUND, AUTO_REFUND_CANCELLED_ONLY],
+      // #3033 turned the hand-back queue's own link into a permission the route
+      // states, so the control below has to grant it explicitly.
+      viewerCanViewBookings: true,
     });
 
     render(<ManualRefundTaskQueue />);
@@ -488,8 +491,10 @@ describe("ManualRefundTaskQueue — automatically refunded late captures (#2750)
     const notices = screen.getByTestId("automatic-refund-notices");
     expect(notices.querySelectorAll("a")).toHaveLength(0);
     expect(notices).toHaveTextContent("booking-deleted");
-    // The hand-back queue keeps its link: those bookings are cancelled, not
-    // deleted, so the page opens for every viewer this screen admits.
+    // The hand-back queue keeps its link for a viewer who may open a booking.
+    // #3033 made that a stated permission rather than an assumption: the
+    // paragraph above says the link is a dead end for a Finance Viewer, and
+    // until then the queue offered it to them anyway.
     expect(
       screen.getByTestId("manual-refund-task-queue").querySelectorAll("a").length,
     ).toBeGreaterThan(0);

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
@@ -6,6 +7,11 @@ import {
   AUTOMATIC_REFUND_NOTICE_WINDOW_DAYS,
   automaticallyRefundedManualRefundTaskFilter,
 } from "@/lib/deleted-booking-modification-payment";
+import {
+  toAutoRefundedManualRefundTaskPayload,
+  toOpenManualRefundTaskPayload,
+} from "@/lib/manual-refund-task-queue-payload";
+import { unpricedNightsSummariesForQueue } from "@/lib/stored-night-price-repair-store";
 
 /**
  * GET /api/admin/payments/manual-refund-tasks
@@ -68,10 +74,43 @@ export async function GET() {
   });
   if (!guard.ok) return guard.response;
 
+  /*
+    #3033. Whether this caller may open a booking at all, read off the
+    DB-verified matrix `requireAdmin()` just resolved onto the session — the
+    #2823 stuck-state shape, and defaulted to FALSE on the client for the same
+    reason that route's own flag is: a caller that omits it must fail closed.
+
+    It is a real distinction on this card and not a hypothetical one. The card is
+    gated on `finance:view`, which a Finance Viewer holds with NO bookings access
+    at all, and the automatic-refund card beside it already prints identifiers as
+    plain text rather than linking, precisely because `/bookings/{id}` 403s or
+    404s for part of this card's audience. Owner decision D3 asks for "a link to
+    the booking's payment and rate history", so the link has to land somewhere
+    when it is offered; for everyone else the booking id is printed instead, which
+    is what a finance operator needs in order to quote it to somebody who can open
+    it.
+  */
+  const viewerCanViewBookings = hasAdminAreaAccess(guard.session.user, {
+    area: "bookings",
+    level: "view",
+  });
+
   const bookingSummary = {
     checkIn: true,
     checkOut: true,
     member: { select: { firstName: true, lastName: true } },
+  } as const;
+
+  /*
+    #3033. The hand-back queue's own summary additionally reads who OWNS the
+    booking and whether it still exists, for the ownership case below. Kept off
+    `bookingSummary` itself so the automatic-refund list, which offers no link at
+    all, does not start reading an identifier it has no use for.
+  */
+  const handBackBookingSummary = {
+    ...bookingSummary,
+    memberId: true,
+    deletedAt: true,
   } as const;
 
   /*
@@ -119,9 +158,21 @@ export async function GET() {
         id: true,
         bookingId: true,
         amountCents: true,
+        /*
+          #3033. `kind` decides which SENTENCE the card prints beside a row: the
+          queue's standing paragraph says every row "was paid in cash or by a
+          bank transfer that never reached Xero", which is simply untrue of an
+          EDIT_FINANCIAL_REVIEW row. `raisedAmountCents` is what the task was
+          raised with, so a row whose amount an admin has since amended says so
+          on its face rather than only in the audit log. `reviewContext` is owner
+          decision D3's evidence — projected below, never sent raw.
+        */
+        kind: true,
+        raisedAmountCents: true,
+        reviewContext: true,
         reason: true,
         createdAt: true,
-        booking: { select: bookingSummary },
+        booking: { select: handBackBookingSummary },
       },
     }),
     /*
@@ -160,40 +211,39 @@ export async function GET() {
     ),
   ]);
 
+  // #3191: which reviews have unpriced nights the settle screen can offer to fill
+  // in. Keyed by TASK id so no payload has to hold a guest-strand id to find its
+  // own; fails closed on its own rather than taking the money queue down with it.
+  // Both reasons are on `unpricedNightsSummariesForQueue`.
+  const unpricedNights = await unpricedNightsSummariesForQueue({
+    tasks,
+    store: prisma,
+  });
+
   return NextResponse.json({
-    tasks: tasks.map((task) => ({
-      id: task.id,
-      bookingId: task.bookingId,
-      amountCents: task.amountCents,
-      reason: task.reason,
-      createdAt: task.createdAt.toISOString(),
-      memberName: `${task.booking.member.firstName} ${task.booking.member.lastName}`,
-      checkIn: task.booking.checkIn.toISOString(),
-      checkOut: task.booking.checkOut.toISOString(),
-    })),
+    // #3033: whether the "open the booking's payment and rate history" link is
+    // offered at all. Sent as an explicit boolean, never inferred by the card
+    // from the presence of anything else.
+    viewerCanViewBookings,
+    /*
+      Shaped by `manual-refund-task-queue-payload.ts`, which is also where the
+      redaction lives: the stored review context is parsed there and the raw
+      column never crosses the wire.
+    */
+    tasks: tasks.map((task) =>
+      toOpenManualRefundTaskPayload(
+        task,
+        guard.session.user.id,
+        unpricedNights.get(task.id) ?? null,
+      ),
+    ),
     // True only when the notices read itself failed. The surface says so in a
     // line of its own rather than showing an empty card, because "no automatic
     // refunds in the last 30 days" is a claim about money and a failed query is
     // not entitled to make it.
     autoRefundedUnavailable: autoRefundedRead.unavailable,
-    autoRefunded: autoRefundedRead.rows.map((task) => ({
-      id: task.id,
-      bookingId: task.bookingId,
-      amountCents: task.amountCents,
-      reason: task.reason,
-      note: task.note,
-      // `completedAt` is nullable in the schema but never null on a row this
-      // filter matched — the writer sets it in the same statement as the status,
-      // on both the close arm and the #2760 create.
-      // Answered as null rather than coerced, so the surface renders a row whose
-      // date it cannot state instead of inventing one.
-      refundedAt: task.completedAt ? task.completedAt.toISOString() : null,
-      // #2760: which group the card puts this row in. A boolean, not the date:
-      // the card needs "is this booking still there?" and nothing more.
-      bookingDeleted: task.booking.deletedAt !== null,
-      memberName: `${task.booking.member.firstName} ${task.booking.member.lastName}`,
-      checkIn: task.booking.checkIn.toISOString(),
-      checkOut: task.booking.checkOut.toISOString(),
-    })),
+    autoRefunded: autoRefundedRead.rows.map(
+      toAutoRefundedManualRefundTaskPayload,
+    ),
   });
 }

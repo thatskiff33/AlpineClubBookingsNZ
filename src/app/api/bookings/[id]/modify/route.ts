@@ -28,7 +28,10 @@ import {
 import { modifyBookingBatch } from "@/lib/booking-batch-modification-service";
 import { clubTime } from "@/lib/club-time/server";
 import { adminShiftBookingDates } from "@/lib/booking-date-modification-service";
-import { BookingModifyReviewJustificationRequiredError } from "@/lib/booking-modify-validation";
+import { EditFinancialReviewPendingError } from "@/lib/edit-financial-review";
+import {
+  BookingModifyReviewJustificationRequiredError,
+} from "@/lib/booking-modify-validation";
 import { MinimumStayPolicyViolationError } from "@/lib/booking-policy-exceptions";
 import {
   buildPaidUpAdultRefusalBody,
@@ -380,6 +383,18 @@ export async function PUT(
     // panel can reveal the required justification field even when its local
     // predicate missed the trip.
     if (err instanceof BookingModifyReviewJustificationRequiredError) {
+      return NextResponse.json(
+        { error: err.message, code: err.code },
+        { status: err.status },
+      );
+    }
+    // #3032: and the same courtesy for the fence - this booking's LAST edit is
+    // still under review, so this one would have to price against an amount
+    // nobody has confirmed. It was falling through to the generic ApiError
+    // branch and losing its code, while the PREVIEW route already surfaced it,
+    // so quote and apply disagreed about the same refusal - which is exactly the
+    // parity the epic requires of them.
+    if (err instanceof EditFinancialReviewPendingError) {
       return NextResponse.json(
         { error: err.message, code: err.code },
         { status: err.status },

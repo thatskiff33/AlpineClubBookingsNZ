@@ -844,9 +844,12 @@ party. Because nobody is back-filled, a removal can leave `Booking.checkOut`
 ahead of the last night anybody holds; that is accepted rather than guarded.
 A night the edit gives back is credited at the price the member paid rather than
 at today's season rate, and the per-night rows written back are each night's real
-rate rather than the guest's average (#2744, `INV-MOD-025`); a guest with no
-recoverable stored price is still valued at today's rate, capped so that no edit
-can credit back more than that guest is carrying.
+rate rather than the guest's average (#2744, `INV-MOD-025`). Since #3031 there is
+no fallback beneath that: a guest strand whose stored rows do not carry a
+non-negative integer price for every night they hold, and sum to their stored
+total, is not priced at all. The edit produces `financial_review_required` with a
+typed cause and NO amount, and the today's-rate valuation and the refund ceiling
+that used to stand behind it are both gone (`INV-MOD-028`).
 For an ordinary stay that runs to the booking's check-out, every number is
 exactly what it was before. Bookings edited before those fixes keep the rows and
 the price they were given — history is not repriced (#2745 carries the decision
@@ -1438,7 +1441,103 @@ OPEN -> DISMISSED   (#2700: the Stripe webhook, with NO acting member at all —
                      who got there first claims nothing. Moves no money —
                      COMPLETED here would write a SECOND refund allocation for
                      one refund. See `INV-ADDPAY-036`.)
+OPEN -> COMPLETED   (#3030: the same finance:edit close, but the amount arrives
+                     WITH it. An `EDIT_FINANCIAL_REVIEW` task can be OPEN with
+                     `amountCents` NULL - genuinely unknown, never a magic zero -
+                     and the admin's confirmed non-negative integer cents is
+                     written inside the SAME status-fenced claim as the status,
+                     so a confirmation can no more apply twice than a status can.
+                     An OPEN task MAY already carry an amount - see the note
+                     below - and this arm still requires a human to confirm one.
+                     A note is REQUIRED on this arm, because the admin is pricing
+                     real money from evidence. ZERO IS REFUSED: a completion at
+                     $0.00 would record a refund the club did not make, and
+                     "reviewed, nothing is due" is DISMISSED. A task with
+                     `paymentId` NULL is not automatically a credit-only one
+                     since #3194: that column records the booking's captured
+                     money AT RAISE TIME and nothing backfills it, so the
+                     completion re-reads the BOOKING's own payment and routes on
+                     that. A completion that genuinely finds no captured money
+                     writes no refund allocation AND no REFUNDED booking event -
+                     there is nothing to allocate against and nothing moved. Where the confirmed figure differs
+                     from one the task already carried, that is the audited
+                     amendment of owner decision D2 and `raisedAmountCents` keeps
+                     what it was raised with; on a legacy kind a differing figure
+                     is refused as a stale screen instead.)
+OPEN -> COMPLETED   (#3032: and the confirmed amount now MOVES, down whichever of
+                     the three existing settlement paths the booking's payment
+                     says it belongs to - a canonical Stripe refund for a card
+                     payment, made AFTER the commit; the local ledger allocation
+                     for an internet-banking hand-back; or account credit through
+                     `createBookingModificationCredit` where nothing was captured.
+                     #3194: "the booking's payment" is read AT COMPLETION when
+                     the task carries no payment id of its own, through the same
+                     captured-and-settled gate the raise sites use - so a member
+                     who pays after their edit was parked is refunded to the card
+                     they paid with instead of being handed club credit they
+                     never asked for. Where the task DOES carry a payment id that
+                     id still decides, so every existing cap and refusal is
+                     reached exactly as before.
+                     The route is chosen and every refusal raised BEFORE the
+                     status claim, so a refused completion leaves the task OPEN
+                     with nothing half-applied. THREE refusals are possible: no
+                     `BookingModification` anchor to settle against; an anchor
+                     whose credit key is already taken - owner decision D-3032-1's
+                     obliged edge case, refused rather than reaching an untyped
+                     throw inside the credit writer; and a card amount larger than
+                     the booking's captured Stripe total, measured off the
+                     captured transactions rather than the `Payment.source`
+                     column, whose schema default would otherwise send a
+                     hand-settled booking down the card path. The member-facing
+                     event follows the money: REFUNDED only once Stripe returned a
+                     refund id, CREDITED where account credit was issued. The card
+                     route persists its refund DEBT - the frozen per-transaction
+                     slices and a TASK-scoped Stripe key prefix - inside the same
+                     transaction as the claim, before any provider call, so a
+                     crash in the commit-to-Stripe window is replayed by the
+                     recovery cron rather than lost. The prefix and the recovery
+                     operation are keyed to the TASK and not to the
+                     `BookingModification`, because one edit can raise two review
+                     tasks against one modification row. A Xero modification
+                     credit note for the same amount is queued on the same anchor
+                     after the commit, through `queueXeroBookingEditSettlement`.)
+OPEN -> DISMISSED   (#3030: for an `EDIT_FINANCIAL_REVIEW` task this means
+                     REVIEWED, AND THIS SYSTEM MOVED NO MONEY for that occurrence
+                     - a real decision, which is why it is not the same thing as
+                     an unknown amount. The REQUIRED note is what says which
+                     decision it was: nothing was owed, or the club settled it
+                     outside this task. Both are honest here and neither pretends
+                     money moved, which is the property requirement 7 asks for.
+                     It writes NO amount at all: putting a zero there would be the
+                     magic value this epic exists to remove. #3032: and it takes
+                     NO settlement route - no allocation, no credit, no Stripe
+                     call, no Xero note and no booking event - so nothing
+                     downstream can read a dismissal as money having moved.)
 ```
+
+**#3030/#3166: terminal is terminal FOR THE ROW, and for nothing after it.** An
+`EDIT_FINANCIAL_REVIEW` task carries an `occurrenceKey` - the identity of the
+structural edit that raised it. A REPLAY of that edit finds the existing row and
+raises nothing; a COMPLETED or DISMISSED row is not a replay's answer at all, and
+since #3166 it no longer suppresses the next occurrence of the same identity -
+that raise takes a `#n` recurrence key of its own and the settled row is left
+untouched. An earlier revision of this paragraph said a replay raises nothing
+"whatever state it has reached", which is the pre-#3166 rule and the money it
+lost. Where the key is minted, what counts as
+"the same structural edit", what separates a replay from a new edit of the same
+shape, and which database constraints hold the rules up are
+stated once, in [`INV-PAY-051`](invariants/payment-and-settlement.md#inv-pay-051)
+- not restated here, because one rule with three homes is one rename away from
+two of them lying.
+
+**#3030: an OPEN task MAY carry an amount, and that is a defined state.** The
+raise accepts `raisedAmountCents`, which is written to both `amountCents` and
+`raisedAmountCents` at creation, so a `priced-but-still-OPEN` row is legal. It
+means *the edit could prove a figure and a human has not yet confirmed it* - not
+that anything has been decided and not that any money may move. Nothing moves
+until a COMPLETED transition, whatever the row already holds. The ordinary case
+remains `amountCents` NULL: genuinely unknown, and never a zero standing in for
+it.
 
 **Where a terminal row is read, and the #2750 decision behind it.** Both
 terminal states are terminal for the row, not for the operator: the finance
@@ -1524,7 +1623,7 @@ the refund has already gone out. The rows it shows are defined once, in
 route uses rather than restating; an operator's own dismissal never appears
 there.
 
-There are THREE creators, and only the first two ever make an OPEN row:
+There are FOUR creators, and only the first, second and fourth ever make an OPEN row:
 
 - Created atomically with the CANCELLED claim when a **cash-settled** booking is
   cancelled with a non-zero policy refund. A zero-refund outcome creates no task.
@@ -1547,6 +1646,44 @@ There are THREE creators, and only the first two ever make an OPEN row:
   find-then-write rather than an atomic fenced update. On the PRIMARY path there is
   never an `OPEN` row to close — nothing raises one for a primary intent — so the
   create arm is the only one reachable there.
+- Created by a **booking edit whose exact sold price cannot be read from the
+  booking's own stored history** (#3030, epic #2797; `kind`
+  `EDIT_FINANCIAL_REVIEW`). Owner decision D1: the stay change is applied and
+  only the MONEY is held, so the booking never disagrees with reality while an
+  admin prices the adjustment. Raised by `raiseEditFinancialReviewTask`
+  (`src/lib/edit-financial-review.ts`) INSIDE the caller's transaction, so the
+  structural edit and the one task are atomic locally, and under
+  `pg_advisory_xact_lock(1)` — the same cohort and the same reason as the two
+  raisers above, because create-or-find is a find-then-write. Idempotent on the
+  `occurrenceKey` rather than on any `reason` sentence: text is not an identity,
+  and #3030 rejects it as one by name. This is the only creator that may leave
+  `amountCents` and `paymentId` NULL (owner decision D2), and it carries the D3
+  evidence in `reviewContext` — the cause, the guest strand, the nights given
+  back, the stored guest total and whatever stored night prices existed, and the
+  booking dates. The booking's payment and rate history is deliberately NOT
+  copied there: the admin surface links to the live one. #3032 adds the
+  `bookingModificationId` the completion settles against (owner decision
+  D-3032-1) to that context - a pointer to a row, deliberately NOT part of the
+  occurrence identity, so carrying it cannot re-identify a replay. NOTHING RAISES
+  THIS TASK YET, on `main` or on the epic branch: the booking-edit path has to
+  decide an edit is unpriceable first, and that decision needs the discriminated
+  planner result #3031 introduces. #3030 shipped the state and #3032 the
+  settlement and the fence; the raise caller is #3031's.
+
+**#3032: while a review is OPEN, a second MONEY-AFFECTING edit to that booking is
+refused.** `assertNoPendingEditFinancialReview` (`src/lib/edit-financial-review.ts`)
+is called by the batch, date and guest-removal edit services under both locks, on
+the post-lock re-read and before any write, and answers `409` with the code
+`EDIT_FINANCIAL_REVIEW_PENDING`. It is deliberately narrow. An identity-only edit,
+a credit election and the price-preserving admin date shift are not fenced,
+because none of them reads the booking's stored money. Nor is a CONSENT-AUTHORITY
+removal (`CONSENT_DECLINE` / `CONSENT_EXPIRY`): owner decision D-14 says a member
+who never consented must always be able to come off a booking, so that removal
+proceeds rather than being held behind a pricing question nobody has answered.
+Once #3031 wires the raise, such a removal is intended to park its own money as a
+second review task - two occurrences, two keys, two amounts. Until then the
+exemption's only effect is that the fence does not refuse it.
+
 The transition is a status-fenced conditional update, so a double click can
 never double-apply the allocation, and the row is never processed by any cron —
 it deliberately is not a `PaymentRecoveryOperation`. (That dispatcher's final

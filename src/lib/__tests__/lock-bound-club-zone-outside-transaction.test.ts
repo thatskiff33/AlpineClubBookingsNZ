@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
+import { blankLiterals } from "./support/strip-comments";
+
 /**
  * The club's day reaches a lock-bound writer as a VALUE, never as a read taken
  * under its locks (#3123; `INV-LOCK-004`).
@@ -388,55 +390,48 @@ const TRANSACTION_OPENERS = [
 function transactionCallbackSpans(
   source: string,
 ): Array<{ line: number; body: string }> {
+  const masked = blankLiterals(source);
   const spans: Array<{ line: number; body: string }> = [];
   for (const needle of TRANSACTION_OPENERS) {
-    spans.push(...spansForOpener(source, needle));
+    spans.push(...spansForOpener(masked, needle));
   }
   return spans;
 }
 
+/**
+ * One opener's spans, over text that has ALREADY been blanked.
+ *
+ * The walk is a plain bracket count because it is handed blanked text: the
+ * comment and quote branches this function used to carry are the shared
+ * blanker's job since #3180, and it does that job better. None of the three
+ * private copies — this file's, `payment-link-expiry-club-zone.test.ts`'s and
+ * `xero-object-url-write-guard.test.ts`'s — recognised a REGEX LITERAL, so
+ * `.replace(/\//g, "_")` read as a line comment and took the rest of its line
+ * with it. Every one of the three scans `src/`, where that shape is live.
+ *
+ * The reported body is the BLANKED text rather than the original, and that is
+ * the behaviour change worth knowing about: a reader NAMED IN A DOCBLOCK inside
+ * a transaction callback used to be an offender. This repository documents each
+ * defect at the site where it removed it, so that was always the direction a
+ * false positive here would come from.
+ */
 function spansForOpener(
-  source: string,
+  masked: string,
   NEEDLE: string,
 ): Array<{ line: number; body: string }> {
   const spans: Array<{ line: number; body: string }> = [];
 
   for (
-    let at = source.indexOf(NEEDLE);
+    let at = masked.indexOf(NEEDLE);
     at !== -1;
-    at = source.indexOf(NEEDLE, at + 1)
+    at = masked.indexOf(NEEDLE, at + 1)
   ) {
     const open = at + NEEDLE.length - 1;
     let depth = 0;
     let end = -1;
 
-    for (let i = open; i < source.length; i++) {
-      const c = source[i];
-      const next = source[i + 1];
-
-      if (c === "/" && next === "/") {
-        const nl = source.indexOf("\n", i);
-        i = nl === -1 ? source.length : nl;
-        continue;
-      }
-      if (c === "/" && next === "*") {
-        const close = source.indexOf("*/", i + 2);
-        i = close === -1 ? source.length : close + 1;
-        continue;
-      }
-      if (c === '"' || c === "'" || c === "`") {
-        const quote = c;
-        i += 1;
-        for (; i < source.length; i++) {
-          if (source[i] === "\\") {
-            i += 1;
-            continue;
-          }
-          if (source[i] === quote) break;
-        }
-        continue;
-      }
-
+    for (let i = open; i < masked.length; i++) {
+      const c = masked[i];
       if (c === "(") depth += 1;
       else if (c === ")") {
         depth -= 1;
@@ -449,8 +444,8 @@ function spansForOpener(
 
     if (end === -1) continue;
     spans.push({
-      line: source.slice(0, at).split("\n").length,
-      body: source.slice(open + 1, end),
+      line: masked.slice(0, at).split("\n").length,
+      body: masked.slice(open + 1, end),
     });
   }
 
@@ -468,55 +463,6 @@ const CALLER_TRANSACTION_WRAPPERS = ["withOptionalTransaction("] as const;
 /** Column-0 declarations, which is where this codebase's exported services live. */
 const TOP_LEVEL_DECLARATION =
   /^(?:export\s+)?(?:default\s+)?(?:abstract\s+)?(?:async\s+)?(?:function|const|let|var|class|type|interface|enum)\b/gm;
-
-/**
- * Comments and string/template literals blanked to spaces, with every offset and
- * newline preserved, so a regex or an `indexOf` over the result reports
- * positions that are still valid in the original.
- */
-function blankCommentsAndStrings(source: string): string {
-  const out = source.split("");
-  const blank = (from: number, to: number) => {
-    for (let i = from; i < to && i < out.length; i++) {
-      if (out[i] !== "\n") out[i] = " ";
-    }
-  };
-
-  for (let i = 0; i < source.length; i++) {
-    const c = source[i];
-    const next = source[i + 1];
-    if (c === "/" && next === "/") {
-      const nl = source.indexOf("\n", i);
-      const end = nl === -1 ? source.length : nl;
-      blank(i, end);
-      i = end;
-      continue;
-    }
-    if (c === "/" && next === "*") {
-      const close = source.indexOf("*/", i + 2);
-      const end = close === -1 ? source.length : close + 2;
-      blank(i, end);
-      i = end - 1;
-      continue;
-    }
-    if (c === '"' || c === "'" || c === "`") {
-      const quote = c;
-      let j = i + 1;
-      for (; j < source.length; j++) {
-        if (source[j] === "\\") {
-          j += 1;
-          continue;
-        }
-        if (source[j] === quote) break;
-      }
-      blank(i, Math.min(j + 1, source.length));
-      i = j;
-      continue;
-    }
-  }
-
-  return out.join("");
-}
 
 /**
  * The WHOLE BODY of every top-level declaration that hands a caller-supplied
@@ -543,7 +489,7 @@ function blankCommentsAndStrings(source: string): string {
 function callerTransactionSpans(
   source: string,
 ): Array<{ line: number; body: string }> {
-  const masked = blankCommentsAndStrings(source);
+  const masked = blankLiterals(source);
   const starts = [...masked.matchAll(TOP_LEVEL_DECLARATION)].map(
     (match) => match.index ?? 0,
   );
@@ -563,10 +509,13 @@ function callerTransactionSpans(
       }
       if (seen.has(start)) continue;
       seen.add(start);
-      const end = starts.find((candidate) => candidate > start) ?? source.length;
+      const end = starts.find((candidate) => candidate > start) ?? masked.length;
       spans.push({
-        line: source.slice(0, start).split("\n").length,
-        body: source.slice(start, end),
+        // The BLANKED text, at the same offsets. That is the whole promise
+        // of the shared blanker (#3180): `masked.length` is `source.length`,
+        // so every index still names the character it named.
+        line: masked.slice(0, start).split("\n").length,
+        body: masked.slice(start, end),
       });
     }
   }
@@ -616,7 +565,7 @@ function closingBracket(
  * docblock or a template literal cannot move a boundary.
  */
 function transactionWrapperNames(source: string): string[] {
-  const masked = blankCommentsAndStrings(source);
+  const masked = blankLiterals(source);
   if (!masked.includes("$transaction(")) return [];
   const names: string[] = [];
 
@@ -657,7 +606,7 @@ function callerTransactionWrapperCallers(): string[] {
   const callers: string[] = [];
 
   for (const [file, source] of PRODUCTION_SOURCES) {
-    const masked = blankCommentsAndStrings(source);
+    const masked = blankLiterals(source);
     if (!CALLER_TRANSACTION_WRAPPERS.some((call) => masked.includes(call))) {
       continue;
     }
@@ -954,15 +903,45 @@ describe("the club's day is resolved outside the locks and threaded in (#3123)",
     expect(bounded).toHaveLength(1);
     expect(bounded[0].body).toContain("clubTodayDateOnlyInstant()");
 
-    // And the masker it is built on really blanks a comment while preserving
-    // every offset — the property that lets a docblock naming a reader sit in a
-    // transaction-aware function without tripping the rule, and that stops a
-    // brace inside a string from moving a boundary.
-    const masked = blankCommentsAndStrings(
-      'const a = 1; // clubTime(\nconst b = "clubTime(";\n',
-    );
-    expect(masked).toHaveLength('const a = 1; // clubTime(\nconst b = "clubTime(";\n'.length);
+    // And the shared blanker it is built on (#3180) really blanks a comment
+    // while preserving every offset — the property that lets a docblock naming
+    // a reader sit in a transaction-aware function without tripping the rule,
+    // and that stops a brace inside a string from moving a boundary. It is
+    // asserted here rather than in a suite of its own because this is one of
+    // the files that would go quietly green if it stopped holding.
+    const sample = 'const a = 1; // clubTime(\nconst b = "clubTime(";\n';
+    const masked = blankLiterals(sample);
+    expect(masked).toHaveLength(sample.length);
     expect(masked).not.toContain("clubTime(");
     expect(masked.split("\n")).toHaveLength(3);
+    // Delimiters survive and only contents go, so an argument that was a
+    // string still reads as one rather than as a hole.
+    expect(masked).toContain('const b = "         ";');
+
+    // A REGEX LITERAL is why converging on the shared form was worth doing
+    // rather than merely tidy. The private copy this file carried had no regex
+    // branch, so the two adjacent slashes in a `.replace(/\//g, …)` read as a
+    // line comment and the REST OF THE LINE went with them — here, the
+    // transaction on the next line is what the guard has to be able to see
+    // into. That is the #3155 defect, and `src/` writes that shape.
+    // Both on ONE line, deliberately: a regex-blind scanner reads the two
+    // adjacent slashes as a line comment and blanks everything after them,
+    // so the transaction disappears and this case fails. Split across two
+    // lines it would pass either way, and prove nothing.
+    const withRegex =
+      "const slug = raw.replace(/\\//g, \"_\"); " +
+      "await prisma.$transaction(async (tx) => clubTimeZone());";
+    const regexSpans = transactionCallbackSpans(withRegex);
+    expect(regexSpans).toHaveLength(1);
+    expect(regexSpans[0].body).toContain("clubTimeZone()");
+
+    // A `${…}` interpolation is CODE and survives, because a reader called
+    // inside one is called inside the callback exactly like any other.
+    const interpolated = blankLiterals(
+      "const m = `day ${clubTimeZone()} end`;",
+    );
+    expect(interpolated).toContain("clubTimeZone()");
+    expect(interpolated).not.toContain("day");
   });
 });
+

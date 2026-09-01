@@ -19,6 +19,7 @@ import {
   type CalendarDate,
 } from "@/lib/club-time";
 import { addDaysDateOnly, formatDateOnly } from "@/lib/date-only";
+import { requiredNightPriceCents } from "@/lib/required-price-cents";
 import type { GuestNightInput } from "@/lib/booking-guest-stay-ranges";
 import {
   type BookingGuestInput,
@@ -191,7 +192,17 @@ export function buildGuestCreateData(
       nights: {
         create: nightDates.map((stayDate, k) => ({
           stayDate,
-          priceCents: priced.perNightCents[k] ?? 0,
+          // #3167 (epic #2797): NO `?? 0` — the rule and the #3167 census are
+          // in `required-price-cents.ts`. These rows BECOME the booking's
+          // sold-price history the moment it is created, and all five call
+          // sites of this function pass an engine breakdown, so the census's
+          // single-producer verdict is the one that covers this site.
+          priceCents: requiredNightPriceCents(
+            priced.perNightCents,
+            k,
+            stayDate,
+            "the booking-create guest writer"
+          ),
         })),
       },
     };

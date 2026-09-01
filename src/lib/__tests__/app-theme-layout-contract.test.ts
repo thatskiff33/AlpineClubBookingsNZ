@@ -20,6 +20,7 @@ import {
   WEBSITE_ROLE_ALIASES,
 } from "@/lib/theme/app-tokens";
 import { G5A_CARD_SEPARATION } from "@/lib/theme/guarantees";
+import { stripCssComments } from "./support/strip-comments";
 
 function readRepoFile(path: string) {
   return readFileSync(join(process.cwd(), path), "utf8");
@@ -231,7 +232,7 @@ describe("database theme app-shell contract", () => {
 
     // F1 grep-proof: no `var(--brand-*)` survives in the dark core block
     // (comments stripped, so this measures declarations, not prose).
-    const darkDeclarations = darkRules.replaceAll(/\/\*[\s\S]*?\*\//g, "");
+    const darkDeclarations = stripCssComments(darkRules);
     expect(darkDeclarations).not.toMatch(/var\(--brand-/);
 
     // The #2144 hover fix: `--accent` (neutral-4) is one band off

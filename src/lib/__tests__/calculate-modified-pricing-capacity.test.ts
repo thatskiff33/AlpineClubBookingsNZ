@@ -46,6 +46,41 @@ import {
 
 const D = (s: string) => new Date(`${s}T00:00:00.000Z`);
 
+/**
+ * The pricing result, insisting it priced (#3031).
+ *
+ * `calculateModifiedPricing` answers with a discriminated result now - priced,
+ * or "the exact adjustment cannot be read from this booking's stored history" -
+ * so a fixture that drifts into the second case fails HERE, naming the causes,
+ * rather than later on an expectation about a number that was never produced.
+ */
+async function pricedPricing(
+  ...args: Parameters<typeof calculateModifiedPricing>
+) {
+  const result = await calculateModifiedPricing(...args);
+  if (result.kind !== "priced") {
+    throw new Error(
+      `Expected a priced modification, got financial review: ${result.occurrences
+        .map((occurrence) => occurrence.cause)
+        .join(", ")}`,
+    );
+  }
+  return result;
+}
+
+/** The review verdict, insisting the edit was NOT priced (#3031). */
+async function reviewPricing(
+  ...args: Parameters<typeof calculateModifiedPricing>
+) {
+  const result = await calculateModifiedPricing(...args);
+  if (result.kind !== "financial_review_required") {
+    throw new Error(
+      "Expected financial review, got a priced modification - an amount was invented",
+    );
+  }
+  return result.occurrences;
+}
+
 function baseArgs() {
   const guest = {
     id: "g1",
@@ -55,6 +90,16 @@ function baseArgs() {
     stayStart: D("2026-09-10"),
     stayEnd: D("2026-09-13"),
     priceCents: 30000,
+    // #3166: three stored night rows that reconcile to the strand's total, so
+    // this CAPACITY fixture is judged on capacity. Without them the strand has
+    // no readable sold-price history at all and every case here would park for
+    // financial review instead — which is the new rule working, not a bed
+    // question. The reconciling shape is the one the suite means to describe.
+    nights: [
+      { stayDate: D("2026-09-10"), priceCents: 10000 },
+      { stayDate: D("2026-09-11"), priceCents: 10000 },
+      { stayDate: D("2026-09-12"), priceCents: 10000 },
+    ],
   };
   const booking = {
     id: "b1",
@@ -192,7 +237,7 @@ describe("calculateModifiedPricing capacity (issue #1668)", () => {
 
     let thrown: unknown;
     try {
-      await calculateModifiedPricing(NO_DISCOUNT_TX, {
+      await pricedPricing(NO_DISCOUNT_TX, {
         ...baseArgs(),
         adminOverride: true,
         confirmOverCapacity: true,
@@ -230,7 +275,7 @@ describe("calculateModifiedPricing capacity (issue #1668)", () => {
       groupDiscountSetting: { findUnique: vi.fn().mockResolvedValue(null) },
     } as never;
 
-    const result = await calculateModifiedPricing(tx, {
+    const result = await pricedPricing(tx, {
       ...baseArgs(),
       adminOverride: true,
       confirmOverCapacity: true,
@@ -279,9 +324,25 @@ describe("calculateModifiedPricing in-progress check-out-day capacity (#2029)", 
       // without them these cases would only ever exercise the envelope FALLBACK
       // and quietly stop covering the branch production actually takes. They are
       // the envelope expanded, because this guest's stay is contiguous.
-      nights: eachDateOnlyInRange(D(stayStart), D(stayEnd)).map((stayDate) => ({
-        stayDate,
-      })),
+      //
+      // #3031: with their SOLD PRICE. The plan prices an edit from the stored
+      // rows and refuses to invent an amount when they do not reconcile to the
+      // guest total, so a row without a price is now the unpriceable case rather
+      // than a fixture detail. This stay is contiguous at one rate, so the rows
+      // reconcile and every expectation is unchanged.
+      nights: (() => {
+        const dates = eachDateOnlyInRange(D(stayStart), D(stayEnd));
+        // INTEGER cents, remainder on the first night. A float division puts a
+        // fraction of a cent on every row, so the reconciliation the plan
+        // applies would rest on floating point rather than on the integer
+        // arithmetic the column actually holds (INV-MONEY-001).
+        const base = Math.floor(priceCents / dates.length);
+        const remainder = priceCents - base * dates.length;
+        return dates.map((stayDate, index) => ({
+          stayDate,
+          priceCents: index === 0 ? base + remainder : base,
+        }));
+      })(),
       priceCents,
     };
   }
@@ -360,7 +421,7 @@ describe("calculateModifiedPricing in-progress check-out-day capacity (#2029)", 
   it("(b) succeeds when the check-out-day night has capacity, checking that night", async () => {
     h.checkCapacityForGuestRanges.mockResolvedValue(AVAILABLE);
 
-    const result = await calculateModifiedPricing(NO_DISCOUNT_TX, {
+    const result = await pricedPricing(NO_DISCOUNT_TX, {
       ...inProgressArgs({ editableFrom: "2026-08-25", newCheckOut: "2026-08-25" }),
     });
 
@@ -372,7 +433,7 @@ describe("calculateModifiedPricing in-progress check-out-day capacity (#2029)", 
   it("(c) mid-stay extension checks from editableFrom (regression pin — unchanged)", async () => {
     h.checkCapacityForGuestRanges.mockResolvedValue(AVAILABLE);
 
-    await calculateModifiedPricing(NO_DISCOUNT_TX, {
+    await pricedPricing(NO_DISCOUNT_TX, {
       ...inProgressArgs({ editableFrom: "2026-08-22", newCheckOut: "2026-08-26" }),
     });
 
@@ -413,7 +474,7 @@ describe("calculateModifiedPricing in-progress check-out-day capacity (#2029)", 
     h.checkCapacityForGuestRanges.mockResolvedValue(AVAILABLE);
 
     // Guest occupies [08-22, 08-24); editableFrom is 08-21 (they arrive later).
-    await calculateModifiedPricing(NO_DISCOUNT_TX, {
+    await pricedPricing(NO_DISCOUNT_TX, {
       ...inProgressArgs({
         editableFrom: "2026-08-21",
         newCheckOut: "2026-08-26",
@@ -454,7 +515,7 @@ describe("calculateModifiedPricing in-progress per-night breakdown (#2736)", () 
   const AVAILABLE = { available: true, minAvailable: 5, nightDetails: [] };
 
   /** Nights 08-20 and 08-22 — home on the 21st. */
-  function sparseArgs(priceCents: number) {
+  function sparseArgs(perNightCents: number) {
     const guest = {
       id: "g1",
       ageTier: "ADULT",
@@ -464,8 +525,15 @@ describe("calculateModifiedPricing in-progress per-night breakdown (#2736)", () 
       rateSource: "OWN_TYPE",
       stayStart: D("2026-08-20"),
       stayEnd: D("2026-08-23"),
-      nights: [{ stayDate: D("2026-08-20") }, { stayDate: D("2026-08-22") }],
-      priceCents,
+      // #3031: the two nights carry what they were sold for, and `priceCents`
+      // is their sum. `sparseArgs` takes the PER-NIGHT amount now rather than a
+      // total, because a total that does not reconcile with the rows is the
+      // unpriceable case and no longer a fixture that prices.
+      nights: [
+        { stayDate: D("2026-08-20"), priceCents: perNightCents },
+        { stayDate: D("2026-08-22"), priceCents: perNightCents },
+      ],
+      priceCents: 2 * perNightCents,
     };
     return {
       booking: {
@@ -474,10 +542,10 @@ describe("calculateModifiedPricing in-progress per-night breakdown (#2736)", () 
         lodgeId: "lodge-1",
         checkIn: D("2026-08-20"),
         checkOut: D("2026-08-23"),
-        totalPriceCents: priceCents,
+        totalPriceCents: 2 * perNightCents,
         discountCents: 0,
         promoAdjustmentCents: 0,
-        finalPriceCents: priceCents,
+        finalPriceCents: 2 * perNightCents,
         guests: [guest],
       } as never,
       bookingId: "b1",
@@ -506,10 +574,7 @@ describe("calculateModifiedPricing in-progress per-night breakdown (#2736)", () 
   it("writes back the gap, not a continuous run", async () => {
     h.checkCapacityForGuestRanges.mockResolvedValue(AVAILABLE);
 
-    const result = await calculateModifiedPricing(
-      NO_DISCOUNT_TX,
-      sparseArgs(2 * RATE),
-    );
+    const result = await pricedPricing(NO_DISCOUNT_TX, sparseArgs(RATE));
 
     // 20 and 22 kept, 21 still an absence, 23 and 24 bought by the extension.
     expect(result.priceBreakdown.guests[0].nightDates).toEqual([
@@ -521,32 +586,145 @@ describe("calculateModifiedPricing in-progress per-night breakdown (#2736)", () 
     expect(result.newTotalPriceCents).toBe(4 * RATE);
   });
 
-  it("splits the total in whole cents that sum back exactly", async () => {
-    // An odd total over four nights: the remainder lands on the earliest nights
-    // one cent at a time and the parts are integers (INV-MONEY-001,
-    // INV-MONEY-003) — no float division, no rounding drift.
+  it("REFUSES a total the stored rows cannot account for, rather than splitting it", async () => {
+    // #3031, through the real wiring rather than at the plan boundary: a guest
+    // whose stored rows say 2 x RATE while their stored total says 1001.
     //
-    // This guest's rows arrive without their price, so #2744's real-rate
-    // write-back has nothing to recover and the even split is still what lands —
-    // the behaviour this fixture pinned before, unchanged. That shape is a
-    // THINNER select, not a state the database can hold: `BookingGuestNight.
-    // priceCents` is NOT NULL and both production loaders ask for it, which
-    // `in-progress-edit-sold-price-census.test.ts` is what keeps true. The two
-    // fallbacks a live booking can actually reach are a guest with NO rows
-    // (pre-`BookingGuestNight`, or created by approving a request — #2739) and a
-    // guest whose stored total has drifted from their rows; both are covered by
-    // the matrix in `booking-edit-guest-ranges-sparse.test.ts`.
+    // This case used to assert the EVEN SPLIT — the total divided over the
+    // guest's nights in whole cents, remainder on the earliest. The arithmetic
+    // was sound and the sum reconciled; what it produced was a per-night price
+    // list nobody had ever quoted, written straight back onto
+    // `BookingGuestNight.priceCents` for the next edit to read as evidence.
     h.checkCapacityForGuestRanges.mockResolvedValue(AVAILABLE);
 
-    const result = await calculateModifiedPricing(NO_DISCOUNT_TX, sparseArgs(1001));
-    const guest = result.priceBreakdown.guests[0];
+    const drifted = sparseArgs(RATE);
+    const occurrences = await reviewPricing(NO_DISCOUNT_TX, {
+      ...drifted,
+      booking: {
+        ...(drifted.booking as unknown as { guests: Array<{ priceCents: number }> }),
+        guests: [
+          {
+            ...(drifted.booking as unknown as {
+              guests: Array<Record<string, unknown>>;
+            }).guests[0],
+            priceCents: 1001,
+          },
+        ],
+      } as never,
+    });
 
-    expect(guest.perNightCents).toHaveLength(guest.nightDates.length);
-    for (const cents of guest.perNightCents) {
-      expect(Number.isInteger(cents)).toBe(true);
-    }
-    expect(guest.perNightCents.reduce((a, b) => a + b, 0)).toBe(guest.priceCents);
-    expect(guest.priceCents).toBe(1001 + 2 * RATE);
+    expect(occurrences).toHaveLength(1);
+    expect(occurrences[0].cause).toBe("STORED_TOTAL_MISMATCH");
+    // The evidence is what the rows really say - not a redistribution of 1001.
+    expect(
+      occurrences[0].storedEvidence.nightPrices.map(
+        (night) => night.priceCents,
+      ),
+    ).toEqual([RATE, RATE]);
+    expect(occurrences[0].storedEvidence.guestTotalCents).toBe(1001);
+  });
+
+  it("still checks capacity for an edit it cannot price, and refuses when the beds are not there (#3170)", async () => {
+    // #3170 turned this branch from a refusal into a PARK: the structural change
+    // now commits. That makes the capacity check load-bearing here for the first
+    // time — beds are not money, and an edit that puts people in the lodge on
+    // nights nobody has checked would overbook it. The planner used to return
+    // the review verdict before the capacity block ran, which was safe only
+    // while the edit was then thrown away.
+    h.checkCapacityForGuestRanges.mockResolvedValue(OVER_CAPACITY);
+
+    const drifted = sparseArgs(RATE);
+    await expect(
+      calculateModifiedPricing(NO_DISCOUNT_TX, {
+        ...drifted,
+        booking: {
+          ...(drifted.booking as unknown as {
+            guests: Array<{ priceCents: number }>;
+          }),
+          guests: [
+            {
+              ...(drifted.booking as unknown as {
+                guests: Array<Record<string, unknown>>;
+              }).guests[0],
+              priceCents: 1001,
+            },
+          ],
+        } as never,
+      }),
+    ).rejects.toThrow(/Not enough beds available/);
+
+    /*
+      The control, and it is what makes the assertion above mean something: the
+      capacity resolver was asked about THE PARKED PLAN's ranges.
+
+      A CALL COUNT ALONE DOES NOT SAY THAT, and asserting only the count is how
+      this pair came to be a guard that could not fail. Mutating the plan
+      selection to `const capacityPlan = inProgressPlan;` drops the parked branch
+      and falls through to the envelope call - `newCheckIn` as the range start and
+      `policyAdjustedGuestsForPricing` as the ranges - which is the pre-#2736
+      shape, still exactly one call, and the whole suite stayed green.
+
+      So the ARGUMENTS are what is pinned. Two things distinguish the parked
+      plan's ranges from the envelope's, and both are load-bearing:
+        - the range starts at `editableFrom`, not at the booking's check-in, so
+          nights already spent are not re-checked (#2029's capacityRangeStart);
+        - the range carries an EXPLICIT night set, so the sparse guest's gap at
+          08-21 is not silently occupied and #2029's check-out-day extension
+          night IS.
+    */
+    expect(h.checkCapacityForGuestRanges).toHaveBeenCalledTimes(1);
+    const [lodgeId, rangeStart, rangeEnd, proposed] =
+      h.checkCapacityForGuestRanges.mock.calls[0];
+    expect(lodgeId).toBe("lodge-1");
+    // The envelope start a reverted planner would pass is 2026-08-20, so pinning
+    // the start to 08-21 already excludes it - a second, negative assertion of
+    // the same fact adds nothing but a line to keep in step.
+    expect(rangeStart).toEqual(D("2026-08-21"));
+    expect(rangeEnd).toEqual(D("2026-08-25"));
+    expect(proposed).toEqual([
+      {
+        stayStart: D("2026-08-21"),
+        stayEnd: D("2026-08-25"),
+        // 08-21 is the guest's gap and is absent; 08-24 is the extension's
+        // newly-occupied night and is present.
+        nights: [D("2026-08-22"), D("2026-08-23"), D("2026-08-24")],
+        memberId: "m1",
+      },
+    ]);
+  });
+
+  it("parks the same edit when the beds ARE there", async () => {
+    // The other half of the pair. Without it, the case above would also pass on
+    // a planner that had started refusing every unpriceable edit outright again.
+    h.checkCapacityForGuestRanges.mockResolvedValue(AVAILABLE);
+
+    const drifted = sparseArgs(RATE);
+    const result = await calculateModifiedPricing(NO_DISCOUNT_TX, {
+      ...drifted,
+      booking: {
+        ...(drifted.booking as unknown as {
+          guests: Array<{ priceCents: number }>;
+        }),
+        guests: [
+          {
+            ...(drifted.booking as unknown as {
+              guests: Array<Record<string, unknown>>;
+            }).guests[0],
+            priceCents: 1001,
+          },
+        ],
+      } as never,
+    });
+
+    expect(result.kind).toBe("financial_review_required");
+    if (result.kind !== "financial_review_required") return;
+    // And it comes back with the beds, so the caller can commit the structural
+    // half — which is the whole difference between parking and refusing.
+    // #3166 makes `parkedPlan` nullable (a pre-check-in park writes through the
+    // ordinary branch and carries none); this case is an IN-PROGRESS park, so it
+    // must still carry one — asserted rather than narrowed away.
+    expect(result.parkedPlan).not.toBeNull();
+    expect(result.parkedPlan?.proposedExistingGuests).toHaveLength(1);
   });
 });
 
@@ -590,7 +768,11 @@ describe("calculateModifiedPricing in-progress departed guest (#2743)", () => {
           .toISOString()
           .slice(0, 10),
       ),
-      nights: sorted.map((stayDate) => ({ stayDate: D(stayDate) })),
+      // #3031: with their sold price, so the rows reconcile to the total below.
+      nights: sorted.map((stayDate) => ({
+        stayDate: D(stayDate),
+        priceCents: RATE,
+      })),
       priceCents: sorted.length * RATE,
     };
   }
@@ -652,7 +834,7 @@ describe("calculateModifiedPricing in-progress departed guest (#2743)", () => {
   it("hands the writer only the departed guest's own nights, and moves no money", async () => {
     h.checkCapacityForGuestRanges.mockResolvedValue(AVAILABLE);
 
-    const result = await calculateModifiedPricing(
+    const result = await pricedPricing(
       NO_DISCOUNT_TX,
       departedGuestArgs("2026-08-23"),
     );
@@ -664,7 +846,7 @@ describe("calculateModifiedPricing in-progress departed guest (#2743)", () => {
     // had gone home.
     expect(gone.nightDates).toEqual([D("2026-08-18"), D("2026-08-19")]);
     expect(gone.priceCents).toBe(2 * RATE);
-    expect(gone.perNightCents.reduce((a, b) => a + b, 0)).toBe(gone.priceCents);
+    expect(gone.perNightCents.reduce<number>((a, b) => a + (b ?? Number.NaN), 0)).toBe(gone.priceCents);
     // The guest who is actually there is untouched.
     expect(present.nightDates).toEqual([
       D("2026-08-18"), D("2026-08-19"), D("2026-08-20"), D("2026-08-21"),
@@ -682,7 +864,7 @@ describe("calculateModifiedPricing in-progress departed guest (#2743)", () => {
     // never the envelope (INV-DATE-012, INV-MOD-025).
     h.checkCapacityForGuestRanges.mockResolvedValue(AVAILABLE);
 
-    const result = await calculateModifiedPricing(
+    const result = await pricedPricing(
       NO_DISCOUNT_TX,
       departedGuestArgs("2026-08-25"),
     );
@@ -803,7 +985,7 @@ describe("calculateModifiedPricing in-progress per-night prices (#2744)", () => 
     // the average (7000 each); they are the real rates now.
     h.checkCapacityForGuestRanges.mockResolvedValue(AVAILABLE);
 
-    const result = await calculateModifiedPricing(NO_DISCOUNT_TX, args());
+    const result = await pricedPricing(NO_DISCOUNT_TX, args());
     const guest = result.priceBreakdown.guests[0];
 
     expect(guest.nightDates).toEqual([
@@ -813,7 +995,7 @@ describe("calculateModifiedPricing in-progress per-night prices (#2744)", () => 
       D("2026-08-24"),
     ]);
     expect(guest.perNightCents).toEqual([LOW, LOW, HIGH, HIGH]);
-    expect(guest.perNightCents.reduce((a, b) => a + b, 0)).toBe(guest.priceCents);
+    expect(guest.perNightCents.reduce<number>((a, b) => a + (b ?? Number.NaN), 0)).toBe(guest.priceCents);
     expect(result.newTotalPriceCents).toBe(2 * LOW + 2 * HIGH);
     // Xero rebuilds its lines per contiguous run of equal price, so the runs
     // have to multiply back out: 2 x LOW and 2 x HIGH, no phantom balance.
@@ -910,7 +1092,7 @@ describe("calculateModifiedPricing in-progress per-night prices (#2744)", () => 
     // exactly the 23rd they slept, at what they paid for it.
     h.checkCapacityForGuestRanges.mockResolvedValue(AVAILABLE);
 
-    const result = await calculateModifiedPricing(NO_DISCOUNT_TX, removalArgs());
+    const result = await pricedPricing(NO_DISCOUNT_TX, removalArgs());
     const guest = result.priceBreakdown.guests[0];
     const plan = result.inProgressPlan?.proposedExistingGuests[0];
 
@@ -929,32 +1111,45 @@ describe("calculateModifiedPricing in-progress per-night prices (#2744)", () => 
     expect(guest.perNightCents).toEqual([LOW]);
   });
 
-  it("never credits back more than the guest paid when no row records a price", async () => {
+  it("REFUSES a removal when no row records a price, rather than clamping the credit", async () => {
+    // #3031, and the caller-level test that fails if `refundCeilingCents` comes
+    // back.
+    //
     // The population the locked prices cannot reach: a booking created by
-    // approving a booking request, which still writes no `BookingGuestNight`
-    // rows at all (#2739). Those nights have no sold price, so the old-price
-    // window values them at TODAY's rate — 2 x HIGH = 18000 against a stored
-    // 2 x LOW = 10000 — and without the ceiling the guest comes off the booking
-    // at -8000, with a negative per-night row for the next edit to read back as
-    // a sold price. The credit stops at what they are carrying.
+    // approving a booking request, which writes no `BookingGuestNight` rows at
+    // all (#2739). The old code valued those nights at TODAY's rate - 2 x HIGH
+    // against a stored 2 x LOW - and then clamped the result so the guest came
+    // off at exactly zero. Zero is a real financial number, and epic #2797
+    // forbids showing one for an amount nobody has worked out.
     h.checkCapacityForGuestRanges.mockResolvedValue(AVAILABLE);
 
-    const result = await calculateModifiedPricing(
+    const occurrences = await reviewPricing(
       NO_DISCOUNT_TX,
       removalArgs({
         withNightRows: false,
-        // Removed from the 23rd, so BOTH nights are given back and the raw
-        // credit (2 x HIGH) exceeds the whole stored total.
+        // Removed from the 23rd, so BOTH nights are given back.
         editableFrom: D("2026-08-23"),
       }),
     );
-    const guest = result.priceBreakdown.guests[0];
-    const plan = result.inProgressPlan?.proposedExistingGuests[0];
 
-    expect(2 * HIGH).toBeGreaterThan(2 * LOW);
-    expect(plan?.oldFuturePriceCents).toBe(2 * LOW);
-    expect(guest.priceCents).toBe(0);
-    expect(guest.priceCents).toBeGreaterThanOrEqual(0);
-    expect(guest.perNightCents.every((cents) => cents >= 0)).toBe(true);
+    expect(occurrences.map((occurrence) => occurrence.bookingGuestId)).toEqual([
+      "g1",
+    ]);
+    expect(occurrences[0].cause).toBe("NO_STORED_NIGHT_PRICES");
+    expect(occurrences[0].surrenderedNightDates).toEqual([
+      "2026-08-23",
+      "2026-08-24",
+    ]);
+    // No amount anywhere on the occurrence: not the clamped zero, not 2 x HIGH.
+    // Asserted as the WHOLE key set rather than as the absence of one name,
+    // which nothing could have added anyway.
+    expect(Object.keys(occurrences[0]).sort()).toEqual([
+      "addedNightDates",
+      "bookingGuestId",
+      "bookingId",
+      "cause",
+      "storedEvidence",
+      "surrenderedNightDates",
+    ]);
   });
 });
