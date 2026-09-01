@@ -116,8 +116,13 @@ reason: nine lines, one of them code. #3038 made
   the literal look like something to fill in later.
 
 file: src/lib/email/booking.ts
-lines: 1505
-reason: eight lines, all comment, no code. `sendHostingCoverageLostEmail`'s
+lines: 1569
+reason: eight lines from this change, all comment, no code — the rest of the
+  difference from the 1505 this entry first recorded is `main`'s own, arriving
+  with the epic #2797 sync: that epic edited this same file, so the declared
+  length had to be re-measured against the merged tree rather than left at the
+  pre-sync number. An allowance whose number is not the file's real length is
+  exactly the drift this gate replaced, so it is re-stated rather than nudged. `sendHostingCoverageLostEmail`'s
   docblock justified pointing the recipient at their own booking on the premise
   that "the cover that went away was on their own account (#2576 §11)". Under
   `SAME_GROUP_TRIP` that premise is false — the stay is on another member's
