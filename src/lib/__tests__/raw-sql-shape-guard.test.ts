@@ -77,8 +77,13 @@ const RAW_READ_INVENTORY: Record<string, number> = {
   "src/lib/adult-member-hosting-policy-set.ts": 1,
   // The hosting coverage participant protocol's fail-fast owner lock reads the
   // boolean returned by pg_try_advisory_xact_lock and schema-decodes it before
-  // deciding whether the outer transaction must retry.
-  "src/lib/adult-member-hosting-coverage-lock.ts": 1,
+  // deciding whether the outer transaction must retry. TWO since #3039: the
+  // per-TRIP `hosting-coverage-group` key has the same fail-fast spelling, for a
+  // stronger reason than its owner sibling — a trip key is shared with other
+  // accounts, so a blocking wait on it is both a cross-account stall and a real
+  // deadlock edge between two transactions that discover two trip keys in opposite
+  // orders. Same statement shape, same decoder, same schema.
+  "src/lib/adult-member-hosting-coverage-lock.ts": 2,
 };
 
 /**

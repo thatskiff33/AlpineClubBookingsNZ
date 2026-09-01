@@ -15,6 +15,8 @@ const mocks = vi.hoisted(() => ({
   loadPolicy: vi.fn(),
   sourceBookingIsTerminal: vi.fn(),
   loadDependents: vi.fn(),
+  loadSplitSiblings: vi.fn(),
+  loadGroupOwners: vi.fn(),
   reconcile: vi.fn(),
   claimNotification: vi.fn(),
   loadNotificationDelivery: vi.fn(),
@@ -54,6 +56,11 @@ vi.mock("@/lib/adult-member-hosting-review", () => ({
   isHostingCoverageSourceBookingTerminal: mocks.sourceBookingIsTerminal,
   loadAdultMemberHostingPolicy: mocks.loadPolicy,
   loadSameOwnerCoverageDependentIds: mocks.loadDependents,
+  // #3039. Both are reached from this module now, so both belong in the factory: a
+  // vi.mock factory that is short of one export the widened graph reads throws at
+  // import and kills the whole file before a test runs.
+  loadGroupTripCoverageDependentOwnerIds: mocks.loadGroupOwners,
+  loadHostingCoverageSplitSiblingIds: mocks.loadSplitSiblings,
   reconcileSameOwnerCoverageIncident: mocks.reconcile,
 }));
 
@@ -120,6 +127,8 @@ describe("hosting coverage drain claim fences (#2596)", () => {
     });
     mocks.sourceBookingIsTerminal.mockResolvedValue(false);
     mocks.loadDependents.mockResolvedValue([]);
+    mocks.loadSplitSiblings.mockResolvedValue([]);
+    mocks.loadGroupOwners.mockResolvedValue([]);
     mocks.resolveIncidents.mockResolvedValue(0);
     mocks.loadNotificationDelivery.mockResolvedValue({ ...DELIVERY });
     mocks.completeNotification.mockResolvedValue(true);
@@ -379,6 +388,64 @@ describe("hosting coverage drain claim fences (#2596)", () => {
       expect.anything(),
     );
     expect(mocks.resolveIncidents).not.toHaveBeenCalled();
+  });
+
+  it("reconciles the source's #738 split half too, on the scope-off branch (#3039)", async () => {
+    // INV-HOST-043's obligation to #3039, and the only place the drain can honour
+    // it. A split child has NEITHER canonical Group Trip relation, so the group
+    // dependent read matches its PARENT and not the child — and the child is the
+    // half that carries the non-member guests, the rows the rule exists to judge.
+    // Without this expansion the fan-out re-evaluates the one half with nothing to
+    // judge and leaves the stranded half untouched.
+    //
+    // Scope-off is where the gap lives: with `SAME_BOOKING_OWNER` on, the
+    // same-owner dependent predicate (owner + lodge + overlapping nights) already
+    // matches a split half by construction, so nothing is owed there.
+    const item = { ...CLAIMED_ITEM, sourceBookingId: "source-parent" };
+    mocks.claim.mockReset();
+    mocks.claim.mockResolvedValueOnce([item]).mockResolvedValue([]);
+    mocks.loadClaimed.mockResolvedValue(item);
+    mocks.loadPolicy.mockResolvedValue({
+      hostScopes: { sameBookingOwner: false, sameGroupTrip: true },
+    });
+    mocks.sourceBookingIsTerminal.mockResolvedValue(false);
+    mocks.loadSplitSiblings.mockResolvedValue(["source-split-child"]);
+    mocks.reconcile.mockResolvedValue({ action: "none" });
+
+    const result = await drainHostingCoverageReevaluations({}, makeDb());
+
+    expect(result).toMatchObject({ claimed: 1, processed: 1 });
+    expect(mocks.loadDependents).not.toHaveBeenCalled();
+    expect(mocks.loadSplitSiblings).toHaveBeenCalledWith(
+      ["source-parent"],
+      expect.anything(),
+    );
+    expect(mocks.reconcile.mock.calls.map(([input]) => input.bookingId)).toEqual([
+      "source-parent",
+      "source-split-child",
+    ]);
+  });
+
+  it("does not expand split halves for a terminal scope-off source", async () => {
+    // A cancelled or missing source is not happening, so nobody can restore cover
+    // for it and neither half is a dependent. The expansion must stay on the
+    // non-terminal arm, or the drain would reconcile the split halves of a stay that
+    // has gone and then also resolve its incident as BOOKING_CANCELLED.
+    const item = { ...CLAIMED_ITEM, sourceBookingId: "source-gone" };
+    mocks.claim.mockReset();
+    mocks.claim.mockResolvedValueOnce([item]).mockResolvedValue([]);
+    mocks.loadClaimed.mockResolvedValue(item);
+    mocks.loadPolicy.mockResolvedValue({
+      hostScopes: { sameBookingOwner: false, sameGroupTrip: true },
+    });
+    mocks.sourceBookingIsTerminal.mockResolvedValue(true);
+    mocks.resolveIncidents.mockResolvedValue(1);
+
+    const result = await drainHostingCoverageReevaluations({}, makeDb());
+
+    expect(result).toMatchObject({ claimed: 1, processed: 1, incidentsResolved: 1 });
+    expect(mocks.loadSplitSiblings).not.toHaveBeenCalled();
+    expect(mocks.reconcile).not.toHaveBeenCalled();
   });
 
   it("locks the sorted claimed identities before refresh when the drain wins", async () => {

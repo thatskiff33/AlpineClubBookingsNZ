@@ -834,7 +834,40 @@ const SCOPED_ADVISORY_LOCK_INVENTORY: Record<string, number> = {
   // spelling of the same key and is now counted rather than invisible.
   // Counterpart analysis and compatibility evidence in
   // docs/CONCURRENCY_AND_LOCKING.md → "Same-owner coverage takes a per-owner key".
-  "src/lib/adult-member-hosting-coverage-lock.ts": 2,
+  //
+  // FOUR SINCE #3039, because this file now mints a SECOND family: the per-TRIP
+  // `pg_advisory_xact_lock(hashtext('hosting-coverage-group'), hashtext(<GroupBooking.id>))`,
+  // in both the blocking and the fail-fast spelling, for the same
+  // count-every-spelling reason #2722 gave above.
+  //
+  // WHY A SECOND FAMILY AT ALL. `SAME_GROUP_TRIP` (#3038) makes one booking's
+  // compliance a function of a booking on ANOTHER ACCOUNT. The owner key is
+  // `Booking.memberId` — the dependent's own account — so two writers changing two
+  // bookings in one trip hold two DIFFERENT owner keys and are not serialised by
+  // them at all; at READ COMMITTED each can then observe a state the other has
+  // already invalidated. Not the lodge key either: one lodge holds many unrelated
+  // trips and a lodge-wide key would serialise all of them. The trip is the
+  // contention domain, so the trip is the key (`INV-LOCK-001`).
+  //
+  // ORDER. It sits IMMEDIATELY ABOVE the coverage-owner key and below everything
+  // else: global → lodge → roster-date → applicable member keys → participant
+  // `Member` rows → coverage-GROUP → coverage-owner. Group before owner because the
+  // trip's membership is what decides WHICH owners the fan-out will name, so the
+  // owner set is not even known until this key is held. That makes the owner key's
+  // former "always last" the second of the last two, and every statement of the old
+  // form has been rewritten rather than left standing.
+  //
+  // COUNTERPART, AND WHY NO NEW WAIT-GRAPH EDGE APPEARS. Every acquisition tries the
+  // key with `pg_try_advisory_xact_lock` before the blocking form and rolls the whole
+  // outer transaction back on a conflict — the same protocol #2597 applied to
+  // repeated owner-key acquisition, and necessary here rather than merely prudent:
+  // one transaction can reconcile a booking in one trip and then inspect a
+  // same-owner dependent that sits in ANOTHER trip, so sorting inside one call
+  // cannot order keys discovered in two. Callers resolve the lodge policy first and
+  // take nothing unless `SAME_GROUP_TRIP` is on and the booking is in a trip.
+  // Counterpart analysis in docs/CONCURRENCY_AND_LOCKING.md → "Group Trip coverage
+  // takes a per-trip key, above the owner key".
+  "src/lib/adult-member-hosting-coverage-lock.ts": 4,
   // AI Diagnostics budget reserve (AID-2, #2371). Both writers take the SAME
   // per-month key `pg_advisory_xact_lock(hashtext('diagnostics-budget-reserve'),
   // hashtext(<month>))`: `reserveDiagnosticsBudget` (the guarded spend claim) and
