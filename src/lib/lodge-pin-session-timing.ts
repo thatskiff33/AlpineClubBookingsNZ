@@ -27,7 +27,7 @@
  *
  * It used to be twelve hours from sign-in, with nothing in the tree that could
  * end it early: one PIN entry made a shared wall tablet a hut leader's screen
- * for the rest of the day, to whoever walked up to it (#3228).
+ * for the rest of the day, to whoever walked up to it (#3228, `INV-PRIV-015`).
  *
  * Ten minutes of INACTIVITY, rather than a hard ten minutes from sign-in, is
  * the owner's decision of 1 September 2026, and the rejected alternative is
