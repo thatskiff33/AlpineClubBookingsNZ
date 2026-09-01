@@ -137,22 +137,64 @@ function makeFamilyDb(rows: BookingRow[], policies: unknown[]) {
   });
 
   /**
-   * Every booking.findMany the REVIEW code makes — the sibling fan-out's id-only
-   * read and the borrow's own guest read. The fence's three-column re-read goes
-   * to the double above instead, so this spy stays exactly the call list this
-   * suite asserted on before the fence was switched on.
+   * Every booking.findMany the REVIEW code makes — the sibling fan-out's reads and
+   * the borrow's own guest read. The fence's three-column re-read goes to the double
+   * above instead, so this spy stays exactly the call list this suite asserted on
+   * before the fence was switched on.
+   *
+   * IT APPLIES THE PREDICATE RATHER THAN PATTERN-MATCHING ONE SHAPE OF IT, and that
+   * is #3039's correction. It used to read `where.memberId`, `where.id.not` and
+   * `where.OR` off the TOP level, which was the exact shape the singular sibling read
+   * happened to produce. When that read was collapsed onto the batched
+   * `loadHostingCoverageSplitSiblingIds` — one definition of the split-pair relation
+   * instead of two — the batched form's `{ OR: [ <whole predicate>, ... ] }` and its
+   * `{ id: { in: [...] } }` lookup matched nothing here, `hostingSiblingWhere` was
+   * effectively switched off, and five split-pair tests failed. A double that models
+   * one spelling of a predicate is a double that stops meaning anything the moment
+   * the predicate is refactored, which is the whole failure mode
+   * `support/hosting-fake-booking-store.ts` exists to argue against.
    */
+  function matchesSiblingWhere(row: BookingRow, where: any): boolean {
+    if (!where || typeof where !== "object") return true;
+    for (const [key, condition] of Object.entries(where)) {
+      if (key === "AND") {
+        if (!(condition as any[]).every((c) => matchesSiblingWhere(row, c))) {
+          return false;
+        }
+        continue;
+      }
+      if (key === "OR") {
+        if (!(condition as any[]).some((c) => matchesSiblingWhere(row, c))) {
+          return false;
+        }
+        continue;
+      }
+      const value = (row as Record<string, unknown>)[key];
+      if (condition === null || typeof condition !== "object") {
+        if (value !== condition) return false;
+        continue;
+      }
+      const operators = condition as Record<string, unknown>;
+      if ("not" in operators && value === operators.not) return false;
+      if (
+        "in" in operators &&
+        !(operators.in as unknown[]).includes(value as never)
+      ) {
+        return false;
+      }
+      if (
+        "notIn" in operators &&
+        (operators.notIn as unknown[]).includes(value as never)
+      ) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   const siblingFindMany = vi.fn(async (args: unknown) => {
     const { where } = args as { where: any };
-    return [...byId.values()].filter((row) => {
-      if (row.id === where.id?.not) return false;
-      if (row.memberId !== where.memberId) return false;
-      return (where.OR as any[]).some((clause) =>
-        clause.id !== undefined
-          ? row.id === clause.id
-          : row.parentBookingId === clause.parentBookingId,
-      );
-    });
+    return [...byId.values()].filter((row) => matchesSiblingWhere(row, where));
   });
 
   return {
@@ -497,16 +539,35 @@ describe("split-pair reconciliation (#2364 review finding)", () => {
   beforeEach(() => vi.clearAllMocks());
 
   /** Parent = the member's own booking; child = the party's non-member half. */
+  /**
+   * `status` and `deletedAt` are modelled HERE and not on the shared `bookingRow`
+   * fixture, and the distinction matters twice over (#3039).
+   *
+   * They are needed here because `hostingSiblingWhere` filters on both, and this
+   * suite's family double now APPLIES that predicate rather than pattern-matching one
+   * spelling of it — so a row that does not model the columns the query filters on is
+   * excluded from its own family, which is the honest answer.
+   *
+   * They must NOT go on `bookingRow` itself, because
+   * `recordAdultMemberHostingReviewForNewBooking` branches on exactly those two
+   * columns to decide whether a new booking is live cover and therefore whether it
+   * goes through the FENCED sibling seam. Putting a CONFIRMED status on the shared
+   * fixture silently moved an unrelated admin-decision test onto the other seam.
+   */
   function splitPair(parentNights: string[], childNights: string[]) {
     return [
       bookingRow({
         id: "parent-1",
         parentBookingId: null,
+        status: "CONFIRMED",
+        deletedAt: null,
         guests: [guest("m1", parentNights, member())],
       }),
       bookingRow({
         id: "child-1",
         parentBookingId: "parent-1",
+        status: "CONFIRMED",
+        deletedAt: null,
         guests: [guest("g1", childNights)],
       }),
     ];
@@ -614,17 +675,35 @@ describe("split-pair reconciliation (#2364 review finding)", () => {
     await reconcileAdultMemberHostingReviewWithSiblings("parent-1", family.db);
     // Once for the mutated booking, once for the sibling lookup, once for the
     // sibling's own evaluation — never a third round trip from the sibling.
+    //
+    // THE SIBLING LOOKUP IS NOW THE BATCHED READ (#3039). `loadHostingSiblingIds`
+    // delegates to `loadHostingCoverageSplitSiblingIds` so the split-pair relation has
+    // ONE definition instead of two, which means the lookup arrives as an id list
+    // followed by `{ OR: [ <the whole predicate per row> ] }` rather than as one
+    // flattened predicate at the top level. The clauses being asserted are the same
+    // clauses; they now sit one level in, so this reaches them there instead of
+    // pinning a shape the refactor legitimately changed.
     const siblingWheres = family.siblingFindMany.mock.calls.map(
       (call: any[]) => (call[0] as any).where,
     );
-    for (const where of siblingWheres) {
-      expect(where.memberId).toBe("owner-1");
-      expect(where.deletedAt).toBeNull();
-      expect(where.status).toEqual({ notIn: ["CANCELLED", "BUMPED"] });
-    }
-    expect(siblingWheres.filter((w: any) => w.id?.not === "child-1")).toHaveLength(
-      1,
+    const predicateClauses = siblingWheres.flatMap((where: any) =>
+      Array.isArray(where.OR) && where.OR.some((clause: any) => clause.memberId)
+        ? (where.OR as any[])
+        : where.memberId
+          ? [where]
+          : [],
     );
+    expect(predicateClauses.length).toBeGreaterThan(0);
+    for (const clause of predicateClauses) {
+      expect(clause.memberId).toBe("owner-1");
+      expect(clause.deletedAt).toBeNull();
+      expect(clause.status).toEqual({ notIn: ["CANCELLED", "BUMPED"] });
+    }
+    // Exactly one clause excludes the child, i.e. exactly one fan-out FROM the
+    // child — one level, never a third round trip.
+    expect(
+      predicateClauses.filter((clause: any) => clause.id?.not === "child-1"),
+    ).toHaveLength(1);
   });
 
   it("records an admin on-behalf decision, and refuses to approve without one", async () => {

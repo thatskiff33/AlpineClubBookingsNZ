@@ -256,8 +256,57 @@ are permanent: never renumbered, never reused.
   claimed "four measured cases" with a two-green/two-red breakdown; only one is
   evidenced in the tree, so the count is not restated here. Cite the record, not
   the tally.
+- **`adult-member-hosting-coverage-lock.ts` mints BOTH coverage lock families
+  through one blocking and one fail-fast statement (#3039).** The per-owner and
+  per-trip keys differ in exactly two facts — the namespace constant, and the label a
+  decode failure is reported under — so `lockCoverageKeys` and `tryLockCoverageKeys`
+  are parameterised on those and nothing else. Written out per family that would be
+  four statements, and a family whose statement drifted to the session-scoped
+  `pg_advisory_lock(` spelling would leak a lock on a pooled connection with every
+  other test green. It is also what keeps the file at two entries in
+  `GLOBAL_LOCK_SITE_REGISTRY`'s scoped inventory rather than four, and one in
+  `RAW_READ_INVENTORY` rather than two.
+- **`acquireHostingCoverageGroupKey` is the ONLY place the per-trip key is
+  acquired (#3039).** The try-then-take protocol was written twice — there, and
+  inline in `lockAndVerifyGroupTripCoverageDependents`, whose comment pointed the
+  reader at the other copy while duplicating it. Two copies of a fail-fast protocol
+  is two places to delete half of one, and the behavioural order tests cannot see
+  the deletion because they read the FIRST acquisition of the sequence and the other
+  copy still supplies it. `adult-member-hosting-coverage-lock.test.ts` censuses both
+  the protocol's own shape and the absence of any other acquisition site.
+- **One plan-versus-verify comparison for every bounded coverage set (#3039).**
+  `coverageBookingSetFingerprint` is the single definition; the Group Trip fan-out
+  and `enqueueHostingCoverageReevaluationForMember` both use it. They previously
+  answered the same hazard two ways — an ordered string fingerprint and a length
+  check plus a `Map`-keyed field loop — so a fix to one left the other behind. The
+  ORDER-SENSITIVE form was kept because it is the stricter of the two and both
+  reads apply the same `orderBy`.
+- **One split-pair sibling read (#3039).** `loadHostingSiblingIds` delegates to the
+  batched `loadHostingCoverageSplitSiblingIds`, so `hostingSiblingWhere` has one
+  reader rather than two hand-written ones. The mutation path gains a bounded,
+  ordered read where it previously had neither `take` nor `orderBy`, which is an
+  improvement under `INV-OPS` rather than a cost.
+- **One `select` for the `CoverageOwnerFacts` columns (#3039).** Four reads spelled
+  the five columns out and cast the result `as CoverageOwnerFacts`; a cast is not a
+  check, and a dropped `checkOut` would have produced a zero-night queue item with a
+  green typecheck. `COVERAGE_OWNER_FACTS_BASE_SELECT` is spread by all of them,
+  including the two wider selects that add their own fields.
+- **`src/lib/__tests__/support/hosting-fake-booking-store.ts` is the one
+  hosting-coverage booking double (#3039).** #3037 wrote it, #3038 copied it and
+  #3039 copied it again, and by the third copy they had already diverged: `guestRow`
+  took a member id in one and a whole member row in another, and only one modelled
+  the `some` relation filter. These are the doubles that decide whether a coverage
+  predicate is exercised at all, so a copy missing a clause answers "not related"
+  for a booking the production query relates and the suite goes green. Each suite
+  keeps its own `makeStore` — the recording differences are what each file is for.
+- **`src/lib/__tests__/support/race-db-url.ts` is the one race-database safety
+  guard (#3039).** It was restated per suite on the reasoning that an import going
+  missing could point a suite at a real database; a missing import is a module-load
+  error, so that is fail-closed and not a reachable failure. Twelve copies of one
+  `INV-OPS` fact is the real risk, because the eleventh nobody tightened is the one
+  that connects to something real. This change converged its own caller only.
 - **`src/lib/__tests__/support/strip-comments.ts` is the canonical
-  `stripComments`, and since #3164 a lint rule enforces it.** 62 test files, a test
+  `stripComments`, and since #3164 a lint rule enforces it.** 63 test files, a test
   helper and one CI script import it, and `ssot/no-local-comment-stripper` in
   `eslint.config.mjs` reports a second scanner as it is written rather than
   twelve minutes later in CI. **Use it; do not write a second.** The figure was

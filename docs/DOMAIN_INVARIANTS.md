@@ -374,6 +374,7 @@ Prefix `INV-HOST`.
 | `INV-HOST-043` | Group identity is the organiser/join columns, never parentBookingId or container status |
 | `INV-HOST-044` | Group Trip hosts are host-only, deduplicated against narrower scopes, and read under their own ceiling |
 | `INV-HOST-045` | Kiosk cover-source display is derived from the canonical snapshot; stale, failed or unrecorded evaluation never renders as cover |
+| `INV-HOST-046` | Stranding another account's Group Trip booking allows the change, escalates the sibling, and discloses nothing |
 
 ### Booking requests
 

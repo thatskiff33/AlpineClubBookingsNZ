@@ -6,13 +6,17 @@
  * limits sit at the same number for OPPOSITE reasons and the docblocks below
  * are the whole point of keeping them together: a truncated source read errs
  * towards the rule, a truncated dependent read hides a stranded booking. The
- * third, `SAME_GROUP_TRIP_COVERAGE_SOURCE_LIMIT` (#3038), sits at a DIFFERENT
- * number for a third reason, and keeping all three here is what makes the
- * comparison readable. The engine imports this module; this module imports
- * nothing back from it.
+ * third and fourth, `SAME_GROUP_TRIP_COVERAGE_SOURCE_LIMIT` (#3038) and
+ * `GROUP_TRIP_COVERAGE_DEPENDENT_LIMIT` (#3039), sit at a DIFFERENT number from
+ * the first pair for a third reason and repeat the source/dependent split for the
+ * same one — so the file now holds two pairs, each at its own number, each pair
+ * split because the safe-failure direction inverts within it. Keeping all four
+ * here is what makes that comparison readable. The engine imports this module;
+ * this module imports nothing back from it.
  */
 import { Prisma } from "@prisma/client";
 
+import { createAuditLog, type AuditLogClient } from "@/lib/audit";
 import logger from "@/lib/logger";
 
 /**
@@ -182,6 +186,114 @@ export class HostingSameOwnerSourceCeilingExceededError extends Error {
  * caller passes its own ceiling and gets the refusal below instead.
  */
 export const SAME_GROUP_TRIP_COVERAGE_SOURCE_LIMIT = 100;
+
+/**
+ * The ceiling on the Group Trip DEPENDENT read — the set #3039 fans out to when a
+ * change to one booking may have removed the cover another booking in the trip was
+ * relying on (`INV-HOST-046`).
+ *
+ * THE SAME NUMBER AS ITS SOURCE SIBLING, AND THAT IS THE POINT rather than a
+ * coincidence: it is the same population read from the other end. If a trip may
+ * legitimately hold a hundred overlapping live bookings as cover SOURCES, then a
+ * change to one of them may legitimately owe re-evaluation to ninety-nine
+ * DEPENDENTS, and a lower bound here would silently drop the difference. That is
+ * exactly the pairing `SAME_OWNER_COVERAGE_SOURCE_LIMIT` and
+ * `SAME_OWNER_COVERAGE_DEPENDENT_LIMIT` express at 25, for a population whose
+ * plausible size is 25.
+ *
+ * SO IT IS A SEPARATE CONSTANT FOR THE SAME REASON THEY ARE: THE SAFE-FAILURE
+ * ARGUMENT INVERTS. A truncated SOURCE read sees fewer hosts, so a night reads as
+ * uncovered and the booking is flagged rather than quietly allowed. A truncated
+ * DEPENDENT read misses a booking ENTIRELY — no queue item, so no re-evaluation, no
+ * incident, no owner notice and nothing in the officer queue for a booking that
+ * really was stranded. Two constants at one number, meaning opposite things, so
+ * neither can be tuned by somebody reasoning about the other.
+ *
+ * WHAT IT COSTS, STATED PLAINLY, because it is a real cost and not a free bound.
+ * The fan-out records ONE queue row per dependent booking inside the actor's own
+ * transaction, so a change to a booking in a twenty-booking trip writes nineteen
+ * rows. That is the price of the epic's explicit requirement that the queue name
+ * every affected sibling owner in bounded form rather than carry one group-wide
+ * record: the drain's claim is per owner, so an item that named somebody else's
+ * booking would be refused by the participant fence and an item that named only
+ * this booking would leave the siblings to the three-hourly cron. It is bounded by
+ * the trip, it is idempotent (duplicate items are no-ops downstream), and it is
+ * paid only at a club that has switched `SAME_GROUP_TRIP` on, only on a booking
+ * that is actually in a trip.
+ */
+export const GROUP_TRIP_COVERAGE_DEPENDENT_LIMIT = 100;
+
+/**
+ * Say so DURABLY when the Group Trip dependent read filled its ceiling.
+ *
+ * A LOG LINE IS NOT ENOUGH HERE, and that is the difference from
+ * `warnIfCoverageDependentCeilingBound` above. What a bound ceiling costs is stated
+ * in `GROUP_TRIP_COVERAGE_DEPENDENT_LIMIT`'s own docblock: a booking is missed
+ * ENTIRELY — no queue item, so no re-evaluation, no incident, no owner notice and
+ * nothing in the officer queue — for a booking that really was stranded. Handling a
+ * loss of that shape with a `logger.warn` means nobody finds out unless somebody is
+ * reading logs at the moment it happens, and this epic has twice had to come back and
+ * replace exactly that arrangement. So the bind is written as an audit row that an
+ * officer can find afterwards, in the same transaction as the change that caused it,
+ * alongside the log line for whoever IS watching.
+ *
+ * KEYED ON THE TRIP, because that is the subject. `GroupBooking` is the entity whose
+ * party grew past the bound; naming one booking would point an officer at whichever
+ * member happened to make the edit. `severity: "important"` rather than `"critical"`:
+ * the read is still correct for everything it returned and no booking is known to be
+ * uncovered, but somebody has to look — the club's remedy is to examine a very large
+ * trip, not to fix a fault.
+ *
+ * A separate function from its same-owner sibling rather than a parameterised one,
+ * because the two have to name different limits and different remedies: an operator
+ * reading "hit its ceiling" needs to know whether to look at one member's bookings or
+ * at one trip's, and the same-owner message would send them to the wrong place.
+ *
+ * CALLED ONCE PER TRIP PER TRANSACTION, from `settleGroupTripDependentCoverage`
+ * rather than from the dependent read itself. The read runs at least twice on the way
+ * to one fan-out — the unlocked plan and the under-lock re-verify — and again on the
+ * post-commit drain-scope read, so reporting at the read produced two or three
+ * warnings for one truncation and would have produced two or three audit rows.
+ */
+export async function reportGroupTripDependentCeilingBound(
+  where: { groupBookingId: string; lodgeId: string },
+  returned: number,
+  read: string,
+  db: AuditLogClient,
+): Promise<void> {
+  if (returned < GROUP_TRIP_COVERAGE_DEPENDENT_LIMIT) return;
+  logger.warn(
+    {
+      groupBookingId: where.groupBookingId,
+      lodgeId: where.lodgeId,
+      limit: GROUP_TRIP_COVERAGE_DEPENDENT_LIMIT,
+      read,
+    },
+    "Group Trip hosting coverage dependent read hit its ceiling; a sibling booking may not have been re-evaluated",
+  );
+  await createAuditLog(
+    {
+      action: "booking.hostingCoverage.groupTripFanoutTruncated",
+      entityType: "GroupBooking",
+      entityId: where.groupBookingId,
+      actorMemberId: null,
+      category: "booking",
+      severity: "important",
+      outcome: "success",
+      summary:
+        `Group Trip adult-cover re-evaluation was truncated at ${GROUP_TRIP_COVERAGE_DEPENDENT_LIMIT} ` +
+        "bookings; any booking in this trip beyond that was not re-evaluated and may be " +
+        "left without its required adult",
+      metadata: {
+        lodgeId: where.lodgeId,
+        limit: GROUP_TRIP_COVERAGE_DEPENDENT_LIMIT,
+        returned,
+        read,
+      },
+    },
+    db,
+  );
+}
 
 /**
  * The same refusal for the THIRD host population, and a third class rather than

@@ -1,51 +1,36 @@
 # File-size allowances for #3038 (epic #2943)
 
-file: src/lib/adult-member-hosting-review.ts
-lines: 3057
-reason: THREE CHILDREN OF ONE EPIC, ONE DECLARATION. Every child of #2943 diffs
-  against `main` until the epic merges, so all of their allowances are live at
-  once and the gate rightly refuses two numbers for one file — which is why this
-  single entry carries #3037's, #3038's and now #3040's growth, and why the
-  number moved from 2979 to 3057 in #3040's pull request rather than in a
-  fragment of its own. #3040 added `readInheritedSplitPairGroupTrips`, the
-  batched form of the split-pair carve-out: the kiosk day list holds a lodge-full
-  of bookings and calling the singular reader once per card was a sequential N+1
-  the kiosk issue forbids by name. It belongs HERE and nowhere else, because the
-  verdict it applies is `inheritedSplitPairGroupTrip` — the one fence, which the
-  call-site census pins to this file — and its lifecycle filter is the same
-  `HOSTING_SIBLING_LIFECYCLE_WHERE` the singular reader uses, extracted in the
-  same change so the two cannot drift into disagreeing about whether a cancelled
-  parent counts. Putting the batched read in the kiosk module instead would have
-  been a second spelling of exactly that. #3037 added a single line
-  here — the new host-scope column in the policy loader's narrowed `select`,
-  which the call-site census pins to the schema because an omitted column hands
-  the resolver `undefined` and quietly widens or narrows a lodge's rule with a
-  green typecheck. Both children diff against `main`, so its allowance and this
-  one are live together and the gate rightly refuses two numbers for one file;
-  #3037's fragment now carries that reasoning as prose and this is the single
-  live declaration. As for #3038's own growth: this file is the ONE place in the product that turns a persisted booking
-  into evaluator input, and a third host scope is a third loader beside the two
-  already here. Splitting it would put `loadSameGroupTripHosts` in a module of
-  its own while `loadSiblingHosts` and `loadSameBookingOwnerHosts` stayed — and
-  the whole correctness argument for the new one is that it is the SAME SHAPE as
-  its siblings, right down to returning the ids the next scope must exclude. A
-  reader who cannot see the three side by side cannot check that. The
-  deduplication chain is likewise a property of the call site where all three
-  meet, not of any one loader. Most of the growth is that reasoning: why the
-  cross-booking sources are host-only, why the exclusion is a query clause
-  rather than a post-filter, and why the per-owner advisory lock deliberately
-  does NOT widen to cover a scope whose sources belong to other members (#3039
-  owns the per-group key). The file's existing length is #3128's business rather
-  than this change's. Review then added sixty-three lines more, and they are the
-  reason a second evaluator now gets the split-pair carve-out RIGHT rather than
-  a second copy of it: `readInheritedSplitPairGroupTrip` is the same
-  `hostingSiblingWhere` set through the same `inheritedSplitPairGroupTrip`, for
-  a caller that holds no sibling rows. Putting it anywhere else would be the
-  third answer to "what group is this booking in?", which is exactly what
-  `INV-SSOT-001` forbids; the rest is the docblock explaining why the carve-out
-  reaching only one of the two evaluators is a disagreement rather than a
-  smaller version of the same answer, and why the parameter type is the fence's
-  primary structural guard.
+THREE CHILDREN OF ONE EPIC, ONE DECLARATION FOR `src/lib/adult-member-hosting-review.ts`.
+#3037 added a single line there — the new host-scope column in the policy
+loader's narrowed `select`, which the call-site census pins to the schema
+because an omitted column hands the resolver `undefined` and quietly widens or
+narrows a lodge's rule with a green typecheck. #3038 added the third host
+scope's loader. #3039 then added the Group Trip fan-out on top. All three
+children diff against `main`, so all three allowances are live together and the
+gate rightly refuses more than one number for one file — so the single live
+declaration for that path is the LAST child's, in
+`size-allowances.d/3039-group-trip-reconciliation.md`, at the length the file
+really reaches, and the reasoning each earlier child recorded is kept as prose
+here and there rather than as a second field triple. #3038's own reasoning, in
+prose: that file is the ONE place in the product that turns a persisted booking
+into evaluator input, and a third host scope is a third loader beside the two
+already there. Splitting it would put `loadSameGroupTripHosts` in a module of
+its own while `loadSiblingHosts` and `loadSameBookingOwnerHosts` stayed — and
+the whole correctness argument for the new one is that it is the SAME SHAPE as
+its siblings, right down to returning the ids the next scope must exclude. A
+reader who cannot see the three side by side cannot check that. The
+deduplication chain is likewise a property of the call site where all three
+meet, not of any one loader. Most of that growth is the reasoning: why the
+cross-booking sources are host-only, why the exclusion is a query clause rather
+than a post-filter, and why the per-owner advisory lock deliberately does NOT
+widen to cover a scope whose sources belong to other members (#3039 owns the
+per-group key). Review then added sixty-three lines more, and they are the
+reason a second evaluator now gets the split-pair carve-out RIGHT rather than a
+second copy of it: `readInheritedSplitPairGroupTrip` is the same
+`hostingSiblingWhere` set through the same `inheritedSplitPairGroupTrip`, for a
+caller that holds no sibling rows. Putting it anywhere else would be the third
+answer to "what group is this booking in?", which is exactly what
+`INV-SSOT-001` forbids.
 
 file: src/lib/diagnostics/tools/packs/booking-evidence.ts
 lines: 2219
@@ -131,12 +116,7 @@ reason: nine lines, one of them code. #3038 made
 
 file: src/lib/email/booking.ts
 lines: 1569
-reason: eight lines from this change, all comment, no code — the rest of the
-  difference from the 1505 this entry first recorded is `main`'s own, arriving
-  with the epic #2797 sync: that epic edited this same file, so the declared
-  length had to be re-measured against the merged tree rather than left at the
-  pre-sync number. An allowance whose number is not the file's real length is
-  exactly the drift this gate replaced, so it is re-stated rather than nudged. `sendHostingCoverageLostEmail`'s
+reason: eight lines, all comment, no code. `sendHostingCoverageLostEmail`'s
   docblock justified pointing the recipient at their own booking on the premise
   that "the cover that went away was on their own account (#2576 §11)". Under
   `SAME_GROUP_TRIP` that premise is false — the stay is on another member's

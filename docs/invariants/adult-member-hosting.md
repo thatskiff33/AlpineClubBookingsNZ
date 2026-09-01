@@ -1083,3 +1083,172 @@ compliant indefinitely.
   `src/app/api/lodge/guests/[date]/__tests__/group-trip-tiers.test.ts` and
   `src/app/(lodge)/lodge/kiosk/_components/__tests__/kiosk-group-trip-card.test.tsx`,
   whose failure messages carry this id.
+### INV-HOST-046
+
+- **When a change strands another account's Group Trip booking, the change
+  proceeds, the sibling is escalated to officers, and the actor is told nothing
+  about the other account** (owner contract, epic #2943; implemented by #3039).
+  Cross-booking adult cover is not static: a member can remove the qualifying
+  adult, move their dates, change lodge or cancel after another booking in the
+  same trip has started relying on them. The system must not answer that by
+  refusing the change. Refusing would make one account able to control another's
+  booking, and the refusal would ITSELF disclose that somebody else depends on
+  them — so the answer is: allow the valid change, re-evaluate the affected
+  sibling, raise it for officers through the existing incident and
+  officer-queue machinery, and disclose nothing.
+
+  **NO NEW REFUSAL EXISTS, AND THAT IS THE POINT.** There is no Group Trip
+  counterpart to `SameOwnerCoverageWouldBreakError`, none to the officer's
+  override prompt, no new error body and no new member-facing sentence. The
+  cross-account path in `settleGroupTripDependentCoverage` cannot throw at all;
+  it records durable work and returns. Adding a "your group is affected" message
+  later would reintroduce exactly the disclosure this rule forbids, which is why
+  the absence is asserted by a test rather than left to review.
+
+  **"CANNOT THROW" IS TRUE OF THAT FUNCTION AND NOT OF THE WHOLE CROSS-ACCOUNT
+  PATH, and the difference is a 409 the actor can see.**
+  `lockAndVerifyGroupTripCoverageDependents` DOES throw the stable
+  `HOSTING_COVERAGE_PARTICIPANT_RETRY` — when its fail-fast trip-key acquisition
+  loses to any other member's booking write in the same trip, and when the sibling
+  set drifts between the plan and the key (which a sibling's own status transition
+  from a payment webhook can cause). Both roll the actor's outer transaction back.
+  That is a TRANSIENT "reload and try again", it discloses nothing about the other
+  account, and it is the price of the shared serialisation point this rule requires
+  — but "the actor is never blocked because of somebody else's booking" is only true
+  of the OUTCOME, not of every attempt, and must be written that way. At ONE seam
+  even a transient refusal is not available: `enqueueOwnHostingCoverageReevaluation`
+  is reached from `xero-inbound/invoice-paid-effects.ts` inside a `PAID` claim for an
+  invoice the club has already been paid, so that caller passes
+  `GroupTripFanOutOptions.bestEffort` and the cross-account half degrades instead of
+  refusing the transition. That is legal there and nowhere a transition can REMOVE
+  cover: `CONFIRMED` and `PAID` are both eligible coverage sources and
+  `PAYMENT_PENDING -> PAID` only adds one, so skipping can delay a favourable
+  re-evaluation and can never strand anybody. The group-settlement reaper's
+  de-confirming revert must never pass it.
+
+  **THE DEPENDENT SET IS THE TRIP AT THIS LODGE, WITH NO NIGHT-OVERLAP CLAUSE, AND
+  THAT IS THE POINT.** Every writer calls the hosting seam AFTER it has written the
+  booking, so the changed booking's `checkIn`/`checkOut` are the POST-change dates.
+  A dependent envelope that compared against them dropped every sibling that had
+  been relying on the OLD ones — booking A carries the trip's only qualifying adult
+  on nights 10-11, booking B on another account is compliant only through this
+  scope, A moves to nights 20-21, and B is not in the set at all: no item, no
+  re-evaluation, no incident, no owner notice, nothing in the officer queue, and B
+  stays marked compliant indefinitely because nothing looks at it again until its
+  own owner touches it. So `groupTripCoverageDependentWhere` composes
+  `coverageDependentEnvelopeAcrossNightsWhere` — the same lodge, not this booking,
+  not soft-deleted, in the active-status cohort, in this trip — and lets the
+  per-dependent re-evaluation decide the rest. Over-wide costs one idempotent
+  re-read per extra row; too narrow loses a stranded booking silently. The LODGE
+  clause and the self-exclusion stay: dropping the lodge equality would falsify the
+  "group cover is same-lodge by construction" argument that lets one lodge's policy
+  speak for the trip. The SOURCE direction keeps its night clause, because it asks
+  "who is covering these nights" about a booking whose dates are the ones being
+  asked about.
+
+  **THE FAN-OUT IS BOUNDED, PER-BOOKING, AND NAMES EACH SIBLING AS ITS OWN
+  SOURCE.** One `HostingCoverageReevaluation` item per dependent booking in the
+  trip, capped by `GROUP_TRIP_COVERAGE_DEPENDENT_LIMIT`, carrying that booking's
+  own owner as `memberId` and that booking as `sourceBookingId`, the lodge, THAT
+  DEPENDENT'S OWN nights and cause `SYSTEM_CHANGE`. The nights are the dependent's
+  and not the changed booking's, for the same reason the envelope drops the overlap
+  clause and for a second one on top of it: the item's nights are what the drain
+  turns back into bookings (`loadSameOwnerCoverageDependentIds` reads the owner's
+  bookings at that lodge over exactly that window), so an item carrying nights the
+  dependent does not occupy resolves to an EMPTY dependent list and drops the
+  sibling a second time, in the background, with nothing logged. The dependent's own
+  stay is the honest bound: bounded by one booking, it is the window over which that
+  booking's compliance can have changed, and it guarantees the drain's own read
+  finds the booking the item is about. The shape is forced rather than chosen:
+  `assertHostingCoverageQueueParticipantsLocked` requires the runtime-issued
+  proof to hold a source whose `bookingId` is the item's `sourceBookingId` and
+  whose `ownerMemberId` is its `memberId`, so an item naming the actor's booking
+  as the source of a sibling owner's work is refused by the fence. Per booking
+  rather than per owner because in the ordinary trip every owner holds one
+  booking, so the two coincide, and where an owner holds two the two have
+  different nights and one item could not name both honestly. The cause stays
+  `SYSTEM_CHANGE` even when the actor's own change was an officer override: an
+  override is authority over stranding on the account the officer was working on,
+  never a decision about a third party's booking.
+
+  **THE CEILING IS ITS OWN CONSTANT AT THE SOURCE CEILING'S NUMBER.** Same
+  population read from the other end, so a trip that may legitimately hold that
+  many overlapping live bookings as cover SOURCES may owe re-evaluation to that
+  many DEPENDENTS. It stays separate because the safe-failure direction inverts
+  within the pair, exactly as it does for the same-owner limits: a truncated
+  source read sees fewer hosts and errs towards the rule, while a truncated
+  dependent read loses a stranded booking silently — no item, no incident, no
+  owner notice, nothing in the officer queue.
+
+  **AND A BOUND CEILING LEAVES A DURABLE RECORD, not a log line.** Because what it
+  costs is a booking nobody hears about, `reportGroupTripDependentCeilingBound`
+  writes an audit row (`booking.hostingCoverage.groupTripFanoutTruncated`, keyed on
+  the `GroupBooking`, `severity: "important"`) in the same transaction as the change
+  that caused it, alongside the log line. Once per trip per transaction, from the
+  fan-out rather than from the dependent read, because that read runs at least twice
+  on the way to one fan-out. What the record says plainly: any booking in this trip
+  beyond the bound was NOT re-evaluated and may be left without its required adult.
+
+  **THE SPLIT HALF IS REACHED, WHICH IS `INV-HOST-043`'S OBLIGATION HERE.** The
+  dependent set is relation-based, so it finds the split PARENT and not the
+  inheriting CHILD — and the child is the half carrying the non-member guests.
+  The drain therefore expands its source-only dependent list with the booking's
+  `SAME_BOOKING` split halves through the same `hostingSiblingWhere` predicate
+  the borrow itself uses — on EVERY branch, not only the source-only one. The
+  earlier claim that "the same-owner branch needs nothing: its predicate is owner
+  plus lodge plus overlapping nights, which a split half satisfies by construction"
+  is false, and provably so from a fact stated twice elsewhere in this rule:
+  `sameOwnerCoverageDependentWhere` pins `lodgeId` while `hostingSiblingWhere`
+  carries NO lodge clause, so a split pair sitting at two lodges is exactly what the
+  same-owner predicate cannot reach. The window is narrow; the expansion is one
+  bounded indexed read that returns only ids not already in the list, so applying it
+  to both branches is cheaper than being wrong about which one needs it.
+
+  **THE FAN-OUT LIVES IN THE THREE EXISTING SEAMS, NOT IN FORTY WRITERS.**
+  `reconcileAdultMemberHostingReviewWithSiblings` (reconcile, which can refuse),
+  `enqueueOwnHostingCoverageReevaluation` (enqueue, for the confirming paths that
+  must not be refused) and `enqueueHostingCoverageReevaluationForMember` (the
+  membership-lifecycle fan-out) all run it, so every writer that reaches the hosting
+  rule participates automatically and a new writer cannot forget it
+  (`INV-SSOT-001`). The confirming seam needs it as much as the reconciling one: the
+  group-settlement reaper's `CONFIRMED -> PAYMENT_PENDING` revert de-confirms a
+  coverage source.
+
+  **THE MEMBERSHIP SEAM IS THE THIRD, AND IT IS THE ONE THAT IS EASY TO MISS,**
+  because nothing about a membership change looks like a booking change. Host
+  qualification depends on membership standing — `participantQualifiesAsHost`
+  returns false for a member who is inactive, cancelled or archived and for one
+  carrying an unsettled subscription — so a lapse, a deactivation, an archive, a
+  membership cancellation, a declined consent or a Xero "unpaid" removes cover from
+  every booking that was relying on that person, INCLUDING bookings on other
+  accounts in the same Group Trip. Enqueueing only for the bookings the person
+  attends left those siblings stranded permanently, because there is no periodic
+  full re-evaluation in this system: the three-hourly cron drains the queue and
+  nothing more. The seam therefore plans the trips the person is travelling in
+  before its participant fence (one plan per trip, de-duplicated by
+  `GroupBooking.id`), takes those trip keys before the owner keys, and records the
+  items through the same `settleGroupTripDependentCoverage`. A FOURTH seam belongs
+  in `src/lib/__tests__/adult-member-hosting-call-sites.test.ts`'s seam list before
+  it belongs in the tree; that list is what makes the "every writer participates"
+  claim above true rather than aspirational.
+
+  **CLOSING OR REOPENING THE CONTAINER NEEDS NO HOOK, and hard delete needs
+  none either.** `GroupBooking.status` governs joining, not cover
+  (`INV-HOST-043`), so `closeGroupBooking` and `reopenGroupBooking` reach the
+  hosting rule nowhere — a hook there would strip cover from live, compliant
+  bookings whose party has not changed. `booking-delete.ts` hard-deletes only
+  `DRAFT` and soft-deletes only `CANCELLED`, and neither status is in
+  `HOSTING_COVERAGE_SOURCE_BOOKING_STATUSES`, so a deletion removes cover from
+  nobody. The `GroupBookingJoin.bookingId` SetNull and the `GroupBooking` cascade
+  ride on the same gate: both fire only on a hard delete, which only a `DRAFT`
+  reaches, and `OPENABLE_ORGANISER_STATUSES` means an organiser's booking was
+  never `DRAFT` when its group was created — so a cascade cannot destroy a live
+  trip's identity underneath its joiners.
+
+  Enforced by
+  `src/lib/__tests__/adult-member-hosting-group-trip-reconciliation.test.ts` and,
+  against real PostgreSQL,
+  `src/lib/__tests__/adult-member-hosting-group-trip-races.realdb.test.ts`; the
+  writer census is in
+  `src/lib/__tests__/adult-member-hosting-call-sites.test.ts`. Their failure
+  messages carry this id.
