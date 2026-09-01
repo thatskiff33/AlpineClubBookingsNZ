@@ -125,7 +125,9 @@ jobs:
             pull postgres mailpit
 
       # ---------------------------------------------------------------------
-      # The clock moves here, and nothing after this reaches the network.
+      # The clock moves here, and nothing between this line and "Restore the
+      # runner's clock" reaches the network — that is what the pre-pull above
+      # and the early restore below are both for.
       # ---------------------------------------------------------------------
       - name: Park the runner's clock in the rollover window
         id: shift
@@ -221,6 +223,26 @@ jobs:
             bash scripts/e2e-stack.sh run
           fi
 
+      # ---------------------------------------------------------------------
+      # The clock goes back HERE, before anything touches the network again.
+      # Everything below this line uploads an artifact, talks to the Actions
+      # service or writes a summary, and all of that is TLS: a runner a month
+      # ahead can fail a handshake against a certificate that has not been
+      # issued yet in its own reckoning, and the job then reds for a reason that
+      # has nothing to do with the suite. The proof is already recorded by the
+      # step above, so nothing is lost by restoring first.
+      #
+      # `always()`, and it is the pair of the shift: if the suite fails, the
+      # report upload below is exactly what a reader needs, so it must not fail
+      # too.
+      # ---------------------------------------------------------------------
+      - name: Restore the runner's clock
+        if: always()
+        run: |
+          sudo timedatectl set-ntp true || true
+          sudo systemctl start systemd-timesyncd || true
+          date -u --iso-8601=seconds
+
       - name: Upload Playwright report
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -239,23 +261,19 @@ jobs:
         if: always()
         run: bash scripts/e2e-stack.sh down
 
-      # The runner is disposable, so this is belt and braces rather than
-      # housekeeping — but a step that uploads or reports with a month-old clock
-      # can fail confusingly, and restoring costs nothing.
-      - name: Restore the runner's clock
-        if: always()
-        run: |
-          sudo timedatectl set-ntp true || true
-          sudo systemctl start systemd-timesyncd || true
-          date -u --iso-8601=seconds
-
       - name: Explain the verdict
         if: always()
+        # Through the ENVIRONMENT, for the reason the shift step gives: `target`
+        # carries the dispatcher's own `instant` input, and `${{ }}` splices it
+        # into the script text before bash parses it. Guarding one step against
+        # that and not the other leaves the hole open.
+        env:
+          PARKED_AT: ${{ steps.shift.outputs.target }}
         run: |
           {
-            echo "## E2E rollover proof — ${{ steps.shift.outputs.target }}"
+            echo "## E2E rollover proof — ${PARKED_AT:-(clock never moved)}"
             echo
-            echo "The runner's clock was parked at \`${{ steps.shift.outputs.target }}\`,"
+            echo "The runner's clock was parked at \`${PARKED_AT:-nowhere: the shift step did not complete}\`,"
             echo "so the whole stack — Playwright, the seed and the app container —"
             echo "ran with New Zealand already in the following month."
             echo
