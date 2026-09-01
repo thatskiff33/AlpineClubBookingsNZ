@@ -1,5 +1,6 @@
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { enqueueOwnHostingCoverageReevaluation } from "@/lib/adult-member-hosting-review";
+import { reconcileHostingReviewForSystemCancellation } from "@/lib/adult-member-hosting-system-cancellation";
 import { prisma } from "@/lib/prisma";
 import {
   BookingEventType,
@@ -1393,6 +1394,18 @@ async function settleBookingPaymentInTransaction(
           store: tx,
         });
       }
+
+      // #3209 (`INV-HOST-041`). The beds are reconciled above; ADULT SUPERVISION
+      // was not. `PAYABLE_SUCCESS_STATUS_LIST` includes CONFIRMED — a coverage
+      // source — so this void can take the qualifying adult off another booking of
+      // the same member. The `enqueueOwnHostingCoverageReevaluation` further down
+      // is NOT this branch's: it is on the mutually exclusive settle path and this
+      // branch returns first, which is why a whole-file census passed here.
+      // Through the system-cancellation seam because a capacity-failed void has no
+      // actor to refuse, and last in the transaction because the coverage-owner key
+      // comes after the lodge and credit-ledger keys (`INV-LOCK-002`). Drained by
+      // `markBookingPaymentSucceeded`, which settles coverage on every outcome.
+      await reconcileHostingReviewForSystemCancellation(booking.id, tx);
 
       return {
         outcome: "capacity_failed" as const,

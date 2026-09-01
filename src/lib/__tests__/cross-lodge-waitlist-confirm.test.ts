@@ -8,6 +8,8 @@ import { BookingStatus } from "@prisma/client";
 
 const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
+  reconcileHostingForSystemCancellation: vi.fn(),
+  settleHostingCoverage: vi.fn(),
   bookingFindUnique: vi.fn(),
   // #2363 Phase 0 reads the entry on the MODULE client, outside any
   // transaction, before the offered lodge's lock is taken.
@@ -92,6 +94,17 @@ vi.mock("@/lib/capacity", () => ({
 }));
 vi.mock("@/lib/lodge-access", () => ({
   isMemberEligibleToBookLodge: mocks.isMemberEligibleToBookLodge,
+}));
+// #3209: the price-drift unwind cancels the replacement booking, which can be a
+// live coverage source, so it reconciles adult supervision through the shared
+// system-cancellation seam and drains afterwards. Mocked here rather than left to
+// the real modules because this suite has no hosting fixtures at all.
+vi.mock("@/lib/adult-member-hosting-system-cancellation", () => ({
+  reconcileHostingReviewForSystemCancellation:
+    mocks.reconcileHostingForSystemCancellation,
+}));
+vi.mock("@/lib/adult-member-hosting-coverage-drain", () => ({
+  settleHostingCoverageAfterCommit: mocks.settleHostingCoverage,
 }));
 vi.mock("@/lib/bed-allocation-lifecycle", () => ({
   reconcileBedAllocationsForBooking: mocks.reconcileBedAllocations,
@@ -785,6 +798,20 @@ describe("confirmCrossLodgeWaitlistOffer paid-up-adult requirement (#2543)", () 
     );
     expectOfferEpochFence(mocks.bookingUpdateMany.mock.calls[1][0].where);
     expect(mocks.reconcileBedAllocations).toHaveBeenCalledTimes(1);
+    // #3209 (`INV-HOST-041`). The beds were always released here; adult
+    // supervision was not. The replacement can be created PAID (a zero-price
+    // stay auto-confirms), which is a coverage source, and its creation may have
+    // restored cover to another booking of this owner and closed that booking's
+    // incident — so unwinding it silently would leave the incident closed and the
+    // cover gone. In the unwind's own transaction, drained after it commits, and
+    // owed even on this branch where the offer's quote could not be refreshed.
+    expect(mocks.reconcileHostingForSystemCancellation).toHaveBeenCalledWith(
+      "new-booking",
+      expect.anything(),
+    );
+    expect(mocks.settleHostingCoverage).toHaveBeenCalledWith({
+      bookingId: "new-booking",
+    });
   });
 
   it("resolves the club's mode ONCE, and before any capacity lock is taken", async () => {

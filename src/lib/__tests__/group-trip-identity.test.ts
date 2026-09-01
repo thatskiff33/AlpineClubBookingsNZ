@@ -312,7 +312,7 @@ function adultHost(
 describe("SAME_GROUP_TRIP is off until a club turns it on", () => {
   it("is off in the built-in default", () => {
     const rule =
-      "INV-HOST-041 (docs/invariants/adult-member-hosting.md): SAME_GROUP_TRIP " +
+      "INV-HOST-047 (docs/invariants/adult-member-hosting.md): SAME_GROUP_TRIP " +
       "is OFF unless a club turns it on, and it is APPENDED to " +
       "ADULT_MEMBER_HOST_SCOPES rather than inserted. enabledHostScopeList " +
       "sorts frozen violation snapshots through that constant, so widening the " +
@@ -349,7 +349,7 @@ describe("SAME_GROUP_TRIP is off until a club turns it on", () => {
     );
     expect(
       resolved.hostScopes,
-      "INV-HOST-042 (docs/invariants/adult-member-hosting.md): the Group Trip " +
+      "INV-HOST-048 (docs/invariants/adult-member-hosting.md): the Group Trip " +
         "column is outside the all-or-none CHECK, and NULL on a row that DID " +
         "decide the #2569 pair means OFF rather than inherit. Reading it as " +
         "inherit would make every pre-migration and every previous-colour row " +

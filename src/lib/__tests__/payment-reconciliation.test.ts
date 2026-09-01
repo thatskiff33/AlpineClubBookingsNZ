@@ -23,6 +23,11 @@ const mocks = vi.hoisted(() => ({
   settleHostingCoverage: vi.fn(async (...args: unknown[]) => {
     void args;
   }),
+  // #3209: the capacity-failed void is the CANCELLING path in this same function,
+  // and it returns before reaching the enqueue above.
+  reconcileHostingForSystemCancellation: vi.fn(async (...args: unknown[]) => {
+    void args;
+  }),
   executeRaw: vi.fn(),
   bookingFindUnique: vi.fn(),
   bookingFindMany: vi.fn(),
@@ -111,6 +116,14 @@ vi.mock("@/lib/adult-member-hosting-review", () => ({
 vi.mock("@/lib/adult-member-hosting-coverage-drain", () => ({
   settleHostingCoverageAfterCommit: (...args: unknown[]) =>
     mocks.settleHostingCoverage(...args),
+}));
+
+// #3209: its own mock rather than an addition to the review mock above, because
+// the settle and void branches are mutually exclusive and the point of the
+// assertion is which one ran.
+vi.mock("@/lib/adult-member-hosting-system-cancellation", () => ({
+  reconcileHostingReviewForSystemCancellation: (...args: unknown[]) =>
+    mocks.reconcileHostingForSystemCancellation(...args),
 }));
 
 vi.mock("@/lib/logger", () => ({
@@ -673,6 +686,23 @@ describe("markBookingPaymentSucceeded", () => {
       "booking-1",
       expect.anything()
     );
+    // #3209 (`INV-HOST-041`). The beds are reconciled on this branch and adult
+    // supervision was not, and it is the branch's OWN omission: the status set
+    // this void claims from includes CONFIRMED — a coverage source — while the
+    // `enqueueOwnHostingCoverageReevaluation` further down the same function is on
+    // the mutually exclusive settle path, which this branch returns before
+    // reaching. Asserting both here is what makes that distinction a regression
+    // test rather than a comment: a whole-file census could not see it.
+    expect(mocks.reconcileHostingForSystemCancellation).toHaveBeenCalledWith(
+      "booking-1",
+      expect.anything()
+    );
+    expect(mocks.enqueueOwnHostingCoverage).not.toHaveBeenCalled();
+    // The post-commit drain is unconditional on this door, so the obligation the
+    // reconcile recorded reaches the officer queue and the owner immediately.
+    expect(mocks.settleHostingCoverage).toHaveBeenCalledWith({
+      bookingId: "booking-1",
+    });
   });
 
   // Capacity-race auto-refund durability: when two members race for the last

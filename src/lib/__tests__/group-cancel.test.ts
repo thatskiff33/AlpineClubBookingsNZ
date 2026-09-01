@@ -40,6 +40,8 @@ const mocks = vi.hoisted(() => ({
   enqueueGroupSettlementRefundRecovery: vi.fn(),
   markGroupSettlementRefundRecoverySucceeded: vi.fn(),
   enqueueXeroGroupSettlementVoid: vi.fn(),
+  reconcileHostingReviewForSystemCancellation: vi.fn(),
+  settleHostingCoverageAfterCommit: vi.fn(),
 }));
 
 const txClient = {
@@ -113,6 +115,13 @@ vi.mock("@/lib/payment-recovery", () => ({
 vi.mock("@/lib/xero-group-settlement-void-outbox", () => ({
   enqueueXeroGroupSettlementInvoiceVoidOperation:
     mocks.enqueueXeroGroupSettlementVoid,
+}));
+vi.mock("@/lib/adult-member-hosting-system-cancellation", () => ({
+  reconcileHostingReviewForSystemCancellation:
+    mocks.reconcileHostingReviewForSystemCancellation,
+}));
+vi.mock("@/lib/adult-member-hosting-coverage-drain", () => ({
+  settleHostingCoverageAfterCommit: mocks.settleHostingCoverageAfterCommit,
 }));
 vi.mock("@/lib/audit", () => ({ logAudit: mocks.logAudit }));
 vi.mock("@/lib/logger", () => ({
@@ -193,6 +202,8 @@ beforeEach(() => {
   mocks.enqueueXeroGroupSettlementVoid.mockResolvedValue({
     queueOperationId: "void-op-1",
   });
+  mocks.reconcileHostingReviewForSystemCancellation.mockResolvedValue(undefined);
+  mocks.settleHostingCoverageAfterCommit.mockResolvedValue(undefined);
 });
 
 describe("settleGroupBookingOnOrganiserCancel", () => {
@@ -1308,5 +1319,106 @@ describe("executeGroupSettlementRefundPlan (#1351)", () => {
       mirroredChildren: 0,
     });
     expect(mocks.processRefund).not.toHaveBeenCalled();
+  });
+});
+
+describe("adult-member hosting on an organiser cancel (#3209)", () => {
+  function organiserPaysGroup() {
+    mocks.groupBookingFindUnique.mockResolvedValue({
+      id: GROUP_ID,
+      paymentMode: GroupBookingPaymentMode.ORGANISER_PAYS,
+      settlement: null,
+    });
+  }
+
+  it("reconciles hosting for every cancelled child, inside that child's own transaction", async () => {
+    // The defect this closes: the beds were freed correctly and adult supervision
+    // was never re-checked, so cancelling a CONFIRMED or PAID child could take the
+    // qualifying adult off another booking of the SAME joiner with no incident, no
+    // email and nothing in the officer queue.
+    organiserPaysGroup();
+    mocks.bookingFindMany.mockResolvedValue([
+      child({ id: "child-1", status: BookingStatus.CONFIRMED }),
+      child({ id: "child-2", status: BookingStatus.PAID }),
+    ]);
+
+    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4");
+
+    expect(
+      mocks.reconcileHostingReviewForSystemCancellation.mock.calls.map(
+        (call: unknown[]) => call[0],
+      ),
+    ).toEqual(["child-1", "child-2"]);
+    // The caller's own transaction client, so the obligation commits with the
+    // cancellation rather than in a second connection that can be lost.
+    for (const call of mocks.reconcileHostingReviewForSystemCancellation.mock
+      .calls) {
+      expect(call[1]).toBe(txClient);
+    }
+  });
+
+  it("drains the coverage queue after each child commits, scoped to that child", async () => {
+    // Scoped per child because the drain claims by owner and lodge, and every
+    // joiner is a different owner: `booking-cancel.ts` drains the ORGANISER's
+    // booking and can never reach them.
+    organiserPaysGroup();
+    mocks.bookingFindMany.mockResolvedValue([
+      child({ id: "child-1", status: BookingStatus.CONFIRMED }),
+      child({ id: "child-2", status: BookingStatus.CONFIRMED }),
+    ]);
+
+    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4");
+
+    expect(mocks.settleHostingCoverageAfterCommit.mock.calls).toEqual([
+      [{ bookingId: "child-1" }],
+      [{ bookingId: "child-2" }],
+    ]);
+  });
+
+  it("never reconciles or drains for a child whose status claim was lost", async () => {
+    // A concurrent cancel already claimed it, so this run cancelled nothing and
+    // owes no re-evaluation. Fan-out stays proportional to the children this run
+    // really cancelled.
+    organiserPaysGroup();
+    mocks.bookingFindMany.mockResolvedValue([
+      child({ id: "child-1", status: BookingStatus.CONFIRMED }),
+    ]);
+    mocks.bookingUpdate.mockResolvedValue({ count: 0 });
+
+    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4");
+
+    expect(
+      mocks.reconcileHostingReviewForSystemCancellation,
+    ).not.toHaveBeenCalled();
+    expect(mocks.settleHostingCoverageAfterCommit).not.toHaveBeenCalled();
+  });
+
+  it("keeps one child's hosting failure from stopping the rest of the cleanup", async () => {
+    // The seam asks for `REVIEW_ONLY`, so the hosting rule cannot refuse this at
+    // all; what is left to reach here is a database failure or a participant
+    // retry. It rolls that
+    // child's transaction back exactly as any other in-transaction failure does —
+    // the pre-existing best-effort `continue` — and the remaining children are
+    // still cancelled, which is what "an organiser cancel always completes" means
+    // for a loop.
+    organiserPaysGroup();
+    mocks.bookingFindMany.mockResolvedValue([
+      child({ id: "child-1", status: BookingStatus.CONFIRMED }),
+      child({ id: "child-2", status: BookingStatus.CONFIRMED }),
+    ]);
+    mocks.reconcileHostingReviewForSystemCancellation.mockRejectedValueOnce(
+      new Error("participants contended"),
+    );
+
+    await expect(
+      settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4"),
+    ).resolves.toBeUndefined();
+
+    expect(mocks.reconcileHostingReviewForSystemCancellation).toHaveBeenCalledTimes(
+      2,
+    );
+    expect(mocks.settleHostingCoverageAfterCommit.mock.calls).toEqual([
+      [{ bookingId: "child-2" }],
+    ]);
   });
 });

@@ -249,7 +249,7 @@ async function loadCurrent(db: ReadDb): Promise<{
     const scope = slug ? lodgeScope(slug) : "club-wide";
     byScope.set(scope, {
       ...policy,
-      // NULL MEANS `false` ON A DECIDED ROW (#3037, `INV-HOST-042`), and the
+      // NULL MEANS `false` ON A DECIDED ROW (#3037, `INV-HOST-048`), and the
       // comparison has to read it the way the evaluator does or config transfer
       // reports a change nobody made. Every row written before the migration —
       // and every row a draining previous colour writes during a deploy — has
