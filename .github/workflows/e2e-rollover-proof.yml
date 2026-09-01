@@ -94,6 +94,190 @@ jobs:
       - name: Install Playwright browsers
         uses: ./.github/actions/playwright-browsers
 
+      # ---------------------------------------------------------------------
+      # Which specs this clock can honestly run — settled BEFORE it moves.
+      #
+      # The whole VM goes forward, and the app container goes with it. A spec
+      # that drives the app into a REAL outbound TLS call is then met by a
+      # certificate that, in the container's own reckoning, expired weeks ago:
+      # Node refuses the handshake with CERT_HAS_EXPIRED, the payment intent is
+      # never created, the Payment Element never mounts, and the spec times out
+      # waiting for an iframe that was never going to appear. That is what
+      # reddened this job's first dispatch (#3227), and it is not a date defect.
+      #
+      # No clock shift can fix it — the certificate is not ours to reissue — so
+      # those specs come out of the run and the job says so out loud. What is
+      # left is a verdict that means what it says: a failure here is a date
+      # defect and nothing else. The cost, stated plainly because it is real:
+      # the payment journeys are never exercised under a shifted clock, and a
+      # spec is excluded whole, so any non-payment test sharing its file goes
+      # with it. `docs/TESTING.md` records both.
+      # ---------------------------------------------------------------------
+      - name: Work out which specs this clock can honestly run
+        env:
+          RUN_SCOPE: ${{ inputs.scope }}
+        run: |
+          set -euo pipefail
+
+          # DERIVED FROM THE IMPORT, never a hand-kept list. "The Stripe specs"
+          # written down as names is stale the first time somebody writes a
+          # third one, and it goes stale silently — in the direction of a red
+          # that the next reader has to diagnose from scratch.
+          mapfile -t EXCLUDED < <(
+            grep -rl 'helpers/stripe' e2e --include='*.spec.ts' \
+              | sed 's#^e2e/##' | sort
+          )
+          mapfile -t ALL_SPECS < <(find e2e -name '*.spec.ts' | sed 's#^e2e/##' | sort)
+
+          if [ "${#EXCLUDED[@]}" -eq 0 ]; then
+            echo "::error::No spec imports e2e/helpers/stripe. Either the helper moved or this selector broke — either way the exclusion this job depends on has silently become a no-op, and the dispatch would red on an expired certificate all over again." >&2
+            exit 1
+          fi
+          if [ "$(( ${#EXCLUDED[@]} * 4 ))" -gt "${#ALL_SPECS[@]}" ]; then
+            echo "::error::${#EXCLUDED[@]} of ${#ALL_SPECS[@]} spec files would be held out — over a quarter of the suite. A proof narrowed that far is not worth reporting; find out what changed before dispatching again." >&2
+            exit 1
+          fi
+
+          printf 'Holding out %d of %d spec file(s) — they drive the app into a live TLS call this clock cannot complete:\n' \
+            "${#EXCLUDED[@]}" "${#ALL_SPECS[@]}"
+          printf '  - %s\n' "${EXCLUDED[@]}"
+
+          # Read by playwright.config.ts, which has the note on why this cannot
+          # be a command-line file filter.
+          printf 'E2E_EXCLUDE_SPECS=%s\n' "$(IFS=,; printf '%s' "${EXCLUDED[*]}")" >> "$GITHUB_ENV"
+
+          ARGS_FILE="$RUNNER_TEMP/rollover-run-args.txt"
+          : > "$ARGS_FILE"
+          # How many spec files this run is entitled to contain BEFORE the
+          # live-provider exclusion is applied. The step below holds Playwright
+          # to it, which is what catches a narrowing that came from somewhere
+          # other than this job — a stray `testIgnore`, a project that stopped
+          # being enabled, a spec that no longer parses.
+          RUNNABLE=0
+          if [ "$RUN_SCOPE" = 'date-bearing' ]; then
+            # Derived from the imports too, and for the same reason.
+            mapfile -t SPECS < <(grep -rlE \
+              'relDateOnly|stayWindow|walkCalendarToMonth|calendarDayLabel|lodgeNightLabel|DEMO_BOOKING_WINDOWS' \
+              e2e --include='*.spec.ts' | sort)
+            if [ "${#SPECS[@]}" -eq 0 ]; then
+              echo "::error::No date-bearing specs matched — that is a broken selector, not a clean run." >&2
+              exit 1
+            fi
+            # The multi-lodge project is only in the config when
+            # E2E_MULTI_LODGE=1, which this job never sets. Naming those specs
+            # anyway is not an error — Playwright simply matches nothing — but
+            # it would print a spec list two entries longer than the run, which
+            # is the same quiet narrowing this whole step exists to refuse.
+            KEPT=()
+            for spec in "${SPECS[@]}"; do
+              case "$spec" in
+                e2e/multi-lodge/*)
+                  printf 'Not naming %s: it belongs to the multi-lodge project, which this job does not enable.\n' "$spec"
+                  ;;
+                *) KEPT+=("$spec") ;;
+              esac
+            done
+            if [ "${#KEPT[@]}" -eq 0 ]; then
+              echo "::error::Every date-bearing spec lives in a project this job does not enable, so this scope has nothing to run." >&2
+              exit 1
+            fi
+            # The live-provider specs stay ON this list deliberately. One
+            # mechanism does the excluding — `testIgnore` in
+            # playwright.config.ts — so the step below can prove it took by
+            # listing the same run with and without it. Subtracting them here
+            # as well would make that comparison compare nothing.
+            printf 'Scope is date-bearing: naming %d spec(s), less the %d held out above.\n' \
+              "${#KEPT[@]}" "${#EXCLUDED[@]}"
+            printf '  %s\n' "${KEPT[@]}"
+            printf '%s\n' "${KEPT[@]}" > "$ARGS_FILE"
+            RUNNABLE="${#KEPT[@]}"
+          else
+            echo 'Running the whole suite, less the spec(s) held out above.'
+            for spec in "${ALL_SPECS[@]}"; do
+              case "$spec" in
+                multi-lodge/*) ;;
+                *) RUNNABLE=$(( RUNNABLE + 1 )) ;;
+              esac
+            done
+          fi
+          printf 'ARGS_FILE=%s\n' "$ARGS_FILE" >> "$GITHUB_ENV"
+          # The +1 is e2e/auth.setup.ts: the `setup` project is a DEPENDENCY, so
+          # Playwright contributes it in full whatever the file filter says. If a
+          # second setup file is ever added this fails loudly with both numbers,
+          # which is the right direction for an assumption to break in.
+          printf 'EXPECTED_BASELINE_FILES=%d\n' "$(( RUNNABLE + 1 ))" >> "$GITHUB_ENV"
+
+      # A run that narrowed further than it said would report green while
+      # proving very little — the same vacuous pass the clock check below
+      # exists to refuse. So prove the narrowing rather than trusting it: list
+      # the tests once WITHOUT the exclusion and once WITH it, and require the
+      # difference to be exactly the files that were named. Listing loads the
+      # config and walks the test directory; it starts no browser and touches
+      # no network, so it is safe on either side of the shift and cheap.
+      - name: Prove the exclusion took, and took exactly what it named
+        run: |
+          set -euo pipefail
+          mapfile -t ARGS < <(cat "$ARGS_FILE")
+          IFS=',' read -r -a EXCLUDED <<< "$E2E_EXCLUDE_SPECS"
+
+          BASELINE="$RUNNER_TEMP/rollover-list-baseline.txt"
+          SELECTED="$RUNNER_TEMP/rollover-list-selected.txt"
+          # Playwright prints a native separator; normalise so the check reads
+          # the same on any host.
+          E2E_EXCLUDE_SPECS='' npx playwright test --list --reporter=list "${ARGS[@]}" \
+            | tr '\\' '/' > "$BASELINE"
+          npx playwright test --list --reporter=list "${ARGS[@]}" \
+            | tr '\\' '/' > "$SELECTED"
+          tail -n 1 "$BASELINE"
+          tail -n 1 "$SELECTED"
+
+          count_files() {
+            sed -n 's/^Total: [0-9]* tests* in \([0-9]*\) files*$/\1/p' "$1" | tail -n 1
+          }
+          BASE_FILES="$(count_files "$BASELINE")"
+          SEL_FILES="$(count_files "$SELECTED")"
+          if [ -z "$BASE_FILES" ] || [ -z "$SEL_FILES" ]; then
+            echo "::error::Could not read a file count out of Playwright's listing, so this job cannot show what it is about to leave out. Refusing to run a proof it cannot describe." >&2
+            exit 1
+          fi
+
+          # First: is the run the size it should be before this job narrows it at
+          # all? Comparing the two listings alone cannot answer that — a spec
+          # dropped by something OTHER than E2E_EXCLUDE_SPECS is missing from
+          # both sides equally, and the difference still comes out right.
+          if [ "$BASE_FILES" -ne "$EXPECTED_BASELINE_FILES" ]; then
+            echo "::error::Playwright selected ${BASE_FILES} file(s) before any exclusion, and this scope accounts for ${EXPECTED_BASELINE_FILES}. Something is narrowing the run that this job did not ask for, so a green from it would cover less than it claims." >&2
+            exit 1
+          fi
+
+          EXPECTED=0
+          for spec in "${EXCLUDED[@]}"; do
+            if grep -qF " ${spec}:" "$BASELINE"; then
+              EXPECTED=$(( EXPECTED + 1 ))
+            fi
+            if grep -qF " ${spec}:" "$SELECTED"; then
+              echo "::error::${spec} is still selected. The exclusion never reached Playwright, and this dispatch would red on an expired certificate rather than on a date." >&2
+              exit 1
+            fi
+          done
+
+          if [ "$EXPECTED" -eq 0 ]; then
+            echo "::error::None of the excluded specs was in this run to begin with, so excluding them proves nothing about it. Check the scope and the selector." >&2
+            exit 1
+          fi
+          # There is deliberately no "and at least N files remain" check here.
+          # Every way of reaching one was tried against the real config, and each
+          # is already refused above or by Playwright itself: narrowing the run
+          # to nothing leaves `chromium` empty, which drops the `setup` project
+          # with it and makes Playwright exit "No tests found"; anything short of
+          # that trips the two checks above first. A guard nothing can trip reads
+          # as protection without being any.
+          if [ "$(( BASE_FILES - SEL_FILES ))" -ne "$EXPECTED" ]; then
+            echo "::error::Holding out ${EXPECTED} spec(s) removed $(( BASE_FILES - SEL_FILES )) file(s) from the run (${BASE_FILES} -> ${SEL_FILES}). Something other than the live-provider specs has been narrowed away, and a green from this run would not mean what it says." >&2
+            exit 1
+          fi
+          printf 'Verified: %d spec file(s) held out, %s file(s) still in the run.\n' "$EXPECTED" "$SEL_FILES"
+
       - name: Write staging env file
         run: bash scripts/ci/write-e2e-staging-env.sh
 
@@ -128,6 +312,14 @@ jobs:
       # The clock moves here, and nothing between this line and "Restore the
       # runner's clock" reaches the network — that is what the pre-pull above
       # and the early restore below are both for.
+      #
+      # "Nothing" has to include what the APP does while a spec drives it, and
+      # for the first two months of this job's life it did not: the runner's own
+      # network work was accounted for and the container's was not, so a spec
+      # that made the app call Stripe met an expired certificate and the job
+      # reported failure for a reason that had nothing to do with a date
+      # (#3227). The step "Work out which specs this clock can honestly run"
+      # above is the other half of this promise.
       # ---------------------------------------------------------------------
       - name: Park the runner's clock in the rollover window
         id: shift
@@ -201,26 +393,17 @@ jobs:
       - name: Prepare staging stack (postgres, migrate, seed, app)
         run: E2E_SKIP_APP_BUILD=1 bash scripts/e2e-stack.sh prepare
 
+      # Which specs run, and which are held out, was settled and PROVED before
+      # the clock moved. `E2E_EXCLUDE_SPECS` is already in this step's
+      # environment and reaches playwright.config.ts through the stack script.
       - name: Run the browser suite under the shifted clock
-        env:
-          RUN_SCOPE: ${{ inputs.scope }}
         run: |
           set -euo pipefail
-          if [ "$RUN_SCOPE" = 'date-bearing' ]; then
-            # Derived from the imports, never a hand-kept list — a list of "the
-            # date-bearing specs" is stale the first time somebody adds one.
-            mapfile -t SPECS < <(grep -rlE \
-              'relDateOnly|stayWindow|walkCalendarToMonth|calendarDayLabel|lodgeNightLabel|DEMO_BOOKING_WINDOWS' \
-              e2e --include='*.spec.ts' | sort)
-            if [ "${#SPECS[@]}" -eq 0 ]; then
-              echo "No date-bearing specs matched — that is a broken selector, not a clean run." >&2
-              exit 1
-            fi
-            printf 'Running %d date-bearing spec(s):\n' "${#SPECS[@]}"
-            printf '  %s\n' "${SPECS[@]}"
-            bash scripts/e2e-stack.sh run "${SPECS[@]}"
-          else
+          mapfile -t ARGS < <(cat "$ARGS_FILE")
+          if [ "${#ARGS[@]}" -eq 0 ]; then
             bash scripts/e2e-stack.sh run
+          else
+            bash scripts/e2e-stack.sh run "${ARGS[@]}"
           fi
 
       # ---------------------------------------------------------------------
@@ -281,4 +464,18 @@ jobs:
             echo "from the machine rather than from the club. The rule, and the three"
             echo "guards that run on every pull request, are in"
             echo "\`docs/TESTING.md\` → \"The browser suite's clock discipline\"."
+            echo
+            if [ -n "${E2E_EXCLUDE_SPECS:-}" ]; then
+              echo "### Held out of this run"
+              echo
+              echo "These specs drive the app into a live TLS call, which no clock this"
+              echo "far forward can complete, so they were excluded rather than left to"
+              echo "fail on an expired certificate. The list is derived from which specs"
+              echo "import \`e2e/helpers/stripe\`, so it cannot go stale:"
+              echo
+              printf '%s\n' "$E2E_EXCLUDE_SPECS" | tr ',' '\n' | sed 's/^/- `/; s/$/`/'
+            else
+              echo "Nothing was held out of this run — which is itself unexpected, since"
+              echo "the live-provider exclusion should always name at least one spec."
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
