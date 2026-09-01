@@ -144,6 +144,24 @@ rules first written here. #2765 extended it with the measured-audience half.
   two trip keys (a booking in one trip whose same-owner dependent sits in
   another), so sorting within a call cannot order keys discovered in two.
 
+  **THE ORDER IS ABOUT A STABLE FAN-OUT; THE FAIL-FAST TRY IS WHAT MAKES THE TIER
+  DEADLOCK-FREE, and the two must not be confused.** This rule does NOT say the
+  tree never takes the trip key after the owner key, because it does:
+  `settleSameOwnerDependentCoverage` holds the owner key and calls
+  `inspectSameOwnerDependents`, which evaluates a same-owner dependent booking
+  that may sit in a DIFFERENT trip and takes that trip's key. What holds instead
+  is stronger and enforceable: **no transaction ever WAITS on a coverage-group
+  key.** The try returns immediately, an advisory xact lock cannot be released
+  before commit, so the blocking call after a successful try is a re-entrant
+  no-op — and a tier nobody waits on cannot join a wait-for cycle whatever order
+  it is taken in. Every acquisition in the tree therefore goes through the single
+  `acquireHostingCoverageGroupKey` protocol function, and
+  `src/lib/__tests__/adult-member-hosting-coverage-lock.test.ts` fails both on a
+  second acquisition site and on the deletion of that function's try. Without the
+  try there is a real deadlock, and it does not surface as the stable 409:
+  PostgreSQL answers `40P01`, which is neither `55P03` nor the retry error, so a
+  member sees a raw 500.
+
 ## INV-LOCK-003
 
 - **Every Tier-2 call site in non-test `src/` is registered, individually, with
