@@ -113,6 +113,21 @@ jobs:
       # spec is excluded whole, so any non-payment test sharing its file goes
       # with it. `docs/TESTING.md` records both.
       # ---------------------------------------------------------------------
+      # Listing the tests IMPORTS every spec file, and `e2e/pre-setup/` reaches
+      # `@prisma/client` at module scope through `e2e/helpers/setup-state.ts`.
+      # Without this the listing dies on an ungenerated client, which is a
+      # confusing way to fail a step that is only counting files. The staging
+      # stack generates its own client again later against the real host URL;
+      # this one exists so the count can be taken before the clock moves.
+      #
+      # `prisma generate` reads the schema and writes a client. It opens NO
+      # connection, so the placeholder below is never dialled — it is there
+      # because the config loader insists the variable resolves to something.
+      - name: Generate the Prisma client, so the specs can be imported
+        env:
+          DATABASE_URL: postgresql://placeholder:placeholder@127.0.0.1:1/placeholder
+        run: npx prisma generate
+
       - name: Work out which specs this clock can honestly run
         env:
           RUN_SCOPE: ${{ inputs.scope }}
@@ -434,15 +449,32 @@ jobs:
           path: playwright-report/
           if-no-files-found: ignore
 
+      # Both of these presuppose a stack. The selection and proof steps run
+      # BEFORE the env file is written, so a failure there reaches here with no
+      # `.env.staging` and no containers: teardown then exits 1 on
+      # "Missing .env.staging", turning one clean, well-explained failure into
+      # two and burying the real one. The condition is on the STEP body rather
+      # than a job-level `if:`, which on a required check would report a
+      # vacuous pass — see the header of `ci.yml`. This job is not required, but
+      # the habit is worth keeping.
       - name: Show app logs on failure
         if: failure()
         run: |
+          if [ ! -f .env.staging ]; then
+            echo "No .env.staging, so no stack was ever started — the failure above is from before the stack existed."
+            exit 0
+          fi
           docker compose --env-file .env.staging -p tacbookings-staging \
             -f docker-compose.yml -f docker-compose.staging.yml logs app | tail -200
 
       - name: Tear down stack
         if: always()
-        run: bash scripts/e2e-stack.sh down
+        run: |
+          if [ ! -f .env.staging ]; then
+            echo "No .env.staging, so there is no stack to tear down."
+            exit 0
+          fi
+          bash scripts/e2e-stack.sh down
 
       - name: Explain the verdict
         if: always()
