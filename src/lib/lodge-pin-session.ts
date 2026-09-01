@@ -6,11 +6,11 @@ import { addDaysDateOnly, formatDateOnly } from "./date-only";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { getAuthSecret } from "./runtime-config";
+import { HUT_LEADER_PIN_SESSION_IDLE_SECONDS } from "./lodge-pin-session-timing";
 
 export const HUT_LEADER_PIN_SESSION_COOKIE = "tac_hut_leader_pin_session";
 
 const HUT_LEADER_PIN_BCRYPT_ROUNDS = 12;
-const HUT_LEADER_PIN_SESSION_MAX_AGE_SECONDS = 12 * 60 * 60;
 const PIN_LOCKOUT_THRESHOLD = 10;
 const PIN_LOCKOUT_SECONDS = 15 * 60;
 const PIN_FAILURE_RESET_MS = 15 * 60 * 1000;
@@ -258,15 +258,37 @@ export async function verifyHutLeaderPinForAssignment(
   return assignment;
 }
 
+/**
+ * A hut-leader PIN session cookie, ready to be written to a response.
+ *
+ * `expiresAt` is the moment the cookie stops being accepted, and it is also
+ * inside the SIGNED payload as `exp` — which is what makes the idle window
+ * server-authoritative (#3228). A browser that keeps or re-sends an old cookie
+ * value gains nothing: `decodePayload` verifies the signature and then refuses
+ * a payload whose own `exp` has passed, so the deadline cannot be edited,
+ * replayed past, or extended by anything the client says.
+ */
+export interface LodgePinSessionCookie {
+  value: string;
+  expiresAt: Date;
+  maxAge: number;
+}
+
+/**
+ * The one place the idle deadline is computed. Sign-in and renewal both come
+ * here, so a change to the window cannot land on one path and miss the other.
+ */
+function nextIdleDeadline(): Date {
+  return new Date(Date.now() + HUT_LEADER_PIN_SESSION_IDLE_SECONDS * 1000);
+}
+
 export function createLodgePinSessionWithVersion(
   assignmentId: string,
   memberId: string,
   pinHash?: string | null,
   sessionUserId?: string | null
-) {
-  const expiresAt = new Date(
-    Date.now() + HUT_LEADER_PIN_SESSION_MAX_AGE_SECONDS * 1000
-  );
+): LodgePinSessionCookie {
+  const expiresAt = nextIdleDeadline();
 
   return {
     value: encodePayload({
@@ -279,8 +301,121 @@ export function createLodgePinSessionWithVersion(
         : undefined,
     }),
     expiresAt,
-    maxAge: HUT_LEADER_PIN_SESSION_MAX_AGE_SECONDS,
+    maxAge: HUT_LEADER_PIN_SESSION_IDLE_SECONDS,
   };
+}
+
+/**
+ * Slide the idle window forward on a session that is ALREADY valid (#3228).
+ *
+ * Called from one route and one route only — `POST /api/lodge/pin-session`,
+ * which the kiosk calls when a person touches the screen. Nothing else in the
+ * tree re-issues this cookie, and that is the whole of the "background
+ * refreshes do not extend the session" guarantee: the routes a wall tablet
+ * polls have no code path that reaches here, so an unattended device cannot
+ * keep itself privileged by talking to the server.
+ *
+ * It **cannot resurrect an expired session**. `decodePayload` refuses a payload
+ * whose `exp` has passed, so once the window has closed the only way back is
+ * the PIN. It also cannot change who the session is: `assignmentId`,
+ * `memberId`, `pinVersion` and `sessionUserBinding` are carried through
+ * verbatim from the payload the server itself signed, so a renewal re-states
+ * exactly the same authority with a later deadline and needs no database read
+ * to do it. Every one of those fields is re-verified against live state on the
+ * next request by {@link getActiveLodgePinSessionForDate}, so a PIN reset, a
+ * deactivated member or an assignment that has ended still ends the session
+ * whether or not it was renewed a second earlier.
+ */
+export function renewLodgePinSession(
+  rawCookieValue: string | null
+): LodgePinSessionCookie | null {
+  if (!rawCookieValue) {
+    return null;
+  }
+
+  const payload = decodePayload(rawCookieValue);
+  if (!payload) {
+    return null;
+  }
+
+  const expiresAt = nextIdleDeadline();
+
+  return {
+    value: encodePayload({
+      ...payload,
+      exp: Math.floor(expiresAt.getTime() / 1000),
+    }),
+    expiresAt,
+    maxAge: HUT_LEADER_PIN_SESSION_IDLE_SECONDS,
+  };
+}
+
+/** {@link renewLodgePinSession}, reading the cookie off an incoming request. */
+export function renewLodgePinSessionForRequest(
+  request: Request
+): LodgePinSessionCookie | null {
+  return renewLodgePinSession(getCookieValueFromRequest(request));
+}
+
+/**
+ * The cookie attributes, in one place, for every route that writes this cookie.
+ *
+ * A structural `cookies` parameter rather than a `NextResponse`: this module is
+ * reachable from `src/instrumentation.node.ts` (see
+ * {@link hasAnyActiveLodgePinSession}), so it stays free of `next/server`.
+ */
+interface LodgePinSessionCookieWriter {
+  set(options: {
+    name: string;
+    value: string;
+    httpOnly: boolean;
+    sameSite: "lax";
+    secure: boolean;
+    expires: Date;
+    maxAge: number;
+    path: string;
+  }): unknown;
+}
+
+function lodgePinSessionCookieAttributes() {
+  return {
+    name: HUT_LEADER_PIN_SESSION_COOKIE,
+    httpOnly: true,
+    sameSite: "lax" as const,
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+  };
+}
+
+/** Write an issued or renewed PIN session to a response. */
+export function setLodgePinSessionCookie(
+  cookies: LodgePinSessionCookieWriter,
+  session: LodgePinSessionCookie
+): void {
+  cookies.set({
+    ...lodgePinSessionCookieAttributes(),
+    value: session.value,
+    expires: session.expiresAt,
+    maxAge: session.maxAge,
+  });
+}
+
+/**
+ * End the PIN session now — the kiosk's **Lock** control (#3228).
+ *
+ * Deliberately the same name, path and attributes as the setter above, because
+ * a clearing cookie that differs in any of them leaves the real one in place
+ * and a lock that silently does nothing is worse than no lock at all.
+ */
+export function clearLodgePinSessionCookie(
+  cookies: LodgePinSessionCookieWriter
+): void {
+  cookies.set({
+    ...lodgePinSessionCookieAttributes(),
+    value: "",
+    expires: new Date(0),
+    maxAge: 0,
+  });
 }
 
 // test seam
