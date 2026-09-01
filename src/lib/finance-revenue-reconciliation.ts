@@ -303,6 +303,30 @@ async function loadChartOfAccountsContext(): Promise<ChartOfAccountsContext> {
   return { accountCodeById, hutFeesCode, subscriptionCode };
 }
 
+/**
+ * The hut-fee revenue this system can price for the window, from its own night
+ * rows.
+ *
+ * #3170: A NIGHT WHOSE STORED PRICE IS `NULL` IS EXCLUDED, NOT COUNTED AS ZERO,
+ * and the difference is the whole reason the column is nullable. SQL `SUM`
+ * skips NULLs, so such a night contributes nothing here — which is the honest
+ * answer, because its amount is genuinely not known: it was written by a parked
+ * edit that committed a structural change and held the money as an OPEN
+ * `EDIT_FINANCIAL_REVIEW` task for a person to price (epic #2797). Treating it
+ * as `$0` of revenue would be a financial statement nobody made.
+ *
+ * IT DOES NOT VANISH. The guest's stored total still carries the money, and
+ * `buildInvoiceLineItems` bills that whole total for a guest with any unknown
+ * night, so Xero holds the amount this sum leaves out. It therefore appears as
+ * a positive VARIANCE against Xero — exactly what this report exists to raise
+ * to a person — rather than as a silently balanced pair of wrong numbers. The
+ * OPEN review task is the system's own record of the same fact.
+ *
+ * THE `?? 0` BELOW IS NOT A PRICE DEFAULT. `_sum.priceCents` is null only when
+ * the WHERE clause matched no rows at all, and the sum of no rows is zero. It
+ * never stands in for an unpriced night, which is filtered out by SQL before
+ * the aggregate is formed.
+ */
 async function loadBookingHutFees(
   start: Date,
   end: Date

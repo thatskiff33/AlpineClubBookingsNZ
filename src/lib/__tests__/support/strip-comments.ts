@@ -1,12 +1,93 @@
 /**
- * Source with every comment blanked out, newlines preserved.
+ * Telling code from prose: source with its comments blanked out, newlines
+ * preserved, plus the two other forms a scanner in this tree ever needs.
  *
- * THE ONE DEFINITION IN THE TREE, and since #3132 that is a fact rather than an
- * aspiration: twenty test files and one CI script import this module, and no
- * local `stripComments` exists anywhere else. Nothing yet FAILS on a nineteenth
- * copy — the lint arm for that is deliberately left as a follow-up, because
- * `INV-SSOT-001` prefers deleting the copies to policing them and the deleting
- * came first. Until it exists, this is on review.
+ * THE ONE DEFINITION IN THE TREE, and since #3164 a rule ENFORCES that rather
+ * than review doing it: 59 test files, one test helper and one CI script import this module, and
+ * `ssot/no-local-comment-stripper` in `eslint.config.mjs` reports a second
+ * scanner wherever one is written, in the editor. That FIGURE is measured
+ * against the tree by `ssot-comment-stripper-guard.test.ts`, which also requires
+ * `docs/invariants/single-source-of-truth.md` to state the same number — it had
+ * drifted three times before anything compared them (published as 48 against a
+ * tree of 53; re-measured at #3180; then published as 56 against a base of 55
+ * and incremented to 57 at #3196), and INV-SSOT-004's own point is that two
+ * statements of one fact with nothing comparing them IS the defect.
+ *
+ * COUNT BY IMPORT SPECIFIER rather than by path text, which is what the pin
+ * does, because a grep for the path over-reports three ways. The module is
+ * reached through three spellings — `./support/strip-comments`,
+ * `@/lib/__tests__/support/strip-comments`, and the CI script's relative path
+ * with its `.ts` extension — and three further files NAME that path without
+ * importing it: `eslint.config.mjs` inside the rule's own message,
+ * `ssot-comment-stripper-guard.test.ts` as the lint target it feeds ESLint, and
+ * `support/member-merge-family.ts` in prose.
+ *
+ * #3132's own claim to have converged the tree was true of the copies spelled
+ * `stripComments` and of nothing else. Measured on the day it landed, SEVEN more
+ * were alive under the name `withoutComments`, and #3164 then found twenty-one
+ * more with no name at all — written inline as a `.replace()` chain in a census
+ * — because a sweep keyed on a symbol cannot see an expression. That is why the
+ * rule keys on what a function DOES, and why the count above roughly doubled
+ * without a single new census being written.
+ *
+ * FIVE FORMS LIVE HERE, and that is the point of the module rather than an
+ * accident of where things landed. `stripComments` keeps strings and removes
+ * comments; `stripCommentsAndStrings` (#3164 moved it here from the Xero census
+ * that wrote it) also blanks the CONTENTS of every string, so a rule cannot fire
+ * on prose inside a quoted example; `stripCssComments` reads CSS, the one other
+ * language sharing JavaScript's block delimiter; `blankLiterals` (#3180)
+ * returns text of the SAME LENGTH, so a caller that reports a line number or
+ * slices by index still points at what it named; and `blankLiteralsWithSpans`
+ * (#3196) is that same blanking with the blanked runs reported back, for the one
+ * caller that has to put some of them again. A caller picks a form. It does not
+ * write a sixth.
+ *
+ * WHICH ONE, IN ONE SENTENCE EACH — and this list is the ONE statement of that
+ * choice in the tree, so a form's own docblock says what it is and sends you
+ * here rather than restating the other four:
+ *
+ * - `stripComments` — you want the code as TEXT and will grep it. It copies a
+ *   regex literal through VERBATIM, where both blank forms blank the body.
+ * - `stripCommentsAndStrings` — the rule's own subject gets discussed in prose,
+ *   including inside a quoted example, and must not fire on it. It alone keeps
+ *   an identifier-shaped bracket key (`invoice["dueDate"]`), which is a property
+ *   read spelled with a string rather than prose.
+ * - `stripCssComments` — the file is CSS.
+ * - `blankLiterals` — you are a WALKER: you report a line number, slice by
+ *   index, or compare one match's position against another's.
+ * - `blankLiteralsWithSpans` — you are a walker AND some of what blanking
+ *   removes is the very thing you are hunting, so you need to put those runs
+ *   back yourself. It is the escape hatch, not the default: reach for
+ *   `blankLiterals` unless you can name the runs you will restore.
+ *
+ * The last one is a fifth export on a module whose value is that there is one
+ * obvious choice per job, and that cost was taken knowingly (#3196) to get the
+ * ratchet below to zero. The list above is what pays for it.
+ *
+ * TWO OF THOSE CLAUSES ARE NOT STYLE. A regex body and a bracket key are TEXT A
+ * SCANNER CAN MATCH, so moving a census from one form to another changes the
+ * ANSWER it reports, silently and without a line of its own code changing.
+ * `advisory-lock-guard.test.ts` rests on the first of them: its "does not count
+ * a needle that only appears inside a regex" case holds because the blank forms
+ * blank a regex body, and `stripComments` would count that needle.
+ *
+ * Two lists in `eslint.config.mjs` say what is not a copy.
+ * `COMMENT_STRIPPER_ALLOWLIST` holds the scanners that are a different CONCEPT —
+ * SQL comments, a comment EXTRACTOR, and the guard's own fixture file.
+ * `UNCONVERGED_COMMENT_SCANNERS` is a ratchet, and it is now EMPTY: #3180 took
+ * it from four files to one, and #3196 took the last one. The three #3180
+ * converged walked source and reported offsets into the ORIGINAL text, which
+ * neither of the first two forms can serve: one preserves newlines but not
+ * columns, the other replaces each string with a two-character `""`.
+ * `blankLiterals` is the form they were waiting on, and it was written HERE
+ * rather than three more times out there. The last entry,
+ * `advisory-lock-guard.test.ts`, never shared that property: it hunts raw SQL,
+ * which lives inside string literals, while the prose it must ignore lives
+ * inside string literals too, so blanking both would have dropped its pinned
+ * lock inventory. `blankLiteralsWithSpans` is what let it converge without this
+ * module growing an opinion about SQL. An empty ratchet is not a dead list — it
+ * is what makes "no second scanner exists" a checked fact, and
+ * `ssot-comment-stripper-guard.test.ts` pins it at zero.
  *
  * It is shared rather than copied for a reason that cost this repository a real
  * blind spot (#3123). `club-time-escape-hatch-census.test.ts` strips comments
@@ -66,25 +147,72 @@
  * That last one is not a new discovery. The #2869 review found it and fixed it in
  * `xero-provider-date-boundary-census.test.ts` ALONE, which is `INV-SSOT-004`
  * exactly: one of two instruments repaired, and the other left reading the same
- * tree by a different method. The predicate and the scan below are that census's,
- * which now imports them from here instead of keeping its own.
+ * tree by a different method. The predicates below were that census's, shared
+ * with this scanner by #3132; #3164 finished the move by bringing the census's
+ * whole second form here too, so the two instruments are now one module with two
+ * entry points and cannot drift apart again. The predicates are private for that
+ * reason — nothing outside this file needs them any more.
+ *
+ * TWO JSX SHAPES ARE CARVED OUT of the regex branch (#3191 fix round), and they
+ * are the only ones: `</Tag>` and a self-closing ` />` after a value token. Both
+ * used to open a phantom regex that ran forward to the next `/` on the line and
+ * DELETED the code between - measured on `finance-fees-sections.tsx`, where it
+ * hid two `.fieldProps` spreads and made an accessibility-wiring contract report
+ * a half-wired file that is wired correctly. The condition and its controls are
+ * on `startsRegexLiteral` and in `xero-provider-date-boundary-census.test.ts`.
+ *
+ * THE REACH OF THAT CARVE-OUT IS MEASURED rather than asserted, because "it
+ * changes nothing" is exactly the claim a later reader skips re-checking. Both
+ * versions of the scanner were run over all 3,924 files under `src/` in all
+ * three JavaScript forms and their outputs diffed, line by line.
+ * `stripCommentsAndStrings` changed 897 of those files and `blankLiterals` the
+ * same 897, recovering 19,519 and 22,513 lines of JSX respectively, and NOT ONE
+ * LINE anywhere came back with less text than before. `stripComments` moved the
+ * other way on five files — the `email-templates/` modules — where 79 lines the
+ * old version wrongly KEPT are now stripped, and every one of those lines is
+ * docblock prose rather than code. Line counts matched on every file and
+ * `blankLiterals` kept its length promise on every file. So the honest summary
+ * is not "no blast radius": it is that the fix recovers a great deal of real
+ * code, loses none, and additionally repairs five files it was not aimed at.
  *
  * It is still not a full parser, and what it does not attempt is stated so
  * nobody has to rediscover it: it does not check that a regex is well-formed,
  * and a `/` following a string literal (`"abc" / 2`) is read as opening a regex
- * rather than dividing. Neither shape occurs on the scanned surface, and both
- * fail toward keeping text rather than deleting it — which is the safe direction
- * for an instrument whose job is to stop a guard passing vacuously.
+ * rather than dividing. Neither shape occurs on the scanned surface — but WHICH
+ * WAY A PHANTOM REGEX FAILS DEPENDS ON THE FORM, and an earlier version of this
+ * paragraph claimed both shapes "fail toward keeping text" as though it did not.
+ * `stripComments` copies a phantom regex through verbatim and so does keep text;
+ * `stripCommentsAndStrings` replaces its whole span with `""` and
+ * `blankLiterals` blanks it, so in those two the code between the two slashes is
+ * DELETED. Measured on `const x = "abc" / 2; // trailing`, the `2;` survives the
+ * first form and is gone from the other two. That is the same class as the #3191
+ * defect above, which is why it needed a carve-out rather than an argument.
  *
- * Two imprecisions are pinned rather than hidden, and they fail in opposite
- * directions.
+ * Three imprecisions are pinned rather than hidden, and they do not all fail in
+ * the same direction.
  *
  * An odd apostrophe in JSX prose (`<p>It's the club clock</p>`) opens a string
  * that never closes, so a comment after it is NOT stripped. That over-reports,
  * which is visible as a failure rather than as a false pass, and
  * `member-public-club-time-convergence.test.ts` asserts both halves of it.
  *
- * The other one under-reports, so it is the one to know about. JSX TEXT is
+ * The `</Tag>` carve-out over-reports the same way, and saying so is better than
+ * the flat "neither condition can hide a real regex literal" this docblock used
+ * to carry. A regex CAN legally be written after a `<`: `a < /"/.test(b)` is
+ * valid JavaScript, the carve-out reads that `/` as division, the quote inside
+ * is then scanned as a string opener, and `stripComments` desynchronises for the
+ * rest of the file — the `xero-contacts.ts` failure, reopened for one shape.
+ * Measured, a line comment written below such a statement comes back UNSTRIPPED.
+ * Two things make it acceptable rather than merely admitted: it fails toward
+ * keeping text, so a census meets its own prose and reports a FAILURE rather
+ * than a silent green; and the whole-tree diff above bounds how live it is. Only
+ * a regex holding a QUOTE or a comment delimiter can desynchronise anything —
+ * `a < /x/.test(b)` is copied through unchanged by either version — and such a
+ * regex would have moved `stripComments`'s output. It moved on five files, every
+ * changed line a docblock the old version wrongly kept, so no such shape is live
+ * under `src/` today.
+ *
+ * The third one under-reports, so it is the one to know about. JSX TEXT is
  * neither code nor a string literal, so a `//` written in prose inside an
  * element is read as a line comment and the rest of that line is deleted.
  * Measured live in two files: `backups-client.tsx` renders
@@ -106,7 +234,7 @@
  */
 
 /** The last character of `code` that is not whitespace, or `""`. */
-export function lastSignificant(code: string): string {
+function lastSignificant(code: string): string {
   for (let index = code.length - 1; index >= 0; index -= 1) {
     if (!/\s/.test(code[index])) return code[index];
   }
@@ -134,9 +262,46 @@ const REGEX_POSITION_KEYWORD =
  * reached, and an empty regex is unwritable in JavaScript, so the two cannot
  * collide.
  */
-export function startsRegexLiteral(codeSoFar: string): boolean {
+function startsRegexLiteral(codeSoFar: string, next: string): boolean {
   const previous = lastSignificant(codeSoFar);
   if (previous === "") return true;
+  /*
+    THE TWO JSX SHAPES, and they are a MEASURED defect rather than pedantry
+    (#3191 fix round). Both delete real code on a single-line element, which is
+    the unsafe direction for an instrument whose job is to stop a guard passing
+    vacuously. A phantom regex is not equally harmless in every form: this
+    function is shared, and while `stripComments` copies one through verbatim and
+    keeps text, `stripCommentsAndStrings` replaces its whole span with `""` and
+    `blankLiterals` blanks it - so in those two the code between the two slashes
+    is GONE, which is how this defect deleted the `.fieldProps` spreads below.
+
+    `</Label>` is a closing tag, and `<` is not one of the value tokens below, so
+    the old rule opened a regex on it and ran forward to the next `/` - the `/>`
+    of a sibling element. `>` is likewise not a value token, so the `/` of that
+    `/>` opened another one and ran to the next closing tag. Measured on
+    `finance-fees-sections.tsx`, whose fee rows are written one element per line:
+    both `{...entranceAmountHint.fieldProps}` spreads were deleted while both
+    `.hintProps` spreads survived, so `field-hint.test.tsx`'s three-way count
+    read 91 hooks against 89 fieldProps - a half-wiring failure reported against
+    a file that is wired correctly.
+
+    THE `<` CONDITION CAN SUPPRESS A REAL REGEX, and the honest claim is about
+    which way that fails rather than that it cannot happen. `a < /"/.test(b)` is
+    legal JavaScript; the condition reads that `/` as division, the quote inside
+    is then scanned as a string opener, and `stripComments` desynchronises for
+    the rest of the file - the `xero-contacts.ts` class, reopened for one shape.
+    It fails toward KEEPING text, so a census meets its own prose and reports a
+    failure rather than a silent green, and only a regex carrying a QUOTE or a
+    comment delimiter can desynchronise anything at all - the whole-tree diff
+    recorded in the module docblock found none of those live under `src/`. It is
+    listed there as the third pinned imprecision rather than argued away. The
+    `/>` condition
+    is narrower again: it is refused only where a JSX self-close puts a value
+    token before it, so `split(/>/)` - whose `/` follows `(` - is untouched, as
+    is `/>=/` after an `=`.
+  */
+  if (previous === "<") return false;
+  if (next === ">" && /["'}]/.test(previous)) return false;
   if (/[)\]\w$]/.test(previous)) {
     return REGEX_POSITION_KEYWORD.test(codeSoFar);
   }
@@ -144,13 +309,16 @@ export function startsRegexLiteral(codeSoFar: string): boolean {
 }
 
 /** The index just past a regex literal that starts at `start`. */
-export function endOfRegexLiteral(source: string, start: number): number {
+function endOfRegexLiteral(source: string, start: number): number {
   let index = start + 1;
   let inCharacterClass = false;
   while (index < source.length) {
     const char = source[index];
     if (char === "\\") {
-      index += 2;
+      // CLAMPED for the reason given on `blankTemplateLiteral`'s escape branch:
+      // a source ending in a backslash would otherwise return one PAST the end,
+      // and `blankCode` pushes that as a `regex` span's `end`.
+      index = Math.min(index + 2, source.length);
       continue;
     }
     // A regex literal cannot span lines; if one appears to, the `/` was
@@ -192,7 +360,7 @@ export function stripComments(source: string): string {
       // A regex literal is CODE, and is copied through verbatim so the scanner
       // cannot mistake a slash or a quote inside it for a delimiter. Checked
       // AFTER the two comment openers, so `//` and `/*` never reach here.
-      if (character === "/" && startsRegexLiteral(out)) {
+      if (character === "/" && startsRegexLiteral(out, next ?? "")) {
         const end = endOfRegexLiteral(source, index);
         out += source.slice(index, end);
         index = end;
@@ -244,4 +412,489 @@ export function stripComments(source: string): string {
   }
 
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// THE CSS FORM: the one other language sharing JavaScript's block delimiter
+// ---------------------------------------------------------------------------
+
+/**
+ * CSS with its comments removed.
+ *
+ * ONE LINE OF CODE, AND IT LIVED IN THREE FILES AT FIVE CALL SITES until #3164:
+ * `placeholder-styling-contract`, `app-theme-layout-contract` and
+ * `print-light-palette-contract` each wrote the identical `replaceAll`. That is
+ * the population `stripComments` itself went from one to eighteen through, so
+ * length is not the test of whether something belongs here (`INV-SSOT-004`).
+ *
+ * WHY CSS CANNOT USE `stripComments`, measured rather than assumed. An earlier
+ * note here said the JavaScript scanner reads the slash in `url(a/b)` as opening
+ * a regex and eats the line. IT DOES NOT: a regex literal is copied through
+ * verbatim, so `url(a/b.png)` and `url(/images/hero.png)` come back byte for
+ * byte. The real hazard is the LINE delimiter, which CSS does not have and every
+ * absolute URL does. Run over `url(https://cdn.example/x.png)` the scanner sees
+ * `//`, opens a line comment and deletes the rest of the line — measured, the
+ * whole of `x.png); color: red; }` goes — and `url(//cdn.example/x.png)` goes
+ * the same way. Quoting the URL saves it, because a CSS string is a JavaScript
+ * string too. Nothing in `globals.css` or `display.css` writes an unquoted
+ * absolute URL today, so this is LATENT rather than live: the first one written
+ * would silently shrink whichever contract read that file.
+ *
+ * WHAT THIS DOES NOT HANDLE, and it is the mirror of the hazard above: a block
+ * delimiter inside a CSS string (`content: "/*"`) is treated as a comment
+ * opener, because this is a single regular expression and not a lexer. No
+ * stylesheet in this tree writes one. Both limits fail in opposite directions —
+ * the JavaScript scanner over CSS deletes too much on a shape a stylesheet
+ * really can grow, this deletes too much only on one no stylesheet here writes.
+ */
+export function stripCssComments(css: string): string {
+  return css.replaceAll(/\/\*[\s\S]*?\*\//g, "");
+}
+
+// ---------------------------------------------------------------------------
+// THE STRING-BLANKING FORM: comments AND string contents, offsets NOT preserved
+// ---------------------------------------------------------------------------
+
+interface ScanResult {
+  readonly code: string;
+  readonly next: number;
+}
+
+/**
+ * A template literal, from its opening backtick.
+ *
+ * The literal TEXT is blanked like any other string, but a `${ … }`
+ * interpolation is CODE and is kept — a `new Date(invoice.date)` inside one is
+ * exactly as much of a defect as anywhere else. Newlines are preserved so a
+ * reported line number still points at the right line.
+ */
+function scanTemplateLiteral(source: string, start: number): ScanResult {
+  let out = '""';
+  let index = start + 1;
+  while (index < source.length) {
+    const char = source[index];
+    if (char === "\\") {
+      index += 2;
+      continue;
+    }
+    if (char === "\n") {
+      out += "\n";
+      index += 1;
+      continue;
+    }
+    if (char === "`") {
+      return { code: out, next: index + 1 };
+    }
+    if (char === "$" && source[index + 1] === "{") {
+      const inner = scanCode(source, index + 2, true);
+      out += ` ${inner.code} `;
+      index = inner.next;
+      continue;
+    }
+    index += 1;
+  }
+  return { code: out, next: index };
+}
+
+// `startsRegexLiteral` and `endOfRegexLiteral` above were written for the #2869
+// review, in `xero-provider-date-boundary-census.test.ts`, and were shared with
+// `stripComments` by #3132. The shared scanner had the very defect they were
+// written to fix — `.replace(/\//g, "_")` read as a line comment — so leaving a
+// repaired copy in the census and a broken one here was INV-SSOT-004 with the
+// two instruments named. #3164 finished the move: the whole second form now
+// lives beside the first, and the census imports it.
+
+/**
+ * What a string literal becomes once blanked — usually `""`, but the KEY of a
+ * bracket access is kept.
+ *
+ * `invoice["dueDate"]` is a property read spelled with a string, and blanking it
+ * would make that spelling invisible to every rule below. An identifier-shaped
+ * key inside brackets cannot be prose, so keeping it cannot resurrect the #2813
+ * class this stripper exists to prevent.
+ */
+function keptBracketKey(codeSoFar: string, content: string): string {
+  if (lastSignificant(codeSoFar) !== "[") return '""';
+  return /^[A-Za-z_$][\w$]*$/.test(content) ? `"${content}"` : '""';
+}
+
+/**
+ * Code, from `start`, with every comment and string literal replaced by
+ * something inert of the same LINE COUNT.
+ *
+ * `stopAtCloseBrace` is for a template interpolation: it returns at the `}`
+ * that closes the interpolation rather than at the end of the source, counting
+ * nested braces on the way so an object literal inside one does not end it
+ * early.
+ */
+function scanCode(
+  source: string,
+  start: number,
+  stopAtCloseBrace: boolean,
+): ScanResult {
+  let out = "";
+  let index = start;
+  let depth = 0;
+  while (index < source.length) {
+    const two = source.slice(index, index + 2);
+    if (two === "//") {
+      const end = source.indexOf("\n", index);
+      index = end === -1 ? source.length : end;
+      continue;
+    }
+    if (two === "/*") {
+      const end = source.indexOf("*/", index + 2);
+      const stop = end === -1 ? source.length : end + 2;
+      // Keep the newlines, so a line number after a docblock is still right.
+      for (const char of source.slice(index, stop)) {
+        if (char === "\n") out += "\n";
+      }
+      index = stop;
+      continue;
+    }
+    const char = source[index];
+    if (char === "`") {
+      const template = scanTemplateLiteral(source, index);
+      out += template.code;
+      index = template.next;
+      continue;
+    }
+    if (char === "/" && startsRegexLiteral(out, source[index + 1] ?? "")) {
+      index = endOfRegexLiteral(source, index);
+      out += '""';
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      const opened = index;
+      index += 1;
+      while (index < source.length) {
+        if (source[index] === "\\") {
+          index += 2;
+          continue;
+        }
+        if (source[index] === char) {
+          index += 1;
+          break;
+        }
+        if (source[index] === "\n") break;
+        index += 1;
+      }
+      out += keptBracketKey(out, source.slice(opened + 1, index - 1));
+      continue;
+    }
+    if (stopAtCloseBrace) {
+      if (char === "{") depth += 1;
+      else if (char === "}") {
+        if (depth === 0) return { code: out, next: index + 1 };
+        depth -= 1;
+      }
+    }
+    out += char;
+    index += 1;
+  }
+  return { code: out, next: index };
+}
+
+/**
+ * Remove `//` and block comments and the contents of every string, so a rule
+ * cannot fire on prose that describes it.
+ *
+ * Comments, quoted strings, template literals (whose `${…}` interpolations are
+ * kept, because those are code) and REGEX LITERALS are all recognised, and the
+ * line count is preserved so a reported line number still points at the right
+ * line. Regex literals are recognised because one of them broke this — see
+ * {@link startsRegexLiteral}.
+ */
+export function stripCommentsAndStrings(source: string): string {
+  return scanCode(source, 0, false).code;
+}
+
+// ---------------------------------------------------------------------------
+// THE OFFSET-PRESERVING FORM: for a WALKER, which reports positions rather than
+// text
+// ---------------------------------------------------------------------------
+
+/**
+ * One run of characters {@link blankLiteralsWithSpans} replaced with spaces,
+ * addressed in the ORIGINAL source so `source.slice(start, end)` is exactly what
+ * was removed and is exactly the same LENGTH as what stands in its place.
+ *
+ * `kind` is what the blanker was reading, and the four differ in where the
+ * DELIMITERS fall, which a caller restoring by span has to know:
+ *
+ * - `comment` — the WHOLE comment, both delimiters included, line or block.
+ * - `string` — a quoted literal's CONTENTS, WITHOUT its quotes, which survive in
+ *   `code` at their own offsets.
+ * - `template` — one stretch of literal text inside a backtick template. A
+ *   template holding interpolations reports several, one per stretch between
+ *   them, and never the interpolations themselves: those are code and were
+ *   never blanked.
+ * - `regex` — everything after the opening `/`, which survives.
+ *
+ * Runs are reported in source order and never overlap, so a caller may restore a
+ * chosen subset in one left-to-right pass.
+ */
+export interface BlankedSpan {
+  readonly kind: "comment" | "string" | "template" | "regex";
+  /** First blanked index, in the ORIGINAL source. */
+  readonly start: number;
+  /** One past the last blanked index, in the ORIGINAL source. */
+  readonly end: number;
+}
+
+/** What {@link blankLiteralsWithSpans} returns. */
+export interface BlankedSource {
+  /** Byte-for-byte what {@link blankLiterals} returns for the same input. */
+  readonly code: string;
+  readonly spans: readonly BlankedSpan[];
+}
+
+/**
+ * A template literal, from its opening backtick, blanked in place.
+ *
+ * The backtick and every `${` / `}` survive at their own offsets; the literal
+ * TEXT becomes spaces; a `${ … }` interpolation is CODE and is walked, because a
+ * `$transaction(` written inside one opens a real transaction.
+ *
+ * `spans` collects the literal TEXT runs — one per stretch between the opening
+ * backtick and the first `${`, between a `}` and the next `${`, and so on. An
+ * interpolation is never in a run, because it was never blanked, so a caller
+ * that restores every run of one template gets that template's text back and
+ * nothing else.
+ */
+function blankTemplateLiteral(
+  source: string,
+  start: number,
+  spans: BlankedSpan[],
+): ScanResult {
+  let out = "`";
+  let index = start + 1;
+  let runStart = index;
+  const endRun = (runEnd: number): void => {
+    if (runEnd > runStart) {
+      spans.push({ kind: "template", start: runStart, end: runEnd });
+    }
+  };
+  while (index < source.length) {
+    const char = source[index];
+    if (char === "\\") {
+      out += blanked(source, index, index + 2);
+      // CLAMPED, and the clamp is the contract rather than tidiness. A source
+      // ending `` `ab\ `` leaves nothing after the backslash, so an unclamped
+      // `index += 2` exits this loop at `source.length + 1` and `endRun` below
+      // pushes a span whose `end` is OUTSIDE the source — contradicting
+      // {@link BlankedSpan}, whose whole promise is that `start`/`end` address
+      // the ORIGINAL text. `code` and the restore survive it (both slices clamp
+      // on their own), so it fails silently for anybody slicing and loudly for
+      // anybody doing ARITHMETIC on `end`. The string branch below has always
+      // clamped, with `Math.min(cursor, source.length)`.
+      index = Math.min(index + 2, source.length);
+      continue;
+    }
+    if (char === "\n") {
+      out += "\n";
+      index += 1;
+      continue;
+    }
+    if (char === "`") {
+      endRun(index);
+      return { code: `${out}\``, next: index + 1 };
+    }
+    if (char === "$" && source[index + 1] === "{") {
+      endRun(index);
+      const inner = blankCode(source, index + 2, true, spans);
+      out += `\${${inner.code}`;
+      index = inner.next;
+      runStart = index;
+      continue;
+    }
+    out += " ";
+    index += 1;
+  }
+  endRun(index);
+  return { code: out, next: index };
+}
+
+/** `source[from..to)` with everything but its newlines turned into spaces. */
+function blanked(source: string, from: number, to: number): string {
+  let out = "";
+  for (let index = from; index < to && index < source.length; index += 1) {
+    out += source[index] === "\n" ? "\n" : " ";
+  }
+  return out;
+}
+
+/**
+ * Code, from `start`, with every comment and every literal's CONTENTS replaced
+ * by spaces, one character for one character.
+ *
+ * `stopAtCloseBrace` is a template interpolation, exactly as in {@link scanCode}
+ * — but this one EMITS the closing brace before it returns, because a form whose
+ * whole promise is that offsets do not move cannot swallow a character.
+ */
+function blankCode(
+  source: string,
+  start: number,
+  stopAtCloseBrace: boolean,
+  spans: BlankedSpan[],
+): ScanResult {
+  let out = "";
+  let index = start;
+  let depth = 0;
+
+  while (index < source.length) {
+    const character = source[index];
+    const next = source[index + 1];
+
+    if (character === "/" && next === "/") {
+      const newline = source.indexOf("\n", index);
+      const end = newline === -1 ? source.length : newline;
+      out += blanked(source, index, end);
+      spans.push({ kind: "comment", start: index, end });
+      index = end;
+      continue;
+    }
+    if (character === "/" && next === "*") {
+      const close = source.indexOf("*/", index + 2);
+      const end = close === -1 ? source.length : close + 2;
+      out += blanked(source, index, end);
+      spans.push({ kind: "comment", start: index, end });
+      index = end;
+      continue;
+    }
+    if (character === "`") {
+      const template = blankTemplateLiteral(source, index, spans);
+      out += template.code;
+      index = template.next;
+      continue;
+    }
+    // A regex literal keeps its opening `/` and loses everything after it. This
+    // is the one place this form is DELIBERATELY less faithful than
+    // `stripComments`, which copies a regex through verbatim: every caller here
+    // is counting brackets, and `/^\(/` or `/[)]/` would move a boundary.
+    if (character === "/" && startsRegexLiteral(out, next ?? "")) {
+      const end = endOfRegexLiteral(source, index);
+      out += "/" + blanked(source, index + 1, end);
+      if (end > index + 1) {
+        spans.push({ kind: "regex", start: index + 1, end });
+      }
+      index = end;
+      continue;
+    }
+    if (character === '"' || character === "'") {
+      let cursor = index + 1;
+      while (cursor < source.length) {
+        if (source[cursor] === "\\") {
+          cursor += 2;
+          continue;
+        }
+        // An UNTERMINATED literal ends at the line end rather than running to
+        // the end of the file, and the direction of that choice is the point:
+        // an odd apostrophe in JSX prose blanks the rest of its own line, not
+        // the rest of the file. A walker handed a blanked file finds nothing
+        // and its census passes over nothing.
+        if (source[cursor] === "\n" || source[cursor] === character) break;
+        cursor += 1;
+      }
+      const closed = source[cursor] === character;
+      const contentEnd = Math.min(cursor, source.length);
+      out += character + blanked(source, index + 1, contentEnd);
+      if (contentEnd > index + 1) {
+        spans.push({ kind: "string", start: index + 1, end: contentEnd });
+      }
+      if (closed) out += character;
+      index = closed ? cursor + 1 : cursor;
+      continue;
+    }
+    if (stopAtCloseBrace) {
+      if (character === "{") depth += 1;
+      else if (character === "}") {
+        if (depth === 0) return { code: `${out}}`, next: index + 1 };
+        depth -= 1;
+      }
+    }
+    out += character;
+    index += 1;
+  }
+
+  return { code: out, next: index };
+}
+
+/**
+ * Source of the SAME LENGTH, with every comment blanked and every literal's
+ * contents blanked, so that every offset, column and line number still points
+ * at what it did.
+ *
+ * USE THIS ONE when you are a WALKER: when you report a line number, slice by
+ * index, or compare one match's position against another's, because those are
+ * the callers the text-producing forms silently break — `stripComments`
+ * preserves newlines but not columns, and `stripCommentsAndStrings` replaces
+ * each string with a two-character `""`. The five-way choice is stated once, in
+ * this module's own docblock; the one form easily confused with this one is
+ * {@link blankLiteralsWithSpans}, which returns THE SAME `code` plus the runs it
+ * blanked. Take that one only if you will restore some of them — a caller that
+ * ignores `spans` wanted this.
+ *
+ * Delimiters survive and contents do not, which is what lets a walker still see
+ * that an argument was there: `create({ xeroObjectUrl: "https://x" })` comes
+ * back with the quotes in place and nothing between them, so an argument reader
+ * finds an empty string rather than a hole where a `,` used to be. Blanking the
+ * delimiters too — which `lock-bound-club-zone-outside-transaction.test.ts` did
+ * before #3180 — costs that and buys nothing, since a blanked body already
+ * contains no needle.
+ *
+ * It is the offset-preserving property that makes the three converted censuses
+ * safe to build on it, and it is worth stating what they got for free. None of
+ * the three private copies recognised a REGEX LITERAL, so each carried the
+ * defect #3155 removed from the shared scanner: `.replace(/\//g, "_")` reads as
+ * a line comment and the rest of the line disappears. Every one of the three
+ * scans `src/`, where that shape is live.
+ */
+export function blankLiterals(source: string): string {
+  return blankCode(source, 0, false, []).code;
+}
+
+/**
+ * {@link blankLiterals}, plus the runs it blanked, so a caller can put back the
+ * ones that were the very thing it was hunting.
+ *
+ * `code` is byte-for-byte what {@link blankLiterals} returns — this is not a
+ * second scanner, it is the same one with its working shown, which is the whole
+ * reason it lives here rather than in the caller (`INV-SSOT-004`: two
+ * instruments reading one tree by two methods agree where both are blind).
+ *
+ * WHEN TO REACH FOR IT, and it is narrow. Blanking is a suppression: it stops a
+ * scanner firing on prose. That is right until the thing being hunted lives
+ * inside a literal too, and then the same blanking that suppresses the prose
+ * suppresses the evidence. `advisory-lock-guard.test.ts` is the case this was
+ * written for: raw SQL in this repository is written as a backtick template or,
+ * where `$executeRawUnsafe` takes a plain string, a double-quoted literal
+ * containing `SELECT` — while the prose it must ignore is ordinary double-quoted
+ * error-message text. Blanking everything hides `FOR UPDATE`; blanking nothing
+ * counts a sentence describing `FOR UPDATE` as a lock. The census restores the
+ * two kinds it can name and leaves the rest blanked.
+ *
+ * THE RESTORE BELONGS TO THE CALLER, deliberately. A `SELECT`-shaped carve-out
+ * is one census's policy about SQL, not a fact about JavaScript, and a helper
+ * reshaped to carry another caller's policy is the contortion `INV-SSOT-001`
+ * names. So this returns evidence and takes no view: the module gained a
+ * capability, not a rule.
+ *
+ * RESTORING IS SAFE FOR OFFSETS because every span is the same length as the
+ * spaces standing in for it, so putting any subset back moves nothing. Restore
+ * left to right; the spans arrive in source order and do not overlap.
+ *
+ *     const { code, spans } = blankLiteralsWithSpans(source);
+ *     const pieces: string[] = [];
+ *     let cursor = 0;
+ *     for (const span of spans) {
+ *       if (!wanted(span)) continue;
+ *       pieces.push(code.slice(cursor, span.start), source.slice(span.start, span.end));
+ *       cursor = span.end;
+ *     }
+ *     const restored = pieces.join("") + code.slice(cursor);
+ */
+export function blankLiteralsWithSpans(source: string): BlankedSource {
+  const spans: BlankedSpan[] = [];
+  return { code: blankCode(source, 0, false, spans).code, spans };
 }

@@ -53,6 +53,40 @@ export class ManualSubscriptionPaymentError extends Error {
 
 export const MANUAL_PAYMENT_NOTE_MAX = 500;
 
+/**
+ * `ManualRefundTask.reason` is `@db.VarChar(500)`, and every writer that builds
+ * that sentence truncates to it.
+ *
+ * `INV-SSOT` (#3030): it lives HERE, beside `MANUAL_PAYMENT_NOTE_MAX`, which is
+ * the same column width for the sibling `note` field on the same table and is
+ * already the house pattern - imported by `manual-booking-payment.ts` and
+ * re-exported from it. Before this there were three homes for one column's
+ * width: the schema, a bare `500` literal in `booking-cancel.ts`, and a private
+ * constant in `edit-financial-review.ts`, so widening the column would have
+ * fixed one truncation and silently left two.
+ */
+export const MANUAL_REFUND_TASK_REASON_MAX = 500;
+
+/**
+ * Trim an admin's free-text manual-payment note and truncate it to the column
+ * width, or null when nothing was typed.
+ *
+ * `INV-SSOT`: it lives HERE, beside `MANUAL_PAYMENT_NOTE_MAX`, for the same
+ * reason `MANUAL_REFUND_TASK_REASON_MAX` does. It was private to
+ * `manual-booking-payment.ts` while that module was the only caller; splitting
+ * the refund-task completion out into
+ * `manual-refund-task-resolution.ts` gave it a second, and a five-line rule
+ * copied into two modules is how the note quietly ends up trimmed one way on
+ * one screen and another way on the next.
+ */
+export function normaliseManualPaymentNote(
+  note: string | null | undefined
+): string | null {
+  const trimmed = note?.trim();
+  if (!trimmed) return null;
+  return trimmed.slice(0, MANUAL_PAYMENT_NOTE_MAX);
+}
+
 export type ManualPaymentDirection = "paid" | "unpaid";
 
 export type ManualSubscriptionPaymentResult = {

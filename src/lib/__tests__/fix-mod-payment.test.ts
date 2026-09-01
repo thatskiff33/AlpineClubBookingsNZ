@@ -74,6 +74,23 @@ vi.mock("@/lib/prisma", () => ({
     // route's early getDefaultLodgeCapacity guard reads it off the singleton).
     lodgeSettings: { findUnique: async () => ({ capacity: 100 }) },
     bookingGuest: { create: mockBookingGuestCreate, update: mockBookingGuestUpdate },
+    // #3032: the pending-review fence reads this under the booking-edit locks.
+    // Empty by default - no financial review is open - so every pre-#3032 test
+    // asserts exactly what it asserted before.
+    manualRefundTask: {
+      findFirst: vi.fn().mockResolvedValue(null),
+      // #3032: the modified email asks whether the club is still working
+      // out an amount on this booking (`bookingHasOpenFinancialReview`).
+      // Empty by default - no review is open - so every pre-#3032
+      // assertion in this file means exactly what it meant before.
+      findMany: vi.fn().mockResolvedValue([]),
+      // #3166: the two calls `raiseEditFinancialReviewTask` makes when the date
+      // path parks. Present on every double rather than only the parking cases,
+      // because a missing model here throws inside the transaction and surfaces
+      // as an opaque 400 — which is how a park looks exactly like a refusal.
+      findUnique: vi.fn().mockResolvedValue(null),
+      create: vi.fn().mockResolvedValue({ id: "task-1" }),
+    },
     bookingModification: { create: mockBookingModCreate },
     bookingRequest: { findFirst: vi.fn().mockResolvedValue(null) },
     season: { findMany: mockSeasonFindMany },
@@ -320,7 +337,19 @@ function makeBooking(overrides: Record<string, unknown> = {}) {
         */
         stayStart: new Date("2026-08-01"),
         stayEnd: new Date("2026-08-03"),
-        nights: [],
+        /*
+          #3166: the two nights this guest holds, carrying what they were sold
+          for and summing to the stored 5000. The date path is now judged on
+          exact stored sold-price evidence, so an EMPTY list is a strand with no
+          readable history at all and every date change on it PARKS for financial
+          review — which is the gate working, not the settlement question this
+          suite is about. Cases that mean to describe unreadable history override
+          this deliberately below.
+        */
+        nights: [
+          { stayDate: new Date("2026-08-01"), priceCents: 2500 },
+          { stayDate: new Date("2026-08-02"), priceCents: 2500 },
+        ],
         // No consent was ever needed for an ordinary guest, and `null` is one of
         // the two values `isOperationallyPresentConsent` treats as present (D-12).
         consentStatus: null,
@@ -449,6 +478,23 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
     bookingGuestNight: {
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
       createMany: vi.fn().mockResolvedValue({ count: 0 }),
+    },
+    // #3032: the pending-review fence reads this under the booking-edit locks.
+    // Empty by default - no financial review is open - so every pre-#3032 test
+    // asserts exactly what it asserted before.
+    manualRefundTask: {
+      findFirst: vi.fn().mockResolvedValue(null),
+      // #3032: the modified email asks whether the club is still working
+      // out an amount on this booking (`bookingHasOpenFinancialReview`).
+      // Empty by default - no review is open - so every pre-#3032
+      // assertion in this file means exactly what it meant before.
+      findMany: vi.fn().mockResolvedValue([]),
+      // #3166: the two calls `raiseEditFinancialReviewTask` makes when the date
+      // path parks. Present on every double rather than only the parking cases,
+      // because a missing model here throws inside the transaction and surfaces
+      // as an opaque 400 — which is how a park looks exactly like a refusal.
+      findUnique: vi.fn().mockResolvedValue(null),
+      create: vi.fn().mockResolvedValue({ id: "task-1" }),
     },
     bookingModification: { create: vi.fn().mockResolvedValue({ id: "mod1" }) },
     bookingRequest: { findFirst: vi.fn().mockResolvedValue(null) },
@@ -1653,5 +1699,235 @@ describe("GET /api/bookings/[id]/additional-payment-secret", () => {
     const req = new NextRequest("http://localhost/api/bookings/bk1/additional-payment-secret");
     const res = await GET(req, { params: Promise.resolve({ id: "bk1" }) });
     expect(res.status).toBe(403);
+  });
+});
+
+// ============================================================================
+// #3166 (epic #2797): the date path stops repairing a blank into a guess
+// ============================================================================
+
+/**
+ * `modifyBookingDates` reads night prices through the LENIENT
+ * `lockedNightPricesForGuest`, so a night whose stored price is blank gets no
+ * lock, is repriced at today's rate, and — before #3166 — was written back into
+ * `BookingGuestNight.priceCents` as a real integer.
+ *
+ * The only thing standing in front of that was the pending-review fence, which
+ * fires only while a review task is still OPEN. And **nothing ever clears a
+ * blank**: settling a review writes an amount to the task, never a price to the
+ * night row. So the first date change after a review closed silently converted
+ * "not known" into a number, and wrote that number into the very column the next
+ * edit reads as evidence.
+ *
+ * #3170 is what makes blanks storable in the first place, so this cannot be a
+ * later problem: it arrives with the same release.
+ */
+describe("#3166 modify-dates parks rather than repricing an unreadable night", () => {
+  let PUT: typeof import("@/app/api/bookings/[id]/modify-dates/route").PUT;
+
+  /**
+   * The booking from the finding: two nights, one priced and one BLANK. That is
+   * exactly what a parked edit leaves behind under #3170 — the row exists and
+   * says the price is not known — and the fence that used to cover it is gone
+   * the moment the review is settled.
+   */
+  function bookingWithABlankNight() {
+    const booking = makeBooking();
+    (booking.guests as Array<Record<string, unknown>>)[0].nights = [
+      { stayDate: new Date("2026-08-01"), priceCents: 2500 },
+      { stayDate: new Date("2026-08-02"), priceCents: null },
+    ];
+    return booking;
+  }
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    mockMemberCount.mockResolvedValue(1);
+    mockMemberFindUnique.mockResolvedValue({
+      id: "m1",
+      active: true,
+      email: "alice@test.com",
+      firstName: "Alice",
+    } as any);
+    mockedAuth.mockResolvedValue(makeSession() as any);
+    mockedCheckCapacity.mockResolvedValue({
+      available: true,
+      availableBeds: 20,
+    } as any);
+    mockedCalcChangeFee.mockReturnValue({
+      feeCents: 0,
+      fromTierRefundPct: 0,
+      toTierRefundPct: 0,
+    });
+    mockPaymentUpdate.mockResolvedValue({});
+    const mod = await import("@/app/api/bookings/[id]/modify-dates/route");
+    PUT = mod.PUT;
+  });
+
+  function moveTheDates() {
+    return PUT(
+      new NextRequest("http://localhost/api/bookings/bk1/modify-dates", {
+        method: "PUT",
+        body: JSON.stringify({ checkIn: "2026-08-05", checkOut: "2026-08-07" }),
+      }),
+      { params: Promise.resolve({ id: "bk1" }) },
+    );
+  }
+
+  it("never writes an integer over a blank night — it writes NULL and keeps the readable row", async () => {
+    // THE NAMED TEST for the second half of #3166. Remove the gate and the two
+    // nights below come back as 7500 apiece: today's rate, for a night nobody
+    // priced, in the column the next edit trusts.
+    const tx = makeTx(bookingWithABlankNight());
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCalcPrice.mockReturnValue({
+      totalPriceCents: 15000,
+      guests: [
+        {
+          priceCents: 15000,
+          perNightCents: [7500, 7500],
+          nightDates: [new Date("2026-08-05"), new Date("2026-08-06")],
+        },
+      ],
+    } as any);
+
+    const res = await moveTheDates();
+    expect(res.status).toBe(200);
+
+    const rows = (
+      tx.bookingGuestNight.createMany.mock.calls[0][0] as {
+        data: Array<{ stayDate: Date; priceCents: number | null }>;
+      }
+    ).data;
+    // The stay MOVED, so neither night matches a stored one and both are
+    // unknown. Not 7500, and — just as importantly — not 0.
+    expect(rows.map((row) => row.priceCents)).toEqual([null, null]);
+    expect(rows).toHaveLength(2);
+  });
+
+  it("keeps a night the moved range still covers at the price it was sold for", async () => {
+    // The counterpart, and the reason the vector is built from the STORED map
+    // rather than blanked wholesale: a date change that overlaps the old stay
+    // keeps the nights it overlaps, and those carry real money. Blanking a row
+    // the club CAN account for would be its own kind of damage.
+    const tx = makeTx(bookingWithABlankNight());
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCalcPrice.mockReturnValue({
+      totalPriceCents: 22500,
+      guests: [
+        {
+          priceCents: 22500,
+          perNightCents: [7500, 7500, 7500],
+          nightDates: [
+            new Date("2026-08-01"),
+            new Date("2026-08-02"),
+            new Date("2026-08-03"),
+          ],
+        },
+      ],
+    } as any);
+
+    const res = await PUT(
+      new NextRequest("http://localhost/api/bookings/bk1/modify-dates", {
+        method: "PUT",
+        // 1 Aug is kept; 2 Aug (the blank) stays blank and 3 Aug is new.
+        body: JSON.stringify({ checkIn: "2026-08-01", checkOut: "2026-08-04" }),
+      }),
+      { params: Promise.resolve({ id: "bk1" }) },
+    );
+    expect(res.status).toBe(200);
+
+    const rows = (
+      tx.bookingGuestNight.createMany.mock.calls[0][0] as {
+        data: Array<{ stayDate: Date; priceCents: number | null }>;
+      }
+    ).data;
+    expect(
+      rows.map((row) => ({
+        date: row.stayDate.toISOString().slice(0, 10),
+        priceCents: row.priceCents,
+      })),
+    ).toEqual([
+      { date: "2026-08-01", priceCents: 2500 },
+      { date: "2026-08-02", priceCents: null },
+      { date: "2026-08-03", priceCents: null },
+    ]);
+  });
+
+  it("moves no money and raises one review task", async () => {
+    const tx = makeTx(bookingWithABlankNight());
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCalcPrice.mockReturnValue({
+      totalPriceCents: 15000,
+      guests: [
+        {
+          priceCents: 15000,
+          perNightCents: [7500, 7500],
+          nightDates: [new Date("2026-08-05"), new Date("2026-08-06")],
+        },
+      ],
+    } as any);
+
+    const res = await moveTheDates();
+    const data = await res.json();
+
+    // The dates moved.
+    expect(res.status).toBe(200);
+    expect(tx.booking.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          // And every stored money figure is written back exactly as it was.
+          totalPriceCents: 10000,
+          finalPriceCents: 10000,
+        }),
+      }),
+    );
+    // Each of these is a separate money door, and the park closes all of them.
+    expect(data.priceDiffCents).toBe(0);
+    expect(data.changeFeeCents).toBe(0);
+    expect(mockedCreatePaymentIntent).not.toHaveBeenCalled();
+    expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
+
+    expect(tx.manualRefundTask.create).toHaveBeenCalledTimes(1);
+    const raised = tx.manualRefundTask.create.mock.calls[0][0] as {
+      data: { raisedAmountCents: number | null; kind: string };
+    };
+    expect(raised.data.kind).toBe("EDIT_FINANCIAL_REVIEW");
+    expect(raised.data.raisedAmountCents).toBeNull();
+  });
+
+  it("CONTROL: the same date change on a fully readable booking still reprices and settles", async () => {
+    // Without this every case above would pass against a gate that parked EVERY
+    // date change — a worse defect than the one being fixed, and invisible from
+    // the assertions alone.
+    const tx = makeTx(makeBooking());
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCalcPrice.mockReturnValue({
+      totalPriceCents: 15000,
+      guests: [
+        {
+          priceCents: 15000,
+          perNightCents: [7500, 7500],
+          nightDates: [new Date("2026-08-05"), new Date("2026-08-06")],
+        },
+      ],
+    } as any);
+    mockedCreatePaymentIntent.mockResolvedValue({
+      id: "pi_additional",
+      client_secret: "pi_additional_secret_xxx",
+    } as any);
+
+    const res = await moveTheDates();
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(tx.manualRefundTask.create).not.toHaveBeenCalled();
+    expect(data.priceDiffCents).toBe(5000);
+    const rows = (
+      tx.bookingGuestNight.createMany.mock.calls[0][0] as {
+        data: Array<{ priceCents: number | null }>;
+      }
+    ).data;
+    expect(rows.map((row) => row.priceCents)).toEqual([7500, 7500]);
   });
 });

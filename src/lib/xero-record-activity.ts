@@ -369,6 +369,86 @@ async function getBookingModificationScope(localId: string): Promise<XeroRecordS
   };
 }
 
+/**
+ * #3193 fix round: the SECOND ASK's record page.
+ *
+ * A second supplementary invoice is anchored on the review task whose settled
+ * share it bills, so that the booking change's own "is an invoice already going
+ * out?" reads cannot find it and raise it to the combined total. Nothing else in
+ * the admin Xero screens knew that anchor, so an operation that failed in Xero
+ * appeared as untitled plain text with no page behind it - and the booking's
+ * audit trail had already recorded that the amount was being billed. The
+ * shortfall #3188 made findable would then have been findable only by somebody
+ * with no reason to look.
+ *
+ * The scope is the task alone; the booking and its payment are RELATED records
+ * rather than scope, exactly as on the booking-change scope, so this page shows
+ * the second ask's own operations and links rather than the whole booking's.
+ */
+async function getManualRefundTaskScope(localId: string): Promise<XeroRecordScope | null> {
+  const task = await prisma.manualRefundTask.findUnique({
+    where: { id: localId },
+    select: {
+      id: true,
+      status: true,
+      amountCents: true,
+      booking: {
+        select: {
+          id: true,
+          checkIn: true,
+          checkOut: true,
+          payment: {
+            select: {
+              id: true,
+              amountCents: true,
+            },
+          },
+        },
+      },
+    },
+  });
+
+  if (!task) {
+    return null;
+  }
+
+  const rootRecord = createRecordReference(
+    "ManualRefundTask",
+    task.id,
+    `Booking review ${task.amountCents === null ? "(amount not set)" : formatCents(task.amountCents)} (${formatStatusLabel(task.status)})`,
+    "Booking Review"
+  );
+  const relatedRecords = [
+    createRecordReference(
+      "Booking",
+      task.booking.id,
+      `Booking ${formatStayDate(task.booking.checkIn)} - ${formatStayDate(task.booking.checkOut)}`,
+      "Booking"
+    ),
+  ];
+
+  if (task.booking.payment) {
+    relatedRecords.push(
+      createRecordReference(
+        "Payment",
+        task.booking.payment.id,
+        `Payment ${formatCents(task.booking.payment.amountCents)}`,
+        "Payment"
+      )
+    );
+  }
+
+  return {
+    rootRecord,
+    scopeRecords: [rootRecord],
+    relatedRecords,
+    backLink: {
+      href: buildLocalAdminUrl("Booking", task.booking.id) ?? "/admin/bookings",
+      label: "Booking Activity",
+    },
+  };
+}
+
 async function getMemberSubscriptionScope(localId: string, yearEndMonth: number): Promise<XeroRecordScope | null> {
   const subscription = await prisma.memberSubscription.findUnique({
     where: { id: localId },
@@ -544,6 +624,8 @@ async function getXeroRecordScope(localModel: XeroLocalModel, localId: string): 
       return getBookingScope(localId);
     case "BookingModification":
       return getBookingModificationScope(localId);
+    case "ManualRefundTask":
+      return getManualRefundTaskScope(localId);
     case "MemberSubscription":
       return getMemberSubscriptionScope(localId, await resolveYearEndMonth());
     case "MembershipCancellationRequest":

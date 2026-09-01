@@ -1,18 +1,17 @@
 import "server-only";
 
-import { BookingEventType, ManualRefundTaskStatus } from "@prisma/client";
-import { createAuditLog } from "@/lib/audit";
-import { recordBookingEvent } from "@/lib/booking-events";
 import { sendBookingConfirmedEmail } from "@/lib/email";
 import logger from "@/lib/logger";
-import { MANUAL_PAYMENT_NOTE_MAX } from "@/lib/manual-subscription-payment";
+import {
+  MANUAL_PAYMENT_NOTE_MAX,
+  normaliseManualPaymentNote,
+} from "@/lib/manual-subscription-payment";
 import {
   ManualBookingPaymentError,
   markBookingPaymentManuallySettled,
   reverseManualBookingPayment,
   type ManualAdditionalCoverage,
 } from "@/lib/payment-reconciliation";
-import { applyLocalRefundAllocation } from "@/lib/payment-transactions";
 import { getProvisionalNonMemberChildSummary } from "@/lib/booking-split-summary";
 import { prisma } from "@/lib/prisma";
 
@@ -181,16 +180,10 @@ export type ApplyManualBookingPaymentResult = {
   additional: ManualBookingAdditionalOutcome | null;
 };
 
-function normaliseNote(note: string | null | undefined): string | null {
-  const trimmed = note?.trim();
-  if (!trimmed) return null;
-  return trimmed.slice(0, MANUAL_PAYMENT_NOTE_MAX);
-}
-
 export async function applyManualBookingPayment(
   input: ApplyManualBookingPaymentInput
 ): Promise<ApplyManualBookingPaymentResult> {
-  const note = normaliseNote(input.note);
+  const note = normaliseManualPaymentNote(input.note);
 
   if (input.direction === "unpaid") {
     const reversal = await reverseManualBookingPayment({
@@ -368,166 +361,4 @@ export async function applyManualBookingPayment(
           }
         : null,
   };
-}
-
-/**
- * B5 (#2262): close a hand-back task raised when a cash-settled booking was
- * cancelled.
- *
- * COMPLETED means the money genuinely went back to the member, so — and only
- * then — the local refund allocation is written (the ledger mirror stays
- * honest) and a REFUNDED booking event is recorded. DISMISSED exists for
- * "the member declined it" / "settled another way" and requires a note; it
- * moves no money and writes no allocation.
- *
- * The OPEN -> terminal transition is a status-fenced conditional update, so a
- * double click or two admins closing at once can never double-apply the
- * allocation.
- */
-export async function resolveManualRefundTask({
-  taskId,
-  resolution,
-  note,
-  actingMemberId,
-}: {
-  taskId: string;
-  resolution: "completed" | "dismissed";
-  note: string | null;
-  actingMemberId: string;
-}) {
-  const trimmedNote = normaliseNote(note);
-  if (resolution === "dismissed" && !trimmedNote) {
-    throw new ManualBookingPaymentError(
-      "Say why this refund is being dismissed — a note is required.",
-      400
-    );
-  }
-
-  const result = await prisma.$transaction(async (tx) => {
-    const task = await tx.manualRefundTask.findUnique({
-      where: { id: taskId },
-      select: {
-        id: true,
-        bookingId: true,
-        paymentId: true,
-        amountCents: true,
-        status: true,
-        booking: { select: { memberId: true } },
-      },
-    });
-    if (!task) {
-      throw new ManualBookingPaymentError("Refund task not found.", 404);
-    }
-    if (task.status !== ManualRefundTaskStatus.OPEN) {
-      throw new ManualBookingPaymentError(
-        "This refund task has already been closed.",
-        409
-      );
-    }
-
-    const now = new Date();
-    const claimed = await tx.manualRefundTask.updateMany({
-      where: { id: task.id, status: ManualRefundTaskStatus.OPEN },
-      data: {
-        status:
-          resolution === "completed"
-            ? ManualRefundTaskStatus.COMPLETED
-            : ManualRefundTaskStatus.DISMISSED,
-        completedByMemberId: actingMemberId,
-        completedAt: now,
-        note: trimmedNote,
-      },
-    });
-    if (claimed.count === 0) {
-      throw new ManualBookingPaymentError(
-        "This refund task changed while you were closing it — refresh and try again.",
-        409
-      );
-    }
-
-    if (resolution === "completed") {
-      // #2797 (owner decision D2): a task cannot be COMPLETED without a
-      // confirmed amount. The DB `ManualRefundTask_completed_amount_present`
-      // check enforces the same rule; this throws first with a message an
-      // operator can read. An EDIT_FINANCIAL_REVIEW task raised with no amount
-      // is priced by the admin BEFORE it reaches completion (that flow sets
-      // `amountCents`), so a null here means the queue tried to close an
-      // unpriced task and the caller has a bug, not the operator.
-      if (task.amountCents === null) {
-        throw new ManualBookingPaymentError(
-          "This refund has no confirmed amount yet — price it before completing.",
-          409
-        );
-      }
-      // #2797 (owner decision D2): a credit-only task (`paymentId` null) has no
-      // captured payment to allocate a refund against — the money is returned as
-      // account credit or off-Stripe by hand — so the local refund allocation is
-      // written ONLY when there is a payment to write it against. Only NOW does
-      // the ledger record that money was returned; doing it at creation time
-      // would have the mirror claim a refund before the club handed anything
-      // back.
-      if (task.paymentId !== null) {
-        await applyLocalRefundAllocation({
-          paymentId: task.paymentId,
-          amountCents: task.amountCents,
-          store: tx,
-        });
-      }
-    }
-
-    await createAuditLog(
-      {
-        action:
-          resolution === "completed"
-            ? "booking-payment.manual-refund-task.complete"
-            : "booking-payment.manual-refund-task.dismiss",
-        memberId: actingMemberId,
-        actorMemberId: actingMemberId,
-        subjectMemberId: task.booking.memberId,
-        targetId: task.bookingId,
-        entityType: "ManualRefundTask",
-        entityId: task.id,
-        category: "payment",
-        severity: "important",
-        outcome: "success",
-        summary:
-          resolution === "completed"
-            ? "Manual booking refund paid back by hand"
-            : "Manual booking refund task dismissed",
-        details: trimmedNote,
-        metadata: {
-          taskId: task.id,
-          bookingId: task.bookingId,
-          paymentId: task.paymentId,
-          amountCents: task.amountCents,
-          resolution,
-        },
-      },
-      tx
-    );
-
-    return {
-      taskId: task.id,
-      bookingId: task.bookingId,
-      paymentId: task.paymentId,
-      amountCents: task.amountCents,
-      memberId: task.booking.memberId,
-      status:
-        resolution === "completed"
-          ? ManualRefundTaskStatus.COMPLETED
-          : ManualRefundTaskStatus.DISMISSED,
-    };
-  });
-
-  if (resolution === "completed") {
-    await recordBookingEvent({
-      bookingId: result.bookingId,
-      type: BookingEventType.REFUNDED,
-      actorMemberId: actingMemberId,
-      amountCents: result.amountCents,
-      reason: "manual_refund_completed",
-    });
-  }
-
-  return result;
 }

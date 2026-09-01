@@ -88,6 +88,20 @@ interface BuildBookingHistoryOptions {
    * Defaults to none.
    */
   duplicateCaptureRefunds?: BookingHistoryDuplicateCaptureRefund[];
+  /**
+   * #3033 (epic #2797): this booking has an OPEN financial review — a change
+   * saved while the refund or credit for it could not be worked out from stored
+   * history.
+   *
+   * Arrives as data, like every other option here; the page reads it once with
+   * `bookingHasOpenFinancialReview` and hands the same answer to this builder
+   * and to the narrative resolver, so the timeline and the banner above it
+   * cannot disagree on one page load.
+   *
+   * Defaults to false, so a caller that has not asked renders the timeline it
+   * always has rather than making a claim about money it has not checked.
+   */
+  financialReviewPending?: boolean;
 }
 
 const MODIFICATION_LABELS: Record<string, string> = {
@@ -128,19 +142,27 @@ function isRemovedGuest(
 }
 
 /**
- * The plain-English promo-coverage sentence a reprice stored on its own
- * modification record (#2390), or null when the promotion covered everybody.
+ * A plain-English sentence an edit stored on its own modification record for the
+ * member to read later, or null when that edit had nothing to say.
+ *
+ * Two keys use it: `promoCoverageNote`, the promotion-cap split a reprice
+ * explained at the time (#2390), and `promoChangeNotAppliedNote`, the
+ * promo-code change an edit saved without (#3179). One reader rather than two,
+ * because both are the same thing — the exact words the member was shown,
+ * replayed verbatim (`INV-SSOT`).
+ *
  * Read defensively: `newData` is free-form JSON, and every modification written
- * before this existed simply has no such key.
+ * before either key existed simply does not have it.
  */
-function promoCoverageNoteOf(
-  modification: BookingHistoryModification
+function memberFacingNoteOf(
+  modification: BookingHistoryModification,
+  key: "promoCoverageNote" | "promoChangeNotAppliedNote"
 ): string | null {
   const next =
     modification.newData && typeof modification.newData === "object"
       ? (modification.newData as Record<string, unknown>)
       : {};
-  const note = next.promoCoverageNote;
+  const note = next[key];
   return typeof note === "string" && note.trim().length > 0 ? note : null;
 }
 
@@ -200,7 +222,36 @@ export function buildBookingHistoryItems({
   refundRequests,
   auditLogs,
   duplicateCaptureRefunds = [],
+  financialReviewPending = false,
 }: BuildBookingHistoryOptions): BookingHistoryItem[] {
+  /*
+    #3033: WHICH row the open review belongs to.
+
+    The most recent modification that moved the price. A review is raised BY a
+    priced edit, and the epic fences a second money-affecting edit while
+    unresolved money would be its baseline, so no later priced modification can
+    exist above the one holding the review. Modifications that changed no price
+    (a credit-election edit, for instance) carry no amount and are not
+    candidates — there is no figure on them to qualify.
+
+    Chosen by `createdAt` rather than by the caller's array order, so a query
+    that returns oldest-first cannot silently qualify the wrong row.
+
+    Deliberately NOT applied to every modification on the booking: an edit from
+    six months ago settled normally, and telling an admin or a member that ITS
+    amount is still being worked out would be false.
+  */
+  const reviewedModificationId = financialReviewPending
+    ? (modifications
+        .filter((modification) => modification.priceDiffCents !== 0)
+        .reduce<BookingHistoryModification | null>(
+          (latest, modification) =>
+            latest === null || modification.createdAt > latest.createdAt
+              ? modification
+              : latest,
+          null,
+        )?.id ?? null)
+    : null;
   const items: BookingHistoryItem[] = [
     {
       id: "booking-created",
@@ -407,9 +458,44 @@ export function buildBookingHistoryItems({
     // edit added, the reprice recorded the exact sentence the member was shown
     // at the time. Replayed verbatim so the booking's own summary, the edit
     // preview and the modification email all tell the one story.
-    const promoCoverageNote = promoCoverageNoteOf(modification);
+    const promoCoverageNote = memberFacingNoteOf(
+      modification,
+      "promoCoverageNote"
+    );
     if (promoCoverageNote) {
       detailParts.push(promoCoverageNote);
+    }
+
+    // #3179: and the promo-code change this edit could not carry, replayed the
+    // same way and for the same reason — the member read this sentence at the
+    // edit, so the booking's own record has to say it in those words too. A
+    // modification written before #3179 simply has no such key.
+    const promoChangeNotAppliedNote = memberFacingNoteOf(
+      modification,
+      "promoChangeNotAppliedNote"
+    );
+    if (promoChangeNotAppliedNote) {
+      detailParts.push(promoChangeNotAppliedNote);
+    }
+
+    /*
+      #3033: the figure stays and stops speaking for itself.
+
+      `priceDiffCents` is real — it is how much the booking's own total moved,
+      and the structural edit did move it. What is NOT established is the refund
+      or credit that follows from it, and the green "success" tone said exactly
+      that: a member reading "-$120.00" in the same colour as a completed refund,
+      under a banner saying no figure is known, reads it as money returned.
+
+      So the tone drops to neutral and the row says what is outstanding. The
+      amount is not hidden and not corrected — hiding it would leave no figure
+      at all, and correcting it is the estimation this epic exists to forbid.
+    */
+    const awaitingReview = modification.id === reviewedModificationId;
+    if (awaitingReview) {
+      detailParts.push(
+        "The refund or credit for this change is still being worked out by the club; the figure beside it is how much the booking's own total changed, not an amount that has been paid back or charged.",
+      );
     }
 
     items.push({
@@ -424,8 +510,9 @@ export function buildBookingHistoryItems({
         modification.priceDiffCents !== 0
           ? formatSignedCents(modification.priceDiffCents)
           : null,
-      tone:
-        modification.priceDiffCents > 0
+      tone: awaitingReview
+        ? "default"
+        : modification.priceDiffCents > 0
           ? "warning"
           : modification.priceDiffCents < 0
             ? "success"

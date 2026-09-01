@@ -2769,9 +2769,7 @@ describe("gated controls keep `disabled` (#2160 Decision 1)", () => {
     // explaining what was weighed and declined — so matching raw source would
     // fail on the documentation that exists precisely to record this decision.
     // Only the code is the contract.
-    const code = source
-      .replace(/\/\*[\s\S]*?\*\//g, "")
-      .replace(/^\s*\/\/.*$/gm, "");
+    const code = stripComments(source);
 
     expect(code).toContain("disabled={isDisabled}");
     expect(code).not.toMatch(/aria-disabled/);

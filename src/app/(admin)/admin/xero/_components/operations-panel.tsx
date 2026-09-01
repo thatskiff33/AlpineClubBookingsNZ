@@ -398,7 +398,7 @@ export function OperationsPanel({
         <div className="flex flex-col gap-3 md:flex-row md:items-center">
           <FilterSelect label="Status" value={statusFilter} onValueChange={(value) => { setStatusFilter(value); resetPage() }} values={["all", "FAILED", "PENDING", "PARTIAL", "RUNNING", "WAITING_PAYMENT", "SUCCEEDED"]} />
           <FilterSelect label="Entity" value={entityFilter} onValueChange={(value) => { setEntityFilter(value); resetPage() }} values={["all", "CONTACT", "CONTACT_GROUP", "INVOICE", "PAYMENT", "CREDIT_NOTE", "ALLOCATION", "SUBSCRIPTION"]} />
-          <FilterSelect label="Local Model" value={localModelFilter} onValueChange={(value) => { setLocalModelFilter(value); resetPage() }} values={["all", "Member", "Booking", "Payment", "BookingModification", "MemberSubscription"]} />
+          <FilterSelect label="Local Model" value={localModelFilter} onValueChange={(value) => { setLocalModelFilter(value); resetPage() }} values={["all", "Member", "Booking", "Payment", "BookingModification", "ManualRefundTask", "MemberSubscription"]} />
           <FilterSelect label="Failure" value={failureStateFilter} onValueChange={(value) => { setFailureStateFilter(value); resetPage() }} values={["all", "ACTIVE", "REPAIRED", "SUPERSEDED"]} />
           <DatasetResetButton disabled={isDatasetDefault} onReset={resetDataset} />
         </div>

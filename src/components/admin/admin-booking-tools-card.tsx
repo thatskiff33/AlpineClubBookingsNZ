@@ -13,12 +13,46 @@ import {
 import { AdminReturnToWaitlistControls } from "@/components/admin/admin-return-to-waitlist-controls";
 import { ConfirmPendingGuestsButton } from "@/components/admin/confirm-pending-guests-button";
 import { CopyBookingButton } from "@/components/admin/copy-booking-button";
-import type { BookingProviderMismatch } from "@/lib/booking-provider-mismatches";
+import type {
+  BookingFinancialReviewWarning,
+  BookingProviderMismatch,
+  BookingWarningRow,
+} from "@/lib/booking-provider-mismatches";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 import { buildXeroRecordActivityUrl } from "@/lib/xero-record-links";
 import { formatDateOnly } from "@/lib/date-only";
 import { isFeatureHrefVisible } from "@/config/feature-routes";
 import type { FeatureFlags } from "@/config/schema";
+
+/**
+ * One warning line: what is wrong, and the one link that leads to fixing it.
+ *
+ * Extracted when #3033 added a second block using the same row shape, so the two
+ * cannot drift into rendering the identical data differently. It carries no
+ * heading of its own — the block above it says what the group means.
+ */
+function WarningRow({
+  warning,
+  returnTo,
+}: {
+  // The shape, not either producer's id vocabulary: this renders a row, and has
+  // no business knowing which of them made it (#3033).
+  warning: BookingWarningRow;
+  returnTo: string;
+}) {
+  return (
+    <p>
+      <span className="font-medium">{warning.label}.</span>{" "}
+      {warning.description}{" "}
+      <Link
+        className="font-medium underline"
+        href={buildHrefWithReturnTo(warning.href, returnTo)}
+      >
+        {warning.linkLabel}
+      </Link>
+    </p>
+  );
+}
 
 /**
  * One visually distinct cluster for everything only admins can do on the
@@ -39,6 +73,7 @@ export function AdminBookingToolsCard({
   hasSavedPaymentMethod,
   finalPriceCents,
   providerMismatches = [],
+  financialReviewWarnings = [],
   features,
   capacityHold,
   exclusiveHold,
@@ -68,6 +103,15 @@ export function AdminBookingToolsCard({
   hasSavedPaymentMethod: boolean;
   finalPriceCents: number;
   providerMismatches?: BookingProviderMismatch[];
+  /**
+   * #3033: money on this booking is held for review — the stay change saved,
+   * the adjustment did not. Its own prop, its own block and its own id
+   * vocabulary rather than another entry in `providerMismatches`, because that
+   * block is headed "Provider state out of step" and this is not a provider
+   * disagreement: local state is right and the club owes a decision. The row
+   * SHAPE is shared, so both render identically through `WarningRow`.
+   */
+  financialReviewWarnings?: BookingFinancialReviewWarning[];
   features: FeatureFlags;
   /** Admin capacity hold state (#1764); omitted for deleted bookings. */
   capacityHold?: {
@@ -158,16 +202,30 @@ export function AdminBookingToolsCard({
             <div className="space-y-2 rounded-md border border-warning-6 bg-warning-3 px-3 py-2 text-sm text-warning-11">
               <p className="font-medium">Provider state out of step</p>
               {providerMismatches.map((mismatch) => (
-                <p key={mismatch.id}>
-                  <span className="font-medium">{mismatch.label}.</span>{" "}
-                  {mismatch.description}{" "}
-                  <Link
-                    className="font-medium underline"
-                    href={buildHrefWithReturnTo(mismatch.href, returnTo)}
-                  >
-                    {mismatch.linkLabel}
-                  </Link>
-                </p>
+                <WarningRow
+                  key={mismatch.id}
+                  warning={mismatch}
+                  returnTo={returnTo}
+                />
+              ))}
+            </div>
+          )}
+          {/* #3033: read-only, so it adds no gated control and no view-only
+              affordance to this card. Its own heading, because "provider state
+              out of step" would misdescribe a booking whose local state is
+              exactly right and whose money is waiting on a person. */}
+          {financialReviewWarnings.length > 0 && (
+            <div
+              className="space-y-2 rounded-md border border-warning-6 bg-warning-3 px-3 py-2 text-sm text-warning-11"
+              data-testid="booking-financial-review-warning"
+            >
+              <p className="font-medium">Money waiting for review</p>
+              {financialReviewWarnings.map((warning) => (
+                <WarningRow
+                  key={warning.id}
+                  warning={warning}
+                  returnTo={returnTo}
+                />
               ))}
             </div>
           )}
