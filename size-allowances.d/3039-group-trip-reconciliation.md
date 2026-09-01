@@ -1,7 +1,7 @@
 # File-size allowances for #3039 (GROUP-TRIP 3)
 
 file: src/lib/adult-member-hosting-review.ts
-lines: 3456
+lines: 3481
 reason: the Group Trip fan-out has to live inside the two existing hosting
   seams, and that is the whole point of it — `reconcileAdultMemberHostingReviewWithSiblings`
   and `enqueueOwnHostingCoverageReevaluation` are the two doors the thirty-odd
@@ -10,7 +10,7 @@ reason: the Group Trip fan-out has to live inside the two existing hosting
   hold it: it needs the engine's split-pair identity read, its participant-proof
   helpers and its coverage-facts types, and the engine must then call back into
   it, which is an import cycle. The growth is also mostly reasoning rather than
-  logic — of the 477 lines, 200 are executable and 264 are the docblocks this
+  logic — of the 502 lines, 200 are executable and the rest are the docblocks this
   repository asks for, including why the per-trip key precedes the per-owner one
   and why the cross-account path may refuse nothing. A split IS available, and is
   deliberately not taken here: it would mean lifting `hostingSiblingWhere`,

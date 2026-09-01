@@ -1764,6 +1764,21 @@ export async function reconcileAdultMemberHostingReview(
  * read and the reconciler's own read is covered the same way every other mode
  * gate in this module is: the policy write holds the policy-set key and enqueues
  * re-evaluation for the affected bookings itself.
+ *
+ * AND SINCE #3039 IT ALSO SETTLES THE OTHER ACCOUNTS IN THIS BOOKING'S GROUP TRIP.
+ * Three things happen that did not before, in this order: the trip's dependent
+ * bookings are PLANNED before the participant fence (because the fence must lock
+ * every owner the queue will name, and those owners are what the plan discovers);
+ * the per-TRIP advisory key is taken and the plan re-verified under it, ahead of any
+ * owner key (`INV-LOCK-002`); and after the same-owner settle, one bounded queue
+ * item is recorded per dependent booking. That last step can refuse NOTHING — the
+ * actor's valid change proceeds and they are told nothing about the other account
+ * (`INV-HOST-045`) — so it cannot change the outcome this function returns.
+ *
+ * The fan-out lives HERE, rather than in the thirty-odd writers that call this,
+ * for the reason the split-sibling fan-out does: this is the entry point every
+ * mutation path uses, so a new writer gets it without knowing Group Trips exist
+ * (`INV-SSOT-001`).
  */
 export async function reconcileAdultMemberHostingReviewWithSiblings(
   bookingId: string,
@@ -2712,6 +2727,16 @@ export async function loadGroupTripCoverageDependentOwnerIds(
  * Returns the queued item id, or null when nothing was queued: the club is not
  * enforcing or the booking has gone. `SAME_BOOKING` alone still queues this
  * booking; only the cross-booking owner lock depends on `SAME_BOOKING_OWNER`.
+ *
+ * IT ALSO OWES THE GROUP TRIP FAN-OUT (#3039), and the group-settlement reaper is
+ * the case that proves it rather than an argument by symmetry. Confirming ADDS
+ * attendance, so it can RESTORE a sibling's cover; the reaper's
+ * `CONFIRMED -> PAYMENT_PENDING` revert REMOVES it, and a revert is exactly a
+ * de-confirmation of a coverage source. Without the fan-out here, an automated path
+ * could take the last qualifying adult out of a trip with no sibling ever
+ * re-evaluated — the same gap that made this seam necessary at all, one account
+ * further out. The per-TRIP key is taken before the owner key, and the returned id
+ * is still this booking's OWN item: a sibling's item is not what the caller logged.
  */
 export async function enqueueOwnHostingCoverageReevaluation(
   bookingId: string,
