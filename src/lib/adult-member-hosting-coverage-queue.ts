@@ -136,12 +136,30 @@ export async function enqueueHostingCoverageReevaluation(
  * do with any of it. Correctness survived (failures are swallowed and the cron
  * re-runs the items) but the route could hang. Filtered, the inline drain does
  * exactly the work its own transaction created.
+ *
+ * `memberIds` IS THE SAME NARROWING FOR MORE THAN ONE OWNER (#3039), and it exists
+ * because a Group Trip fan-out writes items for OTHER accounts. A change to one
+ * booking in a trip records one item per sibling booking, each naming that sibling's
+ * own owner — so a claim narrowed to the single owner whose booking was written
+ * skips every one of them, and a stranded sibling waits up to three hours for the
+ * cron instead of being escalated with the change. The list is bounded by the trip
+ * (`GROUP_TRIP_COVERAGE_DEPENDENT_LIMIT`) and always includes the writing owner, so
+ * this widens the inline drain to the items its own transaction created and to
+ * nothing else — which is the property the single-owner filter was protecting, not
+ * the number one.
  */
 export async function claimHostingCoverageReevaluations(
   options: {
     limit?: number;
     maxAttempts?: number;
     memberId?: string | null;
+    /**
+     * Several owners, for a fan-out whose items do not all belong to one account.
+     * Takes precedence over `memberId` when both are present — a caller supplying
+     * both means "this owner and these others", and the two are unioned by the
+     * caller rather than here so there is one place that decides the set.
+     */
+    memberIds?: readonly string[] | null;
     lodgeId?: string | null;
     /** Rows already attempted by this drain; a released failure must not be reclaimed inline. */
     excludeIds?: readonly string[];
@@ -159,7 +177,11 @@ export async function claimHostingCoverageReevaluations(
       ...(options.excludeIds && options.excludeIds.length > 0
         ? { id: { notIn: [...options.excludeIds] } }
         : {}),
-      ...(options.memberId ? { memberId: options.memberId } : {}),
+      ...(options.memberIds && options.memberIds.length > 0
+        ? { memberId: { in: [...new Set(options.memberIds)] } }
+        : options.memberId
+          ? { memberId: options.memberId }
+          : {}),
       ...(options.lodgeId ? { lodgeId: options.lodgeId } : {}),
     },
     orderBy: { enqueuedAt: "asc" },

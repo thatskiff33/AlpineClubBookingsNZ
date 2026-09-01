@@ -21,6 +21,8 @@ import {
 import { tryLockAdultMemberHostingPolicySet } from "@/lib/adult-member-hosting-policy-set";
 import {
   isHostingCoverageSourceBookingTerminal,
+  loadGroupTripCoverageDependentOwnerIds,
+  loadHostingCoverageSplitSiblingIds,
   loadSameOwnerCoverageDependentIds,
   loadAdultMemberHostingPolicy,
   reconcileSameOwnerCoverageIncident,
@@ -119,6 +121,15 @@ export async function settleHostingCoverageAfterCommit(
 ): Promise<HostingCoverageDrainResult> {
   try {
     let { memberId, lodgeId } = options;
+    // #3039: a Group Trip fan-out writes items for OTHER accounts, so resolving the
+    // written booking to ONE owner and narrowing to it skips every sibling's item.
+    // The owners are resolved here rather than passed in by each of the thirty-odd
+    // call sites, because which siblings a change affects is a property of the trip
+    // and not of the caller — and a caller that had to know would be a caller that
+    // could forget. `loadGroupTripCoverageDependentOwnerIds` returns an empty list
+    // for the ordinary case (scope off, or a booking in no trip), so a club that has
+    // not enabled `SAME_GROUP_TRIP` pays one cached policy read.
+    let groupOwnerIds: string[] = [];
     if (options.bookingId && !memberId && !lodgeId) {
       const booking = await db.booking.findUnique({
         where: { id: options.bookingId },
@@ -126,11 +137,26 @@ export async function settleHostingCoverageAfterCommit(
       });
       memberId = booking?.memberId ?? null;
       lodgeId = booking?.lodgeId ?? null;
+      groupOwnerIds = await loadGroupTripCoverageDependentOwnerIds(
+        options.bookingId,
+        db,
+      );
     }
+    const memberIds =
+      memberId && groupOwnerIds.length > 0
+        ? [...new Set([memberId, ...groupOwnerIds])]
+        : null;
     return await drainHostingCoverageReevaluations(
       {
-        limit: options.limit ?? INLINE_DRAIN_LIMIT,
-        ...(memberId ? { memberId } : {}),
+        // A trip's own commit legitimately records one item per sibling, which is
+        // the shape `INLINE_DRAIN_LIMIT`'s docblock already anticipated ("the
+        // split-booking and group shapes where one commit touches several") at a
+        // number that predates the fan-out existing. A group commit therefore gets
+        // the larger bound; everything else is unchanged.
+        limit:
+          options.limit ??
+          (memberIds ? GROUP_INLINE_DRAIN_LIMIT : INLINE_DRAIN_LIMIT),
+        ...(memberIds ? { memberIds } : memberId ? { memberId } : {}),
         ...(lodgeId ? { lodgeId } : {}),
       },
       db,
@@ -152,6 +178,22 @@ export async function settleHostingCoverageAfterCommit(
  * that the work is somebody else's backlog and belongs to the cron.
  */
 const INLINE_DRAIN_LIMIT = 5;
+
+/**
+ * The same bound for a commit that fanned out across a Group Trip (#3039).
+ *
+ * Larger because the premise changed rather than because five felt tight: a change
+ * to one booking in a trip records one item per sibling booking, so the work its own
+ * transaction created is now the size of the party. Ten settles the ordinary club
+ * trip immediately, which is what §7's "immediate re-evaluation" is for.
+ *
+ * DELIBERATELY NOT THE TRIP CEILING. Every item can send a loss-of-cover email, and
+ * this runs inside the request that made the change, before it answers — so the
+ * bound is a latency budget as well as a work budget. A trip larger than ten leaves
+ * its tail to the cron, which is the authority on completion and drains everything
+ * unfiltered; the cost of that is a delay, never a lost obligation.
+ */
+const GROUP_INLINE_DRAIN_LIMIT = 10;
 const MAX_MEMBER_ID_STABILIZATION_ATTEMPTS = 3;
 
 type HostingCoverageReconciliationOutcome = {
@@ -183,6 +225,8 @@ export async function drainHostingCoverageReevaluations(
     limit?: number;
     maxAttempts?: number;
     memberId?: string | null;
+    /** Several owners; see `claimHostingCoverageReevaluations` (#3039). */
+    memberIds?: readonly string[] | null;
     lodgeId?: string | null;
   } = {},
   db: typeof prisma = prisma,
@@ -507,7 +551,23 @@ async function processHostingCoverageReevaluation(
         )
       : sourceBookingIsTerminal
         ? []
-        : [refreshedItem.sourceBookingId];
+        : // THE SOURCE-ONLY BRANCH OWES THE SPLIT HALVES (#3039, `INV-HOST-043`).
+          // Without `SAME_BOOKING_OWNER` the dependent set is this one booking, and
+          // a #738 split child has neither canonical group relation — so a Group
+          // Trip fan-out named its PARENT and only its parent, leaving the half that
+          // carries the non-member guests as the one half nobody re-evaluated. The
+          // `SAME_BOOKING` borrow relation is unconditional, so the child's answer
+          // is always a function of the parent's rows; this is that relation, read
+          // once for the whole list. The same-owner branch above needs nothing: its
+          // own predicate is owner + lodge + overlapping nights, which a split half
+          // satisfies by construction.
+          [
+            refreshedItem.sourceBookingId,
+            ...(await loadHostingCoverageSplitSiblingIds(
+              [refreshedItem.sourceBookingId],
+              db,
+            )),
+          ];
 
   for (const bookingId of dependentIds) {
     const outcome = await reconcileSameOwnerCoverageIncident(

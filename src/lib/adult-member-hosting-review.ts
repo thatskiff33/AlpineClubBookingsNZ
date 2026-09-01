@@ -3207,6 +3207,69 @@ export async function loadSameOwnerCoverageDependentIds(
 }
 
 /**
+ * The #738 split halves of the given bookings, so a queue item that names ONE
+ * booking still reaches the half carrying the non-member guests (#3039,
+ * `INV-HOST-043`).
+ *
+ * THE GAP THIS CLOSES IS NAMED IN `inheritedSplitPairGroupTrip`'S OWN DOCBLOCK.
+ * Nothing flows the other way across a split pair: the child has neither canonical
+ * group relation, so `groupTripCoverageDependentWhere` cannot match it and a Group
+ * Trip fan-out finds its PARENT and not the child. The child is the half that
+ * carries the non-member guests — the rows the hosting rule exists to judge — so
+ * reconciling only the parent re-evaluates the one half that has nothing to judge.
+ * The child is reached through the `SAME_BOOKING` sibling relation, which is what
+ * this read is.
+ *
+ * IT IS THE SAME PREDICATE, NOT A SECOND ONE. `hostingSiblingWhere` is the clause
+ * `loadSiblingHosts` borrows through and `loadHostingSiblingIds` fans out through,
+ * so this cannot drift from the borrow relation it mirrors (`INV-SSOT-001`). The
+ * batched `OR` is one query rather than one per booking: each disjunct is that exact
+ * clause for one row, so the result is the union of the per-row answers with no
+ * predicate rewritten.
+ *
+ * WHY THE DRAIN NEEDS IT AND THE MUTATION PATH DOES NOT. In the actor's transaction
+ * `reconcileAdultMemberHostingReviewWithSiblings` already walks
+ * `loadHostingSiblingIds` for the booking it was handed. The drain settles a
+ * DIFFERENT booking — a sibling named by a queue item — through the single-id
+ * reconciler, and re-entering the sibling-walking form from a background drain would
+ * re-enter the participant fence and the fan-out, enqueueing fresh work on every
+ * pass. Expanding the id list instead gives the same coverage and terminates.
+ *
+ * BOUNDED BY ITS INPUT AND CAPPED AGAIN. A split pair is two rows, so the realistic
+ * answer is one id per input booking; the ceiling is the same
+ * `SAME_OWNER_COVERAGE_DEPENDENT_LIMIT` the dependent reads use, because a family
+ * wide enough to reach it is the same data problem that constant already names.
+ * Returns only ids NOT already in the input, so a caller can concatenate without
+ * de-duplicating.
+ */
+export async function loadHostingCoverageSplitSiblingIds(
+  bookingIds: readonly string[],
+  db: AdultMemberHostingReviewDb,
+): Promise<string[]> {
+  const ids = [...new Set(bookingIds)];
+  if (ids.length === 0) return [];
+  const rows = (await db.booking.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, memberId: true, parentBookingId: true },
+  })) as Array<Pick<LoadedHostingBooking, "id" | "memberId" | "parentBookingId">>;
+  // Every row contributes a clause, including one with no `parentBookingId`: that
+  // booking may still be the PARENT of a split child, and `hostingSiblingWhere`
+  // covers both directions in the one predicate.
+  const clauses = rows.map((row) => hostingSiblingWhere(row));
+  if (clauses.length === 0) return [];
+  const siblings = (await db.booking.findMany({
+    where: { OR: clauses },
+    orderBy: [...COVERAGE_READ_ORDER],
+    take: SAME_OWNER_COVERAGE_DEPENDENT_LIMIT,
+    select: { id: true },
+  })) as Array<{ id: string }>;
+  const known = new Set(ids);
+  return siblings
+    .map((sibling) => sibling.id)
+    .filter((id) => !known.has(id));
+}
+
+/**
  * Bring one dependent booking's incident state into line with current facts
  * (#2576 §8, §14, §16). Called by the drain, after commit, per dependent.
  *
