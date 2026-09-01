@@ -1,7 +1,7 @@
 # File-size allowances for #3039 (GROUP-TRIP 3)
 
 file: src/lib/adult-member-hosting-review.ts
-lines: 3876
+lines: 3976
 reason: THE SINGLE LIVE DECLARATION FOR THIS PATH ACROSS THREE EPIC CHILDREN.
   #3037 added one line here, #3038 added the third host scope's loader, and this
   child adds the Group Trip fan-out; all three diff against `main`, so the gate
@@ -32,7 +32,11 @@ reason: THE SINGLE LIVE DECLARATION FOR THIS PATH ACROSS THREE EPIC CHILDREN.
   line count. The review round did push work OUT of this file rather than in:
   `coverageDependentEnvelopeAcrossNightsWhere` went to the envelope module, the two
   advisory-lock primitives collapsed from four to two in the lock module, and the
-  fake booking store left three test files for one support module.
+  fake booking store left three test files for one support module. Re-measured
+  after `main` was synced in: #3209's supervision fix landed on this same path and
+  its own `size-allowances.d/3209-cancel-cover-reconcile.md` also names this file,
+  but that fragment has merged, so it is inert and the number above is the composed
+  length rather than either branch's.
 
 file: src/lib/group-settlement.ts
 lines: 1254
@@ -52,7 +56,7 @@ reason: twelve lines, ten of them comment, and the code change is one argument.
   this path, and that fragment has merged, so it is inert.
 
 file: src/lib/cron-group-settlement-reaper.ts
-lines: 752
+lines: 750
 reason: twelve lines, nine of them comment, and the same one-argument change as
   `group-settlement.ts` above for the same measured reason — the reaper reverts
   every child of one settlement inside one transaction, so the per-child Group Trip
@@ -61,7 +65,10 @@ reason: twelve lines, nine of them comment, and the same one-argument change as
   this revert is `CONFIRMED -> PAYMENT_PENDING`, which TAKES a coverage source
   away, so unlike the Xero PAID seam it may never degrade its fan-out to the cron —
   a contended trip must roll the whole pass back. That sentence has to sit at the
-  call it governs; there is nothing to split.
+  call it governs; there is nothing to split. The number went DOWN by two when
+  `main` was synced in: #3209 moved `ORGANISER_CANCEL_ACTIVE_CHILD_STATUSES` into
+  `booking-status.ts` so the organiser cancel and this re-drive share one
+  declaration, and this file imports it instead of spelling it again.
 
 file: src/lib/xero-inbound/invoice-paid-effects.ts
 lines: 1542
