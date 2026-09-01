@@ -41,6 +41,46 @@ module is on.
 1. Click **Preview kiosk** to open the kiosk exactly as this login would see it — a
    **read-only** preview, so nothing is saved.
 
+### When a hut leader unlocks the kiosk with their PIN
+
+**Audience: operator.**
+
+The wall tablet is signed in as the kiosk account and shows what any guest may
+see. A hut leader who needs to do more — mark people off, set up the chore
+roster — types their 6-digit PIN on that same tablet. That is the intended way
+to work and nothing about it has changed.
+
+What *has* changed is how long the tablet stays unlocked afterwards. Until
+[#3228](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3228) one PIN
+entry left the screen unlocked for **twelve hours**, and there was no way to end
+it early. A tablet PINned in after breakfast was still a hut leader's screen at
+ten that night, to whoever walked up to it.
+
+Now:
+
+- **It locks itself after 10 minutes with nobody using it.** "Using it" means a
+  person touching the screen — a tap, a key, a scroll. The tablet refreshing
+  itself in the background does **not** count, which is the whole point: a
+  tablet left on a bench goes back to the ordinary view whether anybody
+  remembers it or not.
+- **Using it keeps it unlocked, for as long as you like.** Somebody working
+  through a full lodge is never dropped part-way. The clock only runs while
+  nobody is touching the screen.
+- **There is a Lock button** at the top of the kiosk whenever the controls are
+  unlocked — *Lock hut leader controls*. Press it when you walk away and the
+  tablet is an ordinary screen again immediately, without waiting for the 10
+  minutes.
+
+When the tablet locks itself, or you press Lock, it goes straight back to what a
+guest sees. Nothing a hut leader could see is left on the screen, and the PIN box
+comes back so the next person who needs it can unlock it again.
+
+**Two things worth telling your hut leaders.** The lock does not sign the tablet
+out — the kiosk account stays signed in, so the guest list and the week strip
+carry on showing as normal. And a hut leader who signs in on their own phone or
+laptop with their own account is not affected by any of this: the 10 minutes and
+the Lock button are about the shared tablet only.
+
 ### What "here today" means on the kiosk
 
 Every count and badge on the kiosk answers one question: who is in the lodge on
