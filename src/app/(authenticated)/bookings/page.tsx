@@ -8,6 +8,7 @@ import { MyWholeLodgeRequests } from "./_components/my-whole-lodge-requests";
 import { MyExceptionRequests } from "./_components/my-exception-requests";
 import { toMyWholeLodgeRequestItem } from "@/lib/member-whole-lodge-requests";
 import { readMemberExceptionRequests } from "@/lib/booking-exception-request-service";
+import { bookingsWithOpenFinancialReview } from "@/lib/booking-financial-review-visibility";
 
 export default async function MyBookingsPage() {
   const session = await auth();
@@ -81,6 +82,19 @@ export default async function MyBookingsPage() {
       .filter((id): id is string => Boolean(id)),
   );
 
+  /*
+    #3033 (epic #2797): which of these bookings have money held for review.
+
+    ONE batched read for the whole list, not one per card. Every booking on this
+    screen shows `finalPriceCents` — which a structural edit UPDATES — so a
+    booking whose adjustment is unresolved currently shows a figure that looks
+    authoritative and is not the whole story. That is the "never a stale figure"
+    case, and the qualifier below is what stops the number speaking for itself.
+  */
+  const bookingsUnderFinancialReview = await bookingsWithOpenFinancialReview(
+    bookings.map((booking) => booking.id),
+  );
+
   const items: MyBookingItem[] = bookings.map((booking) => {
     // #1975/#796: only a genuine #738 split child (a provisional non-member
     // booking) is nestable. A group joiner also carries parentBookingId but is
@@ -97,6 +111,10 @@ export default async function MyBookingsPage() {
       checkOut: booking.checkOut.toISOString(),
       guestCount: booking.guests.length,
       finalPriceCents: booking.finalPriceCents,
+      // #3033: the price above is the post-change total, and it is real — but a
+      // booking with an open review has an adjustment on top of it that nobody
+      // has worked out yet, so the row must not let it read as the final word.
+      financialReviewPending: bookingsUnderFinancialReview.has(booking.id),
       status: booking.status,
       // #1975: expose the parent link ONLY for a genuine split child, so the
       // list nests it as a sub-row inside its parent's card. A #796 joiner

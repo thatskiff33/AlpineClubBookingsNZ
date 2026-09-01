@@ -26,6 +26,8 @@ import { describe, expect, it } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
+import { stripComments } from "./support/strip-comments";
+
 const REFUSAL_MODULE = "src/lib/deleted-booking-refusal.ts";
 
 /**
@@ -53,11 +55,7 @@ function readRepoFile(relativePath: string): string {
  * of what they say.
  */
 function readRepoCode(relativePath: string): string {
-  return readRepoFile(relativePath)
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .split("\n")
-    .filter((line) => !/^\s*(\/\/|\*)/.test(line))
-    .join("\n");
+  return stripComments(readRepoFile(relativePath));
 }
 
 /**

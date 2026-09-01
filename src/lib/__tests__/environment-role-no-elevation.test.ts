@@ -3,6 +3,8 @@ import path from "node:path";
 import { Prisma } from "@prisma/client";
 import { describe, expect, it } from "vitest";
 
+import { stripComments } from "./support/strip-comments";
+
 /**
  * The safer-only rule is STRUCTURAL, not merely enforced in code
  * (ENV-SAFETY 1, #3034; epic #2986; INV-CONFIG-003).
@@ -90,9 +92,7 @@ const writeText = readRepoFile(
  * absent).
  */
 function stripTsComments(source: string): string {
-  return source
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/^[ 	]*\/\/.*$/gm, "");
+  return stripComments(source);
 }
 
 function stripSqlComments(source: string): string {

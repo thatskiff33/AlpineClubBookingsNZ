@@ -34,6 +34,13 @@ const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
 interface AuditGuestNight {
   stayDate: Date;
+  /**
+   * A NUMBER, always. #3170 made `BookingGuestNight.priceCents` nullable, and a
+   * null is deliberately unrepresentable HERE: `mapAuditGuest` drops a guest's
+   * whole per-night detail the moment one night is unknown, exactly as the
+   * invoice builder does, so nothing downstream of that filter has to remember
+   * that a night price might be missing.
+   */
   priceCents: number;
 }
 
@@ -325,7 +332,12 @@ interface RoundingAuditGuest {
   ageTier: string;
   isMember: boolean;
   priceCents: number;
-  nights: Array<{ stayDate: Date; priceCents: number }>;
+  /**
+   * #3170: `priceCents` is NULLABLE in the database now - a night a parked edit
+   * committed without valuing. The scanner reads what is stored, and
+   * `mapAuditGuest` decides what the replay may do with it.
+   */
+  nights: Array<{ stayDate: Date; priceCents: number | null }>;
 }
 
 /** A booking as the scanner reads it (child bookings omit `payment`). */
@@ -414,14 +426,46 @@ export function countStayNights(checkIn: Date, checkOut: Date): number {
   return getStayNights(checkIn, checkOut).length;
 }
 
+/**
+ * #3170: ONE UNKNOWN NIGHT DISQUALIFIES THE WHOLE GUEST'S PER-NIGHT DETAIL, which
+ * is the same `.every()` test `buildInvoiceLineItems` applies and is why it is
+ * spelt the same way here.
+ *
+ * This module's entire promise is that it REPLAYS the builder - its own header
+ * says it reproduces the old grouping byte for byte so the drift it reports is
+ * the drift that was really invoiced. Since #3170 the builder sends a guest with
+ * any unknown night down the whole-stay legacy branch, so an audit that stayed on
+ * the per-night branch would be replaying a builder that no longer exists, for
+ * precisely the population #3170 creates.
+ *
+ * The arithmetic mattered as much as the branch. Left alone, `totalCents +=
+ * night.priceCents` adds a null as 0 and `Math.min(minPrice, null)` collapses to
+ * 0, so the audit would value an unknown night at nothing and report a drift
+ * figure that is not the drift - the null-as-zero this epic exists to forbid, in
+ * a report a person acts on.
+ *
+ * Empty nights is not a loss of evidence: `computeGuestRoundingDrift` reads it as
+ * the legacy flat-total path and replays `round(guest.priceCents / bookingNights)`
+ * over the booking's own range, which is what the builder now emits for this
+ * guest.
+ */
 function mapAuditGuest(guest: RoundingAuditGuest): AuditGuest {
+  const pricedNights = guest.nights.every(
+    (night): night is { stayDate: Date; priceCents: number } =>
+      typeof night.priceCents === "number",
+  )
+    ? guest.nights
+    : [];
   return {
     firstName: guest.firstName,
     lastName: guest.lastName,
     ageTier: guest.ageTier,
     isMember: guest.isMember,
     priceCents: guest.priceCents,
-    nights: guest.nights.map((n) => ({ stayDate: n.stayDate, priceCents: n.priceCents })),
+    nights: pricedNights.map((n) => ({
+      stayDate: n.stayDate,
+      priceCents: n.priceCents,
+    })),
   };
 }
 

@@ -45,6 +45,15 @@ const tx = {
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    /*
+      #3032: the modified email asks whether the club is still working out an
+      amount on this booking, through `bookingHasOpenFinancialReview`. That
+      reads the GLOBAL client after the transaction commits, which is a
+      different read from the fence's in-transaction `findFirst`. Empty by
+      default - no review is open - so every pre-#3032 assertion in this file
+      means exactly what it meant before.
+    */
+    manualRefundTask: { findMany: vi.fn().mockResolvedValue([]) },
     $transaction: (cb: (client: typeof tx) => unknown) => cb(tx),
   },
 }));
@@ -534,6 +543,62 @@ describe("adminShiftBookingDates (issue #1668 — pure translation)", () => {
     const emailArgs = h.sendBookingModifiedEmail.mock.calls[0][0];
     expect(emailArgs.changeFeeCents).toBe(0);
     expect(emailArgs.oldFinalPriceCents).toBe(emailArgs.newFinalPriceCents);
+  });
+
+  it("tells the member their money is still being worked out (#3032)", async () => {
+    /*
+      THE PATH THAT MATTERS MOST OF THE FIVE. An admin date shift preserves the
+      price, so it is deliberately never fenced by
+      `assertNoPendingEditFinancialReview` - which makes it the one
+      modified-email path where an OPEN review is genuinely reachable in
+      production. A booking can sit under review and still have its dates moved,
+      and before #3032 that member was emailed about the move with a money
+      section that said nothing at all.
+
+      Driven through the real `bookingHasOpenFinancialReview` read, not a
+      literal at the call site.
+    */
+    const booking = makeBooking();
+    primeTx(booking);
+    const { prisma } = await import("@/lib/prisma");
+    vi.mocked(prisma.manualRefundTask.findMany).mockResolvedValue([
+      { bookingId: "b1" },
+    ] as never);
+
+    await adminShiftBookingDates({
+      bookingId: "b1",
+      actor: { id: "admin1", role: "ADMIN" },
+      input: { checkIn: "2026-09-12" },
+      ipAddress: "1.1.1.1",
+    });
+
+    expect(h.sendBookingModifiedEmail).toHaveBeenCalledTimes(1);
+    expect(h.sendBookingModifiedEmail.mock.calls[0][0].financialReviewPending).toBe(
+      true,
+    );
+  });
+
+  it("says nothing about a review when the booking has none (#3032)", async () => {
+    // The CONTROL: a shift on a booking with no open review must not tell the
+    // member money is being worked out. Stated explicitly rather than inherited
+    // from the mock declaration, because `vi.clearAllMocks()` keeps
+    // implementations and the row above would otherwise survive into here.
+    const booking = makeBooking();
+    primeTx(booking);
+    const { prisma } = await import("@/lib/prisma");
+    vi.mocked(prisma.manualRefundTask.findMany).mockResolvedValue([] as never);
+
+    await adminShiftBookingDates({
+      bookingId: "b1",
+      actor: { id: "admin1", role: "ADMIN" },
+      input: { checkIn: "2026-09-12" },
+      ipAddress: "1.1.1.1",
+    });
+
+    expect(h.sendBookingModifiedEmail).toHaveBeenCalledTimes(1);
+    expect(h.sendBookingModifiedEmail.mock.calls[0][0].financialReviewPending).toBe(
+      false,
+    );
   });
 
   it("recalculates the non-member hold off the new check-in", async () => {

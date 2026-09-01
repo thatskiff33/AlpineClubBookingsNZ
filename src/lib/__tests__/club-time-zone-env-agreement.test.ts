@@ -6,6 +6,8 @@ import { captureHostTimeZone } from "@/lib/__tests__/helpers/timezone";
 import { CLUB_TIME_ZONE_FALLBACK } from "@/lib/club-time-zone";
 import { readEnvironmentClubTimeZoneSeed } from "@/lib/club-time-zone-env";
 
+import { stripComments } from "./support/strip-comments";
+
 /**
  * The two readings of the environment's timezone must not drift apart while both
  * exist (CT-1, #2989; epic #2988).
@@ -60,24 +62,23 @@ const ENVIRONMENT_READ =
   /process\s*\.\s*env\s*(?:\.\s*([A-Za-z_$][\w$]*)|\[\s*["'`]([A-Za-z_$][\w$]*)["'`]\s*\])/g;
 
 /**
- * Strip comments so a docblock that NAMES a variable is not counted as reading
- * one — the failure mode that tripped the #2440 published-content contract, and
- * which two comments in this tree (`config-self-heal-steps.ts` and the migration
- * verification fixture) would trip here.
+ * The `*TZ` environment variables `text` actually reads, in source order.
  *
- * Block comments go entirely; a line comment is stripped only when it starts the
- * line, so a `//` inside a string literal (a URL) can never eat the code beside
- * it.
+ * Comments are stripped first, so a docblock that NAMES a variable is not
+ * counted as reading one — the failure mode that tripped the #2440
+ * published-content contract, and which two comments in this tree
+ * (`config-self-heal-steps.ts` and the migration verification fixture) would
+ * trip here.
+ *
+ * Through the CANONICAL stripper since #3164, which is the whole of
+ * `INV-SSOT-004`: the copy that used to live here removed a line comment only
+ * when it STARTED the line, and had no regex-literal branch — so an escaped
+ * slash in a scanned file opened a phantom line comment that ate the rest of
+ * that line. Both are the difference between a census that reports and one that
+ * quietly under-reports.
  */
-function withoutComments(text: string): string {
-  return text
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/^[ \t]*\/\/.*$/gm, "");
-}
-
-/** The `*TZ` environment variables `text` actually reads, in source order. */
 function timeZoneEnvironmentVariablesRead(text: string): string[] {
-  return [...withoutComments(text).matchAll(ENVIRONMENT_READ)]
+  return [...stripComments(text).matchAll(ENVIRONMENT_READ)]
     .map((match) => match[1] ?? match[2] ?? "")
     .filter((name) => name.endsWith("TZ"));
 }

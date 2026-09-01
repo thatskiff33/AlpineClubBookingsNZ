@@ -32,6 +32,8 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { stripComments } from "./support/strip-comments";
+
 const SRC_DIR = join(import.meta.dirname, "..", "..");
 
 /** Every `.ts`/`.tsx` file under `src/`, tests and fixtures excluded. */
@@ -52,11 +54,7 @@ function sourceFiles(dir: string, found: string[] = []): string[] {
 
 /** Source with comments stripped, so a comment naming a call is not a call. */
 function executableCode(source: string): string {
-  return source
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .split("\n")
-    .filter((line) => !/^\s*(\/\/|\*)/.test(line))
-    .join("\n");
+  return stripComments(source);
 }
 
 /**

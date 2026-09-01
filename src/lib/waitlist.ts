@@ -49,6 +49,8 @@ import {
 } from "@/lib/subscription-lockout-enforcement";
 import { formatMissingPaidUpAdultWaitlistRefusal } from "@/lib/policies/subscription-lockout-pricing";
 import { formatAdultMemberHostingWaitlistRefusal } from "@/lib/policies/adult-member-hosting";
+import { requiredNightPriceCents } from "@/lib/required-price-cents";
+import { carriesUnvaluedStoredNight } from "@/lib/stored-night-price-write";
 
 export const WAITLIST_OFFER_HOURS =
   Number(process.env.WAITLIST_OFFER_HOURS) || 48;
@@ -126,7 +128,10 @@ type WaitlistCandidateForReprice = Prisma.BookingGetPayload<{
  * policy, group discount, and promo validity, persisting the new totals and
  * per-guest prices (#1035). Returns the price the member will pay on
  * confirmation. On failure the stored snapshot is kept and returned — an
- * offer must never be blocked by a repricing edge case.
+ * offer must never be blocked by a repricing edge case. The same fallback covers
+ * the one reprice this DECLINES to do: a booking carrying a night whose sold
+ * price is not known (#3166, `INV-MOD-028`) is offered at its stored snapshot
+ * rather than having the blank rewritten as a guess.
  */
 async function repriceWaitlistCandidate(
   tx: Prisma.TransactionClient,
@@ -153,6 +158,35 @@ async function repriceWaitlistCandidate(
   // under the per-lodge capacity lock this transaction holds.
   subscriptionLockoutMode?: SubscriptionLockoutMode,
 ): Promise<number> {
+  /**
+   * #3166 (`INV-MOD-028`): A BLANK IS NEVER REPAIRED BY A REPRICE.
+   *
+   * This reprice passes no locked night prices, deletes every night row and
+   * rewrites the lot at today's rates — so a night whose stored price is `NULL`
+   * ("not known", written by a parked edit under #3170) would come back as a
+   * real integer that nobody decided, in the very column the next edit reads as
+   * sold-price evidence. Nothing else ever clears a blank: settling a review
+   * writes an amount to the TASK, not a price to the night row.
+   *
+   * REACHABLE, not theoretical. `ADMIN_FUTURE_EDIT_STATUSES` includes
+   * `WAITLISTED`, so an admin edit can park a waitlisted booking and write
+   * `NULL`s into it; this sweep would then convert them into guesses while the
+   * review task raised by that very edit is still OPEN, and the officer pricing
+   * it would be reading rows the application had invented after the fact.
+   *
+   * The offer still goes out. Falling back to the stored snapshot is this
+   * function's own documented behaviour for a reprice it cannot do, and for a
+   * parked booking the snapshot is the last figure a person stood behind. Logged
+   * at warn rather than error because nothing failed — a decision was declined.
+   */
+  if (carriesUnvaluedStoredNight(candidate.guests)) {
+    logger.warn(
+      { bookingId: candidate.id },
+      "Waitlisted booking carries a night with no known sold price; offering at the stored snapshot rather than repricing over it (#3166)"
+    );
+    return candidate.finalPriceCents;
+  }
+
   try {
     const seasonRateData = await loadSeasonRateData(tx, lodgeId);
     const groupDiscountSetting = await tx.groupDiscountSetting.findUnique({
@@ -203,9 +237,51 @@ async function repriceWaitlistCandidate(
     const newFinalPriceCents =
       newTotalPriceCents + promoResult.newPromoAdjustmentCents;
 
+    // #3031 (epic #2797): THE NIGHT ROWS THIS REPRICE PRICED, built and checked
+    // BEFORE anything is written.
+    //
+    // This used to move `BookingGuest.priceCents` and leave `BookingGuestNight`
+    // untouched, so after any rate change between the waitlist entry and the
+    // offer the rows summed to the OLD total while the guest carried the NEW
+    // one. That is a strand that does not reconcile — INV-MOD-028's
+    // `STORED_TOTAL_MISMATCH` — manufactured fresh, on a healthy live booking,
+    // every time this ran. Every subsequent in-progress edit on that booking
+    // would then be REFUSED, and every single-guest removal would commit with
+    // its money PARKED for a person to price (#3032) — both for a mismatch the
+    // application itself had created.
+    //
+    // The amounts were already in hand: `perNightCents` and `nightDates` are the
+    // same values `guestNightRates` hands to the promo allocator above, so this
+    // writes what the offer is actually charging rather than deriving anything.
+    //
+    // BUILT FIRST, and that ordering is load-bearing. This function's catch
+    // degrades to the stored snapshot and lets the offer go out, so a throw
+    // BETWEEN two writes would commit half a reprice — a guest at the new total
+    // with its night rows already deleted. Everything that can refuse is
+    // therefore resolved here, before the first mutation.
+    const repricedNightRows = candidate.guests.map((guest, index) => {
+      const nightDates = priceBreakdown.guests[index].nightDates ?? [];
+      return nightDates.map((stayDate, k) => ({
+        bookingGuestId: guest.id,
+        stayDate,
+        // NO `?? 0`. These rows become the booking's sold-price history from
+        // here on, and a magic zero would be read back by the next edit as
+        // evidence the member paid nothing for the night. The rule itself, why
+        // it refuses rather than defaults, and the caller census behind it are
+        // stated once in `required-price-cents.ts` (#3031, #3167); all this
+        // site says is which writer it is.
+        priceCents: requiredNightPriceCents(
+          priceBreakdown.guests[index].perNightCents,
+          k,
+          stayDate,
+          "the waitlist offer reprice",
+        ),
+      }));
+    });
+
     await Promise.all(
-      candidate.guests.map((guest, index) =>
-        tx.bookingGuest.update({
+      candidate.guests.map(async (guest, index) => {
+        await tx.bookingGuest.update({
           where: { id: guest.id },
           // Reprice overwrites the rate-membership-type snapshot alongside the
           // price (#1930, E4): the offer re-bases the whole booking at current
@@ -215,8 +291,18 @@ async function repriceWaitlistCandidate(
             rateMembershipTypeId:
               priceBreakdown.guests[index].rateMembershipTypeId,
           },
-        })
-      )
+        });
+        // Delete-then-create, exactly as every other night writer does, because
+        // the repriced night SET can differ from the stored one.
+        await tx.bookingGuestNight.deleteMany({
+          where: { bookingGuestId: guest.id },
+        });
+        if (repricedNightRows[index].length > 0) {
+          await tx.bookingGuestNight.createMany({
+            data: repricedNightRows[index],
+          });
+        }
+      })
     );
     await tx.booking.update({
       where: { id: candidate.id },

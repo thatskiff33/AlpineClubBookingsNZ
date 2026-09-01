@@ -87,9 +87,23 @@ const mocks = vi.hoisted(() => {
     }
   );
 
+  /**
+   * #3170 fix round (F1): the worker re-reads an operation's payload AFTER it
+   * claims the row, because the scan's copy is a Xero round trip per row out of
+   * date by then. Served from the same row store `operationUpdateMany` writes,
+   * so this suite keeps modelling one store rather than two views of one.
+   */
+  const operationFindUnique = vi.fn(
+    async ({ where }: { where: { id: string } }) => {
+      const row = rows.get(where.id);
+      return row ? { requestPayload: row.requestPayload } : null;
+    }
+  );
+
   return {
     rows,
     operationFindMany: vi.fn(),
+    operationFindUnique,
     operationUpdateMany,
     failXeroSyncOperation,
     createXeroCreditNote: vi.fn(),
@@ -103,6 +117,7 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     xeroSyncOperation: {
       findMany: mocks.operationFindMany,
+      findUnique: mocks.operationFindUnique,
       updateMany: mocks.operationUpdateMany,
     },
     membershipSubscriptionCharge: {

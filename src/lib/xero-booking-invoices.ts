@@ -182,7 +182,11 @@ export function buildInvoiceLineItems(
     // Per-night rows (issue #713). When present, line items are emitted per
     // contiguous run; otherwise the guest is billed as one line over the whole
     // booking range, the pre-#713 behaviour.
-    nights?: Array<{ stayDate: Date; priceCents: number }> | null;
+    // #3170: a night whose stored price is `null` is a night whose sold price is
+    // NOT KNOWN — written by a parked edit that committed a structural change
+    // without valuing it. See the guest branch below for what this builder does
+    // with one, and why it does not simply drop it.
+    nights?: Array<{ stayDate: Date; priceCents: number | null }> | null;
   }>,
   checkIn: Date,
   checkOut: Date,
@@ -254,7 +258,32 @@ export function buildInvoiceLineItems(
   };
 
   return guests.flatMap((guest) => {
-    const guestNights = guest.nights ?? [];
+    const loadedNights = guest.nights ?? [];
+    /**
+     * #3170: the nights this guest's rows can actually price.
+     *
+     * A `null` night is one a PARKED edit committed without valuing (epic
+     * #2797): the structural change landed and the money is held as an OPEN
+     * `EDIT_FINANCIAL_REVIEW` task for a person to price.
+     *
+     * DROPPING SUCH A NIGHT FROM THE RUNS WOULD LOSE MONEY, silently. The runs
+     * reconcile to `guest.priceCents` only because they partition every night
+     * the guest holds; omitting one emits an invoice SHORT by that night's
+     * share, which is a real under-charge on a live Xero document
+     * (INV-MONEY-003). So an unknown night disqualifies the per-night detail
+     * for this guest ENTIRELY, and the guest falls to the whole-range legacy
+     * branch below — which bills `guest.priceCents`, a real stored number, over
+     * the booking's own range. That is the same treatment a pre-#713 or
+     * quoted guest with no night rows already gets, and it invents nothing:
+     * the even split below is a LINE-SPLITTING presentation that sums to the
+     * stored total exactly and is never written back to any row.
+     */
+    const guestNights = loadedNights.every(
+      (night): night is { stayDate: Date; priceCents: number } =>
+        typeof night.priceCents === "number",
+    )
+      ? loadedNights
+      : [];
 
     // No per-night detail: bill the whole booking range (legacy path). Split
     // the flat total into an exact per-night cent vector and run it through the

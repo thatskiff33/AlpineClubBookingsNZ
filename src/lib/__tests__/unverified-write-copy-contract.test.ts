@@ -4,6 +4,8 @@ import { describe, expect, it } from "vitest";
 
 import { unverifiedWriteMessage } from "@/lib/unverified-write-copy";
 
+import { stripComments } from "./support/strip-comments";
+
 /**
  * Unverified-write copy — contract (#2668).
  *
@@ -309,11 +311,7 @@ function networkFailureBranches(source: string): Array<{ line: number; text: str
  * number or the message sends the next reader to the wrong place.
  */
 function blankComments(source: string): string {
-  return source
-    .replace(/\/\*[\s\S]*?\*\//g, (block) => block.replace(/[^\n]/g, " "))
-    .split("\n")
-    .map((line) => (/^\s*(\/\/|\*)/.test(line) ? "" : line))
-    .join("\n");
+  return stripComments(source);
 }
 
 describe("unverified-write copy contract (#2668)", () => {

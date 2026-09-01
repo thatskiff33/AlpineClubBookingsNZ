@@ -4,6 +4,8 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { stripCssComments } from "./support/strip-comments";
+
 // #2146 — printing a finance/admin report while the app is in dark mode used to
 // produce a blank-looking PDF.
 //
@@ -115,10 +117,7 @@ function topLevelRules(css: string): Array<{ selector: string; body: string }> {
       }
     }
 
-    const selector = css
-      .slice(cursor, open)
-      .replaceAll(/\/\*[\s\S]*?\*\//g, "")
-      .trim();
+    const selector = stripCssComments(css.slice(cursor, open)).trim();
     const body = css.slice(open + 1, close);
 
     if (selector.startsWith("@")) {
@@ -165,9 +164,9 @@ function declaredTokens(
   return new Set(
     rules.flatMap(({ body }) =>
       [
-        ...body
-          .replaceAll(/\/\*[\s\S]*?\*\//g, "")
-          .matchAll(/(?:^|[;{\s])(--[a-z0-9-]+)\s*:/gi),
+        ...stripCssComments(body).matchAll(
+          /(?:^|[;{\s])(--[a-z0-9-]+)\s*:/gi,
+        ),
       ].map((match) =>
         match[1].toLowerCase(),
       ),
@@ -233,8 +232,7 @@ function nonTokenDeclarations(
   body: string,
   healed: ReadonlySet<string>,
 ): string[] {
-  return body
-    .replaceAll(/\/\*[\s\S]*?\*\//g, "")
+  return stripCssComments(body)
     .split(";")
     .map((declaration) => declaration.trim())
     .filter((declaration) => declaration.includes(":"))

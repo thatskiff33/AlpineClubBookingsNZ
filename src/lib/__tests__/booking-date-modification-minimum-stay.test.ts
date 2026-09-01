@@ -66,6 +66,10 @@ describe("modifyBookingDates minimum-stay transport (#2363)", () => {
       $executeRaw: h.executeRaw,
       booking: { findUnique: h.bookingFindUnique },
       choreAssignment: { findMany: vi.fn().mockResolvedValue([]) },
+      // #3032: the pending-review fence reads this under the booking-edit locks.
+      // Empty by default - no financial review is open - so this suite asserts
+      // exactly what it asserted before.
+      manualRefundTask: { findFirst: vi.fn().mockResolvedValue(null) },
     };
     h.transaction.mockImplementation(
       async (callback: (tx: unknown) => Promise<unknown>) => callback(txClient),

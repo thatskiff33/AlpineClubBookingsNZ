@@ -3,6 +3,7 @@ import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { prisma } from "@/lib/prisma";
 import { getWaitlistOfferEmailDeliveries } from "@/lib/waitlist-offer-email-visibility";
 import { buildXeroRecordActivityUrl } from "@/lib/xero-record-links";
+import { bookingHasOpenFinancialReview } from "@/lib/booking-financial-review-visibility";
 
 /**
  * Issue #1089: per-booking provider-mismatch surfacing. The aggregate views
@@ -20,13 +21,44 @@ type BookingProviderMismatchId =
   | "xero-credit-note-pending"
   | "waitlist-offer-email-failed";
 
-export interface BookingProviderMismatch {
-  id: BookingProviderMismatchId;
+/**
+ * #3033: the id of the money-waiting-for-review warning, which is NOT a provider
+ * mismatch.
+ *
+ * Its own union rather than a fourth member of the one above. The row SHAPE is
+ * shared — label, description, href, link label is exactly what a one-line admin
+ * warning with an actionable path needs, and a parallel interface carrying the
+ * same four fields would be a second home for one thing (`INV-SSOT`). The set of
+ * IDS is not shared, because that is not a shape: it is a claim about what each
+ * function can return. Folded into one union,
+ * `getBookingProviderMismatches` declared `financial-review-open` as a possible
+ * result even though it can never produce one, and a caller narrowing on the id
+ * was handed a case that cannot happen.
+ */
+type BookingFinancialReviewWarningId = "financial-review-open";
+
+/**
+ * One admin warning line: what is out of step, and the one link that leads to
+ * fixing it.
+ *
+ * Generic over its id so the two producers below share the shape without
+ * sharing the vocabulary.
+ */
+export interface BookingWarningRow<Id extends string = string> {
+  id: Id;
   label: string;
   description: string;
   href: string;
   linkLabel: string;
 }
+
+/** Provider state disagreeing with local state (#1089). */
+export type BookingProviderMismatch =
+  BookingWarningRow<BookingProviderMismatchId>;
+
+/** Money on a booking waiting for a person to decide it (#3033). */
+export type BookingFinancialReviewWarning =
+  BookingWarningRow<BookingFinancialReviewWarningId>;
 
 type MismatchBooking = {
   id: string;
@@ -170,4 +202,39 @@ export async function getBookingProviderMismatches(
   }
 
   return mismatches;
+}
+
+/**
+ * #3033: the booking has money held for review, so the Admin tools card says so.
+ *
+ * A separate function from `getBookingProviderMismatches` above, and NOT folded
+ * into its list, because that list renders under a heading that says "Provider
+ * state out of step" — Xero and the waitlist mailer disagreeing with local
+ * state. A financial review is not a provider disagreement: the local state is
+ * exactly right and it is the club that owes a decision. Filing it under that
+ * heading would misdescribe it to the one person able to resolve it.
+ *
+ * Returns at most one row. The card is a warning, not a queue: an admin does not
+ * need to be told twice that this booking has unresolved money, and the queue
+ * the link goes to is where the individual reviews live.
+ *
+ * NO AMOUNT AND NO EVIDENCE HERE, deliberately. The amount is the question, not
+ * a fact, and repeating the evidence on a second screen would be a second home
+ * for it (owner decision D3 asks for a LINK). The row is the pointer.
+ */
+export async function getBookingFinancialReviewWarnings(
+  bookingId: string,
+): Promise<BookingFinancialReviewWarning[]> {
+  if (!(await bookingHasOpenFinancialReview(bookingId))) return [];
+
+  return [
+    {
+      id: "financial-review-open",
+      label: "Money on this booking is waiting for review",
+      description:
+        "A change to this booking saved, but the refund or credit for it could not be worked out from what the booking has stored, so nothing has been refunded or credited and no amount has been assumed. The member has been told their change saved and that the club is working the adjustment out.",
+      href: "/admin/payments",
+      linkLabel: "Open the settlement queue",
+    },
+  ];
 }

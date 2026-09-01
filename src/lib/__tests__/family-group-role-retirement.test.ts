@@ -58,6 +58,8 @@ import path from "node:path";
 import { Prisma } from "@prisma/client";
 import { describe, expect, it } from "vitest";
 
+import { stripCommentsAndStrings } from "./support/strip-comments";
+
 const REPO_ROOT = process.cwd();
 // scripts/ is walked for the same reason it always was: that is where the last
 // survivor hid, in raw fixture SQL a src/+prisma/ scan could never have seen.
@@ -199,42 +201,6 @@ function sqlStatements(chunk: SqlChunk): SqlChunk[] {
     }
   }
   out.push({ text: chunk.text.slice(start), offset: chunk.offset + start });
-  return out;
-}
-
-/** `text` with comments AND string/template bodies blanked out. */
-function codeOnly(text: string): string {
-  let out = "";
-  const keepNewlines = (chunk: string) => {
-    for (const ch of chunk) if (ch === "\n") out += "\n";
-  };
-  for (let i = 0; i < text.length; i += 1) {
-    const ch = text[i];
-    if (ch === "/" && text[i + 1] === "/") {
-      const nl = text.indexOf("\n", i);
-      if (nl === -1) break;
-      i = nl - 1;
-      continue;
-    }
-    if (ch === "/" && text[i + 1] === "*") {
-      const close = text.indexOf("*/", i + 2);
-      if (close === -1) break;
-      keepNewlines(text.slice(i, close + 2));
-      i = close + 1;
-      continue;
-    }
-    if (ch === '"' || ch === "'" || ch === "`") {
-      const openedAt = i;
-      i += 1;
-      while (i < text.length && text[i] !== ch) {
-        if (text[i] === "\\") i += 1;
-        i += 1;
-      }
-      keepNewlines(text.slice(openedAt, i + 1));
-      continue;
-    }
-    out += ch;
-  }
   return out;
 }
 
@@ -509,7 +475,15 @@ describe("#2520 FamilyGroupMember.role is dropped", () => {
     // family group. The label granted nothing after #2284, so PR #2565 removed
     // the behaviour; this pins that it stays removed, and that no substitute
     // update of the surviving row has crept back in.
-    const mergeText = codeOnly(
+    //
+    // Comments AND string contents are blanked, because the removal is discussed
+    // in `member-merge.ts` at the site it was removed from — the postmortem
+    // hazard `INV-SSOT-004` is about — and a mention is not a behaviour. #3164
+    // converged this off a local `codeOnly` onto the canonical second form; it
+    // reports the same on `member-merge.ts` today and is stricter where they
+    // differ, since `obj["maxFamilyRole"]` survives the canonical blanking as
+    // the property read it is and the local one erased it.
+    const mergeText = stripCommentsAndStrings(
       fs.readFileSync(path.join(REPO_ROOT, "src", "lib", "member-merge.ts"), "utf8"),
     );
     expect(mergeText).not.toContain("maxFamilyRole");

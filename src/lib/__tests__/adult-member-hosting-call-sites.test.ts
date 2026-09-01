@@ -44,7 +44,7 @@ import { describe, expect, it } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
-import { stripComments } from "@/lib/__tests__/support/strip-comments";
+import { stripComments } from "./support/strip-comments";
 import {
   ADULT_MEMBER_HOST_SCOPES,
   type AdultMemberHostScope,
@@ -97,13 +97,6 @@ function readRepoCode(relativePath: string): string {
   const key = relativePath.split(path.sep).join("/");
   const cached = repoCodeCache.get(key);
   if (cached !== undefined) return cached;
-  // THE SHARED STRIPPER, not a local one (#3132/#3155, `INV-SSOT-001`). This
-  // file used to blank block comments with a regex and then drop whole lines
-  // beginning `//` or `*`, which misses a TRAILING comment on a line of code —
-  // so a census asserting an identifier is absent could be satisfied by, or
-  // tripped by, prose sitting after real code. Seventeen scanners were converged
-  // onto `stripComments` for exactly that reason and a fresh copy regresses it;
-  // four of the assertions below are new instruments, so they converge too.
   const code = stripComments(readRepoFile(relativePath));
   repoCodeCache.set(key, code);
   return code;

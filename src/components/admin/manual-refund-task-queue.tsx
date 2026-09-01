@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useId, useState } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -14,18 +14,41 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { FieldHint, useFieldHint } from "@/components/ui/field-hint";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { FocusedActionError } from "@/components/focused-action-error";
 import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import { MONEY_INPUT_PROPS, parseDecimalDollarsToCents } from "@/lib/money-input";
 import { formatCents } from "@/lib/utils";
+import type { ManualRefundTaskKind } from "@prisma/client";
+import {
+  EDIT_FINANCIAL_REVIEW_CAUSE_LABEL,
+  type EditFinancialReviewEvidence,
+} from "@/lib/edit-financial-review-context";
 import { useClubTime } from "@/components/club-time-provider";
 import {
   calendarDateOfSerialisedDbDate,
   formatClubDate,
+  type CalendarDate,
 } from "@/lib/club-time";
 import { unverifiedWriteMessage } from "@/lib/unverified-write-copy";
+import { zeroCompletionRefusal } from "@/lib/manual-refund-task-copy";
+import {
+  checkStoredNightPriceRepair,
+  nightPriceRepairUnreadableMessage,
+  type NonEmptyDates,
+  settlementDeltaCents,
+  unpricedNightTargetCents,
+  type RecordedNightPrice,
+  type StoredNightPriceRepairCheck,
+  type UnpricedNightsSummary,
+} from "@/lib/stored-night-price-repair";
+import {
+  parseNightInput,
+  UnpricedNightPriceFields,
+} from "@/components/admin/unpriced-night-price-fields";
 
 const NOTE_MAX_LENGTH = 500;
 
@@ -36,11 +59,79 @@ interface ManualRefundTask {
   // amount the club has not yet priced. Rendered as "Awaiting pricing", never
   // as $0.00 — a magic zero would read as "assessed at nothing".
   amountCents: number | null;
+  /**
+   * #3033: what the task was RAISED with, so a row whose amount an admin has
+   * since confirmed says so on its face instead of only in the audit log. Null
+   * exactly when the task was raised with no amount at all, which is the
+   * ordinary shape of a financial review.
+   */
+  raisedAmountCents?: number | null;
+  /**
+   * #3033: WHY this row exists. Optional on the wire and null for every row
+   * written before the column existed, so a cached client bundle against an
+   * older route — and every legacy hand-back row — still renders: an absent or
+   * null kind is treated as the hand-back it has always been.
+   */
+  kind?: string | null;
   reason: string;
   createdAt: string;
   memberName: string;
   checkIn: string;
   checkOut: string;
+  /**
+   * #3033 (owner decision D3): the evidence captured when the edit was applied,
+   * already redacted by the route. Null on a hand-back row, on a review row that
+   * carries none, and on one whose captured blob this release cannot read — the
+   * last of which the flag below distinguishes, because "no evidence was taken"
+   * and "the evidence cannot be read" are different things to tell an admin who
+   * is about to price a refund.
+   */
+  reviewEvidence?: EditFinancialReviewEvidence | null;
+  reviewEvidenceUnreadable?: boolean;
+  /**
+   * #3191: this booking's nights that carry no stored price, and the two totals
+   * the officer's figures must reconcile against.
+   *
+   * Optional on the wire and absent on every row that has none — a hand-back, a
+   * review whose guest strand was deleted by the edit, or one whose own rows are
+   * already complete. An absent field offers no boxes, which is exactly how this
+   * screen behaved before #3191, so a cached client bundle against a newer route
+   * degrades to the old behaviour rather than throwing.
+   */
+  unpricedNights?: UnpricedNightsSummary | null;
+  /**
+   * #3033: this row's booking belongs to the person looking at it, and still
+   * exists — so they may open it as its member even without admin bookings
+   * access. Per row, because ownership is; absent means false, so a response
+   * that cannot say offers no link.
+   */
+  viewerOwnsBooking?: boolean;
+}
+
+/**
+ * #3033: the one row kind whose money is genuinely unknown.
+ *
+ * TYPED AGAINST THE PRISMA ENUM, not left as a bare string. Nothing else here
+ * fails if the enum member is renamed — every test supplies `kind` as a fixture
+ * string, so the whole suite would stay green while the queue silently printed
+ * the cash-hand-back paragraph over financial reviews again, which is the exact
+ * defect this issue exists to fix. Annotating the constant makes the rename a
+ * compile error instead.
+ *
+ * `import type` is fully erased at build time, so this pulls no Prisma runtime
+ * across the client boundary — the same pattern `my-bookings-list.tsx` already
+ * uses for `BookingStatus`, and what `client-server-boundary-census.test.ts`
+ * permits.
+ *
+ * The wire field stays a loose string: an absent or unrecognised kind is a
+ * hand-back, which is what every row was before the column existed, and a
+ * cached client bundle reading a newer row must degrade rather than throw.
+ */
+const EDIT_FINANCIAL_REVIEW_KIND: ManualRefundTaskKind =
+  "EDIT_FINANCIAL_REVIEW";
+
+function isFinancialReview(task: ManualRefundTask): boolean {
+  return task.kind === EDIT_FINANCIAL_REVIEW_KIND;
 }
 
 /**
@@ -50,6 +141,236 @@ interface ManualRefundTask {
  */
 function formatTaskAmount(amountCents: number | null): string {
   return amountCents === null ? "Awaiting pricing" : formatCents(amountCents);
+}
+
+/**
+ * #3033: one stored night-price row, exactly as it was found.
+ *
+ * "No stored price" and "$0.00" are printed as different things on purpose. Zero
+ * is a real price — a comped night — and an absence is the evidence gap that
+ * raised the task in the first place; collapsing them would hide the thing an
+ * admin is being asked to look at (`StoredNightPriceEvidence`).
+ */
+function formatStoredNightPrice(priceCents: number | null): string {
+  return priceCents === null ? "no stored price" : formatCents(priceCents);
+}
+
+/** A list of lodge nights, or an explicit "none" — never an empty bullet. */
+function formatNightList(dates: readonly CalendarDate[]): string {
+  return dates.length === 0
+    ? "none"
+    : dates.map((date) => formatClubDate(date)).join(", ");
+}
+
+/**
+ * The evidence owner decision D3 asks for, and only that.
+ *
+ * D3 is "a reason string plus a LINK to the booking's payment and rate history",
+ * not a copy of it, so nothing here restates a payment, a refund or an account
+ * credit: those live in the payment tables, are live, and would be stale the
+ * moment they were copied (`INV-SSOT`). What IS shown is the material the edit
+ * DESTROYED — the stored night rows for the nights it surrendered are gone once
+ * it commits — plus the safe diagnostic category and the stay window, which is
+ * what answers "which rates applied then".
+ *
+ * NO INTERNAL VOCABULARY AND NO IDS. The cause is rendered through its label
+ * map, and the guest's member id and guest-strand id are not on the wire at all
+ * (`toEditFinancialReviewEvidence`).
+ */
+function EditFinancialReviewEvidenceBlock({
+  evidence,
+}: {
+  evidence: EditFinancialReviewEvidence;
+}) {
+  return (
+    <div
+      className="space-y-1 rounded-md border border-border bg-muted px-3 py-2 text-xs text-muted-foreground"
+      data-testid="manual-refund-task-review-evidence"
+    >
+      <p className="font-medium text-foreground">
+        {EDIT_FINANCIAL_REVIEW_CAUSE_LABEL[evidence.cause]}
+      </p>
+      <p>
+        Nights given back: {formatNightList(evidence.surrenderedNightDates)}
+      </p>
+      <p>Nights added by the same change: {formatNightList(evidence.addedNightDates)}</p>
+      <p>
+        Stored total for this guest:{" "}
+        {evidence.storedEvidence.guestTotalCents === null
+          ? "none stored"
+          : formatCents(evidence.storedEvidence.guestTotalCents)}
+      </p>
+      <p>
+        Stored night prices before the change:{" "}
+        {evidence.storedEvidence.nightPrices.length === 0
+          ? "none stored"
+          : evidence.storedEvidence.nightPrices
+              .map(
+                (night) =>
+                  `${formatClubDate(night.date)} ${formatStoredNightPrice(night.priceCents)}`,
+              )
+              .join(" · ")}
+      </p>
+      <p>
+        Booked stay: {formatClubDate(evidence.bookingCheckIn)} to{" "}
+        {formatClubDate(evidence.bookingCheckOut)}
+      </p>
+      {evidence.guestsAddedByEdit ? (
+        /*
+         * #3166: what the same change did to the REST of the party.
+         *
+         * Everything above describes one guest whose stored prices could not be
+         * read — on an add, a guest nobody touched. Without this line the card
+         * reads "nights given back: none · nights added: none" while the booking
+         * has just gained people the club has charged nothing for, because a
+         * parked edit writes the booking's total back unchanged. Their prices
+         * live only on their own rows, so this is the only place the person
+         * pricing the booking is told the money exists.
+         */
+        <p className="font-medium text-foreground">
+          This change also added {evidence.guestsAddedByEdit.count}{" "}
+          {evidence.guestsAddedByEdit.count === 1 ? "guest" : "guests"}, priced
+          at{" "}
+          {evidence.guestsAddedByEdit.totalPriceCents === null
+            ? "an amount that could not be read"
+            : formatCents(evidence.guestsAddedByEdit.totalPriceCents)}
+          . The booking&rsquo;s own total was left as it was, so that amount has
+          not been charged.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * #3033: what the confirmation dialog SAYS, per row kind and per priced state.
+ *
+ * Lifted out of three nested ternaries in the JSX because the combinations are
+ * what the wording has to get right and a nested conditional hides which ones
+ * exist. Two were wrong while they were inline, and both were wrong in the same
+ * way — the hand-back sentence surviving on a row it does not describe:
+ *
+ *  - a review with a CONFIRMED amount fell to the hand-back arm and was
+ *    announced as "Record $45.00 as paid back", over a body saying "only do this
+ *    once the money has actually gone back to the member". An adjustment is a
+ *    figure the club has just decided; nothing has physically gone anywhere, and
+ *    the instruction to wait until it has is the opposite of what to do;
+ *  - a HAND-BACK raised with no amount — which #2971 made representable when it
+ *    allowed a null `amountCents` — read "Record Awaiting pricing as paid back
+ *    to Sam?", because the amount formatter's placeholder was interpolated into
+ *    a sentence built for a number.
+ *
+ * Each function therefore branches on the two facts that actually matter, kind
+ * and whether an amount is known, and never falls through to the other kind's
+ * words.
+ */
+type ResolutionTarget = {
+  task: ManualRefundTask;
+  resolution: "completed" | "dismissed";
+};
+
+/**
+ * #3170: which way the officer says the money goes.
+ *
+ * `null` is "not yet chosen" and is the state the dialog OPENS in - there is no
+ * default, deliberately. Before this issue the direction was implicit in the word
+ * "refund", and that implicitness was the hazard: this is the first release where
+ * a parked edit can have raised the price, so an officer reading the evidence can
+ * correctly conclude the club is owed, and every settlement path was refund
+ * -shaped. A pre-ticked "pay them back" would put the wrong-direction movement
+ * one un-noticed default away.
+ */
+type SettlementDirection = "REFUND_TO_MEMBER" | "CHARGE_TO_MEMBER";
+
+/**
+ * What each direction actually does, in the words the officer needs BEFORE they
+ * commit rather than in a receipt afterwards. Both sentences name the instrument,
+ * and the charge sentence says plainly that nothing is taken from the card here -
+ * the completion raises the request and the member pays it, exactly as they would
+ * for an ordinary check-out extension.
+ */
+const DIRECTION_CHOICES: ReadonlyArray<{
+  value: SettlementDirection;
+  label: string;
+  detail: string;
+}> = [
+  {
+    value: "REFUND_TO_MEMBER",
+    label: "The club owes the member",
+    detail:
+      "The money goes back to them: to the card they paid with, or as account credit where there is no card behind it.",
+  },
+  {
+    value: "CHARGE_TO_MEMBER",
+    label: "The member owes the club",
+    detail:
+      "They are asked to pay it: added to this booking as an additional payment on their card, or onto the booking's invoice to pay by internet banking. Nothing is taken from their card by this screen.",
+  },
+];
+
+function completionTitle({ task, resolution }: ResolutionTarget): string {
+  if (resolution === "dismissed") {
+    return isFinancialReview(task)
+      ? `Close this review for ${task.memberName} with no adjustment?`
+      : `Dismiss the refund for ${task.memberName}?`;
+  }
+
+  if (isFinancialReview(task)) {
+    // #3170: NO DIRECTION IN THE TITLE. It used to say "Record an adjustment",
+    // which reads as neutral and settles as a refund - the wording that made a
+    // wrong-direction movement one plausible action away once a parked edit could
+    // raise the price. The direction is chosen in the body and stated on the
+    // button, so the sentence the officer presses is the one that says which way
+    // the money goes.
+    return `Settle this review for ${task.memberName}?`;
+  }
+
+  return task.amountCents === null
+    ? `Record this refund as paid back to ${task.memberName}?`
+    : `Record ${formatCents(task.amountCents)} as paid back to ${task.memberName}?`;
+}
+
+function resolutionDescription({
+  task,
+  resolution,
+}: ResolutionTarget): string {
+  if (resolution === "dismissed") {
+    return isFinancialReview(task)
+      ? "This closes the review as looked at, with nothing to pay back or credit. It moves no money and records none as having moved. Say what the evidence showed, so the finding makes sense to whoever reads it next."
+      : "Dismissing closes the task without refunding anything — for a member who declined the refund, or money settled another way. Say which, so the record makes sense later.";
+  }
+
+  if (isFinancialReview(task)) {
+    return "Price this from the evidence on the row and the booking's payment history: the amount, and which way it goes. If the club owes the member it is paid back or held as account credit; if the member owes the club they are asked to pay it on this booking. If nothing is owed either way, close the review with no adjustment instead.";
+  }
+
+  return "Only do this once the money has actually gone back to the member. It writes the refund into the payment ledger and records a refund on the booking's history.";
+}
+
+/**
+ * #3170: the button says the DIRECTION, because it is the last thing the officer
+ * reads before money moves. "Record the adjustment" was true of both directions
+ * and therefore said nothing about either.
+ *
+ * Before a direction is chosen it stays neutral, and the button is disabled - a
+ * label that named one direction while the other was still available would be the
+ * pre-ticked default this dialog deliberately does not have.
+ */
+function confirmButtonLabel(
+  { task, resolution }: ResolutionTarget,
+  direction: SettlementDirection | null,
+): string {
+  if (resolution === "dismissed") {
+    return isFinancialReview(task) ? "Close with no adjustment" : "Dismiss refund";
+  }
+
+  if (isFinancialReview(task)) {
+    if (direction === "CHARGE_TO_MEMBER") return "Ask the member to pay";
+    if (direction === "REFUND_TO_MEMBER") return "Pay the member back";
+    return "Settle the review";
+  }
+
+  return "Record as paid back";
 }
 
 /**
@@ -393,10 +714,41 @@ export function ManualRefundTaskQueue() {
    * them looking for a problem that is not there.
    */
   const [autoRefundedUnavailable, setAutoRefundedUnavailable] = useState(false);
-  const [target, setTarget] = useState<
-    null | { task: ManualRefundTask; resolution: "completed" | "dismissed" }
-  >(null);
+  /**
+   * #3033: whether this admin may open a booking at all.
+   *
+   * FAIL-CLOSED, and that is the whole reason it is a piece of state rather than
+   * an inline `data.viewerCanViewBookings` read: a response that omits the field
+   * — an older route, a degraded answer, a cached bundle — must offer no link,
+   * because a Finance Viewer holds `finance:view` with no bookings access and a
+   * link would be a dead end for them (the #2823 stuck-state default, and the
+   * same reasoning the automatic-refund card beside this one already records).
+   */
+  const [viewerCanViewBookings, setViewerCanViewBookings] = useState(false);
+  const [target, setTarget] = useState<ResolutionTarget | null>(null);
   const [note, setNote] = useState("");
+  /**
+   * #3170: the officer's pricing of a review, held only while the dialog is open.
+   *
+   * `direction` opens as null on purpose (see `SettlementDirection`), and
+   * `amountInput` is the typed text rather than a number - `parseDecimalDollarsToCents`
+   * is the boundary for money a person typed (`INV-MONEY-003`), and it returns
+   * null for anything malformed rather than a zero.
+   */
+  const [direction, setDirection] = useState<SettlementDirection | null>(null);
+  const [amountInput, setAmountInput] = useState("");
+  /**
+   * #3191: what the officer says each unpriced night sold for, as typed text
+   * keyed by lodge night.
+   *
+   * OPENS EMPTY AND IS NEVER PRE-FILLED - not from the remaining balance, not
+   * from an even split, not from the amount above. `INV-MOD-028` prohibits
+   * deriving a historical amount, and a box that arrives with a number in it is
+   * a derivation an officer can accept by pressing a button.
+   */
+  const [nightPriceInputs, setNightPriceInputs] = useState<
+    Record<string, string>
+  >({});
   const [submitting, setSubmitting] = useState(false);
   /**
    * #2668 review SF-5: the sentence for an outcome that was never read, held on
@@ -425,6 +777,19 @@ export function ManualRefundTaskQueue() {
     carries that, and repeating it there would announce it twice.
   */
   const noteHint = useFieldHint();
+  /*
+    #3170: the review pricing box's hint, on the house field-hint wiring.
+
+    #3195 fix round: the $0.00 refusal is passed as a PRECEDING description, so
+    a screen-reader user hears "this is wrong, and here is why" before "here is
+    an example" - the ordering `field-hint.tsx` exists to make the default. It
+    matters more here than at most field-hint sites: the confirm button is
+    disabled behind that sentence, so without it the officer is left with a
+    control that will not press and no reason given, which is the bare refusal
+    the owner's 31 Aug 2026 decision rejected.
+  */
+  const zeroAmountRefusalId = useId();
+  const amountHint = useFieldHint(zeroAmountRefusalId);
 
   const load = useCallback(async () => {
     try {
@@ -433,6 +798,7 @@ export function ManualRefundTaskQueue() {
         setTasks([]);
         setAutoRefunded([]);
         setAutoRefundedUnavailable(false);
+        setViewerCanViewBookings(false);
         setLoadFailed(true);
         return;
       }
@@ -440,15 +806,18 @@ export function ManualRefundTaskQueue() {
         tasks: ManualRefundTask[];
         autoRefunded?: AutoRefundedNotice[];
         autoRefundedUnavailable?: boolean;
+        viewerCanViewBookings?: boolean;
       };
       setTasks(data.tasks ?? []);
       setAutoRefunded(data.autoRefunded ?? []);
       setAutoRefundedUnavailable(Boolean(data.autoRefundedUnavailable));
+      setViewerCanViewBookings(data.viewerCanViewBookings === true);
       setLoadFailed(false);
     } catch {
       setTasks([]);
       setAutoRefunded([]);
       setAutoRefundedUnavailable(false);
+      setViewerCanViewBookings(false);
       setLoadFailed(true);
     }
   }, []);
@@ -456,6 +825,125 @@ export function ManualRefundTaskQueue() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  /**
+   * #3170: the officer's figure in integer cents, or null when what they typed is
+   * not a well-formed amount. `parseDecimalDollarsToCents` returns null rather
+   * than zero for malformed text (#2685), and null here disables the button -
+   * a completion at zero is refused by the server anyway, and "nothing is owed"
+   * has its own control.
+   */
+  const pricingReview =
+    target !== null &&
+    target.resolution === "completed" &&
+    isFinancialReview(target.task);
+  const pricedAmountCents = pricingReview
+    ? parseDecimalDollarsToCents(amountInput)
+    : null;
+  const reviewPricingIncomplete =
+    pricingReview &&
+    (direction === null || pricedAmountCents === null || pricedAmountCents <= 0);
+  /**
+   * #3195 question 1: a settlement of exactly $0.00 is refused, and the officer
+   * is told why HERE rather than after a round trip - the button is disabled, so
+   * without this they would press nothing and be told nothing, which is the bare
+   * refusal the owner's decision rejected. The sentence is the server's own
+   * (`zeroCompletionRefusal`), so the two can never say different things.
+   */
+  const zeroAmountRefusal =
+    pricingReview && pricedAmountCents === 0
+      ? zeroCompletionRefusal(true)
+      : null;
+
+  /**
+   * #3191: the per-night repair, as it stands while the officer types.
+   *
+   * Everything below is derived rather than stored, so the boxes are the only
+   * state and there is no second copy of the answer to fall out of step. The
+   * VERDICT comes from the shared checker the server runs on the same input
+   * (`INV-SSOT`): a screen with its own arithmetic would enable a button the
+   * server then refuses, or the reverse.
+   */
+  const unpricedNights =
+    target !== null && target.task.unpricedNights
+      ? target.task.unpricedNights
+      : null;
+  const nightPriceDeltaCents =
+    target === null || target.resolution === "dismissed"
+      ? 0
+      : direction !== null && pricedAmountCents !== null
+        ? settlementDeltaCents({
+            direction,
+            amountCents: pricedAmountCents,
+          })
+        : null;
+  const nightPriceEntries: RecordedNightPrice[] = [];
+  /*
+    Boxes holding something that is NOT an amount, kept apart from boxes holding
+    nothing. `parseDecimalDollarsToCents` answers null for "1,200.00", "$45",
+    "45." and a stray letter alike, and folding those in with "not typed" is how
+    an officer looking at a full column of figures gets told to "give an amount
+    for every night listed" - true of the entries this screen built, and visibly
+    false of what is on their screen. `money-input.ts` says the caller must turn
+    that null into a validation error the person can see (#2685); this is that
+    caller.
+  */
+  let unreadableNightDates: NonEmptyDates | null = null;
+  let nightBoxesTyped = 0;
+  if (unpricedNights) {
+    for (const date of unpricedNights.dates) {
+      const raw = nightPriceInputs[date] ?? "";
+      if (raw.trim() === "") continue;
+      nightBoxesTyped += 1;
+      const cents = parseNightInput(raw);
+      /*
+        Built as a NON-EMPTY list by construction (#3191 fix round), because
+        that is the only shape the refusal below accepts - handed an empty one
+        it would render "The amounts for  are not ones these boxes can read."
+        The type is what stops that, rather than the `.length > 0` check the
+        branch below used to rely on.
+      */
+      if (cents === null) {
+        unreadableNightDates =
+          unreadableNightDates === null
+            ? [date]
+            : [...unreadableNightDates, date];
+      } else nightPriceEntries.push({ date, priceCents: cents });
+    }
+  }
+  // A partial or malformed answer never reaches the checker as if it were whole:
+  // the entries are only complete when every box parsed, and an unreadable one
+  // is answered here, by name, before the checker sees a vector it would call
+  // short. Neither branch fills anything in.
+  const nightPriceCheck: StoredNightPriceRepairCheck | null =
+    !unpricedNights || nightBoxesTyped === 0 || nightPriceDeltaCents === null
+      ? null
+      : unreadableNightDates !== null
+        ? {
+            ok: false,
+            message: nightPriceRepairUnreadableMessage(unreadableNightDates),
+            // The ONE definition of what the blanks must come to, shared with
+            // the checker rather than restated for this branch.
+            targetCents: unpricedNightTargetCents(
+              unpricedNights,
+              nightPriceDeltaCents,
+            ),
+          }
+        : checkStoredNightPriceRepair({
+            summary: unpricedNights,
+            entries: nightPriceEntries,
+            deltaCents: nightPriceDeltaCents,
+          });
+  /*
+    Blocked, not required. Leaving every box blank is a valid answer and settles
+    exactly as it did before #3191; having typed into SOME of them and not
+    reached a set of figures that adds up is not, because that is an answer the
+    server would refuse after the task had already been claimed.
+  */
+  const nightPricesBlocked =
+    unpricedNights !== null &&
+    nightBoxesTyped > 0 &&
+    (nightPriceDeltaCents === null || nightPriceCheck?.ok !== true);
 
   async function submit() {
     if (!target) return;
@@ -471,6 +959,25 @@ export function ManualRefundTaskQueue() {
             resolution: target.resolution,
             confirmed: true,
             note: note.trim() || null,
+            // #3170: a POSITIVE magnitude plus an explicit direction, never a
+            // signed amount. Sent only where the officer was asked for them, so
+            // a legacy hand-back posts exactly the body it always did.
+            ...(pricingReview
+              ? {
+                  confirmedAmountCents: pricedAmountCents,
+                  direction,
+                }
+              : {}),
+            /*
+              #3191: sent only when the officer filled every box and the figures
+              reconcile. A partial answer is never posted - the button is
+              disabled behind it - and an untouched section posts nothing at all,
+              so a settle with no repair sends exactly the body it sent before
+              this issue.
+            */
+            ...(nightPriceCheck?.ok
+              ? { recordedNightPrices: nightPriceCheck.entries }
+              : {}),
           }),
         },
       );
@@ -484,6 +991,9 @@ export function ManualRefundTaskQueue() {
       toast.success(data?.message ?? "Done.");
       setTarget(null);
       setNote("");
+      setDirection(null);
+      setAmountInput("");
+      setNightPriceInputs({});
       await load();
     } catch {
       /*
@@ -525,6 +1035,21 @@ export function ManualRefundTaskQueue() {
     because silence there is indistinguishable from a clean slate.
   */
   const showQueue = tasks === null || tasks.length > 0;
+  /*
+    #3033: which SENTENCES the card is entitled to print.
+
+    The standing paragraph said every row in this queue "was paid in cash or by a
+    bank transfer that never reached Xero, and have since been cancelled". That
+    was true of every row this card could hold until #3030 added the
+    EDIT_FINANCIAL_REVIEW kind, and it is false of one: a review row is a LIVE
+    booking whose stay change saved and whose adjustment the club has not been
+    able to work out from stored history. Nothing was cancelled and no cash was
+    necessarily involved. So each sentence is now rendered only when the queue
+    actually holds a row it describes, and neither speaks for the other.
+  */
+  const openTasks = tasks ?? [];
+  const hasReviewRows = openTasks.some(isFinancialReview);
+  const hasHandBackRows = openTasks.some((task) => !isFinancialReview(task));
   if (
     !showQueue &&
     autoRefunded.length === 0 &&
@@ -555,18 +1080,42 @@ export function ManualRefundTaskQueue() {
         <Card data-testid="manual-refund-task-queue">
           <CardHeader>
             <CardTitle className="text-base">
-              Refunds to pay back by hand
+              Money to settle by hand
               {tasks ? ` (${tasks.length})` : ""}
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            <p className="text-sm text-muted-foreground">
-              These bookings were paid in cash or by a bank transfer that never
-              reached Xero, and have since been cancelled. There is no card payment
-              to reverse, so the club has to pay the member back directly. Mark a
-              refund as paid back once the money has actually gone — that is when
-              the ledger records it.
-            </p>
+            {/*
+              Rendered only when a row it describes is actually here (#3033).
+              While the load is still in flight neither sentence shows, which is
+              correct: the card cannot yet say what kind of work it holds.
+            */}
+            {hasHandBackRows ? (
+              <p
+                className="text-sm text-muted-foreground"
+                data-testid="manual-refund-task-hand-back-intro"
+              >
+                Some of these bookings were paid in cash or by a bank transfer
+                that never reached Xero, and have since been cancelled. There is
+                no card payment to reverse, so the club has to pay the member
+                back directly. Mark a refund as paid back once the money has
+                actually gone — that is when the ledger records it.
+              </p>
+            ) : null}
+            {hasReviewRows ? (
+              <p
+                className="text-sm text-muted-foreground"
+                data-testid="manual-refund-task-review-intro"
+              >
+                Some of these are booking changes that saved normally but whose
+                adjustment could not be worked out from what the booking has
+                stored. Nothing has been refunded or credited for them and no
+                amount has been assumed. Use the evidence on each row, together
+                with the booking&apos;s own payment and rate history, to decide
+                the amount — or dismiss the row if, on the evidence, nothing is
+                owed.
+              </p>
+            ) : null}
             {tasks === null ? (
               <p className="text-sm text-muted-foreground">Loading…</p>
             ) : (
@@ -579,18 +1128,85 @@ export function ManualRefundTaskQueue() {
                     <div className="space-y-1 text-sm">
                       <p className="font-medium text-foreground">
                         {task.memberName} — {formatTaskAmount(task.amountCents)}
+                        {/*
+                          #3033: the row says on its face when the amount has
+                          been amended since the task was raised, rather than
+                          leaving that only in the audit log. Printed only when
+                          the two genuinely differ AND the task was raised with
+                          a figure — a review raised unpriced and later
+                          confirmed has nothing to compare against, and saying
+                          "was Awaiting pricing" would read as a money movement.
+                        */}
+                        {task.raisedAmountCents != null &&
+                        task.amountCents != null &&
+                        task.raisedAmountCents !== task.amountCents ? (
+                          <span className="font-normal text-muted-foreground">
+                            {" "}
+                            (raised at {formatCents(task.raisedAmountCents)})
+                          </span>
+                        ) : null}
                       </p>
                       <p className="text-muted-foreground">
                         {formatStayDate(task.checkIn)} to{" "}
                         {formatStayDate(task.checkOut)} ·{" "}
-                        <Link
-                          className="underline"
-                          href={`/bookings/${task.bookingId}`}
-                        >
-                          View booking
-                        </Link>
+                        {/*
+                          #3033 (owner decision D3: a LINK to the booking's
+                          payment and rate history). Offered only to an admin who
+                          may open a booking. This card is gated on
+                          `finance:view`, which a Finance Viewer holds with no
+                          bookings access at all, so for them the link was a dead
+                          end — the same reason the automatic-refund card below
+                          has never carried one. They get the identifier instead,
+                          which is what they need in order to quote the booking
+                          to somebody who can open it.
+
+                          Or to an admin whose OWN booking this is, who reaches
+                          the same page as its member. Two ways to hold the same
+                          authority, so either is enough; both default false, so
+                          a response that establishes neither offers no link.
+                        */}
+                        {viewerCanViewBookings ||
+                        task.viewerOwnsBooking === true ? (
+                          <Link
+                            className="underline"
+                            href={`/bookings/${task.bookingId}`}
+                          >
+                            View the booking&apos;s payment and rate history
+                          </Link>
+                        ) : (
+                          <>
+                            booking{" "}
+                            <span className="font-mono text-xs">
+                              {task.bookingId}
+                            </span>
+                          </>
+                        )}
                       </p>
                       <p className="text-xs text-muted-foreground">{task.reason}</p>
+                      {task.reviewEvidence ? (
+                        <EditFinancialReviewEvidenceBlock
+                          evidence={task.reviewEvidence}
+                        />
+                      ) : null}
+                      {/*
+                        Evidence WAS captured and cannot be read back. Said out
+                        loud rather than rendered as an absence: the captured
+                        rows are the only record of what the edit destroyed, so
+                        an admin who silently sees no evidence section would
+                        reasonably assume none was ever taken and price from the
+                        wrong material.
+                      */}
+                      {task.reviewEvidenceUnreadable ? (
+                        <p
+                          className="text-xs text-warning-11"
+                          data-testid="manual-refund-task-review-evidence-unreadable"
+                        >
+                          The evidence recorded with this review cannot be read
+                          by this version of the site. Decide the amount from the
+                          booking&apos;s own payment and rate history, and tell
+                          the club administrator.
+                        </p>
+                      ) : null}
                     </div>
                     <div className="flex gap-2">
                       <ViewOnlyActionButton
@@ -600,10 +1216,51 @@ export function ManualRefundTaskQueue() {
                         onClick={() => {
                           setNote("");
                           setUnverified(null);
+                          // #3170: open with no direction chosen, and with the
+                          // amount the task already carries where it has one -
+                          // a review raised unpriced opens blank rather than at
+                          // a figure nobody decided.
+                          setDirection(null);
+                          /*
+                            #3191: the ONE thing in this file the night-price
+                            census does not scan, and it is five lines wide. It
+                            is the task's own settled amount rendered into its
+                            box - cents to dollars, the conversion every money
+                            input on this screen does - and no night price passes
+                            through it. EVERYTHING ELSE IN THIS FILE IS SCANNED,
+                            so a helper that could produce a per-night figure
+                            cannot be written anywhere in it, one line above the
+                            night-price code or a thousand lines below.
+
+                            Adding to the region is a real decision rather than
+                            paperwork: the census caps how large it may grow, and
+                            refuses a region that excludes nothing. Each marker
+                            sits on a line of its own and is a WHOLE comment, so
+                            removing the region cannot leave a half-open
+                            delimiter behind and blank the rest of the file.
+                          */
+                          /* MONEY-DISPLAY EXEMPTION START (stored-night-price-repair-census) */
+                          setAmountInput(
+                            task.amountCents === null
+                              ? ""
+                              : (task.amountCents / 100).toFixed(2),
+                          );
+                          /* MONEY-DISPLAY EXEMPTION END (stored-night-price-repair-census) */
+                          // #3191: always empty. See `nightPriceInputs`.
+                          setNightPriceInputs({});
                           setTarget({ task, resolution: "completed" });
                         }}
                       >
-                        Mark paid back
+                        {/*
+                          #3033: the same control, named for what it does on
+                          this row. On a hand-back it records money that has
+                          already physically gone; on a financial review it
+                          records the adjustment the club has decided on. One
+                          render site, two honest labels.
+                        */}
+                        {isFinancialReview(task)
+                          ? "Record the adjustment"
+                          : "Mark paid back"}
                       </ViewOnlyActionButton>
                       <ViewOnlyActionButton
                         canEdit={canEdit}
@@ -612,10 +1269,15 @@ export function ManualRefundTaskQueue() {
                         onClick={() => {
                           setNote("");
                           setUnverified(null);
+                          setDirection(null);
+                          setAmountInput("");
+                          setNightPriceInputs({});
                           setTarget({ task, resolution: "dismissed" });
                         }}
                       >
-                        Dismiss
+                        {isFinancialReview(task)
+                          ? "No adjustment"
+                          : "Dismiss"}
                       </ViewOnlyActionButton>
                     </div>
                   </li>
@@ -632,6 +1294,14 @@ export function ManualRefundTaskQueue() {
               if (!open) {
                 setTarget(null);
                 setUnverified(null);
+                // #3170: a direction and an amount belong to the task they were
+                // typed for. Carrying either onto the next row would offer a
+                // pre-filled figure nobody priced.
+                setDirection(null);
+                setAmountInput("");
+                // #3191: figures typed for one booking's nights must never be
+                // carried onto another's, for the same reason the amount is not.
+                setNightPriceInputs({});
               }
             }}
           >
@@ -639,17 +1309,136 @@ export function ManualRefundTaskQueue() {
               {target && (
                 <>
                   <DialogHeader>
-                    <DialogTitle>
-                      {target.resolution === "completed"
-                        ? `Record ${formatTaskAmount(target.task.amountCents)} as paid back to ${target.task.memberName}?`
-                        : `Dismiss the refund for ${target.task.memberName}?`}
-                    </DialogTitle>
+                    <DialogTitle>{completionTitle(target)}</DialogTitle>
                     <DialogDescription>
-                      {target.resolution === "completed"
-                        ? "Only do this once the money has actually gone back to the member. It writes the refund into the payment ledger and records a refund on the booking's history."
-                        : "Dismissing closes the task without refunding anything — for a member who declined the refund, or money settled another way. Say which, so the record makes sense later."}
+                      {/*
+                        #3033: four sentences, not two, because a dismissal means
+                        different things on the two kinds of row. On a hand-back
+                        it is "declined, or settled another way". On a financial
+                        review it is "somebody looked, and nothing is owed" —
+                        which is a FINDING about the money, not a decision to
+                        skip it, and the record has to read that way later.
+                      */}
+                      {resolutionDescription(target)}
                     </DialogDescription>
                   </DialogHeader>
+                  {pricingReview ? (
+                    <div className="space-y-4">
+                      {/*
+                        #3170: the direction FIRST, and with no default. Every
+                        settlement path used to hand money back, so an officer who
+                        correctly read the evidence as "the member owes us" had one
+                        plausible action that paid them instead. Asking which way
+                        before asking how much is what stops the amount being typed
+                        into a control whose direction the officer never saw.
+                      */}
+                      <fieldset className="space-y-2">
+                        <legend className="text-sm font-medium">
+                          Which way does this money go?
+                        </legend>
+                        {DIRECTION_CHOICES.map((choice) => (
+                          <label
+                            key={choice.value}
+                            htmlFor={`manual-refund-task-direction-${choice.value}`}
+                            className="flex gap-2 rounded-md border border-border p-2 text-sm"
+                          >
+                            <input
+                              type="radio"
+                              id={`manual-refund-task-direction-${choice.value}`}
+                              name="manual-refund-task-direction"
+                              className="mt-1"
+                              value={choice.value}
+                              checked={direction === choice.value}
+                              onChange={() => setDirection(choice.value)}
+                            />
+                            <span className="space-y-1">
+                              <span className="block font-medium">
+                                {choice.label}
+                              </span>
+                              <span className="block text-xs text-muted-foreground">
+                                {choice.detail}
+                              </span>
+                            </span>
+                          </label>
+                        ))}
+                      </fieldset>
+                      <div className="space-y-2">
+                        <Label htmlFor="manual-refund-task-amount">Amount</Label>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm">$</span>
+                          <Input
+                            id="manual-refund-task-amount"
+                            {...MONEY_INPUT_PROPS}
+                            value={amountInput}
+                            className="w-32"
+                            onChange={(event) =>
+                              setAmountInput(event.target.value)
+                            }
+                            {...amountHint.fieldProps}
+                          />
+                        </div>
+                        <FieldHint {...amountHint.hintProps}>
+                          {/*
+                            The box takes a magnitude, never a sign: the direction
+                            above is what says which way it goes, and a money box
+                            that accepts a minus sign is the overloading this epic
+                            exists to remove.
+                          */}
+                          Example: 45.00 — how much, without a plus or minus
+                        </FieldHint>
+                        {/*
+                          #3195 question 1. The confirm button is disabled at
+                          zero, so this sentence is the whole of what the officer
+                          gets to work with — and a refusal that does not name the
+                          way out is the version the owner's decision rejected.
+
+                          Permanently mounted and empty when there is nothing to
+                          say, for the two reasons the same shape is used on the
+                          night boxes and on `focused-action-error.tsx`: a live
+                          region injected already populated is silently dropped
+                          by some screen-reader/browser pairings, and the amount
+                          box's `aria-describedby` names this id whether or not a
+                          zero has been typed.
+                        */}
+                        <p
+                          id={zeroAmountRefusalId}
+                          aria-live="polite"
+                          className="text-xs text-warning-11"
+                          {...(zeroAmountRefusal
+                            ? {
+                                "data-testid":
+                                  "manual-refund-task-zero-amount-refusal",
+                              }
+                            : {})}
+                        >
+                          {zeroAmountRefusal ?? ""}
+                        </p>
+                      </div>
+                    </div>
+                  ) : null}
+                  {/*
+                    #3191. Offered on a dismissal as well as a completion, and
+                    that is not symmetry for its own sake: a parked edit whose
+                    guest kept the same nights owes nothing either way, so "no
+                    adjustment" is its ordinary ending — and if only a completion
+                    could fill the blanks in, exactly those bookings would park
+                    forever, which is the defect this issue exists to remove.
+                  */}
+                  {unpricedNights ? (
+                    <UnpricedNightPriceFields
+                      summary={unpricedNights}
+                      values={nightPriceInputs}
+                      onChange={(date, value) =>
+                        setNightPriceInputs((current) => ({
+                          ...current,
+                          [date]: value,
+                        }))
+                      }
+                      targetKnown={nightPriceDeltaCents !== null}
+                      check={nightPriceCheck}
+                      disabled={submitting || unverified !== null}
+                    />
+                  ) : null}
                   <div className="space-y-2">
                     <Label htmlFor="manual-refund-task-note">
                       Note{target.resolution === "dismissed" ? " (required)" : " (optional)"}
@@ -664,7 +1453,9 @@ export function ManualRefundTaskQueue() {
                     <FieldHint {...noteHint.hintProps}>
                       {target.resolution === "completed"
                         ? "e.g. cash handed back at the lodge"
-                        : "e.g. member asked us to keep it as a donation"}
+                        : isFinancialReview(target.task)
+                          ? "e.g. the nights given back were never charged for, so nothing is owed"
+                          : "e.g. member asked us to keep it as a donation"}
                     </FieldHint>
                   </div>
                   {/*
@@ -702,12 +1493,39 @@ export function ManualRefundTaskQueue() {
                       disabled={
                         submitting ||
                         unverified !== null ||
+                        /*
+                          #3033: an unpriced review cannot be completed — the
+                          server refuses a completion with no amount, and a
+                          button whose only outcome is a refusal is worse than
+                          no button (the house "no button that fails" rule).
+                          The dialog above says why and points at the way out.
+                          Supplying the confirmed amount is #3032's; this only
+                          stops the dead press in the meantime.
+                        */
+                        /*
+                          #3170: a review completion is armed only once the
+                          officer has said which way and how much. It replaces the
+                          #3033 guard that disabled the button whenever the task
+                          carried no amount - which was right while nothing on
+                          this screen could supply one, and would now disable the
+                          control that supplies it.
+                        */
+                        reviewPricingIncomplete ||
+                        /*
+                          #3191: a half-filled or non-reconciling set of night
+                          prices disarms the button rather than being dropped
+                          silently. Dropping them would settle the task and lose
+                          the officer's typing; posting them would be refused
+                          after the task was already claimed.
+                        */
+                        nightPricesBlocked ||
+                        (target.resolution === "completed" &&
+                          !isFinancialReview(target.task) &&
+                          target.task.amountCents === null) ||
                         (target.resolution === "dismissed" && note.trim().length === 0)
                       }
                     >
-                      {target.resolution === "completed"
-                        ? "Record as paid back"
-                        : "Dismiss refund"}
+                      {confirmButtonLabel(target, direction)}
                     </Button>
                   </DialogFooter>
                 </>

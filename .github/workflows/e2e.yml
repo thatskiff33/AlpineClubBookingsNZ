@@ -71,66 +71,11 @@ jobs:
       - name: Install Playwright browsers
         uses: ./.github/actions/playwright-browsers
 
+      # One home for the stack's env file (INV-SSOT): this job, the
+      # multi-lodge job below and `e2e-rollover-proof.yml` all need the
+      # identical file, and it used to be a copied heredoc per job.
       - name: Write staging env file
-        run: |
-          STRIPE_SK="${STRIPE_TEST_SECRET_KEY:-sk_test_e2e_placeholder}"
-          STRIPE_PK="${STRIPE_TEST_PUBLISHABLE_KEY:-pk_test_e2e_placeholder}"
-          case "$STRIPE_SK" in sk_live*) echo "Live Stripe key in secrets — refusing"; exit 1;; esac
-          case "$STRIPE_PK" in pk_live*) echo "Live Stripe key in secrets — refusing"; exit 1;; esac
-          cat > .env.staging <<EOF
-          STAGING_HTTP_PORT=3001
-          STAGING_POSTGRES_PORT=5433
-          # Declare the stack a copy (ENV-SAFETY 1 #3034, epic #2986). The
-          # docker-compose.staging.yml `app` service hard-codes non-production, so
-          # this line is not what keeps the suite off the UNKNOWN fail-closed path
-          # — the override is. It is here because the BASE compose file passes
-          # ${APP_ENVIRONMENT_ROLE} through with no default, and an unset variable
-          # makes Compose emit four "variable is not set" warnings on every
-          # invocation (measured). A workflow log full of warnings that mean
-          # nothing is how a warning that means something gets missed.
-          APP_ENVIRONMENT_ROLE=non-production
-          NEXTAUTH_URL=http://localhost:3001
-          AUTH_TRUST_HOST=true
-          DB_PASSWORD=e2e-ci-db-password
-          AUTH_SECRET=e2e-ci-auth-secret-0123456789abcdef0123456789abcdef
-          NEXTAUTH_SECRET=e2e-ci-auth-secret-0123456789abcdef0123456789abcdef
-          SEED_ADMIN_EMAIL=e2e-admin@example.org
-          SEED_ADMIN_PASSWORD=e2e-ci-seed-password
-          SEED_LODGE_PASSWORD=e2e-ci-lodge-password
-          # Stamp the club theme completed so the public site renders its real
-          # header/footer/title chrome (not the "getting ready" holding page);
-          # the club-identity smoke spec asserts on that public chrome.
-          SEED_THEME_COMPLETE=1
-          STRIPE_SECRET_KEY=$STRIPE_SK
-          NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=$STRIPE_PK
-          STRIPE_WEBHOOK_SECRET=whsec_e2e_placeholder
-          XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH=false
-          XERO_ENABLE_LIVE_MEMBER_GROUP_LOOKUPS=false
-          XERO_ENABLE_AUTOLOAD_XERO_CONTACT_GROUPS=false
-          SMTP_PORT=587
-          # Route outbound mail to the mailpit SMTP capture container (defined in
-          # docker-compose.staging.yml) so the email-code two-factor spec can read
-          # the code back over its HTTP API. USE_AWS_SES must be false so exactly
-          # one provider flag is set, and all four SMTP_RELAY vars must be present
-          # or every send throws.
-          USE_AWS_SES=false
-          USE_SMTP_RELAY=false
-          # ENV-SAFETY 2 (#3035): a non-production installation suppresses every
-          # send unless its transport is DECLARED to be a capture mailbox, so this
-          # flag — not USE_SMTP_RELAY — is what lets mailpit see anything at all.
-          USE_LOCAL_CAPTURE=true
-          EMAIL_SERVER_HOST=mailpit
-          EMAIL_SERVER_PORT=1025
-          EMAIL_SERVER_USER=e2e
-          EMAIL_SERVER_PASSWORD=e2e
-          MAILPIT_HTTP_PORT=8025
-          EMAIL_FROM=e2e@example.org
-          XERO_MOCK_API_ORIGIN=http://localhost:3001
-          XERO_MOCK_INTERNAL_ORIGIN=http://127.0.0.1:3000
-          CRON_SECRET=e2e-ci-cron-secret
-          CRON_ENABLED=false
-          LOG_LEVEL=info
-          EOF
+        run: bash scripts/ci/write-e2e-staging-env.sh
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
@@ -221,62 +166,11 @@ jobs:
       - name: Install Playwright browsers
         uses: ./.github/actions/playwright-browsers
 
+      # One home for the stack's env file (INV-SSOT): this job, the
+      # multi-lodge job below and `e2e-rollover-proof.yml` all need the
+      # identical file, and it used to be a copied heredoc per job.
       - name: Write staging env file
-        run: |
-          STRIPE_SK="${STRIPE_TEST_SECRET_KEY:-sk_test_e2e_placeholder}"
-          STRIPE_PK="${STRIPE_TEST_PUBLISHABLE_KEY:-pk_test_e2e_placeholder}"
-          case "$STRIPE_SK" in sk_live*) echo "Live Stripe key in secrets — refusing"; exit 1;; esac
-          case "$STRIPE_PK" in pk_live*) echo "Live Stripe key in secrets — refusing"; exit 1;; esac
-          cat > .env.staging <<EOF
-          STAGING_HTTP_PORT=3001
-          STAGING_POSTGRES_PORT=5433
-          # Declare the stack a copy (ENV-SAFETY 1 #3034, epic #2986). The
-          # docker-compose.staging.yml `app` service hard-codes non-production, so
-          # this line is not what keeps the suite off the UNKNOWN fail-closed path
-          # — the override is. It is here because the BASE compose file passes
-          # ${APP_ENVIRONMENT_ROLE} through with no default, and an unset variable
-          # makes Compose emit four "variable is not set" warnings on every
-          # invocation (measured). A workflow log full of warnings that mean
-          # nothing is how a warning that means something gets missed.
-          APP_ENVIRONMENT_ROLE=non-production
-          NEXTAUTH_URL=http://localhost:3001
-          AUTH_TRUST_HOST=true
-          DB_PASSWORD=e2e-ci-db-password
-          AUTH_SECRET=e2e-ci-auth-secret-0123456789abcdef0123456789abcdef
-          NEXTAUTH_SECRET=e2e-ci-auth-secret-0123456789abcdef0123456789abcdef
-          SEED_ADMIN_EMAIL=e2e-admin@example.org
-          SEED_ADMIN_PASSWORD=e2e-ci-seed-password
-          SEED_LODGE_PASSWORD=e2e-ci-lodge-password
-          # Keep parity with the single-lodge job: stamp the club theme completed
-          # so the public site renders real chrome rather than the holding page.
-          # The multi-lodge project doesn't run the club-identity smoke, but no
-          # spec asserts the incomplete-theme holding page, so this is inert here.
-          SEED_THEME_COMPLETE=1
-          STRIPE_SECRET_KEY=$STRIPE_SK
-          NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=$STRIPE_PK
-          STRIPE_WEBHOOK_SECRET=whsec_e2e_placeholder
-          XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH=false
-          XERO_ENABLE_LIVE_MEMBER_GROUP_LOOKUPS=false
-          XERO_ENABLE_AUTOLOAD_XERO_CONTACT_GROUPS=false
-          SMTP_PORT=587
-          USE_AWS_SES=false
-          USE_SMTP_RELAY=false
-          # ENV-SAFETY 2 (#3035): a non-production installation suppresses every
-          # send unless its transport is DECLARED to be a capture mailbox, so this
-          # flag — not USE_SMTP_RELAY — is what lets mailpit see anything at all.
-          USE_LOCAL_CAPTURE=true
-          EMAIL_SERVER_HOST=mailpit
-          EMAIL_SERVER_PORT=1025
-          EMAIL_SERVER_USER=e2e
-          EMAIL_SERVER_PASSWORD=e2e
-          MAILPIT_HTTP_PORT=8025
-          EMAIL_FROM=e2e@example.org
-          XERO_MOCK_API_ORIGIN=http://localhost:3001
-          XERO_MOCK_INTERNAL_ORIGIN=http://127.0.0.1:3000
-          CRON_SECRET=e2e-ci-cron-secret
-          CRON_ENABLED=false
-          LOG_LEVEL=info
-          EOF
+        run: bash scripts/ci/write-e2e-staging-env.sh
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
