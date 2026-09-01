@@ -1,7 +1,7 @@
 # File-size allowances for #3039 (GROUP-TRIP 3)
 
 file: src/lib/adult-member-hosting-review.ts
-lines: 3798
+lines: 3876
 reason: THE SINGLE LIVE DECLARATION FOR THIS PATH ACROSS THREE EPIC CHILDREN.
   #3037 added one line here, #3038 added the third host scope's loader, and this
   child adds the Group Trip fan-out; all three diff against `main`, so the gate
