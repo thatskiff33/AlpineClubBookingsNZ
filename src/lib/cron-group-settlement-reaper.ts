@@ -429,6 +429,14 @@ async function releaseSettlementChildren(
     }
 
     const claimedChildren: typeof children = [];
+    // #3039: ONE Group Trip fan-out for the whole loop, not one per child. Every
+    // child of this settlement is in the same trip, and each child's fan-out would
+    // otherwise enumerate every other child — a bounded read per child, but O(n^2)
+    // work and n-1 duplicate queue rows per sibling, all inside one transaction
+    // holding the global and per-lodge keys. Shared and mutated by the seam; see
+    // `GroupTripFanOutOptions`. NOT `bestEffort`: this revert TAKES cover away, so a
+    // contended trip must roll the pass back rather than skip the escalation.
+    const settledTripIds = new Set<string>();
     for (const child of children) {
       // Status-guarded revert (#1881): CONFIRMED -> PAYMENT_PENDING only. Under
       // the shared lock(1) a concurrent settle (which now also takes lock(1))
@@ -460,9 +468,13 @@ async function releaseSettlementChildren(
       // failure" and "automated status transitions", and requires exactly this:
       // allow the authoritative change and record the re-evaluation durably in the
       // same transaction. The cron drains it; nothing here can be refused.
-      await enqueueOwnHostingCoverageReevaluation(child.id, tx, {
-        cause: "SYSTEM_CHANGE",
-      });
+      await enqueueOwnHostingCoverageReevaluation(
+        child.id,
+        tx,
+        { cause: "SYSTEM_CHANGE" },
+        undefined,
+        { settledTripIds },
+      );
     }
 
     // Write FAILED (bumping `updatedAt`) only when this pass did real work —
