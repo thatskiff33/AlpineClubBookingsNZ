@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { noStoreLodgeResponse } from "@/lib/lodge-cache-headers";
 import { checkLodgeAuth, resolveKioskLodgeId } from "@/lib/lodge-auth";
 import { getKioskAccessInfo } from "@/lib/kiosk-access";
 import { countActiveLodges } from "@/lib/lodges";
@@ -36,6 +37,11 @@ const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
  * Returns the user's kiosk access tier and capabilities for the given date.
  */
 export async function GET(req: NextRequest) {
+  // #3228 — nothing here may be cached; `src/lib/lodge-cache-headers.ts` says why.
+  return noStoreLodgeResponse(await handleGet(req));
+}
+
+async function handleGet(req: NextRequest) {
   const dateStr = req.nextUrl.searchParams.get("date");
   if (!dateStr || !dateSchema.safeParse(dateStr).success) {
     return NextResponse.json({ error: "Invalid or missing date parameter" }, { status: 400 });
