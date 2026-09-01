@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { ciEnvHeredocs } from "./helpers/ci-env-heredocs";
 
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
 
@@ -190,22 +191,15 @@ function captureCandidateBlocks(): ConfigBlock[] {
     blocks.push({ id: name, text: withoutDotenvComments(readRepoFile(name)) });
   }
 
-  const workflows = path.join(root, ".github", "workflows");
-  for (const name of readdirSync(workflows).sort()) {
-    if (!/\.ya?ml$/.test(name)) continue;
-    const text = readFileSync(path.join(workflows, name), "utf8");
-    const opener = /cat > ([^\s]+) <<'?EOF'?/g;
-    let match: RegExpExecArray | null;
-    let index = 0;
-    while ((match = opener.exec(text)) !== null) {
-      index += 1;
-      const rest = text.slice(match.index + match[0].length);
-      const end = rest.indexOf("\nEOF");
-      blocks.push({
-        id: `.github/workflows/${name} -> ${match[1]} #${index}`,
-        text: withoutDotenvComments(end === -1 ? rest : rest.slice(0, end)),
-      });
-    }
+  // The heredoc scan is `helpers/ci-env-heredocs.ts` — one home (#3221,
+  // `INV-SSOT`). This file used to carry a byte-identical copy, including the
+  // same terminator bug, and it now also reaches `scripts/ci/*.sh`, where the
+  // E2E stack's `.env.staging` writer moved.
+  for (const heredoc of ciEnvHeredocs(root)) {
+    blocks.push({
+      id: `${heredoc.file} -> ${heredoc.target} #${heredoc.index}`,
+      text: withoutDotenvComments(heredoc.body),
+    });
   }
 
   for (const file of composeFiles) {
@@ -342,9 +336,11 @@ describe("email delivery boundary census (INV-CONFIG-004)", () => {
     expect(blocks.length, "no configuration blocks were discovered").toBeGreaterThan(6);
     expect(declaring).toEqual([
       ".env.staging.example",
-      ".github/workflows/e2e.yml -> .env.staging #1",
-      ".github/workflows/e2e.yml -> .env.staging #2",
+      // One writer, three callers, since #3221 — it was two copied workflow
+      // heredocs whose values were byte-identical while their comments had
+      // already drifted.
       "measurement/stack/docker-compose.measure.yml -> app",
+      'scripts/ci/write-e2e-staging-env.sh -> "$OUT" #1',
     ]);
 
     const offenders: string[] = [];

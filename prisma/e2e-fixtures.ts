@@ -40,7 +40,12 @@ function todayDateOnlyNz(): string {
 }
 
 // Pure YYYY-MM-DD ± whole days (UTC-anchored, so no DST edge can shift it).
-function shiftDateOnly(dateOnly: string, days: number): string {
+//
+// EXPORTED because `e2e/helpers/stay-dates.ts` needs the identical arithmetic to
+// walk Mondays and past bands off `E2E_TODAY_NZ`. It used to hold its own copy
+// built on a LOCAL-TIME `Date`, which is the CI runner's clock (UTC) rather than
+// the club's — see the note on `E2E_TODAY_NZ` below.
+export function shiftDateOnly(dateOnly: string, days: number): string {
   const dt = new Date(`${dateOnly}T00:00:00.000Z`);
   dt.setUTCDate(dt.getUTCDate() + days);
   return dt.toISOString().slice(0, 10);
@@ -51,6 +56,19 @@ function shiftDateOnly(dateOnly: string, days: number): string {
 // same NZ date; a run straddling NZ midnight would differ by a day, which the
 // generous >=30-day future / <=-25-day past margins below absorb without
 // changing any fixture's meaning (future stays future, past stays past).
+//
+// THIS IS THE E2E SUITE'S ONE CLOCK READ, the way `src/lib/club-time/clock.ts`
+// is the application's (`INV-CONFIG-002`, `INV-DATE-019`: ask the CLUB's
+// calendar for "today", never the host's). The Playwright process runs on the CI
+// runner, whose zone is UTC, while the app container runs `TZ=Pacific/Auckland`
+// (`docker-compose.yml`). So for the last ~12 hours of every UTC day the runner
+// and the app disagree about what day it is — and on the last day of a month
+// they disagree about the MONTH. `e2e/admin-retroactive-booking.spec.ts` told
+// the booking calendar it was already showing August while the app had opened on
+// September, and failed on `main` at 2026-08-31T14:30Z having passed on the same
+// commit that morning. Every civil date a spec derives goes through
+// `relDateOnly` (or `E2E_TODAY_NZ` itself); `e2e-club-day-census.test.ts` is
+// the guard that keeps a hand-rolled `new Date()` from coming back.
 export const E2E_TODAY_NZ = todayDateOnlyNz();
 
 // A date `offsetDays` from today (negative = past), as YYYY-MM-DD.
