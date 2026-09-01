@@ -16,6 +16,8 @@ import {
 import { prisma } from "./prisma";
 import logger from "@/lib/logger";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
+import { asRecord } from "@/lib/xero-json";
+import { buildXeroSupplementaryInvoiceKey } from "@/lib/xero-supplementary-invoice-key";
 import {
   buildXeroIdempotencyKey,
   completeXeroSyncOperation,
@@ -46,6 +48,39 @@ export async function createXeroSupplementaryInvoice(params: {
   priceDiffCents: number;
   changeFeeCents: number;
   bookingModificationId?: string;
+  /**
+   * THE SECOND ASK (#3193, epic #2797): the review task whose settled share this
+   * invoice bills, when this is not the booking change's own supplementary
+   * invoice but a small follow-on for a share that invoice had already gone out
+   * without.
+   *
+   * ONE FLAG, THREE EFFECTS, deliberately inseparable. It anchors the
+   * `XeroObjectLink` on the task instead of the `BookingModification`, so the
+   * change's own "is an invoice already going out?" reads cannot see it and
+   * cannot raise it to the combined total; it scopes the Xero idempotency key to
+   * the task, so Xero does not answer this create with the earlier invoice; and
+   * it changes what the member reads on the document. A caller able to take one
+   * without the others could bill the same money twice, so the three arrive
+   * together or not at all (`INV-SSOT`).
+   *
+   * WHAT THAT DOES AND DOES NOT PREVENT, stated exactly (#3193 fix round - the
+   * previous wording claimed "there is no way to ask for one", which was true of
+   * the three effects and not of who may set the flag). This parameter is
+   * reachable: it is public, and a caller passing it with an edit's COMBINED
+   * total would get a task-anchored invoice for the whole amount on top of one
+   * already sent. What is closed is the route by which such a row could be
+   * QUEUED - `shortfallReviewTaskId` is no longer an option on the exported
+   * enqueue, only on the module-private implementation the second-ask wrapper
+   * calls, AND that exported entry forwards its options field by field. The
+   * second half is the load-bearing one: narrowing the type alone did not close
+   * anything, because TypeScript's excess-property check fires only on a fresh
+   * object literal, so a caller assembling its options into a variable first
+   * compiled clean and the key was read (#3193 fix round, second pass). The two
+   * callers here are the outbox handler, which reads the value off a payload
+   * only that wrapper mints, and `xero-operation-retry.ts`, which sets it only
+   * from a payload that already carried it.
+   */
+  shortfallReviewTaskId?: string;
   createdByMemberId?: string;
   recordPayment?: boolean;
   repairExistingLink?: boolean;
@@ -56,6 +91,7 @@ export async function createXeroSupplementaryInvoice(params: {
     priceDiffCents,
     changeFeeCents,
     bookingModificationId,
+    shortfallReviewTaskId,
     createdByMemberId,
     recordPayment = true,
     repairExistingLink,
@@ -133,7 +169,20 @@ export async function createXeroSupplementaryInvoice(params: {
     const lineMapping = refundMapping ?? incomeMapping;
     const lineCode = lineMapping.code ?? "200";
     const li: LineItem = {
-      description: `Booking modification - price adjustment (Booking ${bookingId.slice(0, 8)})`,
+      /**
+       * #3193: WHY THE MEMBER IS BEING ASKED TWICE, on the document itself.
+       *
+       * A second small invoice for a booking change they have already been
+       * invoiced for reads as a mistake unless it says otherwise, and by the
+       * time it arrives nobody is standing next to them to explain. Plain
+       * English, no internal vocabulary, and it says what it is FOR rather than
+       * how the system produced it. Deliberately says nothing about how the club
+       * prices or reviews a change: this is the generic product, and a club's
+       * policy is not a hard-coded string (`INV-CONFIG-001`).
+       */
+      description: shortfallReviewTaskId
+        ? `Further amount for a booking change (Booking ${bookingId.slice(0, 8)}). The invoice for this change had already been sent when this part of it was finalised, so this covers the remainder rather than replacing it.`
+        : `Booking modification - price adjustment (Booking ${bookingId.slice(0, 8)})`,
       quantity: 1,
       unitAmount: priceDiffCents / 100,
       taxType: "OUTPUT2",
@@ -182,23 +231,83 @@ export async function createXeroSupplementaryInvoice(params: {
     lineItems,
     date: supplementaryInvoiceIssueDate,
     dueDate: supplementaryInvoiceDueDate,
-    reference: `Supplementary for booking ${bookingId.slice(0, 8)}${booking.payment?.xeroInvoiceId ? ` (original: ${booking.payment.xeroInvoiceId})` : ""}`,
+    reference: shortfallReviewTaskId
+      ? `Further supplementary for booking ${bookingId.slice(0, 8)}${booking.payment?.xeroInvoiceId ? ` (original: ${booking.payment.xeroInvoiceId})` : ""}`
+      : `Supplementary for booking ${bookingId.slice(0, 8)}${booking.payment?.xeroInvoiceId ? ` (original: ${booking.payment.xeroInvoiceId})` : ""}`,
     status: Invoice.StatusEnum.AUTHORISED,
     lineAmountTypes: LineAmountTypes.Inclusive,
   });
 
-  const localModel = "BookingModification";
-  const localId = bookingModificationId;
-  const invoiceIdempotencyKey = buildXeroIdempotencyKey(
-    "booking-mod",
+  // #3193: a second ask is anchored on the review task whose share it bills, so
+  // the link it writes cannot be mistaken for the booking change's own invoice
+  // by any of the reads that decide whether one is already going out.
+  const localModel = shortfallReviewTaskId
+    ? ("ManualRefundTask" as const)
+    : ("BookingModification" as const);
+  const localId = shortfallReviewTaskId ?? bookingModificationId;
+  // The same mint the outbox uses for the row's correlation key, so the key sent
+  // to Xero and the key stored beside it can never describe different documents.
+  const invoiceIdempotencyKey = buildXeroSupplementaryInvoiceKey({
+    localModel,
     localId,
-    "supplementary-invoice",
     priceDiffCents,
     changeFeeCents,
-    "v1"
-  );
+  });
+  /**
+   * A SECOND ASK KEEPS ITS QUEUED PAYLOAD; every other supplementary invoice
+   * still replaces it (#3193 fix round - the retry that was dead on arrival).
+   *
+   * This function records the Xero invoice body on the operation BEFORE the
+   * create call, so a Xero rejection leaves a FAILED row whose only content is
+   * the request Xero refused. For the booking change's own invoice that costs
+   * nothing: `xero-operation-retry.ts` rebuilds the amounts from the
+   * `BookingModification` row, which is their record, and four comments around
+   * this code correctly rely on the overwrite happening.
+   *
+   * A SECOND ASK HAS NO SUCH RECORD. It bills one settled review share, and
+   * that figure exists only in the payload the outbox queued - so overwriting it
+   * made the `ManualRefundTask` replay branch UNREACHABLE in the exact case it
+   * was written for. Xero rejects the create (archived contact, bad account
+   * code, a validation refusal); the payload is already gone; the officer whom
+   * the booking's own audit row sent to the retry button is told the amounts
+   * were overwritten and to bill by hand - which is the state this issue exists
+   * to remove.
+   *
+   * PRESERVED, NOT REBUILT. The queued row is re-read and the Xero body added
+   * beside it, rather than the queued fields being re-derived from `params`
+   * here. A re-derivation would be a second copy of the payload shape that goes
+   * stale the day a field is added to it (`INV-SSOT`); "keep what was queued"
+   * cannot. Re-reading is safe without a lock because the outbox has already
+   * committed `status: RUNNING`, which is outside the restatable set, so nothing
+   * else may write this row. `readQueuedOutboxPayload` reads named keys and
+   * ignores the extra `invoices`, so the row stays both a diagnosable Xero
+   * request and a replayable instruction; a legacy row already flattened by an
+   * earlier attempt merges to exactly what it holds today, so this is a no-op
+   * for anything already on disk.
+   *
+   * Only on the OUTBOX path. A direct call mints its row below through
+   * `startXeroSyncOperation`, which denormalises `queueType` out of the payload
+   * into the indexed column the pending scan and the booking-vs-Xero repair pass
+   * read - so writing a queued shape onto a row that was never queued would make
+   * it look queued to both.
+   */
   let operationId = syncOperationId ?? null;
-  const requestPayload = { invoices: [buildInvoice(contactId)] };
+  const queuedRequestPayload =
+    syncOperationId && shortfallReviewTaskId
+      ? asRecord(
+          (
+            await prisma.xeroSyncOperation.findUnique({
+              where: { id: syncOperationId },
+              select: { requestPayload: true },
+            })
+          )?.requestPayload,
+        )
+      : null;
+  const buildStoredPayload = (resolvedContactId: string) => ({
+    ...(queuedRequestPayload ?? {}),
+    invoices: [buildInvoice(resolvedContactId)],
+  });
+  const requestPayload = buildStoredPayload(contactId);
 
   if (operationId) {
     await prisma.xeroSyncOperation.update({
@@ -230,9 +339,10 @@ export async function createXeroSupplementaryInvoice(params: {
       operationId: operationId!,
       repairExistingLink,
       createdByMemberId,
-      buildRequestPayload: (resolvedContactId) => ({
-        invoices: [buildInvoice(resolvedContactId)],
-      }),
+      // The contact-repair rewrite carries the same preserved payload: a repair
+      // that then failed in Xero would otherwise re-open the hole above.
+      buildRequestPayload: (resolvedContactId) =>
+        buildStoredPayload(resolvedContactId),
       run: ({ contactId: resolvedContactId }) =>
         callXeroApi(
           () =>
@@ -270,8 +380,14 @@ export async function createXeroSupplementaryInvoice(params: {
         // The recorded payment is the NET — exactly what the additional
         // Stripe PaymentIntent captured (#1356). Recording anything larger
         // than the capture overstates the Stripe clearing account.
+        // The prefix travels with the ANCHOR (#3193). A second ask never
+        // records a payment - it is raised unpaid, because the card that could
+        // have paid it was taken at the earlier figure - so this is unreachable
+        // there today; hard-coding `booking-mod` beside a task-anchored
+        // `localId` would leave that dead branch describing an anchor it does
+        // not have, which is the same defect #3170 fixed in the restate.
         const paymentIdempotencyKey = buildXeroIdempotencyKey(
-          "booking-mod",
+          shortfallReviewTaskId ? "review-task" : "booking-mod",
           localId,
           "supplementary-payment",
           netAmountCents,

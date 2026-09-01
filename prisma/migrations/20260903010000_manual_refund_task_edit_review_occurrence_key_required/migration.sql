@@ -1,0 +1,158 @@
+-- #3030 (epic #2797): the three ManualRefundTask rules that were policed in prose.
+--
+-- THREE STATEMENTS, all ALTER TABLE ... ADD CONSTRAINT ... CHECK on one table.
+-- Each makes a rule the model already claims UNREPRESENTABLE instead of merely
+-- written down:
+--
+--   1. ManualRefundTask_edit_review_occurrence_key_present
+--      an EDIT_FINANCIAL_REVIEW task must carry its occurrence key.
+--   2. ManualRefundTask_non_edit_review_amount_present
+--      every OTHER kind must carry an amount.
+--   3. ManualRefundTask_raised_amount_requires_amount
+--      a task raised WITH an amount must still have one.
+--
+-- ================= 1. THE OCCURRENCE KEY =================
+--
+-- WHY THIS IS A CONSTRAINT AND NOT A CODE RULE. 20260819130000 added
+-- "ManualRefundTask_occurrenceKey_key", a UNIQUE index, and that index is the
+-- fence that stops one unpriceable booking edit raising two review tasks. But
+-- PostgreSQL exempts NULL from a unique index -- deliberately, and that
+-- exemption is load-bearing here, because every pre-#2797 row and every
+-- legacy-kind writer leaves the column NULL. The consequence is that a writer
+-- which simply OMITS "occurrenceKey" is not rejected: it silently opts out of
+-- the fence, and two replays of one edit then produce two OPEN tasks for one
+-- adjustment, which two operators can hand back twice. This makes that
+-- unrepresentable for the one kind whose whole idempotency depends on it,
+-- instead of policing it in review.
+--
+-- ================= 2. AN AMOUNT ON EVERY OTHER KIND =================
+--
+-- #2971 made "amountCents" nullable so that an EDIT_FINANCIAL_REVIEW task could
+-- say "the amount is genuinely unknown" without using a magic zero. Nothing
+-- paired that with the kinds for which an unknown amount is meaningless. A
+-- legacy-kind (or kind IS NULL) row whose "amountCents" is NULL falls straight
+-- through the application's stale-screen guard -- which reads
+-- amountCents !== null && amountCents !== confirmed -- and settles at whatever
+-- figure the operator's screen posted, on exactly the kinds the design says an
+-- operator does NOT get to reprice, because cancellation or capture policy
+-- computed them. No writer creates such a row today; this makes it impossible
+-- rather than merely absent.
+--
+-- NOTE THE THREE-VALUED LOGIC, because the obvious spelling is wrong. Written as
+-- ("kind" <> 'EDIT_FINANCIAL_REVIEW' OR "amountCents" IS NOT NULL) a row with
+-- kind IS NULL evaluates to (NULL OR FALSE) = NULL, and a CHECK accepts anything
+-- that is not FALSE -- so precisely the pre-#2797 shape would be exempt. IS
+-- DISTINCT FROM is null-safe and returns TRUE there, which is what makes the
+-- constraint mean what it says.
+--
+-- WHY IT IS A CONSTRAINT RATHER THAN A CODE GUARD, and the trade-off is real: a
+-- pure code guard refusing to close such a row would make it permanently
+-- UNCLOSEABLE, stranding an operator in front of a task nothing can resolve.
+-- Refusing to create it is the better direction, and it is the direction #3030
+-- already took for the occurrence key.
+--
+-- ================= 3. raisedAmountCents PAIRED WITH amountCents =================
+--
+-- The schema says "raisedAmountCents" is "written once at creation and never
+-- amended", and is null exactly when the task was raised with no amount at all.
+-- Neither half was enforced. raisedAmountCents = 5000 with amountCents = NULL on
+-- an OPEN row satisfied every constraint and is semantically illegal: it claims
+-- the task was raised with an amount that has since vanished.
+--
+-- The pairing is enforceable and is enforced here: raisedAmountCents non-null
+-- REQUIRES amountCents non-null. Creation writes both from the same figure, and
+-- the only amendment path (resolveManualRefundTask) writes a number, never a
+-- null -- so the amount can move but can never disappear. The converse is NOT
+-- constrained and must not be: raisedAmountCents NULL with amountCents set is
+-- the ordinary shape of a review task raised unpriced and completed at a
+-- confirmed figure.
+--
+-- WHAT IS STILL PROSE, stated plainly rather than implied. A CHECK cannot
+-- express "never amended" -- immutability is a property of an UPDATE, not of a
+-- row -- so that half would need a trigger. It is not worth one here: the column
+-- has exactly one writer, the schema comment now says the database does not
+-- enforce it, and a reader who needs the raised figure to be trustworthy has the
+-- audit entry, which records raisedAmountCents and previousAmountCents at every
+-- completion.
+--
+-- ================= WHOLE-FILE ANALYSIS =================
+--
+-- EXPAND-ONLY, and additive. Three statements, all ADD CONSTRAINT ... CHECK. No
+-- column, type, index or constraint is dropped or renamed; nothing is read,
+-- rewritten, inserted or deleted. There is no UPDATE, no INSERT, no DELETE, no
+-- data-modifying CTE and no DO block anywhere in this file, so every existing
+-- ManualRefundTask row is byte-identical afterwards and
+-- scripts/check-data-migration-verification.sh classifies it as shape-only and
+-- demands no fixture. NO SESSION CLOCK: there is no DML at all, so the #1627 DML
+-- gate is satisfied.
+--
+-- MATCHES NEITHER GUARD PATTERN. "ManualRefundTask" is not in
+-- HOT_TABLE_SQL_REGEX, and ADD CONSTRAINT ... CHECK matches neither
+-- BREAKING_SQL_REGEX nor DESTRUCTIVE_REMOVAL_SQL_REGEX (no DROP, no RENAME, no
+-- ALTER COLUMN ... TYPE, no SET NOT NULL). Its ledger row is therefore the
+-- record of the analysis rather than a coverage requirement.
+--
+-- ALL THREE VALIDATED, NOT "NOT VALID", and that is the opposite choice from the
+-- two BookingGuest/BookingGuestNight checks in 20260819130000 -- for a reason,
+-- not by inconsistency. Those two police a population that a damaged deployment
+-- might genuinely hold, where blocking a deploy or silently rewriting a row would
+-- both be wrong. These three police populations that are provably EMPTY.
+--   (1) The 'EDIT_FINANCIAL_REVIEW' enum value was registered by 20260819130000
+--       and no released code has ever written a row of that kind (before this
+--       epic, `grep` for the value across src/ found only comments).
+--   (2) and (3) "amountCents" and "raisedAmountCents" only became nullable in
+--       #2971 (20260819130000). Every row that predates it was written under a
+--       NOT NULL column, and every writer released since -- booking-cancel.ts and
+--       the two in deleted-booking-modification-payment.ts -- sets both columns
+--       from one computed, positive figure. So no legacy row can carry a NULL in
+--       either column.
+-- Validating also means each constraint is true of the whole table rather than
+-- only of future writes, which is what lets a reader trust it. If a scan ever
+-- DOES fail on some deployment, that failure is information worth stopping for:
+-- it means a row exists that no writer in this codebase created.
+--
+-- LOCK IMPACT: each ADD CONSTRAINT with validation takes ACCESS EXCLUSIVE on
+-- "ManualRefundTask" for the duration of one sequential scan; three statements in
+-- one Prisma transaction means the lock is held once, across three scans of the
+-- same table. That table is the club's hand-back work queue -- tens of rows, not
+-- millions, and 20260819130000 already recorded it as "small and cold" when it
+-- validated three checks on it in one migration. No Booking, Payment, Member,
+-- capacity, credit, subscription or provider table is read, locked or altered.
+-- Run in the normal deploy window and let the deploy guard stop on lock timeout.
+--
+-- OLD-CODE COMPATIBLE, for all three, and the argument is that the draining
+-- colour CANNOT violate them rather than that it probably will not.
+--   (1) It has no code path that writes kind = 'EDIT_FINANCIAL_REVIEW' at all:
+--       its three writers (booking-cancel.ts and the two in
+--       deleted-booking-modification-payment.ts) each set one of the three legacy
+--       kinds, for which the key is not required and the check passes regardless
+--       of "occurrenceKey". A row with kind IS NULL passes too: the <> comparison
+--       evaluates to NULL and a CHECK accepts anything that is not FALSE, which
+--       is exactly what keeps every pre-#2797 row legal.
+--   (2) and (3) Those same three writers each set "amountCents" and
+--       "raisedAmountCents" to one computed positive figure, so both constraints
+--       are satisfied by construction. The only path that UPDATES an amount is
+--       resolveManualRefundTask, which writes a number and never a null.
+-- The old colour never SELECTs "occurrenceKey", so nothing it reads changes shape.
+--
+-- REVERSE: DROP CONSTRAINT, three times, by name. Nothing is lost by it -- no
+-- data is created or destroyed here -- so no rollback.sql is required (this row
+-- is not `windowed`).
+--
+-- IDEMPOTENT: PostgreSQL has no ADD CONSTRAINT ... IF NOT EXISTS, so a replay
+-- raises 42710. That matches every ADD CONSTRAINT already in this directory and
+-- is the correct behaviour for Prisma, which records each migration in
+-- _prisma_migrations and never re-applies one.
+--
+-- TIMESTAMP COORDINATION: 20260903010000 sorts strictly above
+-- 20260902010000_add_email_override_body_html, which is the highest prefix found
+-- across origin/main, every other remote branch, every local branch and every
+-- registered worktree (re-measured 29 Aug 2026; an earlier draft of this header
+-- and its ledger row both cited 20260902050000, a prefix that exists nowhere).
+-- RE-VERIFY BEFORE MERGE and renumber if anything has landed at or above it -- a
+-- migration inserted BENEATH one already applied fails `migrate dev`'s
+-- linear-history strictness, the trap 20260813010000 and 20260820020000 both
+-- recorded.
+ALTER TABLE "ManualRefundTask" ADD CONSTRAINT "ManualRefundTask_edit_review_occurrence_key_present" CHECK ("kind" <> 'EDIT_FINANCIAL_REVIEW' OR "occurrenceKey" IS NOT NULL);
+ALTER TABLE "ManualRefundTask" ADD CONSTRAINT "ManualRefundTask_non_edit_review_amount_present" CHECK ("kind" IS NOT DISTINCT FROM 'EDIT_FINANCIAL_REVIEW' OR "amountCents" IS NOT NULL);
+ALTER TABLE "ManualRefundTask" ADD CONSTRAINT "ManualRefundTask_raised_amount_requires_amount" CHECK ("raisedAmountCents" IS NULL OR "amountCents" IS NOT NULL);

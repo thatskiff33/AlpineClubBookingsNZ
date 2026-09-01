@@ -322,6 +322,8 @@ function makeTx(
     ...booking,
     ...bookingOverride,
   }));
+  /** Per-tx, so ids do not carry across the suite's fixtures. */
+  let raiseCount = 0;
   return {
     $executeRaw: vi.fn().mockResolvedValue(undefined),
     $executeRawUnsafe: vi.fn().mockResolvedValue(undefined),
@@ -358,6 +360,29 @@ function makeTx(
     bookingGuestNight: {
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
       createMany: vi.fn().mockResolvedValue({ count: 0 }),
+    },
+    // #3032: the pending-review fence reads this under the booking-edit locks.
+    // Empty by default - no financial review is open - so every pre-#3032 test
+    // asserts exactly what it asserted before.
+    // #3032: `findUnique` and `create` are the raise's find-then-create pair.
+    // `findUnique` resolving null means "this occurrence is not on file", so a
+    // parked removal takes the create branch; a test that wants a REPLAY points
+    // it at an existing row instead.
+    manualRefundTask: {
+      findFirst: vi.fn().mockResolvedValue(null),
+      findUnique: vi.fn().mockResolvedValue(null),
+      // A DISTINCT id per raise, so a suite asserting `financialReviewTaskIds`
+      // is asserting which tasks came back rather than one id repeated. A
+      // parked removal raises one task per parked strand, and the departing
+      // strand is always one of them (#3032), so more than one raise is the
+      // ordinary shape here rather than the exception.
+      create: vi.fn().mockImplementation(() => {
+        raiseCount += 1;
+        return Promise.resolve({
+          id: raiseCount === 1 ? "task-raised" : `task-raised-${raiseCount}`,
+          status: "OPEN",
+        });
+      }),
     },
     bookingModification: { create: vi.fn().mockResolvedValue({ id: "mod-1" }) },
     // Not a quote-priced booking: no booking request holds or converted to it.
@@ -685,6 +710,309 @@ describe("consentAuthority grants nothing on the paths that already existed", ()
   });
 });
 
+describe("an unpriceable removal parks its money instead of inventing it (#3032, D-14)", () => {
+  // WHAT CHANGED HERE, AND WHY THE OLD ASSERTIONS ARE NOT SIMPLY DELETED.
+  //
+  // #3031 added an evidence gate to this function: unless every strand on the
+  // booking reconciles, the removal was REFUSED as `FINANCIAL_REVIEW_REQUIRED`
+  // rather than credited from a number nobody can support (INV-MOD-028). That
+  // refusal was an interim, and #3031 said so — it exempted a consent removal
+  // from the gate because owner decision D-14 says a decline or an expiry must
+  // ALWAYS be able to take its target off the booking, and left a hand-off block
+  // naming this issue as the one that parks the money.
+  //
+  // #3032 discharges it. There is no refusal on either path any more: EVERY
+  // unpriceable removal now commits structurally and raises an OPEN review task
+  // for a person to price. So the case that used to pin the 409 for an owner now
+  // pins the parking, which is the same fixture asserting the behaviour that
+  // replaced the one it was written for — and the consent cases below assert
+  // what D-14 was always about, which is that the member comes OFF.
+  //
+  // The differential is preserved and is now about the EVIDENCE rather than
+  // about the refusal: the same removal on a booking whose rows DO reconcile
+  // settles normally and raises nothing.
+  //
+  // WHAT THIS FIXTURE PINNED WRONG, AND NOW PINS RIGHT. It gives the DEPARTING
+  // guest readable rows and empties only the COMPANION's, which is the exact
+  // shape in which the first cut of #3032 lost money: the unreadable-strand
+  // filter skipped the departing guest for being "exact", so the single task
+  // raised named the guest who was STAYING, carried `surrenderedNightDates: []`,
+  // and read as "reviewed, nothing to adjust" — while the delete destroyed the
+  // departing guest's night rows and `priceDiffCents` stayed 0. These cases
+  // asserted `create` was called exactly ONCE, so the fixture was the defect's
+  // proof rather than its refutation. They now require the departing strand's
+  // task as well, with its nights and its real stored prices on it.
+  function unpriceableCompanionBooking(targetConsent: ConsentStatus) {
+    const booking = makeBooking({ targetConsent });
+    // The companion carries money with no per-night record at all: a booking
+    // predating `BookingGuestNight`, or one created by approving a request
+    // (#2739 backfills those but cannot empty the population). Their strand
+    // cannot reconcile, and it is not the strand being removed.
+    booking.guests[1].nights = [];
+    return booking;
+  }
+
+  /** The one `manualRefundTask.create` call whose task is about `guestId`. */
+  function raisedFor(tx: ReturnType<typeof makeTx>, guestId: string) {
+    const calls = tx.manualRefundTask.create.mock.calls as Array<
+      [{ data: Record<string, never> }]
+    >;
+    const match = calls
+      .map((call) => call[0].data as Record<string, never>)
+      .filter(
+        (data) =>
+          (
+            data.reviewContext as unknown as {
+              occurrence: { bookingGuestId: string };
+            }
+          ).occurrence.bookingGuestId === guestId,
+      );
+    expect(match, `expected exactly one task about ${guestId}`).toHaveLength(1);
+    return match[0] as unknown as {
+      amountCents: number | null;
+      raisedAmountCents: number | null;
+      kind: string;
+      status: string;
+      occurrenceKey: string;
+      reason: string;
+      reviewContext: {
+        bookingModificationId: string | null;
+        occurrence: {
+          bookingGuestId: string;
+          cause: string;
+          surrenderedNightDates: string[];
+          storedEvidence: {
+            guestTotalCents: number | null;
+            nightPrices: Array<{ date: string; priceCents: number | null }>;
+          };
+        };
+      };
+    };
+  }
+
+  it("takes a declining member off, and parks the money rather than settling it", async () => {
+    const tx = makeTx(unpriceableCompanionBooking("DECLINED"));
+
+    const result = await remove(tx, {
+      guestId: TARGET_GUEST,
+      actorMemberId: TARGET,
+      consentAuthority: authority("CONSENT_DECLINE"),
+    });
+
+    // The structural half: the guest is off the booking. This is D-14, and it is
+    // the half that must never be held behind a pricing question.
+    expect(tx.bookingGuest.delete).toHaveBeenCalledWith({
+      where: { id: TARGET_GUEST },
+    });
+    expect(result.removedGuest.id).toBe(TARGET_GUEST);
+
+    // The money half: parked, not settled and not invented.
+    expect(result.financialReviewPending).toBe(true);
+    expect(tx.manualRefundTask.create).toHaveBeenCalledTimes(2);
+    expect(result.financialReviewTaskIds).toEqual([
+      "task-raised",
+      "task-raised-2",
+    ]);
+    expect(result.priceDiffCents).toBe(0);
+    expect(result.refundAmountCents).toBe(0);
+    expect(result.accountCreditAmountCents).toBe(0);
+    expect(result.additionalAmountCents).toBe(0);
+    expect(result.xeroRefundAmountCents).toBe(0);
+    expect(result.xeroAdditionalAmountCents).toBe(0);
+
+    // The task is RAISED WITH NO AMOUNT. Null is "not yet known"; a zero here
+    // would be a financial statement the club has not made (epic #2797).
+    const raised = raisedFor(tx, COMPANION_GUEST);
+    expect(raised.amountCents).toBeNull();
+    expect(raised.raisedAmountCents).toBeNull();
+    expect(raised.kind).toBe("EDIT_FINANCIAL_REVIEW");
+    expect(raised.status).toBe("OPEN");
+
+    // Owner decision D-3032-1: the anchor a confirmed amount settles against is
+    // THIS removal's own `BookingModification` row, carried on the context and
+    // deliberately not on the occurrence.
+    expect(raised.reviewContext.bookingModificationId).toBe("mod-1");
+    expect(raised.reviewContext.occurrence).not.toHaveProperty(
+      "bookingModificationId",
+    );
+
+    // And the booking's stored money did not move. Reducing the total would mean
+    // knowing by how much, which is the question under review.
+    const written = tx.booking.update.mock.calls[0][0].data;
+    expect(written.totalPriceCents).toBe(24000);
+    expect(written.finalPriceCents).toBe(24000);
+    // Nothing was repriced, so no remaining strand had its price overwritten.
+    expect(tx.bookingGuest.update).not.toHaveBeenCalled();
+    expect(tx.payment.update).not.toHaveBeenCalled();
+  });
+
+  it("records the DEPARTING guest's money even though their own rows read cleanly", async () => {
+    // THE CASE THAT FAILS IF THE DEPARTING STRAND IS DROPPED AGAIN.
+    //
+    // On this booking the guest who is LEAVING reconciles — two stored nights at
+    // 6000 summing to their stored 12000 — and a guest who is STAYING does not.
+    // Nothing settles, `priceDiffCents` is 0, the booking's total does not move,
+    // and the delete below destroys the departing guest's `BookingGuestNight`
+    // rows; `BookingModification.previousData` keeps only their name, age tier
+    // and membership. So if this removal raises nothing about them, their refund
+    // is a number that exists nowhere in the database afterwards — and the only
+    // task an admin sees is about the guest who is staying, says "gave back no
+    // nights", and invites the DISMISSED that clears the banner with it.
+    const tx = makeTx(unpriceableCompanionBooking("DECLINED"));
+
+    await remove(tx, {
+      guestId: TARGET_GUEST,
+      actorMemberId: TARGET,
+      consentAuthority: authority("CONSENT_DECLINE"),
+    });
+
+    const departing = raisedFor(tx, TARGET_GUEST);
+
+    // The nights that left the booking, and therefore the money.
+    expect(
+      departing.reviewContext.occurrence.surrenderedNightDates,
+    ).toEqual(["2026-11-02", "2026-11-03"]);
+
+    // And the amount is recoverable from the row: the real per-night prices as
+    // they stood, plus the stored guest total they add up to. This is the number
+    // the delete was about to destroy.
+    expect(departing.reviewContext.occurrence.storedEvidence).toEqual({
+      guestTotalCents: 12000,
+      nightPrices: [
+        { date: "2026-11-02", priceCents: 6000 },
+        { date: "2026-11-03", priceCents: 6000 },
+      ],
+    });
+
+    // Its cause says WHY a strand whose own rows are perfect is under review, so
+    // the admin is confirming a figure the rows already show rather than
+    // reconstructing one. The three "we cannot read this strand" causes would be
+    // false of it.
+    expect(departing.reviewContext.occurrence.cause).toBe(
+      "COUNTERPART_STRAND_UNREADABLE",
+    );
+
+    // The operator sentence matches the cause. "The exact sold price could not be
+    // read" is FALSE here and would contradict the priced rows printed beside it.
+    expect(departing.reason).toContain("2026-11-02");
+    expect(departing.reason).not.toContain(
+      "The exact sold price could not be read",
+    );
+
+    // Still no amount: what goes back also depends on the cancellation tier and
+    // the promo recalculation this parked path skipped, so the gross stored
+    // figure is evidence for the admin, not a settlement the club may assert.
+    expect(departing.amountCents).toBeNull();
+    expect(departing.raisedAmountCents).toBeNull();
+
+    // Two occurrences, two identities. A shared key would mean one of the two
+    // strands silently reusing the other's task.
+    expect(departing.occurrenceKey).not.toBe(
+      raisedFor(tx, COMPANION_GUEST).occurrenceKey,
+    );
+  });
+
+  it("lets the expiry sweep through on the same booking, parking it the same way", async () => {
+    // The sweep has no actor at all, so a refusal here would leave the row
+    // PENDING-claimed-then-rolled-back for ever and hold its bed with it.
+    const tx = makeTx(unpriceableCompanionBooking("EXPIRED"));
+
+    const result = await remove(tx, {
+      guestId: TARGET_GUEST,
+      actorMemberId: OWNER,
+      consentAuthority: authority("CONSENT_EXPIRY"),
+    });
+
+    expect(result.removedGuest.id).toBe(TARGET_GUEST);
+    expect(result.financialReviewPending).toBe(true);
+    // Both strands: the unreadable companion, and the departing member whose own
+    // rows read cleanly and whose money the delete is about to destroy.
+    expect(tx.manualRefundTask.create).toHaveBeenCalledTimes(2);
+    expect(raisedFor(tx, TARGET_GUEST).reviewContext.occurrence
+      .surrenderedNightDates).toHaveLength(2);
+  });
+
+  it("parks the SAME removal on the SAME booking when the OWNER asks for it", async () => {
+    // This case used to pin the interim 409. It now pins what replaced it: an
+    // ordinary owner removal of an unpriceable booking is no longer refused, and
+    // the guest comes off exactly as they do on the consent paths above.
+    const tx = makeTx(unpriceableCompanionBooking("DECLINED"));
+
+    const result = await remove(tx, {
+      guestId: TARGET_GUEST,
+      actorMemberId: OWNER,
+    });
+
+    expect(tx.bookingGuest.delete).toHaveBeenCalledWith({
+      where: { id: TARGET_GUEST },
+    });
+    expect(result.financialReviewPending).toBe(true);
+    expect(result.priceDiffCents).toBe(0);
+  });
+
+  it("raises no second task when the same occurrence is already on file", async () => {
+    // A replay — the retried request, or a second lane that got there first. The
+    // find-then-create pair under the global lock returns the existing task, and
+    // the removal still completes rather than failing on a unique violation that
+    // would roll the structural change back with it.
+    const tx = makeTx(unpriceableCompanionBooking("DECLINED"));
+    // Keyed by the occurrence key the raise looks up, so this also proves the two
+    // strands are looked up under two DISTINCT identities: a single shared key
+    // would return one row twice and the second strand would silently inherit the
+    // first strand's task.
+    const onFile = new Map<string, string>();
+    tx.manualRefundTask.findUnique.mockImplementation(
+      async ({ where }: { where: { occurrenceKey: string } }) => {
+        if (!onFile.has(where.occurrenceKey)) {
+          onFile.set(
+            where.occurrenceKey,
+            `task-already-open-${onFile.size + 1}`,
+          );
+        }
+        return { id: onFile.get(where.occurrenceKey), status: "OPEN" };
+      },
+    );
+
+    const result = await remove(tx, {
+      guestId: TARGET_GUEST,
+      actorMemberId: TARGET,
+      consentAuthority: authority("CONSENT_DECLINE"),
+    });
+
+    expect(result.removedGuest.id).toBe(TARGET_GUEST);
+    expect(tx.manualRefundTask.create).not.toHaveBeenCalled();
+    expect(result.financialReviewTaskIds).toEqual([
+      "task-already-open-1",
+      "task-already-open-2",
+    ]);
+    expect(onFile.size).toBe(2);
+    expect(result.financialReviewPending).toBe(true);
+  });
+
+  it("settles normally, and raises nothing, when the booking CAN be priced", async () => {
+    // The control, and the whole differential. Every strand on the untouched
+    // fixture reconciles, so the same removal takes the ordinary path: the
+    // booking's total moves, and no review task is raised at all. Without this
+    // the cases above would pass just as well if the park had been made
+    // unconditional.
+    const tx = makeTx(makeBooking({ targetConsent: "DECLINED" }));
+
+    const result = await remove(tx, {
+      guestId: TARGET_GUEST,
+      actorMemberId: OWNER,
+    });
+
+    expect(result.removedGuest.id).toBe(TARGET_GUEST);
+    expect(result.financialReviewPending).toBe(false);
+    expect(result.financialReviewTaskIds).toEqual([]);
+    expect(tx.manualRefundTask.create).not.toHaveBeenCalled();
+    expect(result.priceDiffCents).toBeLessThan(0);
+    expect(tx.booking.update.mock.calls[0][0].data.totalPriceCents).toBeLessThan(
+      24000,
+    );
+  });
+});
+
 describe("a consent removal runs the SELF-REMOVAL gate set (D-14)", () => {
   // THE DIFFERENTIAL TEST, and the reason D-14 holds to the letter: the cases in
   // which a never-consented member is trapped on a booking are exactly the cases in
@@ -882,5 +1210,102 @@ describe("the self-removal window is judged on the day the caller supplies (#312
         "Only future booking guests can remove themselves from another member's booking",
       status: 400,
     });
+  });
+});
+
+/**
+ * #3032 (epic #2797): the pending-review fence on the removal path, and the one
+ * exemption that keeps owner decision D-14 true.
+ *
+ * D-14 says a member who never consented must ALWAYS be able to come off a
+ * booking. The fence is what stops a second money-affecting edit compounding an
+ * amount nobody has priced yet — so without the exemption it would trap exactly
+ * the people D-14 exists to free, for as long as an admin left the review open.
+ * With it, the removal proceeds and #3032 parks its money as a second review
+ * task rather than inventing a figure or silently skipping one.
+ */
+describe("#3032 pending financial review fences a removal, except a consent one", () => {
+  const openReview = {
+    id: "task-open",
+    occurrenceKey: "edit-financial-review:v1:abc",
+    amountCents: null,
+    raisedAmountCents: null,
+    reviewContext: null,
+  };
+
+  it("refuses an ordinary owner removal while the booking's money is under review", async () => {
+    const tx = makeTx(makeBooking({ targetConsent: null }));
+    tx.manualRefundTask.findFirst.mockResolvedValue(openReview);
+
+    await expect(
+      remove(tx, { guestId: TARGET_GUEST, actorMemberId: OWNER }),
+    ).rejects.toMatchObject({ status: 409 });
+
+    // Refused BEFORE any write: the booking is exactly as it was.
+    expect(tx.bookingGuest.delete).not.toHaveBeenCalled();
+    expect(tx.bookingModification.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses an admin removal on the same terms — the fence is about the money, not the actor", async () => {
+    const tx = makeTx(makeBooking({ targetConsent: null }));
+    tx.manualRefundTask.findFirst.mockResolvedValue(openReview);
+
+    await expect(
+      remove(tx, {
+        guestId: TARGET_GUEST,
+        actorMemberId: ADMIN,
+        actorRole: "ADMIN",
+      }),
+    ).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("D-14: a CONSENT_EXPIRY removal still comes off, with the review open", async () => {
+    const tx = makeTx(makeBooking({ targetConsent: "EXPIRED" }));
+    tx.manualRefundTask.findFirst.mockResolvedValue(openReview);
+
+    const result = await remove(tx, {
+      guestId: TARGET_GUEST,
+      actorMemberId: OWNER,
+      consentAuthority: authority("CONSENT_EXPIRY"),
+    });
+    expect(result.removedGuest.id).toBe(TARGET_GUEST);
+  });
+
+  it("D-14: a CONSENT_DECLINE removal still comes off, with the review open", async () => {
+    const tx = makeTx(makeBooking({ targetConsent: "DECLINED" }));
+    tx.manualRefundTask.findFirst.mockResolvedValue(openReview);
+
+    const result = await remove(tx, {
+      guestId: TARGET_GUEST,
+      actorMemberId: OWNER,
+      consentAuthority: authority("CONSENT_DECLINE"),
+    });
+    expect(result.removedGuest.id).toBe(TARGET_GUEST);
+  });
+
+  it("CONTROL: the same ordinary removal succeeds when no review is open", async () => {
+    // Without this the four assertions above would still pass against a fence
+    // that refused every removal, or one that refused none.
+    const tx = makeTx(makeBooking({ targetConsent: null }));
+    tx.manualRefundTask.findFirst.mockResolvedValue(null);
+
+    const result = await remove(tx, {
+      guestId: TARGET_GUEST,
+      actorMemberId: OWNER,
+    });
+    expect(result.removedGuest.id).toBe(TARGET_GUEST);
+    expect(tx.manualRefundTask.findFirst).toHaveBeenCalledTimes(1);
+  });
+
+  it("a stranger still gets 403, not a 409 telling them the club is reviewing this booking's money", async () => {
+    const tx = makeTx(makeBooking({ targetConsent: null }));
+    tx.manualRefundTask.findFirst.mockResolvedValue(openReview);
+
+    await expect(
+      remove(tx, { guestId: TARGET_GUEST, actorMemberId: "m-stranger" }),
+    ).rejects.toMatchObject({ status: 403 });
+    // And the fence never even ran: it sits below the authorisation checks, so a
+    // caller with no business here learns nothing about the booking's finances.
+    expect(tx.manualRefundTask.findFirst).not.toHaveBeenCalled();
   });
 });

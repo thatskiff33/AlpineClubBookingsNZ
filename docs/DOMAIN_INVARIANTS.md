@@ -208,6 +208,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-048` | A stored unconsumed credit election is cleared, recorded and reported, never stranded |
 | `INV-PAY-049` | Both directions are audited with the acting admin and the previous status |
 | `INV-PAY-050` | Xero Stripe refund notes cover provider-backed cash evidence, never the refunded-amount mirror |
+| `INV-PAY-051` | An unpriceable booking edit holds the money as one typed occurrence-keyed review task, never a guessed or zero amount |
 | `INV-PAY-002` | Account credit is consumed only at `PAYMENT_PENDING`; a draft stores an election and spends nothing |
 | `INV-PAY-003` | The edit path may write an election only onto DRAFT, AWAITING_REVIEW and PAYMENT_PENDING |
 | `INV-PAY-004` | Members may edit their own drafts; a draft edit moves no money and claims no capacity |
@@ -316,6 +317,7 @@ Prefix `INV-MOD`.
 | `INV-MOD-022` | The admin exemption is not one predicate, and is stated per path |
 | `INV-MOD-023` | Advisory surfaces report the same facts and gate nothing; no row is persisted, no capacity reserved |
 | `INV-MOD-024` | Minimum-stay policy administration is versioned; a stale version is refused, not overwritten |
+| `INV-MOD-028` | EVERY edit path values historical nights only from exact, reconciling stored sold-price rows; anything else commits the stay change, writes `NULL` for what it cannot value and parks the money as an explicit financial review with typed causes and no numeric result, and a second money-affecting edit is then refused until it is settled. No writer repairs a blank into a number by re-pricing it; the ONE exception is a person typing every one of a strand's blanks while settling that review, which must reconcile and is audited as a money-affecting act |
 
 ### Adult-member hosting
 

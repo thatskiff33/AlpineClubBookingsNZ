@@ -106,6 +106,8 @@ vi.mock("@/lib/club-time/server", async () => {
 import { parseDateOnly } from "@/lib/date-only";
 import { lodgeNullTolerantScope } from "@/lib/lodges";
 
+import { stripComments } from "./support/strip-comments";
+
 const LODGE = {
   id: "lodge-a",
   name: "Silverpeak Lodge",
@@ -500,9 +502,7 @@ describe("buildDisplayState privacy matrix", () => {
       path.resolve(process.cwd(), "src/lib/lodge-display-state.ts"),
       "utf8",
     );
-    const code = source
-      .replace(/\/\*[\s\S]*?\*\//g, "")
-      .replace(/^\s*\/\/.*$/gm, "");
+    const code = stripComments(source);
     expect(code).toContain(
       "const nightGuests = getActiveGuestsForNight(booking.guests, date, booking);",
     );

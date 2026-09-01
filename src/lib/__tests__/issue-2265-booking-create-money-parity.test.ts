@@ -2,6 +2,8 @@ import { readFileSync } from "fs";
 import { join } from "path";
 import { describe, expect, it } from "vitest";
 
+import { stripComments } from "./support/strip-comments";
+
 /**
  * #2265 (epic #2245, E1) scope item 2 — make the draft and confirmed create
  * branches structurally hard to diverge again.
@@ -47,9 +49,7 @@ const MONEY_BEARING_FIELDS = [
 function topLevelArgumentKeys(rawSource: string, fnName: string): string[] {
   // Strip comments first: a field merely *mentioned* in prose must not satisfy
   // the guard, and a bracket inside a comment would derail the depth scan.
-  const source = rawSource
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/\/\/[^\n]*/g, "");
+  const source = stripComments(rawSource);
 
   const opener = `${fnName}({`;
   const start = source.indexOf(opener);

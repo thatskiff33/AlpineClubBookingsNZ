@@ -686,6 +686,45 @@ export function getXeroOperationRetryMeta(operation: RetryableOperation): XeroOp
       return { supported: true, reason: null };
     }
 
+    /**
+     * #3193 fix round: A SECOND ASK, anchored on the review task whose settled
+     * share it bills.
+     *
+     * That anchor is what stops the booking change's own reads raising it to the
+     * combined total. It also meant nothing could retry it: this screen's only
+     * supplementary-invoice branch matched `BookingModification`, so a second ask
+     * that failed in Xero sat FAILED forever while the booking's audit trail
+     * already said the amount was being billed.
+     *
+     * Retryable only from its QUEUED payload. A second ask bills one settled
+     * share, and that figure lives nowhere else - unlike the change's own
+     * invoice, which can be rebuilt from the `BookingModification` row.
+     * Rebuilding from the task's current `amountCents` would be a guess about
+     * what this row was queued with, so it refuses and says so instead.
+     *
+     * AND THE PAYLOAD IS THERE TO READ, which the first version of this branch
+     * assumed and did not check (#3193 fix round, second pass).
+     * `createXeroSupplementaryInvoice` records the Xero invoice body on the row
+     * BEFORE it calls Xero, so a rejection used to leave a FAILED row holding
+     * only the refused request - making this branch dead in the one case it was
+     * written for. That handler now keeps a second ask's queued payload and adds
+     * the Xero body beside it, so the ordinary Xero-rejection path arrives here
+     * replayable. The refusal below is what remains: a row whose payload was
+     * destroyed some other way. It is deliberately not a rebuild.
+     */
+    if (operation.localModel === "ManualRefundTask" && operation.localId) {
+      const queuedSecondAsk = readQueuedOutboxPayload(operation.requestPayload);
+      return queuedSecondAsk?.queueType === XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE &&
+        queuedSecondAsk.shortfallReviewTaskId &&
+        queuedSecondAsk.bookingModificationId
+        ? { supported: true, reason: null }
+        : {
+            supported: false,
+            reason:
+              "This second supplementary invoice cannot be replayed from this screen: the amounts it was queued with were overwritten by an earlier attempt. Check Xero for an invoice against this booking review before raising one by hand.",
+          };
+    }
+
     return {
       supported: false,
       reason: "This invoice retry path is not supported by the current replay helper.",
@@ -1101,6 +1140,46 @@ export async function retryXeroSyncOperation(
         repairExistingLink: true,
       });
       return { message: "Retried Xero supplementary invoice creation." };
+    }
+
+    if (operation.localModel === "ManualRefundTask") {
+      // #3193 fix round: replay a SECOND ASK exactly as it was queued. The
+      // payload is the only record of the share it bills - which is why the
+      // create path preserves it through a failed attempt rather than replacing
+      // it with the refused Xero body. `getXeroOperationRetryMeta` has already
+      // refused the row if it no longer holds one; this re-check is the type
+      // narrowing, not a second policy.
+      const queuedPayload = readQueuedOutboxPayload(operation.requestPayload);
+      const secondAsk =
+        queuedPayload?.queueType === XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE &&
+        queuedPayload.shortfallReviewTaskId &&
+        queuedPayload.bookingModificationId
+          ? queuedPayload
+          : null;
+      if (!secondAsk?.shortfallReviewTaskId || !secondAsk.bookingModificationId) {
+        throw new XeroOperationRetryError(
+          "This second supplementary invoice cannot be replayed: the amounts it was queued with were overwritten by an earlier attempt. Check Xero for an invoice against this booking review before raising one by hand.",
+        );
+      }
+      await xero.createXeroSupplementaryInvoice({
+        bookingId: secondAsk.bookingId,
+        priceDiffCents: secondAsk.priceDiffCents,
+        changeFeeCents: secondAsk.changeFeeCents,
+        bookingModificationId: secondAsk.bookingModificationId,
+        shortfallReviewTaskId: secondAsk.shortfallReviewTaskId,
+        createdByMemberId,
+        // NEVER a payment, and hard-coded rather than read off the payload
+        // because it is a property of what a second ask IS: it is raised only
+        // when the change's invoice had already gone out, so on the card route
+        // the card was taken at the earlier figure and nothing has been paid
+        // against this one. Recording a payment here would invent money.
+        recordPayment: false,
+        repairExistingLink: true,
+      });
+      return {
+        message:
+          "Retried the second Xero supplementary invoice for a settled booking-review share.",
+      };
     }
   }
 

@@ -1,0 +1,114 @@
+-- #3170 (epic #2797): make "what this night was sold for is not known" a real
+-- stored value.
+--
+-- WHY. A booking edit whose money cannot be valued from the booking's own
+-- stored history is now COMMITTED and PARKED: the structural change lands and
+-- the amount is held as an OPEN EDIT_FINANCIAL_REVIEW task for a person to
+-- price. Committing such an edit means rewriting a guest's BookingGuestNight
+-- rows, including the nights that guest is KEEPING -- and for a strand whose
+-- history cannot be read there is no honest number for those. The column was
+-- NOT NULL, so "leave it blank" was not representable, and the three ways out
+-- were all bad: invent the number (epic #2797 prohibits it outright), write a
+-- magic zero (a comped night legitimately stores 0, so a zero is a real
+-- financial statement -- #3031 deleted the last one), or delete the rows (which
+-- would let an edit that never touched a guest erase that guest's price
+-- history, irreversibly). The owner decided on 30 Aug 2026 to make the unknown
+-- storable instead: honest by construction, and the same move this epic made
+-- everywhere else -- make the wrong thing unrepresentable rather than policed.
+--
+-- ONE STATEMENT. A catalog metadata flip on pg_attribute.attnotnull. It writes
+-- no heap, rewrites no row, and touches no index: every existing
+-- BookingGuestNight row is byte-identical afterwards, so
+-- check-data-migration-verification.sh demands no fixture.
+--
+-- NOTHING IS BACKFILLED AND NOTHING IS REPRICED. Epic #2797 is forward-only.
+-- The rows the two historical even-split backfills wrote
+-- (20260704150000_backfill_booking_guest_nights and
+-- 20260810010000_backfill_booking_request_guest_nights) keep their values
+-- exactly as they stand; what those values mean is settled by INV-MOD-028's
+-- reconciliation rule, not by this migration.
+--
+-- THE NON-NEGATIVE CHECK STAYS AND STAYS CORRECT.
+-- "BookingGuestNight_price_nonnegative" (added NOT VALID by
+-- 20260819130000_manual_refund_task_edit_financial_review) is CHECK
+-- ("priceCents" >= 0). A SQL CHECK is satisfied when its expression is UNKNOWN,
+-- so a NULL passes it -- which is what is wanted here: NULL is not a negative
+-- amount, it is the absence of one. A stored 0 is still a real sold price (a
+-- comped night) and is still admitted; the distinction between 0 and NULL is
+-- the entire point of this change.
+--
+-- IDEMPOTENT: ALTER COLUMN ... DROP NOT NULL is a no-op when the column is
+-- already nullable, so a replay succeeds rather than raising.
+--
+-- LOCK IMPACT: a brief ACCESS EXCLUSIVE lock on "BookingGuestNight" for the
+-- catalog update only -- no table scan, no rewrite, no index build, so its
+-- duration does not grow with the table (657 rows at the 11 Aug audit). It
+-- takes no other lock and joins no advisory-lock cohort; INV-LOCK-001 and
+-- INV-LOCK-002 are unaffected because this migration composes no application
+-- writer. Run it in the normal deploy window and let the deploy guard stop on
+-- lock timeout.
+--
+-- OLD-CODE COMPATIBLE, FORWARD, WITH ONE BOUNDED DRAIN INTERACTION.
+-- Forward the statement itself is safe: DROP NOT NULL only widens what the
+-- column MAY hold and removes no value any old read expects, so the draining
+-- blue/green colour keeps reading every existing row as the required Int its
+-- generated client declares. The bounded interaction: only the NEW colour ever
+-- writes a NULL here, and only on a parked edit or on the identity echo that
+-- rewrites one, both of which need a booking whose stored rows already do not
+-- reconcile. If the new colour parks such an edit while the old colour is still
+-- draining, an old-colour read of that guest's nights meets a NULL its generated
+-- client declares as a required Int.
+--
+-- THE BLAST RADIUS OF THAT READ IS WIDER THAN "one guest", and this file says so
+-- rather than borrowing 20260819130000's bound. That migration could write
+-- "touches an admin-only surface" and mean it. This one cannot: the readers that
+-- pull every scalar of the nights relation (`include: { nights: true }`) fail the
+-- WHOLE request on one NULL row, and several of them are member-facing money
+-- routes -
+--   src/app/api/payments/create-payment-intent/route.ts
+--   src/app/api/payments/charge-saved-method/route.ts
+--   src/app/api/payments/switch-to-internet-banking/route.ts
+--   src/app/api/bookings/[id]/confirm-draft/route.ts
+--   src/app/api/bookings/[id]/waitlist-confirm/route.ts
+--   src/app/api/bookings/[id]/confirm-pending-guests/route.ts
+--   src/app/api/admin/bookings/[id]/force-confirm/route.ts
+--   src/app/api/admin/bookings/[id]/capacity-hold/route.ts
+-- and one of them is booking-wide over a DATE RANGE, so a single NULL anywhere
+-- in the window fails the entire report:
+--   src/app/api/admin/reports/route.ts
+-- All of it is still bounded to the drain window, moves no money, corrupts no
+-- data, and reads correctly the instant the old colour is gone; every
+-- pre-existing row is unaffected throughout. What it is NOT is admin-only, and
+-- an operator planning the deploy should know that before they read the ledger
+-- row's `yes`.
+--
+-- REVERSE: A ONE-WAY DOOR ONCE A NULL EXISTS. Re-adding NOT NULL requires a full
+-- validating scan and FAILS while any NULL row is present, and there is no
+-- honest automatic repair, because the value a NULL stands for is precisely the
+-- number nobody knew.
+--
+-- AN EARLIER DRAFT OF THIS BLOCK TOLD THE OPERATOR TO WORK THE REVIEW QUEUE
+-- FIRST, AND THAT WAS WRONG. Resolving or dismissing an EDIT_FINANCIAL_REVIEW
+-- task writes an amount, a direction, a settlement and an audit entry to
+-- "ManualRefundTask" and the payment ledger; it writes NOTHING to
+-- "BookingGuestNight". Every writer of that table is a booking-modification,
+-- booking-request or waitlist reprice - none of them is reachable from review
+-- resolution - so an operator who worked the entire queue and then ran the count
+-- below would find it unchanged, at the step both this file and the ledger row
+-- had told them was the way out.
+--
+-- WHAT IS ACTUALLY TRUE. Nothing in the product clears a NULL on purpose. The
+-- only paths that replace one with a number are a later date modification,
+-- booking-request re-quote or waitlist reprice that happens to reprice that
+-- guest's nights - which is a repricing, not a recovery of the sold price, and
+-- is the very guess this change exists to stop. So rolling back means one of:
+--   (a) restore from a backup taken before this migration, or
+--   (b) hand-write the missing amounts into "BookingGuestNight" from the club's
+--       own records, guest by guest, with the OPEN review tasks and their
+--       captured reviewContext evidence as the worklist,
+-- and only then
+--   SELECT count(*) FROM "BookingGuestNight" WHERE "priceCents" IS NULL;
+--   ALTER TABLE "BookingGuestNight" ALTER COLUMN "priceCents" SET NOT NULL;
+-- If NULLs remain the rollback is BLOCKED. Deleting them to unblock it would
+-- destroy the very evidence this change exists to preserve.
+ALTER TABLE "BookingGuestNight" ALTER COLUMN "priceCents" DROP NOT NULL;

@@ -18,6 +18,8 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 import { hashActionToken, issueActionToken } from "@/lib/action-tokens";
+
+import { stripComments } from "./support/strip-comments";
 import {
   generateGroupBookingCode,
   hasGroupStayFullyEnded,
@@ -433,11 +435,10 @@ describe("joinGroupBookingAsMember resolves the club's day ONCE (#3123)", () => 
       path.join(__dirname, "..", "group-booking.ts"),
       "utf8",
     );
-    // Comments blanked so the prose above the read — which names the reader —
-    // cannot be counted, and strings blanked so neither can a message.
-    const masked = source
-      .replace(/\/\*[\s\S]*?\*\//g, (match) => match.replace(/[^\n]/g, " "))
-      .replace(/\/\/[^\n]*/g, (match) => match.replace(/[^\n]/g, " "));
+    // Comments stripped so the prose above the read — which names the reader —
+    // cannot be counted. Through the canonical helper since #3164; the copy this
+    // replaced claimed to blank strings as well and never did (`INV-SSOT-004`).
+    const masked = stripComments(source);
     const start = masked.indexOf("export async function joinGroupBookingAsMember");
     expect(start, "the function has been renamed or removed").toBeGreaterThan(-1);
     const rest = masked.slice(start + 1);

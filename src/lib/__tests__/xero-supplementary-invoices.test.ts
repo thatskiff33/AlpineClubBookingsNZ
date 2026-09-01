@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   bookingFindUnique: vi.fn(),
   bookingModificationFindUnique: vi.fn(),
   xeroSyncOperationUpdate: vi.fn(),
+  xeroSyncOperationFindUnique: vi.fn(),
   startXeroSyncOperation: vi.fn(),
   completeXeroSyncOperation: vi.fn(),
   failXeroSyncOperation: vi.fn(),
@@ -25,6 +26,7 @@ vi.mock("@/lib/prisma", () => ({
     },
     xeroSyncOperation: {
       update: mocks.xeroSyncOperationUpdate,
+      findUnique: mocks.xeroSyncOperationFindUnique,
     },
   },
 }));
@@ -76,6 +78,9 @@ vi.mock("@/lib/xero-contacts", () => ({
 // `xero-document-dates-club-calendar.test.ts`.
 
 import { createXeroSupplementaryInvoice } from "@/lib/xero-supplementary-invoices";
+import { readQueuedOutboxPayload } from "@/lib/xero-operation-outbox-payload";
+import { getXeroOperationRetryMeta } from "@/lib/xero-operation-retry";
+import type { Prisma } from "@prisma/client";
 import { lineTotalCents } from "@/lib/__tests__/helpers";
 
 describe("createXeroSupplementaryInvoice idempotency-key discriminator (#1234, L2)", () => {
@@ -268,5 +273,300 @@ describe("createXeroSupplementaryInvoice mixed-sign components (#1356)", () => {
     expect(mocks.bookingFindUnique).not.toHaveBeenCalled();
     expect(mocks.getAuthenticatedXeroClient).not.toHaveBeenCalled();
     expect(createPayments).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * #3193 (epic #2797): THE SECOND ASK'S DOCUMENT.
+ *
+ * When a booking change's supplementary invoice has already gone out, a review
+ * share settled afterwards is billed on its own small invoice. Three things about
+ * that document have to be right, and one flag decides all three so a caller
+ * cannot take one without the others: the link it writes must NOT land on the
+ * booking change (or the change's own "is an invoice already going out?" reads
+ * would find it and could raise it to the combined total), the Xero idempotency
+ * key must not be the change's (or Xero answers the create with the earlier
+ * invoice and the difference is never billed), and the member has to be told why
+ * a second invoice has arrived.
+ */
+describe("createXeroSupplementaryInvoice: the second ask (#3193)", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    mocks.bookingFindUnique.mockResolvedValue({
+      id: "bk1",
+      memberId: "mem1",
+      payment: { xeroInvoiceId: "inv_orig" },
+    });
+    mocks.bookingModificationFindUnique.mockResolvedValue({
+      createdAt: new Date("2026-01-01T00:00:00Z"),
+    });
+    mocks.getAuthenticatedXeroClient.mockResolvedValue({
+      xero: { accountingApi: {} },
+      tenantId: "tenant_1",
+    });
+    mocks.findOrCreateXeroContact.mockResolvedValue("contact_1");
+    mocks.getResolvedAccountMapping.mockResolvedValue({
+      code: "200",
+      itemCode: undefined,
+      codeExplicitlyConfigured: false,
+    });
+    mocks.getAccountMapping.mockResolvedValue("606");
+    mocks.startXeroSyncOperation.mockResolvedValue({ id: "op_x" });
+    mocks.completeXeroSyncOperation.mockResolvedValue(undefined);
+    mocks.failXeroSyncOperation.mockResolvedValue(undefined);
+    mocks.retryXeroWriteWithContactRepair.mockResolvedValue({
+      body: { invoices: [{ invoiceID: "inv_second", invoiceNumber: "INV-0043" }] },
+    });
+    mocks.callXeroApi.mockImplementation((fn: () => unknown) => fn());
+  });
+
+  it("anchors on the review task and keys the create so Xero cannot dedupe it", async () => {
+    const invoiceId = await createXeroSupplementaryInvoice({
+      bookingId: "bk1",
+      priceDiffCents: 3000,
+      changeFeeCents: 0,
+      bookingModificationId: "mod_123",
+      shortfallReviewTaskId: "task_2",
+      recordPayment: false,
+    });
+
+    expect(invoiceId).toBe("inv_second");
+    const enqueued = mocks.startXeroSyncOperation.mock.calls[0][0];
+    expect(enqueued.localModel).toBe("ManualRefundTask");
+    expect(enqueued.localId).toBe("task_2");
+    expect(enqueued.idempotencyKey).toBe(
+      "review-task:task_2:supplementary-shortfall-invoice:3000:0:v1",
+    );
+    // Not the change's key, in either half. A shared key would have Xero answer
+    // this create with the invoice already sent.
+    expect(enqueued.idempotencyKey).not.toContain("mod_123");
+    expect(enqueued.idempotencyKey).not.toContain(":supplementary-invoice:");
+
+    // And the LINK follows the anchor, which is what keeps it out of the reads
+    // that decide whether the change already has an invoice going out.
+    const completion = mocks.completeXeroSyncOperation.mock.calls[0][1];
+    const invoiceLink = completion.extraLinks.find(
+      (link: { role: string }) => link.role === "SUPPLEMENTARY_INVOICE",
+    );
+    expect(invoiceLink.localModel).toBe("ManualRefundTask");
+    expect(invoiceLink.localId).toBe("task_2");
+  });
+
+  it("tells the member why a second invoice has arrived", async () => {
+    await createXeroSupplementaryInvoice({
+      bookingId: "bk1",
+      priceDiffCents: 3000,
+      changeFeeCents: 0,
+      bookingModificationId: "mod_123",
+      shortfallReviewTaskId: "task_2",
+      recordPayment: false,
+    });
+
+    const enqueued = mocks.startXeroSyncOperation.mock.calls[0][0];
+    const [line] = enqueued.requestPayload.invoices[0].lineItems;
+    expect(line.unitAmount).toBe(30);
+    expect(line.description).toContain("already been sent");
+    expect(line.description).toContain("covers the remainder");
+    // Plain English about THIS document, with no internal vocabulary and no
+    // claim about how the club prices or reviews a change - this is the generic
+    // product, and a club's policy is not a hard-coded string.
+    expect(line.description).not.toMatch(/review|task|shortfall|supplementary/i);
+    expect(enqueued.requestPayload.invoices[0].reference).toContain(
+      "Further supplementary",
+    );
+  });
+
+  /**
+   * CONTROL. The change's OWN invoice is unchanged in all three respects -
+   * without this, a change that simply broke the ordinary anchor, key or wording
+   * would pass every assertion above.
+   */
+  it("CONTROL: the booking change's own invoice keeps its anchor, key and wording", async () => {
+    await createXeroSupplementaryInvoice({
+      bookingId: "bk1",
+      priceDiffCents: 3000,
+      changeFeeCents: 0,
+      bookingModificationId: "mod_123",
+      recordPayment: false,
+    });
+
+    const enqueued = mocks.startXeroSyncOperation.mock.calls[0][0];
+    expect(enqueued.localModel).toBe("BookingModification");
+    expect(enqueued.localId).toBe("mod_123");
+    expect(enqueued.idempotencyKey).toBe(
+      "booking-mod:mod_123:supplementary-invoice:3000:0:v1",
+    );
+    const [line] = enqueued.requestPayload.invoices[0].lineItems;
+    expect(line.description).toContain("price adjustment");
+    expect(line.description).not.toContain("already been sent");
+    const completion = mocks.completeXeroSyncOperation.mock.calls[0][1];
+    const invoiceLink = completion.extraLinks.find(
+      (link: { role: string }) => link.role === "SUPPLEMENTARY_INVOICE",
+    );
+    expect(invoiceLink.localModel).toBe("BookingModification");
+  });
+});
+
+/**
+ * A SECOND ASK REJECTED BY XERO IS STILL REPLAYABLE (#3193 fix round, second
+ * pass) - driven through the REAL create path, which is the whole point.
+ *
+ * The retry branch in `xero-operation-retry.ts` replays a second ask from its
+ * queued payload, and the first version of that branch was DEAD in the exact
+ * case it was written for: this function records the Xero invoice body on the
+ * operation BEFORE it calls Xero, so a rejection left a FAILED row holding only
+ * the request Xero refused, the eligibility check found no queued payload, and
+ * the officer whom the booking's own audit row had sent to the retry button was
+ * told the amounts were overwritten and to bill by hand. The share - the money
+ * this whole issue exists to bill - was back to hand collection.
+ *
+ * The test that pinned that branch handed it an operation whose payload was
+ * still the queued one, which is a state the system could not reach. These cases
+ * reach it from the cause the docblock names: a queued row, a real create, a
+ * Xero refusal, and then the SAME two predicates the retry screen uses, applied
+ * to the payload this run actually wrote.
+ */
+describe("a second ask survives a Xero rejection replayably (#3193)", () => {
+  const queuedSecondAsk = {
+    queueType: "SUPPLEMENTARY_INVOICE",
+    bookingId: "bk1",
+    priceDiffCents: 3000,
+    changeFeeCents: 0,
+    bookingModificationId: "mod_123",
+    shortfallReviewTaskId: "task_2",
+    recordPayment: false,
+    waitForConfirmedAdditionalPayment: false,
+    paymentIntentId: null,
+  };
+
+  const failedOperationRow = (requestPayload: unknown) => ({
+    id: "op_q",
+    status: "FAILED" as const,
+    replayable: true,
+    direction: "OUTBOUND" as const,
+    entityType: "INVOICE" as const,
+    operationType: "CREATE" as const,
+    localModel: "ManualRefundTask",
+    localId: "task_2",
+    requestPayload: requestPayload as Prisma.JsonValue,
+    responsePayload: null,
+    xeroObjectId: null,
+    xeroObjectNumber: null,
+    queueType: "SUPPLEMENTARY_INVOICE",
+  });
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+    mocks.bookingFindUnique.mockResolvedValue({
+      id: "bk1",
+      memberId: "mem1",
+      payment: { xeroInvoiceId: "inv_orig" },
+    });
+    mocks.bookingModificationFindUnique.mockResolvedValue({
+      createdAt: new Date("2026-01-01T00:00:00Z"),
+    });
+    mocks.getAuthenticatedXeroClient.mockResolvedValue({
+      xero: { accountingApi: {} },
+      tenantId: "tenant_1",
+    });
+    mocks.findOrCreateXeroContact.mockResolvedValue("contact_1");
+    mocks.getResolvedAccountMapping.mockResolvedValue({
+      code: "200",
+      itemCode: undefined,
+      codeExplicitlyConfigured: false,
+    });
+    mocks.getAccountMapping.mockResolvedValue("606");
+    mocks.xeroSyncOperationFindUnique.mockResolvedValue({
+      requestPayload: queuedSecondAsk,
+    });
+    mocks.xeroSyncOperationUpdate.mockResolvedValue({ id: "op_q" });
+    mocks.failXeroSyncOperation.mockResolvedValue(undefined);
+    mocks.callXeroApi.mockImplementation((fn: () => unknown) => fn());
+  });
+
+  const rejectTheCreateInXero = async () => {
+    // The real refusal shape: Xero accepts the request and rejects the document
+    // (archived contact, bad account code, a validation error), which is what
+    // makes this a FAILED row rather than a transport retry.
+    mocks.retryXeroWriteWithContactRepair.mockRejectedValue(
+      new Error("Account code 200 has been archived"),
+    );
+
+    await expect(
+      createXeroSupplementaryInvoice({
+        bookingId: "bk1",
+        priceDiffCents: 3000,
+        changeFeeCents: 0,
+        bookingModificationId: "mod_123",
+        shortfallReviewTaskId: "task_2",
+        recordPayment: false,
+        syncOperationId: "op_q",
+      }),
+    ).rejects.toThrow("Account code 200 has been archived");
+
+    expect(mocks.failXeroSyncOperation).toHaveBeenCalledWith(
+      "op_q",
+      expect.any(Error),
+    );
+    expect(mocks.xeroSyncOperationUpdate).toHaveBeenCalledTimes(1);
+    return mocks.xeroSyncOperationUpdate.mock.calls[0][0].data.requestPayload;
+  };
+
+  it("leaves the FAILED row carrying the share it was queued with", async () => {
+    const written = await rejectTheCreateInXero();
+
+    // Still a diagnosable record of what Xero refused...
+    expect(written.invoices[0].lineItems[0].unitAmount).toBe(30);
+    // ...and still the instruction that says what to raise. This is the exact
+    // parser the replay branch calls.
+    expect(readQueuedOutboxPayload(written)).toMatchObject({
+      queueType: "SUPPLEMENTARY_INVOICE",
+      bookingId: "bk1",
+      // THE SHARE, NEVER THE TOTAL - the amount the replay will send.
+      priceDiffCents: 3000,
+      changeFeeCents: 0,
+      bookingModificationId: "mod_123",
+      shortfallReviewTaskId: "task_2",
+    });
+  });
+
+  it("and the retry screen accepts that row", async () => {
+    const written = await rejectTheCreateInXero();
+
+    expect(getXeroOperationRetryMeta(failedOperationRow(written))).toEqual({
+      supported: true,
+      reason: null,
+    });
+  });
+
+  /**
+   * CONTROL, and it is the reason this is scoped to the second ask rather than
+   * to the queue type. The change's own invoice keeps the wholesale replacement:
+   * its amounts live on the `BookingModification` row, which is what
+   * `xero-operation-retry.ts` rebuilds them from, and four comments around this
+   * code correctly rely on the overwrite happening.
+   */
+  it("CONTROL: the change's own invoice still replaces its payload", async () => {
+    mocks.retryXeroWriteWithContactRepair.mockRejectedValue(
+      new Error("Account code 200 has been archived"),
+    );
+
+    await expect(
+      createXeroSupplementaryInvoice({
+        bookingId: "bk1",
+        priceDiffCents: 3000,
+        changeFeeCents: 0,
+        bookingModificationId: "mod_123",
+        recordPayment: false,
+        syncOperationId: "op_q",
+      }),
+    ).rejects.toThrow("Account code 200 has been archived");
+
+    // No read of the queued row at all on this path, so no queued shape can be
+    // written onto it by accident.
+    expect(mocks.xeroSyncOperationFindUnique).not.toHaveBeenCalled();
+    const written = mocks.xeroSyncOperationUpdate.mock.calls[0][0].data.requestPayload;
+    expect(Object.keys(written)).toEqual(["invoices"]);
+    expect(readQueuedOutboxPayload(written)).toBeNull();
   });
 });

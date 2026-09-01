@@ -35,6 +35,8 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 import { DIAGNOSTICS_TOOL_BOUNDS } from "../types";
+
+import { stripComments } from "@/lib/__tests__/support/strip-comments";
 import {
   READ_ONLY_SEAM_EXEMPTIONS,
   READ_ONLY_SEAM_EXEMPTION_IDS,
@@ -102,9 +104,7 @@ function toolsSource(relativePath: string): string {
  * nothing. Stripping first is what lets the assertion be exact.
  */
 function strippedCode(source: string): string {
-  return source
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/^[ \t]*\/\/.*$/gm, "");
+  return stripComments(source);
 }
 
 

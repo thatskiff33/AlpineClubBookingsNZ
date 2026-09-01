@@ -1,10 +1,25 @@
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 
+/**
+ * The local records a Xero row can be anchored to AND opened from the admin
+ * Xero screens. A `localModel` missing from this list is not a broken link - it
+ * renders as plain text and its record page 404s - so an anchor added to the
+ * outbox belongs here in the same change.
+ *
+ * `ManualRefundTask` is #3193's second ask: one settled review share's own small
+ * supplementary invoice, anchored on the task rather than on the booking change
+ * so the change's own reads cannot raise it. That anchor is what makes it safe,
+ * and it is also what made it invisible to the operator - a second ask that
+ * failed in Xero had no page to open and no row an officer could recognise,
+ * while the booking's audit trail already said the amount was being billed
+ * (#3193 fix round).
+ */
 const XERO_LOCAL_MODELS = [
   "Member",
   "Booking",
   "Payment",
   "BookingModification",
+  "ManualRefundTask",
   "MemberSubscription",
   "MembershipCancellationRequest",
   "MembershipCancellationRequestParticipant",
@@ -36,6 +51,7 @@ export function buildLocalAdminUrl(localModel: string | null, localId: string | 
     case "Booking":
     case "Payment":
     case "BookingModification":
+    case "ManualRefundTask":
     case "MemberSubscription":
       return buildXeroRecordActivityUrl(localModel, localId);
     case "MembershipCancellationRequest":

@@ -61,7 +61,38 @@ describe("xero operation outbox payload parsing", () => {
       recordPayment: false,
       paymentIntentId: undefined,
       waitForConfirmedAdditionalPayment: undefined,
+      shortfallReviewTaskId: undefined,
     });
+  });
+
+  /**
+   * #3193: the second ask's marker survives the parse, and the claim guard
+   * accepts its anchor.
+   *
+   * Both halves matter and they fail differently. A dropped marker sends the
+   * handler down the ordinary path, which would write the invoice's link onto
+   * the BOOKING CHANGE - where the change's own reads would find it - and key
+   * the create the way the change's own invoice is keyed, so Xero would answer
+   * it with the invoice already sent. A missing `ManualRefundTask` in the claim
+   * guard is quieter and just as bad: the row is skipped on every pass, forever,
+   * and the difference is never billed at all.
+   */
+  it("carries the second ask's review task through the parse (#3193)", () => {
+    expect(
+      readQueuedOutboxPayload({
+        queueType: "SUPPLEMENTARY_INVOICE",
+        bookingId: "booking_1",
+        priceDiffCents: 3000,
+        changeFeeCents: 0,
+        bookingModificationId: "mod_1",
+        recordPayment: false,
+        shortfallReviewTaskId: "task_2",
+      })
+    ).toMatchObject({ shortfallReviewTaskId: "task_2" });
+
+    expect(
+      getQueuedOutboxExpectedOperation("SUPPLEMENTARY_INVOICE").localModels
+    ).toContain("ManualRefundTask");
   });
 
   it("normalizes modification account-credit note payloads", () => {

@@ -40,6 +40,11 @@ import {
   requestIsOtherLodgeRateElectionOnly,
 } from "@/lib/booking-other-lodge-rate";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
+import {
+  assertNoPendingEditFinancialReview,
+  raiseParkedEditFinancialReviewTasks,
+} from "@/lib/edit-financial-review";
+import { bookingHasOpenFinancialReview } from "@/lib/booking-financial-review-visibility";
 import { linkModificationToOutstandingChangeRequest } from "@/lib/booking-change-request-linkage";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { assertBookingEnvelopeInvariants } from "@/lib/booking-envelope-invariants";
@@ -70,6 +75,10 @@ import {
   resolveCreditElectionUpdate,
 } from "@/lib/booking-credit-election";
 import type { PromoCoverageNotice } from "@/lib/promo-cap-coverage";
+import {
+  describePromoChangeNotApplied,
+  type PromoChangeNotAppliedNotice,
+} from "@/lib/promo-change-not-applied";
 import { hasCapturedPayment } from "@/lib/booking-payment-state";
 import { prisma } from "@/lib/prisma";
 import {
@@ -89,7 +98,10 @@ import {
 } from "@/lib/member-guest-add-policy";
 import type { MemberGuestAddActor } from "@/lib/member-guest-consent";
 import { resolveSubscriptionLockoutMode } from "@/lib/member-subscription-eligibility";
-import { dateOnlyInstantOf, type CalendarDate } from "@/lib/club-time";
+import {
+  dateOnlyInstantOf,
+  type CalendarDate,
+} from "@/lib/club-time";
 import {
   lockRosterDateRangesAndDates,
   rosterOperationalDayRange,
@@ -113,6 +125,10 @@ type BatchModificationTransactionResult =
     // #2390: set only when a usage cap stopped the promotion reaching somebody
     // on the repriced booking; null means everyone it applies to is covered.
     promoCoverage: PromoCoverageNotice | null;
+    // #3179: set only when this edit carried a promo-code change it could not
+    // honour and dropped. Null means nothing the member asked for was left
+    // undone — never "there was no promo code".
+    promoChangeNotApplied: PromoChangeNotAppliedNotice | null;
     choreWarnings: string[];
     datesChanged: boolean;
     adminOverride: boolean;
@@ -168,6 +184,9 @@ export type BatchModificationResponse = {
   promoRemoved: boolean;
   promoChanged: boolean;
   promoCoverage: PromoCoverageNotice | null;
+  // #3179: the promo-code change this edit dropped, in the member's own words.
+  // The panel holds itself open on it rather than closing on a silent partial.
+  promoChangeNotApplied: PromoChangeNotAppliedNotice | null;
   choreWarnings: string[];
   // #2266: the stored credit election (#2265) after this edit, so the panel
   // can confirm what was remembered without a second fetch.
@@ -192,25 +211,76 @@ export type BatchModificationResponse = {
  * arrays, which the guest-sync step treats as "leave the rows alone".
  */
 function buildIdentityOnlyPricing(booking: LoadedBookingForModify): PricingResult {
+  // #3031: NO `?? 0`, ANYWHERE IN THIS ECHO. These amounts are written straight
+  // back onto `BookingGuestNight.priceCents` by `syncGuestNights`, so a default
+  // would replace a night's real sold price with a magic zero on an edit whose
+  // entire promise is that it preserves it (INV-MOD-028). A night loaded without
+  // its price is a SELECT that did not ask for it — the census in
+  // `in-progress-edit-sold-price-census.test.ts` exists to stop exactly that —
+  // and the honest response is to refuse rather than to invent. A stored value
+  // that is negative IS echoed, unchanged: the promise is byte-for-byte
+  // preservation, and repairing damaged rows is #2745's audited decision, not
+  // this echo's.
+  //
+  // ONE READ OF THE ROWS, feeding both the breakdown and the per-night rates
+  // (`INV-SSOT`). They were read twice, and the second read defaulted — dead
+  // only because object-literal properties evaluate in source order and the
+  // refusal happened to precede it. A prohibited construct on a money value must
+  // not depend on evaluation order for its harmlessness.
+  //
+  // #3170: AND A ROW THAT SAYS "NOT KNOWN" IS ECHOED AS THAT. Byte-for-byte
+  // preservation is the promise, and a `NULL` is a value this column now holds:
+  // it is what a parked edit writes for a night this booking's history cannot
+  // price. Refusing it here would refuse a member a spelling correction on a
+  // booking whose amount an officer has yet to confirm, and writing a number
+  // instead would invent the very figure the review exists to establish.
+  //
+  // The two absences stay apart, exactly as they do at the write. `null` is the
+  // row's own statement and is preserved; `undefined` is still a SELECT that
+  // did not ask for the price — a caller wiring defect — and still throws.
+  const echoedNights = booking.guests.map((guest) =>
+    (guest.nights ?? []).map((night) => {
+      if (night.priceCents === undefined) {
+        throw new Error(
+          `Booking guest ${guest.id} night ${night.stayDate.toISOString()} was loaded without its stored sold price (#3031)`,
+        );
+      }
+      return { stayDate: night.stayDate, priceCents: night.priceCents };
+    }),
+  );
   return {
+    kind: "priced",
     inProgressPlan: null,
     capacityOverridden: false,
     newTotalPriceCents: booking.totalPriceCents,
     priceBreakdown: {
       totalPriceCents: booking.totalPriceCents,
-      guests: booking.guests.map((guest) => ({
+      guests: booking.guests.map((guest, index) => ({
         priceCents: guest.priceCents,
-        perNightCents: (guest.nights ?? []).map((night) => night.priceCents ?? 0),
-        nightDates: (guest.nights ?? []).map((night) => night.stayDate),
+        perNightCents: echoedNights[index].map((night) => night.priceCents),
+        nightDates: echoedNights[index].map((night) => night.stayDate),
       })),
     },
-    guestNightRates: booking.guests.map((guest) => ({
-      bookingGuestId: guest.id,
-      memberId: guest.memberId ?? null,
-      isMember: guest.isMember,
-      perNightRates: (guest.nights ?? []).map((night) => night.priceCents ?? 0),
-      nightDates: (guest.nights ?? []).map((night) => night.stayDate),
-    })),
+    // #3170: RATES ONLY, and the pair stays aligned. A night whose stored price
+    // is not known has no rate to state, so it is dropped from BOTH lists
+    // together rather than carried as a null one list would read as zero. This
+    // echo's rates are unused in practice — a price-preserving modification
+    // re-runs no promotion cap, which is the only reader — so dropping is safe
+    // as well as honest; what would not be safe is a rate vector whose
+    // positions no longer matched its dates.
+    guestNightRates: booking.guests.map((guest, index) => {
+      const rated = echoedNights[index].filter(
+        (night): night is { stayDate: Date; priceCents: number } =>
+          night.priceCents !== null,
+      );
+      return {
+        bookingGuestId: guest.id,
+        memberId: guest.memberId ?? null,
+        isMember: guest.isMember,
+        perNightRates: rated.map((night) => night.priceCents),
+        nightDates: rated.map((night) => night.stayDate),
+      };
+    }),
     // Nothing was rated here — this echo does not run the rate resolver at all.
     // A request carrying an other-lodge election is therefore kept OFF this path
     // (see `pricePreservingModification` below): storing the flag from an echo
@@ -706,7 +776,33 @@ export async function modifyBookingBatch({
     const pricePreservingModification =
       (identityOnlyModification || requestIsCreditElectionOnly) &&
       !requestCarriesOtherLodgeElection(input);
-    const pricing = pricePreservingModification
+
+    // #3032 (epic #2797): refuse a second money-affecting edit while this
+    // booking's last one is still under financial review. Taken here - under both
+    // locks, on the post-lock re-read, and BEFORE `calculateModifiedPricing`
+    // below or any write - so a refused edit changes nothing at all.
+    //
+    // THE PREDICATE IS `pricePreservingModification` ITSELF, not a second
+    // expression that agrees with it today. An earlier revision fenced on
+    // `!identityOnly && !creditElectionOnly` and repriced on that pair MINUS the
+    // other-lodge term, so one request carrying `guestUpdates` AND
+    // `otherLodgeMemberGuestIds` - a shape the route's schema accepts - skipped
+    // the fence and then re-rated its guests off stored money that was under
+    // review. #2978 fixed the identical drift on the neighbouring predicate one
+    // revision earlier; two expressions for one question is the defect, so there
+    // is now exactly one (`INV-SSOT`).
+    //
+    // A name correction and a credit election pass through: neither reads the
+    // booking's stored money, so neither can compound an unresolved amount. The
+    // rule itself, and why it is this narrow, are in
+    // `assertNoPendingEditFinancialReview`.
+    await assertNoPendingEditFinancialReview({
+      bookingId,
+      moneyAffecting: !pricePreservingModification,
+      store: tx,
+    });
+
+    const pricingResult = pricePreservingModification
       ? buildIdentityOnlyPricing(booking)
       : await calculateModifiedPricing(tx, {
           booking,
@@ -736,7 +832,77 @@ export async function modifyBookingBatch({
           partnerSharedGuests: input.partnerSharedGuests,
         });
 
-    const promo = pricePreservingModification
+    /**
+     * #3031/#3170 (epic #2797): THE EXACT ADJUSTMENT CANNOT BE READ FROM THIS
+     * BOOKING'S OWN STORED SOLD-PRICE HISTORY.
+     *
+     * #3031 REFUSED here. #3032 parked the guest-removal path and deliberately
+     * left this one refusing, because a removal's structural change is a row
+     * delete — expressible without valuing anything — while this branch's is a
+     * rewrite of every strand's night rows, and that needed a per-night integer
+     * for nights each strand KEEPS. There was no honest number for those, and
+     * `BookingGuestNight.priceCents` was `NOT NULL`, so "leave it blank" was not
+     * representable either.
+     *
+     * #3170 made it representable, on the owner's decision of 30 Aug 2026, and
+     * this path now does what the epic promised: THE CHANGE COMMITS AND THE
+     * MONEY PARKS. The booking becomes what the member asked for; every night
+     * whose price this booking can still tell us keeps it byte for byte; every
+     * night it cannot is written as `NULL` — not known; and one OPEN
+     * `EDIT_FINANCIAL_REVIEW` task per unreadable strand is raised inside this
+     * same transaction for a person to price.
+     *
+     * NOTHING MOVES ON THIS BRANCH, and every one of those is a decision rather
+     * than an omission: no reprice, no promotion recalculation, no change fee,
+     * no settlement options, no refund, no credit, no Xero delta, and the
+     * booking's own stored totals untouched. `priceDiffCents` falls out as 0
+     * because the booking's money genuinely did not move, NOT because 0 was
+     * chosen as the adjustment — the adjustment is unknown, and unknown is an
+     * OPEN task with a null amount. A `$0` credit, a `$0` refund and a `$0`
+     * raised amount are all real financial statements and none is written here.
+     *
+     * WHY THE CHANGE FEE IS 0 AND NOT COMPUTED. A change fee is a policy amount
+     * this service could work out, but charging it would mean money moving on an
+     * edit whose whole adjustment a person has yet to price — and it would move
+     * through the same settlement call this branch is skipping. The admin
+     * settles the entire adjustment, fee included, when they resolve the task.
+     * The removal path takes exactly this line (`changeFeeCents: 0`).
+     */
+    const parked =
+      pricingResult.kind === "financial_review_required" ? pricingResult : null;
+    // Whether an admin confirmed an overbooking to make this edit fit. Read off
+    // the union rather than off one branch, because #3170 puts the PARKED plan
+    // through the same capacity check as the priced one — parking withholds the
+    // money, never the beds — so both members carry it.
+    const capacityOverridden = pricingResult.capacityOverridden;
+
+    /**
+     * #3170 asked whether a parked edit should carry a promo-code change, and
+     * the answer was that it should not carry it but MUST NOT SWALLOW IT.
+     * #3179 is where that second half was built.
+     *
+     * A member who asks to apply or remove a promo code in the same request as
+     * a parked edit has that part of their request dropped: the stub below
+     * keeps the booking's stored promotion figures and reports
+     * `promoRemoved: false`, `promoChanged: false` over an HTTP 200. Parking
+     * did not introduce that - `applyPromoCodeChanges` returns the same shape
+     * for EVERY in-progress plan, priced or parked, because an in-progress edit
+     * reuses prices already agreed and re-runs no promotion cap.
+     *
+     * So the fix is the one both branches share: the promotion is still not
+     * re-run on either, and the member is TOLD on both. `promoEngineRan` below
+     * is what makes that one answer rather than two.
+     *
+     * THIS PREDICATE IS NOT THAT ANSWER, and naming it accurately is the point.
+     * It decides only whether the promotion figures are stubbed HERE. The other
+     * stub is inside `applyPromoCodeChanges` itself, on an in-progress plan,
+     * where this expression is `false` and the engine still does not run - so
+     * reading this to decide what the member is told would have covered one of
+     * the two branches and left the other silent.
+     */
+    const promoFiguresStubbedHere =
+      pricePreservingModification || pricingResult.kind !== "priced";
+    const promo = promoFiguresStubbedHere
       ? {
           newDiscountCents: booking.discountCents,
           newPromoAdjustmentCents: booking.promoAdjustmentCents,
@@ -745,22 +911,98 @@ export async function modifyBookingBatch({
           // A price-preserving modification re-runs no cap, so it cannot change
           // who the promotion covers.
           promoCoverage: null,
+          // #3179: this branch runs no promotion at all. The type on
+          // `PromoChangeResult` is what forces this literal to answer the same
+          // question the function does, so the notice below cannot be built off
+          // a predicate that knows about only one of the two stubs.
+          promoEngineRan: false,
         }
       : await applyPromoCodeChanges(tx, {
           booking,
           bookingId,
           input,
-          inProgressPlan: pricing.inProgressPlan,
+          inProgressPlan: pricingResult.inProgressPlan,
           newCheckIn: dates.newCheckIn,
-          newTotalPriceCents: pricing.newTotalPriceCents,
-          guestNightRates: pricing.guestNightRates,
+          newTotalPriceCents: pricingResult.newTotalPriceCents,
+          guestNightRates: pricingResult.guestNightRates,
           todayAtClub,
         });
 
-    const newFinalPriceCents = pricing.newTotalPriceCents + promo.newPromoAdjustmentCents;
+    /**
+     * #3179 (epic #2797): THE PART OF THE REQUEST THIS EDIT DID NOT DO, said
+     * out loud.
+     *
+     * The stub above keeps the booking's stored promotion figures. When the
+     * request ALSO carried a promo-code change, that change is dropped - the
+     * edit still returns 200 and the booking still changes, so without this the
+     * member is handed a success for something that half happened. The owner's
+     * decision on #3179 is to save what can be honoured and warn clearly about
+     * what cannot; this is the warning, and every surface downstream reads this
+     * one value (`INV-SSOT`).
+     *
+     * READ OFF `promo.promoEngineRan`, NOT off the pricing branch. There are
+     * TWO stubs, not one: the literal above, and `applyPromoCodeChanges`' own
+     * in-progress early return. An in-progress edit that PRICES normally takes
+     * neither `pricePreservingModification` nor the parked branch, so a
+     * predicate built here would call the engine, receive the stubbed figures
+     * back, and build no notice - the one branch this warning most needs to
+     * cover if the in-progress refusals are ever relaxed. The flag comes from
+     * whichever code decided to skip, which is the only place that knows.
+     *
+     * Null in the ordinary case, and null on a price-preserving echo, where a
+     * promo change cannot arrive at all: `promoCode`/`removePromoCode` make a
+     * request STRUCTURAL, which is what `pricePreservingModification` excludes.
+     * The call is still made unconditionally on the skipped branch rather than
+     * fenced on that reasoning, so that if the exclusion ever moves the member
+     * is told instead of silenced.
+     *
+     * WHICH REASON. `dates.isInProgressEdit` and not the pricing branch: on a
+     * stay already under way both surfaces refuse a promo change outright
+     * (`resolveTargetDates`, and the matching block in the modify-quote route),
+     * so that arm is defence in depth and its wording must still be true if a
+     * refusal is ever relaxed - which is exactly why it has to be WIRED and not
+     * merely written. The reachable case is the other one - a pre-check-in edit
+     * whose money parked for review (#3166, `INV-MOD-028`), where the member
+     * edit panel does show the promo card.
+     */
+    const promoChangeNotApplied = promo.promoEngineRan
+      ? null
+      : describePromoChangeNotApplied({
+          requestedPromoCode: input.promoCode,
+          removePromoCodeRequested: Boolean(input.removePromoCode),
+          currentPromoCode: booking.promoRedemption?.promoCode?.code,
+          // The RESOLVED removals, not `input.removeGuestIds`: a resent code's
+          // sentence claims who it covers has not changed, and a removed guest
+          // takes their `PromoRedemptionGuestTarget` row with them (cascade)
+          // while the stored discount is written back untouched. An id naming
+          // nobody on the booking removes nothing and must suppress nothing.
+          guestRemovalsRequested: guestPlan.removedGuests.length > 0,
+          reason: dates.isInProgressEdit
+            ? "STAY_IN_PROGRESS"
+            : "AMOUNT_UNDER_REVIEW",
+          phase: "saved",
+        });
+
+    // #3170: on a parked edit the booking's stored final price is written back
+    // unchanged rather than recomposed from the parked promotion figures. The
+    // two agree by construction today, and deriving it would make this line
+    // quietly depend on that agreement holding — `priceDiffCents` below is the
+    // number every settlement decision reads, and it must be zero because the
+    // booking did not move, not because two expressions happened to cancel.
+    // (The removal path states the same reasoning at the same place.)
+    const newTotalPriceCents =
+      pricingResult.kind === "priced"
+        ? pricingResult.newTotalPriceCents
+        : booking.totalPriceCents;
+    const newFinalPriceCents =
+      pricingResult.kind === "priced"
+        ? pricingResult.newTotalPriceCents + promo.newPromoAdjustmentCents
+        : booking.finalPriceCents;
     const priceDiffCents = newFinalPriceCents - booking.finalPriceCents;
 
-    const changeFeeCents = await calculateModificationChangeFee({
+    const changeFeeCents = parked
+      ? 0
+      : await calculateModificationChangeFee({
       booking,
       newCheckIn: dates.newCheckIn,
       checkInChanged: dates.checkInChanged,
@@ -769,7 +1011,16 @@ export async function modifyBookingBatch({
       todayAtClub,
     });
 
-    const settlementOptions = await calculateModificationSettlementOptions({
+    // NULL ON A PARKED EDIT, which is what keeps `applyPaymentAdjustments`
+    // inert below rather than a second zero literal beside it: with no options
+    // and a `priceDiffCents` of 0 its net amount is 0, so it takes no refund
+    // branch, no credit branch and no additional-charge branch, updates no
+    // payment row, and returns zeros for both Xero legs. The existing machinery
+    // is what proves nothing moved, rather than a parallel hand-built result
+    // that could drift from it.
+    const settlementOptions = parked
+      ? null
+      : await calculateModificationSettlementOptions({
       booking,
       netChargeCents: priceDiffCents + changeFeeCents,
       db: tx,
@@ -790,15 +1041,37 @@ export async function modifyBookingBatch({
       guestNameUpdates,
       // #2337: stamp the member identity + consent columns onto the linked rows.
       guestMemberLinks: linkWriteByGuestId,
-      priceBreakdown: pricing.priceBreakdown,
-      inProgressPlan: pricing.inProgressPlan,
+      // #3170: on a parked edit the breakdown is SPARSE — a night whose price
+      // this booking cannot tell us carries `null`, and `syncGuestNights` writes
+      // that through as `NULL` rather than inventing a number or dropping the
+      // row. The structural half commits; the money waits for a person.
+      priceBreakdown:
+        pricingResult.kind === "priced"
+          ? pricingResult.priceBreakdown
+          : pricingResult.parkedGuestRows,
+      // #3166: NULL on a pre-check-in park, which selects the ORDINARY writer
+      // branch below — the one that knows about member links, consent columns,
+      // other-club flags and guest removal. An in-progress park still carries
+      // its plan and still takes the in-progress branch. One field decides which
+      // writer runs; `parkedGuestRows` above is what that writer is handed
+      // either way, so neither branch composes its own rows.
+      inProgressPlan:
+        pricingResult.kind === "priced"
+          ? pricingResult.inProgressPlan
+          : pricingResult.parkedPlan,
       // Other Lodges epic: the election these rows were priced against, so the
       // per-guest flag is written from the same decision that cleared their
       // locked nights.
       otherLodgeElection: guestPlan.otherLodgeElection,
       // #2978 review: and who pricing actually rated at that rate, so a tick the
       // rate resolver declined is never stored as though it had been honoured.
-      otherLodgeRatedGuestIds: pricing.otherLodgeRatedGuestIds,
+      // A parked edit runs no rate resolver at all, so it rated nobody at the
+      // other-lodge rate and stores no such flag — the same answer the
+      // price-preserving echo gives, and for the same reason.
+      otherLodgeRatedGuestIds:
+        pricingResult.kind === "priced"
+          ? pricingResult.otherLodgeRatedGuestIds
+          : new Set<string>(),
     });
 
     const choreWarnings = await applyChoreCleanup(tx, {
@@ -858,7 +1131,7 @@ export async function modifyBookingBatch({
       data: {
         checkIn: dates.newCheckIn,
         checkOut: dates.newCheckOut,
-        totalPriceCents: pricing.newTotalPriceCents,
+        totalPriceCents: newTotalPriceCents,
         discountCents: promo.newDiscountCents,
         promoAdjustmentCents: promo.newPromoAdjustmentCents,
         finalPriceCents: newFinalPriceCents,
@@ -878,13 +1151,13 @@ export async function modifyBookingBatch({
         adminReviewedAt: guestPlan.reviewUpdate.adminReviewedAt,
         // Persisted capacity override (#1771): this batch modification
         // re-evaluates capacity against the new nights/guests
-        // (pricing.capacityOverridden from calculateModifiedPricing), so
+        // (capacityOverridden from calculateModifiedPricing), so
         // RECONCILE the marker — stamp when admitted over capacity behind a
         // confirm, and CLEAR any prior stamp when the change moved the booking
         // back within capacity, so a stale flag can't suppress a legitimate
         // cancel on the new nights later.
-        capacityOverriddenAt: pricing.capacityOverridden ? new Date() : null,
-        capacityOverriddenByMemberId: pricing.capacityOverridden
+        capacityOverriddenAt: capacityOverridden ? new Date() : null,
+        capacityOverriddenByMemberId: capacityOverridden
           ? actor.id
           : null,
         // #2266: the stored credit election (#2265). A conditional spread so
@@ -987,7 +1260,7 @@ export async function modifyBookingBatch({
                 })),
               }
             : {}),
-          totalPriceCents: pricing.newTotalPriceCents,
+          totalPriceCents: newTotalPriceCents,
           discountCents: promo.newDiscountCents,
           promoAdjustmentCents: promo.newPromoAdjustmentCents,
           finalPriceCents: newFinalPriceCents,
@@ -997,6 +1270,12 @@ export async function modifyBookingBatch({
           // the booking's own history so the split has an answer later.
           ...(promo.promoCoverage
             ? { promoCoverageNote: promo.promoCoverage.message }
+            : {}),
+          // #3179: and the same for a promo-code change this edit could not
+          // carry. The booking's own timeline replays it, so "why is the code
+          // still on it?" has an answer months later.
+          ...(promoChangeNotApplied
+            ? { promoChangeNotAppliedNote: promoChangeNotApplied.message }
             : {}),
           settlementMethod: payments.settlementMethod,
           accountCreditAmountCents: payments.accountCreditAmountCents,
@@ -1017,13 +1296,49 @@ export async function modifyBookingBatch({
             ? {
                 adminOverride: true,
                 pricingMode: "recalculate",
-                capacityOverridden: pricing.capacityOverridden,
+                capacityOverridden: capacityOverridden,
               }
             : {}),
         },
         priceDiffCents,
         changeFeeCents,
       },
+    });
+
+    /**
+     * #3170 (epic #2797), the money half of parking: ONE OPEN
+     * `EDIT_FINANCIAL_REVIEW` TASK PER UNREADABLE STRAND, raised inside this
+     * same transaction and under the locks it already holds, so the structural
+     * change and the record that its money is unresolved either both land or
+     * neither does. The guest-removal path is the worked example and this
+     * follows it line for line.
+     *
+     * ANCHORED TO THIS EDIT'S OWN `BookingModification` ROW (owner decision
+     * D-3032-1), written immediately above, so a credit or refund that
+     * eventually moves is keyed to the change that caused it rather than to a
+     * second history row minted at completion.
+     *
+     * The raise is a find-then-create with a P2002 catch on the occurrence-key
+     * index, so a REPLAY returns the task already on file instead of throwing a
+     * unique violation that would roll this edit's structural half back with it.
+     * That is what makes "a replay raises nothing further" true rather than
+     * hoped for.
+     *
+     * The raise ITSELF - the settlement payment id, the strand's member, the
+     * null amount - is `raiseParkedEditFinancialReviewTasks`, and is stated once
+     * there rather than four times across the four parked doors (#3166,
+     * `INV-SSOT`).
+     */
+    await raiseParkedEditFinancialReviewTasks({
+      booking,
+      guests: booking.guests,
+      // A batch edit can add guests in the same request. They are priced and
+      // written normally while the booking's own total is frozen, so the money
+      // is owed and only their rows record it.
+      addedGuests: createdGuests,
+      occurrences: parked?.occurrences ?? [],
+      bookingModificationId: bookingModification.id,
+      store: tx,
     });
 
     if (payments.accountCreditAmountCents > 0) {
@@ -1080,11 +1395,12 @@ export async function modifyBookingBatch({
       promoRemoved: promo.promoRemoved,
       promoChanged: promo.promoChanged,
       promoCoverage: promo.promoCoverage,
+      promoChangeNotApplied,
       choreWarnings,
       datesChanged: dates.datesChanged,
       adminOverride,
       notifyMember,
-      capacityOverridden: pricing.capacityOverridden,
+      capacityOverridden: capacityOverridden,
       oldCheckIn: booking.checkIn,
       oldCheckOut: booking.checkOut,
       oldGuestCount: booking.guests.length,
@@ -1306,6 +1622,7 @@ export async function modifyBookingBatch({
       promoRemoved: result.promoRemoved,
       promoChanged: result.promoChanged,
       promoCoverage: result.promoCoverage,
+      promoChangeNotApplied: result.promoChangeNotApplied,
       choreWarnings: result.choreWarnings,
       creditElectionCents: result.creditElectionCents,
     };
@@ -1331,6 +1648,7 @@ export async function modifyBookingBatch({
       promoRemoved: result.promoRemoved,
       promoChanged: result.promoChanged,
       promoCoverage: result.promoCoverage,
+      promoChangeNotApplied: result.promoChangeNotApplied,
       choreWarnings: result.choreWarnings,
       creditElectionCents: result.creditElectionCents,
       deferredPostCommit: async () => {
@@ -1368,6 +1686,10 @@ async function dispatchBatchPostTransactionSideEffects({
     promoRemoved: result.promoRemoved,
     promoChanged: result.promoChanged,
     promoCoverageNote: result.promoCoverage?.message ?? null,
+    // #3179: the audit trail carries the dropped promo-code change too, so an
+    // officer answering "I asked for a discount and did not get it" can see
+    // exactly what the member was told and when.
+    promoChangeNotAppliedNote: result.promoChangeNotApplied?.message ?? null,
     updatedGuestCount: result.guestNameUpdates.length,
     guestIdentityChanged: result.guestIdentityChanged,
     // #2266: the stored credit election (#2265) after this edit — audited
@@ -1482,6 +1804,30 @@ async function dispatchBatchPostTransactionSideEffects({
   });
   if (!member) return;
 
+  /*
+    #3032 (epic #2797): does this booking's money sit under review as this email
+    is written?
+
+    NOT "did this edit park money" - this path parks none. The batch park is
+    #3170, held on an owner money decision, so a value derived from THIS edit
+    would be a constant `false` dressed up as a computation, and would stay
+    `false` on the day #3170 lands. The question the member is owed is the one
+    every other member-facing surface answers: is the club still working out an
+    amount on this booking. Read from `bookingHasOpenFinancialReview`, the same
+    reader behind the booking-detail banner and the My Bookings row, so the
+    email cannot say one thing while the page the member opens says another
+    (`INV-SSOT`).
+
+    Read after the transaction commits, deliberately: this edit decided nothing
+    about the review, so the honest answer is the booking's state now, not a
+    value captured earlier in a transaction that never touched it. That is the
+    opposite of the removal path, where the transaction DID decide it and
+    carries the answer out on its result.
+  */
+  const financialReviewPending = await bookingHasOpenFinancialReview(
+    result.booking.id,
+  );
+
   sendBookingModifiedEmail({
     bookingId: result.booking.id,
     recipientMemberId: member.id,
@@ -1512,6 +1858,11 @@ async function dispatchBatchPostTransactionSideEffects({
     // #2390: if a usage cap stopped the promotion reaching somebody this edit
     // added, the email says so in the same words the member saw on screen.
     promoCoverageNote: result.promoCoverage?.message ?? null,
+    // #3179: and if the edit could not carry a promo-code change, the email
+    // says THAT in the same words too. The email is the durable copy: a member
+    // who closed the panel without reading the banner still has this.
+    promoChangeNotAppliedNote: result.promoChangeNotApplied?.message ?? null,
+    financialReviewPending,
     lodgeId: result.booking.lodgeId,
   }).catch((err) =>
     logger.error(

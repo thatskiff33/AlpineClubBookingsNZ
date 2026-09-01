@@ -202,6 +202,28 @@ export function describeConsentExceptionColumns(params: {
  * it stands NOW. The four predictable blockers reuse the member-card
  * prediction (same gates, same order as the removal service).
  *
+ * IT IS STILL COMPLETE AFTER #3031 AND #3032, and the REASON changed under it.
+ * #3031 gave `removeBookingGuestInTransaction` an evidence gate (INV-MOD-028)
+ * that this prediction cannot see — it would need every guest's stored night
+ * rows — and exempted a consent-authority removal from it so a declining member
+ * was never trapped. #3032 discharged that: the gate no longer REFUSES anything.
+ * An unpriceable removal commits and parks its money as a review task, so the
+ * exemption was removed from the evidence gate as having nothing left to exempt
+ * from, and the gate cannot be why one of these rows is stuck because it turns
+ * nobody away.
+ *
+ * WHAT COULD STILL MAKE THIS CLASSIFIER STALE is the pending-review FENCE, and a
+ * consent removal is still exempt from THAT (owner decision D-14,
+ * `assertNoPendingEditFinancialReview`). If that exemption is ever narrowed, this
+ * goes stale in the worst direction: it would report a row as `NO_LONGER_BLOCKED`
+ * ("it should go through this time") for a removal the server is about to refuse
+ * with a 409. The behavioural proof that a consent removal still comes off a
+ * booking whose rows do not reconcile is in
+ * `booking-guest-consent-authority.test.ts` ("an unpriceable removal parks its
+ * money instead of inventing it"). The file this docblock used to name,
+ * `booking-guest-removal-exact-credit.test.ts`, has no consent-authority case in
+ * it at all — a citation is a claim, and that one was never true.
+ *
  * WHEN NO PREDICTABLE BLOCKER APPLIES, `hasSettledPayment` DECIDES, and it is
  * the honest divider rather than a guess. The one refusal the prediction cannot
  * see is the settled-payment election: `removeBookingGuestInTransaction` refuses

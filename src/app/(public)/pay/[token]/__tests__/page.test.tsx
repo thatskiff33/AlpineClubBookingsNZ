@@ -11,6 +11,15 @@ import {
   PAYMENT_RECEIVED_STATUS_UNCONFIRMED_BODY,
 } from "@/lib/payment-recovery-contract";
 import { expectRecoveryAlertToHoldFocus } from "@/lib/__tests__/helpers/focus";
+import {
+  FINANCIAL_REVIEW_NOTHING_MOVED,
+  FINANCIAL_REVIEW_NOTHING_TO_DO,
+  FINANCIAL_REVIEW_AMOUNT_PREDATES_THE_CHANGE,
+  FINANCIAL_REVIEW_NOT_IN_THAT_FIGURE,
+  FINANCIAL_REVIEW_WILL_BE_IN_TOUCH,
+  FINANCIAL_REVIEW_WORKING_IT_OUT,
+  financialReviewNoteBesideAnAmount,
+} from "@/lib/booking-financial-review-copy";
 
 vi.mock("next/navigation", () => ({
   useParams: () => ({ token: "public-token" }),
@@ -547,5 +556,278 @@ describe("the public payment page says when the link dies, in the CLUB's time", 
     // And the deadline on that same render did move, so this case cannot be
     // satisfied by a page that ignores zones altogether.
     expect(document.body.textContent).toContain(deadlineIn(CLUB_ZONE));
+  });
+});
+
+
+/**
+ * #3194 (epic #2797): THIS PAGE USED TO REASSURE A MEMBER THE BOOKING'S OWN PAGE
+ * WAS BUSY CONTRADICTING.
+ *
+ * A saved change the club cannot price parks the money for the office. The
+ * booking page has said so since #3033; the payment link showed the ordinary
+ * view and, on a booking reading as paid, told the member there was nothing more
+ * to do. Same member, same booking, two answers, and the reassuring one was the
+ * one that had not checked.
+ *
+ * The fix is a flag on the payload and sentences that come from
+ * `booking-financial-review-copy.ts` — the same file the booking page composes
+ * from, which is what stops the two drifting apart again.
+ *
+ * Every case below has its CONTROL, because "a booking with no open review is
+ * completely unchanged" is an acceptance criterion.
+ */
+describe("public payment page discloses money held for review", () => {
+  function installContextFetch(
+    context: Record<string, unknown>,
+    intentBody: Record<string, unknown> = {},
+  ) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url === "/api/pay/public-token" && !init?.method) {
+          return { ok: true, json: async () => context } as Response;
+        }
+        if (url === "/api/booking-messages") {
+          return { ok: true, json: async () => ({ messages: {} }) } as Response;
+        }
+        if (
+          url === "/api/pay/public-token/payment-intent" &&
+          init?.method === "POST"
+        ) {
+          return { ok: true, status: 200, json: async () => intentBody } as Response;
+        }
+        throw new Error(`Unexpected request: ${url}`);
+      }) as typeof fetch,
+    );
+  }
+
+  /*
+    The server sends the wording state, not the payment state: a payable booking
+    under review comes back as `financial_review_pending` while `payable` still
+    carries the amount and `canRequestFreshLink` still carries the link's own
+    fact. That split is what keeps the member able to pay.
+  */
+  const payableUnderReview = {
+    ...payableContext,
+    state: "financial_review_pending",
+    narrative: {
+      state: "financial_review_pending",
+      headline: "Complete your payment",
+      message: `Payment is due. ${financialReviewNoteBesideAnAmount({ amountPredatesTheChange: true })}`,
+      nextStep: "Pay now.",
+    },
+    financialReviewPending: true,
+  };
+
+  /*
+    A booking that reads as PAID with a review open, as the SERVER composes it
+    (#3194 review). This is the shape `buildPaidWithFinancialReviewNarrative`
+    returns: the payment confirmed, the change disclosed beside it, and the
+    "nothing more to do" next step replaced.
+
+    The fixture is deliberately the real composition rather than a stand-in,
+    because this branch renders the server's narrative whole - if it ever stopped
+    doing so, the payment confirmation would vanish from the page silently.
+  */
+  const paidUnderReview = {
+    ...payableContext,
+    state: "financial_review_pending",
+    narrative: {
+      state: "financial_review_pending",
+      headline: "Payment received",
+      message: `Thanks Riley - we've received your payment of $125.00 on 20 Jun 2026. Your stay from 1 Sept 2026 to 3 Sept 2026 is confirmed. ${FINANCIAL_REVIEW_NOT_IN_THAT_FIGURE} ${FINANCIAL_REVIEW_WORKING_IT_OUT} ${FINANCIAL_REVIEW_NOTHING_MOVED}`,
+      nextStep: `${FINANCIAL_REVIEW_NOTHING_TO_DO} ${FINANCIAL_REVIEW_WILL_BE_IN_TOUCH}`,
+    },
+    payable: null,
+    financialReviewPending: true,
+  };
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(),
+    });
+  });
+
+  it("shows the review note on a booking that can still be paid, and keeps every way to pay", async () => {
+    installContextFetch(payableUnderReview);
+    render(<PayByLinkPage />);
+
+    const notice = await screen.findByTestId("payment-link-financial-review");
+    expect(notice).toHaveTextContent(
+      financialReviewNoteBesideAnAmount({ amountPredatesTheChange: true }),
+    );
+    /*
+      #3194 fix round: the card renders "Amount due", which is
+      `booking.finalPriceCents` - and both services that can park an edit write
+      that column back UNCHANGED while saving the new dates and deleting the
+      departing guest's row. So the figure directly above this notice is the
+      price from BEFORE the member's change, and the notice has to say so rather
+      than only that the change's amount is outside it. A member who reads the
+      figure as settled and pays it overpays by exactly the amount nobody could
+      work out.
+    */
+    expect(notice).toHaveTextContent(
+      FINANCIAL_REVIEW_AMOUNT_PREDATES_THE_CHANGE,
+    );
+    expect(notice).not.toHaveTextContent(FINANCIAL_REVIEW_NOT_IN_THAT_FIGURE);
+
+    // The amount and both payment routes survive. Disarming them would cost the
+    // member the booking when the hold expired, while moving none of the money
+    // that is actually under review.
+    expect(screen.getByText("Amount due: $125.00")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Pay by card" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Or pay by internet banking")).toBeInTheDocument();
+  });
+
+  it("CONTROL: the same payable booking with no review shows no notice", async () => {
+    installContextFetch(payableContext);
+    render(<PayByLinkPage />);
+
+    expect(await screen.findByText("Complete Your Payment")).toBeInTheDocument();
+    expect(screen.queryByTestId("payment-link-financial-review")).toBeNull();
+    expect(document.body.textContent).not.toContain(
+      FINANCIAL_REVIEW_WORKING_IT_OUT,
+    );
+  });
+
+  it("never says there is nothing more to do on a booking under review", async () => {
+    installContextFetch(paidUnderReview);
+    render(<PayByLinkPage />);
+
+    expect(await screen.findByText("Payment received")).toBeInTheDocument();
+    expect(document.body.textContent).toContain(
+      FINANCIAL_REVIEW_WORKING_IT_OUT,
+    );
+    expect(document.body.textContent).not.toMatch(/nothing more to do/i);
+  });
+
+  /*
+    THE OTHER HALF OF THE SAME QUESTION, and the one this page had been failing.
+
+    A member who paid by internet banking, or who came back through Stripe's
+    return URL after a redirect-based method, is handed the SERVER's narrative
+    rather than the card the page composes for an in-session payment. Asserting
+    only that "nothing more to do" is absent would have passed on a page that
+    said nothing about the payment at all - which is what this branch used to do,
+    on the one page whose entire purpose is that payment.
+  */
+  it("confirms the payment as well as the review on the server-supplied path", async () => {
+    installContextFetch(paidUnderReview);
+    render(<PayByLinkPage />);
+
+    expect(await screen.findByText("Payment received")).toBeInTheDocument();
+    // The payment is answered for: how much, and when.
+    expect(document.body.textContent).toContain(
+      "we've received your payment of $125.00 on 20 Jun 2026",
+    );
+    // And the review is disclosed in the same card, with the sentence that keeps
+    // the figure above it from reading as the amount under review.
+    //
+    // CONTROL for the payable case above: this figure is money the club HAS
+    // RECEIVED, read off a durable payment event, so a parked edit cannot make
+    // it out of date and the stale-amount sentence would be false here.
+    expect(document.body.textContent).toContain(
+      FINANCIAL_REVIEW_NOT_IN_THAT_FIGURE,
+    );
+    expect(document.body.textContent).not.toContain(
+      FINANCIAL_REVIEW_AMOUNT_PREDATES_THE_CHANGE,
+    );
+    expect(document.body.textContent).toContain(FINANCIAL_REVIEW_NOTHING_TO_DO);
+    expect(document.body.textContent).toContain(
+      FINANCIAL_REVIEW_WILL_BE_IN_TOUCH,
+    );
+  });
+
+  it("CONTROL: the same paid booking with no review still confirms the payment", async () => {
+    installContextFetch({
+      ...payableContext,
+      state: "paid",
+      narrative: {
+        state: "paid",
+        headline: "Payment received",
+        message:
+          "Thanks Riley - we've received your payment of $125.00 on 20 Jun 2026. Your stay from 1 Sept 2026 to 3 Sept 2026 is confirmed.",
+        nextStep:
+          "Nothing more to do - we'll see you at the lodge. You can view the full booking details any time from your bookings page.",
+      },
+      payable: null,
+    });
+    render(<PayByLinkPage />);
+
+    expect(await screen.findByText("Payment received")).toBeInTheDocument();
+    expect(document.body.textContent).toContain(
+      "we've received your payment of $125.00 on 20 Jun 2026",
+    );
+    expect(screen.queryByTestId("payment-link-financial-review")).toBeNull();
+    expect(document.body.textContent).not.toContain(
+      FINANCIAL_REVIEW_WORKING_IT_OUT,
+    );
+    // The unreviewed page keeps its own reassurance, which is true for it.
+    expect(document.body.textContent).toMatch(/nothing more to do/i);
+  });
+
+  /*
+    The member pays IN THIS SESSION. The context on screen predates the payment,
+    so this card is composed by the page rather than by the server - which is how
+    a booking under review could still be handed "your booking is confirmed, we
+    look forward to seeing you" as the last thing it said.
+  */
+  it("keeps disclosing the review after the member pays on this page", async () => {
+    installContextFetch(payableUnderReview, { alreadyPaid: true });
+    render(<PayByLinkPage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Pay by card" }));
+
+    expect(
+      await screen.findByText(/your payment is complete/i),
+    ).toBeInTheDocument();
+    const notice = screen.getByTestId("payment-link-financial-review");
+    expect(notice).toHaveTextContent(FINANCIAL_REVIEW_WORKING_IT_OUT);
+    expect(notice).toHaveTextContent(FINANCIAL_REVIEW_NOTHING_TO_DO);
+  });
+
+  it("CONTROL: paying with no review open shows no notice", async () => {
+    installContextFetch(payableContext, { alreadyPaid: true });
+    render(<PayByLinkPage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Pay by card" }));
+
+    expect(
+      await screen.findByText(/your payment is complete/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId("payment-link-financial-review")).toBeNull();
+  });
+
+  /*
+    A link that has expired on a booking under review. The wording state is the
+    review's, so a page keyed on `state === "expired_payable"` would drop the
+    button that emails a fresh link - stranding a member who can still pay.
+  */
+  it("still offers a fresh link when the expired booking is under review", async () => {
+    installContextFetch({
+      ...payableUnderReview,
+      payable: null,
+      canRequestFreshLink: true,
+      narrative: {
+        state: "financial_review_pending",
+        headline: "Payment link expired",
+        message: `This payment link has expired. ${FINANCIAL_REVIEW_WORKING_IT_OUT}`,
+        nextStep: "Request a fresh payment link below.",
+      },
+    });
+    render(<PayByLinkPage />);
+
+    expect(
+      await screen.findByRole("button", { name: "Email me a new link" }),
+    ).toBeInTheDocument();
+    expect(document.body.textContent).toContain(
+      FINANCIAL_REVIEW_WORKING_IT_OUT,
+    );
   });
 });

@@ -804,6 +804,64 @@ CREATED on 30 June was covered — it was not. Re-run any sweep whose check-in
 dates mattered; the created/updated/modified findings in an archived report can
 be taken at face value.
 
+**Booking edits priced by a financial review (#3187).** When an edit's money
+cannot be worked out from the booking's own history, the change is saved and the
+amount is parked for an officer to confirm. The booking's stored totals do not
+move, so the change record itself says "nothing owed" and the tool used to skip
+those bookings entirely. It now reads the settled amount off the completed
+review tasks instead. Two things follow for an operator:
+
+- a `MISSING_SUPPLEMENTARY_INVOICE` finding on such a booking reports the total
+  the reviews settled to (its `editReviewChargeCents` detail), and its
+  `QUEUE_SUPPLEMENTARY_INVOICE` action queues an invoice for that total;
+- an invoice that already went out billing LESS than the settled total shows up
+  as `XERO_AMOUNT_MISMATCH`, which is manual-review only. That is the known
+  window where a second review share is settled after the invoice has been
+  picked up for sending; check the invoice, bill or correct the difference by
+  hand, and record what was done.
+
+A repaired invoice is raised with the payment state the member is actually in:
+unpaid where the club is asking through internet banking, held until the card
+clears where a card request is outstanding, and paid where the card has already
+taken at least the full amount. Do not assume a queued repair invoice records a
+payment.
+
+**Two review-priced cases are reported and never repaired**, because raising the
+invoice would state something untrue about money. Both arrive as a
+`MISSING_SUPPLEMENTARY_INVOICE` finding at `manual_review` severity — the report
+lists them, `--apply` skips them — and each carries an `editReviewPaymentReason`
+saying which it is:
+
+- `capture-short-of-ask` — the card took LESS than the officer settled on,
+  usually because a second review share settled after the member had already
+  paid the first. The invoice would be raised for the combined total and marked
+  paid in full, overstating the Stripe clearing account by the difference and
+  leaving money the member still owes with nothing chasing it. The finding
+  reports both figures (`netAmountCents` and `capturedAmountCents`); collect or
+  write off the difference by hand and record what was done.
+- `intent-mint-awaiting-recovery` — the card request could not be created at
+  Stripe and its retry is still queued. Nothing is wrong yet and nothing needs
+  doing: the retry raises the request, and the invoice follows it. Re-run the
+  sweep later. If the same booking keeps reporting this, the retry itself has
+  stopped making progress — that is the thing to investigate.
+
+  **Read this before you re-run the sweep, because the answer changes once the
+  retry gives up.** The retry is not infinite. When it exhausts its attempts it
+  is marked failed, an admin payment-failure alert is raised, and nothing will
+  replay it. At that point this tool stops deferring: the same booking now
+  reports `MISSING_SUPPLEMENTARY_INVOICE` at **critical** severity, safe to
+  auto-apply — and applying it queues an invoice for the settled total with **no
+  payment recorded and no card request behind it**. The member is left holding a
+  Xero receivable they were never asked for and cannot pay through this
+  application; someone has to collect it another way (internet banking, or a
+  fresh ask) and record the payment against that invoice by hand.
+
+  That is the deliberate choice, and it is the right way round: an unpaid
+  invoice can be collected, where an invoice falsely marked paid quietly
+  overstates the Stripe clearing account and stops anyone chasing the money. But
+  it is the operator's call to understand before running `--apply` on a booking
+  whose retry has failed, not a repair that finishes the job on its own.
+
 Only use `--apply` after the dry-run report has been reviewed. Do not run it
 with live Xero, Stripe, SES, Sentry, or production database credentials during
 exploratory work; use a staging database and Xero demo tenant where possible.

@@ -1,6 +1,10 @@
+import { readdirSync } from "node:fs";
+import path from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import { ENVIRONMENT_ROLE_ENV_VAR } from "@/lib/environment-role-declaration";
+import { ciEnvHeredocs } from "@/lib/__tests__/helpers/ci-env-heredocs";
 import {
   appServiceNames,
   BASE_COMPOSE,
@@ -55,6 +59,15 @@ import {
  * lesson in that parser was learned by a probe defeating it, and a second copy
  * would be the copy that drifts.
  */
+
+const ROOT = process.cwd();
+
+/**
+ * The one script that writes the `.env.staging` every CI job driving the E2E
+ * compose stack reads (#3221). Named here because this file asserts what that
+ * file DECLARES; `ciEnvHeredocs()` is what knows where to find it.
+ */
+const E2E_STAGING_ENV_WRITER = "scripts/ci/write-e2e-staging-env.sh";
 
 const script = readRepoFile("scripts/run-production-blue-green-deploy.sh");
 const compose = readRepoFile(BASE_COMPOSE);
@@ -740,18 +753,83 @@ describe("non-production targets declare themselves", () => {
     );
 
     /*
-      CI does not use `.env.staging.example`: both e2e jobs WRITE `.env.staging`
-      inline with a heredoc, so the template being right says nothing about them.
-      Asserted per heredoc rather than once for the file, because the multi-lodge
-      job's copy has drifted from the single-lodge job's before.
+      CI does not use `.env.staging.example`: the jobs that drive the E2E stack
+      write `.env.staging` themselves, so the template being right says nothing
+      about them.
+
+      Read through `ciEnvHeredocs()` and named by its writer, NOT by splitting a
+      workflow on a literal `cat > .env.staging <<EOF`. That is what this case
+      used to do, and when #3221 moved the writer into
+      `scripts/ci/write-e2e-staging-env.sh` the split found nothing, the loop
+      below it ran zero times, and only a count stood between that and a vacuous
+      green. A census keyed on a LOCATION is one refactor away from checking
+      nothing; this one asks the shared scanner where the writer is, so moving it
+      again either keeps this case honest or fails `ciEnvHeredocs()`'s own
+      search — which is a failure a reader can act on.
     */
-    const workflow = readRepoFile(".github/workflows/e2e.yml");
-    const heredocs = workflow.split("cat > .env.staging <<EOF").slice(1);
-    expect(heredocs.length).toBe(2);
-    for (const heredoc of heredocs) {
-      const body = heredoc.slice(0, heredoc.indexOf("\nEOF"));
-      expect(body).toContain(`${ENVIRONMENT_ROLE_ENV_VAR}=non-production`);
+    const writers = ciEnvHeredocs(ROOT).filter(
+      (heredoc) => heredoc.file === E2E_STAGING_ENV_WRITER,
+    );
+    expect(
+      writers.map((heredoc) => `${heredoc.file} #${heredoc.index}`),
+      `${E2E_STAGING_ENV_WRITER} wrote no env heredoc. If the E2E stack's env ` +
+        "writer moved, teach ciEnvHeredocs() where it went rather than leaving " +
+        "this case reading nothing",
+    ).toEqual([`${E2E_STAGING_ENV_WRITER} #1`]);
+    for (const writer of writers) {
+      expect(writer.body).toContain(`${ENVIRONMENT_ROLE_ENV_VAR}=non-production`);
     }
+  });
+
+  it("leaves no CI job writing a .env.staging of its own beside the shared writer", () => {
+    /*
+      What the removed per-heredoc loop was really protecting. Its comment said
+      the multi-lodge job's copy had drifted from the single-lodge job's before,
+      so it asserted the declaration once per copy. There is one copy now
+      (#3221), and the durable form of that protection is that there cannot be a
+      second: a job hand-rolling its own `.env.staging` takes this declaration
+      back out of one home and puts the drift back.
+    */
+    const strays = ciEnvHeredocs(ROOT)
+      .filter((heredoc) => heredoc.file !== E2E_STAGING_ENV_WRITER)
+      .filter((heredoc) => heredoc.target.includes(".env.staging"))
+      .map((heredoc) => `${heredoc.file} #${heredoc.index}`)
+      .sort();
+    expect(
+      strays,
+      `A CI job writes its own .env.staging. Call ${E2E_STAGING_ENV_WRITER} ` +
+        "instead, so every job driving the E2E stack gets the same file",
+    ).toEqual([]);
+  });
+
+  it("has every E2E job call that one writer", () => {
+    /*
+      Named rather than counted, the way the neighbouring censuses name their
+      inputs: a job that stops calling the writer should say WHICH job, and a new
+      one should be added here deliberately. Three callers today — `e2e.yml`'s
+      two jobs and the dispatch-only rollover proof.
+    */
+    const callers = readdirSync(path.join(ROOT, ".github/workflows"))
+      .filter((name) => /\.ya?ml$/.test(name))
+      .sort()
+      .flatMap((name) => {
+        const file = `.github/workflows/${name}`;
+        const calls =
+          readRepoFile(file).split(`bash ${E2E_STAGING_ENV_WRITER}`).length - 1;
+        return Array.from(
+          { length: calls },
+          (_unused, index) => `${file} #${index + 1}`,
+        );
+      });
+    expect(
+      callers,
+      "the set of CI jobs writing the E2E stack's env file changed; if that is " +
+        "deliberate, update this list",
+    ).toEqual([
+      ".github/workflows/e2e-rollover-proof.yml #1",
+      ".github/workflows/e2e.yml #1",
+      ".github/workflows/e2e.yml #2",
+    ]);
   });
 
   it("ships the safe value in the local-development template", () => {

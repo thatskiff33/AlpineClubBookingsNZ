@@ -377,6 +377,30 @@ export interface BookingClassificationContext {
   bookingOperations: XeroOperationRecord[];
   modificationOperationsById: Map<string, XeroOperationRecord[]>;
   cancellationRefundRecoveryOperations: BookingCancellationRefundRecoveryRecord[];
+  /**
+   * #3187: what this booking's COMPLETED edit-financial-review tasks settled as
+   * money owed to the club, totalled per `BookingModification` anchor.
+   *
+   * Empty for every booking that has never had a review parked on it, which is
+   * what keeps the ordinary arms of the classifier exactly as they were. A
+   * parked edit writes `priceDiffCents: 0` and `changeFeeCents: 0` on its
+   * modification row BY CONSTRUCTION - the booking's stored totals do not move,
+   * because the money is unresolved - so the modification row alone can never
+   * say what such an edit owes. This map is where that number comes from.
+   */
+  editReviewChargeCentsByModificationId: Map<string, number>;
+  /**
+   * #3187 fix round: the edits whose additional PaymentIntent mint FAILED and
+   * is still owed by the recovery replay (PENDING or PROCESSING).
+   *
+   * From the ledger alone this state is indistinguishable from the
+   * internet-banking route - both have no charge request row - and the two need
+   * opposite handling: internet banking wants an unpaid invoice raised, a failed
+   * mint wants the repair DEFERRED so the replay can raise it properly. Empty
+   * for every booking with no failed mint, which is every booking the tool
+   * repaired before this map existed.
+   */
+  openEditReviewChargeIntentRecoveryModificationIds: Set<string>;
 }
 
 export interface MutableFinding {

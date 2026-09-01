@@ -4,6 +4,9 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+// `INV-SSOT` (#3030): `jobBlock` moved to a shared helper when a third guard
+// wanted it, so a weaker copy cannot drift in beside this one.
+import { jobBlock } from "./helpers/ci-workflow";
 import { DATA_MIGRATION_VERIFICATIONS } from "../../../prisma/migration-verification";
 import { splitSqlStatements } from "../../../prisma/migration-verification/split-statements";
 import type {
@@ -74,21 +77,6 @@ function migrationSql(name: string): string {
   // from that same directory listing; no user input.
   // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
   return readFileSync(path.join(MIGRATIONS_DIR, name, "migration.sql"), "utf8");
-}
-
-/**
- * The YAML text of one top-level job, from its `  <id>:` line to just before the
- * next job at the same indent (or end of file). Scoping to the block matters: a
- * setting that lands in an unrelated job, or a step that lost its env var, must
- * not read as this job's wiring. Returns "" when the job is absent.
- */
-function jobBlock(workflow: string, jobId: string): string {
-  const start = workflow.indexOf(`  ${jobId}:`);
-  if (start < 0) return "";
-  const rest = workflow.slice(start + 1).search(/\n {2}[a-z][a-z0-9-]*:\n/);
-  return rest > -1
-    ? workflow.slice(start, start + 1 + rest)
-    : workflow.slice(start);
 }
 
 // ---------------------------------------------------------------------------

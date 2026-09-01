@@ -30,6 +30,7 @@ import {
   ROSTER_ISOLATION_WINDOW,
   SECOND_LODGE,
   SECOND_LODGE_BED_COUNT,
+  shiftDateOnly,
   WAITLISTER,
 } from "../../prisma/e2e-fixtures";
 
@@ -47,11 +48,8 @@ function d(s: string): Date {
 // Nights actually slept = [checkIn, checkOut) — the checkout day is not a night.
 function nightsBetween(checkIn: string, checkOut: string): string[] {
   const out: string[] = [];
-  const cur = d(checkIn);
-  const end = d(checkOut);
-  while (cur < end) {
-    out.push(cur.toISOString().slice(0, 10));
-    cur.setUTCDate(cur.getUTCDate() + 1);
+  for (let night = checkIn; night < checkOut; night = shiftDateOnly(night, 1)) {
+    out.push(night);
   }
   return out;
 }
