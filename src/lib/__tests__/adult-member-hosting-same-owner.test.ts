@@ -38,6 +38,8 @@ import {
 import { HostingSameOwnerSourceCeilingExceededError } from "@/lib/adult-member-hosting-coverage-ceilings";
 import { hostingCoverageStateKey } from "@/lib/adult-member-hosting-coverage-incidents";
 import { HostingCoverageParticipantRetryError } from "@/lib/adult-member-hosting-queue-participants";
+import { reconcileHostingReviewForSystemCancellation } from "@/lib/adult-member-hosting-system-cancellation";
+import { AdultMemberHostingRequiredError } from "@/lib/adult-member-hosting-refusal";
 
 /**
  * #3123 — the club's day now arrives at these lock-bound entry points as a
@@ -2537,5 +2539,350 @@ describe("the hosting fan-out takes the day it is given (#3123)", () => {
       expect(bound).not.toBe(CLUB_TODAY_DATE_ONLY.toISOString());
     }
     expect(new Set(bounds).size).toBe(1);
+  });
+});
+
+
+/**
+ * #3209 — the cancelling half, against the REAL reconciler.
+ *
+ * Everything else written for #3209 mocks the thing in question: the two caller
+ * suites mock the seam, and the seam suite mocks the review engine. Between them
+ * they prove the wiring and the request, and NOTHING proves what the engine does
+ * when a system path cancels a live coverage source — which is the issue's actual
+ * acceptance criterion. The fake store in this file applies real `where` clauses
+ * and runs the real `reconcileAdultMemberHostingReviewWithSiblings`, so it can.
+ *
+ * The first fix for #3209 passed every mocked test and still recorded NOTHING at
+ * the default host scope. It let the sibling loop refuse and caught the refusal,
+ * falling back to an enqueue against the CANCELLED SOURCE — but for a terminal
+ * source with `sameBookingOwner` off, the drain computes an empty dependent list,
+ * so the fallback was a no-op. The first test below is the one that fails against
+ * that fix and passes against the one that ships.
+ */
+describe("a system cancellation records the hazard instead of refusing it (#3209)", () => {
+  /**
+   * The club is ENFORCED, and `SAME_BOOKING_OWNER` is OFF — which is
+   * `DEFAULT_ADULT_MEMBER_HOST_SCOPES`, so this is what a club that simply turns
+   * adult-member hosting on gets. Only the #738 split-sibling relationship
+   * survives at this scope, and it is the relationship the sibling loop is about.
+   */
+  const DEFAULT_SCOPES = [policyRow({ hostScopeSameBookingOwner: false })];
+  const NIGHTS = ["2026-07-03", "2026-07-04"];
+
+  /**
+   * A #738 split pair: one member, one stay, two rows. The PARENT carries the
+   * qualifying adult; the CHILD carries the non-member guest who depends on them.
+   */
+  function splitPair() {
+    return [
+      booking({
+        id: "b-parent",
+        guests: [guestRow("adult", NIGHTS, memberRow({ id: "adult-1" }))],
+      }),
+      booking({
+        id: "b-child",
+        parentBookingId: "b-parent",
+        guests: [guestRow("kid", NIGHTS)],
+      }),
+    ];
+  }
+
+  it("refuses the split sibling when the bare reconciler is used, which is the hazard", async () => {
+    // The premise of the seam, asserted rather than assumed. Cancelling the parent
+    // takes the only qualifying adult out of the child's host pool
+    // (`hostingSiblingWhere` excludes CANCELLED rows), and the sibling loop's
+    // default `REFUSE` throws from inside the caller's transaction — which would
+    // roll the cancellation back. If this ever stops throwing, the seam below is
+    // solving a problem that no longer exists and should be re-examined rather
+    // than kept out of habit.
+    const { db, rowFor } = makeStore(splitPair(), { policies: DEFAULT_SCOPES });
+    rowFor("b-parent").status = "CANCELLED";
+
+    await expect(
+      reconcileAdultMemberHostingReviewWithSiblings("b-parent", db),
+    ).rejects.toBeInstanceOf(AdultMemberHostingRequiredError);
+  });
+
+  it("records the split sibling's hazard on the booking instead of throwing", async () => {
+    // THE FIX. The cancellation completes, and the obligation it would have
+    // interrupted is on the child's own row — PENDING, naming the exact nights, so
+    // the booking's page and the officer's booking view both show it.
+    const { db, rowFor } = makeStore(splitPair(), { policies: DEFAULT_SCOPES });
+    rowFor("b-parent").status = "CANCELLED";
+
+    await expect(
+      reconcileHostingReviewForSystemCancellation("b-parent", db),
+    ).resolves.toBeUndefined();
+
+    const child = rowFor("b-child");
+    expect(child.adultMemberHostingReviewStatus).toBe("PENDING");
+    expect(child.adultMemberHostingReview).toMatchObject({
+      reasonCode: "ADULT_MEMBER_HOSTING_REQUIRED",
+      affectedNights: NIGHTS,
+    });
+  });
+
+  it("still clears a sibling that another booking covers", async () => {
+    // The mutation that matters for the test above: `REVIEW_ONLY` must not turn
+    // into "record a hazard on every sibling of every cancellation". Here the
+    // child carries a qualifying adult of its OWN, so losing the parent's costs it
+    // nothing and nothing is recorded on it at all.
+    const rows = splitPair();
+    rows[1] = booking({
+      ...(rows[1] as Record<string, unknown>),
+      guests: [
+        guestRow("kid", NIGHTS),
+        guestRow("own-adult", NIGHTS, memberRow({ id: "adult-2" })),
+      ],
+    });
+    const { db, rowFor } = makeStore(rows, { policies: DEFAULT_SCOPES });
+    rowFor("b-parent").status = "CANCELLED";
+
+    await reconcileHostingReviewForSystemCancellation("b-parent", db);
+
+    expect(rowFor("b-child").adultMemberHostingReviewStatus).toBeNull();
+  });
+
+  it("opens a coverage incident against the dependent owner when the scope IS on", async () => {
+    // The issue's acceptance criterion, verbatim: "cancelling ... opens a coverage
+    // incident against the affected booking's owner, and the officer queue shows
+    // it". `b-source` was supplying `SAME_BOOKING_OWNER` cover to `b-main`; a
+    // system path cancels it.
+    const rows = [
+      booking({
+        id: "b-source",
+        guests: [guestRow("adult", NIGHTS, memberRow({ id: "adult-1" }))],
+      }),
+      booking({ id: "b-main", guests: [guestRow("kid", NIGHTS)] }),
+    ];
+    const { db, queued, incidents, rowFor } = makeStore(rows);
+    rowFor("b-source").status = "CANCELLED";
+
+    await reconcileHostingReviewForSystemCancellation("b-source", db);
+
+    // The bounded obligation, committed with the cancellation: the owner, the
+    // lodge, this booking's own nights, and no actor because nobody did this.
+    expect(queued).toHaveLength(1);
+    expect(queued[0]).toMatchObject({
+      memberId: "owner-1",
+      lodgeId: LODGE,
+      cause: "SYSTEM_CHANGE",
+      actorMemberId: null,
+      sourceBookingId: "b-source",
+    });
+    expect(queued[0].nights).toEqual(NIGHTS);
+
+    // And the drain's per-dependent step — the half that reaches the officer queue
+    // and the owner's inbox — opens the incident on `b-main`.
+    const outcome = await reconcileSameOwnerCoverageIncident(
+      { bookingId: "b-main", cause: "SYSTEM_CHANGE" },
+      db,
+    );
+    expect(outcome.action).toBe("opened");
+    expect(incidents).toHaveLength(1);
+    expect(incidents[0]).toMatchObject({ bookingId: "b-main" });
+    expect(rowFor("b-main").adultMemberHostingReviewStatus).toBe("PENDING");
+  });
+
+  it("cancels nothing and refuses nothing on its way through", async () => {
+    // §7 and §16: a coverage change never cancels a booking, and this seam is the
+    // one place a cancellation and the hosting engine meet — so the only status
+    // write in the whole call must be the one the CALLER already made.
+    const { db, rowFor } = makeStore(splitPair(), { policies: DEFAULT_SCOPES });
+    rowFor("b-parent").status = "CANCELLED";
+
+    await reconcileHostingReviewForSystemCancellation("b-parent", db);
+
+    expect(
+      db.booking.update.mock.calls.some((call: any) => "status" in call[0].data),
+    ).toBe(false);
+  });
+});
+
+/**
+ * #3209 — WHICH LODGE'S MODE decides that nothing is owed (`INV-HOST-042`).
+ *
+ * Adult-member hosting is configured PER LODGE, and the fan-out relation this
+ * engine reads — `hostingSiblingWhere`, the #738 parent/child of one member — has
+ * no lodge clause in it. So "the booking that changed is at a lodge with the rule
+ * off" is not an answer about the booking that DEPENDS on it. The mode gate used
+ * to return on that half-question, skipping the sibling fan-out entirely.
+ *
+ * The other half of this block is the property the gate exists to protect
+ * (#2623 T5): a club that owes nothing must still pay no `FOR KEY SHARE NOWAIT`
+ * row lock. A fix that simply always fenced would repeal that decision and put the
+ * `HOSTING_COVERAGE_PARTICIPANT_RETRY` 409 back in front of every booking write at
+ * every non-participating lodge, so both halves are asserted here together.
+ */
+describe("the mode gate reads the RELATED bookings' lodges too (#3209)", () => {
+  const NIGHTS = ["2026-07-03", "2026-07-04"];
+  const CLUB_OFF = policyRow({ mode: "DISABLED" });
+  const OTHER_LODGE_ON = policyRow({
+    id: "policy-lodge-b",
+    scopeKey: `lodge:${OTHER_LODGE}`,
+    lodgeId: OTHER_LODGE,
+    mode: "ADMIN_REVIEW_REQUIRED",
+  });
+  const OTHER_LODGE_OFF = policyRow({
+    id: "policy-lodge-b",
+    scopeKey: `lodge:${OTHER_LODGE}`,
+    lodgeId: OTHER_LODGE,
+    mode: "DISABLED",
+  });
+
+  /**
+   * A #738 split pair, one member, with the child placed at `childLodgeId`.
+   *
+   * The parent carries the only qualifying adult; the child carries the
+   * non-member guest who depends on them. The parent arrives already CANCELLED,
+   * which is what a system cancellation has just written in its own transaction —
+   * and `hostingSiblingWhere` excludes CANCELLED rows, so the child's host pool is
+   * empty from the moment that write lands.
+   */
+  function cancelledParentWithChildAt(childLodgeId: string) {
+    return [
+      booking({
+        id: "b-parent",
+        status: "CANCELLED",
+        guests: [guestRow("adult", NIGHTS, memberRow({ id: "adult-1" }))],
+      }),
+      booking({
+        id: "b-child",
+        parentBookingId: "b-parent",
+        lodgeId: childLodgeId,
+        guests: [guestRow("kid", NIGHTS)],
+      }),
+    ];
+  }
+
+  /**
+   * The lodges the policy reader actually asked about, in order. The cost claim in
+   * the gate's docstring is a claim about this list, so assert the list rather than
+   * a count: "one more policy read, and only when a related booking is somewhere
+   * else" is checkable, "it is cheap" is not.
+   */
+  function policyLodgesQueried(db: {
+    adultMemberHostingPolicy: { findMany: { mock: { calls: [never][] } } };
+  }): string[] {
+    return (
+      db.adultMemberHostingPolicy.findMany.mock.calls as unknown as Array<
+        [{ where?: { OR?: Array<{ lodgeId?: string }> } }]
+      >
+    ).map(([args]) => args?.where?.OR?.[0]?.lodgeId as string);
+  }
+
+  it("reconciles a split sibling at an ACTIVE lodge when the changed booking's lodge is off", async () => {
+    // THE DEFECT. The club runs the rule at lodge B and not at lodge A. A system
+    // path cancels the half of the split pair that sits at A and carries the
+    // adult; the half at B loses its cover. Gating on A alone returned before the
+    // sibling loop, so B's booking was never re-read and nothing was recorded on
+    // it — no review, no officer signal, and the member never told.
+    const { db, rowFor } = makeStore(cancelledParentWithChildAt(OTHER_LODGE), {
+      policies: [CLUB_OFF, OTHER_LODGE_ON],
+    });
+
+    await reconcileAdultMemberHostingReviewWithSiblings("b-parent", db);
+
+    const child = rowFor("b-child");
+    expect(child.adultMemberHostingReviewStatus).toBe("PENDING");
+    expect(child.adultMemberHostingReview).toMatchObject({
+      reasonCode: "ADULT_MEMBER_HOSTING_REQUIRED",
+      affectedNights: NIGHTS,
+    });
+    // And the fence WAS taken this time, because real queue work is owed: the
+    // sibling's own evaluation can reach for the coverage-owner advisory key under
+    // lodge B's policy, and that key may never be acquired before the Member rows
+    // it would invert against (`INV-LOCK-002`).
+    expect(db.$executeRaw).toHaveBeenCalled();
+  });
+
+  it("takes no participant proof for a split pair at one DISABLED lodge", async () => {
+    // #2623 T5, preserved exactly. Both halves are at the lodge that has the rule
+    // off, so nothing is owed and the gate must skip without locking anything —
+    // even while a member-lifecycle writer holds the owner's Member row, which is
+    // what the rejecting `$executeRaw` stands in for.
+    const { db } = makeStore(cancelledParentWithChildAt(LODGE), {
+      policies: [CLUB_OFF],
+    });
+    db.$executeRaw.mockRejectedValue({
+      driverAdapterError: { cause: { originalCode: "55P03" } },
+    });
+
+    await expect(
+      reconcileAdultMemberHostingReviewWithSiblings("b-parent", db),
+    ).resolves.toMatchObject({ mode: "DISABLED" });
+    expect(db.$executeRaw).not.toHaveBeenCalled();
+    // ZERO extra policy reads, because every related booking is at this same
+    // lodge — which is every split pair the product can currently produce. The two
+    // reads are the gate's own and the single-booking reconciler's, both for A.
+    expect(policyLodgesQueried(db)).toEqual([LODGE, LODGE]);
+  });
+
+  it("takes no participant proof when the sibling's other lodge is off as well", async () => {
+    // The widened question, answered NO. One extra policy read for lodge B, and
+    // then the same skip: a club that has the rule off everywhere its related
+    // bookings live still pays no row lock.
+    const { db, rowFor } = makeStore(cancelledParentWithChildAt(OTHER_LODGE), {
+      policies: [CLUB_OFF, OTHER_LODGE_OFF],
+    });
+    db.$executeRaw.mockRejectedValue({
+      driverAdapterError: { cause: { originalCode: "55P03" } },
+    });
+
+    await expect(
+      reconcileAdultMemberHostingReviewWithSiblings("b-parent", db),
+    ).resolves.toMatchObject({ mode: "DISABLED" });
+    expect(db.$executeRaw).not.toHaveBeenCalled();
+    expect(policyLodgesQueried(db)).toEqual([LODGE, OTHER_LODGE, LODGE]);
+    expect(rowFor("b-child").adultMemberHostingReviewStatus).toBeNull();
+  });
+
+  it("is not tripped by a booking that merely hangs off this one", async () => {
+    // The gate asks `hostingSiblingWhere`, not "anything with my id as its parent".
+    // A verified group joiner's booking hangs off the organiser's by
+    // `parentBookingId` and belongs to a DIFFERENT member, so the organiser's
+    // adults are deliberately never borrowed for it — and a joiner at an active
+    // lodge must therefore not drag the organiser's cancellation into the fence.
+    const { db } = makeStore(
+      [
+        booking({ id: "b-parent", status: "CANCELLED", guests: [] }),
+        booking({
+          id: "b-joiner",
+          parentBookingId: "b-parent",
+          memberId: "owner-2",
+          lodgeId: OTHER_LODGE,
+          guests: [guestRow("kid", NIGHTS)],
+        }),
+      ],
+      { policies: [CLUB_OFF, OTHER_LODGE_ON] },
+    );
+    db.$executeRaw.mockRejectedValue({
+      driverAdapterError: { cause: { originalCode: "55P03" } },
+    });
+
+    await expect(
+      reconcileAdultMemberHostingReviewWithSiblings("b-parent", db),
+    ).resolves.toMatchObject({ mode: "DISABLED" });
+    expect(db.$executeRaw).not.toHaveBeenCalled();
+    expect(policyLodgesQueried(db)).toEqual([LODGE, LODGE]);
+  });
+
+  it("keeps the dependent cohort at the changed booking's own lodge", () => {
+    // Why the SAME-OWNER half of the gate needs no widening, pinned rather than
+    // argued. `settleSameOwnerDependentCoverage` re-reads the changed booking's
+    // own lodge and returns when it is inactive; that is only safe because the set
+    // it would have looked at cannot contain a booking at any other lodge. Delete
+    // the `lodgeId` clause and the gate's docstring becomes false, so this test
+    // fails first.
+    const where = sameOwnerCoverageDependentWhere(booking() as never) as Record<
+      string,
+      unknown
+    >;
+    expect(where.lodgeId).toBe(LODGE);
+    expect(
+      sameOwnerCoverageDependentWhere(booking({ lodgeId: OTHER_LODGE }) as never)
+        .lodgeId,
+    ).toBe(OTHER_LODGE);
   });
 });

@@ -112,7 +112,8 @@ function sharedApiErrorName(source: string): string | null {
  * thing, which is the only way the claim can ever be broken. Tests are excluded
  * because they legitimately name whatever they assert about.
  */
-function sourceFilesNaming(identifier: string): string[] {
+function everySourceFile(): string[] {
+  if (sourceFileList !== null) return sourceFileList;
   const root = path.resolve(process.cwd(), "src");
   const found: string[] = [];
   const walk = (dir: string) => {
@@ -126,13 +127,117 @@ function sourceFilesNaming(identifier: string): string[] {
       if (!/\.tsx?$/.test(entry.name) || /\.test\.tsx?$/.test(entry.name)) {
         continue;
       }
-      if (readRepoCode(path.relative(process.cwd(), full)).includes(identifier)) {
-        found.push(path.relative(process.cwd(), full).split(path.sep).join("/"));
-      }
+      found.push(path.relative(process.cwd(), full).split(path.sep).join("/"));
     }
   };
   walk(root);
-  return found.sort();
+  sourceFileList = found.sort();
+  return sourceFileList;
+}
+
+let sourceFileList: string[] | null = null;
+
+function sourceFilesNaming(identifier: string): string[] {
+  return everySourceFile().filter((file) =>
+    readRepoCode(file).includes(identifier),
+  );
+}
+
+/**
+ * The balanced `(...)`/`{...}` run that starts at `openIndex`, as text plus the
+ * index of its closing bracket.
+ *
+ * Bracket counting rather than a regex because the thing being matched — a Prisma
+ * call's argument object — nests arbitrarily, and `/\(([\s\S]*?)\)/` stops at the
+ * first `)` inside it. Comments are already gone (`readRepoCode`); string literals
+ * in this repository's Prisma calls do not carry unbalanced brackets, and a file
+ * that made this miscount would show up as a scope that fails the sweep rather
+ * than as one that silently passes it.
+ */
+function balancedRun(source: string, openIndex: number): { text: string; end: number } {
+  let depth = 0;
+  for (let index = openIndex; index < source.length; index += 1) {
+    const character = source[index];
+    if (character === "(" || character === "{" || character === "[") depth += 1;
+    else if (character === ")" || character === "}" || character === "]") {
+      depth -= 1;
+      if (depth === 0) return { text: source.slice(openIndex, index + 1), end: index };
+    }
+  }
+  return { text: source.slice(openIndex), end: source.length - 1 };
+}
+
+/** A `booking.update`/`updateMany` whose `data:` sets a terminal booking status. */
+interface TerminalStatusFlip {
+  file: string;
+  /** The enclosing TOP-LEVEL declaration, which bounds the scope searched. */
+  functionName: string;
+  /** That declaration's source, start to the next top-level declaration. */
+  scope: string;
+  /** Which terminal status this write assigns. */
+  status: string;
+}
+
+const TOP_LEVEL_DECLARATION =
+  /^(?:export\s+)?(?:async\s+)?(?:function\s+(\w+)|const\s+(\w+)\s*=)/gm;
+
+/**
+ * Every write in the tree that flips a Booking to CANCELLED, EXPIRED or BUMPED.
+ *
+ * KEYED ON THE WRITE ITSELF, not on a helper the write happens to spread. The
+ * first version of this sweep looked for `RELEASE_WHOLE_LODGE_HOLD_UPDATE`,
+ * because `booking-status.ts` said that constant was "spread into every terminal
+ * status flip". Measured, it is spread into SEVEN of them and there are TWELVE
+ * files, so ten cancelling writers — the exact omission class #3209 is about —
+ * were invisible to the guard meant to catch them. The constant is kept as a
+ * SECONDARY signal below instead: a file that spreads it but shows no flip here
+ * is a flip written in a shape this reader missed, and has to say so.
+ *
+ * Both status forms are matched, `BookingStatus.CANCELLED` and the bare
+ * `"CANCELLED"` string that `booking-cancel.ts` uses four times, and only inside a
+ * `data:` object — a `where: { status: ... }` guard is a read of the status, not a
+ * write of it, and counting it would call a re-instatement a cancellation.
+ */
+function terminalStatusFlips(): TerminalStatusFlip[] {
+  const flips: TerminalStatusFlip[] = [];
+  for (const file of everySourceFile()) {
+    const source = readRepoCode(file);
+    if (!source.includes("booking.update")) continue;
+    const calls = /\bbooking\.(?:update|updateMany)\s*\(/g;
+    let match: RegExpExecArray | null;
+    while ((match = calls.exec(source)) !== null) {
+      const { text: call } = balancedRun(source, match.index + match[0].length - 1);
+      let status: string | null = null;
+      for (const dataMatch of call.matchAll(/\bdata:\s*\{/g)) {
+        const data = balancedRun(
+          call,
+          (dataMatch.index ?? 0) + dataMatch[0].length - 1,
+        ).text;
+        const terminal = data.match(
+          /status:\s*(?:BookingStatus\.)?["']?(CANCELLED|EXPIRED|BUMPED)["']?\s*[,}]/,
+        );
+        if (terminal) status = terminal[1] as string;
+      }
+      if (status === null) continue;
+
+      const before = source.slice(0, match.index);
+      TOP_LEVEL_DECLARATION.lastIndex = 0;
+      const declarations = [...before.matchAll(TOP_LEVEL_DECLARATION)];
+      const enclosing = declarations[declarations.length - 1];
+      TOP_LEVEL_DECLARATION.lastIndex = 0;
+      const next = [...source.slice(match.index).matchAll(TOP_LEVEL_DECLARATION)][0];
+      flips.push({
+        file,
+        functionName: enclosing ? (enclosing[1] ?? enclosing[2] ?? "?") : "(module)",
+        scope: source.slice(
+          enclosing?.index ?? 0,
+          next ? match.index + (next.index ?? 0) : source.length,
+        ),
+        status,
+      });
+    }
+  }
+  return flips;
 }
 
 describe("one authoritative evaluator and one resolver (#2569 §6, §7)", () => {
@@ -291,23 +396,42 @@ describe("the school and organisation carve-out, and only that (#2569 §13)", ()
     // organisation REQUEST APPROVALS and nothing else, so a second site — a
     // member-owned flow quietly exempted — would be a policy change made by a
     // one-line argument rather than by a decision.
-    // TWO files, and the second is not a second carve-out. #2576's post-commit
-    // coverage drain re-evaluates a booking that is ALREADY confirmed, so there is
-    // nothing left to refuse — throwing there would abort a background sweep and
-    // roll back the very incident it exists to record. It lives inside the review
-    // service itself rather than at a flow, and the position assertion below pins
-    // it to that one function, so it cannot become a way for a booking path to opt
-    // out of an enforcing club's rule.
+    // THREE files, and only the last is the §13 carve-out. The other two share a
+    // different reason, which each states at its call site: there is NOTHING LEFT
+    // TO REFUSE, because the write a refusal exists to prevent is not being made.
+    // #2576's post-commit coverage drain re-evaluates a booking that is ALREADY
+    // confirmed — throwing there would abort a background sweep and roll back the
+    // very incident it exists to record. #3209's system-cancellation seam
+    // reconciles a booking that has ALREADY been cancelled, by an organiser cancel,
+    // an expired Internet Banking hold, a capacity-failed Stripe void or a
+    // price-drift unwind — throwing there would roll back a cancellation nobody
+    // asked for and, on the cron, wedge it forever, because the next run reads the
+    // same rows and refuses again. Neither exempts a member-owned FLOW from
+    // anything: the drain lives inside the review service and the seam takes no
+    // actor and is reachable only from a terminal status flip.
     expect(
       sourceFilesNaming('enforcement: "REVIEW_ONLY"'),
-      "INV-HOST-020 (docs/invariants/adult-member-hosting.md): school and " +
-        "organisation workflows are excluded from the hosting refusal, and only " +
-        "they. A third file passing REVIEW_ONLY exempts a member-owned flow from " +
-        "an enforcing club's rule by a one-line argument rather than by a decision.",
+      "INV-HOST-020 (docs/invariants/adult-member-hosting.md): REVIEW_ONLY is " +
+        "the school and organisation exclusion, plus the two positions where the " +
+        "write a refusal would prevent is not being made. A FOURTH file passing " +
+        "it exempts a member-owned flow from an enforcing club's rule by a " +
+        "one-line argument rather than by a decision.",
     ).toEqual([
       "src/lib/adult-member-hosting-review.ts",
+      "src/lib/adult-member-hosting-system-cancellation.ts",
       "src/lib/school-booking-request.ts",
     ]);
+    // And the seam passes it once, from the one exported function, so it cannot
+    // become a general-purpose way in.
+    const seam = readRepoCode("src/lib/adult-member-hosting-system-cancellation.ts");
+    expect(seam.match(/enforcement: "REVIEW_ONLY"/g) ?? []).toHaveLength(1);
+    expect(
+      seam.indexOf('enforcement: "REVIEW_ONLY"'),
+    ).toBeGreaterThan(
+      seam.indexOf(
+        "export async function reconcileHostingReviewForSystemCancellation(",
+      ),
+    );
     const reviewService = readRepoCode("src/lib/adult-member-hosting-review.ts");
     expect(
       reviewService.match(/enforcement: "REVIEW_ONLY"/g) ?? [],
@@ -585,6 +709,180 @@ describe("the same-owner refusal and the escalation seam (#2576 §6, §8, §9)",
     }
   });
 
+  it("leaves no terminal status flip without a hosting seam at all (#3209)", () => {
+    // THE CANCELLING COUNTERPART of the confirming assertion above, and it exists
+    // because two writers passed every other check while never reaching the rule.
+    // `group-cancel.ts` and `internet-banking-payment-cron.ts` both freed the BEDS
+    // correctly — the cancellation read as fully reconciled — while CONFIRMED and
+    // PAID, the two statuses they flip out of, are precisely the statuses that
+    // qualify a booking as a coverage source. So each could remove the qualifying
+    // adult covering another booking of the same owner with no incident, no owner
+    // email and nothing in the officer queue.
+    //
+    // FOUND BY THE WRITE, not by a hand-kept list of cancel paths and not by the
+    // hold-release constant. A hand-kept list is what failed here: both files
+    // predate the rule and nothing ever added them. The constant was the first fix
+    // attempted and it is not good enough either — measured, ten terminal writers
+    // never spread it, so that guard would have certified the very omission class
+    // it was written for. `terminalStatusFlips()` reads the `data:` object instead.
+    //
+    // SCOPED TO THE ENCLOSING FUNCTION, not the file. A whole-file search certifies
+    // nothing about the branch doing the flip: `payment-reconciliation.ts` passed
+    // one while its capacity-failed void reached no seam at all, because a seam
+    // existed on the mutually exclusive settle path further down the same file.
+    // What this CANNOT do is prove the seam is on the same control-flow branch as
+    // the flip — that needs reachability analysis, not text — so it is a floor.
+    // Deciding a branch really is covered stays a reviewer's job.
+    //
+    // THE EXEMPTIONS ARE TRANSITIONS THAT CANNOT REMOVE A SOURCE, keyed by
+    // `file::function` so exempting one writer never exempts its neighbours. A
+    // booking only supplies cover from CONFIRMED or PAID, and each reason below was
+    // read off that writer's own `where` clause rather than assumed.
+    const NOT_A_SOURCE_REMOVING_FLIP: Record<string, string> = {
+      // `legacyDraft` only: the reject branch flips a DRAFT, and the claim's
+      // `status: current.status` pins it to the status it read.
+      "src/app/api/admin/bookings/[id]/review/route.ts::PATCH":
+        "cancels a DRAFT on review rejection; a paid or confirmed booking keeps its status",
+      // `where: { status: BookingStatus.PENDING }`.
+      "src/lib/booking-cancel.ts::cancelLinkedProvisionalChildBookings":
+        "cancels linked PENDING provisional children, which never supplied cover",
+      // The hold is created AWAITING_REVIEW, and this branch runs only while the
+      // quote is still SENT, so it cannot have been accepted and paid into a
+      // coverage source.
+      "src/lib/booking-request-quotes.ts::respondToBookingRequestQuote":
+        "releases an AWAITING_REVIEW request hold when its quote is withdrawn",
+      // `where: { status: BookingStatus.PAYMENT_PENDING }`.
+      "src/lib/cron-group-settlement-reaper.ts::cancelReapedChildren":
+        "cancels PAYMENT_PENDING children of a stale settlement",
+      // Both `where: { status: BookingStatus.AWAITING_REVIEW }`.
+      "src/lib/cron-quote-expiry-reminders.ts::releaseExpiredQuoteHolds":
+        "releases an expired AWAITING_REVIEW quote hold",
+      "src/lib/cron-quote-expiry-reminders.ts::releaseStaleModificationHolds":
+        "releases a stale AWAITING_REVIEW modification hold",
+      // `where: { status: { in: [WAITLISTED, WAITLIST_OFFERED] } }`.
+      "src/lib/cron-waitlist.ts::processWaitlistCronOnce":
+        "expires waitlist rows whose stay has already ended",
+    };
+    const SEAMS = [
+      "enqueueOwnHostingCoverageReevaluation(",
+      "enqueueHostingCoverageReevaluationForMember(",
+      "reconcileAdultMemberHostingReviewWithSiblings(",
+      "reconcileHostingReviewForSystemCancellation(",
+    ];
+    const flips = terminalStatusFlips();
+    // A sweep that found nothing would pass in silence, and the reader could be
+    // broken by a Prisma rename without a single failure.
+    expect(flips.length).toBeGreaterThan(10);
+    const seen = new Set<string>();
+    for (const flip of flips) {
+      const key = `${flip.file}::${flip.functionName}`;
+      seen.add(key);
+      if (key in NOT_A_SOURCE_REMOVING_FLIP) continue;
+      expect(
+        SEAMS.some((seam) => flip.scope.includes(seam)),
+        `INV-HOST-041 (docs/invariants/adult-member-hosting.md): ${key} flips a ` +
+          `booking to ${flip.status} without reaching the hosting rule by any ` +
+          "seam, so cancelling a CONFIRMED or PAID coverage source there strands " +
+          "the owner's other booking silently. Wire a seam, or add this key to " +
+          "NOT_A_SOURCE_REMOVING_FLIP with the reason its transition cannot " +
+          "remove a source.",
+      ).toBe(true);
+    }
+    // An exemption for a writer that no longer exists is a claim nobody is
+    // checking, and the previous version of this list carried exactly one: a file
+    // whose only mention of the hold-release constant was inside a `//` comment
+    // that `readRepoCode` strips, so it was never in the swept set and the
+    // exemption could never fire.
+    for (const key of Object.keys(NOT_A_SOURCE_REMOVING_FLIP)) {
+      expect(
+        [...seen],
+        `${key} is exempted but no longer flips anything`,
+      ).toContain(key);
+    }
+
+    // THE SECONDARY SIGNAL. `RELEASE_WHOLE_LODGE_HOLD_UPDATE` is spread by
+    // cancel-like transitions, so a file that spreads it and shows NO flip above
+    // is either a flip written in a shape the reader missed — the failure mode
+    // that would make this whole sweep quietly vacuous — or a non-terminal release
+    // that has to say so.
+    const NOT_A_TERMINAL_FLIP: Record<string, string> = {
+      // `PAYMENT_PENDING -> WAITLISTED`, verified: a release back to the queue, and
+      // PAYMENT_PENDING was never a coverage source. Its own docblock records that
+      // whether a RELEASE should re-evaluate cover is a question about all three
+      // release sites at once, carried forward as its own issue.
+      "src/app/api/admin/bookings/[id]/return-to-waitlist/route.ts":
+        "releases from PAYMENT_PENDING to WAITLISTED, which is not a terminal flip",
+    };
+    const flipFiles = new Set(flips.map((flip) => flip.file));
+    for (const file of sourceFilesNaming("RELEASE_WHOLE_LODGE_HOLD_UPDATE")) {
+      if (file === "src/lib/booking-status.ts") continue;
+      if (file in NOT_A_TERMINAL_FLIP) continue;
+      expect(
+        flipFiles.has(file),
+        `INV-HOST-041: ${file} releases a whole-lodge hold but no terminal status ` +
+          "write was found in it, so either the sweep's reader has stopped " +
+          "recognising this file's write — which would make the sweep vacuous — " +
+          "or the transition is not terminal and belongs in NOT_A_TERMINAL_FLIP.",
+      ).toBe(true);
+    }
+  });
+
+  it("never lets a system cancellation be refused by the hosting rule (#3209)", () => {
+    // INV-HOST-041 (docs/invariants/adult-member-hosting.md).
+    // Four authoritative transitions with no actor: an organiser's group cancel, an
+    // expired Internet Banking hold, a capacity-failed Stripe void and a
+    // cross-lodge price-drift unwind. §8 lists those shapes among the changes that
+    // cannot reasonably be blocked, and the concrete failure is worse than a
+    // refused request — a rolled-back release re-reads the same rows next run and
+    // refuses again, deterministically, wedging the hold and its beds. So they go
+    // through the seam that removes the refusal, never through the bare reconciler.
+    const CALLERS = [
+      "src/lib/group-cancel.ts",
+      "src/lib/internet-banking-payment-cron.ts",
+      "src/lib/payment-reconciliation.ts",
+      "src/lib/waitlist-cross-lodge.ts",
+    ];
+    expect(
+      sourceFilesNaming("reconcileHostingReviewForSystemCancellation("),
+    ).toEqual(
+      [...CALLERS, "src/lib/adult-member-hosting-system-cancellation.ts"].sort(),
+    );
+    for (const file of CALLERS) {
+      // Inside the cancelling transaction, so the obligation commits with it.
+      expect(readRepoCode(file), file).toContain(
+        "reconcileHostingReviewForSystemCancellation(",
+      );
+    }
+    // The two pure cancellation modules reach the rule ONLY through the seam. The
+    // other two also settle payments and confirm bookings, so they legitimately
+    // hold other hosting call sites and are not pinned this way.
+    for (const file of [
+      "src/lib/group-cancel.ts",
+      "src/lib/internet-banking-payment-cron.ts",
+    ]) {
+      const source = readRepoCode(file);
+      // The bare reconciler would refuse; the actor helper would ask an officer
+      // for a confirmation nobody is there to give.
+      expect(source, file).not.toContain(
+        "reconcileAdultMemberHostingReviewWithSiblings(",
+      );
+      expect(source, file).not.toContain("hostingCoverageActorOptions(");
+    }
+    // And the seam REMOVES the refusal rather than catching it. The distinction is
+    // the whole of #3209's second round: a catch has to put the interrupted
+    // obligation back, and the fallback it used enqueued against the CANCELLED
+    // SOURCE while the refusal is raised by a SIBLING — so at the DEFAULT host
+    // scope (`sameBookingOwner: false`) the drain computed an empty dependent list
+    // and recorded nothing at all. `REVIEW_ONLY` travels into the sibling loop by
+    // design, so the sibling records its hazard in-transaction instead.
+    const body = readRepoCode(
+      "src/lib/adult-member-hosting-system-cancellation.ts",
+    );
+    expect(body).toContain('enforcement: "REVIEW_ONLY"');
+    expect(body).not.toContain("catch");
+    expect(body).not.toContain("enqueueOwnHostingCoverageReevaluation");
+  });
+
   /**
    * The files that DEFINE the enqueue seams, plus the transaction-scoped helpers that
    * run inside somebody else's `tx` and so have no commit of their own to drain
@@ -596,6 +894,11 @@ describe("the same-owner refusal and the escalation seam (#2576 §6, §8, §9)",
    */
   const TX_SCOPED_HELPERS = [
     "src/lib/adult-member-hosting-review.ts",
+    // #3209 split the system-cancellation seam out of the engine for the same
+    // reason #3128 split the ceilings out. It runs inside its callers' own
+    // transactions, so it has no commit of its own to drain after; its four
+    // callers are swept by the sweep above and by their own entrypoint below.
+    "src/lib/adult-member-hosting-system-cancellation.ts",
     // #3128 moved `enqueueMemberMergeHostingCoveragePlan`'s DECLARATION out of
     // the engine and into its own module. The engine was exempt here, the new
     // module was not, so the sweep began demanding that a pure planner drain a
@@ -628,6 +931,7 @@ describe("the same-owner refusal and the escalation seam (#2576 §6, §8, §9)",
       "enqueueHostingCoverageReevaluationForMember(",
       "enqueueMemberMergeHostingCoveragePlan(",
       "reconcileAdultMemberHostingReviewWithSiblings(",
+      "reconcileHostingReviewForSystemCancellation(",
     ];
     const seamUsers = new Set<string>();
     for (const seam of ENQUEUE_SEAMS) {
@@ -688,6 +992,9 @@ describe("the same-owner refusal and the escalation seam (#2576 §6, §8, §9)",
       // The seam definitions themselves; their callers are the sweep above.
       "src/lib/adult-member-hosting-review.ts": [],
       "src/lib/adult-member-hosting-merge-coverage-plan.ts": [],
+      "src/lib/adult-member-hosting-system-cancellation.ts": [
+        "reconcileHostingReviewForSystemCancellation(",
+      ],
     };
     for (const helper of TX_SCOPED_HELPERS) {
       const entrypoints = EXPORTED_TX_ENTRYPOINTS[helper];
@@ -851,8 +1158,14 @@ describe("the participant fence is gated on the hosting policy (#2623 T5)", () =
     // per-lodge capacity locks — the #2623 T6 hazard relocated, and invisible
     // to every behavioural test because the window needs two interleaved
     // policy reads to open.
+    //
+    // #3209 widened the CONDITION — the return is now taken only when this lodge
+    // is inactive AND no related booking sits at an active one — and left this
+    // property exactly as it was: whatever decides to skip, the call it skips to
+    // still passes `true`. That is why the assertion names the flag rather than
+    // the test that sets it.
     expect(readRepoCode(REVIEW_SERVICE)).toMatch(
-      /if \(!hostingModeIsActive\(planned\.mode\)\) \{\s*return reconcileAdultMemberHostingReview\(\s*bookingId,\s*db,\s*options,\s*true,?\s*\);/,
+      /if \(!sourceLodgeActive && !siblingOwedAtAnotherLodge\) \{\s*return reconcileAdultMemberHostingReview\(\s*bookingId,\s*db,\s*options,\s*true,?\s*\);/,
     );
   });
 
