@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { ciEnvHeredocs } from "./helpers/ci-env-heredocs";
 import {
   BASE_COMPOSE,
   composeFiles,
@@ -85,32 +86,18 @@ function envFileSources(): string[] {
 }
 
 /**
- * Every `cat > <something> <<EOF` heredoc in every workflow, as
- * `<workflow>#<target>#<n>`.
+ * Every CI env heredoc, as `<file>#<target>#<n>`.
  *
- * PER HEREDOC, not per file. Both E2E jobs write their own `.env.staging` and
- * the multi-lodge copy has drifted from the single-lodge one before.
+ * PER HEREDOC, not per file, because more than one can live in a file. The scan
+ * itself is `helpers/ci-env-heredocs.ts` — one home, shared with
+ * `email-delivery-boundary-census.test.ts`, which had a byte-identical copy
+ * including the same latent terminator bug (#3221, `INV-SSOT`).
  */
-function workflowHeredocs(): { id: string; body: string }[] {
-  const dir = path.join(ROOT, ".github", "workflows");
-  const out: { id: string; body: string }[] = [];
-  for (const name of readdirSync(dir).sort()) {
-    if (!/\.ya?ml$/.test(name)) continue;
-    const text = readFileSync(path.join(dir, name), "utf8");
-    const opener = /cat > ([^\s]+) <<'?EOF'?/g;
-    let match: RegExpExecArray | null;
-    let index = 0;
-    while ((match = opener.exec(text)) !== null) {
-      index += 1;
-      const rest = text.slice(match.index + match[0].length);
-      const end = rest.indexOf("\nEOF");
-      out.push({
-        id: `.github/workflows/${name}#${match[1]}#${index}`,
-        body: end === -1 ? rest : rest.slice(0, end),
-      });
-    }
-  }
-  return out;
+function heredocBlocks(): { id: string; body: string }[] {
+  return ciEnvHeredocs(ROOT).map((entry) => ({
+    id: `${entry.file}#${entry.target}#${entry.index}`,
+    body: entry.body,
+  }));
 }
 
 /** name -> the sources that assign it. */
@@ -127,7 +114,7 @@ function declaredVariables(): Map<string, Set<string>> {
       if (match) add(match[1], file);
     }
   }
-  for (const { id, body } of workflowHeredocs()) {
+  for (const { id, body } of heredocBlocks()) {
     for (const line of body.split(/\r?\n/)) {
       const match = line.match(ENV_ASSIGNMENT);
       if (match) add(match[1], id);
@@ -279,9 +266,12 @@ const DELIBERATELY_NOT_DELIVERED: Record<string, string> = {
   // meaningful inside the container -- so delivering it would be the bug.
   POST_IMAGE_HOST_DIR: "host-side only; the container reads POST_IMAGE_DIR",
 
-  // A build arg (docker-compose.yml `build.args`), not a runtime variable: the
-  // per-release CSP nonce has to be fixed for the life of the image.
-  RELEASE_ID: "build arg, baked into the image; see #2352 D1",
+  // NOTE `RELEASE_ID` needs no entry here, and #3221 is what said so. It is a
+  // build arg (docker-compose.yml `build.args`) whose per-release CSP nonce has
+  // to be fixed for the life of the image, so it is correctly never delivered —
+  // but no env file declares it either, so it never reaches the intersection
+  // this census judges. It only ever appeared because the heredoc reader used to
+  // over-collect past an indented `EOF` and swallow a `build-args:` line.
 
   // NEXT_PUBLIC_* are inlined into the browser bundle at BUILD time. Delivering
   // one at runtime would let the server and the browser disagree about the same
@@ -309,7 +299,21 @@ describe("GUARD A: every declared, read variable is delivered (INV-CONFIG-004)",
       above zero so a broken reader cannot hide.
     */
     expect(envFileSources().length, "no tracked .env* files were found").toBeGreaterThan(1);
-    expect(workflowHeredocs().length, "no workflow env heredocs were found").toBeGreaterThan(1);
+    // Named, not counted. There is one CI env heredoc today, so a `> 1` floor
+    // would fail and a `> 0` floor would pass on any heredoc at all — including
+    // one with nothing to do with the E2E stack. Requiring the stack's own writer
+    // BY NAME is what makes moving it somewhere this scanner cannot see fail
+    // here, rather than silently emptying the DECLARED set (#3221).
+    const heredocs = heredocBlocks();
+    expect(heredocs.length, "no CI env heredocs were found").toBeGreaterThan(0);
+    expect(
+      heredocs.map((entry) => entry.id),
+      "the E2E stack's env writer was not read — if it moved, teach " +
+        "ciEnvHeredocs() where it went rather than letting its variables leave " +
+        "the DECLARED set",
+    ).toContainEqual(
+      expect.stringContaining("scripts/ci/write-e2e-staging-env.sh"),
+    );
     expect(declared.size, "no variable assignments were parsed").toBeGreaterThan(50);
     expect(delivered.size, "no compose environment keys were parsed").toBeGreaterThan(40);
     expect(corpus.files, "no source files were read").toBeGreaterThan(500);

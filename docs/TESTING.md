@@ -574,6 +574,16 @@ checking nothing.
 A red canary means some test still reaches the real calendar. Fix the test so it
 reads the frozen clock; do not opt the file out.
 
+**It runs the UNIT suite only, and that blind spot has already cost a red
+`main`.** The browser suite has no frozen clock — see the next section — so on
+31 August 2026 the canary passed on the very commit whose `Playwright E2E` job
+was failing on a month rollover (#3221). `libfaketime` cannot close that gap by
+itself either: it shifts ONE process, and the app the browser suite drives is a
+**container**, which reads the host kernel clock. Shifting only the Playwright
+process would move the runner away from the app, which is the bug rather than a
+test of it. The browser suite's own wound-forward run is
+`.github/workflows/e2e-rollover-proof.yml`, described below.
+
 Reproduce a canary job locally on Linux:
 
 ```bash
@@ -647,6 +657,88 @@ A malformed value fails the run rather than falling back to the frozen instant �
 falling back would report green while checking something other than what you
 asked for, which is the same vacuous-pass failure this whole convention exists to
 prevent.
+
+## The browser suite's clock discipline (it is NOT frozen)
+
+Plain English: the Playwright suite runs against a real clock, on purpose. What
+it is not allowed to do is ask the **machine** what day it is. It asks the
+**club**.
+
+Everything above this heading is about the unit suite. `vitest.clock-setup.ts`
+never runs for a browser spec, there is no `optOutOfFrozenClock` there, and
+`page.clock` is not used. That is a decision, not an omission (#3221):
+
+- The stack the suite drives is real. The app derives its civil date server-side
+  through `club-time` from the persisted `ClubTimeSettings.timeZone`, and the
+  E2E seed fills that from `TZ=Pacific/Auckland` in `docker-compose.yml`. The
+  seeded fixtures are **relative to the real today** by design (#2117, because
+  fixed seed dates rotted CI red). Pinning only the browser would put the browser
+  in one time and the server and seed in another — a new disagreement, not a
+  removed one.
+- The runner and the browser sit in **UTC** while the club sits in **NZ**, and
+  keeping them apart is load-bearing: it is what makes the suite prove
+  continuously that the app never reads the *browser's* clock. That was a live
+  defect (CT-4, #2870 — a member booking from London at 10am New Zealand time saw
+  yesterday as "today"), and a browser pinned to club time would be blind to it.
+
+### The rule
+
+**Every civil date a browser spec derives comes from the club's day**, which is
+`E2E_TODAY_NZ` / `relDateOnly` in
+[`../prisma/e2e-fixtures.ts`](../prisma/e2e-fixtures.ts) — one clock read for the
+whole date space, frozen once per process, formatted through `Intl` with an
+explicit zone. Date arithmetic is `shiftDateOnly` from the same module. A spec
+that calls `new Date()` and reads `getFullYear()`/`getMonth()`/`getDate()` off it
+is reading the **runner's** calendar, which is a different day from the club's for
+roughly the last twelve hours of every UTC day — and on the last day of a month,
+a different **month**.
+
+That is what reddened `main` at 2026-08-31T14:30Z, green on the same commit that
+morning: `admin-retroactive-booking.spec.ts` told the booking calendar it was
+already showing August while the app had correctly opened on September. It was
+the fifth clock-rollover incident here (#2426, #2401, #2443, #2479 were the four
+unit-side ones that bought the frozen clock).
+
+### What enforces it
+
+| Guard | What it holds |
+| --- | --- |
+| [`e2e-club-day-census.test.ts`](../src/lib/__tests__/e2e-club-day-census.test.ts) | The **structural** half. Sweeps every `.ts` under `e2e/`: no argument-less `new Date()` outside a counted allowlist of *instant* writes, no local-zone `getFullYear`/`getMonth`/`getDate`/`getDay`, no hand-rolled `setUTCDate` arithmetic, and the one clock read still names its zone. |
+| [`e2e-club-day-boundary.test.ts`](../src/lib/__tests__/e2e-club-day-boundary.test.ts) | The **behavioural** half. Re-imports the E2E date space with the clock parked at the instant that failed, plus a year boundary and both NZ daylight-saving switches, under **two** host zones — because a single-zone check passes vacuously on a laptop already in New Zealand. |
+| [`e2e-calendar-navigation.test.ts`](../src/lib/__tests__/e2e-calendar-navigation.test.ts) | That `walkCalendarToMonth` still derives its own direction from the month the calendar is showing, and that the retroactive spec's hop bound stays tight enough to be a real check. |
+
+All three are **disk-scanning**: they read `e2e/` from the filesystem, so they
+have no import edge to the files they scan and `npm run test:related` can never
+select them from a diff. Run them by name when a change touches `e2e/`.
+
+### The walk reads the calendar rather than being told
+
+`walkCalendarToMonth` (`e2e/helpers/calendar-navigation.ts`) used to take a
+`direction` its caller computed from the date it believed the calendar had opened
+on. A caller can only get that right by guessing the club's day, so the argument
+could only ever be wrong; it is gone. The walk reads the displayed month heading,
+hops the way it needs to, and waits for the heading to change before reading it
+again.
+
+What that removed — the old assertion that the caller's expectation was *right* —
+now lives in `maxHops`. A caller that believes it is at most one month away
+passes `maxHops: 1`, and a walk that needs four fails naming both the month it
+could not reach and the one it is stuck on. **Keep the bound tight**: it is the
+only remaining check on the caller's belief.
+
+### Proving it, rather than arguing it
+
+[`.github/workflows/e2e-rollover-proof.yml`](../.github/workflows/e2e-rollover-proof.yml)
+sets the **runner VM's** clock into the hazard window — a chosen instant, or the
+next month-end at 14:30 UTC — and runs the date-bearing browser specs against a
+stack started under that clock. The whole VM moves, so the app container, the
+database seed and the Playwright process stay on one clock; that is why it cannot
+be a `libfaketime` job like the unit canary.
+
+It is **`workflow_dispatch` only**. Adding a schedule is one block, and was
+deliberately left off until a VM-clock job has been seen to be stable (owner
+decision, 1 September 2026). The day-to-day protection is the three guards above,
+which run on every pull request.
 
 ## Asserting that a recovery alert holds focus
 

@@ -14,7 +14,12 @@ import {
   bookingCreateIsolation,
   postBookingCreate,
 } from "./helpers/booking-create-client-ip";
-import { DEMO_BOOKING_WINDOWS, E2E_ADMIN } from "./helpers/fixtures";
+import {
+  DEMO_BOOKING_WINDOWS,
+  E2E_ADMIN,
+  relDateOnly,
+  shiftDateOnly,
+} from "./helpers/fixtures";
 import { overrideModules, setModuleSettings, type ModuleSettings } from "./helpers/modules";
 
 // docs/END_TO_END_TEST_MATRIX.md rows "Partner relationship (#1742)" and
@@ -186,9 +191,7 @@ async function allocate(bookingGuestId: string, bedId: string, stayDate: string)
     `allocate ${bookingGuestId} -> ${bedId} @ ${stayDate} (${res.status()}): ${await res.text()}`,
   ).toBeTruthy();
   const body = await res.json();
-  const nextNight = new Date(`${stayDate}T00:00:00.000Z`);
-  nextNight.setUTCDate(nextNight.getUTCDate() + 1);
-  const board = await getBoard(stayDate, nextNight.toISOString().slice(0, 10));
+  const board = await getBoard(stayDate, shiftDateOnly(stayDate, 1));
   const booking = board.bookings.find(
     (candidate: { id: string }) => candidate.id === body.allocation.bookingId,
   );
@@ -301,12 +304,6 @@ async function recordHoldingBooking(
   return body;
 }
 
-function addDays(dateOnly: string, n: number): string {
-  const d = new Date(`${dateOnly}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + n);
-  return d.toISOString().slice(0, 10);
-}
-
 async function monthAvailability(
   year: number,
   month0: number,
@@ -324,7 +321,11 @@ async function monthAvailability(
 // the whole suite's seed-refresh signal, not a silent flake.
 async function deriveHoldingWindows(): Promise<void> {
   const needed = 5; // S2 nights [0,1] + gap [2] + S4 nights [3,4]
-  const from = addDays(new Date().toISOString().slice(0, 10), 14); // future margin
+  // Future margin, counted from the CLUB's day rather than the runner's UTC one
+  // (`prisma/e2e-fixtures.ts` → E2E_TODAY_NZ). A day either way is absorbed by
+  // the 14-day margin, so this was never the failing case — it is here so the
+  // suite has ONE notion of "today" and nobody copies the old shape.
+  const from = relDateOnly(14);
   const nights: Array<{ date: string; ok: boolean }> = [];
   let cursor = new Date(`${from.slice(0, 7)}-01T00:00:00Z`);
   for (let m = 0; m < 12; m += 1) {
@@ -342,7 +343,7 @@ async function deriveHoldingWindows(): Promise<void> {
   let start = "";
   for (let i = 0; i + needed <= nights.length; i += 1) {
     const run = nights.slice(i, i + needed);
-    const contiguous = run.every((f, k) => k === 0 || addDays(run[k - 1].date, 1) === f.date);
+    const contiguous = run.every((f, k) => k === 0 || shiftDateOnly(run[k - 1].date, 1) === f.date);
     if (contiguous && run.every((f) => f.ok)) {
       start = run[0].date;
       break;
@@ -352,11 +353,11 @@ async function deriveHoldingWindows(): Promise<void> {
     start,
     "no future 5-night empty in-season window in the next 12 months — the E2E seed seasons need refreshing forward (prisma/seed.ts)",
   ).toBeTruthy();
-  S2_WINDOW = { checkIn: start, checkOut: addDays(start, 2), night: start };
+  S2_WINDOW = { checkIn: start, checkOut: shiftDateOnly(start, 2), night: start };
   S4_WINDOW = {
-    checkIn: addDays(start, 3),
-    checkOut: addDays(start, 5),
-    night: addDays(start, 3),
+    checkIn: shiftDateOnly(start, 3),
+    checkOut: shiftDateOnly(start, 5),
+    night: shiftDateOnly(start, 3),
   };
 }
 

@@ -7,7 +7,11 @@ import {
   resolveSingleActiveLodgeId,
 } from "./helpers/bed-allocation-settings";
 import { completeMemberDetailsGateIfShown } from "./helpers/booking";
-import { DEMO_BOOKING_WINDOWS, E2E_ADMIN } from "./helpers/fixtures";
+import {
+  DEMO_BOOKING_WINDOWS,
+  E2E_ADMIN,
+  shiftDateOnly,
+} from "./helpers/fixtures";
 import { personas } from "./helpers/personas";
 
 // High row (docs/END_TO_END_TEST_MATRIX.md): "Approve a review-flagged booking,
@@ -28,12 +32,6 @@ test.describe.configure({ mode: "serial" });
 
 let adminContext: BrowserContext;
 let bedAllocationSettingsBefore: BedAllocationSettingsSnapshot | undefined;
-
-function addUtcDays(dateOnly: string, days: number) {
-  const date = new Date(`${dateOnly}T00:00:00.000Z`);
-  date.setUTCDate(date.getUTCDate() + days);
-  return date.toISOString().slice(0, 10);
-}
 
 test.beforeAll(async ({ browser }) => {
   // Reuse the E2E admin session saved once in auth.setup.ts instead of a fresh
@@ -176,7 +174,7 @@ test("pointer, keyboard and menu moves share reviewed scopes and preserve origin
   // Include the checkout date as one extra visible column so the pointer can
   // hover horizontally over a date Ken is not allocated on. Existing-chip
   // semantics must still snap back to the persisted source nights.
-  const extendedTo = addUtcDays(ken.checkOut, 1);
+  const extendedTo = shiftDateOnly(ken.checkOut, 1);
   const dashboardPath = `/api/admin/bed-allocation?from=${ken.checkIn}&to=${extendedTo}`;
   const dashboard = await adminContext.request.get(dashboardPath);
   expect(dashboard.ok(), `read the board (${dashboard.status()})`).toBeTruthy();
