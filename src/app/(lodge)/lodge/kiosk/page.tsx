@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { CalendarDays, RefreshCw } from "lucide-react";
+import { CalendarDays, Lock, RefreshCw } from "lucide-react";
 import { KioskLodgeInstructions } from "@/components/kiosk-lodge-instructions";
 import { useClubIdentity } from "@/components/club-identity-provider";
 import type { KioskTier } from "@/lib/kiosk-access";
@@ -11,6 +11,25 @@ import { formatClubLongWeekdayDate, parseCalendarDate } from "@/lib/club-time";
 // booking page editor and the lobby wall. Three private copies of the same six
 // lines is how three surfaces end up disagreeing about midnight.
 import { formatArrivalTime } from "@/lib/arrival-time";
+// #3228: the idle window, the renewal interval and this page's own refresh
+// cadence are ONE rule with halves on both sides of the client/server boundary,
+// so they come from the module that defines them rather than from numbers typed
+// in here. That module imports nothing, which is what makes it safe for a client
+// bundle to reach.
+import {
+  HUT_LEADER_PIN_SESSION_IDLE_MINUTES,
+  KIOSK_DATA_REFRESH_BACKOFF_MS,
+  KIOSK_DATA_REFRESH_MS,
+} from "@/lib/lodge-pin-session-timing";
+// The renewal itself is NOT here. It is mounted from `src/app/(lodge)/layout.tsx`
+// so it also covers the roster wizard, which this page links to with a full
+// navigation — see that module's docblock for what went wrong when it lived here.
+import {
+  useLodgePinSession,
+  useLodgePinSessionLapse,
+  LODGE_PIN_LOGIN_ENDPOINT,
+  LODGE_PIN_SESSION_ENDPOINT,
+} from "@/components/lodge-pin-session";
 import {
   addDaysToDateKey,
   getWeekStartDateKey,
@@ -93,6 +112,12 @@ interface AccessInfo {
   // (issue #23): the client shows a PREVIEW banner and forces read-only.
   preview?: boolean;
   previewAccountEmail?: string;
+  // #3228 — set only when THIS device reached the hut-leader tier by typing a
+  // PIN on a shared kiosk account. A hut leader signed in with their own
+  // account also reads `tier: "hut-leader"` and leaves this absent, so it is
+  // the flag, never the tier, that decides whether the idle window and the
+  // Lock control apply.
+  pinSessionActive?: boolean;
 }
 
 type KioskView = "week" | "day";
@@ -212,6 +237,24 @@ export default function KioskPage() {
   const [pin, setPin] = useState("");
   const [pinError, setPinError] = useState<string | null>(null);
   const [pinLoading, setPinLoading] = useState(false);
+  const [locking, setLocking] = useState(false);
+  const [lockFailed, setLockFailed] = useState(false);
+
+  /*
+    #3228 — a PIN session on this shared device, as opposed to a hut leader
+    signed in with their own account (which also reads `tier: "hut-leader"`).
+
+    The state lives in the lodge-area provider rather than in this component,
+    because the renewal that depends on it has to outlive this page: the roster
+    wizard is a full navigation away and needs the same session kept alive. This
+    page's job is to PUBLISH what the server just told it (below) and to react
+    when the window closes.
+  */
+  const {
+    active: pinSessionActive,
+    renewalTrouble,
+    setActive: setPinSessionActive,
+  } = useLodgePinSession();
 
   // Effective tier (admin can preview other tiers)
   const effectiveTier = viewAs ?? access?.tier ?? "none";
@@ -323,10 +366,30 @@ export default function KioskPage() {
 
   // Auto-refresh: backs off to 5 min after 3 consecutive failures
   useEffect(() => {
-    const interval = failCount >= 3 ? 300000 : 120000;
+    const interval =
+      failCount >= 3 ? KIOSK_DATA_REFRESH_BACKOFF_MS : KIOSK_DATA_REFRESH_MS;
     const timer = setInterval(fetchData, interval);
     return () => clearInterval(timer);
   }, [failCount, fetchData]);
+
+  /*
+    #3228 — TELL THE PROVIDER WHAT THE SERVER JUST SAID.
+
+    The provider arms renewal from the server's own look at the cookie when the
+    layout renders, which covers arriving here or on the roster wizard by
+    navigation. It cannot see a PIN typed on THIS page without a reload, so the
+    access response — the same one that decides whether the Lock control shows —
+    is what publishes it.
+
+    Guarded on `access` being present, not on the flag: `access` is null while a
+    fetch is in flight and immediately after a lock, and unpublishing on "I do
+    not know yet" would take the listeners off mid-navigation and reset the idle
+    clock. Only an answer changes the answer.
+  */
+  useEffect(() => {
+    if (!access) return;
+    setPinSessionActive(access.pinSessionActive === true);
+  }, [access, setPinSessionActive]);
 
   // #2474 — a kiosk is a wall tablet nobody reloads, so the club's new day has
   // to arrive on its own. Watch for the rollover and carry the strip across WITH
@@ -365,6 +428,54 @@ export default function KioskPage() {
     }, CLUB_DAY_TICK_MS);
     return () => clearInterval(timer);
   }, [clubTime, clubToday, view]);
+
+  /*
+    #3228 — DROP EVERY PRIVILEGED ANSWER THIS DEVICE HOLDS, THEN ASK AGAIN.
+
+    Used by the Lock button and by the idle lapse the lodge-area provider
+    reports. It is not a matter of hiding controls: the guest list, the roster
+    and the access response were fetched as a hut leader, and in this application
+    anything a client component holds is readable in the browser whether it is
+    rendered or not. So the state is emptied before the refetch, and what comes
+    back is whatever the server now serves this device — which is the ordinary
+    lodge view once the PIN session has ended.
+
+    `setLoading(true)` matters as well as tidies: it puts the page on its
+    loading screen for the round trip rather than briefly painting a
+    hut-leader's view with no data in it.
+
+    `setPinSessionActive(false)` takes the interaction listeners off at once
+    rather than a round trip later, so a locked screen cannot renew anything on
+    its way to being re-asked. If the lock actually failed, the refetch below
+    publishes an active session again and renewal resumes — which is correct, and
+    is why the banner beside the button says the screen is still unlocked.
+
+    NOT here any more: `setViewAs(null)`. `viewAs` is a full admin's tier-preview
+    selection, and an admin session never carries a PIN session (the access route
+    answers the PIN branch as `hut-leader`, so `tier: "admin"` and
+    `pinSessionActive` are mutually exclusive). Clearing it could therefore only
+    ever throw away an unrelated choice.
+  */
+  const dropHutLeaderView = useCallback(async () => {
+    setPinSessionActive(false);
+    setAccess(null);
+    setBookings([]);
+    setAssignments([]);
+    setWeekDays([]);
+    setShowPinForm(false);
+    setPin("");
+    setPinError(null);
+    setLoading(true);
+    await fetchData();
+  }, [fetchData, setPinSessionActive]);
+
+  /*
+    #3228 — the provider counts the idle window (it has to: it outlives this
+    page) and tells us when it has closed. Everything about WHEN that happens,
+    and why it is measured from the last accepted renewal rather than from
+    interval ticks, is in `src/components/lodge-pin-session.tsx`.
+  */
+  useLodgePinSessionLapse(dropHutLeaderView);
 
   const refreshNow = async () => {
     setRefreshing(true);
@@ -446,7 +557,7 @@ export default function KioskPage() {
     setPinLoading(true);
 
     try {
-      const res = await fetch("/api/lodge/pin-login", {
+      const res = await fetch(LODGE_PIN_LOGIN_ENDPOINT, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ pin }),
@@ -466,6 +577,42 @@ export default function KioskPage() {
       setPinError("PIN login failed");
     } finally {
       setPinLoading(false);
+    }
+  };
+
+  /*
+    #3228 — THE LOCK CONTROL.
+
+    Ends the session on the server first, then drops what this device holds. If
+    the request fails the cookie is still there, so say so rather than clearing
+    the screen and letting the next refresh quietly restore a hut leader's
+    view — the person walking away needs to know the screen is still unlocked.
+
+    THE FAILURE IS RAISED AFTER THE REFETCH, AND IT DOES NOT TIME OUT, and both
+    halves of that are corrections to the first version of this code. It used
+    `showActionError`, a three-second toast, raised BEFORE the round trip — and
+    `dropHutLeaderView` then puts the page on its full-screen loading state,
+    where the toast is not rendered at all. On a slow link the three seconds
+    elapsed behind the loading screen, so the one message somebody must not miss
+    ("you think you locked this, and you did not") could be shown for zero
+    milliseconds. It is now a banner that stays until a lock succeeds, and it
+    hangs off `pinSessionActive` so it disappears by itself if the session turns
+    out to be over for another reason.
+  */
+  const lockHutLeaderControls = async () => {
+    setLocking(true);
+    setLockFailed(false);
+    let locked = false;
+    try {
+      const res = await fetch(LODGE_PIN_SESSION_ENDPOINT, { method: "DELETE" });
+      locked = res.ok;
+    } catch {
+      locked = false;
+    }
+    setLocking(false);
+    await dropHutLeaderView();
+    if (!locked) {
+      setLockFailed(true);
     }
   };
 
@@ -758,6 +905,65 @@ export default function KioskPage() {
         </div>
       )}
 
+      {/*
+        #3228 — the way back to the ordinary lodge view, on the screen, next to
+        the controls it turns off. It is rendered on `pinSessionActive` rather
+        than on the tier, so a hut leader signed in with their own account is
+        never offered a button that would do nothing for them.
+      */}
+      {pinSessionActive && (
+        <section className="bg-kiosk-card rounded-2xl p-4 mb-4 border border-kiosk-border">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <h2 className="text-lg font-semibold text-kiosk-fg">
+                {hutLeaderSentence} controls are unlocked
+              </h2>
+              <p className="text-sm text-kiosk-fg mt-1">
+                This kiosk is showing {hutLeaderLower} controls to anyone
+                standing at it. It locks itself after{" "}
+                {HUT_LEADER_PIN_SESSION_IDLE_MINUTES} minutes with nobody using
+                it — lock it now when you walk away.
+              </p>
+              {/*
+                #3228 — a failed Lock is the one message on this page somebody
+                must not miss, so it is a banner that stays rather than a toast
+                that expires behind the loading screen. Rendered inside the
+                unlocked panel, so it cannot outlive the state it describes.
+              */}
+              {lockFailed && (
+                <p className="mt-3 rounded-lg border border-kiosk-danger-border bg-kiosk-danger-bg px-3 py-2 text-sm font-semibold text-kiosk-danger-fg">
+                  Could not lock the screen — it is still showing{" "}
+                  {hutLeaderLower} controls. Try Lock again.
+                </p>
+              )}
+              {/*
+                A renewal was refused for a reason that is not "the session is
+                over" — the connection dropped, or the endpoint answered 429.
+                The deadline did not move, so the screen may lock itself
+                mid-task; saying so beats a silent lock-out.
+              */}
+              {renewalTrouble && !lockFailed && (
+                <p className="mt-3 rounded-lg border border-kiosk-warning-border bg-kiosk-warning-bg px-3 py-2 text-sm text-kiosk-warning-fg">
+                  Trouble keeping this kiosk unlocked. It may lock itself and ask
+                  for the PIN again — finish what you are doing and save it.
+                </p>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={lockHutLeaderControls}
+              disabled={locking}
+              className="inline-flex min-h-[56px] items-center justify-center gap-2 rounded-xl bg-kiosk-accent px-4 py-3 text-sm font-semibold text-kiosk-accent-fg transition-colors hover:bg-kiosk-accent-hover active:bg-kiosk-accent-active disabled:cursor-wait disabled:bg-kiosk-chip disabled:text-kiosk-faint-fg"
+            >
+              <Lock className="h-4 w-4" />
+              {locking
+                ? "Locking..."
+                : `Lock ${hutLeaderLower} controls`}
+            </button>
+          </div>
+        </section>
+      )}
+
       {effectiveTier === "lodge" && (
         <section className="bg-kiosk-card rounded-2xl p-4 mb-4 border border-kiosk-border">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
@@ -767,7 +973,10 @@ export default function KioskPage() {
               </h2>
               <p className="text-sm text-kiosk-fg mt-1">
                 Enter the 6-digit {hutLeaderLower} PIN to unlock {hutLeaderLower}{" "}
-                controls on this kiosk, including roster management.
+                controls on this kiosk, including roster management. They stay
+                unlocked while the kiosk is being used and lock themselves after{" "}
+                {HUT_LEADER_PIN_SESSION_IDLE_MINUTES} minutes with nobody using
+                it.
               </p>
             </div>
             {!showPinForm && (

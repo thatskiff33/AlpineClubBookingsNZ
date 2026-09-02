@@ -15,6 +15,24 @@ const baseURL = process.env.E2E_BASE_URL ?? "http://localhost:3001";
 // the default suite's project list is byte-identical.
 const multiLodgeEnabled = process.env.E2E_MULTI_LODGE === "1";
 
+// Specs held out of ONE run, as a comma-separated list of paths relative to
+// `testDir`. Set only by .github/workflows/e2e-rollover-proof.yml, which parks
+// the runner's clock a month ahead: a spec that drives the app into a real
+// outbound TLS call is then met with a certificate that has expired in the
+// container's own reckoning, which is an artefact of the shift and not a date
+// defect (#3227). Unset in CI and on a laptop, so the projects below are
+// unchanged for every ordinary run.
+//
+// This is config rather than a command-line file filter because a filter cannot
+// express it: Playwright runs a project's DEPENDENCIES in full, ignoring the
+// filter, so naming `pre-setup/` on the command line pulls the whole `chromium`
+// project back in and the exclusion evaporates. `testIgnore` decides what is in
+// a project at all, before any filtering, so it holds.
+const excludedSpecs = (process.env.E2E_EXCLUDE_SPECS ?? "")
+  .split(",")
+  .map((entry) => entry.trim())
+  .filter(Boolean);
+
 export default defineConfig({
   testDir: "./e2e",
   outputDir: "./test-results",
@@ -56,7 +74,7 @@ export default defineConfig({
       // pre-setup/ is excluded for a stronger reason: those specs CLOSE the
       // public site for their duration, so they run in their own project after
       // everything else (#2420).
-      testIgnore: /(multi-lodge|pre-setup)\//,
+      testIgnore: [/(multi-lodge|pre-setup)\//, ...excludedSpecs],
     },
     // The pre-setup gate on the wire (#2420). Runs LAST — `dependencies` on the
     // main project — because it un-completes site-style setup, which makes every
@@ -67,6 +85,7 @@ export default defineConfig({
     {
       name: "pre-setup",
       testMatch: /pre-setup\/.*\.spec\.ts/,
+      testIgnore: excludedSpecs,
       use: { ...devices["Desktop Chrome"] },
       dependencies: ["chromium"],
     },
@@ -78,6 +97,7 @@ export default defineConfig({
           {
             name: "multi-lodge",
             testMatch: /multi-lodge\/.*\.spec\.ts/,
+            testIgnore: excludedSpecs,
             use: { ...devices["Desktop Chrome"] },
           },
         ]

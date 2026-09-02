@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { noStoreLodgeResponse } from "@/lib/lodge-cache-headers";
 import { z } from "zod";
 import { checkinNotBlockedByPendingReviewFilter } from "@/lib/booking-review";
 import { OPERATIONAL_STAY_BOOKING_STATUSES } from "@/lib/booking-status";
@@ -74,6 +75,11 @@ async function resolveWeekAuth(req: NextRequest, dates: string[]) {
  * staying-guest window cannot reveal adjacent lodge activity.
  */
 export async function GET(req: NextRequest) {
+  // #3228 — nothing here may be cached; `src/lib/lodge-cache-headers.ts` says why.
+  return noStoreLodgeResponse(await handleGet(req));
+}
+
+async function handleGet(req: NextRequest) {
   const startStr = req.nextUrl.searchParams.get("start");
   if (!startStr || !dateSchema.safeParse(startStr).success) {
     return NextResponse.json(

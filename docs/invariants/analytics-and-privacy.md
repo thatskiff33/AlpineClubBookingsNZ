@@ -477,3 +477,47 @@ question, ungated by either tick**.
   when a tick is off — or if either tick starts gating it. The same guard pins the
   governed boundary in contrast: the record's personal-detail disclosure line
   flips with the record tick while the view lines do not.
+
+## INV-PRIV-015
+
+A hut leader's PIN session on a shared lodge device is bounded by **inactivity**,
+not by a shift. Owner decision of 1 September 2026 (#3228). Before it, one PIN
+entry left a wall tablet showing a hut leader's view for **twelve hours**, to
+whoever walked up to it, with nothing in the tree able to clear the cookie.
+
+- **The window is ten minutes of a PERSON, and the distinction is the rule.** The
+  deadline moves only on `pointerdown`, `keydown`, `touchstart` or `wheel`, and
+  never on the page's own traffic. The kiosk refreshes itself, so a deadline that
+  slid on any request would let an untouched tablet keep its own session alive
+  for ever — which is the exact exposure this rule exists to close. `scroll` is
+  excluded deliberately: a programmatic scroll is still `isTrusted`, so a future
+  auto-scroll would read as a person.
+- **The deadline is the server's, inside the signed payload.** Renewal is a
+  request for a new cookie the server mints from its own clock, granted only to
+  a session that is still valid. A client cannot edit, replay past, or assert its
+  way through it, and a device that is switched off, offline or simply untouched
+  lapses on its own.
+- **Renewal is mounted where the authority applies, not on one page.** The PIN
+  grants privilege across the kiosk *and* the roster wizard, and the wizard is
+  reached by a full navigation. Mounting the listeners on the kiosk alone made
+  the roster — the longest hut-leader task there is — the one screen that could
+  not renew, and a timeout there destroyed unsaved work. One provider, mounted
+  from the layout both pages share.
+- **Twelve hours remains the absolute ceiling.** `iat` is carried and renewal is
+  refused past `iat + 12h`, so an idle window cannot be walked forward
+  indefinitely — which is also what bounds a session held open by OS-injected
+  taps or a failing digitiser rather than by a person.
+- **Lock clears the cookie in the responding browser and does NOT revoke
+  server-side.** There is no session record to revoke against, so a copy taken
+  before the lock survives to its own deadline. Stated here because the operator
+  guide's "the tablet is an ordinary screen again immediately" is true of the
+  tablet and not of the session.
+
+**Id sequencing, and it is deliberate rather than an accident.** This rule was
+written against `main`, whose highest `INV-PRIV` was 014. Epic #2943's kiosk
+child (#3040) independently took **015** on `epic/2943-group-trip-hosting`, and
+dense numbering permits no third option on either base. So whichever reaches
+`main` second renumbers to **016** — including its `docs/DOMAIN_INVARIANTS.md`
+row and every citation, because a stale citation still *resolves*, to the other
+rule, and would hand a reader the wrong invariant while the index check stays
+green.

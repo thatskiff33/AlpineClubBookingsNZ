@@ -124,7 +124,11 @@ const NOT_ENVIRONMENT_SAFETY_READS: Allowance[] = [
     reason: "Secure cookie attribute — plain HTTP in local development.",
   },
   {
-    file: "src/app/api/lodge/pin-login/route.ts",
+    // #3228 moved this read out of `pin-login/route.ts`. Three routes now write
+    // this cookie (sign in, renew, lock) and the attribute set — `Secure`
+    // included — belongs to the session module, so they cannot disagree about
+    // it. Same single read, one hop closer to the cookie it describes.
+    file: "src/lib/lodge-pin-session.ts",
     reads: 1,
     reason:
       "Secure cookie attribute on the lodge kiosk PIN session cookie.",

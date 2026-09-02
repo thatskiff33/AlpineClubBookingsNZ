@@ -1034,6 +1034,11 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.toEqual({
       tier: "hut-leader",
+      // #3228 — this device is at the hut-leader tier BY PIN on a shared kiosk
+      // account, which is what the ten-minute idle window and the Lock control
+      // govern. A hut leader signed in with their own account reads the same
+      // tier and does not carry this flag.
+      pinSessionActive: true,
       dateRange: {
         minDate: "2026-04-12",
         maxDate: "2026-04-16",
@@ -1577,7 +1582,13 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
     expect(content).toContain("canMarkAttendance && guest.canMarkDeparted");
     expect(content).not.toContain("canMarkAttendance && guest.isArriving");
     expect(content).not.toContain("canMarkAttendance && guest.isDeparting");
-    expect(content).toContain("120000");
+    // #3228 — the two-minute refresh cadence is no longer a literal here. It
+    // moved into `@/lib/lodge-pin-session-timing`, which is where the PIN
+    // session's rules are stated AGAINST it ("background refreshes do not extend
+    // the session"), and both the page and the tests of that rule now read the
+    // same constant instead of keeping private copies.
+    expect(content).toContain("KIOSK_DATA_REFRESH_MS");
+    expect(content).not.toContain("120000");
     expect(content).toContain("Manage Today's Roster");
     expect(content).not.toContain("Manage Today&apos;s Roster");
   });

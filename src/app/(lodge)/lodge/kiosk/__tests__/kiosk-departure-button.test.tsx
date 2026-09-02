@@ -24,10 +24,9 @@
  */
 
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
-import KioskPage from "../page";
-import { ClubTimeProvider } from "@/components/club-time-provider";
+import { renderKiosk } from "./helpers/kiosk-harness";
 import { frozenTestNow } from "@/lib/__tests__/helpers/clock";
 import { restoreHostTimeZone } from "@/lib/__tests__/helpers/timezone";
 import { buildWeekDateKeys } from "../_components/kiosk-week-view";
@@ -64,7 +63,8 @@ const { originalHostTimeZone } = vi.hoisted(() => {
   Before CT-4 the kiosk read `APP_TIME_ZONE`, so this mock was the club's zone
   and pinning it to `Pacific/Auckland` was what kept the rollover cases meaning
   anything once the HOST zone moved. The page now takes the club's day from
-  `ClubTimeProvider` instead, and `renderKiosk` below supplies it — so the mock
+  `ClubTimeProvider` instead, and `renderKiosk` (in `./helpers/kiosk-harness`)
+  supplies it — so the mock
   is free to become a third zone, and it should be.
 
   WHAT THAT DOES AND DOES NOT BUY, stated precisely, because the obvious claim is
@@ -245,15 +245,6 @@ afterAll(() => {
 });
 
 /** The club this kiosk belongs to. Delivered the way the application does it. */
-const CLUB_ZONE = "Pacific/Auckland";
-
-function renderKiosk() {
-  return render(
-    <ClubTimeProvider zone={CLUB_ZONE}>
-      <KioskPage />
-    </ClubTimeProvider>,
-  );
-}
 
 describe("kiosk Mark Departed follows the check-out flag, not the badge (#2631)", () => {
   afterEach(() => {
