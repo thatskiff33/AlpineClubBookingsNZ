@@ -735,10 +735,24 @@ stack started under that clock. The whole VM moves, so the app container, the
 database seed and the Playwright process stay on one clock; that is why it cannot
 be a `libfaketime` job like the unit canary.
 
-It is **`workflow_dispatch` only**. Adding a schedule is one block, and was
-deliberately left off until a VM-clock job has been seen to be stable (owner
-decision, 1 September 2026). The day-to-day protection is the three guards above,
-which run on every pull request.
+It runs **weekly (Sundays, 15:20 UTC), plus once on the 27th of each month**, and
+can be dispatched by hand at any time (owner decision, 2 September 2026, #3238).
+It was dispatch-only until then, while it was unproven; it now has clean runs
+behind it. It has no `pull_request` trigger and must never gain one — that is what
+keeps it from ever becoming a required check and blocking unrelated work on a
+clock this repository does not control.
+
+**The parked instant does not vary between runs.** The job always targets the end
+of the *current* UTC month at 14:30Z, so every scheduled run within a month parks
+at the same instant; what changes between them is the **code**. So the schedule
+buys "tell me a newly-merged spec has this defect, before a real rollover does" —
+not more instants. That is why weekly is enough and nightly would mostly re-prove
+the same thing. The run on the 27th exists because weekly alone can miss the last
+few days of a month, which is exactly when missing it is expensive.
+
+The day-to-day protection remains the three guards above, which run on every pull
+request and catch the defect on the change that introduces it. This job only ever
+sees what escapes all three.
 
 #### What the proof does not cover, and why it cannot
 
