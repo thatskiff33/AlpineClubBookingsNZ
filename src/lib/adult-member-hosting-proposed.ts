@@ -11,8 +11,10 @@ import { type PrismaClient } from "@prisma/client";
 import {
   loadAdultMemberHostingPolicy,
   loadSameBookingOwnerHosts,
+  loadSameGroupTripHosts,
   withSubscriptionSettlement,
 } from "@/lib/adult-member-hosting-review";
+import { groupTripIdentityForJoin } from "@/lib/group-trip-identity";
 import type { AdultMemberHostingPolicyExceptionViolation } from "@/lib/booking-policy-exceptions";
 import { eachDateOnlyInRange, formatDateOnly } from "@/lib/date-only";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
@@ -51,6 +53,36 @@ export async function evaluateProposedAdultMemberHosting(
   input: {
     /** The authoritative prospective Booking.memberId. */
     bookingOwnerMemberId?: string | null;
+    /**
+     * The Group Trip this party is JOINING, when it is joining one (#3038).
+     *
+     * THE PRE-PERSIST CASE THE EPIC'S CONTRACT NAMES. A join's group identity is
+     * available strictly EARLIER than its `Booking` row is — it came from the
+     * join code the joiner redeemed — so a party with no booking yet can still
+     * be asked whether a sibling booking covers it. Taking it from the container
+     * rather than from a row that does not exist is what makes that possible,
+     * and it is exactly as canonical as the persisted answer: the
+     * `GroupBookingJoin` this becomes will carry this same `groupBookingId`
+     * (`INV-HOST-043`).
+     *
+     * REQUIRED, AND NULLABLE RATHER THAN OPTIONAL — the same choice, for the
+     * same reason, that `GroupTripIdentityRow` makes about its two relations.
+     * `null` is an ANSWER ("this party is joining no Group Trip"); optional
+     * would be permission to say nothing, and saying nothing resolves to "no
+     * Group Trip" SILENTLY. That silence is not hypothetical: this function
+     * gained its third scope while `booking-exception-request-service.ts` kept
+     * calling it with the two it already knew about, so a modification proposal
+     * on a group-covered booking was re-judged group-blind and froze a hosting
+     * violation that does not exist — put in front of an officer, and under
+     * `HOLD` reserving beds for a hazard nobody has. With the field required the
+     * compiler enumerates every call site and each has to state its answer out
+     * loud. Unrepresentable beats policed (`INV-SSOT`).
+     *
+     * `null` for every ordinary create, including the ORGANISER's own booking —
+     * a `GroupBooking` is opened on a booking that already exists, so at create
+     * time there is no container and no siblings.
+     */
+    groupBookingId: string | null;
     lodgeId: string;
     checkIn: Date;
     checkOut: Date;
@@ -106,7 +138,33 @@ export async function evaluateProposedAdultMemberHosting(
           db,
           [],
         )
-      : [];
+      : { participants: [] as HostingParticipant[], sourceIds: [] };
+
+  // And the same again for a JOIN's Group Trip (#3038). The joiner's own booking
+  // does not exist yet, so `id` is `null` — the shared coverage envelope adds no
+  // self-exclusion for a row that cannot match a query anyway — while the
+  // container's id is already authoritative. This is a preflight answer only;
+  // the persisted reconciler repeats the read inside the creating transaction,
+  // by which time the `GroupBookingJoin` row exists and resolves the identical
+  // group.
+  //
+  // The same-owner sources are excluded, so an adult on a booking that is BOTH
+  // this joiner's own and in this Group Trip is counted once, under the
+  // narrower scope.
+  const groupTripHosts =
+    resolved.hostScopes.sameGroupTrip && input.groupBookingId
+      ? await loadSameGroupTripHosts(
+          {
+            id: null,
+            lodgeId: input.lodgeId,
+            checkIn: input.checkIn,
+            checkOut: input.checkOut,
+          },
+          groupTripIdentityForJoin({ groupBookingId: input.groupBookingId }),
+          db,
+          sameOwnerHosts.sourceIds,
+        )
+      : { participants: [] as HostingParticipant[], sourceIds: [] };
 
   const participants: HostingParticipant[] = [
     ...input.guests.map((guest, index) => ({
@@ -115,7 +173,8 @@ export async function evaluateProposedAdultMemberHosting(
       member: guest.memberId ? memberById.get(guest.memberId) ?? null : null,
       nights: proposedGuestNights(guest, input.checkIn, input.checkOut),
     })),
-    ...sameOwnerHosts,
+    ...sameOwnerHosts.participants,
+    ...groupTripHosts.participants,
   ];
 
   return evaluateAdultMemberHostingWithPolicy(

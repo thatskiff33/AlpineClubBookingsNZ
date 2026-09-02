@@ -170,6 +170,90 @@ day colours *are* lodge days, the panel spells that difference out on screen;
 the hut-leader assignment calendar is night-based throughout, so there is no
 difference to explain there and it says nothing.
 
+### Group Trips on the day list
+
+**Audience: operator.**
+
+Several separate bookings can belong to one travelling party — that is what a
+Group Trip is, and it works whether or not your club shares adult cover between
+those bookings. The day list says so, and how much it says depends on who is
+looking at the screen.
+
+**Anyone the kiosk shows the day list to** — including a guest who is staying
+and signed in — sees a small **Group trip 1** chip on each card that belongs to
+one trip. Cards carrying the same number are one party; different numbers are
+different parties. The number is only a label for the list on screen: it is
+counted from the top of that day's list, it changes from day to day, and it is
+not the group's own reference. A card gets no chip at all unless another card in
+front of you belongs to the same trip, because a lone chip would link to
+nothing.
+
+That chip is the whole of it for an ordinary guest. They are not told who
+organised the trip, which booking or which adult is providing the required adult
+cover, or the trip's join code — none of that reaches their screen, and it is not
+hidden behind a tap or a tooltip either. It simply is not sent.
+
+**A hut leader signed in with their PIN, and a full admin,** see two extra lines
+on those cards:
+
+- **who organises the trip** — the organiser's name, and which card is theirs.
+  Nothing else about that account: no email, no phone number.
+- **where the adult cover comes from** — how many of the booking's nights have a
+  qualifying adult, and which kind of booking supplies them (the booking itself,
+  another booking on the same account, or another booking in the same Group
+  Trip). Cover is decided night by night, so "2 of 3 nights covered" is a normal
+  and useful thing to read, and the uncovered nights are listed.
+
+Both lines appear on Group Trip cards only. A booking that is not part of a
+group carries neither.
+
+The cover line is deliberately cautious. It reports what the club's adult-cover
+rule last worked out, and where that answer cannot be trusted it says so instead
+of claiming cover:
+
+| What you see | What it means |
+| --- | --- |
+| *Adult cover: 2 of 3 nights covered* | The rule found a problem with this booking, and this is what it found. There is always at least one night it could not cover — a booking with no problem has nothing recorded at all, so you will never see "3 of 3" |
+| *Adult cover: needs re-checking — the last check is out of date* | The last answer may no longer be right — because a related booking changed, because the recorded answer is waiting to be worked out again, or because the cover rested on another booking in the trip and we cannot yet confirm that booking has not changed |
+| *Adult cover: last check could not be read* | The stored answer is not in a shape the kiosk can read — worth telling a Booking Officer |
+| *Adult cover: no issue recorded for this booking* | Nothing has been recorded against this booking. That is the normal state for most bookings, and it is why this line is quiet grey rather than a warning. It is **not** a guarantee of cover |
+
+Where a Booking Officer has already looked at a recorded problem, the card says
+so underneath — *waiting for a Booking Officer's decision*, *a Booking Officer
+has approved this*, or *a Booking Officer declined this*. Without that line an
+arrangement an officer has already approved looks exactly like one nobody has
+dealt with.
+
+Until the Group Trip re-checking work is finished, cover that comes from another
+booking in the same trip is reported as *needs re-checking* rather than as
+cover. That is deliberate: the kiosk cannot yet tell whether that other booking
+has changed, and it will not claim supervision it cannot stand behind.
+
+**The cover line only appears at all where your club's adult member hosting
+requirement is switched on.** If your club does not use that requirement, or has
+switched it off, no cover line is shown on any card — rather than a row of
+"not recorded" warnings about a rule you never turned on. The chip and the
+organiser line are unaffected, because they do not depend on it. Switching the
+requirement off does not delete what was recorded while it was on; the kiosk
+simply stops reporting it, because it is no longer the rule.
+
+A shared lodge wall device signed in as the kiosk account is treated as an
+ordinary viewer for all of this: it shows the chip and neither extra line,
+because anybody who walks past an unattended screen is that account.
+
+**Read that carefully, because it is about the account and not about the
+device.** The moment a hut leader signs in on that same wall tablet with their
+PIN, the screen is showing a hut leader's view — organiser name and cover line
+included — to whoever is standing in front of it, and it goes on doing so for as
+long as that PIN session lasts. So sign out, or lock the screen, when you walk
+away from it. How long a PIN session stays open, and how to end one deliberately,
+is described where that session is set up rather than repeated here — see #3228.
+
+The chip itself is not something you switch on. Any club that uses group
+bookings gets it, because it only says that these cards arrived together — it is
+not tied to the Group Trip adult cover setting, which is about who may supervise
+whom.
+
 ### Multi-lodge: bind and add kiosk accounts
 
 1. With more than one lodge, each account gains an **Operates lodge** selector.

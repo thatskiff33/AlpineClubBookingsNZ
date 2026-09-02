@@ -16,6 +16,7 @@ const club = (
   version: 1,
   hostScopeSameBooking: true,
   hostScopeSameBookingOwner: false,
+  hostScopeSameGroupTrip: false,
   ...overrides,
 });
 
@@ -31,6 +32,7 @@ const lodge = (
   version: 1,
   hostScopeSameBooking: null,
   hostScopeSameBookingOwner: null,
+  hostScopeSameGroupTrip: null,
   ...overrides,
 });
 
@@ -210,6 +212,47 @@ describe("adult-hosting policy incident reconciliation", () => {
           hostScopeSameBookingOwner: true,
         }),
       ],
+      candidates: [candidate("a", "lodge-a")],
+    });
+
+    await expect(
+      enqueueActiveHostingIncidentPolicyReconciliation(
+        { beforePolicies: before },
+        db,
+      ),
+    ).resolves.toBe(1);
+    expect(createMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("queues when a policy edit turns Group Trip cover on and nothing else", async () => {
+    // #3037. The twin of the same-owner case above. `incidentPolicyChanged` once
+    // compared only `mode`, `sameBooking` and `sameBookingOwner`, so this exact
+    // edit — the admin ticks Group Trip and saves — wrote the row, bumped the
+    // version and queued NOTHING: no incident opened under the new wider rule,
+    // none refreshed, none closed.
+    const before = [club()];
+    const { db, createMany } = dbDouble({
+      afterPolicies: [club({ version: 2, hostScopeSameGroupTrip: true })],
+      candidates: [candidate("a", "lodge-a")],
+    });
+
+    await expect(
+      enqueueActiveHostingIncidentPolicyReconciliation(
+        { beforePolicies: before },
+        db,
+      ),
+    ).resolves.toBe(1);
+    expect(createMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("queues when a policy edit turns Group Trip cover off and nothing else", async () => {
+    // The relaxation's mirror, and the more dangerous direction: a booking that
+    // was compliant ONLY through a sibling Group Trip booking is uncovered the
+    // moment the club unticks the box, and its incident can only open if this
+    // edit queues.
+    const before = [club({ hostScopeSameGroupTrip: true })];
+    const { db, createMany } = dbDouble({
+      afterPolicies: [club({ version: 2, hostScopeSameGroupTrip: false })],
       candidates: [candidate("a", "lodge-a")],
     });
 

@@ -47,12 +47,22 @@ const UNLOADED_SCOPE = "__unloaded__"
 /**
  * The checkbox wording, taken from the server's own
  * `ADULT_MEMBER_HOST_SCOPE_LABELS` / `..._DESCRIPTIONS` (#2576 §12). Repeated as
- * literals rather than imported because this is a client component and those live
- * beside the evaluator; the route tests assert the two agree.
+ * literals rather than imported because this is a client component and
+ * `policies/adult-member-hosting.ts` imports a Prisma VALUE, which cannot cross
+ * into the browser bundle.
+ *
+ * `adult-member-hosting-call-sites.test.ts` reads these two records off disk and
+ * asserts, scope by scope, that they are the evaluator's own words and that both
+ * records plus `HOST_SCOPE_ORDER` are total over `ADULT_MEMBER_HOST_SCOPES`.
+ * That guard was promised here long before it existed — this docblock used to
+ * say "the route tests assert the two agree", and no test did (#3037). A copy is
+ * the weaker of `INV-SSOT`'s two options and is used only because importing is
+ * genuinely blocked, so the policing has to be real.
  */
 const HOST_SCOPE_LABELS: Record<keyof AdultMemberHostScopeSetValue, string> = {
   sameBooking: "Eligible adult member on the same booking",
   sameBookingOwner: "Another booking on the same account",
+  sameGroupTrip: "Another booking in the same Group Trip",
 }
 
 const HOST_SCOPE_DESCRIPTIONS: Record<
@@ -63,9 +73,15 @@ const HOST_SCOPE_DESCRIPTIONS: Record<
     "Count a qualifying adult member who is staying on the booking itself for the nights they are there.",
   sameBookingOwner:
     "Allow a qualifying adult member on another confirmed booking owned by the same member account to provide coverage for the same lodge and nights.",
+  sameGroupTrip:
+    "Allow a qualifying adult member on another confirmed booking in the same Group Trip to provide coverage for the same lodge and nights, even when that booking belongs to a different member. Off unless you turn it on.",
 }
 
-const HOST_SCOPE_ORDER = ["sameBooking", "sameBookingOwner"] as const
+const HOST_SCOPE_ORDER = [
+  "sameBooking",
+  "sameBookingOwner",
+  "sameGroupTrip",
+] as const
 
 const SOURCE_LABELS: Record<string, string> = {
   LODGE: "set for this lodge",
@@ -96,17 +112,39 @@ interface HostingDraft {
  * force rather than from an arbitrary default the admin never chose — and so
  * ticking one extra box does not silently drop the club's other choices.
  */
+/**
+ * Fill in every scope the build knows about, whatever the server sent.
+ *
+ * A response from a previous colour omits `sameGroupTrip` (#3037), and an
+ * omitted checkbox is not the same thing as an unticked one once the value is
+ * sent BACK: the card's save is deliberately explicit — it sends `null` rather
+ * than omitting `hostScopes`, so the route never has to guess what silence meant
+ * — and a partial set would reintroduce exactly that guess one field lower down.
+ * Normalising on the way in means the card always sends a complete set.
+ */
+function normaliseScopeSet(
+  scopes: AdultMemberHostScopeSetValue,
+): AdultMemberHostScopeSetValue {
+  return {
+    sameBooking: scopes.sameBooking,
+    sameBookingOwner: scopes.sameBookingOwner,
+    sameGroupTrip: scopes.sameGroupTrip === true,
+  }
+}
+
 function customScopeStartingPoint(
   policy: AdultMemberHostingPolicy,
 ): AdultMemberHostScopeSetValue {
-  return policy.hostScopes ?? policy.effective.hostScopes
+  return normaliseScopeSet(policy.hostScopes ?? policy.effective.hostScopes)
 }
 
 function toDraft(policy: AdultMemberHostingPolicy): HostingDraft {
   return {
     mode: policy.mode,
     capacityMode: policy.capacityMode ?? "",
-    hostScopes: policy.hostScopes,
+    hostScopes: policy.hostScopes
+      ? normaliseScopeSet(policy.hostScopes)
+      : null,
     version: policy.configured ? policy.version : null,
     configured: policy.configured,
   }
@@ -119,7 +157,12 @@ function scopeSetsEqual(
   if (a === null || b === null) return a === b
   return (
     a.sameBooking === b.sameBooking &&
-    a.sameBookingOwner === b.sameBookingOwner
+    a.sameBookingOwner === b.sameBookingOwner &&
+    // #3037. Normalised through `=== true` on both sides, so an absent field from
+    // a previous colour's response and an explicit `false` compare equal — they
+    // mean the same setting, and treating them as different would mark a freshly
+    // loaded card dirty and offer a save that changes nothing.
+    (a.sameGroupTrip === true) === (b.sameGroupTrip === true)
   )
 }
 
@@ -188,6 +231,7 @@ export function AdultMemberHostingSection() {
     useState<AdultMemberHostScopeSetValue>({
       sameBooking: true,
       sameBookingOwner: false,
+      sameGroupTrip: false,
     })
   const scopeRef = useRef(scopeLodgeId)
   const modeHint = useFieldHint()
@@ -287,7 +331,8 @@ export function AdultMemberHostingSection() {
       draft.capacityMode !== "" &&
       (draft.hostScopes === null ||
         draft.hostScopes.sameBooking ||
-        draft.hostScopes.sameBookingOwner),
+        draft.hostScopes.sameBookingOwner ||
+        draft.hostScopes.sameGroupTrip === true),
   })
 
   const { draft, editing, saving, dirty, valid, error, success } = section

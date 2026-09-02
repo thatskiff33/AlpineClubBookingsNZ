@@ -136,12 +136,48 @@ export async function enqueueHostingCoverageReevaluation(
  * do with any of it. Correctness survived (failures are swallowed and the cron
  * re-runs the items) but the route could hang. Filtered, the inline drain does
  * exactly the work its own transaction created.
+ *
+ * `sourceBookingIds` IS THE CROSS-ACCOUNT HALF OF THE SAME NARROWING (#3039), and
+ * it is keyed on the BOOKING rather than the owner for a reason worth stating.
+ *
+ * A Group Trip fan-out writes items for OTHER accounts: one per sibling booking,
+ * each naming that sibling's own owner as `memberId`. A claim narrowed to the single
+ * owner whose booking was written therefore skips every one of them, and a stranded
+ * sibling waits up to three hours for the cron instead of being escalated with the
+ * change. That much needed fixing.
+ *
+ * WIDENING TO THE SIBLING OWNERS WOULD HAVE FIXED IT AND BROKEN SOMETHING ELSE. An
+ * owner filter carries no lower bound and this claim is oldest-first, so a sibling
+ * owner sitting on a dozen unrelated stale items would have filled every inline slot
+ * with THEIR backlog — each fanning out to as many as the dependent ceiling and each
+ * able to send a synchronous loss-of-cover email — inside the actor's request, while
+ * the actor's own fresh items were not drained inline at all. That is exactly the
+ * hazard the single-owner filter existed to prevent, reintroduced across accounts.
+ *
+ * Keying on `sourceBookingId` closes it exactly: the caller passes the trip's
+ * dependent BOOKING ids, so the only cross-account items this claim can reach are
+ * items about bookings in the very trip the committed change touched. An older
+ * unprocessed item about one of those bookings is not somebody else's backlog — it
+ * is the same booking's overdue re-evaluation, and settling it is the same
+ * idempotent existential re-read. The list is bounded by the trip
+ * (`GROUP_TRIP_COVERAGE_DEPENDENT_LIMIT`).
+ *
+ * The two arms are OR-ed: the written booking's own owner, or a dependent booking of
+ * its trip. Under `AND` rather than beside the lease disjunction above, because two
+ * `OR` keys at one level keep only the last — which would silently drop the lease
+ * filter and let a live worker's in-flight item be re-claimed.
  */
 export async function claimHostingCoverageReevaluations(
   options: {
     limit?: number;
     maxAttempts?: number;
     memberId?: string | null;
+    /**
+     * The trip's dependent bookings, whose items belong to OTHER accounts. Unioned
+     * with `memberId` rather than replacing it: the claim is "this owner's items, or
+     * an item about one of these bookings".
+     */
+    sourceBookingIds?: readonly string[] | null;
     lodgeId?: string | null;
     /** Rows already attempted by this drain; a released failure must not be reclaimed inline. */
     excludeIds?: readonly string[];
@@ -159,7 +195,26 @@ export async function claimHostingCoverageReevaluations(
       ...(options.excludeIds && options.excludeIds.length > 0
         ? { id: { notIn: [...options.excludeIds] } }
         : {}),
-      ...(options.memberId ? { memberId: options.memberId } : {}),
+      ...(options.sourceBookingIds && options.sourceBookingIds.length > 0
+        ? {
+            AND: [
+              {
+                OR: [
+                  ...(options.memberId
+                    ? [{ memberId: options.memberId }]
+                    : []),
+                  {
+                    sourceBookingId: {
+                      in: [...new Set(options.sourceBookingIds)],
+                    },
+                  },
+                ],
+              },
+            ],
+          }
+        : options.memberId
+          ? { memberId: options.memberId }
+          : {}),
       ...(options.lodgeId ? { lodgeId: options.lodgeId } : {}),
     },
     orderBy: { enqueuedAt: "asc" },

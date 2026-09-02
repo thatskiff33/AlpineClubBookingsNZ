@@ -135,7 +135,8 @@ are the literal `1`.
 | **Global booking / money** | `1` (literal) | inline `tx.$executeRaw` | 2 | Booking-status + money side effects that must exclude across the whole booking regardless of lodge: cancel, capture/settle, hold-release, group-settlement reaper/settle/refund/organiser-cancel, refunds, credit restore; plus bed-allocation inventory/placement/move/range/auto/approval/removal writers that must serialize with lifecycle prune. Member merge is the one bed-allocation writer that deliberately does NOT take this key — see "Merge joins the bed-allocation cohort" (#2595). |
 | **Per-lodge capacity** | `hashtextextended(<lodgeId>, 0)` | `acquireLodgeCapacityLock(tx, lodgeId)` (`lodge-capacity-lock.ts`, re-exported by `capacity.ts`) | 1 | Capacity claims/checks and bed-allocation mutations for one lodge; booking admission versus lodge deactivation; hut-leader overlap and optional bed-hold writes; roster eligibility snapshots; and direct or config-transfer chore-template changes, which serialize active-template validation for that lodge. |
 | **Per-member night footprint** | `hashtext("booking-member-night"), hashtext(<memberId>)` | `lockBookingMemberNights(tx, guests)` (`booking-member-night-conflicts.ts`) | cross-lodge | Serialises the person-night guard ACROSS lodges (see below). |
-| **Per-owner hosting coverage** | `hashtext("hosting-coverage-owner"), hashtext(<Booking.memberId>)` | `lockHostingCoverageOwner` / `lockHostingCoverageOwners` (`adult-member-hosting-coverage-lock.ts`) | cross-booking | Serialises `SAME_BOOKING_OWNER` coverage (#2576 §9): one booking's compliance depends on another booking of the SAME owner, so the key remains authoritative even though #2600 made allocation-participating confirmation and cancellation compose global → lodge. Taken LAST among the application lock families a caller composes. Roster-aware modification paths take global → lodge → roster-date → any applicable member keys → sorted queue-participant `Member FOR KEY SHARE NOWAIT` rows → coverage-owner; queued incident reconciliation takes hosting policy-set → sorted claimed member-lifecycle keys → sorted claimed `Member FOR KEY SHARE` rows → coverage-owner. Paths that do not use roster or member keys omit those tiers. Ordinary producers try sorted owner keys before re-entering the blocking helper, while merge takes its sorted owner keys only after its one sorted participant `FOR UPDATE` statement. The key is taken only when the lodge actually has the scope enabled. |
+| **Per-trip hosting coverage** | `hashtext("hosting-coverage-group"), hashtext(<GroupBooking.id>)` | `lockHostingCoverageGroup` / `lockHostingCoverageGroups`, with `tryLockHostingCoverageGroup(s)` tried first (`adult-member-hosting-coverage-lock.ts`) | cross-account | Serialises `SAME_GROUP_TRIP` coverage (#3039, epic #2943). The owner key cannot do this job: it is `Booking.memberId`, the DEPENDENT's own account, while every Group Trip source belongs to somebody else — so two writers changing two bookings in one trip hold two DIFFERENT owner keys and are not serialised at all. Not the lodge key either: one lodge holds many unrelated trips. Taken immediately BEFORE the sorted owner keys, because the trip's membership is what decides which owners the reconciliation fan-out will name. Several trips are taken in sorted order, and EVERY acquisition is tried with `pg_try_advisory_xact_lock` before the blocking form — one transaction can discover two trip keys (a booking in one trip whose same-owner dependent sits in another), so sorting within a call cannot order keys discovered in two, and a conflict rolls the whole outer transaction back with the stable `HOSTING_COVERAGE_PARTICIPANT_RETRY` 409 rather than waiting inside a booking transaction. Taken only where the lodge has `SAME_GROUP_TRIP` enabled AND the booking is in a trip. |
+| **Per-owner hosting coverage** | `hashtext("hosting-coverage-owner"), hashtext(<Booking.memberId>)` | `lockHostingCoverageOwner` / `lockHostingCoverageOwners` (`adult-member-hosting-coverage-lock.ts`) | cross-booking | Serialises `SAME_BOOKING_OWNER` coverage (#2576 §9): one booking's compliance depends on another booking of the SAME owner, so the key remains authoritative even though #2600 made allocation-participating confirmation and cancellation compose global → lodge. Taken LAST among the application lock families a caller composes, EXCEPT that since #3039 the per-TRIP hosting coverage key above sits immediately before it — so it is the second of the last two rather than the last. Roster-aware modification paths take global → lodge → roster-date → any applicable member keys → sorted queue-participant `Member FOR KEY SHARE NOWAIT` rows → coverage-group → coverage-owner; queued incident reconciliation takes hosting policy-set → sorted claimed member-lifecycle keys → sorted claimed `Member FOR KEY SHARE` rows → coverage-group (only where the reconciled booking is in a Group Trip at a lodge with `SAME_GROUP_TRIP` on; the evaluator takes it fail-fast before it reads a sibling as cover) → coverage-owner. Paths that do not use roster or member keys omit those tiers. Ordinary producers try sorted owner keys before re-entering the blocking helper, while merge takes its sorted owner keys only after its one sorted participant `FOR UPDATE` statement. The key is taken only when the lodge actually has the scope enabled. |
 | **Per-member credit ledger** | `hashtext("member-credit-ledger"), hashtext(<memberId>)` | `lockMemberCreditLedger(memberId, tx)` (`member-credit.ts`) | — | A member's credit-ledger balance operations (spend, negative-adjustment validation, orphan-restore repair, the Xero inbound applied-credit repair, and the F20 pre-payment-reduction applied-credit clamp `clampAppliedCreditToBookingPrice`, taken inside the modification transaction only when the booking carries applied credit, and the #2265 stored-election consumption `consumeStoredCreditElection`, taken inside the `create-payment-intent` pay transaction and the Internet Banking switch transaction only when the booking carries an outstanding election). |
 | **Member lifecycle** | `hashtext("member-lifecycle:<memberId>")` | inline (`member-lifecycle-actions.ts`, `app/api/admin/deletion-requests/[id]/route.ts`, `nomination.ts` approval mapping, `admin-family-group-requests-service.ts`, `member-merge.ts`, `adult-member-hosting-coverage-drain.ts`) | — | Archive/delete of one member; account-deletion approval (the #1756 partner-share prefix — global cohort `lock(1)` + every affected lodge, sorted — and only then member lifecycle → shared standing-subject `Member FOR UPDATE NOWAIT` → exact queue-participant `Member FOR KEY SHARE NOWAIT` rows → coverage-owner before deactivation and guest unlink); overwrite of one member by application-approval mapping (E10, #1936); linking/removing one member into/from a family group on admin request review; **member merge** (dual-lock on master + loser, E11 #1937, see below — merge takes the merge-only partner-share prefix, so every affected lodge key is held BEFORE this tier while the global cohort key is deliberately NOT taken at all, and the two `member-partner-link:` keys immediately AFTER it, #2595); and the queue-drain handshake that prevents a claimed hosting item from using identities while merge re-points them. |
 | **Membership application** | `hashtext(<application key>)` | `membershipApplicationLockKey` (`nomination.ts`) | — | State transitions of one membership application. |
@@ -321,11 +322,37 @@ member-night and member-credit tiers only after their roster-date set is held,
 then call the same-owner hosting reconciler last. Guest removal likewise reaches
 the hosting reconciler only after its sorted roster-date locks, guest deletion
 and any applicable member-credit write. Thus their concrete composition is
-global → lodge → roster-date → applicable member keys → coverage-owner. This is
+global → lodge → roster-date → applicable member keys → coverage-group →
+coverage-owner. This is
 not a claim that every booking writer takes every tier: create, confirm, cancel,
 membership fan-out and drain paths omit the roster and/or member keys they do
 not use. The invariant is that a path which does compose them never takes a
-roster-date or member key after the coverage-owner key.
+roster-date or member key after the coverage-group or coverage-owner key.
+
+**The coverage-group tier is different, and it is NOT ordered by that rule
+(#3039).** An earlier draft of this paragraph said the tree "never takes the
+coverage-group key after the coverage-owner key". That is untrue at a live site:
+`inspectSameOwnerDependents` runs inside `settleSameOwnerDependentCoverage`, which
+already holds the coverage-owner key, and it evaluates a same-owner dependent that
+may sit in a DIFFERENT Group Trip — reaching a coverage-group key with an owner key
+held. The claim was unenforceable as well as false, which is why it has been
+replaced by the property that actually holds and actually makes the tier safe:
+
+> **No transaction ever WAITS on a coverage-group key.** Every acquisition is a
+> `pg_try_advisory_xact_lock` that returns immediately, and only after it succeeds
+> is the blocking form called — where it is a re-entrant no-op, because an advisory
+> xact lock cannot be released before commit. A lost try rolls the whole outer
+> transaction back with the stable `HOSTING_COVERAGE_PARTICIPANT_RETRY` 409.
+
+A tier nobody waits on cannot appear in a wait-for cycle, whatever order it is
+taken in relative to any other family. That is why there is no deadlock. The
+documented `coverage-group -> coverage-owner` order still matters, for a different
+reason: the trip's membership is what decides WHICH owner keys the fan-out will
+need, so taking the owner keys first would take them against a sibling set that
+could still move. Order buys a stable fan-out; the fail-fast try buys
+deadlock-freedom. `acquireHostingCoverageGroupKey` is the single function that
+composes the two calls, and
+`adult-member-hosting-coverage-lock.test.ts` censuses that no other site may.
 
 Cleanup's own out-of-range predicate is the operational span, not the night
 range: it removes rows strictly before check-in or strictly after check-out, and
@@ -520,10 +547,15 @@ of same-owner cover:
   which collects the affected booking owners and takes their keys together through
   `lockHostingCoverageOwners`, in sorted owner-id order.
 
-**Acquisition order: the coverage-owner key is always last among the application
-locks a caller actually takes.** It follows `pg_advisory_xact_lock(1)`,
-`acquireLodgeCapacityLock`, roster-date locks, `lockBookingMemberNights` and
-member-credit locks wherever those families participate. The roster-aware batch,
+**Acquisition order: the coverage-owner key is last among the application locks a
+caller actually takes, and since #3039 it is the second of the last two.** It
+follows `pg_advisory_xact_lock(1)`, `acquireLodgeCapacityLock`, roster-date locks,
+`lockBookingMemberNights` and member-credit locks wherever those families
+participate, and it follows the per-TRIP `hosting-coverage-group` key — see "Group
+Trip coverage takes a per-trip key, above the owner key" below. This paragraph
+said "always last" until #3039 added that key; the sentence was rewritten rather
+than left standing, because an ordering claim that no longer describes the tree is
+what makes the next lane compose a new key on the wrong side of it. The roster-aware batch,
 date and admin-shift services therefore use global → lodge → sorted roster dates →
 member-night (when the party contains linked members) → member-credit (when the edit
 writes credit) → coverage-owner. Guest removal has no member-night guard and omits
@@ -635,6 +667,35 @@ the runtime-issued exact proof throws the fixed
 transaction back. Interactive callers tell the operator to reload before retrying
 and to check payment status where applicable; automated callers retain their
 existing retry/redelivery boundary.
+
+**Since #3039 that fence spans OTHER ACCOUNTS, which widens one counterpart
+interaction and it must be declared rather than discovered.** Under
+`SAME_GROUP_TRIP` the fence's planned source set is the changed booking plus every
+dependent booking in its Group Trip, so the one `FOR KEY SHARE NOWAIT` statement now
+locks up to `GROUP_TRIP_COVERAGE_DEPENDENT_LIMIT` + 1 `Member` rows belonging to
+people the actor has no relationship with.
+
+`FOR KEY SHARE` is self-compatible, so this does NOT serialise two trip members
+editing their own bookings concurrently — that was the reason for choosing it and it
+still holds. It DOES conflict with `FOR UPDATE`, and the standing-subject barrier
+`lockHostingCoverageMemberLifecycleTarget` takes `FOR UPDATE NOWAIT`. So the widened
+set creates a two-way interaction that did not exist before:
+
+- an admin **deactivating, archiving, deleting or merging any member of a Group
+  Trip** can be refused with the stable retry 409 by an unrelated member's booking
+  edit in that trip;
+- and the reverse: a member's booking edit in a trip can be refused while such an
+  admin action holds one of the trip's `Member` rows.
+
+Both are transient, both are the stable `HOSTING_COVERAGE_PARTICIPANT_RETRY` 409
+telling the caller to reload, and neither can half-write: the whole outer transaction
+rolls back. It is the accepted cost of the epic's requirement that the queue name
+every affected sibling owner in bounded form — an item naming a `Member` row this
+transaction never locked is exactly what
+`assertHostingCoverageQueueParticipantsLocked` exists to refuse. The bound matters
+here as well as in the queue: it is what stops a trip-sized fence becoming a
+lodge-sized one. A club that has not enabled `SAME_GROUP_TRIP`, and any booking in no
+trip, locks exactly the rows it locked before.
 
 That proof is a capability, not a plain value: `acquireHostingCoverageQueueParticipantProof`
 registers each object it returns in a module-private `WeakSet`, and
@@ -822,6 +883,122 @@ one-active-incident-per-booking rule uses the partial unique index
 `HostingCoverageIncident_active_booking_unique` (a concurrent second opener loses
 on the index and folds into the winner). No new key is added to the lock-ordering
 table.
+
+#### Group Trip coverage takes a per-trip key, above the owner key (#3039)
+
+`SAME_GROUP_TRIP` (#3038) makes one booking's compliance a function of a booking on
+ANOTHER ACCOUNT, so it gets its own advisory-lock family: `hosting-coverage-group`,
+keyed on `GroupBooking.id`.
+
+**The owner key cannot do this job, and #3038 said so at the point where it declined
+to invent half of one.** The owner key is `Booking.memberId` — the DEPENDENT's own
+account. Every Group Trip source belongs to somebody else, so two transactions
+changing two different bookings in one trip hold two DIFFERENT owner keys and are
+not serialised by them at all; at READ COMMITTED each can then observe a state the
+other has already invalidated, one removing the last qualifying adult while the
+other reads that adult as cover, with the outcome decided by commit order. That is
+the non-determinism #2576 §9 forbids, one account further out.
+
+**Not the lodge key, and not the organiser.** One lodge holds many unrelated trips,
+so a per-lodge key would serialise all of them against each other for a rule that
+concerns one party. The organiser's member id is a person, who may hold other
+bookings in no trip. `joinCode` is a credential and never an identity. The
+contention domain is the trip, so the key is the trip (`INV-LOCK-001`).
+
+**Order: group BEFORE owner — and the order is about a STABLE FAN-OUT, not about
+deadlocks.** The composed order at a booking writer is global →
+lodge → roster-date → member-night → member-credit → queue-participant
+`Member FOR KEY SHARE NOWAIT` rows → **coverage-group** → coverage-owner, with every
+path omitting the tiers it does not use. Group first because the trip's membership is
+what decides WHICH owners the reconciliation fan-out will name: the owner set is not
+known until the trip key is held, so taking the owner keys first would take them
+against a sibling set that could still move. This is why the owner key's "always
+last" is now "the second of the last two" everywhere it was stated.
+
+**That order is not a global invariant, and must not be written as one.** One live
+site takes the group key with the owner key already held:
+`settleSameOwnerDependentCoverage` holds coverage-owner and calls
+`inspectSameOwnerDependents`, which evaluates a same-owner dependent booking that may
+sit in a DIFFERENT trip, and that evaluation takes that trip's key. It is harmless
+— see the fail-fast paragraph below, which is the whole reason — but a document
+claiming the reverse order never happens would be claiming something the tree
+contradicts, and the next lane composing a new key would compose it against a rule
+that is not real.
+
+**Every acquisition is tried fail-fast before it is taken blocking**, and here that
+is the primary form rather than hardening. A trip key is shared with other accounts,
+so a blocking wait is one member's booking transaction stalled by another member's
+edit — and, worse, one transaction can legitimately need two trip keys (a booking in
+one trip whose same-owner dependent sits in ANOTHER trip), which sorting within a
+single call cannot order. `pg_try_advisory_xact_lock` turns that hold-and-wait edge
+into an immediate loss: the caller rolls its WHOLE outer transaction back and answers
+the stable `HOSTING_COVERAGE_PARTICIPANT_RETRY` 409. The blocking call that follows
+is re-entrant on the same session, so it costs a round trip and no wait; it is
+retained because it is the acquisition the lock inventory recognises, and because on
+a client with `$executeRaw` but no `$queryRaw` it is the call that actually takes the
+key. Several trips within one call are taken in sorted order, the same discipline the
+owner and member-night keys use.
+
+**This, and not the acquisition order, is the deadlock argument for the coverage-group
+tier, and it is a STRONGER guarantee than an order could give.** The try never waits;
+an advisory xact lock cannot be released before commit; so the blocking call after a
+successful try is a re-entrant no-op. Therefore **no transaction ever waits on a trip
+key at all**, and the coverage-group tier cannot appear in a wait-for cycle regardless
+of where it is taken relative to any other family. Delete the try from
+`acquireHostingCoverageGroupKey` and a real deadlock exists: T1 (a drain item for
+owner M1, trip G) takes group(G) and blocks on owner(M1), while T2 (a writer on M1's
+booking in trip H) takes group(H), wins owner(M1), and reaches group(G) through
+`inspectSameOwnerDependents`. PostgreSQL kills one with `40P01`, which is neither
+`55P03` nor the retry error — so it surfaces as a raw 500 rather than the stable
+409. `acquireHostingCoverageGroupKey` is the ONE function permitted to acquire this
+key, precisely so that `if` exists in exactly one place; the census in
+`adult-member-hosting-coverage-lock.test.ts` fails on any other acquisition site and
+on the deletion of that `if`.
+
+**Plan, then lock, then re-verify, then retry.** The trip's dependent bookings are
+planned BEFORE the participant fence, because the fence has to lock every owner the
+queue will name and those owners are exactly what the plan discovers — so the plan is
+necessarily unlocked, and therefore a hypothesis. `lockAndVerifyGroupTripCoverageDependents`
+takes the trip key and re-reads the same bounded, ordered set; a changed fingerprint
+(booking id, owner or lodge) is the stable retry rather than a guess. This is the
+same protocol `enqueueHostingCoverageReevaluationForMember` uses for its own
+candidate set, deliberately, because a second protocol for one hazard is a second
+thing to get right. Rereading WITHOUT the shared key would not do: that is the case
+#3039 was opened to close.
+
+**Where the key is taken.** `evaluateBookingAdultMemberHosting`, before it reads a
+sibling booking as cover, and only when the lodge has `SAME_GROUP_TRIP` enabled and
+the booking resolves to a trip; and the two enqueue seams,
+`reconcileAdultMemberHostingReviewWithSiblings` and
+`enqueueOwnHostingCoverageReevaluation`, which take it before the owner key and hold
+it across the fan-out. Both spellings are minted only in
+`adult-member-hosting-coverage-lock.ts`, registered in
+`SCOPED_ADVISORY_LOCK_INVENTORY` (`INV-LOCK-003`), and taken by no other module. A
+club that has not enabled the scope never takes the key, and neither does an ordinary
+booking at a club that has: a booking in no Group Trip has no key to take.
+
+**Compatibility with #3038's write-skew argument.** That child established that the
+eleven writers which can add or remove group cover all already hold
+`pg_advisory_xact_lock(1)` AND the per-lodge key, and that a trip is confined to one
+lodge, so the two-member skew cannot occur today. The trip key orders the fan-out
+#3039 introduces; it does not plug a hole #3038 opened. **A lane that later narrows
+one of those writers off the global key onto a scoped key must take the trip key
+first**, or it re-opens the skew that serialisation is currently preventing.
+
+**Group cover is same-lodge by construction, which is why the mode gate needs no
+group widening.** Every group read composes `groupTripMembershipWhere` INSIDE the
+shared coverage envelope, whose first clause is `lodgeId: booking.lodgeId`. So a
+Group Trip sibling that can supply or receive cover is always at this lodge, under
+this lodge's policy, and the changed booking's own resolved mode speaks for the whole
+trip. A #738 split sibling is different — `hostingSiblingWhere` carries no lodge
+clause — which is why #3209 teaches the same gate to consider a related booking's
+lodge. The two are independent: #3209's widening is correct, and a group clause
+beside it would be dead code no group read could exercise.
+
+**The fan-out itself, and what the actor is told**, are `INV-HOST-046` rather than a
+locking rule, and are stated there: one bounded item per dependent booking naming
+that booking as its own source, cause `SYSTEM_CHANGE`, no refusal of any kind, and no
+sibling identity in the actor's answer.
 
 #### Which client reads the subscription-lockout mode (#2543)
 

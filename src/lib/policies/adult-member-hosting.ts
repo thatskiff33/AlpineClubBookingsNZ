@@ -66,13 +66,20 @@ export type EffectiveAdultMemberHostingMode =
  * a set, so the shape matches the independent checkboxes the owner asked for and
  * matches the columns one-for-one.
  *
- * TWO FIELDS: the lodge-wide scope was removed (#2575) and the nominated-host
- * scope was replaced by same-owner coverage (#2576), both before either shipped.
- * See `ADULT_MEMBER_HOST_SCOPES`.
+ * THREE FIELDS since #3037: the lodge-wide scope was removed (#2575) and the
+ * nominated-host scope was replaced by same-owner coverage (#2576), both before
+ * either shipped, and `sameGroupTrip` was added by epic #2943. See
+ * `ADULT_MEMBER_HOST_SCOPES`.
  */
 export interface AdultMemberHostScopeSet {
   sameBooking: boolean;
   sameBookingOwner: boolean;
+  /**
+   * Optional Group Trip cover (#3037). OFF in the built-in default, OFF when the
+   * column is NULL on a row that decided the rest of the set, and only ever on
+   * because a club ticked the box.
+   */
+  sameGroupTrip: boolean;
 }
 
 /**
@@ -89,6 +96,7 @@ export const DEFAULT_ADULT_MEMBER_HOST_SCOPES: AdultMemberHostScopeSet =
   Object.freeze({
     sameBooking: true,
     sameBookingOwner: false,
+    sameGroupTrip: false,
   });
 
 /** Where the resolved value for one DIMENSION came from (#2569 §16 display). */
@@ -113,6 +121,17 @@ export interface AdultMemberHostingPolicyLike {
    */
   hostScopeSameBooking?: boolean | null;
   hostScopeSameBookingOwner?: boolean | null;
+  /**
+   * The Group Trip scope (#3037). NOT part of the all-or-none pair above, and
+   * that asymmetry is deliberate — see the schema comment and the migration: a
+   * three-way CHECK would refuse a draining old colour's policy INSERT, which
+   * names only the two columns it knows. So NULL here on a row that DID decide
+   * the pair means OFF, not "inherit", and that is what keeps the upgrade a
+   * no-op. Optional as well as nullable for the same reason its siblings are: a
+   * narrowed select or a pre-#3037 test double resolves the built-in default
+   * rather than failing to compile.
+   */
+  hostScopeSameGroupTrip?: boolean | null;
 }
 
 /**
@@ -273,14 +292,25 @@ export class EmptyAdultMemberHostScopeSetError extends Error {
   }
 }
 
-/** Whether a row decided the second dimension at all. */
+/**
+ * Whether a row decided the second dimension at all.
+ *
+ * THE PAIR DECIDES, AND `hostScopeSameGroupTrip` DELIBERATELY DOES NOT (#3037).
+ * The database CHECK holds the two #2569 columns to all-null or all-set, so
+ * either one being non-null means the row decided. Testing both and requiring
+ * agreement would turn a constraint violation into a silent fall-through to the
+ * club default; testing one would trust the constraint more than it is worth
+ * here. Requiring BOTH to be set is the safe reading: a half-written row inherits
+ * rather than asserting a scope set nobody chose.
+ *
+ * The Group Trip column is excluded because it can legitimately be NULL on a row
+ * that HAS decided — every row a draining previous colour writes during a
+ * blue/green window, and every row that predates the #3037 migration. Including
+ * it here would make all of those rows suddenly inherit a scope set they had
+ * overridden, which is the exact behaviour change the default-OFF promise
+ * forbids. On a decided row NULL means OFF, and `rowHostScopes` reads it that way.
+ */
 function rowHasHostScopes(row: AdultMemberHostingPolicyLike): boolean {
-  // The database CHECK holds the columns to all-null or all-set, so either one
-  // being non-null means the row decided. Testing both and requiring agreement
-  // would turn a constraint violation into a silent fall-through to the club
-  // default; testing one would trust the constraint more than it is worth here.
-  // Requiring ALL to be set is the safe reading: a half-written row inherits
-  // rather than asserting a scope set nobody chose.
   return (
     typeof row.hostScopeSameBooking === "boolean" &&
     typeof row.hostScopeSameBookingOwner === "boolean"
@@ -293,6 +323,9 @@ function rowHostScopes(
   return {
     sameBooking: row.hostScopeSameBooking === true,
     sameBookingOwner: row.hostScopeSameBookingOwner === true,
+    // `=== true` rather than a truthiness test, so NULL and undefined both read
+    // as OFF (#3037). See `rowHasHostScopes` for why NULL is reachable here.
+    sameGroupTrip: row.hostScopeSameGroupTrip === true,
   };
 }
 
@@ -309,7 +342,38 @@ export function enabledHostScopeList(
 }
 
 export function hostScopeSetIsEmpty(scopes: AdultMemberHostScopeSet): boolean {
-  return !scopes.sameBooking && !scopes.sameBookingOwner;
+  return (
+    !scopes.sameBooking && !scopes.sameBookingOwner && !scopes.sameGroupTrip
+  );
+}
+
+/**
+ * Whether the enabled set is EXACTLY the built-in one — `SAME_BOOKING` and
+ * nothing else.
+ *
+ * ONE PREDICATE, TWO PIECES OF PROSE (`INV-SSOT-002`). The member-facing
+ * refusal sentence and the public policy page each have a narrow
+ * "on the same booking" wording that is only honest when no wider scope is on,
+ * and each used to spell the condition out for itself. #3037 found the second
+ * copy still branching on the #2569 pair alone: a club running `SAME_BOOKING`
+ * plus `SAME_GROUP_TRIP` PUBLISHED a narrower rule than it applied. Spelling the
+ * denial out a third time would only wait for the next scope, so both sites now
+ * ask here.
+ *
+ * DERIVED FROM `ADULT_MEMBER_HOST_SCOPES`, not from a hand-written list of
+ * denials. `enabledHostScopeList` filters the canonical constant through
+ * `hostScopeEnabled`, whose switch is exhaustive over the scope union — so a
+ * fourth scope is a typecheck error there, and until it is enabled this
+ * predicate already reports `false` for it. An explicit `!scopes.someNewScope`
+ * chain looks like it would make the same edit visible and does not: adding a
+ * field to `AdultMemberHostScopeSet` type-checks clean at every site that simply
+ * omits it, which is exactly how the public copy was missed.
+ */
+export function hostScopesAreSameBookingOnly(
+  scopes: AdultMemberHostScopeSet,
+): boolean {
+  const enabled = enabledHostScopeList(scopes);
+  return enabled.length === 1 && enabled[0] === "SAME_BOOKING";
 }
 
 /** Whether a resolved consequence actually evaluates the rule. */
@@ -526,6 +590,17 @@ function describeHostScopes(scopes: AdultMemberHostScopeSet): string {
         "on your account",
     );
   }
+  if (scopes.sameGroupTrip) {
+    // NAMES THE RULE, NEVER THE SOURCE (#3037, epic #2943). Unlike the same-owner
+    // clause above, the other booking here may belong to SOMEBODY ELSE, so this
+    // sentence says what the club counts and stops: it identifies no booking, no
+    // organiser and no member. Which booking or adult actually supplied cover is
+    // privileged information the epic keeps to the officer/hut-leader tier.
+    parts.push(
+      "an adult member staying at the same lodge that night on another booking " +
+        "in the same Group Trip",
+    );
+  }
   if (parts.length === 0) return "an adult member";
   if (parts.length === 1) return parts[0];
   return `${parts.slice(0, -1).join(", ")} or ${parts[parts.length - 1]}`;
@@ -559,8 +634,11 @@ export function formatAdultMemberHostingMessage(
 
   if (
     consequence === "ADMIN_REVIEW_REQUIRED" &&
-    scopes.sameBooking &&
-    !scopes.sameBookingOwner
+    // The narrow sentence is only true while `SAME_BOOKING` is the whole rule
+    // (#3037). Asked through the shared predicate rather than denied scope by
+    // scope here, because the public policy page needs the same question
+    // answered the same way and the hand-written copy of it went stale.
+    hostScopesAreSameBookingOnly(scopes)
   ) {
     return (
       "This club asks that an adult member stays on the same booking as any " +
@@ -776,6 +854,8 @@ export function hostScopeEnabled(
       return scopes.sameBooking;
     case "SAME_BOOKING_OWNER":
       return scopes.sameBookingOwner;
+    case "SAME_GROUP_TRIP":
+      return scopes.sameGroupTrip;
   }
 }
 
@@ -836,6 +916,7 @@ export const ADULT_MEMBER_HOST_SCOPE_LABELS: Record<
 > = {
   SAME_BOOKING: "Eligible adult member on the same booking",
   SAME_BOOKING_OWNER: "Another booking on the same account",
+  SAME_GROUP_TRIP: "Another booking in the same Group Trip",
 };
 
 /**
@@ -854,6 +935,10 @@ export const ADULT_MEMBER_HOST_SCOPE_DESCRIPTIONS: Record<
   SAME_BOOKING_OWNER:
     "Allow a qualifying adult member on another confirmed booking owned by the " +
     "same member account to provide coverage for the same lodge and nights.",
+  SAME_GROUP_TRIP:
+    "Allow a qualifying adult member on another confirmed booking in the same " +
+    "Group Trip to provide coverage for the same lodge and nights, even when " +
+    "that booking belongs to a different member. Off unless you turn it on.",
 };
 
 /**

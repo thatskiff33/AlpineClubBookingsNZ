@@ -371,6 +371,12 @@ Prefix `INV-HOST`.
 | `INV-HOST-040` | Dependent reads have their own ordered, logged ceiling, separate from the source read's |
 | `INV-HOST-041` | A system cancellation re-checks supervision through a seam that can never refuse it |
 | `INV-HOST-042` | The mode gate that skips the coverage fan-out reads the related bookings' lodges, not only the changed booking's |
+| `INV-HOST-043` | Group identity is the organiser/join columns, never parentBookingId or container status |
+| `INV-HOST-044` | Group Trip hosts are host-only, deduplicated against narrower scopes, and read under their own ceiling |
+| `INV-HOST-045` | Kiosk cover-source display is derived from the canonical snapshot; stale, failed or unrecorded evaluation never renders as cover |
+| `INV-HOST-046` | Stranding another account's Group Trip booking allows the change, escalates the sibling, and discloses nothing |
+| `INV-HOST-047` | Third optional scope, appended never reordered, off until a club enables it |
+| `INV-HOST-048` | Outside the all-or-none CHECK; NULL on a decided row means off |
 
 ### Booking requests
 
@@ -584,6 +590,7 @@ Prefix `INV-PRIV`.
 | `INV-PRIV-013` | `admin` writers move only to close a split; fifteen keeps, `lockers` settled (#2777) |
 | `INV-PRIV-014` | Diagnostics page filters and typed search reach the provider, ungated by either tick |
 | `INV-PRIV-015` | A hut leader's PIN session is bounded by ten minutes of human inactivity, with a twelve-hour ceiling and a Lock control |
+| `INV-PRIV-016` | Kiosk Group Trip disclosure: ordinary tier sees a per-response linkage ordinal only; organiser and cover source are two separate capabilities; no tier gets `joinCode` |
 
 ## Membership Lifecycle
 

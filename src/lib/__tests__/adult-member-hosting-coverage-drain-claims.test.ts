@@ -15,6 +15,8 @@ const mocks = vi.hoisted(() => ({
   loadPolicy: vi.fn(),
   sourceBookingIsTerminal: vi.fn(),
   loadDependents: vi.fn(),
+  loadSplitSiblings: vi.fn(),
+  loadGroupDependents: vi.fn(),
   reconcile: vi.fn(),
   claimNotification: vi.fn(),
   loadNotificationDelivery: vi.fn(),
@@ -54,6 +56,12 @@ vi.mock("@/lib/adult-member-hosting-review", () => ({
   isHostingCoverageSourceBookingTerminal: mocks.sourceBookingIsTerminal,
   loadAdultMemberHostingPolicy: mocks.loadPolicy,
   loadSameOwnerCoverageDependentIds: mocks.loadDependents,
+  // #3039. Both are reached from this module now, so both belong in the factory: a
+  // vi.mock factory that is short of one export the widened graph reads throws at
+  // import and kills the whole file before a test runs.
+  loadGroupTripCoverageDependentBookingIds: mocks.loadGroupDependents,
+  GROUP_TRIP_COVERAGE_SOURCE_SELECT: { id: true, memberId: true, lodgeId: true },
+  loadHostingCoverageSplitSiblingIds: mocks.loadSplitSiblings,
   reconcileSameOwnerCoverageIncident: mocks.reconcile,
 }));
 
@@ -67,7 +75,10 @@ vi.mock("@/lib/logger", () => ({
 
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 
-import { drainHostingCoverageReevaluations } from "@/lib/adult-member-hosting-coverage-drain";
+import {
+  drainHostingCoverageReevaluations,
+  settleHostingCoverageAfterCommit,
+} from "@/lib/adult-member-hosting-coverage-drain";
 
 const CLAIMED_ITEM = {
   id: "queue-1",
@@ -102,6 +113,17 @@ function makeDb() {
   } as any;
 }
 
+/**
+ * The same double plus the one read `settleHostingCoverageAfterCommit` does before
+ * it claims: resolving the written booking to its owner and lodge.
+ */
+function makeCommitDb(booking: { memberId: string; lodgeId: string } | null) {
+  return {
+    ...makeDb(),
+    booking: { findUnique: vi.fn(async () => booking) },
+  } as any;
+}
+
 describe("hosting coverage drain claim fences (#2596)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -120,6 +142,8 @@ describe("hosting coverage drain claim fences (#2596)", () => {
     });
     mocks.sourceBookingIsTerminal.mockResolvedValue(false);
     mocks.loadDependents.mockResolvedValue([]);
+    mocks.loadSplitSiblings.mockResolvedValue([]);
+    mocks.loadGroupDependents.mockResolvedValue([]);
     mocks.resolveIncidents.mockResolvedValue(0);
     mocks.loadNotificationDelivery.mockResolvedValue({ ...DELIVERY });
     mocks.completeNotification.mockResolvedValue(true);
@@ -379,6 +403,149 @@ describe("hosting coverage drain claim fences (#2596)", () => {
       expect.anything(),
     );
     expect(mocks.resolveIncidents).not.toHaveBeenCalled();
+  });
+
+  it("claims the Group Trip sibling owners' items inline, not only the writer's (#3039)", async () => {
+    // TWO DEFECTS, ONE PREDICATE, and both are behavioural rather than structural
+    // because a source-text assertion cannot see either.
+    //
+    // THE FIRST: `settleHostingCoverageAfterCommit` resolved the written booking to ONE
+    // owner and narrowed the claim to it, so every item the Group Trip fan-out had just
+    // written for ANOTHER account was skipped and waited up to three hours for the
+    // cron. Removing the widening leaves the file's own `const` line in place, so a
+    // test that merely greps for a name passes — which is exactly what happened before
+    // this test existed.
+    //
+    // THE SECOND WAS INTRODUCED BY THE OBVIOUS FIX. Widening to the sibling OWNERS put
+    // no lower bound on the claim, and the claim is oldest-first, so a sibling owner
+    // sitting on a dozen unrelated stale items filled every inline slot with THEIR
+    // backlog — each fanning out again and each able to send a synchronous email —
+    // inside the actor's request, while the actor's own fresh items went undrained.
+    // That is the hazard the single-owner filter existed to prevent, reintroduced
+    // across accounts. So the claim is keyed on the trip's dependent BOOKINGS: the only
+    // cross-account items it can reach are items about bookings in this very trip.
+    // The drain claims one row at a time, so the caller's bound shows up as HOW MANY
+    // claims it makes rather than as a `limit` on any single call. An endless supply
+    // of distinct items makes that observable.
+    let serial = 0;
+    mocks.claim.mockReset().mockImplementation(async () => {
+      serial += 1;
+      return [{ ...CLAIMED_ITEM, id: `queue-${serial}`, claimToken: `token-${serial}` }];
+    });
+    mocks.loadClaimed.mockImplementation(async (claim: { id: string; claimToken: string }) => ({
+      ...CLAIMED_ITEM,
+      ...claim,
+    }));
+    mocks.loadGroupDependents.mockResolvedValue(["joiner-a", "joiner-b"]);
+
+    const result = await settleHostingCoverageAfterCommit(
+      { bookingId: "booking-1" },
+      makeCommitDb({ memberId: "owner-1", lodgeId: "lodge-a" }),
+    );
+
+    expect(mocks.claim).toHaveBeenCalled();
+    const [options] = mocks.claim.mock.calls[0] as [Record<string, unknown>];
+    expect(
+      [...((options.sourceBookingIds as string[] | undefined) ?? [])].sort(),
+      "INV-HOST-046 (docs/invariants/adult-member-hosting.md): the inline drain must claim the trip's own items, not only the written booking's owner",
+    ).toEqual(["joiner-a", "joiner-b"]);
+    // The writer's own owner arm SURVIVES beside it — the claim is "this owner's items,
+    // or an item about one of these bookings" — so the booking's own item is still
+    // drained inline exactly as it was.
+    expect(options.memberId).toBe("owner-1");
+    expect(
+      options.memberIds,
+      "INV-HOST-046: an OWNER-keyed cross-account claim lets a sibling's unrelated backlog starve the items this transaction just wrote",
+    ).toBeUndefined();
+    expect(options.lodgeId).toBe("lodge-a");
+    // The larger inline bound, because this commit legitimately created more than one
+    // item. A trip larger than this leaves its tail to the cron.
+    expect(result.claimed).toBe(10);
+  });
+
+  it("leaves the single-owner claim exactly as it was when no trip is involved", async () => {
+    // The ordinary case at every club, including one that HAS enabled the scope for a
+    // booking in no trip: one owner, one lodge, the original small bound. This is the
+    // half that says the widening is not a behaviour change for anybody else.
+    let serial = 0;
+    mocks.claim.mockReset().mockImplementation(async () => {
+      serial += 1;
+      return [{ ...CLAIMED_ITEM, id: `queue-${serial}`, claimToken: `token-${serial}` }];
+    });
+    mocks.loadClaimed.mockImplementation(async (claim: { id: string; claimToken: string }) => ({
+      ...CLAIMED_ITEM,
+      ...claim,
+    }));
+    mocks.loadGroupDependents.mockResolvedValue([]);
+
+    const result = await settleHostingCoverageAfterCommit(
+      { bookingId: "booking-1" },
+      makeCommitDb({ memberId: "owner-1", lodgeId: "lodge-a" }),
+    );
+
+    const [options] = mocks.claim.mock.calls[0] as [Record<string, unknown>];
+    expect(options.sourceBookingIds).toBeUndefined();
+    expect(options.memberIds).toBeUndefined();
+    expect(options.memberId).toBe("owner-1");
+    expect(result.claimed).toBe(5);
+  });
+
+  it("reconciles the source's #738 split half too, on the scope-off branch (#3039)", async () => {
+    // INV-HOST-043's obligation to #3039, and the only place the drain can honour
+    // it. A split child has NEITHER canonical Group Trip relation, so the group
+    // dependent read matches its PARENT and not the child — and the child is the
+    // half that carries the non-member guests, the rows the rule exists to judge.
+    // Without this expansion the fan-out re-evaluates the one half with nothing to
+    // judge and leaves the stranded half untouched.
+    //
+    // Scope-off is where the gap lives: with `SAME_BOOKING_OWNER` on, the
+    // same-owner dependent predicate (owner + lodge + overlapping nights) already
+    // matches a split half by construction, so nothing is owed there.
+    const item = { ...CLAIMED_ITEM, sourceBookingId: "source-parent" };
+    mocks.claim.mockReset();
+    mocks.claim.mockResolvedValueOnce([item]).mockResolvedValue([]);
+    mocks.loadClaimed.mockResolvedValue(item);
+    mocks.loadPolicy.mockResolvedValue({
+      hostScopes: { sameBookingOwner: false, sameGroupTrip: true },
+    });
+    mocks.sourceBookingIsTerminal.mockResolvedValue(false);
+    mocks.loadSplitSiblings.mockResolvedValue(["source-split-child"]);
+    mocks.reconcile.mockResolvedValue({ action: "none" });
+
+    const result = await drainHostingCoverageReevaluations({}, makeDb());
+
+    expect(result).toMatchObject({ claimed: 1, processed: 1 });
+    expect(mocks.loadDependents).not.toHaveBeenCalled();
+    expect(mocks.loadSplitSiblings).toHaveBeenCalledWith(
+      ["source-parent"],
+      expect.anything(),
+    );
+    expect(mocks.reconcile.mock.calls.map(([input]) => input.bookingId)).toEqual([
+      "source-parent",
+      "source-split-child",
+    ]);
+  });
+
+  it("does not expand split halves for a terminal scope-off source", async () => {
+    // A cancelled or missing source is not happening, so nobody can restore cover
+    // for it and neither half is a dependent. The expansion must stay on the
+    // non-terminal arm, or the drain would reconcile the split halves of a stay that
+    // has gone and then also resolve its incident as BOOKING_CANCELLED.
+    const item = { ...CLAIMED_ITEM, sourceBookingId: "source-gone" };
+    mocks.claim.mockReset();
+    mocks.claim.mockResolvedValueOnce([item]).mockResolvedValue([]);
+    mocks.loadClaimed.mockResolvedValue(item);
+    mocks.loadPolicy.mockResolvedValue({
+      hostScopes: { sameBookingOwner: false, sameGroupTrip: true },
+    });
+    mocks.sourceBookingIsTerminal.mockResolvedValue(true);
+    mocks.resolveIncidents.mockResolvedValue(1);
+
+    const result = await drainHostingCoverageReevaluations({}, makeDb());
+
+    expect(result).toMatchObject({ claimed: 1, processed: 1, incidentsResolved: 1 });
+    expect(mocks.loadSplitSiblings).not.toHaveBeenCalled();
+    expect(mocks.reconcile).not.toHaveBeenCalled();
   });
 
   it("locks the sorted claimed identities before refresh when the drain wins", async () => {

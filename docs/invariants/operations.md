@@ -125,6 +125,42 @@ rules first written here. #2765 extended it with the measured-audience half.
   cohort, not a general licence: a writer whose contention domain is genuinely
   scoped takes the narrow tier alone by default (`INV-LOCK-001`) and needs no
   decision at all.
+- **Among the adult-member-hosting coverage families, the per-TRIP key comes
+  before the per-OWNER key (#3039).** `hosting-coverage-group`, keyed on
+  `GroupBooking.id`, is acquired immediately above `hosting-coverage-owner`, so
+  the composed order at a booking writer is global → per-lodge → roster-date →
+  member-night → member-credit → queue-participant `Member` rows →
+  coverage-group → coverage-owner, with every path omitting the tiers it does not
+  use. Group first because the trip's membership is what decides WHICH owners the
+  reconciliation fan-out will name: the owner set is not known until the trip key
+  is held, so taking the owner keys first would take them against a sibling set
+  that could still move. The owner key was documented as "always last" before
+  this; it is now the second of the last two, and every statement of the old form
+  was rewritten rather than left standing, because an ordering claim that no
+  longer describes the tree is what makes the next lane compose a new key on the
+  wrong side. Both spellings of the trip key are minted only in
+  `adult-member-hosting-coverage-lock.ts`, and every acquisition tries it
+  fail-fast before taking it blocking — one transaction can legitimately discover
+  two trip keys (a booking in one trip whose same-owner dependent sits in
+  another), so sorting within a call cannot order keys discovered in two.
+
+  **THE ORDER IS ABOUT A STABLE FAN-OUT; THE FAIL-FAST TRY IS WHAT MAKES THE TIER
+  DEADLOCK-FREE, and the two must not be confused.** This rule does NOT say the
+  tree never takes the trip key after the owner key, because it does:
+  `settleSameOwnerDependentCoverage` holds the owner key and calls
+  `inspectSameOwnerDependents`, which evaluates a same-owner dependent booking
+  that may sit in a DIFFERENT trip and takes that trip's key. What holds instead
+  is stronger and enforceable: **no transaction ever WAITS on a coverage-group
+  key.** The try returns immediately, an advisory xact lock cannot be released
+  before commit, so the blocking call after a successful try is a re-entrant
+  no-op — and a tier nobody waits on cannot join a wait-for cycle whatever order
+  it is taken in. Every acquisition in the tree therefore goes through the single
+  `acquireHostingCoverageGroupKey` protocol function, and
+  `src/lib/__tests__/adult-member-hosting-coverage-lock.test.ts` fails both on a
+  second acquisition site and on the deletion of that function's try. Without the
+  try there is a real deadlock, and it does not surface as the stable 409:
+  PostgreSQL answers `40P01`, which is neither `55P03` nor the retry error, so a
+  member sees a raw 500.
 
 ## INV-LOCK-003
 

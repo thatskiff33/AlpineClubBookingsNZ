@@ -74,7 +74,27 @@ let WINDOW: { checkIn: string; checkOut: string };
 /** Booking ids to clear even if a step failed part-way. */
 const createdBookingIds: string[] = [];
 
-type HostScopes = { sameBooking: boolean; sameBookingOwner: boolean };
+/**
+ * What the route ALWAYS returns. Every scope is present on a read, so the
+ * `toEqual` assertions below stay closed-world — and that is deliberate: a
+ * third scope shipped in #3037 and this spec failed rather than quietly
+ * asserting two thirds of the answer. This mirror is hand-maintained, so
+ * closed-world equality is the only thing keeping it honest.
+ */
+type HostScopes = {
+  sameBooking: boolean;
+  sameBookingOwner: boolean;
+  sameGroupTrip: boolean;
+};
+
+/**
+ * What a WRITE may name. `sameGroupTrip` is optional on the route (#3037), and
+ * omitting it preserves whatever is stored rather than clearing it — so the
+ * writes below deliberately do not name it, which keeps that behaviour under
+ * test instead of papering over it with an explicit `false`.
+ */
+type HostScopeWrite = Partial<HostScopes> &
+  Pick<HostScopes, "sameBooking" | "sameBookingOwner">;
 
 /**
  * Every status the admin booking list can filter on (its own `VALID_STATUSES`).
@@ -102,7 +122,7 @@ const LISTABLE_STATUSES = [
  */
 async function setClubHostingPolicy(options: {
   mode: "DISABLED" | "ADMIN_REVIEW_REQUIRED" | "ENFORCED";
-  hostScopes: HostScopes | null;
+  hostScopes: HostScopeWrite | null;
 }): Promise<void> {
   const current = await admin.get(
     "/api/admin/booking-policies/adult-member-hosting",
@@ -420,6 +440,8 @@ test("the card resolves and states the two dimensions independently (#2569)", as
   expect(effective.hostScopes).toEqual({
     sameBooking: true,
     sameBookingOwner: false,
+    // #3037 defaults OFF and a write that does not name it must not turn it on.
+    sameGroupTrip: false,
   });
 
   // Move ONE dimension. The other must not follow it — that independence is the
@@ -434,6 +456,9 @@ test("the card resolves and states the two dimensions independently (#2569)", as
   expect(effective.hostScopes).toEqual({
     sameBooking: true,
     sameBookingOwner: true,
+    // Moving BOTH original dimensions must still leave the third where it was:
+    // the new scope is independent of them, not carried along by either.
+    sameGroupTrip: false,
   });
   expect(effective.modeSource).toBe("CLUB_WIDE");
   expect(effective.hostScopeSource).toBe("CLUB_WIDE");

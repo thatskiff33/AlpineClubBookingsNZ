@@ -90,15 +90,20 @@ clears the set; a blank or malformed file never does.
 `booking-policies/adult-member-hosting.csv` gained a fourth column,
 `hostScopes` (#2569). Leave the cell **blank** to inherit — a lodge following the
 club, or a club that has not chosen — or name the scopes that count, separated by
-`|`, for example `SAME_BOOKING` or `SAME_BOOKING|SAME_BOOKING_OWNER`. The two
-supported names are `SAME_BOOKING` (an adult member on the booking itself) and
+`|`, for example `SAME_BOOKING` or `SAME_BOOKING|SAME_BOOKING_OWNER`. The three
+supported names are `SAME_BOOKING` (an adult member on the booking itself),
 `SAME_BOOKING_OWNER` (an adult member on another confirmed booking owned by the same
-member account, at the same lodge on the same nights). An explicit set naming
+member account, at the same lodge on the same nights) and `SAME_GROUP_TRIP` (an
+adult member on another confirmed booking in the same Group Trip, at the same
+lodge on the same nights, which may belong to a different member). An explicit set naming
 nothing is refused, and so is any other name — including a bundle written against
 the withdrawn `ANY_MEMBER_AT_LODGE` or `NOMINATED_HOST` options, which are no longer
 part of the product. Blank
 round-trips as blank, so exporting and re-importing a club that has never touched
-the setting changes nothing. Bundles are accepted only at the exact format version
+the setting changes nothing — and so does an explicit set, including one saved
+before `SAME_GROUP_TRIP` existed. A club that chose its scopes under an earlier
+release exports the set it really means and re-imports as **unchanged** rather
+than as an edit nobody made. Bundles are accepted only at the exact format version
 that wrote them, so an older bundle is refused outright rather than importing this
 column as empty.
 

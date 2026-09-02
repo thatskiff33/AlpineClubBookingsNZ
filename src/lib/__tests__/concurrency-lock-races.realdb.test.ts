@@ -96,6 +96,16 @@ import "./lodge-admission-races.realdb.test";
 // RUN_CONCURRENCY_RACE_TESTS=1 and its fixtures are namespaced and cleaned
 // independently.
 import "./hut-leader-teacher-exclusion.realdb.test";
+// #3039 shares the same guarded database to prove the per-TRIP coverage key:
+// that it is mutually exclusive and occupies a keyspace disjoint from the
+// per-owner key, that a reconciliation acquires it BEFORE any owner key as
+// EXECUTED rather than as written, that it is held for the whole transaction so a
+// concurrent sibling writer is answered with the stable retry, and that the
+// sibling set is re-read under it so a joiner committed between the unlocked plan
+// and the key rolls the whole change back. Its describe stays skipped unless
+// RUN_CONCURRENCY_RACE_TESTS=1 and its `race-3039-` fixtures are cleaned
+// independently.
+import "./adult-member-hosting-group-trip-races.realdb.test";
 // #2374 (AID-5) deliberately is NOT imported here, unlike the two suites above.
 // `ai-diagnostics-select-only-role.realdb.test.ts` provisions and drops a cluster
 // ROLE and revokes `TEMPORARY ... FROM PUBLIC` on the shared throwaway database

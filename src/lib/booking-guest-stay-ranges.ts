@@ -493,6 +493,16 @@ export function getGuestDepartureMorningKeys(
     .sort();
 }
 
+/**
+ * WHY THE CHECK-OUT BUTTON READS THIS AND NOT `stayEnd` EQUALITY (#2628).
+ * The lodge guest-list route derived its flag as `isFinalDeparture` from
+ * `stayEnd`, because the depart endpoint resolved its guest that way and so
+ * could only ever succeed on the morning after the LAST booked night. That
+ * made the earlier departure of a sparse stay unrecordable: the badge said
+ * "Departing", the button was withheld, and the guest's first check-out never
+ * happened. The endpoint now accepts every departure morning by reading this
+ * predicate, so the route's flag reads the SAME predicate by name.
+ */
 /** Is `day` one of this guest's departure mornings (per segment)? */
 export function isGuestDepartureMorning(
   guest: GuestStayRange,
