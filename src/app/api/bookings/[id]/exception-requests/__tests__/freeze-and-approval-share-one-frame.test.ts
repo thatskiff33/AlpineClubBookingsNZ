@@ -135,6 +135,7 @@ import type {
 } from "@/lib/booking-exception-requests";
 import { POST } from "@/app/api/bookings/[id]/exception-requests/route";
 import { requireCalendarDate } from "@/lib/club-time";
+import type { BatchModificationPreTransaction } from "@/lib/booking-batch-modification-service";
 
 // #3123 (`INV-LOCK-004`) — the CLUB's day, resolved by the caller BEFORE it opens
 // its transaction and threaded in. Pinned to the frozen clock's club day, so
@@ -215,6 +216,15 @@ function snapshotOf(base: ProposalParty, proposed: ProposalParty) {
 function approvalHooks() {
   return buildPolicyExceptionApprovalHooks({
     todayAtClub: FIXTURE_CLUB_DAY,
+    // #3232 (`INV-LOCK-004`): resolved before the approval opens its transaction,
+    // exactly as the club day above is. This suite is about the frozen frame, not
+    // the Xero lock-date guard, so the facts say what a club with the module off
+    // really resolves to.
+    batchPreTransaction: {
+      memberGuestPolicy: { enabled: false, requiresConsent: false },
+      subscriptionLockoutMode: "off",
+      xeroLockDates: { kind: "not-applicable" },
+    } as unknown as BatchModificationPreTransaction,
     requestId: "bcr-1",
     actorMemberId: "officer-1",
     ipAddress: "0.0.0.0",

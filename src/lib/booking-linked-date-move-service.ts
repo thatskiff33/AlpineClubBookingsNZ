@@ -23,6 +23,8 @@ import {
 } from "@/lib/adult-member-hosting-same-owner";
 import {
   modifyBookingBatch,
+  prepareBookingBatchModification,
+  type BatchModificationPreTransaction,
   type BatchModificationResponse,
 } from "@/lib/booking-batch-modification-service";
 import {
@@ -88,12 +90,20 @@ import { prisma } from "@/lib/prisma";
  * capacity refusal comes from the real capacity engine on a real attempt, not from
  * a hand-rolled bed count, and the attempt costs nothing because it is discarded.
  *
- * The provider work is the one thing that cannot be inside the transaction, and it
- * is not: `modifyBookingBatch` in caller-transaction mode returns its Stripe
- * refund, additional PaymentIntent, emails and Xero settlement as a
- * `deferredPostCommit` thunk, and this module runs every booking's thunk after the
- * commit. A provider call inside a transaction holding the global money lock and a
- * lodge capacity key is the shape the locking guide forbids.
+ * Provider work cannot be inside the transaction, and there are TWO ways it could
+ * have been. AFTER the commit: `modifyBookingBatch` in caller-transaction mode
+ * returns its Stripe refund, additional PaymentIntent, emails and Xero settlement
+ * as a `deferredPostCommit` thunk, and this module runs every booking's thunk
+ * after the commit, each contained separately. BEFORE it: that service's own
+ * preamble reads the club's settings, its subscription-lockout mode and the Xero
+ * organisation's lock dates, and it sits above `withOptionalTransaction` — which
+ * READS as "before the transaction" and is false for a caller that supplies one,
+ * so on this path it ran INSIDE the transaction, twice, with a live HTTPS request
+ * among it. That is why `prepareLinkedMovePreTransaction` exists and why the
+ * service now REFUSES a caller transaction without it. An earlier version of this
+ * paragraph said the provider work "is not" inside the transaction and was half
+ * right, which is worse than saying nothing: the half it named was the half that
+ * had been dealt with.
  *
  * ## Locking (`INV-LOCK-001`, `INV-LOCK-002`, `INV-LOCK-003`)
  *
@@ -180,6 +190,40 @@ export async function loadLinkedMoveChargesBothChangeFees(): Promise<boolean> {
     select: { linkedMoveChargesBothChangeFees: true },
   });
   return defaults?.linkedMoveChargesBothChangeFees ?? true;
+}
+
+/**
+ * The settings, policy and provider reads BOTH bookings need, done ONCE and
+ * BEFORE the transaction opens (`INV-LOCK-004`, #3232).
+ *
+ * WHY IT CANNOT BE LEFT TO `modifyBookingBatch`. That service does this work
+ * itself when it owns its transaction, and the code sits above its
+ * `withOptionalTransaction` call — which reads as "before the transaction" and is
+ * false here: this module hands it a transaction, so its preamble would run INSIDE
+ * one holding `pg_advisory_xact_lock(1)` and the per-lodge capacity key. Twice per
+ * linked move. Among those reads is `getXeroLockDates`, which on a cold or expired
+ * cache is a live HTTPS request to Xero with a possible OAuth refresh, so the
+ * club's entire money and lifecycle path would serialise behind an outbound
+ * provider call — the one shape `docs/CONCURRENCY_AND_LOCKING.md` forbids outright,
+ * and the shape this module's own header claimed it had avoided.
+ *
+ * `"unknown"` BECAUSE THE SECOND BOOKING IS ONLY DISCOVERED UNDER THE LOCKS. Who
+ * the primary's move stranded is read after that move is written, so no position
+ * out here can name the dependent bookings or their target nights. The lock-date
+ * facts are therefore resolved unconditionally rather than short-circuited on "no
+ * check-in is retroactive": one settings read, one token read and at most one
+ * TTL-cached organisation read, on a path that is already pricing two bookings.
+ * The alternative — enumerating candidate dependents out here with a second
+ * uncommitted read — would buy a rare saving with a second definition of who the
+ * dependents are (`INV-SSOT-001`).
+ */
+async function prepareLinkedMovePreTransaction(
+  args: LinkedDateMoveArgs,
+): Promise<BatchModificationPreTransaction> {
+  return prepareBookingBatchModification({
+    candidateCheckIns: "unknown",
+    audience: args.actor.role === "ADMIN" ? "admin" : "member",
+  });
 }
 
 /**
@@ -286,6 +330,7 @@ async function runLinkedDateMove(
   mode: "quote" | "apply",
   answer: HostingCoverageLinkedMoveInput | null,
   bothChangeFeesCharged: boolean,
+  preTransaction: BatchModificationPreTransaction,
 ): Promise<{
   primary: BatchModificationResponse;
   deferred: Array<() => Promise<void>>;
@@ -323,6 +368,7 @@ async function runLinkedDateMove(
         : {}),
       tx,
       hostingReconcile: "CALLER",
+      preTransaction,
     });
 
     // WHO the primary's move has just stranded, read from the same code the
@@ -394,6 +440,12 @@ async function runLinkedDateMove(
           todayAtClub: args.todayAtClub,
           tx,
           hostingReconcile: "CALLER",
+          // THE SAME pre-transaction value, so this booking's settings, lockout
+          // mode and Xero lock dates are the ones resolved before the transaction
+          // opened — not a second set read from inside it. One value covers both
+          // bookings, which is what makes it usable for a booking this service
+          // only discovers under the locks.
+          preTransaction,
           // D2, AND IT HAS TO BE HERE RATHER THAN IN THE SENTENCE. The club's
           // setting decides whether the booking that was DRAGGED ALONG attracts
           // its own change fee; the booking the member chose to move always
@@ -602,8 +654,15 @@ export async function offerLinkedDateMove(
   args: LinkedDateMoveArgs,
 ): Promise<never> {
   const bothChangeFeesCharged = await loadLinkedMoveChargesBothChangeFees();
+  const preTransaction = await prepareLinkedMovePreTransaction(args);
   try {
-    await runLinkedDateMove(args, "quote", null, bothChangeFeesCharged);
+    await runLinkedDateMove(
+      args,
+      "quote",
+      null,
+      bothChangeFeesCharged,
+      preTransaction,
+    );
   } catch (error) {
     if (error instanceof LinkedMoveProbeComplete) {
       throw new SameOwnerCoverageLinkedMoveRequiredError(error.quote, {
@@ -631,6 +690,7 @@ export async function applyLinkedDateMove(
   args: LinkedDateMoveArgs & { linkedMove: HostingCoverageLinkedMoveInput },
 ): Promise<BatchModificationResponse> {
   const bothChangeFeesCharged = await loadLinkedMoveChargesBothChangeFees();
+  const preTransaction = await prepareLinkedMovePreTransaction(args);
   let outcome;
   try {
     outcome = await runLinkedDateMove(
@@ -638,6 +698,7 @@ export async function applyLinkedDateMove(
       "apply",
       args.linkedMove,
       bothChangeFeesCharged,
+      preTransaction,
     );
   } catch (error) {
     if (error instanceof LinkedMoveProbeComplete) {

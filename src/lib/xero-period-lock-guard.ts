@@ -298,17 +298,55 @@ export async function assertDateEditClearsXeroLockDate(
   requested: { checkIn?: string; checkOut?: string },
   options?: { audience?: XeroLockGuardAudience },
 ): Promise<void> {
+  // ONE EVALUATOR, and this is the wrapper that resolves the facts for it. The
+  // facts are the provider/settings half - the club zone, the module flag, the
+  // connection and the organisation lock dates - and they are resolved here,
+  // OUTSIDE any transaction, which is what this function has always contracted
+  // (#1729). A caller already inside a transaction resolves them BEFORE it opens
+  // and calls `assertDateEditClearsXeroLockDateFromFacts` instead; it must not
+  // reach this one. See `resolveXeroLockDateFacts`.
+  // THE CHEAP TEST FIRST, and it decides whether anything is read at all. An
+  // identity-only request, a settled payment, a booking with no issued Xero
+  // invoice or an unparseable date needs no lock-date decision, and must cost no
+  // settings read, no token read and certainly no Xero call - which is what #1729
+  // narrowed this guard to and what its own suite pins.
+  const checkIn = checkInNeedingLockDateCheck(booking, requested);
+  if (checkIn === null) return;
+  assertDateEditClearsXeroLockDateFromFacts(
+    booking,
+    requested,
+    await resolveXeroLockDateFacts([checkIn], { audience: options?.audience }),
+    options,
+  );
+}
+
+/**
+ * The check-in this edit's lock-date decision turns on, or `null` when there is no
+ * decision to make.
+ *
+ * ONE COPY OF THE PREDICATE, shared by the wrapper above (which uses it to avoid
+ * reading anything) and the pure decision below (which uses it to decide). Two
+ * copies would be two definitions of "does this edit queue a check-in-dated
+ * invoice write" (`INV-SSOT-001`), and the one that drifted would either read the
+ * lock dates on every identity fix or skip the guard on a retroactive one.
+ */
+function checkInNeedingLockDateCheck(
+  booking: XeroLockGuardDateEditBooking,
+  requested: { checkIn?: string; checkOut?: string },
+): Date | null {
   const requestedCheckIn = requested.checkIn
     ? parseDateOnly(requested.checkIn)
     : null;
   const requestedCheckOut = requested.checkOut
     ? parseDateOnly(requested.checkOut)
     : null;
+  // Any unparseable requested date field resolves silently - malformed input is
+  // the caller's own date validation's 400 to make, never a lock-date 409.
   if (
     (requestedCheckIn !== null && Number.isNaN(requestedCheckIn.getTime())) ||
     (requestedCheckOut !== null && Number.isNaN(requestedCheckOut.getTime()))
   ) {
-    return;
+    return null;
   }
   const datesChanged =
     (requestedCheckIn !== null &&
@@ -323,11 +361,125 @@ export async function assertDateEditClearsXeroLockDate(
     // outbox backstop covers that rare strand rather than blocking a typo fix.
     guestIdentityChanged: false,
   });
-  if (!wouldQueueCheckInDatedWrite) return;
+  if (!wouldQueueCheckInDatedWrite) return null;
+  // The check-in the booking would END UP with: a check-out-only edit still
+  // re-dates the invoice at the unchanged past check-in.
+  const checkIn = requestedCheckIn ?? booking.checkIn;
+  return Number.isNaN(checkIn.getTime()) ? null : checkIn;
+}
 
-  await assertCheckInClearsXeroLockDate(requestedCheckIn ?? booking.checkIn, {
-    audience: options?.audience,
-  });
+/**
+ * The lock-date facts, resolved OUTSIDE any transaction and passed in as a value
+ * (`INV-LOCK-004`, #3232).
+ *
+ * WHY THIS EXISTS. The guard's decision needs two things: the booking's own row,
+ * and the club's Xero state - the persisted timezone, the module flag, whether
+ * Xero is connected, and the organisation's lock dates, which on a cold cache is a
+ * real HTTPS round trip with a possible OAuth refresh. The second half must never
+ * happen inside a transaction holding the global money key and a lodge capacity
+ * key. `modifyBookingBatch` in caller-transaction mode is exactly such a position,
+ * and the linked move (#3232) composes TWO bookings there, one of which is only
+ * discovered under the locks - so "call the guard for each booking before the
+ * transaction" is not available to it. Splitting the facts from the decision is:
+ * the facts are ONE value that covers every booking, and the decision is then
+ * arithmetic on the row.
+ *
+ * `"unknown"` IS FOR EXACTLY THAT CALLER. Given candidate check-ins the resolver
+ * skips everything when none is in the past, which is the short-circuit the guard
+ * has always had and the reason an ordinary member edit costs no Xero work at all.
+ * A caller that cannot enumerate its bookings passes `"unknown"` and pays one
+ * settings read, one token read and at most one TTL-cached organisation read,
+ * before its transaction opens.
+ *
+ * FAILING CLOSED IS PRESERVED AND NOT WIDENED. A lock-date read that fails is
+ * CAPTURED here rather than thrown, and raised by the decision only where it
+ * actually needs the lock date - a past check-in on an invoiced, unsettled
+ * booking. Resolving eagerly and throwing eagerly would turn a Xero outage into a
+ * refused save on every future-dated edit, which is not what the guard does.
+ */
+export type XeroLockDateFacts =
+  | {
+      /**
+       * The guard cannot bite: no candidate check-in is in the past, the Xero
+       * module is off, or Xero is not connected.
+       */
+      kind: "not-applicable";
+    }
+  | {
+      kind: "resolved";
+      effectiveLockDate: Date | null;
+      clubTodayInstant: Date;
+    }
+  | {
+      kind: "unavailable";
+      error: XeroLockDateCheckFailedError;
+      clubTodayInstant: Date;
+    };
+
+export async function resolveXeroLockDateFacts(
+  candidateCheckIns: Date[] | "unknown",
+  options?: { audience?: XeroLockGuardAudience },
+): Promise<XeroLockDateFacts> {
+  const clubTodayInstant = dateOnlyInstantOf(
+    clubToday(await readClubTimeZoneOutsideRequest()),
+  );
+  if (
+    candidateCheckIns !== "unknown" &&
+    !candidateCheckIns.some(
+      (checkIn) => !Number.isNaN(checkIn.getTime()) && checkIn < clubTodayInstant,
+    )
+  ) {
+    return { kind: "not-applicable" };
+  }
+  if (
+    !(await loadEffectiveModuleFlags()).xeroIntegration ||
+    !(await isXeroConnected())
+  ) {
+    return { kind: "not-applicable" };
+  }
+  try {
+    return {
+      kind: "resolved",
+      effectiveLockDate: getEffectiveXeroLockDate(await getXeroLockDates()),
+      clubTodayInstant,
+    };
+  } catch (error) {
+    return {
+      kind: "unavailable",
+      error: classifyXeroLockDateCheckFailure(error, options?.audience),
+      clubTodayInstant,
+    };
+  }
+}
+
+/**
+ * The ordinary date-edit decision, as arithmetic over a booking row and
+ * pre-resolved facts (#1729's rule, #3232's shape).
+ *
+ * Synchronous and I/O-free, which is the whole point: this is what a caller
+ * already inside a transaction may run. Same three answers as before - silence, a
+ * `XeroPeriodLockedError`, or the captured read failure - and the read failure is
+ * raised only where the lock date is actually needed.
+ */
+export function assertDateEditClearsXeroLockDateFromFacts(
+  booking: XeroLockGuardDateEditBooking,
+  requested: { checkIn?: string; checkOut?: string },
+  facts: XeroLockDateFacts,
+  options?: { audience?: XeroLockGuardAudience },
+): void {
+  if (facts.kind === "not-applicable") return;
+  const checkIn = checkInNeedingLockDateCheck(booking, requested);
+  if (checkIn === null) return;
+  // Only PAST check-ins are guarded - the retroactive paths are the ones that can
+  // land documents in a closed period.
+  if (checkIn >= facts.clubTodayInstant) return;
+  if (facts.kind === "unavailable") throw facts.error;
+  if (facts.effectiveLockDate && checkIn <= facts.effectiveLockDate) {
+    throw new XeroPeriodLockedError(
+      formatDateOnly(facts.effectiveLockDate),
+      options?.audience,
+    );
+  }
 }
 
 /**

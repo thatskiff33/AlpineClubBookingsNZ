@@ -89,7 +89,9 @@ import {
 import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
 import {
   assertProposedCheckInClearsXeroLockDate,
-  assertProposedDateEditClearsXeroLockDate,
+  assertDateEditClearsXeroLockDateFromFacts,
+  resolveXeroLockDateFacts,
+  type XeroLockDateFacts,
 } from "@/lib/xero-period-lock-guard";
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
 import {
@@ -99,6 +101,7 @@ import {
 } from "@/lib/member-guest-add-policy";
 import type { MemberGuestAddActor } from "@/lib/member-guest-consent";
 import { resolveSubscriptionLockoutMode } from "@/lib/member-subscription-eligibility";
+import type { SubscriptionLockoutMode } from "@/lib/membership-lockout-settings";
 import {
   dateOnlyInstantOf,
   type CalendarDate,
@@ -107,7 +110,7 @@ import {
   lockRosterDateRangesAndDates,
   rosterOperationalDayRange,
 } from "@/lib/roster-lock";
-import { formatDateOnly } from "@/lib/date-only";
+import { formatDateOnly, parseDateOnly } from "@/lib/date-only";
 
 type ModifiedBooking = Booking & {
   guests: BookingGuest[];
@@ -330,6 +333,104 @@ function buildIdentityOnlyPricing(booking: LoadedBookingForModify): PricingResul
   };
 }
 
+/**
+ * Everything a batch modification must resolve BEFORE its transaction opens
+ * (#3232, `INV-LOCK-004`).
+ *
+ * Three reads, and each of them is here for a reason already written down
+ * somewhere else in the tree:
+ *
+ *  - the member-guest add policy, whose own module header says it must be read
+ *    before the caller opens its transaction;
+ *  - the club's subscription-lockout mode, which `INV-LOCK-004` names explicitly
+ *    as a reader to resolve first and pass in as a value, because it can refresh
+ *    the financial-year configuration from Xero;
+ *  - the Xero lock dates, which on a cold cache is a live HTTPS request with a
+ *    possible OAuth refresh.
+ *
+ * `modifyBookingBatch` does this itself when it owns its transaction, which is
+ * every route and on-behalf caller and is byte-identical to before. A caller that
+ * supplies `tx` MUST call this first: see the `preTransaction` field.
+ */
+export interface BatchModificationPreTransaction {
+  readonly memberGuestPolicy: Awaited<ReturnType<typeof loadMemberGuestAddPolicy>>;
+  readonly subscriptionLockoutMode: SubscriptionLockoutMode;
+  readonly xeroLockDates: XeroLockDateFacts;
+}
+
+/**
+ * Resolve the pre-transaction work for one or more batch modifications.
+ *
+ * ONE VALUE COVERS EVERY BOOKING THE CALLER WILL WRITE, which is what makes it
+ * usable by a caller whose second booking is only discovered under the locks — the
+ * linked move (#3232) reads who was stranded after the first booking has already
+ * moved, so it cannot name its bookings out here. `candidateCheckIns: "unknown"`
+ * says exactly that and costs one settings read, one token read and at most one
+ * TTL-cached Xero organisation read. A caller that CAN name its check-ins passes
+ * them and usually pays nothing at all, because only a retroactive check-in is
+ * guarded.
+ */
+export async function prepareBookingBatchModification(options: {
+  /** The check-ins the caller can enumerate, or `"unknown"` when it cannot. */
+  candidateCheckIns: Date[] | "unknown";
+  audience: "admin" | "member";
+  /**
+   * The CONSERVATIVE lock-date guard for an admin date override (#1697,
+   * re-affirmed #1718): every recalculate override is checked, even where the
+   * settlement would only write today-dated documents. It throws rather than
+   * returning a value, and it lives here so that this function is the ONE place in
+   * this module that reads the club's settings or reaches a provider — which is
+   * what `lock-bound-club-zone-outside-transaction.test.ts` can then hold.
+   */
+  adminOverride?: { bookingId: string; requestedCheckIn: string | undefined };
+}): Promise<BatchModificationPreTransaction> {
+  if (options.adminOverride) {
+    await assertProposedCheckInClearsXeroLockDate(
+      prisma,
+      options.adminOverride.bookingId,
+      options.adminOverride.requestedCheckIn,
+    );
+  }
+  const [memberGuestPolicy, subscriptionLockoutMode, xeroLockDates] =
+    await Promise.all([
+      loadMemberGuestAddPolicy(),
+      resolveSubscriptionLockoutMode(),
+      resolveXeroLockDateFacts(options.candidateCheckIns, {
+        audience: options.audience,
+      }),
+    ]);
+  return { memberGuestPolicy, subscriptionLockoutMode, xeroLockDates };
+}
+
+/**
+ * The check-ins THIS edit's lock-date decision could turn on, for a caller that
+ * owns its own transaction and can therefore name them (#3232).
+ *
+ * An edit with no date fields can never queue a check-in-dated invoice write, so
+ * it answers with an empty list and the facts resolve to `"not-applicable"` —
+ * which is exactly the early return the narrow guard has always taken, and the
+ * reason an identity-only fix costs no settings read, no token read and no Xero
+ * call. An edit that sends a check-in answers with it, so a future-dated move
+ * costs nothing either. Only a check-OUT-only edit falls through to `"unknown"`,
+ * because the check-in it would keep is not knowable from here.
+ */
+function candidateCheckInsForEdit(input: {
+  checkIn?: string;
+  checkOut?: string;
+}): Date[] | "unknown" {
+  if (!input.checkIn && !input.checkOut) return [];
+  if (input.checkIn) {
+    const requested = parseDateOnly(input.checkIn);
+    return Number.isNaN(requested.getTime()) ? [] : [requested];
+  }
+  // A check-OUT-only edit still re-dates the invoice at the unchanged check-in,
+  // and that date is not knowable here without a read this position should not
+  // take. `"unknown"` resolves the facts instead — one settings read, one token
+  // read and at most one TTL-cached organisation read — which is cheaper than
+  // reading the booking a second time and honest about what it does not know.
+  return "unknown";
+}
+
 export async function modifyBookingBatch({
   bookingId,
   actor,
@@ -342,6 +443,7 @@ export async function modifyBookingBatch({
   tx: callerTx,
   hostingReconcile,
   waiveChangeFee,
+  preTransaction,
 }: {
   bookingId: string;
   actor: { id: string; role: Role };
@@ -469,7 +571,51 @@ export async function modifyBookingBatch({
    * second fee told the member it was waived and charged it anyway.
    */
   waiveChangeFee?: boolean;
+  /**
+   * The work that has to happen BEFORE the transaction, done by the caller that
+   * owns the transaction (#3232, `INV-LOCK-004`).
+   *
+   * REQUIRED WHENEVER `tx` IS SUPPLIED, and that is the whole point of it. Three
+   * things above this line read the club's settings and module flags and — on a
+   * cold cache — the Xero organisation over HTTPS. They sit before
+   * `withOptionalTransaction`, which READS as "before the transaction" and is
+   * FALSE on the caller-supplied path: that helper runs its callback inside `tx`
+   * when a caller hands one in, so by the time control reaches this function the
+   * caller already holds `pg_advisory_xact_lock(1)` and the per-lodge capacity
+   * key. Each of those reads then takes a second pooled connection under both
+   * keys, and a live provider request serialises the club's entire money and
+   * lifecycle path behind an outbound HTTP call — the shape
+   * `docs/CONCURRENCY_AND_LOCKING.md` forbids outright.
+   *
+   * There is no position inside this function that is outside the transaction on
+   * every path, which is why the answers have to ARRIVE as values — exactly as
+   * `todayAtClub` does, and for exactly the same reason. Asking for `tx` without
+   * them throws rather than quietly doing provider work under two locks.
+   *
+   * Build it with `prepareBookingBatchModification`.
+   */
+  preTransaction?: BatchModificationPreTransaction;
 }): Promise<BatchModificationResponse> {
+  if (callerTx && !preTransaction) {
+    throw new Error(
+      "INV-LOCK-004: modifyBookingBatch in caller-transaction mode requires " +
+        "`preTransaction` — the member-guest policy, the subscription-lockout " +
+        "mode and the Xero lock dates must be resolved before the caller opens " +
+        "its transaction, never from inside it. Call " +
+        "prepareBookingBatchModification() first.",
+    );
+  }
+  if (input.adminOverride && callerTx) {
+    // The override path takes the CONSERVATIVE lock-date guard, which has no
+    // pre-resolved form because nothing composes it into a caller transaction.
+    // Refusing the combination is better than running that guard's Xero call
+    // under two locks, and better than skipping a guard the owner re-affirmed
+    // twice (#1697, #1718).
+    throw new Error(
+      "INV-LOCK-004: an admin date override cannot run inside a caller-supplied " +
+        "transaction — its Xero lock-date guard has no pre-resolved form.",
+    );
+  }
   if (hostingReconcile === "CALLER" && !callerTx) {
     throw new Error(
       "hostingReconcile: \"CALLER\" is only meaningful inside a caller-supplied " +
@@ -534,46 +680,34 @@ export async function modifyBookingBatch({
     // create (#1695). Deliberately conservative: it fires on every recalculate
     // override even when the settlement would only write today-dated documents
     // (decision on #1697, re-affirmed on #1718). Shift mode writes no Xero
-    // documents and is never guarded. Runs before the transaction: the Xero
-    // call must stay outside it, and the pre-read is only advisory (the outbox
-    // still fails safely if the lock dates change mid-flight).
-    await assertProposedCheckInClearsXeroLockDate(
-      prisma,
-      bookingId,
-      input.checkIn,
-    );
-  } else {
-    // Ordinary edits (#1729) get the NARROW guard instead, also before the
-    // transaction: it consults the lock dates only when this edit would
-    // actually queue the check-in-dated invoice update (issued Xero invoice +
-    // dates changing + payment not settled — the settlement classifier's own
-    // predicate), with member-appropriate error text for non-admin actors.
-    // Identity-only edits (guest name fixes, no date fields) never trigger
-    // it — the outbox backstop covers that rare strand instead of blocking a
-    // typo fix.
-    await assertProposedDateEditClearsXeroLockDate(
-      prisma,
-      bookingId,
-      { checkIn: input.checkIn, checkOut: input.checkOut },
-      {
-        audience: actor.role === "ADMIN" ? "admin" : "member",
-        actorMemberId: actor.id,
-      },
-    );
+    // documents and is never guarded. It runs inside
+    // `prepareBookingBatchModification` below, which is where every read on this
+    // path now lives (#3232) — outside the transaction, as it must be, and the
+    // pre-read is only advisory (the outbox still fails safely if the lock dates
+    // change mid-flight).
   }
 
-  // "+ Add Member Guest" (epic #2305, MG2 #2307). Read the module flag and the
-  // policy singleton HERE, before the transaction below takes the global money
-  // lock and the per-lodge capacity lock — see the ordering rule in
-  // `member-guest-add-policy.ts`. `prepareGuestPlan` takes the answer as a value,
-  // so there is no way for it to reach for the database itself.
-  const memberGuestPolicy = await loadMemberGuestAddPolicy();
-  // #2543 — the club's subscription-lockout mode, resolved here for exactly the
-  // same reason and passed the same way: as a value the in-transaction planner
-  // cannot reach for the database to obtain. `resolveSubscriptionLockoutMode` may
-  // refresh the financial-year cache from Xero, which must never happen inside the
-  // transaction below.
-  const subscriptionLockoutMode = await resolveSubscriptionLockoutMode();
+  // EVERYTHING THAT MUST HAPPEN BEFORE THE TRANSACTION, IN ONE PLACE (#3232,
+  // `INV-LOCK-004`). The member-guest policy (whose own module header demands
+  // this position), the subscription-lockout mode (which `INV-LOCK-004` names,
+  // and which can refresh the financial year from Xero) and the Xero lock dates
+  // (a live HTTPS request on a cold cache).
+  //
+  // FROM THE CALLER WHEN THERE IS ONE, because on that path "here" is INSIDE the
+  // caller's transaction — `withOptionalTransaction` runs its callback on `tx`,
+  // so a read above it is not outside anything. See `preTransaction`, which is
+  // required in that mode for exactly this reason.
+  const preparation =
+    preTransaction ??
+    (await prepareBookingBatchModification({
+      audience: actor.role === "ADMIN" ? "admin" : "member",
+      candidateCheckIns: candidateCheckInsForEdit(input),
+      ...(adminOverride
+        ? { adminOverride: { bookingId, requestedCheckIn: input.checkIn } }
+        : {}),
+    }));
+  const memberGuestPolicy = preparation.memberGuestPolicy;
+  const subscriptionLockoutMode = preparation.subscriptionLockoutMode;
   // #3123 — the caller's club day, encoded at UTC midnight so it shares a frame
   // with the stored `@db.Date` columns the edit policy compares against
   // (`INV-DATE-026`). The day itself is a REQUIRED parameter; its docblock says
@@ -644,6 +778,23 @@ export async function modifyBookingBatch({
       role: actor.role,
       actorId: actor.id,
     });
+    // #3232: the ordinary lock-date decision (#1729's narrow guard), made HERE
+    // rather than before the transaction. NOTHING IS READ — the facts arrived as a
+    // value, resolved above and, on the caller-transaction path, before that
+    // caller opened its transaction — so this is arithmetic over the POST-LOCK
+    // row, which is better evidence than the pre-transaction read it replaces and
+    // one query cheaper. The one skip mirrors that pre-read's exactly: a
+    // MEMBER-audience actor on a booking that is not theirs is not told about the
+    // club's Xero state (the eligibility check above has already refused them, so
+    // this is defence in depth rather than the decision).
+    if (!(actor.role !== "ADMIN" && booking.memberId !== actor.id)) {
+      assertDateEditClearsXeroLockDateFromFacts(
+        booking,
+        { checkIn: input.checkIn, checkOut: input.checkOut },
+        preparation.xeroLockDates,
+        { audience: actor.role === "ADMIN" ? "admin" : "member" },
+      );
+    }
     // Identity-only requests (guest name fixes, nothing structural) never
     // reprice (#1099), so they are allowed on quote-priced bookings: the
     // negotiated basis cannot be disturbed by an edit that skips the pricing

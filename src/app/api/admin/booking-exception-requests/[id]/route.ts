@@ -26,6 +26,7 @@ import { parseFrozenEvidence } from "@/lib/booking-exception-requests";
 import { parseDateOnly } from "@/lib/date-only";
 import { sendBookingPolicyExceptionRefusedEmail } from "@/lib/email";
 import { BookingModificationSettlementMethodRequiredError } from "@/lib/booking-modify-settlement-required";
+import { prepareBookingBatchModification } from "@/lib/booking-batch-modification-service";
 import {
   BookingGuestValidationError,
   computeMemberGuestBoundary,
@@ -523,6 +524,18 @@ export async function PATCH(
     // One day for the whole approval, which is also what stops a change fee and
     // a refund tier being priced on different days across club midnight.
     todayAtClub: (await clubTime()).today(),
+    // #3232, `INV-LOCK-004` — the same position and the same reason as the day
+    // above. `modifyBookingBatch` reads the member-guest policy, the
+    // subscription-lockout mode and the Xero organisation's lock dates before its
+    // transaction; on this path it is handed one, so the reads happen HERE.
+    // `"unknown"` because the check-in this approval will really apply is decided
+    // by the drift gate under the locks, so the lock-date facts have to cover a
+    // booking this position cannot name — one settings read, one token read and at
+    // most one cached organisation read, on an officer's approval.
+    batchPreTransaction: await prepareBookingBatchModification({
+      candidateCheckIns: "unknown",
+      audience: "admin",
+    }),
     ipAddress,
     adminNotes,
     internalNotes,

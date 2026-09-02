@@ -80,6 +80,7 @@ const h = vi.hoisted(() => ({
   getDefaultLodgeId: vi.fn(),
   actorOptionCalls: [] as unknown[],
   logError: vi.fn(),
+  prepareBatch: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -92,6 +93,7 @@ vi.mock("@/lib/prisma", () => ({
 
 vi.mock("@/lib/booking-batch-modification-service", () => ({
   modifyBookingBatch: h.modifyBookingBatch,
+  prepareBookingBatchModification: h.prepareBatch,
 }));
 
 vi.mock("@/lib/booking-date-modification-service", () => ({
@@ -339,6 +341,13 @@ beforeEach(() => {
     },
   );
   h.getDefaultLodgeId.mockResolvedValue("lodge-default");
+  h.prepareBatch.mockImplementation(async () => {
+    // Recorded, because WHEN it runs is the assertion: the club settings, the
+    // subscription-lockout mode and the Xero lock dates must be resolved before
+    // the transaction opens, never from inside it (`INV-LOCK-004`).
+    h.events.push("prepare:pre-transaction");
+    return { prepared: true };
+  });
   h.inspectStranding.mockResolvedValue([strandedRow()]);
   h.reconcileSiblings.mockImplementation(async (bookingId: string) => {
     h.events.push(`reconcile-siblings:${bookingId}`);
@@ -412,6 +421,13 @@ describe("the linked move is one transaction (#3232, INV-HOST-051)", () => {
 
     expect(result.booking.id).toBe(PRIMARY);
     expect(h.events).toEqual([
+      // FIRST, AND OUTSIDE THE TRANSACTION. The club settings, the
+      // subscription-lockout mode and the Xero organisation's lock dates are
+      // resolved here and passed to both bookings as a value. Left to
+      // `modifyBookingBatch` they would have run INSIDE this transaction, twice,
+      // under the global money key and the lodge capacity key — with a live HTTPS
+      // request to Xero among them (`INV-LOCK-004`).
+      "prepare:pre-transaction",
       "tx:begin",
       "raw:SELECT pg_advisory_xact_lock(1)",
       `lock:lodge:${LODGE}`,
@@ -932,6 +948,7 @@ describe("either both bookings move or neither does (#3232)", () => {
       await expect(offerLinkedDateMove(args())).rejects.toBe(error);
 
       expect(h.events).toEqual([
+        "prepare:pre-transaction",
         "tx:begin",
         "raw:SELECT pg_advisory_xact_lock(1)",
         `lock:lodge:${LODGE}`,
