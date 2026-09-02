@@ -402,6 +402,8 @@ describe("PATCH — approve", () => {
           reference: "BK-DEPENDENT",
           lodgeName: "Example Lodge",
           nights: ["2026-07-01", "2026-07-02"],
+          checkIn: "2026-07-01",
+          checkOut: "2026-07-03",
         },
       ]),
     );

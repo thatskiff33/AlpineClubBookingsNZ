@@ -937,13 +937,26 @@ describe("the same-owner refusal and the escalation seam (#2576 §6, §8, §9)",
     "instanceof SameOwnerCoverageWouldBreakError",
   );
 
+  /**
+   * The ONE non-route file allowed to catch the refusal, and what it must do with
+   * it (#3232, `INV-HOST-050`).
+   *
+   * It does not answer the refusal — it UPGRADES it. Where the stranding was caused
+   * by moving away from the affected booking, the member cannot fix that booking
+   * (the same rule refuses THAT edit from the other end), so a refusal there is a
+   * deadlock. This service prices the linked move and raises the offer instead. It
+   * is exempt from the structured-body assertion below because it returns no body
+   * at all, and it carries its own assertion instead.
+   */
+  const REFUSAL_UPGRADER = "src/lib/booking-linked-date-move-service.ts";
+
   it("catches the same-owner refusal on every member self-service surface", () => {
     // The five change classes §6 names that a member can reach: cancelling,
     // removing a guest, adding guests (which moves the night picture), a date
     // change and a batch edit. A path that raises it and does not catch it answers
     // a bare 409 with no list of the member's own affected bookings — which is the
     // whole content of the message.
-    expect(REFUSAL_CATCHERS).toEqual([
+    expect(REFUSAL_CATCHERS.filter((file) => file !== REFUSAL_UPGRADER)).toEqual([
       "src/app/api/bookings/[id]/cancel/route.ts",
       "src/app/api/bookings/[id]/confirm-draft/route.ts",
       "src/app/api/bookings/[id]/guests/[guestId]/route.ts",
@@ -951,13 +964,46 @@ describe("the same-owner refusal and the escalation seam (#2576 §6, §8, §9)",
       "src/app/api/bookings/[id]/modify-dates/route.ts",
       "src/app/api/bookings/[id]/modify/route.ts",
     ]);
+    // And the upgrader is really there, so removing it fails this test rather than
+    // quietly reverting the member to the deadlocking refusal.
+    expect(REFUSAL_CATCHERS, REFUSAL_UPGRADER).toContain(REFUSAL_UPGRADER);
+  });
+
+  it("upgrades the refusal to the linked-move offer where the member has nowhere to go", () => {
+    // `INV-HOST-050`. The upgrade is conditional on the engine's own flag, so a
+    // stranding the member CAN fix on the affected booking keeps today's refusal,
+    // and it re-raises rather than swallowing — a refusal turned into a success
+    // would strand the booking silently, which is the defect #3232 exists to fix.
+    const source = readRepoCode(REFUSAL_UPGRADER);
+    expect(source, REFUSAL_UPGRADER).toContain("error.linkedMoveWouldAnswer");
+    expect(source, REFUSAL_UPGRADER).toContain("await offerLinkedDateMove(");
+    expect(source, REFUSAL_UPGRADER).toContain("throw error;");
+  });
+
+  it("defers the hosting reconciliation from exactly one caller", () => {
+    // `INV-HOST-051`. `hostingReconcile: "CALLER"` moves the supervision check to
+    // the caller so a two-booking move is judged on the state that will really
+    // commit; a caller that asked for it and then did not run the check would have
+    // no supervision check at all. The service that owns the composition is the
+    // only file permitted to ask, so a new caller cannot opt out of the rule by
+    // copying a flag.
+    expect(sourceFilesNaming('hostingReconcile: "CALLER"')).toEqual([
+      "src/lib/booking-linked-date-move-service.ts",
+    ]);
+    // And it really discharges the obligation it took on, for every booking it
+    // wrote rather than only the first.
+    const source = readRepoCode(REFUSAL_UPGRADER);
+    expect(source).toContain("await primary.pendingHostingReconcile?.()");
+    expect(source).toContain("await entry.result.pendingHostingReconcile?.()");
   });
 
   it("answers with the structured body, above any generic ApiError branch", () => {
     // Same positional trap as its #2569 sibling: `SameOwnerCoverageWouldBreakError`
     // extends `ApiError`, so below a generic branch the member loses the booking
     // references, the lodge and the uncovered nights.
-    for (const file of REFUSAL_CATCHERS) {
+    for (const file of REFUSAL_CATCHERS.filter(
+      (candidate) => candidate !== REFUSAL_UPGRADER,
+    )) {
       const source = readRepoCode(file);
       expect(source, file).toContain("buildSameOwnerCoverageRefusalBody(");
       const shared = sharedApiErrorName(source);

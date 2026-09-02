@@ -523,8 +523,17 @@ const CENSUS_CEILING = {
    * row to move this number, which is why the warning above is written the way
    * it is. It sat at 218 against a base of 216 until `main` moved to 217
    * underneath it; the value below was then re-measured, not re-added.
+   *
+   * 219 -> 220 (#3232): `booking-linked-date-move-service.ts` is a new module and
+   * takes its own `date-only` import, using only the zone-free exports
+   * (`addDaysDateOnly`, `formatDateOnly`, `parseDateOnly`) to shift a lodge-night
+   * window by a whole number of days per `INV-DATE-001`. It resolves no timezone:
+   * the club's day arrives as the `todayAtClub` value its callers already resolve
+   * outside their transactions, which is `INV-LOCK-004`'s rule and not this
+   * counter's. Re-measured against the branch base rather than added to, per the
+   * warning above.
    */
-  dateOnlyImporters: 219,
+  dateOnlyImporters: 220,
   /**
    * `new Date(y, m, d)` — local midnight in the HOST's zone.
    *
