@@ -17,6 +17,7 @@ import {
   hostingCoverageLinkedMoveSchema,
   linkedMoveStateKey,
   linkedMoveTargetRange,
+  linkedMoveWouldRestoreCover,
   type LinkedMoveQuote,
 } from "@/lib/adult-member-hosting-linked-move";
 import { strandedCoverageStateKey } from "@/lib/adult-member-hosting-same-owner";
@@ -100,6 +101,25 @@ describe("where the second booking goes (#3232)", () => {
     ).toEqual({ checkIn: "2026-08-10", checkOut: "2026-08-13" });
   });
 
+  it("leaves it exactly where it is when only the CHECK-OUT moved", () => {
+    // The requested probe, and the limit it exposes. A stay of 10-15 August cut
+    // back to 10-12 has an arrival delta of zero, so this rule returns the
+    // dependent's own dates unchanged. That is the honest answer for this rule —
+    // following the DEPARTURE delta instead would drag a booking the member never
+    // asked to move onto nights they never chose — and it is exactly why the
+    // classification below refuses to promise the offer for such a change.
+    expect(
+      linkedMoveTargetRange(
+        {
+          previousCheckIn: new Date("2026-08-10T00:00:00.000Z"),
+          currentCheckIn: new Date("2026-08-10T00:00:00.000Z"),
+        },
+        { checkIn: "2026-08-13", checkOut: "2026-08-14" },
+      ),
+      "a tail shortening moves the dependent nowhere",
+    ).toEqual({ checkIn: "2026-08-13", checkOut: "2026-08-14" });
+  });
+
   it("moves it backwards when the primary moved backwards", () => {
     expect(
       linkedMoveTargetRange(
@@ -110,6 +130,106 @@ describe("where the second booking goes (#3232)", () => {
         { checkIn: "2026-08-20", checkOut: "2026-08-22" },
       ),
     ).toEqual({ checkIn: "2026-08-03", checkOut: "2026-08-05" });
+  });
+});
+
+describe("whether the offer can deliver at all (#3232, INV-HOST-050)", () => {
+  const dependent = { checkIn: "2026-08-13", checkOut: "2026-08-14" };
+
+  it("says no when the stay was shortened at the tail", () => {
+    // Ten to fifteen August, cut back to ten to twelve. The arrival did not move,
+    // so the shift is zero and the dependent's target is its own window: the write
+    // would be a no-op, the booking would still be uncovered, and the final
+    // supervision pass would throw the very refusal the offer replaces — after two
+    // full pricing runs inside a transaction that was always going to be discarded.
+    expect(
+      linkedMoveWouldRestoreCover(
+        {
+          vacatedRange: {
+            checkIn: new Date("2026-08-10T00:00:00.000Z"),
+            checkOut: new Date("2026-08-15T00:00:00.000Z"),
+          },
+          currentCheckIn: new Date("2026-08-10T00:00:00.000Z"),
+          currentCheckOut: new Date("2026-08-12T00:00:00.000Z"),
+        },
+        dependent,
+      ),
+    ).toBe(false);
+  });
+
+  it("says no when the arrival moved but not far enough to carry it inside", () => {
+    // Ten to fifteen becoming eleven to thirteen shifts a 13-14 dependent to
+    // 14-15, past the new check-out. Same outcome as above by a different route,
+    // which is why the test is the shifted window rather than "did the stay get
+    // shorter".
+    expect(
+      linkedMoveWouldRestoreCover(
+        {
+          vacatedRange: {
+            checkIn: new Date("2026-08-10T00:00:00.000Z"),
+            checkOut: new Date("2026-08-15T00:00:00.000Z"),
+          },
+          currentCheckIn: new Date("2026-08-11T00:00:00.000Z"),
+          currentCheckOut: new Date("2026-08-13T00:00:00.000Z"),
+        },
+        dependent,
+      ),
+    ).toBe(false);
+  });
+
+  it("says yes for the ordinary move, which is the arm's whole purpose", () => {
+    // The stay moves ten days later as a whole, so the dependent shifts with it and
+    // lands back inside it.
+    expect(
+      linkedMoveWouldRestoreCover(
+        {
+          vacatedRange: {
+            checkIn: new Date("2026-08-10T00:00:00.000Z"),
+            checkOut: new Date("2026-08-15T00:00:00.000Z"),
+          },
+          currentCheckIn: new Date("2026-08-20T00:00:00.000Z"),
+          currentCheckOut: new Date("2026-08-25T00:00:00.000Z"),
+        },
+        dependent,
+      ),
+    ).toBe(true);
+  });
+
+  it("says yes on a PARTIAL overlap, because cover need not come from this booking alone", () => {
+    // The shifted dependent's first night is inside the new stay and its second is
+    // not. Containment would withhold an offer the engine would accept, because
+    // another booking of the owner's can cover the remaining night — so the test is
+    // overlap, and the real supervision pass over the state that would commit is
+    // what decides.
+    expect(
+      linkedMoveWouldRestoreCover(
+        {
+          vacatedRange: {
+            checkIn: new Date("2026-08-10T00:00:00.000Z"),
+            checkOut: new Date("2026-08-15T00:00:00.000Z"),
+          },
+          currentCheckIn: new Date("2026-08-20T00:00:00.000Z"),
+          currentCheckOut: new Date("2026-08-24T00:00:00.000Z"),
+        },
+        { checkIn: "2026-08-13", checkOut: "2026-08-16" },
+      ),
+      "13-16 shifted by ten days is 23-26, which starts inside a stay ending on the 24th",
+    ).toBe(true);
+  });
+
+  it("says no when the change did not move the stay at all", () => {
+    // A guest change strands nobody a shift could rescue: there is no delta, so the
+    // dependent's target is its own window.
+    expect(
+      linkedMoveWouldRestoreCover(
+        {
+          vacatedRange: null,
+          currentCheckIn: new Date("2026-08-10T00:00:00.000Z"),
+          currentCheckOut: new Date("2026-08-15T00:00:00.000Z"),
+        },
+        dependent,
+      ),
+    ).toBe(false);
   });
 });
 

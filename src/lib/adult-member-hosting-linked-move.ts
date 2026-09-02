@@ -377,9 +377,19 @@ export interface LinkedMoveSettledBooking {
  * LENGTH — not "to the same nights", which the issue's own wording uses and which
  * is only well defined when the two stays happen to match. Two bookings of
  * different lengths have no "same nights"; shifting by the arrival delta preserves
- * exactly the relationship the dependent was relying on, so a booking that was
- * covered before the move is covered after it, and it also preserves the
- * dependent's stay length, its per-guest stay ranges and the shape of its price.
+ * the relationship the dependent was relying on WHENEVER THE STAY MOVED AS A
+ * WHOLE, and it also preserves the dependent's stay length, its per-guest stay
+ * ranges and the shape of its price.
+ *
+ * IT DOES NOT PRESERVE COVER WHEN THE STAY WAS SHORTENED AT THE TAIL, and that is
+ * a real limit of this rule rather than a bug in it. Cut 10–15 back to 10–12 and
+ * the arrival did not move, so a 13–14 dependent's target is where it already is.
+ * Following the DEPARTURE delta instead would drag a booking the member never
+ * asked to move to nights they never chose, which is the same objection as
+ * lengthening it. So the rule stays as it is and the CLASSIFICATION is what
+ * changed: `linkedMoveWouldRestoreCover` refuses to claim the offer for a
+ * shortening it cannot answer, and the member gets the ordinary refusal — whose
+ * remedies, on this shape, really are open to them.
  *
  * WHEN THE PRIMARY ALSO CHANGED LENGTH — arrival and departure moved by different
  * amounts — the dependent still follows the ARRIVAL delta and keeps its own length.
@@ -406,6 +416,62 @@ export function linkedMoveTargetRange(
       addDaysDateOnly(parseDateOnly(dependent.checkOut), shiftDays),
     ),
   };
+}
+
+/**
+ * Whether the linked move could actually put this dependent back under the changed
+ * booking's cover (#3232, `INV-HOST-050`).
+ *
+ * WHY THE CLASSIFICATION NEEDS THIS AND NOT JUST "IT MOVED AWAY". The refusal is
+ * marked answerable when the dependent no longer shares a night with the changed
+ * booking, because that is the shape where every remedy on the affected booking is
+ * closed. But "it moved away" and "a shift can fix it" are not the same question,
+ * and a SHORTENING is where they come apart. A stay of 10–15 cut back to 10–12
+ * moves nothing at the arrival end, so `shiftDays` is zero and the dependent's
+ * target is where it already is: its write is a no-op, it is still uncovered, and
+ * the final supervision pass throws the bare refusal the offer was supposed to
+ * replace. The member paid for two full pricing runs inside a transaction that was
+ * always going to be discarded, and got today's answer anyway. The same happens
+ * when the arrival moved but not far enough to carry the dependent inside the new
+ * stay — 10–15 becoming 11–13 shifts a 13–14 dependent to 14–15, past the new
+ * check-out.
+ *
+ * OVERLAP, NOT CONTAINMENT, and the weaker test is the deliberate one. Full cover
+ * does not have to come from THIS booking alone — another booking of the owner's
+ * can cover the rest of the dependent's nights — so demanding that the shifted
+ * window sit wholly inside the new stay would withhold an offer the engine would
+ * have accepted. What overlap rules out is the case where the shifted dependent
+ * shares no night at all with the changed booking, where the shift provably
+ * changes nothing about the relationship that broke.
+ *
+ * THE TRANSACTION REMAINS THE AUTHORITY. This is a cheap structural test on ONE
+ * dependent, used to decide whether the offer is worth raising; whether the
+ * combined move really satisfies the rule is decided by the real supervision pass
+ * over the state that would commit.
+ */
+export function linkedMoveWouldRestoreCover(
+  primary: {
+    /** The window the changed booking vacated, or `null` if its stay did not move. */
+    vacatedRange: { checkIn: Date; checkOut: Date } | null;
+    currentCheckIn: Date;
+    currentCheckOut: Date;
+  },
+  dependent: { checkIn: string; checkOut: string },
+): boolean {
+  // A change that did not move the stay cannot be answered by shifting anything:
+  // there is no delta to shift by, so the dependent's target is its own window.
+  if (!primary.vacatedRange) return false;
+  const target = linkedMoveTargetRange(
+    {
+      previousCheckIn: primary.vacatedRange.checkIn,
+      currentCheckIn: primary.currentCheckIn,
+    },
+    dependent,
+  );
+  return (
+    parseDateOnly(target.checkIn).getTime() < primary.currentCheckOut.getTime() &&
+    parseDateOnly(target.checkOut).getTime() > primary.currentCheckIn.getTime()
+  );
 }
 
 /**

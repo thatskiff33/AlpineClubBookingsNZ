@@ -43,7 +43,10 @@ import {
   strandedCoverageReference,
   type StrandedCoverageBooking,
 } from "@/lib/adult-member-hosting-same-owner";
-import { LINKED_MOVE_DECLINED_INCIDENT_REASON } from "@/lib/adult-member-hosting-linked-move";
+import {
+  LINKED_MOVE_DECLINED_INCIDENT_REASON,
+  linkedMoveWouldRestoreCover,
+} from "@/lib/adult-member-hosting-linked-move";
 import { AdultMemberHostingRequiredError } from "@/lib/adult-member-hosting-refusal";
 import {
   COVERAGE_READ_ORDER,
@@ -2925,11 +2928,28 @@ async function settleSameOwnerDependentCoverage(
       // the stranding came from a guest change rather than a move — keeps exactly
       // today's refusal, because there the member really can add cover to the
       // affected booking or cancel it.
-      const movedAwayFrom = stranded.some((row) =>
-        dependentNeedsOwnQueueItem(booking, {
-          checkIn: parseDateOnly(row.checkIn),
-          checkOut: parseDateOnly(row.checkOut),
-        }),
+      //
+      // AND IT MUST BE A STRANDING THE OFFER CAN ACTUALLY ANSWER. "Moved away" and
+      // "a shift can fix it" come apart on a SHORTENING: cut 10-15 back to 10-12
+      // and the arrival did not move, so a 13-14 dependent's target is where it
+      // already is — the offer would run two full pricing runs inside a doomed
+      // transaction and then throw this very refusal anyway, having promised an arm
+      // it could not deliver. `linkedMoveWouldRestoreCover` asks the question with
+      // the same shift the offer would use.
+      const movedAwayFrom = stranded.some(
+        (row) =>
+          dependentNeedsOwnQueueItem(booking, {
+            checkIn: parseDateOnly(row.checkIn),
+            checkOut: parseDateOnly(row.checkOut),
+          }) &&
+          linkedMoveWouldRestoreCover(
+            {
+              vacatedRange: options.coverageChangeVacatedRange ?? null,
+              currentCheckIn: booking.checkIn,
+              currentCheckOut: booking.checkOut,
+            },
+            row,
+          ),
       );
       throw new SameOwnerCoverageWouldBreakError(stranded, {
         linkedMoveWouldAnswer: movedAwayFrom,

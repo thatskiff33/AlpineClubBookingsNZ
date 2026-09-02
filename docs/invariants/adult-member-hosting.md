@@ -1481,17 +1481,46 @@ compliant indefinitely.
   where the beds are not there for both, that is said plainly and the
   warn-and-continue path is offered rather than a failure.
 
-  **WHICH REFUSALS BECOME AN OFFER, AND WHICH DO NOT.** Only the shape where the
-  member has nowhere to go: the dependent no longer shares a night with the
-  changed booking, so this booking has MOVED AWAY from it. A stranding whose
-  dependent still overlaps came from a guest change or a cancellation, and there
-  the member really can add cover to the affected booking, cancel it, or ask an
-  officer — so that keeps the ordinary refusal
-  (`SameOwnerCoverageWouldBreakError`, unflagged). The hosting engine marks the
-  refusal `linkedMoveWouldAnswer` and `modifyBookingWithLinkedMoveSupport` prices
-  it into the offer, because the engine cannot import the pricing engine without a
-  cycle. If some path ever fails to enrich it the member gets the bare refusal —
-  worse, but a refusal naming an officer they can ring, never a silent stranding.
+  **WHICH REFUSALS BECOME AN OFFER, AND WHICH DO NOT.** Two conditions, and both
+  are necessary. First, the shape where the member has nowhere to go: the dependent
+  no longer shares a night with the changed booking, so this booking has MOVED AWAY
+  from it. A stranding whose dependent still overlaps came from a guest change or a
+  cancellation, and there the member really can add cover to the affected booking,
+  cancel it, or ask an officer — so that keeps the ordinary refusal
+  (`SameOwnerCoverageWouldBreakError`, unflagged). Second, the offer must be able to
+  DELIVER: shifting the dependent by the changed booking's arrival delta has to put
+  it back into a night the changed booking still holds
+  (`linkedMoveWouldRestoreCover`).
+
+  **THE SECOND CONDITION EXISTS BECAUSE A SHORTENING IS NOT A MOVE-AWAY, THOUGH IT
+  LOOKS LIKE ONE.** A stay of 10–15 cut back to 10–12 leaves a 13–14 dependent
+  sharing no night with it, so the first condition holds — but the arrival did not
+  move, the shift is zero, and the dependent's target is where it already is. The
+  offer would run two full pricing runs inside a transaction certain to be
+  discarded and then throw this very refusal, having promised an arm it could not
+  deliver. The same happens when the arrival moved but not far enough to carry the
+  dependent inside the new stay (10–15 → 11–13 shifts 13–14 to 14–15). Following
+  the DEPARTURE delta instead was rejected: it would drag a booking the member never
+  asked to move onto nights they never chose, which is the same objection as
+  lengthening it. So the classification changed rather than the shift rule, and on
+  this shape the ordinary refusal really is actionable — the affected booking's
+  nights are outside the shortened stay, so adding a qualifying adult to it, moving
+  it into the remaining nights, or cancelling it are all open to the member.
+
+  The delivery test is OVERLAP, not containment, because full cover need not come
+  from the changed booking alone — another booking of the owner's can cover the
+  rest of the dependent's nights — so demanding containment would withhold an
+  offer the engine would have accepted. It is a cheap structural test used only to
+  decide whether the offer is worth raising; the real supervision pass over the
+  state that would commit remains the authority, so a mixed set (one dependent a
+  shift can carry, another it cannot) still reaches the offer and is decided there
+  rather than guessed at here.
+
+  The hosting engine marks the refusal `linkedMoveWouldAnswer` and
+  `modifyBookingWithLinkedMoveSupport` prices it into the offer, because the engine
+  cannot import the pricing engine without a cycle. If some path ever fails to
+  enrich it the member gets the bare refusal — worse, but a refusal naming an
+  officer they can ring, never a silent stranding.
 
   **THE OFFER'S PRICE IS THE REAL PRICE.** The quote is produced by applying both
   moves through the ordinary modification service and rolling the transaction
@@ -1510,6 +1539,20 @@ compliant indefinitely.
   an officer for a reason because they are exercising authority over a booking
   that is not theirs. These are the member's own two bookings. What is demanded is
   proof they were shown the consequence, which is the state key.
+
+  **AND ONLY THE BOOKING'S OWN MEMBER MAY ANSWER IT.** The answer means "the person
+  whose two bookings these are was shown what this costs the other one and chose to
+  go ahead", which is only true if the actor is that person — so the answer travels
+  with the booking's owner and is honoured only when the two match. It is
+  deliberately not one of the routes' ADMIN-gated fields (gating it that way would
+  403 the only person entitled to answer), and that is precisely what made the
+  check necessary: an officer refused with `SameOwnerCoverageOverrideRequiredError`
+  is handed the `strandedStateKey` in that refusal body, and resubmitting it as a
+  declined linked move used to proceed with `overrideReason: null`,
+  `overriddenByMemberId: null` and an incident recording that the member was asked
+  — defeating all three of §7's requirements at once and quietly corrupting the
+  cause count `INV-HOST-052` protects. An officer who means to strand a booking
+  still owes §7's confirmation and its reason.
 
   **EVERY DATE-CAPABLE MEMBER SURFACE OFFERS ALL THREE ARMS, OR THE RULE IS A
   DEADLOCK ON WHICHEVER ONE DOES NOT.** Widening the read above (`INV-HOST-049`)
@@ -1605,12 +1648,51 @@ compliant indefinitely.
   the one file permitted to pass it is censused, exactly as the deferred hosting
   check is.
 
+  **"THERE ARE NOT BEDS FOR BOTH" IS DECIDED FROM A CLASS, NOT FROM A SENTENCE.**
+  The `NO_CAPACITY` arm is selected by asking the second booking's refusal what
+  kind of refusal it is, and the member path throws `InsufficientCapacityError` —
+  the same 400 with the same words as before it was classed, so nothing on the wire
+  changed. It has to be a class because the two over-capacity errors
+  (`OverCapacityConfirmationRequiredError`, `WholeLodgeHoldBlockedError`) are
+  raised on the ADMIN override path only, and a linked move is reachable only for
+  the booking's own member: keyed on those alone the arm was unreachable, a full
+  lodge propagated a bare 400 about beds on a booking the member had not asked to
+  move, and the member was refused with no door — the third distinct way this arm
+  was found to be dead. A message match would have worked until somebody reworded
+  the message.
+
   **ONE LODGE CAPACITY KEY COVERS BOTH BOOKINGS**, and that is a property of the
   predicate rather than an assumption: the dependent envelope pins `lodgeId` to
   the changed booking's lodge, so a same-owner dependent is always at the same
   lodge, and no writer moves a booking between lodges. The order is unchanged —
   global `pg_advisory_xact_lock(1)`, then the lodge key, then the participant
   `Member` rows and the per-owner coverage key — and this change adds no new key.
+  The ROSTER-DATE family is the one place where composing two booking writes takes
+  keys outside a single sorted order: `lockRosterDates` sorts within a call and
+  this transaction makes two, so it can hold a later date from the first booking's
+  set and then ask for an earlier one from the second's. Every writer in the tree
+  that acquires more than one roster-date key holds the global key first, so two
+  such acquisitions can never interleave; that constraint is now stated where the
+  key is minted and in `docs/CONCURRENCY_AND_LOCKING.md`, because it is what a new
+  multi-key roster writer has to honour.
+
+  **THE TRANSACTION IS BUDGETED FOR THE GLOBAL KEY, NOT LEFT ON PRISMA'S
+  DEFAULTS.** It is roughly two batch modifications behind a blocking wait for
+  `pg_advisory_xact_lock(1)`, and that wait counts against the 2s/5s default — so
+  an ordinary cancel or bed assignment legitimately holding the key would abort a
+  member's save. It takes the same `{ maxWait: 10_000, timeout: 30_000 }` as
+  `assignBedRange`, the longest-lived holder of that key. Contention (P2028/P2034)
+  is answered as "nothing was changed, try again in a moment" rather than as an
+  opaque 500, because an unmapped contention error reaches the member INSTEAD OF
+  THE OFFER and puts them back to being unable to move either booking.
+
+  **AND THE POST-COMMIT WORK IS CONTAINED PER BOOKING.** The transaction has
+  committed by then, so a failure there can never mean the move did not happen.
+  Uncontained, one booking's follow-up failing meant the other booking got none of
+  its own — no Stripe charge for its increase and no recovery row either, since
+  that enqueue lives inside the thunk's own catch, no Xero leg, no audit row and no
+  member email — while its dates had already changed, and the member was told the
+  whole change had failed.
 
   Enforced by `src/lib/__tests__/adult-member-hosting-linked-move.test.ts`,
   `src/lib/__tests__/booking-linked-date-move-service.test.ts` and

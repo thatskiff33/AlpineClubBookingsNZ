@@ -3297,6 +3297,59 @@ describe("a member is offered the linked move, never deadlocked (#3232)", () => 
     ).toBe(false);
   });
 
+  it("does not claim the offer for a shortening the shift cannot answer", async () => {
+    // `INV-HOST-050`. "The booking moved away from it" and "a shift can put it
+    // back" are different questions, and a SHORTENING is where they come apart. A
+    // stay of 10-15 August cut back to 10-12 moves nothing at the arrival end, so
+    // the dependent's target is where it already is: its write would be a no-op,
+    // it would still be uncovered, and the final supervision pass would throw this
+    // very refusal — after two full pricing runs inside a transaction that was
+    // always going to be discarded. The arm was being claimed and could not be
+    // delivered.
+    //
+    // The member is not stuck here, which is why the ordinary refusal is the right
+    // answer rather than a dead end: the affected booking's nights are outside the
+    // shortened stay, so adding a qualifying adult to it, moving it into the
+    // remaining nights, or cancelling it are all open to them.
+    const { db } = makeStore([
+      sourceWithAdult("b-source", ["2026-08-10", "2026-08-11"]),
+      booking({
+        id: "b-main",
+        checkIn: new Date("2026-08-13T00:00:00.000Z"),
+        checkOut: new Date("2026-08-14T00:00:00.000Z"),
+        guests: [guestRow("kid", ["2026-08-13"])],
+      }),
+    ]);
+    let error: SameOwnerCoverageWouldBreakError | null = null;
+    try {
+      await reconcileAdultMemberHostingReviewWithSiblings(
+        "b-source",
+        db,
+        hostingCoverageActorOptions({
+          actorRole: "MEMBER",
+          actorMemberId: "owner-1",
+          // Ten to fifteen August, cut back to ten to twelve: the check-out moved
+          // and the arrival did not.
+          vacatedRange: {
+            checkIn: new Date("2026-08-10T00:00:00.000Z"),
+            checkOut: new Date("2026-08-15T00:00:00.000Z"),
+          },
+        }),
+      );
+    } catch (caught) {
+      error = caught as SameOwnerCoverageWouldBreakError;
+    }
+    expect(
+      error,
+      "the shortening is still refused, and the dependent is still noticed",
+    ).toBeInstanceOf(SameOwnerCoverageWouldBreakError);
+    expect(error?.stranded.map((row) => row.bookingId)).toEqual(["b-main"]);
+    expect(
+      error?.linkedMoveWouldAnswer,
+      "INV-HOST-050: an arm that cannot deliver must not be claimed",
+    ).toBe(false);
+  });
+
   it("names no impossible action in what the member is told", () => {
     // The second defect #3232 fixed, and it is a product defect rather than a
     // mechanism one: the sentence #2576 shipped told members to "Update the
