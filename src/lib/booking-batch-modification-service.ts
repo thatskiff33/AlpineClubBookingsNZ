@@ -68,6 +68,7 @@ import {
 } from "@/lib/adult-member-hosting-review";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import type { HostingCoverageOverrideInput } from "@/lib/adult-member-hosting-same-owner";
+import type { HostingCoverageLinkedMoveInput } from "@/lib/adult-member-hosting-linked-move";
 import logger from "@/lib/logger";
 import { createBookingModificationCredit } from "@/lib/member-credit";
 import {
@@ -116,6 +117,8 @@ type ModifiedBooking = Booking & {
 type BatchModificationTransactionResult =
   BookingModificationPaymentContext & {
     booking: ModifiedBooking;
+    /** #3232: the deferred hosting reconciliation, when the caller asked for it. */
+    pendingHostingReconcile?: () => Promise<void>;
     priceDiffCents: number;
     changeFeeCents: number;
     refundAmountCents: number;
@@ -201,6 +204,22 @@ export type BatchModificationResponse = {
    * fields (`stripeRefundId`, `additionalPaymentClientSecret`) are populated.
    */
   deferredPostCommit?: () => Promise<void>;
+  /**
+   * Present ONLY when the caller asked for `hostingReconcile: "CALLER"` (#3232):
+   * the adult-member hosting reconciliation this service deferred.
+   *
+   * A RETURNED OBLIGATION RATHER THAN A DOCUMENTED ONE. A caller composing several
+   * booking writes into one transaction has to run the supervision check once, over
+   * the state that will really commit, and it has to run it BEFORE that commit. A
+   * boolean flag plus a paragraph asking nicely would be a supervision rule that a
+   * future caller can turn off by accident; handing the work back means the thing
+   * the caller must do is a value it is holding.
+   *
+   * It still is not unforgeable — nothing stops a caller dropping the thunk — which
+   * is why `adult-member-hosting-call-sites.test.ts` pins the single file allowed to
+   * ask for the deferral at all.
+   */
+  pendingHostingReconcile?: () => Promise<void>;
 };
 
 /**
@@ -294,10 +313,12 @@ export async function modifyBookingBatch({
   actor,
   approvedExceptionAdultMemberHostingDecision,
   hostingCoverageOverride,
+  hostingCoverageLinkedMove,
   input,
   ipAddress,
   todayAtClub,
   tx: callerTx,
+  hostingReconcile,
 }: {
   bookingId: string;
   actor: { id: string; role: Role };
@@ -317,6 +338,17 @@ export async function modifyBookingBatch({
    * member cannot self-authorise past §6's block by inventing a reason.
    */
   hostingCoverageOverride?: HostingCoverageOverrideInput | null;
+  /**
+   * #3232: the MEMBER's answer to the linked-move offer, when they gave one.
+   *
+   * Only `LEAVE_UNCOVERED` is meaningful here — it turns the stranded refusal into
+   * an escalation, so the change proceeds, the member has already been warned in
+   * plain words and the officer queue gets an incident. `MOVE_BOTH` never reaches
+   * this service directly: accepting is a two-booking atomic move and belongs to
+   * `booking-linked-date-move-service.ts`, which calls this service twice inside
+   * one transaction.
+   */
+  hostingCoverageLinkedMove?: HostingCoverageLinkedMoveInput | null;
   input: BatchModifyInput;
   ipAddress: string;
   /**
@@ -358,7 +390,43 @@ export async function modifyBookingBatch({
    * below re-enter those same keys (no-ops), preserving the global→lodge order.
    */
   tx?: PrismaTransactionClient;
+  /**
+   * WHO reconciles the adult-member hosting rule for this edit (#3232).
+   *
+   * Absent, or `"INLINE"`, means this service does it at the end of its own write,
+   * which is every existing caller and is the only correct answer for a single
+   * booking. `"CALLER"` is for a caller composing SEVERAL booking writes into ONE
+   * transaction, and it exists because such a caller has an intermediate state that
+   * the rule would refuse and must not.
+   *
+   * THE INTERMEDIATE STATE IS THE WHOLE PROBLEM, and there is no ordering that
+   * avoids it. Booking A carries the only qualifying adult and booking B depends on
+   * it; the member is moving both. Move A first and A's seam sees B stranded and
+   * refuses. Move B first and B's own seam sees B with no qualifying adult on its
+   * new nights and refuses. Either order fails on a state that was never going to
+   * be committed, so the reconciliation has to happen once, at the end, over the
+   * state that really will be.
+   *
+   * WHAT THE CALLER OWES, and it is not optional: it MUST reconcile every booking
+   * it wrote, with full enforcement, before its transaction commits. Deferral moves
+   * the check; it never removes it. The obligation is handed back as
+   * `pendingHostingReconcile` on the result rather than left to a docblock, and
+   * `booking-linked-date-move-service.ts` is the ONLY caller that may pass
+   * `"CALLER"` — pinned tree-wide by `adult-member-hosting-call-sites.test.ts`, so a
+   * new caller cannot quietly opt out of the supervision rule by copying a flag.
+   *
+   * REQUIRES `tx`. Without a caller transaction there is no composition to defer
+   * for, and deferring would just be a hosting check nobody runs; asking for it
+   * without one throws rather than silently skipping.
+   */
+  hostingReconcile?: "INLINE" | "CALLER";
 }): Promise<BatchModificationResponse> {
+  if (hostingReconcile === "CALLER" && !callerTx) {
+    throw new Error(
+      "hostingReconcile: \"CALLER\" is only meaningful inside a caller-supplied " +
+        "transaction; without one the hosting rule would simply not be checked.",
+    );
+  }
   // Issue #1668: admin-only date override. The route also rejects non-admins,
   // but keep the service guard so the invariant holds however it is called.
   if (input.adminOverride && actor.role !== "ADMIN") {
@@ -1373,19 +1441,41 @@ export async function modifyBookingBatch({
     // exact-night cover away from another booking on this account. The disposition
     // travels with the actor — an ordinary member is refused and rolled back, an
     // officer is allowed and the consequence is escalated to an urgent incident.
-    await reconcileAdultMemberHostingReviewWithSiblings(bookingId, tx, {
+    //
+    // #3232: DEFERRED, not skipped, when the caller is composing several booking
+    // writes into one transaction. See `hostingReconcile` — an intermediate state
+    // where one of two linked bookings has moved would be refused by this very
+    // rule, over a state that was never going to be committed. The obligation
+    // travels back to the caller as `pendingHostingReconcile`.
+    const reconcileHosting = async () => {
+      await reconcileAdultMemberHostingReviewWithSiblings(bookingId, tx, {
       ...(approvedExceptionAdultMemberHostingDecision
         ? { decision: approvedExceptionAdultMemberHostingDecision }
         : {}),
       ...hostingCoverageActorOptions({
         actorRole: actor.role,
         actorMemberId: actor.id,
+        // #3232: a batch edit CAN move the stay, and this seam runs after the
+        // write, so the dependent fan-out would otherwise be narrowed to the new
+        // nights and would miss a booking that was relying on the old ones.
+        // `booking` is the post-lock PRE-WRITE snapshot — the window the booking
+        // really held, never the window the caller asked for.
+        vacatedRange: { checkIn: booking.checkIn, checkOut: booking.checkOut },
         ...(hostingCoverageOverride ? { override: hostingCoverageOverride } : {}),
+        // #3232: a member who was offered the linked move and declined it is
+        // escalated rather than refused — see `hostingCoverageActorOptions`.
+        ...(hostingCoverageLinkedMove
+          ? { linkedMove: hostingCoverageLinkedMove }
+          : {}),
       }),
-    });
+      });
+    };
+    if (hostingReconcile !== "CALLER") await reconcileHosting();
 
     return {
       booking: updatedBooking,
+      pendingHostingReconcile:
+        hostingReconcile === "CALLER" ? reconcileHosting : undefined,
       priceDiffCents,
       changeFeeCents,
       refundAmountCents: payments.refundAmountCents,
@@ -1637,6 +1727,9 @@ export async function modifyBookingBatch({
     // not surface them.
     return {
       booking: result.booking,
+      ...(result.pendingHostingReconcile
+        ? { pendingHostingReconcile: result.pendingHostingReconcile }
+        : {}),
       priceDiffCents: result.priceDiffCents,
       changeFeeCents: result.changeFeeCents,
       refundAmountCents: result.refundAmountCents,
