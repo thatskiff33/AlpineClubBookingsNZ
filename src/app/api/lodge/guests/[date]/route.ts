@@ -46,18 +46,9 @@ const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
  * button anywhere else and staff tap it, the server refuses, and there is
  * nothing they can do about it.
  *
- * It was `isFinalDeparture` until #2628, derived from `stayEnd` equality
- * because the endpoint resolved its guest that way and so could only ever
- * succeed on the morning after the LAST booked night. That made the earlier
- * departure of a sparse stay unrecordable: the badge said "Departing", the
- * button was withheld, and the guest's first check-out never happened. The
- * endpoint now accepts every departure morning
- * (`findLodgeGuestDepartingOnDate` reads `isGuestDepartureMorning`, still
- * deliberately fenced off from presence — see
- * `lodge-arrive-depart-asymmetry.test.ts`), so this flag reads the SAME
- * predicate by name. The two flags now coincide, and that is a consequence of
- * the rule rather than a licence to delete one: they answer different
- * questions and the endpoint is free to narrow again.
+ * It was `isFinalDeparture` until #2628; why that spelling made a sparse
+ * stay's earlier departure unrecordable is recorded with the predicate it
+ * now reads, in `booking-guest-stay-ranges.ts`.
  *
  * `canMarkArrived` is the same idea for the CHECK-IN button, and it is here for
  * the same reason: the page used to derive it as `isArriving && !departedAt`
@@ -241,9 +232,8 @@ async function handleGet(req: NextRequest, dateStr: string) {
     .filter((booking) => booking.guests.length > 0);
 
   // #3040: after the filter, so linkage is asked of the list the reader sees.
-  const withGroupTrip = await attachKioskGroupTrip(result, bookings, {
-    db: prisma, lodgeId, capabilities: kioskGroupTripCapabilities(tier),
-  });
+  const capabilities = kioskGroupTripCapabilities(tier);
+  const withGroupTrip = await attachKioskGroupTrip(result, bookings, { db: prisma, lodgeId, capabilities });
 
   return NextResponse.json({
     date: dateStr,

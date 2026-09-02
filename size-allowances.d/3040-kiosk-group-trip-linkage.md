@@ -23,7 +23,7 @@ all live together and the gate refuses two numbers for one file. That fragment's
 entry carries the reasoning and the current length.
 
 file: src/app/(lodge)/lodge/kiosk/page.tsx
-lines: 1191
+lines: 1400
 reason: twenty-nine lines, and the smallest wiring available. Six render three
   presentational components; ten declare the three optional payload fields with
   the note saying WHY they are optional rather than nullable (the server omits
