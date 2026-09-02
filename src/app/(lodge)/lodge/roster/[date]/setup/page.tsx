@@ -4,6 +4,11 @@ import type { AgeTier } from "@prisma/client";
 import { useState, useEffect, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { formatClubLongWeekdayDate, parseCalendarDate } from "@/lib/club-time";
+// #3228 — a hut leader's PIN session is kept alive for this page by the
+// lodge-area provider (`src/app/(lodge)/layout.tsx`), which is what stops the
+// window closing mid-wizard. This is the safety net for when it closes anyway.
+import { LodgePinRelockPanel } from "@/components/lodge-pin-relock-panel";
+import { useLodgePinSessionLapse } from "@/components/lodge-pin-session";
 import {
   computeFrequencyInfo,
   type FrequencyInfo,
@@ -120,6 +125,28 @@ export default function RosterSetupWizard() {
   // Existing roster check
   const [hasExistingRoster, setHasExistingRoster] = useState(false);
 
+  /*
+    #3228 — WHAT TO DO WHEN THE PIN SESSION CLOSES MID-WIZARD.
+
+    `null` means it has not. Otherwise it names what to retry the moment the PIN
+    is typed again, and the panel stays on screen until then. Nothing is cleared
+    and nothing navigates away: the allocation on step 3 exists only in
+    `allocations`, and this page used to answer a lapsed session by printing the
+    server's bare "Forbidden" over the top of it with no way back but starting
+    again.
+  */
+  const [relockedRetry, setRelockedRetry] = useState<
+    null | "load" | "generate" | "confirm" | "nothing"
+  >(null);
+
+  // The provider counts the idle window for the whole lodge area and reports it
+  // here. Only a notice — the work in progress is untouched.
+  useLodgePinSessionLapse(
+    useCallback(() => {
+      setRelockedRetry((current) => current ?? "nothing");
+    }, []),
+  );
+
   // ---------------------------------------------------------------------------
   // Fetch initial data
   // ---------------------------------------------------------------------------
@@ -141,9 +168,21 @@ export default function RosterSetupWizard() {
         fetch(`/api/lodge/roster/${dateStr}/chores`),
       ]);
 
+      // #3228 — the chore-template list is hut-leader gated, so a lapsed PIN
+      // session shows up here as a 403 on a page load. That is a re-unlock, not
+      // a fault: say so and offer the PIN rather than a dead "Failed to load
+      // data".
+      if ([guestsRes, rosterRes, templatesRes].some((res) => res.status === 403)) {
+        setError(null);
+        setRelockedRetry("load");
+        return;
+      }
+
       if (!guestsRes.ok || !rosterRes.ok || !templatesRes.ok) {
         throw new Error("Failed to load data");
       }
+
+      setRelockedRetry(null);
 
       const gData = await guestsRes.json();
       setBookings(gData.bookings);
@@ -227,12 +266,21 @@ export default function RosterSetupWizard() {
         }),
       });
 
+      // #3228 — a 403 here is the PIN session having closed, not a fault the
+      // hut leader can act on. Offer the PIN and re-run this step, instead of
+      // printing "Forbidden" over the chores they just chose.
+      if (res.status === 403) {
+        setRelockedRetry("generate");
+        return;
+      }
+
       if (!res.ok) {
         const data = await res.json();
         setError(data.error ?? "Failed to generate roster");
         return;
       }
 
+      setRelockedRetry(null);
       const data = await res.json();
       setAllocations(data.allocations);
       setAllGuests(data.guests);
@@ -345,6 +393,14 @@ export default function RosterSetupWizard() {
         }),
       });
 
+      // #3228 — the worst place in the application to lose work, and the reason
+      // this whole safety net exists: the allocation being written here is a
+      // full lodge's worth of chore assignments that live nowhere else.
+      if (res.status === 403) {
+        setRelockedRetry("confirm");
+        return;
+      }
+
       if (!res.ok) {
         const data = await res.json();
         setError(data.error ?? "Failed to confirm roster");
@@ -382,6 +438,35 @@ export default function RosterSetupWizard() {
   }));
 
   const totalGuests = bookings.reduce((sum, b) => sum + b.guests.length, 0);
+
+  // #3228 — pick the interrupted step back up. Nothing is reconstructed: the
+  // chore selection and the allocation are still in state, so the retry is the
+  // same call with the same arguments.
+  const retryAfterUnlock = () => {
+    const pending = relockedRetry;
+    setRelockedRetry(null);
+    if (pending === "load") {
+      setLoading(true);
+      void fetchData();
+      return;
+    }
+    if (pending === "generate") {
+      void generateRoster();
+      return;
+    }
+    if (pending === "confirm") {
+      void confirmRoster();
+    }
+  };
+
+  const relockPendingLabel =
+    relockedRetry === "generate"
+      ? "work out the roster"
+      : relockedRetry === "confirm"
+        ? "save the roster"
+        : relockedRetry === "load"
+          ? "load this page"
+          : null;
 
   // ---------------------------------------------------------------------------
   // Render
@@ -439,6 +524,13 @@ export default function RosterSetupWizard() {
           {step === 4 && "Confirm"}
         </div>
       </header>
+
+      {relockedRetry !== null && (
+        <LodgePinRelockPanel
+          pendingLabel={relockPendingLabel}
+          onUnlocked={retryAfterUnlock}
+        />
+      )}
 
       {error && (
         <div className="bg-kiosk-danger-bg text-kiosk-danger-fg rounded-xl p-4 mb-4 text-lg">

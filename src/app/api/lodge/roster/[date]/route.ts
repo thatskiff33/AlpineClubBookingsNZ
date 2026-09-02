@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { noStoreLodgeResponse } from "@/lib/lodge-cache-headers";
 import { checkLodgeAuth, getLodgeAuthActorMemberId, kioskLodgeAuthErrorResponse, resolveKioskLodgeId } from "@/lib/lodge-auth";
 import { getBookingGuestDisplayAgeTier } from "@/lib/booking-guests";
 import { parseDateOnly } from "@/lib/date-only";
@@ -30,7 +31,10 @@ export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ date: string }> }
 ) {
-  const { date: dateStr } = await params;
+  return noStoreLodgeResponse(await handleGet(req, (await params).date));
+}
+
+async function handleGet(req: NextRequest, dateStr: string) {
 
   const authResult = await checkLodgeAuth(dateStr, {
     request: req,
@@ -107,6 +111,8 @@ export async function GET(
  * Limited actions: complete and uncomplete only (kiosk use).
  * Requires tier >= lodge (staying-guest cannot toggle chores).
  */
+// Deliberately NOT `noStoreLodgeResponse`-wrapped, unlike the GET above; the
+// "Writes" section of `src/lib/lodge-cache-headers.ts` is the reasoning.
 export async function PUT(
   req: NextRequest,
   { params }: { params: Promise<{ date: string }> }

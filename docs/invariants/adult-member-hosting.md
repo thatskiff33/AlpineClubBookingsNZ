@@ -1173,7 +1173,7 @@ compliant indefinitely.
   `SAME_BOOKING` evidence its hut leaders may read. This is the one club setting
   the kiosk Group Trip surface still consults, and it governs the cover line
   alone — owner decision D1 on #3040 settled that the linkage badge is gated on
-  nothing (`INV-PRIV-015`).
+  nothing (`INV-PRIV-016`).
 
   **The POLICY REVISION is deliberately NOT a staleness signal, and adding one
   would be a regression.** A snapshot frozen under an earlier
@@ -1208,7 +1208,7 @@ compliant indefinitely.
 
   **The categories travel; the people do not.** `qualifyingHostsByNight` carries
   the covering members' ids and the kiosk drops them: which adult, on whose
-  account, is not a kiosk question. That half of the rule is `INV-PRIV-015`.
+  account, is not a kiosk question. That half of the rule is `INV-PRIV-016`.
 
   Enforced by `src/lib/__tests__/kiosk-group-trip-privacy.test.ts`,
   `src/app/api/lodge/guests/[date]/__tests__/group-trip-tiers.test.ts` and

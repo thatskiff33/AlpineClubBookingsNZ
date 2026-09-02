@@ -33,8 +33,15 @@ vi.mock("next/navigation", () => ({
   redirect: (path: string) => mockRedirect(path),
 }));
 
+// #3228 — `cookies` as well as `headers`. The layout now reads the hut-leader
+// PIN session cookie so it can arm the interaction-renewal provider for the
+// whole lodge area (the kiosk AND the roster wizard), and that reader goes
+// through `next/headers`. With only `headers` mocked the whole file died at
+// import; an empty cookie store is the right answer for a suite about auth
+// redirects, and it means the real reader runs and returns "no session".
 vi.mock("next/headers", () => ({
   headers: vi.fn(async () => new Headers()),
+  cookies: vi.fn(async () => ({ get: () => undefined })),
 }));
 
 vi.mock("@/components/app-providers", () => ({
@@ -91,7 +98,27 @@ describe("lodge layout authentication", () => {
       unknown,
     ];
     expect(themeStyle.props["data-site-style"]).toBe("club-theme");
-    expect(pageChildren).toBe("secure");
+
+    /*
+      #3228 — the page now sits inside `LodgePinSessionProvider`, and that is
+      load-bearing rather than incidental. It is the ONE mount point for the
+      hut-leader PIN session's interaction renewal, and this layout is where it
+      belongs because it is the only ancestor shared by the two pages a hut
+      leader's authority covers: the kiosk, and the chore-roster wizard a full
+      navigation away. Mount it on either page instead and the other silently
+      stops renewing — which is what the first cut of #3228 did, and what a
+      reviewer rather than a test caught.
+
+      `initialActive` comes from the server's own look at the cookie, which is
+      what arms renewal across that navigation. False here: this suite's cookie
+      store is empty.
+    */
+    const provider = pageChildren as ReactElement<{
+      initialActive: boolean;
+      children: unknown;
+    }>;
+    expect(provider.props.initialActive).toBe(false);
+    expect(provider.props.children).toBe("secure");
   });
 
   it("redirects inactive authenticated users back to login", async () => {
