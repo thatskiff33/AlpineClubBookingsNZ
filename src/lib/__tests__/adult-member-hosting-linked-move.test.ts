@@ -395,6 +395,46 @@ describe("what the member is told (#3232)", () => {
     expect(message).toMatch(/the one choice covers both bookings/);
   });
 
+  it("counts the bookings throughout, because the cap is 25 and not 1", () => {
+    // Found by a mutation probe that did NOT discriminate: nothing asserted the
+    // SERVER's sentence for more than one dependent, so a member with one adult
+    // and two parties of guests read "2 other bookings ... is relying on this
+    // booking ... would leave it without", and was invited to "Move both
+    // bookings" over a list of three.
+    const first = quote().linked[0]!;
+    const message = formatLinkedMoveOfferMessage(
+      quote({
+        linked: [
+          first,
+          { ...first, bookingId: "b-second", reference: "BK-SECND" },
+        ],
+        combinedRefundCents: 0,
+        combinedAmountDueCents: 6500,
+      }),
+    );
+    expect(message).toMatch(
+      /2 other bookings on your account are relying on this booking/,
+    );
+    expect(message).toMatch(/would leave them\s+without/);
+    expect(message).toMatch(/Move all 3 bookings together\?/);
+    expect(message).toMatch(/payable across all 3 bookings/);
+    expect(message).toMatch(/the other 2 will be\s+left without adult supervision/);
+    expect(message).not.toMatch(/both bookings/);
+
+    // And the "cannot" arm, which is the one that has to be plainest of all.
+    const noBeds = formatLinkedMoveOfferMessage(
+      quote({
+        linked: [
+          first,
+          { ...first, bookingId: "b-second", reference: "BK-SECND" },
+        ],
+        feasibility: "NO_CAPACITY",
+      }),
+    );
+    expect(noBeds).toMatch(/beds free on the new nights to move all 3 bookings/);
+    expect(noBeds).toMatch(/the other 2 will be left\s+without adult supervision/);
+  });
+
   it("never names a person, only the member's own bookings", () => {
     // §11 unchanged: not the qualifying adult, not a guest. The owner is told which
     // of their bookings, which lodge, which nights and how much.
