@@ -3331,6 +3331,39 @@ model BookingDefaults {
   nonMemberHoldEnabled    Boolean                 @default(true)
   nonMemberHoldDays       Int                     @default(7)
   waitlistCrossLodgeOrder WaitlistCrossLodgeOrder @default(OWN_LODGE_FIRST)
+
+  // Whether the LINKED MOVE charges the change fee on BOTH bookings (#3232 D2,
+  // `INV-CONFIG-001`, `INV-HOST-051`).
+  //
+  // A club setting rather than a baked-in answer because clubs will genuinely
+  // disagree, and the disagreement is a fairness judgement no codebase should make
+  // for them: the member is moving a second booking because the CLUB's own adult-
+  // supervision rule compelled it, so one club reads the second fee as the honest
+  // cost of a second real change and another reads it as charging a member for
+  // obeying a rule they did not write.
+  //
+  // DEFAULTS TO true — charging both — which is the owner's decision and is also
+  // the conservative direction for a club's money: a club that means to waive it
+  // says so, and an upgrade never silently starts giving fees away. Both bookings
+  // really do move, so both really do attract their fee; the waiver is the
+  // exception.
+  //
+  // `Boolean @default(true)` AND NOT NULLABLE, unlike the host-scope columns on
+  // `AdultMemberHostingPolicy`. Those are nullable because "the club has not
+  // decided" has to be distinguishable from "the club chose the narrow answer",
+  // since deciding widens what counts as coverage. Nothing here widens: the
+  // default IS a complete, safe answer, so there is no undecided state to model
+  // and a NOT NULL default makes a draining old colour's INSERT succeed without
+  // naming a column it has never heard of.
+  //
+  // CLUB-WIDE, NOT PER LODGE, and that is a deliberate reading of the question.
+  // The change-fee TIERS are per lodge (`CancellationPolicy.lodgeId`) because they
+  // price a lodge's own cancellation risk; whether a second fee is FAIR when the
+  // club compelled the move is a question about how the club treats its members,
+  // which does not change between one of its lodges and another. A club that
+  // later disagrees gets the per-lodge conversion every other singleton on this
+  // model is already queued for.
+  linkedMoveChargesBothChangeFees Boolean @default(true)
   // Soft link for the phase-7 singleton-to-per-lodge conversion
   // (docs/multi-lodge/implementation-plan.md); unused by runtime reads today.
   lodgeId                 String?
