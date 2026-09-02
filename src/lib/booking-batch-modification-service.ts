@@ -1534,9 +1534,18 @@ export async function modifyBookingBatch({
         vacatedRange: { checkIn: booking.checkIn, checkOut: booking.checkOut },
         ...(hostingCoverageOverride ? { override: hostingCoverageOverride } : {}),
         // #3232: a member who was offered the linked move and declined it is
-        // escalated rather than refused — see `hostingCoverageActorOptions`.
+        // escalated rather than refused — see `hostingCoverageActorOptions`. The
+        // owner travels WITH the answer, from the same pre-write snapshot, because
+        // the answer only means anything if the actor is the person whose two
+        // bookings these are; an officer answering here would otherwise skip §7's
+        // confirmation and its mandatory reason.
         ...(hostingCoverageLinkedMove
-          ? { linkedMove: hostingCoverageLinkedMove }
+          ? {
+              linkedMove: {
+                answer: hostingCoverageLinkedMove,
+                bookingOwnerMemberId: booking.memberId,
+              },
+            }
           : {}),
       }),
       });

@@ -3342,9 +3342,12 @@ describe("a member is offered the linked move, never deadlocked (#3232)", () => 
           actorMemberId: "owner-1",
           vacatedRange: VACATED,
           linkedMove: {
-            choice: "LEAVE_UNCOVERED",
-            acknowledged: true,
-            stateKey: strandedCoverageStateKey(stranded, "b-source"),
+            answer: {
+              choice: "LEAVE_UNCOVERED",
+              acknowledged: true,
+              stateKey: strandedCoverageStateKey(stranded, "b-source"),
+            },
+            bookingOwnerMemberId: "owner-1",
           },
         }),
       ),
@@ -3352,6 +3355,64 @@ describe("a member is offered the linked move, never deadlocked (#3232)", () => 
     ).resolves.toBeTruthy();
     const dependentItem = queued.find((item) => item.sourceBookingId === "b-main");
     expect(dependentItem?.reason).toBe(LINKED_MOVE_DECLINED_INCIDENT_REASON);
+  });
+
+  it("refuses an officer the member's answer, so §7's reason is still owed", async () => {
+    // THE AUTHORISATION HOLE THIS PINS. `hostingCoverageLinkedMove` is
+    // deliberately not one of either save route's admin-gated flags — right,
+    // because it is a MEMBER's field — so an officer can send it. An officer
+    // refused with `SameOwnerCoverageOverrideRequiredError` is handed the
+    // `strandedStateKey` in that refusal body; resubmitting it as a declined
+    // linked move used to be honoured, because the decline branch was evaluated
+    // above the officer branch and checked neither role nor ownership. The change
+    // then proceeded with `overrideReason: null`, `overriddenByMemberId: null` and
+    // an incident whose recorded reason says THE MEMBER was asked — about a
+    // booking that is not theirs, and a member who was never asked. All three of
+    // §7's requirements (explicit confirmation, mandatory reason, officer
+    // attribution) defeated at once, and the cause count `INV-HOST-052` protects
+    // corrupted quietly.
+    const { db } = makeStore([
+      sourceWithAdult("b-source", ["2026-07-20", "2026-07-21"]),
+      booking({ id: "b-main", guests: [guestRow("kid", ["2026-07-03", "2026-07-04"])] }),
+    ]);
+    const stranded = [
+      {
+        bookingId: "b-main",
+        reference: strandedCoverageReference("b-main"),
+        lodgeName: "Ruapehu Lodge",
+        nights: ["2026-07-03", "2026-07-04"],
+        checkIn: "2026-07-03",
+        checkOut: "2026-07-05",
+      },
+    ];
+    let error: unknown = null;
+    try {
+      await reconcileAdultMemberHostingReviewWithSiblings(
+        "b-source",
+        db,
+        hostingCoverageActorOptions({
+          actorRole: "ADMIN",
+          actorMemberId: "officer-1",
+          vacatedRange: VACATED,
+          // The member's field, sent by somebody who is not the member, carrying
+          // the key the officer's own refusal handed them.
+          linkedMove: {
+            answer: {
+              choice: "LEAVE_UNCOVERED",
+              acknowledged: true,
+              stateKey: strandedCoverageStateKey(stranded, "b-source"),
+            },
+            bookingOwnerMemberId: "owner-1",
+          },
+        }),
+      );
+    } catch (caught) {
+      error = caught;
+    }
+    expect(
+      error,
+      "INV-HOST-050: only the booking's own member may answer the offer; an officer still owes §7's override",
+    ).toBeInstanceOf(SameOwnerCoverageOverrideRequiredError);
   });
 
   it("re-prompts rather than honouring an answer about a different situation", async () => {
@@ -3372,9 +3433,12 @@ describe("a member is offered the linked move, never deadlocked (#3232)", () => 
           actorMemberId: "owner-1",
           vacatedRange: VACATED,
           linkedMove: {
-            choice: "LEAVE_UNCOVERED",
-            acknowledged: true,
-            stateKey: "v1:" + "f".repeat(64),
+            answer: {
+              choice: "LEAVE_UNCOVERED",
+              acknowledged: true,
+              stateKey: "v1:" + "f".repeat(64),
+            },
+            bookingOwnerMemberId: "owner-1",
           },
         }),
       );

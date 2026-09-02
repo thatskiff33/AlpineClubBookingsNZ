@@ -1619,7 +1619,7 @@ export function hostingCoverageActorOptions(actor: {
   } | null;
   /**
    * The MEMBER's answer to the linked-move offer, when they have given one
-   * (#3232, `INV-HOST-050`).
+   * (#3232, `INV-HOST-050`), together with WHOSE booking is being changed.
    *
    * OPTIONAL, unlike `vacatedRange`, and the asymmetry is deliberate rather than
    * inconsistent. A missing vacated range is silently WRONG — the fan-out looks at
@@ -1628,6 +1628,20 @@ export function hostingCoverageActorOptions(actor: {
    * question, and its consequence is the safe one: the member is refused-and-
    * offered rather than allowed. Absence cannot hide a defect.
    *
+   * THE OWNER'S ID IS PART OF THE ANSWER, AND IT IS NOT OPTIONAL WITHIN IT. The
+   * answer means "the person whose two bookings these are was shown what this
+   * costs the other one, and chose to go ahead". That sentence is only true if the
+   * actor IS that person, and this field is what lets the check be made rather
+   * than assumed. `hostingCoverageLinkedMove` is deliberately not one of either
+   * save route's admin-gated flags — correct, because it is a MEMBER's field — so
+   * without this an officer refused with `SameOwnerCoverageOverrideRequiredError`
+   * could take the `strandedStateKey` out of that refusal body, resubmit it as a
+   * declined linked move, and be let through with no reason recorded, no officer
+   * attribution, and an audit line saying the member was asked about a booking
+   * that is not theirs. That defeats all three of §7's requirements at once and
+   * corrupts the cause count `INV-HOST-052` exists to protect. An officer who
+   * really means to strand a booking still owes §7's confirmation and reason.
+   *
    * `MOVE_BOTH` is deliberately NOT handled here. Accepting is not a disposition,
    * it is a different operation — moving two bookings atomically — and it is
    * `booking-linked-date-move-service.ts`'s job. By the time that service
@@ -1635,9 +1649,18 @@ export function hostingCoverageActorOptions(actor: {
    * nothing for a disposition to decide.
    */
   linkedMove?: {
-    choice?: "MOVE_BOTH" | "LEAVE_UNCOVERED";
-    acknowledged?: boolean;
-    stateKey?: string | null;
+    /** The answer as it arrived on the wire, or `null` if none did. */
+    answer: {
+      choice?: "MOVE_BOTH" | "LEAVE_UNCOVERED";
+      acknowledged?: boolean;
+      stateKey?: string | null;
+    } | null;
+    /**
+     * The changed booking's own member, from the pre-write snapshot the caller
+     * already holds. `null` is not a wildcard: an answer can never be honoured
+     * against an unknown owner.
+     */
+    bookingOwnerMemberId: string | null;
   } | null;
 }): Pick<
   HostingReconcileOptions,
@@ -1656,12 +1679,23 @@ export function hostingCoverageActorOptions(actor: {
   // officer queue gets it and an incident opens. The stranded-state key is carried
   // so the settle step can prove they were shown THIS situation — a stale answer
   // re-prompts instead of being honoured.
+  //
+  // AND IT IS ONLY THE OWNER'S ANSWER TO GIVE. Checked before the choice is even
+  // read, because this branch sits above the officer branch and grants everything
+  // that one withholds: an officer answering here would proceed with no reason, no
+  // attribution and an incident claiming the member was asked. `null` on either
+  // side never matches, so an unknown actor or an unknown owner falls through to
+  // the refusal/override branches below rather than through this one.
+  const answeredByOwner =
+    actorMemberId !== null &&
+    actor.linkedMove?.bookingOwnerMemberId === actorMemberId;
+  const answer = answeredByOwner ? actor.linkedMove?.answer : null;
   const declinedLinkedMove =
-    actor.linkedMove?.choice === "LEAVE_UNCOVERED" &&
-    actor.linkedMove?.acknowledged === true &&
-    typeof actor.linkedMove?.stateKey === "string" &&
-    actor.linkedMove.stateKey.length > 0
-      ? actor.linkedMove.stateKey
+    answer?.choice === "LEAVE_UNCOVERED" &&
+    answer?.acknowledged === true &&
+    typeof answer?.stateKey === "string" &&
+    answer.stateKey.length > 0
+      ? answer.stateKey
       : null;
   if (declinedLinkedMove) {
     return {
@@ -2794,6 +2828,25 @@ async function settleSameOwnerDependentCoverage(
     // override is the same rule D-R4 already applies to a hosting decision.
     throw new Error(
       "Overriding same-owner hosting coverage requires an explicit reason",
+    );
+  }
+
+  // #3232, DEFENCE IN DEPTH, for the same reason `resolveDependentDisposition`
+  // states it: this is the last point before an acceptance is acted on, and the
+  // acceptance is the thing that turns a refusal into an allowed change with no
+  // officer reason recorded. `hostingCoverageActorOptions` already refuses to set
+  // the flag for anybody but the owner, so reaching here means a caller assembled
+  // the options by hand and got it wrong. Fail loudly inside the transaction,
+  // where it rolls back, rather than record that a member consented to something
+  // on somebody else's booking.
+  if (
+    context.strandingAcceptedByOwner === true &&
+    (context.actorMemberId ?? null) !== booking.memberId
+  ) {
+    throw new Error(
+      "INV-HOST-050: a linked-move answer can only be honoured for the member " +
+        "who owns the booking being changed; an officer still owes the " +
+        "same-owner coverage override and its reason.",
     );
   }
 

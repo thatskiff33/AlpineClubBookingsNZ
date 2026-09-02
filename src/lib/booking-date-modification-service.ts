@@ -1240,9 +1240,18 @@ export async function modifyBookingDates({
         ...(hostingCoverageOverride ? { override: hostingCoverageOverride } : {}),
         // #3232: a member who was offered the linked move and chose to move only
         // this booking is escalated rather than refused — the officer queue gets
-        // the incident and they were shown the consequence first.
+        // the incident and they were shown the consequence first. The owner
+        // travels WITH the answer, from the same pre-write snapshot: the answer
+        // only means anything if the actor is the person whose two bookings these
+        // are, and an officer answering here would otherwise skip §7's
+        // confirmation and its mandatory reason.
         ...(hostingCoverageLinkedMove
-          ? { linkedMove: hostingCoverageLinkedMove }
+          ? {
+              linkedMove: {
+                answer: hostingCoverageLinkedMove,
+                bookingOwnerMemberId: booking.memberId,
+              },
+            }
           : {}),
       }),
     });
