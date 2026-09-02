@@ -10,7 +10,6 @@ import {
   type Prisma,
 } from "@prisma/client";
 
-import { ApiError } from "@/lib/api-error";
 import { BookingModificationSettlementMethodRequiredError } from "@/lib/booking-modify-settlement-required";
 import type { CalendarDate } from "@/lib/club-time";
 import {

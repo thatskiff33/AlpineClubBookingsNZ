@@ -112,7 +112,7 @@ import {
   lockRosterDateRangesAndDates,
   rosterOperationalDayRange,
 } from "@/lib/roster-lock";
-import { formatDateOnly, parseDateOnly } from "@/lib/date-only";
+import { formatDateOnly } from "@/lib/date-only";
 
 type ModifiedBooking = Booking & {
   guests: BookingGuest[];
