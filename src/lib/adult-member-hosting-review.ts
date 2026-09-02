@@ -2724,9 +2724,9 @@ async function settleSameOwnerDependentCoverage(
   if (!booking) return;
 
   const resolved = await loadAdultMemberHostingPolicy(booking.lodgeId, db);
-  if (resolved.mode !== "ENFORCED" && resolved.mode !== "ADMIN_REVIEW_REQUIRED") {
-    return;
-  }
+  // The shared predicate rather than its two literals written out, which is what
+  // this line was (`INV-SSOT-001`).
+  if (!hostingModeIsActive(resolved.mode)) return;
 
   // Exact queue attribution only. An on-behalf review decision is a separate
   // Booking FK and must never be substituted for a missing coverage-change actor.

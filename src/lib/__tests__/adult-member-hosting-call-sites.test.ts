@@ -1096,6 +1096,58 @@ describe("the same-owner refusal and the escalation seam (#2576 §6, §8, §9)",
     ).toContain("parked || waiveChangeFee");
   });
 
+  it("asks ONE predicate whether a stranding can refuse (#3232)", () => {
+    // `INV-HOST-050`. There were three spellings of the same fact: the settle
+    // path's early return on the literal `ADMIN_REVIEW_REQUIRED`, the read-only
+    // probe the OFFER uses on `mode !== "ENFORCED"`, and the wider active pair
+    // the plan they share gates on. They agree today, which is what made the
+    // arrangement dangerous — extend the refusal to `ADMIN_REVIEW_REQUIRED` in
+    // one of them and the probe returns an empty list, so the caller raises a 409
+    // naming nobody, the browser's fail-closed reader discards it, and the member
+    // is handed a body no reader matches.
+    const review = readRepoCode("src/lib/adult-member-hosting-review.ts");
+    // The offer's read-only probe, which had its own spelling.
+    const probe = review.slice(
+      review.indexOf("export async function inspectSameOwnerStrandingForOffer"),
+    );
+    expect(probe.slice(0, 900)).toContain("hostingModeCanRefuseStranding(");
+    expect(probe.slice(0, 900)).not.toContain('!== "ENFORCED"');
+    // And the same-owner settle path, which had the literal label.
+    expect(review).not.toContain('resolved.mode === "ADMIN_REVIEW_REQUIRED"');
+    expect(
+      (review.match(/hostingModeCanRefuseStranding\(/g) ?? []).length,
+      "both the refusal path and the offer's probe must read it",
+    ).toBeGreaterThanOrEqual(2);
+    // And its one home is beside the sibling that answers the WIDER question.
+    expect(
+      readRepoCode("src/lib/policies/adult-member-hosting.ts"),
+    ).toContain("export function hostingModeCanRefuseStranding(");
+  });
+
+  it("writes the state-key version in exactly one place", () => {
+    // #3232, `INV-SSOT-001`. The literal `v1:` was at six sites — two minters,
+    // two request schemas and two browser readers — and the prefix exists
+    // precisely so a future change to what a key must cover FAILS CLOSED. With
+    // six copies, bumping the minters alone leaves the readers discarding every
+    // offer the server makes, so a member clicks a "Move both" button that can
+    // never work and is given no reason. `readRepoCode` has already stripped
+    // comments, so prose naming the version is not a hit.
+    for (const file of [
+      "src/lib/adult-member-hosting-linked-move.ts",
+      "src/lib/adult-member-hosting-same-owner.ts",
+      "src/lib/hosting-coverage-linked-move-client.ts",
+    ]) {
+      expect(
+        readRepoCode(file),
+        `${file} must mint and match through the shared format, never a literal`,
+      ).not.toContain("v1:");
+    }
+    // And the one home really is the shared browser contract.
+    expect(
+      readRepoCode("src/lib/hosting-coverage-override-client.ts"),
+    ).toContain('HOSTING_COVERAGE_STATE_KEY_VERSION = "v1"');
+  });
+
   it("offers the linked move on BOTH date-capable member surfaces", () => {
     // #3232 D1, applied consistently. Widening the dependent read
     // (`INV-HOST-049`) makes a date move NOTICE the booking it leaves behind on

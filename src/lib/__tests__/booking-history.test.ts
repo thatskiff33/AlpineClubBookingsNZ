@@ -544,4 +544,55 @@ describe("a modification whose adjustment is still with the club (#3033)", () =>
     expect(free?.detail).not.toMatch(/still being worked out/i);
     expect(priced?.detail).toMatch(/still being worked out/i);
   });
+
+  /**
+   * #3232 D3: WHY THIS BOOKING IS FLAGGED, on the booking, in words.
+   *
+   * The guide promised an officer that "the booking's history says, in words,
+   * that the member was asked about the other booking and chose to move only this
+   * one". Three things stopped that being true: the incident writer set no
+   * `targetId`, so the page's `targetId = booking.id` query never saw the row;
+   * this switch had no case for it; and the page's action allowlist did not name
+   * it. The officer clicked through from the queue, saw the generic cause and
+   * nothing else, and did exactly what the guide said they would not — guess.
+   *
+   * The page feeds these two actions only to admin viewers, because `details` can
+   * be an officer's PRIVATE override reason.
+   */
+  it("renders a hosting-coverage incident's own recorded explanation (#3232)", () => {
+    const items = buildBookingHistoryItems({
+      createdAt: new Date("2026-04-01T09:00:00Z"),
+      payment: null,
+      modifications: [],
+      refundRequests: [],
+      auditLogs: [
+        {
+          id: "audit-incident",
+          action: "booking.hostingCoverage.incidentOpened",
+          details:
+            "The member was asked whether to move this booking to the same new " +
+            "nights as the booking they were editing, and chose to move only " +
+            "that one.",
+          createdAt: new Date("2026-04-09T12:00:00Z"),
+        },
+        {
+          id: "audit-incident-again",
+          action: "booking.hostingCoverage.incidentUpdated",
+          details: "A later change moved which nights are uncovered.",
+          createdAt: new Date("2026-04-10T12:00:00Z"),
+        },
+      ],
+    });
+
+    const opened = items.find((item) => item.id === "audit-audit-incident");
+    expect(opened?.title).toBe("Adult member cover flagged");
+    expect(opened?.detail).toMatch(/chose to move only that one/);
+    expect(opened?.tone).toBe("warning");
+
+    const updated = items.find(
+      (item) => item.id === "audit-audit-incident-again",
+    );
+    expect(updated?.title).toBe("Adult member cover flag updated");
+    expect(updated?.detail).toMatch(/which nights are uncovered/);
+  });
 });

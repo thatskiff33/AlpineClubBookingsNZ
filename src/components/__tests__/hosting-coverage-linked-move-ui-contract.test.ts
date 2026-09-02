@@ -332,6 +332,30 @@ describe("the linked-move offer's UI contract (#3232, INV-HOST-050)", () => {
     );
   });
 
+  /**
+   * #3232 D3: the incident's recorded explanation reaches the booking page, and
+   * reaches ONLY staff.
+   *
+   * The audit row's `details` is whoever's explanation applies — a member's
+   * recorded decision about their own two bookings, or an officer's PRIVATE
+   * override reason, which the booking's own member must never read. So the DATA
+   * FEED is gated rather than the render, the way #2008's duplicate-capture rows
+   * on the same page already are: a non-admin viewer never receives the rows at
+   * all. Asserted on the source because the query lives in a server component.
+   */
+  it("feeds the incident's own history rows to staff only", () => {
+    const page = source("src/app/(authenticated)/bookings/[id]/page.tsx");
+    expect(page).toContain("booking.hostingCoverage.incidentOpened");
+    const gate = page.slice(
+      page.indexOf("const bookingAuditLogs"),
+      page.indexOf("booking.hostingCoverage.incidentOpened"),
+    );
+    expect(
+      gate,
+      "the incident actions must be inside a canSeeAdminTools branch, not the shared list",
+    ).toContain("canSeeAdminTools");
+  });
+
   it("keeps the shared browser contract free of server-only dependencies", () => {
     const client = source("src/lib/hosting-coverage-linked-move-client.ts");
     expect(client).not.toMatch(

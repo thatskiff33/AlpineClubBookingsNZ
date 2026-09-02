@@ -317,6 +317,14 @@ describe("one active incident per booking, created or folded into (#2576 §16)",
     expect(audits[0]).toMatchObject({
       action: "booking.hostingCoverage.incidentOpened",
       details: "The member was offered the linked move and declined it.",
+      // #3232 D3: AND IT IS REACHABLE FROM THE BOOKING. The booking page's own
+      // history reads `auditLog.targetId = booking.id`, so without this the
+      // recorded explanation lived only in Admin -> Monitoring & Support -> Audit
+      // Log — while both the officer queue's "Review booking" button and the
+      // stuck-state row send an officer to the booking page, where they saw the
+      // generic cause and nothing else. D3's whole justification is that an
+      // officer reading the booking's history sees the decision.
+      targetId: "b-main",
     });
     // Actorless. `createAuditLog` maps a null actor to `undefined` so Prisma
     // omits the column, which is why this reads the key rather than matching

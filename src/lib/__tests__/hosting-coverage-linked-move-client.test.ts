@@ -9,10 +9,17 @@
 // renders.
 import { describe, expect, it } from "vitest";
 
+import { linkedMoveStateKey } from "@/lib/adult-member-hosting-linked-move";
+import { strandedCoverageStateKey } from "@/lib/adult-member-hosting-same-owner";
 import {
   hostingCoverageLinkedMoveAnswer,
   readHostingCoverageLinkedMovePrompt,
 } from "@/lib/hosting-coverage-linked-move-client";
+import {
+  HOSTING_COVERAGE_STATE_KEY_PATTERN,
+  HOSTING_COVERAGE_STATE_KEY_VERSION,
+  hostingCoverageStateKeyOf,
+} from "@/lib/hosting-coverage-override-client";
 
 const KEY_A = `v1:${"a".repeat(64)}`;
 const KEY_B = `v1:${"b".repeat(64)}`;
@@ -182,5 +189,68 @@ describe("which key travels with which answer (#3232, INV-HOST-050)", () => {
     expect(
       hostingCoverageLinkedMoveAnswer(prompt, "LEAVE_UNCOVERED")?.stateKey,
     ).toBe(KEY_B);
+  });
+});
+
+/**
+ * #3232: ONE STATE-KEY FORMAT, ONE MINT, ONE PATTERN.
+ *
+ * The literal `v1:` was written at six sites — two minters, two request schemas
+ * and two browser readers — and the code already anticipated the drift that
+ * invites: the prefix exists so a future change to what a key must cover fails
+ * CLOSED rather than colliding with an old value. With six copies, a bump in the
+ * minters alone leaves the readers silently discarding every offer the server
+ * makes, so a member clicks a "Move both" button that can never work.
+ */
+describe("the hosting-coverage state-key format (#3232, INV-SSOT-001)", () => {
+  const digest = "a".repeat(64);
+
+  it("mints what its own pattern matches", () => {
+    expect(hostingCoverageStateKeyOf(digest)).toBe(
+      `${HOSTING_COVERAGE_STATE_KEY_VERSION}:${digest}`,
+    );
+    expect(hostingCoverageStateKeyOf(digest)).toMatch(
+      HOSTING_COVERAGE_STATE_KEY_PATTERN,
+    );
+    expect(`v0:${digest}`).not.toMatch(HOSTING_COVERAGE_STATE_KEY_PATTERN);
+    expect(`${HOSTING_COVERAGE_STATE_KEY_VERSION}:nothex`).not.toMatch(
+      HOSTING_COVERAGE_STATE_KEY_PATTERN,
+    );
+  });
+
+  it("is what BOTH real minters produce, so a bump reaches every reader", () => {
+    const stranded = [
+      {
+        bookingId: "b-main",
+        reference: "BK-MAIN",
+        lodgeName: "Ruapehu Lodge",
+        nights: ["2026-08-10"],
+        checkIn: "2026-08-10",
+        checkOut: "2026-08-12",
+      },
+    ];
+    const accept = linkedMoveStateKey({
+      stranded,
+      sourceBookingId: "b-source",
+      proposals: [
+        { bookingId: "b-main", checkIn: "2026-08-20", checkOut: "2026-08-22" },
+      ],
+      combinedAmountDueCents: 100,
+      combinedRefundCents: 0,
+      combinedChangeFeeCents: 50,
+      combinedPriceDiffCents: 50,
+    });
+    const decline = strandedCoverageStateKey(stranded, "b-source");
+    for (const key of [accept, decline]) {
+      expect(key).toMatch(HOSTING_COVERAGE_STATE_KEY_PATTERN);
+      expect(key.startsWith(`${HOSTING_COVERAGE_STATE_KEY_VERSION}:`)).toBe(true);
+    }
+    // And a body carrying them still reads, which is the end-to-end statement:
+    // the minters and this module's reader agree on the format by construction.
+    expect(
+      readHostingCoverageLinkedMovePrompt(
+        body({ acceptStateKey: accept, declineStateKey: decline }),
+      ),
+    ).not.toBeNull();
   });
 });

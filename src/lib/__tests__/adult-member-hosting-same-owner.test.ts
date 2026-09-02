@@ -7,6 +7,7 @@
 // the fake store below really applies them — see `matchesWhere`. That is the whole
 // reason this file does not reuse the single-row `makeDb` in
 // adult-member-hosting-review.test.ts.
+import { bookingsOverlap } from "@/lib/booking-night-overlap";
 import { AgeTier, type MemberGuestConsentStatus } from "@prisma/client";
 import { describe, expect, it, vi } from "vitest";
 
@@ -59,6 +60,7 @@ import {
   sameOwnerCoverageDependentOverStayUnionWhere,
   sameOwnerCoverageDependentWhere,
   strandedCoverageReference,
+  dependentNeedsOwnQueueItem,
   strandedCoverageStateKey,
 } from "@/lib/adult-member-hosting-same-owner";
 import { LINKED_MOVE_DECLINED_INCIDENT_REASON } from "@/lib/adult-member-hosting-linked-move";
@@ -3364,6 +3366,71 @@ describe("a member is offered the linked move, never deadlocked (#3232)", () => 
     expect(message).toMatch(/adding a qualifying adult member/i);
     expect(message).toMatch(/cancelling it/i);
     expect(message).toMatch(/Booking Officer/);
+    // INCLUDING THE THIRD CLAUSE, which the #3232 rewrite briefly turned into a
+    // dead end: "A Booking Officer can also authorise this change and record why"
+    // is a true statement about officers with no way to reach one, and the member
+    // cannot take that override themselves. A refusal that names no way forward
+    // is the failure this sentence exists to avoid.
+    expect(
+      message,
+      "INV-HOST-050: the officer clause must be a way forward, not a fact",
+    ).toMatch(/contact the club/i);
+  });
+
+  it("decides its own queue item with the SAME overlap test the query uses", () => {
+    // `INV-SSOT-001`. The queue item's night window is what the drain turns back
+    // into bookings, so the predicate deciding whether a dependent needs an item
+    // of its own has to agree with the query that found it — and the SQL half of
+    // exactly this test is already single-sourced as `nightOverlapClause`. This
+    // function hand-wrote the two comparisons a second time, one drift away from
+    // #3039's measured failure where the refusal looks fixed and the booking is
+    // dropped in the background instead.
+    const day = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
+    const changed = { checkIn: day("2026-08-10"), checkOut: day("2026-08-12") };
+    const cases = [
+      // Overlapping, back-to-back on each side, and clear of it — the half-open
+      // boundary included, which is where a second spelling drifts first.
+      { checkIn: day("2026-08-11"), checkOut: day("2026-08-13") },
+      { checkIn: day("2026-08-12"), checkOut: day("2026-08-14") },
+      { checkIn: day("2026-08-08"), checkOut: day("2026-08-10") },
+      { checkIn: day("2026-08-20"), checkOut: day("2026-08-22") },
+      { checkIn: day("2026-08-10"), checkOut: day("2026-08-12") },
+    ];
+    for (const dependent of cases) {
+      expect(
+        dependentNeedsOwnQueueItem(changed, dependent),
+        `${dependent.checkIn.toISOString()} must agree with bookingsOverlap`,
+      ).toBe(!bookingsOverlap(changed, dependent));
+    }
+  });
+
+  it("counts the bookings it is talking about, because the cap is not one", () => {
+    // `SAME_OWNER_COVERAGE_DEPENDENT_LIMIT` is 25, and a member with one adult
+    // and two parties of guests is an ordinary family shape. The singular second
+    // sentence told them to add an adult to "that booking", or cancel "it", above
+    // a plural "Affected:" list naming three.
+    function row(id: string) {
+      return {
+        bookingId: id,
+        reference: strandedCoverageReference(id),
+        lodgeName: "Ruapehu Lodge",
+        nights: ["2026-07-03"],
+        checkIn: "2026-07-03",
+        checkOut: "2026-07-04",
+      };
+    }
+    const one = formatStrandedCoverageMessage([row("b-one")]);
+    expect(one).toMatch(/leave another booking on your account/);
+    expect(one).toMatch(/to that booking, or cancelling it,/);
+
+    const many = formatStrandedCoverageMessage([
+      row("b-one"),
+      row("b-two"),
+      row("b-three"),
+    ]);
+    expect(many).toMatch(/leave 3 other bookings on your account/);
+    expect(many).toMatch(/to those bookings, or cancelling them,/);
+    expect(many).not.toMatch(/cancelling it,/);
   });
 
   it("escalates instead of refusing once the member has declined the offer", async () => {
@@ -3503,6 +3570,57 @@ describe("a member is offered the linked move, never deadlocked (#3232)", () => 
       error?.linkedMoveWouldAnswer,
       "a stale answer must produce a FRESH offer, not a dead-end refusal",
     ).toBe(true);
+  });
+
+  it("does not claim the offer for a STALE answer the shift cannot answer either", async () => {
+    // The stale-answer re-throw above passed `linkedMoveWouldAnswer: true`
+    // UNCONDITIONALLY, while the first-submission throw computed it. So a member
+    // re-submitting a stale decline whose NEW stranding is one a shift cannot fix
+    // — a shortening, exactly the case pinned earlier in this file — was offered
+    // a move the rule says should stay a plain refusal, and the offer would then
+    // fail because the dependent's target is where it already is. Both throws now
+    // ask the same question of the same predicate.
+    const { db } = makeStore([
+      sourceWithAdult("b-source", ["2026-08-10", "2026-08-11"]),
+      booking({
+        id: "b-main",
+        checkIn: new Date("2026-08-13T00:00:00.000Z"),
+        checkOut: new Date("2026-08-14T00:00:00.000Z"),
+        guests: [guestRow("kid", ["2026-08-13"])],
+      }),
+    ]);
+    let error: SameOwnerCoverageWouldBreakError | null = null;
+    try {
+      await reconcileAdultMemberHostingReviewWithSiblings(
+        "b-source",
+        db,
+        hostingCoverageActorOptions({
+          actorRole: "MEMBER",
+          actorMemberId: "owner-1",
+          // Ten to fifteen August, cut back to ten to twelve: the arrival did not
+          // move, so no shift can carry the 13-14 dependent back under cover.
+          vacatedRange: {
+            checkIn: new Date("2026-08-10T00:00:00.000Z"),
+            checkOut: new Date("2026-08-15T00:00:00.000Z"),
+          },
+          linkedMove: {
+            answer: {
+              choice: "LEAVE_UNCOVERED",
+              acknowledged: true,
+              stateKey: "v1:" + "f".repeat(64),
+            },
+            bookingOwnerMemberId: "owner-1",
+          },
+        }),
+      );
+    } catch (caught) {
+      error = caught as SameOwnerCoverageWouldBreakError;
+    }
+    expect(error).toBeInstanceOf(SameOwnerCoverageWouldBreakError);
+    expect(
+      error?.linkedMoveWouldAnswer,
+      "INV-HOST-050: a stale answer is a fresh first submission, judged by the same predicate",
+    ).toBe(false);
   });
 
   it("still escalates rather than refusing when the actor is not the owner", async () => {

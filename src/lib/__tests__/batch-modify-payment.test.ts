@@ -801,6 +801,70 @@ describe("PUT /api/bookings/[id]/modify", () => {
     await expect(result.deferredPostCommit!()).resolves.toBeUndefined();
   }, 10_000);
 
+  /**
+   * #3232 D2: A WAIVED CHANGE FEE IS NOT AN UNMARKED ZERO.
+   *
+   * Nothing recorded that a waiver had happened — no flag, no reason — so "no fee
+   * was due" and "we waived it because our own supervision rule compelled this
+   * move" were the same 0 in the modification row, the audit trail and the Xero
+   * leg. A treasurer reconciling change-fee income against the club setting had
+   * nothing to reconcile against, and the dragged booking's history read as an
+   * ordinary member-initiated edit to a booking the member never asked to move.
+   */
+  it("records that a waived change fee was WAIVED, and only when it was", async () => {
+    async function runWith(waiveChangeFee: boolean) {
+      const tx = makeTx(makeBooking());
+      mockCalculateBookingPrice.mockReturnValue({
+        totalPriceCents: 5000,
+        guests: [{ priceCents: 5000, perNightCents: [2500, 2500], nightDates: [] }],
+      });
+      const { logAudit } = await import("@/lib/audit");
+      vi.mocked(logAudit).mockClear();
+      const { modifyBookingBatch } = await import(
+        "@/lib/booking-batch-modification-service"
+      );
+      const result = await modifyBookingBatch({
+        todayAtClub: FIXTURE_CLUB_DAY,
+        bookingId: "bk1",
+        actor: { id: "m1", role: "USER" },
+        input: {} as never,
+        ipAddress: "127.0.0.1",
+        tx: tx as never,
+        preTransaction: TX_MODE_PRE_TRANSACTION,
+        ...(waiveChangeFee ? { waiveChangeFee: true } : {}),
+      });
+      await result.deferredPostCommit!();
+      const row = vi.mocked(tx.bookingModification.create).mock.calls[0]?.[0] as
+        | { data: { newData: Record<string, unknown> } }
+        | undefined;
+      const audit = vi
+        .mocked(logAudit)
+        .mock.calls.find(
+          (call) =>
+            (call[0] as { action: string }).action === "booking.modify.batch",
+        )?.[0] as { metadata: Record<string, unknown> } | undefined;
+      return { newData: row?.data.newData, metadata: audit?.metadata };
+    }
+
+    const waived = await runWith(true);
+    expect(waived.newData?.changeFeeWaived).toBe(true);
+    expect(waived.newData?.changeFeeWaivedReason).toBe(
+      "LINKED_MOVE_SUPERVISION_RULE",
+    );
+    expect(waived.metadata?.changeFeeWaived).toBe(true);
+    expect(waived.metadata?.changeFeeWaivedReason).toBe(
+      "LINKED_MOVE_SUPERVISION_RULE",
+    );
+
+    // And ABSENT on an ordinary edit, so a query for waived fees is a query for
+    // the key rather than a guess at which zeroes meant something.
+    const ordinary = await runWith(false);
+    expect(ordinary.newData).toBeDefined();
+    expect(ordinary.newData).not.toHaveProperty("changeFeeWaived");
+    expect(ordinary.metadata).toBeDefined();
+    expect(ordinary.metadata).not.toHaveProperty("changeFeeWaived");
+  }, 10_000);
+
   it("real service path preserves sparse added-guest nights and forwards both hosting approvals", async () => {
     const booking = makeBooking();
     const tx = makeTx(booking);
