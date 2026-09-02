@@ -431,6 +431,19 @@ export const rateLimiters = {
   contact: { id: "contact", limit: 10, windowSeconds: 60 * 60, authSensitive: true } as RateLimitConfig,
   /** Lodge hut leader PIN login: 5 attempts per minute */
   lodgePinLogin: { id: "lodge-pin-login", limit: 5, windowSeconds: 60, authSensitive: true } as RateLimitConfig,
+  /**
+   * Hut-leader PIN session renew/lock (#3228): 60 per minute. The kiosk sends one
+   * renewal a minute per device, so this bounds cost rather than policing a
+   * credential — renewal requires the signed cookie it renews. Applied two ways,
+   * and the route's docblock carries why. Renew is keyed on the KIOSK ACCOUNT
+   * with no shared-address backstop: a lodge's tablets all sign in as that one
+   * account and share this budget (sixty against one a minute each is ample),
+   * while an address key here is spendable by anyone else on the lodge's
+   * connection — a staying guest included — making it a lockout lever rather
+   * than a protection. Lock is address-keyed, being unauthenticated by design.
+   * Different key namespaces, so neither starves the other.
+   */
+  lodgePinSession: { id: "lodge-pin-session", limit: 60, windowSeconds: 60 } as RateLimitConfig,
   /** Lobby display pairing start + admin code bind: 10 per 15 minutes */
   displayPairing: { id: "display-pairing", limit: 10, windowSeconds: 15 * 60, authSensitive: true } as RateLimitConfig,
   /** Lobby display claim poll (signed-blob-bound, not guessable): 30 per minute */
