@@ -991,6 +991,39 @@ describe("either both bookings move or neither does (#3232)", () => {
   });
 });
 
+describe("the transaction is budgeted for lock(1) contention (#3232, INV-LOCK-002)", () => {
+  it("opens with the same budget as the longest-lived holder of the global key", async () => {
+    await raiseOffer();
+
+    // Prisma's defaults are 2s maxWait / 5s timeout, and the blocking wait for
+    // `pg_advisory_xact_lock(1)` counts against them — while this one transaction
+    // runs TWO full batch modifications, the envelope flush and three reconciles
+    // behind that wait. On the defaults an ordinary cancel or a bed assignment
+    // legitimately holding the key would abort a member's save.
+    expect(h.transaction.mock.calls[0]?.[1]).toEqual({
+      maxWait: 10_000,
+      timeout: 30_000,
+    });
+  });
+
+  for (const code of ["P2028", "P2034"] as const) {
+    it(`answers ${code} with "try again", not an opaque failure`, async () => {
+      h.transaction.mockRejectedValue(Object.assign(new Error("tx"), { code }));
+
+      const thrown = await offerLinkedDateMove(args()).then(
+        () => null,
+        (error: unknown) => error,
+      );
+
+      // Nothing was committed, and the alternative is worse than untidy: an
+      // unmapped contention error reaches the member as a 500 INSTEAD OF THE
+      // OFFER, which puts them back to being unable to move either booking.
+      expect((thrown as { status?: number })?.status).toBe(503);
+      expect((thrown as Error)?.message).toContain("try again in a moment");
+    });
+  }
+});
+
 describe("post-commit work is contained per booking (#3232)", () => {
   /**
    * THE TRANSACTION HAS COMMITTED BY THIS POINT, so a failure here can never mean
