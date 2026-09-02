@@ -25,7 +25,7 @@ import {
 import { parseFrozenEvidence } from "@/lib/booking-exception-requests";
 import { parseDateOnly } from "@/lib/date-only";
 import { sendBookingPolicyExceptionRefusedEmail } from "@/lib/email";
-import { BookingModificationSettlementMethodRequiredError } from "@/lib/booking-modify-settlement";
+import { BookingModificationSettlementMethodRequiredError } from "@/lib/booking-modify-settlement-required";
 import {
   BookingGuestValidationError,
   computeMemberGuestBoundary,

@@ -132,6 +132,7 @@ import {
   SameOwnerCoverageWouldBreakError,
   strandedCoverageStateKey,
 } from "@/lib/adult-member-hosting-same-owner";
+import { BookingModificationSettlementMethodRequiredError } from "@/lib/booking-modify-settlement-required";
 import {
   InsufficientCapacityError,
   OverCapacityConfirmationRequiredError,
@@ -988,6 +989,99 @@ describe("either both bookings move or neither does (#3232)", () => {
       [],
     );
     expect(h.events.filter((event) => event.startsWith("settle:"))).toEqual([]);
+  });
+});
+
+describe("a dependent that needs a refund-or-credit choice (#3232)", () => {
+  /**
+   * THE SHAPE, and it needs no contrivance. The panel collects the card-or-credit
+   * choice only when the PRIMARY's own quote asks for one, so whenever the primary
+   * needs none — it is unpaid, or its price went UP — and the compelled move
+   * reduces a settled dependent, the request carries no choice and the dependent's
+   * write demands one. That threw a bare 400 telling the member to choose
+   * something there was no control for, the offer was never built, and they could
+   * move neither booking.
+   */
+  // THE REAL CLASS, not a name-alike: the service recognises it with `instanceof`,
+  // which is exactly why the class was split into a module whose only import is
+  // `ApiError` — importing it from the pricing side would drag the modification
+  // planner into this suite's graph, and this suite doubles that planner on
+  // purpose.
+  const demandsChoice = () => new BookingModificationSettlementMethodRequiredError();
+
+  it("prices the quote on the card option instead of refusing to quote", async () => {
+    const offer = await raiseOffer();
+
+    const dependentCall = h.modifyBookingBatch.mock.calls
+      .map(([call]) => call as BatchArgs)
+      .find((call) => call.bookingId === DEPENDENT);
+    expect(
+      dependentCall?.input.settlementMethod,
+      "the quote is a discarded probe, so it may assume the card option to get a figure",
+    ).toBe("card");
+    // And the quote says a choice is owed, which is what asks the member for it.
+    expect(offer.quote.settlementMethodRequired).toBe(true);
+  });
+
+  it("never substitutes a choice on the arm that really moves money", async () => {
+    await acceptOffer(await raiseOffer());
+
+    const dependentCall = h.modifyBookingBatch.mock.calls
+      .map(([call]) => call as BatchArgs)
+      .find((call) => call.bookingId === DEPENDENT);
+    expect(
+      dependentCall?.input.settlementMethod,
+      "real money goes where the member said or nowhere",
+    ).toBeUndefined();
+  });
+
+  it("re-raises the OFFER when the accepted move still has no choice", async () => {
+    const offer = await raiseOffer();
+    // The apply attempt: the dependent demands the choice the request does not
+    // carry. The member must get the prompt that states the requirement, not a 400
+    // about a control they cannot see.
+    let attempts = 0;
+    h.modifyBookingBatch.mockImplementation(async (call: BatchArgs) => {
+      h.events.push(`edit:${call.bookingId}`);
+      const isPrimary = call.bookingId === PRIMARY;
+      if (!isPrimary && !call.input.settlementMethod) {
+        attempts += 1;
+        throw demandsChoice();
+      }
+      return batchResult(
+        call.bookingId,
+        isPrimary ? PRIMARY_MONEY : DEPENDENT_MONEY,
+        isPrimary
+          ? MOVED
+          : {
+              checkIn: new Date(`${call.input.checkIn}T00:00:00.000Z`),
+              checkOut: new Date(`${call.input.checkOut}T00:00:00.000Z`),
+            },
+        call.waiveChangeFee === true,
+      );
+    });
+
+    const thrown = await applyLinkedDateMove({
+      ...args(),
+      linkedMove: {
+        choice: "MOVE_BOTH",
+        acknowledged: true,
+        stateKey: offer.acceptStateKey,
+      },
+    }).then(
+      () => null,
+      (error: unknown) => error,
+    );
+
+    expect(thrown).toBeInstanceOf(SameOwnerCoverageLinkedMoveRequiredError);
+    expect(
+      (thrown as SameOwnerCoverageLinkedMoveRequiredError).quote
+        .settlementMethodRequired,
+      "the offer the member gets back is the one that asks for the choice",
+    ).toBe(true);
+    // Once on the apply attempt; the re-quote assumes the card option and so gets
+    // its figures rather than throwing again.
+    expect(attempts).toBe(1);
   });
 });
 

@@ -262,6 +262,21 @@ export function EditBookingPanel({
   );
   const [settlementMethod, setSettlementMethod] = useState<"card" | "credit" | null>(null);
   /**
+   * #3232: where the money coming back on the OTHER booking should go.
+   *
+   * A SECOND SLOT, AND IT HAS TO BE. `settlementMethod` above is part of the save
+   * payload, and the payload is what the linked-move offer's proposal signature is
+   * taken over — so setting it would retire the very offer that asked the
+   * question, taking the member's chosen arm with it. This one is injected into
+   * the body AFTER that signature is captured, exactly as the offer's own answer
+   * is, so answering the question cannot invalidate it. Only one of the two is
+   * ever on screen: this control is drawn only when this booking's own quote asks
+   * for no choice.
+   */
+  const [linkedMoveSettlementMethod, setLinkedMoveSettlementMethod] = useState<
+    "card" | "credit" | null
+  >(null);
+  /**
    * #2562 — the server-confirmed offer to ask a Booking Officer, or null.
    *
    * Set ONLY from a refusal the SERVER classified as reviewable, through the one
@@ -1308,6 +1323,12 @@ export function EditBookingPanel({
       setSaveError("Choose a refund or account credit before saving");
       return;
     }
+    // #3232: and the same block when it is the OTHER booking's money that needs
+    // the choice, so the linked move is never submitted into the server's 400.
+    if (linkedMoveSettlementRequired && !linkedMoveSettlementMethod) {
+      setSaveError("Choose a refund or account credit before saving");
+      return;
+    }
     if (saveInFlightRef.current) return;
     saveInFlightRef.current = true;
     setSaving(true);
@@ -1337,6 +1358,13 @@ export function EditBookingPanel({
           linkedMoveChoice,
         );
         if (answer) body.hostingCoverageLinkedMove = answer;
+        // #3232: and the return method for the other booking's refund, added HERE
+        // rather than in the payload builder for the reason its state slot gives —
+        // in the builder it would change the proposal signature and retire this
+        // very offer.
+        if (linkedMoveSettlementRequired && linkedMoveSettlementMethod) {
+          body.settlementMethod = linkedMoveSettlementMethod;
+        }
       }
 
       const res = await fetch(`/api/bookings/${booking.id}/modify`, {
@@ -1544,6 +1572,22 @@ export function EditBookingPanel({
         booking.editPolicy.mode === "in-progress") &&
       (isLockedChangeError(quoteError) || isLockedChangeError(saveError)));
   const settlementRequired = quote?.settlementOptions?.requiresSettlementMethod ?? false;
+  /**
+   * #3232: the LINKED MOVE needs the card-or-credit choice and this booking's own
+   * quote does not ask for it.
+   *
+   * The chooser in the price summary belongs to THIS booking's money and appears
+   * only when this booking's net is a reduction. The other booking's compelled
+   * move has its own money, so whenever this booking needs no choice — it is
+   * unpaid, or its price went up — and the other one's price falls, the member was
+   * asked to choose a refund or account credit with no control anywhere on the
+   * page, and could then move neither booking. The control is drawn here, directly
+   * above the offer it belongs to, which is also what makes the offer's own
+   * sentence about "your card-or-credit choice above" true.
+   */
+  const linkedMoveSettlementRequired =
+    Boolean(activeLinkedMoveState?.prompt.settlementMethodRequired) &&
+    !settlementRequired;
 
   // Issue #1668: over-capacity under an admin override is a confirmable warning,
   // not a hard block. The signal can come from the quote (preview) or from a
@@ -1817,6 +1861,43 @@ export function EditBookingPanel({
         </div>
       ) : (
         <>
+          {linkedMoveSettlementRequired ? (
+            <div
+              className="space-y-2 rounded-md border p-3 text-sm"
+              role="status"
+              data-testid="linked-move-settlement-method"
+            >
+              <p className="font-medium">Return method</p>
+              <p className="text-xs text-muted-foreground">
+                Moving both bookings brings money back on the other booking.
+                Choose where it goes; the same choice covers both.
+              </p>
+              <label className="flex cursor-pointer items-start gap-2">
+                <input
+                  type="radio"
+                  name="linkedMoveSettlementMethod"
+                  value="card"
+                  className="mt-1"
+                  checked={linkedMoveSettlementMethod === "card"}
+                  disabled={saving}
+                  onChange={() => setLinkedMoveSettlementMethod("card")}
+                />
+                <span>Refund to the original card</span>
+              </label>
+              <label className="flex cursor-pointer items-start gap-2">
+                <input
+                  type="radio"
+                  name="linkedMoveSettlementMethod"
+                  value="credit"
+                  className="mt-1"
+                  checked={linkedMoveSettlementMethod === "credit"}
+                  disabled={saving}
+                  onChange={() => setLinkedMoveSettlementMethod("credit")}
+                />
+                <span>Hold as account credit</span>
+              </label>
+            </div>
+          ) : null}
           <HostingCoverageLinkedMovePrompt
             prompt={activeLinkedMoveState ? activeLinkedMoveState.prompt : null}
             choice={linkedMoveChoice}
@@ -1851,6 +1932,7 @@ export function EditBookingPanel({
                 !quote ||
                 !capacityOk ||
                 (settlementRequired && !settlementMethod) ||
+                (linkedMoveSettlementRequired && !linkedMoveSettlementMethod) ||
                 (Boolean(activeHostingOverrideState) &&
                   (!hostingOverrideConfirmed ||
                     hostingOverrideReason.trim().length < 10))

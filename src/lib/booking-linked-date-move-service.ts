@@ -39,6 +39,7 @@ import {
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import { ApiError } from "@/lib/api-error";
 import { assertBookingEnvelopeInvariants } from "@/lib/booking-envelope-invariants";
+import { BookingModificationSettlementMethodRequiredError } from "@/lib/booking-modify-settlement-required";
 import type { CalendarDate } from "@/lib/club-time";
 import { formatDateOnly } from "@/lib/date-only";
 import { getDefaultLodgeId } from "@/lib/lodges";
@@ -337,6 +338,12 @@ async function runLinkedDateMove(
       checkOut: formatDateOnly(primary.booking.checkOut),
     };
 
+    // See the note at the call below. `"apply"` never substitutes a choice: real
+    // money moves there, and it goes where the member said or nowhere.
+    const settlementMethodForDependent =
+      args.input.settlementMethod ??
+      (mode === "quote" ? ("card" as const) : undefined);
+
     const linked: LinkedMoveCandidate<BatchModificationResponse>[] = [];
     let feasibility: LinkedMoveFeasibility = "AVAILABLE";
     const targetOf = (dependent: (typeof stranded)[number]) =>
@@ -360,8 +367,27 @@ async function runLinkedDateMove(
             // ONE settlement choice covers both bookings — the member is asked
             // once and it is applied to each. Passing the primary's choice rather
             // than asking again is what makes "accepts once" true.
-            ...(args.input.settlementMethod
-              ? { settlementMethod: args.input.settlementMethod }
+            //
+            // AND THE QUOTE PRICES A CHOICE THE MEMBER HAS NOT MADE YET, on the
+            // card option, rather than refusing to quote at all. The dependent's
+            // move can need a refund-or-credit choice when the PRIMARY's does not
+            // — the primary unpaid or its price rising, the compelled move
+            // reducing a settled booking — and the panel only collects the choice
+            // when the primary's own quote asks for it. Without this the
+            // dependent's write threw a bare 400 telling the member to choose
+            // something there was no control for, the offer was never built, and
+            // they could move NEITHER booking: the deadlock again, by a fourth
+            // route. The quote instead comes back with `settlementMethodRequired`
+            // set, which is what asks them.
+            //
+            // CARD, AND THE CHOICE STILL BINDS. The two options do not always
+            // return the same amount (a card refund can carry a policy
+            // percentage), so a member who then picks CREDIT gets a fresh offer
+            // with the true figures rather than a silent substitution — the accept
+            // key covers the combined money. One extra confirmation on that
+            // branch, and never a figure they were not shown.
+            ...(settlementMethodForDependent
+              ? { settlementMethod: settlementMethodForDependent }
               : {}),
           },
           ipAddress: args.ipAddress,
@@ -624,6 +650,14 @@ export async function applyLinkedDateMove(
     // member's acceptance is still good: the state key is re-derived on the retry
     // from the same situation and the same figures.
     if (isTransactionContention(error)) throw new LinkedDateMoveContendedError();
+    // A DEPENDENT THAT NEEDS A REFUND-OR-CREDIT CHOICE THE REQUEST DID NOT CARRY.
+    // Re-raise the OFFER, which states the requirement, rather than the bare 400
+    // that tells the member to choose something with no control in front of them —
+    // the choice belongs to the prompt they are answering, and a dead-end 400 here
+    // leaves them unable to move either booking. Nothing was committed.
+    if (error instanceof BookingModificationSettlementMethodRequiredError) {
+      await offerLinkedDateMove(args);
+    }
     throw error;
   }
 

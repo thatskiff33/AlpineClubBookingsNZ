@@ -274,6 +274,50 @@ describe("EditBookingPanel — the linked-move offer (#3232)", () => {
     });
   });
 
+  it("asks where the OTHER booking's money goes when this booking needs no choice", async () => {
+    // THE DEAD END THIS REMOVES. The card-or-credit control in the price summary
+    // belongs to THIS booking's money and is drawn only when this booking's net is
+    // a reduction — and here it is an increase, so there is none. The other
+    // booking's compelled move brings money back, so the server needs the choice;
+    // without a control the member was told "Choose a refund or account credit
+    // before saving" with nothing on the page to choose, and could then move
+    // neither booking.
+    modifyResponse = () =>
+      jsonResponse(
+        linkedMoveOffer({
+          combinedRefundCents: 1_200,
+          settlementMethodRequired: true,
+        }),
+        409,
+      );
+    render(<EditBookingPanel booking={makeBooking()} onDone={vi.fn()} />);
+
+    const saveButton = await saveIntoTheOffer();
+    const chooser = screen.getByTestId("linked-move-settlement-method");
+    expect(chooser).toBeVisible();
+
+    // Save stays blocked while the answer is incomplete, and sends nothing.
+    fireEvent.click(screen.getByRole("radio", { name: /Move both bookings/ }));
+    expect(saveButton).toBeDisabled();
+    fireEvent.click(saveButton);
+    expect(modifyBodies).toHaveLength(1);
+
+    modifyResponse = () => jsonResponse({ booking: { id: BOOKING_ID } });
+    fireEvent.click(
+      screen.getByRole("radio", { name: /Hold as account credit/ }),
+    );
+    await waitFor(() => expect(saveButton).not.toBeDisabled());
+    fireEvent.click(saveButton);
+
+    await waitFor(() => expect(modifyBodies).toHaveLength(2));
+    expect(modifyBodies[1]?.settlementMethod).toBe("credit");
+    expect(modifyBodies[1]?.hostingCoverageLinkedMove).toEqual({
+      choice: "MOVE_BOTH",
+      acknowledged: true,
+      stateKey: ACCEPT_KEY,
+    });
+  });
+
   it("retires the offer the moment the member changes the edit again", async () => {
     render(<EditBookingPanel booking={makeBooking()} onDone={vi.fn()} />);
 
