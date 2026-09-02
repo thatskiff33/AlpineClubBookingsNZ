@@ -1926,6 +1926,42 @@ describe("settling a dependent booking after the change (#2576 §7, §14, §16)"
     expect(rowFromStore(db, "b-main").adultMemberHostingReviewStatus).toBe("PENDING");
   });
 
+  it("puts a declined offer's reason in the incident's history, actorless", async () => {
+    // #3232 D3, `INV-HOST-052`. The queue item already carried this reason (pinned
+    // in the linked-move block below) and the drain already hands it here — and
+    // this function used to DROP it, because only an officer override stored a
+    // reason. So an officer reading the booking's history was shown a bare cause
+    // code that also means "a qualification changed" for a decision a member had
+    // deliberately made after being warned.
+    //
+    // The history rather than a column, deliberately: an audit row describes ONE
+    // event and cannot go stale, while a "why" column would be left describing the
+    // decline after a later automatic change moved the same incident's state.
+    const rows = [
+      booking({ id: "b-main", guests: [guestRow("kid", KID_NIGHTS)] }),
+    ];
+    const { db } = makeStore(rows);
+    const outcome = await reconcileSameOwnerCoverageIncident(
+      {
+        bookingId: "b-main",
+        cause: "SYSTEM_CHANGE",
+        reason: LINKED_MOVE_DECLINED_INCIDENT_REASON,
+      },
+      db,
+    );
+    expect(outcome.action).toBe("opened");
+
+    const opened = db.auditLog.create.mock.calls
+      .map((call: any) => call[0].data)
+      .find(
+        (data: any) => data.action === "booking.hostingCoverage.incidentOpened",
+      );
+    expect(opened?.details).toBe(LINKED_MOVE_DECLINED_INCIDENT_REASON);
+    // No officer is named, because none was involved. Inventing attribution is
+    // the failure this arm exists to avoid.
+    expect(opened?.actorMemberId ?? null).toBeNull();
+  });
+
   it("resolves rather than opens when an alternative same-owner source covers it (§14)", async () => {
     const rows = [
       booking({ id: "b-main", guests: [guestRow("kid", KID_NIGHTS)] }),
