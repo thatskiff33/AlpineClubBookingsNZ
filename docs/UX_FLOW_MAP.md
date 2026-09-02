@@ -283,8 +283,19 @@ on the member's behalf:
   will be left without adult supervision on those nights, a Booking Officer will
   be told, and they will be in touch if anything needs to change.
 
+Where the OTHER booking's move brings money back and this booking's own edit
+needs no such choice — it is unpaid, or its price went up — a **Return method**
+choice (refund to the original card, or hold as account credit) appears directly
+above the offer, and Save waits for it. That is the case the card-or-credit
+control in the price summary cannot serve, because that one belongs to this
+booking's money and is only drawn when this booking's own total falls; without
+this the member was told to choose a refund or account credit with nothing on the
+page to choose and could then move neither booking.
+
 Picking one and saving again applies it. Both bookings move together or neither
-does. Changing anything about the edit retires the offer and the choice, so a
+does. Choosing account credit can produce a different figure from the card
+option, so the offer is shown once more with the true numbers before it commits —
+the member is never charged, or refunded, an amount they were not shown. Changing anything about the edit retires the offer and the choice, so a
 member cannot accept a total that has stopped being true — they are asked again
 with the new figure.
 

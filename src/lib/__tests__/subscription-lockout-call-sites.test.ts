@@ -867,12 +867,39 @@ describe("the mode is threaded to the money, not re-read inside the locks (#2543
     // `resolveSubscriptionLockoutMode` can refresh the financial-year cache from
     // Xero. Inside the transaction that holds lock(1) and the per-lodge capacity
     // lock, that is the one thing the booking rules forbid outright.
+    //
+    // #3232: the read moved into this service's ONE named pre-transaction
+    // function, where it is awaited alongside the member-guest policy and the
+    // Xero lock dates, so the `await` no longer sits against its name. The
+    // positional rule still holds — that function is declared above the boundary
+    // — and the case it could never see is now covered by the assertion below: on
+    // a CALLER-supplied transaction, "above `withOptionalTransaction`" is not
+    // outside the transaction at all, and this read really was running under both
+    // locks there.
     const source = readRepoFile("src/lib/booking-batch-modification-service.ts");
-    const modeRead = source.indexOf("await resolveSubscriptionLockoutMode()");
+    const modeRead = source.indexOf("resolveSubscriptionLockoutMode(),");
     const transaction = source.indexOf("withOptionalTransaction(callerTx,");
     expect(modeRead).toBeGreaterThan(-1);
     expect(transaction).toBeGreaterThan(-1);
     expect(modeRead).toBeLessThan(transaction);
+  });
+
+  it("and REFUSES a caller transaction that did not resolve it first (#3232)", () => {
+    // The hole the positional rule above cannot express, and it was live: this
+    // service is transaction-AWARE, so a caller that supplies `tx` has already
+    // taken `pg_advisory_xact_lock(1)` and the per-lodge capacity key by the time
+    // control enters — and every read above `withOptionalTransaction` then runs
+    // inside that transaction, this one among them, with its possible Xero
+    // refresh. The only rule that holds on every path is that the mode ARRIVES
+    // from whoever owns the commit (`INV-LOCK-004`).
+    const source = readRepoFile("src/lib/booking-batch-modification-service.ts");
+    expect(source).toContain("if (callerTx && !preTransaction) {");
+    expect(source).toContain("the subscription-lockout ");
+    // And the mode the pricing engine is handed comes off that prepared value
+    // rather than from a read of its own.
+    expect(source).toContain(
+      "const subscriptionLockoutMode = preparation.subscriptionLockoutMode;",
+    );
   });
 
   it("the guest-removal route resolves the mode before it opens its transaction", () => {
