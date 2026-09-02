@@ -623,6 +623,85 @@ describe("public PageContent token view models", () => {
     );
   });
 
+  it("publishes the wider wording when Group Trip cover is the only extra scope (#3037)", async () => {
+    // THE BUG THIS PINS. The branch used to ask `sameBooking && !sameBookingOwner`
+    // by hand, so a club running SAME_BOOKING + SAME_GROUP_TRIP published
+    // "to stay with an adult member on the same booking" — narrower than the rule
+    // it applies — while the member-facing refusal sentence, fixed in the same
+    // change, said the wider thing. Both now ask `hostScopesAreSameBookingOnly`.
+    const stored = {
+      id: "hosting-club",
+      scopeKey: "club-wide",
+      lodgeId: null,
+      mode: "ADMIN_REVIEW_REQUIRED",
+      capacityMode: "HOLD",
+      version: 4,
+      hostScopeSameBooking: true,
+      hostScopeSameBookingOwner: false,
+      hostScopeSameGroupTrip: true,
+    };
+    mocks.hostingPolicies.mockImplementation(
+      ({ select }: { select: Record<string, boolean> }) =>
+        Promise.resolve([
+          Object.fromEntries(
+            Object.keys(select).map((key) => [
+              key,
+              stored[key as keyof typeof stored],
+            ]),
+          ),
+        ]),
+    );
+
+    const policy = await loadPublicBookingPolicy();
+
+    expect(policy?.adultMemberHosting).toContain(
+      "covered by an adult member staying at the lodge",
+    );
+    expect(policy?.adultMemberHosting).not.toContain("same booking");
+    // A public page never names the mechanism, so the wider sentence must not
+    // start explaining Group Trips or other people's bookings either.
+    expect(policy?.adultMemberHosting).not.toMatch(/group trip|account/i);
+    expect(mocks.hostingPolicies).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({ hostScopeSameGroupTrip: true }),
+      }),
+    );
+  });
+
+  it("keeps the narrow same-booking wording while SAME_BOOKING is the whole rule (#3037)", async () => {
+    // The control for the test above: an explicitly-stored default set, with the
+    // Group Trip column present and OFF, still publishes the narrow sentence.
+    // Without this a predicate that always returned false would pass.
+    const stored = {
+      id: "hosting-club",
+      scopeKey: "club-wide",
+      lodgeId: null,
+      mode: "ADMIN_REVIEW_REQUIRED",
+      capacityMode: "HOLD",
+      version: 4,
+      hostScopeSameBooking: true,
+      hostScopeSameBookingOwner: false,
+      hostScopeSameGroupTrip: false,
+    };
+    mocks.hostingPolicies.mockImplementation(
+      ({ select }: { select: Record<string, boolean> }) =>
+        Promise.resolve([
+          Object.fromEntries(
+            Object.keys(select).map((key) => [
+              key,
+              stored[key as keyof typeof stored],
+            ]),
+          ),
+        ]),
+    );
+
+    const policy = await loadPublicBookingPolicy();
+
+    expect(policy?.adultMemberHosting).toContain(
+      "to stay with an adult member on the same booking",
+    );
+  });
+
   it("answers a lodge page from that lodge's override, and a club page from the club row (#2364)", async () => {
     mocks.lodge.mockResolvedValue({ id: "lodge-1", name: "Lodge One", slug: "one" });
     const clubOn = {

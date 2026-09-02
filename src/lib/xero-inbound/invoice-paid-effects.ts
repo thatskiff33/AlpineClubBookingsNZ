@@ -1055,9 +1055,26 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
       // already in the club's bank account by the time Xero tells us, so the only
       // available answer is to allow the transition and escalate anything uncovered
       // to an urgent incident (§8).
-      await enqueueOwnHostingCoverageReevaluation(fresh.bookingId, tx, {
-        cause: "SYSTEM_CHANGE",
-      });
+      //
+      // #3039: `bestEffort` KEEPS THAT PREMISE TRUE now that the seam also reaches
+      // ANOTHER account's rows. The Group Trip fan-out takes a per-trip advisory key
+      // and a `Member FOR KEY SHARE NOWAIT` fence over the sibling owners, and both
+      // are lost fail-fast to a third party editing their own booking in the same
+      // trip — which would roll THIS transaction back and refuse a PAID claim for an
+      // invoice that is already paid. So the cross-account half degrades to the cron
+      // instead. That is safe here, and only here, because CONFIRMED and PAID are
+      // both eligible coverage sources and PAYMENT_PENDING -> PAID only ADDS one: a
+      // Xero PAID can restore a sibling's cover, never remove it, so the worst case
+      // of skipping is a favourable re-evaluation arriving three hours later. The
+      // booking's own item is still written. `GroupTripFanOutOptions` carries the
+      // full rule and the discriminator for any future caller.
+      await enqueueOwnHostingCoverageReevaluation(
+        fresh.bookingId,
+        tx,
+        { cause: "SYSTEM_CHANGE" },
+        undefined,
+        { bestEffort: true },
+      );
 
       return {
         type: "paid" as const,

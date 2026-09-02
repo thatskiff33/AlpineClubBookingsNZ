@@ -278,6 +278,16 @@ export const AUDIT_CENSUS_TOTALS = {
    * that must answer the webhook without throwing, and an awaited write that
    * rejected would replay a refund for the sake of recording something about a
    * refund. `filesScanned` moved 1895 -> 1901 across the merged tree.
+   *
+   * 465 -> 466 (#3039): when a Group Trip's dependent read is truncated at its
+   * ceiling, the fan-out writes `booking.hostingCoverage.groupTripFanoutTruncated`
+   * against the `GroupBooking`, inside the caller's transaction. That row IS the
+   * recovery surface: a bound ceiling means a booking that really was stranded got
+   * no queue item, so no re-evaluation, no incident, no owner notice and nothing in
+   * the officer queue — and this epic has twice had to fix "a `logger.warn` is not
+   * a durable trace". Categorised `booking` at the site with `important` severity,
+   * so it does not join `UNCATEGORISED_AUDIT_WRITERS`, and it carries the group's
+   * entity type and id so an officer can correlate it.
    */
   // 428 -> 429 (#2760): `booking.payment.auto_refund_record_failed`, above.
   // 429 -> 432 (#2749): the three Other Lodges admin CRUD audit writers
@@ -382,7 +392,7 @@ export const AUDIT_CENSUS_TOTALS = {
   // `UNCATEGORISED_AUDIT_WRITERS` below. Measured by RUNNING
   // `npm run audit:census` on this tree (464 sites, 2225 files scanned), not by
   // adding one to the literal.
-  writeSites: 465,
+  writeSites: 466,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -463,7 +473,10 @@ export const AUDIT_CENSUS_TOTALS = {
     // 117 -> 118 (#3191): the stored-night-price record above.
     // 117 -> 118 (#3193): its counterpart, the re-invoiced review share, in the
     // same module and the same form.
-    createAuditLog: { total: 119, uncategorised: 0 },
+    // 119 -> 120 (#3039): the truncated-fan-out row above, written with the
+    // awaited `createAuditLog` because it must land inside the transaction that
+    // discovered the truncation.
+    createAuditLog: { total: 120, uncategorised: 0 },
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -546,7 +559,10 @@ export const AUDIT_CENSUS_TOTALS = {
     // names, and nobody new.
     // 83 -> 101 (#2581 child 2): the ten booking-policy/booking-period/age-tier
     // writers and the eight season and promotional-code writers (decision 4).
-    booking: 101,
+    // 101 -> 102 (#3039): the truncated-fan-out row is categorised `booking`,
+    // which is a widening of nothing — a bound ceiling is a booking fact and the
+    // row names the GroupBooking, not a member.
+    booking: 102,
     // 16 -> 33 (#2581 child 2): the seventeen money writers — subscription
     // billing, member credit, fee configuration, saved-card charges and the five
     // Stripe webhook outcomes. `payment` is `support` plus `finance`, the

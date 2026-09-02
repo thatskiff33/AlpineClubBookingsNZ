@@ -52,11 +52,33 @@ const CLUB_SCOPE_KEY = "club-wide";
  * STRICT, so a body naming a scope this build does not have — including the two
  * the owner removed from the model (#2575, #2576) — is a 400 rather than a silently
  * dropped key that would save a set the operator did not choose.
+ *
+ * `sameGroupTrip` (#3037) is OPTIONAL rather than required, and only that field
+ * is. Strictness is about unknown keys and is unweakened; what optionality buys
+ * is a blue/green window in which a browser tab loaded from the previous colour
+ * can still save a policy, naming only the two fields it knows.
+ *
+ * OPTIONAL, NOT `.default(false)`, and the difference is a real bug rather than
+ * a style preference. A default makes an ABSENT field indistinguishable from an
+ * explicit `false`, so an old-colour tab saving an unrelated change — the mode,
+ * the capacity mode — would silently turn Group Trip cover OFF on a row a
+ * different admin had turned it on for. The compare-and-swap `version` does not
+ * stop that: the old-colour tab reads the row through a GET that simply does not
+ * select this column, so it can hold the CURRENT version quite legitimately, the
+ * CAS passes, and the default writes the field the body could not express.
+ * Absent therefore means "this writer expressed no view", and the handler leaves
+ * the stored value alone; on a CREATE it stores NULL, which reads as OFF and is
+ * exactly what the previous colour would have written itself.
+ *
+ * The reverse direction is closed by strictness rather than by this field: a
+ * NEW-colour body routed to an OLD-colour instance names a key that build's
+ * `.strict()` does not know, and is a 400 — a visible refusal, not a silent drop.
  */
 const hostScopesSchema = z
   .object({
     sameBooking: z.boolean(),
     sameBookingOwner: z.boolean(),
+    sameGroupTrip: z.boolean().optional(),
   })
   .strict()
   .nullable();
@@ -123,10 +145,20 @@ export async function GET(request: NextRequest) {
   });
 }
 
-/** The stored scope set, or null where this row did not decide (#2569 §2). */
+/**
+ * The stored scope set, or null where this row did not decide (#2569 §2).
+ *
+ * THE #2569 PAIR DECIDES; `hostScopeSameGroupTrip` IS READ, NOT TESTED (#3037).
+ * It is legitimately NULL on a decided row — every row a draining previous colour
+ * writes, and every row that predates the #3037 migration — and NULL there means
+ * OFF, exactly as `rowHostScopes` reads it for the evaluator. Testing it would
+ * make those rows report "this scope inherits", which is a different setting from
+ * the one the admin saved.
+ */
 function storedHostScopes(policy: {
   hostScopeSameBooking: boolean | null;
   hostScopeSameBookingOwner: boolean | null;
+  hostScopeSameGroupTrip: boolean | null;
 }): AdultMemberHostScopeSet | null {
   if (
     policy.hostScopeSameBooking === null ||
@@ -137,6 +169,7 @@ function storedHostScopes(policy: {
   return {
     sameBooking: policy.hostScopeSameBooking,
     sameBookingOwner: policy.hostScopeSameBookingOwner,
+    sameGroupTrip: policy.hostScopeSameGroupTrip === true,
   };
 }
 
@@ -212,7 +245,15 @@ export async function PUT(request: NextRequest) {
     // saving an active policy with no host scopes enabled). Refused whatever the
     // mode is, so the saved selections a Disabled policy keeps for later reuse
     // are always a set that would actually work when it is turned back on.
-    if (hostScopeSetIsEmpty(hostScopes)) {
+    if (
+      hostScopeSetIsEmpty({
+        ...hostScopes,
+        // An unstated Group Trip decision cannot make an otherwise-empty set
+        // non-empty, so it reads as off for this test exactly as it does
+        // everywhere else NULL is reachable.
+        sameGroupTrip: hostScopes.sameGroupTrip === true,
+      })
+    ) {
       return NextResponse.json(
         {
           error:
@@ -223,9 +264,26 @@ export async function PUT(request: NextRequest) {
     }
   }
 
+  /**
+   * `null` when this row inherits, `undefined` when the body expressed no view,
+   * otherwise the decision it carried.
+   *
+   * The inherit case is null rather than absent because the migration's CHECK
+   * requires it: the Group Trip column may be set only on a row that decided the
+   * rest of the set, so a switch to inherit has to clear all three together.
+   */
+  const groupTripDecision: boolean | null | undefined =
+    hostScopes === null ? null : hostScopes.sameGroupTrip;
+
   const scopeColumns = {
     hostScopeSameBooking: hostScopes ? hostScopes.sameBooking : null,
     hostScopeSameBookingOwner: hostScopes ? hostScopes.sameBookingOwner : null,
+    // OMITTED ENTIRELY when the writer expressed no view (#3037). Prisma then
+    // leaves the stored value alone on an UPDATE and stores NULL on a CREATE,
+    // which is the only reading that cannot clear another admin's opt-in.
+    ...(groupTripDecision === undefined
+      ? {}
+      : { hostScopeSameGroupTrip: groupTripDecision }),
   };
 
   const scopeKey = scopeKeyFor(lodgeId);
@@ -308,7 +366,16 @@ export async function PUT(request: NextRequest) {
         // old token and leave another admin's editor believing it was current.
         existing.hostScopeSameBooking === scopeColumns.hostScopeSameBooking &&
         existing.hostScopeSameBookingOwner ===
-          scopeColumns.hostScopeSameBookingOwner
+          scopeColumns.hostScopeSameBookingOwner &&
+        // #3037. Written as a strict comparison of the raw columns, so turning
+        // Group Trip cover on for a row stored with NULL here — the shape a
+        // previous colour writes — is correctly material rather than "false ===
+        // false, nothing changed". Every scope column belongs in this test, and
+        // the database revision trigger compares the same set. A body that
+        // expressed no view writes nothing here, so it cannot make an otherwise
+        // no-op save material either.
+        (groupTripDecision === undefined ||
+          existing.hostScopeSameGroupTrip === groupTripDecision)
       ) {
         // Nothing material changed. Return the row untouched rather than write
         // it: the revision trigger would hold the token anyway, but a no-op

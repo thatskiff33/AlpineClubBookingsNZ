@@ -34,6 +34,7 @@ const clubPolicy = {
   capacityMode: "HOLD",
   hostScopeSameBooking: null,
   hostScopeSameBookingOwner: null,
+  hostScopeSameGroupTrip: null,
   version: 2,
 };
 const lodgePolicy = {
@@ -44,6 +45,7 @@ const lodgePolicy = {
   capacityMode: "NO_HOLD",
   hostScopeSameBooking: null,
   hostScopeSameBookingOwner: null,
+  hostScopeSameGroupTrip: null,
   version: 1,
 };
 
@@ -261,6 +263,7 @@ describe("adult-member hosting configuration transfer (#2364)", () => {
         capacityMode: "NO_HOLD",
         hostScopeSameBooking: null,
         hostScopeSameBookingOwner: null,
+        hostScopeSameGroupTrip: null,
         version: 3,
       },
     });
@@ -271,6 +274,7 @@ describe("adult-member hosting configuration transfer (#2364)", () => {
         capacityMode: "HOLD",
         hostScopeSameBooking: null,
         hostScopeSameBookingOwner: null,
+        hostScopeSameGroupTrip: null,
         version: 2,
       },
     });
@@ -303,6 +307,7 @@ describe("adult-member hosting configuration transfer (#2364)", () => {
         capacityMode: "HOLD",
         hostScopeSameBooking: null,
         hostScopeSameBookingOwner: null,
+        hostScopeSameGroupTrip: null,
       },
       select: { id: true },
     });
@@ -347,9 +352,177 @@ describe("adult-member hosting configuration transfer (#2364)", () => {
         capacityMode: "HOLD",
         hostScopeSameBooking: true,
         hostScopeSameBookingOwner: true,
+        // #3037. The cell named two scopes, so the third is written as an
+        // explicit `false`: a bundle that does not mention Group Trip cover
+        // cannot turn it on, and cannot leave it undecided on a row that decided
+        // the rest of the set either.
+        hostScopeSameGroupTrip: false,
         version: 3,
       },
     });
+  });
+
+  it("carries Group Trip coverage in and out of the bundle (#3037)", async () => {
+    // Config transfer is the one path that can write a setting the UI would not
+    // let an operator choose, so the new scope has to survive BOTH directions.
+    // Import first: a cell naming SAME_GROUP_TRIP must write the column `true`.
+    // Reading the cell but dropping the flag is silent — the import reports
+    // success and the target keeps the club's old rule.
+    const { tx, updateMany } = txDouble();
+    await bookingPoliciesImporter.apply(
+      applyContext(
+        `${HEADER}club-wide,ADMIN_REVIEW_REQUIRED,HOLD,SAME_BOOKING|SAME_GROUP_TRIP
+lodge:tukino,INHERIT,NO_HOLD,
+`,
+        tx,
+      ),
+    );
+    expect(updateMany).toHaveBeenCalledWith({
+      where: { id: "hosting-club", version: 2 },
+      data: {
+        mode: "ADMIN_REVIEW_REQUIRED",
+        capacityMode: "HOLD",
+        hostScopeSameBooking: true,
+        hostScopeSameBookingOwner: false,
+        hostScopeSameGroupTrip: true,
+        version: 3,
+      },
+    });
+
+    // And export: a stored row with the scope on serialises it, in the canonical
+    // order, so an export/import round trip cannot quietly turn it off.
+    const groupTripClub = {
+      ...clubPolicy,
+      hostScopeSameBooking: true,
+      hostScopeSameBookingOwner: false,
+      hostScopeSameGroupTrip: true,
+    };
+    const entries = await bookingPoliciesExporter.export({
+      db: db([groupTripClub, lodgePolicy]),
+      includeDoorCodes: false,
+      media: { reference: vi.fn() },
+    } as ExportContext);
+    const entry = entries.find((e) => e.path === ADULT_MEMBER_HOSTING_FILE)!;
+    const parsed = parseCsv(strFromU8(entry.bytes));
+    expect(parsed.rows[0].hostScopes).toBe("SAME_BOOKING|SAME_GROUP_TRIP");
+  });
+
+  it("plans a Group-Trip-only difference as a real update, never as unchanged", async () => {
+    // The scope columns drive `changedFields` as well as the write. A column
+    // missing from that list makes a bundle that turns Group Trip cover ON plan
+    // as "unchanged" and apply nothing — the operator is told the import
+    // succeeded and the setting they came to change is still off.
+    const groupTripOff = {
+      ...clubPolicy,
+      hostScopeSameBooking: true,
+      hostScopeSameBookingOwner: false,
+      hostScopeSameGroupTrip: false,
+    };
+    const plan = await bookingPoliciesImporter.plan(
+      planContext(
+        `${HEADER}club-wide,ADMIN_REVIEW_REQUIRED,HOLD,SAME_BOOKING|SAME_GROUP_TRIP
+lodge:tukino,INHERIT,NO_HOLD,
+`,
+        db([groupTripOff, lodgePolicy]),
+      ),
+    );
+    expect(plan.errors).toEqual([]);
+    const club = plan.items.find((item) => item.key === "club-wide")!;
+    expect(club.action).toBe("update");
+    expect(club.changedFields).toEqual(["hostScopeSameGroupTrip"]);
+
+    // The control: the same bundle against a target that already has it on is
+    // genuinely unchanged, so the assertion above is about the FIELD and not
+    // about every plan being an update.
+    const already = await bookingPoliciesImporter.plan(
+      planContext(
+        `${HEADER}club-wide,ADMIN_REVIEW_REQUIRED,HOLD,SAME_BOOKING|SAME_GROUP_TRIP
+lodge:tukino,INHERIT,NO_HOLD,
+`,
+        db([
+          { ...groupTripOff, hostScopeSameGroupTrip: true },
+          lodgePolicy,
+        ]),
+      ),
+    );
+    expect(
+      already.items.find((item) => item.key === "club-wide")!.action,
+    ).toBe("unchanged");
+  });
+
+  it("does not plan a legacy decided row as changed just for existing (#3037)", async () => {
+    // THE MIGRATION-DAY ROUND TRIP. A row written before this column existed has
+    // the #2569 pair set and Group Trip NULL, which the evaluator reads as OFF.
+    // Exporting it yields "SAME_BOOKING", and re-importing that same bundle
+    // parses back to an explicit `false` — so a naive `false !== null` compare
+    // called an untouched installation an update, wrote the row and bumped the
+    // version, 409ing every admin who had the policy card open.
+    const legacyDecided = {
+      ...clubPolicy,
+      hostScopeSameBooking: true,
+      hostScopeSameBookingOwner: false,
+      hostScopeSameGroupTrip: null,
+    };
+    const plan = await bookingPoliciesImporter.plan(
+      planContext(
+        `${HEADER}club-wide,ADMIN_REVIEW_REQUIRED,HOLD,SAME_BOOKING
+lodge:tukino,INHERIT,NO_HOLD,
+`,
+        db([legacyDecided, lodgePolicy]),
+      ),
+    );
+    expect(plan.errors).toEqual([]);
+    const club = plan.items.find((item) => item.key === "club-wide")!;
+    expect(club.action).toBe("unchanged");
+    expect(club.changedFields).toBeUndefined();
+
+    // THE CONTROL, and it is what stops this becoming "never notice this
+    // column": the same legacy row against a bundle that really does turn Group
+    // Trip cover on is still a real update.
+    const turningOn = await bookingPoliciesImporter.plan(
+      planContext(
+        `${HEADER}club-wide,ADMIN_REVIEW_REQUIRED,HOLD,SAME_BOOKING|SAME_GROUP_TRIP
+lodge:tukino,INHERIT,NO_HOLD,
+`,
+        db([legacyDecided, lodgePolicy]),
+      ),
+    );
+    const changing = turningOn.items.find((item) => item.key === "club-wide")!;
+    expect(changing.action).toBe("update");
+    expect(changing.changedFields).toEqual(["hostScopeSameGroupTrip"]);
+  });
+
+  it("binds the plan fingerprint to the Group Trip column too (#3037)", async () => {
+    // The fingerprint is how an apply notices the target moved after the operator
+    // read the dry run. A scope column left out of the digest makes a concurrent
+    // change to that exact setting invisible, and the apply proceeds against a
+    // target its plan no longer describes. Two targets differing ONLY in the new
+    // column must therefore produce different fingerprints.
+    const base = {
+      ...clubPolicy,
+      hostScopeSameBooking: true,
+      hostScopeSameBookingOwner: false,
+      hostScopeSameGroupTrip: false,
+    };
+    const off = await bookingPoliciesImporter.plan(
+      planContext(HEADER, db([base])),
+    );
+    const on = await bookingPoliciesImporter.plan(
+      planContext(HEADER, db([{ ...base, hostScopeSameGroupTrip: true }])),
+    );
+    const hostingParts = (parts: string[]) =>
+      parts.filter((part) => part.startsWith("adult-member-hosting-policy:"));
+    expect(hostingParts(off.fingerprintParts)).not.toEqual(
+      hostingParts(on.fingerprintParts),
+    );
+    // The control: the same target twice hashes identically, so the assertion
+    // above is about the column and not about the digest being unstable.
+    const again = await bookingPoliciesImporter.plan(
+      planContext(HEADER, db([base])),
+    );
+    expect(hostingParts(off.fingerprintParts)).toEqual(
+      hostingParts(again.fingerprintParts),
+    );
   });
 
   it("carries an explicit host-scope set, and refuses the shapes the card refuses (#2569)", async () => {
@@ -369,6 +542,7 @@ describe("adult-member hosting configuration transfer (#2364)", () => {
         capacityMode: "HOLD",
         hostScopeSameBooking: true,
         hostScopeSameBookingOwner: false,
+        hostScopeSameGroupTrip: false,
         version: 3,
       },
     });

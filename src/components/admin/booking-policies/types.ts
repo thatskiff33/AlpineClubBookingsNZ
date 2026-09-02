@@ -29,10 +29,17 @@ export type AdultMemberHostingModeValue =
   | "ADMIN_REVIEW_REQUIRED"
   | "ENFORCED"
 
-/** The two independent host scopes (#2569 §2); null is the inherit option. */
+/**
+ * The three independent host scopes (#2569 §2, #3037); null is the inherit option.
+ *
+ * `sameGroupTrip` is optional on the wire and defaults to false when the server
+ * omits it, so a card rendered against a response from a previous colour shows the
+ * scope unticked — which is what it is — rather than failing to parse.
+ */
 export interface AdultMemberHostScopeSetValue {
   sameBooking: boolean
   sameBookingOwner: boolean
+  sameGroupTrip?: boolean
 }
 
 /**

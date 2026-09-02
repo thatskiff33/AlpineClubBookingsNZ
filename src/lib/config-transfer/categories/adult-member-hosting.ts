@@ -55,6 +55,14 @@ const DATA_FIELDS = [
   "capacityMode",
   "hostScopeSameBooking",
   "hostScopeSameBookingOwner",
+  // #3037. Every scope column belongs here. This list is what `hashRow` digests
+  // into the plan's fingerprint, which is how an apply notices that the target
+  // moved after the operator read the dry run — so a column left out means a
+  // concurrent scope-set change between plan and apply is invisible and the
+  // apply proceeds against a target it no longer describes. (`changedFields`
+  // reads the parsed write-data's own keys rather than this list, so
+  // update-versus-unchanged is not what this constant decides.)
+  "hostScopeSameGroupTrip",
 ] as const;
 
 /**
@@ -75,7 +83,13 @@ const HOST_SCOPE_CELL_SEPARATOR = "|";
 function serialiseHostScopes(policy: {
   hostScopeSameBooking: boolean | null;
   hostScopeSameBookingOwner: boolean | null;
+  hostScopeSameGroupTrip: boolean | null;
 }): string {
+  // The #2569 pair decides whether the row is an explicit set at all; the #3037
+  // column is read as OFF when it is NULL, exactly as the evaluator reads it. A
+  // decided row with NULL there — what a draining previous colour writes —
+  // therefore exports as the set it really means, and re-importing that cell
+  // writes an explicit `false` rather than reasserting the NULL.
   if (
     policy.hostScopeSameBooking === null ||
     policy.hostScopeSameBookingOwner === null
@@ -85,17 +99,20 @@ function serialiseHostScopes(policy: {
   return enabledHostScopeList({
     sameBooking: policy.hostScopeSameBooking,
     sameBookingOwner: policy.hostScopeSameBookingOwner,
+    sameGroupTrip: policy.hostScopeSameGroupTrip === true,
   }).join(HOST_SCOPE_CELL_SEPARATOR);
 }
 
 type HostScopeColumns = {
   hostScopeSameBooking: boolean | null;
   hostScopeSameBookingOwner: boolean | null;
+  hostScopeSameGroupTrip: boolean | null;
 };
 
 const INHERITED_HOST_SCOPE_COLUMNS: HostScopeColumns = {
   hostScopeSameBooking: null,
   hostScopeSameBookingOwner: null,
+  hostScopeSameGroupTrip: null,
 };
 
 /**
@@ -136,6 +153,7 @@ function parseHostScopeCell(
   const scopes = {
     sameBooking: seen.has("SAME_BOOKING"),
     sameBookingOwner: seen.has("SAME_BOOKING_OWNER"),
+    sameGroupTrip: seen.has("SAME_GROUP_TRIP"),
   };
   if (hostScopeSetIsEmpty(scopes)) {
     errors.push(
@@ -146,6 +164,7 @@ function parseHostScopeCell(
   return {
     hostScopeSameBooking: scopes.sameBooking,
     hostScopeSameBookingOwner: scopes.sameBookingOwner,
+    hostScopeSameGroupTrip: scopes.sameGroupTrip,
   };
 }
 
@@ -210,6 +229,7 @@ async function loadCurrent(db: ReadDb): Promise<{
         capacityMode: true,
         hostScopeSameBooking: true,
         hostScopeSameBookingOwner: true,
+        hostScopeSameGroupTrip: true,
         version: true,
       },
     }),
@@ -227,7 +247,28 @@ async function loadCurrent(db: ReadDb): Promise<{
       continue;
     }
     const scope = slug ? lodgeScope(slug) : "club-wide";
-    byScope.set(scope, { ...policy, scope });
+    byScope.set(scope, {
+      ...policy,
+      // NULL MEANS `false` ON A DECIDED ROW (#3037, `INV-HOST-048`), and the
+      // comparison has to read it the way the evaluator does or config transfer
+      // reports a change nobody made. Every row written before the migration —
+      // and every row a draining previous colour writes during a deploy — has
+      // the pair set and this column NULL. It EXPORTS as the set it means, so
+      // re-importing an untouched bundle parsed back to an explicit `false` and
+      // `changedFields` compared `false !== null`: a plan item reading "update",
+      // an apply that writes, and a version bump that 409s every open policy
+      // editor, all for a round trip that changed nothing.
+      //
+      // An inheriting row keeps NULL, which is a different fact — "this row did
+      // not decide" — and the database CHECK guarantees the column is NULL there
+      // anyway. The conditional states the rule rather than relying on that.
+      hostScopeSameGroupTrip:
+        policy.hostScopeSameBooking === null ||
+        policy.hostScopeSameBookingOwner === null
+          ? policy.hostScopeSameGroupTrip
+          : policy.hostScopeSameGroupTrip === true,
+      scope,
+    });
   }
   return { byScope, lodgeIdBySlug, errors };
 }

@@ -3,12 +3,12 @@ import { createHash } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
 
+import {
+  coverageDependentEnvelopeWhere,
+  coverageEnvelopeWhere,
+} from "@/lib/adult-member-hosting-coverage-envelope";
 import { ApiError } from "@/lib/api-error";
 import { formatBookingReference } from "@/lib/booking-reference";
-import {
-  ACTIVE_BOOKING_STATUSES,
-  hostingCoverageSourceBookingFilter,
-} from "@/lib/booking-status";
 
 /**
  * The `SAME_BOOKING_OWNER` host scope: which OTHER bookings may supply cover, and
@@ -49,20 +49,15 @@ import {
  *
  * Four clauses, each from the owner's decision:
  *
- *  - `memberId` — the exact same account (§1).
- *  - `lodgeId` — the exact same lodge (§4). An adult member at Lodge A on Friday
- *    cannot cover Lodge B on Friday, so this is an equality and never a fan-out.
- *  - the eligible-source filter — genuinely confirmed active attendance only
- *    (§3), read off the canonical lifecycle helper in `booking-status.ts`.
- *  - a date-range OVERLAP — a source whose stay does not touch this booking's
- *    nights cannot cover any of them. Per-NIGHT matching still happens in the
- *    evaluator, on the participants' own `BookingGuestNight` rows; this clause
- *    only keeps the read bounded, which is why it is a coarse envelope test and
- *    not the coverage rule.
- *
- * The overlap is half-open, matching the rest of the codebase: `checkOut` is the
- * morning nobody stays, so a source arriving on this booking's checkout day, or
- * leaving on its arrival day, shares no night and is excluded.
+ *  - `memberId` — the exact same account (§1). THE RELATIONSHIP, and the only
+ *    clause this module owns.
+ *  - the shared coverage envelope — the same lodge, not this booking, an
+ *    overlapping half-open date range, and the eligible-source lifecycle filter
+ *    (§3, §4). Those five are `coverageEnvelopeWhere`, in
+ *    `adult-member-hosting-coverage-envelope.ts`, because `SAME_GROUP_TRIP`
+ *    (#3037) needs them to be byte-for-byte the same and hand-maintained
+ *    symmetry between two copies is what `INV-SSOT-002` refuses. Their reasoning
+ *    lives there rather than being restated here.
  *
  * WHY THIS IS BOUNDED WITHOUT A NEW INDEX (§10). The leading equality is
  * `memberId`, and the existing `Booking(memberId, status, checkIn)` index makes
@@ -84,13 +79,12 @@ export function sameBookingOwnerCoverageSourceWhere(
   },
   options: { historical?: boolean } = {},
 ): Prisma.BookingWhereInput {
+  // Spread flat, which is safe HERE and only here: the relationship is a scalar
+  // equality on one key, so it cannot collide with anything the envelope sets.
+  // The Group Trip scope's relationship is an `OR` and must compose under `AND`.
   return {
-    ...hostingCoverageSourceBookingFilter(options),
+    ...coverageEnvelopeWhere(booking, options),
     memberId: booking.memberId,
-    lodgeId: booking.lodgeId,
-    id: { not: booking.id },
-    checkIn: { lt: booking.checkOut },
-    checkOut: { gt: booking.checkIn },
   };
 }
 
@@ -98,26 +92,17 @@ export function sameBookingOwnerCoverageSourceWhere(
  * Bookings whose own compliance may DEPEND on `booking`'s attendance — the set
  * that has to be re-evaluated when this booking's rows change (§6, §8, §10).
  *
- * The mirror of the source builder, with one deliberate difference: the status
- * set is the wider `ACTIVE_BOOKING_STATUSES`, not the eligible-source set. A
- * dependent is any booking the rule would judge, and the rule judges a
- * PAYMENT_PENDING or AWAITING_REVIEW booking too — those cannot SUPPLY cover, but
- * they certainly NEED it. Refusing an ordinary source-removal change preserves
- * their prospective cover; if an authorised or unavoidable change proceeds, their
- * own confirmation path still rechecks the rule. These statuses are not all
- * capacity-holding, so this is a policy cohort rather than a bed-hold claim.
+ * The mirror of the source builder: the same `memberId` relationship, wrapped in
+ * `coverageDependentEnvelopeWhere` instead. That envelope carries the one
+ * deliberate difference — the wider `ACTIVE_BOOKING_STATUSES` cohort, because
+ * the rule judges a PAYMENT_PENDING or AWAITING_REVIEW booking too — and the
+ * reasoning for it, and for the absence of a guest-composition filter that §10
+ * might seem to ask for. Both are stated once, there.
  *
- * NO GUEST-COMPOSITION FILTER, on purpose. §10 describes the bound as "active
- * bookings containing relevant non-member guest-nights", and the SQL for "has a
- * participant the rule treats as a non-member guest" is not `memberId IS NULL`:
- * it also covers a member-linked row whose Member is inactive, cancelled or
- * archived. Expressing that here would be a second copy of
- * `participantIsNonMemberGuest` written in Prisma filters, and the failure
- * direction is the bad one — a drifted copy MISSES a dependent, which means no
- * refusal, no incident and no notification for a booking that really was
- * stranded. A copy that is merely too wide costs one idempotent reconciliation
- * that writes nothing. The owner/lodge/night clauses are what make the set small,
- * and they are all here.
+ * The one thing worth repeating here is §10's consequence: refusing an ordinary
+ * source-removal change preserves a dependent's prospective cover, and if an
+ * authorised or unavoidable change proceeds, its own confirmation path still
+ * rechecks the rule.
  */
 export function sameOwnerCoverageDependentWhere(booking: {
   id: string;
@@ -127,13 +112,8 @@ export function sameOwnerCoverageDependentWhere(booking: {
   checkOut: Date;
 }): Prisma.BookingWhereInput {
   return {
+    ...coverageDependentEnvelopeWhere(booking),
     memberId: booking.memberId,
-    lodgeId: booking.lodgeId,
-    deletedAt: null,
-    status: { in: [...ACTIVE_BOOKING_STATUSES] },
-    id: { not: booking.id },
-    checkIn: { lt: booking.checkOut },
-    checkOut: { gt: booking.checkIn },
   };
 }
 

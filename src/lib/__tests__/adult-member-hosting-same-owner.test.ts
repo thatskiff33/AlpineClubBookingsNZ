@@ -123,6 +123,14 @@ function booking(overrides: FakeBooking = {}): FakeBooking {
     id: "b-main",
     memberId: "owner-1",
     parentBookingId: null,
+    // #3038 added these two to `BOOKING_HOSTING_SELECT`, so production hands the
+    // identity resolver whatever the row carries. A fixture that omitted them
+    // would hand it `undefined` — benign today, since undefined and null both
+    // resolve to "no Group Trip", and exactly the silent-omission shape
+    // `GroupTripIdentityRow` is required-and-nullable to prevent. Modelled here
+    // so this file's store keeps matching the select it is standing in for.
+    groupBookingAsOrganiser: null,
+    groupBookingJoin: null,
     lodgeId: LODGE,
     status: "CONFIRMED",
     deletedAt: null,
@@ -2287,9 +2295,10 @@ describe("the SOURCE read gets an evidence ceiling of its own (#2376)", () => {
    * diagnostic that misses the booking carrying the covering adult reports
    * `policy_adult_member_hosting` as a live blocker on a booking that is actually
    * covered — a fabricated finding — while `booking-evidence.ts` promises in as
-   * many words that it "refuses rather than truncating". And with no `orderBy`,
-   * two invocations of the same diagnostic could disagree with nothing on the row
-   * to say which 25 each one saw.
+   * many words that it "refuses rather than truncating". #3038 gave both source
+   * reads a deterministic order, so two invocations no longer disagree about
+   * WHICH 25 they saw — they still agree on a fabricated blocker, which is what
+   * this ceiling is for.
    */
   const SAME_OWNER_SCOPE_ONLY = [
     policyRow({ hostScopeSameBooking: false, hostScopeSameBookingOwner: true }),
@@ -2331,15 +2340,24 @@ describe("the SOURCE read gets an evidence ceiling of its own (#2376)", () => {
       );
   }
 
-  it("leaves the writer's read exactly as it was when no ceiling is supplied", async () => {
-    // Byte-identical for every writer, including the deliberate absence of an
-    // order: its truncation fails towards the rule, so reproducibility buys it
-    // nothing and the sibling fix took the same care.
+  it("leaves the writer's TRUNCATING bound when no ceiling is supplied", async () => {
+    // The writer still truncates at 25 rather than refusing — that, and not the
+    // presence of an order, is what separates it from an evidence caller.
+    //
+    // The order used to be deliberately absent here, on the reasoning that a
+    // writer's truncation fails towards the rule so reproducibility buys it
+    // nothing. #3038 corrected that: it is true of the ANSWER and false of the
+    // SNAPSHOT. An unordered `take` lets Postgres return any 25 of the matching
+    // rows, so `adultMemberHostingStateKey` moves between two evaluations of an
+    // unchanged booking, and the review row is rewritten — reopening the
+    // incident and re-notifying the officer — over nothing. Ordering an already
+    // indexed, single-owner read costs a writer nothing, so both cross-booking
+    // source reads take `COVERAGE_READ_ORDER` unconditionally.
     const { db } = makeSameOwnerStore(1);
     await reconcileAdultMemberHostingReviewWithSiblings("b-main", db);
     const args = sourceReadArgs(db);
     expect(args?.take).toBe(25);
-    expect(args?.orderBy).toBeUndefined();
+    expect(args?.orderBy).toEqual([{ checkIn: "asc" }, { id: "asc" }]);
   });
 
   it("bounds the source read to ceiling + 1, in a total order, for an evidence caller", async () => {
@@ -2447,7 +2465,15 @@ describe("the dependent reads truncate reproducibly (#2576 §10)", () => {
       ([args]: [any]) =>
         typeof args?.take === "number" && !args?.select?.guests?.where,
     );
-    expect(dependentReads).toHaveLength(2);
+    // THREE SINCE #3039, and the third one is an improvement rather than a new
+    // hazard. `loadHostingSiblingIds` used to run the #738 split-pair relation
+    // through its own `findMany` with NEITHER `take` NOR `orderBy` — an unbounded,
+    // unordered sibling read on every booking write, which is precisely the shape
+    // these ceilings exist to prevent. It now delegates to the batched
+    // `loadHostingCoverageSplitSiblingIds`, so the relation has one definition and
+    // that read is bounded and ordered like its two siblings. The loop below holds it
+    // to the same order.
+    expect(dependentReads).toHaveLength(3);
     for (const [args] of dependentReads) {
       expect(args.orderBy, JSON.stringify(args.where)).toEqual([
         { checkIn: "asc" },

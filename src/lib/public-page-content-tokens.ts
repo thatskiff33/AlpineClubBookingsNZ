@@ -9,6 +9,7 @@ import { APP_CURRENCY } from "@/config/operational";
 import { normalizeCancellationRule } from "@/lib/cancellation-rules";
 import { resolvePolicyRowsForLodge } from "@/lib/lodges";
 import {
+  hostScopesAreSameBookingOnly,
   hostingModeIsActive,
   resolveAdultMemberHostingPolicy,
   type AdultMemberHostingPolicyLike,
@@ -632,6 +633,7 @@ export async function loadPublicBookingPolicy(slug?: string): Promise<PublicBook
         version: true,
         hostScopeSameBooking: true,
         hostScopeSameBookingOwner: true,
+        hostScopeSameGroupTrip: true,
       },
     }),
   ]);
@@ -700,13 +702,19 @@ function publicAdultMemberHostingCopy(
 
   // WORDED FOR THE SCOPES ACTUALLY IN FORCE, so the public sentence cannot
   // promise a narrower rule than the club applies. A club on the built-in default
-  // takes the first branch; the second is the honest public wording once same-owner
-  // coverage is switched on, and it deliberately does not mention accounts or
-  // bookings — a public page is read by people who have neither.
-  const coverage =
-    resolved.hostScopes.sameBooking && !resolved.hostScopes.sameBookingOwner
-      ? "to stay with an adult member on the same booking"
-      : "to be covered by an adult member staying at the lodge";
+  // takes the first branch; the second is the honest public wording once ANY
+  // wider scope is switched on, and it deliberately does not mention accounts,
+  // bookings or Group Trips — a public page is read by people who have none of
+  // them.
+  //
+  // ASKED, NOT RE-DERIVED (#3037). This branch used to test the #2569 pair by
+  // hand and so went stale the moment a third scope existed: a club running
+  // `SAME_BOOKING` + `SAME_GROUP_TRIP` published "on the same booking" while
+  // applying something wider. `hostScopesAreSameBookingOnly` is the one place
+  // that question is answered, and the member-facing refusal sentence asks it too.
+  const coverage = hostScopesAreSameBookingOnly(resolved.hostScopes)
+    ? "to stay with an adult member on the same booking"
+    : "to be covered by an adult member staying at the lodge";
 
   // The consequence, and nothing beyond it. Still no invitation to request an
   // exception and no promise of an outcome — see the note above.

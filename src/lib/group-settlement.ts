@@ -578,6 +578,8 @@ async function commitChildrenToConfirmed(
 
     const committed: SettleableChild[] = [];
     let hostingCoverageQueued = false;
+    /** #3039: trips already fanned out by this transaction. Shared by every child. */
+    const settledTripIds = new Set<string>();
     for (const child of children) {
       // Re-read inside the lock; another path may have already moved it.
       const fresh = await tx.booking.findUnique({
@@ -672,9 +674,19 @@ async function commitChildrenToConfirmed(
       // covers it ("payment or booking lifecycle", "automated status transitions"),
       // and a child that turns out to be uncovered becomes an urgent incident on the
       // officer queue instead of a settlement that fails for the whole group.
-      await enqueueOwnHostingCoverageReevaluation(fresh.id, tx, {
-        cause: "SYSTEM_CHANGE",
-      });
+      //
+      // #3039: ONE Group Trip fan-out for the whole settlement, not one per child.
+      // Every child here is in the same trip, so each child's fan-out would
+      // enumerate every other child — O(n^2) reads and n-1 duplicate queue rows per
+      // sibling inside one transaction holding the global and per-lodge keys. NOT
+      // `bestEffort`: see `GroupTripFanOutOptions` for the discriminator.
+      await enqueueOwnHostingCoverageReevaluation(
+        fresh.id,
+        tx,
+        { cause: "SYSTEM_CHANGE" },
+        undefined,
+        { settledTripIds },
+      );
       hostingCoverageQueued = true;
       committed.push({
         id: fresh.id,
