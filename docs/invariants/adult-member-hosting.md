@@ -1616,3 +1616,89 @@ compliant indefinitely.
   `src/lib/__tests__/booking-linked-date-move-service.test.ts` and
   `src/lib/__tests__/adult-member-hosting-call-sites.test.ts`, whose failure
   messages carry this id.
+
+### INV-HOST-052
+
+- **A booking left uncovered because its owner declined the linked move has its
+  own recorded cause, and that cause is registered one release before anything
+  writes it** (#3232 D3, `docs/BLUE_GREEN_MIGRATION_POLICY.md`).
+
+  **WHY ITS OWN CAUSE.** `HostingCoverageIncidentCause` had exactly two values,
+  and a member's deliberate, prompted decision was filed as `SYSTEM_CHANGE` —
+  the value that means an automatic change nobody could reasonably block. An
+  officer reading the booking's history was therefore told the wrong thing, and
+  anybody counting incidents by cause had a member's own choice mixed in with
+  genuine automatic changes. That count is the one number a club or its committee
+  would use to judge whether the supervision setting is working, so merging the
+  two corrupts it, and corrupts it quietly. The repository already argues this
+  against itself: the docblock on the neighbouring
+  `HostingCoverageIncidentResolution` says its values are recorded rather than
+  inferred, because "coverage came back" and "the booking was cancelled" are the
+  same absence of a hazard and a very different story for an officer reading the
+  history. A member's decision and an automatic change are the same kind of pair.
+
+  **TWO RELEASES, AND THE ORDER IS THE RULE.** A production deploy runs
+  migrations *before* the new colour takes traffic, while the previous colour is
+  still serving against the same database. That colour's generated Prisma client
+  knows this type with two labels and cannot deserialize a third. So:
+
+  1. **Expand (this release).**
+     `20260909010000_add_owner_declined_linked_move_incident_cause` registers
+     `OWNER_DECLINED_LINKED_MOVE` and **nothing writes it**. A declined offer is
+     still stored as `SYSTEM_CHANGE`.
+  2. **Runtime (the following release).** The declined arm starts writing the new
+     value.
+
+  Writing it early is not a cosmetic risk. `cause` is selected by the incident
+  writer's OWN fold read in
+  `src/lib/adult-member-hosting-coverage-incidents.ts` — the read every
+  re-evaluation drain performs before it opens or folds an incident — as well as
+  by the two officer surfaces. A row carrying the value during the drain
+  therefore breaks the reconciliation engine, not merely a screen. Registering
+  the label breaks nothing: a client that never meets a value of a type is
+  unaffected by that value existing.
+
+  **That claim was measured, not reasoned about.** Every migration on the branch
+  was applied to a throwaway PostgreSQL 16, a Prisma client was generated from
+  `origin/main`'s own `prisma/schema.prisma`, and that client ran the fold read
+  three times: after the expand with no row carrying the new label, **OK**; with
+  a row carrying `SYSTEM_CHANGE`, which is what this release writes for a
+  declined offer, **OK**; and with that row's cause changed to
+  `OWNER_DECLINED_LINKED_MOVE`, **failed** with
+  `Value 'OWNER_DECLINED_LINKED_MOVE' not found in enum
+  'HostingCoverageIncidentCause'`. The migration header records the same
+  transcript.
+
+  **THE WORDING DOES NOT WAIT, AND NEITHER DOES THE TRUTH.** Two things land in
+  the expand release, so an officer is not misinformed for a release.
+
+  - The officer-facing phrase for every cause has ONE home,
+    `describeHostingCoverageIncidentCause`, and it already names the new value.
+    The two surfaces had drifted into two different wordings for the same stored
+    value — the bookings queue said "qualification changed", the stuck-state
+    dashboard said "system change" (`INV-SSOT-001`). `SYSTEM_CHANGE` now reads
+    "cover removed by a later change", which is true of everything that value
+    holds: an administrative cancellation, a lifecycle transition, a data
+    correction, and — until the runtime half lands — a declined linked move.
+    "Qualification changed" was true of none of those.
+  - The member's decision is **recorded in words** in the incident's audit
+    history. It was already computed and carried on the queue item and then
+    dropped, because only an officer override stored a reason, so the history
+    showed a bare cause code for a decision a member had deliberately made after
+    being warned. The audit row is the right home for it and not only the
+    available one: an audit row describes ONE event, so it cannot go stale, while
+    a "why" column would be left describing the decline after a later automatic
+    change moved the same incident's uncovered state.
+
+  It is **not** written onto `overriddenByMemberId`/`overrideReason`. Nobody
+  exercised authority over a booking that was not theirs, so §7's mandatory
+  reason and its attribution would both be inventions, and an officer would be
+  shown a decision they never made.
+
+  Enforced by
+  `src/lib/__tests__/hosting-coverage-incident-cause-expand.test.ts`, whose
+  failure messages carry this id: it pins the appended-never-reordered enum, the
+  additive DML-free migration, the ledger row's declared deploy order, the ready
+  wording in its one home on both surfaces, and — the gate — that no non-test
+  file under `src/` produces the value while the expand is in its first release.
+  Delete that last assertion in the same change that starts writing it.

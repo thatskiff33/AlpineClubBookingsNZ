@@ -1,6 +1,6 @@
 # File-size allowances for #3232 — the linked date move
 
-Eleven files grow. Six grow by two to twenty-three lines because the compiler
+Twelve files grow. Six grow by two to twenty-three lines because the compiler
 made them: `hostingCoverageActorOptions` now takes the vacated stay window as a
 **required** field, so every actor-driven hosting call site had to state whether
 its change moved a booking's dates. That was the point — an optional field with
@@ -22,8 +22,17 @@ change could have declared its way out of. The pure predicate that belonged
 beside the two where-builders it explains was moved into
 `adult-member-hosting-same-owner.ts` rather than left in either.
 
+The twelfth is one line, and it is a line that REMOVES a duplicate rather than
+adding a feature: `stuck-state-dashboard.ts` gains the import of the shared
+officer-facing wording for an incident cause. The two officer surfaces had each
+written their own phrase for the same stored value - "qualification changed" on
+the bookings queue, "system change" here - and one of them had to be wrong the
+moment a third cause was registered. Both now read from
+`describeHostingCoverageIncidentCause`, so the file's own branch went away and
+what is left is the import that replaced it.
+
 file: src/lib/adult-member-hosting-review.ts
-lines: 4368
+lines: 4377
 reason: the same-owner dependent fan-out gains its plan/verify pair, the
   per-dependent queue items, the read-only stranding seam the offer shares with
   the refusal, and the disposition split that decides offer-versus-refuse.
@@ -126,3 +135,15 @@ file: src/app/api/bookings/[id]/confirm-draft/route.ts
 lines: 391
 reason: three lines at its one hosting seam, saying that confirming a draft does
   not move its stay. Required by the compiler.
+
+file: src/lib/stuck-state-dashboard.ts
+lines: 1143
+reason: one line, and it is an import that deleted a branch. This file wrote its
+  own phrase for an incident cause ("system change") while the bookings queue
+  wrote a different one for the same stored value ("qualification changed"), and
+  #3232 D3 registers a third cause that neither would have named. The wording now
+  has one home and this file calls it, so the ternary went and the import came -
+  net one line, in the direction of less duplication (`INV-SSOT-001`,
+  `INV-HOST-052`). Splitting a 1143-line aggregator over one import line would be
+  the definition of churn; the file's real size debt is its twenty-odd
+  independent stuck-state probes and is untouched by this change.

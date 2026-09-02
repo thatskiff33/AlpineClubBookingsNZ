@@ -32,3 +32,18 @@
   is really available. It was being dropped before it reached the screen, so a full
   lodge left the member with a refusal and no way forward - the opposite of what
   that arm is for (#3232).
+- A booking left without adult supervision because the member was asked about
+  their other booking and chose not to move it now says so. The reason beside a
+  booking officer's queue entry used to read "qualification changed" for every
+  booking that lost its cover without an officer overriding anything - an
+  administrative cancellation, a lifecycle change, a data correction and a
+  member's deliberate choice all wore the same wording, and that wording was
+  true of none of them. It now reads "cover removed by a later change", the
+  booking's history records the member's decision in words, and the two officer
+  screens that had drifted into two different wordings for the same fact read
+  from one place (#3232, `INV-HOST-052`, `INV-SSOT-001`).
+- The queue entry will name a declined offer as its own reason from the release
+  after this one. The label has to be added to the database one release before
+  anything writes it, because the version of the site still running while a new
+  one is being put in place cannot read a label it has never heard of (#3232,
+  `INV-HOST-052`).

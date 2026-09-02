@@ -31,6 +31,21 @@
 -- the drain itself, not merely a screen. Registering the label breaks none of
 -- them: a client that never meets a value of it is unaffected by its existence.
 --
+-- VERIFIED RATHER THAN ASSERTED, which is what the policy asks of a
+-- compatibility claim. Every migration in this branch was applied to a throwaway
+-- PostgreSQL 16, a Prisma client was generated from origin/main's OWN
+-- prisma/schema.prisma, and that client performed the fold read above three
+-- times:
+--   A. after the expand, with no row carrying the new label -> OK.
+--   B. with a row carrying 'SYSTEM_CHANGE', which is what THIS release writes
+--      for a declined offer -> OK.
+--   C. with that row's cause changed to 'OWNER_DECLINED_LINKED_MOVE', which is
+--      what release 2 writes -> FAILED, with
+--      "Value 'OWNER_DECLINED_LINKED_MOVE' not found in enum
+--      'HostingCoverageIncidentCause'".
+-- So the expand is safe now and the write is not, measured on the exact read the
+-- drain performs.
+--
 -- ONE STATEMENT, additive. Nothing is dropped, renamed, retyped, backfilled or
 -- indexed, and there is no DML of any kind, so every existing row in every
 -- existing table is byte-identical afterwards. The migration only REGISTERS the
