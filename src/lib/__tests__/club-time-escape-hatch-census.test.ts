@@ -532,8 +532,15 @@ const CENSUS_CEILING = {
    * outside their transactions, which is `INV-LOCK-004`'s rule and not this
    * counter's. Re-measured against the branch base rather than added to, per the
    * warning above.
+   *
+   * 220 -> 221 (#3232, completion): the pure construction of the linked-move
+   * quote moved into `adult-member-hosting-linked-move.ts` so the new service
+   * module could come under its file-size budget — the gate refuses an allowance
+   * for a new file outright — and the shift rule it took with it needs the same
+   * three zone-free exports. Both modules now import them; neither resolves a
+   * timezone. Re-measured, not incremented.
    */
-  dateOnlyImporters: 220,
+  dateOnlyImporters: 221,
   /**
    * `new Date(y, m, d)` — local midnight in the HOST's zone.
    *

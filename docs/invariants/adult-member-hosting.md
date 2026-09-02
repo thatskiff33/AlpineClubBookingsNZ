@@ -1511,8 +1511,42 @@ compliant indefinitely.
   that is not theirs. These are the member's own two bookings. What is demanded is
   proof they were shown the consequence, which is the state key.
 
-  Enforced by `src/lib/__tests__/adult-member-hosting-linked-move.test.ts` and
-  `src/lib/__tests__/adult-member-hosting-same-owner.test.ts`, whose failure
+  **EVERY DATE-CAPABLE MEMBER SURFACE OFFERS ALL THREE ARMS, OR THE RULE IS A
+  DEADLOCK ON WHICHEVER ONE DOES NOT.** Widening the read above (`INV-HOST-049`)
+  makes a date move notice the booking it leaves behind on all three date writers
+  at once, so a route that gained the widened read and not the offer starts
+  refusing moves that used to succeed — which is precisely the refusal this rule
+  exists to remove. Both member doors, `PUT /api/bookings/[id]/modify` and
+  `PUT /api/bookings/[id]/modify-dates`, therefore route all three arms through
+  ONE shared function over whichever single-booking writer that surface runs; they
+  differ only in the writer they hand in, never in the policy
+  (`INV-SSOT-001`). The member's answer is NOT one of the officer-authority fields
+  those routes gate on ADMIN: gating it that way would 403 the only person
+  entitled to answer it. `adminShiftBookingDates` is deliberately outside the
+  arms, because an officer's change escalates through `REQUIRE_OVERRIDE` and is
+  never refused for stranding in the first place. The third writer's absence from
+  this list is checked by a census, not by review.
+
+  **THE "CANNOT" ARM MUST STILL NAME THE BOOKINGS, AND MUST NOT RE-RUN THE CHECK
+  IT REPLACES.** Two ways this arm became unreachable, both found by the
+  completion review and both leaving the member refused with no door. First, the
+  quote named no bookings at all when the first dependent was the one with no beds
+  — the ordinary single-dependent case — and the browser's reader for the offer
+  fails closed on an empty list, so the panel discarded it and fell back to the
+  plain refusal. The quote now names the WHOLE stranded set, priced at nothing
+  because nothing moves, with the combined figures being the primary's own since
+  the only move still on offer is the primary's. Second, the deferred supervision
+  check still ran on that arm, over a transaction certain to be discarded, where
+  the primary has moved and the dependent has not — which IS the stranding the
+  rule refuses, so it threw the bare refusal and it propagated in place of the
+  offer. The check is skipped on any arm that cannot commit and still governs
+  every arm that can.
+
+  Enforced by `src/lib/__tests__/adult-member-hosting-linked-move.test.ts`,
+  `src/lib/__tests__/adult-member-hosting-same-owner.test.ts`,
+  `src/lib/__tests__/booking-linked-date-move-service.test.ts`,
+  `src/lib/__tests__/adult-member-hosting-call-sites.test.ts` (both doors) and
+  `src/app/api/bookings/[id]/__tests__/modify-linked-move.test.ts`, whose failure
   messages carry this id.
 
 ### INV-HOST-051
@@ -1557,6 +1591,20 @@ compliant indefinitely.
   starts giving fees away. The member-facing sentence states which answer the club
   gave, so a waived fee is never described as charged or the reverse.
 
+  **AND THE SETTING REACHES THE PRICING ENGINE, NOT ONLY THE SENTENCE.** It first
+  shipped as a display flag: the combined figure was summed from two modifications
+  that each charged their own fee, so a club that had waived the second fee told
+  the member it was waived and charged it anyway. The waiver is a service argument
+  on the modification service (`waiveChangeFee`), passed on the DRAGGED booking
+  only — the booking the member chose to move always attracts its own — and it
+  takes the same zero branch a parked edit takes, so the zero flows through the
+  settlement options, the payment adjustment, the modification row, the audit
+  trail and the Xero leg. It is deliberately NOT a field on the request-body input
+  type, because that input is the parsed request body on both member save routes
+  and a fee waiver living there would be a fee waiver any member could ask for;
+  the one file permitted to pass it is censused, exactly as the deferred hosting
+  check is.
+
   **ONE LODGE CAPACITY KEY COVERS BOTH BOOKINGS**, and that is a property of the
   predicate rather than an assumption: the dependent envelope pins `lodgeId` to
   the changed booking's lodge, so a same-owner dependent is always at the same
@@ -1564,5 +1612,7 @@ compliant indefinitely.
   global `pg_advisory_xact_lock(1)`, then the lodge key, then the participant
   `Member` rows and the per-owner coverage key — and this change adds no new key.
 
-  Enforced by `src/lib/__tests__/adult-member-hosting-linked-move.test.ts`, whose
-  failure messages carry this id.
+  Enforced by `src/lib/__tests__/adult-member-hosting-linked-move.test.ts`,
+  `src/lib/__tests__/booking-linked-date-move-service.test.ts` and
+  `src/lib/__tests__/adult-member-hosting-call-sites.test.ts`, whose failure
+  messages carry this id.

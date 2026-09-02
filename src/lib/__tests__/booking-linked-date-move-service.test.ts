@@ -121,6 +121,7 @@ vi.mock("@/lib/lodges", () => ({
 import {
   SameOwnerCoverageLinkedMoveRequiredError,
   linkedMoveStateKey,
+  linkedMoveTargetRange,
 } from "@/lib/adult-member-hosting-linked-move";
 import {
   SameOwnerCoverageWouldBreakError,
@@ -132,7 +133,6 @@ import {
 } from "@/lib/over-capacity-confirmation";
 import {
   applyLinkedDateMove,
-  linkedMoveTargetRange,
   loadLinkedMoveChargesBothChangeFees,
   modifyBookingDatesWithLinkedMoveSupport,
   modifyBookingWithLinkedMoveSupport,
@@ -264,6 +264,19 @@ function installTransaction() {
       h.events.push(`raw:${statement.trim()}`);
       return 1;
     }),
+    // The deferred envelope-constraint flush. Recorded as an event, because WHEN
+    // it happens is the whole point: each `modifyBookingBatch` must skip its own
+    // (`SET CONSTRAINTS ... IMMEDIATE` applies for the rest of the transaction, so
+    // the first booking's flush breaks the second booking's legitimate write
+    // order) and this service must perform it once after both are written.
+    $executeRawUnsafe: vi.fn(async (statement: string) => {
+      h.events.push(
+        statement.startsWith("SET CONSTRAINTS")
+          ? "flush:envelope"
+          : `raw-unsafe:${statement}`,
+      );
+      return 1;
+    }),
     booking: { findUnique: h.bookingFindUnique },
   };
   h.txClient = tx as unknown as Record<string, unknown>;
@@ -393,6 +406,13 @@ describe("the linked move is one transaction (#3232, INV-HOST-051)", () => {
       `lock:lodge:${LODGE}`,
       `edit:${PRIMARY}`,
       `edit:${DEPENDENT}`,
+      // The envelope, ONCE, and only after BOTH bookings are written. Neither
+      // `modifyBookingBatch` may flush its own: the first one's flush turns the
+      // deferrable triggers immediate for the rest of the transaction, and the
+      // second booking legitimately writes its guest stay ranges before its own
+      // booking row — which is the ordering the triggers are deferrable to permit.
+      // That was a real 500 on a real database, caught end to end.
+      "flush:envelope",
       // The supervision rule ONCE, over the state that will really commit.
       `reconcile:${PRIMARY}`,
       `reconcile:${DEPENDENT}`,
@@ -741,6 +761,8 @@ describe("where there are not beds for both — the owner's cannot arm (#3232)",
       expect(h.events).toContain("tx:rollback");
       expect(h.events).not.toContain("tx:commit");
       expect(h.events).not.toContain(`deferred:${PRIMARY}`);
+      // Nothing to assert an envelope over on an arm that cannot commit.
+      expect(h.events).not.toContain("flush:envelope");
       expect(h.settleAfterCommit).not.toHaveBeenCalled();
     });
   }
@@ -846,6 +868,9 @@ describe("either both bookings move or neither does (#3232)", () => {
         `edit:${DEPENDENT}`,
         "tx:rollback",
       ]);
+      // Not even the envelope assertion ran: the second write failed, so there is
+      // no final state to assert one over.
+      expect(h.events).not.toContain("flush:envelope");
       // The primary was written and is gone with the transaction: no supervision
       // check was recorded, no provider work fired, no post-commit drain ran.
       expect(h.events).not.toContain(`reconcile:${PRIMARY}`);

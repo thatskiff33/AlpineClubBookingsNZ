@@ -7,6 +7,8 @@ import {
   type StrandedCoverageBooking,
 } from "@/lib/adult-member-hosting-same-owner";
 import { ApiError } from "@/lib/api-error";
+import { formatBookingReference } from "@/lib/booking-reference";
+import { addDaysDateOnly, formatDateOnly, parseDateOnly } from "@/lib/date-only";
 
 /**
  * The LINKED MOVE: what a member is offered when moving one of their bookings
@@ -349,6 +351,164 @@ export function formatLinkedMoveOfferMessage(quote: LinkedMoveQuote): string {
     `If you would rather move only this booking, you can — the other will be ` +
     `left without adult supervision and a Booking Officer will be told.`
   );
+}
+
+/**
+ * What one booking's own move settled to, as the quote needs to read it.
+ *
+ * A STRUCTURAL SUBSET rather than an import of `BatchModificationResponse`, so
+ * this module stays free of the pricing engine — the property that lets the
+ * hosting engine raise the offer without a cycle and lets the browser read the
+ * prompt without Prisma. The real result satisfies it, and the compiler checks
+ * that at the one call site.
+ */
+export interface LinkedMoveSettledBooking {
+  priceDiffCents: number;
+  changeFeeCents: number;
+  additionalAmountCents: number;
+  refundAmountCents: number;
+  accountCreditAmountCents: number;
+}
+
+/**
+ * Where the dependent booking goes.
+ *
+ * IT SHIFTS BY THE SAME NUMBER OF DAYS AS THE PRIMARY'S ARRIVAL, KEEPING ITS OWN
+ * LENGTH — not "to the same nights", which the issue's own wording uses and which
+ * is only well defined when the two stays happen to match. Two bookings of
+ * different lengths have no "same nights"; shifting by the arrival delta preserves
+ * exactly the relationship the dependent was relying on, so a booking that was
+ * covered before the move is covered after it, and it also preserves the
+ * dependent's stay length, its per-guest stay ranges and the shape of its price.
+ *
+ * WHEN THE PRIMARY ALSO CHANGED LENGTH — arrival and departure moved by different
+ * amounts — the dependent still follows the ARRIVAL delta and keeps its own length.
+ * A member extending their own stay has not asked to extend anybody else's, and
+ * lengthening a second booking would charge them for nights they never requested.
+ *
+ * THE MEMBER IS SHOWN THE RESULTING DATES OUTRIGHT rather than this rule, because
+ * dates can be checked against a calendar and a rule cannot.
+ */
+export function linkedMoveTargetRange(
+  primary: { previousCheckIn: Date; currentCheckIn: Date },
+  dependent: { checkIn: string; checkOut: string },
+): { checkIn: string; checkOut: string } {
+  const MS_PER_DAY = 24 * 60 * 60 * 1000;
+  const shiftDays = Math.round(
+    (primary.currentCheckIn.getTime() - primary.previousCheckIn.getTime()) /
+      MS_PER_DAY,
+  );
+  return {
+    checkIn: formatDateOnly(
+      addDaysDateOnly(parseDateOnly(dependent.checkIn), shiftDays),
+    ),
+    checkOut: formatDateOnly(
+      addDaysDateOnly(parseDateOnly(dependent.checkOut), shiftDays),
+    ),
+  };
+}
+
+/**
+ * A booking the offer would move alongside the primary, and what its own move
+ * costs.
+ *
+ * `money` IS NULL ON THE `NO_CAPACITY` ARM, and that is the whole reason this
+ * type exists rather than the `BatchModificationResponse` it used to carry. When
+ * there are not beds for both, nothing moves — so this booking has no price, and
+ * the honest way to say that is the absence of one rather than a zero that looks
+ * like a free move.
+ */
+export type LinkedMoveCandidate<
+  TResult extends LinkedMoveSettledBooking = LinkedMoveSettledBooking,
+> = {
+  stranded: {
+    bookingId: string;
+    reference: string;
+    lodgeName: string;
+    nights: string[];
+    checkIn: string;
+    checkOut: string;
+  };
+  target: { checkIn: string; checkOut: string };
+  money: { priceDiffCents: number; changeFeeCents: number } | null;
+  /**
+   * The full modification result, kept by the CALLER because it also owes the
+   * deferred provider work and the deferred supervision check. This module reads
+   * only the money off it, which is why the parameter defaults to the subset.
+   */
+  result: TResult | null;
+};
+
+export function combineLinkedMoveQuote(input: {
+  primary: LinkedMoveSettledBooking;
+  primaryId: string;
+  primaryRange: { checkIn: string; checkOut: string };
+  linked: LinkedMoveCandidate[];
+  bothChangeFeesCharged: boolean;
+  feasibility: LinkedMoveFeasibility;
+}): LinkedMoveQuote {
+  const linked: LinkedMoveBooking[] = input.linked
+    .map((entry) => ({
+      bookingId: entry.stranded.bookingId,
+      reference: entry.stranded.reference,
+      lodgeName: entry.stranded.lodgeName,
+      uncoveredNights: entry.stranded.nights,
+      currentCheckIn: entry.stranded.checkIn,
+      currentCheckOut: entry.stranded.checkOut,
+      proposedCheckIn: entry.target.checkIn,
+      proposedCheckOut: entry.target.checkOut,
+      priceDiffCents: entry.money?.priceDiffCents ?? 0,
+      changeFeeCents: entry.money?.changeFeeCents ?? 0,
+    }))
+    .sort((left, right) => (left.bookingId < right.bookingId ? -1 : 1));
+
+  // ON THE `NO_CAPACITY` ARM THE COMBINED FIGURES ARE THE PRIMARY'S OWN, because
+  // the only move still on offer is the primary's: the member is being told the
+  // two cannot travel together and asked whether to move this one anyway. Summing
+  // in a dependent that is not moving would quote them for a move nobody is
+  // making. Nothing else in the transaction survives either — the whole probe is
+  // discarded — so these are the figures of the single-booking edit they can still
+  // choose, which is exactly the decision in front of them.
+  const all = [
+    input.primary,
+    ...input.linked
+      .map((entry) => entry.result)
+      .filter((result): result is LinkedMoveSettledBooking => result !== null),
+  ];
+  const sum = (pick: (r: LinkedMoveSettledBooking) => number) =>
+    all.reduce((total, result) => total + pick(result), 0);
+
+  return {
+    primary: {
+      bookingId: input.primaryId,
+      reference: formatBookingReference(input.primaryId),
+      proposedCheckIn: input.primaryRange.checkIn,
+      proposedCheckOut: input.primaryRange.checkOut,
+      priceDiffCents: input.primary.priceDiffCents,
+      changeFeeCents: input.primary.changeFeeCents,
+    },
+    linked,
+    combinedPriceDiffCents: sum((r) => r.priceDiffCents),
+    combinedChangeFeeCents: sum((r) => r.changeFeeCents),
+    combinedAmountDueCents: sum((r) => r.additionalAmountCents),
+    // A reduction can come back as a card refund OR as account credit, and the
+    // member chose once for both. Summing the two is right rather than
+    // double-counting: exactly one of them is non-zero per booking, because
+    // `calculateModificationSettlementOptions` routes a given reduction down one
+    // path or the other, never both.
+    combinedRefundCents: sum(
+      (r) => r.refundAmountCents + r.accountCreditAmountCents,
+    ),
+    settlementMethodRequired: all.some(
+      (r) => r.refundAmountCents + r.accountCreditAmountCents > 0,
+    ),
+    // TRUE TO THE MONEY ABOVE, not a separate claim about it: when the club has
+    // waived it, the dependent's `modifyBookingBatch` call was given
+    // `waiveChangeFee`, so its `changeFeeCents` really is 0 and
+    // `combinedChangeFeeCents` really does carry one fee only.
+    bothChangeFeesCharged: input.bothChangeFeesCharged,
+    feasibility: input.feasibility,
+  };
 }
 
 /** The stored reason on the incident a declined offer opens. */

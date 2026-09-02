@@ -14,6 +14,10 @@ import { E2E_ADMIN, ROLE_PERSONAS, WAITLISTER } from "./helpers/fixtures";
 import { overrideModules, setModuleSettings } from "./helpers/modules";
 import { cancelMemberBookingsOnDate } from "./helpers/reset";
 import { stayWindowForAttempt } from "./helpers/stay-dates";
+// #3232: the linked move needs a SECOND window derived from this spec's own, and
+// the seeded season bands to check it against. Both are the single sources the
+// rest of the date space already uses (prisma/e2e-fixtures.ts).
+import { SEEDED_SEASONS, shiftDateOnly } from "../prisma/e2e-fixtures";
 
 /**
  * #2569 / #2576 / #2597 — the adult-member hosting rule end to end against the
@@ -835,4 +839,244 @@ test("same-owner cover can be removed with authority and restored by another act
       summary: expect.stringContaining("COVERAGE_RESTORED"),
     }),
   );
+});
+
+/**
+ * #3232 — THE LINKED MOVE, end to end, and the one thing only the running app can
+ * show: that BOTH bookings really moved.
+ *
+ * Everything else about this feature has a home. The dependent read is
+ * `adult-member-hosting-same-owner.test.ts`, the orchestration and the money are
+ * `booking-linked-date-move-service.test.ts`, the 409 on the wire is
+ * `modify-linked-move.test.ts`, and the offer as the member reads it is
+ * `hosting-coverage-linked-move-ui-contract.test.ts`. None of them can show two
+ * real bookings in one real database both sitting on new nights afterwards, which
+ * is the acceptance criterion the whole issue turns on: "no state exists in which
+ * one booking moved and the other did not."
+ *
+ * IT ALSO SHOWS THE DEADLOCK IS GONE, which is the reason the offer exists rather
+ * than a refusal. Before this, a member owning both bookings could move neither:
+ * moving the one carrying the adult was refused for stranding the other, and
+ * moving the other was refused by the same rule from the other end.
+ *
+ * DATES ARE COUNTED FROM THIS SPEC'S OWN WINDOW and are deliberately NOT Mondays.
+ * Every `stayWindow` index in the suite is a Monday, so a Thursday pair cannot
+ * collide with another spec's band however the bases are reallocated — see
+ * `e2e-stay-window-disjointness.test.ts` for why an unverifiable disjointness
+ * claim is not good enough here. Both windows are asserted to fall inside a
+ * seeded season, so a run date that pushed one into the season gap fails loudly
+ * with the reason instead of failing as an out-of-season price.
+ */
+test("moving one booking offers to move the other, and both really move (#3232)", async ({}, testInfo) => {
+  test.setTimeout(180_000);
+
+  // Thursday-to-Saturday, and the same again a week later: two nights each, both
+  // clear of every Monday window in the suite.
+  const start = shiftDateOnly(WINDOW.checkIn, 3);
+  const target = shiftDateOnly(WINDOW.checkIn, 10);
+  const inSeason = (checkIn: string) => {
+    const nights = [checkIn, shiftDateOnly(checkIn, 1)];
+    return SEEDED_SEASONS.some((season) =>
+      nights.every((night) => night >= season.start && night <= season.end),
+    );
+  };
+  for (const window of [start, target]) {
+    expect(
+      inSeason(window),
+      `the linked-move window ${window} must fall inside a seeded season - it ` +
+        `is derived from this spec's stay window (${WINDOW.checkIn}), so a run ` +
+        `date that pushes it into the ~30-day season gap needs the base index ` +
+        `moved rather than this assertion relaxed. See docs/E2E_PLAYWRIGHT.md.`,
+    ).toBe(true);
+  }
+
+  await setClubHostingPolicy({
+    mode: "ENFORCED",
+    hostScopes: { sameBooking: true, sameBookingOwner: true },
+  });
+
+  // The pair: one booking carrying the member (a qualifying adult), and one
+  // carrying a non-member guest that is compliant only through it.
+  const { source, dependent } = await withInternetBankingHolds(async () => ({
+    source: await postBookingCreate(
+      admin,
+      bookingCreateIsolation("linked-move-pair", testInfo.retry),
+      {
+        data: {
+          checkIn: start,
+          checkOut: shiftDateOnly(start, 2),
+          forMemberId: ownerMemberId,
+          paymentMethod: "internet_banking",
+          guests: [
+            {
+              firstName: WAITLISTER.firstName,
+              lastName: WAITLISTER.lastName,
+              ageTier: "ADULT",
+              isMember: true,
+              memberId: ownerMemberId,
+            },
+          ],
+        },
+      },
+    ),
+    dependent: await postBookingCreate(
+      bookingOfficer,
+      bookingCreateIsolation("linked-move-pair", testInfo.retry),
+      {
+        data: {
+          checkIn: start,
+          checkOut: shiftDateOnly(start, 2),
+          forMemberId: ownerMemberId,
+          paymentMethod: "internet_banking",
+          guests: [
+            {
+              firstName: "Linked",
+              lastName: "Guest",
+              ageTier: "ADULT",
+              isMember: false,
+            },
+          ],
+        },
+      },
+    ),
+  }));
+
+  expect(
+    source.ok(),
+    `create the covering booking (${source.status()}): ${await source.text()}`,
+  ).toBe(true);
+  expect(
+    dependent.ok(),
+    `same-owner cover must allow the dependent (${dependent.status()}): ` +
+      `${await dependent.text()}`,
+  ).toBe(true);
+  const sourceBooking = (await source.json()) as { id: string; status: string };
+  const dependentBooking = (await dependent.json()) as {
+    id: string;
+    status: string;
+  };
+  createdBookingIds.push(sourceBooking.id, dependentBooking.id);
+  for (const booking of [sourceBooking, dependentBooking]) {
+    expect(
+      ["CONFIRMED", "PAID"],
+      `both bookings must be confirmed active attendance (got ${booking.status})`,
+    ).toContain(booking.status);
+  }
+
+  // 1. THE OFFER. The member moves the booking carrying the adult away from the
+  //    other one. Before #3232 this either silently stranded the dependent or -
+  //    once the read was widened - refused with nowhere to go.
+  const move = { checkIn: target, checkOut: shiftDateOnly(target, 2) };
+  const offered = await member.put(`/api/bookings/${sourceBooking.id}/modify`, {
+    data: move,
+  });
+  expect(
+    offered.status(),
+    `the move must raise the linked-move offer (${offered.status()}): ` +
+      `${await offered.text()}`,
+  ).toBe(409);
+  const offer = (await offered.json()) as {
+    code?: string;
+    requiresLinkedMoveChoice?: boolean;
+    acceptStateKey?: string;
+    declineStateKey?: string;
+    linkedMoveAvailable?: boolean;
+    linkedBookings?: Array<{
+      bookingId: string;
+      proposedCheckIn: string;
+      proposedCheckOut: string;
+      uncoveredNights: string[];
+    }>;
+    combinedAmountDueCents?: number;
+    combinedRefundCents?: number;
+    combinedChangeFeeCents?: number;
+  };
+  expect(offer.code).toBe("SAME_OWNER_COVERAGE_LINKED_MOVE_REQUIRED");
+  expect(offer.requiresLinkedMoveChoice).toBe(true);
+  expect(offer.linkedMoveAvailable).toBe(true);
+  // It names the member's OWN affected booking, where it would go, and which
+  // nights lose their adult if it stays.
+  expect(offer.linkedBookings).toEqual([
+    expect.objectContaining({
+      bookingId: dependentBooking.id,
+      proposedCheckIn: target,
+      proposedCheckOut: shiftDateOnly(target, 2),
+    }),
+  ]);
+  expect(offer.linkedBookings?.[0]?.uncoveredNights).toContain(start);
+  // Two keys, because the two arms bind different things - a hazard, and a price.
+  expect(offer.acceptStateKey).toMatch(/^v1:[0-9a-f]{64}$/);
+  expect(offer.declineStateKey).toMatch(/^v1:[0-9a-f]{64}$/);
+  expect(offer.acceptStateKey).not.toBe(offer.declineStateKey);
+  // Integer cents, every one of them.
+  for (const cents of [
+    offer.combinedAmountDueCents,
+    offer.combinedRefundCents,
+    offer.combinedChangeFeeCents,
+  ]) {
+    expect(Number.isInteger(cents)).toBe(true);
+  }
+
+  // 2. THE WRONG KEY IS REFUSED. Declining binds the hazard alone, so it cannot
+  //    stand in for an acceptance of a price.
+  const wrongArm = await member.put(
+    `/api/bookings/${sourceBooking.id}/modify`,
+    {
+      data: {
+        ...move,
+        hostingCoverageLinkedMove: {
+          choice: "MOVE_BOTH",
+          acknowledged: true,
+          stateKey: offer.declineStateKey,
+        },
+      },
+    },
+  );
+  expect(
+    wrongArm.status(),
+    `the decline key must not accept the offer (${wrongArm.status()})`,
+  ).toBe(409);
+
+  // 3. THE MOVE. One acceptance, both bookings.
+  const applied = await member.put(`/api/bookings/${sourceBooking.id}/modify`, {
+    data: {
+      ...move,
+      hostingCoverageLinkedMove: {
+        choice: "MOVE_BOTH",
+        acknowledged: true,
+        stateKey: offer.acceptStateKey,
+      },
+    },
+  });
+  expect(
+    applied.ok(),
+    `the accepted linked move must succeed (${applied.status()}): ` +
+      `${await applied.text()}`,
+  ).toBe(true);
+
+  // 4. AND BOTH REALLY MOVED. This is the assertion no unit test can make: two
+  //    rows in a real database, on the new nights, after one request.
+  const moved = await admin.get(
+    `/api/admin/bookings?calendarMonth=${target.slice(0, 7)}&status=${LISTABLE_STATUSES}`,
+  );
+  expect(moved.ok(), `list bookings for ${target} (${moved.status()})`).toBe(
+    true,
+  );
+  const movedBody = (await moved.json()) as {
+    bookings: Array<{ id: string; checkIn: string; deletedAt: string | null }>;
+  };
+  const byId = new Map(
+    movedBody.bookings
+      .filter((booking) => !booking.deletedAt)
+      .map((booking) => [booking.id, booking.checkIn]),
+  );
+  expect(
+    byId.get(sourceBooking.id),
+    "the booking the member moved must be on the new nights",
+  ).toBe(target);
+  expect(
+    byId.get(dependentBooking.id),
+    "the booking that was relying on it must have moved with it - a state where " +
+      "only one moved is the thing #3232 promises cannot exist",
+  ).toBe(target);
 });

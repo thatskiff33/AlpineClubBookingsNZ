@@ -1,6 +1,6 @@
 # File-size allowances for #3232 — the linked date move
 
-Ten files grow. Six grow by two to twenty-three lines because the compiler
+Eleven files grow. Six grow by two to twenty-three lines because the compiler
 made them: `hostingCoverageActorOptions` now takes the vacated stay window as a
 **required** field, so every actor-driven hosting call site had to state whether
 its change moved a booking's dates. That was the point — an optional field with
@@ -9,14 +9,18 @@ they were, silently, which is the failure #3116 already cost this repository
 once. Those six are not candidates for a split: the growth is one field and its
 reason at an existing call site.
 
-The three real ones are `adult-member-hosting-review.ts`,
-`booking-batch-modification-service.ts` and the config-transfer registry the new
-club setting has to be listed in, and each has its reason below. The new
-code that could stand alone already does: `adult-member-hosting-linked-move.ts`
-(the offer contract) and `booking-linked-date-move-service.ts` (the atomic move)
-are new modules inside their budgets, and the one pure predicate that belonged
+The four real ones are `adult-member-hosting-review.ts`,
+`booking-batch-modification-service.ts`, the config-transfer registry the new
+club setting has to be listed in, and the `modify-dates` route that gains the
+offer, and each has its reason below. The new code that could stand alone
+already does: `adult-member-hosting-linked-move.ts` (the offer contract, which
+also owns the pure construction of the quote) and
+`booking-linked-date-move-service.ts` (the atomic move) are new modules INSIDE
+their budgets, and keeping them there is not decoration — the gate refuses an
+allowance for a new file outright, so arriving over budget is not a thing this
+change could have declared its way out of. The pure predicate that belonged
 beside the two where-builders it explains was moved into
-`adult-member-hosting-same-owner.ts` rather than left here.
+`adult-member-hosting-same-owner.ts` rather than left in either.
 
 file: src/lib/adult-member-hosting-review.ts
 lines: 4368
@@ -34,14 +38,22 @@ reason: the same-owner dependent fan-out gains its plan/verify pair, the
   most likely to let them.
 
 file: src/lib/booking-batch-modification-service.ts
-lines: 1966
-reason: the hosting reconciliation becomes deferrable, so a caller composing two
-  booking writes into one transaction can run the supervision check once over the
-  state that will really commit. That is nine lines of code and the rest is the
-  explanation of why no ordering avoids the intermediate state — move A first and
-  A's seam refuses because B is stranded; move B first and B's own seam refuses
-  because B has no adult. A reader who does not have that in front of them will
-  eventually "simplify" the deferral away, and it lives at the seam it changes.
+lines: 2041
+reason: three changes at this one seam, and all three are about a caller that
+  composes two booking writes into one transaction. The hosting reconciliation
+  becomes deferrable, so the supervision check runs once over the state that will
+  really commit — nine lines of code, and the rest is why no ordering avoids the
+  intermediate state (move A first and A's seam refuses because B is stranded;
+  move B first and B's own seam refuses because B has no adult). The deferred
+  envelope-constraint flush is skipped for that same caller, because
+  `SET CONSTRAINTS ... IMMEDIATE` applies for the remainder of the transaction and
+  the first booking's flush made the triggers immediate for the second booking's
+  writes — a measured 500 on a real database, so the paragraph explaining it is
+  worth more than the line it guards. And `waiveChangeFee` arrives as a service
+  argument rather than a request-body field, with the reason stated where somebody
+  might otherwise "tidy" it into the input type and hand every member a fee
+  waiver. All three live at the seam they change; a reader without them in front
+  of them will simplify one of them away.
 
 file: src/app/api/bookings/[id]/modify/route.ts
 lines: 514
@@ -65,9 +77,10 @@ reason: the offer is a THIRD refusal shape this one panel has to read, choose an
   seam to save twenty lines.
 
 file: src/lib/booking-date-modification-service.ts
-lines: 2050
-reason: fourteen lines at its two hosting seams, supplying the window each edit
-  has just vacated. This is the writer the whole defect turned on — it holds
+lines: 2074
+reason: fourteen lines at its two hosting seams supplying the window each edit
+  has just vacated, plus the member's linked-move answer threaded to the seam
+  that honours it — this writer owes the field because it owes the offer. This is the writer the whole defect turned on — it holds
   oldCheckIn/oldCheckOut in the same function that calls the seam — so the
   reasoning belongs at the call site rather than one indirection away.
 
@@ -94,6 +107,20 @@ reason: the new club setting joins the travelling singleton beside the
   reason it TRAVELS rather than staying deployment-local — the distinction this
   file exists to make, one entry at a time. The registry and its reasoning are
   the module.
+
+file: src/app/api/bookings/[id]/modify-dates/route.ts
+lines: 373
+reason: the same two additions its `/modify` sibling took — one schema field for
+  the member's answer, one response branch for the offer — plus the club-day
+  resolution the accepted move needs before any transaction opens, and the
+  paragraph saying why the answer is deliberately NOT one of the officer-authority
+  flags this route gates on ADMIN (gating it that way would 403 the only person
+  entitled to answer it). It has to be here rather than skipped: this route is one
+  of the three writers that now supplies the vacated window, so it already
+  NOTICES the stranded booking, and a door that noticed without offering would
+  refuse moves that used to succeed. The policy itself is not here — all three
+  arms are the shared `withLinkedMoveArms`, so the two doors cannot grow two
+  copies of it.
 
 file: src/app/api/bookings/[id]/confirm-draft/route.ts
 lines: 391

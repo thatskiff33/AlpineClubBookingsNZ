@@ -1475,7 +1475,26 @@ export async function modifyBookingBatch({
 
     // Fire the deferred envelope constraint triggers here so a violation is
     // attributed to this service instead of the transaction's COMMIT.
-    await assertBookingEnvelopeInvariants(tx);
+    //
+    // NOT WHEN THE CALLER IS COMPOSING SEVERAL BOOKING WRITES (#3232), and this
+    // one is not a nicety — it is a 500 the linked move hit on the real database.
+    // `SET CONSTRAINTS ... IMMEDIATE` applies for the REST OF THE TRANSACTION, not
+    // just to the queued checks, so flushing at the end of the FIRST booking's
+    // write turns the envelope triggers immediate for the second booking's — and
+    // the second booking legitimately writes its guest stay ranges before its own
+    // `Booking` row, which is exactly the ordering these triggers are deferrable
+    // in order to permit. Measured: the dependent's guest update was refused with
+    // `BookingGuest stay range must be within parent Booking date range`, naming
+    // the new stay range against the OLD booking window, and the member got the
+    // internal-consistency 500.
+    //
+    // The caller that took `hostingReconcile: "CALLER"` is by definition the one
+    // that owns the end of this transaction, so it owns this flush too and
+    // performs it once, after every booking is written. Forgetting it costs
+    // ATTRIBUTION and not safety: the triggers are `DEFERRABLE INITIALLY
+    // DEFERRED`, so a genuine violation still fails the COMMIT — just as an
+    // anonymous transaction error rather than one carrying this service's stack.
+    if (hostingReconcile !== "CALLER") await assertBookingEnvelopeInvariants(tx);
 
     // #2364. Re-derive the hosting hazard from the rows this edit just wrote:
     // guests added or removed, nights moved, and a lodge change all land here,
