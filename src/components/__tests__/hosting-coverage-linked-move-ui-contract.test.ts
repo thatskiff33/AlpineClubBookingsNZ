@@ -91,9 +91,9 @@ describe("the linked-move offer's UI contract (#3232, INV-HOST-050)", () => {
     );
 
     const moveBoth = screen.getByRole("radio", { name: /Move both bookings/ });
-    expect(moveBoth).toHaveAccessibleName(/\$35\.00 payable across both/);
+    expect(moveBoth).toHaveAccessibleName(/\$35\.00 would be payable across both/);
     expect(moveBoth).toHaveAccessibleName(
-      /Includes the change fee on both bookings \(\$20\.00 in all\)/,
+      /change fee on both bookings \(\$20\.00 in all\)/,
     );
     // The other arm carries its consequence in the same place.
     expect(
@@ -115,7 +115,7 @@ describe("the linked-move offer's UI contract (#3232, INV-HOST-050)", () => {
     expect(
       screen.getByRole("radio", { name: /Move both bookings/ }),
     ).toHaveAccessibleName(
-      /change fee on the second booking has been waived by the club/,
+      /change fee on the other booking has been waived by the club, so that total carries one change fee only/,
     );
   });
 
@@ -133,10 +133,10 @@ describe("the linked-move offer's UI contract (#3232, INV-HOST-050)", () => {
 
     const moveBoth = screen.getByRole("radio", { name: /Move both bookings/ });
     expect(moveBoth).toHaveAccessibleName(
-      /\$42\.50 comes back to you across both bookings/,
+      /\$42\.50 would come back to you across both bookings/,
     );
     expect(moveBoth).toHaveAccessibleName(
-      /card-or-credit choice above covers both bookings/,
+      /asked once whether that comes back to your card or as account credit; the one choice covers both bookings/,
     );
   });
 
@@ -202,7 +202,7 @@ describe("the linked-move offer's UI contract (#3232, INV-HOST-050)", () => {
     expect(screen.getByRole("alert")).toBe(alert);
     expect(
       within(alert).getByText(
-        /Another of your bookings needs an adult on these nights/,
+        /Another of your bookings needs an adult on the nights below/,
       ),
     ).toBeVisible();
     expect(within(alert).queryAllByRole("radio")).toEqual([]);
@@ -245,6 +245,91 @@ describe("the linked-move offer's UI contract (#3232, INV-HOST-050)", () => {
     expect(onChoiceChange).not.toHaveBeenCalled();
     screen.getByRole("radio", { name: /Move only this booking/ }).click();
     expect(onChoiceChange).toHaveBeenCalledWith("LEAVE_UNCOVERED");
+  });
+
+
+  /**
+   * THE CASE THAT COULD CHARGE A MEMBER MONEY NO SCREEN NAMED.
+   *
+   * Per booking, "money comes back" and "money is payable" are mutually
+   * exclusive. Across two bookings they are not — `combineLinkedMoveQuote` sums
+   * each independently — and the exclusive ternary that rendered them let the
+   * refund branch win. The fixture in
+   * `booking-linked-date-move-service.test.ts` has produced this state all along
+   * (due $35.00 and refund $2.00 on one quote) and nothing asserted what the
+   * member was told about it.
+   */
+  it("names BOTH figures when both are moving, and says they do not net off", () => {
+    render(
+      createElement(HostingCoverageLinkedMovePrompt, {
+        ...BASE,
+        prompt: promptData({
+          // A shifts into peak: +$120 price, +$50 fee. B shifts off an event
+          // surcharge: -$300, +$50. Both totals are positive at once.
+          combinedAmountDueCents: 17_000,
+          combinedRefundCents: 25_000,
+          combinedChangeFeeCents: 10_000,
+          settlementMethodRequired: true,
+        }),
+      }),
+    );
+
+    const moveBoth = screen.getByRole("radio", { name: /Move both bookings/ });
+    expect(moveBoth).toHaveAccessibleName(/\$170\.00 would be payable/);
+    expect(moveBoth).toHaveAccessibleName(/\$250\.00 would come back to you/);
+    expect(moveBoth).toHaveAccessibleName(
+      /do not cancel each other out: each booking settles on its own/,
+    );
+  });
+
+  it("formats money through the canonical formatter, separators and all", () => {
+    // The hand-rolled formatter this replaces printed `$1234.56` while every
+    // other figure on the same page printed `$1,234.56`, and hard-coded a `$` for
+    // a club whose currency may not be dollars at all (`INV-CONFIG-001`).
+    render(
+      createElement(HostingCoverageLinkedMovePrompt, {
+        ...BASE,
+        prompt: promptData({ combinedAmountDueCents: 123_456 }),
+      }),
+    );
+    expect(
+      screen.getByRole("radio", { name: /Move both bookings/ }),
+    ).toHaveAccessibleName(/\$1,234\.56 would be payable/);
+  });
+
+  it("counts the bookings it is talking about, because the cap is 25 and not 1", () => {
+    // A member with one adult and two parties of guests is an ordinary family
+    // shape. The singular wording told them "The booking above will be left
+    // without adult supervision" while the list showed two — understating the
+    // consequence on the arm the design relies on for informed consent.
+    const second = {
+      ...promptData().linkedBookings[0]!,
+      bookingId: "bk-dependent-02",
+      reference: "BK-SECND",
+    };
+    render(
+      createElement(HostingCoverageLinkedMovePrompt, {
+        ...BASE,
+        prompt: promptData({
+          linkedBookings: [...promptData().linkedBookings, second],
+          bothChangeFeesCharged: false,
+        }),
+      }),
+    );
+
+    expect(
+      screen.getByText(/2 of your bookings need an adult on the nights below/),
+    ).toBeVisible();
+    const moveAll = screen.getByRole("radio", { name: /Move all 3 bookings/ });
+    expect(moveAll).toHaveAccessibleName(/across all 3 bookings/);
+    expect(moveAll).toHaveAccessibleName(
+      /change fee on the other 2 bookings has been waived/,
+    );
+    expect(
+      screen.getByRole("radio", { name: /Move only this booking/ }),
+    ).toHaveAccessibleName(
+      /The 2 bookings listed above will be left without adult supervision/,
+    );
   });
 
   it("keeps the shared browser contract free of server-only dependencies", () => {

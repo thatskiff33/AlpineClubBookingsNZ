@@ -392,7 +392,7 @@ describe("what the member is told (#3232)", () => {
       }),
     );
     expect(message).toContain("$40.00");
-    expect(message).toMatch(/the choice covers both bookings/);
+    expect(message).toMatch(/the one choice covers both bookings/);
   });
 
   it("never names a person, only the member's own bookings", () => {
@@ -469,11 +469,17 @@ describe("the offer's 409 body (#3232)", () => {
     );
   });
 
-  it("records why a declined offer's incident exists", () => {
+  it("records why a declined offer's incident exists, and stands alone", () => {
     // So an officer reading their queue sees that a member was asked and answered,
     // rather than inferring it from a cause code that also means "a qualification
     // changed".
-    expect(LINKED_MOVE_DECLINED_INCIDENT_REASON).toMatch(/offered the linked move/);
+    expect(LINKED_MOVE_DECLINED_INCIDENT_REASON).toMatch(/was asked whether to move/);
     expect(LINKED_MOVE_DECLINED_INCIDENT_REASON).toMatch(/chose to move only/);
+    // FOR ONE RELEASE THIS SENTENCE IS ALL AN OFFICER GETS, because the stored
+    // cause is still the shared `SYSTEM_CHANGE`. So it carries no issue reference
+    // — no other stored human-read string in this repository does — and no name
+    // out of this codebase that an officer has never met.
+    expect(LINKED_MOVE_DECLINED_INCIDENT_REASON).not.toMatch(/#\d/);
+    expect(LINKED_MOVE_DECLINED_INCIDENT_REASON).not.toMatch(/linked move/i);
   });
 });

@@ -186,7 +186,7 @@ async function saveIntoTheOffer() {
   const saveButton = await moveArrivalTo("2026-09-05");
   fireEvent.click(saveButton);
   await screen.findByText(
-    /Another of your bookings needs an adult on these nights/,
+    /Another of your bookings needs an adult on the nights below/,
   );
   return saveButton;
 }
@@ -218,20 +218,43 @@ describe("EditBookingPanel — the linked-move offer (#3232)", () => {
     expect(routerRefresh).not.toHaveBeenCalled();
   });
 
-  it("refuses to save again until an arm is chosen, and sends nothing", async () => {
+  it("DISABLES Save until an arm is chosen, and sends nothing", async () => {
+    // #3232 fix round: Save is genuinely disabled, which is what the offer
+    // component's docblock had always claimed and what its officer-override
+    // sibling already did. The mechanism it replaces was the panel's BOTTOM error
+    // slot — below Save, while the radios sit above it, with no `role="alert"`,
+    // no focus move and no scroll, so a member using a screen reader pressed Save
+    // and nothing was announced.
     render(<EditBookingPanel booking={makeBooking()} onDone={vi.fn()} />);
 
     const saveButton = await saveIntoTheOffer();
     expect(modifyBodies).toHaveLength(1);
+    expect(saveButton).toBeDisabled();
 
     fireEvent.click(saveButton);
 
-    await screen.findByText(
-      /Choose whether to move both bookings or only this one\./,
-    );
     // Not "no request was sent" by absence — every PUT body is recorded, and the
     // recorded list is what proves the second click sent none.
     expect(modifyBodies).toHaveLength(1);
+
+    // And choosing an arm is what releases it.
+    fireEvent.click(screen.getByRole("radio", { name: /Move only this booking/ }));
+    await waitFor(() => expect(saveButton).not.toBeDisabled());
+  });
+
+  it("announces the refusal that carried the offer", async () => {
+    // The sentence telling the member to choose lands in the panel's bottom slot,
+    // which is now a permanently-mounted assertive region rather than a bare div.
+    render(<EditBookingPanel booking={makeBooking()} onDone={vi.fn()} />);
+    await saveIntoTheOffer();
+
+    const announced = screen
+      .getAllByRole("alert")
+      .map((node) => node.textContent ?? "")
+      .join(" ");
+    expect(announced).toMatch(
+      /Choose whether to move both bookings or only this one, then save again/,
+    );
   });
 
   it("sends the ACCEPT key when the member chooses to move both", async () => {
