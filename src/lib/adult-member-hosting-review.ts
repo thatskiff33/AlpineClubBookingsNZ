@@ -4362,6 +4362,15 @@ export async function reconcileSameOwnerCoverageIncident(
         params.reason?.trim()
           ? { byMemberId: actorMemberId, reason: params.reason }
           : null,
+      // A reason WITHOUT an override, which is the declined linked move (#3232
+      // D3). It used to be computed, carried all the way here on the queue item,
+      // and then dropped on the floor because only an override stored one - so an
+      // officer reading the booking's history saw a bare "system change" for a
+      // decision a member had deliberately made and been warned about. It is
+      // recorded in the incident's audit history from this release; `cause`
+      // itself carries it from the runtime half of `INV-HOST-052`.
+      recordedReason:
+        params.cause === "OFFICER_OVERRIDE" ? null : params.reason ?? null,
     },
     db,
   );

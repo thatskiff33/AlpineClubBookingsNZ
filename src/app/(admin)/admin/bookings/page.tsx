@@ -51,6 +51,7 @@ import {
 } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
 import { formatBookingReference } from "@/lib/booking-reference";
+import { describeHostingCoverageIncidentCause } from "@/lib/adult-member-hosting-coverage-incidents";
 import {
   AlertTriangle,
   CalendarX2,
@@ -459,9 +460,7 @@ export default async function AdminBookingsPage({
                       {uncovered === null
                         ? ""
                         : ` · ${uncovered} uncovered guest-night${uncovered === 1 ? "" : "s"}`}
-                      {incident.cause === "OFFICER_OVERRIDE"
-                        ? " · officer override"
-                        : " · qualification changed"}
+                      {` · ${describeHostingCoverageIncidentCause(incident.cause)}`}
                     </p>
                   </div>
                   <Link

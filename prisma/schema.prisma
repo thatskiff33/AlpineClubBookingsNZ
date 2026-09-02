@@ -3560,16 +3560,41 @@ model AdultMemberHostingPolicy {
 // ---------------------------------------------------------------------------
 
 /// Why a booking lost its required adult-member coverage AFTER it was confirmed
-/// (#2576 §7, §8). Exactly two causes, because there are exactly two ways it can
-/// happen: an authorised Booking Officer deliberately overrode the refusal, or an
-/// authoritative change outside the ordinary member edit flow (a membership
-/// lapse, an administrative cancellation, a lifecycle transition, a data
-/// correction) removed the cover and could not reasonably be blocked. An ordinary
-/// member self-service change is neither: it is refused before it commits, so it
-/// never produces an incident.
+/// (#2576 §7, §8; #3232 D3). Recorded rather than inferred, for the same reason
+/// `HostingCoverageIncidentResolution` below gives: a deliberate decision and an
+/// automatic change are the same absence of cover and a very different story for
+/// an officer reading the history — and the count of each is the number a club
+/// would use to judge whether its supervision setting is working.
+///
+/// APPENDED, NEVER REORDERED. PostgreSQL cannot remove or re-sort an enum label,
+/// and the stored value is the whole point of the column.
 enum HostingCoverageIncidentCause {
+  /// An authorised Booking Officer deliberately overrode the refusal (§7), with
+  /// the mandatory reason and their attribution on the incident row.
   OFFICER_OVERRIDE
+
+  /// An authoritative change outside the ordinary member edit flow — a membership
+  /// lapse, an administrative cancellation, a lifecycle transition, a data
+  /// correction — removed the cover and could not reasonably be blocked (§8).
   SYSTEM_CHANGE
+
+  /// The booking's OWNER was offered the linked move on their own other booking
+  /// and chose to move only the booking they were editing (#3232 D1, D3;
+  /// `INV-HOST-050`, `INV-HOST-052`).
+  ///
+  /// NOTHING WRITES THIS VALUE YET, and that is deliberate rather than unfinished.
+  /// `docs/BLUE_GREEN_MIGRATION_POLICY.md` binds every migration to stay readable
+  /// by the colour that is still draining, and that colour's generated client has
+  /// never heard of a third label — the incident writer's own fold read selects
+  /// `cause`, so a row carrying this value would fail to deserialise there. So
+  /// migration `20260909010000_add_owner_declined_linked_move_incident_cause`
+  /// REGISTERS the label (expand) and the release AFTER it starts writing it
+  /// (runtime). Until then a declined offer is still recorded as `SYSTEM_CHANGE`,
+  /// with the member's decision written in words into the incident's audit
+  /// history. `INV-HOST-052` is the rule, and a census fails the build if any
+  /// writer starts producing this value while the expand is still in its first
+  /// release.
+  OWNER_DECLINED_LINKED_MOVE
 }
 
 /// How an incident stopped being a live problem (#2576 §7, §16). Recorded rather
