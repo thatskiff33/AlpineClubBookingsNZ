@@ -1,45 +1,52 @@
 # File-size allowances for #3232 — the linked date move
 
-Twelve files grow. Six grow by two to twenty-three lines because the compiler
-made them: `hostingCoverageActorOptions` now takes the vacated stay window as a
+**The entries below are the list of files that grow, and no sentence here
+restates how many.** This paragraph used to open "twelve files grow", which was
+wrong three ways at once: the entry list already held fifteen, the paragraph's
+own breakdown accounted for eleven of the twelve it claimed, and the completion
+and fix rounds then added more. A count restated in prose beside a list that
+already carries it is a number nobody maintains — `npm run quality:budget`
+prints the real figure from the entries. What follows describes the *shapes*.
+
+**Most of the growth is two to twenty-three lines the compiler demanded.**
+`hostingCoverageActorOptions` now takes the vacated stay window as a
 **required** field, so every actor-driven hosting call site had to state whether
 its change moved a booking's dates. That was the point — an optional field with
-a convenient default would have left the three date writers exactly as wrong as
-they were, silently, which is the failure #3116 already cost this repository
-once. Those six are not candidates for a split: the growth is one field and its
-reason at an existing call site.
+a convenient default would have left the date writers exactly as wrong as they
+were, silently, which is the failure #3116 already cost this repository once.
+Those entries are not candidates for a split: the growth is one field and its
+reason at an existing call site. (No count of the date writers appears here
+either. It was published as "three" in three places and there are four; the
+compiler is the proof and `adult-member-hosting-call-sites.test.ts` is the one
+place a figure lives.)
 
-The four real ones are `adult-member-hosting-review.ts`,
-`booking-batch-modification-service.ts`, the config-transfer registry the new
-club setting has to be listed in, and the `modify-dates` route that gains the
-offer, and each has its reason below. The new code that could stand alone
-already does: `adult-member-hosting-linked-move.ts` (the offer contract, which
-also owns the pure construction of the quote), `booking-linked-date-move-service.ts`
-(the atomic move), `booking-linked-date-move-preflight.ts` (the club's
-change-fee answer, the settings and provider reads that must happen before the
-transaction opens, and the budget and refusal belonging to that transaction) and
+**The substantive entries each carry their own reason below.** The new code that
+could stand alone already does: `adult-member-hosting-linked-move.ts` (the offer
+contract and the pure construction of the quote),
+`hosting-coverage-linked-move-client.ts` (the browser contract, which since the
+fix round also owns the sentences BOTH sides say),
+`booking-linked-date-move-service.ts` (the atomic move),
+`booking-linked-date-move-preflight.ts` (the club's change-fee answer and the
+settings and provider reads that must happen before the transaction opens),
 `booking-linked-date-move-arms.ts` (the three arms, over whichever
-single-booking writer the surface runs) are new modules INSIDE their budgets, and
+single-booking writer the surface runs), `use-retired-prompt.ts` (the shared
+retire-on-change hook) and `booking-night-overlap.ts` (the in-memory night
+overlap, in a module with no imports) are new modules INSIDE their budgets, and
 keeping them there is not decoration — the gate refuses an allowance for a new
 file outright, so arriving over budget is not a thing this change could have
-declared its way out of. The last two were split out when the completion
-review's fixes took the service past its ceiling: the split is along the seams
-the file's own headings already named, so the service file is the one procedure
-it describes. The pure predicate that belonged
-beside the two where-builders it explains was moved into
-`adult-member-hosting-same-owner.ts` rather than left in either.
+declared its way out of.
 
-The twelfth is one line, and it is a line that REMOVES a duplicate rather than
-adding a feature: `stuck-state-dashboard.ts` gains the import of the shared
+`stuck-state-dashboard.ts` grows by one line, and it is a line that REMOVES a
+duplicate rather than adding a feature: it gains the import of the shared
 officer-facing wording for an incident cause. The two officer surfaces had each
-written their own phrase for the same stored value - "qualification changed" on
-the bookings queue, "system change" here - and one of them had to be wrong the
+written their own phrase for the same stored value — "qualification changed" on
+the bookings queue, "system change" here — and one of them had to be wrong the
 moment a third cause was registered. Both now read from
 `describeHostingCoverageIncidentCause`, so the file's own branch went away and
 what is left is the import that replaced it.
 
 file: src/lib/adult-member-hosting-review.ts
-lines: 4450
+lines: 4473
 reason: the same-owner dependent fan-out gains its plan/verify pair, the
   per-dependent queue items, the read-only stranding seam the offer shares with
   the refusal, and the disposition split that decides offer-versus-refuse.
@@ -51,10 +58,12 @@ reason: the same-owner dependent fan-out gains its plan/verify pair, the
   the code that decides whether a member's booking edit is refused. The whole
   point of #3232 is that the read direction and the enforcement direction must
   not drift apart; putting them in two files joined by a cycle is the arrangement
-  most likely to let them.
+  most likely to let them. The fix round added the twenty-three lines that make
+  "can this stranding be answered by a shift" ONE named local read by both
+  refusal throws, instead of computed at one and hard-coded `true` at the other.
 
 file: src/lib/booking-batch-modification-service.ts
-lines: 2236
+lines: 2264
 reason: three changes at this one seam, and all three are about a caller that
   composes two booking writes into one transaction. The hosting reconciliation
   becomes deferrable, so the supervision check runs once over the state that will
@@ -77,7 +86,11 @@ reason: three changes at this one seam, and all three are about a caller that
   caller that supplies one — so three reads, one of them a live HTTPS request to
   Xero, were running under the global money key and the lodge capacity key. The
   paragraph saying that is what stops the next reader concluding the position is
-  safe because it looks safe.
+  safe because it looks safe. The fix round added a fifth, twenty-eight lines
+  including its reason: a waived change fee was an unmarked zero, so the row, the
+  audit and the Xero leg could not tell "no fee was due" from "we waived it
+  because our own supervision rule compelled this move". The marker belongs at
+  the one line that decides the fee and the two writers that record it.
 
 file: src/app/api/bookings/[id]/modify/route.ts
 lines: 514
@@ -88,25 +101,33 @@ reason: one schema field for the member's answer and one response branch for the
   second copy of the arm that either deadlocks a member or strands a booking.
 
 file: src/components/edit-booking-panel.tsx
-lines: 2085
+lines: 2108
 reason: the offer is a THIRD refusal shape this one panel has to read, choose an
   answer to and put back on the retry, and the state machine it joins is already
   here — the quote, the exception offer and the officer's override prompt all
   retire against the same proposal signature. The reusable parts were extracted
   rather than added: the reader is `hosting-coverage-linked-move-client.ts`, the
-  retire-on-change state is its own hook, and the offer itself is its own
-  component. What is left in the panel is the wiring those three cannot own — one
-  branch in `handleSave`, one guard in `handleSaveClick`, one render slot — and
-  moving that out would mean threading the whole save closure through a fourth
-  seam to save twenty lines.
+  retire-on-change state is now the SHARED `use-retired-prompt.ts` hook (the
+  fix round's own de-duplication), and the offer itself is its own component.
+  What is left in the panel is the wiring those three cannot own — one branch in
+  `handleSave`, one guard in `handleSaveClick`, one render slot — and moving that
+  out would mean threading the whole save closure through a fourth seam to save
+  twenty lines. The fix round added the Return-method control for the case where
+  the OTHER booking's price falls and this booking's own quote asks for no
+  choice, with the paragraph saying why it stays in the panel rather than moving
+  inside the offer component (the answer travels as a top-level payload field
+  injected after the proposal signature is captured, which the component cannot
+  reach), and the two lines that gate Save on the chosen arm and announce the
+  bottom error slot.
 
 file: src/lib/booking-date-modification-service.ts
 lines: 2090
 reason: fourteen lines at its two hosting seams supplying the window each edit
   has just vacated, plus the member's linked-move answer threaded to the seam
-  that honours it — this writer owes the field because it owes the offer. This is the writer the whole defect turned on — it holds
-  oldCheckIn/oldCheckOut in the same function that calls the seam — so the
-  reasoning belongs at the call site rather than one indirection away.
+  that honours it — this writer owes the field because it owes the offer. This is
+  the writer the whole defect turned on — it holds oldCheckIn/oldCheckOut in the
+  same function that calls the seam — so the reasoning belongs at the call site
+  rather than one indirection away.
 
 file: src/lib/booking-cancel.ts
 lines: 2423
@@ -140,11 +161,10 @@ reason: the same two additions its `/modify` sibling took — one schema field f
   paragraph saying why the answer is deliberately NOT one of the officer-authority
   flags this route gates on ADMIN (gating it that way would 403 the only person
   entitled to answer it). It has to be here rather than skipped: this route is one
-  of the three writers that now supplies the vacated window, so it already
-  NOTICES the stranded booking, and a door that noticed without offering would
-  refuse moves that used to succeed. The policy itself is not here — all three
-  arms are the shared `withLinkedMoveArms`, so the two doors cannot grow two
-  copies of it.
+  of the writers that now supplies the vacated window, so it already NOTICES the
+  stranded booking, and a door that noticed without offering would refuse moves
+  that used to succeed. The policy itself is not here — all three arms are the
+  shared `withLinkedMoveArms`, so the two doors cannot grow two copies of it.
 
 file: src/app/api/bookings/[id]/confirm-draft/route.ts
 lines: 391
@@ -199,3 +219,34 @@ reason: eleven lines at one throw site, and ten of them say why the class
   full lodge refused the member with no door at all. The comment is at the throw
   because that is where somebody would otherwise "simplify" the class back to an
   `ApiError`.
+
+file: src/app/(authenticated)/bookings/[id]/page.tsx
+lines: 2711
+reason: thirteen lines, and they are what makes D3 true. The decision D3 records
+  is justified by an officer reading the booking's history, and they could not:
+  the incident's audit row set no `targetId`, which is exactly what this page's
+  history query filters on, and the action was not in its allowlist. So an
+  officer following the queue's "Review booking" button saw the generic cause and
+  nothing else, and guessed. The two actions join the allowlist BEHIND
+  `canSeeAdminTools`, because `details` can be an officer's private override
+  reason and this page is read by the booking's own member — the data feed is
+  gated rather than the render, which is the pattern #2008's duplicate-capture
+  rows on this same page already follow, and the comment is at the gate because
+  that is what stops the next reader "simplifying" it into the shared list.
+  Splitting a 2711-line page over a thirteen-line query addition would move the
+  gate away from the `canSeeAdminTools` definition and the sibling gated reads it
+  belongs beside.
+
+file: src/lib/policies/adult-member-hosting.ts
+lines: 991
+reason: twenty-six lines, twenty-two of which are the reason for the four. There
+  were three spellings of "can a same-owner stranding refuse the actor, or only
+  escalate" — the settle path's literal `ADMIN_REVIEW_REQUIRED`, the offer's
+  read-only probe on `mode !== "ENFORCED"`, and the wider active pair the plan
+  they share gates on. They agree today, which is what made it dangerous:
+  extending the refusal in one of them makes the probe return an empty list, so
+  the caller raises a 409 naming nobody, the browser's fail-closed reader
+  discards it, and the member gets a body no reader matches. The predicate
+  belongs beside `hostingModeIsActive`, which answers the WIDER question, so a
+  reader meets both distinctions together; anywhere else and it is a mode
+  predicate living away from the module that owns mode semantics.

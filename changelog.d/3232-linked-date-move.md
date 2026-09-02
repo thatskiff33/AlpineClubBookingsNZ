@@ -38,10 +38,15 @@
   booking that lost its cover without an officer overriding anything - an
   administrative cancellation, a lifecycle change, a data correction and a
   member's deliberate choice all wore the same wording, and that wording was
-  true of none of them. It now reads "cover removed by a later change", the
-  booking's history records the member's decision in words, and the two officer
-  screens that had drifted into two different wordings for the same fact read
-  from one place (#3232, `INV-HOST-052`, `INV-SSOT-001`).
+  true of none of them. It now reads "no longer covered after a later change",
+  which is also true of the two cases "cover removed" was not - a club that
+  tightened its own rule removed nothing, and an officer confirming pending
+  guests added people the existing cover no longer stretches to. Open the
+  booking and its history records the member's decision in words, under "Adult
+  member cover flagged", which only staff see because the same entry can carry
+  an officer's private reason. The two officer screens that had drifted into two
+  different wordings for the same fact now read from one place (#3232,
+  `INV-HOST-052`, `INV-SSOT-001`).
 - The queue entry will name a declined offer as its own reason from the release
   after this one. The label has to be added to the database one release before
   anything writes it, because the version of the site still running while a new
@@ -76,3 +81,40 @@
   entry, the email - is now kept separate, so a hiccup on one cannot silently
   cancel the other's. It also no longer reports a change that really happened as
   a failure (#3232, `INV-HOST-051`).
+- Where moving both bookings costs money on one and refunds money on the other,
+  you are now told both figures. Before, you were shown only the refund, and
+  charged the rest with nothing on the page naming it: the two are worked out per
+  booking, so one going up while the other goes down leaves both totals real, and
+  the screen only had room in its wording for one of them. It now says both, and
+  says they do not cancel each other out - each booking settles on its own
+  (#3232).
+- Money on the linked-move offer is now written the same way as money everywhere
+  else on the page, so a five-figure total keeps its thousands separator, and a
+  club whose currency is not dollars is no longer shown a dollar sign on the one
+  figure it legally accepts (#3232, `INV-CONFIG-001`, `INV-SSOT-001`).
+- The offer now counts the bookings it is talking about. It was written for
+  exactly one other booking throughout, and a member with one adult and two
+  parties of guests is an ordinary family shape - so they read "2 other bookings
+  ... is relying on this booking", were invited to "Move both bookings" over a
+  list of three, and, on the option that leaves bookings uncovered, were told
+  "the booking above" would be left without supervision when the list showed
+  two (#3232).
+- Save now stays disabled until you choose one of the two options, which is what
+  the screen already said would happen. Before, pressing Save put a message at
+  the bottom of the panel, below the button, while the choices sat above it - and
+  that message was not announced to anyone using a screen reader (#3232).
+- A change fee the club has waived is now recorded as waived rather than left as
+  a plain zero, so "no fee was due" and "we waived it because our own supervision
+  rule compelled this move" are no longer the same thing in the booking's history
+  and the accounting entry (#3232).
+- The email sent when a booking loses its adult cover no longer says "a change
+  elsewhere means" it happened. That was written for the case where somebody else
+  caused it, and it was also being sent to the member who had just deliberately
+  chosen to leave the booking uncovered (#3232).
+- Smaller corrections in the same area: the reason stored against a flagged
+  booking no longer carries a GitHub issue number or wording out of the codebase,
+  since for one release it is the only explanation an officer reads; the refusal a
+  member can still hit tells them how to reach a Booking Officer again rather
+  than only that one exists, and counts the bookings it names; and the officer
+  guide no longer says the full-lodge option is hidden when it is shown greyed
+  out with the reason on it (#3232).

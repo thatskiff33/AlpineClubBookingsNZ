@@ -990,6 +990,7 @@ test("moving one booking offers to move the other, and both really move (#3232)"
     combinedAmountDueCents?: number;
     combinedRefundCents?: number;
     combinedChangeFeeCents?: number;
+    combinedPriceDiffCents?: number;
   };
   expect(offer.code).toBe("SAME_OWNER_COVERAGE_LINKED_MOVE_REQUIRED");
   expect(offer.requiresLinkedMoveChoice).toBe(true);
@@ -1013,6 +1014,9 @@ test("moving one booking offers to move the other, and both really move (#3232)"
     offer.combinedAmountDueCents,
     offer.combinedRefundCents,
     offer.combinedChangeFeeCents,
+    // #3232 fix round: the price delta is keyed money too, because the other
+    // three are all 0 for a booking that has taken no money yet.
+    offer.combinedPriceDiffCents,
   ]) {
     expect(Number.isInteger(cents)).toBe(true);
   }

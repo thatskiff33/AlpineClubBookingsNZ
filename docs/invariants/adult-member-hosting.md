@@ -1533,7 +1533,41 @@ compliant indefinitely.
   (`strandedCoverageStateKey`, shared with the officer's override). Accepting is a
   statement about a price, so it is bound by `linkedMoveStateKey` — the stranded
   set, every booking's proposed window, and the combined money. A stale key of
-  either kind produces a fresh prompt rather than a silent substitution.
+  either kind produces a fresh prompt rather than a silent substitution, and
+  "stale" is judged by the same delivery test above at BOTH throw sites: a stale
+  answer is a fresh first submission, so it may not claim an arm the shift cannot
+  deliver either.
+
+  **THE COMBINED MONEY IN THAT KEY INCLUDES THE PRICE DELTA, and leaving it out
+  was a hole rather than an economy.** Amount-due, refund and change fee are all
+  outputs of `applyPaymentAdjustments`, which is inert for a booking that has
+  taken no money yet: a `PAYMENT_PENDING` dependent quotes 0/0/0 whatever its
+  price does. So a member could accept "nothing more to pay and nothing to come
+  back", an officer could move the season rate before they pressed save, and the
+  retry would find the dependent dearer with all three keyed figures still zero —
+  key matched, transaction committed, and money they never agreed to waiting at
+  the pay step.
+
+  **BOTH MONEY DIRECTIONS ARE SHOWN WHENEVER BOTH ARE MOVING.** The quote holds a
+  due field and a refund field rather than one signed number because the two do
+  not net off in this product — a booking whose price fell refunds through its own
+  payment or credit note, a booking whose price rose takes a fresh charge on its
+  own intent, and Stripe and Internet Banking/Xero settlement stay distinct per
+  booking. Per booking exactly one of the two is non-zero; ACROSS bookings both
+  can be, because each is summed independently. Rendering them as an exclusive
+  choice therefore hid a real charge behind a real refund, which is the mirror
+  image of the netting-off the two fields exist to prevent. Every surface composes
+  the sentence from one place
+  (`hosting-coverage-linked-move-client.ts`, `INV-SSOT-001`), states both figures
+  when both are non-zero, says they settle separately, and is count-driven
+  throughout — the dependent cap is `SAME_OWNER_COVERAGE_DEPENDENT_LIMIT`, not
+  one, and the arm relied on for informed consent must name every booking it will
+  leave uncovered.
+
+  **AND THE MEMBER CANNOT SAVE WITHOUT ANSWERING.** Save is disabled until an arm
+  is chosen, matching the officer-override arm; the bottom error slot that used to
+  carry the refusal is an announced live region rather than a bare element, since
+  a member using a screen reader otherwise pressed Save and heard nothing.
 
   **NO REASON IS DEMANDED OF THE MEMBER**, unlike the officer's override. §7 asks
   an officer for a reason because they are exercising authority over a booking
