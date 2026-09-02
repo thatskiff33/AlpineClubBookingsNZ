@@ -15,24 +15,55 @@ name: E2E rollover proof
 # process, the database seed and the app container all advance together, and the
 # only thing left to disagree about the date is the code.
 #
-# ## Why it is dispatch-only
+# ## Why it runs weekly, and why not nightly
 #
-# Owner decision, 1 September 2026. Setting a VM's clock is heavier than
-# `libfaketime` and can produce failures of its own; a nightly nobody trusts is
-# worse than no nightly. The day-to-day protection is three guards that run on
-# every pull request — `e2e-club-day-census.test.ts` (no second way to ask what
-# day it is), `e2e-club-day-boundary.test.ts` (what the dates come out as at the
-# boundary) and `e2e-calendar-navigation.test.ts` (the walk reads the calendar
-# rather than being told). This job is the end-to-end PROOF, run when the
-# derivation changes or when a rollover is suspected.
+# It was dispatch-only until 2 September 2026, because its only run had come back
+# red and "a nightly nobody trusts is worse than no nightly" (owner decision,
+# 1 September). That red turned out to be a live TLS call no clock shift could
+# ever have completed rather than a date defect (#3227), and the job now has a
+# clean run — 184 passed at the 30 September / 1 October boundary. So it is on a
+# schedule, weekly, plus one run before each month-end (owner decision,
+# 2 September 2026, #3238).
 #
-# Adding `schedule:` here is all it would take. It has no `pull_request` trigger
-# and must never gain one: it can then never become a required check, and never
-# block unrelated work on a clock this repository does not control.
+# **The parked instant does not vary between runs.** The shift step below always
+# targets the end of the CURRENT UTC month at 14:30Z, so every scheduled run in a
+# month parks at the same instant; what changes between them is the CODE. A
+# schedule therefore buys "tell me a newly-merged spec has this defect, before a
+# real rollover does" — not more instants. That is what makes weekly sufficient
+# and nightly mostly a re-proof of the same thing.
+#
+# The run on the 27th exists because weekly alone can miss the last few days of a
+# month, and those are the days where missing it is expensive: the failure lands
+# at the rollover, which takes `main` and every open pull request red at once.
+# About five times a year the 27th falls on a Sunday and both crons fire; the
+# concurrency group never cancels, so the second queues and repeats the first.
+# That is a duplicate, not a fault, and de-duplicating it would cost more clarity
+# here than the runner minutes are worth.
+#
+# None of this replaces the three guards that run on EVERY pull request —
+# `e2e-club-day-census.test.ts` (no second way to ask what day it is),
+# `e2e-club-day-boundary.test.ts` (what the dates come out as at the boundary) and
+# `e2e-calendar-navigation.test.ts` (the walk reads the calendar rather than being
+# told). Those catch the defect on the pull request that introduces it. This job
+# is the end-to-end proof, and it only ever sees what escapes all three.
+#
+# It has no `pull_request` trigger and must never gain one: it can then never
+# become a required check, and never block unrelated work on a clock this
+# repository does not control.
 #
 # See docs/TESTING.md → "The browser suite's clock discipline (it is NOT frozen)".
 
 on:
+  schedule:
+    # 15:20 UTC Sunday = early Monday morning in New Zealand (03:20 NZST, 04:20
+    # NZDT) — after the week's merges, before anyone starts. Offset off the hour
+    # and away from `Clock rollover canary`'s `0 14 * * *`, because GitHub's
+    # scheduler contends on round times.
+    - cron: "20 15 * * 0"
+    # And once before each month-end, for the reason in the header. 27 September
+    # 2026 is itself a Sunday, so the first of these coincides with a weekly run;
+    # that is the duplicate the header describes, not a fault.
+    - cron: "20 15 27 * *"
   workflow_dispatch:
     inputs:
       instant:
@@ -131,9 +162,25 @@ jobs:
       # ---------------------------------------------------------------------
       - name: Work out which specs this clock can honestly run
         env:
-          RUN_SCOPE: ${{ inputs.scope }}
+          # `|| 'all'` is load-bearing, not decoration. On a `schedule` event the
+          # `inputs` context is EMPTY, and the `default: all` above applies only
+          # to `workflow_dispatch` — so a scheduled run arrives here with an
+          # empty scope. Without the fallback it would still run the whole suite,
+          # but only by failing the `date-bearing` comparison below and falling
+          # through, which is the same thing an unrecognised value would do.
+          # Resolve it here, and refuse anything unrecognised, so "what this run
+          # covers" is never decided by a string nobody checked.
+          RUN_SCOPE: ${{ inputs.scope || 'all' }}
         run: |
           set -euo pipefail
+
+          case "$RUN_SCOPE" in
+            all|date-bearing) ;;
+            *)
+              echo "::error::Unrecognised scope '${RUN_SCOPE}'. It must be 'all' or 'date-bearing'. Refusing to guess: guessing here means silently running a different set of specs than the verdict will claim." >&2
+              exit 1
+              ;;
+          esac
 
           # DERIVED FROM THE IMPORT, never a hand-kept list. "The Stripe specs"
           # written down as names is stale the first time somebody writes a
@@ -352,6 +399,10 @@ jobs:
         # it, which is a script-injection hole even on a dispatch-only workflow;
         # an env var is data.
         env:
+          # Empty on every `schedule` event, because the `inputs` context is only
+          # populated for a dispatch. That is the intended path, not an oversight:
+          # a scheduled run takes the computed month-end below, which is the shape
+          # that fired. Only a person choosing an instant by hand sets this.
           REQUESTED_INSTANT: ${{ inputs.instant }}
         run: |
           set -euo pipefail
