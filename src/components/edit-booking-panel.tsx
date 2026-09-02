@@ -68,6 +68,15 @@ import {
   useHostingCoverageOverride,
   type HostingOverrideState,
 } from "@/components/edit-booking/hooks/use-hosting-coverage-override";
+import {
+  useHostingCoverageLinkedMove,
+  type HostingLinkedMoveState,
+} from "@/components/edit-booking/hooks/use-hosting-coverage-linked-move";
+import { HostingCoverageLinkedMovePrompt } from "@/components/hosting-coverage-linked-move-prompt";
+import {
+  hostingCoverageLinkedMoveAnswer,
+  readHostingCoverageLinkedMovePrompt,
+} from "@/lib/hosting-coverage-linked-move-client";
 import { useMemberGuestFinder } from "@/components/edit-booking/hooks/use-member-guest-finder";
 import { useOtherLodgeRate } from "@/components/edit-booking/hooks/use-other-lodge-rate";
 import {
@@ -1179,7 +1188,33 @@ export function EditBookingPanel({
     activeHostingOverrideState,
   } = useHostingCoverageOverride(buildSavePayload);
 
+  // #3232: the member's answer to the linked-move offer. Its own hook rather than
+  // a slot on the override one, because the two are different questions asked of
+  // different people — the officer is asked to explain overriding somebody else's
+  // stranding, the member is asked to decide about their own two bookings — and
+  // only one of them can be open on any given save.
+  const {
+    setLinkedMoveState,
+    linkedMoveChoice,
+    setLinkedMoveChoice,
+    activeLinkedMoveState,
+  } = useHostingCoverageLinkedMove(buildSavePayload);
+
   function handleSaveClick() {
+    if (activeLinkedMoveState) {
+      // NO DEFAULT ANSWER. Saving without a choice would answer a money question
+      // on the member's behalf in one direction and strand a booking in the other.
+      if (!linkedMoveChoice) {
+        setSaveError("Choose whether to move both bookings or only this one.");
+        return;
+      }
+      void handleSave(
+        activeLinkedMoveState.notifyMemberChoice,
+        null,
+        activeLinkedMoveState,
+      );
+      return;
+    }
     if (activeHostingOverrideState) {
       if (!hostingOverrideConfirmed || hostingOverrideReason.trim().length < 10) {
         setSaveError(
@@ -1256,6 +1291,7 @@ export function EditBookingPanel({
   async function handleSave(
     notifyMemberChoice?: boolean,
     overrideState: HostingOverrideState | null = null,
+    linkedMoveState: HostingLinkedMoveState | null = null,
   ) {
     setSaveError("");
     // #2104: block submission with an inline error adjacent to the field (not the
@@ -1289,6 +1325,19 @@ export function EditBookingPanel({
           strandedStateKey: overrideState.prompt.strandedStateKey,
         };
       }
+      // #3232: the arm the member chose decides WHICH state key travels —
+      // accepting is bound to the moves and the money, declining only to the
+      // stranded set — so the key comes off the prompt rather than being picked
+      // here. A null answer means the arm is not answerable (the offer said there
+      // are not beds for both), and the save then carries no answer at all so the
+      // server re-prompts rather than acting on half of one.
+      if (linkedMoveState && linkedMoveChoice) {
+        const answer = hostingCoverageLinkedMoveAnswer(
+          linkedMoveState.prompt,
+          linkedMoveChoice,
+        );
+        if (answer) body.hostingCoverageLinkedMove = answer;
+      }
 
       const res = await fetch(`/api/bookings/${booking.id}/modify`, {
         method: "PUT",
@@ -1298,6 +1347,23 @@ export function EditBookingPanel({
 
       const data = await res.json();
       if (!res.ok) {
+        // #3232, BEFORE the officer's override prompt: a linked-move offer is
+        // raised for the BOOKING'S OWN MEMBER, admin or not, so it must not be
+        // gated on `actingAsAdmin` the way the override prompt is. The two bodies
+        // carry different codes, so only one reader can ever match.
+        const linkedMovePrompt = readHostingCoverageLinkedMovePrompt(data);
+        if (linkedMovePrompt) {
+          setLinkedMoveState({
+            prompt: linkedMovePrompt,
+            proposalSignature: refusedHostingProposalSignature,
+            notifyMemberChoice,
+          });
+          setLinkedMoveChoice(null);
+          setSaveError(
+            "Choose whether to move both bookings or only this one, then save again.",
+          );
+          return;
+        }
         const hostingPrompt = actingAsAdmin
           ? readHostingCoverageOverridePrompt(data)
           : null;
@@ -1751,6 +1817,13 @@ export function EditBookingPanel({
         </div>
       ) : (
         <>
+          <HostingCoverageLinkedMovePrompt
+            prompt={activeLinkedMoveState ? activeLinkedMoveState.prompt : null}
+            choice={linkedMoveChoice}
+            disabled={saving}
+            idPrefix={`edit-booking-${booking.id}`}
+            onChoiceChange={setLinkedMoveChoice}
+          />
           <HostingCoverageOverridePrompt
             prompt={
               actingAsAdmin && activeHostingOverrideState
