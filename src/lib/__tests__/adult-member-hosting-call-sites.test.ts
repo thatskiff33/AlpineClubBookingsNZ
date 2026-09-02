@@ -1021,6 +1021,11 @@ describe("the same-owner refusal and the escalation seam (#2576 §6, §8, §9)",
     expect(source).toContain(
       "defaults?.linkedMoveChargesBothChangeFees ?? true",
     );
+    // And the pricing engine really honours it, on the one line that decides the
+    // fee. A lever the engine ignored is exactly the defect this replaced.
+    expect(
+      readRepoCode("src/lib/booking-batch-modification-service.ts"),
+    ).toContain("parked || waiveChangeFee");
   });
 
   it("offers the linked move on BOTH date-capable member surfaces", () => {

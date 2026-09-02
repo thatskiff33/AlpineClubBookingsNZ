@@ -212,22 +212,35 @@ export async function loadLinkedMoveChargesBothChangeFees(): Promise<boolean> {
   return defaults?.linkedMoveChargesBothChangeFees ?? true;
 }
 
+/**
+ * A booking the offer would move alongside the primary, and what its own move
+ * costs.
+ *
+ * `money` IS NULL ON THE `NO_CAPACITY` ARM, and that is the whole reason this
+ * type exists rather than the `BatchModificationResponse` it used to carry. When
+ * there are not beds for both, nothing moves — so this booking has no price, and
+ * the honest way to say that is the absence of one rather than a zero that looks
+ * like a free move.
+ */
+type LinkedMoveCandidate = {
+  stranded: {
+    bookingId: string;
+    reference: string;
+    lodgeName: string;
+    nights: string[];
+    checkIn: string;
+    checkOut: string;
+  };
+  target: { checkIn: string; checkOut: string };
+  money: { priceDiffCents: number; changeFeeCents: number } | null;
+  result: BatchModificationResponse | null;
+};
+
 function combineQuote(input: {
   primary: BatchModificationResponse;
   primaryId: string;
   primaryRange: { checkIn: string; checkOut: string };
-  linked: Array<{
-    stranded: {
-      bookingId: string;
-      reference: string;
-      lodgeName: string;
-      nights: string[];
-      checkIn: string;
-      checkOut: string;
-    };
-    target: { checkIn: string; checkOut: string };
-    result: BatchModificationResponse;
-  }>;
+  linked: LinkedMoveCandidate[];
   bothChangeFeesCharged: boolean;
   feasibility: LinkedMoveFeasibility;
 }): LinkedMoveQuote {
@@ -241,12 +254,24 @@ function combineQuote(input: {
       currentCheckOut: entry.stranded.checkOut,
       proposedCheckIn: entry.target.checkIn,
       proposedCheckOut: entry.target.checkOut,
-      priceDiffCents: entry.result.priceDiffCents,
-      changeFeeCents: entry.result.changeFeeCents,
+      priceDiffCents: entry.money?.priceDiffCents ?? 0,
+      changeFeeCents: entry.money?.changeFeeCents ?? 0,
     }))
     .sort((left, right) => (left.bookingId < right.bookingId ? -1 : 1));
 
-  const all = [input.primary, ...input.linked.map((entry) => entry.result)];
+  // ON THE `NO_CAPACITY` ARM THE COMBINED FIGURES ARE THE PRIMARY'S OWN, because
+  // the only move still on offer is the primary's: the member is being told the
+  // two cannot travel together and asked whether to move this one anyway. Summing
+  // in a dependent that is not moving would quote them for a move nobody is
+  // making. Nothing else in the transaction survives either — the whole probe is
+  // discarded — so these are the figures of the single-booking edit they can still
+  // choose, which is exactly the decision in front of them.
+  const all = [
+    input.primary,
+    ...input.linked
+      .map((entry) => entry.result)
+      .filter((result): result is BatchModificationResponse => result !== null),
+  ];
   const sum = (pick: (r: BatchModificationResponse) => number) =>
     all.reduce((total, result) => total + pick(result), 0);
 
@@ -357,21 +382,19 @@ async function runLinkedDateMove(
       checkOut: formatDateOnly(primary.booking.checkOut),
     };
 
-    const linked: Array<{
-      stranded: (typeof stranded)[number];
-      target: { checkIn: string; checkOut: string };
-      result: BatchModificationResponse;
-    }> = [];
+    const linked: LinkedMoveCandidate[] = [];
     let feasibility: LinkedMoveFeasibility = "AVAILABLE";
-
-    for (const dependent of stranded) {
-      const target = linkedMoveTargetRange(
+    const targetOf = (dependent: (typeof stranded)[number]) =>
+      linkedMoveTargetRange(
         {
           previousCheckIn: before.checkIn,
           currentCheckIn: primary.booking.checkIn,
         },
         dependent,
       );
+
+    for (const dependent of stranded) {
+      const target = targetOf(dependent);
       try {
         const result = await modifyBookingBatch({
           bookingId: dependent.bookingId,
@@ -400,7 +423,15 @@ async function runLinkedDateMove(
           // have told the member the fee was waived and charged it anyway.
           ...(bothChangeFeesCharged ? {} : { waiveChangeFee: true }),
         });
-        linked.push({ stranded: dependent, target, result });
+        linked.push({
+          stranded: dependent,
+          target,
+          money: {
+            priceDiffCents: result.priceDiffCents,
+            changeFeeCents: result.changeFeeCents,
+          },
+          result,
+        });
       } catch (error) {
         if (!isCapacityRefusal(error)) throw error;
         // THE "CANNOT" ARM. There are not beds for both, so the linked move is
@@ -416,37 +447,78 @@ async function runLinkedDateMove(
       }
     }
 
+    // AND THE OFFER STILL NAMES EVERY BOOKING, which is what makes the "cannot"
+    // arm reachable at all. The loop above stops at the first booking there are no
+    // beds for, so the partial results describe a move that is not happening and
+    // say nothing about the dependents it never reached. Replacing them with the
+    // WHOLE stranded set, priced at nothing because nothing moves, is what the
+    // member actually needs: which of their bookings will be left without adult
+    // supervision, on which nights, if they go ahead.
+    //
+    // It is also load-bearing rather than cosmetic. The browser's reader for this
+    // body fails closed on an empty `linkedBookings`, so a `NO_CAPACITY` offer
+    // that named nobody was discarded in the panel and fell back to the plain
+    // refusal — leaving the member refused with no door, which is the deadlock this
+    // whole issue exists to remove. With one dependent, which is the ordinary case,
+    // that was every single time.
+    if (feasibility === "NO_CAPACITY") {
+      linked.length = 0;
+      for (const dependent of stranded) {
+        linked.push({
+          stranded: dependent,
+          target: targetOf(dependent),
+          money: null,
+          result: null,
+        });
+      }
+    }
+
     // The supervision rule, ONCE, over the state that will really commit — with
     // full enforcement, for every booking this transaction wrote. Deferred from
     // each `modifyBookingBatch` because an intermediate state in which one of two
     // linked bookings has moved would be refused by this very rule, over a state
     // that was never going to exist.
-    await primary.pendingHostingReconcile?.();
-    for (const entry of linked) {
-      await entry.result.pendingHostingReconcile?.();
-    }
-    // A booking written with the deferral MUST be reconciled, so a missing thunk
-    // is a wiring fault rather than a booking with no supervision check. Fail
-    // loudly inside the transaction, where it rolls back.
-    if (!primary.pendingHostingReconcile) {
-      throw new Error(
-        "The linked move wrote a booking without receiving its deferred hosting " +
-          "reconciliation; refusing to commit an unchecked supervision state.",
-      );
-    }
-    // And re-assert the rule over the primary once more only where the linked
-    // moves changed the world after its own reconciliation ran, so the answer the
-    // member gets is derived from the final rows rather than an intermediate one.
-    if (linked.length > 0) {
-      await reconcileAdultMemberHostingReviewWithSiblings(args.bookingId, tx, {
-        ...hostingCoverageActorOptions({
-          actorRole: args.actor.role,
-          actorMemberId: args.actor.id,
-          // The primary really did move, and the second pass has to look at where
-          // it was as well as where it now is for the same reason the first did.
-          vacatedRange: { checkIn: before.checkIn, checkOut: before.checkOut },
-        }),
-      });
+    //
+    // NOT RUN AT ALL ON THE `NO_CAPACITY` ARM, and that is a correctness rule
+    // rather than an optimisation. This transaction is CERTAIN to be discarded
+    // there — `"quote"` mode always throws below, and an acceptance cannot match a
+    // quote built as unavailable — so the only state the rule could judge is a
+    // state that will never exist. What it actually did was worse than wasteful:
+    // the primary has moved in this doomed transaction and the dependent has not,
+    // which is precisely the stranding the rule refuses, so the check threw the
+    // bare refusal and it propagated in place of the offer. The member was
+    // therefore refused with no door on exactly the arm the owner added so that
+    // a full lodge would never refuse anybody. The rule still governs every
+    // committing path, which is the only kind there is once beds exist for both.
+    if (feasibility === "AVAILABLE") {
+      await primary.pendingHostingReconcile?.();
+      for (const entry of linked) {
+        if (!entry.result) continue;
+        await entry.result.pendingHostingReconcile?.();
+      }
+      // A booking written with the deferral MUST be reconciled, so a missing thunk
+      // is a wiring fault rather than a booking with no supervision check. Fail
+      // loudly inside the transaction, where it rolls back.
+      if (!primary.pendingHostingReconcile) {
+        throw new Error(
+          "The linked move wrote a booking without receiving its deferred hosting " +
+            "reconciliation; refusing to commit an unchecked supervision state.",
+        );
+      }
+      // And re-assert the rule over the primary once more only where the linked
+      // moves changed the world after its own reconciliation ran, so the answer the
+      // member gets is derived from the final rows rather than an intermediate one.
+      if (linked.length > 0) {
+        await reconcileAdultMemberHostingReviewWithSiblings(args.bookingId, tx, {
+          ...hostingCoverageActorOptions({
+            actorRole: args.actor.role,
+            actorMemberId: args.actor.id,
+            // The primary really did move, and the second pass has to look at where
+            // it was as well as where it now is for the same reason the first did.
+            vacatedRange: { checkIn: before.checkIn, checkOut: before.checkOut },
+          }),
+        });
+      }
     }
 
     const quote = combineQuote({
@@ -497,7 +569,7 @@ async function runLinkedDateMove(
 
     const deferred = [
       primary.deferredPostCommit,
-      ...linked.map((entry) => entry.result.deferredPostCommit),
+      ...linked.map((entry) => entry.result?.deferredPostCommit),
     ].filter((thunk): thunk is () => Promise<void> => Boolean(thunk));
 
     return {
