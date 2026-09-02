@@ -740,6 +740,47 @@ deliberately left off until a VM-clock job has been seen to be stable (owner
 decision, 1 September 2026). The day-to-day protection is the three guards above,
 which run on every pull request.
 
+#### What the proof does not cover, and why it cannot
+
+**The payment specs are held out of the shifted run.** Moving the whole VM moves
+the app container with it, and the app then makes a real outbound call to
+`api.stripe.com` while a spec drives it. Stripe's certificate is not valid a
+month from now, so Node refuses the handshake with `CERT_HAS_EXPIRED`, the
+payment intent is never created, the Payment Element never mounts, and the spec
+times out waiting for an iframe that was never going to appear. **No clock shift
+can fix that** — the certificate is not ours to reissue — and a job whose normal
+state is red is a job nobody reads, so the specs come out of the run instead
+(#3227, owner decision 2 September 2026).
+
+Two things follow, and both are costs rather than details:
+
+- The **payment journeys are never exercised under a shifted clock.** They are
+  covered by `Playwright E2E` on every pull request, at the real date.
+- A spec is held out **whole**, so any non-payment test sharing its file goes
+  with it. Today that is the first three tests of
+  `locked-out-pickup-and-pay.spec.ts`, which are date-bearing. The alternative —
+  skipping individual tests from inside the Stripe helper — was rejected because
+  it puts a new false-green surface into the helper that the *required* E2E
+  checks also load.
+
+The held-out list is **derived from the imports**, exactly as the `date-bearing`
+scope is: it is every spec importing `e2e/helpers/stripe`, so a third payment
+spec is covered the day somebody writes it and there is no list to go stale. The
+job prints what it held out, refuses to run if that set is empty or larger than a
+quarter of the suite, and — because a run that narrowed further than it said
+would report green while proving very little — lists the tests twice, once with
+the exclusion and once without, and fails unless the difference is exactly the
+files it named and the unexcluded listing is the size the scope accounts for.
+
+The exclusion is applied by `testIgnore` in
+[`../playwright.config.ts`](../playwright.config.ts), reading `E2E_EXCLUDE_SPECS`,
+and **not** by a file argument on the command line. It cannot be a file argument:
+Playwright runs a project's *dependencies* in full, ignoring the filter, so naming
+`pre-setup/` (which depends on `chromium`) pulls the whole chromium project back
+in and the exclusion evaporates. `testIgnore` decides what is in a project at all,
+before any filtering. The variable is unset in CI and on a laptop, so every
+ordinary run is unchanged.
+
 ## Asserting that a recovery alert holds focus
 
 The other convention that is load-bearing rather than stylistic, for the same
