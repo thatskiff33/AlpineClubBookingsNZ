@@ -128,6 +128,7 @@ import {
   strandedCoverageStateKey,
 } from "@/lib/adult-member-hosting-same-owner";
 import {
+  InsufficientCapacityError,
   OverCapacityConfirmationRequiredError,
   WholeLodgeHoldBlockedError,
 } from "@/lib/over-capacity-confirmation";
@@ -722,6 +723,28 @@ describe("what the member is charged, once, for both (#3232 D2)", () => {
 
 describe("where there are not beds for both — the owner's cannot arm (#3232)", () => {
   for (const [label, makeError] of [
+    [
+      // THE ONE A MEMBER ACTUALLY GETS, and the reason this arm was dead code.
+      // `calculateModifiedPricing` branches on `adminOverride` FIRST: the two
+      // classed over-capacity errors below are admin-only, and the member path
+      // throws this instead. A linked move is reachable only for the booking's own
+      // member — an officer escalates through `REQUIRE_OVERRIDE` and never arrives
+      // here — so the refusal a full lodge really produces was the one refusal the
+      // service did not recognise: it propagated as a bare 400 about beds, on a
+      // booking the member never asked to move, with no offer and therefore no
+      // decline arm either. That is the deadlock this issue exists to remove,
+      // reappearing by a third route.
+      //
+      // The other half of this pin is in `calculate-modified-pricing-capacity.
+      // test.ts`, which drives the REAL pricing engine and asserts it throws this
+      // exact class. This suite doubles `modifyBookingBatch`, so it can only show
+      // what the service does with the class — neither half is meaningful alone.
+      "the member-path refusal a full lodge really throws",
+      () =>
+        new InsufficientCapacityError(
+          "Not enough beds available for these changes",
+        ),
+    ],
     [
       "over capacity",
       () => new OverCapacityConfirmationRequiredError([

@@ -54,6 +54,7 @@ import {
   checkCapacityForGuestRanges,
 } from "@/lib/capacity";
 import {
+  InsufficientCapacityError,
   OverCapacityConfirmationRequiredError,
   overCapacityNights,
   wholeLodgeBlockedNights,
@@ -520,9 +521,15 @@ export async function modifyBookingDates({
       );
 
       if (!capacity.available) {
-        throw new ApiError(
+        // #3232: the same class the batch engine's member path throws, for the
+        // same reason — a caller has to be able to tell "there are no beds" apart
+        // from every other 400 a date move can produce. Nothing routes a linked
+        // move's second booking through THIS writer today (the atomic arm needs a
+        // transaction-aware engine, so it prices through `modifyBookingBatch`),
+        // and that is exactly why it is classed here as well: the arm must not go
+        // dead again the day one does.
+        throw new InsufficientCapacityError(
           "Not enough beds available for the new dates",
-          400,
         );
       }
     }

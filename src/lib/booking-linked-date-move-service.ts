@@ -31,8 +31,11 @@ import {
   type ModifyBookingDatesInput,
 } from "@/lib/booking-date-modification-service";
 import type { BatchModifyInput } from "@/lib/booking-modify-validation";
-import { OverCapacityConfirmationRequiredError } from "@/lib/over-capacity-confirmation";
-import { WholeLodgeHoldBlockedError } from "@/lib/over-capacity-confirmation";
+import {
+  InsufficientCapacityError,
+  OverCapacityConfirmationRequiredError,
+  WholeLodgeHoldBlockedError,
+} from "@/lib/over-capacity-confirmation";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import { assertBookingEnvelopeInvariants } from "@/lib/booking-envelope-invariants";
 import type { CalendarDate } from "@/lib/club-time";
@@ -180,14 +183,27 @@ export async function loadLinkedMoveChargesBothChangeFees(): Promise<boolean> {
  * A refusal that means "there are not beds for both", as opposed to any other
  * reason the second move could fail.
  *
- * ONLY THESE TWO, deliberately. A minimum-stay violation, a Xero lock date, a
+ * ONLY THESE THREE, deliberately. A minimum-stay violation, a Xero lock date, a
  * member-night conflict or a membership-type policy block are not "cannot fit" —
  * they are reasons this particular linked move is wrong, and dressing them as a
  * capacity message would tell the member something false. They propagate, the
  * transaction rolls back, and the member sees the real refusal.
+ *
+ * `InsufficientCapacityError` IS THE ONE THAT ACTUALLY FIRES HERE, and its absence
+ * made this whole arm dead code. `calculateModifiedPricing` branches on
+ * `adminOverride` FIRST: the two over-capacity classes are raised only on the
+ * override path, and the member path throws the plain refusal instead. A linked
+ * move is reachable only for the booking's own member — an officer escalates
+ * through `REQUIRE_OVERRIDE` and never gets here — so `adminOverride` is always
+ * false, and keying on the classed pair alone meant a full lodge propagated a bare
+ * 400 about beds on a booking the member had not asked to move, with no offer and
+ * therefore no decline arm either. The two override classes are kept because an
+ * admin-initiated caller supplying this service is a shape the type system allows
+ * and the arm is right for it too.
  */
 function isCapacityRefusal(error: unknown): boolean {
   return (
+    error instanceof InsufficientCapacityError ||
     error instanceof OverCapacityConfirmationRequiredError ||
     error instanceof WholeLodgeHoldBlockedError
   );
