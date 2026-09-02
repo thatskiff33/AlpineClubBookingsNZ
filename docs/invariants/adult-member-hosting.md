@@ -1383,3 +1383,186 @@ compliant indefinitely.
   writer census is in
   `src/lib/__tests__/adult-member-hosting-call-sites.test.ts`. Their failure
   messages carry this id.
+
+### INV-HOST-049
+
+- **The same-owner dependent fan-out reads over the window the changed booking
+  VACATED as well as the one it now holds, and each queue item carries the
+  DEPENDENT's own nights** (#3232). Both halves, in one rule, because fixing
+  either one alone still loses the booking — and the second failure is silent
+  where the first is at least visible.
+
+  **THE FIRST HALF.** Every dependent read runs after the write: the writer
+  updates the booking and then calls the hosting seam. A single-window overlap
+  test therefore compares against the NEW dates, so a booking that was relying on
+  the OLD ones fails the test and is not in the set at all. No evaluation, no
+  incident, no owner notice, nothing in the officer queue — the booking stays
+  recorded as compliant while being uncovered, indefinitely, because nothing looks
+  at it again until its owner touches it and its owner has no reason to.
+  Concretely: booking A carries the only qualifying adult on nights 10-11, booking
+  B is the same owner's at the same lodge on the same nights and is compliant only
+  through A, and A moves to nights 20-21. B's checkout (night 12) is not after A's
+  new arrival (night 20), so B fails the overlap test and is invisible. The set
+  must therefore be the UNION of the vacated and the current window —
+  `coverageDependentEnvelopeOverStayUnionWhere`, composed with §1's `memberId`
+  relationship by `sameOwnerCoverageDependentOverStayUnionWhere`.
+
+  **THE UNION, AND NOT THE DROPPED CLAUSE THE GROUP DIRECTION USES.**
+  `coverageDependentEnvelopeAcrossNightsWhere` (#3039) removes the night
+  comparison entirely, which is right there because that fan-out cannot refuse
+  anybody: an extra row costs one idempotent re-evaluation that writes nothing.
+  Here an extra row is a booking the member may be told they cannot move, so the
+  set has to be RIGHT rather than merely not-narrowed. It is, because the fact the
+  group direction lacks is available here: only a DATE MOVE makes the old and new
+  stay differ, and the writers that perform one hold the previous window in the
+  same function that calls the seam. The union is exact — a booking sharing a
+  night with neither window cannot have been relying on this booking before the
+  change and cannot be after it.
+
+  **WHAT MAKES A WRITER SUPPLY THE VACATED WINDOW IS THE COMPILER, NOT THIS
+  PAGE.** `hostingCoverageActorOptions` takes `vacatedRange` as a REQUIRED field,
+  so every actor-driven site has to state whether its change moved the stay. Three
+  say yes (`modifyBookingDates`, `adminShiftBookingDates`, `modifyBookingBatch`);
+  the rest pass `null`, which collapses the union to one overlap test and is
+  byte-identical to their previous behaviour. An optional field with a convenient
+  default would have compiled every existing caller unchanged and left the three
+  date writers exactly as wrong as they were.
+
+  **THE SECOND HALF, WHICH IS THE ONE THAT LOOKS FIXED AND IS NOT.** A queue
+  item's nights are what the drain turns back into bookings —
+  `loadSameOwnerCoverageDependentIds` reads the owner's bookings at that lodge
+  over exactly that window — so an item carrying the CHANGED booking's new nights
+  resolves to a dependent list that does not contain the booking the change
+  stranded. Widen the read and leave the item alone and the refusal path works
+  while the escalation path drops the booking in the background, with nothing
+  logged. So the settle step records one item per dependent the changed booking's
+  own window cannot reach, naming that dependent's OWN nights
+  (`enqueueSameOwnerDependentItems`, gated by `dependentNeedsOwnQueueItem`). In
+  the ordinary edit every dependent overlaps and exactly one item is written,
+  exactly as before; items appear only after a move, and are capped with the
+  dependent set at `SAME_OWNER_COVERAGE_DEPENDENT_LIMIT`.
+
+  **THE TWO HALVES ARE MUTATION-VERIFIED SEPARATELY**, because #3039 measured that
+  fixing one and not the other still loses the booking. A single test that only
+  fails when both are broken would pass over a half-fix.
+
+  **PER-DEPENDENT ITEMS NEED THE DEPENDENT IN THE PARTICIPANT FENCE**, so the
+  dependent set is planned BEFORE the fence and re-verified under the per-owner
+  coverage key — the same plan, lock, re-verify, retry protocol the Group Trip
+  fan-out uses. No new lock and no new ordering: every same-owner dependent shares
+  the changed booking's `memberId` by construction, so the `Member` row set the
+  fence takes is unchanged and only the proof's source list grows.
+
+  Enforced by `src/lib/__tests__/adult-member-hosting-same-owner.test.ts` and
+  `src/lib/__tests__/adult-member-hosting-linked-move.test.ts`, whose failure
+  messages carry this id.
+
+### INV-HOST-050
+
+- **A member is never refused a change they have no way to make; where moving one
+  of their bookings would strand another of their own, they are OFFERED the linked
+  move** (owner decision, 2 September 2026, #3232).
+
+  **WHY A REFUSAL IS NOT AVAILABLE HERE, and it is a deadlock rather than a
+  preference.** The obvious remedy for "moving A strands B" is to refuse the move
+  and tell the member to sort B out first. They cannot. Moving B is ALREADY
+  refused by the same rule from the other end — B away from A is B with no
+  qualifying adult, and `REFUSE` is the default enforcement — so a member who
+  simply wants both of their own bookings on different nights could move NEITHER.
+  The advice #2576 shipped ("Update the affected booking first") described
+  something the code forbids; it is gone, and every action the remaining sentence
+  names is one the member can actually take.
+
+  **THE THREE ARMS.** *Yes* — both bookings move together, atomically, on one
+  combined figure accepted once. *No* — only the changed booking moves, the member
+  is told plainly that the other will be left without adult supervision, the
+  officer queue gets it and an incident opens, whose recorded reason says a member
+  was asked and answered rather than leaving an officer to infer it. *Cannot* —
+  where the beds are not there for both, that is said plainly and the
+  warn-and-continue path is offered rather than a failure.
+
+  **WHICH REFUSALS BECOME AN OFFER, AND WHICH DO NOT.** Only the shape where the
+  member has nowhere to go: the dependent no longer shares a night with the
+  changed booking, so this booking has MOVED AWAY from it. A stranding whose
+  dependent still overlaps came from a guest change or a cancellation, and there
+  the member really can add cover to the affected booking, cancel it, or ask an
+  officer — so that keeps the ordinary refusal
+  (`SameOwnerCoverageWouldBreakError`, unflagged). The hosting engine marks the
+  refusal `linkedMoveWouldAnswer` and `modifyBookingWithLinkedMoveSupport` prices
+  it into the offer, because the engine cannot import the pricing engine without a
+  cycle. If some path ever fails to enrich it the member gets the bare refusal —
+  worse, but a refusal naming an officer they can ring, never a silent stranding.
+
+  **THE OFFER'S PRICE IS THE REAL PRICE.** The quote is produced by applying both
+  moves through the ordinary modification service and rolling the transaction
+  back, not by a parallel estimator: an estimator would be a second definition of
+  what a date move costs (`INV-SSOT-001`), and it would be the definition the
+  member was shown while the other one charged them.
+
+  **TWO STATE KEYS, BECAUSE THE TWO ANSWERS BIND DIFFERENT THINGS.** Declining is
+  a statement about the hazard, so it is bound by the stranded set alone
+  (`strandedCoverageStateKey`, shared with the officer's override). Accepting is a
+  statement about a price, so it is bound by `linkedMoveStateKey` — the stranded
+  set, every booking's proposed window, and the combined money. A stale key of
+  either kind produces a fresh prompt rather than a silent substitution.
+
+  **NO REASON IS DEMANDED OF THE MEMBER**, unlike the officer's override. §7 asks
+  an officer for a reason because they are exercising authority over a booking
+  that is not theirs. These are the member's own two bookings. What is demanded is
+  proof they were shown the consequence, which is the state key.
+
+  Enforced by `src/lib/__tests__/adult-member-hosting-linked-move.test.ts` and
+  `src/lib/__tests__/adult-member-hosting-same-owner.test.ts`, whose failure
+  messages carry this id.
+
+### INV-HOST-051
+
+- **The linked move is atomic and settles once, and whether it charges both
+  change fees is a club setting that defaults to charging** (#3232 D2,
+  `INV-CONFIG-001`).
+
+  **ATOMIC.** Every write happens inside one transaction, so no state exists in
+  which one booking has moved and the other has not. Any failure on the second
+  booking — no beds, a minimum-stay violation, a Xero lock date, a member-night
+  conflict, or a supervision refusal over the FINAL state — rolls the first one
+  back with it. The provider work is the one thing that cannot be inside the
+  transaction and is not: each booking's Stripe refund or charge, member email and
+  Xero settlement is returned as a `deferredPostCommit` thunk and run after the
+  commit, because a provider call under the global money key and a lodge capacity
+  key is what the locking guide forbids.
+
+  **ONE COMBINED FIGURE, ACCEPTED ONCE.** Both bookings' price recalculations and
+  both change fees are summed and shown before the member accepts, and one
+  refund-or-credit choice covers both. Every amount stays integer cents; the
+  combined fields are sums of the per-booking ones, never separately derived. The
+  due and refund figures are reported separately rather than netted, because
+  Stripe and Internet Banking/Xero settlement stay distinct per booking and a
+  single signed figure would imply a netting-off that never happens.
+
+  **THE SUPERVISION CHECK RUNS ONCE, OVER THE STATE THAT WILL COMMIT.** The
+  intermediate state in which one of two linked bookings has moved would be
+  refused by this very rule, and no ordering avoids it: move A first and A's seam
+  sees B stranded; move B first and B's own seam sees B with no adult. So
+  `modifyBookingBatch` accepts `hostingReconcile: "CALLER"` and hands the
+  reconciliation back as `pendingHostingReconcile`, which the linked move runs for
+  every booking it wrote before committing. Deferral moves the check and never
+  removes it, and `booking-linked-date-move-service.ts` is the only caller
+  permitted to ask for it.
+
+  **BOTH CHANGE FEES, BY DEFAULT, AS A SETTING.** Both bookings really move, so
+  both really attract their fee. Clubs will disagree about whether the second is
+  fair when the club's own supervision rule is what compelled the move, so
+  `BookingDefaults.linkedMoveChargesBothChangeFees` is the lever, defaulting to
+  `true` — a club that means to waive it says so, and an upgrade never silently
+  starts giving fees away. The member-facing sentence states which answer the club
+  gave, so a waived fee is never described as charged or the reverse.
+
+  **ONE LODGE CAPACITY KEY COVERS BOTH BOOKINGS**, and that is a property of the
+  predicate rather than an assumption: the dependent envelope pins `lodgeId` to
+  the changed booking's lodge, so a same-owner dependent is always at the same
+  lodge, and no writer moves a booking between lodges. The order is unchanged —
+  global `pg_advisory_xact_lock(1)`, then the lodge key, then the participant
+  `Member` rows and the per-owner coverage key — and this change adds no new key.
+
+  Enforced by `src/lib/__tests__/adult-member-hosting-linked-move.test.ts`, whose
+  failure messages carry this id.

@@ -322,6 +322,49 @@ Re-running the same check does not re-send the email or duplicate the entry: the
 club tells the owner when the situation actually changes, not every time a background
 job looks at it.
 
+**A member moving one of their own bookings is asked, not stopped.** This is the
+one case that used to go wrong in both directions, and it is worth reading in full
+because the answer is a question rather than a refusal.
+
+Suppose a member has two bookings at the same lodge on the same nights — one
+carrying the qualifying adult, one carrying the children — and the second is
+compliant only because of the first. If they move the booking with the adult on it,
+the other one loses its cover.
+
+Until #3232 nothing happened at all: the second booking stayed marked as fine,
+nobody was told, and nothing reached your queue. Nothing would have looked at it
+again either, because the club only re-checks a booking when something touches it
+and its owner had no reason to touch it. It could have sat like that until the
+night itself.
+
+The obvious fix — refuse the move — was tried on paper and does not work. Moving
+the *other* booking is refused by the same rule from the other end, because moving
+it away from the adult leaves it with no adult. A member wanting both of their
+bookings on different nights could have moved neither. So instead they are offered
+the thing they were actually trying to do:
+
+> Booking BK-1234 is relying on this booking for adult supervision. Move both
+> together?
+
+- **Move both bookings.** They move together, on **one combined figure the member
+  accepts once** — both bookings repriced for the new nights, both change fees,
+  and a single card-or-credit choice covering both. Either both move or neither
+  does; there is no state where one moved and the other did not.
+- **Move only this booking.** The change goes ahead, the member is told in plain
+  words on the screen that the other booking will be left without adult
+  supervision, and it arrives in your queue exactly as an officer override would —
+  urgent entry, owner emailed, audit trail. The entry records that a member was
+  asked and chose this, so you are not left guessing whether somebody decided it or
+  a qualification quietly changed.
+- **Where the beds are not there for both**, the first option is not offered. The
+  member is told plainly that there are not enough beds free on the new nights, and
+  the second option is still there. A full lodge never stops somebody moving their
+  own booking.
+
+Whether the **second** change fee is charged is your club's choice — see
+"Charge the change fee on both bookings" on the Cancellation page. It defaults to
+charging both, because both bookings really do move.
+
 **Booking on behalf of a member.** If the party would trip the rule, you are
 stopped once and asked for a reason. A panel appears on the review step with a
 box for it; type the reason and click **Record the reason and create**. Saving as
@@ -402,6 +445,7 @@ because there is nowhere to ask yet.
 | Non-member guests without adult member cover | Adult Member Hosting | Allowed; allowed but sent to a Booking Officer; or stopped unless corrected or an exception is approved | Allowed (club); Use the club-wide setting (lodge) | The club-wide scope cannot inherit; no upgrade selects "stopped" |
 | Adult members who count | Adult Member Hosting | Either or both of: on the same booking; on another booking on the same account | Inherit (lodge and club) — the built-in default is "on the same booking" | At least one must be ticked when you set your own; there are two options and no others |
 | Exception capacity handling | Adult Member Hosting | Whether a future exception request holds the affected capacity while it waits | None — you must choose | Required on every save; the same hold deadline applies |
+| Charge the change fee on both bookings | Cancellation (club-wide) | Whether a member who moves two of their own bookings together, because one relies on the other for adult supervision, pays the change fee on both | on — charge both | Club-wide only, like the non-member hold beside it; the fee *tiers* stay per lodge. Off charges only the booking the member was editing |
 | Paid-up adult member required | Configured on [Subscription Lockout](subscription-lockout.md), not here | Refuses a booking with no paid-up adult member on it, when either somebody staying is being repriced for an unpaid subscription or the member who made the booking has one | Off (only applies when you choose "let them book, at non-member rates") | Always holds the bed while a request is pending; not configurable |
 | Show indicative pricing | Public Requests | Price shown on the public request form | off | — |
 | Quote response window | Public Requests | Days a quote link stays valid | 14 | 1–60 days |

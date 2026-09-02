@@ -262,6 +262,40 @@ shows "we do not know what is stored here" with **Try again**, and a stale save
 is refused and reloaded. A first save also requires an explicit
 exception-capacity choice.
 
+### Moving a booking that another of your own bookings relies on (#3232)
+
+The member opens their booking, changes the dates and presses Save. Where that
+would leave another booking on their own account without a qualifying adult on
+nights it was relying on this one for, the save is not written and the panel shows
+**"Another of your bookings needs an adult on these nights"** with the affected
+booking's reference, lodge, its current dates, the dates it would move to, and the
+nights it would be left uncovered on.
+
+Underneath sit two radio options and **no default** — the save button will not
+proceed until one is picked, because either default would answer a money question
+on the member's behalf:
+
+- **Move both bookings**, with the combined figure beside it: what is payable or
+  coming back across both bookings, whether both change fees are included (the
+  club's setting decides, and the sentence says which answer it gave), and a note
+  that the card-or-credit choice already made above covers both.
+- **Move only this booking**, with the consequence beside it: the other booking
+  will be left without adult supervision on those nights, a Booking Officer will
+  be told, and they will be in touch if anything needs to change.
+
+Picking one and saving again applies it. Both bookings move together or neither
+does. Changing anything about the edit retires the offer and the choice, so a
+member cannot accept a total that has stopped being true — they are asked again
+with the new figure.
+
+Where there are not enough beds free on the new nights for both, the first option
+is shown **disabled with the reason**, and the second is still available: a full
+lodge never stops somebody moving their own booking.
+
+Feedback: the offer sits in a permanently mounted assertive live region, so it is
+announced when it appears; the radio group sits outside that region so choosing an
+option does not re-announce the whole offer.
+
 In review mode the member's booking is made and officer work opens beside it. In
 enforced mode a non-compliant create or change is rolled back and the member sees
 the same **Request Booking Officer approval** journey described above — but only
