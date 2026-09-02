@@ -236,7 +236,11 @@ function batchResult(
 /** What the two callers hand in. Dates only — this is a date move. */
 function args(
   overrides: {
-    linkedMove?: { choice: string; acknowledged: true; stateKey: string };
+    linkedMove?: {
+      choice: "MOVE_BOTH" | "LEAVE_UNCOVERED";
+      acknowledged: true;
+      stateKey: string;
+    };
   } = {},
 ) {
   return {

@@ -16,10 +16,10 @@ import {
   formatLinkedMoveOfferMessage,
   hostingCoverageLinkedMoveSchema,
   linkedMoveStateKey,
+  linkedMoveTargetRange,
   type LinkedMoveQuote,
 } from "@/lib/adult-member-hosting-linked-move";
 import { strandedCoverageStateKey } from "@/lib/adult-member-hosting-same-owner";
-import { linkedMoveTargetRange } from "@/lib/booking-linked-date-move-service";
 
 const STRANDED = [
   {

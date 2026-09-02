@@ -21,4 +21,14 @@
   defaulting to charging both. Both bookings really move, so both attract their
   fee - but clubs will differ on whether that is fair when the club's own
   supervision rule is what compelled the second move (#3232, `INV-CONFIG-001`,
-  `INV-HOST-051`).
+  `INV-HOST-051`). A club that turns it off really is not charged it: the waiver
+  reaches the price, not only the sentence beside it.
+- The same offer is made on the other way into a date change, `modify-dates`, and
+  not only on the booking-edit panel. That route already noticed the booking a
+  move leaves behind, so without the offer it would have started refusing moves
+  that used to work, with nowhere for the member to go (#3232, `INV-HOST-050`).
+- Where there are not beds for both, the offer now says which booking will be left
+  without adult supervision and on which nights, and the "move only this one" path
+  is really available. It was being dropped before it reached the screen, so a full
+  lodge left the member with a refusal and no way forward - the opposite of what
+  that arm is for (#3232).
