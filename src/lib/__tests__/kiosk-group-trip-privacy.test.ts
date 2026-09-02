@@ -2,7 +2,7 @@
 // staying, organiser and adult-cover source only behind their own explicit
 // capability, and the group's join credential nowhere at all.
 //
-// ENFORCES INV-PRIV-015 (the three-tier kiosk Group Trip disclosure) and
+// ENFORCES INV-PRIV-016 (the three-tier kiosk Group Trip disclosure) and
 // INV-HOST-045 (kiosk cover-source display is derived from the canonical
 // evaluation and never renders stale, failed or unrecorded evaluation as cover).
 // Every assertion that carries one of those rules repeats its id in the failure
@@ -300,7 +300,7 @@ function fakeStore(options: {
         // assertions below then find in the payload.
         if (JSON.stringify(args.select).includes("joinCode")) {
           throw new Error(
-            "INV-PRIV-015 (docs/invariants/analytics-and-privacy.md): the kiosk " +
+            "INV-PRIV-016 (docs/invariants/analytics-and-privacy.md): the kiosk " +
               "selected GroupBooking.joinCode",
           );
         }
@@ -430,7 +430,7 @@ describe("#3040 ordinary staying-guest tier: linkage only", () => {
     ]) {
       expect(
         payload,
-        `INV-PRIV-015 (docs/invariants/analytics-and-privacy.md): the ordinary ` +
+        `INV-PRIV-016 (docs/invariants/analytics-and-privacy.md): the ordinary ` +
           `kiosk tier's serialized payload contains "${forbidden}". A field an ` +
           `ordinary viewer may not see must be ABSENT from the payload, not ` +
           `merely unrendered.`,
@@ -501,7 +501,7 @@ describe("#3040 the club's hosting settings gate the cover line, never the badge
         const { attached } = await attach(all, capabilities, store);
         expect(
           attached.map((entry) => entry.groupTrip),
-          "INV-PRIV-015 (docs/invariants/analytics-and-privacy.md): owner " +
+          "INV-PRIV-016 (docs/invariants/analytics-and-privacy.md): owner " +
             "decision D1 on #3040 — the linkage badge follows whether the " +
             "bookings are in one group, NOT the club's shared-cover option",
         ).toEqual([{ label: 1 }, { label: 1 }]);
@@ -618,11 +618,11 @@ describe("#3040 the two privileged capabilities are independent", () => {
 
       expect(
         Object.prototype.hasOwnProperty.call(first, "groupTripOrganiser"),
-        "INV-PRIV-015: organiser context must follow its OWN capability",
+        "INV-PRIV-016: organiser context must follow its OWN capability",
       ).toBe(wantOrganiser);
       expect(
         Object.prototype.hasOwnProperty.call(first, "adultCoverSource"),
-        "INV-PRIV-015: adult-cover source must follow its OWN capability, " +
+        "INV-PRIV-016: adult-cover source must follow its OWN capability, " +
           "separately from organiser context",
       ).toBe(wantCover);
 
@@ -692,7 +692,7 @@ describe("#3040 the two privileged capabilities are independent", () => {
     for (const [tier, privileged] of Object.entries(expected)) {
       expect(
         kioskGroupTripCapabilities(tier as KioskTier),
-        `INV-PRIV-015: kiosk tier ${tier}`,
+        `INV-PRIV-016: kiosk tier ${tier}`,
       ).toEqual({ organiser: privileged, coverSource: privileged });
       // AND THE DOCBLOCK'S CLAIMED COINCIDENCE, checked rather than asserted in
       // prose: `kioskGroupTripCapabilities` says it grants to deliberately the
@@ -701,7 +701,7 @@ describe("#3040 the two privileged capabilities are independent", () => {
       // later change moves one the claim stops being true silently.
       expect(
         kioskTierManagesRoster(tier as KioskTier),
-        `INV-PRIV-015: the two Group Trip capabilities are documented as going ` +
+        `INV-PRIV-016: the two Group Trip capabilities are documented as going ` +
           `to exactly the roster-managing tiers, and ${tier} now disagrees. ` +
           `Either restore the coincidence or rewrite the docblock that claims ` +
           `it.`,
@@ -1029,7 +1029,7 @@ describe("#3040 adult-cover source is the canonical evaluation, honestly reporte
     expect(derived.status).toBe("EVALUATED");
     expect(
       JSON.stringify(derived),
-      "INV-PRIV-015: the kiosk reports the cover SOURCE CATEGORY, never which " +
+      "INV-PRIV-016: the kiosk reports the cover SOURCE CATEGORY, never which " +
         "member on which account supplied it",
     ).not.toContain("adult-secret");
   });
@@ -1229,7 +1229,7 @@ describe("#3040 adult-cover source is the canonical evaluation, honestly reporte
     expect(attached[1]).toHaveProperty("adultCoverSource");
     expect(
       attached[2],
-      "INV-PRIV-015: the two privileged lines belong to the Group Trip surface " +
+      "INV-PRIV-016: the two privileged lines belong to the Group Trip surface " +
         "#3040 opened; a booking in no group gets neither",
     ).not.toHaveProperty("adultCoverSource");
     expect(attached[2]).not.toHaveProperty("groupTripOrganiser");
@@ -1429,7 +1429,7 @@ describe("#3040 source fences on the kiosk Group Trip surfaces", () => {
     for (const file of KIOSK_SURFACES) {
       expect(
         readSurface(file),
-        `INV-PRIV-015 (docs/invariants/analytics-and-privacy.md): ${file} names ` +
+        `INV-PRIV-016 (docs/invariants/analytics-and-privacy.md): ${file} names ` +
           `joinCode. The group's join credential is excluded from every kiosk ` +
           `tier, every DTO and every select.`,
       ).not.toContain("joinCode");
@@ -1479,7 +1479,7 @@ describe("#3040 source fences on the kiosk Group Trip surfaces", () => {
     for (const attribute of ["title=", "aria-label=", "data-"]) {
       expect(
         component,
-        `INV-PRIV-015: the kiosk Group Trip card uses ${attribute}. A tooltip ` +
+        `INV-PRIV-016: the kiosk Group Trip card uses ${attribute}. A tooltip ` +
           `and a screen-reader label are as readable as body text, and the ` +
           `issue lists them among the leaks it forbids.`,
       ).not.toContain(attribute);

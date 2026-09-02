@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { noStoreLodgeResponse } from "@/lib/lodge-cache-headers";
 import { checkLodgeAuth, resolveKioskLodgeId } from "@/lib/lodge-auth";
 import { getKioskAccessInfo } from "@/lib/kiosk-access";
 import { countActiveLodges } from "@/lib/lodges";
@@ -36,6 +37,11 @@ const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
  * Returns the user's kiosk access tier and capabilities for the given date.
  */
 export async function GET(req: NextRequest) {
+  // #3228 — nothing here may be cached; `src/lib/lodge-cache-headers.ts` says why.
+  return noStoreLodgeResponse(await handleGet(req));
+}
+
+async function handleGet(req: NextRequest) {
   const dateStr = req.nextUrl.searchParams.get("date");
   if (!dateStr || !dateSchema.safeParse(dateStr).success) {
     return NextResponse.json({ error: "Invalid or missing date parameter" }, { status: 400 });
@@ -57,6 +63,15 @@ export async function GET(req: NextRequest) {
   if ("pinSession" in authResult && authResult.pinSession) {
     return NextResponse.json({
       tier: "hut-leader",
+      // #3228 — this device reached the hut-leader tier by PIN on a SHARED
+      // account, which is the case the ten-minute idle window and the Lock
+      // control govern. A hut leader signed in with their OWN account also
+      // reads `tier: "hut-leader"` and must not be swept into either: their
+      // session is theirs, on their own device, and dropping them out of it
+      // every ten minutes would be a new defect. The flag is what lets the
+      // kiosk tell the two apart, and it says nothing the holder of the cookie
+      // does not already know from its own tier.
+      pinSessionActive: true,
       dateRange: authResult.pinSession.dateRange,
       canManageRoster: true,
       canMarkAttendance: true,

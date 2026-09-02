@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { noStoreLodgeResponse } from "@/lib/lodge-cache-headers";
 import { checkLodgeAuth, kioskLodgeAuthErrorResponse, resolveKioskLodgeId } from "@/lib/lodge-auth";
 import { getBookingGuestDisplayAgeTier } from "@/lib/booking-guests";
 import { GROUP_TRIP_IDENTITY_SELECT } from "@/lib/group-trip-identity";
@@ -71,7 +72,11 @@ export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ date: string }> }
 ) {
-  const { date: dateStr } = await params;
+  // #3228 — nothing here may be cached; `src/lib/lodge-cache-headers.ts` says why.
+  return noStoreLodgeResponse(await handleGet(req, (await params).date));
+}
+
+async function handleGet(req: NextRequest, dateStr: string) {
 
   const authResult = await checkLodgeAuth(dateStr, {
     request: req,

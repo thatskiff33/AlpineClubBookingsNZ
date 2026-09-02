@@ -1,10 +1,9 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import KioskPage from "../page";
-import { ClubTimeProvider } from "@/components/club-time-provider";
+import { renderKiosk } from "./helpers/kiosk-harness";
 import { frozenTestNow } from "@/lib/__tests__/helpers/clock";
 import { captureHostTimeZone } from "@/lib/__tests__/helpers/timezone";
 import {
@@ -19,7 +18,8 @@ import {
   Before CT-4 the kiosk read `APP_TIME_ZONE`, so this mock was the club's zone
   and pinning it to `Pacific/Auckland` was what kept the rollover cases meaning
   anything once the HOST zone moved. The page now takes the club's day from
-  `ClubTimeProvider` instead, and `renderKiosk` below supplies it — so the mock
+  `ClubTimeProvider` instead, and `renderKiosk` (in `./helpers/kiosk-harness`)
+  supplies it — so the mock
   is free to become a THIRD zone, and it should be. With three different zones
   in play (club `Pacific/Auckland`, environment `America/Denver`, host `UTC`)
   every date assertion in this file discriminates all three: an implementation
@@ -65,16 +65,6 @@ function buildWeekDays(start: string): KioskWeekDaySummary[] {
   );
 }
 
-/** The club this kiosk belongs to. Delivered the way the application does it. */
-const CLUB_ZONE = "Pacific/Auckland";
-
-function renderKiosk() {
-  return render(
-    <ClubTimeProvider zone={CLUB_ZONE}>
-      <KioskPage />
-    </ClubTimeProvider>,
-  );
-}
 
 describe("KioskPage week view", () => {
   afterEach(() => {

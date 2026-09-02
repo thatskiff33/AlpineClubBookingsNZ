@@ -102,7 +102,7 @@ the row, not open work. Open findings now live in labelled GitHub issues
 | `/api/issue-reports` | Authenticated active member. | Signed-in member reporting an issue. | Issue report text, screenshot metadata/storage path if captured, member id. | Email notification to admins. | Auth.js session, active-account guard, issue-report retention helpers. | Audit log and logger. | Not anonymous in current code. #615 should only treat it as public if the implementation changes. |
 | `/api/chores/[token]` | Public opaque token. | Guest with chore link. | Guest chore assignment for one token/date. | None. | `rateLimiters.guestChoreToken`; token validation; `PUT` explicitly returns 405. | None. | Token URL can be logged or forwarded. Existing mitigation is rate limit and token expiry. Keep in public allowlist. |
 | `/api/chores/roster/[date]/print` | Authenticated active member holding the `ADMIN` access role (`hasAdminAccess`). | Admin needing printable roster data. | A headcount and the chore rows for one lodge on one date. Since #2631 the headcount is not a query of its own: it is the length of the shared roster selector's list (`getOperationalRosterGuestsForDate`), so it inherits that selector's exclusions — soft-deleted bookings, review-blocked bookings, and member guests whose consent is still pending — and counts the OPERATIONAL DAY (the night plus the following morning) rather than the night. No guest names, ids, or contact details leave this route except the names already printed on the chore rows. | None. | Auth.js session, active-account guard, two-step date-only validation (`isDateOnlyString` then `parseDateOnly`, so an out-of-range day is refused rather than rolled forward), and lodge scoping — `?lodgeId=` must name an active lodge (400 otherwise), omitted falls back to the club's default lodge, and both the assignment and booking queries carry that lodge (#2478). | None. | No page calls this feed today (the admin Print Roster button uses `/api/admin/roster/[date]`); it is kept correct for a future consumer. #618 can review lodge/roster exposure. |
-| `/api/lodge/access`, `/api/lodge/pin-login`, `/api/lodge/guests/[date]/**`, `/api/lodge/roster/[date]/**` | Lodge guard or PIN login flow. `pin-login` starts a hut-leader PIN session behind an authenticated lodge/admin path. | Lodge account, admin, member with kiosk access, hut leader PIN session. | Lodge guest list, arrival/departure, roster chores, PIN session, audit records. | None. | `checkLodgeAuth()` for most routes, active-account guard, `rateLimiters.lodgePinLogin`, date scoping. The kiosk's lodge is resolved from its STAFF binding: exactly one grant binds, zero grants fall back to the default lodge, and a grant at **two or more lodges is ambiguous and denied** (`resolveKioskLodgeId` throws `AmbiguousKioskLodgeError`, which every kiosk data route maps to a clean `403` via `kioskLodgeAuthErrorResponse` rather than a 500; `pin-login` returns `403` directly) so a mis-selected double-grant cannot serve the default lodge's guest list/roster or accept its hut-leader PINs on the wrong property. | Audit log for arrival/departure and roster updates; logger for failures. | Shared lodge devices and PIN sessions have elevated operational risk. #618 should review kiosk session lifetime and device assumptions. |
+| `/api/lodge/access`, `/api/lodge/pin-login`, `/api/lodge/pin-session`, `/api/lodge/guests/[date]/**`, `/api/lodge/roster/[date]/**` | Lodge guard or PIN login flow. `pin-login` starts a hut-leader PIN session behind an authenticated lodge/admin path; `pin-session` is that session's LIFETIME (#3228) — `POST` slides its ten-minute idle window forward on human interaction only, `DELETE` is the kiosk's Lock control and clears the cookie unconditionally. | Lodge account, admin, member with kiosk access, hut leader PIN session. | Lodge guest list, arrival/departure, roster chores, PIN session, audit records. | None. | `checkLodgeAuth()` for most routes, active-account guard, `rateLimiters.lodgePinLogin` and `rateLimiters.lodgePinSession`, date scoping. Since #3228 a PIN session expires after ten minutes with nobody touching the kiosk, and only `pin-session` can extend it. The kiosk's lodge is resolved from its STAFF binding: exactly one grant binds, zero grants fall back to the default lodge, and a grant at **two or more lodges is ambiguous and denied** (`resolveKioskLodgeId` throws `AmbiguousKioskLodgeError`, which every kiosk data route maps to a clean `403` via `kioskLodgeAuthErrorResponse` rather than a 500; `pin-login` returns `403` directly) so a mis-selected double-grant cannot serve the default lodge's guest list/roster or accept its hut-leader PINs on the wrong property. | Audit log for arrival/departure and roster updates; logger for failures. | Shared lodge devices and PIN sessions have elevated operational risk. Session lifetime was reviewed and shortened in #3228 (see "Lodge Account Or Hut-Leader PIN Session"); the remaining device assumptions are physical. |
 | `/api/lodge-instructions` | Authenticated active member who is an admin or holds a current/upcoming hut-leader assignment (`canReadLodgeInstructions`). | Signed-in hut leader or admin. | Per-lodge operational documents (OPEN/CLOSE/DAY_TO_DAY), which may carry door codes and emergency access details. | None. | Active-session guard plus the reader gate. A requested `?lodgeId=` is constrained to the caller's own hut-leader assignment lodges (the assignment lodge set); an out-of-set lodge is `403`. Admins may request any lodge. Without this, the reader gate had no lodge dimension, so a lodge A hut leader could read lodge B's documents. | Logger on errors. | Reader-only surface; the admin editor lives under `/api/admin/lodge-instructions`. Assignment-scoped read keeps operational access details scoped to the lodge the leader actually runs. |
 | `/display`, `/api/display/state`, `/api/display/heartbeat` | Unauthenticated public lobby-TV surface. A paired device carries a long-lived, hashed display token in an httpOnly cookie; `checkDisplayAuth()` (`src/lib/lodge-display-auth.ts`) resolves `tokenHash` → device → lodge and nothing else — it never maps to a `Member` and shares no code path with `checkLodgeAuth`, so a display token cannot inherit a kiosk capability. `lobbyDisplay` module-gated at the proxy (404 when off). | Anonymous lobby TV / paired display device; a full-admin session may also preview through the state route. | Privacy-reduced `DisplayState` from `buildDisplayState()` (`src/lib/lodge-display-state.ts`): names reduced to the configured granularity, minors never individually named, no money or member-id fields; an adult member phone appears only under the two-sided opt-in gate (`canServeMemberPhoneOnLodgeSurface`, both flags default off). | None. | `rateLimiters.api` (100/min/IP) on state and heartbeat; `buildDisplayState` is the single privacy-enforcement point (templates render as pure functions of its payload and cannot reach past it); window clamped server-side (default 3, max 7 days); revoked or inactive-lodge tokens are rejected without stamping `lastSeenAt`; every payload path sets `Cache-Control: no-store` (#176) so the privacy-reduced feed — which can include guest names and opted-in phone numbers — is never held in a shared/browser cache; scoped CSP on `/display` — `img-src 'self' data:`, `frame-ancestors 'self'`, `X-Frame-Options: SAMEORIGIN` (`src/lib/csp.ts`). | Only the device `lastSeenAt` stamp on a genuine device poll; no per-request audit. | Unattended public screen in a physical lobby. The display token is deliberately the weakest-privileged credential in the system (ADR-001); exposure is bounded to one lodge's already-privacy-reduced wall feed. |
 | `/api/display/pair`, `/api/admin/display/devices/**` (including `[id]/pairing` bind and `[id]/revoke`) | Pairing `start`/`claim` are anonymous but bound to an HMAC-signed httpOnly pairing blob (`{code, exp}` signed with the auth secret); device create/list, code bind, and revoke require the shared `requireAdmin()` guard. | Anonymous display device (start/claim) and admin (create/bind/revoke). | `LodgeDisplayDevice` rows — name, lodge FK, `pairingCode`+expiry, and `tokenHash` (hash only; the raw token is returned once to the device and never re-read). | None. | `rateLimiters.displayPairing` (10/15min, auth-sensitive) on start and admin bind; `rateLimiters.displayClaim` (30/min) on the claim poll; a 6-character code from a 31-symbol unambiguous alphabet; the anonymous side persists nothing (start only signs a blob); claim must present the server-signed blob for that browser, so a shoulder-surfed code alone is useless; a matched claim issues the token, stores only its hash, and clears the pairing fields (single-use); revoke sets `revokedAt`, rejecting the token on its next request. | `LODGE_DISPLAY_DEVICE_REVOKED` audit on revoke; logger otherwise. | Shared-device physical control and the long-lived token are the standing operational trust assumptions (ADR-001); revocation is the containment lever. |
@@ -547,8 +547,73 @@ intended period, viewing dates outside scope, or modifying roster/arrival state
 without an accountable member.
 
 Current mitigations are `checkLodgeAuth()`, active-account checks, date scoping,
-PIN rate limits, and audit logs for operational changes. #618 should review PIN
-session lifetime, shared-device assumptions, and roster data exposure.
+PIN rate limits, and audit logs for operational changes.
+
+**Session lifetime, since #3228.** Two deadlines, and both are inside the
+HMAC-signed cookie payload so the browser can edit neither.
+
+- **An idle window of 10 minutes** (`exp`), measured from the last time a PERSON
+  touched the screen — not from sign-in, and not from the last request. Renewal
+  exists in exactly one place, `POST /api/lodge/pin-session`, called on a trusted
+  `pointerdown`, `keydown`, `touchstart` or `wheel` and never on either lodge
+  page's own data traffic; a source census fails any other module that writes,
+  names or slides this cookie. Renewal cannot resurrect an expired session,
+  cannot change whose session it is (the assignment, member, PIN version and
+  account binding are carried through verbatim and re-verified against live state
+  on the next request), and requires the cookie it renews — which is
+  `SameSite=Lax`, so a cross-site POST arrives without it.
+- **An absolute ceiling of 12 hours** (`iat`), which no amount of renewal moves,
+  because `iat` records the PIN entry and is carried through unchanged. Past it
+  both the reader and the renewal endpoint refuse, and the last cookie issued has
+  its own `Max-Age` clamped to it. **This is the twelve-hour deadline the idle
+  window replaced, KEPT as a bound rather than dropped** — see "What it does not
+  prevent" below for the case it is the only bound on. A genuine all-day shift
+  re-enters a six-digit PIN once.
+
+A cookie minted before #3228 carries no `iat` and is refused outright, so the
+deploy that lands the idle window also ends the long-lived sessions already out
+there rather than honouring the rest of their twelve hours.
+
+Renewal is rate-limited on the **kiosk account** and deliberately has no
+shared-address backstop: every tablet at a lodge is signed in as that one
+account, and an address-keyed budget on this route is reachable by anyone else on
+the lodge's connection — a staying guest included — which makes it a way to time
+a working hut leader out rather than a protection. The route reads nothing and
+reveals nothing, and refuses anything not already holding a valid signed session,
+so the account key is the whole of what that limiter was for.
+
+`DELETE /api/lodge/pin-session` is the kiosk's **Lock** control. **It clears the
+cookie in the browser that asked, and revokes nothing server-side** — there is no
+session store to revoke against. So Lock ends the session on that tablet and has
+no effect on a copy of the cookie taken beforehand; the 12-hour ceiling is what
+bounds that copy.
+
+Every response these routes give carries `Cache-Control: no-store`
+(`src/lib/lodge-cache-headers.ts`), on the same reasoning as the display feed
+(#176) plus one specific to Lock: its guarantee is "end the session, then re-ask
+the same URLs and get an ordinary lodge answer", and a cached privileged payload
+would defeat that silently.
+
+**What it does not prevent.** Three cases, all of them about a device somebody
+else is holding or standing at:
+
+- **A person at an unlocked tablet** can keep the session open by tapping the
+  screen every few minutes, or from the browser's console by calling the renewal
+  endpoint on a timer.
+- **A screen that touches itself.** Kiosk anti-sleep tooling that injects taps at
+  the OS level, condensation, and a failing digitiser all produce **trusted**
+  touch events, and there is no property of a `touchstart` that distinguishes one
+  from a finger. On such a device the idle window never closes on its own.
+- **A copied cookie.** The value sits in the same devtools panel as the sign-in
+  cookie, so lifting it is a minute's work at the tablet, and renewal asks the
+  holder for nothing but the cookie itself.
+
+No signal a browser sends about its own user can be authenticated against the
+person holding the device, so the controls are the Lock button, the ten-minute
+window, physical control of the room — and, for the second and third cases, the
+12-hour ceiling, which is the only thing that ends a session nobody chooses to
+end. What the idle window closes outright is the unattended case, which is the
+one this surface actually suffers from.
 
 ### Cron Caller
 
@@ -833,8 +898,12 @@ Verified controls already present and intentionally preserved:
 Residual risks to keep visible:
 
 - Lodge and admin shared-device sessions still depend on physical device
-  control, sign-out habits, and the existing 12-hour hut-leader PIN session
-  lifetime.
+  control and sign-out habits. **Reduced but not removed by #3228**, which put a
+  10-minute idle window and a Lock control in front of the hut-leader PIN
+  session's 12-hour ceiling. What stands: the physical device-control half; a
+  session held open by injected taps or by somebody at the screen, bounded only
+  by the 12-hour ceiling; and a cookie copied off the device, which Lock cannot
+  revoke because there is no server-side session to revoke.
 - Adult phone numbers remain available to operational lodge tiers because the
   current kiosk workflow uses them for same-day arrival/departure coordination.
 - The legacy dashboard export remains a bearer-token bridge for compatibility;

@@ -6,11 +6,14 @@ import { addDaysDateOnly, formatDateOnly } from "./date-only";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { getAuthSecret } from "./runtime-config";
+import {
+  HUT_LEADER_PIN_SESSION_IDLE_SECONDS,
+  HUT_LEADER_PIN_SESSION_MAX_TOTAL_SECONDS,
+} from "./lodge-pin-session-timing";
 
 export const HUT_LEADER_PIN_SESSION_COOKIE = "tac_hut_leader_pin_session";
 
 const HUT_LEADER_PIN_BCRYPT_ROUNDS = 12;
-const HUT_LEADER_PIN_SESSION_MAX_AGE_SECONDS = 12 * 60 * 60;
 const PIN_LOCKOUT_THRESHOLD = 10;
 const PIN_LOCKOUT_SECONDS = 15 * 60;
 const PIN_FAILURE_RESET_MS = 15 * 60 * 1000;
@@ -18,7 +21,23 @@ const PIN_FAILURE_RESET_MS = 15 * 60 * 1000;
 interface PinSessionPayload {
   assignmentId: string;
   memberId: string;
+  /** The idle deadline, in whole seconds since the epoch. Moves on renewal. */
   exp: number;
+  /**
+   * When the PIN was typed, in whole seconds since the epoch. **Never moves.**
+   *
+   * This is what makes {@link HUT_LEADER_PIN_SESSION_MAX_TOTAL_SECONDS} an
+   * absolute ceiling rather than a sliding one: renewal carries it through
+   * verbatim, so no number of renewals extends the session past twelve hours
+   * from the moment somebody actually authenticated.
+   *
+   * REQUIRED, not optional, and that is a deliberate one-way door. A cookie
+   * minted before #3228 carries no `iat` and a twelve-hour `exp`; refusing it
+   * outright means the deploy that lands the idle window also ends every
+   * long-lived session already out there, rather than honouring them for the
+   * rest of their twelve hours. A hut leader mid-shift re-enters their PIN once.
+   */
+  iat: number;
   pinVersion?: string;
   sessionUserBinding?: string;
 }
@@ -97,7 +116,18 @@ function decodePayload(rawValue: string): PinSessionPayload | null {
     if (
       typeof payload.assignmentId !== "string" ||
       typeof payload.memberId !== "string" ||
+      // `Number.isSafeInteger` as well as `typeof`, and the second half is the
+      // one that matters. Only the server holds the signing key and both mints
+      // floor a finite value, so nothing can reach here with a bad one today —
+      // but this is a security boundary, and `typeof` alone admits `NaN` and
+      // `Infinity`. `1e999` parses from JSON as `Infinity`, and
+      // `Infinity <= now` is false, so `typeof` on its own would wave through a
+      // deadline that can never pass. (The `typeof` line is still needed:
+      // `Number.isSafeInteger` returns a boolean and narrows nothing.)
       typeof payload.exp !== "number" ||
+      typeof payload.iat !== "number" ||
+      !Number.isSafeInteger(payload.exp) ||
+      !Number.isSafeInteger(payload.iat) ||
       (payload.pinVersion !== undefined && typeof payload.pinVersion !== "string") ||
       (payload.sessionUserBinding !== undefined &&
         typeof payload.sessionUserBinding !== "string")
@@ -105,14 +135,48 @@ function decodePayload(rawValue: string): PinSessionPayload | null {
       return null;
     }
 
-    if (payload.exp <= Math.floor(Date.now() / 1000)) {
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const { exp, iat } = payload;
+
+    if (exp <= nowSeconds) {
+      return null;
+    }
+
+    /*
+      THE ABSOLUTE CEILING, enforced here so BOTH readers get it (#3228).
+
+      This function is the one gate every use of the cookie passes — the tier
+      resolver and the renewal endpoint alike — so putting the ceiling here means
+      a session past twelve hours from its PIN entry cannot be read OR renewed,
+      rather than merely refusing to slide forward while the last-minted cookie
+      lives out its final idle window.
+
+      `iat` never moves (renewal carries it verbatim), so no amount of activity
+      buys more than the ceiling. The two bounds either side of it are defence in
+      depth, for a payload that is signed and still nonsense: an `iat` in the
+      future would push the ceiling out with it, and a deadline further out than
+      one idle window past the ceiling cannot have come from either mint. One
+      idle window is used as the future tolerance because it is the largest gap
+      either mint can put between "now" and the deadline it writes — big enough
+      to absorb a clock correction, small enough that it cannot hide a session.
+    */
+    if (
+      iat <= 0 ||
+      iat > nowSeconds + HUT_LEADER_PIN_SESSION_IDLE_SECONDS ||
+      nowSeconds >= iat + HUT_LEADER_PIN_SESSION_MAX_TOTAL_SECONDS ||
+      exp >
+        iat +
+          HUT_LEADER_PIN_SESSION_MAX_TOTAL_SECONDS +
+          HUT_LEADER_PIN_SESSION_IDLE_SECONDS
+    ) {
       return null;
     }
 
     return {
       assignmentId: payload.assignmentId,
       memberId: payload.memberId,
-      exp: payload.exp,
+      exp,
+      iat,
       pinVersion: payload.pinVersion,
       sessionUserBinding: payload.sessionUserBinding,
     };
@@ -258,29 +322,182 @@ export async function verifyHutLeaderPinForAssignment(
   return assignment;
 }
 
+/**
+ * A hut-leader PIN session cookie, ready to be written to a response.
+ *
+ * `expiresAt` is the moment the cookie stops being accepted, and it is also
+ * inside the SIGNED payload as `exp` — which is what makes the idle window
+ * server-authoritative (#3228). A browser that keeps or re-sends an old cookie
+ * value gains nothing: `decodePayload` verifies the signature and then refuses
+ * a payload whose own `exp` has passed, so the deadline cannot be edited,
+ * replayed past, or extended by anything the client says.
+ */
+export interface LodgePinSessionCookie {
+  value: string;
+  expiresAt: Date;
+  maxAge: number;
+}
+
+/**
+ * The one place the idle deadline is computed. Sign-in and renewal both come
+ * here, so a change to the window cannot land on one path and miss the other.
+ */
+function nextIdleDeadline(): Date {
+  return new Date(Date.now() + HUT_LEADER_PIN_SESSION_IDLE_SECONDS * 1000);
+}
+
 export function createLodgePinSessionWithVersion(
   assignmentId: string,
   memberId: string,
   pinHash?: string | null,
   sessionUserId?: string | null
-) {
-  const expiresAt = new Date(
-    Date.now() + HUT_LEADER_PIN_SESSION_MAX_AGE_SECONDS * 1000
-  );
+): LodgePinSessionCookie {
+  const expiresAt = nextIdleDeadline();
 
   return {
     value: encodePayload({
       assignmentId,
       memberId,
       exp: Math.floor(expiresAt.getTime() / 1000),
+      // The moment the PIN was typed, stamped once and carried through every
+      // renewal, which is what bounds the session absolutely (#3228).
+      iat: Math.floor(Date.now() / 1000),
       pinVersion: pinHash ? derivePinSessionVersion(pinHash) : undefined,
       sessionUserBinding: sessionUserId
         ? deriveSessionUserBinding(sessionUserId)
         : undefined,
     }),
     expiresAt,
-    maxAge: HUT_LEADER_PIN_SESSION_MAX_AGE_SECONDS,
+    maxAge: HUT_LEADER_PIN_SESSION_IDLE_SECONDS,
   };
+}
+
+/**
+ * Slide the idle window forward on a session that is ALREADY valid (#3228).
+ *
+ * Called from one route and one route only — `POST /api/lodge/pin-session`,
+ * which the kiosk calls when a person touches the screen. Nothing else in the
+ * tree re-issues this cookie, and that is the whole of the "background
+ * refreshes do not extend the session" guarantee: the routes a wall tablet
+ * polls have no code path that reaches here, so an unattended device cannot
+ * keep itself privileged by talking to the server.
+ *
+ * It **cannot resurrect an expired session**. `decodePayload` refuses a payload
+ * whose `exp` has passed, so once the window has closed the only way back is
+ * the PIN. It also cannot change who the session is: `assignmentId`,
+ * `memberId`, `pinVersion` and `sessionUserBinding` are carried through
+ * verbatim from the payload the server itself signed, so a renewal re-states
+ * exactly the same authority with a later deadline and needs no database read
+ * to do it. Every one of those fields is re-verified against live state on the
+ * next request by {@link getActiveLodgePinSessionForDate}, so a PIN reset, a
+ * deactivated member or an assignment that has ended still ends the session
+ * whether or not it was renewed a second earlier.
+ *
+ * It also **cannot outlast the absolute ceiling**
+ * ({@link HUT_LEADER_PIN_SESSION_MAX_TOTAL_SECONDS}). `iat` is carried through
+ * unchanged, `decodePayload` refuses a payload past `iat` plus the ceiling, and
+ * the deadline written here is clamped to it — so the cookie's own `Max-Age`
+ * stops lying about a session the server will not accept, and a renewal loop
+ * cannot turn a copied cookie into an indefinite credential.
+ */
+export function renewLodgePinSession(
+  rawCookieValue: string | null
+): LodgePinSessionCookie | null {
+  if (!rawCookieValue) {
+    return null;
+  }
+
+  const payload = decodePayload(rawCookieValue);
+  if (!payload) {
+    return null;
+  }
+
+  const now = Date.now();
+  const ceiling = new Date(
+    (payload.iat + HUT_LEADER_PIN_SESSION_MAX_TOTAL_SECONDS) * 1000
+  );
+  const idleDeadline = nextIdleDeadline();
+  const expiresAt = idleDeadline < ceiling ? idleDeadline : ceiling;
+  // `decodePayload` already refused everything at or past the ceiling, so this
+  // is strictly positive.
+  const maxAge = Math.ceil((expiresAt.getTime() - now) / 1000);
+
+  return {
+    value: encodePayload({
+      ...payload,
+      exp: Math.floor(expiresAt.getTime() / 1000),
+    }),
+    expiresAt,
+    maxAge,
+  };
+}
+
+/** {@link renewLodgePinSession}, reading the cookie off an incoming request. */
+export function renewLodgePinSessionForRequest(
+  request: Request
+): LodgePinSessionCookie | null {
+  return renewLodgePinSession(getCookieValueFromRequest(request));
+}
+
+/**
+ * The cookie attributes, in one place, for every route that writes this cookie.
+ *
+ * A structural `cookies` parameter rather than a `NextResponse`: this module is
+ * reachable from `src/instrumentation.node.ts` (see
+ * {@link hasAnyActiveLodgePinSession}), so it stays free of `next/server`.
+ */
+interface LodgePinSessionCookieWriter {
+  set(options: {
+    name: string;
+    value: string;
+    httpOnly: boolean;
+    sameSite: "lax";
+    secure: boolean;
+    expires: Date;
+    maxAge: number;
+    path: string;
+  }): unknown;
+}
+
+function lodgePinSessionCookieAttributes() {
+  return {
+    name: HUT_LEADER_PIN_SESSION_COOKIE,
+    httpOnly: true,
+    sameSite: "lax" as const,
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+  };
+}
+
+/** Write an issued or renewed PIN session to a response. */
+export function setLodgePinSessionCookie(
+  cookies: LodgePinSessionCookieWriter,
+  session: LodgePinSessionCookie
+): void {
+  cookies.set({
+    ...lodgePinSessionCookieAttributes(),
+    value: session.value,
+    expires: session.expiresAt,
+    maxAge: session.maxAge,
+  });
+}
+
+/**
+ * End the PIN session now — the kiosk's **Lock** control (#3228).
+ *
+ * Deliberately the same name, path and attributes as the setter above, because
+ * a clearing cookie that differs in any of them leaves the real one in place
+ * and a lock that silently does nothing is worse than no lock at all.
+ */
+export function clearLodgePinSessionCookie(
+  cookies: LodgePinSessionCookieWriter
+): void {
+  cookies.set({
+    ...lodgePinSessionCookieAttributes(),
+    value: "",
+    expires: new Date(0),
+    maxAge: 0,
+  });
 }
 
 // test seam

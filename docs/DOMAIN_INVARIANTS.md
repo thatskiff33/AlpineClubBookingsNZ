@@ -589,7 +589,8 @@ Prefix `INV-PRIV`.
 | `INV-PRIV-012` | Audit category follows the affected domain; member visibility declared separately; rows already written are `INV-OPS-012` |
 | `INV-PRIV-013` | `admin` writers move only to close a split; fifteen keeps, `lockers` settled (#2777) |
 | `INV-PRIV-014` | Diagnostics page filters and typed search reach the provider, ungated by either tick |
-| `INV-PRIV-015` | Kiosk Group Trip disclosure: ordinary tier sees a per-response linkage ordinal only; organiser and cover source are two separate capabilities; no tier gets `joinCode` |
+| `INV-PRIV-015` | A hut leader's PIN session is bounded by ten minutes of human inactivity, with a twelve-hour ceiling and a Lock control |
+| `INV-PRIV-016` | Kiosk Group Trip disclosure: ordinary tier sees a per-response linkage ordinal only; organiser and cover source are two separate capabilities; no tier gets `joinCode` |
 
 ## Membership Lifecycle
 

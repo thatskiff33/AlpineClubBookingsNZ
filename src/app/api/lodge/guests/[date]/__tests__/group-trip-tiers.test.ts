@@ -1,6 +1,6 @@
 // #3040 (epic #2943) — the kiosk guest-list ROUTE, end to end, once per tier.
 //
-// ENFORCES INV-PRIV-015 (docs/invariants/analytics-and-privacy.md).
+// ENFORCES INV-PRIV-016 (docs/invariants/analytics-and-privacy.md).
 //
 // The unit suite (`src/lib/__tests__/kiosk-group-trip-privacy.test.ts`) proves
 // the tier split in the module that owns it. This suite proves the ROUTE is
@@ -158,7 +158,7 @@ beforeEach(() => {
   mockPrisma.groupBooking.findMany.mockImplementation(
     async (args: { select: Record<string, unknown> }) => {
       if (JSON.stringify(args.select).includes("joinCode")) {
-        throw new Error("INV-PRIV-015: the kiosk route selected joinCode");
+        throw new Error("INV-PRIV-016: the kiosk route selected joinCode");
       }
       return [
         {
@@ -205,7 +205,7 @@ describe("#3040 GET /api/lodge/guests/[date] — Group Trip disclosure by tier",
     ]) {
       expect(
         payload,
-        `INV-PRIV-015 (docs/invariants/analytics-and-privacy.md): the ordinary ` +
+        `INV-PRIV-016 (docs/invariants/analytics-and-privacy.md): the ordinary ` +
           `kiosk tier's JSON body contains "${forbidden}"`,
       ).not.toContain(forbidden);
     }
@@ -251,7 +251,7 @@ describe("#3040 GET /api/lodge/guests/[date] — Group Trip disclosure by tier",
     expect(payload).not.toContain(JOIN_CODE);
     expect(
       payload,
-      "INV-PRIV-015: even the privileged tier gets the cover SOURCE CATEGORY, " +
+      "INV-PRIV-016: even the privileged tier gets the cover SOURCE CATEGORY, " +
         "never the covering member's identity",
     ).not.toContain("adult-secret");
   });
@@ -297,7 +297,7 @@ describe("#3040 GET /api/lodge/guests/[date] — Group Trip disclosure by tier",
     ).toEqual({ status: "STALE", nights: [], scopes: [] });
     expect(
       JSON.stringify(body),
-      "INV-PRIV-015: a withheld cover claim carries no scope either",
+      "INV-PRIV-016: a withheld cover claim carries no scope either",
     ).not.toContain("SAME_GROUP_TRIP");
   });
 
@@ -336,7 +336,7 @@ describe("#3040 GET /api/lodge/guests/[date] — Group Trip disclosure by tier",
     expect(body.bookings[2]).not.toHaveProperty("groupTripOrganiser");
     expect(
       body.bookings[2],
-      "INV-PRIV-015: the two privileged lines belong to the Group Trip surface " +
+      "INV-PRIV-016: the two privileged lines belong to the Group Trip surface " +
         "#3040 opened, so a card in no group gets neither",
     ).not.toHaveProperty("adultCoverSource");
   });
@@ -355,7 +355,7 @@ describe("#3040 GET /api/lodge/guests/[date] — Group Trip disclosure by tier",
     const body = await callRoute();
     expect(
       body.bookings.map((entry) => entry.groupTrip),
-      "INV-PRIV-015 (docs/invariants/analytics-and-privacy.md): owner decision " +
+      "INV-PRIV-016 (docs/invariants/analytics-and-privacy.md): owner decision " +
         "D1 on #3040 — the linkage label follows group membership, not the " +
         "club's shared-cover option",
     ).toEqual([{ label: 1 }, { label: 1 }]);
