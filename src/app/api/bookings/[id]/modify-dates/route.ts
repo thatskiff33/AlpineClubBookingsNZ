@@ -10,13 +10,17 @@ import {
   buildSameOwnerCoverageRefusalBody,
   hostingCoverageOverrideSchema,
 } from "@/lib/adult-member-hosting-same-owner";
+import {
+  SameOwnerCoverageLinkedMoveRequiredError,
+  buildSameOwnerCoverageLinkedMoveBody,
+  hostingCoverageLinkedMoveSchema,
+} from "@/lib/adult-member-hosting-linked-move";
+import { modifyBookingDatesWithLinkedMoveSupport } from "@/lib/booking-linked-date-move-service";
 import { ApiError } from "@/lib/api-error";
 import { MinimumStayPolicyViolationError } from "@/lib/booking-policy-exceptions";
 import { auth } from "@/lib/auth";
-import {
-  adminShiftBookingDates,
-  modifyBookingDates,
-} from "@/lib/booking-date-modification-service";
+import { clubTime } from "@/lib/club-time/server";
+import { adminShiftBookingDates } from "@/lib/booking-date-modification-service";
 import { OverCapacityConfirmationRequiredError } from "@/lib/over-capacity-confirmation";
 import {
   BookingGuestValidationError,
@@ -56,6 +60,17 @@ const modifyDatesSchema = z
     // first submission never carries it — the officer is asked only when the change
     // would actually strand another booking on the account.
     hostingCoverageOverride: hostingCoverageOverrideSchema.optional(),
+    // #3232: the MEMBER's answer to the linked-move offer. Absent on a first
+    // submission, which is the normal case — the question is only asked when the
+    // move would actually strand another booking on their own account.
+    //
+    // DELIBERATELY NOT one of the admin-gated flags below. Every other optional
+    // field on this schema raises the caller to the booking-management role and
+    // 403s a member who sends it, because every other one is an officer's
+    // authority over somebody else's booking. This is the owner deciding about
+    // their own two bookings, so gating it on ADMIN would 403 the only person
+    // entitled to answer it.
+    hostingCoverageLinkedMove: hostingCoverageLinkedMoveSchema.optional(),
   })
   .refine((d) => d.checkIn || d.checkOut, {
     message: "At least one of checkIn or checkOut is required",
@@ -161,6 +176,16 @@ export async function PUT(
     );
   }
 
+  // #3123 / #3232 — the CLUB's day, from its persisted `ClubTimeSettings.timeZone`
+  // (`INV-CONFIG-002`), resolved HERE because this is the last position on this
+  // path that is outside every transaction on every route in. It reached this route
+  // with the linked move (#3232): accepting the offer moves two bookings in ONE
+  // transaction through the transaction-AWARE batch service, which cannot resolve a
+  // day for itself without reading the club's zone under the global money key and
+  // the lodge capacity key — `INV-LOCK-004`, the same reason its `todayAtClub` is a
+  // required parameter on the `/modify` door.
+  const todayAtClub = (await clubTime()).today();
+
   try {
     const result =
       adminOverride && pricingMode === "shift"
@@ -178,14 +203,18 @@ export async function PUT(
             },
             ipAddress,
           })
-        : await modifyBookingDates({
+        : await modifyBookingDatesWithLinkedMoveSupport({
             bookingId,
             actor: { id: session.user.id, role: actorRole },
             ...(parsed.data.hostingCoverageOverride
               ? { hostingCoverageOverride: parsed.data.hostingCoverageOverride }
               : {}),
+            ...(parsed.data.hostingCoverageLinkedMove
+              ? { linkedMove: parsed.data.hostingCoverageLinkedMove }
+              : {}),
             input: parsed.data,
             ipAddress,
+            todayAtClub,
           });
 
     return NextResponse.json(result);
@@ -289,6 +318,19 @@ export async function PUT(
     // as its neighbour: a date change that would leave another booking on the
     // member's own account without adult-member cover is refused, and the body is
     // what names the affected booking, its lodge and the uncovered nights.
+    // #3232 D1, ABOVE its bare-refusal sibling and for the same positional reason
+    // every branch on this handler is ordered: both extend ApiError. Moving this
+    // booking would strand another of the member's own bookings that they cannot
+    // move themselves — the same rule refuses THAT edit from the other end — so
+    // they are OFFERED the linked move rather than refused: both together on one
+    // combined figure, or this one alone with the other left uncovered and a
+    // Booking Officer told. The bare refusal below is still right for a stranding
+    // the member CAN fix on the affected booking.
+    if (err instanceof SameOwnerCoverageLinkedMoveRequiredError) {
+      return NextResponse.json(buildSameOwnerCoverageLinkedMoveBody(err), {
+        status: err.status,
+      });
+    }
     if (err instanceof SameOwnerCoverageWouldBreakError) {
       return NextResponse.json(buildSameOwnerCoverageRefusalBody(err), {
         status: err.status,

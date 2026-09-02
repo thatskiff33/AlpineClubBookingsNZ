@@ -195,6 +195,28 @@ export type BatchModificationResponse = {
   // can confirm what was remembered without a second fetch.
   creditElectionCents: number | null;
   /**
+   * How much of a reduction the cancellation policy KEPT rather than returning
+   * (#3232).
+   *
+   * Already computed inside the transaction and already written to the
+   * modification row and the audit trail; it was simply not surfaced here, while
+   * the date sibling's `DateModificationResponse` has always surfaced it. That
+   * asymmetry meant the live member save path could return less money than the
+   * member expected without saying which rule kept the difference. The linked
+   * move made it load-bearing — `/modify-dates` answers with this contract on
+   * every arm, so an arm that dropped the field would have to invent a figure.
+   */
+  policyRetainedAmountCents: number;
+  /**
+   * True when an over-capacity target was explicitly confirmed by an admin.
+   *
+   * Always false on every member path, including the linked move: confirming an
+   * overbooking needs `adminOverride`, and the linked move answers a full lodge
+   * with its own `NO_CAPACITY` arm rather than by overbooking. Surfaced for the
+   * same reason as `policyRetainedAmountCents` above.
+   */
+  capacityOverridden: boolean;
+  /**
    * Present ONLY in tx-mode (#2525): the post-commit provider work (Stripe
    * refund, additional PaymentIntent, member/notification emails, Xero
    * settlement, superseded-intent drain, change-request linkage, audit) the
@@ -319,6 +341,7 @@ export async function modifyBookingBatch({
   todayAtClub,
   tx: callerTx,
   hostingReconcile,
+  waiveChangeFee,
 }: {
   bookingId: string;
   actor: { id: string; role: Role };
@@ -420,6 +443,32 @@ export async function modifyBookingBatch({
    * without one throws rather than silently skipping.
    */
   hostingReconcile?: "INLINE" | "CALLER";
+  /**
+   * Charge NO late-notice change fee for this move (#3232 D2).
+   *
+   * WHAT IT IS FOR, and it is one thing only. A club may decide that when its own
+   * adult-supervision rule is what COMPELLED a second booking to move, charging
+   * that second booking's change fee is not fair — `BookingDefaults.
+   * linkedMoveChargesBothChangeFees`, which defaults to charging. The waiver
+   * applies to the booking that was dragged along, never to the one the member
+   * chose to move.
+   *
+   * WHY A SERVICE ARGUMENT AND NOT A FIELD ON `BatchModifyInput`. `input` is the
+   * parsed REQUEST BODY on both member-facing save routes, so a fee waiver living
+   * there would be a fee waiver any authenticated member could ask for. This sits
+   * beside `tx` and `hostingReconcile` — arguments a route cannot populate from
+   * the body — and `adult-member-hosting-call-sites.test.ts` pins the single file
+   * allowed to pass it, exactly as it pins `hostingReconcile: "CALLER"`.
+   *
+   * IT ZEROES THE FEE, it does not hide it. The zero flows through the settlement
+   * options, the payment adjustment, the modification row, the audit trail and the
+   * Xero settlement leg, the same way a parked edit's zero does — so what the
+   * member is shown, what they are charged and what the club's books record are
+   * one number. That is the whole point: before this existed the setting changed
+   * the SENTENCE the member read and nothing else, so a club that had waived the
+   * second fee told the member it was waived and charged it anyway.
+   */
+  waiveChangeFee?: boolean;
 }): Promise<BatchModificationResponse> {
   if (hostingReconcile === "CALLER" && !callerTx) {
     throw new Error(
@@ -1068,7 +1117,10 @@ export async function modifyBookingBatch({
         : booking.finalPriceCents;
     const priceDiffCents = newFinalPriceCents - booking.finalPriceCents;
 
-    const changeFeeCents = parked
+    // #3232 D2: `waiveChangeFee` takes the same zero branch a parked edit takes,
+    // so the waived fee is genuinely absent from every downstream decision rather
+    // than subtracted back out somewhere later.
+    const changeFeeCents = parked || waiveChangeFee
       ? 0
       : await calculateModificationChangeFee({
       booking,
@@ -1715,6 +1767,8 @@ export async function modifyBookingBatch({
       promoChangeNotApplied: result.promoChangeNotApplied,
       choreWarnings: result.choreWarnings,
       creditElectionCents: result.creditElectionCents,
+      policyRetainedAmountCents: result.policyRetainedAmountCents,
+      capacityOverridden: result.capacityOverridden,
     };
   };
 
@@ -1744,6 +1798,8 @@ export async function modifyBookingBatch({
       promoChangeNotApplied: result.promoChangeNotApplied,
       choreWarnings: result.choreWarnings,
       creditElectionCents: result.creditElectionCents,
+      policyRetainedAmountCents: result.policyRetainedAmountCents,
+      capacityOverridden: result.capacityOverridden,
       deferredPostCommit: async () => {
         await runPostCommit();
       },

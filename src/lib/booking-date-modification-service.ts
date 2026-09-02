@@ -29,6 +29,7 @@ import {
 } from "@/lib/adult-member-hosting-review";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import type { HostingCoverageOverrideInput } from "@/lib/adult-member-hosting-same-owner";
+import type { HostingCoverageLinkedMoveInput } from "@/lib/adult-member-hosting-linked-move";
 import {
   createModificationAdditionalPaymentIntent,
   executeBookingModificationRefund,
@@ -213,6 +214,7 @@ export async function modifyBookingDates({
   bookingId,
   actor,
   hostingCoverageOverride,
+  hostingCoverageLinkedMove,
   input,
   ipAddress,
 }: {
@@ -224,6 +226,22 @@ export async function modifyBookingDates({
    * member cannot self-authorise past §6's block by inventing a reason.
    */
   hostingCoverageOverride?: HostingCoverageOverrideInput | null;
+  /**
+   * #3232: the MEMBER's answer to the linked-move offer, when they gave one.
+   *
+   * Only `LEAVE_UNCOVERED` is meaningful here — it turns the stranded refusal into
+   * an escalation, so the change proceeds, the member has already been warned in
+   * plain words and the officer queue gets an incident. `MOVE_BOTH` never reaches
+   * this service: accepting is a two-booking atomic move, and this service is not
+   * transaction-aware, so it belongs to `booking-linked-date-move-service.ts`.
+   *
+   * THIS SERVICE OWES THE FIELD BECAUSE IT OWES THE OFFER. It is the writer that
+   * holds `oldCheckIn`/`oldCheckOut`, so it is the writer whose widened dependent
+   * fan-out now NOTICES the booking a move leaves behind — and a route that can
+   * raise the offer but cannot accept the member's answer to it would refuse them
+   * twice with the same sentence.
+   */
+  hostingCoverageLinkedMove?: HostingCoverageLinkedMoveInput | null;
   input: ModifyBookingDatesInput;
   ipAddress: string;
 }): Promise<DateModificationResponse> {
@@ -1213,6 +1231,12 @@ export async function modifyBookingDates({
         actorRole: actor.role,
         actorMemberId: actor.id,
         ...(hostingCoverageOverride ? { override: hostingCoverageOverride } : {}),
+        // #3232: a member who was offered the linked move and chose to move only
+        // this booking is escalated rather than refused — the officer queue gets
+        // the incident and they were shown the consequence first.
+        ...(hostingCoverageLinkedMove
+          ? { linkedMove: hostingCoverageLinkedMove }
+          : {}),
       }),
     });
 

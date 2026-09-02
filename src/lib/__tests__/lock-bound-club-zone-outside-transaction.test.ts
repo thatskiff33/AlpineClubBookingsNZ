@@ -130,6 +130,12 @@ const RESOLVERS = {
     "src/app/api/bookings/route.ts",
     "src/app/api/bookings/quote/route.ts",
     "src/app/api/bookings/[id]/modify/route.ts",
+    // #3232: `modify-dates` joined its `/modify` sibling here when the linked move
+    // reached it. Accepting the offer moves TWO bookings in one transaction through
+    // the transaction-AWARE batch service, so this route now has to resolve the
+    // club's day before that transaction opens for exactly the reason the door
+    // above does.
+    "src/app/api/bookings/[id]/modify-dates/route.ts",
     "src/app/api/admin/booking-requests/[id]/link-conflicts/route.ts",
     "src/app/api/admin/booking-exception-requests/[id]/route.ts",
     // The AI-diagnostics booking pack. Its person-night scan and its edit-policy
@@ -225,6 +231,12 @@ const PURE_CALLEES = [
   // nothing" is the only rule that holds on every path in.
   "src/lib/booking-request-shared.ts",
   "src/lib/booking-batch-modification-service.ts",
+  // #3232's linked move. It opens `prisma.$transaction` itself and drives the
+  // transaction-aware batch service twice inside it, so a club-day read anywhere
+  // in this file would be a `clubTimeSettings` query on a second pooled connection
+  // while the global money key and the lodge capacity key are both held. It takes
+  // the day its callers already resolved outside their own transactions.
+  "src/lib/booking-linked-date-move-service.ts",
 ] as const;
 
 /**

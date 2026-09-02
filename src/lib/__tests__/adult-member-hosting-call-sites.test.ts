@@ -997,6 +997,67 @@ describe("the same-owner refusal and the escalation seam (#2576 §6, §8, §9)",
     expect(source).toContain("await entry.result.pendingHostingReconcile?.()");
   });
 
+  it("waives a change fee from exactly one caller, and only on the dragged booking", () => {
+    // #3232 D2. `waiveChangeFee` zeroes a member's late-notice change fee, so a
+    // route that could set it from the request body would be a fee waiver any
+    // member could ask for. It is a service argument rather than a field on
+    // `BatchModifyInput` for that reason, and this pins the one file allowed to
+    // pass it — the same shape as `hostingReconcile: "CALLER"` above.
+    expect(sourceFilesNaming("waiveChangeFee: true")).toEqual([
+      "src/lib/booking-linked-date-move-service.ts",
+    ]);
+    // It is NEVER accepted from the wire: no route schema may name it, and no
+    // request-body type may carry it.
+    expect(sourceFilesNaming("waiveChangeFee")).toEqual([
+      "src/lib/booking-batch-modification-service.ts",
+      "src/lib/booking-linked-date-move-service.ts",
+    ]);
+    // And the waiver really is the CLUB's answer rather than a constant: it is
+    // driven by the setting, whose absent-row default is to charge.
+    const source = readRepoCode(REFUSAL_UPGRADER);
+    expect(source).toContain(
+      "...(bothChangeFeesCharged ? {} : { waiveChangeFee: true })",
+    );
+    expect(source).toContain(
+      "defaults?.linkedMoveChargesBothChangeFees ?? true",
+    );
+  });
+
+  it("offers the linked move on BOTH date-capable member surfaces", () => {
+    // #3232 D1, applied consistently. Widening the dependent read
+    // (`INV-HOST-049`) makes a date move NOTICE the booking it leaves behind on
+    // every date writer at once — so a route that widened the read and did not
+    // gain the offer would refuse a move that used to succeed, and refuse it with
+    // the deadlock the owner rejected. Both doors offer all three arms or neither
+    // does, and this is the assertion that fails on a third date route that
+    // forgets.
+    expect(
+      sourceFilesNaming("buildSameOwnerCoverageLinkedMoveBody("),
+    ).toEqual([
+      "src/app/api/bookings/[id]/modify-dates/route.ts",
+      "src/app/api/bookings/[id]/modify/route.ts",
+      "src/lib/adult-member-hosting-linked-move.ts",
+    ]);
+    // The offer must be answerable, not merely raisable: a surface that shows the
+    // three arms and cannot accept the answer refuses the member twice with the
+    // same sentence.
+    expect(sourceFilesNaming("hostingCoverageLinkedMoveSchema")).toEqual([
+      "src/app/api/bookings/[id]/modify-dates/route.ts",
+      "src/app/api/bookings/[id]/modify/route.ts",
+      "src/lib/adult-member-hosting-linked-move.ts",
+    ]);
+    // And the answer must reach a writer that honours it — the shared arms, never
+    // a second copy of the policy per route (`INV-SSOT-001`).
+    for (const route of [
+      "src/app/api/bookings/[id]/modify-dates/route.ts",
+      "src/app/api/bookings/[id]/modify/route.ts",
+    ]) {
+      expect(readRepoCode(route), route).toMatch(
+        /modifyBooking(Dates)?WithLinkedMoveSupport\(/,
+      );
+    }
+  });
+
   it("answers with the structured body, above any generic ApiError branch", () => {
     // Same positional trap as its #2569 sibling: `SameOwnerCoverageWouldBreakError`
     // extends `ApiError`, so below a generic branch the member loses the booking
