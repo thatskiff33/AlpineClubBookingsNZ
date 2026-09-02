@@ -1096,6 +1096,27 @@ describe("the same-owner refusal and the escalation seam (#2576 §6, §8, §9)",
     ).toContain("parked || waiveChangeFee");
   });
 
+  it("states the dependent cohort clauses once, not at four sites (#3232)", () => {
+    // `INV-SSOT-001`. `deletedAt: null` plus the ACTIVE status set was inline at
+    // four builders in the module that exists to hold shared coverage clauses
+    // once — and had already factored out the lodge/self and night ones. Widening
+    // the cohort with four copies means the refusal path silently keeps the old
+    // one, and a booking the rule would judge is simply not in the set.
+    const envelope = readRepoCode(
+      "src/lib/adult-member-hosting-coverage-envelope.ts",
+    );
+    expect(envelope).toContain("function dependentCohortClauses(");
+    expect(
+      (envelope.match(/deletedAt: null/g) ?? []).length,
+      "the pair belongs to one named helper",
+    ).toBe(1);
+    expect(
+      // Four builders spread it; the fifth match is the declaration itself.
+      (envelope.match(/\.\.\.dependentCohortClauses\(\)/g) ?? []).length,
+      "every dependent builder must read it",
+    ).toBe(4);
+  });
+
   it("asks ONE predicate whether a stranding can refuse (#3232)", () => {
     // `INV-HOST-050`. There were three spellings of the same fact: the settle
     // path's early return on the literal `ADMIN_REVIEW_REQUIRED`, the read-only

@@ -178,6 +178,30 @@ describe("the linked-move offer's UI contract (#3232, INV-HOST-050)", () => {
     }
   });
 
+  it("reports the save in flight on the live region, and the panel says so", () => {
+    // `busy` was declared on this component and never passed by the panel, so
+    // `aria-busy` was permanently false while a two-booking move was in flight.
+    const { rerender } = render(
+      createElement(HostingCoverageLinkedMovePrompt, {
+        ...BASE,
+        prompt: promptData(),
+      }),
+    );
+    expect(screen.getByRole("alert")).toHaveAttribute("aria-busy", "false");
+    rerender(
+      createElement(HostingCoverageLinkedMovePrompt, {
+        ...BASE,
+        prompt: promptData(),
+        busy: true,
+      }),
+    );
+    expect(screen.getByRole("alert")).toHaveAttribute("aria-busy", "true");
+    // And the one caller really passes it.
+    expect(source("src/components/edit-booking-panel.tsx")).toContain(
+      "busy={saving}",
+    );
+  });
+
   it("keeps the assertive region permanently mounted, and the radios outside it", () => {
     // Same reason its override sibling gives: inserting an already-populated
     // role=alert is missed by some screen-reader and browser pairs. And choosing
