@@ -622,6 +622,21 @@ function eachNightBetween(checkIn: Date, checkOut: Date): Date[] {
   return nights;
 }
 
+/**
+ * #3232 (`INV-LOCK-004`): a caller that supplies the transaction owns the reads
+ * that must happen before it opens — the member-guest policy, the
+ * subscription-lockout mode and the Xero lock dates, the last of which is an
+ * outbound HTTPS request on a cold cache. The service refuses a caller
+ * transaction without them rather than doing that work under the caller's locks,
+ * so every tx-mode case here hands them in. `not-applicable` is what a club with
+ * the Xero module off, or no retroactive check-in, really resolves to.
+ */
+const TX_MODE_PRE_TRANSACTION = {
+  memberGuestPolicy: { enabled: false, requiresConsent: false },
+  subscriptionLockoutMode: "off",
+  xeroLockDates: { kind: "not-applicable" },
+} as never;
+
 describe("PUT /api/bookings/[id]/modify", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -771,6 +786,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
       } as never,
       ipAddress: "127.0.0.1",
       tx: tx as never,
+      preTransaction: TX_MODE_PRE_TRANSACTION,
     });
 
     // Ran inside the caller's transaction — the service opened NONE of its own.
@@ -840,6 +856,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
       },
       ipAddress: "127.0.0.1",
       tx: tx as never,
+      preTransaction: TX_MODE_PRE_TRANSACTION,
     });
 
     expect(result.priceDiffCents).toBe(3000);
@@ -3830,6 +3847,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
         input: input as never,
         ipAddress: "127.0.0.1",
         tx: tx as never,
+        preTransaction: TX_MODE_PRE_TRANSACTION,
       });
     }
 
@@ -3991,6 +4009,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
         input: input as never,
         ipAddress: "127.0.0.1",
         tx: tx as never,
+        preTransaction: TX_MODE_PRE_TRANSACTION,
       });
     }
 

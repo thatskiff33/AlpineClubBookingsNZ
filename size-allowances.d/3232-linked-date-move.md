@@ -54,7 +54,7 @@ reason: the same-owner dependent fan-out gains its plan/verify pair, the
   most likely to let them.
 
 file: src/lib/booking-batch-modification-service.ts
-lines: 2201
+lines: 2236
 reason: three changes at this one seam, and all three are about a caller that
   composes two booking writes into one transaction. The hosting reconciliation
   becomes deferrable, so the supervision check runs once over the state that will
@@ -69,7 +69,15 @@ reason: three changes at this one seam, and all three are about a caller that
   argument rather than a request-body field, with the reason stated where somebody
   might otherwise "tidy" it into the input type and hand every member a fee
   waiver. All three live at the seam they change; a reader without them in front
-  of them will simplify one of them away.
+  of them will simplify one of them away. The completion review added a fourth,
+  and it is the one that had to be here: everything this service must read BEFORE
+  its transaction is now one named function, and the service REFUSES a caller
+  transaction that did not call it (`INV-LOCK-004`). Code above
+  `withOptionalTransaction` reads as "before the transaction" and is false for a
+  caller that supplies one — so three reads, one of them a live HTTPS request to
+  Xero, were running under the global money key and the lodge capacity key. The
+  paragraph saying that is what stops the next reader concluding the position is
+  safe because it looks safe.
 
 file: src/app/api/bookings/[id]/modify/route.ts
 lines: 514

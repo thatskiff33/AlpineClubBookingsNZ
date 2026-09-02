@@ -948,7 +948,18 @@ describe("the same-owner refusal and the escalation seam (#2576 §6, §8, §9)",
    * is exempt from the structured-body assertion below because it returns no body
    * at all, and it carries its own assertion instead.
    */
-  const REFUSAL_UPGRADER = "src/lib/booking-linked-date-move-service.ts";
+  const REFUSAL_UPGRADER = "src/lib/booking-linked-date-move-arms.ts";
+  /**
+   * The atomic two-booking move itself, and the reads that precede its
+   * transaction. Separate files from the upgrader above because they are separate
+   * jobs: the arms decide WHICH refusal becomes an offer and what each answer
+   * means, the service is the one procedure that moves both bookings, and the
+   * preflight module holds the club's own answer plus the settings and provider
+   * reads that must happen before any transaction opens (`INV-LOCK-004`).
+   */
+  const LINKED_MOVE_SERVICE = "src/lib/booking-linked-date-move-service.ts";
+  const LINKED_MOVE_PREFLIGHT =
+    "src/lib/booking-linked-date-move-preflight.ts";
 
   it("catches the same-owner refusal on every member self-service surface", () => {
     // The five change classes §6 names that a member can reach: cancelling,
@@ -996,7 +1007,7 @@ describe("the same-owner refusal and the escalation seam (#2576 §6, §8, §9)",
     // dependents called the thunk optionally, so a wiring fault on a dependent
     // committed a booking whose supervision state was never judged, which is the
     // one thing deferral must never be able to do.
-    const source = readRepoCode(REFUSAL_UPGRADER);
+    const source = readRepoCode(LINKED_MOVE_SERVICE);
     expect(source).toContain("const reconcile = result.pendingHostingReconcile;");
     expect(source).toContain("await reconcile();");
     expect(source).toContain(
@@ -1033,7 +1044,7 @@ describe("the same-owner refusal and the escalation seam (#2576 §6, §8, §9)",
       'if (hostingReconcile !== "CALLER") await assertBookingEnvelopeInvariants(tx);',
     );
     // And the caller really performs it, once, itself.
-    expect(readRepoCode(REFUSAL_UPGRADER)).toContain(
+    expect(readRepoCode(LINKED_MOVE_SERVICE)).toContain(
       "await assertBookingEnvelopeInvariants(tx);",
     );
   });
@@ -1055,11 +1066,11 @@ describe("the same-owner refusal and the escalation seam (#2576 §6, §8, §9)",
     ]);
     // And the waiver really is the CLUB's answer rather than a constant: it is
     // driven by the setting, whose absent-row default is to charge.
-    const source = readRepoCode(REFUSAL_UPGRADER);
-    expect(source).toContain(
+    expect(readRepoCode(LINKED_MOVE_SERVICE)).toContain(
       "...(bothChangeFeesCharged ? {} : { waiveChangeFee: true })",
     );
-    expect(source).toContain(
+    // The club's own answer, read where every pre-transaction read lives.
+    expect(readRepoCode(LINKED_MOVE_PREFLIGHT)).toContain(
       "defaults?.linkedMoveChargesBothChangeFees ?? true",
     );
     // And the pricing engine really honours it, on the one line that decides the

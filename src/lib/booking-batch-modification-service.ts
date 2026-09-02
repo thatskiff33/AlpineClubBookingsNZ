@@ -90,6 +90,8 @@ import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settleme
 import {
   assertProposedCheckInClearsXeroLockDate,
   assertDateEditClearsXeroLockDateFromFacts,
+  checkInNeedingLockDateCheck,
+  readXeroLockGuardDateEditBooking,
   resolveXeroLockDateFacts,
   type XeroLockDateFacts,
 } from "@/lib/xero-period-lock-guard";
@@ -406,29 +408,47 @@ export async function prepareBookingBatchModification(options: {
  * The check-ins THIS edit's lock-date decision could turn on, for a caller that
  * owns its own transaction and can therefore name them (#3232).
  *
- * An edit with no date fields can never queue a check-in-dated invoice write, so
- * it answers with an empty list and the facts resolve to `"not-applicable"` —
- * which is exactly the early return the narrow guard has always taken, and the
- * reason an identity-only fix costs no settings read, no token read and no Xero
- * call. An edit that sends a check-in answers with it, so a future-dated move
- * costs nothing either. Only a check-OUT-only edit falls through to `"unknown"`,
- * because the check-in it would keep is not knowable from here.
+ * IT COSTS EXACTLY WHAT THE GUARD IT REPLACES COST, and it IS that guard: the
+ * same one light indexed read, the same non-owner skip, and the same single
+ * predicate (`checkInNeedingLockDateCheck`) deciding both whether the facts are
+ * worth resolving and, once they are, what the answer is. An identity-only fix,
+ * a settled payment, a booking with no issued Xero invoice or a future-dated move
+ * therefore reads no settings, no token store and no Xero — which is what #1729
+ * narrowed this guard to, and what its own suite pins.
+ *
+ * IT STAYS BEFORE THE TRANSACTION on this path, deliberately. Deciding it under
+ * the locks would be safe but wasteful: a refusal would have taken the global
+ * money key and the lodge capacity key to write nothing. A caller that supplies
+ * the transaction gets the decision inside it instead, because it has no position
+ * outside one — see `preTransaction`.
  */
-function candidateCheckInsForEdit(input: {
-  checkIn?: string;
-  checkOut?: string;
-}): Date[] | "unknown" {
-  if (!input.checkIn && !input.checkOut) return [];
-  if (input.checkIn) {
-    const requested = parseDateOnly(input.checkIn);
-    return Number.isNaN(requested.getTime()) ? [] : [requested];
-  }
-  // A check-OUT-only edit still re-dates the invoice at the unchanged check-in,
-  // and that date is not knowable here without a read this position should not
-  // take. `"unknown"` resolves the facts instead — one settings read, one token
-  // read and at most one TTL-cached organisation read — which is cheaper than
-  // reading the booking a second time and honest about what it does not know.
-  return "unknown";
+async function resolveOrdinaryXeroLockDateGuard(
+  bookingId: string,
+  input: { checkIn?: string; checkOut?: string },
+  actor: { id: string; role: Role },
+): Promise<{
+  candidateCheckIns: Date[];
+  decide: (facts: XeroLockDateFacts) => void;
+}> {
+  const audience = actor.role === "ADMIN" ? "admin" : "member";
+  const booking = await readXeroLockGuardDateEditBooking(
+    prisma,
+    bookingId,
+    input,
+    { audience, actorMemberId: actor.id },
+  );
+  // Nothing to decide: no date fields, a missing booking, or a member-audience
+  // actor on a booking that is not theirs. No settings read, no token read and no
+  // Xero call, exactly as before.
+  if (!booking) return { candidateCheckIns: [], decide: () => undefined };
+  const candidate = checkInNeedingLockDateCheck(booking, input);
+  return {
+    candidateCheckIns: candidate ? [candidate] : [],
+    decide: (facts) =>
+      assertDateEditClearsXeroLockDateFromFacts(booking, input, facts, {
+        audience,
+      }),
+  };
 }
 
 export async function modifyBookingBatch({
@@ -697,15 +717,25 @@ export async function modifyBookingBatch({
   // caller's transaction — `withOptionalTransaction` runs its callback on `tx`,
   // so a read above it is not outside anything. See `preTransaction`, which is
   // required in that mode for exactly this reason.
-  const preparation =
-    preTransaction ??
-    (await prepareBookingBatchModification({
+  let preparation: BatchModificationPreTransaction;
+  if (preTransaction) {
+    preparation = preTransaction;
+  } else {
+    const ordinaryGuard = await resolveOrdinaryXeroLockDateGuard(
+      bookingId,
+      input,
+      actor,
+    );
+    preparation = await prepareBookingBatchModification({
       audience: actor.role === "ADMIN" ? "admin" : "member",
-      candidateCheckIns: candidateCheckInsForEdit(input),
+      candidateCheckIns: ordinaryGuard.candidateCheckIns,
       ...(adminOverride
         ? { adminOverride: { bookingId, requestedCheckIn: input.checkIn } }
         : {}),
-    }));
+    });
+    // #1729's narrow guard, still before the transaction on this path.
+    ordinaryGuard.decide(preparation.xeroLockDates);
+  }
   const memberGuestPolicy = preparation.memberGuestPolicy;
   const subscriptionLockoutMode = preparation.subscriptionLockoutMode;
   // #3123 — the caller's club day, encoded at UTC midnight so it shares a frame
@@ -778,16 +808,21 @@ export async function modifyBookingBatch({
       role: actor.role,
       actorId: actor.id,
     });
-    // #3232: the ordinary lock-date decision (#1729's narrow guard), made HERE
-    // rather than before the transaction. NOTHING IS READ — the facts arrived as a
-    // value, resolved above and, on the caller-transaction path, before that
-    // caller opened its transaction — so this is arithmetic over the POST-LOCK
-    // row, which is better evidence than the pre-transaction read it replaces and
-    // one query cheaper. The one skip mirrors that pre-read's exactly: a
+    // #3232: the ordinary lock-date decision (#1729's narrow guard) for a CALLER
+    // that owns the transaction, and only for one. Such a caller has no position
+    // outside the transaction — it opened it before calling — so the decision has
+    // to be made in here, and it can be: NOTHING IS READ, because the facts
+    // arrived as a value resolved before that caller opened anything. It is
+    // arithmetic over the post-lock row, which is better evidence than a pre-read
+    // one. The standalone path keeps its pre-transaction decision, where a refusal
+    // takes no locks. The one skip mirrors that pre-read's exactly: a
     // MEMBER-audience actor on a booking that is not theirs is not told about the
     // club's Xero state (the eligibility check above has already refused them, so
     // this is defence in depth rather than the decision).
-    if (!(actor.role !== "ADMIN" && booking.memberId !== actor.id)) {
+    if (
+      preTransaction &&
+      !(actor.role !== "ADMIN" && booking.memberId !== actor.id)
+    ) {
       assertDateEditClearsXeroLockDateFromFacts(
         booking,
         { checkIn: input.checkIn, checkOut: input.checkOut },

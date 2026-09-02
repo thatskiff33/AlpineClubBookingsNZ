@@ -49,7 +49,7 @@ vi.mock("@/lib/admin-permissions", async (importOriginal) => ({
 // The two entry points the routes dispatch through. Mocked TOGETHER, from one
 // factory, because both routes import this module and a factory that named only
 // one would leave the other undefined at import.
-vi.mock("@/lib/booking-linked-date-move-service", () => ({
+vi.mock("@/lib/booking-linked-date-move-arms", () => ({
   modifyBookingWithLinkedMoveSupport: h.modifyBookingWithLinkedMoveSupport,
   modifyBookingDatesWithLinkedMoveSupport:
     h.modifyBookingDatesWithLinkedMoveSupport,

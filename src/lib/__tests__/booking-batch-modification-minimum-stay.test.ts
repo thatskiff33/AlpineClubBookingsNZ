@@ -56,10 +56,14 @@ vi.mock("@/lib/xero-period-lock-guard", () => ({
     h.assertProposedCheckInClearsXeroLockDate,
   assertProposedDateEditClearsXeroLockDate:
     h.assertProposedDateEditClearsXeroLockDate,
-  // #3232: the narrow guard is now two halves — the club/Xero facts, resolved
-  // before the transaction, and a synchronous decision over the booking row that
-  // the service makes under its own locks. A club with the Xero module off
-  // resolves to `not-applicable`, which is what these fixtures are.
+  // #3232: the narrow guard is now three named pieces rather than one call — the
+  // row it decides from, the single predicate that says whether a decision is owed
+  // at all, and the decision itself over club/Xero facts resolved before the
+  // transaction. These fixtures are a club with the Xero module off, which is what
+  // `not-applicable` means; answering `null` for the row is the same "nothing to
+  // decide" these suites always had.
+  readXeroLockGuardDateEditBooking: async () => null,
+  checkInNeedingLockDateCheck: () => null,
   resolveXeroLockDateFacts: async () => ({ kind: "not-applicable" as const }),
   assertDateEditClearsXeroLockDateFromFacts: () => undefined,
 }));

@@ -278,13 +278,24 @@ describe("no policy read inside a booking transaction", () => {
       // through withOptionalTransaction (caller tx or a fresh one), so that is
       // the boundary the policy read must precede.
       transactionMarker: "await withOptionalTransaction(",
+      // #3232: the read moved into this service's one named pre-transaction
+      // function, where it is awaited alongside the two other reads that must
+      // precede the transaction, so the `await` no longer sits against its name.
+      // The positional rule still holds and still means what it meant — that
+      // function is declared above the boundary — and it is now backed by a
+      // stronger one asserted below: a caller that supplies the transaction is
+      // REFUSED unless it did this work itself.
+      policyReadMarker: "loadMemberGuestAddPolicy(),",
     },
   ];
 
   for (const site of SITES) {
     it(`${site.name} reads the policy before it opens its transaction`, () => {
       const source = readRepoFile(site.file);
-      const policyRead = source.indexOf("await loadMemberGuestAddPolicy()");
+      const policyRead = source.indexOf(
+        (site as { policyReadMarker?: string }).policyReadMarker ??
+          "await loadMemberGuestAddPolicy()",
+      );
       const transaction = source.indexOf(site.transactionMarker);
 
       expect(policyRead).toBeGreaterThan(-1);
@@ -295,6 +306,22 @@ describe("no policy read inside a booking transaction", () => {
       expect(source).not.toContain("loadMemberGuestSettings");
     });
   }
+
+  it("the transaction-aware service refuses a caller transaction that did not read it", () => {
+    // #3232, `INV-LOCK-004`, and the rule the positional check above cannot
+    // express. "Before `withOptionalTransaction`" is not "before the transaction"
+    // for a caller that SUPPLIES one — that helper runs the body on the caller's
+    // `tx`, which already holds the global money key and the per-lodge capacity
+    // key. So the policy read ran under both locks on that path, and the position
+    // in the file said nothing about it. The service now refuses the combination
+    // rather than reading anything, and the answers arrive from whoever owns the
+    // commit.
+    const source = readRepoFile("src/lib/booking-batch-modification-service.ts");
+    expect(source).toContain("if (callerTx && !preTransaction) {");
+    expect(source).toContain(
+      "INV-LOCK-004: modifyBookingBatch in caller-transaction mode requires ",
+    );
+  });
 
   it("the pure planner is the only member-guest call the guests route makes inside its transaction", () => {
     const source = readRepoFile("src/app/api/bookings/[id]/guests/route.ts");
