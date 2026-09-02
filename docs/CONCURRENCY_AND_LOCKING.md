@@ -1053,6 +1053,48 @@ one request can disagree if an admin saves the panel between them, which on
 member's settlement delta) is a money error rather than a nuisance. See the
 `INV-LOCKOUT` rules in `docs/invariants/subscription-lockout-pricing.md`.
 
+#### Which client reads the Xero lock dates (#3232)
+
+Not a database client at all, which is why it is the sharpest case of this rule.
+The ordinary date-edit guard (`assertProposedDateEditClearsXeroLockDate`, #1729)
+consults the club's persisted timezone, its module flags, its Xero connection
+and — on a cold or expired cache — `getXeroLockDates()`, a live HTTPS request to
+Xero with a possible OAuth refresh. It has always been documented as a call that
+must sit outside any transaction, and it did: `modifyBookingBatch` calls it in
+its preamble, above `withOptionalTransaction`.
+
+**Above `withOptionalTransaction` is not outside the transaction for a caller
+that supplies one.** That helper runs its callback on the caller's `tx`, so on
+the caller-transaction path the global money key and the per-lodge capacity key
+are already held when control enters the service — and the preamble's three
+reads, the provider request among them, ran under both. #2525's approve-and-
+execute path had that exposure from the start; #3232's linked move made it a live
+member API on both date doors, twice per transaction, and this file's own rules
+forbid a provider call there outright.
+
+The remedy is the same "resolve first, pass a value" shape as the two sections
+below, with one addition the linked move forces. It composes TWO booking writes
+and discovers the second **under its locks**, so "call the guard for each booking
+beforehand" is not available to it. The guard is therefore split: the club and
+provider facts (`resolveXeroLockDateFacts`) resolve outside any transaction into
+ONE value that covers every booking, and the per-booking decision
+(`assertDateEditClearsXeroLockDateFromFacts`) is synchronous arithmetic over the
+booking row, which a caller may safely run under its locks — and does, against
+the post-lock row rather than a pre-read one. A caller that can enumerate its
+check-ins passes them and usually pays nothing, because only a retroactive
+check-in is guarded at all; a caller that cannot passes `"unknown"`.
+
+Alongside it, `modifyBookingBatch` now **refuses a caller-supplied transaction
+without a `preTransaction` value** carrying those facts, the member-guest add
+policy and the subscription-lockout mode. That refusal is the enforcement: there
+is no position inside a transaction-aware function that is outside the
+transaction on every path, so the only safe rule is that the answers arrive from
+whoever owns the commit. `lock-bound-club-zone-outside-transaction.test.ts` bans
+the resolvers themselves from every such module except its one named
+pre-transaction function — the frame that census was previously stopping one
+short of, which is how three indirect readers sat in a preamble under two locks
+with a green suite.
+
 #### Which client reads the club's timezone (#2870)
 
 The same rule again, and the one place it decides whether a member keeps a bed.

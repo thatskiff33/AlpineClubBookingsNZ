@@ -191,9 +191,19 @@ rules first written here. #2765 extended it with the measured-audience half.
   this in two ways. Three families take a trailing `db` that an in-transaction
   caller MUST supply: `validateMinimumStay` (`booking-policies.ts`),
   `loadAdultMemberHostingPolicy` (`adult-member-hosting-review.ts`), and the
-  three cancellation and non-member-hold readers in `cancellation.ts`. Two more
-  cannot take one - the subscription-lockout mode and the club timezone - and are
-  resolved before the transaction opens and passed in as a value instead. Which shape a
+  three cancellation and non-member-hold readers in `cancellation.ts`. Three more
+  cannot take one - the subscription-lockout mode, the club timezone, and (since
+  #3232) the club's Xero lock dates, which are not a database read at all but an
+  outbound HTTPS request with a possible OAuth refresh - and are
+  resolved before the transaction opens and passed in as a value instead. A
+  transaction-AWARE service is the trap here, and it caught this repository twice:
+  code above its `withOptionalTransaction` call READS as "before the transaction"
+  and is not, for a caller that supplies one. `modifyBookingBatch` therefore
+  REFUSES a caller transaction unless the caller hands it those three answers
+  (`prepareBookingBatchModification`), and the Xero lock-date guard is split into
+  facts resolved outside and a synchronous decision over the booking row - which
+  is also what lets one value cover a second booking the caller only discovers
+  under its locks. Which shape a
   reader gets is decided by whether it is keyed by state the transaction re-reads
   under the lock: if it is, the read must move with that state and the client is
   threaded; if it is not, hoisting it out is both cheaper and safe. The reasoning,
