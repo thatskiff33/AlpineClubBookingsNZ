@@ -997,6 +997,34 @@ describe("the same-owner refusal and the escalation seam (#2576 §6, §8, §9)",
     expect(source).toContain("await entry.result.pendingHostingReconcile?.()");
   });
 
+  it("leaves the deferred envelope constraints deferred for that same caller", () => {
+    // `INV-HOST-051`, AND THIS ONE WAS A MEASURED 500 rather than a theory.
+    // `SET CONSTRAINTS ... IMMEDIATE` applies for the REST of the transaction, so
+    // the modification service flushing the envelope triggers at the end of the
+    // FIRST booking's write turns them immediate for the SECOND booking's — and
+    // the second booking legitimately writes its guest stay ranges before its own
+    // `Booking` row, the exact ordering those triggers are deferrable to permit.
+    // The dependent's guest update was refused and the member got the
+    // internal-consistency 500.
+    //
+    // A SOURCE CONTRACT BECAUSE NOTHING ELSE CAN SEE IT. The linked move's own
+    // suite mocks the modification service, so it cannot observe that service's
+    // flush at all: reverting this guard leaves that suite green, which is exactly
+    // what happened when it was mutation-probed. Only the browser suite against a
+    // real PostgreSQL catches the behaviour, and a CI-only guard for a one-line
+    // regression on the money path is not enough.
+    const modifier = readRepoCode(
+      "src/lib/booking-batch-modification-service.ts",
+    );
+    expect(modifier).toContain(
+      'if (hostingReconcile !== "CALLER") await assertBookingEnvelopeInvariants(tx);',
+    );
+    // And the caller really performs it, once, itself.
+    expect(readRepoCode(REFUSAL_UPGRADER)).toContain(
+      "await assertBookingEnvelopeInvariants(tx);",
+    );
+  });
+
   it("waives a change fee from exactly one caller, and only on the dragged booking", () => {
     // #3232 D2. `waiveChangeFee` zeroes a member's late-notice change fee, so a
     // route that could set it from the request body would be a fee waiver any
