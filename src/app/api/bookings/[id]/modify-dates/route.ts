@@ -15,7 +15,7 @@ import {
   buildSameOwnerCoverageLinkedMoveBody,
   hostingCoverageLinkedMoveSchema,
 } from "@/lib/adult-member-hosting-linked-move";
-import { modifyBookingDatesWithLinkedMoveSupport } from "@/lib/booking-linked-date-move-service";
+import { modifyBookingDatesWithLinkedMoveSupport } from "@/lib/booking-linked-date-move-arms";
 import { ApiError } from "@/lib/api-error";
 import { MinimumStayPolicyViolationError } from "@/lib/booking-policy-exceptions";
 import { auth } from "@/lib/auth";

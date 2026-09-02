@@ -17,21 +17,14 @@ import {
   type LinkedMoveQuote,
 } from "@/lib/adult-member-hosting-linked-move";
 import {
-  SameOwnerCoverageWouldBreakError,
   strandedCoverageStateKey,
   type HostingCoverageOverrideInput,
 } from "@/lib/adult-member-hosting-same-owner";
 import {
   modifyBookingBatch,
-  prepareBookingBatchModification,
   type BatchModificationPreTransaction,
   type BatchModificationResponse,
 } from "@/lib/booking-batch-modification-service";
-import {
-  modifyBookingDates,
-  type DateModificationResponse,
-  type ModifyBookingDatesInput,
-} from "@/lib/booking-date-modification-service";
 import type { BatchModifyInput } from "@/lib/booking-modify-validation";
 import {
   InsufficientCapacityError,
@@ -39,11 +32,17 @@ import {
   WholeLodgeHoldBlockedError,
 } from "@/lib/over-capacity-confirmation";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
-import { ApiError } from "@/lib/api-error";
 import { assertBookingEnvelopeInvariants } from "@/lib/booking-envelope-invariants";
 import { BookingModificationSettlementMethodRequiredError } from "@/lib/booking-modify-settlement-required";
 import type { CalendarDate } from "@/lib/club-time";
 import { formatDateOnly } from "@/lib/date-only";
+import {
+  LINKED_MOVE_TRANSACTION_BUDGET,
+  LinkedDateMoveContendedError,
+  isTransactionContention,
+  loadLinkedMoveChargesBothChangeFees,
+  prepareLinkedMovePreTransaction,
+} from "@/lib/booking-linked-date-move-preflight";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
@@ -134,12 +133,8 @@ import { prisma } from "@/lib/prisma";
  * disclosing another account's booking.
  */
 
-/** How a caller says what the member answered, if anything. */
-export interface LinkedDateMoveAnswer {
-  linkedMove?: HostingCoverageLinkedMoveInput | null;
-}
 
-interface LinkedDateMoveArgs {
+export interface LinkedDateMoveArgs {
   bookingId: string;
   actor: { id: string; role: Role };
   input: BatchModifyInput;
@@ -172,150 +167,6 @@ class LinkedMoveProbeComplete extends Error {
   }
 }
 
-/**
- * Whether the club charges the change fee on both bookings (#3232 D2).
- *
- * Read from the club settings singleton, OUTSIDE any transaction, and passed in as
- * a value — the same rule every other policy read on these paths follows
- * (`INV-LOCK-004`): a settings read inside the transaction would take a second
- * pooled connection while the global money key and the lodge capacity key are both
- * held.
- *
- * Absent row means the default, which is `true`. A club that has never opened the
- * settings page has not chosen to waive anything.
- */
-export async function loadLinkedMoveChargesBothChangeFees(): Promise<boolean> {
-  const defaults = await prisma.bookingDefaults.findUnique({
-    where: { id: "default" },
-    select: { linkedMoveChargesBothChangeFees: true },
-  });
-  return defaults?.linkedMoveChargesBothChangeFees ?? true;
-}
-
-/**
- * The settings, policy and provider reads BOTH bookings need, done ONCE and
- * BEFORE the transaction opens (`INV-LOCK-004`, #3232).
- *
- * WHY IT CANNOT BE LEFT TO `modifyBookingBatch`. That service does this work
- * itself when it owns its transaction, and the code sits above its
- * `withOptionalTransaction` call — which reads as "before the transaction" and is
- * false here: this module hands it a transaction, so its preamble would run INSIDE
- * one holding `pg_advisory_xact_lock(1)` and the per-lodge capacity key. Twice per
- * linked move. Among those reads is `getXeroLockDates`, which on a cold or expired
- * cache is a live HTTPS request to Xero with a possible OAuth refresh, so the
- * club's entire money and lifecycle path would serialise behind an outbound
- * provider call — the one shape `docs/CONCURRENCY_AND_LOCKING.md` forbids outright,
- * and the shape this module's own header claimed it had avoided.
- *
- * `"unknown"` BECAUSE THE SECOND BOOKING IS ONLY DISCOVERED UNDER THE LOCKS. Who
- * the primary's move stranded is read after that move is written, so no position
- * out here can name the dependent bookings or their target nights. The lock-date
- * facts are therefore resolved unconditionally rather than short-circuited on "no
- * check-in is retroactive": one settings read, one token read and at most one
- * TTL-cached organisation read, on a path that is already pricing two bookings.
- * The alternative — enumerating candidate dependents out here with a second
- * uncommitted read — would buy a rare saving with a second definition of who the
- * dependents are (`INV-SSOT-001`).
- */
-async function prepareLinkedMovePreTransaction(
-  args: LinkedDateMoveArgs,
-): Promise<BatchModificationPreTransaction> {
-  return prepareBookingBatchModification({
-    candidateCheckIns: "unknown",
-    audience: args.actor.role === "ADMIN" ? "admin" : "member",
-  });
-}
-
-/**
- * A refusal that means "there are not beds for both", as opposed to any other
- * reason the second move could fail.
- *
- * ONLY THESE THREE, deliberately. A minimum-stay violation, a Xero lock date, a
- * member-night conflict or a membership-type policy block are not "cannot fit" —
- * they are reasons this particular linked move is wrong, and dressing them as a
- * capacity message would tell the member something false. They propagate, the
- * transaction rolls back, and the member sees the real refusal.
- *
- * `InsufficientCapacityError` IS THE ONE THAT ACTUALLY FIRES HERE, and its absence
- * made this whole arm dead code. `calculateModifiedPricing` branches on
- * `adminOverride` FIRST: the two over-capacity classes are raised only on the
- * override path, and the member path throws the plain refusal instead. A linked
- * move is reachable only for the booking's own member — an officer escalates
- * through `REQUIRE_OVERRIDE` and never gets here — so `adminOverride` is always
- * false, and keying on the classed pair alone meant a full lodge propagated a bare
- * 400 about beds on a booking the member had not asked to move, with no offer and
- * therefore no decline arm either. The two override classes are kept because an
- * admin-initiated caller supplying this service is a shape the type system allows
- * and the arm is right for it too.
- */
-/**
- * The interactive-transaction budget, WIDENED because this transaction is roughly
- * two of them (`INV-LOCK-001`, `INV-LOCK-002`).
- *
- * Prisma's defaults are `maxWait: 2s / timeout: 5s`, and the wait for
- * `pg_advisory_xact_lock(1)` counts against them. Inside this one transaction:
- * that blocking global wait, the per-lodge capacity key, TWO full
- * `modifyBookingBatch` bodies (each a re-read, an eligibility pass, a pricing run,
- * a capacity check, a guest-row rewrite and a settlement), the envelope flush and
- * three supervision reconciles. On the defaults an ordinary cancel or a bed
- * assignment legitimately holding `lock(1)` would abort it — and it is the same
- * numbers `assignBedRange`, the longest-lived holder of that key in the tree,
- * already runs on, so a linked move contending with one no longer loses by
- * construction. `deleted-booking-modification-payment.ts` states the same
- * reasoning for the same reason; that caller takes a TIGHTER budget only because a
- * Stripe delivery timeout is its ceiling, and a member's save has no such ceiling.
- *
- * NOTHING IS COMMITTED WHEN IT DOES EXPIRE, which is why the caller can answer
- * "try again in a moment" honestly — see `LinkedDateMoveContendedError`.
- */
-const LINKED_MOVE_TRANSACTION_BUDGET = {
-  maxWait: 10_000,
-  timeout: 30_000,
-} as const;
-
-/**
- * Refused because the transaction could not take its locks in time, or lost a
- * write conflict.
- *
- * P2028 covers an exhausted `maxWait`/`timeout` and P2034 a write
- * conflict/deadlock; both mean a counterpart writer legitimately held `lock(1)` or
- * the lodge key, NOTHING WAS COMMITTED, and the remedy is "again shortly" rather
- * than "differently" (`docs/CONCURRENCY_AND_LOCKING.md`). It matters more here
- * than on most paths: unmapped, contention arrives at the member as an opaque 500
- * INSTEAD OF THE OFFER, which puts them back in the state of being unable to move
- * either booking — the deadlock this whole feature exists to remove, reappearing
- * under load.
- *
- * An `ApiError` subclass so both save routes answer it through the generic branch
- * they already have, rather than each growing its own copy of the mapping.
- */
-export class LinkedDateMoveContendedError extends ApiError {
-  readonly code = "LINKED_MOVE_CONTENDED";
-  constructor() {
-    super(
-      "Something else is being changed on these bookings right now, so we could not " +
-        "work out the combined change in time. Nothing was changed — please try " +
-        "again in a moment.",
-      503,
-    );
-    this.name = "LinkedDateMoveContendedError";
-  }
-}
-
-/**
- * Prisma's transaction contention codes.
- *
- * The same pair, for the same reason, as `waitlist-confirm/route.ts`,
- * `admin/site-style/route.ts`, `deletion-request-decision.ts` and
- * `waitlist-return-contract.ts`. It is deliberately NOT hoisted into a shared
- * module here: two of the existing copies also carry `P2002`, which is a
- * unique-constraint retry rather than contention, so unifying them is a decision
- * about those paths and not a side effect of this one.
- */
-function isTransactionContention(error: unknown): boolean {
-  const code = (error as { code?: unknown } | null)?.code;
-  return code === "P2028" || code === "P2034";
-}
 
 function isCapacityRefusal(error: unknown): boolean {
   return (
@@ -767,140 +618,4 @@ export async function applyLinkedDateMove(
     );
   }
   return outcome.primary;
-}
-
-/**
- * The three arms of the offer, ONCE, over whichever single-booking edit the
- * surface performs (#3232 D1).
- *
- * WHY THE ARMS ARE HERE AND NOT IN THE ROUTES. Which refusals become an offer,
- * which stay a refusal, and what accepting means are a POLICY, not a rendering
- * concern. Two date-capable member surfaces exist (`/modify` and `/modify-dates`)
- * and they run different single-booking writers, so a route that assembled the
- * policy itself would be a second copy of it — and the arm that got copied wrong
- * would be the one that either deadlocks a member or silently strands a booking
- * (`INV-SSOT-001`). The surfaces therefore differ ONLY in the writer they hand in.
- *
- * WHAT IT DOES, in order:
- *
- *  - `MOVE_BOTH` answered → the atomic two-booking move, on one settlement.
- *  - otherwise → the surface's own ordinary single-booking edit. A
- *    `LEAVE_UNCOVERED` answer travels with it, which is what turns the stranded
- *    refusal into an escalation.
- *  - and if that edit is refused because it would strand a booking the member
- *    cannot reach, the refusal is priced and re-thrown as the OFFER.
- *
- * A refusal NOT marked `linkedMoveWouldAnswer` propagates untouched, because there
- * the member has real remedies on the affected booking and today's refusal is the
- * right answer. Deciding that here rather than at the throw site is deliberate:
- * the hosting engine knows which shape of stranding it found, and this module knows
- * what can be done about it.
- */
-async function withLinkedMoveArms<T>(
-  args: LinkedDateMoveArgs & LinkedDateMoveAnswer,
-  performSingleBookingEdit: (
-    linkedMove: HostingCoverageLinkedMoveInput | null,
-  ) => Promise<T>,
-): Promise<T | BatchModificationResponse> {
-  const { linkedMove, ...rest } = args;
-  if (linkedMove?.choice === "MOVE_BOTH") {
-    return applyLinkedDateMove({ ...rest, linkedMove });
-  }
-  try {
-    return await performSingleBookingEdit(linkedMove ?? null);
-  } catch (error) {
-    if (
-      error instanceof SameOwnerCoverageWouldBreakError &&
-      error.linkedMoveWouldAnswer
-    ) {
-      // Always throws — either the offer, or whatever real refusal the priced
-      // attempt hits on the way. A minimum-stay violation on the dependent's new
-      // nights must not be hidden behind an offer the member cannot take.
-      await offerLinkedDateMove(rest);
-    }
-    throw error;
-  }
-}
-
-/**
- * The batch save path's entry point (`PUT /api/bookings/[id]/modify`, #3232).
- */
-export async function modifyBookingWithLinkedMoveSupport(
-  args: LinkedDateMoveArgs & LinkedDateMoveAnswer,
-): Promise<BatchModificationResponse> {
-  return withLinkedMoveArms(args, (linkedMove) =>
-    modifyBookingBatch({
-      bookingId: args.bookingId,
-      actor: args.actor,
-      input: args.input,
-      ipAddress: args.ipAddress,
-      todayAtClub: args.todayAtClub,
-      ...(args.hostingCoverageOverride
-        ? { hostingCoverageOverride: args.hostingCoverageOverride }
-        : {}),
-      ...(linkedMove ? { hostingCoverageLinkedMove: linkedMove } : {}),
-    }),
-  );
-}
-
-/**
- * The date-only save path's entry point (`PUT /api/bookings/[id]/modify-dates`,
- * #3232 D1 applied consistently).
- *
- * WHY THIS ROUTE NEEDS IT AT ALL, which is not obvious. `modifyBookingDates` is
- * one of the three writers that now hands the seam the window the booking VACATED
- * (`INV-HOST-049`), so it is one of the writers whose dependent fan-out NOTICES the
- * booking a date move leaves behind. Noticing is the fix — but on its own it turns
- * a move that used to succeed silently into a refusal, and this is precisely the
- * refusal the owner rejected: the member cannot move the affected booking either,
- * because the same rule refuses THAT edit from the other end. Widening the read
- * here without offering the move would therefore have shipped the deadlock on a
- * live member API. Both date-capable surfaces offer all three arms or neither does.
- *
- * THE QUOTE INPUT IS DATES AND THE SETTLEMENT CHOICE, AND NOTHING ELSE. The
- * admin-only flags this route also accepts (`adminOverride`, `confirmOverCapacity`,
- * `notifyMember`) are deliberately not carried into the linked move: the offer is
- * raised only where the acting member IS the booking owner, an officer's change
- * escalates through `REQUIRE_OVERRIDE` instead and never reaches here, and an
- * over-capacity CONFIRMATION is the opposite of what the `NO_CAPACITY` arm is for.
- * Deriving the same input for the quote and for the apply is what keeps the figure
- * the member accepted the figure they are charged.
- *
- * THE MOVE-BOTH ARM ANSWERS WITH THE BATCH WRITER, and that is a real difference
- * worth stating rather than hiding: a two-booking move must happen inside ONE
- * transaction, and `modifyBookingDates` is not transaction-aware, so the atomic arm
- * necessarily prices through `modifyBookingBatch`. The property the member is owed
- * survives it, because the QUOTE they accepted came from that same engine on that
- * same pair of moves — they are never charged a figure they were not shown. Its
- * response satisfies this route's `DateModificationResponse` contract in full,
- * which is why `policyRetainedAmountCents` and `capacityOverridden` are now on
- * `BatchModificationResponse`: an arm that dropped them would have to invent money.
- */
-export async function modifyBookingDatesWithLinkedMoveSupport(
-  args: Omit<LinkedDateMoveArgs, "input"> &
-    LinkedDateMoveAnswer & { input: ModifyBookingDatesInput },
-): Promise<DateModificationResponse> {
-  const quoteInput: BatchModifyInput = {
-    ...(args.input.checkIn !== undefined ? { checkIn: args.input.checkIn } : {}),
-    ...(args.input.checkOut !== undefined
-      ? { checkOut: args.input.checkOut }
-      : {}),
-    ...(args.input.settlementMethod
-      ? { settlementMethod: args.input.settlementMethod }
-      : {}),
-  };
-  return withLinkedMoveArms(
-    { ...args, input: quoteInput },
-    (linkedMove) =>
-      modifyBookingDates({
-        bookingId: args.bookingId,
-        actor: args.actor,
-        input: args.input,
-        ipAddress: args.ipAddress,
-        ...(args.hostingCoverageOverride
-          ? { hostingCoverageOverride: args.hostingCoverageOverride }
-          : {}),
-        ...(linkedMove ? { hostingCoverageLinkedMove: linkedMove } : {}),
-      }),
-  );
 }

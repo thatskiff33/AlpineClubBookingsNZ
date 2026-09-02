@@ -30,7 +30,7 @@ import {
   buildSameOwnerCoverageLinkedMoveBody,
   hostingCoverageLinkedMoveSchema,
 } from "@/lib/adult-member-hosting-linked-move";
-import { modifyBookingWithLinkedMoveSupport } from "@/lib/booking-linked-date-move-service";
+import { modifyBookingWithLinkedMoveSupport } from "@/lib/booking-linked-date-move-arms";
 import { clubTime } from "@/lib/club-time/server";
 import { adminShiftBookingDates } from "@/lib/booking-date-modification-service";
 import { EditFinancialReviewPendingError } from "@/lib/edit-financial-review";

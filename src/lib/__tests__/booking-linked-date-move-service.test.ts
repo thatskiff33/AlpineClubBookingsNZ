@@ -142,11 +142,17 @@ import {
 } from "@/lib/over-capacity-confirmation";
 import {
   applyLinkedDateMove,
-  loadLinkedMoveChargesBothChangeFees,
-  modifyBookingDatesWithLinkedMoveSupport,
-  modifyBookingWithLinkedMoveSupport,
   offerLinkedDateMove,
 } from "@/lib/booking-linked-date-move-service";
+// #3232: the club's change-fee answer and the pre-transaction reads live in
+// `-preflight`, and the three arms over each surface's own writer in `-arms`, so
+// the service file is the one procedure it describes. This suite drives all
+// three, because what it tests is how they compose.
+import { loadLinkedMoveChargesBothChangeFees } from "@/lib/booking-linked-date-move-preflight";
+import {
+  modifyBookingDatesWithLinkedMoveSupport,
+  modifyBookingWithLinkedMoveSupport,
+} from "@/lib/booking-linked-date-move-arms";
 
 const LODGE = "lodge-alpine";
 const PRIMARY = "bk-primary-0001";
@@ -1481,24 +1487,31 @@ describe("nothing in this module can write outside the transaction (#3232)", () 
    * deliberately OUTSIDE the transaction (`INV-LOCK-004`).
    */
   it("touches the module client only to open the transaction and read the club setting", () => {
-    const source = stripComments(
-      readFileSync(
-        path.join(
-          path.resolve(__dirname, "../.."),
-          "lib/booking-linked-date-move-service.ts",
+    const moduleClientUses = (file: string) => {
+      const source = stripComments(
+        readFileSync(
+          path.join(path.resolve(__dirname, "../.."), `lib/${file}`),
+          "utf8",
         ),
-        "utf8",
-      ),
-    );
-    const uses = [...source.matchAll(/prisma[.][A-Za-z$]+/g)].map(
-      (match) => match[0],
-    );
+      );
+      return [...source.matchAll(/prisma[.][A-Za-z$]+/g)].map(
+        (match) => match[0],
+      );
+    };
+
+    // The transaction itself, and nothing else. Every read inside it goes through
+    // the transaction client; a read on the module client would take a second
+    // pooled connection while the global money key and the lodge capacity key are
+    // both held (`INV-LOCK-004`).
+    const service = moduleClientUses("booking-linked-date-move-service.ts");
     // Vacuity: a regex that stopped matching would report a clean file just as
     // loudly as a clean file does.
-    expect(uses.length).toBeGreaterThanOrEqual(2);
-    expect([...new Set(uses)].sort()).toEqual([
-      "prisma.$transaction",
-      "prisma.bookingDefaults",
-    ]);
+    expect(service.length).toBeGreaterThanOrEqual(1);
+    expect([...new Set(service)]).toEqual(["prisma.$transaction"]);
+
+    // And the club's own answer is read on the module client BEFORE that
+    // transaction opens, which is why it lives in the pre-transaction module.
+    const preflight = moduleClientUses("booking-linked-date-move-preflight.ts");
+    expect([...new Set(preflight)]).toEqual(["prisma.bookingDefaults"]);
   });
 });

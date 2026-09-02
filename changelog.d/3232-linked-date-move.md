@@ -47,3 +47,32 @@
   anything writes it, because the version of the site still running while a new
   one is being put in place cannot read a label it has never heard of (#3232,
   `INV-HOST-052`).
+- A full lodge no longer refuses the member outright. "There are not beds for
+  both" was decided by looking for two refusals that only ever reach an
+  administrator, so on a member's own move it was never recognised: they got a
+  bare message about beds on a booking they had not asked to move, with no offer
+  and no way to go ahead with just the one. The refusal a member really gets is
+  now the one the offer looks for (#3232, `INV-HOST-051`).
+- Only the member whose bookings they are can answer the offer. A booking officer
+  could send the member's answer back with the token from their own refusal and
+  have the change go through with no reason recorded, no officer named, and the
+  booking's history saying the member had been asked - about a booking that was
+  not theirs. An officer who means to leave a booking without supervision still
+  has to confirm it and say why (#3232, `INV-HOST-050`).
+- Where moving both bookings brings money back on the second one, you are asked
+  where it should go. Before, that case ended in "choose a refund or account
+  credit before saving" with nothing on the page to choose, and neither booking
+  could be moved (#3232, `INV-HOST-051`).
+- Shortening a stay is no longer offered a move that cannot help. Cutting a
+  booking short at the departure end leaves the other booking exactly where it
+  is, so shifting it changes nothing - the offer was being made and then failing.
+  That case now gets the ordinary refusal straight away, whose remedies really
+  are open (#3232, `INV-HOST-050`).
+- If something else is being changed on the same bookings at that moment, the
+  answer is "nothing was changed, try again in a moment" rather than an
+  unexplained failure - and the two-booking move is given the time it needs
+  before that can happen at all (#3232, `INV-LOCK-002`).
+- Both bookings' follow-up work - the card refund or charge, the accounting
+  entry, the email - is now kept separate, so a hiccup on one cannot silently
+  cancel the other's. It also no longer reports a change that really happened as
+  a failure (#3232, `INV-HOST-051`).
