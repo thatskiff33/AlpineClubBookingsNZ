@@ -1,3 +1,4 @@
+import { DEFAULT_BOOKING_DEFAULTS } from "@/config/club-settings-defaults";
 import { ApiError } from "@/lib/api-error";
 import {
   prepareBookingBatchModification,
@@ -35,7 +36,10 @@ export async function loadLinkedMoveChargesBothChangeFees(): Promise<boolean> {
     where: { id: "default" },
     select: { linkedMoveChargesBothChangeFees: true },
   });
-  return defaults?.linkedMoveChargesBothChangeFees ?? true;
+  return (
+    defaults?.linkedMoveChargesBothChangeFees ??
+    DEFAULT_BOOKING_DEFAULTS.linkedMoveChargesBothChangeFees
+  );
 }
 
 /**

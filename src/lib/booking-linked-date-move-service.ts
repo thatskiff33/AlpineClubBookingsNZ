@@ -451,6 +451,9 @@ async function runLinkedDateMove(
       combinedAmountDueCents: quote.combinedAmountDueCents,
       combinedRefundCents: quote.combinedRefundCents,
       combinedChangeFeeCents: quote.combinedChangeFeeCents,
+      // The figure the other three cannot see: on a booking that has taken no
+      // money yet all three are 0 whatever its price does.
+      combinedPriceDiffCents: quote.combinedPriceDiffCents,
     });
     // The DECLINE key, derived the way the hosting engine will re-derive it when it
     // honours the answer — from the stranded set alone, because declining carries
@@ -600,6 +603,14 @@ export async function applyLinkedDateMove(
       followUpErrors.push(error);
     }
   }
+  // AND A DRAIN PER MOVED BOOKING, which looks redundant beside the thunks above
+  // and is not. Every `deferredPostCommit` calls `settleHostingCoverageAfterCommit`
+  // as its first act, so for an ordinary run this is a second idempotent call that
+  // re-reads committed facts and writes nothing. It earns its place twice: the
+  // `deferred` list is FILTERED to the thunks that exist, so a moved booking whose
+  // thunk was absent is reached by nothing else; and a drain that throws inside a
+  // thunk takes that thunk's Stripe, Xero and email work down with it, so retrying
+  // it here is the one follow-up that gets a second chance.
   for (const bookingId of outcome.movedBookingIds) {
     try {
       await settleHostingCoverageAfterCommit({ bookingId });

@@ -776,6 +776,10 @@ describe("what the member is charged, once, for both (#3232 D2)", () => {
         combinedAmountDueCents: 3_500,
         combinedRefundCents: 200,
         combinedChangeFeeCents: 2_000,
+        // 2_500 + -1_200. Bound because the other three cannot see it: on a
+        // booking that has taken no money yet they are all 0 whatever its price
+        // does.
+        combinedPriceDiffCents: 1_300,
       }),
     );
     // Declining carries no price, so it is bound to the stranded set alone — the

@@ -13,18 +13,52 @@
  * Every field the offer needs is therefore required, and anything short of the
  * complete body reads as no offer at all, which falls back to the plain refusal
  * sentence the panel already renders.
+ *
+ * AND IT OWNS THE SENTENCES BOTH SIDES SAY. The server's 409 message and this
+ * component's radio labels were two independently-worded copies of the same
+ * refund/payable/waiver/settlement decision tree, rendered in the same box at the
+ * same moment, and they had already drifted — one waiver sentence ended "so that
+ * total carries one change fee only" and the other stopped at "by the club". They
+ * are composed here now, once (`INV-SSOT-001`).
  */
 
+import { formatCents } from "@/lib/utils";
+import { HOSTING_COVERAGE_STATE_KEY_PATTERN } from "@/lib/hosting-coverage-override-client";
+
+/**
+ * One booking the offer would move alongside the one the member asked about.
+ *
+ * THE ONE DEFINITION OF THIS WIRE ROW. The server used to restate the same ten
+ * fields as its own `LinkedMoveBooking`; it now aliases this type instead
+ * (`INV-SSOT-001`), because `import type` is erased at compile time so the server
+ * takes on no browser dependency by naming it, and two hand-kept copies of a wire
+ * shape are two things that can disagree about what the server sends.
+ */
 export interface HostingCoverageLinkedMoveBooking {
   bookingId: string;
+  /** The short handle the member sees, never the raw cuid alone. */
   reference: string;
   lodgeName: string;
+  /** The nights the rule finds uncovered on this booking if it stays put. */
   uncoveredNights: string[];
+  /** Where this booking is today (stored lodge nights, `YYYY-MM-DD`). */
   currentCheckIn: string;
   currentCheckOut: string;
+  /**
+   * Where the linked move would put it.
+   *
+   * NOT NECESSARILY "the same nights as the other booking", and the offer says the
+   * real dates rather than that phrase for exactly that reason. The two bookings
+   * can be different lengths, so the honest general rule is that this booking
+   * shifts by the same number of days as the one the member moved — which IS "the
+   * same nights" whenever the two windows matched, and is a statement the member
+   * can check against a calendar whenever they did not.
+   */
   proposedCheckIn: string;
   proposedCheckOut: string;
+  /** Integer cents. Positive = this booking costs more on the new nights. */
   priceDiffCents: number;
+  /** Integer cents. The late-notice change fee this booking's own move attracts. */
   changeFeeCents: number;
 }
 
@@ -44,9 +78,152 @@ export interface HostingCoverageLinkedMovePromptData {
   bothChangeFeesCharged: boolean;
 }
 
+/**
+ * The money the offer moves, as any surface rendering it needs to read it.
+ *
+ * `linkedCount` IS A FIELD RATHER THAN AN ASSUMPTION. Every sentence below used to
+ * be written for exactly one other booking — "both bookings", "the second
+ * booking", "the booking above" — while `SAME_OWNER_COVERAGE_DEPENDENT_LIMIT` is
+ * 25 and a member with one adult and two parties of guests is an ordinary family
+ * shape. A member in that shape was told "2 other bookings ... is relying" and,
+ * on the arm the design relies on for informed consent, that "the booking above"
+ * would be left uncovered while the list showed three.
+ */
+export interface LinkedMoveMoneyFacts {
+  combinedAmountDueCents: number;
+  combinedRefundCents: number;
+  combinedChangeFeeCents: number;
+  settlementMethodRequired: boolean;
+  bothChangeFeesCharged: boolean;
+  /** How many OTHER bookings the offer would move. At least one. */
+  linkedCount: number;
+}
+
+/** "both bookings" / "all 3 bookings" — the primary plus its dependents. */
+export function linkedMoveAllBookingsPhrase(linkedCount: number): string {
+  return linkedCount === 1 ? "both bookings" : `all ${linkedCount + 1} bookings`;
+}
+
+/** "the other booking" / "the other 2 bookings". */
+export function linkedMoveOtherBookingsPhrase(linkedCount: number): string {
+  return linkedCount === 1
+    ? "the other booking"
+    : `the other ${linkedCount} bookings`;
+}
+
+/**
+ * Which change fees the combined figure carries, and whose answer that is.
+ *
+ * D2 made the second fee a club setting because clubs disagree about whether it is
+ * fair when the club's own supervision rule is what compelled the move, so the
+ * sentence has to say which answer THIS club gave rather than leave the member to
+ * assume they paid one fee for moving two bookings.
+ */
+function linkedMoveChangeFeeSentence(facts: LinkedMoveMoneyFacts): string {
+  if (facts.bothChangeFeesCharged) {
+    return (
+      `That total includes the change fee on ` +
+      `${linkedMoveAllBookingsPhrase(facts.linkedCount)} ` +
+      `(${formatCents(facts.combinedChangeFeeCents)} in all).`
+    );
+  }
+  return (
+    `The change fee on ${linkedMoveOtherBookingsPhrase(facts.linkedCount)} ` +
+    `has been waived by the club, so that total carries one change fee only.`
+  );
+}
+
+/**
+ * What the linked move costs, in plain words — AND IN BOTH DIRECTIONS AT ONCE
+ * WHEN THAT IS WHAT IS HAPPENING (#3232).
+ *
+ * THE THREE-WAY EXCLUSIVE TERNARY THIS REPLACES WAS A WAY TO CHARGE A MEMBER
+ * MONEY NO SCREEN NAMED. Refund, else payable, else nothing is a sound reading of
+ * ONE booking, where exactly one of the two can be non-zero. Across two bookings
+ * it is not: `combineLinkedMoveQuote` sums each independently, so one booking
+ * netting up while the other nets down leaves BOTH totals positive and the refund
+ * branch won. Concretely — booking A shifts into peak (+$120 of price, +$50 of
+ * fee, so $170 due) and booking B's window shifts off an event surcharge (-$300,
+ * +$50, so $250 back) — the member read "$250.00 would come back to you", accepted,
+ * and was charged $170 nothing had shown them. `linkedMoveStateKey` covers both
+ * figures, so the server accepted the acceptance: the key proves they were shown
+ * A quote, not a complete one.
+ *
+ * AND THE TWO ARE STATED AS NOT NETTING OFF, which is the same fact
+ * `LinkedMoveQuote` gives as the reason there are two fields rather than one
+ * signed number. A booking whose price fell refunds through its own payment or
+ * credit note and a booking whose price rose takes a fresh charge on its own
+ * payment intent; Stripe and Internet Banking/Xero settlement stay distinct per
+ * booking. A member told only the net figure would be waiting for a smaller
+ * refund that never arrives instead of paying a charge that does.
+ */
+export function formatLinkedMoveMoneySentence(
+  facts: LinkedMoveMoneyFacts,
+): string {
+  const all = linkedMoveAllBookingsPhrase(facts.linkedCount);
+  const parts: string[] = [];
+  if (facts.combinedRefundCents > 0 && facts.combinedAmountDueCents > 0) {
+    parts.push(
+      `${formatCents(facts.combinedAmountDueCents)} would be payable and ` +
+        `${formatCents(facts.combinedRefundCents)} would come back to you, ` +
+        `across ${all}. Those two do not cancel each other out: each booking ` +
+        `settles on its own, so you would pay the one and be refunded the other.`,
+    );
+  } else if (facts.combinedRefundCents > 0) {
+    parts.push(
+      `${formatCents(facts.combinedRefundCents)} would come back to you across ` +
+        `${all}.`,
+    );
+  } else if (facts.combinedAmountDueCents > 0) {
+    parts.push(
+      `${formatCents(facts.combinedAmountDueCents)} would be payable across ` +
+        `${all}.`,
+    );
+  } else {
+    parts.push("There is nothing more to pay and nothing to come back.");
+  }
+  parts.push(linkedMoveChangeFeeSentence(facts));
+  if (facts.settlementMethodRequired) {
+    // Neutral about WHERE the control is, because this same sentence is read on
+    // the panel (where the Return-method radios sit above the offer) and in the
+    // bare 409 message a surface without them falls back to.
+    parts.push(
+      `You will be asked once whether that comes back to your card or as ` +
+        `account credit; the one choice covers ${all}.`,
+    );
+  }
+  return parts.join(" ");
+}
+
+/** The heading over the list of bookings the change would strand. */
+export function linkedMoveHeading(linkedCount: number): string {
+  return linkedCount === 1
+    ? "Another of your bookings needs an adult on the nights below"
+    : `${linkedCount} of your bookings need an adult on the nights below`;
+}
+
+/**
+ * What declining costs, beside the arm that costs it.
+ *
+ * THE COUNT MATTERS MOST HERE. This is the sentence the design relies on for
+ * informed consent, and "The booking above will be left without adult
+ * supervision" understates the consequence for every member with more than one
+ * dependent — the list shows three and the sentence admits to one.
+ */
+export function linkedMoveDeclineConsequence(linkedCount: number): string {
+  const which =
+    linkedCount === 1
+      ? "The booking listed above"
+      : `The ${linkedCount} bookings listed above`;
+  return (
+    `${which} will be left without adult supervision on those nights. A ` +
+    `Booking Officer will be told and will be in touch if anything needs to ` +
+    `change.`
+  );
+}
+
 export type HostingCoverageLinkedMoveChoice = "MOVE_BOTH" | "LEAVE_UNCOVERED";
 
-const STATE_KEY_PATTERN = /^v1:[0-9a-f]{64}$/;
 const LODGE_NIGHT_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 function isLodgeNight(value: unknown): value is string {
@@ -111,9 +288,9 @@ export function readHostingCoverageLinkedMovePrompt(
     typeof record.error !== "string" ||
     record.error.trim().length === 0 ||
     typeof record.acceptStateKey !== "string" ||
-    !STATE_KEY_PATTERN.test(record.acceptStateKey) ||
+    !HOSTING_COVERAGE_STATE_KEY_PATTERN.test(record.acceptStateKey) ||
     typeof record.declineStateKey !== "string" ||
-    !STATE_KEY_PATTERN.test(record.declineStateKey) ||
+    !HOSTING_COVERAGE_STATE_KEY_PATTERN.test(record.declineStateKey) ||
     typeof record.linkedMoveAvailable !== "boolean" ||
     typeof record.settlementMethodRequired !== "boolean" ||
     typeof record.bothChangeFeesCharged !== "boolean" ||

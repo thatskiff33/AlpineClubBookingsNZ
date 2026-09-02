@@ -1069,10 +1069,26 @@ describe("the same-owner refusal and the escalation seam (#2576 §6, §8, §9)",
     expect(readRepoCode(LINKED_MOVE_SERVICE)).toContain(
       "...(bothChangeFeesCharged ? {} : { waiveChangeFee: true })",
     );
-    // The club's own answer, read where every pre-transaction read lives.
-    expect(readRepoCode(LINKED_MOVE_PREFLIGHT)).toContain(
-      "defaults?.linkedMoveChargesBothChangeFees ?? true",
+    // The club's own answer, read where every pre-transaction read lives — and
+    // read from the ONE home for an absent-row default rather than a literal
+    // `?? true` (`INV-SSOT-001`). This assertion used to pin the literal, which
+    // meant the census itself held the structural fix shut: the same `true` was
+    // written at five sites, so a club that changed its mind could be told one
+    // answer by the admin page and charged under the other.
+    const preflight = readRepoCode(LINKED_MOVE_PREFLIGHT);
+    expect(preflight).toContain(
+      "DEFAULT_BOOKING_DEFAULTS.linkedMoveChargesBothChangeFees",
     );
+    for (const file of [
+      LINKED_MOVE_PREFLIGHT,
+      "src/app/api/admin/booking-policies/cancellation/route.ts",
+      "src/components/admin/booking-policies/default-cancellation-policy-section.tsx",
+    ]) {
+      expect(
+        readRepoCode(file),
+        `${file} must read the shared default, never restate \`?? true\``,
+      ).not.toContain("linkedMoveChargesBothChangeFees ?? true");
+    }
     // And the pricing engine really honours it, on the one line that decides the
     // fee. A lever the engine ignored is exactly the defect this replaced.
     expect(

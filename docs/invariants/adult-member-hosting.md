@@ -1556,8 +1556,8 @@ compliant indefinitely.
 
   **EVERY DATE-CAPABLE MEMBER SURFACE OFFERS ALL THREE ARMS, OR THE RULE IS A
   DEADLOCK ON WHICHEVER ONE DOES NOT.** Widening the read above (`INV-HOST-049`)
-  makes a date move notice the booking it leaves behind on all three date writers
-  at once, so a route that gained the widened read and not the offer starts
+  makes a date move notice the booking it leaves behind on every date writer at
+  once, so a route that gained the widened read and not the offer starts
   refusing moves that used to succeed — which is precisely the refusal this rule
   exists to remove. Both member doors, `PUT /api/bookings/[id]/modify` and
   `PUT /api/bookings/[id]/modify-dates`, therefore route all three arms through
@@ -1759,10 +1759,14 @@ compliant indefinitely.
     The two surfaces had drifted into two different wordings for the same stored
     value — the bookings queue said "qualification changed", the stuck-state
     dashboard said "system change" (`INV-SSOT-001`). `SYSTEM_CHANGE` now reads
-    "cover removed by a later change", which is true of everything that value
-    holds: an administrative cancellation, a lifecycle transition, a data
-    correction, and — until the runtime half lands — a declined linked move.
-    "Qualification changed" was true of none of those.
+    "no longer covered after a later change", which is true of everything that
+    value holds: an administrative cancellation, a lifecycle transition, a data
+    correction, a club that tightened its own policy or switched the rule on, an
+    officer who confirmed pending guests or force-confirmed and so ADDED people
+    the existing cover no longer stretches to, and — until the runtime half
+    lands — a declined linked move. "Qualification changed" was true of none of
+    those, and the interim phrase "cover removed by a later change" was untrue of
+    the last three: nothing was removed in any of them.
   - The member's decision is **recorded in words** in the incident's audit
     history. It was already computed and carried on the queue item and then
     dropped, because only an officer override stored a reason, so the history

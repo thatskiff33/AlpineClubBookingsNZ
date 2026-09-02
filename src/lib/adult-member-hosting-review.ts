@@ -93,6 +93,7 @@ import {
   evaluateAdultMemberHostingWithPolicy,
   hostingModeIsActive,
   resolveAdultMemberHostingPolicy,
+  hostingModeCanRefuseStranding,
   type EffectiveAdultMemberHostingMode,
   type HostingParticipant,
   type ResolvedAdultMemberHostingPolicy,
@@ -1543,7 +1544,7 @@ export interface HostingCoverageChangeContext {
  *    of their own bookings, which lodge and which nights, and pointed at a remedy
  *    they can actually reach: put cover back on that booking, cancel it, or ask a
  *    Booking Officer. NOT "move that booking first", which the same rule refuses
- *    from the other end — see `STRANDED_COVERAGE_OPENING` (#3232). A DATE move
+ *    from the other end — see `strandedCoverageOpening` (#3232). A DATE move
  *    that would strand one is offered the linked move instead of being refused at
  *    all (`INV-HOST-050`).
  *  - AN AUTHORISED OFFICER'S CHANGE IS ALLOWED AND ESCALATED (§7, §8). §8 lists
@@ -1592,13 +1593,18 @@ export function hostingCoverageActorOptions(actor: {
    * one fact only a date writer holds.
    *
    * An optional field with a convenient default would have made every existing
-   * caller compile unchanged and left the three date writers exactly as wrong as
-   * they were, silently — the failure this repository has already paid for once
+   * caller compile unchanged and left the date writers exactly as wrong as they
+   * were, silently — the failure this repository has already paid for once
    * (#3116). A required field makes the COMPILER enumerate every actor-driven
-   * site, so each one has to state whether its change moved the stay. Three say
-   * yes (`modifyBookingDates`, `adminShiftBookingDates`, `modifyBookingBatch`);
-   * the rest say `null`, which collapses the union to today's single-window test
-   * and is byte-identical to their present behaviour.
+   * site, so each one has to state whether its change moved the stay: the date
+   * writers pass a real window, everything else passes `null`, which collapses
+   * the union to today's single-window test and is byte-identical to their
+   * present behaviour. NO COUNT IS STATED HERE, deliberately. It was written out
+   * as "three" in this docblock, in `INV-HOST-049` and in the size-allowance
+   * note, and all three were wrong — there are four sites, and a number restated
+   * in prose is a number that goes stale the next time a writer is added. The
+   * compiler is the proof, and `adult-member-hosting-call-sites.test.ts` is the
+   * one place a figure lives.
    *
    * NOT "the dates the caller asked for" — the dates the booking REALLY HELD
    * before the write. A proposal is not evidence: an edit that was clamped,
@@ -2793,7 +2799,7 @@ async function settleSameOwnerDependentCoverage(
     throw new HostingCoverageParticipantRetryError();
   }
 
-  if (resolved.mode === "ADMIN_REVIEW_REQUIRED") {
+  if (!hostingModeCanRefuseStranding(resolved.mode)) {
     // No inspection: nothing here can refuse and nothing can open an incident, so
     // the only question is whether any other booking of this owner is in the set at
     // all. The verified plan already answers that, so the separate count this used
@@ -2857,6 +2863,35 @@ async function settleSameOwnerDependentCoverage(
   const { stranded, dependentsWithOpenIncidents } =
     await inspectSameOwnerDependents(booking, verifiedDependents, db);
 
+  /**
+   * Whether the LINKED MOVE could actually answer this stranding (#3232,
+   * `INV-HOST-050`), asked once and read by both refusal throws below.
+   *
+   * "Moved away" and "a shift can fix it" are not the same question, and a
+   * SHORTENING is where they come apart: cut 10-15 back to 10-12 and the arrival
+   * did not move, so a 13-14 dependent's target is where it already is. Marking
+   * the refusal answerable there means two full pricing runs inside a transaction
+   * that was always going to be discarded, and then this very refusal anyway —
+   * having promised the member an arm the offer could not deliver.
+   * `linkedMoveWouldRestoreCover` asks with the same shift the offer would use.
+   */
+  const linkedMoveCouldAnswer = () =>
+    stranded.some(
+      (row) =>
+        dependentNeedsOwnQueueItem(booking, {
+          checkIn: parseDateOnly(row.checkIn),
+          checkOut: parseDateOnly(row.checkOut),
+        }) &&
+        linkedMoveWouldRestoreCover(
+          {
+            vacatedRange: options.coverageChangeVacatedRange ?? null,
+            currentCheckIn: booking.checkIn,
+            currentCheckOut: booking.checkOut,
+          },
+          row,
+        ),
+    );
+
   // The confirmation is authority over the exact bookings and lodge-nights the
   // officer saw, not over whatever happens to be stranded by the time the retry
   // acquires the owner lock. A changed set is therefore another FIRST submission:
@@ -2901,8 +2936,13 @@ async function settleSameOwnerDependentCoverage(
     stranded.length > 0 &&
     context.strandedStateKey !== strandedCoverageStateKey(stranded, booking.id)
   ) {
+    // #3232: AND IT IS THE SAME QUESTION HERE. `true` unconditionally was wrong:
+    // a member re-submitting a stale decline whose NEW stranding is an overlapping
+    // guest-change one would be offered a move the rule says should stay a plain
+    // refusal, and the offer would then fail because a shift cannot fix it. One
+    // predicate, both throws.
     throw new SameOwnerCoverageWouldBreakError(stranded, {
-      linkedMoveWouldAnswer: true,
+      linkedMoveWouldAnswer: linkedMoveCouldAnswer(),
     });
   }
 
@@ -2929,30 +2969,10 @@ async function settleSameOwnerDependentCoverage(
       // today's refusal, because there the member really can add cover to the
       // affected booking or cancel it.
       //
-      // AND IT MUST BE A STRANDING THE OFFER CAN ACTUALLY ANSWER. "Moved away" and
-      // "a shift can fix it" come apart on a SHORTENING: cut 10-15 back to 10-12
-      // and the arrival did not move, so a 13-14 dependent's target is where it
-      // already is — the offer would run two full pricing runs inside a doomed
-      // transaction and then throw this very refusal anyway, having promised an arm
-      // it could not deliver. `linkedMoveWouldRestoreCover` asks the question with
-      // the same shift the offer would use.
-      const movedAwayFrom = stranded.some(
-        (row) =>
-          dependentNeedsOwnQueueItem(booking, {
-            checkIn: parseDateOnly(row.checkIn),
-            checkOut: parseDateOnly(row.checkOut),
-          }) &&
-          linkedMoveWouldRestoreCover(
-            {
-              vacatedRange: options.coverageChangeVacatedRange ?? null,
-              currentCheckIn: booking.checkIn,
-              currentCheckOut: booking.checkOut,
-            },
-            row,
-          ),
-      );
+      // AND IT MUST BE A STRANDING THE OFFER CAN ACTUALLY ANSWER — decided by
+      // `linkedMoveCouldAnswer` above, computed once for both throw sites.
       throw new SameOwnerCoverageWouldBreakError(stranded, {
-        linkedMoveWouldAnswer: movedAwayFrom,
+        linkedMoveWouldAnswer: linkedMoveCouldAnswer(),
       });
     }
     // The officer's change is authorised but not yet confirmed: they are shown
@@ -4001,7 +4021,10 @@ export async function inspectSameOwnerStrandingForOffer(
   })) as CoverageOwnerFactsWithOutcome | null;
   if (!booking) return [];
   const resolved = await loadAdultMemberHostingPolicy(booking.lodgeId, db);
-  if (resolved.mode !== "ENFORCED") return [];
+  // THE SAME PREDICATE THE REFUSAL USES, not a second spelling of it: an offer
+  // raised where the refusal would only escalate names nobody, and an offer that
+  // names nobody is a body the browser's fail-closed reader discards.
+  if (!hostingModeCanRefuseStranding(resolved.mode)) return [];
   if (!resolved.hostScopes.sameBookingOwner) return [];
   const dependents = await planSameOwnerCoverageDependents(
     booking,

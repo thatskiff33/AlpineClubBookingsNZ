@@ -10,6 +10,11 @@ import {
 } from "@/lib/adult-member-hosting-coverage-envelope";
 import { ApiError } from "@/lib/api-error";
 import { formatBookingReference } from "@/lib/booking-reference";
+import { bookingsOverlap } from "@/lib/booking-night-overlap";
+import {
+  HOSTING_COVERAGE_STATE_KEY_PATTERN,
+  hostingCoverageStateKeyOf,
+} from "@/lib/hosting-coverage-override-client";
 
 /**
  * The `SAME_BOOKING_OWNER` host scope: which OTHER bookings may supply cover, and
@@ -197,10 +202,12 @@ export function dependentNeedsOwnQueueItem(
   booking: { checkIn: Date; checkOut: Date },
   dependent: { checkIn: Date; checkOut: Date },
 ): boolean {
-  return !(
-    dependent.checkIn.getTime() < booking.checkOut.getTime() &&
-    dependent.checkOut.getTime() > booking.checkIn.getTime()
-  );
+  // THE SHARED PREDICATE, NOT A THIRD SPELLING OF IT. This decision has to agree
+  // with the query that found the dependent, whose SQL half is
+  // `nightOverlapClause`; writing the two comparisons out here again was one
+  // drift away from an item whose window the drain cannot resolve back to this
+  // booking (`INV-SSOT-001`).
+  return !bookingsOverlap(booking, dependent);
 }
 
 /**
@@ -223,7 +230,7 @@ export const hostingCoverageOverrideSchema = z
   .object({
     acknowledged: z.literal(true),
     reason: z.string().trim().min(10).max(500),
-    strandedStateKey: z.string().regex(/^v1:[0-9a-f]{64}$/),
+    strandedStateKey: z.string().regex(HOSTING_COVERAGE_STATE_KEY_PATTERN),
   })
   .strict();
 
@@ -297,7 +304,7 @@ export function strandedCoverageStateKey(
       }),
     )
     .digest("hex");
-  return `v1:${digest}`;
+  return hostingCoverageStateKeyOf(digest);
 }
 
 /**
@@ -343,24 +350,49 @@ export function canonicalStrandedRows(
  * different message, and they conclude the booking system is broken rather than
  * that they need an officer.
  *
+ * THE THIRD CLAUSE IS STILL AN INSTRUCTION, which the rewrite briefly lost. It
+ * became "A Booking Officer can also authorise this change and record why" — a
+ * true statement about officers, and a dead end, because the member cannot take
+ * that override themselves and was told nothing about how to reach anyone. A
+ * refusal that names no way forward is the failure this whole sentence exists to
+ * avoid.
+ *
  * The deadlock itself is fixed elsewhere — a date move that would strand another
  * of the owner's bookings now offers the LINKED MOVE (`INV-HOST-050`) instead of
  * reaching this sentence at all. This sentence is what is left for the strandings a
- * linked move cannot answer: a guest removal, a cancellation, or a date move where
- * the two bookings will not both fit. So the remedies it names are the ones that
- * work for THOSE: put cover back on the booking that needs it, stop that booking
+ * linked move cannot answer: a guest removal, a cancellation, and a date move the
+ * shift provably cannot fix (a stay shortened at the tail, where the arrival did
+ * not move — see `linkedMoveWouldRestoreCover`). It is NOT what a full lodge
+ * reaches: "there are not beds for both" is the offer's own `NO_CAPACITY` arm,
+ * which still offers warn-and-continue. So the remedies it names are the ones that
+ * work for those: put cover back on the booking that needs it, stop that booking
  * happening, or ask the officer who is the authority the refusal points at.
+ *
+ * COUNT-DRIVEN, because the dependent cap is `SAME_OWNER_COVERAGE_DEPENDENT_LIMIT`
+ * and not one. The singular second sentence sat above a plural "Affected:" list
+ * and told a member to add an adult to "that booking" when three were named.
  *
  * NOTHING HERE PROMISES SUCCESS, on purpose. Adding an adult member to another
  * booking can itself be refused (consent, subscription standing, capacity), so the
  * wording offers a direction rather than a guarantee. What it must never do again
  * is name a step that cannot even be attempted.
  */
-const STRANDED_COVERAGE_OPENING =
-  "This change would leave another booking on your account without the " +
-  "required adult member coverage for one or more nights. Adding a qualifying " +
-  "adult member to that booking, or cancelling it, would resolve this. A " +
-  "Booking Officer can also authorise this change and record why.";
+function strandedCoverageOpening(count: number): string {
+  const which =
+    count > 1
+      ? `${count} other bookings on your account`
+      : "another booking on your account";
+  const fix =
+    count > 1
+      ? "Adding a qualifying adult member to those bookings, or cancelling them,"
+      : "Adding a qualifying adult member to that booking, or cancelling it,";
+  return (
+    `This change would leave ${which} without the required adult member ` +
+    `coverage for one or more nights. ${fix} would resolve this. A Booking ` +
+    `Officer can also authorise this change and record why — contact the club ` +
+    `if you would like them to look at it.`
+  );
+}
 
 /**
  * The member-facing sentence for a refused self-service change (§6).
@@ -390,7 +422,7 @@ const STRANDED_COVERAGE_OPENING =
 export function formatStrandedCoverageMessage(
   stranded: readonly StrandedCoverageBooking[],
 ): string {
-  const opening = STRANDED_COVERAGE_OPENING;
+  const opening = strandedCoverageOpening(stranded.length);
   if (stranded.length === 0) return opening;
 
   const detail = stranded

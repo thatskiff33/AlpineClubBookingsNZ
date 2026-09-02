@@ -353,20 +353,22 @@ the thing they were actually trying to do:
 - **Move only this booking.** The change goes ahead, the member is told in plain
   words on the screen that the other booking will be left without adult
   supervision, and it arrives in your queue exactly as an officer override would —
-  urgent entry, owner emailed, audit trail. **The booking's history says, in
-  words, that the member was asked about the other booking and chose to move only
-  this one**, so you are not left guessing whether somebody decided it or a
-  qualification quietly changed. The one-line reason beside the queue entry will
-  name that choice on its own from the next update; until then it reads "cover
-  removed by a later change", which is the shared wording for every booking that
-  lost its cover without an officer overriding anything. The reason it waits one
+  urgent entry, owner emailed, audit trail. **Open the booking and its history
+  says, in words, that the member was asked about the other booking and chose to
+  move only this one** — under "Adult member cover flagged", which only staff
+  see, because the same entry can carry an officer's private override reason. So
+  you are not left guessing whether somebody decided it or a qualification
+  quietly changed. The one-line reason beside the queue entry will name that
+  choice on its own from the next update; until then it reads "no longer covered
+  after a later change", which is the shared wording for every booking that stops
+  being covered without an officer overriding anything. The reason it waits one
   update is that a stored label has to be readable by the version of the site
   still running while a new one is being put in place, and it cannot be until that
   version has gone.
-- **Where the beds are not there for both**, the first option is not offered. The
-  member is told plainly that there are not enough beds free on the new nights, and
-  the second option is still there. A full lodge never stops somebody moving their
-  own booking.
+- **Where the beds are not there for both**, the first option is shown greyed out
+  with the reason on it, rather than hidden. The member is told plainly that there
+  are not enough beds free on the new nights, and the second option is still there
+  and still works. A full lodge never stops somebody moving their own booking.
 
 Whether the **second** change fee is charged is your club's choice — see
 "Charge the change fee on both bookings" on the Cancellation page. It defaults to

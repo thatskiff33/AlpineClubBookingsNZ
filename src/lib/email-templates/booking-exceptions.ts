@@ -176,7 +176,14 @@ export function hostingCoverageLostTemplate(data: {
   return layout(`
     ${heading("Your booking needs adult member cover")}
     ${paragraph(
-      `Hi ${escapeHtml(data.firstName)}, a change elsewhere means your booking at ${escapeHtml(data.lodgeName)} no longer has a qualifying adult member staying on every night your non-member guests are there.`,
+      // #3232: NO CLAIM ABOUT THE CAUSE. "A change elsewhere means" was written
+      // for the passive case, and the declined arm of the linked move escalates —
+      // so it arms this very email for a member who has just deliberately chosen
+      // to leave the booking uncovered, and tells them it happened to them. This
+      // email cannot know which case it is (the cause may equally be guests added
+      // to THIS booking), so it states the fact and leaves the cause to the
+      // remedies below, which are followable in every case.
+      `Hi ${escapeHtml(data.firstName)}, your booking at ${escapeHtml(data.lodgeName)} no longer has a qualifying adult member staying on every night your non-member guests are there.`,
     )}
     ${infoTable([
       { label: "Check-in", value: escapeHtml(emailCalendarDay(data.checkIn)) },

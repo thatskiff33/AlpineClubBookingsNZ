@@ -1,3 +1,4 @@
+import { DEFAULT_BOOKING_DEFAULTS } from "@/config/club-settings-defaults"
 import { NextRequest, NextResponse } from "next/server"
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma"
@@ -96,10 +97,12 @@ export async function GET(req: NextRequest) {
     nonMemberHoldEnabled: defaults?.nonMemberHoldEnabled ?? true,
     nonMemberHoldDays: defaults?.nonMemberHoldDays ?? 7,
     waitlistCrossLodgeOrder: defaults?.waitlistCrossLodgeOrder ?? "OWN_LODGE_FIRST",
-    // #3232: absent row means the schema default, which is `true` — charge both.
-    // A club that has never opened this page has not chosen to waive anything.
+    // #3232: absent row means the effective default, which is `true` — charge
+    // both. A club that has never opened this page has not chosen to waive
+    // anything. Read from the one home rather than restated (`INV-SSOT-001`).
     linkedMoveChargesBothChangeFees:
-      defaults?.linkedMoveChargesBothChangeFees ?? true,
+      defaults?.linkedMoveChargesBothChangeFees ??
+      DEFAULT_BOOKING_DEFAULTS.linkedMoveChargesBothChangeFees,
     lodgeId: lodgeId ?? null,
   })
 }
@@ -222,7 +225,8 @@ export async function PUT(req: NextRequest) {
       nonMemberHoldDays: defaults?.nonMemberHoldDays ?? 7,
       waitlistCrossLodgeOrder: defaults?.waitlistCrossLodgeOrder ?? "OWN_LODGE_FIRST",
       linkedMoveChargesBothChangeFees:
-        defaults?.linkedMoveChargesBothChangeFees ?? true,
+        defaults?.linkedMoveChargesBothChangeFees ??
+        DEFAULT_BOOKING_DEFAULTS.linkedMoveChargesBothChangeFees,
     }
   }, { isolationLevel: "Serializable" })
 

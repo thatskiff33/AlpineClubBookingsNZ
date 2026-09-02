@@ -65,13 +65,19 @@ export type HostingCoverageIncidentCause =
  * (`INV-SSOT-001`). Both are now this function, so a third surface cannot invent
  * a third wording and the follow-up release's new cause needs no screen change.
  *
- * `SYSTEM_CHANGE` deliberately no longer says "qualification changed". That
- * claimed one specific story for a value that also covers an administrative
- * cancellation, a lifecycle transition, a data correction and - until the runtime
- * half of `INV-HOST-052` lands - a member who was offered the linked move and
- * declined it. The phrase has to be true of everything the value holds; what
- * distinguishes a declined offer in the meantime is the incident's audit history,
- * which records the member's decision in words.
+ * `SYSTEM_CHANGE` deliberately no longer says "qualification changed", which
+ * claimed one specific story for a value that holds many. Nor does it say "cover
+ * REMOVED by a later change", which was the same mistake in a new direction: the
+ * phrase has to be true of every writer, and two of them remove nothing. A club
+ * TIGHTENING ITS OWN POLICY (`adult-member-hosting-policy-reconciliation.ts`)
+ * narrowed who counts or switched the rule on, so the rule moved rather than the
+ * cover; an officer CONFIRMING PENDING GUESTS or force-confirming ADDED people,
+ * so existing cover simply no longer stretches. "No longer covered after a later
+ * change" is true of those, of an administrative cancellation, of a lifecycle
+ * transition, of a data correction, and — until the runtime half of
+ * `INV-HOST-052` lands — of a member who was asked about their other booking and
+ * chose not to move it. What distinguishes that last one in the meantime is the
+ * incident's audit history, which records the decision in words.
  *
  * An unrecognised value is described rather than crashing an officer's queue: a
  * screen is a bad place to discover a schema addition.
@@ -81,7 +87,7 @@ export function describeHostingCoverageIncidentCause(cause: string): string {
     case "OFFICER_OVERRIDE":
       return "officer override";
     case "SYSTEM_CHANGE":
-      return "cover removed by a later change";
+      return "no longer covered after a later change";
     case "OWNER_DECLINED_LINKED_MOVE":
       return "member chose not to move this booking too";
     default:
@@ -629,6 +635,15 @@ async function recordIncidentAudit(
       action,
       entityType: "Booking",
       entityId: params.bookingId,
+      // #3232 D3: `targetId` IS WHAT MAKES THIS ROW REACHABLE FROM THE BOOKING.
+      // The booking page's own history reads `auditLog.targetId = booking.id`, so
+      // without this the recorded explanation existed only in Admin → Monitoring &
+      // Support → Audit Log — while both the officer queue's "Review booking"
+      // button and the stuck-state row send an officer to the booking page, where
+      // they saw the generic cause and nothing else and had to guess. It is the
+      // only reader of `targetId` on a booking, and that page allowlists which
+      // actions it shows, so setting it exposes nothing anywhere else.
+      targetId: params.bookingId,
       actorMemberId: params.override?.byMemberId ?? null,
       category: "booking",
       // `important` rather than `info`: an enforcing club has a confirmed booking on

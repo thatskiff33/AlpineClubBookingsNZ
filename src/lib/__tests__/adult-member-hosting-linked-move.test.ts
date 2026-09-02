@@ -244,6 +244,7 @@ describe("what binds the member's answer (#3232, INV-HOST-050)", () => {
     combinedAmountDueCents: 6500,
     combinedRefundCents: 0,
     combinedChangeFeeCents: 5000,
+    combinedPriceDiffCents: 1500,
   };
 
   it("represents a SET of moves, not the order they came back in", () => {
@@ -269,6 +270,16 @@ describe("what binds the member's answer (#3232, INV-HOST-050)", () => {
     ).not.toBe(linkedMoveStateKey(base));
     expect(
       linkedMoveStateKey({ ...base, combinedRefundCents: 1000 }),
+    ).not.toBe(linkedMoveStateKey(base));
+    // THE FIGURE THE OTHER THREE CANNOT SEE. `applyPaymentAdjustments` is inert
+    // for a booking that has taken no money yet, so a `PAYMENT_PENDING` dependent
+    // quotes 0 due, 0 refund and 0 fee whatever its price does. Without this
+    // field an officer could move the season rate between the offer and the
+    // retry, the key would still match, and the member who accepted "nothing more
+    // to pay" would owe the difference at the pay step.
+    expect(
+      linkedMoveStateKey({ ...base, combinedPriceDiffCents: 9900 }),
+      "INV-HOST-050: the price the move really moves is part of the offer",
     ).not.toBe(linkedMoveStateKey(base));
   });
 

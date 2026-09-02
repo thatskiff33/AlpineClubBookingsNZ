@@ -223,7 +223,12 @@ describe("INV-HOST-052: the declined-linked-move cause is registered, not yet wr
     // correction and — until the runtime half lands — a member who declined the
     // linked move. The phrase has to be true of everything the value holds.
     expect(system).not.toMatch(/qualification/i);
-    expect(system).toMatch(/cover removed/);
+    // And it must not claim cover was REMOVED either, which was the same mistake
+    // in a new direction: a club tightening its own policy removed nothing (the
+    // rule moved), and an officer confirming pending guests ADDED people the
+    // existing cover no longer stretches to.
+    expect(system).not.toMatch(/removed/i);
+    expect(system).toMatch(/no longer covered/);
 
     // An unrecognised label describes itself rather than crashing a queue.
     expect(describeHostingCoverageIncidentCause("SOMETHING_ELSE")).toMatch(

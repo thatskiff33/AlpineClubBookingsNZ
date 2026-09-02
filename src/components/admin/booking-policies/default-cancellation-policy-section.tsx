@@ -1,5 +1,6 @@
 "use client"
 
+import { DEFAULT_BOOKING_DEFAULTS } from "@/config/club-settings-defaults"
 import { useEffect, useRef, useState } from "react"
 import {
   cancellationRuleSetsEqual,
@@ -143,7 +144,12 @@ function toDraft(
     rules: fetchedRules.length > 0 || lodgeId ? fetchedRules : FALLBACK_RULES,
     holdEnabled: data.nonMemberHoldEnabled ?? true,
     holdDays: data.nonMemberHoldDays ?? 7,
-    linkedMoveBothFees: data.linkedMoveChargesBothChangeFees ?? true,
+    // #3232: the one home for the effective default, not a fourth copy of `true`
+    // (`INV-SSOT-001`). `src/config/club-settings-defaults.ts` is a pure leaf, so
+    // a client component may read it.
+    linkedMoveBothFees:
+      data.linkedMoveChargesBothChangeFees ??
+      DEFAULT_BOOKING_DEFAULTS.linkedMoveChargesBothChangeFees,
     waitlistOrder:
       data.waitlistCrossLodgeOrder === "MERGED" ? "MERGED" : "OWN_LODGE_FIRST",
     configured: fetchedRules.length > 0,

@@ -1,8 +1,12 @@
 "use client";
 
-import type {
-  HostingCoverageLinkedMoveChoice,
-  HostingCoverageLinkedMovePromptData,
+import {
+  formatLinkedMoveMoneySentence,
+  linkedMoveAllBookingsPhrase,
+  linkedMoveDeclineConsequence,
+  linkedMoveHeading,
+  type HostingCoverageLinkedMoveChoice,
+  type HostingCoverageLinkedMovePromptData,
 } from "@/lib/hosting-coverage-linked-move-client";
 
 /**
@@ -12,7 +16,14 @@ import type {
  * would answer a money question on the member's behalf: pre-selecting "move both"
  * charges them for a second booking they may not want moved, and pre-selecting
  * "move only this one" strands a booking on a click they did not think about. So
- * the save button stays disabled until they pick, and the panel enforces that.
+ * the save button stays disabled until they pick — genuinely, on
+ * `activeLinkedMoveState && !linkedMoveChoice` in the panel's `disabled`
+ * expression, matching its officer-override arm. This docblock asserted that
+ * mechanism before it existed: Save gated on the override state only, and an
+ * unanswered offer instead set the panel's BOTTOM error slot, below Save, while
+ * the radios sat above it — and that slot had no `role="alert"`, no focus move and
+ * no scroll, so a member using a screen reader pressed Save and nothing was
+ * announced at all. Save is now gated and that slot is announced.
  *
  * THE PRICE IS ON THE CHOICE THAT COSTS IT, not in a summary somewhere else. A
  * member reading "Move both bookings" needs the figure beside those words, and the
@@ -27,12 +38,16 @@ import type {
  * NO PERSON IS NAMED anywhere in here — not the qualifying adult, not a guest.
  * Every booking listed is the member's own; the server established that before it
  * built the body (see `buildSameOwnerCoverageLinkedMoveBody`).
+ *
+ * EVERY SENTENCE WITH A NUMBER IN IT COMES FROM
+ * `hosting-coverage-linked-move-client.ts`, including the money. This component
+ * used to hand-roll its own dollar formatter and its own copy of the
+ * refund/payable/waiver decision tree, beside the server's — so a club on a
+ * non-dollar currency got a `$` on the one figure it legally accepts, a five-digit
+ * total lost its thousands separator on one line and kept it on the next, and the
+ * two waiver sentences had already drifted apart (`INV-SSOT-001`,
+ * `INV-CONFIG-001`).
  */
-function money(cents: number): string {
-  const sign = cents < 0 ? "-" : "";
-  const absolute = Math.abs(cents);
-  return `${sign}$${Math.floor(absolute / 100)}.${String(absolute % 100).padStart(2, "0")}`;
-}
 
 export function HostingCoverageLinkedMovePrompt({
   prompt,
@@ -65,7 +80,7 @@ export function HostingCoverageLinkedMovePrompt({
         {prompt ? (
           <div className="space-y-1">
             <p className="font-semibold text-warning-11">
-              Another of your bookings needs an adult on these nights
+              {linkedMoveHeading(prompt.linkedBookings.length)}
             </p>
             <p>{prompt.message}</p>
           </div>
@@ -115,25 +130,23 @@ export function HostingCoverageLinkedMovePrompt({
                 onChange={() => onChoiceChange("MOVE_BOTH")}
               />
               <span>
-                <span className="font-semibold">Move both bookings</span>
+                <span className="font-semibold">
+                  {`Move ${linkedMoveAllBookingsPhrase(prompt.linkedBookings.length)}`}
+                </span>
                 {prompt.linkedMoveAvailable ? (
                   <span className="block text-xs text-muted-foreground">
-                    {prompt.combinedRefundCents > 0
-                      ? `${money(prompt.combinedRefundCents)} comes back to you across both bookings.`
-                      : prompt.combinedAmountDueCents > 0
-                        ? `${money(prompt.combinedAmountDueCents)} payable across both bookings.`
-                        : "Nothing more to pay and nothing to come back."}
-                    {prompt.bothChangeFeesCharged
-                      ? ` Includes the change fee on both bookings (${money(prompt.combinedChangeFeeCents)} in all).`
-                      : " The change fee on the second booking has been waived by the club."}
-                    {prompt.settlementMethodRequired
-                      ? " Your card-or-credit choice above covers both bookings."
-                      : null}
+                    {formatLinkedMoveMoneySentence({
+                      combinedAmountDueCents: prompt.combinedAmountDueCents,
+                      combinedRefundCents: prompt.combinedRefundCents,
+                      combinedChangeFeeCents: prompt.combinedChangeFeeCents,
+                      settlementMethodRequired: prompt.settlementMethodRequired,
+                      bothChangeFeesCharged: prompt.bothChangeFeesCharged,
+                      linkedCount: prompt.linkedBookings.length,
+                    })}
                   </span>
                 ) : (
                   <span className="block text-xs text-muted-foreground">
-                    Not available: there are not enough beds free on the new
-                    nights for both bookings.
+                    {`Not available: there are not enough beds free on the new nights for ${linkedMoveAllBookingsPhrase(prompt.linkedBookings.length)}.`}
                   </span>
                 )}
               </span>
@@ -153,9 +166,7 @@ export function HostingCoverageLinkedMovePrompt({
                   Move only this booking
                 </span>
                 <span className="block text-xs text-muted-foreground">
-                  The booking above will be left without adult supervision on
-                  those nights. A Booking Officer will be told and will be in
-                  touch if anything needs to change.
+                  {linkedMoveDeclineConsequence(prompt.linkedBookings.length)}
                 </span>
               </span>
             </label>

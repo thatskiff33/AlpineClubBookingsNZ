@@ -146,6 +146,30 @@ export function coverageEnvelopeWhere(
 }
 
 /**
+ * The dependent COHORT: which rows the rule judges at all.
+ *
+ * Both clauses, in one place, for the reason this module exists — it is the home
+ * of the clauses every coverage read shares, and it had already factored out the
+ * lodge/self and night ones while leaving this pair inline at four sites. Widening
+ * the cohort with four copies means the refusal path keeps the old one, and the
+ * failure is silent: a booking the rule would judge is simply not in the set.
+ *
+ * Returned fresh each call rather than as a shared const, so no caller can mutate
+ * the array another caller is about to hand to Prisma.
+ */
+function dependentCohortClauses(): Prisma.BookingWhereInput {
+  return {
+    // A soft-deleted booking is not at the lodge.
+    deletedAt: null,
+    // The WIDER set, not the eligible-source one: the rule judges a
+    // `PAYMENT_PENDING` or `AWAITING_REVIEW` booking too — those cannot SUPPLY
+    // cover, but they certainly NEED it. Not all capacity-holding, so this is a
+    // policy cohort rather than a bed-hold claim.
+    status: { in: [...ACTIVE_BOOKING_STATUSES] },
+  };
+}
+
+/**
  * The envelope for a coverage DEPENDENT: a booking whose own compliance may
  * depend on the evaluated booking's attendance, and which therefore has to be
  * re-evaluated when it changes.
@@ -176,8 +200,7 @@ export function coverageDependentEnvelopeWhere(
   booking: CoverageEnvelopeBooking,
 ): Prisma.BookingWhereInput {
   return {
-    deletedAt: null,
-    status: { in: [...ACTIVE_BOOKING_STATUSES] },
+    ...dependentCohortClauses(),
     ...lodgeSelfAndNightClauses(booking),
   };
 }
@@ -246,8 +269,7 @@ export function coverageDependentEnvelopeAcrossNightsWhere(
   booking: CoverageEnvelopeBooking,
 ): Prisma.BookingWhereInput {
   return {
-    deletedAt: null,
-    status: { in: [...ACTIVE_BOOKING_STATUSES] },
+    ...dependentCohortClauses(),
     ...lodgeAndSelfClauses(booking),
   };
 }
@@ -317,15 +339,13 @@ export function coverageDependentEnvelopeOverStayUnionWhere(
       vacated.checkOut.getTime() === booking.checkOut.getTime())
   ) {
     return {
-      deletedAt: null,
-      status: { in: [...ACTIVE_BOOKING_STATUSES] },
+      ...dependentCohortClauses(),
       ...lodgeAndSelfClauses(booking),
       ...current,
     };
   }
   return {
-    deletedAt: null,
-    status: { in: [...ACTIVE_BOOKING_STATUSES] },
+    ...dependentCohortClauses(),
     ...lodgeAndSelfClauses(booking),
     AND: [{ OR: [current, nightOverlapClause(vacated)] }],
   };

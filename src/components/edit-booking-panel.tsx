@@ -1582,8 +1582,17 @@ export function EditBookingPanel({
    * unpaid, or its price went up — and the other one's price falls, the member was
    * asked to choose a refund or account credit with no control anywhere on the
    * page, and could then move neither booking. The control is drawn here, directly
-   * above the offer it belongs to, which is also what makes the offer's own
-   * sentence about "your card-or-credit choice above" true.
+   * above the offer it belongs to.
+   *
+   * IT STAYS IN THE PANEL RATHER THAN MOVING INSIDE THE OFFER COMPONENT, decided
+   * deliberately. The answer travels as the top-level `settlementMethod` field of
+   * the save body, injected after the proposal signature is captured (see the
+   * state slot above for why that is not optional), and the offer component is
+   * presentational with no access to either. Moving the radios inside it would
+   * thread this state through it and change nothing else, so the offer's own money
+   * sentence is worded neutrally about WHERE the choice is made instead — which is
+   * also what makes it true in the bare 409 message a surface without this control
+   * falls back to.
    */
   const linkedMoveSettlementRequired =
     Boolean(activeLinkedMoveState?.prompt.settlementMethodRequired) &&
@@ -1902,6 +1911,7 @@ export function EditBookingPanel({
             prompt={activeLinkedMoveState ? activeLinkedMoveState.prompt : null}
             choice={linkedMoveChoice}
             disabled={saving}
+            busy={saving}
             idPrefix={`edit-booking-${booking.id}`}
             onChoiceChange={setLinkedMoveChoice}
           />
@@ -1933,6 +1943,12 @@ export function EditBookingPanel({
                 !capacityOk ||
                 (settlementRequired && !settlementMethod) ||
                 (linkedMoveSettlementRequired && !linkedMoveSettlementMethod) ||
+                // #3232: no arm chosen is not a save. Matching the officer-override
+                // arm below rather than the weaker bottom-slot error it used to
+                // take: that slot is where a member is LEAST likely to notice, it
+                // renders below Save while the radios sit above it, and the offer
+                // component's own docblock already promised this mechanism.
+                (Boolean(activeLinkedMoveState) && !linkedMoveChoice) ||
                 (Boolean(activeHostingOverrideState) &&
                   (!hostingOverrideConfirmed ||
                     hostingOverrideReason.trim().length < 10))
@@ -1946,9 +1962,16 @@ export function EditBookingPanel({
             </Button>
           </div>
 
-          {saveError && (
-            <div className="rounded-md bg-danger-3 p-3 text-sm text-danger-11">{saveError}</div>
-          )}
+          {/* #3232: PERMANENTLY MOUNTED ASSERTIVE REGION, for the reason both
+              hosting prompts give — inserting an already-populated role=alert is
+              missed by some screen-reader and browser pairs. Before this, a member
+              using a screen reader pressed Save, the server refused, and nothing
+              was announced at all. */}
+          <div role="alert" aria-atomic="true">
+            {saveError && (
+              <div className="rounded-md bg-danger-3 p-3 text-sm text-danger-11">{saveError}</div>
+            )}
+          </div>
 
           {/* #2562 — the exception-request door, drawn ONLY when the server's own
               refusal said every blocking failure is reviewable. It sits under Save

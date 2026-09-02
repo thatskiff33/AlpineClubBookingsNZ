@@ -433,6 +433,25 @@ export function buildBookingHistoryItems({
         });
         break;
       }
+      // #3232 D3: WHY THIS BOOKING IS FLAGGED, in words, on the booking itself.
+      // Fed only to admin viewers (the page allowlists these two actions behind
+      // `canSeeAdminTools`) because `details` can be an officer's private override
+      // reason. Replayed verbatim, as the cancel row below is: it is the one
+      // derived explanation the incident writer recorded for this event.
+      case "booking.hostingCoverage.incidentOpened":
+      case "booking.hostingCoverage.incidentUpdated":
+        items.push({
+          id: `audit-${auditLog.id}`,
+          occurredAt: auditLog.createdAt,
+          category: "Booking",
+          title: auditLog.action.endsWith("incidentOpened")
+            ? "Adult member cover flagged"
+            : "Adult member cover flag updated",
+          detail: auditLog.details ?? "This booking needs adult member cover.",
+          amountDisplay: null,
+          tone: "warning",
+        });
+        break;
       case "booking.cancel":
         items.push({
           id: `audit-${auditLog.id}`,

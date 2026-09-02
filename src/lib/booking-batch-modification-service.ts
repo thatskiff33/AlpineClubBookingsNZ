@@ -126,6 +126,18 @@ type BatchModificationTransactionResult =
     pendingHostingReconcile?: () => Promise<void>;
     priceDiffCents: number;
     changeFeeCents: number;
+    /**
+     * #3232 D2: this booking's change fee was WAIVED, not absent.
+     *
+     * Without it a waived fee is an unmarked zero, and "no fee was due" and "we
+     * waived it because our own supervision rule compelled this move" are the
+     * same 0 in the modification row, the audit trail and the Xero leg. A
+     * treasurer reconciling change-fee income against the club setting has
+     * nothing to reconcile against, and the dependent's history reads as an
+     * ordinary member-initiated edit to a booking the member never asked to
+     * move.
+     */
+    changeFeeWaived: boolean;
     refundAmountCents: number;
     accountCreditAmountCents: number;
     promoRemoved: boolean;
@@ -1605,6 +1617,13 @@ export async function modifyBookingBatch({
                 capacityOverridden: capacityOverridden,
               }
             : {}),
+          // #3232 D2: the zero beside this is a WAIVER, and which waiver.
+          ...(waiveChangeFee
+            ? {
+                changeFeeWaived: true,
+                changeFeeWaivedReason: "LINKED_MOVE_SUPERVISION_RULE",
+              }
+            : {}),
         },
         priceDiffCents,
         changeFeeCents,
@@ -1744,6 +1763,7 @@ export async function modifyBookingBatch({
         hostingReconcile === "CALLER" ? reconcileHosting : undefined,
       priceDiffCents,
       changeFeeCents,
+      changeFeeWaived: waiveChangeFee === true,
       refundAmountCents: payments.refundAmountCents,
       accountCreditAmountCents: payments.accountCreditAmountCents,
       additionalAmountCents: payments.additionalAmountCents,
@@ -2044,6 +2064,14 @@ async function dispatchBatchPostTransactionSideEffects({
     newGuestCount: result.booking.guests.length,
     priceDiffCents: result.priceDiffCents,
     changeFeeCents: result.changeFeeCents,
+    // #3232 D2: present only on a waiver, so a query for waived fees is a query
+    // for this key rather than a guess at which zeroes meant something.
+    ...(result.changeFeeWaived
+      ? {
+          changeFeeWaived: true,
+          changeFeeWaivedReason: "LINKED_MOVE_SUPERVISION_RULE",
+        }
+      : {}),
     refundAmountCents: result.refundAmountCents,
     accountCreditAmountCents: result.accountCreditAmountCents,
     promoRemoved: result.promoRemoved,

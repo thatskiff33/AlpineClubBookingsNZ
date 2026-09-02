@@ -195,21 +195,11 @@ function isNightWholeLodgeHeld(
   );
 }
 
-/**
- * Two bookings overlap on at least one night when their [checkIn, checkOut)
- * half-open spans intersect. A booking departing on day D and one arriving that
- * night do NOT overlap (back-to-back handovers) — the same half-open rule the
- * hold-night span uses. Pure; admin conflict surfacing (issue #119) shares it.
- */
-export function bookingsOverlap(
-  a: { checkIn: Date; checkOut: Date },
-  b: { checkIn: Date; checkOut: Date }
-): boolean {
-  return (
-    a.checkIn.getTime() < b.checkOut.getTime() &&
-    a.checkOut.getTime() > b.checkIn.getTime()
-  );
-}
+// #3232: the definition moved to `booking-night-overlap.ts`, a module with no
+// imports, so the pure hosting modules can share it instead of writing the two
+// comparisons a second time (`INV-SSOT-001`). Re-exported here because this is the
+// name three callers and this module's own suite already import.
+export { bookingsOverlap } from "@/lib/booking-night-overlap";
 
 /**
  * Lodge equality tolerant of the expand-release null lodgeId (a null on either

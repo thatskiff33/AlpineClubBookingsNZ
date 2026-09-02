@@ -9,6 +9,15 @@ import {
 import { ApiError } from "@/lib/api-error";
 import { formatBookingReference } from "@/lib/booking-reference";
 import { addDaysDateOnly, formatDateOnly, parseDateOnly } from "@/lib/date-only";
+import {
+  HOSTING_COVERAGE_STATE_KEY_PATTERN,
+  hostingCoverageStateKeyOf,
+} from "@/lib/hosting-coverage-override-client";
+import {
+  formatLinkedMoveMoneySentence,
+  linkedMoveAllBookingsPhrase,
+  type HostingCoverageLinkedMoveBooking,
+} from "@/lib/hosting-coverage-linked-move-client";
 
 /**
  * The LINKED MOVE: what a member is offered when moving one of their bookings
@@ -71,34 +80,16 @@ export const HOSTING_COVERAGE_LINKED_MOVE_CODE =
  */
 export type LinkedMoveFeasibility = "AVAILABLE" | "NO_CAPACITY";
 
-/** One booking the offer would move alongside the one the member asked about. */
-export interface LinkedMoveBooking {
-  bookingId: string;
-  /** The short handle the member sees, never the raw cuid alone. */
-  reference: string;
-  lodgeName: string;
-  /** The nights the rule finds uncovered on this booking if it stays put. */
-  uncoveredNights: string[];
-  /** Where this booking is today (stored lodge nights, `YYYY-MM-DD`). */
-  currentCheckIn: string;
-  currentCheckOut: string;
-  /**
-   * Where the linked move would put it.
-   *
-   * NOT NECESSARILY "the same nights as the other booking", and the offer says the
-   * real dates rather than that phrase for exactly that reason. The two bookings
-   * can be different lengths, so the honest general rule is that this booking
-   * shifts by the same number of days as the one the member moved — which IS "the
-   * same nights" whenever the two windows matched, and is a statement the member
-   * can check against a calendar whenever they did not.
-   */
-  proposedCheckIn: string;
-  proposedCheckOut: string;
-  /** Integer cents. Positive = this booking costs more on the new nights. */
-  priceDiffCents: number;
-  /** Integer cents. The late-notice change fee this booking's own move attracts. */
-  changeFeeCents: number;
-}
+/**
+ * One booking the offer would move alongside the one the member asked about.
+ *
+ * AN ALIAS, NOT A SECOND DECLARATION. The wire shape is declared once, in the
+ * browser contract that also validates it (`INV-SSOT-001`); the two used to be
+ * hand-kept copies of the same ten fields, which is two things that can disagree
+ * about what the server actually sends. `import type` is erased, so naming it here
+ * gives this module no browser dependency at all.
+ */
+export type LinkedMoveBooking = HostingCoverageLinkedMoveBooking;
 
 /** The booking the member actually asked to move. */
 export interface LinkedMovePrimary {
@@ -177,8 +168,20 @@ export interface LinkedMoveQuote {
  * are. Presentation — references, lodge names — is deliberately absent: a lodge
  * rename is not a different offer.
  *
- * `v1:` PREFIXED AND FIXED WIDTH, so a future change to what the key must cover
- * fails closed rather than colliding with an old value.
+ * THE PRICE DELTA IS IN THERE TOO, and leaving it out was a hole rather than an
+ * economy. Due, refund and change fee are all outputs of
+ * `applyPaymentAdjustments`, which is INERT for a booking that has taken no money
+ * yet: a `PAYMENT_PENDING` dependent quotes 0/0/0 whatever its price does. So the
+ * member could be shown "there is nothing more to pay and nothing to come back",
+ * an officer could edit the season rate before they pressed save, and the retry
+ * would find the dependent $80 dearer with all three keyed figures still zero —
+ * key matched, transaction committed, and $80 they never agreed to waiting at the
+ * pay step. `combinedPriceDiffCents` is the figure that moved, so it is the figure
+ * that has to bind.
+ *
+ * THE VERSIONED PREFIX IS MINTED IN ONE PLACE (`hostingCoverageStateKeyOf`), so a
+ * future change to what the key must cover fails closed rather than colliding
+ * with an old value, and the bump reaches the readers with the minters.
  */
 export function linkedMoveStateKey(input: {
   stranded: readonly StrandedCoverageBooking[];
@@ -191,6 +194,7 @@ export function linkedMoveStateKey(input: {
   combinedAmountDueCents: number;
   combinedRefundCents: number;
   combinedChangeFeeCents: number;
+  combinedPriceDiffCents: number;
 }): string {
   const proposals = [...input.proposals]
     .map((proposal) => ({
@@ -198,7 +202,7 @@ export function linkedMoveStateKey(input: {
       checkIn: proposal.checkIn,
       checkOut: proposal.checkOut,
     }))
-    .sort((left, right) => (left.bookingId < right.bookingId ? -1 : 1));
+    .sort(byBookingId);
   const digest = createHash("sha256")
     .update(
       JSON.stringify({
@@ -209,11 +213,12 @@ export function linkedMoveStateKey(input: {
           due: input.combinedAmountDueCents,
           refund: input.combinedRefundCents,
           changeFee: input.combinedChangeFeeCents,
+          priceDiff: input.combinedPriceDiffCents,
         },
       }),
     )
     .digest("hex");
-  return `v1:${digest}`;
+  return hostingCoverageStateKeyOf(digest);
 }
 
 /**
@@ -256,7 +261,7 @@ export const hostingCoverageLinkedMoveSchema = z
   .object({
     choice: z.enum(["MOVE_BOTH", "LEAVE_UNCOVERED"]),
     acknowledged: z.literal(true),
-    stateKey: z.string().regex(/^v1:[0-9a-f]{64}$/),
+    stateKey: z.string().regex(HOSTING_COVERAGE_STATE_KEY_PATTERN),
   })
   .strict();
 
@@ -264,11 +269,22 @@ export type HostingCoverageLinkedMoveInput = z.infer<
   typeof hostingCoverageLinkedMoveSchema
 >;
 
-/** Money, as a member reads it. Integer cents in, dollars out. */
-function money(cents: number): string {
-  const sign = cents < 0 ? "-" : "";
-  const absolute = Math.abs(cents);
-  return `${sign}$${Math.floor(absolute / 100)}.${String(absolute % 100).padStart(2, "0")}`;
+/**
+ * Order by booking id, and RETURN 0 ON A TIE.
+ *
+ * Written twice as `left < right ? -1 : 1`, which never returns 0. Harmless on
+ * unique cuids and a trap the moment somebody reuses the shape on a key that can
+ * tie, where an inconsistent comparator gives an implementation-defined order —
+ * and this order is what makes a state key represent a SET rather than whatever
+ * order a query happened to return.
+ */
+function byBookingId(
+  left: { bookingId: string },
+  right: { bookingId: string },
+): number {
+  if (left.bookingId < right.bookingId) return -1;
+  if (left.bookingId > right.bookingId) return 1;
+  return 0;
 }
 
 function describeBooking(booking: LinkedMoveBooking): string {
@@ -303,20 +319,26 @@ export function formatLinkedMoveOfferMessage(quote: LinkedMoveQuote): string {
       "the required adult member coverage."
     );
   }
-  const which =
-    quote.linked.length === 1
-      ? describeBooking(first)
-      : `${quote.linked.length} other bookings on your account`;
+  const count = quote.linked.length;
+  // COUNT-DRIVEN THROUGHOUT, because the limit is 25 and not 1: a member with one
+  // adult and two parties of guests is an ordinary family shape, and the singular
+  // wording told them "2 other bookings ... is relying ... would leave it without".
   const opening =
-    `${which} is relying on this booking for adult supervision, so moving ` +
-    `this one on its own would leave it without.`;
+    count === 1
+      ? `${describeBooking(first)} is relying on this booking for adult ` +
+        `supervision, so moving this one on its own would leave it without.`
+      : `${count} other bookings on your account are relying on this booking ` +
+        `for adult supervision, so moving this one on its own would leave them ` +
+        `without.`;
 
   if (quote.feasibility === "NO_CAPACITY") {
     return (
       `${opening} There are not enough beds free on the new nights to move ` +
-      `both, so they cannot travel together this time. You can still move ` +
-      `this booking: the other one will be left without adult supervision, a ` +
-      `Booking Officer will be told, and it will be raised for their attention.`
+      `${linkedMoveAllBookingsPhrase(count)}, so they cannot travel together ` +
+      `this time. You can still move this booking: ` +
+      `${count === 1 ? "the other one" : `the other ${count}`} will be left ` +
+      `without adult supervision, a Booking Officer will be told, and it will ` +
+      `be raised for their attention.`
     );
   }
 
@@ -328,27 +350,22 @@ export function formatLinkedMoveOfferMessage(quote: LinkedMoveQuote): string {
     )
     .join("; ");
 
-  const feeSentence = quote.bothChangeFeesCharged
-    ? `That total includes the change fee on both bookings ` +
-      `(${money(quote.combinedChangeFeeCents)} in all).`
-    : `The change fee on the second booking has been waived by the club, so ` +
-      `that total carries one change fee only.`;
-
-  const moneySentence =
-    quote.combinedRefundCents > 0
-      ? `${money(quote.combinedRefundCents)} would come back to you across ` +
-        `both bookings. ${feeSentence}` +
-        (quote.settlementMethodRequired
-          ? " Choose once whether that comes back to your card or as account credit; the choice covers both bookings."
-          : "")
-      : quote.combinedAmountDueCents > 0
-        ? `${money(quote.combinedAmountDueCents)} would be payable across both ` +
-          `bookings. ${feeSentence}`
-        : `There is nothing more to pay and nothing to come back. ${feeSentence}`;
+  // ONE HOME FOR THE MONEY SENTENCE, shared with the radio labels the member reads
+  // beside this very paragraph (`INV-SSOT-001`). It was written twice, in two
+  // wordings, and had already drifted on the waiver clause.
+  const moneySentence = formatLinkedMoveMoneySentence({
+    combinedAmountDueCents: quote.combinedAmountDueCents,
+    combinedRefundCents: quote.combinedRefundCents,
+    combinedChangeFeeCents: quote.combinedChangeFeeCents,
+    settlementMethodRequired: quote.settlementMethodRequired,
+    bothChangeFeesCharged: quote.bothChangeFeesCharged,
+    linkedCount: count,
+  });
 
   return (
-    `${opening} Move both together? ${moves}. ${moneySentence} ` +
-    `If you would rather move only this booking, you can — the other will be ` +
+    `${opening} Move ${linkedMoveAllBookingsPhrase(count)} together? ` +
+    `${moves}. ${moneySentence} If you would rather move only this booking, ` +
+    `you can — ${count === 1 ? "the other" : `the other ${count}`} will be ` +
     `left without adult supervision and a Booking Officer will be told.`
   );
 }
@@ -526,7 +543,7 @@ export function combineLinkedMoveQuote(input: {
       priceDiffCents: entry.money?.priceDiffCents ?? 0,
       changeFeeCents: entry.money?.changeFeeCents ?? 0,
     }))
-    .sort((left, right) => (left.bookingId < right.bookingId ? -1 : 1));
+    .sort(byBookingId);
 
   // ON THE `NO_CAPACITY` ARM THE COMBINED FIGURES ARE THE PRIMARY'S OWN, because
   // the only move still on offer is the primary's: the member is being told the
@@ -577,10 +594,22 @@ export function combineLinkedMoveQuote(input: {
   };
 }
 
-/** The stored reason on the incident a declined offer opens. */
+/**
+ * The stored reason on the incident a declined offer opens (#3232).
+ *
+ * IT HAS TO STAND ALONE, because for one release it is what an officer reads
+ * INSTEAD of a cause label of its own: until `INV-HOST-052`'s runtime half lands
+ * the stored cause is the shared `SYSTEM_CHANGE`, whose officer-facing phrase is
+ * true of a cancellation and a data correction too. So no issue reference (no
+ * other stored human-read string in this repository carries one — compare
+ * `ADULT_SUPERVISION_REVIEW_REASON`), and no product jargon: "the linked move" is
+ * a name from this codebase that no officer has ever met. What it says instead is
+ * what happened.
+ */
 export const LINKED_MOVE_DECLINED_INCIDENT_REASON =
-  "The member was offered the linked move and chose to move only the booking " +
-  "they were editing, leaving this one without adult member coverage (#3232).";
+  "The member was asked whether to move this booking to the same new nights as " +
+  "the booking they were editing, and chose to move only that one — leaving " +
+  "this booking without adult member coverage.";
 
 /**
  * The 409 that carries the offer.
