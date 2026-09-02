@@ -1203,6 +1203,13 @@ export async function modifyBookingDates({
     // account. The disposition travels with the actor.
     await reconcileAdultMemberHostingReviewWithSiblings(bookingId, tx, {
       ...hostingCoverageActorOptions({
+        // #3232: THE window this booking has just vacated. This seam runs AFTER
+        // the write, so without it the dependent fan-out compares against the NEW
+        // dates and a booking that was relying on the OLD ones is invisible to it —
+        // no evaluation, no incident, no owner notice and nothing in the officer
+        // queue, indefinitely. These are the dates the booking really held, taken
+        // from the post-lock snapshot rather than from the caller's proposal.
+        vacatedRange: { checkIn: oldCheckIn, checkOut: oldCheckOut },
         actorRole: actor.role,
         actorMemberId: actor.id,
         ...(hostingCoverageOverride ? { override: hostingCoverageOverride } : {}),
@@ -1891,6 +1898,13 @@ export async function adminShiftBookingDates({
     // 409 retry impossible or turns an attributable override into a system change.
     await reconcileAdultMemberHostingReviewWithSiblings(bookingId, tx, {
       ...hostingCoverageActorOptions({
+        // #3232: THE window this booking has just vacated. This seam runs AFTER
+        // the write, so without it the dependent fan-out compares against the NEW
+        // dates and a booking that was relying on the OLD ones is invisible to it —
+        // no evaluation, no incident, no owner notice and nothing in the officer
+        // queue, indefinitely. These are the dates the booking really held, taken
+        // from the post-lock snapshot rather than from the caller's proposal.
+        vacatedRange: { checkIn: oldCheckIn, checkOut: oldCheckOut },
         actorRole: actor.role,
         actorMemberId: actor.id,
         ...(hostingCoverageOverride ? { override: hostingCoverageOverride } : {}),

@@ -36,11 +36,14 @@ import {
   SameOwnerCoverageOverrideRequiredError,
   SameOwnerCoverageWouldBreakError,
   sameBookingOwnerCoverageSourceWhere,
+  dependentNeedsOwnQueueItem,
+  sameOwnerCoverageDependentOverStayUnionWhere,
   sameOwnerCoverageDependentWhere,
   strandedCoverageStateKey,
   strandedCoverageReference,
   type StrandedCoverageBooking,
 } from "@/lib/adult-member-hosting-same-owner";
+import { LINKED_MOVE_DECLINED_INCIDENT_REASON } from "@/lib/adult-member-hosting-linked-move";
 import { AdultMemberHostingRequiredError } from "@/lib/adult-member-hosting-refusal";
 import {
   COVERAGE_READ_ORDER,
@@ -1506,6 +1509,20 @@ export interface HostingCoverageChangeContext {
   reason?: string | null;
   /** Exact stranded state the officer was shown before confirming the override. */
   strandedStateKey?: string | null;
+  /**
+   * The OWNER was offered the linked move and chose to move only the booking they
+   * were editing (#3232, `INV-HOST-050`).
+   *
+   * Distinct from an officer's override, and the distinction is not cosmetic. An
+   * override is one person exercising authority over a booking that is not theirs,
+   * which is why §7 demands a reason and audits who gave it. This is the owner
+   * deciding about their OWN two bookings, which is theirs to decide — so no reason
+   * is demanded of them. What IS demanded is proof they were shown the consequence,
+   * which is `strandedStateKey`: a stale one means the situation moved since they
+   * were asked, and they are asked again rather than held to an answer about a
+   * different set of bookings.
+   */
+  strandingAcceptedByOwner?: boolean;
 }
 
 /**
@@ -1520,8 +1537,12 @@ export interface HostingCoverageChangeContext {
  * THE RULE, straight from the owner's text:
  *
  *  - AN ORDINARY MEMBER'S SELF-SERVICE CHANGE IS BLOCKED (§6). They are told which
- *    of their own bookings, which lodge and which nights, and directed to amend
- *    that booking, restore alternative cover, or contact a Booking Officer.
+ *    of their own bookings, which lodge and which nights, and pointed at a remedy
+ *    they can actually reach: put cover back on that booking, cancel it, or ask a
+ *    Booking Officer. NOT "move that booking first", which the same rule refuses
+ *    from the other end — see `STRANDED_COVERAGE_OPENING` (#3232). A DATE move
+ *    that would strand one is offered the linked move instead of being refused at
+ *    all (`INV-HOST-050`).
  *  - AN AUTHORISED OFFICER'S CHANGE IS ALLOWED AND ESCALATED (§7, §8). §8 lists
  *    "authorised officer action" among the changes that cannot reasonably be
  *    blocked, and §7 describes what must happen instead: the affected booking stays
@@ -1555,6 +1576,33 @@ export interface HostingCoverageChangeContext {
 export function hostingCoverageActorOptions(actor: {
   /** The session role at the acting site; "ADMIN" is the officer case. */
   actorRole?: string | null;
+  /**
+   * The stay window this booking held BEFORE this change, when the change MOVED
+   * it — and `null` when the change did not (#3232, `INV-HOST-049`).
+   *
+   * REQUIRED, WITH NO DEFAULT, AND THAT IS THE POINT. The dependent fan-out runs
+   * after the write, so it compares against the NEW dates and a booking that was
+   * relying on the OLD ones is invisible to it: no evaluation, no incident, no
+   * owner notice, nothing in the officer queue, for as long as nobody happens to
+   * edit that booking. The remedy is to match the union of the vacated and the
+   * current window (`coverageDependentEnvelopeOverStayUnionWhere`), which needs
+   * one fact only a date writer holds.
+   *
+   * An optional field with a convenient default would have made every existing
+   * caller compile unchanged and left the three date writers exactly as wrong as
+   * they were, silently — the failure this repository has already paid for once
+   * (#3116). A required field makes the COMPILER enumerate every actor-driven
+   * site, so each one has to state whether its change moved the stay. Three say
+   * yes (`modifyBookingDates`, `adminShiftBookingDates`, `modifyBookingBatch`);
+   * the rest say `null`, which collapses the union to today's single-window test
+   * and is byte-identical to their present behaviour.
+   *
+   * NOT "the dates the caller asked for" — the dates the booking REALLY HELD
+   * before the write. A proposal is not evidence: an edit that was clamped,
+   * rejected in part, or normalised would name a window the booking never
+   * occupied, and the dependent read would then miss the one it did.
+   */
+  vacatedRange: { checkIn: Date; checkOut: Date } | null;
   /** Additionally treat a delegated bookings-edit permission as officer authority. */
   hasBookingsEditAccess?: boolean;
   actorMemberId?: string | null;
@@ -1569,17 +1617,75 @@ export function hostingCoverageActorOptions(actor: {
     reason?: string | null;
     strandedStateKey?: string | null;
   } | null;
+  /**
+   * The MEMBER's answer to the linked-move offer, when they have given one
+   * (#3232, `INV-HOST-050`).
+   *
+   * OPTIONAL, unlike `vacatedRange`, and the asymmetry is deliberate rather than
+   * inconsistent. A missing vacated range is silently WRONG — the fan-out looks at
+   * the wrong window and loses a booking — so the compiler has to demand it. A
+   * missing answer here is simply the truth on every path that never asks the
+   * question, and its consequence is the safe one: the member is refused-and-
+   * offered rather than allowed. Absence cannot hide a defect.
+   *
+   * `MOVE_BOTH` is deliberately NOT handled here. Accepting is not a disposition,
+   * it is a different operation — moving two bookings atomically — and it is
+   * `booking-linked-date-move-service.ts`'s job. By the time that service
+   * reconciles, both bookings have moved and nothing is stranded, so there is
+   * nothing for a disposition to decide.
+   */
+  linkedMove?: {
+    choice?: "MOVE_BOTH" | "LEAVE_UNCOVERED";
+    acknowledged?: boolean;
+    stateKey?: string | null;
+  } | null;
 }): Pick<
   HostingReconcileOptions,
-  "dependentCoverage" | "coverageChange" | "coverageActorMemberId"
+  | "dependentCoverage"
+  | "coverageChange"
+  | "coverageActorMemberId"
+  | "coverageChangeVacatedRange"
 > {
   const actorMemberId = actor.actorMemberId ?? null;
   const isOfficer =
     actor.actorRole === "ADMIN" || actor.hasBookingsEditAccess === true;
+  const coverageChangeVacatedRange = actor.vacatedRange ?? null;
+  // #3232: the owner was offered the linked move and declined it. That is D1's "No"
+  // arm, and it is an ESCALATION rather than a refusal: the change proceeds, the
+  // member has already been told plainly what it costs the other booking, the
+  // officer queue gets it and an incident opens. The stranded-state key is carried
+  // so the settle step can prove they were shown THIS situation — a stale answer
+  // re-prompts instead of being honoured.
+  const declinedLinkedMove =
+    actor.linkedMove?.choice === "LEAVE_UNCOVERED" &&
+    actor.linkedMove?.acknowledged === true &&
+    typeof actor.linkedMove?.stateKey === "string" &&
+    actor.linkedMove.stateKey.length > 0
+      ? actor.linkedMove.stateKey
+      : null;
+  if (declinedLinkedMove) {
+    return {
+      dependentCoverage: "ESCALATE",
+      coverageActorMemberId: actorMemberId,
+      coverageChangeVacatedRange,
+      coverageChange: {
+        // NOT `OFFICER_OVERRIDE`: no officer was involved and inventing one would
+        // put a name and a reason against a decision they never considered. The
+        // incident's own `reason` says a member was asked and answered, so the
+        // officer reading their queue is not left to infer it.
+        cause: "SYSTEM_CHANGE",
+        actorMemberId,
+        reason: LINKED_MOVE_DECLINED_INCIDENT_REASON,
+        strandedStateKey: declinedLinkedMove,
+        strandingAcceptedByOwner: true,
+      },
+    };
+  }
   if (!isOfficer) {
     return {
       dependentCoverage: "BLOCK",
       coverageActorMemberId: actorMemberId,
+      coverageChangeVacatedRange,
       // Carried even though a member's change is normally refused rather than
       // escalated, because it is NOT always refused: a member acting on a booking
       // that is not theirs (a member-linked guest removing their own row) is
@@ -1599,6 +1705,7 @@ export function hostingCoverageActorOptions(actor: {
     return {
       dependentCoverage: "REQUIRE_OVERRIDE",
       coverageActorMemberId: actorMemberId,
+      coverageChangeVacatedRange,
       // Still `SYSTEM_CHANGE` with the officer named, for the case where nothing
       // is stranded and the change simply proceeds: no override happened, so
       // recording one would be a lie.
@@ -1613,6 +1720,7 @@ export function hostingCoverageActorOptions(actor: {
   return {
     dependentCoverage: "ESCALATE",
     coverageActorMemberId: actorMemberId,
+    coverageChangeVacatedRange,
     coverageChange: {
       cause: "OFFICER_OVERRIDE",
       actorMemberId,
@@ -1640,6 +1748,18 @@ export interface HostingReconcileOptions {
   dependentCoverage?: HostingDependentCoverageDisposition;
   /** Required context for an `ESCALATE` change; see `HostingCoverageChangeContext`. */
   coverageChange?: HostingCoverageChangeContext;
+  /**
+   * The stay window the changed booking VACATED, when this change moved it
+   * (#3232, `INV-HOST-049`).
+   *
+   * Absent or `null` means the stay did not move, which is true of every writer
+   * except a date change. Read only by the same-owner dependent fan-out, whose
+   * post-write read would otherwise be narrowed to the NEW nights and would miss
+   * the booking whose cover the move just took away. The full reasoning is at
+   * `coverageDependentEnvelopeOverStayUnionWhere`; what makes a caller supply it
+   * is that `hostingCoverageActorOptions` demands it as a required field.
+   */
+  coverageChangeVacatedRange?: { checkIn: Date; checkOut: Date } | null;
   /**
    * The member who is making this change, when there is one (#2576 §6, §11).
    *
@@ -2039,9 +2159,28 @@ export async function reconcileAdultMemberHostingReviewWithSiblings(
     planned,
     db,
   );
+  // #3232: plan the SAME-OWNER dependents before the fence too, and for the same
+  // reason the Group Trip plan is planned here. Since #3232 the same-owner settle
+  // records one item per dependent BOOKING rather than one item naming the changed
+  // booking's window, and the fence demands a proof source for every booking an
+  // item names — so a dependent discovered only inside the settle step would be
+  // refused by `assertHostingCoverageQueueParticipantsLocked` rather than enqueued.
+  //
+  // NO NEW LOCK AND NO NEW ORDERING (`INV-LOCK-002`). Every same-owner dependent
+  // shares the changed booking's `memberId` by construction (§1), so the `Member`
+  // row set the fence takes is unchanged — the owner is already in it. Only the
+  // proof's `sources` list grows, which is a fingerprint of rows the fence re-reads
+  // under the row lock it already holds.
+  const plannedSameOwner = await planSameOwnerCoverageDependents(
+    plannedBooking,
+    planned,
+    options.coverageChangeVacatedRange ?? null,
+    db,
+  );
   const participantProof = await acquireOrValidateQueueParticipantProof(
     [
       sourceParticipant(plannedBooking),
+      ...plannedSameOwner.map(sourceParticipant),
       ...(plannedGroupTrip?.dependents ?? []).map(sourceParticipant),
     ],
     actorMemberId,
@@ -2098,6 +2237,7 @@ export async function reconcileAdultMemberHostingReviewWithSiblings(
     db,
     options,
     participantProof,
+    plannedSameOwner,
   );
 
   // #3039: and this booking's rows can decide whether a booking on ANOTHER ACCOUNT
@@ -2388,6 +2528,95 @@ async function resolveOwnCoverageIncidentAfterChange(
 }
 
 /**
+ * The same-owner bookings whose own compliance may depend on this one, read over
+ * the window it VACATED as well as the one it now holds (#3232, `INV-HOST-049`).
+ *
+ * ONE READ, TWO CALLERS, AND THEY MUST AGREE. It runs first UNLOCKED, before the
+ * participant fence, because the fence has to hold a `Member` row for every owner
+ * the queue will name and — since #3232 records one item per dependent booking —
+ * the fence also has to hold every dependent BOOKING as a proof source. Then it
+ * runs again under the per-owner coverage key, where the plan becomes a fact or a
+ * safe retry. That is the same plan -> lock -> re-verify -> retry protocol
+ * `lockAndVerifyGroupTripCoverageDependents` and
+ * `enqueueHostingCoverageReevaluationForMember` use, deliberately shared in shape
+ * rather than invented a third time.
+ *
+ * CHEAPER THAN IT LOOKS FOR A CLUB THAT OWES NOTHING. Both gates are read from the
+ * already-resolved, cached policy: an inactive mode or a lodge not on
+ * `SAME_BOOKING_OWNER` returns the empty list with no query at all, which is what
+ * keeps "costs no same-owner query while the scope is off" true.
+ *
+ * ORDERED AND CAPPED for the reason the Group Trip plan is: an unordered truncation
+ * would return a different N under the lock than it did in the plan, and every edit
+ * on an account above the ceiling would fail as a spurious retry.
+ */
+async function planSameOwnerCoverageDependents(
+  booking: CoverageOwnerFacts,
+  resolved: ResolvedAdultMemberHostingPolicy,
+  vacated: { checkIn: Date; checkOut: Date } | null,
+  db: AdultMemberHostingReviewDb,
+): Promise<CoverageOwnerFacts[]> {
+  if (!hostingModeIsActive(resolved.mode)) return [];
+  if (!resolved.hostScopes.sameBookingOwner) return [];
+  return (await db.booking.findMany({
+    where: sameOwnerCoverageDependentOverStayUnionWhere(booking, vacated),
+    orderBy: [...COVERAGE_READ_ORDER],
+    take: SAME_OWNER_COVERAGE_DEPENDENT_LIMIT,
+    select: COVERAGE_OWNER_FACTS_BASE_SELECT,
+  })) as CoverageOwnerFacts[];
+}
+
+/**
+ * Record the bounded re-evaluation the dependents this change could have stranded
+ * are owed, one item per dependent the changed booking's own item cannot reach
+ * (#3232, `INV-HOST-049`).
+ *
+ * ONE ITEM PER DEPENDENT BOOKING, naming the dependent as its own source, for
+ * exactly the reason `settleGroupTripDependentCoverage` gives: the participant fence
+ * demands a proof source whose `bookingId` is the item's `sourceBookingId` AND whose
+ * `ownerMemberId` is the item's `memberId`, so an item pairing the changed booking
+ * with a dependent's window would be REFUSED. Here both bookings share the owner by
+ * construction (§1), so the item's `memberId` and `lodgeId` are the same either way
+ * and only the source and the nights differ.
+ *
+ * THE NIGHTS ARE THE DEPENDENT'S OWN. That is the whole point — see
+ * `dependentNeedsOwnQueueItem`.
+ */
+async function enqueueSameOwnerDependentItems(
+  booking: CoverageOwnerFacts,
+  dependents: readonly CoverageOwnerFacts[],
+  context: { cause: HostingCoverageIncidentCause; reason: string | null },
+  actorMemberId: string | null,
+  participantProof: HostingCoverageQueueParticipantProof,
+  db: AdultMemberHostingReviewDb,
+): Promise<number> {
+  let queued = 0;
+  for (const dependent of dependents) {
+    if (!dependentNeedsOwnQueueItem(booking, dependent)) continue;
+    const id = await enqueueHostingCoverageReevaluation(
+      {
+        memberId: dependent.memberId,
+        lodgeId: dependent.lodgeId,
+        nights: coverageNightsOf(dependent),
+        // A dependent's own item is never labelled as somebody's override: the
+        // officer authorised stranding on the booking they were working on, not a
+        // decision about this one. The actor is still recorded, so the audit trail
+        // says who did it — the same reasoning `settleGroupTripDependentCoverage`
+        // applies to a third party's booking.
+        cause: context.cause === "OFFICER_OVERRIDE" ? "SYSTEM_CHANGE" : context.cause,
+        sourceBookingId: dependent.id,
+        actorMemberId,
+        reason: context.cause === "OFFICER_OVERRIDE" ? null : context.reason,
+      },
+      participantProof,
+      db,
+    );
+    if (id) queued += 1;
+  }
+  return queued;
+}
+
+/**
  * Settle the same-owner bookings whose cover this change may have removed
  * (#2576 §6, §7, §8).
  *
@@ -2438,6 +2667,12 @@ async function settleSameOwnerDependentCoverage(
   db: AdultMemberHostingReviewDb,
   options: HostingReconcileOptions,
   participantProof: HostingCoverageQueueParticipantProof,
+  /**
+   * The dependent set as planned before the participant fence (#3232). Re-read
+   * under the owner key below and compared, so a plan that has stopped describing
+   * the account is a safe retry rather than a queue item against an unlocked row.
+   */
+  plannedDependents: readonly CoverageOwnerFacts[],
 ): Promise<void> {
   const booking = (await db.booking.findUnique({
     where: { id: bookingId },
@@ -2503,14 +2738,31 @@ async function settleSameOwnerDependentCoverage(
   }
   await lockHostingCoverageOwner(db, booking.memberId);
 
+  // #3232: the plan becomes a fact HERE, under the owner key, or the whole
+  // transaction is a safe retry. Unlocked, the plan is a hypothesis — at READ
+  // COMMITTED each of two concurrent writers can observe a state the other has
+  // already invalidated — and the fence's proof was issued for exactly the bookings
+  // it named, so a set that has moved must not be enqueued against it.
+  const verifiedDependents = await planSameOwnerCoverageDependents(
+    booking,
+    resolved,
+    options.coverageChangeVacatedRange ?? null,
+    db,
+  );
+  if (
+    coverageBookingSetFingerprint(verifiedDependents) !==
+    coverageBookingSetFingerprint(plannedDependents)
+  ) {
+    throw new HostingCoverageParticipantRetryError();
+  }
+
   if (resolved.mode === "ADMIN_REVIEW_REQUIRED") {
     // No inspection: nothing here can refuse and nothing can open an incident, so
-    // the only question is whether any other booking of this owner overlaps at all.
-    // One indexed count, and a queue row only when there is somebody to re-read.
-    const dependents = await db.booking.count({
-      where: sameOwnerCoverageDependentWhere(booking),
-    });
-    if (dependents === 0) return;
+    // the only question is whether any other booking of this owner is in the set at
+    // all. The verified plan already answers that, so the separate count this used
+    // to run is gone rather than duplicated — and it was the count whose
+    // single-window predicate lost the moved-away dependent (#3232).
+    if (verifiedDependents.length === 0) return;
     await enqueueHostingCoverageReevaluation(
       {
         memberId: booking.memberId,
@@ -2521,6 +2773,14 @@ async function settleSameOwnerDependentCoverage(
         actorMemberId,
         reason: null,
       },
+      participantProof,
+      db,
+    );
+    await enqueueSameOwnerDependentItems(
+      booking,
+      verifiedDependents,
+      { cause: "SYSTEM_CHANGE", reason: null },
+      actorMemberId,
       participantProof,
       db,
     );
@@ -2539,7 +2799,7 @@ async function settleSameOwnerDependentCoverage(
 
   const disposition = resolveDependentDisposition(booking, options);
   const { stranded, dependentsWithOpenIncidents } =
-    await inspectSameOwnerDependents(booking, db);
+    await inspectSameOwnerDependents(booking, verifiedDependents, db);
 
   // The confirmation is authority over the exact bookings and lodge-nights the
   // officer saw, not over whatever happens to be stranded by the time the retry
@@ -2574,12 +2834,53 @@ async function settleSameOwnerDependentCoverage(
     context.actorMemberId ?? null,
   );
 
-  // REFUSE FIRST, and which refusal it is depends on who is asking (§6, §7).
+  // #3232: A STALE OWNER ACCEPTANCE IS ANOTHER FIRST SUBMISSION. The member
+  // answered about the bookings and nights they were SHOWN; if that set has moved
+  // since, honouring the answer would strand something they were never asked
+  // about. Re-prompt through the same door a first submission uses, from inside
+  // this transaction so the write, the incident work and the queue rows all roll
+  // back with it.
+  if (
+    context.strandingAcceptedByOwner === true &&
+    stranded.length > 0 &&
+    context.strandedStateKey !== strandedCoverageStateKey(stranded, booking.id)
+  ) {
+    throw new SameOwnerCoverageWouldBreakError(stranded, {
+      linkedMoveWouldAnswer: true,
+    });
+  }
+
+  // REFUSE FIRST, and which refusal it is depends on who is asking (§6, §7) — and,
+  // since #3232, on whether the member has anywhere to go.
   if (stranded.length > 0) {
     // The member's own change is rolled back with the sentence §6 specifies,
     // naming the affected booking, its lodge and the uncovered nights.
     if (disposition === "BLOCK") {
-      throw new SameOwnerCoverageWouldBreakError(stranded);
+      // #3232, `INV-HOST-050`: A REFUSAL IS ONLY LEGITIMATE WHEN THE PERSON
+      // REFUSED CAN DO SOMETHING ABOUT IT, and for one shape of stranding they
+      // cannot. Where the dependent no longer shares a night with this booking,
+      // this booking has MOVED AWAY from it — and every remedy the refusal's own
+      // sentence offers on the affected booking is either irrelevant or refused by
+      // this same rule from the other end. Moving that booking to follow this one
+      // leaves it with no qualifying adult and `REFUSE` is the default
+      // enforcement, so the member could move NEITHER of their own bookings. That
+      // is the deadlock the owner refused to ship.
+      //
+      // So the refusal is MARKED as answerable and the date writer turns it into
+      // the linked-move offer: move both together, or decline and be warned while
+      // the officer is told. The other shape — a dependent that still overlaps, so
+      // the stranding came from a guest change rather than a move — keeps exactly
+      // today's refusal, because there the member really can add cover to the
+      // affected booking or cancel it.
+      const movedAwayFrom = stranded.some((row) =>
+        dependentNeedsOwnQueueItem(booking, {
+          checkIn: parseDateOnly(row.checkIn),
+          checkOut: parseDateOnly(row.checkOut),
+        }),
+      );
+      throw new SameOwnerCoverageWouldBreakError(stranded, {
+        linkedMoveWouldAnswer: movedAwayFrom,
+      });
     }
     // The officer's change is authorised but not yet confirmed: they are shown
     // what would be stranded and asked to acknowledge it with a reason (§7).
@@ -2620,12 +2921,31 @@ async function settleSameOwnerDependentCoverage(
       // The nights this booking covers, and no others (§10). A change to this
       // booking cannot affect a night it never touched, so this IS the bound —
       // not a heuristic narrowing of a wider sweep.
+      //
+      // #3232: WHAT THIS ITEM CANNOT REACH is a dependent that no longer shares a
+      // night with this booking, which is exactly what a date MOVE produces. The
+      // drain resolves an item's nights back into bookings, so such a dependent
+      // resolves out of this item's list entirely and is dropped in the background
+      // with nothing logged. The item below is still right for what it names; the
+      // dependents it cannot name get their own, immediately after.
       nights,
       cause: context.cause,
       sourceBookingId: booking.id,
       actorMemberId,
       reason: context.reason ?? null,
     },
+    participantProof,
+    db,
+  );
+
+  // #3232: and one item per dependent this booking's own window cannot reach,
+  // naming that dependent's own nights. In the ordinary edit every dependent
+  // overlaps and this writes nothing at all.
+  await enqueueSameOwnerDependentItems(
+    booking,
+    verifiedDependents,
+    { cause: context.cause, reason: context.reason ?? null },
+    actorMemberId,
     participantProof,
     db,
   );
@@ -2647,7 +2967,7 @@ async function settleSameOwnerDependentCoverage(
  *
  * There is a second harm on the same path, and it is the reason the answer is
  * `ESCALATE` rather than a redacted refusal: every remedy §6's message offers —
- * amend the affected booking, restore alternative cover, ring an officer — belongs
+ * put cover back on the affected booking, cancel it, ring an officer — belongs
  * to the OWNER. A guest refused here could not comply by any means available to
  * them; they would simply be pinned to a stranger's booking indefinitely. §8's
  * principle applies exactly: allow the change nobody can sensibly block, and record
@@ -3567,6 +3887,61 @@ export async function enqueueHostingCoverageReevaluationForMember(
 }
 
 /**
+ * WHO this change has just stranded, read-only, for a caller that intends to OFFER
+ * the member something rather than refuse them (#3232, `INV-HOST-050`).
+ *
+ * THE SAME ANSWER THE REFUSAL USES, FROM THE SAME CODE. The linked-move offer has
+ * to name exactly the bookings the refusal would have named, at exactly the nights
+ * it would have named — otherwise the member is offered a move that does not fix
+ * the thing that is about to block them, or is charged for moving a booking nothing
+ * required to move. So this is `inspectSameOwnerDependents` over the same verified
+ * plan, exported rather than reimplemented (`INV-SSOT-001`): a second "who is
+ * stranded" predicate is the drift that would make the offer and the enforcement
+ * disagree, which is the exact failure #3232's own acceptance criteria call out.
+ *
+ * READ-ONLY, AND CALLED FROM INSIDE THE CALLER'S TRANSACTION AFTER ITS WRITE. It
+ * answers "given what is now true, who is uncovered", so it has to see the caller's
+ * own uncommitted rows — which reading through `tx` is what provides. It writes
+ * nothing: no review row, no incident, no queue item. The caller either rolls the
+ * whole thing back (to quote the offer) or goes on to move the stranded bookings
+ * too (to apply it), and in both cases the durable consequences are settled by the
+ * ordinary seam afterwards.
+ *
+ * RETURNS THE EMPTY LIST rather than throwing when the lodge is not on the scope,
+ * the mode is inactive, or nothing is stranded. A caller asking "is there anything
+ * to offer about" is entitled to a plain no.
+ *
+ * IT DOES NOT TAKE THE PER-OWNER COVERAGE KEY, deliberately, and that is safe only
+ * because of how it is used: the caller is inside a transaction that is about to
+ * either roll back or call the full seam (which takes the key and re-verifies).
+ * A wrong answer here therefore costs a re-prompt, never a lost obligation. Do not
+ * reach for this function to decide anything durable.
+ */
+export async function inspectSameOwnerStrandingForOffer(
+  bookingId: string,
+  db: AdultMemberHostingReviewDb,
+  vacatedRange: { checkIn: Date; checkOut: Date } | null,
+): Promise<StrandedCoverageBooking[]> {
+  const booking = (await db.booking.findUnique({
+    where: { id: bookingId },
+    select: COVERAGE_OWNER_FACTS_SELECT,
+  })) as CoverageOwnerFactsWithOutcome | null;
+  if (!booking) return [];
+  const resolved = await loadAdultMemberHostingPolicy(booking.lodgeId, db);
+  if (resolved.mode !== "ENFORCED") return [];
+  if (!resolved.hostScopes.sameBookingOwner) return [];
+  const dependents = await planSameOwnerCoverageDependents(
+    booking,
+    resolved,
+    vacatedRange,
+    db,
+  );
+  if (dependents.length === 0) return [];
+  const { stranded } = await inspectSameOwnerDependents(booking, dependents, db);
+  return stranded;
+}
+
+/**
  * Look at every same-owner booking this change could have touched, and report two
  * things: which are NEWLY uncovered, and which are already carrying an open
  * incident (#2576 §6, §7, §14).
@@ -3597,13 +3972,24 @@ export async function enqueueHostingCoverageReevaluationForMember(
  */
 async function inspectSameOwnerDependents(
   booking: CoverageOwnerFacts,
+  /**
+   * The set already verified under the owner key (#3232). Read BY ID rather than by
+   * re-running the predicate, so the bookings evaluated here cannot possibly differ
+   * from the bookings the participant fence holds a proof for and the queue items
+   * name. Re-running the predicate would be a third evaluation of the same clause
+   * and a third chance for the three lists to disagree.
+   */
+  verified: readonly CoverageOwnerFacts[],
   db: AdultMemberHostingReviewDb,
 ): Promise<{
   stranded: StrandedCoverageBooking[];
   dependentsWithOpenIncidents: string[];
 }> {
+  if (verified.length === 0) {
+    return { stranded: [], dependentsWithOpenIncidents: [] };
+  }
   const dependents = (await db.booking.findMany({
-    where: sameOwnerCoverageDependentWhere(booking),
+    where: { id: { in: verified.map((dependent) => dependent.id) } },
     orderBy: [...COVERAGE_READ_ORDER],
     take: SAME_OWNER_COVERAGE_DEPENDENT_LIMIT,
     select: BOOKING_HOSTING_SELECT,
@@ -3645,6 +4031,12 @@ async function inspectSameOwnerDependents(
       reference: strandedCoverageReference(dependent.id),
       lodgeName,
       nights: violation.affectedNights,
+      // #3232: the dependent's OWN stay, so a linked-move offer can name the dates
+      // it would be moved to without re-reading the row. Its uncovered `nights` are
+      // a subset of this stay and are not a substitute for it: a partially covered
+      // booking would otherwise be proposed a move of only the uncovered part.
+      checkIn: formatDateOnly(dependent.checkIn),
+      checkOut: formatDateOnly(dependent.checkOut),
     });
   }
 
