@@ -37,10 +37,12 @@ import {
   WholeLodgeHoldBlockedError,
 } from "@/lib/over-capacity-confirmation";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
+import { ApiError } from "@/lib/api-error";
 import { assertBookingEnvelopeInvariants } from "@/lib/booking-envelope-invariants";
 import type { CalendarDate } from "@/lib/club-time";
 import { formatDateOnly } from "@/lib/date-only";
 import { getDefaultLodgeId } from "@/lib/lodges";
+import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -201,6 +203,75 @@ export async function loadLinkedMoveChargesBothChangeFees(): Promise<boolean> {
  * admin-initiated caller supplying this service is a shape the type system allows
  * and the arm is right for it too.
  */
+/**
+ * The interactive-transaction budget, WIDENED because this transaction is roughly
+ * two of them (`INV-LOCK-001`, `INV-LOCK-002`).
+ *
+ * Prisma's defaults are `maxWait: 2s / timeout: 5s`, and the wait for
+ * `pg_advisory_xact_lock(1)` counts against them. Inside this one transaction:
+ * that blocking global wait, the per-lodge capacity key, TWO full
+ * `modifyBookingBatch` bodies (each a re-read, an eligibility pass, a pricing run,
+ * a capacity check, a guest-row rewrite and a settlement), the envelope flush and
+ * three supervision reconciles. On the defaults an ordinary cancel or a bed
+ * assignment legitimately holding `lock(1)` would abort it — and it is the same
+ * numbers `assignBedRange`, the longest-lived holder of that key in the tree,
+ * already runs on, so a linked move contending with one no longer loses by
+ * construction. `deleted-booking-modification-payment.ts` states the same
+ * reasoning for the same reason; that caller takes a TIGHTER budget only because a
+ * Stripe delivery timeout is its ceiling, and a member's save has no such ceiling.
+ *
+ * NOTHING IS COMMITTED WHEN IT DOES EXPIRE, which is why the caller can answer
+ * "try again in a moment" honestly — see `LinkedDateMoveContendedError`.
+ */
+const LINKED_MOVE_TRANSACTION_BUDGET = {
+  maxWait: 10_000,
+  timeout: 30_000,
+} as const;
+
+/**
+ * Refused because the transaction could not take its locks in time, or lost a
+ * write conflict.
+ *
+ * P2028 covers an exhausted `maxWait`/`timeout` and P2034 a write
+ * conflict/deadlock; both mean a counterpart writer legitimately held `lock(1)` or
+ * the lodge key, NOTHING WAS COMMITTED, and the remedy is "again shortly" rather
+ * than "differently" (`docs/CONCURRENCY_AND_LOCKING.md`). It matters more here
+ * than on most paths: unmapped, contention arrives at the member as an opaque 500
+ * INSTEAD OF THE OFFER, which puts them back in the state of being unable to move
+ * either booking — the deadlock this whole feature exists to remove, reappearing
+ * under load.
+ *
+ * An `ApiError` subclass so both save routes answer it through the generic branch
+ * they already have, rather than each growing its own copy of the mapping.
+ */
+export class LinkedDateMoveContendedError extends ApiError {
+  readonly code = "LINKED_MOVE_CONTENDED";
+  constructor() {
+    super(
+      "Something else is being changed on these bookings right now, so we could not " +
+        "work out the combined change in time. Nothing was changed — please try " +
+        "again in a moment.",
+      503,
+    );
+    this.name = "LinkedDateMoveContendedError";
+  }
+}
+
+/**
+ * Prisma's transaction contention codes.
+ *
+ * The same pair, for the same reason, as `waitlist-confirm/route.ts`,
+ * `admin/site-style/route.ts`, `deletion-request-decision.ts` and
+ * `waitlist-return-contract.ts`. It is deliberately NOT hoisted into a shared
+ * module here: two of the existing copies also carry `P2002`, which is a
+ * unique-constraint retry rather than contention, so unifying them is a decision
+ * about those paths and not a side effect of this one.
+ */
+function isTransactionContention(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  return code === "P2028" || code === "P2034";
+}
+
 function isCapacityRefusal(error: unknown): boolean {
   return (
     error instanceof InsufficientCapacityError ||
@@ -384,19 +455,35 @@ async function runLinkedDateMove(
       // triggers are deferrable to permit. That was a 500 on the real database,
       // not a theory.
       await assertBookingEnvelopeInvariants(tx);
-      await primary.pendingHostingReconcile?.();
-      for (const entry of linked) {
-        if (!entry.result) continue;
-        await entry.result.pendingHostingReconcile?.();
-      }
-      // A booking written with the deferral MUST be reconciled, so a missing thunk
-      // is a wiring fault rather than a booking with no supervision check. Fail
-      // loudly inside the transaction, where it rolls back.
-      if (!primary.pendingHostingReconcile) {
-        throw new Error(
-          "The linked move wrote a booking without receiving its deferred hosting " +
-            "reconciliation; refusing to commit an unchecked supervision state.",
-        );
+      // EVERY BOOKING THIS TRANSACTION WROTE, AND THE GUARD COVERS EVERY ONE OF
+      // THEM. A booking written with the deferral MUST be reconciled: deferral
+      // moves the supervision check, it never removes it, so a missing thunk is a
+      // wiring fault and not a booking that happens not to need checking. Failing
+      // loudly here rolls the whole transaction back, which is the only safe answer
+      // — committing would leave a booking whose supervision state nobody judged.
+      //
+      // IT USED TO GUARD THE PRIMARY ONLY, with the dependents calling the thunk
+      // optionally, so the very fault the guard exists to catch went undetected on
+      // exactly the bookings this service exists to write. One list, one loop, no
+      // optional call.
+      const written = [
+        { bookingId: args.bookingId, result: primary },
+        ...linked.flatMap((entry) =>
+          entry.result
+            ? [{ bookingId: entry.stranded.bookingId, result: entry.result }]
+            : [],
+        ),
+      ];
+      for (const { bookingId, result } of written) {
+        const reconcile = result.pendingHostingReconcile;
+        if (!reconcile) {
+          throw new Error(
+            "INV-HOST-051: the linked move wrote a booking without receiving its " +
+              "deferred hosting reconciliation; refusing to commit an unchecked " +
+              `supervision state (booking ${bookingId}).`,
+          );
+        }
+        await reconcile();
       }
       // And re-assert the rule over the primary once more only where the linked
       // moves changed the world after its own reconciliation ran, so the answer the
@@ -474,7 +561,7 @@ async function runLinkedDateMove(
       ],
       quote,
     };
-  });
+  }, LINKED_MOVE_TRANSACTION_BUDGET);
 }
 
 /**
@@ -498,6 +585,9 @@ export async function offerLinkedDateMove(
         declineStateKey: error.declineStateKey,
       });
     }
+    // Contention is not a fault, and it must not reach the member as one: an
+    // opaque 500 here replaces the OFFER, which is the only door they had.
+    if (isTransactionContention(error)) throw new LinkedDateMoveContendedError();
     throw error;
   }
   // Unreachable: `"quote"` mode always throws.
@@ -530,17 +620,56 @@ export async function applyLinkedDateMove(
         declineStateKey: error.declineStateKey,
       });
     }
+    // Nothing was committed, so "try again in a moment" is the whole truth. The
+    // member's acceptance is still good: the state key is re-derived on the retry
+    // from the same situation and the same figures.
+    if (isTransactionContention(error)) throw new LinkedDateMoveContendedError();
     throw error;
   }
 
   // AFTER THE COMMIT, and only after it. Each booking's provider work — Stripe
   // refund or charge, member email, Xero settlement, superseded-intent drain,
   // audit — was deferred because this module owned the commit.
+  //
+  // EACH BOOKING'S WORK IS CONTAINED SEPARATELY, and that is the difference
+  // between one booking's follow-up failing and the other booking's not happening
+  // at all. The transaction has COMMITTED: both bookings really have moved, so a
+  // failure here can never mean "the move did not happen", and re-raising it says
+  // exactly that — the route answers 500, the member is told their change failed,
+  // and a resubmit is refused because the acceptance no longer matches. Meanwhile
+  // the SECOND booking, whose thunk was never reached, has new dates with no
+  // Stripe charge for its increase, no recovery row (that enqueue lives inside the
+  // thunk's own catch), no Xero leg, no audit row and no member email.
+  //
+  // The throw sites are ordinary reads — the member row for the email, the
+  // open-financial-review check — and pool pressure straight after a long doubled
+  // transaction is exactly when they fail. `booking-exception-execution.ts` is the
+  // other caller that owns a commit and it contains its post-commit work for the
+  // same stated reason; this follows it.
+  const followUpErrors: unknown[] = [];
   for (const thunk of outcome.deferred) {
-    await thunk();
+    try {
+      await thunk();
+    } catch (error) {
+      followUpErrors.push(error);
+    }
   }
   for (const bookingId of outcome.movedBookingIds) {
-    await settleHostingCoverageAfterCommit({ bookingId });
+    try {
+      await settleHostingCoverageAfterCommit({ bookingId });
+    } catch (error) {
+      followUpErrors.push(error);
+    }
+  }
+  if (followUpErrors.length > 0) {
+    // Logged rather than surfaced, because there is nothing the member can do
+    // about it and the thing they asked for did happen. The Stripe, Xero and
+    // email paths each already have their own recovery or outbox backstop; what
+    // this containment protects is their CHANCE TO RUN.
+    logger.error(
+      { errs: followUpErrors, bookingIds: outcome.movedBookingIds },
+      "Linked date move committed, but post-commit follow-up work failed",
+    );
   }
   return outcome.primary;
 }

@@ -317,6 +317,24 @@ shares the immutable lodge tier. Those common tiers serialize eligibility
 changes with roster validation without making every booking writer enumerate
 every possible roster night.
 
+**One sorted set per call is not one sorted set per transaction (#3232).**
+`lockRosterDates` sorts the dates it is given, so any two writers that each take
+ONE set are safe against each other. A caller that composes two booking writes
+into one transaction takes TWO sets: `runLinkedDateMove` moves a member's booking
+and the booking of theirs that was relying on it for adult supervision, and each
+`modifyBookingBatch` derives its own envelope. It can therefore hold a later date
+from the first booking's set and then ask for an earlier one from the second
+booking's — an inverted acquisition against a writer arriving from the other
+direction. What makes that safe is the global key, and it is a constraint on new
+writers rather than a happy accident: **every writer in the tree that acquires
+more than one roster-date key holds `pg_advisory_xact_lock(1)` for the whole
+transaction first** — both booking modification services, guest removal, the
+kiosk departure route, and `chore-cleanup`, which is only ever called from inside
+the first two. Two multi-key roster acquisitions therefore cannot interleave, and
+a writer holding a single roster key cannot complete a cycle in this family. A new
+multi-key roster writer that skips the global key would break this, so it must
+take it.
+
 The three roster-aware booking modification paths continue into the optional
 member-night and member-credit tiers only after their roster-date set is held,
 then call the same-owner hosting reconciler last. Guest removal likewise reaches

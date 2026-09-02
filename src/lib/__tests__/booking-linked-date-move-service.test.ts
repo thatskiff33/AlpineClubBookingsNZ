@@ -79,6 +79,7 @@ const h = vi.hoisted(() => ({
   acquireLodgeCapacityLock: vi.fn(),
   getDefaultLodgeId: vi.fn(),
   actorOptionCalls: [] as unknown[],
+  logError: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -116,6 +117,10 @@ vi.mock("@/lib/capacity", () => ({
 
 vi.mock("@/lib/lodges", () => ({
   getDefaultLodgeId: h.getDefaultLodgeId,
+}));
+
+vi.mock("@/lib/logger", () => ({
+  default: { error: h.logError, warn: vi.fn(), info: vi.fn() },
 }));
 
 import {
@@ -565,6 +570,44 @@ describe("the linked move is one transaction (#3232, INV-HOST-051)", () => {
     expect(h.events).not.toContain(`deferred:${PRIMARY}`);
   });
 
+  it("refuses when it is the DEPENDENT's supervision check that went missing", async () => {
+    // THE HALF THE GUARD USED TO MISS. It inspected the primary only, and the
+    // dependents called their thunk optionally (`?.()`), so a wiring fault on the
+    // second booking — the one this whole service exists to write — committed a
+    // booking whose supervision state nobody had judged. Deferral moves the check;
+    // it must never be able to remove it.
+    h.modifyBookingBatch.mockImplementation(async (call: BatchArgs) => {
+      h.events.push(`edit:${call.bookingId}`);
+      const isPrimary = call.bookingId === PRIMARY;
+      const result = batchResult(
+        call.bookingId,
+        isPrimary ? PRIMARY_MONEY : DEPENDENT_MONEY,
+        isPrimary
+          ? MOVED
+          : {
+              checkIn: new Date(`${call.input.checkIn}T00:00:00.000Z`),
+              checkOut: new Date(`${call.input.checkOut}T00:00:00.000Z`),
+            },
+        false,
+      );
+      return isPrimary ? result : { ...result, pendingHostingReconcile: undefined };
+    });
+
+    await expect(
+      applyLinkedDateMove({
+        ...args(),
+        linkedMove: {
+          choice: "MOVE_BOTH",
+          acknowledged: true,
+          stateKey: `v1:${"0".repeat(64)}`,
+        },
+      }),
+    ).rejects.toThrow(/INV-HOST-051: the linked move wrote a booking without/);
+    expect(h.events).toContain("tx:rollback");
+    expect(h.events).not.toContain(`deferred:${PRIMARY}`);
+    expect(h.events).not.toContain(`deferred:${DEPENDENT}`);
+  });
+
   it("falls back to the default lodge key when the booking row has gone", async () => {
     h.bookingFindUnique.mockResolvedValueOnce(null);
     await raiseOffer().catch(() => undefined);
@@ -945,6 +988,82 @@ describe("either both bookings move or neither does (#3232)", () => {
       [],
     );
     expect(h.events.filter((event) => event.startsWith("settle:"))).toEqual([]);
+  });
+});
+
+describe("post-commit work is contained per booking (#3232)", () => {
+  /**
+   * THE TRANSACTION HAS COMMITTED BY THIS POINT, so a failure here can never mean
+   * "the move did not happen". Both loops used to be bare `for … await`, so the
+   * FIRST booking's follow-up failing meant the second booking got none of its
+   * own: no Stripe charge for its increase and no recovery row either (that
+   * enqueue lives inside the thunk's own catch, which was never entered), no Xero
+   * leg, no audit row, no member email — with its dates permanently changed. The
+   * route then answered 500, telling the member their change had failed, and a
+   * resubmit was refused because the acceptance no longer matched.
+   */
+  async function applyWithFailingPrimaryThunk() {
+    const offer = await raiseOffer();
+    h.events = [];
+    h.logError.mockClear();
+    h.modifyBookingBatch.mockImplementation(async (call: BatchArgs) => {
+      h.events.push(`edit:${call.bookingId}`);
+      const isPrimary = call.bookingId === PRIMARY;
+      const result = batchResult(
+        call.bookingId,
+        isPrimary ? PRIMARY_MONEY : DEPENDENT_MONEY,
+        isPrimary
+          ? MOVED
+          : {
+              checkIn: new Date(`${call.input.checkIn}T00:00:00.000Z`),
+              checkOut: new Date(`${call.input.checkOut}T00:00:00.000Z`),
+            },
+        false,
+      );
+      if (!isPrimary) return result;
+      return {
+        ...result,
+        deferredPostCommit: async () => {
+          h.events.push(`deferred:${call.bookingId}`);
+          // The realistic shape: an ordinary read failing under pool pressure
+          // straight after a long doubled transaction.
+          throw new Error("Timed out fetching a new connection from the pool");
+        },
+      };
+    });
+    return applyLinkedDateMove({
+      ...args(),
+      linkedMove: {
+        choice: "MOVE_BOTH",
+        acknowledged: true,
+        stateKey: offer.acceptStateKey,
+      },
+    });
+  }
+
+  it("still runs the OTHER booking's provider work when one booking's fails", async () => {
+    const result = await applyWithFailingPrimaryThunk();
+
+    expect(result.booking.id).toBe(PRIMARY);
+    // The primary's thunk threw, and the dependent's still ran.
+    expect(h.events).toContain(`deferred:${PRIMARY}`);
+    expect(h.events).toContain(`deferred:${DEPENDENT}`);
+    // And so did the supervision drain for BOTH bookings, which is what opens the
+    // incident and reaches the officer queue.
+    expect(h.events).toContain(`settle:${PRIMARY}`);
+    expect(h.events).toContain(`settle:${DEPENDENT}`);
+  });
+
+  it("does not report a committed move as a failure, and logs what did fail", async () => {
+    await expect(applyWithFailingPrimaryThunk()).resolves.toBeTruthy();
+    expect(h.logError).toHaveBeenCalledTimes(1);
+    const [context, message] = h.logError.mock.calls[0] as [
+      { errs: unknown[]; bookingIds: string[] },
+      string,
+    ];
+    expect(message).toContain("post-commit follow-up work failed");
+    expect(context.errs).toHaveLength(1);
+    expect(context.bookingIds).toEqual([PRIMARY, DEPENDENT]);
   });
 });
 

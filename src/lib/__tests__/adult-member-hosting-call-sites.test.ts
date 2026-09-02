@@ -991,10 +991,23 @@ describe("the same-owner refusal and the escalation seam (#2576 §6, §8, §9)",
       "src/lib/booking-linked-date-move-service.ts",
     ]);
     // And it really discharges the obligation it took on, for every booking it
-    // wrote rather than only the first.
+    // wrote rather than only the first — including the GUARD that a missing thunk
+    // is a hard failure. That guard used to inspect the primary alone while the
+    // dependents called the thunk optionally, so a wiring fault on a dependent
+    // committed a booking whose supervision state was never judged, which is the
+    // one thing deferral must never be able to do.
     const source = readRepoCode(REFUSAL_UPGRADER);
-    expect(source).toContain("await primary.pendingHostingReconcile?.()");
-    expect(source).toContain("await entry.result.pendingHostingReconcile?.()");
+    expect(source).toContain("const reconcile = result.pendingHostingReconcile;");
+    expect(source).toContain("await reconcile();");
+    expect(source).toContain(
+      "INV-HOST-051: the linked move wrote a booking without receiving its ",
+    );
+    // No optional call survives anywhere in the file: `?.()` on this thunk is the
+    // exact shape that lets a missing one pass silently.
+    expect(
+      source,
+      "a deferred hosting reconciliation must never be called optionally",
+    ).not.toContain("pendingHostingReconcile?.(");
   });
 
   it("leaves the deferred envelope constraints deferred for that same caller", () => {
