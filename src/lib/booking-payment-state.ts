@@ -64,7 +64,12 @@ export function isSettledBookingStatus(status: string): boolean {
  */
 export function hasIssuedPrimaryXeroInvoice(booking: {
   status: string;
-  payment: { xeroInvoiceId?: string | null } | null | undefined;
+  // REQUIRED, not optional (#3200 review). Optional would let a caller whose
+  // payment select omits the column type-check clean and be told "no invoice"
+  // for ever — the under-answering direction, where the difference is simply
+  // never billed and nothing fails. `INV-SSOT-001` prefers unrepresentable
+  // over policed: a narrowed select is now a compile error at the call site.
+  payment: { xeroInvoiceId: string | null } | null | undefined;
 }): boolean {
   return (
     isSettledBookingStatus(booking.status) &&
