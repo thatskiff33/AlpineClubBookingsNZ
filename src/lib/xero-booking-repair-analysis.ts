@@ -164,3 +164,117 @@ export function getCashCancellationRefundCandidateCents(booking: BookingRepairRe
 
   return candidate;
 }
+
+/**
+ * WHEN WAS THIS BOOKING'S PRIMARY XERO INVOICE RAISED, RELATIVE TO ONE EDIT
+ * (#3199, epic #2797)?
+ *
+ * The supplementary-invoice arm of the repair tool used to ask only "is there a
+ * primary invoice now, and is this edit's net positive". That question has no
+ * notion of WHEN the primary invoice was raised, and the two orderings need
+ * opposite answers:
+ *
+ * - invoice FIRST, then the edit — the invoice bills the old total, so the
+ *   difference needs its own supplementary invoice. This is the ordinary case,
+ *   because the primary invoice is enqueued at confirmation.
+ * - edit FIRST, then the invoice — the primary invoice is minted from the
+ *   booking as it stands at DISPATCH (`createXeroInvoiceForBooking` re-reads
+ *   the booking and its guest nights; the queued payload carries only a booking
+ *   id), so it already bills the change. A supplementary invoice on top of it
+ *   bills the same money twice: $600 of income and a $50 receivable nobody owes
+ *   on a $550 booking.
+ *
+ * WHY THE OPERATION HISTORY IS THE SOURCE, and specifically why not
+ * `primaryInvoice.operation`. `resolveObjectFromCandidates` sorts its candidates
+ * `field` before `link` before `operation` and takes the first, and this arm
+ * only fires when `payment.xeroInvoiceId` is set — which is exactly when the
+ * field candidate exists. So the resolved object's `.operation` is `null` in
+ * essentially every real case and reading it would silently answer "unknown"
+ * everywhere. The operation rows themselves are the evidence, and they are
+ * complete: `XeroSyncOperation` rows are never pruned in production.
+ *
+ * WHY LINKS ARE NOT A FALLBACK. `XeroObjectLink.createdAt` looks like the same
+ * evidence and is not: this very tool backfills a missing PRIMARY_INVOICE link
+ * (`SYNC_PAYMENT_PRIMARY_INVOICE_LINK`), so a link's timestamp can be years
+ * later than the mint it records. Reading one would report "the invoice
+ * followed the edit" for invoices that plainly preceded it.
+ *
+ * THE COMPARISON INSTANT IS `completedAt`, AND EARLIEST WINS. A successful
+ * `INVOICE`/`CREATE` operation carrying this invoice's id is proof the invoice
+ * existed in Xero by the moment that operation completed, so the EARLIEST such
+ * completion is the tightest upper bound the history offers on when the invoice
+ * came into existence. `startedAt` and `createdAt` are NOT usable in its place:
+ * an operation enqueued before the edit can dispatch after it, and the invoice
+ * is built at dispatch — so an enqueue timestamp would read "invoice first" for
+ * exactly the outage window this defect lives in.
+ *
+ * EVERYTHING ELSE IS `unknown`, WHICH THE CALLER REPORTS RATHER THAN GUESSES.
+ * An invoice minted before the outbox existed, or reconciled into Xero by hand,
+ * has no matching operation row at all; a matching row with no completion
+ * instant bounds nothing. Neither is evidence that the invoice preceded the
+ * edit, and this is a money path, so neither may be treated as if it were.
+ */
+export type PrimaryInvoiceEditTiming =
+  | {
+      outcome: "invoice-preceded-edit";
+      raisedAt: Date;
+      operationId: string;
+    }
+  | {
+      outcome: "invoice-followed-edit";
+      raisedAt: Date;
+      operationId: string;
+    }
+  | {
+      outcome: "unknown";
+      reason: "no-successful-create-operation" | "no-completion-timestamp";
+    };
+
+export function resolvePrimaryInvoiceEditTiming({
+  operations,
+  primaryInvoiceObjectId,
+  editedAt,
+}: {
+  operations: XeroOperationRecord[];
+  primaryInvoiceObjectId: string;
+  editedAt: Date;
+}): PrimaryInvoiceEditTiming {
+  const matches = operations.filter(
+    (operation) =>
+      operation.entityType === "INVOICE" &&
+      operation.operationType === "CREATE" &&
+      ["SUCCEEDED", "PARTIAL"].includes(operation.status) &&
+      operation.xeroObjectId === primaryInvoiceObjectId
+  );
+
+  if (matches.length === 0) {
+    return { outcome: "unknown", reason: "no-successful-create-operation" };
+  }
+
+  let earliest: { raisedAt: Date; operationId: string } | null = null;
+  for (const operation of matches) {
+    const completedAt = operation.completedAt;
+    if (!completedAt) {
+      continue;
+    }
+    if (!earliest || completedAt.getTime() < earliest.raisedAt.getTime()) {
+      earliest = { raisedAt: completedAt, operationId: operation.id };
+    }
+  }
+
+  if (!earliest) {
+    return { outcome: "unknown", reason: "no-completion-timestamp" };
+  }
+
+  // Strictly BEFORE. An invoice raised at the same instant as the edit is not
+  // evidence that it preceded it, and the safe answer to "cannot tell" is the
+  // one that asks a person rather than the one that bills.
+  return {
+    outcome:
+      earliest.raisedAt.getTime() < editedAt.getTime()
+        ? "invoice-preceded-edit"
+        : "invoice-followed-edit",
+    raisedAt: earliest.raisedAt,
+    operationId: earliest.operationId,
+  };
+}

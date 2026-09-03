@@ -80,6 +80,39 @@ function makeOperation(overrides: Record<string, unknown> = {}) {
   };
 }
 
+/**
+ * THE PRIMARY INVOICE'S OWN OUTBOX ROW, COMPLETED BEFORE THE EDIT (#3199).
+ *
+ * Production's ordinary shape, and since #3199 the evidence the supplementary-
+ * invoice arm needs before it will offer a one-click fix: the primary invoice
+ * is enqueued at confirmation, so it is minted from the booking as it stood
+ * BEFORE any later edit and the edit's difference really does need its own
+ * invoice. `makeBooking` puts `inv_primary` on the payment, so this row carries
+ * the same `xeroObjectId` - that is what joins the two - and completes on
+ * 1 May, a day before every modification fixture in this file.
+ *
+ * Tests that leave it out are asserting the OTHER half of #3199: with no
+ * operation history the tool cannot tell which came first, and it reports for
+ * manual review rather than billing.
+ */
+function makePrimaryInvoiceCreateOperation(overrides: Record<string, unknown> = {}) {
+  return makeOperation({
+    id: "operation_primary_invoice",
+    localModel: "Payment",
+    localId: "payment_1",
+    entityType: "INVOICE",
+    operationType: "CREATE",
+    status: "SUCCEEDED",
+    xeroObjectType: "INVOICE",
+    xeroObjectId: "inv_primary",
+    startedAt: new Date("2026-05-01T00:00:00Z"),
+    completedAt: new Date("2026-05-01T00:00:00Z"),
+    createdAt: new Date("2026-05-01T00:00:00Z"),
+    updatedAt: new Date("2026-05-01T00:00:00Z"),
+    ...overrides,
+  });
+}
+
 function isCapturedTransactionStatus(status: string) {
   return ["SUCCEEDED", "PARTIALLY_REFUNDED", "REFUNDED"].includes(status);
 }
@@ -496,7 +529,12 @@ describe("runBookingXeroRepair", () => {
         },
       ],
     });
-    const deps = createDependencies({ bookings: [booking] });
+    const deps = createDependencies({
+      bookings: [booking],
+      // #3199: the primary invoice went out on 1 May, the edit landed on 2 May.
+      // Invoice first, so this edit's difference is genuinely unbilled.
+      operations: [makePrimaryInvoiceCreateOperation()],
+    });
 
     const report = await runBookingXeroRepair({
       dependencies: deps,
@@ -546,7 +584,11 @@ describe("runBookingXeroRepair", () => {
         },
       ],
     });
-    const deps = createDependencies({ bookings: [booking] });
+    const deps = createDependencies({
+      bookings: [booking],
+      // #3199: invoice first, edit second - the arm this control guards.
+      operations: [makePrimaryInvoiceCreateOperation()],
+    });
 
     await runBookingXeroRepair({
       apply: true,
@@ -634,7 +676,11 @@ describe("runBookingXeroRepair", () => {
         },
       ],
     });
-    const deps = createDependencies({ bookings: [booking] });
+    const deps = createDependencies({
+      bookings: [booking],
+      // #3199: invoice first, edit second.
+      operations: [makePrimaryInvoiceCreateOperation()],
+    });
 
     const report = await runBookingXeroRepair({
       dependencies: deps,
@@ -2121,7 +2167,8 @@ describe("runBookingXeroRepair", () => {
     const state = {
       bookings: [booking],
       links: [] as any[],
-      operations: [] as any[],
+      // #3199: invoice first, edit second - so the repair is offered at all.
+      operations: [makePrimaryInvoiceCreateOperation()] as any[],
     };
     const deps = createDependencies(state);
 
@@ -3518,5 +3565,300 @@ describe("runBookingXeroRepair - booking edits priced by a financial review (#31
     });
     expect(secondRun.summary.bookingsWithFindings).toBe(0);
     expect(deps.enqueueXeroSupplementaryInvoiceOperation).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * #3199 (epic #2797): WHICH CAME FIRST, THE PRIMARY INVOICE OR THE EDIT?
+ *
+ * The supplementary-invoice arm used to ask only "is there a primary invoice
+ * now, and is this edit's net positive". A booking whose card cleared but whose
+ * primary invoice had not been minted yet - a Xero outage, or the ordinary
+ * window between confirmation and the outbox running - gets its edit folded
+ * into the primary invoice when that invoice is finally minted, because the
+ * mint reads the booking as it then stands. The tool would still offer a
+ * one-click supplementary invoice on top: $600 of income and a $50 receivable
+ * nobody owes, on a $550 booking.
+ *
+ * The answer comes from the operation history, and only from there. Both
+ * directions are pinned below, along with the two shapes that cannot be
+ * answered at all - no successful create row, and a create row with no
+ * completion instant - which report for manual review rather than billing.
+ */
+describe("runBookingXeroRepair - primary invoice vs edit timing (#3199)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  /** A price increase of +3000 cents, committed on 2 May. */
+  function priceIncreaseModification(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "mod_timing",
+      bookingId: "booking_1",
+      modificationType: "GUEST_ADD",
+      priceDiffCents: 2500,
+      changeFeeCents: 500,
+      createdAt: new Date("2026-05-02T00:00:00Z"),
+      ...overrides,
+    };
+  }
+
+  function supplementaryInvoiceFinding(report: {
+    passes: {
+      bookings: {
+        findings: {
+          code: string;
+          severity: string;
+          summary: string;
+          safeToAutoApply: boolean;
+          details: Record<string, unknown>;
+        }[];
+      }[];
+    }[];
+  }) {
+    return report.passes[0].bookings[0].findings.find(
+      (finding) => finding.code === "MISSING_SUPPLEMENTARY_INVOICE"
+    );
+  }
+
+  it("offers the one-click fix when the primary invoice was raised BEFORE the edit", async () => {
+    const booking = makeBooking({ modifications: [priceIncreaseModification()] });
+    const deps = createDependencies({
+      bookings: [booking],
+      operations: [makePrimaryInvoiceCreateOperation()],
+    });
+
+    const report = await runBookingXeroRepair({
+      dependencies: deps,
+      scope: { all: true },
+    });
+
+    const finding = supplementaryInvoiceFinding(report);
+    expect(finding?.severity).toBe("critical");
+    expect(finding?.safeToAutoApply).toBe(true);
+    expect(
+      report.passes[0].bookings[0].actions.map((action) => action.type)
+    ).toContain("QUEUE_SUPPLEMENTARY_INVOICE");
+  });
+
+  it("reports instead of billing when the primary invoice was raised AFTER the edit", async () => {
+    const booking = makeBooking({ modifications: [priceIncreaseModification()] });
+    const deps = createDependencies({
+      bookings: [booking],
+      operations: [
+        // Minted on 3 May, a day AFTER the edit - so it billed the new total.
+        makePrimaryInvoiceCreateOperation({
+          startedAt: new Date("2026-05-03T00:00:00Z"),
+          completedAt: new Date("2026-05-03T00:00:00Z"),
+          createdAt: new Date("2026-05-03T00:00:00Z"),
+          updatedAt: new Date("2026-05-03T00:00:00Z"),
+        }),
+      ],
+    });
+
+    const report = await runBookingXeroRepair({
+      apply: true,
+      dependencies: deps,
+      scope: { all: true },
+    });
+
+    const finding = supplementaryInvoiceFinding(report);
+    expect(finding?.severity).toBe("manual_review");
+    expect(finding?.safeToAutoApply).toBe(false);
+    expect(finding?.summary).toContain("bill the same money twice");
+    expect(finding?.details).toMatchObject({
+      modificationId: "mod_timing",
+      netAmountCents: 3000,
+      primaryInvoiceTiming: "invoice-followed-edit",
+      primaryInvoiceRaisedAt: "2026-05-03T00:00:00.000Z",
+      primaryInvoiceOperationId: "operation_primary_invoice",
+    });
+
+    const actionTypes = report.passes[0].bookings[0].actions.map(
+      (action) => action.type
+    );
+    expect(actionTypes).not.toContain("QUEUE_SUPPLEMENTARY_INVOICE");
+    expect(actionTypes).toContain("MARK_MANUAL_REVIEW");
+    // `--apply` was on. Reported is not the same as skipped, and neither is the
+    // same as billed: nothing was queued at Xero.
+    expect(deps.enqueueXeroSupplementaryInvoiceOperation).not.toHaveBeenCalled();
+  });
+
+  it("reports when NO operation row says the primary invoice was ever raised", async () => {
+    const booking = makeBooking({ modifications: [priceIncreaseModification()] });
+    const deps = createDependencies({ bookings: [booking] });
+
+    const report = await runBookingXeroRepair({
+      apply: true,
+      dependencies: deps,
+      scope: { all: true },
+    });
+
+    const finding = supplementaryInvoiceFinding(report);
+    expect(finding?.severity).toBe("manual_review");
+    expect(finding?.details).toMatchObject({
+      primaryInvoiceTiming: "unknown",
+      primaryInvoiceTimingReason: "no-successful-create-operation",
+    });
+    expect(
+      report.passes[0].bookings[0].actions.map((action) => action.type)
+    ).not.toContain("QUEUE_SUPPLEMENTARY_INVOICE");
+    expect(deps.enqueueXeroSupplementaryInvoiceOperation).not.toHaveBeenCalled();
+  });
+
+  it("reports when the create row carries no completion instant", async () => {
+    const booking = makeBooking({ modifications: [priceIncreaseModification()] });
+    const deps = createDependencies({
+      bookings: [booking],
+      operations: [makePrimaryInvoiceCreateOperation({ completedAt: null })],
+    });
+
+    const report = await runBookingXeroRepair({
+      dependencies: deps,
+      scope: { all: true },
+    });
+
+    expect(supplementaryInvoiceFinding(report)?.details).toMatchObject({
+      primaryInvoiceTiming: "unknown",
+      primaryInvoiceTimingReason: "no-completion-timestamp",
+    });
+  });
+
+  it("does not read ANOTHER invoice's create row as this one's", async () => {
+    const booking = makeBooking({ modifications: [priceIncreaseModification()] });
+    const deps = createDependencies({
+      bookings: [booking],
+      operations: [
+        // A different Xero invoice on the same payment - an entrance fee, say.
+        // It says nothing about when THIS booking's invoice was raised.
+        makePrimaryInvoiceCreateOperation({
+          id: "operation_other_invoice",
+          xeroObjectId: "inv_other",
+        }),
+      ],
+    });
+
+    const report = await runBookingXeroRepair({
+      dependencies: deps,
+      scope: { all: true },
+    });
+
+    expect(supplementaryInvoiceFinding(report)?.details).toMatchObject({
+      primaryInvoiceTiming: "unknown",
+      primaryInvoiceTimingReason: "no-successful-create-operation",
+    });
+  });
+
+  it("treats a same-instant raise as unproven rather than as invoice-first", async () => {
+    const booking = makeBooking({ modifications: [priceIncreaseModification()] });
+    const deps = createDependencies({
+      bookings: [booking],
+      operations: [
+        makePrimaryInvoiceCreateOperation({
+          completedAt: new Date("2026-05-02T00:00:00Z"),
+        }),
+      ],
+    });
+
+    const report = await runBookingXeroRepair({
+      dependencies: deps,
+      scope: { all: true },
+    });
+
+    expect(supplementaryInvoiceFinding(report)?.details).toMatchObject({
+      primaryInvoiceTiming: "invoice-followed-edit",
+    });
+  });
+
+  it("takes the EARLIEST completion, so a later re-assert cannot flip the answer", async () => {
+    const booking = makeBooking({ modifications: [priceIncreaseModification()] });
+    const deps = createDependencies({
+      bookings: [booking],
+      operations: [
+        // `createXeroInvoiceForBooking` closes a re-driven operation SUCCEEDED
+        // against the invoice that already exists, so a booking can carry two
+        // successful create rows for one invoice. The mint is the earlier one.
+        makePrimaryInvoiceCreateOperation({
+          id: "operation_primary_invoice_reassert",
+          startedAt: new Date("2026-06-01T00:00:00Z"),
+          completedAt: new Date("2026-06-01T00:00:00Z"),
+          createdAt: new Date("2026-06-01T00:00:00Z"),
+          updatedAt: new Date("2026-06-01T00:00:00Z"),
+        }),
+        makePrimaryInvoiceCreateOperation(),
+      ],
+    });
+
+    const report = await runBookingXeroRepair({
+      dependencies: deps,
+      scope: { all: true },
+    });
+
+    expect(supplementaryInvoiceFinding(report)?.severity).toBe("critical");
+    expect(
+      report.passes[0].bookings[0].actions.map((action) => action.type)
+    ).toContain("QUEUE_SUPPLEMENTARY_INVOICE");
+  });
+
+  /**
+   * THE BOUNDARY THIS GATE TURNS ON, guarded from the other side.
+   *
+   * A parked edit's money is on its review tasks, not on the booking's stored
+   * totals, and the primary invoice bills guest-night lines and a promo
+   * adjustment - nothing else. So no later primary invoice can ever have billed
+   * a review-priced ask, and the timing question does not arise for one. If the
+   * gate is ever widened to read the expected ask instead of the modification
+   * row's own net, this test fails: every review-priced finding on a booking
+   * with no operation history would become manual review, and #3187's whole
+   * point - that these bookings get a one-click repair - would be undone
+   * silently.
+   */
+  it("CONTROL: a review-priced ask is unaffected, even with no operation history at all", async () => {
+    const booking = makeBooking({
+      modifications: [
+        priceIncreaseModification({
+          id: "mod_parked_timing",
+          priceDiffCents: 0,
+          changeFeeCents: 0,
+        }),
+      ],
+    });
+    const deps = createDependencies({
+      bookings: [booking],
+      editReviewChargeShares: [
+        {
+          id: "task_timing",
+          bookingId: "booking_1",
+          amountCents: 6000,
+          reviewContext: {
+            version: 1,
+            occurrence: {
+              bookingId: "booking_1",
+              bookingGuestId: "guest_1",
+              cause: "NO_STORED_NIGHT_PRICES",
+              surrenderedNightDates: ["2026-06-10"],
+              addedNightDates: [],
+              storedEvidence: { guestTotalCents: null, nightPrices: [] },
+            },
+            guestMemberId: "member_1",
+            bookingCheckIn: "2026-06-10",
+            bookingCheckOut: "2026-06-12",
+            bookingModificationId: "mod_parked_timing",
+          },
+        },
+      ],
+    });
+
+    const report = await runBookingXeroRepair({
+      dependencies: deps,
+      scope: { all: true },
+    });
+
+    const finding = supplementaryInvoiceFinding(report);
+    expect(finding?.severity).toBe("critical");
+    expect(finding?.details).not.toHaveProperty("primaryInvoiceTiming");
+    expect(
+      report.passes[0].bookings[0].actions.map((action) => action.type)
+    ).toContain("QUEUE_SUPPLEMENTARY_INVOICE");
   });
 });

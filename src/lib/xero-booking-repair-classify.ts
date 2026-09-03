@@ -34,6 +34,7 @@ import {
   getUnpaidCancellationClearingAmountCents,
   hasSuccessfulPrimaryInvoiceCreateAfter,
   hasSuccessfulPrimaryInvoiceUpdateAfter,
+  resolvePrimaryInvoiceEditTiming,
 } from "./xero-booking-repair-analysis";
 import {
   addAction,
@@ -47,6 +48,7 @@ import {
 } from "./xero-booking-repair-findings";
 import {
   getOperationQueueTypeHint,
+  toIsoDate,
 } from "./xero-booking-repair-utils";
 import { hasCapturedPayment } from "@/lib/booking-payment-state";
 import {
@@ -399,6 +401,47 @@ export function classifyBookingContext(
           "INVOICE",
           "CREATE"
         );
+        /**
+         * WAS THE PRIMARY INVOICE ALREADY RAISED WHEN THIS EDIT HAPPENED
+         * (#3199, epic #2797)? The gate above cannot see that - it asks only
+         * whether a primary invoice exists NOW - and a primary invoice minted
+         * AFTER the edit already bills it, so a supplementary invoice on top
+         * bills the money twice. `resolvePrimaryInvoiceEditTiming` carries the
+         * reasoning: where the answer comes from, and why not from
+         * `primaryInvoice.operation` or from a link timestamp.
+         *
+         * ONLY THE MODIFICATION ROW'S OWN POSITIVE NET IS AT RISK, which is why
+         * this asks `modificationNetAmountCents` rather than the expected ask.
+         * A price increase moves the booking's stored totals and its guest
+         * nights, so a primary invoice minted afterwards carries it. A
+         * review-priced ask (#3187) does NOT move those totals - parking exists
+         * so the structural change can commit while the money stays unresolved,
+         * and the primary invoice bills guest-night lines and a promo
+         * adjustment, nothing else - so no later primary invoice can ever have
+         * billed it and the timing question does not arise. On a booking with
+         * no review this is the whole ask; on a parked edit both components are
+         * 0 by construction and this stays out of the way.
+         *
+         * A STATED LIMIT, not an oversight: a change fee is not a line on the
+         * primary invoice either, so an edit whose positive net is part price
+         * increase and part change fee is only PARTLY double-billed. That case
+         * reports for manual review rather than queueing a part-invoice,
+         * because sizing what is left owed is exactly the judgement the
+         * decision on #3199 put in a person's hands.
+         */
+        const primaryInvoiceEditTiming =
+          modificationNetAmountCents > 0
+            ? resolvePrimaryInvoiceEditTiming({
+                operations: paymentOperations,
+                primaryInvoiceObjectId: primaryInvoice.objectId,
+                editedAt: modification.createdAt,
+              })
+            : null;
+        const primaryInvoiceEditTimingRefusal =
+          primaryInvoiceEditTiming &&
+          primaryInvoiceEditTiming.outcome !== "invoice-preceded-edit"
+            ? primaryInvoiceEditTiming
+            : null;
         if (blockingOperation && blockingOperation.retryMeta.supported) {
           const action = addAction(
             actionMap,
@@ -415,6 +458,52 @@ export function classifyBookingContext(
               operationStatus: blockingOperation.operation.status,
             },
             actionKeys: [action.key],
+          });
+        } else if (!blockingOperation && primaryInvoiceEditTimingRefusal) {
+          /**
+           * REPORTED, NEVER APPLIED, AND NEVER SILENTLY SKIPPED (#3199).
+           *
+           * The same finding code the ordinary arm raises, at `manual_review`
+           * severity with no queue action - the shape this file already uses
+           * for every other case it will not size itself. An officer still sees
+           * the booking; what they no longer get is a button that bills money
+           * the club may not be owed.
+           */
+          const summary =
+            primaryInvoiceEditTimingRefusal.outcome === "invoice-followed-edit"
+              ? "This booking edit happened before the primary Xero invoice was raised, so that invoice already bills the change - raising a supplementary invoice would bill the same money twice. Check the invoice in Xero and bill only what is genuinely still owed."
+              : "No Xero operation history says when this booking's primary invoice was raised, so whether it already bills this edit cannot be established. Check the invoice in Xero before raising a supplementary invoice for it.";
+          const manualAction = addAction(
+            actionMap,
+            buildManualReviewAction(booking.id, summary)
+          );
+          addFinding(findings, {
+            code: "MISSING_SUPPLEMENTARY_INVOICE",
+            severity: "manual_review",
+            summary,
+            safeToAutoApply: false,
+            details: {
+              modificationId: modification.id,
+              netAmountCents,
+              priceDiffCents: expectedAsk.priceDiffCents,
+              changeFeeCents: expectedAsk.changeFeeCents,
+              ...(editReviewChargeCents > 0 ? { editReviewChargeCents } : {}),
+              xeroInvoiceId: primaryInvoice.objectId,
+              primaryInvoiceTiming: primaryInvoiceEditTimingRefusal.outcome,
+              ...(primaryInvoiceEditTimingRefusal.outcome === "unknown"
+                ? {
+                    primaryInvoiceTimingReason:
+                      primaryInvoiceEditTimingRefusal.reason,
+                  }
+                : {
+                    primaryInvoiceRaisedAt: toIsoDate(
+                      primaryInvoiceEditTimingRefusal.raisedAt
+                    ),
+                    primaryInvoiceOperationId:
+                      primaryInvoiceEditTimingRefusal.operationId,
+                  }),
+            },
+            actionKeys: [manualAction.key],
           });
         } else if (!blockingOperation) {
           // #3187: a review-priced ask must not be queued as if the member had
