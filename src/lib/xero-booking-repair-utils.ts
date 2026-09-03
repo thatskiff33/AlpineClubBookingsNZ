@@ -15,6 +15,37 @@ export function makeLocalKey(localModel: string, localId: string) {
 }
 
 /**
+ * "THIS XERO OPERATION GOT FAR ENOUGH TO HAVE TOUCHED ITS OBJECT" - the repair
+ * tool's one definition, imported by every arm that needs it (`INV-SSOT-001`).
+ *
+ * `PARTIAL` joins `SUCCEEDED` because the Xero write itself landed: the object
+ * exists, carries an id, and is recorded on the row. What failed is a step
+ * AFTER it - the payment write, the emailed copy - so a `PARTIAL` invoice-create
+ * is an invoice that really was raised. Every reader in this tool wants that
+ * fact, and each used to spell it as its own inline `["SUCCEEDED", "PARTIAL"]`;
+ * the sixth copy arrived with #3199, on a money path, which is where two
+ * definitions of one fact stop being cosmetic.
+ *
+ * NOT the same fact as `SETTLED_CREDIT_OPERATION_STATUSES`
+ * (`membership-cancellation-subscription-credit.ts`), which happens to be the
+ * same two strings. That one asks "has this operation had its one run", a
+ * question about the QUEUE rather than about the object, and merging the two
+ * would tie a subscription-credit gate to whatever this tool later decides
+ * counts as evidence of a Xero object. Same strings, different questions: they
+ * stay apart.
+ */
+export const SUCCESSFUL_XERO_OPERATION_STATUSES = [
+  "SUCCEEDED",
+  "PARTIAL",
+] as const;
+
+export function isSuccessfulXeroOperation(operation: { status: string }) {
+  return (SUCCESSFUL_XERO_OPERATION_STATUSES as readonly string[]).includes(
+    operation.status
+  );
+}
+
+/**
  * A club calendar day for the repair scope, or a refusal (#2868).
  *
  * Shared by the CLI's `--from`/`--to` and by `buildScopeWhere`, so the sweep
@@ -112,7 +143,7 @@ function readJsonNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
-function readJsonArray(value: unknown): unknown[] {
+export function readJsonArray(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
 }
 

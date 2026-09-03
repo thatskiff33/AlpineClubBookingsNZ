@@ -3776,10 +3776,18 @@ describe("runBookingXeroRepair - primary invoice vs edit timing (#3199)", () => 
       bookings: [booking],
       operations: [
         // `createXeroInvoiceForBooking` closes a re-driven operation SUCCEEDED
-        // against the invoice that already exists, so a booking can carry two
-        // successful create rows for one invoice. The mint is the earlier one.
+        // against the invoice that already exists, so a booking can carry a
+        // SECOND successful create row for one invoice whenever the re-drive
+        // was enqueued as a fresh operation. The mint is the earlier one.
+        // (When the re-drive instead claims the ORIGINAL row - an operator
+        // retry - there is no second row and no earlier instant left; that
+        // case is pinned separately below.)
         makePrimaryInvoiceCreateOperation({
           id: "operation_primary_invoice_reassert",
+          responsePayload: {
+            skipped: true,
+            reason: "Invoice already exists for this payment; link re-asserted.",
+          },
           startedAt: new Date("2026-06-01T00:00:00Z"),
           completedAt: new Date("2026-06-01T00:00:00Z"),
           createdAt: new Date("2026-06-01T00:00:00Z"),
@@ -3803,17 +3811,21 @@ describe("runBookingXeroRepair - primary invoice vs edit timing (#3199)", () => 
   /**
    * THE BOUNDARY THIS GATE TURNS ON, guarded from the other side.
    *
-   * A parked edit's money is on its review tasks, not on the booking's stored
-   * totals, and the primary invoice bills guest-night lines and a promo
-   * adjustment - nothing else. So no later primary invoice can ever have billed
-   * a review-priced ask, and the timing question does not arise for one. If the
-   * gate is ever widened to read the expected ask instead of the modification
-   * row's own net, this test fails: every review-priced finding on a booking
-   * with no operation history would become manual review, and #3187's whole
-   * point - that these bookings get a one-click repair - would be undone
-   * silently.
+   * A parked edit THAT ADDED NO GUEST leaves nothing on the booking for a later
+   * primary invoice to bill: its money is on the review tasks, its stored
+   * totals do not move, and the primary invoice bills guest-night lines and a
+   * promo adjustment - nothing else. Note the qualifier, which the first
+   * version of this test did not have: an added guest IS written onto the
+   * booking at a real price even on a parked edit, so that shape is at risk and
+   * is pinned by the two tests below. This one is the other side of the same
+   * boundary.
+   *
+   * If the gate is ever widened to read the expected ask instead, this test
+   * fails: every review-priced finding on a booking with no operation history
+   * would become manual review, and #3187's whole point - that these bookings
+   * get a one-click repair - would be undone silently.
    */
-  it("CONTROL: a review-priced ask is unaffected, even with no operation history at all", async () => {
+  it("CONTROL: a review-priced ask that added no guest is unaffected, even with no operation history at all", async () => {
     const booking = makeBooking({
       modifications: [
         priceIncreaseModification({
@@ -3857,6 +3869,226 @@ describe("runBookingXeroRepair - primary invoice vs edit timing (#3199)", () => 
     const finding = supplementaryInvoiceFinding(report);
     expect(finding?.severity).toBe("critical");
     expect(finding?.details).not.toHaveProperty("primaryInvoiceTiming");
+    expect(
+      report.passes[0].bookings[0].actions.map((action) => action.type)
+    ).toContain("QUEUE_SUPPLEMENTARY_INVOICE");
+  });
+
+  /**
+   * A PARKED EDIT THAT ADDED A GUEST - the live double-bill this gate missed
+   * on its first pass (#3199 fix round).
+   *
+   * The edit's own row nets ZERO, because parking puts the money on the review
+   * tasks. But an added guest is still written onto the booking with a real
+   * `priceCents` and real priced nights - a guest who did not exist before can
+   * always be priced at the current rate - and the primary invoice bills
+   * `booking.guests[]`, not `booking.finalPriceCents`. So a primary invoice
+   * minted AFTER this edit bills the added guest; the officer pricing the
+   * review is told that amount "has not been charged" and includes it; and the
+   * supplementary invoice then bills it a second time.
+   *
+   * Gating on the modification row's net alone read this as "nothing at risk"
+   * and handed it a critical, auto-appliable one-click fix.
+   */
+  function parkedGuestAddModification(overrides: Record<string, unknown> = {}) {
+    return priceIncreaseModification({
+      id: "mod_parked_guest_add",
+      modificationType: "BATCH_MODIFY",
+      priceDiffCents: 0,
+      changeFeeCents: 0,
+      newData: {
+        checkIn: "2026-06-10",
+        checkOut: "2026-06-12",
+        guestCount: 2,
+        addedGuests: [{ firstName: "Bob", lastName: "Newcomer" }],
+      },
+      ...overrides,
+    });
+  }
+
+  function parkedGuestAddShare() {
+    return {
+      id: "task_parked_guest_add",
+      bookingId: "booking_1",
+      amountCents: 15000,
+      reviewContext: {
+        version: 1,
+        occurrence: {
+          bookingId: "booking_1",
+          bookingGuestId: "guest_1",
+          cause: "NO_STORED_NIGHT_PRICES",
+          surrenderedNightDates: ["2026-06-10"],
+          addedNightDates: [],
+          storedEvidence: { guestTotalCents: null, nightPrices: [] },
+        },
+        guestMemberId: "member_1",
+        bookingCheckIn: "2026-06-10",
+        bookingCheckOut: "2026-06-12",
+        bookingModificationId: "mod_parked_guest_add",
+      },
+    };
+  }
+
+  it("reports instead of billing when a PARKED edit added a guest and the primary invoice was raised after it", async () => {
+    const booking = makeBooking({
+      modifications: [parkedGuestAddModification()],
+    });
+    const deps = createDependencies({
+      bookings: [booking],
+      editReviewChargeShares: [parkedGuestAddShare()],
+      operations: [
+        // Minted on 3 May, a day AFTER the edit - so it already billed the
+        // added guest at their real price.
+        makePrimaryInvoiceCreateOperation({
+          startedAt: new Date("2026-05-03T00:00:00Z"),
+          completedAt: new Date("2026-05-03T00:00:00Z"),
+          createdAt: new Date("2026-05-03T00:00:00Z"),
+          updatedAt: new Date("2026-05-03T00:00:00Z"),
+        }),
+      ],
+    });
+
+    const report = await runBookingXeroRepair({
+      apply: true,
+      dependencies: deps,
+      scope: { all: true },
+    });
+
+    const finding = supplementaryInvoiceFinding(report);
+    expect(finding?.severity).toBe("manual_review");
+    expect(finding?.safeToAutoApply).toBe(false);
+    expect(finding?.details).toMatchObject({
+      modificationId: "mod_parked_guest_add",
+      primaryInvoiceTiming: "invoice-followed-edit",
+      addedGuestCount: 1,
+    });
+
+    const actionTypes = report.passes[0].bookings[0].actions.map(
+      (action) => action.type
+    );
+    expect(actionTypes).not.toContain("QUEUE_SUPPLEMENTARY_INVOICE");
+    expect(actionTypes).toContain("MARK_MANUAL_REVIEW");
+    expect(deps.enqueueXeroSupplementaryInvoiceOperation).not.toHaveBeenCalled();
+  });
+
+  it("still offers the one-click fix when a PARKED edit added a guest AFTER the primary invoice went out", async () => {
+    const booking = makeBooking({
+      modifications: [parkedGuestAddModification()],
+    });
+    const deps = createDependencies({
+      bookings: [booking],
+      editReviewChargeShares: [parkedGuestAddShare()],
+      // Invoice on 1 May, edit on 2 May: the added guest is genuinely unbilled.
+      operations: [makePrimaryInvoiceCreateOperation()],
+    });
+
+    const report = await runBookingXeroRepair({
+      dependencies: deps,
+      scope: { all: true },
+    });
+
+    const finding = supplementaryInvoiceFinding(report);
+    expect(finding?.severity).toBe("critical");
+    expect(finding?.details).not.toHaveProperty("primaryInvoiceTiming");
+    expect(
+      report.passes[0].bookings[0].actions.map((action) => action.type)
+    ).toContain("QUEUE_SUPPLEMENTARY_INVOICE");
+  });
+
+  it("reports a parked guest-adding edit with no operation history rather than billing it", async () => {
+    const booking = makeBooking({
+      modifications: [parkedGuestAddModification()],
+    });
+    const deps = createDependencies({
+      bookings: [booking],
+      editReviewChargeShares: [parkedGuestAddShare()],
+    });
+
+    const report = await runBookingXeroRepair({
+      apply: true,
+      dependencies: deps,
+      scope: { all: true },
+    });
+
+    expect(supplementaryInvoiceFinding(report)?.details).toMatchObject({
+      primaryInvoiceTiming: "unknown",
+      primaryInvoiceTimingReason: "no-successful-create-operation",
+      addedGuestCount: 1,
+    });
+    expect(deps.enqueueXeroSupplementaryInvoiceOperation).not.toHaveBeenCalled();
+  });
+
+  /**
+   * A RE-ASSERT IS NOT A MINT (#3199 fix round).
+   *
+   * An operator retry claims the operation row ITSELF (`FAILED|PARTIAL ->
+   * RUNNING`) - a retry this very tool offers as `RETRY_XERO_OPERATION` - and
+   * when `createXeroInvoiceForBooking` finds the invoice already there it
+   * closes that SAME row SUCCEEDED with `{ skipped: true }`, rewriting
+   * `completedAt`. There is no earlier row left for "earliest wins" to find.
+   *
+   * The tool must not then state POSITIVELY that a supplementary invoice would
+   * double-bill: the invoice really was raised first and the money really is
+   * owed. "Cannot be established" is the honest answer, and it is the one that
+   * sends an officer to look.
+   */
+  function reAssertedCompletion(overrides: Record<string, unknown> = {}) {
+    return makePrimaryInvoiceCreateOperation({
+      status: "SUCCEEDED",
+      responsePayload: {
+        skipped: true,
+        reason: "Invoice already exists for this payment; link re-asserted.",
+      },
+      ...overrides,
+    });
+  }
+
+  it("will not claim the invoice followed the edit when the only completion is a later re-assert", async () => {
+    const booking = makeBooking({ modifications: [priceIncreaseModification()] });
+    const deps = createDependencies({
+      bookings: [booking],
+      operations: [
+        // Minted 1 May, retried 10 May: the retry rewrote completedAt on the
+        // one and only row this invoice has.
+        reAssertedCompletion({
+          startedAt: new Date("2026-05-10T00:00:00Z"),
+          completedAt: new Date("2026-05-10T00:00:00Z"),
+          updatedAt: new Date("2026-05-10T00:00:00Z"),
+        }),
+      ],
+    });
+
+    const report = await runBookingXeroRepair({
+      apply: true,
+      dependencies: deps,
+      scope: { all: true },
+    });
+
+    const finding = supplementaryInvoiceFinding(report);
+    expect(finding?.severity).toBe("manual_review");
+    expect(finding?.details).toMatchObject({
+      primaryInvoiceTiming: "unknown",
+      primaryInvoiceTimingReason: "only-re-asserted-completion",
+    });
+    // The false statement this replaces.
+    expect(finding?.summary).not.toContain("bill the same money twice");
+    expect(deps.enqueueXeroSupplementaryInvoiceOperation).not.toHaveBeenCalled();
+  });
+
+  it("still reads a re-assert that lands BEFORE the edit as proof the invoice came first", async () => {
+    const booking = makeBooking({ modifications: [priceIncreaseModification()] });
+    const deps = createDependencies({
+      bookings: [booking],
+      // An upper bound before the edit still bounds the mint before the edit.
+      operations: [reAssertedCompletion()],
+    });
+
+    const report = await runBookingXeroRepair({
+      dependencies: deps,
+      scope: { all: true },
+    });
+
+    expect(supplementaryInvoiceFinding(report)?.severity).toBe("critical");
     expect(
       report.passes[0].bookings[0].actions.map((action) => action.type)
     ).toContain("QUEUE_SUPPLEMENTARY_INVOICE");
