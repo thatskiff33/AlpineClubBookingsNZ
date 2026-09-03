@@ -2989,7 +2989,9 @@ model PaymentRecoveryOperation {
   // a supplementary invoice for money the primary invoice already carries.
   // NULL means "not recorded" (a row enqueued by code older than #3181), and the
   // replay then raises nothing: an unrecorded invoice is surfaced by the
-  // booking-vs-Xero repair pass, while a duplicate one is surfaced by nobody.
+  // booking-vs-Xero repair pass - one-click where that pass can establish the
+  // primary invoice went out first, named for manual review where it cannot
+  // (#3199) - while a duplicate one is surfaced by nobody.
   hadIssuedXeroInvoice Boolean?
   idempotencyKey       String                         @unique
   attempts             Int                            @default(0)

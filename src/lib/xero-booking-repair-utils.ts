@@ -34,7 +34,7 @@ export function makeLocalKey(localModel: string, localId: string) {
  * counts as evidence of a Xero object. Same strings, different questions: they
  * stay apart.
  */
-export const SUCCESSFUL_XERO_OPERATION_STATUSES = [
+const SUCCESSFUL_XERO_OPERATION_STATUSES = [
   "SUCCEEDED",
   "PARTIAL",
 ] as const;

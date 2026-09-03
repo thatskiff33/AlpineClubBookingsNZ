@@ -1,7 +1,7 @@
 # File-size allowances for #3199
 
 file: src/lib/xero-booking-repair-classify.ts
-lines: 1610
+lines: 1658
 reason: the timing gate is a new arm of the supplementary-invoice branch inside
   `classifyBookingContext`, which this module's own header states is kept whole
   as one sequential function that mutates its local findings/action
@@ -14,3 +14,13 @@ reason: the timing gate is a new arm of the supplementary-invoice branch inside
   `xero-booking-repair-analysis.ts` (`resolvePrimaryInvoiceEditTiming`); what
   stays here is the branch and the note saying which population it engages on
   and why.
+
+file: src/lib/payment-recovery.ts
+lines: 2502
+reason: four words of correction, not new behaviour. This module's docblock
+  asserted that an invoice the replay declines to raise is surfaced by the
+  booking-vs-Xero repair pass as a critical one-click finding; since #3199 that
+  pass sometimes surfaces it at `manual_review` instead, so the sentence the
+  whole `null` asymmetry rests on had to say which. Splitting a 2500-line
+  module to correct a comment inside it is not a trade anyone would take, and
+  deleting the qualification instead would leave the stale claim standing.

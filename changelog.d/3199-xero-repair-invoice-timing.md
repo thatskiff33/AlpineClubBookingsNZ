@@ -29,7 +29,10 @@
 
   Two things for an operator to know. Findings of this kind will appear in
   reports that previously showed a one-click fix, and that is the change working
-  — check the invoice in Xero and bill only what is genuinely still owed. And an
-  edit whose amount was set by a financial review is unaffected: that money is
-  never part of a main invoice, so the timing question does not arise for it and
-  those findings keep their one-click repair.
+  — check the invoice in Xero and bill only what is genuinely still owed. And the
+  question is asked about any edit that **added a guest**, even one whose amount
+  was parked for a financial review and whose own recorded difference is
+  therefore zero: a main invoice bills the booking's guests, so an added guest is
+  on it if it went out after the edit. The rest of what a financial review prices
+  is unaffected — that money is never a line on a main invoice — and those
+  findings keep their one-click repair.

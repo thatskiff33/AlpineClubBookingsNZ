@@ -1502,31 +1502,25 @@ one, check the other.
       failed. So the edit-time value is frozen on the recovery row
       (`PaymentRecoveryOperation.hadIssuedXeroInvoice`) and read back; NULL means
       "not recorded" and raises nothing, because a missing invoice is surfaced by
-      the repair pass as a critical one-click finding and a duplicate one is
-      surfaced by nobody.
+      the repair pass - one-click where that pass can establish the primary
+      invoice went out first, named for manual review where it cannot (#3199) -
+      and a duplicate one is surfaced by nobody.
     - **And the booking-vs-Xero repair pass asks the same question, from the
       operation history** (#3199). It is the operator-facing twin of the rule
-      above and it fails the same way if it guesses: the pass reads historical
-      bookings whose edits predate `hadIssuedXeroInvoice`, so it has no carrier
-      to read and used to gate only on "a primary invoice exists NOW and this
-      edit's net is positive" - which offers a confident one-click supplementary
-      invoice for exactly the booking whose primary invoice was minted AFTER the
-      edit and already bills it. The timing now comes from the payment's own
-      `XeroSyncOperation` rows: the SUCCEEDED or PARTIAL `INVOICE`/`CREATE` row
-      carrying that invoice's `xeroObjectId`, EARLIEST `completedAt`, strictly
-      before `BookingModification.createdAt`. Not from `primaryInvoice.operation`
-      - `resolveObjectFromCandidates` ranks `field` above `operation` and this
-      arm only fires when `payment.xeroInvoiceId` is set, so that field is null
-      in every real case - and not from a link timestamp, which this same tool
-      backfills. Anything else (no matching row, no completion instant, the same
-      instant) is `unknown` and reports at `manual_review` with no action rather
-      than billing; `--apply` skips it and nothing is dropped silently. The gate
-      reads the MODIFICATION ROW's own positive net, never the expected ask: a
-      price increase moves the booking's stored totals and its guest nights, so a
-      later primary invoice carries it, whereas a parked review's money is on the
-      review tasks and the primary invoice bills guest-night lines and a promo
-      adjustment only - no later invoice can ever have billed it. Pinned in both
-      directions, and on that boundary, by
+      above, for historical bookings that have no `hadIssuedXeroInvoice` to read.
+      The rule: the primary invoice counts as raised before an edit when a
+      SUCCEEDED or PARTIAL `INVOICE`/`CREATE` operation carrying that invoice's
+      `xeroObjectId` has an EARLIEST `completedAt` strictly before
+      `BookingModification.createdAt`. Anything else - no matching row, no
+      completion instant, the same instant, or a completion that only
+      re-asserted an invoice already there - is `unknown`, and reports at
+      `manual_review` with no action rather than billing; `--apply` skips it and
+      nothing is dropped silently. The check engages on an edit whose
+      modification row nets positive OR that added a guest, never on the expected
+      ask. Why each of those, and why not `primaryInvoice.operation`, a link
+      timestamp, or `hadIssuedXeroInvoice` itself:
+      `resolvePrimaryInvoiceEditTiming` in `xero-booking-repair-analysis.ts`.
+      Pinned in both directions, and on both gate boundaries, by
       `xero-booking-repair.test.ts`.
     - **A replay raises no invoice against an ask that was already paid** (#3181
       fix round). Its webhook has fired and cannot fire again, so a supplementary
