@@ -27,7 +27,8 @@
  * leaves the "sha256 of stable JSON" composition stated in two places rather
  * than one, which `INV-SSOT` would normally refuse — the boundary wins, the
  * duplication is three lines, and both are pinned by fixed-digest tests
- * (`booking-exception-requests.test.ts`, `edit-financial-review.test.ts`) so a
+ * (`booking-exception-requests.test.ts`, `edit-financial-review.test.ts`, and
+ * `__tests__/stable-digest.test.ts` for the shared machinery itself) so a
  * drift between them fails loudly instead of silently re-identifying stored
  * rows.
  *

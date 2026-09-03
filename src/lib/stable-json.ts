@@ -23,7 +23,11 @@
  * object, and nothing fails loudly when they do — which is precisely why the
  * digests are PINNED by test (`booking-exception-requests.test.ts`,
  * `edit-financial-review.test.ts`, `diagnostics/knowledge/__tests__/hash.test.ts`)
- * rather than merely recomputed on both sides.
+ * rather than merely recomputed on both sides. Those three pin what each CALLER
+ * builds. `__tests__/stable-digest.test.ts` (#3218) pins the machinery here —
+ * the sorter's exact bytes on hostile input, and the digest they produce — so a
+ * change to the serialisation fails on its own account rather than only through
+ * whichever caller's fixture happened to notice.
  *
  * THIS MODULE IS CLIENT-SAFE, AND MUST STAY THAT WAY. It imports nothing —
  * not `node:crypto`, not the club-time boundary, nothing. That is load-bearing

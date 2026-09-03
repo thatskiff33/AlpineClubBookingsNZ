@@ -404,6 +404,14 @@ export function computeProposalHash(snapshot: ExceptionProposalSnapshot): string
   // cannot drift while it lasts. **Collapsing the two is #3218** — a production
   // edit on a booking path and a reversal of a recorded decision, which is not
   // something a branch sync may decide.
+  //
+  // "Pinned by test" NAMES its tests, because an unnamed one cannot be looked
+  // up and an unlookupable claim is how a docblock outlives the thing it
+  // describes. Two literal digests in `__tests__/booking-exception-requests.test.ts`
+  // pin this function — one NEW_BOOKING snapshot (#3030) and one MODIFICATION
+  // snapshot (#3218), which is the larger shape and the one execution re-derives
+  // from a live booking. `__tests__/stable-digest.test.ts` pins the shared
+  // canonicalisation underneath both.
   return createHash("sha256")
     .update(stableStringify(canonical), "utf8")
     .digest("hex");
