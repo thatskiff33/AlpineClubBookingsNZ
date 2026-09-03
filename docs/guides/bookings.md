@@ -210,11 +210,11 @@ Things worth knowing:
   bookings hold nights whose original price the club's records cannot tell us —
   usually older ones, or ones created by approving a public request. A change to
   one of those is saved but its money is parked for someone to price, and while
-  that is true nothing on the booking can be re-rated. So an edit carrying this
-  tick is refused, and refused whole: the lodge is not saved either, and you are
-  told why. Save the rest of the change on its own, wait for the amount to be
-  settled, then come back and set the tick. A booking already waiting on such a
-  review refuses the tick for the same reason.
+  those nights carry no price nothing on the booking can be re-rated. So an edit
+  carrying this tick is refused, and refused whole: the lodge is not saved
+  either, and you are told why. The nights are given prices by an officer
+  settling the booking's financial review; set the tick once that is done. A
+  booking already waiting on such a review refuses the tick for the same reason.
 - **It is an officer decision, and it is audited.** Members never see the
   control on their own booking.
 

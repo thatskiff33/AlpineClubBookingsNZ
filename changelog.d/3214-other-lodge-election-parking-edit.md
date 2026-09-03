@@ -13,10 +13,10 @@
 
   The change is now refused instead, and refused whole — the ticks and the lodge
   together, so nothing is saved and there is no half-applied edit to unpick. The
-  message says plainly what was refused, why, and what to do next: save the rest
-  of the change on its own, wait for the amount to be confirmed, then set the
-  tick. The refusal appears before you press Save as well as after, so it is not
-  a surprise at the end.
+  message says plainly what was refused, why, and what has to be true before the
+  tick can be set: those nights have to carry a price, which happens when an
+  officer settles the booking's amount. The refusal appears before you press Save
+  as well as after, so it is not a surprise at the end.
 
   Nothing an officer could previously do is lost. A booking that is already
   waiting on one of these amounts has refused the tick all along, for the same

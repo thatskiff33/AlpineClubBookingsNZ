@@ -121,10 +121,25 @@ export const OTHER_LODGE_RATE_IN_PROGRESS_MESSAGE =
  *
  * That the election was refused; that the whole edit was refused with it, ticks
  * AND lodge, because a refusal that saved half of the request is the defect
- * being fixed; why; and what the officer can do next. The refusal is raised on
- * the SAVE before anything is written, and mirrored on the PREVIEW so the
- * officer meets it before pressing Save rather than after — the same
- * preview/save parity {@link OTHER_LODGE_RATE_IN_PROGRESS_MESSAGE} keeps.
+ * being fixed; why; and what has to be true before the tick can be set. The
+ * refusal is raised on the SAVE before anything is written, and mirrored on the
+ * PREVIEW so the officer meets it before pressing Save rather than after — the
+ * same preview/save parity {@link OTHER_LODGE_RATE_IN_PROGRESS_MESSAGE} keeps.
+ *
+ * IT NAMES A CONDITION, NOT A PROCEDURE, and that is deliberate. An earlier
+ * draft told the officer to "save the rest of the change on its own" and then
+ * "settle the amount the office is asked to confirm". Both are false on the case
+ * this refusal is most likely to meet: an ELECTION-ONLY edit has no rest to
+ * save, and a refused edit raises no `EDIT_FINANCIAL_REVIEW` task, so there is
+ * nothing anybody was asked to confirm. What IS true in every case is the
+ * condition — the booking's unpriced nights have to carry a price before
+ * anything on it can be re-rated — so the message states that and points at the
+ * office rather than scripting steps that may not exist. On a QUOTE-PRICED
+ * booking they provably do not: `QUOTE_PRICED_EDIT_BLOCK_MESSAGE` refuses every
+ * other edit that could park, the night-price repair
+ * (`stored-night-price-repair-store.ts`) only runs while completing an OPEN
+ * review task, and re-approval refuses a booking that is no longer
+ * `AWAITING_REVIEW`. That gap is real and is not this refusal's to close.
  *
  * A 400 rather than the 409 the already-open case uses, deliberately: that
  * status carries `EDIT_FINANCIAL_REVIEW_PENDING_CODE`, which asserts a review is
@@ -132,7 +147,7 @@ export const OTHER_LODGE_RATE_IN_PROGRESS_MESSAGE =
  * combined, which is what every other refusal in this module is.
  */
 export const OTHER_LODGE_RATE_AMOUNT_UNDER_REVIEW_MESSAGE =
-  "The other-lodge member rate cannot be set on this change, because this booking has nights whose original price the club's records cannot tell us. That means an officer has to work the amount out by hand, and this change prices nothing — so a tick here would record a rate nobody was charged. Nothing has been saved: not the ticks, and not the lodge. Save the rest of the change on its own, settle the amount the office is asked to confirm, and then make the other-lodge change.";
+  "The other-lodge member rate cannot be set on this change, because this booking has nights whose original price the club's records cannot tell us. That means an officer has to work the amount out by hand, and this change prices nothing — so a tick here would record a rate nobody was charged. Nothing has been saved: not the ticks, and not the lodge. Those nights have to carry a price before anything on this booking can be re-rated, so ask the office to record what they sold for, and set the other-lodge rate once that is done.";
 
 /** The stored shape this election is resolved against. */
 export interface OtherLodgeRateBooking {
