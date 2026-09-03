@@ -36,6 +36,22 @@ keeping them there is not decoration — the gate refuses an allowance for a new
 file outright, so arriving over budget is not a thing this change could have
 declared its way out of.
 
+**One file was SPLIT rather than declared, and the gate is why.**
+`booking-history.ts` sat at exactly its 700-line ceiling, and the final fix round
+had to add a required `audience` argument to `buildBookingHistoryItems` — the
+thing that makes "only staff read an officer's private override reason"
+unrepresentable instead of policed by a query in a page a hundred and seventy
+lines away. An allowance cannot carry a file over its budget for the FIRST time,
+which is the gate's own rule and the right one: a file still inside its budget has
+the cheapest possible split available to it. So the narrative half moved out to
+`booking-history-modification-narrative.ts` — how one stored `BookingModification`
+row is turned into a sentence, which is a different job with a different reason to
+change from deciding which events appear on a timeline and for whom, and which is
+the half that grows every time the modification service learns to record something
+new. It owns the row shape it reads rather than importing it back, so there is one
+declaration of what a modification row contains (`INV-SSOT-001`). The builder came
+out at 629 lines and the new module at 119; neither needs an allowance.
+
 `stuck-state-dashboard.ts` grows by one line, and it is a line that REMOVES a
 duplicate rather than adding a feature: it gains the import of the shared
 officer-facing wording for an incident cause. The two officer surfaces had each
@@ -63,7 +79,7 @@ reason: the same-owner dependent fan-out gains its plan/verify pair, the
   refusal throws, instead of computed at one and hard-coded `true` at the other.
 
 file: src/lib/booking-batch-modification-service.ts
-lines: 2264
+lines: 2402
 reason: three changes at this one seam, and all three are about a caller that
   composes two booking writes into one transaction. The hosting reconciliation
   becomes deferrable, so the supervision check runs once over the state that will
@@ -90,7 +106,19 @@ reason: three changes at this one seam, and all three are about a caller that
   including its reason: a waived change fee was an unmarked zero, so the row, the
   audit and the Xero leg could not tell "no fee was due" from "we waived it
   because our own supervision rule compelled this move". The marker belongs at
-  the one line that decides the fee and the two writers that record it.
+  the one line that decides the fee and the two writers that record it. The final
+  fix round added three more, each at the same seam and each the answer to a defect
+  a delta review found in this file's own contract. The service now says on its
+  RESULT whether the settlement needed a card-or-credit choice, because a caller
+  reading that off the resolved amounts disagreed with the refusal this service
+  raises — an OR over both refund options — and the disagreement deadlocked the
+  member on every retry. The waiver marker moved off the request flag and onto the
+  fee that was really suppressed, which needed the fee calculated before it is
+  zeroed. And the pre-transaction value a caller-supplied transaction must hand in
+  is now branded and minted by one function that takes no candidate check-ins, so
+  the lock-date facts cannot be resolved from a set that does not contain the
+  booking they will judge; a comment asking nobody to do that was the only thing
+  stopping it. All three are contract changes at the one seam they govern.
 
 file: src/app/api/bookings/[id]/modify/route.ts
 lines: 514
@@ -101,7 +129,7 @@ reason: one schema field for the member's answer and one response branch for the
   second copy of the arm that either deadlocks a member or strands a booking.
 
 file: src/components/edit-booking-panel.tsx
-lines: 2108
+lines: 2127
 reason: the offer is a THIRD refusal shape this one panel has to read, choose an
   answer to and put back on the retry, and the state machine it joins is already
   here — the quote, the exception offer and the officer's override prompt all
@@ -198,7 +226,7 @@ reason: twenty lines, and nineteen of them are the reason for the one. The
   otherwise is how the next reader concludes the exposure cannot reach them.
 
 file: src/app/api/admin/booking-exception-requests/[id]/route.ts
-lines: 769
+lines: 770
 reason: thirteen lines, one call and its reason. This route is the last position
   on the approve-and-execute path that is outside a transaction, which is why the
   club day is already resolved here; the batch modification's own settings and
@@ -221,7 +249,7 @@ reason: eleven lines at one throw site, and ten of them say why the class
   `ApiError`.
 
 file: src/app/(authenticated)/bookings/[id]/page.tsx
-lines: 2711
+lines: 2716
 reason: thirteen lines, and they are what makes D3 true. The decision D3 records
   is justified by an officer reading the booking's history, and they could not:
   the incident's audit row set no `targetId`, which is exactly what this page's

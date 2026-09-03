@@ -111,6 +111,66 @@
   elsewhere means" it happened. That was written for the case where somebody else
   caused it, and it was also being sent to the member who had just deliberately
   chosen to leave the booking uncovered (#3232).
+- Where a club's refund rules return nothing to a card but do return account
+  credit, the offer now asks where the money should go instead of saying there is
+  nothing to come back. It used to work out whether to ask by looking at the figure
+  it had already priced, and it prices against the card - so on a club whose card
+  refunds carry a processing fee larger than the refund itself, the member was told
+  "there is nothing more to pay and nothing to come back", given nothing to choose
+  from, and then refused for not choosing. Trying again produced word-for-word the
+  same offer, so neither booking could ever be moved. The same fix also stops the
+  opposite case swapping back and forth forever, where the option the member picked
+  is the one that returns nothing (#3232, `INV-HOST-051`).
+- Choosing "Move only this booking" no longer asks where a refund should go. That
+  question is about the money on the OTHER booking, which is not moving on that
+  option - so the member was blocked from saving until they answered a question
+  about something that was never going to happen, and the answer was then sent
+  along and ignored (#3232).
+- The sentence about change fees is now true in both money directions and when
+  there is no fee at all. "That total includes the change fee on both bookings" was
+  written when there was one figure on screen; where money is payable on one
+  booking and coming back on another there are two, and the fee makes the refund
+  SMALLER rather than being included in it. A move that attracts no fee no longer
+  reports "$0.00 in all", and a club that has waived the second fee is no longer
+  told the total "carries one change fee only" when the first booking's fee is also
+  nothing (#3232).
+- Where money is payable on one booking and refunded on another, the explanation
+  no longer says "you would pay the one and be refunded the other" - true of
+  exactly two bookings, and wrong for a member with one paying and two coming back.
+  It also now says where the combined amount is actually paid: on each booking's
+  own page, one at a time, rather than as a single payment the screen was implying
+  and never asked for (#3232).
+- Where the club's refund rules keep part of a reduction, the offer says how much.
+  A booking whose price falls by $500 under a half-refund rule returns $250, and
+  the other $250 was stated nowhere - on the one screen where the member gives a
+  single yes to a combined figure they cannot work out for themselves (#3232).
+- The offer no longer promises "you will be asked once" where the money goes when
+  the answer was already given and nothing is going to ask (#3232).
+- A change fee is now recorded as WAIVED only where a fee was actually given up.
+  The waiver is applied to every booking the supervision rule drags along,
+  whatever that booking's own fee band says, so a booking that was never going to
+  be charged anything was recorded as having had a fee waived - inflating exactly
+  the figure a treasurer reconciles against the club setting, and putting a waiver
+  nobody granted into that booking's history (#3232).
+- Only the member whose bookings they are can accept the offer, as well as
+  decline it. The decline side was already the member's alone; accepting was not,
+  and a stale acceptance is answered with a fresh working token - so a booking
+  officer could send it back and commit a two-booking move on somebody else's
+  bookings, with the second booking's change fee waived under the club's own
+  supervision setting. No authority they did not already have, but not the door the
+  screen, the guide and the rules all describe (#3232, `INV-HOST-050`).
+- An administrator moving their own booking no longer gets an unexplained failure
+  instead of the offer. The booking-edit screen was passing its whole request
+  through to the combined quote, including administrator-only options that the
+  combined move refuses outright, and the member-facing answer to the refusal was a
+  server error with the offer nowhere in it (#3232).
+- The reason a booking is flagged for adult cover is readable by anyone with
+  booking-edit access - Full Admins and Booking Officers - and by nobody else,
+  which is now written down in the audit-log guide rather than left to the code.
+  A view-only booking administrator sees the queue entry saying which booking needs
+  attention, and not the officer's own words about it: noticing a problem and
+  reading a private note about it are different permissions (#3232, `INV-PRIV-012`).
+
 - Smaller corrections in the same area: the reason stored against a flagged
   booking no longer carries a GitHub issue number or wording out of the codebase,
   since for one release it is the only explanation an officer reads; the refusal a

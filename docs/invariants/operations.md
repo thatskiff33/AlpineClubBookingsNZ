@@ -200,10 +200,24 @@ rules first written here. #2765 extended it with the measured-audience half.
   code above its `withOptionalTransaction` call READS as "before the transaction"
   and is not, for a caller that supplies one. `modifyBookingBatch` therefore
   REFUSES a caller transaction unless the caller hands it those three answers
-  (`prepareBookingBatchModification`), and the Xero lock-date guard is split into
-  facts resolved outside and a synchronous decision over the booking row - which
-  is also what lets one value cover a second booking the caller only discovers
-  under its locks. Which shape a
+  (`prepareBatchModificationForCallerTransaction`), and the Xero lock-date guard is
+  split into facts resolved outside and a synchronous decision over the booking row
+  - which is also what lets one value cover a second booking the caller only
+  discovers under its locks. **Those facts must cover EVERY booking such a caller
+  will write, and that is enforced by the type rather than asked for in prose**
+  (#3232 fix round): given an enumerated candidate set the resolver short-circuits
+  to `not-applicable` when none of them is retroactive, and the decision then
+  returns without looking at the booking at all - so a caller-transaction caller
+  that enumerated would hand the guard a set that does not contain the booking it
+  is about to judge, and a retroactive invoice would be re-dated into a closed
+  accounting period with no refusal. The only function that can mint the
+  caller-transaction value takes no candidate set, and the value it returns is
+  branded so nothing else can construct one. **The AUDIENCE the refusals are worded
+  for travels on the facts too**, because one of the two - the captured read
+  failure - is worded at resolve time and cannot be re-worded by the decision, so a
+  decision function taking its own audience would honour it for one refusal and
+  silently ignore it for the other, disclosing the club's Xero connection state to
+  a member. Which shape a
   reader gets is decided by whether it is keyed by state the transaction re-reads
   under the lock: if it is, the read must move with that state and the client is
   threaded; if it is not, hoisting it out is both cheaper and safe. The reasoning,

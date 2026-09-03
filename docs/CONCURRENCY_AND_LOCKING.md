@@ -1082,7 +1082,23 @@ ONE value that covers every booking, and the per-booking decision
 booking row, which a caller may safely run under its locks — and does, against
 the post-lock row rather than a pre-read one. A caller that can enumerate its
 check-ins passes them and usually pays nothing, because only a retroactive
-check-in is guarded at all; a caller that cannot passes `"unknown"`.
+check-in is guarded at all; a caller that cannot resolves the facts over EVERY
+booking instead.
+
+**And a caller-transaction caller has no choice about that, by construction.**
+Given an enumerated candidate set the resolver short-circuits to
+`not-applicable` when none of them is retroactive, and the decision then returns
+without looking at the booking at all — so enumerating on a path that discovers a
+booking under its locks would hand the guard a set that does not contain the
+booking it is about to judge, and a retroactive invoice would be re-dated into a
+closed accounting period with no refusal at all. The only function that can build
+the caller-transaction value, `prepareBatchModificationForCallerTransaction`,
+takes no candidate set, and its result is branded so nothing else can construct
+one. The audience the refusals are worded for rides on the facts for a related
+reason: the captured read-failure error is worded at resolve time and cannot be
+re-worded later, so a decision taking its own audience would honour it for the
+locked-period refusal and ignore it for the other — disclosing the club's Xero
+connection state to a member.
 
 Alongside it, `modifyBookingBatch` now **refuses a caller-supplied transaction
 without a `preTransaction` value** carrying those facts, the member-guest add
@@ -1093,7 +1109,11 @@ whoever owns the commit. `lock-bound-club-zone-outside-transaction.test.ts` bans
 the resolvers themselves from every such module except its one named
 pre-transaction function — the frame that census was previously stopping one
 short of, which is how three indirect readers sat in a preamble under two locks
-with a green suite.
+with a green suite. Its list of banned resolvers includes the guard's own
+module-client booking read (`readXeroLockGuardDateEditBooking`), which was missing
+from it: a second pooled connection taken under both keys is the same hazard as
+the settings reads beside it, and the only thing stopping it being called from
+inside a transaction was that nobody had.
 
 #### Which client reads the club's timezone (#2870)
 

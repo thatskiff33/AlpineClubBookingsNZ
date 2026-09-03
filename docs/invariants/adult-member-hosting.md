@@ -1562,7 +1562,30 @@ compliant indefinitely.
   when both are non-zero, says they settle separately, and is count-driven
   throughout — the dependent cap is `SAME_OWNER_COVERAGE_DEPENDENT_LIMIT`, not
   one, and the arm relied on for informed consent must name every booking it will
-  leave uncovered.
+  leave uncovered. "Count-driven throughout" once had an exception hiding in it:
+  the both-directions sentence ended "so you would pay the one and be refunded the
+  other", which is a sentence about exactly two bookings and is wrong for a member
+  with one paying and two refunding. It says which way the money goes without
+  counting the bookings it goes to.
+
+  **AND EVERY OTHER CLAIM IN THAT SENTENCE MUST BE TRUE OF BOTH DIRECTIONS AT
+  ONCE, WHICH THE CHANGE-FEE CLAUSE WAS NOT.** "That total includes the change fee
+  on both bookings" was written when the paragraph stated one figure. Over two, a
+  payable figure has the fee ADDED and a refund figure has it TAKEN OFF, so
+  "includes" told a member reading a refund the opposite of what happened — the
+  fee made the money coming back smaller. Three further claims are guarded for the
+  same reason: a fee sentence naming a figure is not said when the combined fee is
+  zero (a move outside every band, an unchanged check-in, a draft); the waiver
+  branch does not claim "one change fee only" when the primary's own fee is also
+  nothing; and the promise that the member "will be asked once" where the money
+  goes is not made when the request already carried that answer.
+
+  **WHAT THE POLICY KEPT IS STATED, NOT LEFT TO ARITHMETIC.** A dependent's price
+  can fall by $500 and return $250 under a 50% tier. `policyRetainedAmountCents`
+  is already computed, already stored and already surfaced on the single-booking
+  responses; the combined quote sums it across every booking that moves and the
+  offer names it, because this is the one screen where a member gives a single
+  informed consent to a combined figure they cannot decompose.
 
   **AND THE MEMBER CANNOT SAVE WITHOUT ANSWERING.** Save is disabled until an arm
   is chosen, matching the officer-override arm; the bottom error slot that used to
@@ -1574,10 +1597,20 @@ compliant indefinitely.
   that is not theirs. These are the member's own two bookings. What is demanded is
   proof they were shown the consequence, which is the state key.
 
-  **AND ONLY THE BOOKING'S OWN MEMBER MAY ANSWER IT.** The answer means "the person
-  whose two bookings these are was shown what this costs the other one and chose to
-  go ahead", which is only true if the actor is that person — so the answer travels
-  with the booking's owner and is honoured only when the two match. It is
+  **AND ONLY THE BOOKING'S OWN MEMBER MAY ANSWER IT — ON EITHER ARM.** The answer
+  means "the person whose two bookings these are was shown what this costs the
+  other one and chose to go ahead", which is only true if the actor is that person
+  — so the answer travels with the booking's owner and is honoured only when the
+  two match. The two arms are reached through different doors and each needs the
+  check: DECLINING is honoured by the hosting seam, which compares the actor
+  against the booking owner carried on the answer, and ACCEPTING is a different
+  operation entirely — an atomic two-booking move — which refuses a non-owner in
+  `runLinkedDateMove` before it writes anything. Only the first had the check for a
+  time, and the gap was reachable: a stale acceptance is answered with a fresh,
+  VALID `acceptStateKey`, so an officer could resubmit it and commit a member's
+  two-booking move with the dependent's change fee waived under the club's
+  supervision-rule setting. No authority they did not already hold, and a
+  documented rule that was true of the screen and false of the route. It is
   deliberately not one of the routes' ADMIN-gated fields (gating it that way would
   403 the only person entitled to answer), and that is precisely what made the
   check necessary: an officer refused with `SameOwnerCoverageOverrideRequiredError`
@@ -1649,6 +1682,34 @@ compliant indefinitely.
   due and refund figures are reported separately rather than netted, because
   Stripe and Internet Banking/Xero settlement stay distinct per booking and a
   single signed figure would imply a netting-off that never happens.
+
+  **WHETHER A CARD-OR-CREDIT CHOICE IS NEEDED IS THE WRITE'S OWN ANSWER, CARRIED
+  ON THE RESULT — NEVER RE-DERIVED FROM THE AMOUNTS.** The modification service
+  refuses a settlement without a method on
+  `cardRefundAmountCents > 0 || creditRefundAmountCents > 0`, an OR over BOTH
+  options; a quote is priced against ONE of them, and the two come from separate
+  policy tiers with their own percentage and their own fixed fee, each floored at
+  zero. So the two expressions disagree whenever one option resolves to nothing and
+  the other does not — a card tier carrying a processing fee larger than the
+  refund, say — and the disagreement is a DEADLOCK, not a cosmetic one: the offer
+  says nothing comes back, draws no Return-method control, the member accepts, the
+  write demands a method, and the re-quote prices the same way and returns a
+  byte-identical offer. Every retry repeats and neither booking moves. The fact
+  therefore travels as `requiresSettlementMethod` on the modification result
+  (`INV-SSOT-001`), and the panel attaches a method the member has already chosen
+  on the strength of the ARM they chose rather than on the strength of that flag —
+  a flag going quiet on a re-quote must not un-answer a question they answered.
+
+  **A WAIVER IS RECORDED ONLY WHERE A FEE WAS SUPPRESSED.** `changeFeeWaived` and
+  its reason are written from the fee that would have been charged, not from the
+  request that asked for the waiver. The flag is passed for every booking the move
+  drags along, and `calculateModificationChangeFee` already returns zero for an
+  unchanged check-in, a `DRAFT` booking and a move outside every fee band, so
+  recording the waiver from the flag alone over-counted exactly the number the
+  field exists for — the one a treasurer reconciles against the club setting — and
+  wrote "waived because our own supervision rule compelled this move" into the
+  history of a booking that was never going to be charged. The stored reason has
+  one home in code, because it is written to two places and read as a key.
 
   **THE SUPERVISION CHECK RUNS ONCE, OVER THE STATE THAT WILL COMMIT.** The
   intermediate state in which one of two linked bookings has moved would be
