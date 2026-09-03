@@ -124,8 +124,12 @@ are permanent: never renumbered, never reused.
   unreachable — that door's gate refuses a finished stay outright — so it was found
   by reading rather than by anything failing, and correcting it changed no
   behaviour. `issued-primary-xero-invoice-one-home.test.ts` now refuses a direct
-  read of `Payment.xeroInvoiceId` at any of the four doors, which is the structural
-  remedy this rule prefers over another reviewer noticing.
+  read of `Payment.xeroInvoiceId` anywhere under `src/app/api/bookings/**` — a
+  measured population, not the four doors by name — and pins the set of files
+  reaching `applyPaymentAdjustments`, so a fifth door is visible whichever way it
+  arrives. The one home's parameter takes `xeroInvoiceId` as a REQUIRED field, so
+  a caller loading a payment without that column fails to compile rather than
+  being told "no invoice" for ever.
 - **Deliberately not enforced by a registry.** A canonical-homes registry
   (concept → owning module, checked by a census test) was considered and
   **declined by the owner on 26 Aug 2026**: too much ongoing maintenance for the

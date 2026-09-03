@@ -7,8 +7,9 @@
   booking whose stay had already finished.
 
   All four now read the same answer from the same place, so the question cannot
-  be answered two ways again. A test refuses any future edit path that works it
-  out for itself.
+  be answered two ways again. A test refuses any booking screen that works the
+  answer out for itself, and reports any new screen that starts taking payment
+  decisions so it can be checked too.
 
   Nothing an administrator does today behaves differently: the add-a-guest
   screen already refuses a booking whose stay has finished, so the disagreement
