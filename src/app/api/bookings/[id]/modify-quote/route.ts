@@ -33,6 +33,7 @@ import { parseJsonRequestBody } from "@/lib/api-json";
 import { ApiError } from "@/lib/api-error";
 import {
   assertOtherLodgeExists,
+  OTHER_LODGE_RATE_AMOUNT_UNDER_REVIEW_MESSAGE,
   OTHER_LODGE_RATE_IN_PROGRESS_MESSAGE,
   requestCarriesOtherLodgeElection,
   requestIsOtherLodgeRateElectionOnly,
@@ -1603,6 +1604,25 @@ export async function POST(
    * promo change at all.
    */
   const parkedQuoteResponse = (causes: readonly string[]) => {
+    /**
+     * #3214: THE ONE ANSWER THAT IS NOT A PARKED QUOTE — an edit that parks its
+     * money may not also carry an other-lodge rate election, and the save
+     * refuses it (`OTHER_LODGE_RATE_AMOUNT_UNDER_REVIEW_MESSAGE`,
+     * `INV-MOD-028`). Inside this helper rather than at its two call sites, for
+     * the reason the payload is: both exits are the same answer, and a second
+     * copy of the test is how the two previews would come to differ. Fenced on
+     * `otherLodgeElection.requested`, the field the SAVE fences on, so neither
+     * surface can offer what the other declines. The in-progress exit cannot
+     * reach it — a mid-stay election is refused several hundred lines above —
+     * and is covered anyway so relaxing that refusal cannot silently re-open
+     * this one.
+     */
+    if (otherLodgeElection.requested) {
+      return NextResponse.json(
+        { error: OTHER_LODGE_RATE_AMOUNT_UNDER_REVIEW_MESSAGE },
+        { status: 400 },
+      );
+    }
     logger.info(
       {
         bookingId,
