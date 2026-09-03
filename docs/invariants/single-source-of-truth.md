@@ -107,6 +107,25 @@ are permanent: never renumbered, never reused.
   proceed autonomously and record decisions for later review. There is no owner
   comment on #3163 to read at source. It stands until the owner overturns it,
   and anyone wanting to unify these later needs no further permission than that.
+- **Third worked example, and the one where the copy was written from the wrong
+  neighbour.** "Has this booking's main Xero invoice already been raised?" decides
+  whether an edit that raises the price is billed as a supplementary invoice or is
+  treated as an edit to a booking nobody has invoiced yet. Its one home is
+  `hasIssuedPrimaryXeroInvoice` in `src/lib/booking-payment-state.ts`: a settled
+  booking status AND a payment row carrying the invoice id. Three of the four edit
+  doors — the batch edit, the date change and the single-guest removal — reach it
+  through `applyPaymentAdjustments`. The fourth, the guest add, does its own
+  settlement arithmetic and re-stated the rule inline, copying its status list from
+  its OWN eligibility gate a few hundred lines above rather than from the shared
+  rule — so it omitted `COMPLETED` and answered "no invoice raised" where the other
+  three answered "invoice issued" (#3200). Two things are worth carrying forward.
+  The copy was plausible precisely because a nearby list was the wrong list, which
+  no amount of care at the copy site would have caught; and the divergence was
+  unreachable — that door's gate refuses a finished stay outright — so it was found
+  by reading rather than by anything failing, and correcting it changed no
+  behaviour. `issued-primary-xero-invoice-one-home.test.ts` now refuses a direct
+  read of `Payment.xeroInvoiceId` at any of the four doors, which is the structural
+  remedy this rule prefers over another reviewer noticing.
 - **Deliberately not enforced by a registry.** A canonical-homes registry
   (concept → owning module, checked by a census test) was considered and
   **declined by the owner on 26 Aug 2026**: too much ongoing maintenance for the
@@ -306,7 +325,7 @@ are permanent: never renumbered, never reused.
   `INV-OPS` fact is the real risk, because the eleventh nobody tightened is the one
   that connects to something real. This change converged its own caller only.
 - **`src/lib/__tests__/support/strip-comments.ts` is the canonical
-  `stripComments`, and since #3164 a lint rule enforces it.** 63 test files, a test
+  `stripComments`, and since #3164 a lint rule enforces it.** 64 test files, a test
   helper and one CI script import it, and `ssot/no-local-comment-stripper` in
   `eslint.config.mjs` reports a second scanner as it is written rather than
   twelve minutes later in CI. **Use it; do not write a second.** The figure was
