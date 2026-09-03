@@ -63,7 +63,7 @@ import {
   dependentNeedsOwnQueueItem,
   strandedCoverageStateKey,
 } from "@/lib/adult-member-hosting-same-owner";
-import { LINKED_MOVE_DECLINED_INCIDENT_REASON } from "@/lib/adult-member-hosting-linked-move";
+import { LINKED_MOVE_DECLINED_INCIDENT_REASON } from "@/lib/adult-member-hosting-coverage-incidents";
 
 const LODGE = "lodge-a";
 const OTHER_LODGE = "lodge-b";

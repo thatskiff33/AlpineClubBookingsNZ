@@ -337,6 +337,12 @@ const LOCK_BOUND_INDIRECT_RESOLVERS = [
   "loadMemberGuestAddPolicy(",
   "resolveSubscriptionLockoutMode(",
   "resolveXeroLockDateFacts(",
+  // #3232 fix round: a MODULE-CLIENT booking read, and therefore the same hazard
+  // as the settings reads beside it — a second pooled connection taken while the
+  // global money key and the per-lodge capacity key are both held. It was missing
+  // from this list, so the one thing stopping it being called from inside a
+  // transaction was that nobody had.
+  "readXeroLockGuardDateEditBooking(",
   "getXeroLockDates(",
   "assertCheckInClearsXeroLockDate(",
   "assertProposedCheckInClearsXeroLockDate(",
@@ -360,6 +366,12 @@ const PRE_TRANSACTION_RESOLVER_HOMES: Readonly<
 > = {
   "src/lib/booking-batch-modification-service.ts": [
     "prepareBookingBatchModification",
+    // The STANDALONE path's own pre-transaction resolver (#3232 fix round). It is
+    // reached only where the caller supplied no transaction — the `else` branch of
+    // `if (preTransaction)` — so its one light booking read really does happen
+    // before anything is opened. A caller that supplies a transaction never enters
+    // it; that path decides from the facts it was handed, reading nothing.
+    "resolveOrdinaryXeroLockDateGuard",
   ],
   // The approval's own pre-transaction resolver, called by the route BEFORE
   // `approveAndExecutePolicyExceptionRequest` opens its transaction and handed in

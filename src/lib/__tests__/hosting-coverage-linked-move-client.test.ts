@@ -12,8 +12,10 @@ import { describe, expect, it } from "vitest";
 import { linkedMoveStateKey } from "@/lib/adult-member-hosting-linked-move";
 import { strandedCoverageStateKey } from "@/lib/adult-member-hosting-same-owner";
 import {
+  formatLinkedMoveMoneySentence,
   hostingCoverageLinkedMoveAnswer,
   readHostingCoverageLinkedMovePrompt,
+  type LinkedMoveMoneyFacts,
 } from "@/lib/hosting-coverage-linked-move-client";
 import {
   HOSTING_COVERAGE_STATE_KEY_PATTERN,
@@ -60,7 +62,9 @@ function body(overrides: Record<string, unknown> = {}) {
     combinedChangeFeeCents: 5000,
     combinedAmountDueCents: 6500,
     combinedRefundCents: 0,
+    combinedPolicyRetainedCents: 0,
     settlementMethodRequired: false,
+    settlementMethodChosen: false,
     bothChangeFeesCharged: true,
     ...overrides,
   };
@@ -152,6 +156,128 @@ describe("reading the linked-move offer (#3232)", () => {
     for (const value of [null, undefined, "no", 1, [], true]) {
       expect(readHostingCoverageLinkedMovePrompt(value)).toBeNull();
     }
+  });
+});
+
+/**
+ * THE MONEY SENTENCE, which is the only description of this change the member is
+ * ever given, and which four separate claims in it had outgrown (#3232 fix round).
+ *
+ * It began as a paragraph about ONE booking and one figure. Once both directions
+ * could be live at once, and once a dependent could attract no fee at all, several
+ * of its clauses became true only of the case they were written for.
+ */
+describe("what the offer says about the money (#3232)", () => {
+  function money(overrides: Partial<LinkedMoveMoneyFacts> = {}): LinkedMoveMoneyFacts {
+    return {
+      combinedAmountDueCents: 0,
+      combinedRefundCents: 0,
+      combinedChangeFeeCents: 0,
+      combinedPolicyRetainedCents: 0,
+      settlementMethodRequired: false,
+      settlementMethodChosen: false,
+      bothChangeFeesCharged: true,
+      linkedCount: 1,
+      ...overrides,
+    };
+  }
+
+  it("says nothing about a change fee when there is no change fee", () => {
+    // A move outside every fee band, an unchanged check-in, a DRAFT. The charged
+    // branch printed "($0.00 in all)" and the waived branch claimed the total
+    // "carries one change fee only" over a total that carried none.
+    const charged = formatLinkedMoveMoneySentence(
+      money({ combinedAmountDueCents: 5_000 }),
+    );
+    expect(charged).toContain("No change fee applies to this move.");
+    expect(charged).not.toContain("$0.00");
+
+    const waived = formatLinkedMoveMoneySentence(
+      money({ combinedAmountDueCents: 5_000, bothChangeFeesCharged: false }),
+    );
+    expect(waived).toContain("No change fee applies to this move.");
+    expect(waived).not.toMatch(/one change fee only/);
+  });
+
+  it("does not say a total 'includes' a fee that made it smaller", () => {
+    // Both directions live: $170 payable carries its $50, and $250 coming back is
+    // a $300 reduction NET OF the other $50 — so the fee made the refund smaller,
+    // which is the opposite of what "includes" says.
+    const sentence = formatLinkedMoveMoneySentence(
+      money({
+        combinedAmountDueCents: 17_000,
+        combinedRefundCents: 25_000,
+        combinedChangeFeeCents: 10_000,
+      }),
+    );
+    expect(sentence).not.toMatch(/total includes the change fee/);
+    expect(sentence).toContain(
+      "A change fee applies to both bookings — $100.00 in all — and the figures above already take it into account.",
+    );
+  });
+
+  it("stays count-driven when the money goes both ways", () => {
+    // "so you would pay the one and be refunded the other" is a sentence about
+    // exactly two bookings. With one paying and two refunding it is simply wrong,
+    // and it was the one clause in this paragraph that counted nothing.
+    const sentence = formatLinkedMoveMoneySentence(
+      money({
+        combinedAmountDueCents: 17_000,
+        combinedRefundCents: 25_000,
+        linkedCount: 2,
+      }),
+    );
+    expect(sentence).toContain("across all 3 bookings");
+    expect(sentence).not.toMatch(/pay the one and be refunded the other/);
+    expect(sentence).toContain("each booking settles on its own");
+  });
+
+  it("says where a combined payable is actually paid", () => {
+    // The combined figure is not one payment: the linked move commits both
+    // bookings and hands neither a card prompt, so each increase is collected on
+    // its own booking page. Nothing said so.
+    expect(
+      formatLinkedMoveMoneySentence(money({ combinedAmountDueCents: 17_000 })),
+    ).toContain("each booking is paid on its own booking page");
+  });
+
+  it("names what the club's policy kept", () => {
+    expect(
+      formatLinkedMoveMoneySentence(
+        money({ combinedRefundCents: 25_000, combinedPolicyRetainedCents: 25_000 }),
+      ),
+    ).toContain(
+      "The club's cancellation policy keeps $250.00 of the reduction, so what comes back is less than the drop in price.",
+    );
+  });
+
+  it("promises a question only when one will really be asked", () => {
+    const asks = formatLinkedMoveMoneySentence(
+      money({ combinedRefundCents: 25_000, settlementMethodRequired: true }),
+    );
+    expect(asks).toContain("You will be asked once whether that comes back");
+
+    // The request already carried the answer, so nothing is going to ask. A
+    // promise of a control that never appears is a member waiting for it.
+    const alreadyChosen = formatLinkedMoveMoneySentence(
+      money({
+        combinedRefundCents: 25_000,
+        settlementMethodRequired: true,
+        settlementMethodChosen: true,
+      }),
+    );
+    expect(alreadyChosen).not.toMatch(/You will be asked once/);
+  });
+
+  it("does not say 'nothing to come back' over a question about where it goes", () => {
+    // The quote is priced as a card refund; the club's tier can return nothing
+    // that way and real money as account credit. Saying only "there is nothing to
+    // come back" over a Return-method control is what made the offer unanswerable.
+    const sentence = formatLinkedMoveMoneySentence(
+      money({ settlementMethodRequired: true }),
+    );
+    expect(sentence).toContain("Money does come back on this move");
+    expect(sentence).toContain("account credit instead");
   });
 });
 

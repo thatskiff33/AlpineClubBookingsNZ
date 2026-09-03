@@ -271,22 +271,30 @@ describe("no policy read inside a booking transaction", () => {
       file: "src/app/api/bookings/[id]/guests/route.ts",
       transactionMarker: "await prisma.$transaction(",
     },
-    {
-      name: "booking-batch-modification-service.ts",
-      file: "src/lib/booking-batch-modification-service.ts",
-      // #2525 made this service transaction-aware: it enters its transaction
-      // through withOptionalTransaction (caller tx or a fresh one), so that is
-      // the boundary the policy read must precede.
-      transactionMarker: "await withOptionalTransaction(",
-      // #3232: the read moved into this service's one named pre-transaction
-      // function, where it is awaited alongside the two other reads that must
-      // precede the transaction, so the `await` no longer sits against its name.
-      // The positional rule still holds and still means what it meant — that
-      // function is declared above the boundary — and it is now backed by a
-      // stronger one asserted below: a caller that supplies the transaction is
-      // REFUSED unless it did this work itself.
-      policyReadMarker: "loadMemberGuestAddPolicy(),",
-    },
+    /*
+      #3232 fix round: `booking-batch-modification-service.ts` USED TO BE A SITE
+      HERE, and it is not one any more.
+
+      Once #3232 moved its policy read into the service's one named
+      pre-transaction function, this comparison stopped saying anything about when
+      the read runs: it compared the position of a top-level function DECLARATION
+      against the position of a call inside another one. Measured — moving
+      `prepareBookingBatchModification` textually below `modifyBookingBatch`, which
+      changes no behaviour at all, turned it red; and a read inside a helper
+      declared above but CALLED from inside the transaction would have kept it
+      green.
+
+      The rule is held instead by
+      `lock-bound-club-zone-outside-transaction.test.ts`, which confines this read
+      to the module's named pre-transaction home and is indifferent to where that
+      home is written (it stayed green under the same move), and by the
+      caller-transaction refusal asserted below — the case no positional rule can
+      express, because "above `withOptionalTransaction`" is not "before the
+      transaction" for a caller that supplies one.
+
+      The guests route below keeps its site: there the marker and the
+      `prisma.$transaction(` boundary really are in the same function body.
+    */
   ];
 
   for (const site of SITES) {

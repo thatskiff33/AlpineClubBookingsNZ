@@ -6,6 +6,7 @@ import { createElement } from "react";
 import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
+import { stripComments } from "@/lib/__tests__/support/strip-comments";
 import { HostingCoverageLinkedMovePrompt } from "@/components/hosting-coverage-linked-move-prompt";
 import type { HostingCoverageLinkedMovePromptData } from "@/lib/hosting-coverage-linked-move-client";
 
@@ -50,7 +51,9 @@ function promptData(
     combinedAmountDueCents: 3_500,
     combinedRefundCents: 0,
     combinedChangeFeeCents: 2_000,
+    combinedPolicyRetainedCents: 0,
     settlementMethodRequired: false,
+    settlementMethodChosen: false,
     bothChangeFeesCharged: true,
     ...overrides,
   };
@@ -93,7 +96,7 @@ describe("the linked-move offer's UI contract (#3232, INV-HOST-050)", () => {
     const moveBoth = screen.getByRole("radio", { name: /Move both bookings/ });
     expect(moveBoth).toHaveAccessibleName(/\$35\.00 would be payable across both/);
     expect(moveBoth).toHaveAccessibleName(
-      /change fee on both bookings \(\$20\.00 in all\)/,
+      /A change fee applies to both bookings . \$20\.00 in all . and the figures above already take it into account/,
     );
     // The other arm carries its consequence in the same place.
     expect(
@@ -115,7 +118,7 @@ describe("the linked-move offer's UI contract (#3232, INV-HOST-050)", () => {
     expect(
       screen.getByRole("radio", { name: /Move both bookings/ }),
     ).toHaveAccessibleName(
-      /change fee on the other booking has been waived by the club, so that total carries one change fee only/,
+      /change fee on the other booking has been waived by the club, so the figures above carry one change fee only \(\$10\.00\)/,
     );
   });
 
@@ -368,7 +371,15 @@ describe("the linked-move offer's UI contract (#3232, INV-HOST-050)", () => {
    * all. Asserted on the source because the query lives in a server component.
    */
   it("feeds the incident's own history rows to staff only", () => {
-    const page = source("src/app/(authenticated)/bookings/[id]/page.tsx");
+    // COMMENTS BLANKED FIRST, and that is the whole difference from the assertion
+    // this replaces. That one sliced the RAW source, and the paragraph explaining
+    // the gate sits inside the slice — so deleting the gating ternary outright,
+    // while leaving the word `canSeeAdminTools` in the prose above it, left the
+    // rows in every member's feed and the guard still green. Measured on this
+    // branch before it was replaced.
+    const page = stripComments(
+      source("src/app/(authenticated)/bookings/[id]/page.tsx"),
+    );
     expect(page).toContain("booking.hostingCoverage.incidentOpened");
     const gate = page.slice(
       page.indexOf("const bookingAuditLogs"),
@@ -378,6 +389,14 @@ describe("the linked-move offer's UI contract (#3232, INV-HOST-050)", () => {
       gate,
       "the incident actions must be inside a canSeeAdminTools branch, not the shared list",
     ).toContain("canSeeAdminTools");
+    // AND THE SECOND LOCK, which is the one a query edit cannot lose: the timeline
+    // builder is TOLD who is reading, so the rows are dropped for a member even if
+    // they reach it. `booking-history.test.ts` asserts that behaviourally; this
+    // asserts the page really passes the audience rather than defaulting it.
+    expect(
+      page,
+      "the history builder must be handed the viewer's audience (#3232 D3)",
+    ).toContain('audience: canSeeAdminTools ? "staff" : "member"');
   });
 
   it("keeps the shared browser contract free of server-only dependencies", () => {

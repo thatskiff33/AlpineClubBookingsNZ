@@ -81,7 +81,9 @@ function linkedMoveOffer(
     combinedChangeFeeCents: 2_000,
     combinedAmountDueCents: 800,
     combinedRefundCents: 0,
+    combinedPolicyRetainedCents: 0,
     settlementMethodRequired: false,
+    settlementMethodChosen: false,
     bothChangeFeesCharged: true,
     ...overrides,
   };
@@ -339,6 +341,110 @@ describe("EditBookingPanel — the linked-move offer (#3232)", () => {
       acknowledged: true,
       stateKey: ACCEPT_KEY,
     });
+  });
+
+  it("does not ask where money goes on the arm where none moves", async () => {
+    /*
+      #3232 fix round. The Return-method question belongs to the OTHER booking's
+      refund, and that refund only happens because the other booking moves. A
+      member who chose "Move only this booking" was still blocked by it —
+      "Choose a refund or account credit before saving", about money that will
+      never move — and, once they answered, the answer was attached to a request
+      where it does nothing.
+    */
+    modifyResponse = () =>
+      jsonResponse(
+        linkedMoveOffer({
+          combinedRefundCents: 1_200,
+          settlementMethodRequired: true,
+        }),
+        409,
+      );
+    render(<EditBookingPanel booking={makeBooking()} onDone={vi.fn()} />);
+
+    const saveButton = await saveIntoTheOffer();
+    // Before either arm is chosen the control is on screen, because the offer's
+    // own money sentence promises it.
+    expect(screen.getByTestId("linked-move-settlement-method")).toBeVisible();
+
+    modifyResponse = () => jsonResponse({ booking: { id: BOOKING_ID } });
+    fireEvent.click(
+      screen.getByRole("radio", { name: /Move only this booking/ }),
+    );
+
+    // It goes away with the arm that made it relevant, and Save is not held on it.
+    await waitFor(() =>
+      expect(screen.queryByTestId("linked-move-settlement-method")).toBeNull(),
+    );
+    expect(saveButton).not.toBeDisabled();
+
+    fireEvent.click(saveButton);
+    await waitFor(() => expect(modifyBodies).toHaveLength(2));
+    expect(modifyBodies[1]?.hostingCoverageLinkedMove).toEqual({
+      choice: "LEAVE_UNCOVERED",
+      acknowledged: true,
+      stateKey: DECLINE_KEY,
+    });
+    expect(
+      "settlementMethod" in (modifyBodies[1] ?? {}),
+      "an answer about a refund that will not happen must not travel",
+    ).toBe(false);
+  });
+
+  it("keeps sending the chosen return method after a re-offer drops the flag", async () => {
+    /*
+      #3232 fix round — the OSCILLATION.
+
+      The panel used to attach the member's card-or-credit answer only while the
+      offer's `settlementMethodRequired` was set. The two options can resolve to
+      different amounts, so a re-quote priced on the option they chose could come
+      back with the flag off; the panel then dropped the answer, the server priced
+      on card again, the flag came back, and the two states swapped forever with
+      neither booking moving. The answer now travels with the ACCEPTING ARM, not
+      with the flag.
+    */
+    modifyResponse = () =>
+      jsonResponse(
+        linkedMoveOffer({
+          combinedRefundCents: 25_000,
+          settlementMethodRequired: true,
+        }),
+        409,
+      );
+    render(<EditBookingPanel booking={makeBooking()} onDone={vi.fn()} />);
+
+    const saveButton = await saveIntoTheOffer();
+    fireEvent.click(screen.getByRole("radio", { name: /Move both bookings/ }));
+    fireEvent.click(
+      screen.getByRole("radio", { name: /Hold as account credit/ }),
+    );
+
+    // The re-offer: same situation, priced on the member's own choice, and this
+    // time it says no choice is outstanding.
+    modifyResponse = () =>
+      jsonResponse(
+        linkedMoveOffer({
+          combinedRefundCents: 0,
+          settlementMethodRequired: false,
+          settlementMethodChosen: true,
+        }),
+        409,
+      );
+    await waitFor(() => expect(saveButton).not.toBeDisabled());
+    fireEvent.click(saveButton);
+    await waitFor(() => expect(modifyBodies).toHaveLength(2));
+    expect(modifyBodies[1]?.settlementMethod).toBe("credit");
+
+    // And the NEXT attempt still carries it, which is the half that was lost.
+    modifyResponse = () => jsonResponse({ booking: { id: BOOKING_ID } });
+    fireEvent.click(screen.getByRole("radio", { name: /Move both bookings/ }));
+    await waitFor(() => expect(saveButton).not.toBeDisabled());
+    fireEvent.click(saveButton);
+    await waitFor(() => expect(modifyBodies).toHaveLength(3));
+    expect(
+      modifyBodies[2]?.settlementMethod,
+      "the member answered once; a flag going quiet must not un-answer it",
+    ).toBe("credit");
   });
 
   it("retires the offer the moment the member changes the edit again", async () => {

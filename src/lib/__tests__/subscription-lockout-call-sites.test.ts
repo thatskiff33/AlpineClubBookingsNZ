@@ -863,26 +863,27 @@ describe("the mode is threaded to the money, not re-read inside the locks (#2543
     },
   );
 
-  it("the batch modify service resolves the mode before it opens its transaction", () => {
-    // `resolveSubscriptionLockoutMode` can refresh the financial-year cache from
-    // Xero. Inside the transaction that holds lock(1) and the per-lodge capacity
-    // lock, that is the one thing the booking rules forbid outright.
-    //
-    // #3232: the read moved into this service's ONE named pre-transaction
-    // function, where it is awaited alongside the member-guest policy and the
-    // Xero lock dates, so the `await` no longer sits against its name. The
-    // positional rule still holds — that function is declared above the boundary
-    // — and the case it could never see is now covered by the assertion below: on
-    // a CALLER-supplied transaction, "above `withOptionalTransaction`" is not
-    // outside the transaction at all, and this read really was running under both
-    // locks there.
-    const source = readRepoFile("src/lib/booking-batch-modification-service.ts");
-    const modeRead = source.indexOf("resolveSubscriptionLockoutMode(),");
-    const transaction = source.indexOf("withOptionalTransaction(callerTx,");
-    expect(modeRead).toBeGreaterThan(-1);
-    expect(transaction).toBeGreaterThan(-1);
-    expect(modeRead).toBeLessThan(transaction);
-  });
+  /*
+    THE POSITIONAL ASSERTION THAT USED TO SIT HERE IS GONE (#3232 fix round), and
+    deleting it is the fix rather than a loss of cover.
+
+    Once #3232 moved this read into the service's one named pre-transaction
+    function, the comparison it made — "the marker appears earlier in the file than
+    `withOptionalTransaction(callerTx,`" — stopped saying anything about when the
+    read RUNS. It compared the position of a top-level function DECLARATION against
+    the position of a call inside another one. Measured: moving
+    `prepareBookingBatchModification` textually below `modifyBookingBatch`, which
+    changes no behaviour whatever, turned it red; and a read inside a helper
+    declared above but CALLED from inside the transaction would have kept it green.
+    A rule that fails on a neutral move and passes on a real violation is measuring
+    file layout.
+
+    What actually holds the rule is `lock-bound-club-zone-outside-transaction.test.ts`,
+    which confines every one of these resolvers to the module's NAMED
+    pre-transaction home and is indifferent to where that home is written — it
+    stayed green under the same move — plus the caller-transaction refusal below,
+    which is the case no positional rule could ever express.
+  */
 
   it("and REFUSES a caller transaction that did not resolve it first (#3232)", () => {
     // The hole the positional rule above cannot express, and it was live: this
@@ -895,6 +896,12 @@ describe("the mode is threaded to the money, not re-read inside the locks (#2543
     const source = readRepoFile("src/lib/booking-batch-modification-service.ts");
     expect(source).toContain("if (callerTx && !preTransaction) {");
     expect(source).toContain("the subscription-lockout ");
+    // And the value can only have been built one way: the exported preparer takes
+    // no candidate check-ins, so a caller-supplied transaction cannot hand in
+    // lock-date facts resolved from a set that does not contain its own bookings.
+    expect(source).toContain(
+      "export async function prepareBatchModificationForCallerTransaction(options: {",
+    );
     // And the mode the pricing engine is handed comes off that prepared value
     // rather than from a read of its own.
     expect(source).toContain(

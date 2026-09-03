@@ -4,6 +4,7 @@ import { buildBookingHistoryItems } from "@/lib/booking-history";
 describe("buildBookingHistoryItems", () => {
   it("builds a unified history sorted newest-first", () => {
     const items = buildBookingHistoryItems({
+      audience: "member",
       createdAt: new Date("2026-04-01T09:00:00Z"),
       payment: {
         status: "PARTIALLY_REFUNDED",
@@ -80,6 +81,7 @@ describe("buildBookingHistoryItems", () => {
 
   it("falls back to the payment updated timestamp when no success audit exists", () => {
     const items = buildBookingHistoryItems({
+      audience: "member",
       createdAt: new Date("2026-04-01T09:00:00Z"),
       payment: {
         status: "SUCCEEDED",
@@ -114,6 +116,7 @@ describe("buildBookingHistoryItems", () => {
       ),
     ) {
       return buildBookingHistoryItems({
+        audience: "member",
         createdAt: new Date("2026-04-01T09:00:00Z"),
         payment: {
           status: "SUCCEEDED",
@@ -204,6 +207,7 @@ describe("buildBookingHistoryItems", () => {
 
   it("renders a #1992 duplicate-capture auto-refund with honest copy when supplied (admin view, #2008)", () => {
     const items = buildBookingHistoryItems({
+      audience: "member",
       createdAt: new Date("2026-04-01T09:00:00Z"),
       payment: null,
       modifications: [],
@@ -233,6 +237,7 @@ describe("buildBookingHistoryItems", () => {
 
   it("omits duplicate-capture entries entirely when none are supplied (member view sees nothing new, #2008)", () => {
     const items = buildBookingHistoryItems({
+      audience: "member",
       createdAt: new Date("2026-04-01T09:00:00Z"),
       payment: null,
       modifications: [],
@@ -259,6 +264,7 @@ describe("buildBookingHistoryItems", () => {
 describe("buildBookingHistoryItems — unapplied credit election (#2265)", () => {
   function build(details: string | null) {
     return buildBookingHistoryItems({
+      audience: "member",
       createdAt: new Date("2026-04-01T09:00:00Z"),
       payment: null,
       modifications: [],
@@ -360,6 +366,7 @@ describe("buildBookingHistoryItems — unapplied credit election (#2265)", () =>
 describe("buildBookingHistoryItems — a manually settled extra (#2397)", () => {
   function build(auditLogs: Parameters<typeof buildBookingHistoryItems>[0]["auditLogs"]) {
     return buildBookingHistoryItems({
+      audience: "member",
       createdAt: new Date("2026-07-01T09:00:00Z"),
       payment: {
         status: "SUCCEEDED",
@@ -453,6 +460,7 @@ describe("a modification whose adjustment is still with the club (#3033)", () =>
 
   function build(financialReviewPending: boolean) {
     return buildBookingHistoryItems({
+      audience: "member",
       createdAt: new Date("2026-04-01T09:00:00Z"),
       payment: null,
       modifications: [
@@ -505,6 +513,7 @@ describe("a modification whose adjustment is still with the club (#3033)", () =>
     // Defaulted false: a caller that has not checked makes no claim about this
     // member's money.
     const items = buildBookingHistoryItems({
+      audience: "member",
       createdAt: new Date("2026-04-01T09:00:00Z"),
       payment: null,
       modifications: [modification("mod-new", -12000, "2026-06-01T10:00:00Z")],
@@ -521,6 +530,7 @@ describe("a modification whose adjustment is still with the club (#3033)", () =>
     // A credit-election edit has no amount on its row, so there is nothing on it
     // to qualify — and qualifying it would point at the wrong change.
     const items = buildBookingHistoryItems({
+      audience: "member",
       createdAt: new Date("2026-04-01T09:00:00Z"),
       payment: null,
       modifications: [
@@ -559,29 +569,32 @@ describe("a modification whose adjustment is still with the club (#3033)", () =>
    * The page feeds these two actions only to admin viewers, because `details` can
    * be an officer's PRIVATE override reason.
    */
+  const incidentRows = [
+    {
+      id: "audit-incident",
+      action: "booking.hostingCoverage.incidentOpened",
+      details:
+        "The member was asked whether to move this booking to the same new " +
+        "nights as the booking they were editing, and chose to move only " +
+        "that one.",
+      createdAt: new Date("2026-04-09T12:00:00Z"),
+    },
+    {
+      id: "audit-incident-again",
+      action: "booking.hostingCoverage.incidentUpdated",
+      details: "A later change moved which nights are uncovered.",
+      createdAt: new Date("2026-04-10T12:00:00Z"),
+    },
+  ];
+
   it("renders a hosting-coverage incident's own recorded explanation (#3232)", () => {
     const items = buildBookingHistoryItems({
+      audience: "staff",
       createdAt: new Date("2026-04-01T09:00:00Z"),
       payment: null,
       modifications: [],
       refundRequests: [],
-      auditLogs: [
-        {
-          id: "audit-incident",
-          action: "booking.hostingCoverage.incidentOpened",
-          details:
-            "The member was asked whether to move this booking to the same new " +
-            "nights as the booking they were editing, and chose to move only " +
-            "that one.",
-          createdAt: new Date("2026-04-09T12:00:00Z"),
-        },
-        {
-          id: "audit-incident-again",
-          action: "booking.hostingCoverage.incidentUpdated",
-          details: "A later change moved which nights are uncovered.",
-          createdAt: new Date("2026-04-10T12:00:00Z"),
-        },
-      ],
+      auditLogs: incidentRows,
     });
 
     const opened = items.find((item) => item.id === "audit-audit-incident");
@@ -594,5 +607,42 @@ describe("a modification whose adjustment is still with the club (#3033)", () =>
     );
     expect(updated?.title).toBe("Adult member cover flag updated");
     expect(updated?.detail).toMatch(/which nights are uncovered/);
+  });
+
+  /**
+   * AND A MEMBER READING THEIR OWN BOOKING GETS NEITHER (#3232 D3, fix round).
+   *
+   * `details` on these two rows is whoever's explanation applies — the member's
+   * own recorded decision, or an OFFICER'S PRIVATE OVERRIDE REASON. The owner's
+   * decision of 4 September 2026 is that it is readable by anyone with
+   * booking-edit access and by nobody else.
+   *
+   * Before the audience argument existed, the only thing standing between a
+   * member and that text was a conditional array a hundred and seventy lines away
+   * in the page — and the guard on it was satisfiable by a comment, which was
+   * measured. This is the assertion no source scan can be fooled about: the rows
+   * are handed in, and the member's timeline does not contain them.
+   */
+  it("withholds the incident rows from the booking's own member (#3232 D3)", () => {
+    const items = buildBookingHistoryItems({
+      audience: "member",
+      createdAt: new Date("2026-04-01T09:00:00Z"),
+      payment: null,
+      modifications: [],
+      refundRequests: [],
+      auditLogs: incidentRows,
+    });
+
+    // NOT "the list is empty" — the booking-created row is always there, so an
+    // empty list would mean the builder had failed rather than withheld anything.
+    expect(items.some((item) => item.id === "booking-created")).toBe(true);
+    expect(items.map((item) => item.id)).not.toContain("audit-audit-incident");
+    expect(items.map((item) => item.id)).not.toContain(
+      "audit-audit-incident-again",
+    );
+    // And no row anywhere carries the text, whatever it might have been titled.
+    for (const item of items) {
+      expect(item.detail ?? "").not.toMatch(/chose to move only that one/);
+    }
   });
 });

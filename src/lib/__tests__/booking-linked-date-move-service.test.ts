@@ -81,6 +81,9 @@ const h = vi.hoisted(() => ({
   actorOptionCalls: [] as unknown[],
   logError: vi.fn(),
   prepareBatch: vi.fn(),
+  moneyFor: (() => {
+    throw new Error("moneyFor not installed");
+  }) as (bookingId: string, method: string | null) => unknown,
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -93,7 +96,7 @@ vi.mock("@/lib/prisma", () => ({
 
 vi.mock("@/lib/booking-batch-modification-service", () => ({
   modifyBookingBatch: h.modifyBookingBatch,
-  prepareBookingBatchModification: h.prepareBatch,
+  prepareBatchModificationForCallerTransaction: h.prepareBatch,
 }));
 
 vi.mock("@/lib/booking-date-modification-service", () => ({
@@ -155,6 +158,7 @@ import {
 } from "@/lib/booking-linked-date-move-arms";
 
 const LODGE = "lodge-alpine";
+const OWNER = "member-owner";
 const PRIMARY = "bk-primary-0001";
 const DEPENDENT = "bk-dependent-01";
 const SECOND_DEPENDENT = "bk-dependent-02";
@@ -190,6 +194,15 @@ type Money = {
   additionalAmountCents: number;
   refundAmountCents: number;
   accountCreditAmountCents: number;
+  /**
+   * The WRITE's own answer to "does this settlement need a card-or-credit
+   * choice", which the real engine computes as an OR over BOTH options and is
+   * therefore INDEPENDENT of the option this call happened to be priced on
+   * (#3232 fix round). Defaults to false.
+   */
+  requiresSettlementMethod?: boolean;
+  /** What the cancellation policy kept of this booking's reduction. */
+  policyRetainedAmountCents?: number;
 };
 
 const PRIMARY_MONEY: Money = {
@@ -206,6 +219,11 @@ const DEPENDENT_MONEY: Money = {
   additionalAmountCents: 0,
   refundAmountCents: 200,
   accountCreditAmountCents: 0,
+  // Money comes back, so the real engine's settlement options say a card-or-credit
+  // choice is owed. Stated rather than inferred from the amount above, because the
+  // engine computes it as an OR over BOTH options and the two can disagree — which
+  // is the whole of `requiresSettlementMethod`.
+  requiresSettlementMethod: true,
 };
 
 /**
@@ -228,6 +246,7 @@ function batchResult(
     additionalAmountCents: Math.max(0, money.additionalAmountCents - waived),
     refundAmountCents: money.refundAmountCents + waived,
     accountCreditAmountCents: money.accountCreditAmountCents,
+    requiresSettlementMethod: money.requiresSettlementMethod === true,
     settlementMethod: null,
     additionalPaymentClientSecret: null,
     stripeRefundId: null,
@@ -237,7 +256,7 @@ function batchResult(
     promoChangeNotApplied: null,
     choreWarnings: [],
     creditElectionCents: null,
-    policyRetainedAmountCents: 0,
+    policyRetainedAmountCents: money.policyRetainedAmountCents ?? 0,
     capacityOverridden: false,
     deferredPostCommit: async () => {
       h.events.push(`deferred:${bookingId}`);
@@ -256,11 +275,15 @@ function args(
       acknowledged: true;
       stateKey: string;
     };
+    /** A different actor — the accept arm is the booking owner's door alone. */
+    actor?: { id: string; role: "USER" | "ADMIN" };
+    /** A different request body, for the narrowing and settlement-choice cases. */
+    input?: Record<string, unknown>;
   } = {},
 ) {
   return {
     bookingId: PRIMARY,
-    actor: { id: "member-owner", role: "USER" as const },
+    actor: { id: OWNER, role: "USER" as const },
     input: { checkIn: "2026-08-20", checkOut: "2026-08-22" },
     ipAddress: "203.0.113.7",
     todayAtClub: "2026-07-01" as never,
@@ -337,7 +360,18 @@ beforeEach(() => {
     lodgeId: LODGE,
     checkIn: HELD.checkIn,
     checkOut: HELD.checkOut,
+    // The owner, because accepting is the owner's door and nobody else's.
+    memberId: OWNER,
   });
+  // THE DOUBLE IS METHOD-SENSITIVE BY DEFAULT-OVERRIDE (#3232 fix round). The real
+  // engine can return a DIFFERENT amount for a card refund than for account
+  // credit — separate policy tier, separate percentage, separate fixed fee — and a
+  // double that returned the same money whatever it was handed could not
+  // distinguish a quote priced on one option from a write that demanded the
+  // choice. That is exactly the disagreement that deadlocked the member, and the
+  // suite could not see it.
+  h.moneyFor = (bookingId: string, _method: string | null): Money =>
+    bookingId === PRIMARY ? PRIMARY_MONEY : DEPENDENT_MONEY;
   h.bookingDefaultsFindUnique.mockResolvedValue({
     linkedMoveChargesBothChangeFees: true,
   });
@@ -372,9 +406,17 @@ beforeEach(() => {
           checkIn: new Date(`${call.input.checkIn}T00:00:00.000Z`),
           checkOut: new Date(`${call.input.checkOut}T00:00:00.000Z`),
         };
+    // METHOD-SENSITIVE (#3232 fix round): the money a scenario hands back may
+    // depend on which option this call was priced against, because the real engine's
+    // card and credit amounts come from separate policy tiers. A fixture that wants
+    // to refuse a call carrying no choice throws from its own `moneyFor`.
+    const money = h.moneyFor(
+      call.bookingId,
+      call.input.settlementMethod ?? null,
+    ) as Money;
     return batchResult(
       call.bookingId,
-      isPrimary ? PRIMARY_MONEY : DEPENDENT_MONEY,
+      money,
       range,
       call.waiveChangeFee === true,
     );
@@ -546,7 +588,7 @@ describe("the linked move is one transaction (#3232, INV-HOST-051)", () => {
       actorMemberId: string;
     };
     expect(actorOptions.vacatedRange).toEqual(HELD);
-    expect(actorOptions.actorMemberId).toBe("member-owner");
+    expect(actorOptions.actorMemberId).toBe(OWNER);
   });
 
   it("does not run the second pass when nothing moved alongside", async () => {
@@ -1471,6 +1513,69 @@ describe("the three arms, shared across both date doors (#3232 D1, INV-SSOT-001)
       });
     });
   });
+
+  describe("PUT /api/bookings/[id]/modify — what reaches the linked move", () => {
+    /**
+     * THE SAME NARROWING, ON THE OTHER DOOR — and it was missing there (#3232 fix
+     * round).
+     *
+     * `/modify` was handing its WHOLE parsed request body to the linked move.
+     * `adminOverride: true` then reached `modifyBookingBatch` WITH a caller
+     * transaction, which that service refuses outright — its conservative Xero
+     * lock-date guard has no pre-resolved form — so the member got an unexplained
+     * 500 in place of the offer that was their only door.
+     *
+     * Reachable, not theoretical: the linked-move answer is deliberately not one
+     * of this route's admin-gated fields, because the person entitled to answer it
+     * is the booking's own member, admin or not. An ADMIN editing their OWN
+     * booking could therefore carry the flag in.
+     */
+    it("carries only the dates and the settlement choice into the linked move", async () => {
+      h.modifyBookingBatch.mockImplementationOnce(async () => {
+        throw MARKED();
+      });
+
+      await modifyBookingWithLinkedMoveSupport({
+        ...args(),
+        actor: { id: OWNER, role: "ADMIN" as const },
+        input: {
+          checkIn: "2026-08-20",
+          checkOut: "2026-08-22",
+          settlementMethod: "card",
+          adminOverride: true,
+          confirmOverCapacity: true,
+          notifyMember: false,
+          addGuests: [
+            {
+              firstName: "New",
+              lastName: "Guest",
+              ageTier: "ADULT",
+              isMember: true,
+            },
+          ],
+        },
+      }).catch(() => undefined);
+
+      // The FIRST call is the ordinary single-booking edit, which legitimately
+      // gets the whole body; the quote's calls are the ones that must not.
+      const quoteCalls = h.modifyBookingBatch.mock.calls
+        .map(([call]) => call as BatchArgs)
+        .slice(1);
+      expect(quoteCalls.length).toBeGreaterThan(0);
+      const primaryCall = quoteCalls.find((call) => call.bookingId === PRIMARY);
+      expect(primaryCall?.input).toEqual({
+        checkIn: "2026-08-20",
+        checkOut: "2026-08-22",
+        settlementMethod: "card",
+      });
+      for (const call of quoteCalls) {
+        expect(
+          (call.input as Record<string, unknown>).adminOverride,
+          "an admin flag inside a caller transaction is a hard refusal, not an offer",
+        ).toBeUndefined();
+      }
+    });
+  });
 });
 
 describe("nothing in this module can write outside the transaction (#3232)", () => {
@@ -1517,5 +1622,227 @@ describe("nothing in this module can write outside the transaction (#3232)", () 
     // transaction opens, which is why it lives in the pre-transaction module.
     const preflight = moduleClientUses("booking-linked-date-move-preflight.ts");
     expect([...new Set(preflight)]).toEqual(["prisma.bookingDefaults"]);
+  });
+});
+
+/**
+ * THE FIFTH DEADLOCK, and it was created by the fix for the fourth (#3232 fix
+ * round).
+ *
+ * The offer used to say a card-or-credit choice was needed by looking at the
+ * RESOLVED amounts of a quote priced on the card. The write decides it a different
+ * way — `cardRefundAmountCents > 0 || creditRefundAmountCents > 0`, an OR over
+ * BOTH options — and `calculateDualRefundAmounts` gives each option its own
+ * percentage and its own fixed fee, each floored at zero. So the two expressions
+ * disagree exactly when one option resolves to nothing and the other does not, and
+ * the disagreement is not cosmetic: the member reads that nothing comes back, is
+ * shown no Return-method control, accepts, the write demands a method, the re-quote
+ * prices on card again and returns a BYTE-IDENTICAL offer. Every retry repeats and
+ * NEITHER booking moves.
+ *
+ * Both cases below are written as "the retry makes progress", because that is the
+ * property the deadlock removes.
+ */
+describe("the card and credit options can resolve differently (#3232 fix round)", () => {
+  /** A primary whose own move needs no settlement at all: unpaid, price unchanged. */
+  const NEUTRAL_PRIMARY: Money = {
+    priceDiffCents: 0,
+    changeFeeCents: 0,
+    additionalAmountCents: 0,
+    refundAmountCents: 0,
+    accountCreditAmountCents: 0,
+  };
+
+  /** Accept a specific offer, with a specific return method on the request. */
+  async function accept(
+    offer: SameOwnerCoverageLinkedMoveRequiredError,
+    settlementMethod: "card" | "credit",
+  ) {
+    return applyLinkedDateMove({
+      ...args({
+        input: {
+          checkIn: "2026-08-20",
+          checkOut: "2026-08-22",
+          settlementMethod,
+        },
+      }),
+      linkedMove: {
+        choice: "MOVE_BOTH",
+        acknowledged: true,
+        stateKey: offer.acceptStateKey,
+      },
+    }).then(
+      (result) => ({ committed: result, offer: null }),
+      (error: unknown) => {
+        expect(error).toBeInstanceOf(SameOwnerCoverageLinkedMoveRequiredError);
+        return {
+          committed: null,
+          offer: error as SameOwnerCoverageLinkedMoveRequiredError,
+        };
+      },
+    );
+  }
+
+  /**
+   * CASE A — the card option nets to nothing and the credit option does not.
+   *
+   * A club tier of 100% with a $30 fixed fee for processing a card refund, and
+   * 100% with no fixed fee as account credit. The dependent's compelled move frees
+   * $25.00: `max(0, 2500 - 3000)` is zero on the card, and $25.00 as credit.
+   */
+  const CASE_A = (bookingId: string, method: string | null): Money =>
+    bookingId === PRIMARY
+      ? NEUTRAL_PRIMARY
+      : {
+          priceDiffCents: -2_500,
+          changeFeeCents: 0,
+          additionalAmountCents: 0,
+          refundAmountCents: 0,
+          accountCreditAmountCents: method === "credit" ? 2_500 : 0,
+          // TRUE WHICHEVER WAY IT IS PRICED, which is the whole point: the write's
+          // test is an OR over both options.
+          requiresSettlementMethod: true,
+          policyRetainedAmountCents: method === "credit" ? 0 : 2_500,
+        };
+
+  it("asks for the choice even where the priced option returns nothing", async () => {
+    h.moneyFor = CASE_A;
+
+    const offer = await raiseOffer();
+
+    // The figure really is zero on the option this quote was priced against...
+    expect(offer.quote.combinedRefundCents).toBe(0);
+    expect(offer.quote.combinedAmountDueCents).toBe(0);
+    // ...and the member is asked anyway, because the OTHER option pays. Derived
+    // from `requiresSettlementMethod` on the write's own result: reading it off
+    // the resolved amounts above answered `false` here, which is what drew no
+    // Return-method control and made the offer unanswerable.
+    expect(offer.quote.settlementMethodRequired).toBe(true);
+    expect(offer.quote.settlementMethodChosen).toBe(false);
+    // And the sentence says so rather than "there is nothing to come back", which
+    // is what a member reads over a control asking where it should go.
+    expect(offer.message).toContain("Money does come back on this move");
+    expect(offer.message).toContain("account credit instead");
+  });
+
+  it("makes progress on the retry, whichever option the member picks", async () => {
+    h.moneyFor = CASE_A;
+    const first = await raiseOffer();
+
+    // CARD: the figures are the ones already quoted, so the key matches and the
+    // move commits. One round trip.
+    const onCard = await accept(first, "card");
+    expect(onCard.offer, "the card arm commits").toBeNull();
+    expect(onCard.committed?.booking.id).toBe(PRIMARY);
+
+    // CREDIT: the money is genuinely different, so the member is re-offered with
+    // the TRUE figures rather than charged something they were not shown. The
+    // proof that this is progress and not the deadlock is that the second offer is
+    // NOT the first one again.
+    const second = await accept(await raiseOffer(), "credit");
+    expect(second.committed).toBeNull();
+    expect(second.offer?.acceptStateKey).not.toBe(first.acceptStateKey);
+    expect(second.offer?.quote.combinedRefundCents).toBe(2_500);
+    expect(second.offer?.quote.settlementMethodChosen).toBe(true);
+    // ...and answering THAT one commits. Two round trips, terminating.
+    const nextOffer = second.offer;
+    if (!nextOffer) throw new Error("expected a fresh offer");
+    const third = await accept(nextOffer, "credit");
+    expect(third.offer).toBeNull();
+    expect(third.committed?.booking.id).toBe(PRIMARY);
+  });
+
+  /**
+   * CASE B — the mirror: the card option pays and the credit option does not.
+   *
+   * This is the shape that OSCILLATED. Priced on credit the refund is zero, so the
+   * old derivation dropped `settlementMethodRequired`, the panel stopped attaching
+   * the member's choice, the next quote priced on card again, the flag came back,
+   * and the two states swapped forever.
+   */
+  const CASE_B = (bookingId: string, method: string | null): Money =>
+    bookingId === PRIMARY
+      ? NEUTRAL_PRIMARY
+      : {
+          priceDiffCents: -50_000,
+          changeFeeCents: 0,
+          additionalAmountCents: 0,
+          refundAmountCents: method === "credit" ? 0 : 25_000,
+          accountCreditAmountCents: 0,
+          requiresSettlementMethod: true,
+          policyRetainedAmountCents: method === "credit" ? 50_000 : 25_000,
+        };
+
+  it("does not oscillate when the chosen option returns nothing", async () => {
+    h.moneyFor = CASE_B;
+    const first = await raiseOffer();
+    expect(first.quote.combinedRefundCents).toBe(25_000);
+    expect(first.quote.settlementMethodRequired).toBe(true);
+
+    const second = await accept(first, "credit");
+    expect(second.committed).toBeNull();
+    expect(second.offer?.quote.combinedRefundCents).toBe(0);
+    // THE FLAG SURVIVES THE ZERO. This is the assertion the oscillation turned on:
+    // a `false` here withdrew the control, the panel dropped the member's answer,
+    // and the next attempt was priced on card again — back to the first offer.
+    expect(second.offer?.quote.settlementMethodRequired).toBe(true);
+    expect(second.offer?.acceptStateKey).not.toBe(first.acceptStateKey);
+
+    // And the second answer terminates it.
+    const nextOffer = second.offer;
+    if (!nextOffer) throw new Error("expected a fresh offer");
+    const third = await accept(nextOffer, "credit");
+    expect(third.offer, "the second acceptance commits").toBeNull();
+    expect(third.committed?.booking.id).toBe(PRIMARY);
+  });
+
+  it("names what the club's policy kept, rather than only what comes back", async () => {
+    h.moneyFor = CASE_B;
+    const offer = await raiseOffer();
+
+    expect(offer.quote.combinedPolicyRetainedCents).toBe(25_000);
+    expect(offer.message).toContain("cancellation policy keeps $250.00");
+  });
+});
+
+/**
+ * ACCEPTING IS THE OWNER'S DOOR (#3232 D1, `INV-HOST-050`).
+ *
+ * The offer is only RAISED for the booking's own member, but accepting was
+ * reachable by any actor authorised to modify the primary — and a stale key is
+ * answered with a fresh, valid `acceptStateKey`, so an officer could resubmit and
+ * commit an atomic two-booking move on a member's bookings with the dependent's
+ * change fee waived under the club's supervision-rule setting. No new authority,
+ * but a documented invariant that was true of the screen and false of the route.
+ */
+describe("only the booking's own member may accept (#3232, INV-HOST-050)", () => {
+  it("refuses an officer who returns a valid acceptance for somebody else's booking", async () => {
+    const offer = await raiseOffer();
+    h.events = [];
+    h.modifyBookingBatch.mockClear();
+
+    const thrown = await applyLinkedDateMove({
+      ...args({
+        actor: { id: "officer-not-the-owner", role: "ADMIN" as const },
+      }),
+      linkedMove: {
+        choice: "MOVE_BOTH",
+        acknowledged: true,
+        stateKey: offer.acceptStateKey,
+      },
+    }).then(
+      () => null,
+      (error: unknown) => error,
+    );
+
+    expect((thrown as { status?: number }).status).toBe(403);
+    expect((thrown as Error).message).toContain(
+      "only available to the member whose bookings they are",
+    );
+    // REFUSED BEFORE ANYTHING IS WRITTEN, which is the half a status code does not
+    // prove: no booking was modified and the transaction rolled back.
+    expect(h.modifyBookingBatch).not.toHaveBeenCalled();
+    expect(h.events).toContain("tx:rollback");
+    expect(h.events).not.toContain("tx:commit");
   });
 });

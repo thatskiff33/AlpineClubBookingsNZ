@@ -8,9 +8,9 @@
 // exercised by the route and service suites.
 import { describe, expect, it } from "vitest";
 
+import { LINKED_MOVE_DECLINED_INCIDENT_REASON } from "@/lib/adult-member-hosting-coverage-incidents";
 import {
   HOSTING_COVERAGE_LINKED_MOVE_CODE,
-  LINKED_MOVE_DECLINED_INCIDENT_REASON,
   SameOwnerCoverageLinkedMoveRequiredError,
   buildSameOwnerCoverageLinkedMoveBody,
   formatLinkedMoveOfferMessage,
@@ -61,7 +61,9 @@ function quote(overrides: Partial<LinkedMoveQuote> = {}): LinkedMoveQuote {
     combinedChangeFeeCents: 5000,
     combinedAmountDueCents: 6500,
     combinedRefundCents: 0,
+    combinedPolicyRetainedCents: 0,
     settlementMethodRequired: false,
+    settlementMethodChosen: false,
     bothChangeFeesCharged: true,
     feasibility: "AVAILABLE",
     ...overrides,
@@ -355,7 +357,10 @@ describe("what the member is told (#3232)", () => {
     expect(
       message,
       "a member who moves two bookings and sees one total will assume one fee",
-    ).toMatch(/change fee on both bookings/);
+    ).toMatch(/A change fee applies to both bookings/);
+    // AND NOT "that total includes", which was written when there was one figure
+    // and is false of a refund the fee made SMALLER (#3232 fix round).
+    expect(message).not.toMatch(/total includes the change fee/);
     expect(message).toContain("$50.00");
   });
 
@@ -367,7 +372,10 @@ describe("what the member is told (#3232)", () => {
       quote({ bothChangeFeesCharged: false, combinedChangeFeeCents: 2500 }),
     );
     expect(message).toMatch(/waived by the club/);
-    expect(message).not.toMatch(/change fee on both bookings/);
+    expect(message).not.toMatch(/A change fee applies to both bookings/);
+    // And it names the one fee that IS carried, so "one change fee only" is a
+    // figure rather than a claim.
+    expect(message).toContain("one change fee only ($25.00)");
   });
 
   it("offers the warn-and-continue path when there are not beds for both", () => {

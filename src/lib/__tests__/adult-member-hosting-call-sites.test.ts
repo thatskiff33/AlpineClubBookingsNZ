@@ -1091,9 +1091,22 @@ describe("the same-owner refusal and the escalation seam (#2576 §6, §8, §9)",
     }
     // And the pricing engine really honours it, on the one line that decides the
     // fee. A lever the engine ignored is exactly the defect this replaced.
-    expect(
-      readRepoCode("src/lib/booking-batch-modification-service.ts"),
-    ).toContain("parked || waiveChangeFee");
+    //
+    // TWO LINES NOW, NOT ONE (#3232 fix round), and the split is the point. The
+    // fee is CALCULATED first and zeroed second, because "waived" has to mean a
+    // fee existed and was given up: the flag is passed for every booking the move
+    // drags along, and the calculator already returns 0 for an unchanged check-in,
+    // a DRAFT and a move outside every band. Recording the waiver from the flag
+    // alone inflated the very figure a treasurer reconciles against this setting.
+    const batchService = readRepoCode(
+      "src/lib/booking-batch-modification-service.ts",
+    );
+    expect(batchService).toContain(
+      "const changeFeeCents = waiveChangeFee ? 0 : chargeableChangeFeeCents;",
+    );
+    expect(batchService).toContain(
+      "waiveChangeFee === true && chargeableChangeFeeCents > 0",
+    );
   });
 
   it("states the dependent cohort clauses once, not at four sites (#3232)", () => {

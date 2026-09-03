@@ -812,12 +812,19 @@ describe("PUT /api/bookings/[id]/modify", () => {
    * ordinary member-initiated edit to a booking the member never asked to move.
    */
   it("records that a waived change fee was WAIVED, and only when it was", async () => {
-    async function runWith(waiveChangeFee: boolean) {
+    async function runWith(waiveChangeFee: boolean, chargeableFeeCents: number) {
       const tx = makeTx(makeBooking());
       mockCalculateBookingPrice.mockReturnValue({
         totalPriceCents: 5000,
         guests: [{ priceCents: 5000, perNightCents: [2500, 2500], nightDates: [] }],
       });
+      // WHAT THE MOVE WOULD ATTRACT IF NOBODY WAIVED IT. The waiver is only a
+      // waiver against a fee that existed, so this is the variable the third case
+      // below turns to zero (#3232 D2, fix round).
+      const { calculateChangeFee } = await import("@/lib/change-fee");
+      vi.mocked(calculateChangeFee).mockReturnValue({
+        feeCents: chargeableFeeCents,
+      } as never);
       const { logAudit } = await import("@/lib/audit");
       vi.mocked(logAudit).mockClear();
       const { modifyBookingBatch } = await import(
@@ -827,7 +834,10 @@ describe("PUT /api/bookings/[id]/modify", () => {
         todayAtClub: FIXTURE_CLUB_DAY,
         bookingId: "bk1",
         actor: { id: "m1", role: "USER" },
-        input: {} as never,
+        // A REAL DATE MOVE, because an edit that does not move the check-in never
+        // reaches the fee band at all — which is exactly how the first version of
+        // this test recorded a "waiver" of a fee that was never chargeable.
+        input: { checkIn: "2026-08-24", checkOut: "2026-08-26" } as never,
         ipAddress: "127.0.0.1",
         tx: tx as never,
         preTransaction: TX_MODE_PRE_TRANSACTION,
@@ -843,10 +853,14 @@ describe("PUT /api/bookings/[id]/modify", () => {
           (call) =>
             (call[0] as { action: string }).action === "booking.modify.batch",
         )?.[0] as { metadata: Record<string, unknown> } | undefined;
-      return { newData: row?.data.newData, metadata: audit?.metadata };
+      return {
+        newData: row?.data.newData,
+        metadata: audit?.metadata,
+        changeFeeCents: result.changeFeeCents,
+      };
     }
 
-    const waived = await runWith(true);
+    const waived = await runWith(true, 2_500);
     expect(waived.newData?.changeFeeWaived).toBe(true);
     expect(waived.newData?.changeFeeWaivedReason).toBe(
       "LINKED_MOVE_SUPERVISION_RULE",
@@ -855,14 +869,36 @@ describe("PUT /api/bookings/[id]/modify", () => {
     expect(waived.metadata?.changeFeeWaivedReason).toBe(
       "LINKED_MOVE_SUPERVISION_RULE",
     );
+    // The waiver reached the MONEY, not only the label beside it.
+    expect(waived.changeFeeCents).toBe(0);
 
     // And ABSENT on an ordinary edit, so a query for waived fees is a query for
     // the key rather than a guess at which zeroes meant something.
-    const ordinary = await runWith(false);
+    const ordinary = await runWith(false, 2_500);
     expect(ordinary.newData).toBeDefined();
     expect(ordinary.newData).not.toHaveProperty("changeFeeWaived");
     expect(ordinary.metadata).toBeDefined();
     expect(ordinary.metadata).not.toHaveProperty("changeFeeWaived");
+    expect(ordinary.changeFeeCents).toBe(2_500);
+
+    /*
+      AND ABSENT WHERE THERE WAS NOTHING TO WAIVE (#3232 fix round).
+
+      The flag is passed for every booking the linked move drags along, whatever
+      that booking's own fee band says. Recording a waiver from the flag ALONE
+      therefore over-counted exactly the number the field exists for — the one a
+      treasurer reconciles against the club setting — and wrote "we waived it
+      because our own supervision rule compelled this move" into the history of a
+      booking that was never going to be charged anything. Same zero on the money
+      either way, which is precisely why the marker has to come from the fee that
+      was suppressed rather than from the request that asked.
+    */
+    const nothingToWaive = await runWith(true, 0);
+    expect(nothingToWaive.changeFeeCents).toBe(0);
+    expect(nothingToWaive.newData).toBeDefined();
+    expect(nothingToWaive.newData).not.toHaveProperty("changeFeeWaived");
+    expect(nothingToWaive.metadata).toBeDefined();
+    expect(nothingToWaive.metadata).not.toHaveProperty("changeFeeWaived");
   }, 10_000);
 
   it("real service path preserves sparse added-guest nights and forwards both hosting approvals", async () => {
