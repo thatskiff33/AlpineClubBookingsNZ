@@ -86,6 +86,54 @@ export const OTHER_LODGE_RATE_LODGE_NOT_FOUND_MESSAGE = "Selected lodge not foun
 export const OTHER_LODGE_RATE_IN_PROGRESS_MESSAGE =
   "The other-lodge member rate cannot be changed once a booking has started. Contact the office to adjust the price on a stay that is already under way.";
 
+/**
+ * The other-club re-rate is ALSO refused on the edit that parks a booking's
+ * money for review (#3214, epic #2797; owner decision 2 September 2026).
+ *
+ * ## The one edge that behaved differently from the rest of the system
+ *
+ * An edit whose existing guest strands cannot be priced from this booking's own
+ * stored sold-price history commits its structural half and parks the amount as
+ * an OPEN financial review (`INV-MOD-028`). Once that review is open, EVERY
+ * later election is already refused outright: an election is never
+ * price-preserving, so the request is money-affecting, so
+ * `assertNoPendingEditFinancialReview` throws.
+ *
+ * The edit that CREATES the park was the single exception, and it half-applied
+ * the request in both directions:
+ *
+ *  - a tick resolved to `false`, because a parked edit runs no rate resolver and
+ *    so rates nobody at the other-lodge rate — while the same edit still saved a
+ *    change of lodge, so the officer got a success, a partner lodge on the
+ *    booking, and no ticks;
+ *  - an untick cleared the flag unconditionally (it must, or a stale flag could
+ *    never be removed) while the nights stayed sold at the other club's member
+ *    rate — leaving the column and the money saying different things about what
+ *    was charged.
+ *
+ * Refusing removes no ability anybody has: it is refused on every booking whose
+ * review is already open, and this makes the one inconsistent edge behave the
+ * same way. Disclosure was weighed and rejected — it would have left the product
+ * refusing in one breath and accepting-then-silently-dropping in the next, and
+ * would have described the untick disagreement rather than prevented it.
+ *
+ * ## What the wording has to carry
+ *
+ * That the election was refused; that the whole edit was refused with it, ticks
+ * AND lodge, because a refusal that saved half of the request is the defect
+ * being fixed; why; and what the officer can do next. The refusal is raised on
+ * the SAVE before anything is written, and mirrored on the PREVIEW so the
+ * officer meets it before pressing Save rather than after — the same
+ * preview/save parity {@link OTHER_LODGE_RATE_IN_PROGRESS_MESSAGE} keeps.
+ *
+ * A 400 rather than the 409 the already-open case uses, deliberately: that
+ * status carries `EDIT_FINANCIAL_REVIEW_PENDING_CODE`, which asserts a review is
+ * already open, and here none is. This is a request two of whose parts cannot be
+ * combined, which is what every other refusal in this module is.
+ */
+export const OTHER_LODGE_RATE_AMOUNT_UNDER_REVIEW_MESSAGE =
+  "The other-lodge member rate cannot be set on this change, because this booking has nights whose original price the club's records cannot tell us. That means an officer has to work the amount out by hand, and this change prices nothing — so a tick here would record a rate nobody was charged. Nothing has been saved: not the ticks, and not the lodge. Save the rest of the change on its own, settle the amount the office is asked to confirm, and then make the other-lodge change.";
+
 /** The stored shape this election is resolved against. */
 export interface OtherLodgeRateBooking {
   otherLodgeId: string | null;
