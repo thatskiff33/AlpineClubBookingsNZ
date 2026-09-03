@@ -849,6 +849,11 @@ export default async function BookingDetailPage({
 
   const bookingHistory = buildBookingHistoryItems({
     createdAt: booking.createdAt,
+    // #3232 D3 (owner, 4 September 2026): the incident's recorded explanation is
+    // readable by anyone with booking-edit access, and by nobody else. The audit
+    // query above already withholds the rows; this says the same thing to the
+    // builder, so a future edit to either one cannot open the door on its own.
+    audience: canSeeAdminTools ? "staff" : "member",
     payment: booking.payment
       ? {
           status: booking.payment.status,

@@ -412,6 +412,7 @@ export default async function AdminBookingsPage({
         }
       />
 
+      {/* #3232: visible at bookings:view — the row carries no free text. The officer's own reason needs bookings:edit; see docs/guides/audit-log.md. */}
       {hostingCoverageIncidentCount > 0 ? (
         <section
           id="hosting-coverage-incidents"
