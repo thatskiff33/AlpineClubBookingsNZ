@@ -170,6 +170,7 @@ vi.mock("@/lib/booking-policies", () => ({
 }));
 
 import { POST } from "@/app/api/bookings/[id]/modify-quote/route";
+import { OTHER_LODGE_RATE_AMOUNT_UNDER_REVIEW_MESSAGE } from "@/lib/booking-other-lodge-rate";
 
 const D = (s: string) => new Date(`${s}T00:00:00.000Z`);
 
@@ -530,5 +531,83 @@ describe("modify-quote — other-lodge member rate", () => {
     );
 
     expect(res.status).toBe(400);
+  });
+});
+
+/**
+ * #3214 (epic #2797): THE PREVIEW HALF OF THE PARKED-EDIT REFUSAL.
+ *
+ * The save refuses an other-lodge election on the edit that parks a booking's
+ * money (`OTHER_LODGE_RATE_AMOUNT_UNDER_REVIEW_MESSAGE`). A preview that went on
+ * returning the parked quote would show the officer "an officer will confirm the
+ * amount", and then Save would 400 — the quote/charge disagreement this whole
+ * module exists to prevent, and the same preview/save parity the mid-stay
+ * refusal already keeps.
+ *
+ * The fixture parks by making ONE strand unreadable: `g-stranger` carries a
+ * stored total that does not reconcile with its own night rows, which
+ * `storedSoldPriceEvidenceForGuest` classes as an absence of usable evidence
+ * (INV-MOD-028). Nothing about that guest is ticked, which is the point — a
+ * parked edit is judged over every existing strand, not over the ticked subset.
+ */
+describe("modify-quote — an election on an edit whose money parks", () => {
+  /** The same booking, with one strand whose stored total has drifted. */
+  function unpriceable() {
+    const stored = booking();
+    return {
+      ...stored,
+      guests: stored.guests.map((guest) =>
+        guest.id === "g-stranger" ? { ...guest, priceCents: 5000 } : guest,
+      ),
+    };
+  }
+
+  beforeEach(() => {
+    h.bookingFindUnique.mockResolvedValue(unpriceable());
+  });
+
+  it("parks with no election, which is what makes the refusal below narrow", async () => {
+    // The control. Parking is not itself a refusal: an edit that never mentions
+    // the rate still gets its parked quote, unchanged by #3214.
+    const res = await POST(req({ checkOut: "2026-08-04" }), { params });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ financialReviewRequired: true });
+  });
+
+  it("REFUSES a tick instead of quoting a park", async () => {
+    const res = await POST(
+      req({
+        otherLodgeId: "lodge-partner",
+        otherLodgeMemberGuestIds: ["g-visitor"],
+      }),
+      { params },
+    );
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: OTHER_LODGE_RATE_AMOUNT_UNDER_REVIEW_MESSAGE,
+    });
+  });
+
+  it("REFUSES an untick as well, which is the direction that left the records disagreeing", async () => {
+    const stored = unpriceable();
+    h.bookingFindUnique.mockResolvedValue({
+      ...stored,
+      otherLodgeId: "lodge-partner",
+      guests: stored.guests.map((guest) =>
+        guest.id === "g-visitor" ? { ...guest, otherLodgeMember: true } : guest,
+      ),
+    });
+
+    const res = await POST(
+      req({ otherLodgeId: "lodge-partner", otherLodgeMemberGuestIds: [] }),
+      { params },
+    );
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: OTHER_LODGE_RATE_AMOUNT_UNDER_REVIEW_MESSAGE,
+    });
   });
 });
