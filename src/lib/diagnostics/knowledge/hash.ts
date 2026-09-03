@@ -11,16 +11,16 @@
  *    object key order can never shift the bytes.
  */
 
-import { sha256Hex } from "@/lib/stable-digest";
-import { sortKeysDeep } from "@/lib/stable-json";
+import { sha256Hex, sortKeysDeep } from "@/lib/stable-digest";
 
 /**
- * `INV-SSOT` (#3030): the recursive key sorter and the sha256-hex of a string
- * both live in `@/lib/stable-json`, which is the one home shared with the two
- * derived-identity hashers (`booking-exception-requests.ts` and
- * `edit-financial-review.ts`). They were duplicated here until #3030. Only the
- * two things that are genuinely specific to the knowledge bundle stay in this
- * file: BOM/CRLF normalization, and `canonicalStringify`'s pinned indentation.
+ * `INV-SSOT` (#3030, #3218): the recursive key sorter and the sha256-hex of a
+ * string both live in `@/lib/stable-digest`, which is the one home shared with
+ * the two derived-identity hashers (`booking-exception-requests.ts` and
+ * `edit-financial-review-occurrence.ts`). They were duplicated here until #3030,
+ * and that one home was itself two modules until #3218. Only the two things that
+ * are genuinely specific to the knowledge bundle stay in this file: BOM/CRLF
+ * normalization, and `canonicalStringify`'s pinned indentation.
  * `sha256Hex` is re-exported so every existing importer of this module keeps
  * working and there is still only one definition.
  */

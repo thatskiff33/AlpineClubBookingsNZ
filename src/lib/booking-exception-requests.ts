@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 import { MEMBER_MESSAGE_MAX_LENGTH } from "@/lib/booking-exception-request-shared";
 import { parseCalendarDate, startOfClubDay } from "@/lib/club-time";
 import type { ClubTimeZone } from "@/lib/club-time";
@@ -13,7 +11,7 @@ import {
   type PolicyExceptionViolation,
 } from "@/lib/booking-policy-exceptions";
 
-import { canonicalNights, stableStringify } from "@/lib/stable-json";
+import { canonicalNights, stableDigest } from "@/lib/stable-digest";
 
 /**
  * The durable member-request + admin-decision workflow that sits ON TOP of the
@@ -37,14 +35,16 @@ import { canonicalNights, stableStringify } from "@/lib/stable-json";
  *    per-night beds beyond the unchanged live booking.
  *
  * **Pure is not the same as browser-safe, and this module is only the first**
- * (#2851). `computeProposalHash` needs a real SHA-256, so line 1 is
- * `import { createHash } from "node:crypto"` and everything reachable from a
- * `"use client"` component that imports ANY export here is compiled into the
- * browser bundle — Node built-in and all. It used to be: seven `"use client"`
- * modules reached here, all of them for `MEMBER_MESSAGE_MAX_LENGTH` or
+ * (#2851). `computeProposalHash` needs a real SHA-256, so `@/lib/stable-digest`
+ * reaches `node:crypto`, and everything reachable from a `"use client"`
+ * component that imports ANY export here would be compiled into the browser
+ * bundle — Node built-in and all. It used to be: seven `"use client"` modules
+ * reached here, all of them for `MEMBER_MESSAGE_MAX_LENGTH` or
  * `formatPolicyExceptionRequestAge`. Those two now live in
  * `@/lib/booking-exception-request-shared`, which imports nothing, and this
- * module is off the client graph entirely.
+ * module is off the client graph entirely. #3218 routed the hash through the
+ * shared digest on the strength of that, so this paragraph is the reason the
+ * import is allowed to be indirect now.
  *
  * So: **nothing a client component imports may be added here.** If the browser
  * needs a new constant or formatter from this vocabulary, it goes in the shared
@@ -386,35 +386,24 @@ export function canonicalizeProposalSnapshot(
  * 64 lowercase hex characters, which is why the column is VARCHAR(64).
  */
 export function computeProposalHash(snapshot: ExceptionProposalSnapshot): string {
-  const canonical = canonicalizeProposalSnapshot(snapshot);
-  // `node:crypto` is imported DIRECTLY here rather than through a shared digest
-  // helper. That WAS load-bearing and is now hygiene, and the difference is
-  // recorded rather than quietly kept: this module used to be on the client
-  // graph, so the import was the single allowlisted `INV-OPS-013` edge, and
-  // routing it through `@/lib/stable-digest` would have licensed every future
-  // client importer of that helper. #2851 moved the two constants the client
-  // actually wanted into `@/lib/booking-exception-request-shared`, so nothing
-  // under `"use client"` reaches here any more and the allowlist it named no
-  // longer exists.
+  // Through the shared `stableDigest` (`INV-SSOT`) rather than spelling "sha256
+  // of stable JSON" out a second time. It did spell it out until #3218, because
+  // this module was once on the client graph and its own `node:crypto` import
+  // was the single allowlisted `INV-OPS-013` edge; #2851 removed the last client
+  // reach and the allowlist with it. **So this call depends on the module
+  // docblock's rule** — nothing a client component imports may be added here. If
+  // that is ever broken the fix is #2851's (split the client-safe values into a
+  // module importing nothing), not a re-split of the digest.
   //
-  // It stays split anyway, and the reason is weaker than it was: the boundary
-  // moved once and can move back, and keeping a client-safe module client-safe
-  // costs nothing while re-establishing it costs a review. The digest is
-  // byte-identical to `stableDigest` and pinned by test, so the duplication
-  // cannot drift while it lasts. **Collapsing the two is #3218** — a production
-  // edit on a booking path and a reversal of a recorded decision, which is not
-  // something a branch sync may decide.
-  //
-  // "Pinned by test" NAMES its tests, because an unnamed one cannot be looked
-  // up and an unlookupable claim is how a docblock outlives the thing it
-  // describes. Two literal digests in `__tests__/booking-exception-requests.test.ts`
-  // pin this function — one NEW_BOOKING snapshot (#3030) and one MODIFICATION
-  // snapshot (#3218), which is the larger shape and the one execution re-derives
-  // from a live booking. `__tests__/stable-digest.test.ts` pins the shared
-  // canonicalisation underneath both.
-  return createHash("sha256")
-    .update(stableStringify(canonical), "utf8")
-    .digest("hex");
+  // "Pinned by test" NAMES its tests, because an unlookupable claim is how a
+  // docblock outlives the thing it describes. Two literal digests in
+  // `__tests__/booking-exception-requests.test.ts` pin this function — a
+  // NEW_BOOKING snapshot (#3030) and a MODIFICATION one (#3218), the larger
+  // shape and the one execution re-derives from a live booking — and
+  // `__tests__/stable-digest.test.ts` pins the canonicalisation underneath both.
+  // All passed the #3218 collapse UNCHANGED, which is why a `proposalHash`
+  // stored before it still validates.
+  return stableDigest(canonicalizeProposalSnapshot(snapshot));
 }
 
 // ---------------------------------------------------------------------------

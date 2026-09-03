@@ -107,6 +107,27 @@ are permanent: never renumbered, never reused.
   proceed autonomously and record decisions for later review. There is no owner
   comment on #3163 to read at source. It stands until the owner overturns it,
   and anyone wanting to unify these later needs no further permission than that.
+- **An accepted exception is only accepted while its reason is alive, and
+  retiring one needs a measurement rather than an argument.** #3030 split
+  deterministic identity across two modules — canonicalisation in a client-safe
+  `stable-json.ts`, sha256 in a server-only `stable-digest.ts` — so that
+  `computeProposalHash` could keep the single `INV-OPS-013` allowlist edge it
+  then needed. That left `"sha256 of stable JSON"` written twice, recorded in
+  both docblocks as a deliberate exception. #2851 removed the client reach; the
+  reason expired without the exception noticing, which is the normal way an
+  exception outlives its cause. #3218 collapsed the two back into
+  `src/lib/stable-digest.ts` and retired the exception.
+
+  The transferable part is the ORDER. That digest is stored on
+  `BookingExceptionRequest` rows and recompared before execution, so a collapse
+  that silently changed it would have failed every waiting request as tampered,
+  months later and unexplainably. Both docblocks said it was "pinned by
+  fixed-digest tests"; a caller-level pin existed, the shared machinery
+  underneath had none, and the claim named no test that could be looked up. So
+  the pins were written and mutation-verified FIRST
+  (`src/lib/__tests__/stable-digest.test.ts`), against the two separate modules,
+  and passed the collapse unchanged. **A convergence onto one home is a change
+  to an identity, and an identity is proved rather than reasoned about.**
 - **Deliberately not enforced by a registry.** A canonical-homes registry
   (concept → owning module, checked by a census test) was considered and
   **declined by the owner on 26 Aug 2026**: too much ongoing maintenance for the

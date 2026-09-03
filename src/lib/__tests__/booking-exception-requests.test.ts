@@ -193,9 +193,12 @@ describe("computeProposalHash", () => {
     // would pass if the canonicalisation itself changed - and a changed
     // canonicalisation silently invalidates every BookingExceptionRequest row
     // already on file, whose stored proposalHash approval re-derives and
-    // compares. #3030 moved `stableStringify` out to `@/lib/stable-json` for a
-    // second hasher to share; the move was byte-identical, and this pin is what
-    // makes the NEXT such change fail loudly instead of quietly.
+    // compares. #3030 moved `stableStringify` out to a shared module for a
+    // second hasher to share, and #3218 routed this function through
+    // `stableDigest` rather than spelling the composition out again. Both moves
+    // were byte-identical, and this literal is what MEASURED that rather than
+    // asserting it - it passed #3218 unchanged. It is also what makes the NEXT
+    // such change fail loudly instead of quietly.
     expect(computeProposalHash(snapshot)).toBe(
       "b3f4e6183c223af0703c0e080edfcba14695455f0630d7beda613a393d478ff2",
     );

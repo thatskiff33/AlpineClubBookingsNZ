@@ -2,16 +2,23 @@ import { createHash } from "node:crypto";
 
 import { describe, expect, it } from "vitest";
 
-import { sha256Hex, stableDigest } from "@/lib/stable-digest";
 import {
   canonicalNights,
+  sha256Hex,
   sortKeysDeep,
+  stableDigest,
   stableStringify,
-} from "@/lib/stable-json";
+} from "@/lib/stable-digest";
 
 /**
  * #3218: the deterministic-identity bytes, PINNED — the safety net the collapse
- * of `stable-json.ts` into `stable-digest.ts` rests on.
+ * of `stable-json.ts` into `stable-digest.ts` rested on, and the guard that
+ * keeps the one remaining home honest.
+ *
+ * Every literal in this file was pinned BEFORE the collapse, against the two
+ * separate modules, and passed the collapse unchanged. That is the whole proof
+ * that `computeProposalHash` still produces the digest already stored in every
+ * `BookingExceptionRequest` row.
  *
  * Three stored identities in this codebase are `sha256` over deterministically
  * serialised JSON, and all three are COMPARED against a value written down

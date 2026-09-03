@@ -20,7 +20,9 @@ import {
  *    truncates a diagnostic payload rather than failing.
  *
  * Nothing pinned those bytes before. #3030 needed to move the recursive key
- * sorter into `@/lib/stable-json` for a third caller to share (`INV-SSOT` -
+ * sorter into the shared deterministic-identity module for a third caller to
+ * share - `@/lib/stable-json` then, `@/lib/stable-digest` since #3218 collapsed
+ * the two halves back together (`INV-SSOT` -
  * there were already two copies), and "the move was byte-identical" is a claim,
  * not a fact, unless something fails when it stops being true. This is that
  * something, and it is written to be equally useful to whoever changes the
