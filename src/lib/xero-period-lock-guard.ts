@@ -316,7 +316,6 @@ export async function assertDateEditClearsXeroLockDate(
     booking,
     requested,
     await resolveXeroLockDateFacts([checkIn], { audience: options?.audience }),
-    options,
   );
 }
 
@@ -397,7 +396,22 @@ export function checkInNeedingLockDateCheck(
  * booking. Resolving eagerly and throwing eagerly would turn a Xero outage into a
  * refused save on every future-dated edit, which is not what the guard does.
  */
-export type XeroLockDateFacts =
+export type XeroLockDateFacts = {
+  /**
+   * WHO every refusal decided from these facts is worded for (#3232 fix round).
+   *
+   * IT LIVES ON THE FACTS RATHER THAN ON THE DECISION, because one of the two
+   * refusals is worded HERE and cannot be re-worded later: the `unavailable`
+   * branch carries an already-built `XeroLockDateCheckFailedError` whose message
+   * was chosen by `classifyXeroLockDateCheckFailure` at resolve time. A decision
+   * function that also took an audience could therefore honour it for
+   * `XeroPeriodLockedError` and silently ignore it for the other — which is how a
+   * caller resolving as `"admin"` and deciding for a member would have disclosed
+   * the club's Xero connection state, the exact non-disclosure the member wording
+   * above is deliberate about. One audience, decided once, governing both.
+   */
+  audience: XeroLockGuardAudience;
+} & (
   | {
       /**
        * The guard cannot bite: no candidate check-in is in the past, the Xero
@@ -414,12 +428,16 @@ export type XeroLockDateFacts =
       kind: "unavailable";
       error: XeroLockDateCheckFailedError;
       clubTodayInstant: Date;
-    };
+    }
+);
 
 export async function resolveXeroLockDateFacts(
   candidateCheckIns: Date[] | "unknown",
   options?: { audience?: XeroLockGuardAudience },
 ): Promise<XeroLockDateFacts> {
+  // Normalised ONCE, so the two refusals below cannot be worded for different
+  // readers. `"admin"` is the default the error classes have always taken.
+  const audience: XeroLockGuardAudience = options?.audience ?? "admin";
   const clubTodayInstant = dateOnlyInstantOf(
     clubToday(await readClubTimeZoneOutsideRequest()),
   );
@@ -429,24 +447,26 @@ export async function resolveXeroLockDateFacts(
       (checkIn) => !Number.isNaN(checkIn.getTime()) && checkIn < clubTodayInstant,
     )
   ) {
-    return { kind: "not-applicable" };
+    return { audience, kind: "not-applicable" };
   }
   if (
     !(await loadEffectiveModuleFlags()).xeroIntegration ||
     !(await isXeroConnected())
   ) {
-    return { kind: "not-applicable" };
+    return { audience, kind: "not-applicable" };
   }
   try {
     return {
+      audience,
       kind: "resolved",
       effectiveLockDate: getEffectiveXeroLockDate(await getXeroLockDates()),
       clubTodayInstant,
     };
   } catch (error) {
     return {
+      audience,
       kind: "unavailable",
-      error: classifyXeroLockDateCheckFailure(error, options?.audience),
+      error: classifyXeroLockDateCheckFailure(error, audience),
       clubTodayInstant,
     };
   }
@@ -465,7 +485,6 @@ export function assertDateEditClearsXeroLockDateFromFacts(
   booking: XeroLockGuardDateEditBooking,
   requested: { checkIn?: string; checkOut?: string },
   facts: XeroLockDateFacts,
-  options?: { audience?: XeroLockGuardAudience },
 ): void {
   if (facts.kind === "not-applicable") return;
   const checkIn = checkInNeedingLockDateCheck(booking, requested);
@@ -477,7 +496,7 @@ export function assertDateEditClearsXeroLockDateFromFacts(
   if (facts.effectiveLockDate && checkIn <= facts.effectiveLockDate) {
     throw new XeroPeriodLockedError(
       formatDateOnly(facts.effectiveLockDate),
-      options?.audience,
+      facts.audience,
     );
   }
 }

@@ -26,7 +26,7 @@ import { parseFrozenEvidence } from "@/lib/booking-exception-requests";
 import { parseDateOnly } from "@/lib/date-only";
 import { sendBookingPolicyExceptionRefusedEmail } from "@/lib/email";
 import { BookingModificationSettlementMethodRequiredError } from "@/lib/booking-modify-settlement-required";
-import { prepareBookingBatchModification } from "@/lib/booking-batch-modification-service";
+import { prepareBatchModificationForCallerTransaction } from "@/lib/booking-batch-modification-service";
 import {
   BookingGuestValidationError,
   computeMemberGuestBoundary,
@@ -528,12 +528,13 @@ export async function PATCH(
     // above. `modifyBookingBatch` reads the member-guest policy, the
     // subscription-lockout mode and the Xero organisation's lock dates before its
     // transaction; on this path it is handed one, so the reads happen HERE.
-    // `"unknown"` because the check-in this approval will really apply is decided
-    // by the drift gate under the locks, so the lock-date facts have to cover a
-    // booking this position cannot name — one settings read, one token read and at
-    // most one cached organisation read, on an officer's approval.
-    batchPreTransaction: await prepareBookingBatchModification({
-      candidateCheckIns: "unknown",
+    // The facts cover EVERY booking rather than an enumerated set, because the
+    // check-in this approval will really apply is decided by the drift gate under
+    // the locks — the frozen proposal's can be in the future while the stored one
+    // is retroactive. One settings read, one token read and at most one cached
+    // organisation read, on an officer's approval. The preparer takes no candidate
+    // set at all, so narrowing it here is not possible (#3232 fix round).
+    batchPreTransaction: await prepareBatchModificationForCallerTransaction({
       audience: "admin",
     }),
     ipAddress,

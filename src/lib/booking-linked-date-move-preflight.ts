@@ -1,7 +1,7 @@
 import { DEFAULT_BOOKING_DEFAULTS } from "@/config/club-settings-defaults";
 import { ApiError } from "@/lib/api-error";
 import {
-  prepareBookingBatchModification,
+  prepareBatchModificationForCallerTransaction,
   type BatchModificationPreTransaction,
 } from "@/lib/booking-batch-modification-service";
 import type { LinkedDateMoveArgs } from "@/lib/booking-linked-date-move-service";
@@ -57,7 +57,7 @@ export async function loadLinkedMoveChargesBothChangeFees(): Promise<boolean> {
  * provider call — the one shape `docs/CONCURRENCY_AND_LOCKING.md` forbids outright,
  * and the shape this module's own header claimed it had avoided.
  *
- * `"unknown"` BECAUSE THE SECOND BOOKING IS ONLY DISCOVERED UNDER THE LOCKS. Who
+ * EVERY BOOKING, BECAUSE THE SECOND ONE IS ONLY DISCOVERED UNDER THE LOCKS. Who
  * the primary's move stranded is read after that move is written, so no position
  * out here can name the dependent bookings or their target nights. The lock-date
  * facts are therefore resolved unconditionally rather than short-circuited on "no
@@ -65,13 +65,14 @@ export async function loadLinkedMoveChargesBothChangeFees(): Promise<boolean> {
  * TTL-cached organisation read, on a path that is already pricing two bookings.
  * The alternative — enumerating candidate dependents out here with a second
  * uncommitted read — would buy a rare saving with a second definition of who the
- * dependents are (`INV-SSOT-001`).
+ * dependents are (`INV-SSOT-001`), and a guard that answers `not-applicable`
+ * about a booking it was never shown. `prepareBatchModificationForCallerTransaction`
+ * takes no candidate set at all, so this is not a choice made here.
  */
 export async function prepareLinkedMovePreTransaction(
   args: LinkedDateMoveArgs,
 ): Promise<BatchModificationPreTransaction> {
-  return prepareBookingBatchModification({
-    candidateCheckIns: "unknown",
+  return prepareBatchModificationForCallerTransaction({
     audience: args.actor.role === "ADMIN" ? "admin" : "member",
   });
 }
