@@ -62,7 +62,16 @@
 
 import { createHash } from "node:crypto";
 
-/** Deterministic JSON with recursively sorted object keys. */
+/**
+ * Deterministic JSON with recursively sorted object keys.
+ *
+ * EXPORTED FOR ITS TEST, deliberately. `stableDigest` just below is its only
+ * production caller, so `knip` stays quiet on this export only because of
+ * `ignoreExportsUsedInFile`. It stays exported because
+ * `stable-digest.test.ts` pins its exact bytes — and that byte pin is what
+ * localises a digest change to the serialiser rather than to the hash. Drop
+ * the export and the pin goes with it.
+ */
 export function stableStringify(value: unknown): string {
   return JSON.stringify(sortKeysDeep(value));
 }
