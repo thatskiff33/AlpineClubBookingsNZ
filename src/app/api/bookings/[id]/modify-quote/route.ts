@@ -33,8 +33,8 @@ import { parseJsonRequestBody } from "@/lib/api-json";
 import { ApiError } from "@/lib/api-error";
 import {
   assertOtherLodgeExists,
-  OTHER_LODGE_RATE_AMOUNT_UNDER_REVIEW_MESSAGE,
-  OTHER_LODGE_RATE_IN_PROGRESS_MESSAGE,
+  OtherLodgeRateAmountUnderReviewError,
+  OtherLodgeRateInProgressError,
   requestCarriesOtherLodgeElection,
   requestIsOtherLodgeRateElectionOnly,
   resolveOtherLodgeRateElection,
@@ -957,13 +957,22 @@ export async function POST(
     // Other Lodges epic: the same mid-stay refusal, mirrored from the apply path
     // so preview and save agree — the in-progress plan prices the stored rows,
     // so an election here would preview a $0 re-rate.
+    //
+    // The PREDICATE and the STATUS both come from the module rather than being
+    // written out here (`INV-SSOT`): the save's twin in
+    // `booking-modify-validation.ts` reads the identical test and throws the
+    // identical error, so the two cannot drift apart — which matters because the
+    // #3214 guard below is placed on the strength of this one having fired.
     if (
-      requestedOtherLodgeId !== undefined ||
-      otherLodgeMemberGuestIds !== undefined
+      requestCarriesOtherLodgeElection({
+        otherLodgeId: requestedOtherLodgeId,
+        otherLodgeMemberGuestIds,
+      })
     ) {
+      const refusal = new OtherLodgeRateInProgressError();
       return NextResponse.json(
-        { error: OTHER_LODGE_RATE_IN_PROGRESS_MESSAGE },
-        { status: 400 }
+        { error: refusal.message },
+        { status: refusal.status }
       );
     }
     // TRANSCRIBED, not imported: `booking-date-modification-frame-parity.test.ts`
@@ -1607,20 +1616,35 @@ export async function POST(
     /**
      * #3214: THE ONE ANSWER THAT IS NOT A PARKED QUOTE — an edit that parks its
      * money may not also carry an other-lodge rate election, and the save
-     * refuses it (`OTHER_LODGE_RATE_AMOUNT_UNDER_REVIEW_MESSAGE`,
-     * `INV-MOD-028`). Inside this helper rather than at its two call sites, for
-     * the reason the payload is: both exits are the same answer, and a second
-     * copy of the test is how the two previews would come to differ. Fenced on
+     * refuses it (`OtherLodgeRateAmountUnderReviewError`, `INV-MOD-028`). Inside
+     * this helper rather than at its two call sites, for the reason the payload
+     * is: both exits are the same answer, and a second copy of the test is how
+     * the two previews would come to differ. Fenced on
      * `otherLodgeElection.requested`, the field the SAVE fences on, so neither
      * surface can offer what the other declines. The in-progress exit cannot
      * reach it — a mid-stay election is refused several hundred lines above —
      * and is covered anyway so relaxing that refusal cannot silently re-open
      * this one.
+     *
+     * AHEAD OF THE CAPACITY PAYLOAD, and that does NOT breach the "beds before
+     * money" ordering the caller below states. That rule orders two FIELDS of
+     * one quote: a parked preview is a 200 that reports `capacityAvailable`
+     * alongside `financialReviewRequired`, so the member reads "no beds" first.
+     * This is not a field of a quote — it is the refusal of a request two of
+     * whose parts cannot be combined, and there is no quote to hang a bed
+     * answer on. Ordering it after the capacity composition would have to mean
+     * gating it on `capacity.available`, which would make an unconditional
+     * refusal conditional on an unrelated field and hide the election problem
+     * entirely from the officer who is also overbooked. The save answers a
+     * capacity failure first because there capacity THROWS, from inside
+     * `calculateModifiedPricing`; the preview has no such throw to order
+     * against.
      */
     if (otherLodgeElection.requested) {
+      const refusal = new OtherLodgeRateAmountUnderReviewError();
       return NextResponse.json(
-        { error: OTHER_LODGE_RATE_AMOUNT_UNDER_REVIEW_MESSAGE },
-        { status: 400 },
+        { error: refusal.message },
+        { status: refusal.status },
       );
     }
     logger.info(

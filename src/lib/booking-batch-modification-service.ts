@@ -36,7 +36,7 @@ import {
   QUOTE_PRICED_EDIT_BLOCK_MESSAGE,
 } from "@/lib/booking-modify";
 import {
-  OTHER_LODGE_RATE_AMOUNT_UNDER_REVIEW_MESSAGE,
+  OtherLodgeRateAmountUnderReviewError,
   requestCarriesOtherLodgeElection,
   requestIsOtherLodgeRateElectionOnly,
 } from "@/lib/booking-other-lodge-rate";
@@ -876,7 +876,9 @@ export async function modifyBookingBatch({
      * #3214 (epic #2797): AN OTHER-LODGE ELECTION IS REFUSED ON THE EDIT THAT
      * PARKS THE MONEY, and the whole request is refused with it. Why refusal
      * rather than disclosure, and what each direction used to do, are in
-     * `OTHER_LODGE_RATE_AMOUNT_UNDER_REVIEW_MESSAGE` (`INV-MOD-028`).
+     * `OTHER_LODGE_RATE_AMOUNT_UNDER_REVIEW_MESSAGE`, which
+     * `OtherLodgeRateAmountUnderReviewError` carries together with the status
+     * that docblock argues for (`INV-MOD-028`).
      *
      * HERE and not one line earlier because the pricing pass is the only thing
      * that knows this edit parks — and not one line later because everything
@@ -896,7 +898,7 @@ export async function modifyBookingBatch({
      * field, so preview and save cannot disagree.
      */
     if (parked && guestPlan.otherLodgeElection.requested) {
-      throw new ApiError(OTHER_LODGE_RATE_AMOUNT_UNDER_REVIEW_MESSAGE, 400);
+      throw new OtherLodgeRateAmountUnderReviewError();
     }
     // Whether an admin confirmed an overbooking to make this edit fit. Read off
     // the union rather than off one branch, because #3170 puts the PARKED plan

@@ -149,6 +149,46 @@ export const OTHER_LODGE_RATE_IN_PROGRESS_MESSAGE =
 export const OTHER_LODGE_RATE_AMOUNT_UNDER_REVIEW_MESSAGE =
   "The other-lodge member rate cannot be set on this change, because this booking has nights whose original price the club's records cannot tell us. That means an officer has to work the amount out by hand, and this change prices nothing — so a tick here would record a rate nobody was charged. Nothing has been saved: not the ticks, and not the lodge. Those nights have to carry a price before anything on this booking can be re-rated, so ask the office to record what they sold for, and set the other-lodge rate once that is done.";
 
+/**
+ * The status BOTH whole-request refusals above answer with, in one place.
+ *
+ * The number was argued at length — in {@link
+ * OTHER_LODGE_RATE_AMOUNT_UNDER_REVIEW_MESSAGE}'s docblock, which explains why
+ * this is a 400 and not the 409 the already-open review case uses — and it was
+ * then typed out at four call sites: two throws on the save paths and two
+ * `NextResponse.json` literals on the preview. The reasoning and the number
+ * could not be changed together, which is the defect `INV-SSOT` names. The
+ * classes below bind each message to it, the way
+ * `EditFinancialReviewPendingError` binds its own message to its 409, so a save
+ * `throw`s one and a preview reads `.message`/`.status` off one.
+ *
+ * Deliberately NOT extended to the resolver's own 400s further down (a tick on a
+ * guest who is not on the booking, an ineligible guest, a missing lodge): those
+ * refuse one FIELD of an otherwise valid request rather than the request as a
+ * whole, they are per-guest and interpolate a name, and none of them has a
+ * status argued anywhere. Sweeping them in would be a rename, not a fix.
+ */
+const OTHER_LODGE_RATE_REFUSAL_STATUS = 400;
+
+/** The mid-stay refusal, message and status bound together. */
+export class OtherLodgeRateInProgressError extends ApiError {
+  constructor() {
+    super(OTHER_LODGE_RATE_IN_PROGRESS_MESSAGE, OTHER_LODGE_RATE_REFUSAL_STATUS);
+    this.name = "OtherLodgeRateInProgressError";
+  }
+}
+
+/** The parking-edit refusal (#3214), message and status bound together. */
+export class OtherLodgeRateAmountUnderReviewError extends ApiError {
+  constructor() {
+    super(
+      OTHER_LODGE_RATE_AMOUNT_UNDER_REVIEW_MESSAGE,
+      OTHER_LODGE_RATE_REFUSAL_STATUS,
+    );
+    this.name = "OtherLodgeRateAmountUnderReviewError";
+  }
+}
+
 /** The stored shape this election is resolved against. */
 export interface OtherLodgeRateBooking {
   otherLodgeId: string | null;
