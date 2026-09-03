@@ -324,6 +324,10 @@ prices the STORED guest rows rather than the election-modified pricing rows, so 
 mid-stay election would stamp the flag and settle $0. Preview and save refuse
 identically, so the officer sees the refusal rather than a phantom $0 quote.
 
+**It is refused on the edit that PARKS a booking's money for review**, on the
+same preview-and-save parity (#3214). The rule and its reasoning live once, in
+INV-MOD-028.
+
 **It is exempt from the quote-priced edit block when it rides alone**, again
 mirroring #2337. A booking converted from a public request is quote-priced and
 carries an even split of the negotiated total (#1032 blocks ordinary edits so
@@ -1455,11 +1459,21 @@ branch and left that one silent.
   deletes and recreates EVERY existing guest's night rows — so a strand whose
   stored prices cannot be preserved would have its history rewritten at today's
   rate by an edit that never touched it. There is no carve-out for a strand the
-  edit deliberately reprices in full (a placeholder→member link, an other-club
-  rate election): a parked edit charges nobody, so the flag recording what was
-  charged is written as un-honoured, which is what `otherLodgeRatedGuestIds`
-  already promises. The modify-quote PREVIEW runs the identical gate over the
-  identical night sets, so it can never quote money the save will not move;
+  edit deliberately reprices in full: a parked edit charges nobody, so a
+  placeholder→member link's flag recording what was charged is written as
+  un-honoured, which is what `otherLodgeRatedGuestIds` already promises. **An
+  other-club rate election is the ONE thing a parking edit may not carry, and it
+  is refused rather than un-honoured** (#3214). See INV-MOD-027 for the election
+  itself; the reason it is a refusal here is that a parked edit's flag write goes
+  wrong in BOTH directions — a tick is dropped while the same edit still saves
+  the lodge, and an untick clears the flag while the nights stay sold at the
+  other club's rate — and because every booking with an OPEN review already
+  refuses an election, since an election is never price-preserving. The parking
+  edit was the one edge that behaved differently. The refusal is raised after the
+  pricing pass and before any write, so a refused edit changes nothing at all,
+  and the modify-quote PREVIEW refuses identically. Otherwise the preview runs
+  the identical gate over the identical night sets, so it can never quote money
+  the save will not move;
 - **the date change**, `modifyBookingDates`
   (`src/lib/booking-date-modification-service.ts`) (#3166). It read night prices
   through the LENIENT `lockedNightPricesForGuest`, so a blank night got no lock,
