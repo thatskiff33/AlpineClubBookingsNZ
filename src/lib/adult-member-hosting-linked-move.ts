@@ -8,6 +8,7 @@ import {
 } from "@/lib/adult-member-hosting-same-owner";
 import { ApiError } from "@/lib/api-error";
 import { formatBookingReference } from "@/lib/booking-reference";
+import { bookingsOverlap } from "@/lib/booking-night-overlap";
 import { addDaysDateOnly, formatDateOnly, parseDateOnly } from "@/lib/date-only";
 import {
   HOSTING_COVERAGE_STATE_KEY_PATTERN,
@@ -84,10 +85,9 @@ export type LinkedMoveFeasibility = "AVAILABLE" | "NO_CAPACITY";
  * One booking the offer would move alongside the one the member asked about.
  *
  * AN ALIAS, NOT A SECOND DECLARATION. The wire shape is declared once, in the
- * browser contract that also validates it (`INV-SSOT-001`); the two used to be
- * hand-kept copies of the same ten fields, which is two things that can disagree
- * about what the server actually sends. `import type` is erased, so naming it here
- * gives this module no browser dependency at all.
+ * browser contract that also validates it (`INV-SSOT-001`); two hand-kept copies
+ * of the same ten fields can disagree about what the server sends. `import type`
+ * is erased, so naming it here adds no browser dependency.
  */
 export type LinkedMoveBooking = HostingCoverageLinkedMoveBooking;
 
@@ -127,11 +127,18 @@ export interface LinkedMoveQuote {
   /** What comes back to the member, across both bookings. */
   combinedRefundCents: number;
   /**
-   * True when money comes back and the member therefore has to choose a card
-   * refund or account credit. One choice covers both bookings — see
-   * `formatLinkedMoveOfferMessage`.
+   * What the club's cancellation policy KEEPS of the reductions, across every
+   * booking that moves — the difference between what a booking's price fell by and
+   * what comes back to the member.
+   */
+  combinedPolicyRetainedCents: number;
+  /**
+   * True when this settlement needs a card-or-credit choice. One choice covers
+   * every booking — see `formatLinkedMoveOfferMessage`.
    */
   settlementMethodRequired: boolean;
+  /** True when the request that produced this quote already carried that choice. */
+  settlementMethodChosen: boolean;
   /**
    * Whether the second booking's change fee is being charged (D2's club setting).
    *
@@ -357,7 +364,9 @@ export function formatLinkedMoveOfferMessage(quote: LinkedMoveQuote): string {
     combinedAmountDueCents: quote.combinedAmountDueCents,
     combinedRefundCents: quote.combinedRefundCents,
     combinedChangeFeeCents: quote.combinedChangeFeeCents,
+    combinedPolicyRetainedCents: quote.combinedPolicyRetainedCents,
     settlementMethodRequired: quote.settlementMethodRequired,
+    settlementMethodChosen: quote.settlementMethodChosen,
     bothChangeFeesCharged: quote.bothChangeFeesCharged,
     linkedCount: count,
   });
@@ -385,6 +394,10 @@ export interface LinkedMoveSettledBooking {
   additionalAmountCents: number;
   refundAmountCents: number;
   accountCreditAmountCents: number;
+  /** The WRITE's own answer, never inferred from the amounts — see `combineLinkedMoveQuote`. */
+  requiresSettlementMethod: boolean;
+  /** What the cancellation policy KEPT of this booking's reduction, in cents. */
+  policyRetainedAmountCents: number;
 }
 
 /**
@@ -485,9 +498,15 @@ export function linkedMoveWouldRestoreCover(
     },
     dependent,
   );
-  return (
-    parseDateOnly(target.checkIn).getTime() < primary.currentCheckOut.getTime() &&
-    parseDateOnly(target.checkOut).getTime() > primary.currentCheckIn.getTime()
+  // THE ONE DEFINITION OF "do these two stays share a night" (`INV-SSOT-001`).
+  // Hand-writing the two comparisons here was the third copy of the predicate this
+  // change extracted into an import-free module for exactly this reason.
+  return bookingsOverlap(
+    {
+      checkIn: parseDateOnly(target.checkIn),
+      checkOut: parseDateOnly(target.checkOut),
+    },
+    { checkIn: primary.currentCheckIn, checkOut: primary.currentCheckOut },
   );
 }
 
@@ -528,6 +547,7 @@ export function combineLinkedMoveQuote(input: {
   primaryRange: { checkIn: string; checkOut: string };
   linked: LinkedMoveCandidate[];
   bothChangeFeesCharged: boolean;
+  settlementMethodChosen: boolean;
   feasibility: LinkedMoveFeasibility;
 }): LinkedMoveQuote {
   const linked: LinkedMoveBooking[] = input.linked
@@ -582,9 +602,15 @@ export function combineLinkedMoveQuote(input: {
     combinedRefundCents: sum(
       (r) => r.refundAmountCents + r.accountCreditAmountCents,
     ),
-    settlementMethodRequired: all.some(
-      (r) => r.refundAmountCents + r.accountCreditAmountCents > 0,
-    ),
+    combinedPolicyRetainedCents: sum((r) => r.policyRetainedAmountCents),
+    // THE WRITE'S OWN TEST, never a reading of the resolved amounts. The refusal is
+    // an OR over BOTH options, priced from two separate policy tiers, and a quote is
+    // priced on ONE. A tier whose card option nets to zero (a processing fee larger
+    // than the refund) while its credit option does not therefore gave an offer that
+    // asked for no choice over a write that demanded one — and the re-quote was
+    // byte-identical, so NEITHER booking could ever move (`INV-SSOT-001`).
+    settlementMethodRequired: all.some((r) => r.requiresSettlementMethod),
+    settlementMethodChosen: input.settlementMethodChosen,
     // TRUE TO THE MONEY ABOVE, not a separate claim about it: when the club has
     // waived it, the dependent's `modifyBookingBatch` call was given
     // `waiveChangeFee`, so its `changeFeeCents` really is 0 and
@@ -593,23 +619,6 @@ export function combineLinkedMoveQuote(input: {
     feasibility: input.feasibility,
   };
 }
-
-/**
- * The stored reason on the incident a declined offer opens (#3232).
- *
- * IT HAS TO STAND ALONE, because for one release it is what an officer reads
- * INSTEAD of a cause label of its own: until `INV-HOST-052`'s runtime half lands
- * the stored cause is the shared `SYSTEM_CHANGE`, whose officer-facing phrase is
- * true of a cancellation and a data correction too. So no issue reference (no
- * other stored human-read string in this repository carries one — compare
- * `ADULT_SUPERVISION_REVIEW_REASON`), and no product jargon: "the linked move" is
- * a name from this codebase that no officer has ever met. What it says instead is
- * what happened.
- */
-export const LINKED_MOVE_DECLINED_INCIDENT_REASON =
-  "The member was asked whether to move this booking to the same new nights as " +
-  "the booking they were editing, and chose to move only that one — leaving " +
-  "this booking without adult member coverage.";
 
 /**
  * The 409 that carries the offer.
@@ -683,7 +692,9 @@ export function buildSameOwnerCoverageLinkedMoveBody(
     combinedChangeFeeCents: quote.combinedChangeFeeCents,
     combinedAmountDueCents: quote.combinedAmountDueCents,
     combinedRefundCents: quote.combinedRefundCents,
+    combinedPolicyRetainedCents: quote.combinedPolicyRetainedCents,
     settlementMethodRequired: quote.settlementMethodRequired,
+    settlementMethodChosen: quote.settlementMethodChosen,
     bothChangeFeesCharged: quote.bothChangeFeesCharged,
   };
 }

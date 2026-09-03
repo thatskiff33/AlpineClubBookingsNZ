@@ -139,7 +139,10 @@ export function HostingCoverageLinkedMovePrompt({
                       combinedAmountDueCents: prompt.combinedAmountDueCents,
                       combinedRefundCents: prompt.combinedRefundCents,
                       combinedChangeFeeCents: prompt.combinedChangeFeeCents,
+                      combinedPolicyRetainedCents:
+                        prompt.combinedPolicyRetainedCents,
                       settlementMethodRequired: prompt.settlementMethodRequired,
+                      settlementMethodChosen: prompt.settlementMethodChosen,
                       bothChangeFeesCharged: prompt.bothChangeFeesCharged,
                       linkedCount: prompt.linkedBookings.length,
                     })}

@@ -1325,7 +1325,16 @@ export function EditBookingPanel({
     }
     // #3232: and the same block when it is the OTHER booking's money that needs
     // the choice, so the linked move is never submitted into the server's 400.
-    if (linkedMoveSettlementRequired && !linkedMoveSettlementMethod) {
+    //
+    // ON THE ACCEPTING ARM ONLY (fix round). The other booking's money moves
+    // because the other booking moves; a member who chose "Move only this booking"
+    // is being asked where a refund that will never happen should go, and could not
+    // save until they answered it.
+    if (
+      linkedMoveSettlementRequired &&
+      linkedMoveChoice === "MOVE_BOTH" &&
+      !linkedMoveSettlementMethod
+    ) {
       setSaveError("Choose a refund or account credit before saving");
       return;
     }
@@ -1362,7 +1371,14 @@ export function EditBookingPanel({
         // rather than in the payload builder for the reason its state slot gives —
         // in the builder it would change the proposal signature and retire this
         // very offer.
-        if (linkedMoveSettlementRequired && linkedMoveSettlementMethod) {
+        //
+        // KEYED ON THE CHOSEN ARM, NOT ON THE OFFER'S FLAG (fix round). Gating it on
+        // `linkedMoveSettlementRequired` meant the member's answer was DROPPED the
+        // moment a re-quote came back with the flag off — the server then priced the
+        // dependent on card again, the flag came back on, and the panel and the
+        // server swapped states forever with neither booking moving. It also
+        // attached the answer on the decline arm, where nothing it answers happens.
+        if (linkedMoveChoice === "MOVE_BOTH" && linkedMoveSettlementMethod) {
           body.settlementMethod = linkedMoveSettlementMethod;
         }
       }
@@ -1870,7 +1886,8 @@ export function EditBookingPanel({
         </div>
       ) : (
         <>
-          {linkedMoveSettlementRequired ? (
+          {linkedMoveSettlementRequired &&
+          linkedMoveChoice !== "LEAVE_UNCOVERED" ? (
             <div
               className="space-y-2 rounded-md border p-3 text-sm"
               role="status"
@@ -1942,7 +1959,9 @@ export function EditBookingPanel({
                 !quote ||
                 !capacityOk ||
                 (settlementRequired && !settlementMethod) ||
-                (linkedMoveSettlementRequired && !linkedMoveSettlementMethod) ||
+                (linkedMoveSettlementRequired &&
+                  linkedMoveChoice === "MOVE_BOTH" &&
+                  !linkedMoveSettlementMethod) ||
                 // #3232: no arm chosen is not a save. Matching the officer-override
                 // arm below rather than the weaker bottom-slot error it used to
                 // take: that slot is where a member is LEAST likely to notice, it

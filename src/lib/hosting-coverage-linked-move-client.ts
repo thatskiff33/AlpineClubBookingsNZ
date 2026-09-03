@@ -74,7 +74,9 @@ export interface HostingCoverageLinkedMovePromptData {
   combinedAmountDueCents: number;
   combinedRefundCents: number;
   combinedChangeFeeCents: number;
+  combinedPolicyRetainedCents: number;
   settlementMethodRequired: boolean;
+  settlementMethodChosen: boolean;
   bothChangeFeesCharged: boolean;
 }
 
@@ -93,7 +95,21 @@ export interface LinkedMoveMoneyFacts {
   combinedAmountDueCents: number;
   combinedRefundCents: number;
   combinedChangeFeeCents: number;
+  /**
+   * What the club's cancellation policy KEEPS of the reductions, in cents.
+   *
+   * It is the gap between how far the price fell and how much comes back, and
+   * saying it is the whole reason `policyRetainedAmountCents` exists at all: a
+   * member consenting ONCE to a combined figure should not have to work out for
+   * themselves why a $500 reduction returned $250.
+   */
+  combinedPolicyRetainedCents: number;
   settlementMethodRequired: boolean;
+  /**
+   * True when the request that produced this quote ALREADY carried a card-or-credit
+   * choice, so nobody is going to be asked anything.
+   */
+  settlementMethodChosen: boolean;
   bothChangeFeesCharged: boolean;
   /** How many OTHER bookings the offer would move. At least one. */
   linkedCount: number;
@@ -120,16 +136,30 @@ export function linkedMoveOtherBookingsPhrase(linkedCount: number): string {
  * assume they paid one fee for moving two bookings.
  */
 function linkedMoveChangeFeeSentence(facts: LinkedMoveMoneyFacts): string {
+  // NO FEE AT ALL IS ITS OWN ANSWER, and both sentences below assert a figure. A
+  // move outside every fee band, an unchanged check-in or a draft attracts nothing,
+  // and the two branches were saying "($0.00 in all)" and "carries one change fee
+  // only" over a total that carried none.
+  if (facts.combinedChangeFeeCents <= 0) {
+    return "No change fee applies to this move.";
+  }
   if (facts.bothChangeFeesCharged) {
+    // NOT "that total includes", which was written when there was one figure and
+    // stopped being true the moment there were two. A payable figure has the fee
+    // ADDED to it and a refund figure has it TAKEN OFF, so "includes" told a member
+    // reading a refund the opposite of what happened — the fee made the money
+    // coming back smaller. "Already take it into account" is true of both
+    // directions, which is what a sentence sitting under both of them has to be.
     return (
-      `That total includes the change fee on ` +
-      `${linkedMoveAllBookingsPhrase(facts.linkedCount)} ` +
-      `(${formatCents(facts.combinedChangeFeeCents)} in all).`
+      `A change fee applies to ${linkedMoveAllBookingsPhrase(facts.linkedCount)} ` +
+      `— ${formatCents(facts.combinedChangeFeeCents)} in all — and the figures ` +
+      `above already take it into account.`
     );
   }
   return (
     `The change fee on ${linkedMoveOtherBookingsPhrase(facts.linkedCount)} ` +
-    `has been waived by the club, so that total carries one change fee only.`
+    `has been waived by the club, so the figures above carry one change fee ` +
+    `only (${formatCents(facts.combinedChangeFeeCents)}).`
   );
 }
 
@@ -167,7 +197,8 @@ export function formatLinkedMoveMoneySentence(
       `${formatCents(facts.combinedAmountDueCents)} would be payable and ` +
         `${formatCents(facts.combinedRefundCents)} would come back to you, ` +
         `across ${all}. Those two do not cancel each other out: each booking ` +
-        `settles on its own, so you would pay the one and be refunded the other.`,
+        `settles on its own, so the amount payable is paid on its own booking ` +
+        `page and the refund comes back separately.`,
     );
   } else if (facts.combinedRefundCents > 0) {
     parts.push(
@@ -175,21 +206,51 @@ export function formatLinkedMoveMoneySentence(
         `${all}.`,
     );
   } else if (facts.combinedAmountDueCents > 0) {
+    // "ACROSS", AND THEN WHERE. The combined figure is not one payment: each
+    // booking's increase is collected on that booking's own page, and nothing on
+    // this screen said so — a member reading one total reasonably expects one card
+    // prompt, and there is none, because the linked move commits both bookings and
+    // hands neither a payment secret. Saying it here is the fix; the money itself
+    // was never at risk.
     parts.push(
       `${formatCents(facts.combinedAmountDueCents)} would be payable across ` +
-        `${all}.`,
+        `${all}, and each booking is paid on its own booking page.`,
     );
   } else {
     parts.push("There is nothing more to pay and nothing to come back.");
   }
+  // WHAT THE POLICY KEPT, beside the figure it made smaller. A booking whose price
+  // falls by $500 under a 50% tier returns $250, and without this sentence the
+  // other $250 is stated nowhere — on a screen whose whole job is to obtain ONE
+  // informed consent to a combined figure.
+  if (facts.combinedPolicyRetainedCents > 0) {
+    parts.push(
+      `The club's cancellation policy keeps ` +
+        `${formatCents(facts.combinedPolicyRetainedCents)} of the reduction, so ` +
+        `what comes back is less than the drop in price.`,
+    );
+  }
   parts.push(linkedMoveChangeFeeSentence(facts));
-  if (facts.settlementMethodRequired) {
+  // ONLY WHERE SOMEBODY IS REALLY GOING TO BE ASKED. A request that already carried
+  // the choice is re-quoted with it, and promising a question nobody will put is
+  // how a member waits for a control that never appears.
+  if (facts.settlementMethodRequired && !facts.settlementMethodChosen) {
     // Neutral about WHERE the control is, because this same sentence is read on
     // the panel (where the Return-method radios sit above the offer) and in the
     // bare 409 message a surface without them falls back to.
     parts.push(
-      `You will be asked once whether that comes back to your card or as ` +
-        `account credit; the one choice covers ${all}.`,
+      facts.combinedRefundCents > 0
+        ? `You will be asked once whether that comes back to your card or as ` +
+            `account credit; the one choice covers ${all}.`
+        : // AND THE ZERO ABOVE IS NOT "nothing comes back". This quote is priced as
+          // a card refund, and the club's policy can return nothing that way while
+          // returning real money as account credit — two tiers, two percentages,
+          // two fixed fees. Saying only "there is nothing to come back" over a
+          // control asking where it should go is what made the offer unanswerable.
+          `Money does come back on this move, but priced as a card refund the ` +
+          `club's policy returns none of it — so you will be asked once whether ` +
+          `to take it as account credit instead, and the figures are confirmed ` +
+          `for the choice you make.`,
     );
   }
   return parts.join(" ");
@@ -293,10 +354,12 @@ export function readHostingCoverageLinkedMovePrompt(
     !HOSTING_COVERAGE_STATE_KEY_PATTERN.test(record.declineStateKey) ||
     typeof record.linkedMoveAvailable !== "boolean" ||
     typeof record.settlementMethodRequired !== "boolean" ||
+    typeof record.settlementMethodChosen !== "boolean" ||
     typeof record.bothChangeFeesCharged !== "boolean" ||
     !isCents(record.combinedAmountDueCents) ||
     !isCents(record.combinedRefundCents) ||
     !isCents(record.combinedChangeFeeCents) ||
+    !isCents(record.combinedPolicyRetainedCents) ||
     !Array.isArray(record.linkedBookings) ||
     record.linkedBookings.length === 0
   ) {
@@ -319,7 +382,9 @@ export function readHostingCoverageLinkedMovePrompt(
     combinedAmountDueCents: record.combinedAmountDueCents,
     combinedRefundCents: record.combinedRefundCents,
     combinedChangeFeeCents: record.combinedChangeFeeCents,
+    combinedPolicyRetainedCents: record.combinedPolicyRetainedCents,
     settlementMethodRequired: record.settlementMethodRequired,
+    settlementMethodChosen: record.settlementMethodChosen,
     bothChangeFeesCharged: record.bothChangeFeesCharged,
   };
 }

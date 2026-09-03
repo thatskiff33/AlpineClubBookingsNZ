@@ -119,6 +119,22 @@ type ModifiedBooking = Booking & {
   payment: Payment | null;
 };
 
+/**
+ * WHY a change fee on this booking was waived, as it is stored (#3232 D2).
+ *
+ * ONE HOME, because it is written twice — onto the `BookingModification` row and
+ * onto the audit row — and read by a treasurer reconciling change-fee income
+ * against the club's setting. Two string literals that must agree is exactly the
+ * shape `INV-SSOT-001` is about: the pair that drifted would be the pair a query
+ * for waived fees silently under-counts.
+ *
+ * There is only ever one reason today, and the constant is named for the value
+ * rather than for "the reason" so a second one can be added beside it rather than
+ * by changing what this one means.
+ */
+export const LINKED_MOVE_CHANGE_FEE_WAIVED_REASON =
+  "LINKED_MOVE_SUPERVISION_RULE" as const;
+
 type BatchModificationTransactionResult =
   BookingModificationPaymentContext & {
     booking: ModifiedBooking;
@@ -138,6 +154,19 @@ type BatchModificationTransactionResult =
      * move.
      */
     changeFeeWaived: boolean;
+    /**
+     * #3232 (fix round): this edit's settlement genuinely needs a card-or-credit
+     * choice, whichever way it was priced.
+     *
+     * `calculateModificationSettlementOptions` answers this as
+     * `cardRefundAmountCents > 0 || creditRefundAmountCents > 0` — an OR over BOTH
+     * options — and the two are computed from separate policy tiers, so one can
+     * resolve to zero while the other does not. A caller that inferred the need
+     * from the RESOLVED amounts of a quote priced one way therefore disagreed with
+     * the write's own refusal, and the disagreement deadlocked the member: see
+     * `combineLinkedMoveQuote`.
+     */
+    requiresSettlementMethod: boolean;
     refundAmountCents: number;
     accountCreditAmountCents: number;
     promoRemoved: boolean;
@@ -199,6 +228,20 @@ export type BatchModificationResponse = {
   accountCreditAmountCents: number;
   additionalAmountCents: number;
   settlementMethod: BookingModificationSettlementMethod | null;
+  /**
+   * Whether this edit's settlement needs a card-or-credit choice at all (#3232).
+   *
+   * SURFACED BECAUSE A CALLER CANNOT DERIVE IT FROM THE MONEY. The refusal this
+   * service raises without a method is an OR over both options, computed from two
+   * separate policy tiers; `refundAmountCents` and `accountCreditAmountCents` are
+   * the amounts of the option that was actually priced. A club whose tier carries
+   * a card processing fee can therefore return 0 on the card while the credit
+   * option returns real money — so the quote said "nothing to come back", asked
+   * for no choice, and the write then refused for want of one, identically, on
+   * every retry. The fact has to travel rather than be re-derived
+   * (`INV-SSOT-001`).
+   */
+  requiresSettlementMethod: boolean;
   additionalPaymentClientSecret: string | null;
   stripeRefundId: string | null;
   promoRemoved: boolean;
@@ -366,10 +409,40 @@ function buildIdentityOnlyPricing(booking: LoadedBookingForModify): PricingResul
  * every route and on-behalf caller and is byte-identical to before. A caller that
  * supplies `tx` MUST call this first: see the `preTransaction` field.
  */
-export interface BatchModificationPreTransaction {
+interface BatchModificationPreparation {
   readonly memberGuestPolicy: Awaited<ReturnType<typeof loadMemberGuestAddPolicy>>;
   readonly subscriptionLockoutMode: SubscriptionLockoutMode;
   readonly xeroLockDates: XeroLockDateFacts;
+}
+
+/**
+ * The brand that makes "these lock-date facts cover EVERY booking" a property of
+ * the VALUE rather than a rule in a comment (#3232 fix round, `INV-LOCK-004`).
+ *
+ * Module-private and mintable in exactly one place — `prepareBatchModification
+ * ForCallerTransaction`, which passes `"unknown"` and cannot be asked for
+ * anything else. Nothing outside this file can construct the shape, so a caller
+ * that supplies a transaction cannot hand in facts resolved from an enumerated
+ * candidate set.
+ *
+ * WHY THAT MATTERS, AND IT IS NOT THEORETICAL. `resolveXeroLockDateFacts` returns
+ * `not-applicable` when no candidate check-in is retroactive, and the decision
+ * then returns before looking at the booking at all. A caller-transaction caller
+ * discovers bookings UNDER the locks — the linked move reads who was stranded
+ * after the first move is written, and the policy-exception approval's drift gate
+ * can apply a stored past check-in while the frozen proposal's is in the future.
+ * Enumerating there would hand the guard a set that does not contain the booking
+ * it is about to judge, and the answer would be a retroactive invoice re-dated
+ * into a closed accounting period with no refusal at all. Making it
+ * unrepresentable beats a comment asking nobody to do it (`INV-SSOT-001`).
+ */
+const EVERY_BOOKING_LOCK_FACTS: unique symbol = Symbol(
+  "batchModificationPreTransaction",
+);
+
+export interface BatchModificationPreTransaction
+  extends BatchModificationPreparation {
+  readonly [EVERY_BOOKING_LOCK_FACTS]: true;
 }
 
 /**
@@ -384,7 +457,7 @@ export interface BatchModificationPreTransaction {
  * them and usually pays nothing at all, because only a retroactive check-in is
  * guarded.
  */
-export async function prepareBookingBatchModification(options: {
+async function prepareBookingBatchModification(options: {
   /** The check-ins the caller can enumerate, or `"unknown"` when it cannot. */
   candidateCheckIns: Date[] | "unknown";
   audience: "admin" | "member";
@@ -397,7 +470,7 @@ export async function prepareBookingBatchModification(options: {
    * what `lock-bound-club-zone-outside-transaction.test.ts` can then hold.
    */
   adminOverride?: { bookingId: string; requestedCheckIn: string | undefined };
-}): Promise<BatchModificationPreTransaction> {
+}): Promise<BatchModificationPreparation> {
   if (options.adminOverride) {
     await assertProposedCheckInClearsXeroLockDate(
       prisma,
@@ -414,6 +487,28 @@ export async function prepareBookingBatchModification(options: {
       }),
     ]);
   return { memberGuestPolicy, subscriptionLockoutMode, xeroLockDates };
+}
+
+/**
+ * The pre-transaction value for a caller that owns the commit (#3232,
+ * `INV-LOCK-004`).
+ *
+ * THE ONLY WAY TO MAKE ONE, and it takes no candidate check-ins: such a caller
+ * cannot name the bookings it will write, because it discovers them under the
+ * locks. It therefore pays one settings read, one token read and at most one
+ * TTL-cached Xero organisation read, and gets facts that cover EVERY booking. See
+ * `EVERY_BOOKING_LOCK_FACTS` for what a narrower set would have cost.
+ */
+export async function prepareBatchModificationForCallerTransaction(options: {
+  audience: "admin" | "member";
+}): Promise<BatchModificationPreTransaction> {
+  return {
+    ...(await prepareBookingBatchModification({
+      candidateCheckIns: "unknown",
+      audience: options.audience,
+    })),
+    [EVERY_BOOKING_LOCK_FACTS]: true,
+  };
 }
 
 /**
@@ -434,14 +529,24 @@ export async function prepareBookingBatchModification(options: {
  * the transaction gets the decision inside it instead, because it has no position
  * outside one — see `preTransaction`.
  */
+/**
+ * A NAMED return type rather than an inline one, so the shape of this function's
+ * SIGNATURE cannot hide its body from a source-scanning census. `functionSpan` in
+ * `lock-bound-club-zone-outside-transaction.test.ts` takes the first `{` after the
+ * parameter list as the start of the body, and `Promise<{ … }>` puts a different
+ * brace there — which made this function's one pre-transaction booking read read as
+ * an unguarded call from the module's top level.
+ */
+type OrdinaryXeroLockDateGuard = {
+  candidateCheckIns: Date[];
+  decide: (facts: XeroLockDateFacts) => void;
+};
+
 async function resolveOrdinaryXeroLockDateGuard(
   bookingId: string,
   input: { checkIn?: string; checkOut?: string },
   actor: { id: string; role: Role },
-): Promise<{
-  candidateCheckIns: Date[];
-  decide: (facts: XeroLockDateFacts) => void;
-}> {
+): Promise<OrdinaryXeroLockDateGuard> {
   const audience = actor.role === "ADMIN" ? "admin" : "member";
   const booking = await readXeroLockGuardDateEditBooking(
     prisma,
@@ -456,10 +561,11 @@ async function resolveOrdinaryXeroLockDateGuard(
   const candidate = checkInNeedingLockDateCheck(booking, input);
   return {
     candidateCheckIns: candidate ? [candidate] : [],
+    // The audience travels ON the facts (#3232 fix round), so the wording of the
+    // locked-period refusal and the wording of the read-failure refusal cannot
+    // disagree about who is reading them.
     decide: (facts) =>
-      assertDateEditClearsXeroLockDateFromFacts(booking, input, facts, {
-        audience,
-      }),
+      assertDateEditClearsXeroLockDateFromFacts(booking, input, facts),
   };
 }
 
@@ -624,7 +730,8 @@ export async function modifyBookingBatch({
    * `todayAtClub` does, and for exactly the same reason. Asking for `tx` without
    * them throws rather than quietly doing provider work under two locks.
    *
-   * Build it with `prepareBookingBatchModification`.
+   * Build it with `prepareBatchModificationForCallerTransaction`, which is the
+   * only function that can mint one — see `EVERY_BOOKING_LOCK_FACTS`.
    */
   preTransaction?: BatchModificationPreTransaction;
 }): Promise<BatchModificationResponse> {
@@ -634,7 +741,7 @@ export async function modifyBookingBatch({
         "`preTransaction` — the member-guest policy, the subscription-lockout " +
         "mode and the Xero lock dates must be resolved before the caller opens " +
         "its transaction, never from inside it. Call " +
-        "prepareBookingBatchModification() first.",
+        "prepareBatchModificationForCallerTransaction() first.",
     );
   }
   if (input.adminOverride && callerTx) {
@@ -729,7 +836,7 @@ export async function modifyBookingBatch({
   // caller's transaction — `withOptionalTransaction` runs its callback on `tx`,
   // so a read above it is not outside anything. See `preTransaction`, which is
   // required in that mode for exactly this reason.
-  let preparation: BatchModificationPreTransaction;
+  let preparation: BatchModificationPreparation;
   if (preTransaction) {
     preparation = preTransaction;
   } else {
@@ -839,7 +946,6 @@ export async function modifyBookingBatch({
         booking,
         { checkIn: input.checkIn, checkOut: input.checkOut },
         preparation.xeroLockDates,
-        { audience: actor.role === "ADMIN" ? "admin" : "member" },
       );
     }
     // Identity-only requests (guest name fixes, nothing structural) never
@@ -1315,10 +1421,10 @@ export async function modifyBookingBatch({
         : booking.finalPriceCents;
     const priceDiffCents = newFinalPriceCents - booking.finalPriceCents;
 
-    // #3232 D2: `waiveChangeFee` takes the same zero branch a parked edit takes,
-    // so the waived fee is genuinely absent from every downstream decision rather
-    // than subtracted back out somewhere later.
-    const changeFeeCents = parked || waiveChangeFee
+    // #3232 D2: what this move WOULD attract, before the club's waiver is applied.
+    // A parked edit is priced by nobody, so it is zero here for the reason it is
+    // zero everywhere else on that path.
+    const chargeableChangeFeeCents = parked
       ? 0
       : await calculateModificationChangeFee({
       booking,
@@ -1328,6 +1434,19 @@ export async function modifyBookingBatch({
       db: tx, // locked transaction; see `CancellationPolicyDb`
       todayAtClub,
     });
+    // #3232 D2: `waiveChangeFee` takes the same zero branch a parked edit takes,
+    // so the waived fee is genuinely absent from every downstream decision rather
+    // than subtracted back out somewhere later.
+    const changeFeeCents = waiveChangeFee ? 0 : chargeableChangeFeeCents;
+    // #3232 D2 (fix round): AND A WAIVER IS RECORDED ONLY WHERE A FEE WAS REALLY
+    // SUPPRESSED. The flag alone is not evidence of one: `calculateModification
+    // ChangeFee` already returns 0 for an unchanged check-in, a DRAFT booking and
+    // a move outside every fee band, and a parked edit never asks it at all. Marking
+    // those as "waived because our own supervision rule compelled this move"
+    // over-counts precisely the number the field exists for — the one a treasurer
+    // reconciles against the club setting — and puts a waiver in a dragged-along
+    // booking's history that nobody granted.
+    const changeFeeWaived = waiveChangeFee === true && chargeableChangeFeeCents > 0;
 
     // NULL ON A PARKED EDIT, which is what keeps `applyPaymentAdjustments`
     // inert below rather than a second zero literal beside it: with no options
@@ -1617,11 +1736,12 @@ export async function modifyBookingBatch({
                 capacityOverridden: capacityOverridden,
               }
             : {}),
-          // #3232 D2: the zero beside this is a WAIVER, and which waiver.
-          ...(waiveChangeFee
+          // #3232 D2: the zero beside this is a WAIVER, and which waiver. Only
+          // where a fee really was suppressed — see `changeFeeWaived` above.
+          ...(changeFeeWaived
             ? {
                 changeFeeWaived: true,
-                changeFeeWaivedReason: "LINKED_MOVE_SUPERVISION_RULE",
+                changeFeeWaivedReason: LINKED_MOVE_CHANGE_FEE_WAIVED_REASON,
               }
             : {}),
         },
@@ -1763,7 +1883,12 @@ export async function modifyBookingBatch({
         hostingReconcile === "CALLER" ? reconcileHosting : undefined,
       priceDiffCents,
       changeFeeCents,
-      changeFeeWaived: waiveChangeFee === true,
+      changeFeeWaived,
+      // #3232 (fix round): the WRITE's own answer to "does this settlement need a
+      // card-or-credit choice", so a caller quoting on one option cannot disagree
+      // with the refusal it will hit. Null options (a parked edit) need nothing.
+      requiresSettlementMethod:
+        settlementOptions?.requiresSettlementMethod === true,
       refundAmountCents: payments.refundAmountCents,
       accountCreditAmountCents: payments.accountCreditAmountCents,
       additionalAmountCents: payments.additionalAmountCents,
@@ -1993,6 +2118,7 @@ export async function modifyBookingBatch({
       accountCreditAmountCents: result.accountCreditAmountCents,
       additionalAmountCents: result.additionalAmountCents,
       settlementMethod: result.settlementMethod,
+      requiresSettlementMethod: result.requiresSettlementMethod,
       additionalPaymentClientSecret: additionalPaymentClientSecret ?? null,
       stripeRefundId: stripeRefundId ?? null,
       promoRemoved: result.promoRemoved,
@@ -2007,12 +2133,23 @@ export async function modifyBookingBatch({
   };
 
   if (callerTx) {
-    // tx-mode (atomic approve-and-execute): the caller owns the commit. The
-    // modification is already applied in the caller's transaction; provider
-    // work runs after commit via deferredPostCommit. Provider-derived fields
-    // (stripeRefundId / additionalPaymentClientSecret) are null here — they
-    // become available only when the deferred work runs, and the approval does
-    // not surface them.
+    // tx-mode: the caller owns the commit. The modification is already applied in
+    // the caller's transaction; provider work runs after commit via
+    // `deferredPostCommit`. Provider-derived fields (`stripeRefundId` /
+    // `additionalPaymentClientSecret`) are null here — they do not exist yet, since
+    // they are produced by work that has not run.
+    //
+    // THE OLD JUSTIFICATION FOR THE NULLS — "and the approval does not surface
+    // them" — WAS TRUE OF ONE CALLER AND IS NOT TRUE OF THE OTHER (#3232 fix
+    // round). An officer's policy-exception approval really does not show a member
+    // a payment sheet; a member's own linked-move save does, and it is a live save
+    // on a page with a Pay control. What makes the null safe there is not that
+    // nobody wanted a secret, it is that each booking's increase is collectable
+    // from that booking's own page through
+    // `/api/bookings/[id]/additional-payment-secret`, per booking and never as a
+    // combined charge — which is why the offer's own money sentence says the
+    // amount is payable ACROSS the bookings and settles on each separately
+    // (`formatLinkedMoveMoneySentence`), rather than implying one payment step.
     return {
       booking: result.booking,
       ...(result.pendingHostingReconcile
@@ -2024,6 +2161,7 @@ export async function modifyBookingBatch({
       accountCreditAmountCents: result.accountCreditAmountCents,
       additionalAmountCents: result.additionalAmountCents,
       settlementMethod: result.settlementMethod,
+      requiresSettlementMethod: result.requiresSettlementMethod,
       additionalPaymentClientSecret: null,
       stripeRefundId: null,
       promoRemoved: result.promoRemoved,
@@ -2069,7 +2207,7 @@ async function dispatchBatchPostTransactionSideEffects({
     ...(result.changeFeeWaived
       ? {
           changeFeeWaived: true,
-          changeFeeWaivedReason: "LINKED_MOVE_SUPERVISION_RULE",
+          changeFeeWaivedReason: LINKED_MOVE_CHANGE_FEE_WAIVED_REASON,
         }
       : {}),
     refundAmountCents: result.refundAmountCents,

@@ -57,6 +57,23 @@ export type HostingCoverageIncidentCause =
   | "OWNER_DECLINED_LINKED_MOVE";
 
 /**
+ * The stored reason on the incident a declined offer opens (#3232).
+ *
+ * IT HAS TO STAND ALONE, because for one release it is what an officer reads
+ * INSTEAD of a cause label of its own: until `INV-HOST-052`'s runtime half lands
+ * the stored cause is the shared `SYSTEM_CHANGE`, whose officer-facing phrase is
+ * true of a cancellation and a data correction too. So no issue reference (no
+ * other stored human-read string in this repository carries one — compare
+ * `ADULT_SUPERVISION_REVIEW_REASON`), and no product jargon: "the linked move" is
+ * a name from this codebase that no officer has ever met. What it says instead is
+ * what happened.
+ */
+export const LINKED_MOVE_DECLINED_INCIDENT_REASON =
+  "The member was asked whether to move this booking to the same new nights as " +
+  "the booking they were editing, and chose to move only that one — leaving " +
+  "this booking without adult member coverage.";
+
+/**
  * The one officer-facing phrase for a recorded cause (#3232 D3).
  *
  * ONE HOME, because there are two officer surfaces and they had drifted into two

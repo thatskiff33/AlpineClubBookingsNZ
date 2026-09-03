@@ -22,6 +22,39 @@ export interface LinkedDateMoveAnswer {
 }
 
 /**
+ * What a linked move is allowed to see of a save request: the dates, and where the
+ * money goes. ONE definition, for both doors (`INV-SSOT-001`, #3232).
+ *
+ * EVERYTHING ELSE IS DROPPED, and dropping it is the point rather than tidiness.
+ * `/modify` accepts admin-only fields — `adminOverride`, `confirmOverCapacity`,
+ * `notifyMember`, guest and promo edits — and it was passing its whole parsed body
+ * into the quote. `adminOverride` then travelled into `modifyBookingBatch` inside a
+ * caller transaction, which that service refuses outright (its conservative Xero
+ * lock-date guard has no pre-resolved form), so the member got an unexplained 500
+ * instead of the offer. Reachable: the answer is deliberately NOT admin-gated,
+ * because the person entitled to answer it is the booking's own member, admin or
+ * not.
+ *
+ * An over-capacity CONFIRMATION is also the opposite of what the `NO_CAPACITY` arm
+ * is for, and a guest or promo edit is not part of a two-booking date move at all.
+ * Deriving the same input for the quote and for the apply is what keeps the figure
+ * the member accepted the figure they are charged.
+ */
+export function linkedMoveQuoteInput(input: {
+  checkIn?: string;
+  checkOut?: string;
+  settlementMethod?: BatchModifyInput["settlementMethod"];
+}): BatchModifyInput {
+  return {
+    ...(input.checkIn !== undefined ? { checkIn: input.checkIn } : {}),
+    ...(input.checkOut !== undefined ? { checkOut: input.checkOut } : {}),
+    ...(input.settlementMethod
+      ? { settlementMethod: input.settlementMethod }
+      : {}),
+  };
+}
+
+/**
  * The three arms of the offer, ONCE, over whichever single-booking edit the
  * surface performs (#3232 D1).
  *
@@ -55,8 +88,15 @@ async function withLinkedMoveArms<T>(
   ) => Promise<T>,
 ): Promise<T | BatchModificationResponse> {
   const { linkedMove, ...rest } = args;
+  // THE LINKED MOVE SEES DATES AND THE SETTLEMENT CHOICE, AND NOTHING ELSE —
+  // narrowed HERE so both doors get it rather than in the door that remembered.
+  // `/modify` was handing its whole parsed request body straight through, so an
+  // ADMIN who owns the booking could carry `adminOverride: true` into the quote,
+  // which reaches `modifyBookingBatch` WITH a transaction and hits the bare
+  // `INV-LOCK-004` throw — a raw 500 where the member was owed the offer.
+  const linkedMoveArgs = { ...rest, input: linkedMoveQuoteInput(rest.input) };
   if (linkedMove?.choice === "MOVE_BOTH") {
-    return applyLinkedDateMove({ ...rest, linkedMove });
+    return applyLinkedDateMove({ ...linkedMoveArgs, linkedMove });
   }
   try {
     return await performSingleBookingEdit(linkedMove ?? null);
@@ -68,7 +108,7 @@ async function withLinkedMoveArms<T>(
       // Always throws — either the offer, or whatever real refusal the priced
       // attempt hits on the way. A minimum-stay violation on the dependent's new
       // nights must not be hidden behind an offer the member cannot take.
-      await offerLinkedDateMove(rest);
+      await offerLinkedDateMove(linkedMoveArgs);
     }
     throw error;
   }
@@ -109,14 +149,9 @@ export async function modifyBookingWithLinkedMoveSupport(
  * here without offering the move would therefore have shipped the deadlock on a
  * live member API. Both date-capable surfaces offer all three arms or neither does.
  *
- * THE QUOTE INPUT IS DATES AND THE SETTLEMENT CHOICE, AND NOTHING ELSE. The
- * admin-only flags this route also accepts (`adminOverride`, `confirmOverCapacity`,
- * `notifyMember`) are deliberately not carried into the linked move: the offer is
- * raised only where the acting member IS the booking owner, an officer's change
- * escalates through `REQUIRE_OVERRIDE` instead and never reaches here, and an
- * over-capacity CONFIRMATION is the opposite of what the `NO_CAPACITY` arm is for.
- * Deriving the same input for the quote and for the apply is what keeps the figure
- * the member accepted the figure they are charged.
+ * THE QUOTE INPUT IS DATES AND THE SETTLEMENT CHOICE, AND NOTHING ELSE —
+ * `linkedMoveQuoteInput`, shared with the `/modify` door rather than written here,
+ * since a narrowing only one door performs is the narrowing the other door forgets.
  *
  * THE MOVE-BOTH ARM ANSWERS WITH THE BATCH WRITER, and that is a real difference
  * worth stating rather than hiding: a two-booking move must happen inside ONE
@@ -132,17 +167,8 @@ export async function modifyBookingDatesWithLinkedMoveSupport(
   args: Omit<LinkedDateMoveArgs, "input"> &
     LinkedDateMoveAnswer & { input: ModifyBookingDatesInput },
 ): Promise<DateModificationResponse> {
-  const quoteInput: BatchModifyInput = {
-    ...(args.input.checkIn !== undefined ? { checkIn: args.input.checkIn } : {}),
-    ...(args.input.checkOut !== undefined
-      ? { checkOut: args.input.checkOut }
-      : {}),
-    ...(args.input.settlementMethod
-      ? { settlementMethod: args.input.settlementMethod }
-      : {}),
-  };
   return withLinkedMoveArms(
-    { ...args, input: quoteInput },
+    { ...args, input: linkedMoveQuoteInput(args.input) },
     (linkedMove) =>
       modifyBookingDates({
         bookingId: args.bookingId,

@@ -7,6 +7,7 @@ import {
 } from "@prisma/client";
 
 import {
+  LINKED_MOVE_DECLINED_INCIDENT_REASON,
   hostingCoverageStateKey,
   openOrUpdateHostingCoverageIncident,
   resolveHostingCoverageIncidents,
@@ -44,7 +45,6 @@ import {
   type StrandedCoverageBooking,
 } from "@/lib/adult-member-hosting-same-owner";
 import {
-  LINKED_MOVE_DECLINED_INCIDENT_REASON,
   linkedMoveWouldRestoreCover,
 } from "@/lib/adult-member-hosting-linked-move";
 import { AdultMemberHostingRequiredError } from "@/lib/adult-member-hosting-refusal";

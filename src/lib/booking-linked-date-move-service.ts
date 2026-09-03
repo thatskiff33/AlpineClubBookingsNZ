@@ -31,6 +31,7 @@ import {
   OverCapacityConfirmationRequiredError,
   WholeLodgeHoldBlockedError,
 } from "@/lib/over-capacity-confirmation";
+import { ApiError } from "@/lib/api-error";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import { assertBookingEnvelopeInvariants } from "@/lib/booking-envelope-invariants";
 import { BookingModificationSettlementMethodRequiredError } from "@/lib/booking-modify-settlement-required";
@@ -126,11 +127,13 @@ import { prisma } from "@/lib/prisma";
  *
  * ## What it does not do
  *
- * It does not touch the officer's override path, and it raises no new refusal for
- * anybody but the booking's own member. An actor who is not the owner never
- * reaches this code, because the disposition that raises the offer is the same one
+ * It does not touch the officer's override path. An actor who is not the owner is
+ * never OFFERED the move — the disposition that raises the offer is the same one
  * that gates the bare stranded refusal, and that one escalates rather than
- * disclosing another account's booking.
+ * disclosing another account's booking — and, since the fix round, cannot ACCEPT
+ * one either: `runLinkedDateMove` refuses a non-owner before it writes anything.
+ * The offer path and the accept path are reachable through different doors, so
+ * both need the check; only the first had it.
  */
 
 
@@ -204,9 +207,35 @@ async function runLinkedDateMove(
     // dependent's shift is measured from, and a proposal is not evidence.
     const before = await tx.booking.findUnique({
       where: { id: args.bookingId },
-      select: { checkIn: true, checkOut: true },
+      select: { checkIn: true, checkOut: true, memberId: true },
     });
     if (!before) throw new Error("Booking not found");
+
+    // AND IT IS ONLY THE OWNER'S DOOR (#3232 D1, `INV-HOST-050`), checked here
+    // because here is before anything is written on either mode.
+    //
+    // The offer is RAISED only for the booking's own member — the disposition that
+    // marks a refusal answerable is the same one that escalates for anybody else —
+    // but ACCEPTING was reachable by any actor authorised to modify the primary,
+    // and a key mismatch answers with a valid `acceptStateKey`, so an officer could
+    // resubmit it and commit an atomic two-booking move on a member's bookings with
+    // the dependent's change fee waived under the club's supervision-rule setting.
+    // No new authority is gained — they could already edit both — but the arm's own
+    // docblocks, the invariant and the published changelog all say this door is the
+    // member's, and §7 exists so that an officer who means to leave a booking
+    // uncovered confirms it and says why. The same rule already gates the DECLINE
+    // arm (`hostingCoverageActorOptions`); this is the half that was missing.
+    //
+    // ROLE IS NOT THE TEST — ownership is. An admin moving their OWN booking is
+    // offered the linked move like anybody else, which is why neither save route
+    // gates the answer on `adminOverride`.
+    if (args.actor.id !== before.memberId) {
+      throw new ApiError(
+        "Moving both bookings together is only available to the member whose " +
+          "bookings they are.",
+        403,
+      );
+    }
 
     const primary = await modifyBookingBatch({
       bookingId: args.bookingId,
@@ -436,6 +465,10 @@ async function runLinkedDateMove(
       primaryRange,
       linked,
       bothChangeFeesCharged,
+      // Whether a card-or-credit choice ALREADY travelled with this request, which
+      // decides whether the offer's money sentence promises a question. In
+      // `"quote"` mode without one the dependents were priced on card above.
+      settlementMethodChosen: Boolean(args.input.settlementMethod),
       feasibility,
     });
     const acceptStateKey = linkedMoveStateKey({
