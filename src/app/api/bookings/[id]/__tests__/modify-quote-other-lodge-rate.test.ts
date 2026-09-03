@@ -170,7 +170,10 @@ vi.mock("@/lib/booking-policies", () => ({
 }));
 
 import { POST } from "@/app/api/bookings/[id]/modify-quote/route";
-import { OTHER_LODGE_RATE_AMOUNT_UNDER_REVIEW_MESSAGE } from "@/lib/booking-other-lodge-rate";
+import {
+  OTHER_LODGE_RATE_AMOUNT_UNDER_REVIEW_MESSAGE,
+  OTHER_LODGE_RATE_IN_PROGRESS_MESSAGE,
+} from "@/lib/booking-other-lodge-rate";
 
 const D = (s: string) => new Date(`${s}T00:00:00.000Z`);
 
@@ -608,6 +611,75 @@ describe("modify-quote — an election on an edit whose money parks", () => {
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({
       error: OTHER_LODGE_RATE_AMOUNT_UNDER_REVIEW_MESSAGE,
+    });
+  });
+});
+
+/**
+ * THE MID-STAY REFUSAL, which had no test at all until #3214's review round.
+ *
+ * `OTHER_LODGE_RATE_IN_PROGRESS_MESSAGE` refuses an election once the stay is
+ * under way, on both surfaces, because the in-progress plan prices the STORED
+ * guest rows and would settle $0. That refusal is now load-bearing for a SECOND
+ * rule: the parked guard above says the in-progress exit "cannot reach it — a
+ * mid-stay election is refused several hundred lines above". A reader trusts
+ * that sentence, so the refusal it names is pinned here rather than assumed.
+ */
+describe("modify-quote — an election once the stay is under way", () => {
+  /** The same booking, moved so the frozen clock (2026-07-01) sits inside it. */
+  function inProgress(overrides: Record<string, unknown> = {}) {
+    const stored = booking();
+    return {
+      ...stored,
+      checkIn: D("2026-06-29"),
+      checkOut: D("2026-07-03"),
+      guests: stored.guests.map((guest) => ({
+        ...guest,
+        stayStart: D("2026-06-29"),
+        stayEnd: D("2026-07-03"),
+      })),
+      ...overrides,
+    };
+  }
+
+  it("REFUSES a tick rather than quoting a $0 re-rate", async () => {
+    h.bookingFindUnique.mockResolvedValue(inProgress());
+
+    const res = await POST(
+      req({
+        otherLodgeId: "lodge-partner",
+        otherLodgeMemberGuestIds: ["g-visitor"],
+      }),
+      { params },
+    );
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: OTHER_LODGE_RATE_IN_PROGRESS_MESSAGE,
+    });
+  });
+
+  it("REFUSES a request that names only the lodge, the half a `!== undefined` pair is easiest to lose", async () => {
+    h.bookingFindUnique.mockResolvedValue(inProgress());
+
+    const res = await POST(req({ otherLodgeId: "lodge-partner" }), { params });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: OTHER_LODGE_RATE_IN_PROGRESS_MESSAGE,
+    });
+  });
+
+  it("REFUSES a request that CLEARS the lodge, so `null` is not read as silence", async () => {
+    h.bookingFindUnique.mockResolvedValue(
+      inProgress({ otherLodgeId: "lodge-partner" }),
+    );
+
+    const res = await POST(req({ otherLodgeId: null }), { params });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: OTHER_LODGE_RATE_IN_PROGRESS_MESSAGE,
     });
   });
 });

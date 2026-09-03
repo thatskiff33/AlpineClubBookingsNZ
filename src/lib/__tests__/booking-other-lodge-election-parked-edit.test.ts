@@ -5,25 +5,10 @@ import type { Role } from "@prisma/client";
   #3214 (epic #2797) — AN OTHER-LODGE ELECTION IS REFUSED ON THE EDIT THAT PARKS
   THE MONEY, and the whole request is refused with it.
 
-  WHAT WAS BROKEN, and how narrow it really was. On a booking whose money is
-  ALREADY under review the election was refused outright and always had been: an
-  election is never price-preserving, so the request is money-affecting, so
-  `assertNoPendingEditFinancialReview` throws. The defect lived on exactly one
-  edge — the edit that CREATES the park — where the request was half-applied in
-  both directions:
-
-    * a tick resolved to `false`, because a parked edit runs no rate resolver
-      and so rates nobody at the other-lodge rate, while the SAME edit still
-      saved a change of lodge. The officer got a success, a partner lodge on the
-      booking, and no ticks;
-    * an untick cleared the flag (unconditionally, by design — else a stale flag
-      could never be removed) while the nights stayed sold at the other club's
-      member rate, leaving the column and the money disagreeing about what was
-      charged.
-
-  The owner's decision (2 September 2026) is refusal, not disclosure: refusing
-  removes no ability anybody has, because it is already refused everywhere else,
-  and it prevents the untick disagreement rather than describing it.
+  WHAT WAS BROKEN, WHY REFUSAL RATHER THAN DISCLOSURE, and what each direction of
+  the flag used to do: `OTHER_LODGE_RATE_AMOUNT_UNDER_REVIEW_MESSAGE`'s docblock
+  in `src/lib/booking-other-lodge-rate.ts`, which is the one home for all of it
+  (`INV-MOD-028`). Restating it here is how the two copies come to disagree.
 
   HOW THIS SUITE PROVES "NOTHING IS WRITTEN". `applyGuestChanges` is the first
   write the service performs after the pricing pass, so it is stubbed with a
@@ -159,17 +144,30 @@ function loadedBooking(overrides: Record<string, unknown> = {}) {
 /**
  * The election as `resolveOtherLodgeRateElection` resolves it — the SAME object
  * `applyGuestChanges` is handed, which is what the guard fences on.
+ *
+ * `otherLodgeIdChanged` IS DERIVED THE WAY THE RESOLVER DERIVES IT, against the
+ * lodge the stored booking already carries, and that is load-bearing rather than
+ * tidiness. It used to be `Boolean(options.otherLodgeId)`, which is true of
+ * every `requested: true` case in this file because they all name a partner
+ * lodge. A guard mutated to fence on `otherLodgeIdChanged` instead of
+ * `requested` therefore left all five tests green — while letting through the
+ * commonest real election of all, ticking a guest on a booking whose partner
+ * lodge is ALREADY stored. The untick case below is exactly that shape and now
+ * resolves `false` here, so it fails that mutation.
  */
 function election(options: {
   requested: boolean;
   flagged?: string[];
   reprice?: string[];
   otherLodgeId?: string | null;
+  /** What the loaded booking carries; the resolver compares against it. */
+  storedOtherLodgeId?: string | null;
 }) {
+  const otherLodgeId = options.otherLodgeId ?? null;
   return {
     requested: options.requested,
-    otherLodgeId: options.otherLodgeId ?? null,
-    otherLodgeIdChanged: Boolean(options.otherLodgeId),
+    otherLodgeId,
+    otherLodgeIdChanged: otherLodgeId !== (options.storedOtherLodgeId ?? null),
     flaggedGuestIds: new Set(options.flagged ?? []),
     repriceGuestIds: new Set(options.reprice ?? []),
   };
@@ -335,6 +333,10 @@ describe("modifyBookingBatch: an other-lodge election on the edit that parks", (
           flagged: [],
           reprice: [GUEST.id],
           otherLodgeId: "lodge-partner",
+          // The booking ALREADY carries this lodge, so the resolver sets
+          // `otherLodgeIdChanged: false` — the case that proves the guard fences
+          // on `requested` and not on the lodge moving.
+          storedOtherLodgeId: "lodge-partner",
         }),
       ),
     );
@@ -358,7 +360,9 @@ describe("modifyBookingBatch: an other-lodge election on the edit that parks", (
           requested: true,
           flagged: [],
           reprice: [],
-          otherLodgeId: "lodge-partner",
+          // The request names no lodge, so the resolver keeps the booking's
+          // stored one — which is `null` here. Nothing moves at all.
+          otherLodgeId: null,
         }),
       ),
     );
