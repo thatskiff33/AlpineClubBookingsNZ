@@ -1,15 +1,7 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "types": ["vitest/globals", "node"],
-    // #2693: tests run only on Node 24, which carries the ES2024 standard
-    // library in full. One census suite already relies on `Map.groupBy`
-    // (`src/lib/__tests__/e2e-booking-create-isolation.test.ts`), and the app
-    // project's ES2022 `lib` describes what a browser must offer, not a ceiling
-    // for a Node-only test. Measured at the baseline: that one site is the only
-    // use beyond ES2022 in any project, so this is a deliberate, narrow widening
-    // rather than a return to `esnext`.
-    "lib": ["dom", "dom.iterable", "es2024"]
+    "types": ["vitest/globals", "node"]
   },
   // Every Vitest test under the configured src/ and scripts/ collection roots.
   //
