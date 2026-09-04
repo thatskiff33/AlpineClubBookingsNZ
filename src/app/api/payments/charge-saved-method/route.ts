@@ -102,11 +102,13 @@ export async function POST(request: NextRequest) {
     }
 
     // #3269 (`INV-PAY-053`): a card is chargeable off-session only with
-    // SetupIntent provenance on this booking's OWN row. This route records the
-    // capture against that row (`savedPayment.id` below) and creates none, so
-    // it deliberately offers no split-parent fallback — the settlement cron and
-    // the admin confirm-pending-guests route, which upsert the child's row
-    // inside their claim, carry that fallback.
+    // SetupIntent provenance on this booking's OWN row, read through
+    // `reusableSavedPaymentMethodOnRow` rather than the split-aware
+    // `savedPaymentMethodForBooking`. This route records the capture against
+    // the row it read (`booking.payment.id`, aliased `savedPayment` below) and
+    // creates none, so it deliberately offers no split-parent fallback — the
+    // settlement cron and the admin confirm-pending-guests route, which upsert
+    // the child's row inside their claim, carry that fallback.
     const reusableCard = reusableSavedPaymentMethodOnRow(booking.payment);
     if (!booking.payment || !reusableCard) {
       return NextResponse.json(

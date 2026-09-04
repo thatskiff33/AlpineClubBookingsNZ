@@ -44,6 +44,17 @@ import type { Payment } from "@prisma/client";
  * without a migration: the next resolution re-derives the answer from
  * provenance and routes the child down the payment-link path instead of into a
  * charge that cannot succeed.
+ *
+ * The same shape still arises legitimately, and is harmless for the same
+ * reason. No CLAIM writes the card column (`savedPaymentMethodRowStamp`), but a
+ * charge attempt on a borrowed card records that card on the child's row as
+ * every attempt does: `upsertPaymentIntentTransaction` →
+ * `reconcilePaymentAggregates` mirrors the latest primary attempt's pm whether
+ * it succeeded, failed or is pending, and `markBookingPaymentSucceeded` writes
+ * the pm that paid. So a PENDING child whose borrowed charge failed, and a PAID
+ * child, may both carry the parent's pm without a SetupIntent. Neither copy is
+ * ever offered for reuse — this predicate is what makes the copy harmless, not
+ * the absence of the copy.
  */
 
 export type ReusableSavedPaymentMethod = {
@@ -116,25 +127,33 @@ export function savedPaymentMethodForBooking(booking: {
 }
 
 /**
- * What a charge claim may persist on the CHARGED booking's own `Payment` row.
+ * What a charge claim may persist on the CHARGED booking's own `Payment` row:
+ * the customer it is charged under, and nothing else.
  *
  * The customer is always written (the row needs it to record the transaction).
- * The payment method is written back only when it came from this row in the
- * first place, where it is a no-op. When the card came from the parent, the
- * child's row must NOT receive it: the charge uses the returned card object,
- * not the row, and copying the parent's pm onto the child is exactly the
- * laundering that turned a one-off checkout artefact into a "saved card" every
- * reader trusted (#3269). Both claim writers — the settlement cron and the admin
- * confirm-pending-guests route — spread this into their upsert, so the rule has
- * one home.
+ * The payment method is NEVER written by a claim, whichever row supplied it:
+ *
+ * - From the parent, copying it onto the child is exactly the laundering that
+ *   turned a one-off checkout artefact into a "saved card" every reader trusted
+ *   (#3269).
+ * - From the child's own row, writing it back looks like a no-op but races
+ *   the setup-intent route's replacement mint (#3266), which clears the pm
+ *   beside a fresh `stripeSetupIntentId`. Read (pm1, seti1) → replacement
+ *   writes (null, seti2) → a claim writing pm1 back leaves (pm1, seti2): a
+ *   card mid-replacement that passes the provenance check. A claim that writes
+ *   only the customer cannot resurrect anything.
+ *
+ * The charge uses the returned card object, not the row. A SUCCESSFUL charge
+ * then records the card that paid on the row like every other capture does
+ * (`reconcilePaymentAggregates`, `markBookingPaymentSucceeded`) — a copy with
+ * no SetupIntent beside it, which is why `reusableSavedPaymentMethodOnRow`
+ * never reads it as reusable. Both claim writers — the settlement cron and the
+ * admin confirm-pending-guests route — spread this into their upsert, so the
+ * rule has one home. `source` is carried for logging and tests, not for the
+ * stamp.
  */
 export function savedPaymentMethodRowStamp(
   saved: SavedPaymentMethodForBooking
-): { stripeCustomerId: string; stripePaymentMethodId?: string } {
-  return saved.source === "own"
-    ? {
-        stripeCustomerId: saved.stripeCustomerId,
-        stripePaymentMethodId: saved.stripePaymentMethodId,
-      }
-    : { stripeCustomerId: saved.stripeCustomerId };
+): { stripeCustomerId: string } {
+  return { stripeCustomerId: saved.stripeCustomerId };
 }

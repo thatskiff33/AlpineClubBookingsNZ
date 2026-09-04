@@ -834,8 +834,10 @@ async function resolveHoldWindowUnderLock(
       },
     });
 
-    // #3269: a card borrowed from the parent is charged from the returned
-    // object and never written onto this row (`savedPaymentMethodRowStamp`).
+    // #3269: the card is charged from the returned object; the claim writes
+    // only the customer onto this row (`savedPaymentMethodRowStamp`), so it can
+    // neither launder a parent's pm nor resurrect one a concurrent replacement
+    // mint just cleared.
     const rowStamp = savedPaymentMethodRowStamp(savedPayment);
     const payment = await tx.payment.upsert({
       where: { bookingId: booking.id },

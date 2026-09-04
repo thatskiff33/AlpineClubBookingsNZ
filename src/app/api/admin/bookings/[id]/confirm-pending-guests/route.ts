@@ -441,8 +441,10 @@ export async function POST(
         cause: "SYSTEM_CHANGE",
         actorMemberId: session.user.id,
       });
-      // #3269: a card borrowed from the parent is charged from `savedPayment`
-      // and never written onto this row (`savedPaymentMethodRowStamp`).
+      // #3269: the card is charged from `savedPayment`; the claim writes only
+      // the customer onto this row (`savedPaymentMethodRowStamp`), so it can
+      // neither launder a parent's pm nor resurrect one a concurrent
+      // replacement mint just cleared.
       const rowStamp = savedPaymentMethodRowStamp(savedPayment);
       const payment = await tx.payment.upsert({
         where: { bookingId },
