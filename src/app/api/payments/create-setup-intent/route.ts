@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { createSetupIntent, findOrCreateCustomer, getSetupIntent } from "@/lib/stripe";
+import {
+  setupIntentCardStillAttached,
+  stripeReferenceId,
+} from "@/lib/setup-intent-card";
 import { markBookingSetupIntentSucceeded } from "@/lib/payment-reconciliation";
 import { CreateSetupIntentSchema } from "@/types/payments";
 import { auth } from "@/lib/auth";
@@ -69,26 +73,69 @@ export async function POST(request: NextRequest) {
       const existingIntent = await getSetupIntent(booking.payment.stripeSetupIntentId);
 
       if (existingIntent.status === "succeeded") {
-        const paymentMethodId =
-          typeof existingIntent.payment_method === "string"
-            ? existingIntent.payment_method
-            : existingIntent.payment_method?.id ?? null;
+        const paymentMethodId = stripeReferenceId(existingIntent.payment_method);
 
-        if (paymentMethodId) {
+        if (booking.payment.stripePaymentMethodId) {
+          // The row still carries a card, so the succeeded intent is simply
+          // the one that saved it: re-stamp (harmless if already stamped) and
+          // tell the client there is nothing to enter.
+          if (paymentMethodId) {
+            await markBookingSetupIntentSucceeded({
+              bookingId: booking.id,
+              setupIntentId: existingIntent.id,
+              paymentMethodId,
+            });
+          }
+
+          return NextResponse.json({
+            alreadySaved: true,
+            setupIntentId: existingIntent.id,
+          });
+        }
+
+        // #3266 — succeeded intent, but NO card on the row: either the webhook
+        // has not landed yet, or the card was retired after a terminal refusal
+        // (#3268). Ask Stripe which (`setup-intent-card.ts`); never re-adopt a
+        // card it no longer holds for this customer (`INV-PAY-054`).
+        const customerId =
+          booking.payment.stripeCustomerId ??
+          stripeReferenceId(existingIntent.customer);
+        const stillAttached =
+          paymentMethodId !== null &&
+          (await setupIntentCardStillAttached({
+            bookingId: booking.id,
+            setupIntentId: existingIntent.id,
+            paymentMethodId,
+            customerId,
+          }));
+
+        if (stillAttached && paymentMethodId) {
           await markBookingSetupIntentSucceeded({
             bookingId: booking.id,
             setupIntentId: existingIntent.id,
             paymentMethodId,
           });
+          logger.info(
+            { bookingId: booking.id, setupIntentId: existingIntent.id, paymentMethodId },
+            "Re-adopted a succeeded SetupIntent's card that the webhook had not yet stamped",
+          );
+
+          return NextResponse.json({
+            alreadySaved: true,
+            setupIntentId: existingIntent.id,
+          });
         }
 
-        return NextResponse.json({
-          alreadySaved: true,
-          setupIntentId: existingIntent.id,
-        });
-      }
-
-      if (existingIntent.client_secret && existingIntent.status !== "canceled") {
+        logger.info(
+          { bookingId: booking.id, setupIntentId: existingIntent.id, paymentMethodId },
+          "Succeeded SetupIntent's card is not attached to the booking's customer; minting a replacement",
+        );
+        // Fall through and mint. The idempotency key below chains from this
+        // intent's id, so the replacement is a distinct Stripe object.
+      } else if (
+        existingIntent.client_secret &&
+        existingIntent.status !== "canceled"
+      ) {
         return NextResponse.json({
           clientSecret: existingIntent.client_secret,
           setupIntentId: existingIntent.id,
@@ -113,7 +160,16 @@ export async function POST(request: NextRequest) {
       idempotencyKey: `seti_${booking.id}_${booking.payment?.stripeSetupIntentId ?? "initial"}`,
     });
 
-    // Create or update Payment record
+    // Create or update Payment record. #3266 — minting a replacement RETIRES
+    // the previous card (`INV-PAY-054`): `stripePaymentMethodId` is cleared
+    // here, and only `markBookingSetupIntentSucceeded` (the webhook, or the
+    // re-adopt arm above) puts one back. Left in place, the old — possibly
+    // dead — card stayed chargeable by the cron and both admin charge routes
+    // for as long as the member took to finish re-saving (in production:
+    // never, and 24 consecutive cron failures). Same convention as
+    // `booking-modify-settlement.ts`; the one deliberate exception
+    // (`booking-credit-election.ts`, a settled split parent's card kept for
+    // the child's deferred charge) is a settled row this route never reaches.
     await prisma.payment.upsert({
       where: { bookingId: booking.id },
       create: {
@@ -121,11 +177,13 @@ export async function POST(request: NextRequest) {
         amountCents: booking.finalPriceCents,
         stripeSetupIntentId: setupIntent.id,
         stripeCustomerId: customer.id,
+        stripePaymentMethodId: null,
         status: "PENDING",
       },
       update: {
         stripeSetupIntentId: setupIntent.id,
         stripeCustomerId: customer.id,
+        stripePaymentMethodId: null,
       },
     });
 
