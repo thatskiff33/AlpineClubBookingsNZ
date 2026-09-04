@@ -31,7 +31,7 @@ a booking's nights sold for, which is what makes this issue's refusal message
 true rather than merely written.
 
 file: src/app/(authenticated)/bookings/[id]/page.tsx
-lines: 2737
+lines: 2761
 reason: the offers have to be read where `financialReviewPending` already is.
   The page holds that flag for the member's own banner, and the same flag is what
   withholds this section while a review is open - so reading the offers anywhere
@@ -40,7 +40,12 @@ reason: the offers have to be read where `financialReviewPending` already is.
   that reasoning for `financialReviewWarnings` three blocks above and this
   follows it. Splitting the whole 2700-line server component is a real piece of
   work and is not this issue's; adding twenty-one lines to it under the rule the
-  file already applies is.
+  file already applies is. The review round added twenty-four more, all comment:
+  a reviewer asked whether this read should be gated on finance-view as well as
+  on the admin-tools gate, and the answer - the precedent that governs, what the
+  page already sends every viewer, and what withholding it would break - belongs
+  at the read it is about, where the next person to ask the same question will
+  find it.
 
 file: src/lib/admin-permissions.ts
 lines: 897
