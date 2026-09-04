@@ -62,9 +62,17 @@ function settingsReferenceSection(guide: string): { lines: string[]; start: numb
   return { lines: lines.slice(start + 1, end), start: start + 1 };
 }
 
+/**
+ * Cells split on UNESCAPED pipes only, so a `\|` inside a cell stays in the
+ * cell (and is unescaped) — which is what the parse error below tells an author
+ * to write. The first version split on every pipe and then gave that advice,
+ * so following it failed the same way (PR #3265 review).
+ */
 function splitTableRow(line: string): string[] {
-  const trimmed = line.trim().replace(/^\|/, "").replace(/\|$/, "");
-  return trimmed.split("|").map((cell) => cell.trim());
+  const trimmed = line.trim().replace(/^\|/, "").replace(/(?<!\\)\|$/, "");
+  return trimmed
+    .split(/(?<!\\)\|/)
+    .map((cell) => cell.trim().replace(/\\\|/g, "|"));
 }
 
 /** The one table in the section headed `| Module | Enables | Default |`. */

@@ -23,6 +23,24 @@ import { stripComments } from "./support/strip-comments";
 // the next time a module was registered. Both halves read the same
 // comment-stripped text (INV-SSOT-004): a `select:` or a module key that only
 // occurs inside a comment is neither a select nor a copy.
+//
+// The copy is looked for in TWO places, because the first review of this guard
+// (PR #3265) walked a complete duplicate past it twice. Inside a delegate call's
+// arguments, where a key may be bare or quoted (`kiosk: true` / `"kiosk": true`).
+// And in ANY object literal in non-test src/ whose `<key>: true` entries name
+// more than the threshold — because the likeliest real copy is hoisted into a
+// constant and passed as `select: MODULE_SELECT_COPY`, exactly the way the
+// canonical constant is used, and a scan of call arguments alone never sees it.
+//
+// WHAT THE LITERAL CENSUS DOES NOT SEE, stated rather than discovered: a
+// vocabulary built from a string array (`Object.fromEntries(KEYS.map(...))` —
+// which is how the canonical select itself is written, and why
+// src/config/modules.ts is excluded by name rather than passing by accident);
+// computed or template-literal keys; a copy split across several small
+// literals merged by spread; and a brace inside a string literal, which can
+// mis-scope the block the entries are counted in. `: true` is required on
+// purpose: it keeps the census on select-shaped objects and away from
+// DEFAULT_MODULE_SETTINGS-shaped maps of mixed booleans.
 
 const SRC_DIR = path.join(process.cwd(), "src");
 
@@ -126,11 +144,79 @@ function projectingCalls(): ProjectingCall[] {
   return calls;
 }
 
-/** The module keys a call spells out as object keys (`kiosk: true`, `kiosk:`). */
+/**
+ * The module keys a call spells out as object keys — bare (`kiosk: true`,
+ * `kiosk:`) or quoted (`"kiosk": true`, `'kiosk': true`). The quote is
+ * optional on purpose: the first review of this guard passed a JSON-style copy
+ * of all 29 keys because the bare form was the only one looked for.
+ */
 function handSpelledModuleKeys(args: string): string[] {
   return MODULE_KEYS.filter((key) =>
-    new RegExp(`(?:^|[\\s{,])${key}\\s*:`).test(args),
+    new RegExp(`(?:^|[\\s{,])["']?${key}["']?\\s*:`).test(args),
   );
+}
+
+/** Offset of the `{` opening the innermost block that contains `index`, or -1. */
+function enclosingBlockStart(code: string, index: number): number {
+  let depth = 0;
+  for (let i = index - 1; i >= 0; i--) {
+    const char = code[i];
+    if (char === "}") depth++;
+    else if (char === "{") {
+      if (depth === 0) return i;
+      depth--;
+    }
+  }
+  return -1;
+}
+
+/** Non-test source files under src/, minus the vocabulary's own home. */
+function nonTestSourceFiles(): string[] {
+  return walk(SRC_DIR).filter((file) => {
+    const rel = path.relative(process.cwd(), file).replace(/\\/g, "/");
+    if (rel === "src/config/modules.ts") return false;
+    if (/(^|\/)__tests__\//.test(rel)) return false;
+    return !/\.test\.tsx?$/.test(rel);
+  });
+}
+
+interface SelectShapedLiteral {
+  location: string;
+  keys: string[];
+}
+
+/**
+ * Every object literal in non-test src/ (excluding the registry itself) with the
+ * DISTINCT module keys it names as `<key>: true`, bare or quoted, grouped by the
+ * innermost enclosing `{`. Same comment-stripped text as the call scan.
+ */
+function selectShapedLiterals(): SelectShapedLiteral[] {
+  const found: SelectShapedLiteral[] = [];
+  const entryPattern = new RegExp(
+    `(?:^|[\\s{,])["']?(${MODULE_KEYS.join("|")})["']?\\s*:\\s*true\\b`,
+    "g",
+  );
+  for (const file of nonTestSourceFiles()) {
+    const code = stripComments(fs.readFileSync(file, "utf8"));
+    const byBlock = new Map<number, Set<string>>();
+    let match: RegExpExecArray | null;
+    entryPattern.lastIndex = 0;
+    while ((match = entryPattern.exec(code))) {
+      const start = enclosingBlockStart(code, match.index + 1);
+      if (start < 0) continue;
+      const keys = byBlock.get(start) ?? new Set<string>();
+      keys.add(match[1]);
+      byBlock.set(start, keys);
+    }
+    for (const [start, keys] of byBlock) {
+      const line = code.slice(0, start).split("\n").length;
+      found.push({
+        location: `${path.relative(process.cwd(), file).replace(/\\/g, "/")}:${line}`,
+        keys: [...keys],
+      });
+    }
+  }
+  return found;
 }
 
 describe("ClubModuleSettings reads use an explicit column select", () => {
@@ -162,6 +248,25 @@ describe("ClubModuleSettings reads use an explicit column select", () => {
       `INV-SSOT-001: a call naming more than ${MAX_HAND_SPELLED_MODULE_KEYS} module keys is a second copy of MODULE_KEYS. ` +
         "Spread CLUB_MODULE_SETTINGS_COLUMN_SELECT (src/config/modules.ts) or derive the projection from MODULE_KEYS instead; " +
         "a genuinely narrow read names only the modules it gates on.",
+    ).toEqual([]);
+  });
+
+  it("hoists no hand-maintained copy of the module vocabulary into an object literal anywhere in non-test src/ (#2996, INV-SSOT-001)", () => {
+    const literals = selectShapedLiterals();
+    // The threshold binds nothing today (measured: zero select-shaped literals
+    // above it), so the one thing that can be asserted about the population is
+    // that the scan still reads a real tree rather than an empty one.
+    expect(nonTestSourceFiles().length).toBeGreaterThan(0);
+    const offenders = literals
+      .filter((literal) => literal.keys.length > MAX_HAND_SPELLED_MODULE_KEYS)
+      .map(
+        (literal) =>
+          `${literal.location} names ${literal.keys.length} of the ${MODULE_KEYS.length} module keys as \`<key>: true\``,
+      );
+    expect(
+      offenders,
+      `INV-SSOT-001: an object literal naming more than ${MAX_HAND_SPELLED_MODULE_KEYS} module keys as \`<key>: true\` is a hoisted copy of MODULE_KEYS, ` +
+        "wherever it is later passed. Import CLUB_MODULE_SETTINGS_COLUMN_SELECT (src/config/modules.ts) or derive from MODULE_KEYS instead.",
     ).toEqual([]);
   });
 
