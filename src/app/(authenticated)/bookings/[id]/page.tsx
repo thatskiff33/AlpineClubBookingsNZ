@@ -24,6 +24,7 @@ import {
 } from "@/lib/additional-payment-chase";
 import { ConfirmDraftButton } from "@/components/confirm-draft-button";
 import { AdminBookingToolsCard } from "@/components/admin/admin-booking-tools-card";
+import { strandNightPriceOffersForBooking } from "@/lib/stored-night-price-strand-reconcile";
 import { getBookingManualPaymentState } from "@/lib/manual-booking-payment-state";
 import { BookingBedAllocationPanel } from "@/components/admin/booking-bed-allocation-panel";
 import { BookingWithheldEmailsBanner } from "@/components/admin/booking-withheld-emails-banner";
@@ -1469,6 +1470,25 @@ export default async function BookingDetailPage({
       : null;
 
   /*
+    #3214 (epic #2797): strands whose stored night prices cannot be read back,
+    offered to an officer to record.
+
+    WITHHELD WHILE A REVIEW IS OPEN, and `financialReviewPending` — already read
+    above — is what says so rather than a second query, exactly as
+    `financialReviewWarnings` reuses it. While a review is open the settle screen
+    owns these figures, because its target also includes the amount being
+    settled; the route refuses on the same condition, re-read under its own
+    transaction, so this only decides what to OFFER.
+
+    Admin-gated like every other tools-card input: the list names guest strands,
+    which is a thing a member never receives.
+  */
+  const storedNightPriceOffers =
+    canSeeAdminTools && !isDeleted && !financialReviewPending
+      ? await strandNightPriceOffersForBooking(booking.id, prisma)
+      : [];
+
+  /*
     #2649: the stranded zero-dollar waitlist confirm.
 
     The three cheap conditions — free, `PAYMENT_PENDING`, no payment record — are
@@ -1633,6 +1653,7 @@ export default async function BookingDetailPage({
           }}
           noEmails={isDeleted ? undefined : (noEmailsState ?? undefined)}
           manualPayment={manualPaymentState ?? undefined}
+          storedNightPriceOffers={storedNightPriceOffers}
           // #2649: the stranded zero-dollar waitlist confirm. Derived above,
           // where the provenance check that makes the banner's claim true can
           // be awaited; the route re-checks every condition under its locks.

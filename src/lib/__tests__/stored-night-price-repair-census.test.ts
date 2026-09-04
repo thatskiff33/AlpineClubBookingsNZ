@@ -103,11 +103,32 @@ const SRC = resolve(process.cwd(), "src");
 /** The one module allowed to update an existing night row's price in place. */
 const REPAIR_WRITER = "lib/stored-night-price-repair-store.ts";
 
-/** The whole of this feature, as files. */
+/**
+ * The whole of this feature, as files.
+ *
+ * #3214 ADDED THREE, and the reason each is here rather than merely nearby is
+ * worth stating, because an entry nobody can justify is how this list turns into
+ * habit:
+ *
+ *  - the strand-reconcile module is the second caller of the one writer and the
+ *    home of the eligibility fence, so it is where a "work the rest out" helper
+ *    would be most natural to write;
+ *  - the booking-page controls MUST be here. They mirror the settle screen's
+ *    unreadable-box branch, which names `unpricedNightTargetCents`, so without
+ *    an entry that reference fails the last test in this file by name - and,
+ *    more to the point, a "split it evenly" button would sit in this component;
+ *  - the route is here by choice rather than by need. Nothing fails without it,
+ *    because the route touches no `bookingGuestNight` model call and names no
+ *    target figure. It costs one line and the route has to be arithmetic-free
+ *    anyway, so the guarantee is extended rather than left to review.
+ */
 const FEATURE_FILES = [
   "lib/stored-night-price-repair.ts",
   "lib/stored-night-price-repair-store.ts",
+  "lib/stored-night-price-strand-reconcile.ts",
   "components/admin/unpriced-night-price-fields.tsx",
+  "components/admin/booking-stored-night-price-controls.tsx",
+  "app/api/admin/bookings/[id]/stored-night-prices/route.ts",
 ];
 
 /**
