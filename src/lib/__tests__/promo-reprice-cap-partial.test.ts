@@ -1311,6 +1311,7 @@ describe("the price a partial promotion produces reaches every surface unchanged
 
     // And the booking's own history replays the identical sentence.
     const items = buildBookingHistoryItems({
+      audience: "member",
       createdAt: new Date("2026-07-01T00:00:00Z"),
       payment: null,
       modifications: [
@@ -1338,6 +1339,7 @@ describe("the price a partial promotion produces reaches every surface unchanged
 
   it("leaves the history detail alone when nothing was left out", () => {
     const items = buildBookingHistoryItems({
+      audience: "member",
       createdAt: new Date("2026-07-01T00:00:00Z"),
       payment: null,
       modifications: [

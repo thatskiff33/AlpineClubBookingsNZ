@@ -4,11 +4,17 @@ import { Prisma } from "@prisma/client";
 import { z } from "zod";
 
 import {
+  coverageDependentEnvelopeOverStayUnionWhere,
   coverageDependentEnvelopeWhere,
   coverageEnvelopeWhere,
 } from "@/lib/adult-member-hosting-coverage-envelope";
 import { ApiError } from "@/lib/api-error";
 import { formatBookingReference } from "@/lib/booking-reference";
+import { bookingsOverlap } from "@/lib/booking-night-overlap";
+import {
+  HOSTING_COVERAGE_STATE_KEY_PATTERN,
+  hostingCoverageStateKeyOf,
+} from "@/lib/hosting-coverage-override-client";
 
 /**
  * The `SAME_BOOKING_OWNER` host scope: which OTHER bookings may supply cover, and
@@ -88,6 +94,15 @@ export function sameBookingOwnerCoverageSourceWhere(
   };
 }
 
+/** The owner, lodge and stay window either dependent builder is keyed from. */
+export interface SameOwnerDependentBooking {
+  id: string;
+  memberId: string;
+  lodgeId: string;
+  checkIn: Date;
+  checkOut: Date;
+}
+
 /**
  * Bookings whose own compliance may DEPEND on `booking`'s attendance — the set
  * that has to be re-evaluated when this booking's rows change (§6, §8, §10).
@@ -103,18 +118,96 @@ export function sameBookingOwnerCoverageSourceWhere(
  * source-removal change preserves a dependent's prospective cover, and if an
  * authorised or unavoidable change proceeds, its own confirmation path still
  * rechecks the rule.
+ *
+ * THIS FORM IS NOW THE DRAIN'S, AND ONLY THE DRAIN'S (#3232). Its single-window
+ * night clause is exactly right for `loadSameOwnerCoverageDependentIds`, whose
+ * `booking` argument is a SYNTHETIC envelope built from a queue item's own night
+ * list — there the window IS the bound §10 asks for, not a stale reading of a
+ * booking that has since moved. The post-mutation fan-out cannot use it, for the
+ * reason `sameOwnerCoverageDependentOverStayUnionWhere` states, and the two are
+ * separate named functions rather than one flagged function so that neither
+ * caller can reach the other's window by accident.
  */
-export function sameOwnerCoverageDependentWhere(booking: {
-  id: string;
-  memberId: string;
-  lodgeId: string;
-  checkIn: Date;
-  checkOut: Date;
-}): Prisma.BookingWhereInput {
+export function sameOwnerCoverageDependentWhere(
+  booking: SameOwnerDependentBooking,
+): Prisma.BookingWhereInput {
   return {
     ...coverageDependentEnvelopeWhere(booking),
     memberId: booking.memberId,
   };
+}
+
+/**
+ * The same relationship, over the window this booking VACATED as well as the one
+ * it now holds — the set the POST-MUTATION fan-out has to look at (#3232,
+ * `INV-HOST-049`).
+ *
+ * WHY THE BUILDER ABOVE CANNOT SERVE THIS CALLER. The fan-out runs after the
+ * write, so `booking.checkIn`/`checkOut` are the NEW dates, and a booking relying
+ * on the OLD ones fails a single-window overlap test. It is then not in the set at
+ * all: `inspectSameOwnerDependents` never evaluates it, no incident opens, the
+ * owner is not told and nothing reaches the officer queue, so the booking stays
+ * marked compliant while being uncovered for as long as nobody happens to edit it.
+ * That was live for every club on this scope, and it is what #3232 fixes.
+ *
+ * The envelope carries the whole argument for why the answer is the UNION of the
+ * two windows rather than the group direction's dropped clause — see
+ * `coverageDependentEnvelopeOverStayUnionWhere`. Nothing about it is same-owner
+ * specific, which is why it lives there; the only thing this function owns is §1's
+ * relationship, the exact `Booking.memberId`, spread flat for the reason the source
+ * builder documents.
+ */
+export function sameOwnerCoverageDependentOverStayUnionWhere(
+  booking: SameOwnerDependentBooking,
+  vacated: { checkIn: Date; checkOut: Date } | null,
+): Prisma.BookingWhereInput {
+  return {
+    ...coverageDependentEnvelopeOverStayUnionWhere(booking, vacated),
+    memberId: booking.memberId,
+  };
+}
+
+/**
+ * Whether this dependent needs a queue item OF ITS OWN, or is already reached by
+ * the item recorded for the changed booking (#3232, `INV-HOST-049`).
+ *
+ * THE SECOND HALF OF THE FIX, AND THE HALF THAT IS EASY TO MISS. Widening the read
+ * is not enough on its own: the queue item's nights are what the drain turns back
+ * into bookings — `loadSameOwnerCoverageDependentIds` reads the owner's bookings at
+ * that lodge over exactly that window — so an item carrying the CHANGED booking's
+ * new nights resolves to a dependent list that does not contain the booking the
+ * change stranded. The refusal would then look fixed and the booking would be
+ * dropped in the background instead, with nothing logged. #3039 measured that on
+ * the Group Trip path; this is the same trap on the same-owner path.
+ *
+ * SO THE TEST IS OVERLAP WITH THE CHANGED BOOKING'S CURRENT WINDOW, and it is
+ * exact rather than cautious. A dependent that DOES overlap it is already inside
+ * the night envelope of the changed booking's own item, so a second item would be
+ * duplicate work the drain has to recognise and discard. A dependent that does NOT
+ * overlap it is precisely the case the old code lost, and it gets an item naming
+ * ITS OWN nights, which is the window over which its compliance can have changed
+ * and the window whose drain read is guaranteed to find it.
+ *
+ * WHAT THIS COSTS A CLUB THAT WAS NEVER BROKEN: nothing. In the ordinary edit every
+ * dependent overlaps, so exactly one item is written, exactly as before. Items
+ * appear only for the non-overlapping dependents, which is only after a date move,
+ * and are capped with the dependent set at `SAME_OWNER_COVERAGE_DEPENDENT_LIMIT`.
+ *
+ * A ZERO-NIGHT CHANGED BOOKING falls out correctly without a special case: no
+ * dependent can overlap an empty half-open window, so every dependent gets its own
+ * item — which is right, because the changed booking's item is not written at all
+ * (`enqueueHostingCoverageReevaluation` returns null for an empty night list).
+ */
+export function dependentNeedsOwnQueueItem(
+  booking: { checkIn: Date; checkOut: Date },
+  dependent: { checkIn: Date; checkOut: Date },
+): boolean {
+  // THE SHARED PREDICATE, NOT A THIRD SPELLING OF IT. This decision has to agree
+  // with the query that found the dependent, whose SQL half is
+  // `nightOverlapClause`; writing the two comparisons out here again was one
+  // drift away from an item whose window the drain cannot resolve back to this
+  // booking (`INV-SSOT-001`).
+  return !bookingsOverlap(booking, dependent);
 }
 
 /**
@@ -137,7 +230,7 @@ export const hostingCoverageOverrideSchema = z
   .object({
     acknowledged: z.literal(true),
     reason: z.string().trim().min(10).max(500),
-    strandedStateKey: z.string().regex(/^v1:[0-9a-f]{64}$/),
+    strandedStateKey: z.string().regex(HOSTING_COVERAGE_STATE_KEY_PATTERN),
   })
   .strict();
 
@@ -173,6 +266,17 @@ export interface StrandedCoverageBooking {
   lodgeName: string;
   /** Sorted, unique NZ lodge-nights (YYYY-MM-DD) left uncovered. */
   nights: string[];
+  /**
+   * This booking's OWN arrival, as a stored lodge night (`YYYY-MM-DD`) — #3232.
+   *
+   * Distinct from `nights`, which is the subset the rule found uncovered. The
+   * linked-move offer has to propose a whole new stay for this booking, and moving
+   * only the uncovered part of a partially covered one would split a stay nobody
+   * asked to split.
+   */
+  checkIn: string;
+  /** This booking's own checkout — the morning nobody stays (#3232). */
+  checkOut: string;
 }
 
 /**
@@ -192,7 +296,31 @@ export function strandedCoverageStateKey(
   stranded: readonly StrandedCoverageBooking[],
   sourceBookingId: string | null = null,
 ): string {
-  const canonical = stranded
+  const digest = createHash("sha256")
+    .update(
+      JSON.stringify({
+        sourceBookingId,
+        stranded: canonicalStrandedRows(stranded),
+      }),
+    )
+    .digest("hex");
+  return hostingCoverageStateKeyOf(digest);
+}
+
+/**
+ * The stranded set reduced to its policy identity: booking ids and their exact
+ * lodge-nights, insensitive to query and night ordering.
+ *
+ * Exported because #3232's linked-move prompt binds the member's acceptance to
+ * the same set plus the proposal and the money, and a second hand-written
+ * canonicaliser is exactly the drift `INV-SSOT-001` refuses — two keys that
+ * disagree about whether a situation changed would let one prompt be answered
+ * with the other's evidence.
+ */
+export function canonicalStrandedRows(
+  stranded: readonly StrandedCoverageBooking[],
+): Array<{ bookingId: string; nights: string[] }> {
+  return stranded
     .map((row) => ({
       bookingId: row.bookingId,
       nights: [...new Set(row.nights)].sort(),
@@ -204,18 +332,73 @@ export function strandedCoverageStateKey(
       const rightNights = JSON.stringify(right.nights);
       return leftNights < rightNights ? -1 : leftNights > rightNights ? 1 : 0;
     });
-  const digest = createHash("sha256")
-    .update(JSON.stringify({ sourceBookingId, stranded: canonical }))
-    .digest("hex");
-  return `v1:${digest}`;
+}
+
+/**
+ * The advice a refused member is given, and EVERY ACTION IT NAMES IS ONE THEY CAN
+ * ACTUALLY TAKE (#3232).
+ *
+ * IT USED TO OPEN THE DOOR IT HAD JUST LOCKED. The sentence #2576 shipped read
+ * "Update the affected booking first, provide alternative qualifying coverage, or
+ * contact a Booking Officer for assistance", and the first of those three is
+ * impossible. Updating the affected booking means moving it, and moving it is
+ * refused by the same rule from the other end — `modify-dates/route.ts` catches
+ * `AdultMemberHostingRequiredError` and `REFUSE` is the default enforcement — so a
+ * member who wants both of their own bookings on different nights could move
+ * NEITHER. The product was instructing people to do something the code forbids,
+ * which is worse than saying nothing: they try it, they are refused again with a
+ * different message, and they conclude the booking system is broken rather than
+ * that they need an officer.
+ *
+ * THE THIRD CLAUSE IS STILL AN INSTRUCTION, which the rewrite briefly lost. It
+ * became "A Booking Officer can also authorise this change and record why" — a
+ * true statement about officers, and a dead end, because the member cannot take
+ * that override themselves and was told nothing about how to reach anyone. A
+ * refusal that names no way forward is the failure this whole sentence exists to
+ * avoid.
+ *
+ * The deadlock itself is fixed elsewhere — a date move that would strand another
+ * of the owner's bookings now offers the LINKED MOVE (`INV-HOST-050`) instead of
+ * reaching this sentence at all. This sentence is what is left for the strandings a
+ * linked move cannot answer: a guest removal, a cancellation, and a date move the
+ * shift provably cannot fix (a stay shortened at the tail, where the arrival did
+ * not move — see `linkedMoveWouldRestoreCover`). It is NOT what a full lodge
+ * reaches: "there are not beds for both" is the offer's own `NO_CAPACITY` arm,
+ * which still offers warn-and-continue. So the remedies it names are the ones that
+ * work for those: put cover back on the booking that needs it, stop that booking
+ * happening, or ask the officer who is the authority the refusal points at.
+ *
+ * COUNT-DRIVEN, because the dependent cap is `SAME_OWNER_COVERAGE_DEPENDENT_LIMIT`
+ * and not one. The singular second sentence sat above a plural "Affected:" list
+ * and told a member to add an adult to "that booking" when three were named.
+ *
+ * NOTHING HERE PROMISES SUCCESS, on purpose. Adding an adult member to another
+ * booking can itself be refused (consent, subscription standing, capacity), so the
+ * wording offers a direction rather than a guarantee. What it must never do again
+ * is name a step that cannot even be attempted.
+ */
+function strandedCoverageOpening(count: number): string {
+  const which =
+    count > 1
+      ? `${count} other bookings on your account`
+      : "another booking on your account";
+  const fix =
+    count > 1
+      ? "Adding a qualifying adult member to those bookings, or cancelling them,"
+      : "Adding a qualifying adult member to that booking, or cancelling it,";
+  return (
+    `This change would leave ${which} without the required adult member ` +
+    `coverage for one or more nights. ${fix} would resolve this. A Booking ` +
+    `Officer can also authorise this change and record why — contact the club ` +
+    `if you would like them to look at it.`
+  );
 }
 
 /**
  * The member-facing sentence for a refused self-service change (§6).
  *
- * The owner supplied the first sentence verbatim and it is used verbatim. What
- * follows is the evidence §6 asks for "where appropriate and safe": the affected
- * booking reference, its lodge and the uncovered dates.
+ * The evidence §6 asks for "where appropriate and safe" follows the advice: the
+ * affected booking reference, its lodge and the uncovered dates.
  *
  * SAFE ONLY WHEN THE ACTOR IS THE OWNER, AND THE CALLER MUST HAVE ESTABLISHED
  * THAT. Every booking in this list has the same `Booking.memberId` as the one
@@ -239,11 +422,7 @@ export function strandedCoverageStateKey(
 export function formatStrandedCoverageMessage(
   stranded: readonly StrandedCoverageBooking[],
 ): string {
-  const opening =
-    "This change would leave another booking on your account without the " +
-    "required adult member coverage for one or more nights. Update the " +
-    "affected booking first, provide alternative qualifying coverage, or " +
-    "contact a Booking Officer for assistance.";
+  const opening = strandedCoverageOpening(stranded.length);
   if (stranded.length === 0) return opening;
 
   const detail = stranded
@@ -271,8 +450,8 @@ export function formatStrandedCoverageMessage(
  * differs from its hosting sibling. The #2365 exception workflow decides whether
  * a PROPOSED party may breach the hosting rule; this refusal is about a DIFFERENT
  * booking that is already confirmed and already compliant. The way out the owner
- * specified is the three concrete actions in the message — amend the affected
- * booking, restore alternative cover, or ask an officer — not a policy-exception
+ * specified is the concrete actions in the message — put cover back on the
+ * affected booking, cancel it, or ask an officer — not a policy-exception
  * request against the booking being changed. `exceptionEligible` is therefore
  * absent rather than false: this refusal never enters exception review, so it
  * carries no aggregated review shape to mislead a client into offering one.
@@ -280,11 +459,35 @@ export function formatStrandedCoverageMessage(
 export class SameOwnerCoverageWouldBreakError extends ApiError {
   readonly code = "SAME_OWNER_COVERAGE_WOULD_BREAK";
   readonly stranded: readonly StrandedCoverageBooking[];
+  /**
+   * True when a LINKED MOVE would answer this, so the member must be OFFERED one
+   * rather than refused (#3232, `INV-HOST-050`).
+   *
+   * SET ONLY WHEN THE STRANDING IS CAUSED BY MOVING AWAY, which is the one case in
+   * which every remedy this refusal's own sentence offers is closed to the member.
+   * They cannot move the affected booking — the same rule refuses that from the
+   * other end — so a refusal here is a deadlock rather than a redirection. A
+   * stranding caused by removing a guest, or by a cancellation, leaves them real
+   * remedies on the affected booking and is refused exactly as before.
+   *
+   * WHY A FLAG ON THE REFUSAL RATHER THAN A SEPARATE ERROR TYPE. Because the
+   * refusal itself is still correct and still the fallback: the hosting engine
+   * cannot build the offer (that needs the pricing engine, which would be an import
+   * cycle), so it raises what it has always raised and marks it as answerable. The
+   * date writer catches it, prices the linked move and re-throws the offer. If some
+   * path ever fails to do that the member gets the bare refusal — worse, but a
+   * refusal naming an officer they can ring, never a silent stranding.
+   */
+  readonly linkedMoveWouldAnswer: boolean;
 
-  constructor(stranded: readonly StrandedCoverageBooking[]) {
+  constructor(
+    stranded: readonly StrandedCoverageBooking[],
+    options: { linkedMoveWouldAnswer?: boolean } = {},
+  ) {
     super(formatStrandedCoverageMessage(stranded), 409);
     this.name = "SameOwnerCoverageWouldBreakError";
     this.stranded = stranded;
+    this.linkedMoveWouldAnswer = options.linkedMoveWouldAnswer === true;
   }
 }
 

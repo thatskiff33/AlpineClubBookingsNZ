@@ -524,7 +524,7 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
   },
   "hosting-coverage-lost": {
     "defaultSubject": "Your booking needs adult member cover - {{CLUB_LODGE_NAME}}",
-    "defaultBody": "Your booking needs adult member cover\n\nHi {{firstName}}, a change elsewhere means your booking at {{CLUB_LODGE_NAME}} no longer has a qualifying adult member staying on every night your non-member guests are there.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nNights needing cover: {{uncoveredNights}}\n\nYour booking has not been cancelled and your beds and payments are unchanged. A Booking Officer has been notified and will be in touch.\n\nYou can fix it yourself by adding adult member cover for those nights, by changing the affected booking, or by asking a Booking Officer to approve an exception. If you have any questions, contact the club at {{SUPPORT_EMAIL}}."
+    "defaultBody": "Your booking needs adult member cover\n\nHi {{firstName}}, your booking at {{CLUB_LODGE_NAME}} no longer has a qualifying adult member staying on every night your non-member guests are there.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nNights needing cover: {{uncoveredNights}}\n\nYour booking has not been cancelled and your beds and payments are unchanged. A Booking Officer has been notified and will be in touch.\n\nYou can fix it yourself by adding adult member cover for those nights, by changing the affected booking, or by asking a Booking Officer to approve an exception. If you have any questions, contact the club at {{SUPPORT_EMAIL}}."
   },
   "booking-policy-exception-refused": {
     "defaultSubject": "Your request was not approved - {{CLUB_LODGE_NAME}}",

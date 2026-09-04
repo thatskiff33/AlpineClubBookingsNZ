@@ -311,6 +311,32 @@ visible to anybody. What *did* change for some entries is which Category filter
 returns them — the fourth bullet above lists the moves, and they apply on a
 member's own timeline too.
 
+**A place other than this screen where an entry's own words are read.** The
+category decides who finds an entry *here*, and on a member's own timeline. It is
+not the only surface that shows what an entry says. From this release, a booking
+that has lost its required adult member cover shows the reason on the booking's
+own page, under **Adult member cover flagged**, in the words that were recorded —
+which may be an officer's free-text override reason.
+
+Who sees it: **anyone with booking-edit access** (Full Admins, and Booking
+Officers through the `bookings:edit` permission). Not the booking's own member,
+and not a view-only booking admin. That is a deliberate decision of the club
+owner, taken on 4 September 2026 over the narrower alternative of showing only
+the member's own recorded decision, and the reason is that an officer following
+the queue's **Review booking** button has to be able to see why the booking is
+flagged — without it they saw a generic cause and guessed. It is worth knowing
+because the entry's own category is `admin`, which on this screen is Support only:
+a Booking Officer who cannot find the entry in the Audit Log can still read its
+words on the booking.
+
+A **view-only** booking admin sees the queue on **Admin → All Bookings** — which
+booking, whose, which nights, how many uncovered guest-nights and the cause label
+— and, on the booking itself, no reason. That is the same line drawn twice:
+noticing that a booking needs attention and reading an officer's private note
+about it are different permissions, and the queue row carries no free text of its
+own. Nothing on it is information a view-only booking admin cannot already see on
+the bookings list.
+
 Two mismatches are worth remembering when you search, because they look like
 mistakes and are not. **Induction** entries are `lodge`, not membership. **Issue
 report** entries are `privacy`, not admin. Both follow the *information* in the

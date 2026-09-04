@@ -1,0 +1,34 @@
+-- #3232 D2: whether the LINKED MOVE charges the change fee on BOTH bookings.
+--
+-- ONE STATEMENT, ADDITIVE EXPAND ONLY. `BookingDefaults` is a single-row club
+-- settings table (`id` defaults to the literal 'default'), so this is a catalog
+-- change over one row.
+--
+-- NOT NULL WITH A CONSTANT DEFAULT IS SAFE HERE AND IS THE POINT. PostgreSQL 11
+-- and later store a non-volatile ADD COLUMN default in the catalog and rewrite no
+-- heap, so this neither scans nor rewrites; and `true` is a complete, correct
+-- answer for every existing club (charge both fees, which is the owner's decision
+-- and the conservative direction for a club's money). There is no "undecided"
+-- state worth modelling, which is why this column is not nullable the way the
+-- host-scope columns on "AdultMemberHostingPolicy" are — those had to distinguish
+-- "not decided" from "decided narrowly" because deciding WIDENS what counts as
+-- coverage. Nothing here widens.
+--
+-- OLD-COLOUR COMPATIBLE IN BOTH DIRECTIONS. Forward: the draining colour's
+-- generated client has never heard of this column, so it neither selects nor
+-- writes it, and its INSERT/upsert of the settings row succeeds because the
+-- default supplies the value. Backward: a rollback ignores the column entirely
+-- and re-applying finds it already present; no data changes either way.
+--
+-- NO DML OF ANY KIND — no INSERT, UPDATE, DELETE, data-modifying CTE or DO block
+-- — so every existing row is byte-identical afterwards and the data-migration
+-- verification gate classifies this as shape-only. No session clock is needed
+-- because there is no payload (#1627).
+--
+-- LOCK IMPACT: a brief ACCESS EXCLUSIVE on "BookingDefaults" for the catalog
+-- write, whose duration does not grow with the table (one row). No Booking,
+-- Payment, Member, capacity, credit or provider table is read, locked or altered,
+-- and this migration composes no application writer, so INV-LOCK-001 and
+-- INV-LOCK-002 are unaffected.
+ALTER TABLE "BookingDefaults"
+  ADD COLUMN "linkedMoveChargesBothChangeFees" BOOLEAN NOT NULL DEFAULT true;

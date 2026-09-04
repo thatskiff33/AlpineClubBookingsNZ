@@ -1,3 +1,4 @@
+import { DEFAULT_BOOKING_DEFAULTS } from "@/config/club-settings-defaults"
 import { NextRequest, NextResponse } from "next/server"
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma"
@@ -22,6 +23,13 @@ const policySchema = z
     // Cross-lodge waitlist queue order (ADR-004 owner decision 1).
     // Club-wide, like hold days: queue fairness is a club policy.
     waitlistCrossLodgeOrder: z.enum(["OWN_LODGE_FIRST", "MERGED"]).optional(),
+    // #3232 D2: whether the LINKED MOVE charges the change fee on both bookings.
+    // Club-wide like the two above, and for the same kind of reason: the change-fee
+    // TIERS price a lodge's own cancellation risk and are per lodge, but whether a
+    // second fee is fair when the club's own supervision rule compelled the move is
+    // a question about how the club treats its members, which does not differ
+    // between its lodges.
+    linkedMoveChargesBothChangeFees: z.boolean().optional(),
     // Per-lodge override partition (ADR-001 resolved question 3). Omitted =
     // the club-wide (null lodgeId) rules. A lodge's rows REPLACE the
     // club-wide set at runtime; an empty rules array for a lodge removes the
@@ -57,6 +65,14 @@ const policySchema = z
         message: "Waitlist queue order is club-wide and cannot be set per lodge",
       })
     }
+    if (data.lodgeId && data.linkedMoveChargesBothChangeFees !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["linkedMoveChargesBothChangeFees"],
+        message:
+          "The linked-move change-fee setting is club-wide and cannot be set per lodge",
+      })
+    }
   })
 
 export async function GET(req: NextRequest) {
@@ -81,6 +97,12 @@ export async function GET(req: NextRequest) {
     nonMemberHoldEnabled: defaults?.nonMemberHoldEnabled ?? true,
     nonMemberHoldDays: defaults?.nonMemberHoldDays ?? 7,
     waitlistCrossLodgeOrder: defaults?.waitlistCrossLodgeOrder ?? "OWN_LODGE_FIRST",
+    // #3232: absent row means the effective default, which is `true` — charge
+    // both. A club that has never opened this page has not chosen to waive
+    // anything. Read from the one home rather than restated (`INV-SSOT-001`).
+    linkedMoveChargesBothChangeFees:
+      defaults?.linkedMoveChargesBothChangeFees ??
+      DEFAULT_BOOKING_DEFAULTS.linkedMoveChargesBothChangeFees,
     lodgeId: lodgeId ?? null,
   })
 }
@@ -101,7 +123,14 @@ export async function PUT(req: NextRequest) {
     )
   }
 
-  const { rules, nonMemberHoldEnabled, nonMemberHoldDays, waitlistCrossLodgeOrder, lodgeId } = parsed.data
+  const {
+    rules,
+    nonMemberHoldEnabled,
+    nonMemberHoldDays,
+    waitlistCrossLodgeOrder,
+    linkedMoveChargesBothChangeFees,
+    lodgeId,
+  } = parsed.data
 
   if (lodgeId) {
     const lodge = await prisma.lodge.findUnique({
@@ -153,7 +182,8 @@ export async function PUT(req: NextRequest) {
     if (
       nonMemberHoldDays !== undefined ||
       nonMemberHoldEnabled !== undefined ||
-      waitlistCrossLodgeOrder !== undefined
+      waitlistCrossLodgeOrder !== undefined ||
+      linkedMoveChargesBothChangeFees !== undefined
     ) {
       await tx.bookingDefaults.upsert({
         where: { id: "default" },
@@ -161,12 +191,21 @@ export async function PUT(req: NextRequest) {
           ...(nonMemberHoldEnabled !== undefined ? { nonMemberHoldEnabled } : {}),
           ...(nonMemberHoldDays !== undefined ? { nonMemberHoldDays } : {}),
           ...(waitlistCrossLodgeOrder !== undefined ? { waitlistCrossLodgeOrder } : {}),
+          ...(linkedMoveChargesBothChangeFees !== undefined
+            ? { linkedMoveChargesBothChangeFees }
+            : {}),
         },
         create: {
           id: "default",
           nonMemberHoldEnabled: nonMemberHoldEnabled ?? true,
           nonMemberHoldDays: nonMemberHoldDays ?? 7,
           ...(waitlistCrossLodgeOrder !== undefined ? { waitlistCrossLodgeOrder } : {}),
+          // #3232: only when the request said so, so an unrelated save of the
+          // cancellation rules cannot stamp a decision this club never made — the
+          // schema default supplies `true` on a create that omits it.
+          ...(linkedMoveChargesBothChangeFees !== undefined
+            ? { linkedMoveChargesBothChangeFees }
+            : {}),
         },
       })
     }
@@ -185,6 +224,9 @@ export async function PUT(req: NextRequest) {
       nonMemberHoldEnabled: defaults?.nonMemberHoldEnabled ?? true,
       nonMemberHoldDays: defaults?.nonMemberHoldDays ?? 7,
       waitlistCrossLodgeOrder: defaults?.waitlistCrossLodgeOrder ?? "OWN_LODGE_FIRST",
+      linkedMoveChargesBothChangeFees:
+        defaults?.linkedMoveChargesBothChangeFees ??
+        DEFAULT_BOOKING_DEFAULTS.linkedMoveChargesBothChangeFees,
     }
   }, { isolationLevel: "Serializable" })
 
@@ -192,7 +234,7 @@ export async function PUT(req: NextRequest) {
     action: "cancellation-policy.update",
     category: "booking",
     memberId: session.user.id,
-    details: `Updated to ${sortedRules.length} rules, holdEnabled=${nonMemberHoldEnabled ?? "unchanged"}, holdDays=${nonMemberHoldDays ?? "unchanged"}, waitlistOrder=${waitlistCrossLodgeOrder ?? "unchanged"}, lodge=${lodgeId ?? "club-wide"}`,
+    details: `Updated to ${sortedRules.length} rules, holdEnabled=${nonMemberHoldEnabled ?? "unchanged"}, holdDays=${nonMemberHoldDays ?? "unchanged"}, waitlistOrder=${waitlistCrossLodgeOrder ?? "unchanged"}, linkedMoveBothFees=${linkedMoveChargesBothChangeFees ?? "unchanged"}, lodge=${lodgeId ?? "club-wide"}`,
   })
 
   revalidatePublicPageContent()

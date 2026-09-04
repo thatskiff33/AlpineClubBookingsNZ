@@ -308,6 +308,9 @@ export async function POST(
     // can fix the party or ask an officer.
     await reconcileAdultMemberHostingReviewWithSiblings(id, tx, {
       ...hostingCoverageActorOptions({
+        // #3232: confirming a draft does not move its stay, so there is no
+        // vacated window for the dependent fan-out to also look at.
+        vacatedRange: null,
         actorRole: session.user.role,
         hasBookingsEditAccess: isAdmin,
         actorMemberId: session.user.id,

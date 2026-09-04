@@ -29,6 +29,7 @@ import {
 } from "@/lib/adult-member-hosting-review";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import type { HostingCoverageOverrideInput } from "@/lib/adult-member-hosting-same-owner";
+import type { HostingCoverageLinkedMoveInput } from "@/lib/adult-member-hosting-linked-move";
 import {
   createModificationAdditionalPaymentIntent,
   executeBookingModificationRefund,
@@ -53,6 +54,7 @@ import {
   checkCapacityForGuestRanges,
 } from "@/lib/capacity";
 import {
+  InsufficientCapacityError,
   OverCapacityConfirmationRequiredError,
   overCapacityNights,
   wholeLodgeBlockedNights,
@@ -213,6 +215,7 @@ export async function modifyBookingDates({
   bookingId,
   actor,
   hostingCoverageOverride,
+  hostingCoverageLinkedMove,
   input,
   ipAddress,
 }: {
@@ -224,6 +227,22 @@ export async function modifyBookingDates({
    * member cannot self-authorise past §6's block by inventing a reason.
    */
   hostingCoverageOverride?: HostingCoverageOverrideInput | null;
+  /**
+   * #3232: the MEMBER's answer to the linked-move offer, when they gave one.
+   *
+   * Only `LEAVE_UNCOVERED` is meaningful here — it turns the stranded refusal into
+   * an escalation, so the change proceeds, the member has already been warned in
+   * plain words and the officer queue gets an incident. `MOVE_BOTH` never reaches
+   * this service: accepting is a two-booking atomic move, and this service is not
+   * transaction-aware, so it belongs to `booking-linked-date-move-service.ts`.
+   *
+   * THIS SERVICE OWES THE FIELD BECAUSE IT OWES THE OFFER. It is the writer that
+   * holds `oldCheckIn`/`oldCheckOut`, so it is the writer whose widened dependent
+   * fan-out now NOTICES the booking a move leaves behind — and a route that can
+   * raise the offer but cannot accept the member's answer to it would refuse them
+   * twice with the same sentence.
+   */
+  hostingCoverageLinkedMove?: HostingCoverageLinkedMoveInput | null;
   input: ModifyBookingDatesInput;
   ipAddress: string;
 }): Promise<DateModificationResponse> {
@@ -502,9 +521,15 @@ export async function modifyBookingDates({
       );
 
       if (!capacity.available) {
-        throw new ApiError(
+        // #3232: the same class the batch engine's member path throws, for the
+        // same reason — a caller has to be able to tell "there are no beds" apart
+        // from every other 400 a date move can produce. Nothing routes a linked
+        // move's second booking through THIS writer today (the atomic arm needs a
+        // transaction-aware engine, so it prices through `modifyBookingBatch`),
+        // and that is exactly why it is classed here as well: the arm must not go
+        // dead again the day one does.
+        throw new InsufficientCapacityError(
           "Not enough beds available for the new dates",
-          400,
         );
       }
     }
@@ -1203,9 +1228,31 @@ export async function modifyBookingDates({
     // account. The disposition travels with the actor.
     await reconcileAdultMemberHostingReviewWithSiblings(bookingId, tx, {
       ...hostingCoverageActorOptions({
+        // #3232: THE window this booking has just vacated. This seam runs AFTER
+        // the write, so without it the dependent fan-out compares against the NEW
+        // dates and a booking that was relying on the OLD ones is invisible to it —
+        // no evaluation, no incident, no owner notice and nothing in the officer
+        // queue, indefinitely. These are the dates the booking really held, taken
+        // from the post-lock snapshot rather than from the caller's proposal.
+        vacatedRange: { checkIn: oldCheckIn, checkOut: oldCheckOut },
         actorRole: actor.role,
         actorMemberId: actor.id,
         ...(hostingCoverageOverride ? { override: hostingCoverageOverride } : {}),
+        // #3232: a member who was offered the linked move and chose to move only
+        // this booking is escalated rather than refused — the officer queue gets
+        // the incident and they were shown the consequence first. The owner
+        // travels WITH the answer, from the same pre-write snapshot: the answer
+        // only means anything if the actor is the person whose two bookings these
+        // are, and an officer answering here would otherwise skip §7's
+        // confirmation and its mandatory reason.
+        ...(hostingCoverageLinkedMove
+          ? {
+              linkedMove: {
+                answer: hostingCoverageLinkedMove,
+                bookingOwnerMemberId: booking.memberId,
+              },
+            }
+          : {}),
       }),
     });
 
@@ -1891,6 +1938,13 @@ export async function adminShiftBookingDates({
     // 409 retry impossible or turns an attributable override into a system change.
     await reconcileAdultMemberHostingReviewWithSiblings(bookingId, tx, {
       ...hostingCoverageActorOptions({
+        // #3232: THE window this booking has just vacated. This seam runs AFTER
+        // the write, so without it the dependent fan-out compares against the NEW
+        // dates and a booking that was relying on the OLD ones is invisible to it —
+        // no evaluation, no incident, no owner notice and nothing in the officer
+        // queue, indefinitely. These are the dates the booking really held, taken
+        // from the post-lock snapshot rather than from the caller's proposal.
+        vacatedRange: { checkIn: oldCheckIn, checkOut: oldCheckOut },
         actorRole: actor.role,
         actorMemberId: actor.id,
         ...(hostingCoverageOverride ? { override: hostingCoverageOverride } : {}),

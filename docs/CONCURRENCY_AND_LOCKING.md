@@ -317,6 +317,24 @@ shares the immutable lodge tier. Those common tiers serialize eligibility
 changes with roster validation without making every booking writer enumerate
 every possible roster night.
 
+**One sorted set per call is not one sorted set per transaction (#3232).**
+`lockRosterDates` sorts the dates it is given, so any two writers that each take
+ONE set are safe against each other. A caller that composes two booking writes
+into one transaction takes TWO sets: `runLinkedDateMove` moves a member's booking
+and the booking of theirs that was relying on it for adult supervision, and each
+`modifyBookingBatch` derives its own envelope. It can therefore hold a later date
+from the first booking's set and then ask for an earlier one from the second
+booking's — an inverted acquisition against a writer arriving from the other
+direction. What makes that safe is the global key, and it is a constraint on new
+writers rather than a happy accident: **every writer in the tree that acquires
+more than one roster-date key holds `pg_advisory_xact_lock(1)` for the whole
+transaction first** — both booking modification services, guest removal, the
+kiosk departure route, and `chore-cleanup`, which is only ever called from inside
+the first two. Two multi-key roster acquisitions therefore cannot interleave, and
+a writer holding a single roster key cannot complete a cycle in this family. A new
+multi-key roster writer that skips the global key would break this, so it must
+take it.
+
 The three roster-aware booking modification paths continue into the optional
 member-night and member-credit tiers only after their roster-date set is held,
 then call the same-owner hosting reconciler last. Guest removal likewise reaches
@@ -1034,6 +1052,68 @@ one request can disagree if an admin saves the panel between them, which on
 `modify-quote` (seven or more pricing passes, two of them differenced into the
 member's settlement delta) is a money error rather than a nuisance. See the
 `INV-LOCKOUT` rules in `docs/invariants/subscription-lockout-pricing.md`.
+
+#### Which client reads the Xero lock dates (#3232)
+
+Not a database client at all, which is why it is the sharpest case of this rule.
+The ordinary date-edit guard (`assertProposedDateEditClearsXeroLockDate`, #1729)
+consults the club's persisted timezone, its module flags, its Xero connection
+and — on a cold or expired cache — `getXeroLockDates()`, a live HTTPS request to
+Xero with a possible OAuth refresh. It has always been documented as a call that
+must sit outside any transaction, and it did: `modifyBookingBatch` calls it in
+its preamble, above `withOptionalTransaction`.
+
+**Above `withOptionalTransaction` is not outside the transaction for a caller
+that supplies one.** That helper runs its callback on the caller's `tx`, so on
+the caller-transaction path the global money key and the per-lodge capacity key
+are already held when control enters the service — and the preamble's three
+reads, the provider request among them, ran under both. #2525's approve-and-
+execute path had that exposure from the start; #3232's linked move made it a live
+member API on both date doors, twice per transaction, and this file's own rules
+forbid a provider call there outright.
+
+The remedy is the same "resolve first, pass a value" shape as the two sections
+below, with one addition the linked move forces. It composes TWO booking writes
+and discovers the second **under its locks**, so "call the guard for each booking
+beforehand" is not available to it. The guard is therefore split: the club and
+provider facts (`resolveXeroLockDateFacts`) resolve outside any transaction into
+ONE value that covers every booking, and the per-booking decision
+(`assertDateEditClearsXeroLockDateFromFacts`) is synchronous arithmetic over the
+booking row, which a caller may safely run under its locks — and does, against
+the post-lock row rather than a pre-read one. A caller that can enumerate its
+check-ins passes them and usually pays nothing, because only a retroactive
+check-in is guarded at all; a caller that cannot resolves the facts over EVERY
+booking instead.
+
+**And a caller-transaction caller has no choice about that, by construction.**
+Given an enumerated candidate set the resolver short-circuits to
+`not-applicable` when none of them is retroactive, and the decision then returns
+without looking at the booking at all — so enumerating on a path that discovers a
+booking under its locks would hand the guard a set that does not contain the
+booking it is about to judge, and a retroactive invoice would be re-dated into a
+closed accounting period with no refusal at all. The only function that can build
+the caller-transaction value, `prepareBatchModificationForCallerTransaction`,
+takes no candidate set, and its result is branded so nothing else can construct
+one. The audience the refusals are worded for rides on the facts for a related
+reason: the captured read-failure error is worded at resolve time and cannot be
+re-worded later, so a decision taking its own audience would honour it for the
+locked-period refusal and ignore it for the other — disclosing the club's Xero
+connection state to a member.
+
+Alongside it, `modifyBookingBatch` now **refuses a caller-supplied transaction
+without a `preTransaction` value** carrying those facts, the member-guest add
+policy and the subscription-lockout mode. That refusal is the enforcement: there
+is no position inside a transaction-aware function that is outside the
+transaction on every path, so the only safe rule is that the answers arrive from
+whoever owns the commit. `lock-bound-club-zone-outside-transaction.test.ts` bans
+the resolvers themselves from every such module except its one named
+pre-transaction function — the frame that census was previously stopping one
+short of, which is how three indirect readers sat in a preamble under two locks
+with a green suite. Its list of banned resolvers includes the guard's own
+module-client booking read (`readXeroLockGuardDateEditBooking`), which was missing
+from it: a second pooled connection taken under both keys is the same hazard as
+the settings reads beside it, and the only thing stopping it being called from
+inside a transaction was that nobody had.
 
 #### Which client reads the club's timezone (#2870)
 

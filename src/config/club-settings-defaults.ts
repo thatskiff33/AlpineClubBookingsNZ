@@ -45,6 +45,12 @@ export const DEFAULT_BOOKING_DEFAULTS = {
   nonMemberHoldEnabled: true,
   nonMemberHoldDays: 7,
   waitlistCrossLodgeOrder: "OWN_LODGE_FIRST",
+  // #3232 D2: both bookings really move in a linked move, so both attract their
+  // change fee. `true` is the owner's decision and the conservative direction for
+  // a club's money — a club that means to waive the second fee says so, and an
+  // upgrade never silently starts giving fees away. Must agree with the schema
+  // default on `BookingDefaults.linkedMoveChargesBothChangeFees`.
+  linkedMoveChargesBothChangeFees: true,
 } as const;
 
 /** `BedAllocationSettings` — read by `resolveAutoAllocationEnabled` and the admin surface. */

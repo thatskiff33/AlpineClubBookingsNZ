@@ -9,7 +9,10 @@ import { MEMBER_ACCESS_ROLE_SELECT } from "@/lib/access-role-definitions";
 import { resolveHostingCoverageIncidents } from "@/lib/adult-member-hosting-coverage-incidents";
 import { recordAdultMemberHostingReviewDecision } from "@/lib/adult-member-hosting-review";
 import { createConfirmedBooking } from "@/lib/booking-create";
-import { modifyBookingBatch } from "@/lib/booking-batch-modification-service";
+import {
+  modifyBookingBatch,
+  type BatchModificationPreTransaction,
+} from "@/lib/booking-batch-modification-service";
 import {
   assertLinkedBookingMembersCanBeBooked,
   normalizeBookingGuestInputs,
@@ -369,13 +372,14 @@ export interface PolicyExceptionApprovalContext {
    *
    * #3123 review, `INV-LOCK-004`. The two canonical services this approval
    * executes — `modifyBookingBatch` and `createConfirmedBooking` — are both
-   * transaction-AWARE, and this is the ONE path that supplies them a caller
-   * transaction. By the time either runs, `pg_advisory_xact_lock(1)` and the
-   * per-lodge capacity key are held, so neither may read the club's persisted
-   * zone for itself: a `clubTimeSettings` query on the module client would need
-   * a second pooled connection under both locks, and under concurrency every
-   * transaction ends up holding one connection and waiting for another that
-   * only a commit can free.
+   * transaction-AWARE, and this was the ONE path that supplied them a caller
+   * transaction until #3232's linked move became a SECOND (a live member API, on
+   * both date doors, twice per transaction). By the time either runs,
+   * `pg_advisory_xact_lock(1)` and the per-lodge capacity key are held, so
+   * neither may read the club's persisted zone for itself: a `clubTimeSettings`
+   * query on the module client would need a second pooled connection under both
+   * locks, and under concurrency every transaction ends up holding one connection
+   * and waiting for another that only a commit can free.
    *
    * The whole approval therefore acts on ONE club day, which is also the right
    * answer on its own terms: an approval that priced a change fee on one day
@@ -383,6 +387,18 @@ export interface PolicyExceptionApprovalContext {
    * midnight.
    */
   todayAtClub: CalendarDate;
+  /**
+   * The batch modification's own pre-transaction work, resolved by the route for
+   * exactly the reason `todayAtClub` above is (#3232, `INV-LOCK-004`).
+   *
+   * `modifyBookingBatch` reads the member-guest policy, the subscription-lockout
+   * mode and — on a cold cache, over HTTPS — the Xero organisation's lock dates
+   * before it opens a transaction. On THIS path it does not open one: it is handed
+   * the approval's, already holding the global money key and the lodge capacity
+   * key. So those reads have to happen out here, and the field is required rather
+   * than optional so the compiler says so.
+   */
+  batchPreTransaction: BatchModificationPreTransaction;
   /** The officer approving; re-read from the DB inside the transaction. */
   actorMemberId: string;
   /** Recorded on the canonical services' audit rows. */
@@ -736,6 +752,10 @@ async function executeApprovedModification(args: {
       : {}),
     todayAtClub: context.todayAtClub,
     tx,
+    // #3232, `INV-LOCK-004`: resolved by the route before this transaction was
+    // opened. Without it the service would read the club's settings and reach
+    // Xero from inside a transaction holding two keys.
+    preTransaction: context.batchPreTransaction,
   });
 
   // The service reconciles the hosting hazard from the rows it just wrote and

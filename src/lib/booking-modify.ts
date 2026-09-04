@@ -53,10 +53,14 @@ export {
   applyLifecycleTransitions,
   applyPaymentAdjustments,
   calculateModificationSettlementOptions,
-  BookingModificationSettlementMethodRequiredError,
-  SETTLEMENT_METHOD_REQUIRED_CODE,
-  SETTLEMENT_METHOD_REQUIRED_MESSAGE,
   type BookingModificationSettlementOptions,
   type LifecycleTransitionResult,
   type PaymentAdjustmentResult,
 } from "@/lib/booking-modify-settlement";
+// #3232: straight from the module that declares them, whose only import is
+// `ApiError`, so recognising this refusal costs a caller nothing.
+export {
+  BookingModificationSettlementMethodRequiredError,
+  SETTLEMENT_METHOD_REQUIRED_CODE,
+  SETTLEMENT_METHOD_REQUIRED_MESSAGE,
+} from "@/lib/booking-modify-settlement-required";

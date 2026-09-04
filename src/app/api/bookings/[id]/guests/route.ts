@@ -968,6 +968,8 @@ export async function POST(
       // travels with the actor.
       await reconcileAdultMemberHostingReviewWithSiblings(bookingId, tx, {
           ...hostingCoverageActorOptions({
+            // #3232: a guest change moves nobody's dates, so no vacated window.
+            vacatedRange: null,
           actorRole,
           hasBookingsEditAccess: isAdmin,
           actorMemberId: session.user.id,

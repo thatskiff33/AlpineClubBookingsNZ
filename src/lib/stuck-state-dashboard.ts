@@ -1,5 +1,6 @@
 import type { FeatureFlags } from "@/config/schema";
 import { CLUB_HUT_LEADER_LABEL } from "@/config/club-identity";
+import { describeHostingCoverageIncidentCause } from "@/lib/adult-member-hosting-coverage-incidents";
 import { formatDateOnly } from "@/lib/date-only";
 import { addCalendarDays } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
@@ -1087,7 +1088,7 @@ export async function getStuckStateDashboard(input?: {
         `${incident.booking.lodge?.name ?? "Lodge"}; ` +
         `${formatDateOnly(incident.booking.checkIn)} to ${formatDateOnly(incident.booking.checkOut)}; ` +
         `${nights.length} uncovered ${plural(nights.length, "night")}; ` +
-        `${incident.cause === "OFFICER_OVERRIDE" ? "officer override" : "system change"}.`,
+        `${describeHostingCoverageIncidentCause(incident.cause)}.`,
       href: `/bookings/${incident.booking.id}`,
     };
   });

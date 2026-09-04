@@ -7,6 +7,7 @@
 // the fake store below really applies them — see `matchesWhere`. That is the whole
 // reason this file does not reuse the single-row `makeDb` in
 // adult-member-hosting-review.test.ts.
+import { bookingsOverlap } from "@/lib/booking-night-overlap";
 import { AgeTier, type MemberGuestConsentStatus } from "@prisma/client";
 import { describe, expect, it, vi } from "vitest";
 
@@ -56,9 +57,13 @@ import {
   hostingCoverageOverrideSchema,
   readHostingCoverageOverride,
   sameBookingOwnerCoverageSourceWhere,
+  sameOwnerCoverageDependentOverStayUnionWhere,
   sameOwnerCoverageDependentWhere,
+  strandedCoverageReference,
+  dependentNeedsOwnQueueItem,
   strandedCoverageStateKey,
 } from "@/lib/adult-member-hosting-same-owner";
+import { LINKED_MOVE_DECLINED_INCIDENT_REASON } from "@/lib/adult-member-hosting-coverage-incidents";
 
 const LODGE = "lodge-a";
 const OTHER_LODGE = "lodge-b";
@@ -164,6 +169,17 @@ function matchesWhere(row: FakeBooking, where: Record<string, unknown>): boolean
     if (key === "OR") {
       const clauses = condition as Array<Record<string, unknown>>;
       if (!clauses.some((clause) => matchesWhere(row, clause))) return false;
+      continue;
+    }
+    // #3232: the union dependent envelope composes its two night-overlap tests as
+    // `AND: [{ OR: [ ... ] }]`, because a flat spread of two objects that both set
+    // `checkIn` and `checkOut` would silently keep only one of them. Before this
+    // arm the fake THREW on the array, which is the behaviour that matters most —
+    // an unknown clause must never be silently skipped, or a "not related" test
+    // would pass while the real query related the two bookings.
+    if (key === "AND") {
+      const clauses = condition as Array<Record<string, unknown>>;
+      if (!clauses.every((clause) => matchesWhere(row, clause))) return false;
       continue;
     }
     const value = row[key];
@@ -877,7 +893,7 @@ describe("a change that would strand another booking (#2576 §6, §7, §14)", ()
       reconcileAdultMemberHostingReviewWithSiblings(
         "b-source",
         db,
-        hostingCoverageActorOptions({ actorRole: "MEMBER", actorMemberId: "owner-1" }),
+        hostingCoverageActorOptions({ vacatedRange: null, actorRole: "MEMBER", actorMemberId: "owner-1" }),
       ),
     ).rejects.toBeInstanceOf(SameOwnerCoverageWouldBreakError);
 
@@ -893,6 +909,8 @@ describe("a change that would strand another booking (#2576 §6, §7, §14)", ()
         "b-source",
         db,
         hostingCoverageActorOptions({
+          // #3232: this fixture's change does not move a stay.
+          vacatedRange: null,
           actorRole: "MEMBER",
           actorMemberId: "owner-1",
         }),
@@ -928,7 +946,7 @@ describe("a change that would strand another booking (#2576 §6, §7, §14)", ()
       reconcileAdultMemberHostingReviewWithSiblings(
         "b-source",
         db,
-        hostingCoverageActorOptions({ actorRole: "MEMBER", actorMemberId: "owner-1" }),
+        hostingCoverageActorOptions({ vacatedRange: null, actorRole: "MEMBER", actorMemberId: "owner-1" }),
       ),
     ).resolves.toBeTruthy();
     // Existential coverage: nothing stranded, nothing to settle, no queue row, so
@@ -964,7 +982,7 @@ describe("a change that would strand another booking (#2576 §6, §7, §14)", ()
       reconcileAdultMemberHostingReviewWithSiblings(
         "b-source",
         db,
-        hostingCoverageActorOptions({ actorRole: "MEMBER", actorMemberId: "owner-1" }),
+        hostingCoverageActorOptions({ vacatedRange: null, actorRole: "MEMBER", actorMemberId: "owner-1" }),
       ),
     ).resolves.toBeTruthy();
   });
@@ -1008,7 +1026,7 @@ describe("a change that would strand another booking (#2576 §6, §7, §14)", ()
       reconcileAdultMemberHostingReviewWithSiblings(
         "b-source",
         seeded.db,
-        hostingCoverageActorOptions({ actorRole: "MEMBER", actorMemberId: "owner-1" }),
+        hostingCoverageActorOptions({ vacatedRange: null, actorRole: "MEMBER", actorMemberId: "owner-1" }),
       ),
     ).resolves.toBeTruthy();
     // The change is permitted, AND the standing incident is still queued for
@@ -1022,7 +1040,7 @@ describe("a change that would strand another booking (#2576 §6, §7, §14)", ()
     const prompt = await reconcileAdultMemberHostingReviewWithSiblings(
       "b-source",
       first.db,
-      hostingCoverageActorOptions({ actorRole: "ADMIN", actorMemberId: "officer-1" }),
+      hostingCoverageActorOptions({ vacatedRange: null, actorRole: "ADMIN", actorMemberId: "officer-1" }),
     ).then(
       () => null,
       (error: unknown) => error,
@@ -1036,6 +1054,8 @@ describe("a change that would strand another booking (#2576 §6, §7, §14)", ()
       "b-source",
       db,
       hostingCoverageActorOptions({
+        // #3232: this fixture's change does not move a stay.
+        vacatedRange: null,
         actorRole: "ADMIN",
         actorMemberId: "officer-1",
         override: {
@@ -1075,7 +1095,7 @@ describe("a change that would strand another booking (#2576 §6, §7, §14)", ()
     const prompt = await reconcileAdultMemberHostingReviewWithSiblings(
       "b-source",
       first.db,
-      hostingCoverageActorOptions({ actorRole: "ADMIN", actorMemberId: "officer-1" }),
+      hostingCoverageActorOptions({ vacatedRange: null, actorRole: "ADMIN", actorMemberId: "officer-1" }),
     ).then(
       () => null,
       (error: unknown) => error,
@@ -1092,6 +1112,8 @@ describe("a change that would strand another booking (#2576 §6, §7, §14)", ()
       "b-source",
       accepted.db,
       hostingCoverageActorOptions({
+        // #3232: this fixture's change does not move a stay.
+        vacatedRange: null,
         actorRole: "ADMIN",
         actorMemberId: "officer-1",
         override: {
@@ -1142,10 +1164,13 @@ describe("a change that would strand another booking (#2576 §6, §7, §14)", ()
     // `overrideReason` / `overriddenByMemberId` columns were unreachable outside
     // tests, because no caller ever supplied a reason.
     expect(
-      hostingCoverageActorOptions({ actorRole: "ADMIN", actorMemberId: "officer-1" }),
+      hostingCoverageActorOptions({ vacatedRange: null, actorRole: "ADMIN", actorMemberId: "officer-1" }),
     ).toEqual({
       dependentCoverage: "REQUIRE_OVERRIDE",
       coverageActorMemberId: "officer-1",
+      // #3232: the vacated window travels with the disposition, so the dependent
+      // fan-out can look at where the booking WAS as well as where it now is.
+      coverageChangeVacatedRange: null,
       coverageChange: {
         cause: "SYSTEM_CHANGE",
         actorMemberId: "officer-1",
@@ -1166,6 +1191,8 @@ describe("a change that would strand another booking (#2576 §6, §7, §14)", ()
     ]) {
       expect(
         hostingCoverageActorOptions({
+          // #3232: this fixture's change does not move a stay.
+          vacatedRange: null,
           actorRole: "ADMIN",
           actorMemberId: "officer-1",
           override: half as never,
@@ -1176,6 +1203,8 @@ describe("a change that would strand another booking (#2576 §6, §7, §14)", ()
     // A complete one is, and it records who and why.
     expect(
       hostingCoverageActorOptions({
+        // #3232: this fixture's change does not move a stay.
+        vacatedRange: null,
         actorRole: "ADMIN",
         actorMemberId: "officer-1",
         override: {
@@ -1187,6 +1216,8 @@ describe("a change that would strand another booking (#2576 §6, §7, §14)", ()
     ).toEqual({
       dependentCoverage: "ESCALATE",
       coverageActorMemberId: "officer-1",
+      // #3232: the vacated window travels with every disposition, not only BLOCK.
+      coverageChangeVacatedRange: null,
       coverageChange: {
         cause: "OFFICER_OVERRIDE",
         actorMemberId: "officer-1",
@@ -1195,12 +1226,14 @@ describe("a change that would strand another booking (#2576 §6, §7, §14)", ()
       },
     });
     expect(
-      hostingCoverageActorOptions({ actorRole: "MEMBER", actorMemberId: "owner-1" })
+      hostingCoverageActorOptions({ vacatedRange: null, actorRole: "MEMBER", actorMemberId: "owner-1" })
         .dependentCoverage,
     ).toBe("BLOCK");
     // A delegated bookings-edit permission is officer authority too.
     expect(
       hostingCoverageActorOptions({
+        // #3232: this fixture's change does not move a stay.
+        vacatedRange: null,
         actorRole: "MEMBER",
         hasBookingsEditAccess: true,
       }).dependentCoverage,
@@ -1216,7 +1249,7 @@ describe("a change that would strand another booking (#2576 §6, §7, §14)", ()
     const thrown = await reconcileAdultMemberHostingReviewWithSiblings(
       "b-source",
       db,
-      hostingCoverageActorOptions({ actorRole: "ADMIN", actorMemberId: "officer-1" }),
+      hostingCoverageActorOptions({ vacatedRange: null, actorRole: "ADMIN", actorMemberId: "officer-1" }),
     ).then(
       () => null,
       (err: unknown) => err,
@@ -1238,6 +1271,10 @@ describe("a change that would strand another booking (#2576 §6, §7, §14)", ()
         reference: expect.any(String),
         lodgeName: "Ruapehu Lodge",
         nights: ["2026-07-03", "2026-07-04"],
+        // #3232: the dependent's OWN stay, which the linked-move offer proposes
+        // new dates for. Its uncovered nights above are a subset of it.
+        checkIn: "2026-07-03",
+        checkOut: "2026-07-05",
       },
     ]);
     const body = buildSameOwnerCoverageOverrideRequiredBody(error);
@@ -1265,7 +1302,7 @@ describe("a change that would strand another booking (#2576 §6, §7, §14)", ()
     const first = await reconcileAdultMemberHostingReviewWithSiblings(
       "b-source",
       original.db,
-      hostingCoverageActorOptions({ actorRole: "ADMIN", actorMemberId: "officer-1" }),
+      hostingCoverageActorOptions({ vacatedRange: null, actorRole: "ADMIN", actorMemberId: "officer-1" }),
     ).then(
       () => null,
       (error: unknown) => error,
@@ -1283,6 +1320,8 @@ describe("a change that would strand another booking (#2576 §6, §7, §14)", ()
       "b-source",
       changed.db,
       hostingCoverageActorOptions({
+        // #3232: this fixture's change does not move a stay.
+        vacatedRange: null,
         actorRole: "ADMIN",
         actorMemberId: "officer-1",
         override: {
@@ -1312,7 +1351,7 @@ describe("a change that would strand another booking (#2576 §6, §7, §14)", ()
     const first = await reconcileAdultMemberHostingReviewWithSiblings(
       "b-source",
       original.db,
-      hostingCoverageActorOptions({ actorRole: "ADMIN", actorMemberId: "officer-1" }),
+      hostingCoverageActorOptions({ vacatedRange: null, actorRole: "ADMIN", actorMemberId: "officer-1" }),
     ).then(
       () => null,
       (error: unknown) => error,
@@ -1340,6 +1379,8 @@ describe("a change that would strand another booking (#2576 §6, §7, §14)", ()
         "b-source",
         improved.db,
         hostingCoverageActorOptions({
+          // #3232: this fixture's change does not move a stay.
+          vacatedRange: null,
           actorRole: "ADMIN",
           actorMemberId: "officer-1",
           override: {
@@ -1359,12 +1400,16 @@ describe("a change that would strand another booking (#2576 §6, §7, §14)", ()
       reference: "BK-MAIN",
       lodgeName: "Example Lodge",
       nights: ["2026-07-04", "2026-07-03", "2026-07-03"],
+      checkIn: "2026-07-03",
+      checkOut: "2026-07-05",
     };
     const two = {
       bookingId: "b-second",
       reference: "BK-SECOND",
       lodgeName: "Example Lodge",
       nights: ["2026-07-05"],
+      checkIn: "2026-07-05",
+      checkOut: "2026-07-06",
     };
     expect(strandedCoverageStateKey([one, two])).toBe(
       strandedCoverageStateKey([
@@ -1414,7 +1459,7 @@ describe("a change that would strand another booking (#2576 §6, §7, §14)", ()
       reconcileAdultMemberHostingReviewWithSiblings(
         "b-source",
         db,
-        hostingCoverageActorOptions({ actorRole: "ADMIN", actorMemberId: "officer-1" }),
+        hostingCoverageActorOptions({ vacatedRange: null, actorRole: "ADMIN", actorMemberId: "officer-1" }),
       ),
     ).resolves.toBeTruthy();
     expect(queued).toEqual([]);
@@ -1434,6 +1479,8 @@ describe("a change that would strand another booking (#2576 §6, §7, §14)", ()
         "b-source",
         db,
         hostingCoverageActorOptions({
+          // #3232: this fixture's change does not move a stay.
+          vacatedRange: null,
           actorRole: "MEMBER",
           // A DIFFERENT account from `owner-1`, who owns both bookings.
           actorMemberId: "guest-member-9",
@@ -1458,7 +1505,7 @@ describe("a change that would strand another booking (#2576 §6, §7, §14)", ()
       reconcileAdultMemberHostingReviewWithSiblings(
         "b-source",
         db,
-        hostingCoverageActorOptions({ actorRole: "MEMBER", actorMemberId: "owner-1" }),
+        hostingCoverageActorOptions({ vacatedRange: null, actorRole: "MEMBER", actorMemberId: "owner-1" }),
       ),
     ).rejects.toThrow(SameOwnerCoverageWouldBreakError);
     // A site that forgot to pass the actor at all fails towards escalation — an
@@ -1502,7 +1549,7 @@ describe("a change that would strand another booking (#2576 §6, §7, §14)", ()
     await reconcileAdultMemberHostingReviewWithSiblings(
       "b-main",
       db,
-      hostingCoverageActorOptions({ actorRole: "MEMBER", actorMemberId: "owner-1" }),
+      hostingCoverageActorOptions({ vacatedRange: null, actorRole: "MEMBER", actorMemberId: "owner-1" }),
     );
     expect(incidents[0]).toMatchObject({
       resolvedAt: expect.any(Date),
@@ -1532,7 +1579,7 @@ describe("a change that would strand another booking (#2576 §6, §7, §14)", ()
     await reconcileAdultMemberHostingReviewWithSiblings(
       "b-main",
       db,
-      hostingCoverageActorOptions({ actorRole: "MEMBER", actorMemberId: "owner-1" }),
+      hostingCoverageActorOptions({ vacatedRange: null, actorRole: "MEMBER", actorMemberId: "owner-1" }),
     );
     expect(incidents[0]).toMatchObject({ resolution: "BOOKING_CANCELLED" });
   });
@@ -1630,7 +1677,7 @@ describe("a change that would strand another booking (#2576 §6, §7, §14)", ()
     await reconcileAdultMemberHostingReviewWithSiblings(
       "b-source",
       db,
-      hostingCoverageActorOptions({ actorRole: "MEMBER", actorMemberId: "owner-1" }),
+      hostingCoverageActorOptions({ vacatedRange: null, actorRole: "MEMBER", actorMemberId: "owner-1" }),
     );
     expect(queued).toHaveLength(1);
   });
@@ -1647,7 +1694,7 @@ describe("a change that would strand another booking (#2576 §6, §7, §14)", ()
       reconcileAdultMemberHostingReviewWithSiblings(
         "b-source",
         db,
-        hostingCoverageActorOptions({ actorRole: "MEMBER", actorMemberId: "owner-1" }),
+        hostingCoverageActorOptions({ vacatedRange: null, actorRole: "MEMBER", actorMemberId: "owner-1" }),
       ),
     ).resolves.toBeTruthy();
     // ...but the dependent's own snapshot DOES have to be refreshed, and this is the
@@ -1692,6 +1739,8 @@ describe("privacy: the member sees their own account and nothing else (#2576 §1
         reference: "BK-ABC123",
         lodgeName: "Ruapehu Lodge",
         nights: ["2026-07-03"],
+        checkIn: "2026-08-01",
+        checkOut: "2026-08-03",
       },
     ]);
     expect(message).toContain("BK-ABC123");
@@ -1877,6 +1926,42 @@ describe("settling a dependent booking after the change (#2576 §7, §14, §16)"
     // The booking's own review IS recorded, so its page and the officer's booking
     // view agree with the incident.
     expect(rowFromStore(db, "b-main").adultMemberHostingReviewStatus).toBe("PENDING");
+  });
+
+  it("puts a declined offer's reason in the incident's history, actorless", async () => {
+    // #3232 D3, `INV-HOST-052`. The queue item already carried this reason (pinned
+    // in the linked-move block below) and the drain already hands it here — and
+    // this function used to DROP it, because only an officer override stored a
+    // reason. So an officer reading the booking's history was shown a bare cause
+    // code that also means "a qualification changed" for a decision a member had
+    // deliberately made after being warned.
+    //
+    // The history rather than a column, deliberately: an audit row describes ONE
+    // event and cannot go stale, while a "why" column would be left describing the
+    // decline after a later automatic change moved the same incident's state.
+    const rows = [
+      booking({ id: "b-main", guests: [guestRow("kid", KID_NIGHTS)] }),
+    ];
+    const { db } = makeStore(rows);
+    const outcome = await reconcileSameOwnerCoverageIncident(
+      {
+        bookingId: "b-main",
+        cause: "SYSTEM_CHANGE",
+        reason: LINKED_MOVE_DECLINED_INCIDENT_REASON,
+      },
+      db,
+    );
+    expect(outcome.action).toBe("opened");
+
+    const opened = db.auditLog.create.mock.calls
+      .map((call: any) => call[0].data)
+      .find(
+        (data: any) => data.action === "booking.hostingCoverage.incidentOpened",
+      );
+    expect(opened?.details).toBe(LINKED_MOVE_DECLINED_INCIDENT_REASON);
+    // No officer is named, because none was involved. Inventing attribution is
+    // the failure this arm exists to avoid.
+    expect(opened?.actorMemberId ?? null).toBeNull();
   });
 
   it("resolves rather than opens when an alternative same-owner source covers it (§14)", async () => {
@@ -2446,7 +2531,7 @@ describe("the dependent reads truncate reproducibly (#2576 §10)", () => {
     await reconcileAdultMemberHostingReviewWithSiblings(
       "b-source",
       db,
-      hostingCoverageActorOptions({ actorRole: "ADMIN", actorMemberId: "officer-1" }),
+      hostingCoverageActorOptions({ vacatedRange: null, actorRole: "ADMIN", actorMemberId: "officer-1" }),
     ).catch(() => undefined);
     await loadSameOwnerCoverageDependentIds(
       {
@@ -2465,6 +2550,16 @@ describe("the dependent reads truncate reproducibly (#2576 §10)", () => {
       ([args]: [any]) =>
         typeof args?.take === "number" && !args?.select?.guests?.where,
     );
+    // FIVE SINCE #3232, and the two new ones are the plan/verify pair the queue's
+    // participant fence forces. #3232 records one item per dependent BOOKING, and
+    // the fence demands a proof source for every booking an item names, so the
+    // dependent set has to be read BEFORE the fence (unlocked, a hypothesis) and
+    // again under the per-owner coverage key (where it becomes a fact or a safe
+    // retry). Both are bounded and ordered, which is what the loop below holds them
+    // to — an unordered truncation would return a different N under the lock than it
+    // did in the plan and every account above the ceiling would fail as a spurious
+    // retry.
+    //
     // THREE SINCE #3039, and the third one is an improvement rather than a new
     // hazard. `loadHostingSiblingIds` used to run the #738 split-pair relation
     // through its own `findMany` with NEITHER `take` NOR `orderBy` — an unbounded,
@@ -2473,7 +2568,7 @@ describe("the dependent reads truncate reproducibly (#2576 §10)", () => {
     // `loadHostingCoverageSplitSiblingIds`, so the relation has one definition and
     // that read is bounded and ordered like its two siblings. The loop below holds it
     // to the same order.
-    expect(dependentReads).toHaveLength(3);
+    expect(dependentReads).toHaveLength(5);
     for (const [args] of dependentReads) {
       expect(args.orderBy, JSON.stringify(args.where)).toEqual([
         { checkIn: "asc" },
@@ -2910,5 +3005,644 @@ describe("the mode gate reads the RELATED bookings' lodges too (#3209)", () => {
       sameOwnerCoverageDependentWhere(booking({ lodgeId: OTHER_LODGE }) as never)
         .lodgeId,
     ).toBe(OTHER_LODGE);
+  });
+});
+
+/**
+ * #3232 — moving one booking's dates must not silently strand another booking on
+ * the same account, and must not deadlock the member either.
+ *
+ * TWO HALVES, TESTED SEPARATELY AND ON PURPOSE (`INV-HOST-049`). #3039 measured
+ * that fixing one and leaving the other still loses the booking, and that the
+ * second failure is the quiet one: the refusal path looks fixed while the
+ * escalation path drops the booking in the background with nothing logged. A
+ * single test that only fails when BOTH are broken would pass over a half-fix, so
+ * each half has its own test and each was mutation-verified against its own
+ * mutation.
+ *
+ *  - the READ half: `sameOwnerCoverageDependentOverStayUnionWhere` must match the
+ *    window the changed booking VACATED as well as the one it now holds.
+ *  - the QUEUE half: the item recorded for a dependent the changed booking's own
+ *    window cannot reach must carry the DEPENDENT's nights, not the changed
+ *    booking's.
+ */
+describe("a date move must not strand another of the owner's bookings (#3232)", () => {
+  /**
+   * The exact scenario from the issue. Booking `b-source` carries the only
+   * qualifying adult over 3-4 July and `b-main` is the same owner's booking on the
+   * same nights, compliant only through it. `b-source` has just been moved to
+   * 20-21 July, so its row already holds the NEW dates — which is the whole point:
+   * every dependent read runs after the write.
+   */
+  function movedAwaySource() {
+    return sourceWithAdult("b-source", ["2026-07-20", "2026-07-21"]);
+  }
+
+  const VACATED = {
+    checkIn: new Date("2026-07-03T00:00:00.000Z"),
+    checkOut: new Date("2026-07-05T00:00:00.000Z"),
+  };
+
+  it("finds the dependent the move left behind, which the new window cannot see", () => {
+    // `INV-HOST-049`, the READ half, at the level of the predicate itself. The
+    // single-window builder is asked the same question and must NOT match, which
+    // is what makes this a discrimination test rather than a tautology: if both
+    // builders matched, the union would be buying nothing.
+    const moved = movedAwaySource() as never;
+    const left = booking({ id: "b-main" });
+
+    const narrow = sameOwnerCoverageDependentWhere(moved);
+    const union = sameOwnerCoverageDependentOverStayUnionWhere(moved, VACATED);
+
+    expect(
+      matchesWhere(left, narrow as Record<string, unknown>),
+      "the post-move window alone cannot see the booking it left behind — that is the defect",
+    ).toBe(false);
+    expect(
+      matchesWhere(left, union as Record<string, unknown>),
+      "INV-HOST-049: the dependent read must match the window the booking VACATED",
+    ).toBe(true);
+  });
+
+  it("collapses to one overlap test when the stay did not move", () => {
+    // Every writer except a date change passes `null`, and the ~40 of them must be
+    // byte-identical to their previous behaviour. Asserted as a SHAPE rather than
+    // by behaviour, because a union that happened to agree on these fixtures could
+    // still be a second query plan for every booking write at every club.
+    const still = booking({ id: "b-source" }) as never;
+    expect(sameOwnerCoverageDependentOverStayUnionWhere(still, null)).toEqual(
+      sameOwnerCoverageDependentWhere(still),
+    );
+    // And the same when the caller passes the window it holds, unchanged. A writer
+    // that restates a window it did not move must not pay for a second clause.
+    expect(
+      sameOwnerCoverageDependentOverStayUnionWhere(still, {
+        checkIn: new Date("2026-07-03T00:00:00.000Z"),
+        checkOut: new Date("2026-07-05T00:00:00.000Z"),
+      }),
+    ).toEqual(sameOwnerCoverageDependentWhere(still));
+  });
+
+  it("does not reach a booking that overlaps neither window", () => {
+    // The union is EXACT, not merely wide. A booking sharing a night with neither
+    // where this one was nor where it now is cannot have been relying on it, and
+    // widening the set to reach it would put a booking the change cannot have
+    // affected in front of a refusal. This is the test that fails if somebody
+    // "simplifies" the union into `coverageDependentEnvelopeAcrossNightsWhere`.
+    const moved = movedAwaySource() as never;
+    const unrelated = booking({
+      id: "b-unrelated",
+      checkIn: new Date("2026-07-10T00:00:00.000Z"),
+      checkOut: new Date("2026-07-12T00:00:00.000Z"),
+    });
+    expect(
+      matchesWhere(
+        unrelated,
+        sameOwnerCoverageDependentOverStayUnionWhere(
+          moved,
+          VACATED,
+        ) as Record<string, unknown>,
+      ),
+      "INV-HOST-049: the union of the two windows, not the gap between them",
+    ).toBe(false);
+  });
+
+  it("keeps the lodge equality and the self-exclusion across the union", () => {
+    // Both are load-bearing elsewhere: the mode gate reads ONE lodge's policy for
+    // the whole dependent cohort on the strength of the lodge clause, and dropping
+    // the self-exclusion would make a booking its own dependent.
+    const moved = movedAwaySource() as never;
+    const where = sameOwnerCoverageDependentOverStayUnionWhere(
+      moved,
+      VACATED,
+    ) as Record<string, unknown>;
+    expect(where.lodgeId).toBe(LODGE);
+    expect(where.id).toEqual({ not: "b-source" });
+    expect(where.memberId).toBe("owner-1");
+  });
+
+  it("records the stranded dependent's OWN nights, not the moved booking's", async () => {
+    // `INV-HOST-049`, the QUEUE half — the one that looks fixed and is not. The
+    // item's nights are what `loadSameOwnerCoverageDependentIds` turns back into
+    // bookings, so an item carrying 20-21 July resolves to a dependent list that
+    // does not contain the booking sitting on 3-4 July. Widen the read, leave the
+    // item alone, and the booking is dropped in the background instead.
+    const { db, queued } = makeStore([
+      movedAwaySource(),
+      booking({ id: "b-main", guests: [guestRow("kid", ["2026-07-03", "2026-07-04"])] }),
+    ]);
+
+    // An OFFICER's move, so the change is allowed and the durable work is what is
+    // being asserted. A member's move raises the linked-move offer instead, which
+    // is `INV-HOST-050`'s test below; the queue behaviour is the same either way
+    // and this is the disposition that lets it commit.
+    await reconcileAdultMemberHostingReviewWithSiblings(
+      "b-source",
+      db,
+      hostingCoverageActorOptions({
+        actorRole: "ADMIN",
+        actorMemberId: "officer-1",
+        vacatedRange: {
+          checkIn: new Date("2026-07-03T00:00:00.000Z"),
+          checkOut: new Date("2026-07-05T00:00:00.000Z"),
+        },
+        override: {
+          acknowledged: true,
+          reason: "Member asked for the whole party to move",
+          // The exact stranded state the officer confirmed. A wrong key here
+          // re-prompts instead of overriding, and the queue stays empty — which is
+          // correct behaviour and would have made this test pass for the wrong
+          // reason if it were swallowed.
+          strandedStateKey: strandedCoverageStateKey(
+            [
+              {
+                bookingId: "b-main",
+                reference: strandedCoverageReference("b-main"),
+                lodgeName: "Ruapehu Lodge",
+                nights: ["2026-07-03", "2026-07-04"],
+                checkIn: "2026-07-03",
+                checkOut: "2026-07-05",
+              },
+            ],
+            "b-source",
+          ),
+        },
+      }),
+    );
+
+    const dependentItem = queued.find((item) => item.sourceBookingId === "b-main");
+    expect(
+      dependentItem,
+      "INV-HOST-049: the dependent the move left behind owes its own queue item",
+    ).toBeDefined();
+    expect(
+      dependentItem?.nights,
+      "INV-HOST-049: the item's nights must be the DEPENDENT's own, or the drain resolves it to nobody",
+    ).toEqual(["2026-07-03", "2026-07-04"]);
+    // And the item really is findable by the drain, which is the property the
+    // nights exist for. Asserting the nights alone would pin the mechanism; this
+    // pins the consequence.
+    expect(
+      await loadSameOwnerCoverageDependentIds(
+        {
+          memberId: "owner-1",
+          lodgeId: LODGE,
+          nights: dependentItem?.nights as string[],
+        },
+        db,
+      ),
+    ).toContain("b-main");
+  });
+
+  it("writes no extra item when the dependent still shares a night", async () => {
+    // The cost control, and the reason a club that was never broken pays nothing.
+    // An overlapping dependent is already inside the changed booking's own item,
+    // so a second one would be duplicate work the drain has to discard.
+    const { db, queued } = makeStore([
+      sourceWithAdult("b-source", ["2026-07-03", "2026-07-04"]),
+      booking({ id: "b-main", guests: [guestRow("kid", ["2026-07-03", "2026-07-04"])] }),
+    ]);
+    await reconcileAdultMemberHostingReviewWithSiblings(
+      "b-source",
+      db,
+      hostingCoverageActorOptions({
+        actorRole: "ADMIN",
+        actorMemberId: "officer-1",
+        vacatedRange: null,
+        override: {
+          acknowledged: true,
+          reason: "Officer took the adult off at the member's request",
+          strandedStateKey: "v1:" + "0".repeat(64),
+        },
+      }),
+    ).catch(() => undefined);
+    expect(
+      queued.filter((item) => item.sourceBookingId === "b-main"),
+      "an overlapping dependent is already covered by the changed booking's own item",
+    ).toEqual([]);
+  });
+});
+
+describe("a member is offered the linked move, never deadlocked (#3232)", () => {
+  const VACATED = {
+    checkIn: new Date("2026-07-03T00:00:00.000Z"),
+    checkOut: new Date("2026-07-05T00:00:00.000Z"),
+  };
+
+  async function refuseMemberMove(vacated: { checkIn: Date; checkOut: Date } | null) {
+    const { db } = makeStore([
+      sourceWithAdult("b-source", ["2026-07-20", "2026-07-21"]),
+      booking({ id: "b-main", guests: [guestRow("kid", ["2026-07-03", "2026-07-04"])] }),
+    ]);
+    try {
+      await reconcileAdultMemberHostingReviewWithSiblings(
+        "b-source",
+        db,
+        hostingCoverageActorOptions({
+          actorRole: "MEMBER",
+          actorMemberId: "owner-1",
+          vacatedRange: vacated,
+        }),
+      );
+      return null;
+    } catch (error) {
+      return error as SameOwnerCoverageWouldBreakError;
+    }
+  }
+
+  it("marks the refusal as one a linked move would answer", async () => {
+    // `INV-HOST-050`. The member has moved AWAY from the booking that was relying
+    // on them, so every remedy the refusal's own sentence could offer on that
+    // booking is closed to them — moving it is refused by this same rule from the
+    // other end. The refusal therefore has to be answerable, and this flag is what
+    // makes the date writer price the offer instead of returning a dead end.
+    const error = await refuseMemberMove(VACATED);
+    expect(error, "the member's move is still refused, and rolled back").toBeInstanceOf(
+      SameOwnerCoverageWouldBreakError,
+    );
+    expect(
+      error?.linkedMoveWouldAnswer,
+      "INV-HOST-050: a refusal the member cannot act on must be marked as one the linked move answers",
+    ).toBe(true);
+    expect(error?.stranded.map((row) => row.bookingId)).toEqual(["b-main"]);
+  });
+
+  it("keeps the ordinary refusal for a stranding the member CAN fix", async () => {
+    // The other side of `INV-HOST-050`, and the reason the flag is conditional
+    // rather than always set. Here the dependent still shares a night with the
+    // changed booking, so the stranding came from a guest change rather than a
+    // move — and the member really can add an adult to the affected booking or
+    // cancel it. That refusal is unchanged, and offering a linked move for it
+    // would offer to move a booking nothing required to move.
+    const { db } = makeStore([
+      sourceWithAdult("b-source", ["2026-07-03", "2026-07-04"], { guests: [] }),
+      booking({ id: "b-main", guests: [guestRow("kid", ["2026-07-03", "2026-07-04"])] }),
+    ]);
+    let error: SameOwnerCoverageWouldBreakError | null = null;
+    try {
+      await reconcileAdultMemberHostingReviewWithSiblings(
+        "b-source",
+        db,
+        hostingCoverageActorOptions({
+          actorRole: "MEMBER",
+          actorMemberId: "owner-1",
+          vacatedRange: null,
+        }),
+      );
+    } catch (caught) {
+      error = caught as SameOwnerCoverageWouldBreakError;
+    }
+    expect(error).toBeInstanceOf(SameOwnerCoverageWouldBreakError);
+    expect(
+      error?.linkedMoveWouldAnswer,
+      "a stranding the member can fix on the affected booking keeps today's refusal",
+    ).toBe(false);
+  });
+
+  it("does not claim the offer for a shortening the shift cannot answer", async () => {
+    // `INV-HOST-050`. "The booking moved away from it" and "a shift can put it
+    // back" are different questions, and a SHORTENING is where they come apart. A
+    // stay of 10-15 August cut back to 10-12 moves nothing at the arrival end, so
+    // the dependent's target is where it already is: its write would be a no-op,
+    // it would still be uncovered, and the final supervision pass would throw this
+    // very refusal — after two full pricing runs inside a transaction that was
+    // always going to be discarded. The arm was being claimed and could not be
+    // delivered.
+    //
+    // The member is not stuck here, which is why the ordinary refusal is the right
+    // answer rather than a dead end: the affected booking's nights are outside the
+    // shortened stay, so adding a qualifying adult to it, moving it into the
+    // remaining nights, or cancelling it are all open to them.
+    const { db } = makeStore([
+      sourceWithAdult("b-source", ["2026-08-10", "2026-08-11"]),
+      booking({
+        id: "b-main",
+        checkIn: new Date("2026-08-13T00:00:00.000Z"),
+        checkOut: new Date("2026-08-14T00:00:00.000Z"),
+        guests: [guestRow("kid", ["2026-08-13"])],
+      }),
+    ]);
+    let error: SameOwnerCoverageWouldBreakError | null = null;
+    try {
+      await reconcileAdultMemberHostingReviewWithSiblings(
+        "b-source",
+        db,
+        hostingCoverageActorOptions({
+          actorRole: "MEMBER",
+          actorMemberId: "owner-1",
+          // Ten to fifteen August, cut back to ten to twelve: the check-out moved
+          // and the arrival did not.
+          vacatedRange: {
+            checkIn: new Date("2026-08-10T00:00:00.000Z"),
+            checkOut: new Date("2026-08-15T00:00:00.000Z"),
+          },
+        }),
+      );
+    } catch (caught) {
+      error = caught as SameOwnerCoverageWouldBreakError;
+    }
+    expect(
+      error,
+      "the shortening is still refused, and the dependent is still noticed",
+    ).toBeInstanceOf(SameOwnerCoverageWouldBreakError);
+    expect(error?.stranded.map((row) => row.bookingId)).toEqual(["b-main"]);
+    expect(
+      error?.linkedMoveWouldAnswer,
+      "INV-HOST-050: an arm that cannot deliver must not be claimed",
+    ).toBe(false);
+  });
+
+  it("names no impossible action in what the member is told", () => {
+    // The second defect #3232 fixed, and it is a product defect rather than a
+    // mechanism one: the sentence #2576 shipped told members to "Update the
+    // affected booking first", which the same rule refuses from the other end. The
+    // product was instructing people to do something the code forbids.
+    const message = formatStrandedCoverageMessage([]);
+    expect(
+      message,
+      "INV-HOST-050: never tell a member to update the booking this rule will refuse to let them update",
+    ).not.toMatch(/update the affected booking/i);
+    // And every action it DOES name is one they can attempt.
+    expect(message).toMatch(/adding a qualifying adult member/i);
+    expect(message).toMatch(/cancelling it/i);
+    expect(message).toMatch(/Booking Officer/);
+    // INCLUDING THE THIRD CLAUSE, which the #3232 rewrite briefly turned into a
+    // dead end: "A Booking Officer can also authorise this change and record why"
+    // is a true statement about officers with no way to reach one, and the member
+    // cannot take that override themselves. A refusal that names no way forward
+    // is the failure this sentence exists to avoid.
+    expect(
+      message,
+      "INV-HOST-050: the officer clause must be a way forward, not a fact",
+    ).toMatch(/contact the club/i);
+  });
+
+  it("decides its own queue item with the SAME overlap test the query uses", () => {
+    // `INV-SSOT-001`. The queue item's night window is what the drain turns back
+    // into bookings, so the predicate deciding whether a dependent needs an item
+    // of its own has to agree with the query that found it — and the SQL half of
+    // exactly this test is already single-sourced as `nightOverlapClause`. This
+    // function hand-wrote the two comparisons a second time, one drift away from
+    // #3039's measured failure where the refusal looks fixed and the booking is
+    // dropped in the background instead.
+    const day = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
+    const changed = { checkIn: day("2026-08-10"), checkOut: day("2026-08-12") };
+    const cases = [
+      // Overlapping, back-to-back on each side, and clear of it — the half-open
+      // boundary included, which is where a second spelling drifts first.
+      { checkIn: day("2026-08-11"), checkOut: day("2026-08-13") },
+      { checkIn: day("2026-08-12"), checkOut: day("2026-08-14") },
+      { checkIn: day("2026-08-08"), checkOut: day("2026-08-10") },
+      { checkIn: day("2026-08-20"), checkOut: day("2026-08-22") },
+      { checkIn: day("2026-08-10"), checkOut: day("2026-08-12") },
+    ];
+    for (const dependent of cases) {
+      expect(
+        dependentNeedsOwnQueueItem(changed, dependent),
+        `${dependent.checkIn.toISOString()} must agree with bookingsOverlap`,
+      ).toBe(!bookingsOverlap(changed, dependent));
+    }
+  });
+
+  it("counts the bookings it is talking about, because the cap is not one", () => {
+    // `SAME_OWNER_COVERAGE_DEPENDENT_LIMIT` is 25, and a member with one adult
+    // and two parties of guests is an ordinary family shape. The singular second
+    // sentence told them to add an adult to "that booking", or cancel "it", above
+    // a plural "Affected:" list naming three.
+    function row(id: string) {
+      return {
+        bookingId: id,
+        reference: strandedCoverageReference(id),
+        lodgeName: "Ruapehu Lodge",
+        nights: ["2026-07-03"],
+        checkIn: "2026-07-03",
+        checkOut: "2026-07-04",
+      };
+    }
+    const one = formatStrandedCoverageMessage([row("b-one")]);
+    expect(one).toMatch(/leave another booking on your account/);
+    expect(one).toMatch(/to that booking, or cancelling it,/);
+
+    const many = formatStrandedCoverageMessage([
+      row("b-one"),
+      row("b-two"),
+      row("b-three"),
+    ]);
+    expect(many).toMatch(/leave 3 other bookings on your account/);
+    expect(many).toMatch(/to those bookings, or cancelling them,/);
+    expect(many).not.toMatch(/cancelling it,/);
+  });
+
+  it("escalates instead of refusing once the member has declined the offer", async () => {
+    // D1's "No" arm. The member was shown the consequence and chose to move only
+    // the booking they were editing, so the change PROCEEDS — and the officer
+    // queue gets an item whose recorded reason says a member was asked and
+    // answered, rather than leaving an officer to infer it from a cause code that
+    // also means "a qualification changed".
+    const { db, queued } = makeStore([
+      sourceWithAdult("b-source", ["2026-07-20", "2026-07-21"]),
+      booking({ id: "b-main", guests: [guestRow("kid", ["2026-07-03", "2026-07-04"])] }),
+    ]);
+    const stranded = [
+      {
+        bookingId: "b-main",
+        reference: strandedCoverageReference("b-main"),
+        lodgeName: "Ruapehu Lodge",
+        nights: ["2026-07-03", "2026-07-04"],
+        checkIn: "2026-07-03",
+        checkOut: "2026-07-05",
+      },
+    ];
+    await expect(
+      reconcileAdultMemberHostingReviewWithSiblings(
+        "b-source",
+        db,
+        hostingCoverageActorOptions({
+          actorRole: "MEMBER",
+          actorMemberId: "owner-1",
+          vacatedRange: VACATED,
+          linkedMove: {
+            answer: {
+              choice: "LEAVE_UNCOVERED",
+              acknowledged: true,
+              stateKey: strandedCoverageStateKey(stranded, "b-source"),
+            },
+            bookingOwnerMemberId: "owner-1",
+          },
+        }),
+      ),
+      "INV-HOST-050: a member who declined the offer is allowed through, not refused",
+    ).resolves.toBeTruthy();
+    const dependentItem = queued.find((item) => item.sourceBookingId === "b-main");
+    expect(dependentItem?.reason).toBe(LINKED_MOVE_DECLINED_INCIDENT_REASON);
+  });
+
+  it("refuses an officer the member's answer, so §7's reason is still owed", async () => {
+    // THE AUTHORISATION HOLE THIS PINS. `hostingCoverageLinkedMove` is
+    // deliberately not one of either save route's admin-gated flags — right,
+    // because it is a MEMBER's field — so an officer can send it. An officer
+    // refused with `SameOwnerCoverageOverrideRequiredError` is handed the
+    // `strandedStateKey` in that refusal body; resubmitting it as a declined
+    // linked move used to be honoured, because the decline branch was evaluated
+    // above the officer branch and checked neither role nor ownership. The change
+    // then proceeded with `overrideReason: null`, `overriddenByMemberId: null` and
+    // an incident whose recorded reason says THE MEMBER was asked — about a
+    // booking that is not theirs, and a member who was never asked. All three of
+    // §7's requirements (explicit confirmation, mandatory reason, officer
+    // attribution) defeated at once, and the cause count `INV-HOST-052` protects
+    // corrupted quietly.
+    const { db } = makeStore([
+      sourceWithAdult("b-source", ["2026-07-20", "2026-07-21"]),
+      booking({ id: "b-main", guests: [guestRow("kid", ["2026-07-03", "2026-07-04"])] }),
+    ]);
+    const stranded = [
+      {
+        bookingId: "b-main",
+        reference: strandedCoverageReference("b-main"),
+        lodgeName: "Ruapehu Lodge",
+        nights: ["2026-07-03", "2026-07-04"],
+        checkIn: "2026-07-03",
+        checkOut: "2026-07-05",
+      },
+    ];
+    let error: unknown = null;
+    try {
+      await reconcileAdultMemberHostingReviewWithSiblings(
+        "b-source",
+        db,
+        hostingCoverageActorOptions({
+          actorRole: "ADMIN",
+          actorMemberId: "officer-1",
+          vacatedRange: VACATED,
+          // The member's field, sent by somebody who is not the member, carrying
+          // the key the officer's own refusal handed them.
+          linkedMove: {
+            answer: {
+              choice: "LEAVE_UNCOVERED",
+              acknowledged: true,
+              stateKey: strandedCoverageStateKey(stranded, "b-source"),
+            },
+            bookingOwnerMemberId: "owner-1",
+          },
+        }),
+      );
+    } catch (caught) {
+      error = caught;
+    }
+    expect(
+      error,
+      "INV-HOST-050: only the booking's own member may answer the offer; an officer still owes §7's override",
+    ).toBeInstanceOf(SameOwnerCoverageOverrideRequiredError);
+  });
+
+  it("re-prompts rather than honouring an answer about a different situation", async () => {
+    // A stale acceptance is another first submission. The member answered about
+    // the bookings and nights they were SHOWN; honouring it against a set that has
+    // moved would strand something they were never asked about.
+    const { db } = makeStore([
+      sourceWithAdult("b-source", ["2026-07-20", "2026-07-21"]),
+      booking({ id: "b-main", guests: [guestRow("kid", ["2026-07-03", "2026-07-04"])] }),
+    ]);
+    let error: SameOwnerCoverageWouldBreakError | null = null;
+    try {
+      await reconcileAdultMemberHostingReviewWithSiblings(
+        "b-source",
+        db,
+        hostingCoverageActorOptions({
+          actorRole: "MEMBER",
+          actorMemberId: "owner-1",
+          vacatedRange: VACATED,
+          linkedMove: {
+            answer: {
+              choice: "LEAVE_UNCOVERED",
+              acknowledged: true,
+              stateKey: "v1:" + "f".repeat(64),
+            },
+            bookingOwnerMemberId: "owner-1",
+          },
+        }),
+      );
+    } catch (caught) {
+      error = caught as SameOwnerCoverageWouldBreakError;
+    }
+    expect(error).toBeInstanceOf(SameOwnerCoverageWouldBreakError);
+    expect(
+      error?.linkedMoveWouldAnswer,
+      "a stale answer must produce a FRESH offer, not a dead-end refusal",
+    ).toBe(true);
+  });
+
+  it("does not claim the offer for a STALE answer the shift cannot answer either", async () => {
+    // The stale-answer re-throw above passed `linkedMoveWouldAnswer: true`
+    // UNCONDITIONALLY, while the first-submission throw computed it. So a member
+    // re-submitting a stale decline whose NEW stranding is one a shift cannot fix
+    // — a shortening, exactly the case pinned earlier in this file — was offered
+    // a move the rule says should stay a plain refusal, and the offer would then
+    // fail because the dependent's target is where it already is. Both throws now
+    // ask the same question of the same predicate.
+    const { db } = makeStore([
+      sourceWithAdult("b-source", ["2026-08-10", "2026-08-11"]),
+      booking({
+        id: "b-main",
+        checkIn: new Date("2026-08-13T00:00:00.000Z"),
+        checkOut: new Date("2026-08-14T00:00:00.000Z"),
+        guests: [guestRow("kid", ["2026-08-13"])],
+      }),
+    ]);
+    let error: SameOwnerCoverageWouldBreakError | null = null;
+    try {
+      await reconcileAdultMemberHostingReviewWithSiblings(
+        "b-source",
+        db,
+        hostingCoverageActorOptions({
+          actorRole: "MEMBER",
+          actorMemberId: "owner-1",
+          // Ten to fifteen August, cut back to ten to twelve: the arrival did not
+          // move, so no shift can carry the 13-14 dependent back under cover.
+          vacatedRange: {
+            checkIn: new Date("2026-08-10T00:00:00.000Z"),
+            checkOut: new Date("2026-08-15T00:00:00.000Z"),
+          },
+          linkedMove: {
+            answer: {
+              choice: "LEAVE_UNCOVERED",
+              acknowledged: true,
+              stateKey: "v1:" + "f".repeat(64),
+            },
+            bookingOwnerMemberId: "owner-1",
+          },
+        }),
+      );
+    } catch (caught) {
+      error = caught as SameOwnerCoverageWouldBreakError;
+    }
+    expect(error).toBeInstanceOf(SameOwnerCoverageWouldBreakError);
+    expect(
+      error?.linkedMoveWouldAnswer,
+      "INV-HOST-050: a stale answer is a fresh first submission, judged by the same predicate",
+    ).toBe(false);
+  });
+
+  it("still escalates rather than refusing when the actor is not the owner", async () => {
+    // §6/§11 unchanged by #3232, and worth pinning here because the offer names
+    // the OWNER's other bookings. An actor who is not the owner must never reach
+    // the offer at all — they could not act on it, and it would disclose another
+    // account's booking to them.
+    const { db, queued } = makeStore([
+      sourceWithAdult("b-source", ["2026-07-20", "2026-07-21"]),
+      booking({ id: "b-main", guests: [guestRow("kid", ["2026-07-03", "2026-07-04"])] }),
+    ]);
+    await expect(
+      reconcileAdultMemberHostingReviewWithSiblings(
+        "b-source",
+        db,
+        hostingCoverageActorOptions({
+          actorRole: "MEMBER",
+          actorMemberId: "somebody-else",
+          vacatedRange: VACATED,
+        }),
+      ),
+    ).resolves.toBeTruthy();
+    expect(queued.length).toBeGreaterThan(0);
   });
 });

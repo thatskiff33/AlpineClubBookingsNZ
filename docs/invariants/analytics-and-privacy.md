@@ -257,6 +257,31 @@ and #2763's bulk member-record rows were not.
   order to achieve visibility, and do not accept one as the price of tidying
   labels: audit rows are append-only, so publishing administrative activity to
   members cannot be quietly undone.
+- **A ROW'S STORED `details` CAN BE READ SOMEWHERE OTHER THAN THE AUDIT LOG, AND
+  THAT SECOND DOOR IS ITS OWN DECIDED READERSHIP** (#3232 D4, owner, 4 September
+  2026). The category answers "who finds this row in the Audit Log, and does the
+  subject member see it on their timeline". It does not answer "who can read the
+  words in it", because a domain page may render an audit row's free text as part
+  of the record it is about, under that page's own permission. The first such
+  surface is the booking page: the two hosting-coverage incident actions
+  (`booking.hostingCoverage.incidentOpened` / `.incidentUpdated`) are `admin` —
+  Support only in the Audit Log — and their `details` is shown on the booking to
+  anyone holding `bookings:edit`, which the page computes as `canSeeAdminTools`.
+  The owner chose that over the narrower option of showing only the member's own
+  recorded decision, because an officer following the queue's **Review booking**
+  button must be able to see why a booking is flagged; the stated cost is that the
+  text can be an officer's private override reason and a Booking Officer who could
+  not find the row in the Audit Log can read it here. **Three things follow, and
+  they bind the next such surface as much as this one.** The readership is
+  DECIDED and WRITTEN DOWN, here and in
+  [`guides/audit-log.md`](../guides/audit-log.md), rather than inferred from
+  whatever query a page happens to run. It is enforced where it cannot be lost by
+  editing that query: `buildBookingHistoryItems` takes a REQUIRED audience and
+  drops the rows for a member, so the page's own gate is defence in depth rather
+  than the only lock — a source-shaped guard on the query alone was measured to
+  pass with the gate deleted and the word left in a comment. And the booking's own
+  member is never a reader: this widens who may read the text sideways, never
+  downwards.
 - **All three writers of the SIX MEMBER-RECORD ACTIONS file `admin`, and the join
   is `admin` for that reason** (#2755). The six are `admin.member.updated` /
   `.deactivated` / `.reactivated` from the member detail page

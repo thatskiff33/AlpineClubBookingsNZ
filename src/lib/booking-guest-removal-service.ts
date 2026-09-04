@@ -1119,6 +1119,8 @@ export async function removeBookingGuestInTransaction({
   // officer is allowed and escalated.
   await reconcileAdultMemberHostingReviewWithSiblings(bookingId, tx, {
     ...hostingCoverageActorOptions({
+      // #3232: removing a guest moves no dates, so there is no vacated window.
+      vacatedRange: null,
       actorRole,
       actorMemberId,
       ...(hostingCoverageOverride ? { override: hostingCoverageOverride } : {}),

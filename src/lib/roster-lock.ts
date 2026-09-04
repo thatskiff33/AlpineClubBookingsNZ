@@ -38,7 +38,27 @@ export async function lockRosterEligibilityMutation(
   await lockRosterDate(tx, date);
 }
 
-/** Acquire several roster-date locks in deterministic date order. */
+/**
+ * Acquire several roster-date locks in deterministic date order.
+ *
+ * THE ORDER IS DETERMINISTIC WITHIN ONE CALL, WHICH IS NOT THE SAME AS WITHIN ONE
+ * TRANSACTION (#3232). Two writers that each take ONE sorted set can never
+ * deadlock on this family. A caller that takes TWO sorted sets — composing two
+ * booking writes into one transaction, as `runLinkedDateMove` does — can hold a
+ * later date from the first set and then ask for an earlier one from the second,
+ * which is an inverted acquisition against a writer coming the other way.
+ *
+ * WHAT MAKES THAT SAFE, and it is a real constraint rather than an observation:
+ * every writer in the tree that acquires MORE THAN ONE roster-date key holds
+ * `pg_advisory_xact_lock(1)` for the whole transaction first — the two booking
+ * modification services, guest removal, the kiosk departure route, and
+ * `chore-cleanup`, which is only ever called from inside the first two. So no two
+ * multi-key roster acquisitions can interleave at all, and a writer holding a
+ * SINGLE roster key (`lockRosterDate`, `lockRosterEligibilityMutation`) cannot be
+ * part of a cycle in this family. A NEW multi-key roster writer that does not take
+ * the global key first would break that, so take it — see
+ * `docs/CONCURRENCY_AND_LOCKING.md` → "Composition: roster-date writers".
+ */
 export async function lockRosterDates(
   tx: RosterLockTx,
   dates: Iterable<Date>,
