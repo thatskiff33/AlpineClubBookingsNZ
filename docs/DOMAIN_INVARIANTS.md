@@ -450,7 +450,8 @@ Prefix `INV-LOCKOUT`.
 | `INV-LOCKOUT-034` | Config transfer maps the legacy bundle key; unmapped drops a decision |
 | `INV-LOCKOUT-035` | That hook derives only into an absent mode, before field validation |
 | `INV-LOCKOUT-036` | Reversal is a mode change: no migration, no code, nothing repriced |
-| `INV-LOCKOUT-037` | The admin-only date override: date-only, per-action notify, `pricingMode` `shift` — `recalculate` is `INV-LOCKOUT-053` |
+| `INV-LOCKOUT-037` | The admin-only date override: date-only, explicit `pricingMode`; `shift` freezes every cent |
+| `INV-LOCKOUT-073` | Emailing the member about an admin edit is a per-action choice; four always-notify |
 | `INV-LOCKOUT-044` | #1780 sweep extends the per-action notify choice to remaining admin emails |
 | `INV-LOCKOUT-045` | An account-deletion approval with bookings to cancel claims `APPROVAL_IN_PROGRESS` before cancelling |
 | `INV-LOCKOUT-046` | That claim is taken only when there is something irreversible to protect |
@@ -478,7 +479,9 @@ Prefix `INV-LOCKOUT`.
 | `INV-LOCKOUT-066` | A member must never learn the switch exists, render or RSC |
 | `INV-LOCKOUT-067` | The per-action notify prompts are not offered while the switch is on |
 | `INV-LOCKOUT-068` | The silenced path sends no `notifyMember` flag, never `false` |
-| `INV-LOCKOUT-040` | Creation is today-or-future except admin retroactive creates within 365 days; period-lock guard |
+| `INV-LOCKOUT-040` | Creation is today-or-future except admin retroactive creates within 365 days |
+| `INV-LOCKOUT-071` | Create-time Xero lock-date guard: skipped when disconnected, fails closed, classifies cause |
+| `INV-LOCKOUT-072` | Lock-date guard on modify paths: override always, ordinary edits narrowly |
 | `INV-LOCKOUT-041` | Shift overrides write no Xero documents; on-behalf over-capacity creates are warn-and-confirm |
 | `INV-LOCKOUT-042` | A deliberately over-capacity booking is never destroyed by a later capacity re-check |
 | `INV-LOCKOUT-043` | Finished stays' card obligations never linger unseen: disjoint queues, one predicate |
