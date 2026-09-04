@@ -236,7 +236,7 @@ matrix is:
 git diff --check
 npm run lint
 DATABASE_URL=postgresql://user:pass@localhost:5432/tacbookings npx prisma validate
-npx tsc --noEmit
+npm run typecheck
 npm test
 ```
 

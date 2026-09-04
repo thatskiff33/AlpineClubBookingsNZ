@@ -8,4 +8,4 @@
 
   Nothing an administrator or member sees changes: this is compiler
   configuration and dead-code hygiene, and it is the measured baseline the
-  staged `noUncheckedIndexedAccess` adoption (#2694) starts from.
+  stricter checking planned in #2694 starts from.

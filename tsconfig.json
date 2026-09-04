@@ -8,16 +8,8 @@
     // enter the type surface before the target that carries it does.
     "target": "ES2022",
     "lib": ["dom", "dom.iterable", "es2022"],
-    // Class fields keep [[Set]] (assignment) semantics, which is what every
-    // emitter here produces today: Next's SWC reads ONLY this explicit key
-    // (`Boolean(compilerOptions.useDefineForClassFields)`, never the target),
-    // and Vite/Vitest derive `true` from an ES2022 target only when the key is
-    // absent. Left implicit, the ES2022 default would flip the Vitest transform
-    // to [[Define]] while the production build stayed on [[Set]], and the
-    // checker would model a runtime the app does not have. Flipping this to
-    // `true` is a real behaviour change for the ~80 `Error` subclasses that
-    // declare uninitialised fields and assign them after `super()`; it is a
-    // separate decision, not part of the baseline.
+    // Pinned false on purpose — see docs/TESTING.md → "Which project typechecks
+    // a test" for why (Next's SWC and Vite/Vitest read this key differently).
     "useDefineForClassFields": false,
     // #2693: no JavaScript enters a TypeScript project. Vitest still runs the
     // `scripts/**/*.test.mjs` suites, which were never statically checked
@@ -70,8 +62,8 @@
     "**/__tests__/**",
     // #2693: the Playwright suite and its config belong to tsconfig.e2e.json,
     // which supplies Node types without `vitest/globals` and without the Next
-    // route typegen. The three Vitest suites under `src/lib/__tests__/` that
-    // import an `e2e/helpers/*` module still reach it through that import;
+    // route typegen. The Vitest suites under `src/lib/__tests__/` that import
+    // an `e2e/helpers/*` module still reach it through that import;
     // ownership is about which project lists a file as a root.
     "e2e/**",
     "playwright.config.ts",

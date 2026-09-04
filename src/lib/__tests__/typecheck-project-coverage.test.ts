@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
@@ -31,7 +31,7 @@ import {
  *
  * "In a project" here means listed as a ROOT by that project's `include`, which
  * is what `parseJsonConfigFileContent` reports. A file another project reaches
- * through an import (three Vitest suites import `e2e/helpers/*`) is not owned
+ * through an import (several Vitest suites import `e2e/helpers/*`) is not owned
  * by it, and ownership is what this contract is about.
  */
 
@@ -77,14 +77,41 @@ const JAVASCRIPT_VITEST_TESTS = [
  * pinned so the declaration cannot quietly become the only half that exists.
  */
 const DECLARED_JAVASCRIPT_MODULES = [
-  ["eslint.config.mjs", "eslint.config.d.mts"],
-  ["load/lib/contention-invariant.js", "load/lib/contention-invariant.d.ts"],
-  [
-    "scripts/ci/server-only-boundary-selftest.mjs",
-    "scripts/ci/server-only-boundary-selftest.d.mts",
-  ],
-  ["scripts/sync-user-guide-wiki.mjs", "scripts/sync-user-guide-wiki.d.mts"],
+  {
+    module: "eslint.config.mjs",
+    declaration: "eslint.config.d.mts",
+    load: () => import("../../../eslint.config.mjs"),
+  },
+  {
+    module: "load/lib/contention-invariant.js",
+    declaration: "load/lib/contention-invariant.d.ts",
+    load: () => import("../../../load/lib/contention-invariant.js"),
+  },
+  {
+    module: "scripts/ci/server-only-boundary-selftest.mjs",
+    declaration: "scripts/ci/server-only-boundary-selftest.d.mts",
+    load: () => import("../../../scripts/ci/server-only-boundary-selftest.mjs"),
+  },
+  {
+    module: "scripts/sync-user-guide-wiki.mjs",
+    declaration: "scripts/sync-user-guide-wiki.d.mts",
+    load: () => import("../../../scripts/sync-user-guide-wiki.mjs"),
+  },
 ] as const;
+
+/**
+ * The runtime export names a declaration file promises: every
+ * `export declare const|function NAME`, plus `default` when it has one.
+ * `export type` is type-only and has no runtime counterpart, so it is skipped.
+ */
+function declaredRuntimeExports(declaration: string): string[] {
+  const source = readFileSync(path.join(ROOT, declaration), "utf8");
+  const names = [
+    ...source.matchAll(/^export declare (?:const|function) ([A-Za-z_$][\w$]*)/gm),
+  ].map((match) => match[1]);
+  if (/^export default /m.test(source)) names.push("default");
+  return names.sort();
+}
 
 type ProjectCoverage = {
   files: Set<string>;
@@ -292,7 +319,7 @@ describe("typecheck project coverage", () => {
   });
 
   it("pairs every JavaScript module a TypeScript test imports with a sibling declaration", () => {
-    for (const [module, declaration] of DECLARED_JAVASCRIPT_MODULES) {
+    for (const { module, declaration } of DECLARED_JAVASCRIPT_MODULES) {
       expect(existsSync(path.join(ROOT, module)), `${module} exists`).toBe(
         true,
       );
@@ -304,6 +331,20 @@ describe("typecheck project coverage", () => {
         app.files.has(declaration),
         `${declaration} is typechecked by tsconfig.json`,
       ).toBe(true);
+    }
+  });
+
+  it("declares exactly the runtime exports each JavaScript module has", async () => {
+    // A declaration is a promise about a module TypeScript never reads. A name
+    // the module gained is unreachable until declared; a name it lost arrives as
+    // `undefined`. Comparing the two lists makes both a failure here rather than
+    // a surprise in whichever suite imports the name.
+    for (const { module, declaration, load } of DECLARED_JAVASCRIPT_MODULES) {
+      const runtime = Object.keys(await load()).sort();
+      expect(
+        declaredRuntimeExports(declaration),
+        `${declaration} must declare exactly the exports of ${module}`,
+      ).toEqual(runtime);
     }
   });
 

@@ -180,9 +180,9 @@ their purpose. Every other file is a root of exactly one project:
   `playwright.config.ts`, with Node's types and nothing from Vitest. Specs
   reach application code through imports (`@/lib/...`), never by listing it.
 
-Vitest also collects JavaScript test files. The fifteen `scripts/**/*.test.mjs`
-suites — each the test of a `scripts/**` tool that CI runs with a bare `node`,
-so both stay `.mjs` — execute in Vitest and are typechecked by **no** project.
+Vitest also collects JavaScript test files. The `scripts/**/*.test.mjs`
+suites — each the test of a tool that runs under a bare `node`, so both stay
+`.mjs` — execute in Vitest and are typechecked by **no** project.
 That is not a loss: before #2693 they were loaded with `allowJs: true,
 checkJs: false`, which produced no diagnostics either. Their names are pinned in
 `src/lib/__tests__/typecheck-project-coverage.test.ts`, so a new JavaScript
