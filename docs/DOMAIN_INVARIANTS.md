@@ -209,7 +209,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-049` | Both directions are audited with the acting admin and the previous status |
 | `INV-PAY-050` | Xero Stripe refund notes cover provider-backed cash evidence, never the refunded-amount mirror |
 | `INV-PAY-051` | An unpriceable booking edit holds the money as one typed occurrence-keyed review task, never a guessed or zero amount |
-| `INV-PAY-052` | An unusable saved card is terminal for the auto-charge cron: retired at Stripe, cleared from every row carrying it, member and admins told once |
+| `INV-PAY-052` | An unusable saved card is terminal for the cron: retired everywhere, escalated once |
 | `INV-PAY-002` | Account credit is consumed only at `PAYMENT_PENDING`; a draft stores an election and spends nothing |
 | `INV-PAY-003` | The edit path may write an election only onto DRAFT, AWAITING_REVIEW and PAYMENT_PENDING |
 | `INV-PAY-004` | Members may edit their own drafts; a draft edit moves no money and claims no capacity |
