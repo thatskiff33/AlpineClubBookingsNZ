@@ -147,7 +147,13 @@ function makeBooking(overrides: Record<string, unknown> = {}) {
     promoAdjustmentCents: 0,
     member: { email: "m@example.com", firstName: "Pat", lastName: "Lee" },
     guests: [{ id: "g1" }, { id: "g2" }],
-    payment: { stripePaymentMethodId: "pm_1", stripeCustomerId: "cus_1" },
+    // #3269: a saved card is customer + pm + the SetupIntent that saved it.
+    payment: {
+      stripePaymentMethodId: "pm_1",
+      stripeCustomerId: "cus_1",
+      stripeSetupIntentId: "seti_1",
+    },
+    parentBooking: null,
     promoRedemption: null,
     ...overrides,
   };
@@ -279,6 +285,140 @@ describe("POST /api/admin/bookings/[id]/confirm-pending-guests", () => {
       mocks.upsertPaymentIntentTransaction.mock.invocationCallOrder[0]
     ).toBeLessThan(mocks.markBookingPaymentSucceeded.mock.invocationCallOrder[0]);
     expect(mocks.createStructuredAuditLog).toHaveBeenCalled();
+    // The booking's OWN saved card is charged and stamped back onto its row.
+    expect(mocks.chargePaymentMethod).toHaveBeenCalledWith(
+      expect.objectContaining({ customerId: "cus_1", paymentMethodId: "pm_1" })
+    );
+    expect(mocks.paymentUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          stripeCustomerId: "cus_1",
+          stripePaymentMethodId: "pm_1",
+        }),
+      })
+    );
+  });
+
+  // #3269 / INV-PAY-053: the route asks the same question the cron asks — "may
+  // this card be charged off-session?" — and answers it by SetupIntent
+  // provenance, on the child's own row first and then the split parent's.
+  describe("saved-card provenance (#3269)", () => {
+    const ONE_OFF_CHECKOUT_CARD = {
+      stripeCustomerId: "cus_oneoff",
+      stripePaymentMethodId: "pm_oneoff",
+      stripeSetupIntentId: null,
+    };
+    const PARENT_SETUP_INTENT_CARD = {
+      stripeCustomerId: "cus_parent",
+      stripePaymentMethodId: "pm_parent",
+      stripeSetupIntentId: "seti_parent",
+    };
+
+    it("moves a booking whose only card came from a one-off checkout to payment-owed instead of charging it", async () => {
+      mocks.bookingFindUnique.mockResolvedValue(
+        makeBooking({ payment: ONE_OFF_CHECKOUT_CARD })
+      );
+
+      const res = await POST(makeRequest(), { params });
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(body).toMatchObject({ status: "PAYMENT_PENDING", charged: false });
+      expect(mocks.chargePaymentMethod).not.toHaveBeenCalled();
+      expect(mocks.paymentUpsert).not.toHaveBeenCalled();
+    });
+
+    it("charges a split child on its parent's SetupIntent-saved card without copying that card onto the child's row", async () => {
+      mocks.bookingFindUnique.mockResolvedValue(
+        makeBooking({
+          payment: null,
+          parentBooking: { id: "parent-1", payment: PARENT_SETUP_INTENT_CARD },
+        })
+      );
+      mocks.chargePaymentMethod.mockResolvedValue({
+        id: "pi_parent_card",
+        status: "succeeded",
+        amount: 10000,
+        payment_method: "pm_parent",
+      });
+      mocks.markBookingPaymentSucceeded.mockResolvedValue({ outcome: "paid" });
+
+      const res = await POST(makeRequest(), { params });
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(body).toMatchObject({ success: true, status: "PAID", charged: true });
+      // The route can only answer for a split child if it LOADS the parent's
+      // payment row — the mock above returns it regardless, so pin the query.
+      expect(mocks.bookingFindUnique).toHaveBeenCalledWith(
+        expect.objectContaining({
+          include: expect.objectContaining({
+            payment: true,
+            parentBooking: { include: { payment: true } },
+          }),
+        })
+      );
+      expect(mocks.chargePaymentMethod).toHaveBeenCalledWith(
+        expect.objectContaining({
+          customerId: "cus_parent",
+          paymentMethodId: "pm_parent",
+          idempotencyKey: "pending_charge_b1",
+        })
+      );
+      // The claim writes the customer the child is charged under, and NOT the
+      // parent's pm: the key is absent from both arms of the upsert.
+      const upsertArgs = mocks.paymentUpsert.mock.calls[0][0] as {
+        create: Record<string, unknown>;
+        update: Record<string, unknown>;
+      };
+      expect(upsertArgs.create).toMatchObject({ stripeCustomerId: "cus_parent" });
+      expect(upsertArgs.update).toMatchObject({ stripeCustomerId: "cus_parent" });
+      expect(Object.keys(upsertArgs.create)).not.toContain("stripePaymentMethodId");
+      expect(Object.keys(upsertArgs.update)).not.toContain("stripePaymentMethodId");
+      // The pre-reconciliation transaction record names the customer charged.
+      expect(mocks.upsertPaymentIntentTransaction).toHaveBeenCalledWith(
+        expect.objectContaining({ stripeCustomerId: "cus_parent" })
+      );
+    });
+
+    it("does not borrow a parent's one-off checkout card: payment-owed, never a charge Stripe would refuse", async () => {
+      mocks.bookingFindUnique.mockResolvedValue(
+        makeBooking({
+          payment: null,
+          parentBooking: { id: "parent-1", payment: ONE_OFF_CHECKOUT_CARD },
+        })
+      );
+
+      const res = await POST(makeRequest(), { params });
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(body).toMatchObject({ status: "PAYMENT_PENDING", charged: false });
+      expect(mocks.chargePaymentMethod).not.toHaveBeenCalled();
+      expect(mocks.paymentUpsert).not.toHaveBeenCalled();
+    });
+
+    it("prefers the child's own SetupIntent card over the parent's", async () => {
+      mocks.bookingFindUnique.mockResolvedValue(
+        makeBooking({
+          parentBooking: { id: "parent-1", payment: PARENT_SETUP_INTENT_CARD },
+        })
+      );
+      mocks.chargePaymentMethod.mockResolvedValue({
+        id: "pi_own",
+        status: "succeeded",
+        amount: 10000,
+        payment_method: "pm_1",
+      });
+      mocks.markBookingPaymentSucceeded.mockResolvedValue({ outcome: "paid" });
+
+      const res = await POST(makeRequest(), { params });
+
+      expect(res.status).toBe(200);
+      expect(mocks.chargePaymentMethod).toHaveBeenCalledWith(
+        expect.objectContaining({ customerId: "cus_1", paymentMethodId: "pm_1" })
+      );
+    });
   });
 
   it("does not charge when capacity is full, returning 409 CAPACITY_EXCEEDED", async () => {
