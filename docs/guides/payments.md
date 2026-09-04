@@ -286,13 +286,53 @@ guest* sending the booking back; the other row is still waiting, and until it is
 dealt with the booking will keep returning. The message you get after settling
 says so.
 
-**Some rows will never show the boxes**, and that is deliberate. A guest whose
-nights all carry a price, but whose prices do not add up to what their stay is
-recorded as being worth, has nothing blank to fill in — what that needs is a
-decision about which of two stored figures is wrong, which is not something this
-screen can ask for. So is a guest with a negative or otherwise unusable stored
-price. Those bookings keep coming back to this queue, and pricing each change by
-hand is the current answer for them.
+**Some rows will never show the boxes here**, and that is deliberate: these
+boxes fill in *blanks*, and some guests have no blanks to fill. A guest whose
+nights all carry a price but whose prices do not add up to what their stay is
+recorded as being worth has nothing blank; neither does a guest with no stored
+night prices at all, whose nights the system works out from their arrival and
+departure dates.
+
+**Those are recorded from the booking's own page instead** — see
+"[Recording what a guest's nights sold for](#recording-what-a-guests-nights-sold-for)"
+below. A guest with a negative or otherwise unusable stored figure for the stay
+as a whole is the one case neither surface can take: there is nothing sound for
+the night figures to add up to, and what should happen to those bookings has not
+been decided.
+
+### Recording what a guest's nights sold for
+
+Open the booking, find **Admin tools**, and look for **Nights whose sold price
+the records cannot tell us**. It lists each guest the club cannot price, says
+why, and shows what is on file for each of their nights.
+
+- **You give a figure for every night of that guest's stay** — all of them,
+  including any that already show an amount — and they have to come to what
+  that guest's stay is already stored as being worth. The total is shown, and the
+  running total under the boxes says what you have typed and what it needs to be.
+- **It cannot move any money.** Because the figures have to come to the figure
+  already on file, what the guest owes is exactly the same afterwards. What
+  changes is how that figure is made up, night by night — which matters,
+  because a later part-refund is worked out from those nights.
+- **Nothing is filled in for you**, here or anywhere in this feature. If the
+  figures will not add up honestly, do not adjust one to close the gap; a figure
+  typed to close a gap is a price nobody decided.
+- **One guest at a time.** A booking with two such guests needs both recorded
+  before it stops coming back.
+- **It is not offered while the booking has a review waiting** on this queue.
+  Settle that first — its boxes ask for the same figures, against a total that
+  also includes the amount being settled — and record anything still missing
+  afterwards.
+- **It is audited**, with the figures you gave, what each night held before, and
+  what the stay was worth before and after, which are the same number.
+
+You need **Finance — Edit** to use it; a finance viewer sees the section and
+every control disabled.
+
+**Why this exists.** Until an officer records them, every change to such a
+booking has to be priced by hand, and an other-club member rate cannot be set on
+it at all — the edit that would set one is refused, and its message points
+here.
 
 A booking with a review waiting also shows a **Money waiting for review** warning
 on its own page, under **Admin tools**, with a link back to this page.

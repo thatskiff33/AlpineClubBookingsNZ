@@ -2774,6 +2774,42 @@ listed above; and the blanks are re-read on the caller's transaction rather than
 trusted from the browser, so a screen minutes old cannot price a night the
 booking no longer holds. `INV-MOD-028` carries the rest of the rule.
 
+**#3214 ADDS A SECOND CALLER OF THAT SAME WRITER, ON THE SAME BASIS, AND STILL NO
+KEY.** An officer may now record what a guest strand's nights sold for from the
+booking's own page, outside any review, when the strand's stored rows cannot be
+read back. It writes the same two tables through the same function, and it takes
+no advisory tier for a reason the section above cannot claim: **its total write
+is provably a no-op**. The officer is asked for every night the strand holds and
+the shared checker forces those to sum to `BookingGuest.priceCents` as stored, so
+the writer re-bases that column to the number already in it. It moves no
+settlement money, makes no provider call, composes no lifecycle transition and
+joins no capacity claim.
+
+Three things differ from the settle path and each matters:
+
+- **it has no status claim, so the compare-and-set is the WHOLE of its
+  single-flight guarantee.** The settle path has a task to claim; this has
+  nothing. Two officers recording at once: the first commits, the second's fenced
+  `updateMany` matches zero rows and raises the 409;
+- **the night fence is the value the row was READ holding, not a literal
+  `priceCents: null`.** It has to be, because this act may rewrite a night that
+  already carries a figure — bounded to strands that do not reconcile, with the
+  total fenced. The settle path still passes `null` and reaches the database with
+  a byte-identical `where`;
+- **it can CREATE a row**, for a night the strand holds through its stay envelope
+  with no row behind it. The `(bookingGuestId, stayDate)` unique constraint is
+  the fence on that arm, and its `P2002` becomes the same race refusal rather
+  than a 500. The created dates are exactly `getGuestBedNightKeys`, so no
+  capacity count moves (`INV-CAP-032`).
+
+Against a concurrent booking edit — which holds `pg_advisory_xact_lock(1)` and
+`acquireLodgeCapacityLock`, and deletes and recreates these very rows in
+`applyGuestChanges` — the fences turn a race into a 409 and a rollback, never a
+lost update. The reverse order is the intended outcome: the reconcile commits,
+and the edit then reads exact evidence and prices normally. It also refuses
+outright while an `EDIT_FINANCIAL_REVIEW` is open on the booking, so the two
+callers cannot be writing the same strand against two different targets.
+
 **#3194 ADDS A READ TO THAT SAME LOCKLESS TRANSACTION AND STILL NO KEY.** Where
 the task carries no `paymentId` of its own — a review parked before the member
 paid — the route decision re-reads the BOOKING's payment on the caller's

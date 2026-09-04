@@ -1491,6 +1491,43 @@ supplying the amount. That is the rule the date path broke and is the reason it
 is stated separately from the five bullets above: a path can be gated against
 inventing a *credit* and still quietly invent a *row*.
 
+**There are TWO acts in which a person may supply those amounts, and both are
+the same arithmetic** — one function, `checkStoredNightPriceRepair`, applied
+with different arguments (`INV-SSOT`). Neither derives anything:
+
+1. **Settling the review** (#3191). The officer types every one of a strand's
+   BLANK nights, and they must come to the strand's stored total adjusted by the
+   amount being settled. The settlement is what moves what the stay is worth.
+2. **Recording what a non-reconciling strand's nights sold for** (#3214), on a
+   booking with **no open review**, from `Admin tools` on the booking's own
+   page. The officer types **every night the strand holds** — not only its
+   blanks — and they must come to `BookingGuest.priceCents` **as stored**.
+
+The second exists because the first could not be reached on the population that
+needs it most. A booking converted from a public request is quote-priced, so
+`QUOTE_PRICED_EDIT_BLOCK_MESSAGE` refuses every edit that could park it, and no
+park means no review to settle; #3214's own refusal closed the last door. It also
+covers the two unusable shapes the settle-time repair structurally cannot — a
+strand with **no night rows at all**, whose nights come from the stay envelope,
+and a strand whose rows are all readable but **do not add up**.
+
+**The second act cannot change what anybody owes, and that is arithmetic rather
+than policy.** With every held night asked for, nothing counts as already known
+and nothing is being settled, so the target is the stored total flat and the
+writer re-bases that total to the number already on file. What it CAN do is
+re-apportion, within that fixed total, what each night is recorded as having sold
+for — which is the officer's judgement, is what a mismatch needs, and is why the
+audit entry carries the previous per-night values as well as both totals.
+
+**Its fence is eligibility, not arithmetic.** A strand the exactness classifier
+calls `exact` is refused outright, so this is not a general re-pricer; so is a
+strand whose stored total is not usable money, which is #2745's territory and not
+this act's. It writes through the same single writer as the settle path, on the
+same compare-and-set basis, and creates a night row only where the strand holds
+that night through its envelope with no row behind it — which cannot move a
+capacity count, because those are exactly the nights the guest already occupies
+(`INV-CAP-032`).
+
 It binds every writer of `BookingGuestNight.priceCents`, not only the five edit
 doors — a wholesale night-row rewriter destroys a blank exactly as effectively as
 an edit does, and two of them exist outside the edit paths. Both are named here,
@@ -1560,18 +1597,28 @@ removes any of them is a change to the rule above, not a tidy-up.
   already makes: the flag says what was CHARGED, and nothing was. Undoing it
   would mean either withholding an identity correction the member asked for, or
   charging money the edit was parked for being unable to price.
-- **A parked batch edit writes the officer's other-club rate tick back as
-  `false`, with no message on screen.** Intended, for the reason above — the tick
-  records a rate that was honoured, and a parked edit honours no rate — but the
-  officer is not told, so they may believe they applied it.
+- **A placeholder link half-lands; an other-club rate tick no longer does.**
+  The tick used to be written back as `false` with no message on screen, on the
+  same reasoning as the bullet above — the flag records a rate that was
+  honoured, and a parked edit honours no rate. #3214 closed that one instead of
+  disclosing it: the whole edit is now refused, ticks and lodge together, and the
+  refusal says what has to be true first. The link's half-landing above stands,
+  because an identity correction is not a rate.
 
-**The consequence worth stating plainly:** because nothing clears a blank, a
-booking that has been parked once is unreadable for good. Settling a review
-writes an amount to the TASK, not a price to the night row. Combined with the
-pending-review fence above, that means a parked booking is one price-affecting
-edit per officer intervention — honest rather than harmful, because the club is
-asked each time instead of being told a number nobody decided, but a real cost
-to self-service and not a detail.
+**The consequence this rule used to carry, and what is left of it.** It read:
+because nothing clears a blank, a booking parked once is unreadable for good, so
+a parked booking is one price-affecting edit per officer intervention. That was
+true when settling a review wrote an amount to the TASK and no price to the night
+row. #3191 and #3214 between them made it false: a person can now supply the
+per-night figures, at the settle and again from the booking's own page, and a
+strand whose figures are supplied prices exactly from then on.
+
+What is left is the shape of the cost rather than its permanence. Until somebody
+supplies those figures the booking still parks on every price-affecting edit, and
+supplying them is deliberate work an officer has to know to do — the club is
+asked rather than told a number nobody decided, which is the whole point. And it
+is per STRAND: a booking with two unreadable guests needs both recorded before it
+stops coming back.
 
 A negative or non-integer stored row is classified as an ABSENCE of usable
 evidence, never as a price: trusting one inverts an edit, so giving a night back
@@ -1613,6 +1660,18 @@ sweep, each against a priced control that raises nothing) and by
 asserts that the guest is deleted, that the tasks are raised with a null amount
 and this removal's `BookingModification` as their anchor, and that every
 settlement figure handed to the post-commit provider helpers is zero.
+
+THE SECOND ACT is pinned by `stored-night-price-strand-reconcile.test.ts`, which
+proves the same property the same way — it takes a strand this rule's own
+classifier calls `unusable`, in all three of its shapes, runs the real plan and
+the real writer over a store that applies the same fences the database does, and
+asks the same classifier again. Its eligibility fence, its no-op total, its
+created night set (with a bed count measured through the real capacity predicate)
+and its re-derivation of the night list are each mutation-verified.
+`booking-other-lodge-election-parked-edit.test.ts` carries the end-to-end lane:
+the election-only edit on a quote-priced booking is refused, the strand is
+recorded, and the same edit then prices normally — which is what makes #3214's
+refusal sentence true rather than merely written.
 
 The REPAIR is pinned by `stored-night-price-repair.test.ts`, whose last block is
 the proof that matters: it takes a strand this rule's own classifier calls
