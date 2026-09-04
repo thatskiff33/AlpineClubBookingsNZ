@@ -401,6 +401,45 @@ describe("hosting coverage drain claim fences (#2596)", () => {
     );
   });
 
+  it("does NOT hand a split half a decision nobody asked its owner about", async () => {
+    // The other side of the pair rule (#3241, `INV-HOST-053`). An override names
+    // no set of bookings — the officer confirmed a change to one booking, and its
+    // two halves are that booking — but a DECLINE is an answer about an exact set,
+    // and every booking in that set already holds a row of its own. A half that
+    // was not in the set is a booking the member was never shown, so inheriting
+    // the decision through the pair would be this invariant's own defect wearing
+    // a different hat, and would count as a decline nobody made.
+    const declined = {
+      ...CLAIMED_ITEM,
+      cause: "OWNER_DECLINED_LINKED_MOVE" as const,
+      sourceBookingId: "booking-asked-about",
+      actorMemberId: "owner-1",
+      reason: "The member was asked whether to move this booking",
+    };
+    mocks.claim.mockReset();
+    mocks.claim.mockResolvedValueOnce([declined]).mockResolvedValue([]);
+    mocks.lockMember.mockResolvedValue(0);
+    mocks.loadClaimed.mockResolvedValue(declined);
+    mocks.loadDependents.mockResolvedValue(["booking-asked-about"]);
+    mocks.loadSplitSiblings.mockResolvedValue(["booking-split-half"]);
+    mocks.reconcile.mockResolvedValue({ action: "none" });
+
+    await drainHostingCoverageReevaluations({}, makeDb());
+
+    expect(
+      mocks.reconcile,
+      "INV-HOST-053: a half outside the asked-about set must not inherit the decision",
+    ).toHaveBeenCalledWith(
+      {
+        bookingId: "booking-split-half",
+        cause: "SYSTEM_CHANGE",
+        actorMemberId: "owner-1",
+        reason: null,
+      },
+      expect.anything(),
+    );
+  });
+
   it("resolves a directly verified terminal source even when the bounded list omits it", async () => {
     const item = {
       ...CLAIMED_ITEM,

@@ -577,11 +577,11 @@ async function processHostingCoverageReevaluation(
     db,
   );
 
-  // A #738 SPLIT PAIR IS ONE BOOKING HERE, or §7's reason is lost (`INV-HOST-053`).
+  // A SPLIT PAIR IS ONE BOOKING FOR AN OVERRIDE, never for a decline (INV-HOST-053).
   const subject = refreshedItem.sourceBookingId;
-  const plain = refreshedItem.cause === "SYSTEM_CHANGE" && !refreshedItem.reason;
+  const officer = refreshedItem.cause === "OFFICER_OVERRIDE";
   const rowIsAbout = new Set(
-    subject && !plain ? await expandWithSplitHalves([subject], db) : [subject],
+    subject && officer ? await expandWithSplitHalves([subject], db) : [subject],
   );
   for (const bookingId of dependentIds) {
     const rowIsAboutThisBooking = rowIsAbout.has(bookingId);

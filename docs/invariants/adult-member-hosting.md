@@ -1925,14 +1925,6 @@ compliant indefinitely.
   (`INV-SSOT-001`). The writer re-exports the words for callers that already
   imported them from it — a pointer, not a second definition.
 
-  **WHERE THE VOCABULARY LIVES.** The labels, their ranks, the one officer-facing
-  phrase for each and the one stored sentence a declined move records are
-  `src/lib/adult-member-hosting-incident-causes.ts`, split out of the incident
-  writer by #3241 when that module had grown to two jobs. Two officer surfaces
-  and an audit line want the words and nothing else; the fold wants the ranks
-  (`INV-SSOT-001`). The writer re-exports the words for callers that already
-  imported them from it — a pointer, not a second definition.
-
   **THE ACTOR IS NOT THE STORY.** `actorMemberId` still reaches every booking in
   the sweep, because "who did the thing that revealed this" is true of all of
   them and is what an audit trail is for. What stops at the row's own booking is
@@ -1942,14 +1934,39 @@ compliant indefinitely.
   attribution is not sufficient by itself, and shipping only that would have
   silently dropped the decision from the very bookings it describes.
 
-  1. **The drain** gives `cause` and `reason` only to the booking the row names
-     (`adult-member-hosting-coverage-drain.ts`).
-  2. **The enqueue** writes a row per stranded dependent for a declined linked
+  1. **The drain** gives `cause` and `reason` only to the booking the row names —
+     **and, for an officer override, to that booking's #738 split half**, because
+     a split pair is one booking and the officer acted on the pair. The sibling
+     query excludes its own input, so a half can never equal `sourceBookingId`;
+     and §7's mandatory reason is stored nowhere but the incident, so where the
+     uncovered half is the split child and its parent has no violation of its
+     own, confining attribution to the id alone would leave that reason nowhere
+     at all.
+
+     **THE EXPANSION IS FOR AN OVERRIDE AND NOT FOR A DECLINE**, and that is not
+     an oversight. A decline is an answer about an EXACT set of bookings, each of
+     which gets a row of its own under part 2 — so a half that was not in that set
+     would inherit a decision nobody was asked for, which is this invariant's own
+     defect wearing a different hat. An override names no set: the officer
+     confirmed a change to one booking, and its two halves are that booking. The
+     extra read is therefore taken only for an override, and the ordinary sweep
+     pays nothing (`adult-member-hosting-coverage-drain.ts`).
+  2. **The enqueue** writes a row per **stranded** dependent for a declined linked
      move, even where the changed booking's own night window already reaches it.
      A dependent that PARTIALLY overlaps the new dates — the adult's booking
      still covers one of the kid's nights and leaves the other short — is an
      ordinary family shape, and it is reached only by the sweep. Without a row of
      its own it would lose the decision entirely.
+
+     **STRANDED, NOT EVERY DEPENDENT, AND THE DIFFERENCE IS THE WHOLE POINT.**
+     `inspectSameOwnerDependents` drops from `stranded` any dependent whose
+     uncovered state is already recorded — a stored review or an open incident at
+     the same state key — and those are precisely the bookings uncovered for
+     reasons of their own. They stay in the dependent set. Giving each of them a
+     row of its own would hand them the decision under their own name, where the
+     drain's filter cannot help. The changed booking's own row does not carry the
+     decision either: "asked whether to move this booking as well" is
+     self-contradictory on the booking they were editing.
   3. **The fold promotes by rank**: `OFFICER_OVERRIDE` outranks
      `OWNER_DECLINED_LINKED_MOVE`, which outranks `SYSTEM_CHANGE`. For an
      identical uncovered state a more explained cause overwrites a less explained
