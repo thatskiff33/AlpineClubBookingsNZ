@@ -3,7 +3,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { describeHostingCoverageIncidentCause } from "@/lib/adult-member-hosting-coverage-incidents";
+import { describeHostingCoverageIncidentCause } from "@/lib/adult-member-hosting-incident-causes";
 
 import { stripComments } from "./support/strip-comments";
 
@@ -56,9 +56,11 @@ const EXPAND_MIGRATION =
 
 /**
  * The module that declares the mirror union and holds the single officer-facing
- * wording. It names the label; it must not write it.
+ * wording. It names the label; it must not write it. Split out of
+ * `adult-member-hosting-coverage-incidents.ts` by #3241, which re-exports these
+ * names and so no longer spells the label itself.
  */
-const DECLARING_MODULE = "src/lib/adult-member-hosting-coverage-incidents.ts";
+const DECLARING_MODULE = "src/lib/adult-member-hosting-incident-causes.ts";
 
 /**
  * The ONE arm allowed to write it: the owner-declined branch of

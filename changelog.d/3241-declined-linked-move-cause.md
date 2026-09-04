@@ -27,4 +27,7 @@
   nobody ever had. Each booking now carries its own account, the person who made
   the change is still recorded against all of them, and the counts by reason stop
   being inflated by bookings nobody decided anything about (#3241,
-  `INV-HOST-053`).
+  `INV-HOST-053`). The same correction applies to a booking officer's own private
+  note: the reason they type when they allow a booking to go uncovered stays on
+  the booking they were looking at, and where that booking was split in two, both
+  halves still carry it.

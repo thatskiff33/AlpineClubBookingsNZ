@@ -465,17 +465,11 @@ async function expandWithSplitHalves(
 
 /**
  * Settle one queued item: every active booking of that owner, at that lodge, over
- * those nights, bounded by the item itself (§10) — `loadSameOwnerCoverageDependentIds`
- * cannot widen into a lodge-wide sweep.
- *
- * §14's EXISTENTIAL RULE IS WHAT THE LOOP BELOW IMPLEMENTS: not "did the source
- * that used to cover this booking go away" but "is this booking covered NOW, by
- * anything" — so a second eligible same-owner source keeps a booking compliant, an
- * earlier incident is resolved rather than left standing, and no misleading
- * loss-of-cover message is sent. WHICH IS WHY THE ROW'S STORY STOPS AT ITS OWN
- * BOOKING (#3241, `INV-HOST-053`): that question also reaches bookings uncovered
- * for their own reasons, and this row's cause and reason are not their story.
- */
+ * those nights, bounded by the item itself (§10). §14's EXISTENTIAL RULE IS WHAT
+ * THE LOOP BELOW IMPLEMENTS: not "did the source that used to cover this booking
+ * go away" but "is this booking covered NOW, by anything" — which is why THE
+ * ROW'S STORY STOPS AT ITS OWN BOOKING (#3241, `INV-HOST-053`): it also reaches
+ * bookings uncovered for their own reasons, whose story this is not. */
 async function processHostingCoverageReevaluation(
   item: HostingCoverageReevaluationItem,
   db: Prisma.TransactionClient,
@@ -583,18 +577,11 @@ async function processHostingCoverageReevaluation(
     db,
   );
 
-  // A #738 SPLIT PAIR IS ONE BOOKING FOR THIS PURPOSE (#3241). The officer acted
-  // on the pair, and the half carrying the non-member guests is often the
-  // uncovered one — with §7's mandatory reason stored nowhere but the incident,
-  // treating that half as a stranger would lose it outright. Asked only of a row
-  // that HAS a story, so the ordinary sweep pays no extra read.
+  // A #738 SPLIT PAIR IS ONE BOOKING HERE, or §7's reason is lost (`INV-HOST-053`).
+  const subject = refreshedItem.sourceBookingId;
+  const plain = refreshedItem.cause === "SYSTEM_CHANGE" && !refreshedItem.reason;
   const rowIsAbout = new Set(
-    refreshedItem.sourceBookingId &&
-      (refreshedItem.cause !== "SYSTEM_CHANGE" || refreshedItem.reason !== null)
-      ? await expandWithSplitHalves([refreshedItem.sourceBookingId], db)
-      : refreshedItem.sourceBookingId
-        ? [refreshedItem.sourceBookingId]
-        : [],
+    subject && !plain ? await expandWithSplitHalves([subject], db) : [subject],
   );
   for (const bookingId of dependentIds) {
     const rowIsAboutThisBooking = rowIsAbout.has(bookingId);

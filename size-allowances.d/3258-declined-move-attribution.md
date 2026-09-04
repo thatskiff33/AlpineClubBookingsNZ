@@ -1,14 +1,16 @@
 # File-size allowances for #3258
 
 file: src/lib/adult-member-hosting-review.ts
-lines: 4483
-reason: ten lines in `enqueueSameOwnerDependentItems`, so a stranded booking
-  that still OVERLAPS the moved dates gets a re-evaluation row of its own. The
-  skip it qualifies exists to avoid duplicate work, and it is now the difference
-  between an officer being told a member chose this and not, since a row's
-  explanation stops at the booking it is about (`INV-HOST-053`). The rule has to
-  sit at the one place that decides whether a dependent gets a row; there is no
-  seam to lift it to that would not put the decision and its reason in different
-  files. The file is 4483 lines against a 700-line budget and wants splitting,
-  but that is a refactor of the hosting engine and not something to attempt
-  inside a release-ordering fix.
+lines: 4498
+reason: twenty-five lines across the two places that decide which
+  re-evaluation row a dependent gets and what story it carries — the stranded
+  booking that still OVERLAPS the moved dates needs a row of its own, a booking
+  uncovered for its own reason must not be handed the member's decision, and the
+  changed booking's own row must not claim the member was asked about the booking
+  they were editing (`INV-HOST-053`). All three are properties of the one
+  function that enqueues those rows; there is no seam to lift them to that would
+  not separate a decision from its reason. The file is 4498 lines against a
+  700-line budget and wants splitting, but that is a refactor of the hosting
+  engine, not something to attempt inside a release-ordering fix. The cause
+  vocabulary this change did outgrow was split out, into
+  `src/lib/adult-member-hosting-incident-causes.ts`.

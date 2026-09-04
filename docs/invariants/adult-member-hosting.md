@@ -1917,6 +1917,22 @@ compliant indefinitely.
   had mentioned to them. It also inflated the count `INV-HOST-052` exists to keep
   honest: a club counting declined moves counted bookings nobody declined.
 
+  **WHERE THE VOCABULARY LIVES.** The labels, their ranks, the one officer-facing
+  phrase for each and the one stored sentence a declined move records are
+  `src/lib/adult-member-hosting-incident-causes.ts`, split out of the incident
+  writer by #3241 when the writer had grown to two jobs. Two officer surfaces and
+  an audit line want the words and nothing else; the fold wants the ranks
+  (`INV-SSOT-001`). The writer re-exports the words for callers that already
+  imported them from it — a pointer, not a second definition.
+
+  **WHERE THE VOCABULARY LIVES.** The labels, their ranks, the one officer-facing
+  phrase for each and the one stored sentence a declined move records are
+  `src/lib/adult-member-hosting-incident-causes.ts`, split out of the incident
+  writer by #3241 when that module had grown to two jobs. Two officer surfaces
+  and an audit line want the words and nothing else; the fold wants the ranks
+  (`INV-SSOT-001`). The writer re-exports the words for callers that already
+  imported them from it — a pointer, not a second definition.
+
   **THE ACTOR IS NOT THE STORY.** `actorMemberId` still reaches every booking in
   the sweep, because "who did the thing that revealed this" is true of all of
   them and is what an audit trail is for. What stops at the row's own booking is
@@ -1940,8 +1956,18 @@ compliant indefinitely.
      one, and never the reverse. That is what makes drain order stop mattering: a
      stranded booking can be opened by a sweep that knows nothing and reached
      afterwards by its own row carrying the member's decision. The guarded
-     `updateMany` re-asserts the ranks this write outranks, so a concurrent
-     writer holding something stronger wins rather than being erased.
+     `updateMany` re-asserts the ranks under concurrency **as `notIn` the causes
+     this write does not outrank** — an allow-list would exclude a label the
+     running build has never heard of, which is exactly what an older colour
+     meets mid-deploy under `INV-HOST-052`'s own two-release order, and the
+     promotion would then match nothing, spin the retry loop and throw. A
+     concurrent writer holding something stronger still wins rather than being
+     erased. A promotion writes the story and NOTHING ELSE: the full update
+     payload also clears the owner-notification claim, which is right when the
+     state moved and wrong here — clearing a claim held by a delivery in flight
+     loses its completion stamp and emails the owner twice about one unchanged
+     condition (§16). The rank is a map checked with `satisfies`, so a fourth
+     cause nobody ranks is a compile error rather than a silent 0.
 
   **WHAT THIS DOES NOT CHANGE.** A materially different uncovered state is still
   a new state: when the state key moves, the incoming cause is written whatever
@@ -1952,9 +1978,12 @@ compliant indefinitely.
   Enforced by
   `src/lib/__tests__/adult-member-hosting-coverage-drain-claims.test.ts` (the
   story reaches the row's own booking and no other, in both the declined and the
-  officer-override directions),
+  officer-override directions, and a split half keeps the officer's reason),
   `src/lib/__tests__/adult-member-hosting-coverage-incidents.test.ts` (the
-  decision is recorded whichever drain arrives first, and an override is never
-  demoted) and `src/lib/__tests__/adult-member-hosting-same-owner.test.ts` (an
-  overlapping stranded booking gets a row of its own), whose failure messages
-  carry this id.
+  decision is recorded whichever drain arrives first, an override promotes a
+  decision and is never demoted by one, and a notification claim in flight
+  survives a promotion) and
+  `src/lib/__tests__/adult-member-hosting-same-owner.test.ts` (an overlapping
+  stranded booking gets a row of its own, while a booking uncovered for its own
+  reason and the booking being edited do not carry the decision), whose failure
+  messages carry this id.
