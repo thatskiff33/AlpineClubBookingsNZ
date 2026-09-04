@@ -23,6 +23,7 @@ import {
   formatFinancePercent,
 } from "@/lib/finance-format";
 import { formatClubShortMonthYear, requireCalendarDate } from "@/lib/club-time";
+import { monthPointLabel } from "@/lib/finance-dashboard-page/model";
 
 /*
   Finance chart axes need the SHORT month ("Apr 2026"), where the kernel's
@@ -184,9 +185,10 @@ export function RatioExplorer({
       }
       return [
         {
-          label: provisional.has(month)
-            ? `${shortMonthLabel(month)} (MTD)`
-            : shortMonthLabel(month),
+          label: monthPointLabel({
+            label: shortMonthLabel(month),
+            isProvisional: provisional.has(month),
+          }),
           ratio: (numerator.valuesCents[index] ?? 0) / denominatorCents,
         },
       ];
