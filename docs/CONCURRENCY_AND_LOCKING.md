@@ -2994,7 +2994,7 @@ under the lodge lock freezes the set of link intents, and the sweep excludes the
 cron's own `pending_hold_auto_charge` transactions because Stripe's shared
 `pending_charge_<bookingId>` idempotency key re-returns a prior run's intent.
 The same cron's terminal branch for a permanently unusable saved card (#3268,
-`INV-PAY-052`) runs AFTER `releaseChargeClaim` has committed and holds no lock
+`INV-PAY-054`) runs AFTER `releaseChargeClaim` has committed and holds no lock
 at all: the Stripe detach is a plain provider call outside any transaction, and
 the two `updateMany` clears (`Payment.stripePaymentMethodId`,
 `PaymentTransaction.paymentMethodId`, both matched by the exact pm id) are

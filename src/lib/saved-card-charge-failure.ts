@@ -11,7 +11,7 @@
  * four days on the 3-hourly schedule — beds unheld throughout, admins alerted
  * every run, member never told.
  *
- * Two exports, one policy (INV-PAY-052):
+ * Two exports, one policy (INV-PAY-054):
  *
  *   - `classifySavedCardChargeFailure` reads the thrown error by duck-typing
  *     (the SDK class is mocked in tests and `instanceof` across module

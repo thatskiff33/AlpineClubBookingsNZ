@@ -1708,7 +1708,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
         // failing identically every three hours. Anything not recognised as
         // terminal — and any error inside this decision — keeps today's
         // release-alert-retry behaviour, so the classifier can only narrow the
-        // retry loop (INV-PAY-052).
+        // retry loop (INV-PAY-054).
         let escalatedAsTerminal = false;
         if (claimForCharge) {
           try {

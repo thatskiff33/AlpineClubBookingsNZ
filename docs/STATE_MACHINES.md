@@ -1321,7 +1321,7 @@ surface show nothing new. The rest of the audit trail (recovery-operation row,
 `PaymentRefund` ledger entries, error log, and the dedicated #2007 admin alert)
 is unchanged.
 
-Saved-card auto-charge failure (#3268, `INV-PAY-052`): when the confirm-pending
+Saved-card auto-charge failure (#3268, `INV-PAY-054`): when the confirm-pending
 cron's off-session charge THROWS, the Payment row's state does not move — the
 row stays `PENDING` and the capacity claim is released as before — but the
 error is now classified before the next run is allowed to try again:
@@ -2732,7 +2732,7 @@ charge throws -> claim released (booking back to PENDING, beds reconciled away)
 ```
 
 The full decision table and the row-clearing contract are in "Payment
-Lifecycle" above and `INV-PAY-052`. To verify: the classifier table
+Lifecycle" above and `INV-PAY-054`. To verify: the classifier table
 (`saved-card-charge-failure.test.ts`) and the cron's terminal branch
 (`cron-confirm-pending.test.ts`, "#3268").
 

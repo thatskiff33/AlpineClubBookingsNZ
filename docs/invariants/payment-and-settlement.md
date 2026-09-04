@@ -1671,7 +1671,7 @@ one, check the other.
     for the admin rather than a settlement the system may assert. **The rule:
     a parked edit never destroys a number the system could have known.**
 
-## INV-PAY-052
+## INV-PAY-054
 
 **Related: `INV-PAY-027`, `INV-PAY-030`, `INV-INT-001`, `INV-INT-003`.**
 

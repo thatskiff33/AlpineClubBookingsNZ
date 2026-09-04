@@ -614,7 +614,7 @@ export function setupIntentFailedTemplate(data: {
 
 /**
  * #3268 — the auto-charge cron found the saved card permanently unusable and
- * has retired it (INV-PAY-052). Sent ONCE, because after this run the card is
+ * has retired it (INV-PAY-054). Sent ONCE, because after this run the card is
  * gone from every row that carried it and the next run never reaches the charge
  * arm for it. Names no card detail and no Stripe wording: the member's remedy
  * is the same whatever the provider said, and the operator alert carries the
