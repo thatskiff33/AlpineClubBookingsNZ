@@ -1670,3 +1670,41 @@ one, check the other.
     recalculation a parked removal skips, so the gross stored figure is evidence
     for the admin rather than a settlement the system may assert. **The rule:
     a parked edit never destroys a number the system could have known.**
+
+## INV-PAY-052
+
+- **A payment recovery becomes terminally failed in exactly one place, and that
+  place owns what a dead recovery costs** (#3220). A
+  `PaymentRecoveryOperation` reaching `FAILED` with no attempts left is not a
+  local bookkeeping detail: it is the moment the rest of the system is told to
+  stop waiting for that debt. The booking-vs-Xero repair tool reads that
+  deadness as permission to stop deferring and raise the edit's supplementary
+  invoice UNPAID (`OPEN_PAYMENT_RECOVERY_STATUSES` in
+  `xero-booking-repair-load.ts`, the control #3202 pins). So anything that must
+  happen when a recovery dies has to happen on every route to that status —
+  and there were three, each with its own status write, its own `nextRetryAt`
+  policy and only one of the three alerting anybody.
+  `markPaymentRecoveryOperationFailed` in `payment-recovery.ts` is now the only
+  one, and `payment-recovery-terminal-failure-census.test.ts` fails when a
+  second appears anywhere under `src/` or when the single write leaves that
+  function. **Terminality is an argument, not a re-derivation**: the worker
+  knows it has just burnt an attempt and the stale-worker reaper knows the row
+  never came back, and a shared re-derivation from `attempts` would be a third
+  opinion on a fact its callers already hold. `nextRetryAt` is forced to `null`
+  when terminal rather than trusted from the caller, because a terminal row
+  that keeps a retry time is re-claimable and is therefore not terminal.
+  **The write is status-fenced**, like `completePaymentRecoveryOperation` and
+  for the same reason: the worker's arm used `update` by id, which throws
+  `P2025` on a row a manual mark-paid reversal deleted mid-flight — from inside
+  the worker loop's own `catch`, so the throw escaped the loop and abandoned
+  every remaining operation in the batch. A fenced `updateMany` matches
+  nothing instead, and the fence also stops a `SUCCEEDED` row being dragged
+  back to `FAILED` by a worker holding a stale in-memory copy.
+- **`FAILED` is two readings of one column, and the reader has to say which.** A
+  `FAILED` row with attempts left is a retry waiting its turn; a `FAILED` row
+  with none is dead. What separates them is the `attempts < MAX` filter beside
+  the query, never the status alone — so that filter belongs to each query and
+  the status sets themselves are named once
+  (`CLAIMABLE_PAYMENT_RECOVERY_STATUSES`,
+  `NON_TERMINAL_PAYMENT_RECOVERY_STATUSES`) rather than spelled inline at each
+  reader.
