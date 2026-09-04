@@ -111,13 +111,13 @@ import {
   FINANCIAL_REVIEW_WORKING_IT_OUT,
 } from "@/lib/booking-financial-review-copy";
 import {
-  createPaymentIntentForPaymentLink,
   getPaymentLinkContext,
   reissuePaymentLinkForToken,
   resolvePaymentLink,
   revokePaymentLinkById,
   revokePaymentLinksForBooking,
 } from "@/lib/payment-link";
+import { createPaymentIntentForPaymentLink } from "@/lib/payment-link-intent";
 import {
   issueSplitGuestPaymentLink,
   mintSplitGuestPaymentLinkIfAbsent,

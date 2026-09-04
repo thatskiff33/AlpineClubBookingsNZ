@@ -43,7 +43,6 @@ vi.mock("@/lib/booking-request", async () => {
 
 vi.mock("@/lib/payment-link", () => ({
   getPaymentLinkContext: vi.fn(),
-  createPaymentIntentForPaymentLink: vi.fn(),
   reissuePaymentLinkForToken: vi.fn(),
   PaymentLinkError: class PaymentLinkError extends Error {
     status: number;
@@ -53,6 +52,9 @@ vi.mock("@/lib/payment-link", () => ({
       this.status = status;
     }
   },
+}));
+vi.mock("@/lib/payment-link-intent", () => ({
+  createPaymentIntentForPaymentLink: vi.fn(),
   PaymentLinkPaymentRecoveryError: class PaymentLinkPaymentRecoveryError extends Error {
     constructor(readonly kind: string) {
       super("payment recovery");
@@ -144,11 +146,13 @@ import {
 } from "@/lib/booking-request";
 import {
   getPaymentLinkContext,
-  createPaymentIntentForPaymentLink,
   reissuePaymentLinkForToken,
   PaymentLinkError,
-  PaymentLinkPaymentRecoveryError,
 } from "@/lib/payment-link";
+import {
+  createPaymentIntentForPaymentLink,
+  PaymentLinkPaymentRecoveryError,
+} from "@/lib/payment-link-intent";
 import { POST as submitBookingRequest } from "@/app/api/booking-requests/route";
 import { GET as verifyBookingRequestRoute } from "@/app/api/booking-requests/verify/[token]/route";
 import { POST as quoteBookingRequest } from "@/app/api/booking-requests/quote/route";
