@@ -1936,9 +1936,12 @@ describe("settling a dependent booking after the change (#2576 §7, §14, §16)"
     // code that also means "a qualification changed" for a decision a member had
     // deliberately made after being warned.
     //
-    // The history rather than a column, deliberately: an audit row describes ONE
-    // event and cannot go stale, while a "why" column would be left describing the
-    // decline after a later automatic change moved the same incident's state.
+    // THE WORDS ARE STILL OWED NOW THAT THE CAUSE NAMES THE DECISION (#3241). The
+    // label says a member declined; only this sentence says they were asked about
+    // THIS booking while editing another one. The history rather than a column,
+    // deliberately: an audit row describes ONE event and cannot go stale, while a
+    // "why" column would be left describing the decline after a later automatic
+    // change moved the same incident's state.
     const rows = [
       booking({ id: "b-main", guests: [guestRow("kid", KID_NIGHTS)] }),
     ];
@@ -1946,12 +1949,18 @@ describe("settling a dependent booking after the change (#2576 §7, §14, §16)"
     const outcome = await reconcileSameOwnerCoverageIncident(
       {
         bookingId: "b-main",
-        cause: "SYSTEM_CHANGE",
+        cause: "OWNER_DECLINED_LINKED_MOVE",
         reason: LINKED_MOVE_DECLINED_INCIDENT_REASON,
       },
       db,
     );
     expect(outcome.action).toBe("opened");
+    // The incident carries the member's decision as its recorded cause, not the
+    // shared label for an automatic change (#3241).
+    const created = db.hostingCoverageIncident.create.mock.calls
+      .map((call: any) => call[0].data)
+      .at(-1);
+    expect(created?.cause).toBe("OWNER_DECLINED_LINKED_MOVE");
 
     const opened = db.auditLog.create.mock.calls
       .map((call: any) => call[0].data)
@@ -3475,6 +3484,11 @@ describe("a member is offered the linked move, never deadlocked (#3232)", () => 
     ).resolves.toBeTruthy();
     const dependentItem = queued.find((item) => item.sourceBookingId === "b-main");
     expect(dependentItem?.reason).toBe(LINKED_MOVE_DECLINED_INCIDENT_REASON);
+    // AND THE CAUSE THE DRAIN WILL STORE (#3241, `INV-HOST-052`). This is the one
+    // arm that produces the label, and the queue item is where it starts: a
+    // regression to `SYSTEM_CHANGE` here files a member's prompted decision as an
+    // automatic change, which is the count the value exists to keep clean.
+    expect(dependentItem?.cause).toBe("OWNER_DECLINED_LINKED_MOVE");
   });
 
   it("refuses an officer the member's answer, so §7's reason is still owed", async () => {

@@ -8,25 +8,35 @@ import { describeHostingCoverageIncidentCause } from "@/lib/adult-member-hosting
 import { stripComments } from "./support/strip-comments";
 
 /**
- * `INV-HOST-052` — the expand half of a two-release enum addition, and the rule
- * that the halves stay in different releases (#3232 D3).
+ * `INV-HOST-052` — a two-release enum addition, and what is left to hold once
+ * both halves have landed (#3232 D3, #3241).
  *
- * WHAT THIS EXISTS TO CATCH. A production deploy runs migrations BEFORE the new
+ * WHY THE TWO RELEASES. A production deploy runs migrations BEFORE the new
  * colour takes traffic, while the previous colour is still serving requests
  * against the same database (`docs/BLUE_GREEN_MIGRATION_POLICY.md`). That
- * colour's generated Prisma client knows `HostingCoverageIncidentCause` with two
- * labels and cannot deserialize a third, and the label is selected by the
+ * colour's generated Prisma client knew `HostingCoverageIncidentCause` with two
+ * labels and could not deserialize a third, and the label is selected by the
  * incident writer's OWN fold read — so a row carrying the new value during the
- * drain breaks every re-evaluation drain, not merely a screen. Registering the
- * label is safe; writing it is not. So this release registers it and the release
- * after it starts writing it.
+ * drain would have broken every re-evaluation drain, not merely a screen.
+ * Registering the label was safe; writing it was not. So one release registered
+ * it while nothing wrote it, and #3241 added the writer.
  *
- * WHY A CENSUS RATHER THAN A NOTE. "Nothing writes this yet" is a property of
- * the whole tree, held over a release boundary, by whoever next edits the
- * hosting engine — which is exactly the kind of promise a comment does not keep.
- * The value is now a legal member of the TypeScript union (it has to be, so the
- * officer-facing reader can name it), which means the compiler will happily
- * accept a writer that produces it. This is the thing that will not.
+ * THE WRITER-BAN CENSUS IS THEREFORE GONE, DELIBERATELY. It failed the build on
+ * any `cause:` naming the label anywhere under `src/`, which is exactly what
+ * #3241 had to do; keeping it would have made that change unmergeable, and
+ * deleting it in a separate change would have dropped the guard while the wait
+ * was still real.
+ *
+ * WHAT REPLACES IT, AND WHY THERE IS STILL A CENSUS HERE. The property worth
+ * holding now is that the label has EXACTLY ONE writer. "A member was asked and
+ * declined" is a different fact from every automatic change `SYSTEM_CHANGE`
+ * holds, and a second producer — a system cancellation, a policy tightening, a
+ * merge fan-out reaching for the more specific-sounding label — would quietly
+ * put an automatic change back into the count a club judges its own supervision
+ * setting by, which is the whole reason the value exists. That is a property of
+ * the tree held by whoever next edits the hosting engine, so it is the kind of
+ * promise a comment does not keep, and the compiler cannot help: the value is a
+ * legal member of the union, so it will accept a writer anywhere.
  *
  * IT SCANS `src/` FROM DISK, so it has no import edge to the files it reads and
  * `npm run test:related` structurally cannot select it (`docs/TESTING.md`). Run
@@ -35,19 +45,27 @@ import { stripComments } from "./support/strip-comments";
 
 const REPO_ROOT = process.cwd();
 
-/** The registered-but-unwritten label. */
-const PENDING_CAUSE = "OWNER_DECLINED_LINKED_MOVE";
+/** The declined offer's own cause. */
+const DECLINED_CAUSE = "OWNER_DECLINED_LINKED_MOVE";
 
-/** The expand migration that registers it. */
+/** The expand migration that registered it, one release before #3241's writer. */
 const EXPAND_MIGRATION =
   "20260909010000_add_owner_declined_linked_move_incident_cause";
 
 /**
- * The one module allowed to NAME the label this release: it declares the mirror
- * union and holds the single officer-facing wording. Naming is not writing, and
- * the write-shape assertion below still applies to this file.
+ * The module that declares the mirror union and holds the single officer-facing
+ * wording. It names the label; it must not write it.
  */
 const DECLARING_MODULE = "src/lib/adult-member-hosting-coverage-incidents.ts";
+
+/**
+ * The ONE arm allowed to write it: the owner-declined branch of
+ * `hostingCoverageActorOptions` (#3241). Nothing else under `src/` may produce
+ * the label, and nothing else may name it either — a screen that branched on it
+ * would be the two-wordings drift starting again (`INV-SSOT-001`). Widening
+ * either list is a deliberate change to `INV-HOST-052`, not a test fix.
+ */
+const WRITER_MODULE = "src/lib/adult-member-hosting-review.ts";
 
 /** The two officer surfaces that render a cause. */
 const OFFICER_SURFACES = [
@@ -63,7 +81,7 @@ const OFFICER_SURFACES = [
  * some `cause:` property. Matching that shape rather than the bare token is what
  * lets `DECLARING_MODULE` keep its union member and its `case` label.
  */
-const WRITE_SHAPE = new RegExp(`cause\\s*:\\s*["']?${PENDING_CAUSE}`);
+const WRITE_SHAPE = new RegExp(`cause\\s*:\\s*["']?${DECLINED_CAUSE}`);
 
 function read(relative: string): string {
   return readFileSync(path.join(REPO_ROOT, relative), "utf8");
@@ -91,7 +109,7 @@ function everySourceFile(): string[] {
   return found;
 }
 
-describe("INV-HOST-052: the declined-linked-move cause is registered, not yet written (#3232 D3)", () => {
+describe("INV-HOST-052: the declined-linked-move cause, registered one release before its one writer (#3232 D3, #3241)", () => {
   it("registers the label in the schema, appended and never reordered", () => {
     const schema = read("prisma/schema.prisma");
     const block = /enum HostingCoverageIncidentCause \{([^}]*)\}/.exec(schema);
@@ -104,7 +122,7 @@ describe("INV-HOST-052: the declined-linked-move cause is registered, not yet wr
 
     // ORDER IS PART OF THE ASSERTION. PostgreSQL cannot remove or re-sort an
     // enum label, so a reordering here would be a migration that cannot exist.
-    expect(values).toEqual(["OFFICER_OVERRIDE", "SYSTEM_CHANGE", PENDING_CAUSE]);
+    expect(values).toEqual(["OFFICER_OVERRIDE", "SYSTEM_CHANGE", DECLINED_CAUSE]);
   });
 
   it("registers it by an additive migration that writes no row", () => {
@@ -123,7 +141,7 @@ describe("INV-HOST-052: the declined-linked-move cause is registered, not yet wr
       .filter((statement) => statement.length > 0);
 
     expect(statements).toEqual([
-      `ALTER TYPE "HostingCoverageIncidentCause" ADD VALUE IF NOT EXISTS '${PENDING_CAUSE}'`,
+      `ALTER TYPE "HostingCoverageIncidentCause" ADD VALUE IF NOT EXISTS '${DECLINED_CAUSE}'`,
     ]);
     // No DML, so every existing row is byte-identical afterwards and the
     // data-migration verification gate has nothing to demand.
@@ -147,71 +165,74 @@ describe("INV-HOST-052: the declined-linked-move cause is registered, not yet wr
     expect(plan).toContain("hosting-coverage-incident-cause-expand.test.ts");
   });
 
-  it("finds no writer of the label anywhere under src/", () => {
+  it("has exactly one writer of the label under src/, and it is the declined arm", () => {
     const files = everySourceFile();
-    // A census that scanned nothing would pass vacuously, and an empty result is
-    // exactly the shape that hides that. 2184 files at the time of writing.
+    // A census that scanned nothing would pass vacuously, and an empty offender
+    // list is exactly the shape that hides that. 2184 files at the time of
+    // writing.
     expect(
       files.length,
       "the walk found almost no source files, so every result below is vacuous",
     ).toBeGreaterThan(1500);
 
-    const offenders: string[] = [];
-    let sawTheLabelSomewhere = false;
+    const writers: string[] = [];
+    const namers: string[] = [];
     for (const file of files) {
       const code = stripComments(read(file));
-      if (code.includes(PENDING_CAUSE)) sawTheLabelSomewhere = true;
-      if (WRITE_SHAPE.test(code)) {
-        offenders.push(`${file} (writes it)`);
-        continue;
-      }
-      if (file !== DECLARING_MODULE && code.includes(PENDING_CAUSE)) {
-        offenders.push(`${file} (names it outside ${DECLARING_MODULE})`);
-      }
+      if (WRITE_SHAPE.test(code)) writers.push(file);
+      else if (code.includes(DECLINED_CAUSE)) namers.push(file);
     }
 
-    // Proof the scan reaches real code with the right spelling: the declaring
-    // module names the label in its union and in its wording switch, and that
-    // survives comment-stripping.
+    // THE POSITIVE HALF FIRST, because it is what proves the scan reaches real
+    // code with the right spelling. A renamed label, a moved arm or a broken
+    // regex all show up here rather than as a silently clean sweep.
     expect(
-      sawTheLabelSomewhere,
-      `no file under src/ mentions ${PENDING_CAUSE} at all, so the token has been renamed or the scan is broken`,
-    ).toBe(true);
-
-    expect(
-      offenders,
+      writers,
       [
-        `${PENDING_CAUSE} is REGISTERED BUT NOT YET WRITABLE (INV-HOST-052, #3232 D3).`,
-        `Migration ${EXPAND_MIGRATION} is the expand half: it registers the label so`,
-        "the database will accept it. But the previously deployed colour is still serving",
-        "during a deploy and its Prisma client cannot deserialize a third label, and the",
-        "incident writer's own fold read selects `cause` — so a row carrying this value",
-        "breaks every re-evaluation drain, not merely a screen.",
+        `${DECLINED_CAUSE} must be written by exactly one arm (INV-HOST-052, #3241):`,
+        `the owner-declined branch in ${WRITER_MODULE}.`,
         "",
-        "WHAT TO DO INSTEAD: wait for the FOLLOWING release. Until then a declined linked",
-        "move is stored as SYSTEM_CHANGE and the member's decision is recorded in words in",
-        "the incident's audit history, which is what an officer reads. When that release",
-        "comes, delete this assertion in the same change that starts writing the value.",
+        "AN EMPTY LIST means the writer has been renamed, moved or removed — a",
+        "declined offer would be back to filing itself as SYSTEM_CHANGE, silently,",
+        "since no other test reads the tree.",
+        "",
+        "A SECOND ENTRY means some other change now files itself as a member's",
+        "decision. `SYSTEM_CHANGE` covers every automatic change — an administrative",
+        "cancellation, a lifecycle transition, a data correction, a club tightening",
+        "its own policy, an officer confirming guests — and this label exists to keep",
+        "a member's own prompted choice OUT of that count, which is the number a club",
+        "judges its supervision setting by. Widening this is a change to INV-HOST-052.",
       ].join("\n"),
-    ).toEqual([]);
+    ).toEqual([WRITER_MODULE]);
+
+    // And naming it without writing it stays confined to the module that
+    // declares the union and owns the one officer-facing phrase. A screen
+    // branching on the label is the two-wordings drift starting again
+    // (`INV-SSOT-001`), which the surfaces test below guards from the other end.
+    expect(
+      namers,
+      `only ${DECLARING_MODULE} may name ${DECLINED_CAUSE} without writing it`,
+    ).toEqual([DECLARING_MODULE]);
   });
 
   it("would notice a writer — the detector is not blind", () => {
-    // The assertion above is an empty-list assertion, so the detector is exercised
-    // against content that SHOULD trip it. Without this, a broken regex and a
-    // clean tree are indistinguishable.
-    expect(WRITE_SHAPE.test(`cause: "${PENDING_CAUSE}",`)).toBe(true);
-    expect(WRITE_SHAPE.test(`cause: ${PENDING_CAUSE},`)).toBe(true);
-    expect(WRITE_SHAPE.test(`  cause:   "${PENDING_CAUSE}"`)).toBe(true);
+    // Both assertions above turn on this regex, and one of them is an exact-list
+    // assertion. Without this, a broken regex and a correct tree are
+    // indistinguishable: the writer would drop out of `writers` and into
+    // `namers`, and both lists would be wrong in a way that reads as a rename.
+    expect(WRITE_SHAPE.test(`cause: "${DECLINED_CAUSE}",`)).toBe(true);
+    expect(WRITE_SHAPE.test(`cause: ${DECLINED_CAUSE},`)).toBe(true);
+    expect(WRITE_SHAPE.test(`  cause:   "${DECLINED_CAUSE}"`)).toBe(true);
     // And not against the two shapes the declaring module legitimately holds.
-    expect(WRITE_SHAPE.test(`  | "${PENDING_CAUSE}";`)).toBe(false);
-    expect(WRITE_SHAPE.test(`    case "${PENDING_CAUSE}":`)).toBe(false);
+    expect(WRITE_SHAPE.test(`  | "${DECLINED_CAUSE}";`)).toBe(false);
+    expect(WRITE_SHAPE.test(`    case "${DECLINED_CAUSE}":`)).toBe(false);
   });
 
-  it("has the officer's wording ready for the value in THIS release", () => {
-    // The stored value waits; the words do not. When the runtime half lands it
-    // changes a writer, not a writer plus two screens.
-    const declined = describeHostingCoverageIncidentCause(PENDING_CAUSE);
+  it("gives each recorded cause its own true officer-facing phrase", () => {
+    // The wording landed with the EXPAND, one release ahead of the writer, which
+    // is why #3241 changed a writer rather than a writer plus two screens — and
+    // why an officer was never shown a value with no phrase for it.
+    const declined = describeHostingCoverageIncidentCause(DECLINED_CAUSE);
     expect(declined).toMatch(/chose not to move/);
 
     const system = describeHostingCoverageIncidentCause("SYSTEM_CHANGE");
@@ -220,8 +241,9 @@ describe("INV-HOST-052: the declined-linked-move cause is registered, not yet wr
 
     // The corrected wording. "qualification changed" was asserted for every
     // non-override incident, including an administrative cancellation, a data
-    // correction and — until the runtime half lands — a member who declined the
-    // linked move. The phrase has to be true of everything the value holds.
+    // correction and — while the two labels were shared — a member who declined
+    // the linked move. The phrase has to be true of everything the value holds,
+    // which is now the automatic changes and nothing else.
     expect(system).not.toMatch(/qualification/i);
     // And it must not claim cover was REMOVED either, which was the same mistake
     // in a new direction: a club tightening its own policy removed nothing (the

@@ -100,8 +100,7 @@ incident lifecycle, still without changing `Booking.status`:
 ```text
 (none) -> OPEN                 committed cover loss is reconciled after the write
                                cause: OFFICER_OVERRIDE | SYSTEM_CHANGE |
-                               OWNER_DECLINED_LINKED_MOVE (registered, not yet
-                               written -- INV-HOST-052)
+                               OWNER_DECLINED_LINKED_MOVE (INV-HOST-052)
 OPEN -> RESOLVED               COVERAGE_RESTORED | BOOKING_AMENDED |
                                EXCEPTION_APPROVED | BOOKING_CANCELLED
 RESOLVED -> OPEN               a later materially different uncovered state appears
@@ -110,14 +109,15 @@ RESOLVED -> OPEN               a later materially different uncovered state appe
 The cause is recorded, never inferred, for the reason the resolution is: a
 member's deliberate decision and an automatic change are the same absence of
 cover and a very different story for an officer, and the count of each is what a
-club uses to judge its own setting. `OWNER_DECLINED_LINKED_MOVE` (#3232 D3) is
-the owner who was offered the linked move on their own other booking and chose to
-move only the one they were editing. It is REGISTERED BY THIS RELEASE AND WRITTEN
-BY THE NEXT one, because the colour draining during a deploy cannot deserialize a
-third label and the fold read that drives this whole lifecycle selects `cause`;
-until then a declined offer is stored as `SYSTEM_CHANGE` with the member's
-decision recorded in words in the incident's audit history. `INV-HOST-052` is the
-rule and the sequencing.
+club uses to judge its own setting. `OWNER_DECLINED_LINKED_MOVE` (#3232 D3,
+#3241) is the owner who was offered the linked move on their own other booking
+and chose to move only the one they were editing; the decline arm of the offer is
+its ONE writer, and the incident's audit history records the decision in words
+beside it. It was REGISTERED ONE RELEASE BEFORE IT WAS WRITTEN, because the
+colour draining during a deploy cannot deserialize a third label and the fold
+read that drives this whole lifecycle selects `cause` — so a declined offer was
+stored as `SYSTEM_CHANGE` until the writer shipped. `INV-HOST-052` is the rule,
+the sequencing a new value of this enum owes, and the one-writer census.
 
 Adding a new active covering booking therefore resolves the existing incident as
 `COVERAGE_RESTORED`; it does not cancel or recreate the dependent booking. The

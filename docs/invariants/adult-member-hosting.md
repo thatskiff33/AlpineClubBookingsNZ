@@ -1797,8 +1797,9 @@ compliant indefinitely.
 ### INV-HOST-052
 
 - **A booking left uncovered because its owner declined the linked move has its
-  own recorded cause, and that cause is registered one release before anything
-  writes it** (#3232 D3, `docs/BLUE_GREEN_MIGRATION_POLICY.md`).
+  own recorded cause, written by exactly one arm, and that cause was registered
+  one release before anything wrote it** (#3232 D3, #3241,
+  `docs/BLUE_GREEN_MIGRATION_POLICY.md`).
 
   **WHY ITS OWN CAUSE.** `HostingCoverageIncidentCause` had exactly two values,
   and a member's deliberate, prompted decision was filed as `SYSTEM_CHANGE` —
@@ -1819,35 +1820,39 @@ compliant indefinitely.
   still serving against the same database. That colour's generated Prisma client
   knows this type with two labels and cannot deserialize a third. So:
 
-  1. **Expand (this release).**
-     `20260909010000_add_owner_declined_linked_move_incident_cause` registers
-     `OWNER_DECLINED_LINKED_MOVE` and **nothing writes it**. A declined offer is
+  1. **Expand (#3232, shipped first).**
+     `20260909010000_add_owner_declined_linked_move_incident_cause` registered
+     `OWNER_DECLINED_LINKED_MOVE` and **nothing wrote it**. A declined offer was
      still stored as `SYSTEM_CHANGE`.
-  2. **Runtime (the following release).** The declined arm starts writing the new
-     value.
+  2. **Runtime (#3241, the following release).** The declined arm — the
+     owner-declined branch of `hostingCoverageActorOptions` in
+     `src/lib/adult-member-hosting-review.ts` — writes the new value. **Both
+     halves have now landed**, and the sequence stands here because the next
+     value added to this enum owes the same one.
 
-  Writing it early is not a cosmetic risk. `cause` is selected by the incident
-  writer's OWN fold read in
+  Writing it early would not have been a cosmetic risk. `cause` is selected by
+  the incident writer's OWN fold read in
   `src/lib/adult-member-hosting-coverage-incidents.ts` — the read every
   re-evaluation drain performs before it opens or folds an incident — as well as
-  by the two officer surfaces. A row carrying the value during the drain
-  therefore breaks the reconciliation engine, not merely a screen. Registering
-  the label breaks nothing: a client that never meets a value of a type is
-  unaffected by that value existing.
+  by the two officer surfaces. A row carrying the value during the drain would
+  therefore have broken the reconciliation engine, not merely a screen.
+  Registering the label breaks nothing: a client that never meets a value of a
+  type is unaffected by that value existing.
 
   **That claim was measured, not reasoned about.** Every migration on the branch
   was applied to a throwaway PostgreSQL 16, a Prisma client was generated from
   `origin/main`'s own `prisma/schema.prisma`, and that client ran the fold read
   three times: after the expand with no row carrying the new label, **OK**; with
-  a row carrying `SYSTEM_CHANGE`, which is what this release writes for a
+  a row carrying `SYSTEM_CHANGE`, which is what the expand release wrote for a
   declined offer, **OK**; and with that row's cause changed to
   `OWNER_DECLINED_LINKED_MOVE`, **failed** with
   `Value 'OWNER_DECLINED_LINKED_MOVE' not found in enum
   'HostingCoverageIncidentCause'`. The migration header records the same
   transcript.
 
-  **THE WORDING DOES NOT WAIT, AND NEITHER DOES THE TRUTH.** Two things land in
-  the expand release, so an officer is not misinformed for a release.
+  **THE WORDING DID NOT WAIT, AND NEITHER DID THE TRUTH.** Two things landed in
+  the expand release, so an officer was not misinformed for a release — and the
+  runtime half was then a writer rather than a writer plus two screens.
 
   - The officer-facing phrase for every cause has ONE home,
     `describeHostingCoverageIncidentCause`, and it already names the new value.
@@ -1858,8 +1863,8 @@ compliant indefinitely.
     value holds: an administrative cancellation, a lifecycle transition, a data
     correction, a club that tightened its own policy or switched the rule on, an
     officer who confirmed pending guests or force-confirmed and so ADDED people
-    the existing cover no longer stretches to, and — until the runtime half
-    lands — a declined linked move. "Qualification changed" was true of none of
+    the existing cover no longer stretches to, and — while the halves were
+    apart — a declined linked move. "Qualification changed" was true of none of
     those, and the interim phrase "cover removed by a later change" was untrue of
     the last three: nothing was removed in any of them.
   - The member's decision is **recorded in words** in the incident's audit
@@ -1876,10 +1881,22 @@ compliant indefinitely.
   reason and its attribution would both be inventions, and an officer would be
   shown a decision they never made.
 
+  **ONE WRITER, AND THAT IS THE PART STILL BEING ENFORCED.** The writer-ban
+  census is gone, deleted by #3241 in the same change that started writing the
+  value — leaving it would have made that change unmergeable, and deleting it
+  separately would have dropped the guard while the wait was still real. What
+  replaced it is an exact-list census: `OWNER_DECLINED_LINKED_MOVE` is produced
+  by the declined arm and by nothing else, and named outside a test only by the
+  module that declares the union and owns the officer-facing phrase. An empty
+  list means the writer was renamed or removed and a declined offer is quietly
+  back to `SYSTEM_CHANGE`; a second entry means some automatic change now files
+  itself as a member's decision, which is the count this value exists to keep
+  clean. Widening either list is a change to this invariant, not a test fix.
+
   Enforced by
   `src/lib/__tests__/hosting-coverage-incident-cause-expand.test.ts`, whose
   failure messages carry this id: it pins the appended-never-reordered enum, the
-  additive DML-free migration, the ledger row's declared deploy order, the ready
-  wording in its one home on both surfaces, and — the gate — that no non-test
-  file under `src/` produces the value while the expand is in its first release.
-  Delete that last assertion in the same change that starts writing it.
+  additive DML-free migration, the ledger row's declared deploy order, the
+  wording in its one home on both surfaces, and the one-writer census above.
+  `adult-member-hosting-same-owner.test.ts` pins the arm itself — the queue item
+  the declined offer enqueues, and the cause and reason the drain then stores.

@@ -1712,11 +1712,21 @@ export function hostingCoverageActorOptions(actor: {
       coverageActorMemberId: actorMemberId,
       coverageChangeVacatedRange,
       coverageChange: {
-        // NOT `OFFICER_OVERRIDE`: no officer was involved and inventing one would
-        // put a name and a reason against a decision they never considered. The
-        // incident's own `reason` says a member was asked and answered, so the
-        // officer reading their queue is not left to infer it.
-        cause: "SYSTEM_CHANGE",
+        // THE MEMBER'S DECISION HAS ITS OWN RECORDED CAUSE (#3241, the runtime
+        // half of `INV-HOST-052`). It was stored as `SYSTEM_CHANGE` for one
+        // release while the label was registered but unreadable by the colour
+        // still serving during a deploy; this is the writer that release was
+        // waiting for, and the only one. `SYSTEM_CHANGE` means an automatic
+        // change nobody could reasonably block, so filing a prompted decision
+        // under it told an officer the wrong story and mixed a member's own
+        // choice into the count a club judges its supervision setting by.
+        //
+        // NOT `OFFICER_OVERRIDE` either: no officer was involved and inventing
+        // one would put a name and a reason against a decision they never
+        // considered. The incident's own `reason` still says in words that a
+        // member was asked and answered, because a label cannot say WHICH
+        // booking they were editing and the audit row cannot go stale.
+        cause: "OWNER_DECLINED_LINKED_MOVE",
         actorMemberId,
         reason: LINKED_MOVE_DECLINED_INCIDENT_REASON,
         strandedStateKey: declinedLinkedMove,

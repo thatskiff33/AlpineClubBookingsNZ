@@ -373,10 +373,10 @@ describe("one active incident per booking, created or folded into (#2576 §16)",
     // instead of a recorded officer decision. Identical behaviour while only two
     // labels are in use, which is why nothing else caught it.
     //
-    // THIS TEST NAMES THE UNWRITTEN LABEL DELIBERATELY. Nothing under `src/`
-    // outside a test may produce it until the runtime half of `INV-HOST-052`
-    // lands (`hosting-coverage-incident-cause-expand.test.ts` is the gate), but
-    // the guard that will be needed the moment it does is worth having now.
+    // THE CASE IS NOW REACHABLE. The label was registered one release before
+    // anything wrote it (`INV-HOST-052`), so this test named an unwritten value
+    // when it was written; #3241 added the writer, and a declined linked move an
+    // officer then overrides is the live path through this branch.
     const { db, rows } = makeIncidentDb([
       {
         id: "incident-1",

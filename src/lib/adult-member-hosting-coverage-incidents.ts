@@ -42,14 +42,21 @@ export type HostingCoverageIncidentDb = Pick<
 /**
  * Why the cover went away. Mirrors the Prisma enum without importing it.
  *
- * `OWNER_DECLINED_LINKED_MOVE` is REGISTERED AND NOT YET WRITTEN (#3232 D3,
- * `INV-HOST-052`). Migration
- * `20260909010000_add_owner_declined_linked_move_incident_cause` is the expand
- * half; the release after it is the runtime half that starts writing the value.
- * It is named here so the reader below can already put the right words in front
- * of an officer, and so the follow-up release changes a writer rather than a
- * writer plus two screens. Nothing under `src/` may produce it until then, which
- * `hosting-coverage-incident-cause-expand.test.ts` enforces.
+ * `OWNER_DECLINED_LINKED_MOVE` is WRITTEN BY EXACTLY ONE ARM: the owner-declined
+ * branch of `hostingCoverageActorOptions` (#3232 D3, #3241, `INV-HOST-052`). It
+ * arrived over two releases, which is worth knowing here because the shape of
+ * this type is what that split was about. Migration
+ * `20260909010000_add_owner_declined_linked_move_incident_cause` registered the
+ * label while nothing wrote it, so the colour still serving during that deploy
+ * never met a third value its generated client could not deserialize; the
+ * following release (#3241) added the writer. A NEW value of this type owes the
+ * same sequence.
+ *
+ * That one writer is a census rather than a convention:
+ * `hosting-coverage-incident-cause-expand.test.ts` fails on a second producer,
+ * because "a member decided this" is a different fact from every automatic
+ * change `SYSTEM_CHANGE` holds, and a second writer would quietly put one of
+ * those back into the count a club judges its own setting by.
  */
 export type HostingCoverageIncidentCause =
   | "OFFICER_OVERRIDE"
@@ -59,14 +66,14 @@ export type HostingCoverageIncidentCause =
 /**
  * The stored reason on the incident a declined offer opens (#3232).
  *
- * IT HAS TO STAND ALONE, because for one release it is what an officer reads
- * INSTEAD of a cause label of its own: until `INV-HOST-052`'s runtime half lands
- * the stored cause is the shared `SYSTEM_CHANGE`, whose officer-facing phrase is
- * true of a cancellation and a data correction too. So no issue reference (no
- * other stored human-read string in this repository carries one — compare
- * `ADULT_SUPERVISION_REVIEW_REASON`), and no product jargon: "the linked move" is
- * a name from this codebase that no officer has ever met. What it says instead is
- * what happened.
+ * IT STILL HAS TO STAND ALONE, now that `INV-HOST-052`'s runtime half has landed
+ * (#3241) and the stored cause names the decision too. The label says a member
+ * declined; only this sentence says they were asked about THIS booking while
+ * editing another one, and it is read on its own in the booking's history rather
+ * than beside the cause. So no issue reference (no other stored human-read string
+ * in this repository carries one — compare `ADULT_SUPERVISION_REVIEW_REASON`), and
+ * no product jargon: "the linked move" is a name from this codebase that no
+ * officer has ever met. What it says instead is what happened.
  */
 export const LINKED_MOVE_DECLINED_INCIDENT_REASON =
   "The member was asked whether to move this booking to the same new nights as " +
@@ -91,10 +98,10 @@ export const LINKED_MOVE_DECLINED_INCIDENT_REASON =
  * cover; an officer CONFIRMING PENDING GUESTS or force-confirming ADDED people,
  * so existing cover simply no longer stretches. "No longer covered after a later
  * change" is true of those, of an administrative cancellation, of a lifecycle
- * transition, of a data correction, and — until the runtime half of
- * `INV-HOST-052` lands — of a member who was asked about their other booking and
- * chose not to move it. What distinguishes that last one in the meantime is the
- * incident's audit history, which records the decision in words.
+ * transition and of a data correction. It is no longer asked to cover a member
+ * who was offered the move and declined it: that has been its own recorded cause
+ * since `INV-HOST-052`'s runtime half landed (#3241), and the incident's audit
+ * history still records the decision in words beside it.
  *
  * An unrecognised value is described rather than crashing an officer's queue: a
  * screen is a bad place to discover a schema addition.
