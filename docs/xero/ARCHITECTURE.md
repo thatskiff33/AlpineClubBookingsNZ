@@ -1245,7 +1245,7 @@ The producers behind the six server-fed render sites, all covered:
 | `xero/_components/setup-panels.tsx` (duplicate contacts) | `xero-duplicate-contacts.ts` |
 | `components/admin/xero-record-activity-panel.tsx` | `xero-record-activity.ts` |
 | `components/admin/xero-suggested-contact-card.tsx` | `api/admin/xero/import-member-contact/route.ts` |
-| `finance/_components/finance-dashboard-client.tsx` ("Open Xero reports") | `finance-dashboard-page/pnl-view.ts`, `finance-dashboard-page/balance-sheet-views.ts` |
+| `finance/_components/finance-dashboard-client.tsx` ("Open Xero reports") | `finance-dashboard-page/xero-reports-source-note.ts` (spread into the P&L and balance-sheet views' source notes) |
 
 Three write routes also return a link in their JSON response — member
 `xero-link`, member `xero-push`, and Xero `force-sync` — and those returned
@@ -1293,8 +1293,10 @@ cache still costs at most one `getOrganisations` call per server process per
 12 hours. The finance dashboard used to make the opposite trade — link generic
 rather than fetch a short code — on the reasoning that a live Xero call per page
 load was too expensive. The shared cache is what retired that argument, so its
-two "Open Xero reports" source notes (`finance-dashboard-page/pnl-view.ts` and
-`finance-dashboard-page/balance-sheet-views.ts`) now resolve the short code server-side like every other
+two "Open Xero reports" source notes (rendered by `finance-dashboard-page/pnl-view.ts`
+and `finance-dashboard-page/balance-sheet-views.ts`, each spreading the one link
+built in `finance-dashboard-page/xero-reports-source-note.ts`) now resolve the
+short code server-side like every other
 producer: one read per server process per TTL, shared with every other caller,
 and a null one still degrades to the generic link.
 
