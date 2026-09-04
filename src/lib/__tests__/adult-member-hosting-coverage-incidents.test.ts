@@ -129,16 +129,19 @@ function makeIncidentDb(
             return false;
           }
           if (where.cause !== undefined) {
-            // `{ not: value }` as well as a bare label, because the promotion
-            // guard asks for "any cause that is not an override" rather than
-            // naming one label (#3232 D3). `HostingCoverageIncident.cause` is NOT
-            // NULL, so plain inequality is faithful here - there is no
+            // `{ in: [...] }` and `{ not: value }` as well as a bare label. The
+            // promotion guard asks for "any cause this write outranks" (#3241),
+            // which is a SET, and asked for "any cause that is not an override"
+            // before that (#3232 D3). `HostingCoverageIncident.cause` is NOT
+            // NULL, so plain (in)equality is faithful here - there is no
             // three-valued case to model, unlike the nullable notification
             // columns below.
             const filter = where.cause;
             const matchesCause =
-              filter !== null && typeof filter === "object" && "not" in filter
-                ? row.cause !== filter.not
+              filter !== null && typeof filter === "object"
+                ? "in" in filter
+                  ? (filter.in as string[]).includes(String(row.cause))
+                  : row.cause !== filter.not
                 : row.cause === filter;
             if (!matchesCause) return false;
           }
@@ -404,6 +407,89 @@ describe("one active incident per booking, created or folded into (#2576 §16)",
       cause: "OFFICER_OVERRIDE",
       overriddenByMemberId: "officer-1",
       overrideReason: "Approved the exception",
+    });
+  });
+
+  it.each([
+    ["sweep-first", false],
+    ["decision-first", true],
+  ] as const)(
+    "records the member's decision whichever drain gets there first (%s)",
+    async (_label, decisionFirst) => {
+      // #3241, `INV-HOST-053`. The drain gives a re-evaluation row's explanation
+      // only to the booking that row is about, so a stranded booking can be
+      // opened first by a sweep that knows nothing — a bare `SYSTEM_CHANGE` — and
+      // reached only afterwards by its own row carrying the decision. Without a
+      // promotion for the same uncovered state, drain order would decide whether
+      // an officer is ever told a member chose this, and the count of declines a
+      // club judges its own setting by would be short.
+      const { db, rows, audits } = makeIncidentDb();
+      const sweep = {
+        bookingId: "b-main",
+        lodgeId: "lodge-a",
+        cause: "SYSTEM_CHANGE" as const,
+        violation: UNCOVERED,
+      };
+      const decision = {
+        bookingId: "b-main",
+        lodgeId: "lodge-a",
+        cause: "OWNER_DECLINED_LINKED_MOVE" as const,
+        violation: UNCOVERED,
+        recordedReason: "The member was asked and chose to move only that one",
+      };
+
+      const order = decisionFirst ? [decision, sweep] : [sweep, decision];
+      for (const params of order) {
+        await openOrUpdateHostingCoverageIncident(params, db);
+      }
+
+      expect(rows.filter((row) => row.resolvedAt == null)).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        cause: "OWNER_DECLINED_LINKED_MOVE",
+        // No officer is invented on the way through: this is not an override.
+        overriddenByMemberId: null,
+        overrideReason: null,
+      });
+      // The words land too, and only once — the unexplained write adds no event.
+      const withReason = audits.filter(
+        (audit: any) =>
+          audit.details === "The member was asked and chose to move only that one",
+      );
+      expect(withReason).toHaveLength(1);
+    },
+  );
+
+  it("does not let an officer's override be demoted to a member's decision", async () => {
+    // The rank runs one way only. An override outranks everything, and a later
+    // declined-move row for the same uncovered state must leave the officer's
+    // name and mandatory reason exactly where they are (#3241, §7).
+    const { db, rows } = makeIncidentDb();
+    await openOrUpdateHostingCoverageIncident(
+      {
+        bookingId: "b-main",
+        lodgeId: "lodge-a",
+        cause: "OFFICER_OVERRIDE",
+        violation: UNCOVERED,
+        override: { byMemberId: "officer-1", reason: "Spoke with the family" },
+      },
+      db,
+    );
+    const second = await openOrUpdateHostingCoverageIncident(
+      {
+        bookingId: "b-main",
+        lodgeId: "lodge-a",
+        cause: "OWNER_DECLINED_LINKED_MOVE",
+        violation: UNCOVERED,
+        recordedReason: "The member was asked and chose to move only that one",
+      },
+      db,
+    );
+
+    expect(second.action).toBe("unchanged");
+    expect(rows[0]).toMatchObject({
+      cause: "OFFICER_OVERRIDE",
+      overriddenByMemberId: "officer-1",
+      overrideReason: "Spoke with the family",
     });
   });
 

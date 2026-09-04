@@ -28,7 +28,9 @@ import { stripComments } from "./support/strip-comments";
  * was still real.
  *
  * WHAT REPLACES IT, AND WHY THERE IS STILL A CENSUS HERE. The property worth
- * holding now is that the label has EXACTLY ONE writer. "A member was asked and
+ * holding now is that the label has EXACTLY ONE writing SITE — counted, not
+ * merely one writing file, because the module holding the declined arm holds
+ * three other `cause:` arms of the same function. "A member was asked and
  * declined" is a different fact from every automatic change `SYSTEM_CHANGE`
  * holds, and a second producer — a system cancellation, a policy tightening, a
  * merge fan-out reaching for the more specific-sounding label — would quietly
@@ -82,6 +84,13 @@ const OFFICER_SURFACES = [
  * lets `DECLARING_MODULE` keep its union member and its `case` label.
  */
 const WRITE_SHAPE = new RegExp(`cause\\s*:\\s*["']?${DECLINED_CAUSE}`);
+/**
+ * The same shape, counting. ONE WRITING FILE IS NOT ONE WRITING ARM, and the
+ * difference is not academic: `WRITER_MODULE` holds three other `cause:` arms of
+ * the same function, so the likeliest second producer of this label is a sibling
+ * branch in that very file — which a per-file list would report as unchanged.
+ */
+const WRITE_SHAPE_GLOBAL = new RegExp(WRITE_SHAPE.source, "g");
 
 function read(relative: string): string {
   return readFileSync(path.join(REPO_ROOT, relative), "utf8");
@@ -179,7 +188,10 @@ describe("INV-HOST-052: the declined-linked-move cause, registered one release b
     const namers: string[] = [];
     for (const file of files) {
       const code = stripComments(read(file));
-      if (WRITE_SHAPE.test(code)) writers.push(file);
+      const sites = code.match(WRITE_SHAPE_GLOBAL)?.length ?? 0;
+      // A file with two writing arms reports as a DIFFERENT string, so the exact
+      // list below fails on it rather than reading as unchanged.
+      if (sites > 0) writers.push(sites === 1 ? file : `${file} (${sites} sites)`);
       else if (code.includes(DECLINED_CAUSE)) namers.push(file);
     }
 
@@ -196,12 +208,19 @@ describe("INV-HOST-052: the declined-linked-move cause, registered one release b
         "declined offer would be back to filing itself as SYSTEM_CHANGE, silently,",
         "since no other test reads the tree.",
         "",
-        "A SECOND ENTRY means some other change now files itself as a member's",
-        "decision. `SYSTEM_CHANGE` covers every automatic change — an administrative",
-        "cancellation, a lifecycle transition, a data correction, a club tightening",
-        "its own policy, an officer confirming guests — and this label exists to keep",
-        "a member's own prompted choice OUT of that count, which is the number a club",
-        "judges its supervision setting by. Widening this is a change to INV-HOST-052.",
+        "A SECOND ENTRY, OR A COUNT ABOVE ONE, means some other change now files",
+        "itself as a member's decision. `SYSTEM_CHANGE` covers every automatic",
+        "change — an administrative cancellation, a lifecycle transition, a data",
+        "correction, a club tightening its own policy, an officer confirming",
+        "guests — and this label exists to keep a member's own prompted choice OUT",
+        "of that count, which is the number a club judges its setting by. Widening",
+        "this is a change to INV-HOST-052.",
+        "",
+        "ONE THING THIS CANNOT YET TELL APART: a Prisma `where` or `groupBy` naming",
+        "the label reads as a write to the shape above. Counting incidents by cause",
+        "is a feature this release advertises, so if that is what you are adding,",
+        "teach this census to tell a read filter from a write — do not widen the",
+        "one-writer rule to let it through.",
       ].join("\n"),
     ).toEqual([WRITER_MODULE]);
 
@@ -226,6 +245,13 @@ describe("INV-HOST-052: the declined-linked-move cause, registered one release b
     // And not against the two shapes the declaring module legitimately holds.
     expect(WRITE_SHAPE.test(`  | "${DECLINED_CAUSE}";`)).toBe(false);
     expect(WRITE_SHAPE.test(`    case "${DECLINED_CAUSE}":`)).toBe(false);
+    // And the counting form really counts, since a second arm inside the one
+    // writing file is the failure an exact list of FILES would read as clean.
+    const twoArms = [
+      `cause: "${DECLINED_CAUSE}",`,
+      `cause: "${DECLINED_CAUSE}",`,
+    ].join("\n");
+    expect(twoArms.match(WRITE_SHAPE_GLOBAL)?.length).toBe(2);
   });
 
   it("gives each recorded cause its own true officer-facing phrase", () => {

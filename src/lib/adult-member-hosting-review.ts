@@ -2634,8 +2634,18 @@ async function enqueueSameOwnerDependentItems(
   db: AdultMemberHostingReviewDb,
 ): Promise<number> {
   let queued = 0;
+  // #3241: A DEPENDENT WHOSE STORY IS THE MEMBER'S OWN DECISION NEEDS A ROW OF
+  // ITS OWN, overlap or not. The skip below exists to avoid duplicate work when
+  // the changed booking's own row already reaches this dependent — but that row's
+  // explanation now stops at the booking it is about (`INV-HOST-053`), so an
+  // overlapping stranded booking reached only that way would lose the decision
+  // entirely. A partial overlap is exactly that case: the dependent still shares
+  // a night with the new dates and is still left short on the others.
+  const carriesItsOwnStory = context.cause === "OWNER_DECLINED_LINKED_MOVE";
   for (const dependent of dependents) {
-    if (!dependentNeedsOwnQueueItem(booking, dependent)) continue;
+    if (!carriesItsOwnStory && !dependentNeedsOwnQueueItem(booking, dependent)) {
+      continue;
+    }
     const id = await enqueueHostingCoverageReevaluation(
       {
         memberId: dependent.memberId,

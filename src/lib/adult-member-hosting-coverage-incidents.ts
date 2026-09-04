@@ -51,10 +51,39 @@ export type HostingCoverageIncidentDb = Pick<
  * registered the label while nothing wrote it, so the colour still serving during
  * that deploy never met a value its client could not deserialize.
  */
+export const HOSTING_COVERAGE_INCIDENT_CAUSES = [
+  "OFFICER_OVERRIDE",
+  "SYSTEM_CHANGE",
+  "OWNER_DECLINED_LINKED_MOVE",
+] as const;
+
 export type HostingCoverageIncidentCause =
-  | "OFFICER_OVERRIDE"
-  | "SYSTEM_CHANGE"
-  | "OWNER_DECLINED_LINKED_MOVE";
+  (typeof HOSTING_COVERAGE_INCIDENT_CAUSES)[number];
+
+/**
+ * HOW MUCH OF A STORY A CAUSE TELLS, and the order the fold promotes in (#3241).
+ *
+ * `SYSTEM_CHANGE` explains nothing about WHO: it is the label for every automatic
+ * change nobody chose. The other two name a decision and the person who made it.
+ * That matters because ONE re-evaluation row can reach several bookings, and the
+ * drain now gives a row's explanation only to the booking that row is about — so
+ * whichever writer reaches an uncovered booking first, the explained one has to
+ * be able to overwrite the unexplained one for the same uncovered state, or the
+ * story an officer reads would depend on drain order.
+ *
+ * It never runs downhill. An unexplained sweep arriving after a member's decision
+ * or an officer's override leaves both alone.
+ */
+export function hostingCoverageCauseAttributionRank(cause: string): number {
+  switch (cause) {
+    case "OFFICER_OVERRIDE":
+      return 2;
+    case "OWNER_DECLINED_LINKED_MOVE":
+      return 1;
+    default:
+      return 0;
+  }
+}
 
 /**
  * The stored reason on the incident a declined offer opens (#3232).
@@ -284,10 +313,17 @@ export async function openOrUpdateHostingCoverageIncident(
 
     if (existing) {
       if (existing.stateKey === stateKey) {
-        if (
-          params.cause !== "OFFICER_OVERRIDE" ||
-          existing.cause === "OFFICER_OVERRIDE"
-        ) {
+        // THE EXPLAINED WRITE WINS; THE UNEXPLAINED ONE LEAVES IT ALONE (#3241).
+        // This used to be an officer-only promotion, which was right while the
+        // only explanation was an override. It is not any more: the drain gives a
+        // re-evaluation row's explanation ONLY to the booking that row is about,
+        // so a stranded booking can be reached first by a sweep that opens a bare
+        // `SYSTEM_CHANGE` incident and only afterwards by its own row carrying the
+        // member's decision. Without a promotion here, drain order would decide
+        // whether an officer is ever told a member chose this.
+        const incoming = hostingCoverageCauseAttributionRank(params.cause);
+        const held = hostingCoverageCauseAttributionRank(existing.cause);
+        if (incoming <= held) {
           return { action: "unchanged", incidentId: existing.id, stateKey };
         }
         const promoted = await db.hostingCoverageIncident.updateMany({
@@ -295,17 +331,18 @@ export async function openOrUpdateHostingCoverageIncident(
             id: existing.id,
             resolvedAt: null,
             stateKey,
-            // NOT `cause: "SYSTEM_CHANGE"`. This branch runs only when the row
-            // just read was NOT an override, so the guard's job is to re-assert
-            // that under concurrency - and naming one specific non-override
-            // label makes an officer's promotion silently impossible for every
-            // OTHER non-override cause. With the third label registered by
-            // #3232 D3 that is no longer hypothetical: a declined linked move
-            // could never be promoted to `OFFICER_OVERRIDE`, the update would
-            // match nothing, and the loop would exhaust into the retry error
-            // rather than record the officer. Identical behaviour today, since
-            // there are exactly two labels in use.
-            cause: { not: "OFFICER_OVERRIDE" },
+            // RE-ASSERT WHAT WAS JUST READ, by rank rather than by naming one
+            // label. Naming a specific label made a promotion silently impossible
+            // for every other cause of lower rank, and the retry loop would
+            // exhaust into its error rather than record the decision. The guard
+            // is the set of causes this write really outranks, so a concurrent
+            // writer that got there first with something STRONGER wins.
+            cause: {
+              in: HOSTING_COVERAGE_INCIDENT_CAUSES.filter(
+                (candidate) =>
+                  hostingCoverageCauseAttributionRank(candidate) < incoming,
+              ),
+            },
           },
           data: updateData,
         });

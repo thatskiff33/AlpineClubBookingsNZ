@@ -284,12 +284,19 @@ describe("hosting coverage drain claim fences (#2596)", () => {
       },
       expect.anything(),
     );
+    // THE REFRESHED ACTOR, AND DELIBERATELY NOT THE OFFICER'S STORY (#3241,
+    // `INV-HOST-053`). This row is about `source-after`; `dependent-after` is a
+    // different booking the sweep reached because it shares the nights. It used
+    // to be handed `OFFICER_OVERRIDE` and the officer's own private reason —
+    // words about a stranding they authorised on a booking that is not this one.
+    // What survives is the actor, because "who did the thing that revealed this"
+    // is true of every booking in the sweep.
     expect(mocks.reconcile).toHaveBeenCalledWith(
       {
         bookingId: "dependent-after",
-        cause: "OFFICER_OVERRIDE",
+        cause: "SYSTEM_CHANGE",
         actorMemberId: "actor-master-2",
-        reason: "authoritative reason",
+        reason: null,
       },
       expect.anything(),
     );
@@ -298,6 +305,55 @@ describe("hosting coverage drain claim fences (#2596)", () => {
       expect.anything(),
     );
     expect(mocks.resolveIncidents).not.toHaveBeenCalled();
+  });
+
+  it("gives a declined move's story to the booking it is about and to no other", async () => {
+    // #3241, `INV-HOST-053`. One row reaches every same-owner booking on its
+    // nights, and §14 asks "is this booking covered NOW" rather than "did this
+    // change uncover it" — so the sweep also finds bookings that were already
+    // uncovered for reasons of their own. Handing them this row's cause told an
+    // officer that a member had been asked about a booking nobody mentioned, and
+    // corrupted the one count `INV-HOST-052` exists to keep honest: a club
+    // counting declines would have counted this.
+    const declined = {
+      ...CLAIMED_ITEM,
+      cause: "OWNER_DECLINED_LINKED_MOVE" as const,
+      sourceBookingId: "booking-asked-about",
+      actorMemberId: "owner-1",
+      reason: "The member was asked whether to move this booking",
+    };
+    mocks.claim.mockReset();
+    mocks.claim.mockResolvedValueOnce([declined]).mockResolvedValue([]);
+    mocks.lockMember.mockResolvedValue(0);
+    mocks.loadClaimed.mockResolvedValue(declined);
+    // The booking the offer named, and one of the member's own that merely shares
+    // the nights.
+    mocks.loadDependents.mockResolvedValue([
+      "booking-asked-about",
+      "booking-nobody-mentioned",
+    ]);
+    mocks.reconcile.mockResolvedValue({ action: "none" });
+
+    await drainHostingCoverageReevaluations({}, makeDb());
+
+    expect(mocks.reconcile).toHaveBeenCalledWith(
+      {
+        bookingId: "booking-asked-about",
+        cause: "OWNER_DECLINED_LINKED_MOVE",
+        actorMemberId: "owner-1",
+        reason: "The member was asked whether to move this booking",
+      },
+      expect.anything(),
+    );
+    expect(mocks.reconcile).toHaveBeenCalledWith(
+      {
+        bookingId: "booking-nobody-mentioned",
+        cause: "SYSTEM_CHANGE",
+        actorMemberId: "owner-1",
+        reason: null,
+      },
+      expect.anything(),
+    );
   });
 
   it("resolves a directly verified terminal source even when the bounded list omits it", async () => {

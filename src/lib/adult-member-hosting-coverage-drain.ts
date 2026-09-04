@@ -585,12 +585,27 @@ async function processHostingCoverageReevaluation(
   );
 
   for (const bookingId of dependentIds) {
+    // A ROW'S EXPLANATION BELONGS TO THE BOOKING THE ROW IS ABOUT (#3241,
+    // `INV-HOST-053`). One row reaches every same-owner booking on its nights,
+    // and §14 asks "is this booking covered NOW" rather than "did this change
+    // uncover it" — so this loop reaches bookings that were already uncovered for
+    // reasons of their own. Handing them the row's cause and reason told an
+    // officer that a member had been asked about a booking nobody mentioned, and
+    // put an officer's private override reason on somebody's unrelated booking.
+    // It also corrupted the one count `INV-HOST-052` exists to keep honest.
+    //
+    // The ACTOR is still carried, because "who did the thing that revealed this"
+    // is true of every booking here and is what the audit trail is for. Only the
+    // story is withheld. The booking this row IS about keeps both, and reaches
+    // its own explanation even when a sweep opens its incident first, because the
+    // fold promotes an explained cause over an unexplained one.
+    const rowIsAboutThisBooking = refreshedItem.sourceBookingId === bookingId;
     const outcome = await reconcileSameOwnerCoverageIncident(
       {
         bookingId,
-        cause: refreshedItem.cause,
+        cause: rowIsAboutThisBooking ? refreshedItem.cause : "SYSTEM_CHANGE",
         actorMemberId: refreshedItem.actorMemberId,
-        reason: refreshedItem.reason,
+        reason: rowIsAboutThisBooking ? refreshedItem.reason : null,
       },
       db,
     );

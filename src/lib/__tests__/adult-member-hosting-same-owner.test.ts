@@ -1958,8 +1958,10 @@ describe("settling a dependent booking after the change (#2576 §7, §14, §16)"
       db,
     );
     expect(outcome.action).toBe("opened");
-    // The incident carries the member's decision as its recorded cause, not the
-    // shared label for an automatic change (#3241).
+    // The cause reaches the stored row at all — this drives the writer directly,
+    // so it pins the JOURNEY (nothing else proved `cause` reaches `create`) and
+    // NOT that the declined arm chooses it. The arm itself is pinned further
+    // down, where the real engine produces the queue item (#3241).
     const created = db.hostingCoverageIncident.create.mock.calls
       .map((call: any) => call[0].data)
       .at(-1);
@@ -3503,6 +3505,89 @@ describe("a member is offered the linked move, never deadlocked (#3232)", () => 
     // regression to `SYSTEM_CHANGE` here files a member's prompted decision as an
     // automatic change, which is the count the value exists to keep clean.
     expect(dependentItem?.cause).toBe("OWNER_DECLINED_LINKED_MOVE");
+  });
+
+  it("gives an OVERLAPPING stranded booking its own row, so the decision survives", async () => {
+    // #3241, `INV-HOST-053`. A dependent that still shares a night with the new
+    // dates used to get no row of its own — the changed booking's row already
+    // reached it, so a second one was duplicate work. That reasoning stops
+    // holding the moment a row's explanation is confined to the booking the row
+    // is ABOUT: reached only by the source's sweep, this booking would be filed
+    // as a plain automatic change and the member's decision would be lost for it.
+    //
+    // A PARTIAL OVERLAP IS EXACTLY THAT CASE and it is an ordinary family shape:
+    // the adult's booking still covers one of the kid's nights after the move and
+    // leaves the other short.
+    const rows = [
+      sourceWithAdult("b-source", ["2026-07-04"]),
+      booking({
+        id: "b-main",
+        checkIn: new Date("2026-07-03T00:00:00.000Z"),
+        checkOut: new Date("2026-07-05T00:00:00.000Z"),
+        guests: [guestRow("kid", ["2026-07-03", "2026-07-04"])],
+      }),
+    ];
+    // The premise, asserted rather than assumed: without a real overlap this
+    // test would pass against the old rule too and prove nothing.
+    expect(
+      bookingsOverlap(
+        { checkIn: rows[0].checkIn as Date, checkOut: rows[0].checkOut as Date },
+        { checkIn: rows[1].checkIn as Date, checkOut: rows[1].checkOut as Date },
+      ),
+      "the two bookings must really overlap for this to be the case under test",
+    ).toBe(true);
+
+    // THE KEY COMES FROM THE ENGINE'S OWN STRANDED ROWS, not from a hand-built
+    // fixture: a key computed from guessed nights would mismatch and the second
+    // call would refuse for the wrong reason entirely.
+    const refused = makeStore(rows);
+    const memberOptions = () =>
+      hostingCoverageActorOptions({
+        actorRole: "MEMBER",
+        actorMemberId: "owner-1",
+        vacatedRange: {
+          checkIn: new Date("2026-07-03T00:00:00.000Z"),
+          checkOut: new Date("2026-07-05T00:00:00.000Z"),
+        },
+      });
+    const error = await reconcileAdultMemberHostingReviewWithSiblings(
+      "b-source",
+      refused.db,
+      memberOptions(),
+    ).then(
+      () => null,
+      (err: unknown) => err as SameOwnerCoverageWouldBreakError,
+    );
+    expect(error, "a member with no answer is refused, which is where the key comes from").toBeTruthy();
+    const stateKey = strandedCoverageStateKey(error!.stranded, "b-source");
+
+    const { db, queued } = makeStore(rows);
+    await expect(
+      reconcileAdultMemberHostingReviewWithSiblings(
+        "b-source",
+        db,
+        hostingCoverageActorOptions({
+          actorRole: "MEMBER",
+          actorMemberId: "owner-1",
+          vacatedRange: {
+            checkIn: new Date("2026-07-03T00:00:00.000Z"),
+            checkOut: new Date("2026-07-05T00:00:00.000Z"),
+          },
+          linkedMove: {
+            answer: { choice: "LEAVE_UNCOVERED", acknowledged: true, stateKey },
+            bookingOwnerMemberId: "owner-1",
+          },
+        }),
+      ),
+    ).resolves.toBeTruthy();
+
+    const ownRow = queued.find((item) => item.sourceBookingId === "b-main");
+    expect(
+      ownRow,
+      "INV-HOST-053: the acknowledged booking needs a row of its own, overlap or not",
+    ).toBeTruthy();
+    expect(ownRow?.cause).toBe("OWNER_DECLINED_LINKED_MOVE");
+    expect(ownRow?.reason).toBe(LINKED_MOVE_DECLINED_INCIDENT_REASON);
   });
 
   it("refuses an officer the member's answer, so §7's reason is still owed", async () => {
