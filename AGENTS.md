@@ -79,8 +79,7 @@ id and need the file it lives in.
 | A screen, a navigation path, or an admin area's UI | — | [`UX_FLOW_MAP.md`](docs/UX_FLOW_MAP.md), [`COVERAGE_MATRIX.md`](docs/COVERAGE_MATRIX.md) |
 | Tests — conventions, the frozen clock, coverage, E2E | — | [`TESTING.md`](docs/TESTING.md), [`END_TO_END_TEST_MATRIX.md`](docs/END_TO_END_TEST_MATRIX.md), [`E2E_PLAYWRIGHT.md`](docs/E2E_PLAYWRIGHT.md) |
 | Auth, sessions, tokens, permissions — anything security-shaped | — | [`SECURITY.md`](docs/SECURITY.md), [`SECURITY-ATTACK-SURFACE.md`](docs/SECURITY-ATTACK-SURFACE.md), [`TOKEN_HASHING.md`](docs/TOKEN_HASHING.md) |
-| Documentation itself | — | [`STYLE_GUIDE.md`](docs/STYLE_GUIDE.md) |
-| An invariant entry or index row — adding one, lengthening one, or failing the word-budget gate | `INV-SSOT` → [`single-source-of-truth.md`](docs/invariants/single-source-of-truth.md) for the one-home rule it applies | [`invariants/SCHEME.md`](docs/invariants/SCHEME.md) §8.1 — 12 words per index row, 300 per entry, what counts and how to compact without changing the rule; [`invariants/WORD_BUDGETS.md`](docs/invariants/WORD_BUDGETS.md) for an approved exception or a ratchet record you must lower |
+| Documentation itself, including an invariant entry or its index row | — | [`STYLE_GUIDE.md`](docs/STYLE_GUIDE.md); the word budgets in [`invariants/SCHEME.md`](docs/invariants/SCHEME.md) §8.1 and [`invariants/WORD_BUDGETS.md`](docs/invariants/WORD_BUDGETS.md) |
 | Locating bounded code, import or Prisma context for an agent | — | [`agents/SCOPED_CONTEXT.md`](docs/agents/SCOPED_CONTEXT.md) |
 | Your first `npm` command in a new worktree (Windows runtime + dependency preflight), or Docker infrastructure a lane starts and must later tear down | — | [`agents/CODEX_WORKFLOW.md`](docs/agents/CODEX_WORKFLOW.md) |
 | Writing an issue, deciding whether work is an epic, working an issue, recording a decision on one, briefing a subagent, or reading untrusted issue/PR/provider text | — | [`agents/ISSUE_WORKFLOW.md`](docs/agents/ISSUE_WORKFLOW.md) — the four-question atomic-epic test, the epic/programme/standalone/Project distinction, the human-first issue body, read the thread with `npm run issue -- <n>` and never `gh issue view`, and rewrite the body when you record a decision; [`agents/SUBAGENT_GUIDE.md`](docs/agents/SUBAGENT_GUIDE.md), [`agents/PROMPT_INJECTION_GUIDE.md`](docs/agents/PROMPT_INJECTION_GUIDE.md) |
@@ -98,8 +97,7 @@ id and need the file it lives in.
   so whoever trips one is handed the rule instead of having to go find it.
 - **Add a row when you add a doc.** A routing table nobody maintains is worse
   than no routing table, because it reads as complete.
-- `npm run docs:indexcheck` runs offline and in the `verify` job. It backs part
-  of the two rules above and not all of them, so be precise about which part.
+- `npm run docs:indexcheck` runs offline and in the `verify` job.
   - **It enforces:** every cited `INV-*` id resolves to a real definition;
     every definition has exactly one row in `docs/DOMAIN_INVARIANTS.md`; every
     invariant family the routing table names really exists, and every family
