@@ -1,10 +1,39 @@
 {
   "compilerOptions": {
-    "target": "ES2017",
-    "lib": ["dom", "dom.iterable", "esnext"],
-    "allowJs": true,
+    // #2693: the modern baseline. ES2022 is the oldest target every runtime
+    // this repository ships to already exceeds (Node 24 per `engines`, and the
+    // evergreen browsers Next's own browserslist selects), so the checker stops
+    // modelling downlevelled output nobody runs. `lib` names the same level
+    // explicitly rather than `esnext`, so a newer standard-library API cannot
+    // enter the type surface before the target that carries it does.
+    "target": "ES2022",
+    "lib": ["dom", "dom.iterable", "es2022"],
+    // Class fields keep [[Set]] (assignment) semantics, which is what every
+    // emitter here produces today: Next's SWC reads ONLY this explicit key
+    // (`Boolean(compilerOptions.useDefineForClassFields)`, never the target),
+    // and Vite/Vitest derive `true` from an ES2022 target only when the key is
+    // absent. Left implicit, the ES2022 default would flip the Vitest transform
+    // to [[Define]] while the production build stayed on [[Set]], and the
+    // checker would model a runtime the app does not have. Flipping this to
+    // `true` is a real behaviour change for the ~80 `Error` subclasses that
+    // declare uninitialised fields and assign them after `super()`; it is a
+    // separate decision, not part of the baseline.
+    "useDefineForClassFields": false,
+    // #2693: no JavaScript enters a TypeScript project. Vitest still runs the
+    // `scripts/**/*.test.mjs` suites, which were never statically checked
+    // (`checkJs` was off); the four JavaScript modules TypeScript tests import
+    // carry a sibling `.d.ts` / `.d.mts` declaring their surface. The census
+    // is pinned by `src/lib/__tests__/typecheck-project-coverage.test.ts`.
+    "allowJs": false,
     "skipLibCheck": true,
     "strict": true,
+    // #2693: dead-code hygiene the compiler owns. An unused local or import is
+    // removed; a parameter a signature must keep is prefixed `_`, which is the
+    // repository's existing convention (`_label`, `_request`, ...); a member
+    // overriding a base-class member says so.
+    "noImplicitOverride": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
     "noEmit": true,
     "esModuleInterop": true,
     "module": "esnext",
@@ -33,13 +62,24 @@
   "exclude": [
     "node_modules",
     // Vitest's source/script tests belong to tsconfig.test.json for every
-    // supported extension. Keep e2e/*.spec.ts in this project until #2693
-    // gives Playwright a deliberate project of its own.
+    // supported extension.
     "src/**/*.test.*",
     "src/**/*.spec.*",
     "scripts/**/*.test.*",
     "scripts/**/*.spec.*",
     "**/__tests__/**",
+    // #2693: the Playwright suite and its config belong to tsconfig.e2e.json,
+    // which supplies Node types without `vitest/globals` and without the Next
+    // route typegen. The three Vitest suites under `src/lib/__tests__/` that
+    // import an `e2e/helpers/*` module still reach it through that import;
+    // ownership is about which project lists a file as a root.
+    "e2e/**",
+    "playwright.config.ts",
+    // #2693: the Vitest config and its two setup files are the test project's
+    // roots (they exist only to run under Vitest), not the app's.
+    "vitest.config.mts",
+    "vitest.setup.ts",
+    "vitest.clock-setup.ts",
     // #2686: Semgrep rule fixtures. They are deliberately-broken sample code
     // whose only reader is Semgrep's own `--test` runner — they import modules
     // that do not resolve from that directory and they exist to be reported.
