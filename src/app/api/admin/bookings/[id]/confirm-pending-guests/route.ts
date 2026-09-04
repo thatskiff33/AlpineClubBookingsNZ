@@ -37,6 +37,10 @@ import { bookingPromoEmailOptions } from "@/lib/booking-promo-email-options";
 import { createStructuredAuditLog, getAuditRequestContext } from "@/lib/audit";
 import logger from "@/lib/logger";
 import { formatDateOnly } from "@/lib/date-only";
+import {
+  savedPaymentMethodForBooking,
+  savedPaymentMethodRowStamp,
+} from "@/lib/saved-payment-method";
 
 const confirmPendingGuestsSchema = z.object({
   allowOverbook: z.boolean().optional(),
@@ -101,6 +105,9 @@ export async function POST(
       // non-contiguous stays on the nights they actually occupy.
       guests: { include: { nights: true } },
       payment: true,
+      // #3269: a split child (#738) may be charged on its parent's saved card;
+      // the parent's row is what proves the card was saved for reuse.
+      parentBooking: { include: { payment: true } },
       promoRedemption: { include: { promoCode: true } },
     },
   });
@@ -125,9 +132,15 @@ export async function POST(
     checkOut: booking.checkOut,
   };
   const promoEmailOptions = bookingPromoEmailOptions(booking);
-  const hasSavedPaymentMethod = Boolean(
-    booking.payment?.stripePaymentMethodId && booking.payment?.stripeCustomerId
-  );
+  // The one home for "may this booking's saved card be charged off-session"
+  // (#3269, `INV-PAY-053`): own row first, then the split parent's, each gated
+  // on SetupIntent provenance. A one-off checkout card on either row is not a
+  // saved card, so the booking takes the payment-owed branch below instead of a
+  // charge Stripe would refuse.
+  const savedPayment = savedPaymentMethodForBooking({
+    payment: booking.payment,
+    parentBooking: booking.parentBooking,
+  });
 
   const auditRequest = getAuditRequestContext(request);
 
@@ -314,7 +327,7 @@ export async function POST(
 
     // No saved payment method (request-origin): never charge — move to a
     // payment-owed status and let payment be arranged separately.
-    if (!hasSavedPaymentMethod) {
+    if (!savedPayment) {
       const claimed = await prisma.booking.updateMany({
         where: { id: bookingId, status: BookingStatus.PENDING },
         data: {
@@ -428,20 +441,21 @@ export async function POST(
         cause: "SYSTEM_CHANGE",
         actorMemberId: session.user.id,
       });
+      // #3269: a card borrowed from the parent is charged from `savedPayment`
+      // and never written onto this row (`savedPaymentMethodRowStamp`).
+      const rowStamp = savedPaymentMethodRowStamp(savedPayment);
       const payment = await tx.payment.upsert({
         where: { bookingId },
         create: {
           bookingId,
           amountCents: booking.finalPriceCents,
           status: PaymentStatus.PENDING,
-          stripeCustomerId: booking.payment!.stripeCustomerId,
-          stripePaymentMethodId: booking.payment!.stripePaymentMethodId,
+          ...rowStamp,
         },
         update: {
           amountCents: booking.finalPriceCents,
           status: PaymentStatus.PENDING,
-          stripeCustomerId: booking.payment!.stripeCustomerId,
-          stripePaymentMethodId: booking.payment!.stripePaymentMethodId,
+          ...rowStamp,
         },
       });
       return { ok: true as const, paymentId: payment.id };
@@ -497,8 +511,8 @@ export async function POST(
     try {
       paymentIntent = await chargePaymentMethod({
         amountCents: booking.finalPriceCents,
-        customerId: booking.payment!.stripeCustomerId!,
-        paymentMethodId: booking.payment!.stripePaymentMethodId!,
+        customerId: savedPayment.stripeCustomerId,
+        paymentMethodId: savedPayment.stripePaymentMethodId,
         metadata: {
           bookingId,
           memberId: booking.memberId,
@@ -583,7 +597,7 @@ export async function POST(
         amountCents: paymentIntent.amount,
         status: PaymentStatus.SUCCEEDED,
         paymentMethodId,
-        stripeCustomerId: booking.payment!.stripeCustomerId,
+        stripeCustomerId: savedPayment.stripeCustomerId,
       });
     } catch (recordErr) {
       // Non-fatal: reconciliation below upserts the identical row.

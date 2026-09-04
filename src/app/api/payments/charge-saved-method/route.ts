@@ -20,6 +20,7 @@ import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
 import { upsertPaymentIntentTransaction } from "@/lib/payment-transactions";
 import { checkCapacityForGuestRanges } from "@/lib/capacity";
 import { bookingHasCapacityOverride } from "@/lib/booking-status";
+import { reusableSavedPaymentMethodOnRow } from "@/lib/saved-payment-method";
 import { hasAdminAccess } from "@/lib/access-roles";
 import { PAYMENT_RECEIVED_STATUS_UNCONFIRMED_BODY } from "@/lib/payment-recovery-contract";
 
@@ -100,7 +101,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!booking.payment?.stripePaymentMethodId || !booking.payment?.stripeCustomerId) {
+    // #3269 (`INV-PAY-053`): a card is chargeable off-session only with
+    // SetupIntent provenance on this booking's OWN row. This route records the
+    // capture against that row (`savedPayment.id` below) and creates none, so
+    // it deliberately offers no split-parent fallback — the settlement cron and
+    // the admin confirm-pending-guests route, which upsert the child's row
+    // inside their claim, carry that fallback.
+    const reusableCard = reusableSavedPaymentMethodOnRow(booking.payment);
+    if (!booking.payment || !reusableCard) {
       return NextResponse.json(
         { error: "No saved payment method found for this booking" },
         { status: 400 }
@@ -138,8 +146,8 @@ export async function POST(request: NextRequest) {
     // Charge the saved payment method
     const paymentIntent = await chargePaymentMethod({
       amountCents: booking.finalPriceCents,
-      customerId: booking.payment.stripeCustomerId,
-      paymentMethodId: booking.payment.stripePaymentMethodId,
+      customerId: reusableCard.stripeCustomerId,
+      paymentMethodId: reusableCard.stripePaymentMethodId,
       metadata: {
         bookingId: booking.id,
         memberId: booking.memberId,
