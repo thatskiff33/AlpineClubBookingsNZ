@@ -17,3 +17,14 @@
   read a label it has never heard of, and here that read is the one every
   supervision re-check performs rather than merely a screen (#3241,
   `INV-HOST-052`).
+- A booking that simply happens to be without adult supervision at the same time
+  is no longer told somebody else's story. When a booking officer's queue entry
+  is raised, the club re-checks every booking that member has at that lodge on
+  those nights - and any that was already uncovered, for its own unrelated
+  reason, was given the same explanation as the booking the change was really
+  about. An officer could open it and read a private note they had written about
+  a different booking, or be told the member had been asked about this one when
+  nobody ever had. Each booking now carries its own account, the person who made
+  the change is still recorded against all of them, and the counts by reason stop
+  being inflated by bookings nobody decided anything about (#3241,
+  `INV-HOST-053`).

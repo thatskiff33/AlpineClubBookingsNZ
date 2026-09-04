@@ -291,7 +291,10 @@ describe("hosting coverage drain claim fences (#2596)", () => {
     // words about a stranding they authorised on a booking that is not this one.
     // What survives is the actor, because "who did the thing that revealed this"
     // is true of every booking in the sweep.
-    expect(mocks.reconcile).toHaveBeenCalledWith(
+    expect(
+      mocks.reconcile,
+      "INV-HOST-053: an officer's private reason belongs to the booking they acted on",
+    ).toHaveBeenCalledWith(
       {
         bookingId: "dependent-after",
         cause: "SYSTEM_CHANGE",
@@ -345,7 +348,10 @@ describe("hosting coverage drain claim fences (#2596)", () => {
       },
       expect.anything(),
     );
-    expect(mocks.reconcile).toHaveBeenCalledWith(
+    expect(
+      mocks.reconcile,
+      "INV-HOST-053: a booking the offer never named must not be told a member declined it",
+    ).toHaveBeenCalledWith(
       {
         bookingId: "booking-nobody-mentioned",
         cause: "SYSTEM_CHANGE",

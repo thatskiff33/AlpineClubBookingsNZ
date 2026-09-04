@@ -381,6 +381,7 @@ Prefix `INV-HOST`.
 | `INV-HOST-050` | A member is never refused a change they cannot make; moving away from their own booking's cover offers the linked move |
 | `INV-HOST-051` | The linked move is atomic and settles once; both change fees are charged unless the club has turned the second off |
 | `INV-HOST-052` | A declined linked move has its own recorded cause, written by exactly one arm and registered one release before anything wrote it |
+| `INV-HOST-053` | A re-evaluation row's explanation belongs to the booking it is about, and an explained cause is never overwritten by an unexplained one |
 
 ### Booking requests
 

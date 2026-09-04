@@ -42,14 +42,11 @@ export type HostingCoverageIncidentDb = Pick<
 /**
  * Why the cover went away. Mirrors the Prisma enum without importing it.
  *
- * `OWNER_DECLINED_LINKED_MOVE` is WRITTEN BY EXACTLY ONE ARM: the owner-declined
- * branch of `hostingCoverageActorOptions` (#3232 D3, #3241, `INV-HOST-052`), and
- * `hosting-coverage-incident-cause-expand.test.ts` censuses that — a second
- * writer would put an automatic change back into the count a club judges its own
- * setting by. A NEW value of this type owes the same two-release sequence this
- * one had: migration `20260909010000_add_owner_declined_linked_move_incident_cause`
- * registered the label while nothing wrote it, so the colour still serving during
- * that deploy never met a value its client could not deserialize.
+ * `OWNER_DECLINED_LINKED_MOVE` is WRITTEN BY EXACTLY ONE ARM, the owner-declined
+ * branch of `hostingCoverageActorOptions`, censused by
+ * `hosting-coverage-incident-cause-expand.test.ts` (#3232 D3, #3241). A NEW value
+ * here owes that one's two-release sequence: registered while nothing writes it,
+ * written the release after. `INV-HOST-052` is both rules.
  */
 export const HOSTING_COVERAGE_INCIDENT_CAUSES = [
   "OFFICER_OVERRIDE",
@@ -61,38 +58,24 @@ export type HostingCoverageIncidentCause =
   (typeof HOSTING_COVERAGE_INCIDENT_CAUSES)[number];
 
 /**
- * HOW MUCH OF A STORY A CAUSE TELLS, and the order the fold promotes in (#3241).
- *
- * `SYSTEM_CHANGE` explains nothing about WHO: it is the label for every automatic
- * change nobody chose. The other two name a decision and the person who made it.
- * That matters because ONE re-evaluation row can reach several bookings, and the
- * drain now gives a row's explanation only to the booking that row is about — so
- * whichever writer reaches an uncovered booking first, the explained one has to
- * be able to overwrite the unexplained one for the same uncovered state, or the
- * story an officer reads would depend on drain order.
- *
- * It never runs downhill. An unexplained sweep arriving after a member's decision
- * or an officer's override leaves both alone.
+ * HOW MUCH OF A STORY A CAUSE TELLS, and so the order the fold promotes in (#3241,
+ * `INV-HOST-053`). One re-evaluation row reaches several bookings and only one of
+ * them owns its story, so the explained cause has to be able to overwrite the
+ * unexplained one — otherwise drain order decides what an officer is told. It
+ * never runs downhill.
  */
 export function hostingCoverageCauseAttributionRank(cause: string): number {
-  switch (cause) {
-    case "OFFICER_OVERRIDE":
-      return 2;
-    case "OWNER_DECLINED_LINKED_MOVE":
-      return 1;
-    default:
-      return 0;
-  }
+  if (cause === "OFFICER_OVERRIDE") return 2;
+  return cause === "OWNER_DECLINED_LINKED_MOVE" ? 1 : 0;
 }
 
 /**
  * The stored reason on the incident a declined offer opens (#3232).
  *
- * IT STILL HAS TO STAND ALONE, now that `INV-HOST-052`'s runtime half has landed
- * (#3241) and the stored cause names the decision too. The label says a member
- * declined; only this sentence says they were asked about THIS booking while
- * editing another one, and it is read on its own in the booking's history rather
- * than beside the cause. So no issue reference (no other stored human-read string
+ * IT STILL HAS TO STAND ALONE now the cause names the decision too (#3241): the
+ * label says a member declined, and only this sentence says they were asked about
+ * THIS booking while editing another. It is read on its own in the booking's
+ * history. So no issue reference (no other stored human-read string
  * in this repository carries one — compare `ADULT_SUPERVISION_REVIEW_REASON`), and
  * no product jargon: "the linked move" is a name from this codebase that no
  * officer has ever met. What it says instead is what happened.
@@ -111,21 +94,15 @@ export const LINKED_MOVE_DECLINED_INCIDENT_REASON =
  * (`INV-SSOT-001`). Both are now this function, so a third surface cannot invent
  * a third wording and the follow-up release's new cause needs no screen change.
  *
- * `SYSTEM_CHANGE` deliberately no longer says "qualification changed", which
- * claimed one specific story for a value that holds many. Nor does it say "cover
- * REMOVED by a later change", which was the same mistake in a new direction: the
- * phrase has to be true of every writer, and two of them remove nothing. A club
- * TIGHTENING ITS OWN POLICY (`adult-member-hosting-policy-reconciliation.ts`)
- * narrowed who counts or switched the rule on, so the rule moved rather than the
- * cover; an officer CONFIRMING PENDING GUESTS or force-confirming ADDED people,
- * so existing cover simply no longer stretches. "No longer covered after a later
- * change" is true of those, of an administrative cancellation, of a lifecycle
- * transition and of a data correction. It is no longer asked to cover a member
- * who was offered the move and declined it: that has been its own recorded cause
- * since `INV-HOST-052`'s runtime half landed (#3241), and the incident's audit
- * history still records the decision in words beside it.
- *
- * An unrecognised value is described rather than crashing an officer's queue: a
+ * `SYSTEM_CHANGE` deliberately no longer says "qualification changed", nor "cover
+ * REMOVED by a later change": the phrase has to be true of EVERY writer, and two
+ * remove nothing — a club that tightened its own policy moved the rule, and an
+ * officer confirming pending guests ADDED people the cover no longer stretches to.
+ * "No longer covered after a later change" is true of those, of an administrative
+ * cancellation, of a lifecycle transition and of a data correction. It is no
+ * longer asked to carry a member who declined the move: that is its own recorded
+ * cause since #3241, with the decision still in words in the audit history. An
+ * unrecognised value is described rather than crashing an officer's queue — a
  * screen is a bad place to discover a schema addition.
  */
 export function describeHostingCoverageIncidentCause(cause: string): string {
@@ -215,22 +192,18 @@ export interface OpenHostingCoverageIncidentParams {
    * The explanation for a change where NO authority was exercised, recorded in
    * the incident's audit history (#3232 D3, `INV-HOST-052`).
    *
-   * WHY NOT `override`, and why it is history rather than a column. The one case
-   * that supplies this today is a booking owner who was offered the linked move
-   * on their own other booking and declined it. That is not an override: nobody
-   * exercised authority over a booking that was not theirs, so §7's mandatory
-   * reason and its attribution would both be inventions, and writing them onto
-   * `overriddenByMemberId`/`overrideReason` would report an officer decision that
-   * never happened.
+   * WHY NOT `override`. The one case that supplies this is a booking owner who
+   * declined the linked move on their own other booking. Nobody exercised
+   * authority over a booking that was not theirs, so §7's mandatory reason and
+   * its attribution would both be inventions on
+   * `overriddenByMemberId`/`overrideReason` — an officer decision that never was.
    *
-   * The audit row is the right home for it for a second reason too: an audit row
-   * describes ONE event, so it cannot go stale. A column recording "why" would be
-   * left describing the decline after a later automatic change moved the same
-   * incident's uncovered state - and the existing fold deliberately preserves an
-   * officer's reason across such a move, so there is no fold rule that is right
-   * for both. `cause` now names the decision too (#3241), and this is still
-   * where an officer reads WHICH booking they were asked about — a label cannot
-   * say that.
+   * The audit row is the right home for a second reason: it describes ONE event,
+   * so it cannot go stale, where a "why" column would be left describing the
+   * decline after a later automatic change moved the same uncovered state — and
+   * the fold deliberately preserves an officer's reason across such a move, so no
+   * one fold rule is right for both. `cause` names the decision too since #3241;
+   * this is still where an officer reads WHICH booking they were asked about.
    */
   recordedReason?: string | null;
 }
@@ -314,13 +287,10 @@ export async function openOrUpdateHostingCoverageIncident(
     if (existing) {
       if (existing.stateKey === stateKey) {
         // THE EXPLAINED WRITE WINS; THE UNEXPLAINED ONE LEAVES IT ALONE (#3241).
-        // This used to be an officer-only promotion, which was right while the
-        // only explanation was an override. It is not any more: the drain gives a
-        // re-evaluation row's explanation ONLY to the booking that row is about,
-        // so a stranded booking can be reached first by a sweep that opens a bare
-        // `SYSTEM_CHANGE` incident and only afterwards by its own row carrying the
-        // member's decision. Without a promotion here, drain order would decide
-        // whether an officer is ever told a member chose this.
+        // Officer-only promotion was right while an override was the only
+        // explanation. It is not now: a stranded booking can be opened by a sweep
+        // that knows nothing and reached afterwards by its own row carrying the
+        // member's decision (`INV-HOST-053`).
         const incoming = hostingCoverageCauseAttributionRank(params.cause);
         const held = hostingCoverageCauseAttributionRank(existing.cause);
         if (incoming <= held) {
@@ -332,11 +302,9 @@ export async function openOrUpdateHostingCoverageIncident(
             resolvedAt: null,
             stateKey,
             // RE-ASSERT WHAT WAS JUST READ, by rank rather than by naming one
-            // label. Naming a specific label made a promotion silently impossible
-            // for every other cause of lower rank, and the retry loop would
-            // exhaust into its error rather than record the decision. The guard
-            // is the set of causes this write really outranks, so a concurrent
-            // writer that got there first with something STRONGER wins.
+            // label: naming one made promotion silently impossible for every
+            // other lower-ranked cause, and the retry loop exhausted into its
+            // error instead. A concurrent writer holding something STRONGER wins.
             cause: {
               in: HOSTING_COVERAGE_INCIDENT_CAUSES.filter(
                 (candidate) =>
@@ -706,11 +674,9 @@ async function recordIncidentAudit(
       // something an officer has to look at.
       severity: "important",
       outcome: "success",
-      // THE PHRASE, NOT THE STORED LABEL. This line read "after a SYSTEM_CHANGE
-      // change" on the audit-log page — a schema token in a sentence an officer
-      // reads, and the third surface this module's docblock says cannot invent a
-      // wording of its own. The raw value is still in `metadata.cause` below,
-      // where a machine reader wants it (#3241).
+      // THE PHRASE, NOT THE STORED LABEL (#3241). This read "after a SYSTEM_CHANGE
+      // change" on the audit-log page: a schema token in a sentence an officer
+      // reads. The raw value is in `metadata.cause`, where a machine wants it.
       summary:
         `Booking ${formatBookingReference(params.bookingId)} has ` +
         `${params.violation.requirements.uncoveredNonMemberGuestNights} ` +

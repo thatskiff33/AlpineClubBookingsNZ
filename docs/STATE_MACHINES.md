@@ -119,6 +119,13 @@ read that drives this whole lifecycle selects `cause` — so a declined offer wa
 stored as `SYSTEM_CHANGE` until the writer shipped. `INV-HOST-052` is the rule,
 the sequencing a new value of this enum owes, and the one-writer census.
 
+A row that reaches several of the owner's bookings gives its cause and reason only
+to the booking it is about, and the fold promotes by how much a cause explains —
+`OFFICER_OVERRIDE` over `OWNER_DECLINED_LINKED_MOVE` over `SYSTEM_CHANGE`, never
+downhill — so for one uncovered state the explained account survives whichever
+drain arrives first (`INV-HOST-053`). A materially different uncovered state is a
+new state and takes the incoming cause whatever its rank.
+
 Adding a new active covering booking therefore resolves the existing incident as
 `COVERAGE_RESTORED`; it does not cancel or recreate the dependent booking. The
 queue item that drives this transition is part of the mutation transaction. Under

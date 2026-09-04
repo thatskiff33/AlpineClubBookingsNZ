@@ -441,20 +441,6 @@ export async function drainHostingCoverageReevaluations(
 }
 
 /**
- * Settle one queued item: every active booking of that owner, at that lodge, over
- * those nights.
- *
- * Bounded by the item itself (§10) — see `loadSameOwnerCoverageDependentIds`, which
- * turns the owner/lodge/night triple into a booking-id list and cannot be widened
- * into a lodge-wide sweep.
- *
- * §14's EXISTENTIAL RULE IS WHAT THIS LOOP IMPLEMENTS. It does not ask "did the
- * source that used to cover this booking go away"; it asks "is this booking covered
- * NOW, by anything". So a booking with a second eligible same-owner source stays
- * compliant, an incident opened earlier is resolved rather than left standing, and
- * no misleading loss-of-cover message is sent.
- */
-/**
  * The given bookings plus their #738 split halves, de-duplicated.
  *
  * One place rather than two arms of a conditional, so the two cannot disagree about
@@ -477,6 +463,19 @@ async function expandWithSplitHalves(
   ];
 }
 
+/**
+ * Settle one queued item: every active booking of that owner, at that lodge, over
+ * those nights, bounded by the item itself (§10) — `loadSameOwnerCoverageDependentIds`
+ * cannot widen into a lodge-wide sweep.
+ *
+ * §14's EXISTENTIAL RULE IS WHAT THE LOOP BELOW IMPLEMENTS: not "did the source
+ * that used to cover this booking go away" but "is this booking covered NOW, by
+ * anything" — so a second eligible same-owner source keeps a booking compliant, an
+ * earlier incident is resolved rather than left standing, and no misleading
+ * loss-of-cover message is sent. WHICH IS WHY THE ROW'S STORY STOPS AT ITS OWN
+ * BOOKING (#3241, `INV-HOST-053`): that question also reaches bookings uncovered
+ * for their own reasons, and this row's cause and reason are not their story.
+ */
 async function processHostingCoverageReevaluation(
   item: HostingCoverageReevaluationItem,
   db: Prisma.TransactionClient,
@@ -585,20 +584,6 @@ async function processHostingCoverageReevaluation(
   );
 
   for (const bookingId of dependentIds) {
-    // A ROW'S EXPLANATION BELONGS TO THE BOOKING THE ROW IS ABOUT (#3241,
-    // `INV-HOST-053`). One row reaches every same-owner booking on its nights,
-    // and §14 asks "is this booking covered NOW" rather than "did this change
-    // uncover it" — so this loop reaches bookings that were already uncovered for
-    // reasons of their own. Handing them the row's cause and reason told an
-    // officer that a member had been asked about a booking nobody mentioned, and
-    // put an officer's private override reason on somebody's unrelated booking.
-    // It also corrupted the one count `INV-HOST-052` exists to keep honest.
-    //
-    // The ACTOR is still carried, because "who did the thing that revealed this"
-    // is true of every booking here and is what the audit trail is for. Only the
-    // story is withheld. The booking this row IS about keeps both, and reaches
-    // its own explanation even when a sweep opens its incident first, because the
-    // fold promotes an explained cause over an unexplained one.
     const rowIsAboutThisBooking = refreshedItem.sourceBookingId === bookingId;
     const outcome = await reconcileSameOwnerCoverageIncident(
       {

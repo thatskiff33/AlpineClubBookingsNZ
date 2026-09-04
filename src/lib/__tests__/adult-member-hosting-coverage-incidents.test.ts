@@ -444,7 +444,10 @@ describe("one active incident per booking, created or folded into (#2576 §16)",
       }
 
       expect(rows.filter((row) => row.resolvedAt == null)).toHaveLength(1);
-      expect(rows[0]).toMatchObject({
+      expect(
+        rows[0],
+        "INV-HOST-053: the explained cause wins for the same uncovered state, whichever drain arrives first",
+      ).toMatchObject({
         cause: "OWNER_DECLINED_LINKED_MOVE",
         // No officer is invented on the way through: this is not an override.
         overriddenByMemberId: null,
@@ -486,7 +489,10 @@ describe("one active incident per booking, created or folded into (#2576 §16)",
     );
 
     expect(second.action).toBe("unchanged");
-    expect(rows[0]).toMatchObject({
+    expect(
+      rows[0],
+      "INV-HOST-053: the rank runs one way only — an override is never demoted",
+    ).toMatchObject({
       cause: "OFFICER_OVERRIDE",
       overriddenByMemberId: "officer-1",
       overrideReason: "Spoke with the family",

@@ -1900,3 +1900,61 @@ compliant indefinitely.
   wording in its one home on both surfaces, and the one-writer census above.
   `adult-member-hosting-same-owner.test.ts` pins the arm itself — the queue item
   the declined offer enqueues, and the cause and reason the drain then stores.
+
+### INV-HOST-053
+
+- **A re-evaluation row's explanation belongs to the booking that row is about,
+  and an explained cause is never overwritten by an unexplained one** (#3241).
+
+  **THE SHAPE OF THE DEFECT.** One `HostingCoverageReevaluation` row names an
+  owner, a lodge and a night list, and the drain turns that triple back into
+  every one of that owner's active bookings over those nights. §14 then asks of
+  each "is this booking covered NOW", deliberately, rather than "did this change
+  uncover it" — so the sweep also reaches bookings that were already uncovered
+  for reasons of their own. Each of them used to be handed the row's `cause` and
+  `reason`. An officer's private override reason therefore landed on a booking
+  they had never considered, and a member's decision landed on a booking nobody
+  had mentioned to them. It also inflated the count `INV-HOST-052` exists to keep
+  honest: a club counting declined moves counted bookings nobody declined.
+
+  **THE ACTOR IS NOT THE STORY.** `actorMemberId` still reaches every booking in
+  the sweep, because "who did the thing that revealed this" is true of all of
+  them and is what an audit trail is for. What stops at the row's own booking is
+  the `cause` and the `reason` — the claim about WHY, and about whom.
+
+  **THREE PARTS, BECAUSE THE OBVIOUS ONE ALONE LOSES THE STORY.** Confining
+  attribution is not sufficient by itself, and shipping only that would have
+  silently dropped the decision from the very bookings it describes.
+
+  1. **The drain** gives `cause` and `reason` only to the booking the row names
+     (`adult-member-hosting-coverage-drain.ts`).
+  2. **The enqueue** writes a row per stranded dependent for a declined linked
+     move, even where the changed booking's own night window already reaches it.
+     A dependent that PARTIALLY overlaps the new dates — the adult's booking
+     still covers one of the kid's nights and leaves the other short — is an
+     ordinary family shape, and it is reached only by the sweep. Without a row of
+     its own it would lose the decision entirely.
+  3. **The fold promotes by rank**: `OFFICER_OVERRIDE` outranks
+     `OWNER_DECLINED_LINKED_MOVE`, which outranks `SYSTEM_CHANGE`. For an
+     identical uncovered state a more explained cause overwrites a less explained
+     one, and never the reverse. That is what makes drain order stop mattering: a
+     stranded booking can be opened by a sweep that knows nothing and reached
+     afterwards by its own row carrying the member's decision. The guarded
+     `updateMany` re-asserts the ranks this write outranks, so a concurrent
+     writer holding something stronger wins rather than being erased.
+
+  **WHAT THIS DOES NOT CHANGE.** A materially different uncovered state is still
+  a new state: when the state key moves, the incoming cause is written whatever
+  its rank, because the situation being described is no longer the same one. The
+  pre-existing preservation of an officer's stored `overrideReason` across such a
+  move is untouched.
+
+  Enforced by
+  `src/lib/__tests__/adult-member-hosting-coverage-drain-claims.test.ts` (the
+  story reaches the row's own booking and no other, in both the declined and the
+  officer-override directions),
+  `src/lib/__tests__/adult-member-hosting-coverage-incidents.test.ts` (the
+  decision is recorded whichever drain arrives first, and an override is never
+  demoted) and `src/lib/__tests__/adult-member-hosting-same-owner.test.ts` (an
+  overlapping stranded booking gets a row of its own), whose failure messages
+  carry this id.
