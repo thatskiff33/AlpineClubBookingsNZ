@@ -129,18 +129,18 @@ function makeIncidentDb(
             return false;
           }
           if (where.cause !== undefined) {
-            // `{ in: [...] }` and `{ not: value }` as well as a bare label. The
-            // promotion guard asks for "any cause this write outranks" (#3241),
-            // which is a SET, and asked for "any cause that is not an override"
-            // before that (#3232 D3). `HostingCoverageIncident.cause` is NOT
-            // NULL, so plain (in)equality is faithful here - there is no
-            // three-valued case to model, unlike the nullable notification
-            // columns below.
+            // `{ notIn: [...] }` and `{ not: value }` as well as a bare label.
+            // The promotion guard excludes the causes this write does NOT
+            // outrank (#3241), so a label no build knows still matches; before
+            // that it named one label (#3232 D3).
+            // `HostingCoverageIncident.cause` is NOT NULL, so plain (in)equality
+            // is faithful here - there is no three-valued case to model, unlike
+            // the nullable notification columns below.
             const filter = where.cause;
             const matchesCause =
               filter !== null && typeof filter === "object"
-                ? "in" in filter
-                  ? (filter.in as string[]).includes(String(row.cause))
+                ? "notIn" in filter
+                  ? !(filter.notIn as string[]).includes(String(row.cause))
                   : row.cause !== filter.not
                 : row.cause === filter;
             if (!matchesCause) return false;
@@ -461,6 +461,79 @@ describe("one active incident per booking, created or folded into (#2576 §16)",
       expect(withReason).toHaveLength(1);
     },
   );
+
+  it("lets an officer's override promote a member's decision, keeping §7's reason", async () => {
+    // THE RANK IS THREE-VALUED AND THIS IS THE STEP THAT PROVES IT (#3241). With
+    // `OFFICER_OVERRIDE` and `OWNER_DECLINED_LINKED_MOVE` both ranked 1, every
+    // other case in this file still passes — and an officer overriding a booking
+    // whose incident already records the member's decision would be dropped as
+    // `unchanged`, losing the mandatory reason §7 exists to capture.
+    const { db, rows } = makeIncidentDb();
+    await openOrUpdateHostingCoverageIncident(
+      {
+        bookingId: "b-main",
+        lodgeId: "lodge-a",
+        cause: "OWNER_DECLINED_LINKED_MOVE",
+        violation: UNCOVERED,
+        recordedReason: "The member was asked and chose to move only that one",
+      },
+      db,
+    );
+    const promoted = await openOrUpdateHostingCoverageIncident(
+      {
+        bookingId: "b-main",
+        lodgeId: "lodge-a",
+        cause: "OFFICER_OVERRIDE",
+        violation: UNCOVERED,
+        override: { byMemberId: "officer-1", reason: "Approved the exception" },
+      },
+      db,
+    );
+
+    expect(promoted.action).toBe("updated");
+    expect(rows[0]).toMatchObject({
+      cause: "OFFICER_OVERRIDE",
+      overriddenByMemberId: "officer-1",
+      overrideReason: "Approved the exception",
+    });
+  });
+
+  it("leaves the owner-notification claim alone when only the story changes", async () => {
+    // #3241. `updateData` nulls the claim columns, which is right when the
+    // uncovered state MOVED and wrong for a promotion: nothing about the hazard
+    // changed. Clearing a claim held by a delivery in flight loses its completion
+    // stamp, and the owner is emailed about the same unchanged condition twice
+    // (§16). The state key is identical here, so the claim must survive.
+    const { db, rows } = makeIncidentDb();
+    await openOrUpdateHostingCoverageIncident(
+      {
+        bookingId: "b-main",
+        lodgeId: "lodge-a",
+        cause: "SYSTEM_CHANGE",
+        violation: UNCOVERED,
+      },
+      db,
+    );
+    rows[0].ownerNotificationClaimStateKey = hostingCoverageStateKey(UNCOVERED);
+    rows[0].ownerNotificationClaimToken = "claim-in-flight";
+    rows[0].ownerNotificationClaimedAt = new Date();
+
+    await openOrUpdateHostingCoverageIncident(
+      {
+        bookingId: "b-main",
+        lodgeId: "lodge-a",
+        cause: "OWNER_DECLINED_LINKED_MOVE",
+        violation: UNCOVERED,
+        recordedReason: "The member was asked and chose to move only that one",
+      },
+      db,
+    );
+
+    expect(rows[0]).toMatchObject({
+      cause: "OWNER_DECLINED_LINKED_MOVE",
+      ownerNotificationClaimToken: "claim-in-flight",
+    });
+  });
 
   it("does not let an officer's override be demoted to a member's decision", async () => {
     // The rank runs one way only. An override outranks everything, and a later

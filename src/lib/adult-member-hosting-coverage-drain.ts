@@ -583,8 +583,21 @@ async function processHostingCoverageReevaluation(
     db,
   );
 
+  // A #738 SPLIT PAIR IS ONE BOOKING FOR THIS PURPOSE (#3241). The officer acted
+  // on the pair, and the half carrying the non-member guests is often the
+  // uncovered one — with §7's mandatory reason stored nowhere but the incident,
+  // treating that half as a stranger would lose it outright. Asked only of a row
+  // that HAS a story, so the ordinary sweep pays no extra read.
+  const rowIsAbout = new Set(
+    refreshedItem.sourceBookingId &&
+      (refreshedItem.cause !== "SYSTEM_CHANGE" || refreshedItem.reason !== null)
+      ? await expandWithSplitHalves([refreshedItem.sourceBookingId], db)
+      : refreshedItem.sourceBookingId
+        ? [refreshedItem.sourceBookingId]
+        : [],
+  );
   for (const bookingId of dependentIds) {
-    const rowIsAboutThisBooking = refreshedItem.sourceBookingId === bookingId;
+    const rowIsAboutThisBooking = rowIsAbout.has(bookingId);
     const outcome = await reconcileSameOwnerCoverageIncident(
       {
         bookingId,

@@ -2632,17 +2632,19 @@ async function enqueueSameOwnerDependentItems(
   actorMemberId: string | null,
   participantProof: HostingCoverageQueueParticipantProof,
   db: AdultMemberHostingReviewDb,
+  askedAbout: ReadonlySet<string>,
 ): Promise<number> {
   let queued = 0;
-  // #3241: A DEPENDENT WHOSE STORY IS THE MEMBER'S OWN DECISION NEEDS A ROW OF
-  // ITS OWN, overlap or not. The skip below exists to avoid duplicate work when
-  // the changed booking's own row already reaches this dependent — but that row's
-  // explanation now stops at the booking it is about (`INV-HOST-053`), so an
-  // overlapping stranded booking reached only that way would lose the decision
-  // entirely. A partial overlap is exactly that case: the dependent still shares
-  // a night with the new dates and is still left short on the others.
-  const carriesItsOwnStory = context.cause === "OWNER_DECLINED_LINKED_MOVE";
+  const declined = context.cause === "OWNER_DECLINED_LINKED_MOVE";
   for (const dependent of dependents) {
+    // #3241, `INV-HOST-053`. THE STORY GOES TO THE BOOKINGS THE MEMBER WAS ASKED
+    // ABOUT AND TO NO OTHERS, and each of those needs a row of its own even where
+    // the changed booking's window already reaches it — the skip below avoids
+    // duplicate work, but a row's explanation now stops at the booking it names,
+    // so an overlapping stranded booking reached only by the sweep would lose the
+    // decision. A PARTIAL overlap is exactly that: still sharing a night with the
+    // new dates, still left short on the others.
+    const carriesItsOwnStory = declined && askedAbout.has(dependent.id);
     if (!carriesItsOwnStory && !dependentNeedsOwnQueueItem(booking, dependent)) {
       continue;
     }
@@ -2653,13 +2655,14 @@ async function enqueueSameOwnerDependentItems(
         nights: coverageNightsOf(dependent),
         // A dependent's own item is never labelled as somebody's override: the
         // officer authorised stranding on the booking they were working on, not a
-        // decision about this one. The actor is still recorded, so the audit trail
-        // says who did it — the same reasoning `settleGroupTripDependentCoverage`
-        // applies to a third party's booking.
-        cause: context.cause === "OFFICER_OVERRIDE" ? "SYSTEM_CHANGE" : context.cause,
+        // decision about this one. Nor does a booking nobody mentioned get the
+        // member's decision (#3241). The actor is still recorded, so the audit
+        // trail says who did it — the same reasoning
+        // `settleGroupTripDependentCoverage` applies to a third party's booking.
+        cause: carriesItsOwnStory ? context.cause : "SYSTEM_CHANGE",
         sourceBookingId: dependent.id,
         actorMemberId,
-        reason: context.cause === "OFFICER_OVERRIDE" ? null : context.reason,
+        reason: carriesItsOwnStory ? context.reason : null,
       },
       participantProof,
       db,
@@ -2836,6 +2839,8 @@ async function settleSameOwnerDependentCoverage(
       actorMemberId,
       participantProof,
       db,
+      // Nothing was asked of anybody on this path: it carries no story to give.
+      new Set(),
     );
     return;
   }
@@ -3017,6 +3022,7 @@ async function settleSameOwnerDependentCoverage(
     return;
   }
 
+  const ownerDeclined = context.cause === "OWNER_DECLINED_LINKED_MOVE";
   await enqueueHostingCoverageReevaluation(
     {
       memberId: booking.memberId,
@@ -3032,10 +3038,14 @@ async function settleSameOwnerDependentCoverage(
       // with nothing logged. The item below is still right for what it names; the
       // dependents it cannot name get their own, immediately after.
       nights,
-      cause: context.cause,
+      // #3241: NOT the declined-move story, which is about the OTHER booking —
+      // "asked whether to move this booking as well" is self-contradictory on the
+      // booking they were editing. Every booking the member really was asked
+      // about gets its own row below (`INV-HOST-053`).
+      cause: ownerDeclined ? "SYSTEM_CHANGE" : context.cause,
       sourceBookingId: booking.id,
       actorMemberId,
-      reason: context.reason ?? null,
+      reason: ownerDeclined ? null : context.reason ?? null,
     },
     participantProof,
     db,
@@ -3051,6 +3061,11 @@ async function settleSameOwnerDependentCoverage(
     actorMemberId,
     participantProof,
     db,
+    // #3241: WHICH OF THEM THE MEMBER WAS ACTUALLY ASKED ABOUT. `stranded` is
+    // narrower than `verifiedDependents` by design — a dependent whose uncovered
+    // state is already recorded is dropped from it, and those are precisely the
+    // bookings uncovered for reasons of their own (`INV-HOST-053`).
+    new Set(stranded.map((row) => row.bookingId)),
   );
 }
 

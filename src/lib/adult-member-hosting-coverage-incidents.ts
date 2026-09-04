@@ -64,9 +64,17 @@ export type HostingCoverageIncidentCause =
  * unexplained one — otherwise drain order decides what an officer is told. It
  * never runs downhill.
  */
+const CAUSE_ATTRIBUTION_RANK = {
+  OFFICER_OVERRIDE: 2,
+  OWNER_DECLINED_LINKED_MOVE: 1,
+  SYSTEM_CHANGE: 0,
+} satisfies Record<HostingCoverageIncidentCause, number>;
+
 export function hostingCoverageCauseAttributionRank(cause: string): number {
-  if (cause === "OFFICER_OVERRIDE") return 2;
-  return cause === "OWNER_DECLINED_LINKED_MOVE" ? 1 : 0;
+  // A label this build has never heard of ranks 0: an older colour meeting a
+  // future cause treats it as unexplained rather than crashing, and the guard
+  // below is `notIn` for the same reason.
+  return CAUSE_ATTRIBUTION_RANK[cause as HostingCoverageIncidentCause] ?? 0;
 }
 
 /**
@@ -259,19 +267,23 @@ export async function openOrUpdateHostingCoverageIncident(
     );
   }
 
-  const updateData = {
-    stateKey,
-    evidence: params.violation as unknown as Prisma.InputJsonValue,
+  // What a promotion writes: the story, and nothing about the hazard (#3241).
+  const promotionData = {
     cause: params.cause,
-    ownerNotificationClaimStateKey: null,
-    ownerNotificationClaimedAt: null,
-    ownerNotificationClaimToken: null,
     ...(override
       ? {
           overriddenByMemberId: override.byMemberId,
           overrideReason: override.reason.trim().slice(0, 500),
         }
       : {}),
+  };
+  const updateData = {
+    ...promotionData,
+    stateKey,
+    evidence: params.violation as unknown as Prisma.InputJsonValue,
+    ownerNotificationClaimStateKey: null,
+    ownerNotificationClaimedAt: null,
+    ownerNotificationClaimToken: null,
   };
 
   // OFFICER_OVERRIDE dominates SYSTEM_CHANGE for an identical material state.
@@ -301,18 +313,25 @@ export async function openOrUpdateHostingCoverageIncident(
             id: existing.id,
             resolvedAt: null,
             stateKey,
-            // RE-ASSERT WHAT WAS JUST READ, by rank rather than by naming one
-            // label: naming one made promotion silently impossible for every
-            // other lower-ranked cause, and the retry loop exhausted into its
-            // error instead. A concurrent writer holding something STRONGER wins.
+            // RE-ASSERT WHAT WAS JUST READ, as `notIn` rather than by naming a
+            // label. Naming one made promotion impossible for every other
+            // lower-ranked cause and the retry loop exhausted into its error; an
+            // allow-list does the same to a label this build has never heard of,
+            // which is precisely what an older colour meets mid-deploy. A
+            // concurrent writer holding something STRONGER still wins.
             cause: {
-              in: HOSTING_COVERAGE_INCIDENT_CAUSES.filter(
+              notIn: HOSTING_COVERAGE_INCIDENT_CAUSES.filter(
                 (candidate) =>
-                  hostingCoverageCauseAttributionRank(candidate) < incoming,
+                  hostingCoverageCauseAttributionRank(candidate) >= incoming,
               ),
             },
           },
-          data: updateData,
+          // THE STORY, NOT THE STATE (#3241). `updateData` also nulls the owner
+          // notification claim, which is right when the uncovered state moved and
+          // wrong here: nothing about the hazard changed, and clearing a claim
+          // held by a delivery in flight loses its completion stamp and sends the
+          // owner a second email.
+          data: promotionData,
         });
         if (promoted.count === 0) continue;
       } else {

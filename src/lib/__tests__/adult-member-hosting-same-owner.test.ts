@@ -3507,6 +3507,86 @@ describe("a member is offered the linked move, never deadlocked (#3232)", () => 
     expect(dependentItem?.cause).toBe("OWNER_DECLINED_LINKED_MOVE");
   });
 
+  it("does not tell a booking uncovered for its own reason that the member declined it", async () => {
+    // #3241, `INV-HOST-053`. `stranded` is NARROWER than the dependent set by
+    // design: `inspectSameOwnerDependents` drops a dependent whose uncovered state
+    // is already recorded, and those are exactly the bookings uncovered for
+    // reasons of their own. The member is never shown them and never asked about
+    // them, so a row telling them "you were asked about this and said no" is a
+    // story about a different booking — and it is counted as a decline by a club
+    // judging its own setting, which is the count `INV-HOST-052` protects.
+    const alreadyRecorded = booking({
+      id: "b-own-reason",
+      guests: [guestRow("kid-two", ["2026-07-03", "2026-07-04"])],
+      adultMemberHostingReviewStatus: "PENDING",
+      adultMemberHostingReview: {
+        reasonCode: "ADULT_MEMBER_HOSTING_REQUIRED",
+        policyId: "policy-club",
+        policyVersion: 7,
+        affectedNights: ["2026-07-03", "2026-07-04"],
+        requirements: {
+          uncovered: [
+            { guestRef: "kid-two", guestName: "kid-two Person", night: "2026-07-03" },
+            { guestRef: "kid-two", guestName: "kid-two Person", night: "2026-07-04" },
+          ],
+        },
+      },
+    });
+    const rows = [
+      sourceWithAdult("b-source", ["2026-07-20", "2026-07-21"]),
+      booking({ id: "b-main", guests: [guestRow("kid", ["2026-07-03", "2026-07-04"])] }),
+      alreadyRecorded,
+    ];
+    const declineOptions = (stateKey?: string) =>
+      hostingCoverageActorOptions({
+        actorRole: "MEMBER",
+        actorMemberId: "owner-1",
+        vacatedRange: VACATED,
+        ...(stateKey
+          ? {
+              linkedMove: {
+                answer: { choice: "LEAVE_UNCOVERED" as const, acknowledged: true, stateKey },
+                bookingOwnerMemberId: "owner-1",
+              },
+            }
+          : {}),
+      });
+
+    // The key comes from the engine's own refusal, so it covers exactly the set
+    // the member would really have been shown.
+    const refusal = await reconcileAdultMemberHostingReviewWithSiblings(
+      "b-source",
+      makeStore(rows).db,
+      declineOptions(),
+    ).then(
+      () => null,
+      (err: unknown) => err as SameOwnerCoverageWouldBreakError,
+    );
+    expect(refusal?.stranded.map((row) => row.bookingId)).toEqual(["b-main"]);
+    const stateKey = strandedCoverageStateKey(refusal!.stranded, "b-source");
+
+    const { db, queued } = makeStore(rows);
+    await expect(
+      reconcileAdultMemberHostingReviewWithSiblings("b-source", db, declineOptions(stateKey)),
+    ).resolves.toBeTruthy();
+
+    expect(queued.find((item) => item.sourceBookingId === "b-main")).toMatchObject({
+      cause: "OWNER_DECLINED_LINKED_MOVE",
+      reason: LINKED_MOVE_DECLINED_INCIDENT_REASON,
+    });
+    const other = queued.find((item) => item.sourceBookingId === "b-own-reason");
+    expect(
+      other,
+      "INV-HOST-053: a booking nobody was asked about must not carry the decision",
+    ).toMatchObject({ cause: "SYSTEM_CHANGE", reason: null });
+    // The booking the member was EDITING is not asked about either: "move this
+    // booking as well" cannot be true of the one they were moving.
+    expect(queued.find((item) => item.sourceBookingId === "b-source")).toMatchObject({
+      cause: "SYSTEM_CHANGE",
+      reason: null,
+    });
+  });
+
   it("gives an OVERLAPPING stranded booking its own row, so the decision survives", async () => {
     // #3241, `INV-HOST-053`. A dependent that still shares a night with the new
     // dates used to get no row of its own — the changed booking's row already

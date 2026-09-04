@@ -362,6 +362,45 @@ describe("hosting coverage drain claim fences (#2596)", () => {
     );
   });
 
+  it("treats a split pair as one booking, so §7's reason is not lost with it", async () => {
+    // #3241, `INV-HOST-053`. A #738 split half never equals `sourceBookingId` —
+    // `loadHostingCoverageSplitSiblingIds` excludes its own input — so confining a
+    // row's story to that one id would hand the half a bare `SYSTEM_CHANGE`. That
+    // matters most for an officer: the mandatory reason is stored ONLY on the
+    // incident, the half carrying the non-member guests is often the uncovered
+    // one, and its parent may have no violation to record anything against. So
+    // the officer's reason would exist nowhere durable at all.
+    const override = {
+      ...CLAIMED_ITEM,
+      cause: "OFFICER_OVERRIDE" as const,
+      sourceBookingId: "booking-officer-acted-on",
+      actorMemberId: "officer-1",
+      reason: "Approved after speaking with the family",
+    };
+    mocks.claim.mockReset();
+    mocks.claim.mockResolvedValueOnce([override]).mockResolvedValue([]);
+    mocks.lockMember.mockResolvedValue(0);
+    mocks.loadClaimed.mockResolvedValue(override);
+    mocks.loadDependents.mockResolvedValue(["booking-officer-acted-on"]);
+    mocks.loadSplitSiblings.mockResolvedValue(["booking-split-half"]);
+    mocks.reconcile.mockResolvedValue({ action: "none" });
+
+    await drainHostingCoverageReevaluations({}, makeDb());
+
+    expect(
+      mocks.reconcile,
+      "INV-HOST-053: the officer acted on the pair, so the half keeps the reason",
+    ).toHaveBeenCalledWith(
+      {
+        bookingId: "booking-split-half",
+        cause: "OFFICER_OVERRIDE",
+        actorMemberId: "officer-1",
+        reason: "Approved after speaking with the family",
+      },
+      expect.anything(),
+    );
+  });
+
   it("resolves a directly verified terminal source even when the bounded list omits it", async () => {
     const item = {
       ...CLAIMED_ITEM,
