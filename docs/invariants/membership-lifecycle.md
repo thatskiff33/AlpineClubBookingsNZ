@@ -100,15 +100,16 @@ access via the legacy enum values (`USER`, `ADMIN`, `ADMIN_READONLY`,
 `ADMIN`, `LODGE`, `USER`, and `ORG` are protected system roles: code-defined,
 never editable or deletable, and Full Admin always keeps full permissions.
 Deleting a definition is blocked while any member holds it. Custom
-definition-backed roles are privileged for the Full-Admin
-separation-of-duties gate, exactly like the seeded bundles;
-`Member.role` is limited to `USER`, `ADMIN`, `LODGE`, `NON_MEMBER`, and
-`SCHOOL`, and `financeAccessLevel` is a compatibility field. Neither field may
-be used as a runtime permission gate or for new membership-category semantics.
-Bundled and definition-backed rows are composed by the central admin
-permission matrix (maximum level per area); they must not be projected into
-legacy `Member.role = ADMIN`. Finance portal access derives from the merged
-`finance` area level, never from the enum values or `financeAccessLevel`.
+definition-backed roles are privileged for the Full-Admin separation-of-duties
+gate, exactly like the seeded bundles. `Member.role` is limited to `USER`,
+`ADMIN`, `LODGE`, `NON_MEMBER`, and `SCHOOL`, and `financeAccessLevel` is a
+compatibility field. Neither field may be used as a runtime permission gate or
+for new membership-category semantics. Bundled and definition-backed rows are
+composed by the central admin permission matrix (maximum level per area); they
+must not be projected into legacy `Member.role = ADMIN`. Finance portal access
+derives from the merged `finance` area level, never from the enum values or
+`financeAccessLevel`.
+
 "User Type" (User / Organisation / Admin / Lodge) is a derived presentation
 concept over access-role tokens, not a stored field: the Edit Member screen's
 User Type select and the members-list Access column derive it via
@@ -116,8 +117,12 @@ User Type select and the members-list Access column derive it via
 Lodge kiosk; `ORG` ⇒ Organisation; otherwise User) and save it back as plain
 `accessRoles` tokens — the Admin type's "Also a club member" checkbox is the
 `USER` token. No new stored classification field may be introduced for it,
-organisations cannot hold admin roles, and the server-side Full-Admin gates
-on access-role writes remain the authority (the UI only mirrors them).
+organisations cannot hold admin roles, and the server-side Full-Admin gates on
+access-role writes remain the authority (the UI only mirrors them). The admin
+population is protected against lock-out by `INV-LIFE-089`.
+
+## INV-LIFE-089
+
 The admin population is protected against lock-out on the seven member-write
 paths that can deactivate, de-login, or archive an EXISTING account (#1604,
 extended by #1622): member edit, bulk update, lifecycle archive,
@@ -133,20 +138,18 @@ mutation's transaction, and "Full Admin" means an active, login-enabled member
 with the `ADMIN` access-role row (the runtime grant), not a bare legacy
 `Member.role`. The login-holder transfer both revokes and grants `canLogin` in
 one operation, so it counts active Full Admins on its post-write read view — the
-incoming holder's grant is part of the evaluated end-state. This is a
-closed-world guarantee: every other `canLogin` writer in the codebase either
-CREATES a brand-new member (booking-request/school/group/Xero-import contacts,
-nomination and family-request dependants, plus admin member-create and CSV
-member-import rows — whose `canLogin` value seeds a new row, never de-logins an
-existing one), GRANTS `canLogin` on an existing member without ever revoking it
-(the application-approval mapping **promotion path** — mapping an applicant onto
-a non-login member sets `canLogin: true`, a fresh password, and
-`emailVerified: true`, and cannot strand an admin because it only ever adds a
-login), or passes `canLogin` only as a read/token filter
-(`normalizeAssignableAccessRoleTokens`, list/where clauses), and so cannot
-strand an existing admin. The one remaining path that can clear `canLogin` on an existing
-admin and is NOT guarded is indirect — the age-down cron, where editing a date
-of birth to a minor tier can indirectly clear `canLogin` (informational).
+incoming holder's grant is part of the evaluated end-state.
+
+This is a closed-world guarantee: every other `canLogin` writer either CREATES a
+brand-new member (booking-request/school/group/Xero-import contacts, nomination
+and family-request dependants, admin member-create and CSV member-import rows),
+GRANTS `canLogin` on an existing member without ever revoking it (the
+application-approval mapping promotion path sets `canLogin: true`, a fresh
+password, and `emailVerified: true`), or passes `canLogin` only as a read/token
+filter (`normalizeAssignableAccessRoleTokens`, list/where clauses), and so cannot
+strand an existing admin. The one path that can clear `canLogin` on an existing
+admin and is NOT guarded is indirect — the age-down cron, where editing a date of
+birth to a minor tier can indirectly clear `canLogin` (informational).
 
 ## INV-LIFE-006
 
@@ -523,28 +526,29 @@ Configuration and lifecycle guards:
   current/future-season assignee: either becoming FORCED while a person-tier
   member is assigned, or removing `NOT_APPLICABLE` while a NON-ORG member is
   still on N/A (org members are exempt — the global org force keeps them N/A
-  regardless of the type). This mirrors the merge coverage rule; the admin
-  reassigns/reclassifies those members first. The offending-assignee check is
-  repeated inside the config-write transaction so a concurrent change cannot slip
-  a stranded member past the guard (#2106).
+  regardless of the type). The offending-assignee check is repeated inside the
+  config-write transaction so a concurrent change cannot slip a stranded member
+  past the guard (#2106).
 - A change that flips a member TO N/A is blocked while they are still a linked
-  guest on someone else's future booking. This block is uniform across every
-  N/A-flip site: the seasonal-assignment save (the change preview lists those
-  bookings for removal first), the admin member edit (manual N/A pick and org
-  grant), and the bulk set-role ORG grant (blocked members are reported as
-  per-member failures — like not-found ids — so the rest of the batch still
-  applies). A FORCED/org flip that leaves `ADULT` sweeps the member's future
-  shared-double placements (#1756). The seasonal-assignment save surfaces the
-  old/new age tier in its critical audit record, and binds the resulting tier
-  into the preview's HMAC token so a tier-relevant drift is stale-detected. The
-  same seasonal-assignment save also backs the members-page BULK membership-type
+  guest on someone else's future booking, uniformly at every N/A-flip site: the
+  seasonal-assignment save (the change preview lists those bookings for removal
+  first), the admin member edit (manual N/A pick and org grant), and the bulk
+  set-role ORG grant (blocked members are reported as per-member failures so the
+  rest of the batch still applies). A FORCED/org flip that leaves `ADULT` sweeps
+  the member's future shared-double placements (#1756). The seasonal-assignment
+  save surfaces the old/new age tier in its critical audit record, and binds the
+  resulting tier into the preview's HMAC token so a tier-relevant drift is
+  stale-detected. The same save backs the members-page BULK membership-type
   change (#2107, `bulkSaveSeasonalMembershipAssignments`): each member is
   previewed and saved individually with its own HMAC token and its own critical
-  per-member audit row (the run adds one important-severity summary audit), a
-  stale token or a linked-guest block isolates that member as a per-member
-  outcome without aborting the rest, and the up-to-100 per-member Xero
-  contact-group syncs are suppressed in favour of one deferred batched reconcile
-  of the changed members after the loop.
+  per-member audit row (plus one important-severity summary), a stale token or a
+  linked-guest block isolates that member as a per-member outcome without
+  aborting the rest, and the up-to-100 per-member Xero contact-group syncs are
+  suppressed in favour of one deferred batched reconcile after the loop.
+- Season roll-forward and the Xero member-import are `INV-LIFE-091`.
+
+## INV-LIFE-091
+
 - Roll-forward into the current season reconciles each copied member's age tier
   AFTER the copy commits, in bounded chunks (one transaction per chunk, each
   re-reading member + type state) so no single transaction spans the whole
@@ -552,7 +556,7 @@ Configuration and lifecycle guards:
   self-heal). The reconcile phase writes one critical summary audit row with the
   reconciled/swept counts and a bounded per-member before/after sample (#2106).
 - The Xero member-import (#2108) only ever CREATES current-season assignments,
-  never modifies an existing one. That never-overwrite invariant is enforced by a
+  never modifies an existing one. That never-overwrite rule is enforced by a
   PRE-READ skip, not by the save path: when a mapped group carries a
   `membershipTypeId`, a matched-EXISTING member who already holds a current-season
   assignment is filtered out and reported before any write (remediation is the
@@ -580,41 +584,54 @@ before any amount — including an explicit override — is considered. Booking
 guests are always people with a real age tier: `NOT_APPLICABLE` is not a bookable
 tier, and an N/A account (organisation or age-exempt human) cannot be linked as a
 booking guest.
-Committee assignment controls public committee/contact presentation
-only. Do not add committee positions to access roles or `Member.role`.
-`CommitteeRole` master records and `CommitteeAssignment` member links can be
-active/inactive independently of access role and seasonal membership type, and
-newly linked assignments are hidden until explicitly published by an admin.
+
+## INV-LIFE-084
+
+Committee assignment controls public committee/contact presentation only. Do not
+add committee positions to access roles or `Member.role`. `CommitteeRole` master
+records and `CommitteeAssignment` member links can be active/inactive
+independently of access role and seasonal membership type, and newly linked
+assignments are hidden until explicitly published by an admin.
+
+Committee contact routing is chosen per assignment via
+`CommitteeAssignment.contactEmailMode` (`ROLE`, `MEMBER`, or `CUSTOM`, default
+`ROLE`). `ROLE` uses the role email alias stored on `CommitteeRole`, `MEMBER`
+uses the linked member's own email, and `CUSTOM` uses
+`CommitteeAssignment.contactEmailOverride` (required and email-validated when
+the mode is `CUSTOM`; forced null under `ROLE`/`MEMBER`). If the selected mode's
+address is missing or deactivated, delivery falls back to the role email and
+then the member's email so public contact mail is never black-holed.
+
+## INV-LIFE-085
+
 A member photo (`Member.photoImageId` → a `kind = MEMBER_PHOTO` `MediaImage`) is
 served only through the scoped `/api/members/[id]/photo` endpoint, never the
-public `/api/images/[id]` content path — that content route enforces the split
-in code by returning 404 for any non-`CONTENT` row, so the invariant holds even
-if a `MEMBER_PHOTO` id is learned. A photo is public **only** when the member
-is active, holds an active, published `CommitteeAssignment`, **and** the club has
+public `/api/images/[id]` content path, which returns 404 for any non-`CONTENT`
+row so the split holds even if a `MEMBER_PHOTO` id is learned. A photo is public
+**only** when the member is active, holds an active, published
+`CommitteeAssignment`, **and** the club has
 `PublicContentSettings.committeePhotoDisplay != NONE` — the same two conditions
-`/api/committee` applies, so every publicly-rostered member is the set whose
-photo is servable; otherwise it is visible solely to the member or a
+`/api/committee` applies, so every publicly-rostered member is exactly the set
+whose photo is servable. Otherwise it is visible solely to the member or a
 `membership:view` admin, resolved through the same shared session guards the
 upload/remove methods use (`requireActiveSessionUser` / `requireAdmin`), so the
 serving path cannot skip the force-password-change or two-factor gates (#2242).
 Every refusal on that path is the same 404, whatever the reason, so an
 unauthorised caller cannot tell a real member id from one that does not exist.
-The photo rule is those two conditions alone: the roster
-endpoint additionally applies a pathological `take: 500` backstop
-(`src/app/api/committee/route.ts`) against a misconfigured or hostile admin
-publishing an absurd number of assignments on an unauthenticated public route.
-That backstop is far above any real committee (typically <30) so it never trims
-a genuine roster, but it is a display bound, not a narrowing of the predicate —
-past 500 published assignments the roster would list fewer members than have
-servable photos, which is the safe direction (a photo is never made public by
-being trimmed off the roster). The committee-public ETag is
-an opaque digest, never the raw `MediaImage` id. `committeePhotoDisplay` governs
-both halves together — it decides whether the roster renders photos AND whether
-the bytes are anonymously servable — so switching it to `NONE` genuinely takes
-the images off the public internet. It only ever narrows: it never makes a photo
-public that the assignment predicate does not already allow, and it never hides a
-photo from the member themselves or a `membership:view` admin (those responses
-switch to `private, no-store` instead of the short public cache).
+
+The roster endpoint's `take: 500` backstop (`src/app/api/committee/route.ts`) is
+a display bound against a hostile or misconfigured admin, not a narrowing of the
+predicate: trimming the roster never makes a photo public. The committee-public
+ETag is an opaque digest, never the raw `MediaImage` id. `committeePhotoDisplay`
+governs both halves together — whether the roster renders photos AND whether the
+bytes are anonymously servable — so `NONE` genuinely takes the images off the
+public internet. It only ever narrows: it never makes public a photo the
+assignment predicate does not already allow, and it never hides a photo from the
+member themselves or a `membership:view` admin (those responses switch to
+`private, no-store` instead of the short public cache).
+
+## INV-LIFE-086
+
 Every stored image has its EXIF/XMP/comment metadata (camera GPS) stripped
 first, on every path that stores image bytes: the member-photo upload, the
 admin image library, the image manager's batch upload into `public/images`, the
@@ -630,21 +647,16 @@ or an operator's whole configuration restore is the worse outcome there. `gif`,
 they log rather than claim a clean strip. `POST /api/admin/site-style/logo` needs
 no strip step: it re-encodes through sharp, which drops metadata unless asked to
 keep it.
-Committee contact routing is chosen per assignment via
-`CommitteeAssignment.contactEmailMode` (`ROLE`, `MEMBER`, or `CUSTOM`, default
-`ROLE`). `ROLE` uses the role email alias stored on `CommitteeRole`, `MEMBER`
-uses the linked member's own email, and `CUSTOM` uses
-`CommitteeAssignment.contactEmailOverride` (required and email-validated when
-the mode is `CUSTOM`; forced null under `ROLE`/`MEMBER`). If the selected mode's
-address is missing or deactivated, delivery falls back to the role email and
-then the member's email so public contact mail is never black-holed.
+
+## INV-LIFE-087
+
 Booking pricing, booking block checks, and effective subscription lockout may
-depend on the member's seasonal membership type for the
-booking season; application access and committee presentation must not.
-Seasonal membership type changes require a guarded admin preview and reasoned
-audit record. Existing future bookings are not automatically repriced by a type
-change, and raw subscription, payment, and Xero history must remain intact even
-when the effective subscription status is `NOT_REQUIRED`.
+depend on the member's seasonal membership type for the booking season;
+application access and committee presentation must not. Seasonal membership type
+changes require a guarded admin preview and reasoned audit record. Existing
+future bookings are not automatically repriced by a type change, and raw
+subscription, payment, and Xero history must remain intact even when the
+effective subscription status is `NOT_REQUIRED`.
 
 ## INV-LIFE-020
 
@@ -722,56 +734,47 @@ TTL because the invitee must complete the membership process first).
 
 The declared Partner/Husband/Wife relationship (#1742) is a `MemberPartnerLink`
 row: a symmetric, consent-based link between two ADULT members, stored as a
-canonical ordered pair (`memberAId < memberBId`, DB CHECK constraint — which
-also makes self-partnering unrepresentable) with a `PENDING -> CONFIRMED`
-lifecycle. It is independent of family groups and is the eligibility signal for
-double-bed shared occupancy (#1741). Invariants: **at most one CONFIRMED
-partner per member at a time**, enforced in `src/lib/member-partner-link.ts`
-under `pg_advisory_xact_lock` on both member ids (sorted order, so pair
-transactions cannot deadlock) and backstopped by two raw partial unique indexes
+canonical ordered pair (`memberAId < memberBId`, DB CHECK constraint;
+self-partnering is unrepresentable) with a `PENDING -> CONFIRMED` lifecycle,
+independent of family groups, and the eligibility signal for double-bed shared
+occupancy (#1741). **At most one CONFIRMED partner per member at a time**,
+enforced in `src/lib/member-partner-link.ts` under `pg_advisory_xact_lock` on
+both member ids in sorted order and backstopped by two raw partial unique indexes
 (`MemberPartnerLink_memberA/B_confirmed_unique WHERE status = 'CONFIRMED'`,
-documented in `prisma/partial-unique-indexes.tsv`); both members must be ADULT
-and active; consent is required from the other member unless (a) an admin
-assigns the link directly (`assignedByAdminId` recorded, CONFIRMED
-immediately; both members are then emailed unless the assigning admin chose
-not to notify — the suppression is audited `notifyMember: false`, #1769a),
-(b) the target has **no login** and the initiator is the adult currently
-recorded as the target's details voucher (`detailsConfirmedByMemberId`) in a
-group containing the target ("one login manages the family" — #2284 (S4)
-replaced the old family-group-ADMIN gate; that voucher is self-assignable by any
-adult login co-member sharing the group, so this one-step path is open to every
-adult in the group, not a designated one. A login-holding target always consents
-personally, and the no-login target's address is emailed that the link was
-recorded), or (c) the link
-forms on a `PartnerInviteToken` claim minted with `createPartnerLink` — the
-claim itself is the consent, so the claim page discloses the partnership
-before the claimer accepts, and both parties' eligibility (including the
-inviter's login standing) is re-validated inside the claim transaction.
-Confirming a stale request re-validates the initiator too — a link is never
-confirmed that a fresh request could not create. Declined, withdrawn, and
-dissolved links are
-hard-deleted — history lives in the audit log — so the same pair can re-form
-later without tripping the pair-unique constraint; either partner may dissolve
-a CONFIRMED link unilaterally (the other is emailed); an admin removing a
-CONFIRMED link likewise emails both members unless the admin chose not to
-notify (suppression audited `notifyMember: false`, #1769a), while a
-still-PENDING admin removal emails no one. When a link becomes
+`prisma/partial-unique-indexes.tsv`). Both members must be ADULT and active.
+Consent is required from the other member unless (a) an admin assigns the link
+directly (`assignedByAdminId` recorded, CONFIRMED immediately; both members
+emailed unless the admin suppressed notification, audited, #1769a), (b) the target has **no login** and the initiator is the adult recorded
+as the target's details voucher (`detailsConfirmedByMemberId`) in a group
+containing the target (#2284 S4; a login-holding target always consents personally;
+the no-login target is emailed), or (c) the link forms on a `PartnerInviteToken` claim minted with
+`createPartnerLink` — the claim is the consent, the claim page discloses the
+partnership before acceptance, and both parties' eligibility is re-validated inside the claim transaction.
+Confirming a stale request re-validates the initiator too. A claim conflict
+skips the link without failing the family-group join, audited.
+
+Declined, withdrawn, and dissolved links are hard-deleted, so the same pair can re-form later. Either partner may dissolve a CONFIRMED
+link unilaterally; the other is emailed. An admin removing a CONFIRMED link
+emails both unless the admin chose not to notify (audited `notifyMember:
+false`); a still-PENDING admin removal emails no one. When a link becomes
 CONFIRMED, all other PENDING requests involving either member are pruned in the
-same transaction. A member may have at most one outstanding outgoing PENDING
-request. The member-facing request API accepts an arbitrary target only by
-email (mirroring the family ADULT_INVITE flow); a memberId target must share a
-family group with the requester so the endpoint cannot probe foreign member
-ids. A by-email request must not disclose the target's confirmed-partner
-status (D9, owner decision 2026-07-11): whether or not the target is already
-partnered, the reply is the same generic "request sent if eligible" body —
-same message, no link id or status — with the suppressed attempt audited
+same transaction. A member has at most one outstanding outgoing PENDING request.
+The member-facing request API is `INV-LIFE-090`.
+
+## INV-LIFE-090
+
+The member-facing partner request API accepts an arbitrary target only by email
+(mirroring the family ADULT_INVITE flow); a memberId target must share a family
+group with the requester so the endpoint cannot probe foreign member ids. A
+by-email request must not disclose the target's confirmed-partner status (D9,
+owner decision 2026-07-11): whether or not the target is already partnered, the
+reply is the same generic "request sent if eligible" body — same message, no
+link id or status — with the suppressed attempt audited
 (`MEMBER_PARTNER_LINK_REQUEST_SUPPRESSED`) and no email sent; the target's
 confirmed-partner check runs only after every requester-side conflict so no
-error ordering re-opens the probe. Unknown-email (404) and
-not-adult (422) feedback stays distinguishable, and the family memberId path
-keeps its specific conflict errors. A link claim conflict on token claim (either side already has a confirmed
-partner, inviter no longer eligible) skips the link without failing the
-family-group join, and the skip is audited.
+error ordering re-opens the probe. Unknown-email (404) and not-adult (422)
+feedback stays distinguishable, and the family memberId path keeps its specific
+conflict errors.
 
 ## INV-LIFE-025
 
@@ -1094,56 +1097,29 @@ cannot offer a cycle.
 
 ## INV-LIFE-042
 
-**Ranking is presentation; eligibility is not** (#2425, owner decision 1 Aug
-2026). That "no age clause at all" is a statement about who is ELIGIBLE, and it
-still holds exactly. What #2282 also did, though, was let a family's children
-compete for the picker's eight rows with the adult being searched for: ordered
-by `lastName` then `firstName`, a household of children with a shared surname
-filled every slot, and the adult was unreachable without extra typing the admin
-had no way of knowing was needed. So the parent-candidate search now returns
-**ADULTS first, then everyone else**, at the same page size — a re-ORDER of the
-same set, not a filter. It is implemented as two complementary queries
-(`ageTier: { in: [ADULT, NOT_APPLICABLE] }` and the matching `notIn`) over one
-shared `where`, rather than an `orderBy`, because Prisma has no computed sort
-key and sorting on `ageTier` itself would depend on the enum's declaration
-order. **The line is drawn at MINOR / not minor, not at ADULT / not adult**, and
-that is deliberate: `NOT_APPLICABLE` is the age-EXEMPT tier (see above), so a
-row carrying it in THIS search is a real person — usually an adult on a FORCED
-or N/A-allowing membership type — because organisations are excluded here by
-ROLE and never by tier. Ranking them with `not ADULT` would have interleaved
-them alphabetically among the household's children and left them crowded off
-exactly the page this rule exists to fix. They sort among the adults by name
-instead; nothing about the split claims they ARE adults, only that they are not
-minors. `Member.ageTier` is NOT NULL, so `in` and `notIn` are exact complements
-and the two halves are the same set, and the same count, an unranked query would
-return. The split is windowed
-correctly for pages beyond the first — this is a general list endpoint, and a
-ranking that reshuffled on page 2 would drop and duplicate rows — and the
-`total` the response carries is still the count of the WHOLE eligible set, which
-is what lets the dialog say the page was cut short ("Keep typing to narrow this
-down.", the #2308 member-guest finder's own sentence). Both surfaces DRAW that
-sentence under the list and ANNOUNCE it (#2460), each through a live region that
-is registered before there is anything to say and has only its content gated,
-since a polite region injected already populated is silently dropped by some
-screen-reader/browser pairings — the same house rule `PolicyFeedback` and the
-view-only banners follow. The booking panel announces it on the end of the result
-count its existing status line already reads out, rather than from a second
-region of its own, so it is announced ONCE: two polite regions mutating in the
-same commit are queued in no guaranteed order and one can be dropped outright.
-The dialog, which has no such line, keeps its own `sr-only` region ABOVE the
-results — above, because an invisible LAST child of a `space-y-*` stack still
-moves the visible content above it, Tailwind hanging the gap off
-`:not(:last-child)`. That region goes with the dialog when it closes, so what it
-guarantees is "registered empty before the first search answers", which is the
-case that matters. On both surfaces the sentence stays reachable twice in browse
-mode, once from the region and once as the visible hint under the list: only the
-ANNOUNCEMENT is deduplicated, because hiding the on-screen copy from assistive
-technology would take the sentence away from the place the list actually stops.
-The announced words are the drawn words, verbatim: the sentence must never grow
-a count of who was left out, so it does not grow one for a screen reader either.
-The ranking is scoped to the `parentLinkEligibleFor` parameter, so every other
-caller of `GET /api/admin/members` — the members table, the exports, the other
-pickers — issues exactly the query it did before.
+**Ranking is presentation; eligibility is not** (#2425). "No age clause at all" is a statement about who is ELIGIBLE. The parent-candidate search returns **ADULTS first, then everyone
+else**, at the same page size — a re-ORDER of the same set, not a filter. It is
+two complementary queries (`ageTier: { in: [ADULT, NOT_APPLICABLE] }` and the
+matching `notIn`) over one shared `where`, not an `orderBy`. **The line is drawn
+at MINOR / not minor, not at ADULT / not adult**: `NOT_APPLICABLE` is the
+age-EXEMPT tier, so a row carrying it in THIS search is a real person
+(`INV-LIFE-034`) and sorts among the adults by name; the split claims only that those rows are not minors.
+`Member.ageTier` is NOT NULL, so `in` and `notIn` are exact complements and the
+two halves are the same set and count an unranked query would return. The split
+is windowed correctly across pages, and the response's `total` is still the
+count of the WHOLE eligible set, which is what lets the dialog say the page was
+cut short ("Keep typing to narrow this down.", #2308).
+
+Both surfaces DRAW that sentence under the list and ANNOUNCE it (#2460), each
+through a live region registered before there is anything to say, with only its
+content gated. The booking panel announces it on the end of its existing
+result-count status line, never from a second region, so it is announced ONCE;
+the dialog keeps its own `sr-only` region ABOVE the results. Only the
+ANNOUNCEMENT is deduplicated: the visible hint under the list stays reachable to
+assistive technology. The announced words are the drawn words, verbatim — the
+sentence never grows a count of who was left out. The ranking is scoped to the
+`parentLinkEligibleFor` parameter, so every other caller of
+`GET /api/admin/members` issues exactly the query it did before.
 
 ## INV-LIFE-043
 
@@ -1268,35 +1244,29 @@ nomination approval and admin member-create both stored one-hop pointers until
 
 `validateInheritEmailSource` enforces the guarantees that follow: the source is
 an adult, with a real address, who does not itself inherit. The **adult** clause
-there — and the matching one in `isUsableEmailSource`, which is the single
-predicate every resolution, query and backfill applies — is deliberate and
-survived #2282: a 16-year-old may be recorded as a parent, but being the club's
-contact of record for someone else's notifications is a responsibility function,
-so the link is **refused** rather than quietly making the minor the family's
-contact. Since #2716 that refusal is the whole answer: a minor parent's child
-inherits NOBODY rather than routing on up to the young parent's own parent. The
-admin member detail page resolves and displays the source
-(`dependentEmailSource`) with the same rule the writes use, so the routing is on
-screen before the dependant is added — and both link dialogs resolve the parent
-the admin picks in the notification-recipient list the same way
-(`GET /api/admin/members/[id]/dependent-email-source`). Its former "must point to
-a **primary** adult member" rule (the source must have no parents) stays retired:
-that clause was about where in the TREE a mailbox owner sits, which the one-hop
-rule does not constrain — a parent who is themselves somebody's child is a
-perfectly good source for their own children. The "inherit email from" candidate
-search mirrors the same predicate, so the picker can neither hide a source the
-write route accepts nor offer one it refuses. "Real address" means neither
-club-internal `.invalid` domain: a walk-in `@no-email.invalid` (#1935, silently
-dropped by `sendEmail`) or a deletion-anonymised `@deleted.invalid` (which
-hard-bounces). Both are matched by `isPlaceholderContactEmail`; the second was
-added in #2255 because a grandchild could otherwise keep resolving to an
-anonymised grandparent forever. If resolution finds nobody, the link is
-**refused** rather than quietly stored as "no inheritance": the admin asked for
-the dependant's mail to reach a parent, and silently leaving it on the
-dependant's own address is how a family stops hearing from the club without
-anyone noticing. The family-group create-child branch keeps the explicit opt-out
-(`inheritEmailFromId: ""`, "use the child's own email") its sibling branch has,
-so that refusal never becomes a dead end.
+there — and the matching one in `isUsableEmailSource`, the single predicate every
+resolution, query and backfill applies — is deliberate: a 16-year-old may be
+recorded as a parent, but being the club's contact of record for someone else's
+notifications is a responsibility function, so the link is **refused** rather
+than quietly making the minor the family's contact. Since #2716 that refusal is
+the whole answer: a minor parent's child inherits NOBODY rather than routing on
+up to the young parent's own parent. The admin member detail page resolves and
+displays the source (`dependentEmailSource`) with the same rule the writes use,
+and both link dialogs resolve the parent the admin picks in the
+notification-recipient list the same way
+(`GET /api/admin/members/[id]/dependent-email-source`). The former "must point
+to a **primary** adult member" rule stays retired: a parent who is themselves
+somebody's child is a perfectly good source for their own children. The "inherit
+email from" candidate search mirrors the same predicate, so the picker can
+neither hide a source the write route accepts nor offer one it refuses. "Real
+address" means neither club-internal `.invalid` domain — a walk-in
+`@no-email.invalid` (#1935, silently dropped by `sendEmail`) or a
+deletion-anonymised `@deleted.invalid` (#2255, which hard-bounces) — both
+matched by `isPlaceholderContactEmail`. If resolution finds nobody, the link is
+**refused** rather than quietly stored as "no inheritance". The family-group
+create-child branch keeps the explicit opt-out (`inheritEmailFromId: ""`, "use
+the child's own email") its sibling branch has, so that refusal never becomes a
+dead end.
 
 ## INV-LIFE-051
 
@@ -1356,47 +1326,33 @@ the same call as every other writer instead of a sweep of its own.
 
 **A daily sweep is the guarantee behind the per-write calls, and it is
 re-runnable by design.** `reconcileAllEmailInheritance`, scheduled as
-`email-inheritance-reconcile` at 06:45 NZT — deliberately just after age-up —
-converges every member who holds a choice or a pointer.
+`email-inheritance-reconcile` at 06:45 NZT (after age-up), converges every member
+who holds a choice or a pointer. Because the rule is a pure, total function of
+the family tree, a second run always moves the database towards the same fixed
+point and never away from it, so a partial failure is repaired by running it
+again.
 
-It exists because "every write re-resolves" is a claim about a codebase, and this
-one decides which adult receives a minor's notifications. That claim was false
-when first made — several age-tier writers did not call the reconciler (#2821) —
-so the age-tier half is now mechanically enforced by
+The age-tier half of "every write re-resolves" is mechanically enforced by
 `src/lib/__tests__/age-tier-writers-reconcile-census.test.ts`, which discovers
-every member write that SETS the age tier — however the value was derived, so the
-age-up cron and the nomination promotion are caught alongside the writers that
-resolve an enforced tier — and fails if any does not invoke
-`reconcileEmailInheritanceForMemberChange`. That guard is the age-tier subset
-only. #2821 also wired an adjacent email-source site by hand — the dependant
-`link` route, which changes who is a usable source without writing a tier, so the
-census does not see it and never will. Read the census as proof that every
-age-tier WRITE re-resolves, not that every email-source change does. The specific
-hazard is a
-re-resolution that fires on the wrong event or fails partway, which would leave a
-pointer naming somebody nobody chose: the original defect with extra steps.
-Because the rule is a pure, total function of the family tree, a second run always
-moves the database towards the same fixed point and never away from it — so a
-partial failure is repaired by running it again rather than by working out what it
-did. That property is what made prompt-free re-pointing safe to ship.
+every member write that SETS the age tier and fails if any does not invoke
+`reconcileEmailInheritanceForMemberChange` (#2821). That guard is the age-tier
+subset only: the dependant `link` route changes who is a usable source without
+writing a tier, was wired by hand, and the census does not see it. Read the
+census as proof that every age-tier WRITE re-resolves, not that every
+email-source change does.
 
 The sweep writes `inheritEmailFromId` and nothing else, with ONE exception: where
-it finds a pointer with no choice beside it — the shape a draining blue/green old
-colour writes, since that colour knows only the pointer — it adopts the pointer as
-the choice **if and only if it names a direct parent**, and clears it otherwise.
-That is one hop enforced at the last door: a transitive pointer written mid-deploy
-cannot survive it, while an ordinary link made mid-deploy is preserved intact.
+it finds a pointer with no choice beside it (the shape a draining blue/green old
+colour writes), it adopts the pointer as the choice **if and only if it names a
+direct parent**, and clears it otherwise. That is one hop enforced at the last
+door.
 
-What it never does is rewrite a choice somebody made. `inheritParentEmail` is
-sound as PROVENANCE where a writer set it deliberately (`INV-LIFE-052`) and
-unsound as a universal test, because it carries `@default(true)` and therefore
-reads true for every member who was never a dependant at all. A "derived pointers
-must name a direct parent" rule applied on that flag would fire on a family-group
-login cluster — adults who share one login and are pointed at the holder by hand,
-none of whom is anyone's parent — and disconnect the whole cluster from its own
-mailbox on the next sweep. The one-hop constraint therefore lives where choices
-are CREATED (every writer, the migration backfill, and the adoption rule above),
-never in the convergence step.
+It never rewrites a choice somebody made. `inheritParentEmail` is sound as
+PROVENANCE where a writer set it deliberately (`INV-LIFE-052`) and unsound as a
+universal test, because it carries `@default(true)` and reads true for every
+member who was never a dependant at all. The one-hop constraint therefore lives
+where choices are CREATED (every writer, the migration backfill, and the
+adoption rule above), never in the convergence step.
 
 ## INV-LIFE-055
 
@@ -1505,54 +1461,40 @@ no durable booking, financial, family, Xero, or membership-history blockers.
 
 ### INV-LIFE-064
 
-An administrator linking, approving, creating, editing or removing a Family Group
-member sees that member's **calculated age** beside their name. The invariants:
+Every Family Group admin workflow (link, approve, create, edit, remove) shows the
+member's **calculated age**. The invariants:
 
 - **One helper.** `src/lib/member-age.ts` is the only place age is derived, and
   `src/lib/__tests__/member-identity-age-surfaces.test.ts` pins the complete list
-  of modules that call it or carry its `ageLabel` output. A new screen showing an
-  age fails that census first.
-- **Nothing is stored.** Age changes on its own every day, so there is no age
-  column and no cached value; it is recomputed on every read. `Member.ageTier`
-  remains a separate, deliberately stored classification and is never used to
-  infer an age.
+  of modules that call it or carry its `ageLabel` output.
+- **Nothing is stored.** There is no age column and no cached value; age is
+  recomputed on every read. `Member.ageTier` remains a separate, deliberately
+  stored classification and is never used to infer an age.
 - **Date-only on the New Zealand calendar.** A date of birth is a calendar day.
-  `Date` inputs are read through the club time zone, exactly as the family-group
-  screens already RENDER a date of birth, and the default reference date is the
-  club's calendar day — never the UTC or browser date, which would move a
-  birthday by one day for half of every NZ day. The reference date is injectable
-  so tests are deterministic.
-- **A 29 February anniversary clamps to the last day of the month**, so a
-  leap-day member turns over on 28 February in a non-leap year. A future or
+  `Date` inputs are read through the club time zone, and the default reference
+  date is the club's calendar day — never the UTC or browser date.
+- **A 29 February anniversary clamps to the last day of the month.** A future or
   unparseable date of birth has no age and reads `Age unavailable` — never
-  "0 years", which would look like a real infant.
+  "0 years".
 - **Under five shows completed years AND months**; five and over shows completed
   years only.
-- **Age is as at today; an age tier is as at the season start.** The two sit side
-  by side on these screens and are deliberately computed against different
-  reference dates: `formatMemberIdentityAge` defaults to the club's current
-  calendar day, while `Member.ageTier` (and a child request's derived
-  `requestedAgeTier`) is `computeAgeTierWithSettings(dob, getSeasonStartDate(...))`
-  and holds until the next rollover in `cron-age-up.ts`. A member whose birthday
-  falls between the season start and today therefore reads, correctly, "5 years"
-  beside "Infant (0-4)". Wherever a tier label carrying a numeric range is
-  rendered next to an age, the UI states the season-start basis
-  (`request-review-card.tsx`) — the pairing must never read as a corrupt record.
-  Neither figure is derived from the other: age is never inferred from a tier,
-  and a tier is never recomputed from a label.
+- **Age is as at today; an age tier is as at the season start.**
+  `formatMemberIdentityAge` defaults to the club's current calendar day, while
+  `Member.ageTier` is
+  `computeAgeTierWithSettings(dob, getSeasonStartDate(...))` and holds until the
+  next rollover in `cron-age-up.ts`. Wherever a tier label carrying a numeric
+  range is rendered next to an age, the UI states the season-start basis
+  (`request-review-card.tsx`).
 - **The browser is sent the age, not the birth date.** Every family-group payload
   that needs identity information carries a finished `ageLabel` string and no
   `dateOfBirth`. The one date of birth still rendered is the value the REQUESTER
-  declared on a child or adult request — the request's own data, which the admin
-  checks a candidate record against, not a stored member record.
+  declared on a child or adult request.
 - **Membership permission, verified server-side, on every request.**
   `GET /api/admin/family-groups/member-search` and
-  `GET /api/admin/family-groups/[id]` both name `membership:view` explicitly
-  rather than inferring it from the request path. An administrator whose role
-  covers an unrelated area receives no identity information at all.
-- **Routine views stay routine.** The `GET /api/admin/family-groups` list — the
-  ordinary Family Group overview — carries neither a date of birth nor an age,
-  and no member-facing or public surface carries either.
+  `GET /api/admin/family-groups/[id]` both name `membership:view` explicitly.
+- **Routine views stay routine.** The `GET /api/admin/family-groups` list carries
+  neither a date of birth nor an age, and no member-facing or public surface
+  carries either.
 
 ## Member profile merge (E11 #1937)
 
@@ -1573,50 +1515,47 @@ and is hard-deleted at the end. The merge is **additive and master-wins**:
   `xeroContactId` always stay the master's. (Login-email uniqueness is a partial
   unique index `WHERE canLogin = true`, so two login rows on one email can never
   coexist mid-transaction.)
-  **The FIELD PATCH only** is derived from a read of both members taken
-  immediately before the write, never from the snapshot the transaction opened
-  with (#2243). Everything else in the merge — the guard matrix, the confirmation
-  phrase, the preview-token check, and the self-relation cycle nulling — still
-  runs on that opening snapshot. Every value in the patch is copied off the
-  loser, and two of them are real foreign keys — `photoImageId` (→ `MediaImage`)
-  and `familyGroupId` (→ `FamilyGroup`) — so a stale value can name a row that a
-  writer outside the `member-lifecycle` lock deleted mid-merge and fail the write
-  outright, rolling the entire merge back. Both member rows are row-locked
-  (`SELECT … FOR UPDATE`, id-ordered) immediately before that read, so neither
-  can move again before the write. If the fresh derivation disagrees with the
-  previewed one on any field, the merge **refuses**: a 409
-  (`merge_drift_in_transaction`) naming the drifted fields, nothing written, and
-  the operator re-runs the preview — the same "what was previewed is exactly what
-  is applied" promise the rest of the preview/confirm flows make. The original
-  bug is fixed either way, because the stale value is caught from the fresh read
-  *before* it reaches Postgres. A row lock does not protect the rows these FKs
-  point at, so a concurrent `FamilyGroup` delete can still abort the merge (as a
-  deadlock rather than a stale-value error); the master is still unlocked during
-  the guards and the self-relation pass, which is why the Member self-relation
-  moves exclude the master's own row. The four **family-link** columns
-  (`parentMemberId`, `secondaryParentId`, `inheritEmailFromId`,
-  `detailsConfirmedByMemberId`) are protected in three places (#2437): step 1
-  nulls a master pointer at the duplicate **value-conditionally** (a pointer
-  that moved since the opening snapshot refuses right there, instead of being
-  overwritten and read back as "unchanged"); the step-3 sweeps are
-  **id-bounded** to the rows captured by the in-transaction token
-  re-derivation (a link written after that capture is never absorbed onto the
-  master unvetted — it stays pointing at the duplicate); and the step-5
-  under-lock re-read checks all three arms — either member's own outgoing
-  links beyond the merge's own rewrites, and any other row still referencing
-  the loser after the moves — refusing with the same 409 on any drift. Two
-  invariants follow: a merge never **creates** a self-referencing family link
-  (step 1 clears a master→duplicate pointer, the moves exclude the master's
-  own row, and every mid-merge divergence refuses — note this does NOT forbid
-  a **pre-existing** self-reference: `detailsConfirmedByMemberId` equal to the
-  member's own id is the legitimate self-confirmed state gating
-  `canBeBookedAsMember` (`member-profile-completeness.ts`), and a merge
-  carries it through untouched), and a family link saved while the merge runs
-  is never silently lost or silently absorbed — the merge refuses, nothing is
-  written, and the operator's re-run previews the up-to-date links, including
-  an explicit warning when the master's own link at the duplicate will be
-  cleared (owner decision on #2437, 1 Aug 2026: detect and refuse; no new
-  advisory-lock participants, no DB CHECK constraint).
+- **The FIELD PATCH is derived from a fresh read** of both members taken
+  immediately before the write, under id-ordered `SELECT … FOR UPDATE` row locks,
+  never from the snapshot the transaction opened with (#2243). Everything else in
+  the merge — the guard matrix, the confirmation phrase, the preview-token check,
+  and the self-relation cycle nulling — still runs on that opening snapshot. If
+  the fresh derivation disagrees with the previewed one on any field, the merge
+  **refuses**: a 409 (`merge_drift_in_transaction`) naming the drifted fields,
+  nothing written, and the operator re-runs the preview. Stated limit: a row
+  lock does not protect the rows the patch's foreign keys (`photoImageId`,
+  `familyGroupId`) point at, so a concurrent `FamilyGroup` delete can still abort
+  the merge, as a deadlock rather than a stale-value error; the master is
+  unlocked during the guards and the self-relation pass, which is why the Member
+  self-relation moves exclude the master's own row.
+- **The four family-link columns** are protected by `INV-LIFE-088`.
+
+### INV-LIFE-088
+
+The four **family-link** columns (`parentMemberId`, `secondaryParentId`,
+`inheritEmailFromId`, `detailsConfirmedByMemberId`) are protected in three places
+during a member merge (#2437): step 1 nulls a master pointer at the duplicate
+**value-conditionally** (a pointer that moved since the opening snapshot refuses
+right there, instead of being overwritten and read back as "unchanged"); the
+step-3 sweeps are **id-bounded** to the rows captured by the in-transaction token
+re-derivation (a link written after that capture is never absorbed onto the
+master unvetted — it stays pointing at the duplicate); and the step-5 under-lock
+re-read checks all three arms — either member's own outgoing links beyond the
+merge's own rewrites, and any other row still referencing the loser after the
+moves — refusing with the same 409 on any drift.
+
+Two invariants follow. A merge never **creates** a self-referencing family link
+(step 1 clears a master→duplicate pointer, the moves exclude the master's own
+row, and every mid-merge divergence refuses); this does NOT forbid a
+**pre-existing** self-reference — `detailsConfirmedByMemberId` equal to the
+member's own id is the legitimate self-confirmed state gating
+`canBeBookedAsMember` (`member-profile-completeness.ts`), and a merge carries it
+through untouched. And a family link saved while the merge runs is never
+silently lost or silently absorbed — the merge refuses, nothing is written, and
+the operator's re-run previews the up-to-date links, including an explicit
+warning when the master's own link at the duplicate will be cleared. Owner
+decision on #2437, 1 Aug 2026: detect and refuse; no new advisory-lock
+participants, no DB CHECK constraint.
 
 ### INV-LIFE-078
 
@@ -1635,11 +1574,9 @@ and is hard-deleted at the end. The merge is **additive and master-wins**:
     `MembershipCancellationRequestParticipant`, `GroupBookingJoin`,
     `NotificationPreference` (1-1), `MemberInductionSignOff` (earliest sign-off
     wins), `MemberInductionAssignedSigner`, `FamilyGroupMember` (keep the
-    master's row and re-point the family's billing membership at it; #2520
-    removed the old `MAX(ADMIN > MEMBER)` role upgrade and then dropped the
-    column it wrote), and `MemberPartnerLink` (canonical
-    `memberAId < memberBId` pair, self-pairs and duplicates deleted, and at most
-    one CONFIRMED partner kept for the master).
+    master's row and re-point the family's billing membership at it; #2520), and `MemberPartnerLink`
+    (canonical `memberAId < memberBId` pair, self-pairs and duplicates deleted,
+    and at most one CONFIRMED partner kept for the master).
   - **cascade** — the loser's auth identity and ephemeral tokens
     (password-reset / email-verification / email-change tokens, all 2FA rows,
     partner-invite tokens) are never moved; they die with `member.delete(loser)`.
@@ -1648,24 +1585,20 @@ and is hard-deleted at the end. The merge is **additive and master-wins**:
     `MemberApplication` nominator/reviewer ids, `NominationToken`,
     `IssueReport.resolvedById`, `AuditLog` columns, the settings-audit
     `updatedByMemberId` columns, `CalendarEvent`/`CalendarEventSeries.createdById`,
-    …) are **left pointing at the loser's id by design** as immutable history;
-    the same historic audit rows that reference the loser keep its id and stored
-    names on purpose. These carry no `@relation`, so the relation walk above
-    cannot see them and they used to be listed by hand and non-exhaustively —
-    which is how the two calendar columns escaped both (#2243). They are now
-    enumerated mechanically as well: any FK-less `String` column whose name is
+    …) are **left pointing at the loser's id by design** as immutable history.
+    These carry no `@relation`, so the relation walk cannot see them; they are
+    enumerated mechanically instead: any FK-less `String` column whose name is
     used elsewhere in the schema as a Member FK column must appear in
     `MEMBER_MERGE_SNAPSHOT_SCALAR_COLUMNS`, and `member-merge-dmmf.test.ts` fails
-    on the next one that does not. Columns with bespoke names
+    on the next one that does not (#2243). Columns with bespoke names
     (`MemberApplication.nominator1Id`, `RefundRequest.reviewedBy`,
-    `IntegrationCredential.updatedByUserId` — a misnomer, it holds a member id —
-    and the like) are invisible to that scan and stay hand-documented, so that
-    part of the list is explicitly **best-effort, not exhaustive**.
-    One column found by the same review is deliberately **moved, not
-    snapshotted**: `BookingRequest.convertedMemberId` is the identity pointer to
-    the member a booking request converted into, replayed as a live member id by
-    the idempotent approval path, so the merge re-points it loser → master
-    alongside its FK twin `requestedByMemberId` (#2243).
+    `IntegrationCredential.updatedByUserId`) are invisible to that
+    scan and stay hand-documented: that part of the list is **best-effort, not
+    exhaustive**. `BookingRequest.convertedMemberId` is deliberately **moved, not
+    snapshotted**: it is the identity pointer to the member a booking request
+    converted into, replayed live by the idempotent approval path, so the merge
+    re-points it loser → master alongside its FK twin `requestedByMemberId`
+    (#2243).
 
 ### INV-LIFE-079
 

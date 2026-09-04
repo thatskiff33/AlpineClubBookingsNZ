@@ -618,6 +618,7 @@ is now `INV-OPS-005` to `INV-OPS-011` in
 | `INV-LIFE-003` | One cancellation at most credits a subscription invoice: durable first-writer claim |
 | `INV-LIFE-004` | Unpaid-invoice approval blocker excuses an invoice only while it awaits crediting |
 | `INV-LIFE-005` | Role, membership type, age tier, Xero group, committee: separate axes |
+| `INV-LIFE-089` | Last active Full Admin can never be deactivated, de-logined or archived |
 | `INV-LIFE-006` | Cancellation eligibility is an account-holder question, refusing exactly two record classes |
 | `INV-LIFE-007` | Member-raised route: active and can-log-in only; family candidates unfiltered by role |
 | `INV-LIFE-008` | Member-raised queries must select role columns; otherwise a person reads kiosk |
@@ -638,13 +639,19 @@ is now `INV-OPS-005` to `INV-OPS-011` in
 | `INV-LIFE-071` | Legacy `Member.role` reads, seasonal assignment storage, and age tiers stay separate axes |
 | `INV-LIFE-072` | Built-in membership types never delete or merge; custom merges have preconditions |
 | `INV-LIFE-073` | `NOT_APPLICABLE` is resolved by one shared helper on a four-step precedence ladder |
-| `INV-LIFE-018` | Guards for age-exempt types, N/A flips, season roll-forward and Xero member import |
-| `INV-LIFE-019` | `NOT_APPLICABLE` has no `AgeTierSetting` row, outside age automation; committee, photos, EXIF |
+| `INV-LIFE-018` | Guards for age-exempt types, allowed-tier edits and N/A flips |
+| `INV-LIFE-091` | Roll-forward reconciles age tiers in chunks; Xero import only creates assignments |
+| `INV-LIFE-019` | `NOT_APPLICABLE` has no `AgeTierSetting` row and sits outside every age-based automation |
+| `INV-LIFE-084` | Committee assignment is presentation only; contact routing per assignment via `contactEmailMode` |
+| `INV-LIFE-085` | Member photos: scoped endpoint only; public only when rostered and displayed |
+| `INV-LIFE-086` | Every stored image has EXIF/XMP metadata stripped; member-photo path fails closed |
+| `INV-LIFE-087` | Seasonal membership type governs pricing and lockout, never access or committee |
 | `INV-LIFE-020` | 2FA on: the JWT claim flips only via a server-minted challenge |
 | `INV-LIFE-021` | A `FamilyGroup` with no `FamilyGroupMember` rows is inert everywhere |
 | `INV-LIFE-022` | Family-group facts: the guest-eligibility correction, billing recipients, and memberless groups |
 | `INV-LIFE-023` | Unregistered partner invites: single-use hashed token, claimable only by that email |
 | `INV-LIFE-024` | Declared partner link: symmetric consented ordered pair; at most one CONFIRMED |
+| `INV-LIFE-090` | Partner request API: by-email targets never disclose partner status (D9) |
 | `INV-LIFE-025` | Parent/dependant links are limited to four generations and two parents |
 | `INV-LIFE-026` | Depth cap checked symmetrically at link time by every parent-link writer |
 | `INV-LIFE-027` | Merge is a parent-link writer by consequence; refuses depth and cycles |
@@ -689,6 +696,7 @@ is now `INV-OPS-005` to `INV-OPS-011` in
 | `INV-LIFE-063` | Hard delete stays limited to records passing every durable-history eligibility check |
 | `INV-LIFE-064` | Family Group screens show a calculated age: one helper, never stored |
 | `INV-LIFE-065` | Member profile merge: Full Admin only, additive, master-wins, re-derived field patch |
+| `INV-LIFE-088` | Merge protects the four family-link columns three ways; drift refuses (#2437) |
 | `INV-LIFE-078` | Every Member-referencing relation is classified move, resolve, cascade or snapshot |
 | `INV-LIFE-079` | A meaningful loser subscription colliding with a master-held season blocks merge |
 | `INV-LIFE-080` | Xero teardown deactivates the loser's links, re-pointing only the entrance-fee invoice |
