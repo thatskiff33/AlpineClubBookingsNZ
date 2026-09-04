@@ -14,7 +14,13 @@ vi.mock("@/lib/auth", () => ({ auth: h.auth }));
 vi.mock("@/lib/session-guards", () => ({
   requireActiveSessionUser: h.requireActiveSessionUser,
 }));
-vi.mock("@/lib/access-roles", () => ({
+// #3232: this route now reaches the hosting engine through the shared linked-move
+// arms, which widens the module graph far enough to pull in the access-role
+// DEFINITIONS table — so a factory that replaced this module wholesale threw at
+// import and killed the file before a single test ran. Partial-mock it: only the
+// one function this suite steers is replaced.
+vi.mock("@/lib/access-roles", async (importOriginal) => ({
+  ...((await importOriginal()) as Record<string, unknown>),
   authorizationRoleFromAccessRoles: h.legacyRole,
 }));
 vi.mock("@/lib/admin-permissions", () => ({

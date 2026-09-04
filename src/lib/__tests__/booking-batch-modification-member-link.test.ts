@@ -57,6 +57,16 @@ vi.mock("@/lib/xero-period-lock-guard", () => ({
     h.assertProposedCheckInClearsXeroLockDate,
   assertProposedDateEditClearsXeroLockDate:
     h.assertProposedDateEditClearsXeroLockDate,
+  // #3232: the narrow guard is now three named pieces rather than one call — the
+  // row it decides from, the single predicate that says whether a decision is owed
+  // at all, and the decision itself over club/Xero facts resolved before the
+  // transaction. These fixtures are a club with the Xero module off, which is what
+  // `not-applicable` means; answering `null` for the row is the same "nothing to
+  // decide" these suites always had.
+  readXeroLockGuardDateEditBooking: async () => null,
+  checkInNeedingLockDateCheck: () => null,
+  resolveXeroLockDateFacts: async () => ({ kind: "not-applicable" as const }),
+  assertDateEditClearsXeroLockDateFromFacts: () => undefined,
 }));
 
 vi.mock("@/lib/logger", () => ({
@@ -156,6 +166,54 @@ beforeEach(() => {
 });
 
 const link = { linkGuestToMember: [{ guestId: "g1", memberId: "member-9" }] };
+
+describe("the pre-transaction work belongs to whoever owns the transaction (#3232, INV-LOCK-004)", () => {
+  it("refuses a caller transaction that did not prepare it", async () => {
+    // THE GUARD THAT REPLACED A SILENT WRONG ANSWER. This service reads the club's
+    // member-guest policy, its subscription-lockout mode and the Xero
+    // organisation's lock dates before it opens a transaction — and on a
+    // caller-supplied transaction "before it opens" is a position that does not
+    // exist: `withOptionalTransaction` runs the body on the caller's `tx`, which
+    // already holds `pg_advisory_xact_lock(1)` and the per-lodge capacity key. So
+    // those reads happened under both locks, with a live HTTPS request to Xero
+    // among them, and nothing said so. The answers have to ARRIVE as values, and
+    // asking for a transaction without them is now a loud failure rather than
+    // provider work under two locks.
+    await expect(
+      modifyBookingBatch({
+        todayAtClub: FIXTURE_CLUB_DAY,
+        bookingId: "booking-1",
+        actor: { id: "admin-9", role: "ADMIN" },
+        input: {},
+        ipAddress: "127.0.0.1",
+        tx: {} as never,
+      }),
+    ).rejects.toThrow(/INV-LOCK-004: modifyBookingBatch in caller-transaction/);
+  });
+
+  it("refuses an admin date override inside a caller transaction", async () => {
+    // The override path takes the CONSERVATIVE lock-date guard (#1697, re-affirmed
+    // #1718), which has no pre-resolved form because nothing composes it into a
+    // caller transaction. Refusing the combination is better than running that
+    // guard's Xero call under two locks, and better than skipping a guard the
+    // owner has twice said fires on every recalculate override.
+    await expect(
+      modifyBookingBatch({
+        todayAtClub: FIXTURE_CLUB_DAY,
+        bookingId: "booking-1",
+        actor: { id: "admin-9", role: "ADMIN" },
+        input: { adminOverride: true, pricingMode: "recalculate", checkIn: "2026-08-20" },
+        ipAddress: "127.0.0.1",
+        tx: {} as never,
+        preTransaction: {
+          memberGuestPolicy: { enabled: false, requiresConsent: false },
+          subscriptionLockoutMode: "off",
+          xeroLockDates: { kind: "not-applicable" },
+        } as never,
+      }),
+    ).rejects.toThrow(/INV-LOCK-004: an admin date override cannot run inside/);
+  });
+});
 
 describe("modifyBookingBatch member-link service gate (#2337)", () => {
   it("REFUSES a link on a booking that is not a member whole-lodge booking, before the guest plan", async () => {

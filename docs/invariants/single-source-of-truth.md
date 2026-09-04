@@ -107,6 +107,50 @@ are permanent: never renumbered, never reused.
   proceed autonomously and record decisions for later review. There is no owner
   comment on #3163 to read at source. It stands until the owner overturns it,
   and anyone wanting to unify these later needs no further permission than that.
+- **An accepted exception is only accepted while its reason is alive, and
+  retiring one needs a measurement rather than an argument.** #3030 split
+  deterministic identity across two modules — canonicalisation in a client-safe
+  `stable-json.ts`, sha256 in a server-only `stable-digest.ts` — so that
+  `computeProposalHash` could keep the single `INV-OPS-013` allowlist edge it
+  then needed. That left `"sha256 of stable JSON"` written twice, recorded in
+  both docblocks as a deliberate exception. #2851 removed the client reach; the
+  reason expired without the exception noticing, which is the normal way an
+  exception outlives its cause. #3218 collapsed the two back into
+  `src/lib/stable-digest.ts` and retired the exception.
+
+  The transferable part is the ORDER. That digest is stored on
+  `BookingExceptionRequest` rows and recompared before execution, so a collapse
+  that silently changed it would have failed every waiting request as tampered,
+  months later and unexplainably. Both docblocks said it was "pinned by
+  fixed-digest tests"; a caller-level pin existed, the shared machinery
+  underneath had none, and the claim named no test that could be looked up. So
+  the pins were written and mutation-verified FIRST
+  (`src/lib/__tests__/stable-digest.test.ts`), against the two separate modules,
+  and passed the collapse unchanged. **A convergence onto one home is a change
+  to an identity, and an identity is proved rather than reasoned about.**
+- **Third worked example, and the one where the copy was written from the wrong
+  neighbour.** "Has this booking's main Xero invoice already been raised?" decides
+  whether an edit that raises the price is billed as a supplementary invoice or is
+  treated as an edit to a booking nobody has invoiced yet. Its one home is
+  `hasIssuedPrimaryXeroInvoice` in `src/lib/booking-payment-state.ts`: a settled
+  booking status AND a payment row carrying the invoice id. Three of the four edit
+  doors — the batch edit, the date change and the single-guest removal — reach it
+  through `applyPaymentAdjustments`. The fourth, the guest add, does its own
+  settlement arithmetic and re-stated the rule inline, copying its status list from
+  its OWN eligibility gate a few hundred lines above rather than from the shared
+  rule — so it omitted `COMPLETED` and answered "no invoice raised" where the other
+  three answered "invoice issued" (#3200). Two things are worth carrying forward.
+  The copy was plausible precisely because a nearby list was the wrong list, which
+  no amount of care at the copy site would have caught; and the divergence was
+  unreachable — that door's gate refuses a finished stay outright — so it was found
+  by reading rather than by anything failing, and correcting it changed no
+  behaviour. `issued-primary-xero-invoice-one-home.test.ts` now refuses a direct
+  read of `Payment.xeroInvoiceId` anywhere under `src/app/api/bookings/**` — a
+  measured population, not the four doors by name — and pins the set of files
+  reaching `applyPaymentAdjustments`, so a fifth door is visible whichever way it
+  arrives. The one home's parameter takes `xeroInvoiceId` as a REQUIRED field, so
+  a caller loading a payment without that column fails to compile rather than
+  being told "no invoice" for ever.
 - **Deliberately not enforced by a registry.** A canonical-homes registry
   (concept → owning module, checked by a census test) was considered and
   **declined by the owner on 26 Aug 2026**: too much ongoing maintenance for the
@@ -306,7 +350,7 @@ are permanent: never renumbered, never reused.
   `INV-OPS` fact is the real risk, because the eleventh nobody tightened is the one
   that connects to something real. This change converged its own caller only.
 - **`src/lib/__tests__/support/strip-comments.ts` is the canonical
-  `stripComments`, and since #3164 a lint rule enforces it.** 63 test files, a test
+  `stripComments`, and since #3164 a lint rule enforces it.** 67 test files, a test
   helper and one CI script import it, and `ssot/no-local-comment-stripper` in
   `eslint.config.mjs` reports a second scanner as it is written rather than
   twelve minutes later in CI. **Use it; do not write a second.** The figure was

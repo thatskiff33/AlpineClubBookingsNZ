@@ -64,7 +64,20 @@ export function isSettledBookingStatus(status: string): boolean {
  */
 export function hasIssuedPrimaryXeroInvoice(booking: {
   status: string;
-  payment: { xeroInvoiceId?: string | null } | null | undefined;
+  // REQUIRED, not optional (#3200 review), because the failure it prevents is
+  // silent: a caller handed a payment loaded without this column is told "no
+  // invoice raised" for ever, so the difference is simply never billed and
+  // nothing fails or logs.
+  //
+  // `xeroInvoiceId?` did NOT leave that open today, and the reason is worth
+  // knowing before anyone relaxes it again: one optional property and nothing
+  // else makes this a WEAK type, which TypeScript rejects when the argument has
+  // no property in common. That cover is incidental and narrow. Measured: give
+  // this shape a SECOND optional field, or hand it a loosely-typed payment
+  // (`Record<string, unknown>`), and the old signature accepted both in
+  // silence. Required is the version that does not depend on staying one field
+  // wide — `INV-SSOT-001`, unrepresentable over policed.
+  payment: { xeroInvoiceId: string | null } | null | undefined;
 }): boolean {
   return (
     isSettledBookingStatus(booking.status) &&

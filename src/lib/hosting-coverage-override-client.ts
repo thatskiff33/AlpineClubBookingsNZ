@@ -19,7 +19,35 @@ export interface HostingCoverageOverridePromptData {
   strandedBookings: HostingCoverageStrandedBooking[];
 }
 
-const STATE_KEY_PATTERN = /^v1:[0-9a-f]{64}$/;
+/**
+ * The wire format of EVERY hosting-coverage state key, in one place (#3232,
+ * `INV-SSOT-001`).
+ *
+ * It used to be the literal `v1:` written out at six sites — two minters
+ * (`strandedCoverageStateKey`, `linkedMoveStateKey`), two request schemas and two
+ * browser readers. The code already anticipated the drift that arrangement
+ * invites: the prefix exists so that a future change to what a key must cover
+ * FAILS CLOSED rather than colliding with an old value, and with six copies a
+ * bump to `v2` in the minters alone would leave the readers silently discarding
+ * every offer the server made — a member clicking a button that can never work.
+ * One version, one pattern, one mint, so the bump is one edit.
+ *
+ * Kept in this browser-safe module because the format is wire contract shared by
+ * both sides, and because this module is already where the two surfaces share
+ * `hostingCoverageMutationSignature` rather than growing a second copy of it.
+ */
+export const HOSTING_COVERAGE_STATE_KEY_VERSION = "v1";
+
+/** Matches a complete state key of the current version, and nothing else. */
+export const HOSTING_COVERAGE_STATE_KEY_PATTERN = new RegExp(
+  `^${HOSTING_COVERAGE_STATE_KEY_VERSION}:[0-9a-f]{64}$`,
+);
+
+/** Mint the wire value from a sha-256 digest. The one place the prefix is written. */
+export function hostingCoverageStateKeyOf(digest: string): string {
+  return `${HOSTING_COVERAGE_STATE_KEY_VERSION}:${digest}`;
+}
+
 const LODGE_NIGHT_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 /** Fail closed unless the complete typed 409 body is present. */
@@ -34,7 +62,7 @@ export function readHostingCoverageOverridePrompt(
     typeof record.error !== "string" ||
     record.error.trim().length === 0 ||
     typeof record.strandedStateKey !== "string" ||
-    !STATE_KEY_PATTERN.test(record.strandedStateKey) ||
+    !HOSTING_COVERAGE_STATE_KEY_PATTERN.test(record.strandedStateKey) ||
     !Array.isArray(record.strandedBookings) ||
     record.strandedBookings.length === 0
   ) {

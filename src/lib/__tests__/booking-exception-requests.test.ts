@@ -148,6 +148,42 @@ describe("computeProposalHash", () => {
     ]),
   };
 
+  /** The child on the modification pin: a macron, an apostrophe and an em dash. */
+  function modificationPinChild(): ProposalGuest {
+    return guest({
+      firstName: "Tāne",
+      lastName: "O'Brien — Māhuta",
+      ageTier: "CHILD",
+      isMember: true,
+      memberId: "mem_9",
+      nights: ["2026-07-05"],
+    });
+  }
+
+  /**
+   * A frozen MODIFICATION snapshot, written out field by field rather than via
+   * `party()`, so a later edit to that shared builder cannot silently move a
+   * pinned digest.
+   */
+  const MODIFICATION_PIN_SNAPSHOT: ExceptionProposalSnapshot = {
+    kind: "MODIFICATION",
+    lodgeId: "lodge_1",
+    bookingId: "bk_1",
+    base: {
+      checkIn: "2026-07-04",
+      checkOut: "2026-07-06",
+      guests: [guest({ nights: ["2026-07-04"] })],
+    },
+    proposed: {
+      checkIn: "2026-07-04",
+      checkOut: "2026-07-06",
+      guests: [
+        guest({ nights: ["2026-07-05", "2026-07-04", "2026-07-05"] }),
+        modificationPinChild(),
+      ],
+    },
+  };
+
   it("is a 64-char lowercase hex digest", () => {
     expect(computeProposalHash(snapshot)).toMatch(/^[0-9a-f]{64}$/);
   });
@@ -157,9 +193,12 @@ describe("computeProposalHash", () => {
     // would pass if the canonicalisation itself changed - and a changed
     // canonicalisation silently invalidates every BookingExceptionRequest row
     // already on file, whose stored proposalHash approval re-derives and
-    // compares. #3030 moved `stableStringify` out to `@/lib/stable-json` for a
-    // second hasher to share; the move was byte-identical, and this pin is what
-    // makes the NEXT such change fail loudly instead of quietly.
+    // compares. #3030 moved `stableStringify` out to a shared module for a
+    // second hasher to share, and #3218 routed this function through
+    // `stableDigest` rather than spelling the composition out again. Both moves
+    // were byte-identical, and this literal is what MEASURED that rather than
+    // asserting it - it passed #3218 unchanged. It is also what makes the NEXT
+    // such change fail loudly instead of quietly.
     expect(computeProposalHash(snapshot)).toBe(
       "b3f4e6183c223af0703c0e080edfcba14695455f0630d7beda613a393d478ff2",
     );
@@ -207,6 +246,47 @@ describe("computeProposalHash", () => {
       proposed,
     };
     expect(computeProposalHash(drifted)).not.toBe(computeProposalHash(original));
+  });
+
+  it("PINS the digest for a fixed MODIFICATION snapshot, the shape the pin above does not cover (#3218)", () => {
+    // The NEW_BOOKING pin above hashes a snapshot with no `bookingId` and no
+    // `base` party. A modification hashes a strictly larger canonical shape, and
+    // it is the one `booking-exception-execution.ts` re-derives from a LIVE
+    // booking before executing an approved request - so a canonicalisation
+    // change that happened to leave the smaller shape alone would still turn
+    // every stored modification request into an apparently tampered row.
+    //
+    // The guest names carry a macron, an apostrophe and an em dash on purpose:
+    // the digest is `createHash(...).update(text, "utf8")`, and a member's real
+    // name is exactly where a lost encoding argument would first bite.
+    //
+    // If you are here because this failed: do NOT re-pin it. Work out what
+    // changed in the canonicalisation - rows already on file cannot be
+    // re-verified against new bytes.
+    expect(computeProposalHash(MODIFICATION_PIN_SNAPSHOT)).toBe(
+      "345262ed82caa5333b8171c17d6cc50b6717b6f8787c81d9c02ea3ba35b93d96",
+    );
+  });
+
+  it("MUTATION: the modification pin is reached from a differently-ordered party too", () => {
+    // Same facts, guests listed in the other order and one guest's nights
+    // supplied unsorted and duplicated. Canonicalisation must erase all of that
+    // before the digest, or a member re-opening an editor would re-hash to a
+    // different value than the one already stored.
+    const shuffled: ExceptionProposalSnapshot = {
+      ...MODIFICATION_PIN_SNAPSHOT,
+      proposed: {
+        checkIn: "2026-07-04",
+        checkOut: "2026-07-06",
+        guests: [
+          modificationPinChild(),
+          guest({ nights: ["2026-07-05", "2026-07-04", "2026-07-05"] }),
+        ],
+      },
+    };
+    expect(computeProposalHash(shuffled)).toBe(
+      "345262ed82caa5333b8171c17d6cc50b6717b6f8787c81d9c02ea3ba35b93d96",
+    );
   });
 });
 

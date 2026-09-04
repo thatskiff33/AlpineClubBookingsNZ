@@ -937,13 +937,37 @@ describe("the same-owner refusal and the escalation seam (#2576 §6, §8, §9)",
     "instanceof SameOwnerCoverageWouldBreakError",
   );
 
+  /**
+   * The ONE non-route file allowed to catch the refusal, and what it must do with
+   * it (#3232, `INV-HOST-050`).
+   *
+   * It does not answer the refusal — it UPGRADES it. Where the stranding was caused
+   * by moving away from the affected booking, the member cannot fix that booking
+   * (the same rule refuses THAT edit from the other end), so a refusal there is a
+   * deadlock. This service prices the linked move and raises the offer instead. It
+   * is exempt from the structured-body assertion below because it returns no body
+   * at all, and it carries its own assertion instead.
+   */
+  const REFUSAL_UPGRADER = "src/lib/booking-linked-date-move-arms.ts";
+  /**
+   * The atomic two-booking move itself, and the reads that precede its
+   * transaction. Separate files from the upgrader above because they are separate
+   * jobs: the arms decide WHICH refusal becomes an offer and what each answer
+   * means, the service is the one procedure that moves both bookings, and the
+   * preflight module holds the club's own answer plus the settings and provider
+   * reads that must happen before any transaction opens (`INV-LOCK-004`).
+   */
+  const LINKED_MOVE_SERVICE = "src/lib/booking-linked-date-move-service.ts";
+  const LINKED_MOVE_PREFLIGHT =
+    "src/lib/booking-linked-date-move-preflight.ts";
+
   it("catches the same-owner refusal on every member self-service surface", () => {
     // The five change classes §6 names that a member can reach: cancelling,
     // removing a guest, adding guests (which moves the night picture), a date
     // change and a batch edit. A path that raises it and does not catch it answers
     // a bare 409 with no list of the member's own affected bookings — which is the
     // whole content of the message.
-    expect(REFUSAL_CATCHERS).toEqual([
+    expect(REFUSAL_CATCHERS.filter((file) => file !== REFUSAL_UPGRADER)).toEqual([
       "src/app/api/bookings/[id]/cancel/route.ts",
       "src/app/api/bookings/[id]/confirm-draft/route.ts",
       "src/app/api/bookings/[id]/guests/[guestId]/route.ts",
@@ -951,13 +975,255 @@ describe("the same-owner refusal and the escalation seam (#2576 §6, §8, §9)",
       "src/app/api/bookings/[id]/modify-dates/route.ts",
       "src/app/api/bookings/[id]/modify/route.ts",
     ]);
+    // And the upgrader is really there, so removing it fails this test rather than
+    // quietly reverting the member to the deadlocking refusal.
+    expect(REFUSAL_CATCHERS, REFUSAL_UPGRADER).toContain(REFUSAL_UPGRADER);
+  });
+
+  it("upgrades the refusal to the linked-move offer where the member has nowhere to go", () => {
+    // `INV-HOST-050`. The upgrade is conditional on the engine's own flag, so a
+    // stranding the member CAN fix on the affected booking keeps today's refusal,
+    // and it re-raises rather than swallowing — a refusal turned into a success
+    // would strand the booking silently, which is the defect #3232 exists to fix.
+    const source = readRepoCode(REFUSAL_UPGRADER);
+    expect(source, REFUSAL_UPGRADER).toContain("error.linkedMoveWouldAnswer");
+    expect(source, REFUSAL_UPGRADER).toContain("await offerLinkedDateMove(");
+    expect(source, REFUSAL_UPGRADER).toContain("throw error;");
+  });
+
+  it("defers the hosting reconciliation from exactly one caller", () => {
+    // `INV-HOST-051`. `hostingReconcile: "CALLER"` moves the supervision check to
+    // the caller so a two-booking move is judged on the state that will really
+    // commit; a caller that asked for it and then did not run the check would have
+    // no supervision check at all. The service that owns the composition is the
+    // only file permitted to ask, so a new caller cannot opt out of the rule by
+    // copying a flag.
+    expect(sourceFilesNaming('hostingReconcile: "CALLER"')).toEqual([
+      "src/lib/booking-linked-date-move-service.ts",
+    ]);
+    // And it really discharges the obligation it took on, for every booking it
+    // wrote rather than only the first — including the GUARD that a missing thunk
+    // is a hard failure. That guard used to inspect the primary alone while the
+    // dependents called the thunk optionally, so a wiring fault on a dependent
+    // committed a booking whose supervision state was never judged, which is the
+    // one thing deferral must never be able to do.
+    const source = readRepoCode(LINKED_MOVE_SERVICE);
+    expect(source).toContain("const reconcile = result.pendingHostingReconcile;");
+    expect(source).toContain("await reconcile();");
+    expect(source).toContain(
+      "INV-HOST-051: the linked move wrote a booking without receiving its ",
+    );
+    // No optional call survives anywhere in the file: `?.()` on this thunk is the
+    // exact shape that lets a missing one pass silently.
+    expect(
+      source,
+      "a deferred hosting reconciliation must never be called optionally",
+    ).not.toContain("pendingHostingReconcile?.(");
+  });
+
+  it("leaves the deferred envelope constraints deferred for that same caller", () => {
+    // `INV-HOST-051`, AND THIS ONE WAS A MEASURED 500 rather than a theory.
+    // `SET CONSTRAINTS ... IMMEDIATE` applies for the REST of the transaction, so
+    // the modification service flushing the envelope triggers at the end of the
+    // FIRST booking's write turns them immediate for the SECOND booking's — and
+    // the second booking legitimately writes its guest stay ranges before its own
+    // `Booking` row, the exact ordering those triggers are deferrable to permit.
+    // The dependent's guest update was refused and the member got the
+    // internal-consistency 500.
+    //
+    // A SOURCE CONTRACT BECAUSE NOTHING ELSE CAN SEE IT. The linked move's own
+    // suite mocks the modification service, so it cannot observe that service's
+    // flush at all: reverting this guard leaves that suite green, which is exactly
+    // what happened when it was mutation-probed. Only the browser suite against a
+    // real PostgreSQL catches the behaviour, and a CI-only guard for a one-line
+    // regression on the money path is not enough.
+    const modifier = readRepoCode(
+      "src/lib/booking-batch-modification-service.ts",
+    );
+    expect(modifier).toContain(
+      'if (hostingReconcile !== "CALLER") await assertBookingEnvelopeInvariants(tx);',
+    );
+    // And the caller really performs it, once, itself.
+    expect(readRepoCode(LINKED_MOVE_SERVICE)).toContain(
+      "await assertBookingEnvelopeInvariants(tx);",
+    );
+  });
+
+  it("waives a change fee from exactly one caller, and only on the dragged booking", () => {
+    // #3232 D2. `waiveChangeFee` zeroes a member's late-notice change fee, so a
+    // route that could set it from the request body would be a fee waiver any
+    // member could ask for. It is a service argument rather than a field on
+    // `BatchModifyInput` for that reason, and this pins the one file allowed to
+    // pass it — the same shape as `hostingReconcile: "CALLER"` above.
+    expect(sourceFilesNaming("waiveChangeFee: true")).toEqual([
+      "src/lib/booking-linked-date-move-service.ts",
+    ]);
+    // It is NEVER accepted from the wire: no route schema may name it, and no
+    // request-body type may carry it.
+    expect(sourceFilesNaming("waiveChangeFee")).toEqual([
+      "src/lib/booking-batch-modification-service.ts",
+      "src/lib/booking-linked-date-move-service.ts",
+    ]);
+    // And the waiver really is the CLUB's answer rather than a constant: it is
+    // driven by the setting, whose absent-row default is to charge.
+    expect(readRepoCode(LINKED_MOVE_SERVICE)).toContain(
+      "...(bothChangeFeesCharged ? {} : { waiveChangeFee: true })",
+    );
+    // The club's own answer, read where every pre-transaction read lives — and
+    // read from the ONE home for an absent-row default rather than a literal
+    // `?? true` (`INV-SSOT-001`). This assertion used to pin the literal, which
+    // meant the census itself held the structural fix shut: the same `true` was
+    // written at five sites, so a club that changed its mind could be told one
+    // answer by the admin page and charged under the other.
+    const preflight = readRepoCode(LINKED_MOVE_PREFLIGHT);
+    expect(preflight).toContain(
+      "DEFAULT_BOOKING_DEFAULTS.linkedMoveChargesBothChangeFees",
+    );
+    for (const file of [
+      LINKED_MOVE_PREFLIGHT,
+      "src/app/api/admin/booking-policies/cancellation/route.ts",
+      "src/components/admin/booking-policies/default-cancellation-policy-section.tsx",
+    ]) {
+      expect(
+        readRepoCode(file),
+        `${file} must read the shared default, never restate \`?? true\``,
+      ).not.toContain("linkedMoveChargesBothChangeFees ?? true");
+    }
+    // And the pricing engine really honours it, on the one line that decides the
+    // fee. A lever the engine ignored is exactly the defect this replaced.
+    //
+    // TWO LINES NOW, NOT ONE (#3232 fix round), and the split is the point. The
+    // fee is CALCULATED first and zeroed second, because "waived" has to mean a
+    // fee existed and was given up: the flag is passed for every booking the move
+    // drags along, and the calculator already returns 0 for an unchanged check-in,
+    // a DRAFT and a move outside every band. Recording the waiver from the flag
+    // alone inflated the very figure a treasurer reconciles against this setting.
+    const batchService = readRepoCode(
+      "src/lib/booking-batch-modification-service.ts",
+    );
+    expect(batchService).toContain(
+      "const changeFeeCents = waiveChangeFee ? 0 : chargeableChangeFeeCents;",
+    );
+    expect(batchService).toContain(
+      "waiveChangeFee === true && chargeableChangeFeeCents > 0",
+    );
+  });
+
+  it("states the dependent cohort clauses once, not at four sites (#3232)", () => {
+    // `INV-SSOT-001`. `deletedAt: null` plus the ACTIVE status set was inline at
+    // four builders in the module that exists to hold shared coverage clauses
+    // once — and had already factored out the lodge/self and night ones. Widening
+    // the cohort with four copies means the refusal path silently keeps the old
+    // one, and a booking the rule would judge is simply not in the set.
+    const envelope = readRepoCode(
+      "src/lib/adult-member-hosting-coverage-envelope.ts",
+    );
+    expect(envelope).toContain("function dependentCohortClauses(");
+    expect(
+      (envelope.match(/deletedAt: null/g) ?? []).length,
+      "the pair belongs to one named helper",
+    ).toBe(1);
+    expect(
+      // Four builders spread it; the fifth match is the declaration itself.
+      (envelope.match(/\.\.\.dependentCohortClauses\(\)/g) ?? []).length,
+      "every dependent builder must read it",
+    ).toBe(4);
+  });
+
+  it("asks ONE predicate whether a stranding can refuse (#3232)", () => {
+    // `INV-HOST-050`. There were three spellings of the same fact: the settle
+    // path's early return on the literal `ADMIN_REVIEW_REQUIRED`, the read-only
+    // probe the OFFER uses on `mode !== "ENFORCED"`, and the wider active pair
+    // the plan they share gates on. They agree today, which is what made the
+    // arrangement dangerous — extend the refusal to `ADMIN_REVIEW_REQUIRED` in
+    // one of them and the probe returns an empty list, so the caller raises a 409
+    // naming nobody, the browser's fail-closed reader discards it, and the member
+    // is handed a body no reader matches.
+    const review = readRepoCode("src/lib/adult-member-hosting-review.ts");
+    // The offer's read-only probe, which had its own spelling.
+    const probe = review.slice(
+      review.indexOf("export async function inspectSameOwnerStrandingForOffer"),
+    );
+    expect(probe.slice(0, 900)).toContain("hostingModeCanRefuseStranding(");
+    expect(probe.slice(0, 900)).not.toContain('!== "ENFORCED"');
+    // And the same-owner settle path, which had the literal label.
+    expect(review).not.toContain('resolved.mode === "ADMIN_REVIEW_REQUIRED"');
+    expect(
+      (review.match(/hostingModeCanRefuseStranding\(/g) ?? []).length,
+      "both the refusal path and the offer's probe must read it",
+    ).toBeGreaterThanOrEqual(2);
+    // And its one home is beside the sibling that answers the WIDER question.
+    expect(
+      readRepoCode("src/lib/policies/adult-member-hosting.ts"),
+    ).toContain("export function hostingModeCanRefuseStranding(");
+  });
+
+  it("writes the state-key version in exactly one place", () => {
+    // #3232, `INV-SSOT-001`. The literal `v1:` was at six sites — two minters,
+    // two request schemas and two browser readers — and the prefix exists
+    // precisely so a future change to what a key must cover FAILS CLOSED. With
+    // six copies, bumping the minters alone leaves the readers discarding every
+    // offer the server makes, so a member clicks a "Move both" button that can
+    // never work and is given no reason. `readRepoCode` has already stripped
+    // comments, so prose naming the version is not a hit.
+    for (const file of [
+      "src/lib/adult-member-hosting-linked-move.ts",
+      "src/lib/adult-member-hosting-same-owner.ts",
+      "src/lib/hosting-coverage-linked-move-client.ts",
+    ]) {
+      expect(
+        readRepoCode(file),
+        `${file} must mint and match through the shared format, never a literal`,
+      ).not.toContain("v1:");
+    }
+    // And the one home really is the shared browser contract.
+    expect(
+      readRepoCode("src/lib/hosting-coverage-override-client.ts"),
+    ).toContain('HOSTING_COVERAGE_STATE_KEY_VERSION = "v1"');
+  });
+
+  it("offers the linked move on BOTH date-capable member surfaces", () => {
+    // #3232 D1, applied consistently. Widening the dependent read
+    // (`INV-HOST-049`) makes a date move NOTICE the booking it leaves behind on
+    // every date writer at once — so a route that widened the read and did not
+    // gain the offer would refuse a move that used to succeed, and refuse it with
+    // the deadlock the owner rejected. Both doors offer all three arms or neither
+    // does, and this is the assertion that fails on a third date route that
+    // forgets.
+    expect(
+      sourceFilesNaming("buildSameOwnerCoverageLinkedMoveBody("),
+    ).toEqual([
+      "src/app/api/bookings/[id]/modify-dates/route.ts",
+      "src/app/api/bookings/[id]/modify/route.ts",
+      "src/lib/adult-member-hosting-linked-move.ts",
+    ]);
+    // The offer must be answerable, not merely raisable: a surface that shows the
+    // three arms and cannot accept the answer refuses the member twice with the
+    // same sentence.
+    expect(sourceFilesNaming("hostingCoverageLinkedMoveSchema")).toEqual([
+      "src/app/api/bookings/[id]/modify-dates/route.ts",
+      "src/app/api/bookings/[id]/modify/route.ts",
+      "src/lib/adult-member-hosting-linked-move.ts",
+    ]);
+    // And the answer must reach a writer that honours it — the shared arms, never
+    // a second copy of the policy per route (`INV-SSOT-001`).
+    for (const route of [
+      "src/app/api/bookings/[id]/modify-dates/route.ts",
+      "src/app/api/bookings/[id]/modify/route.ts",
+    ]) {
+      expect(readRepoCode(route), route).toMatch(
+        /modifyBooking(Dates)?WithLinkedMoveSupport\(/,
+      );
+    }
   });
 
   it("answers with the structured body, above any generic ApiError branch", () => {
     // Same positional trap as its #2569 sibling: `SameOwnerCoverageWouldBreakError`
     // extends `ApiError`, so below a generic branch the member loses the booking
     // references, the lodge and the uncovered nights.
-    for (const file of REFUSAL_CATCHERS) {
+    for (const file of REFUSAL_CATCHERS.filter(
+      (candidate) => candidate !== REFUSAL_UPGRADER,
+    )) {
       const source = readRepoCode(file);
       expect(source, file).toContain("buildSameOwnerCoverageRefusalBody(");
       const shared = sharedApiErrorName(source);

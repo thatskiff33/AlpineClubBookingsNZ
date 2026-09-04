@@ -1,5 +1,6 @@
 "use client"
 
+import { DEFAULT_BOOKING_DEFAULTS } from "@/config/club-settings-defaults"
 import { useEffect, useRef, useState } from "react"
 import {
   cancellationRuleSetsEqual,
@@ -72,6 +73,8 @@ interface CancellationDraft {
   holdEnabled: boolean
   holdDays: number
   waitlistOrder: WaitlistCrossLodgeOrder
+  /** #3232 D2: charge the change fee on BOTH bookings of a linked move. */
+  linkedMoveBothFees: boolean
   /**
    * Whether this partition actually has persisted rules, as reported by the GET
    * (#2142). A partition with no rows yet gets `FALLBACK_RULES` seeded into
@@ -117,11 +120,14 @@ const CANCELLATION_DEFAULTS: CancellationDraft = {
   holdEnabled: true,
   holdDays: 7,
   waitlistOrder: "OWN_LODGE_FIRST",
+  // Charging both is the club's default answer; waiving is the exception.
+  linkedMoveBothFees: true,
 }
 
 function toDraft(
   data: {
     rules?: PolicyRule[]
+    linkedMoveChargesBothChangeFees?: boolean
     nonMemberHoldEnabled?: boolean
     nonMemberHoldDays?: number
     waitlistCrossLodgeOrder?: string
@@ -138,6 +144,12 @@ function toDraft(
     rules: fetchedRules.length > 0 || lodgeId ? fetchedRules : FALLBACK_RULES,
     holdEnabled: data.nonMemberHoldEnabled ?? true,
     holdDays: data.nonMemberHoldDays ?? 7,
+    // #3232: the one home for the effective default, not a fourth copy of `true`
+    // (`INV-SSOT-001`). `src/config/club-settings-defaults.ts` is a pure leaf, so
+    // a client component may read it.
+    linkedMoveBothFees:
+      data.linkedMoveChargesBothChangeFees ??
+      DEFAULT_BOOKING_DEFAULTS.linkedMoveChargesBothChangeFees,
     waitlistOrder:
       data.waitlistCrossLodgeOrder === "MERGED" ? "MERGED" : "OWN_LODGE_FIRST",
     configured: fetchedRules.length > 0,
@@ -218,6 +230,7 @@ export function DefaultCancellationPolicySection() {
                 nonMemberHoldEnabled: draft.holdEnabled,
                 nonMemberHoldDays: draft.holdDays,
                 waitlistCrossLodgeOrder: draft.waitlistOrder,
+                linkedMoveChargesBothChangeFees: draft.linkedMoveBothFees,
               }),
         }),
       })
@@ -258,6 +271,7 @@ export function DefaultCancellationPolicySection() {
         draft.holdEnabled !== saved.holdEnabled ||
         draft.holdDays !== saved.holdDays ||
         draft.waitlistOrder !== saved.waitlistOrder ||
+        draft.linkedMoveBothFees !== saved.linkedMoveBothFees ||
         !cancellationRuleSetsEqual(draft.rules, saved.rules)
       )
     },
@@ -543,6 +557,39 @@ export function DefaultCancellationPolicySection() {
                         ? "Non-member bookings are held as pending until this many days before check-in, then confirmed automatically."
                         : "The threshold is retained but inactive while First Paid, First In is selected."}
                     </p>
+                  </div>
+                  {/*
+                    #3232 D2. Club-wide, beside the other club-wide booking
+                    defaults, because whether a second change fee is fair when the
+                    club's own supervision rule compelled the move is a question
+                    about how the club treats its members — not about one lodge's
+                    cancellation risk, which is what the fee TIERS below price.
+                  */}
+                  <div className="flex items-start gap-3 rounded-md border p-3">
+                    <Checkbox
+                      id="linkedMoveBothFees"
+                      checked={draft.linkedMoveBothFees}
+                      disabled={!editing}
+                      onCheckedChange={(v) =>
+                        section.setDraft({ linkedMoveBothFees: v === true })
+                      }
+                    />
+                    <div className="space-y-1">
+                      <Label htmlFor="linkedMoveBothFees">
+                        Charge the change fee on both bookings when a member moves
+                        two together
+                      </Label>
+                      <p className="text-xs text-muted-foreground">
+                        When a member changes the dates of a booking that another of
+                        their own bookings relies on for adult supervision, they are
+                        offered the chance to move both together. Both bookings
+                        really move, so by default both attract the change fee, shown
+                        as one combined figure. Turn this off to charge only the
+                        booking the member was editing — some clubs think the second
+                        fee is unfair when it was the club&apos;s own supervision rule
+                        that made the second move necessary.
+                      </p>
+                    </div>
                   </div>
                 </div>
               ) : null}

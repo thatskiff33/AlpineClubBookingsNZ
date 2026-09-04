@@ -44,6 +44,16 @@ export const E2E_BOOKING_CREATE_CENSUS = [
     requestsPerAttempt: 2,
   },
   {
+    // #3232's linked move: the covering booking and the booking that depends on
+    // it, created by two different officers in one attempt so the relationship
+    // under test is Booking.memberId rather than createdById.
+    key: "linked-move-pair",
+    file: "e2e/adult-member-hosting.spec.ts",
+    transport: "api",
+    classification: "isolated-setup",
+    requestsPerAttempt: 2,
+  },
+  {
     key: "booking-payment-pending",
     file: "e2e/booking.spec.ts",
     transport: "browser",

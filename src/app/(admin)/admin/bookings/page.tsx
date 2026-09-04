@@ -51,6 +51,7 @@ import {
 } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
 import { formatBookingReference } from "@/lib/booking-reference";
+import { describeHostingCoverageIncidentCause } from "@/lib/adult-member-hosting-coverage-incidents";
 import {
   AlertTriangle,
   CalendarX2,
@@ -411,6 +412,7 @@ export default async function AdminBookingsPage({
         }
       />
 
+      {/* #3232: visible at bookings:view — the row carries no free text. The officer's own reason needs bookings:edit; see docs/guides/audit-log.md. */}
       {hostingCoverageIncidentCount > 0 ? (
         <section
           id="hosting-coverage-incidents"
@@ -459,9 +461,7 @@ export default async function AdminBookingsPage({
                       {uncovered === null
                         ? ""
                         : ` · ${uncovered} uncovered guest-night${uncovered === 1 ? "" : "s"}`}
-                      {incident.cause === "OFFICER_OVERRIDE"
-                        ? " · officer override"
-                        : " · qualification changed"}
+                      {` · ${describeHostingCoverageIncidentCause(incident.cause)}`}
                     </p>
                   </div>
                   <Link

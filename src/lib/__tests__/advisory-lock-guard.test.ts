@@ -336,6 +336,13 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
 
   // ── Booking lifecycle and modification ────────────────────────────────────
   {
+    site: "runLinkedDateMove#1",
+    tier: "GLOBAL",
+    reason:
+      "#3232's linked move composes TWO batch modifications into one transaction, so it takes the same global key for the same reason a single one does — money and capacity — and takes it here, once, before either call. Both re-enter it as a no-op, which is what fixes the global -> lodge order however the calls are later reordered. One lodge key covers both bookings because the same-owner dependent envelope pins lodgeId to the changed booking's lodge, so no key is ADDED. The roster-date family is the one place where composing two writes does take keys outside a single sorted order — lockRosterDates sorts within a call, and this transaction makes two calls — and it is safe for the reason that helper's docblock states: every multi-key roster writer in the tree holds this global key first, so two such acquisitions can never interleave.",
+    invariant: "INV-LOCK-002",
+  },
+  {
     site: "modifyBookingBatch#1",
     tier: "GLOBAL",
     reason:

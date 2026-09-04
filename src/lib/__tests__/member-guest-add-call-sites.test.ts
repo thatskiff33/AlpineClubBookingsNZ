@@ -271,20 +271,39 @@ describe("no policy read inside a booking transaction", () => {
       file: "src/app/api/bookings/[id]/guests/route.ts",
       transactionMarker: "await prisma.$transaction(",
     },
-    {
-      name: "booking-batch-modification-service.ts",
-      file: "src/lib/booking-batch-modification-service.ts",
-      // #2525 made this service transaction-aware: it enters its transaction
-      // through withOptionalTransaction (caller tx or a fresh one), so that is
-      // the boundary the policy read must precede.
-      transactionMarker: "await withOptionalTransaction(",
-    },
+    /*
+      #3232 fix round: `booking-batch-modification-service.ts` USED TO BE A SITE
+      HERE, and it is not one any more.
+
+      Once #3232 moved its policy read into the service's one named
+      pre-transaction function, this comparison stopped saying anything about when
+      the read runs: it compared the position of a top-level function DECLARATION
+      against the position of a call inside another one. Measured — moving
+      `prepareBookingBatchModification` textually below `modifyBookingBatch`, which
+      changes no behaviour at all, turned it red; and a read inside a helper
+      declared above but CALLED from inside the transaction would have kept it
+      green.
+
+      The rule is held instead by
+      `lock-bound-club-zone-outside-transaction.test.ts`, which confines this read
+      to the module's named pre-transaction home and is indifferent to where that
+      home is written (it stayed green under the same move), and by the
+      caller-transaction refusal asserted below — the case no positional rule can
+      express, because "above `withOptionalTransaction`" is not "before the
+      transaction" for a caller that supplies one.
+
+      The guests route below keeps its site: there the marker and the
+      `prisma.$transaction(` boundary really are in the same function body.
+    */
   ];
 
   for (const site of SITES) {
     it(`${site.name} reads the policy before it opens its transaction`, () => {
       const source = readRepoFile(site.file);
-      const policyRead = source.indexOf("await loadMemberGuestAddPolicy()");
+      const policyRead = source.indexOf(
+        (site as { policyReadMarker?: string }).policyReadMarker ??
+          "await loadMemberGuestAddPolicy()",
+      );
       const transaction = source.indexOf(site.transactionMarker);
 
       expect(policyRead).toBeGreaterThan(-1);
@@ -295,6 +314,22 @@ describe("no policy read inside a booking transaction", () => {
       expect(source).not.toContain("loadMemberGuestSettings");
     });
   }
+
+  it("the transaction-aware service refuses a caller transaction that did not read it", () => {
+    // #3232, `INV-LOCK-004`, and the rule the positional check above cannot
+    // express. "Before `withOptionalTransaction`" is not "before the transaction"
+    // for a caller that SUPPLIES one — that helper runs the body on the caller's
+    // `tx`, which already holds the global money key and the per-lodge capacity
+    // key. So the policy read ran under both locks on that path, and the position
+    // in the file said nothing about it. The service now refuses the combination
+    // rather than reading anything, and the answers arrive from whoever owns the
+    // commit.
+    const source = readRepoFile("src/lib/booking-batch-modification-service.ts");
+    expect(source).toContain("if (callerTx && !preTransaction) {");
+    expect(source).toContain(
+      "INV-LOCK-004: modifyBookingBatch in caller-transaction mode requires ",
+    );
+  });
 
   it("the pure planner is the only member-guest call the guests route makes inside its transaction", () => {
     const source = readRepoFile("src/app/api/bookings/[id]/guests/route.ts");
