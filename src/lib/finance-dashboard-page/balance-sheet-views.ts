@@ -15,10 +15,11 @@ import {
   listFinanceSnapshots,
 } from "@/lib/finance-sync-storage";
 import { formatCents } from "@/lib/utils";
-import { buildXeroReportsUrl } from "@/lib/xero-links";
-import { getXeroOrgShortCode } from "@/lib/xero-link-short-code";
+import { xeroReportsSourceLink } from "@/lib/finance-dashboard-page/xero-reports-source-note";
 import {
   cardRows,
+  monthPointLabel,
+  monthToDateCell,
   type FinanceDashboardKpiCard,
 } from "@/lib/finance-dashboard-page/model";
 import { SERIES_COLORS } from "@/lib/finance-dashboard-page/series-colors";
@@ -77,7 +78,7 @@ export async function buildCashDashboard(
         variant: "line" as const,
         xKey: "label",
         data: monthPoints.map((point) => ({
-          label: point.isProvisional ? `${point.label} (MTD)` : point.label,
+          label: monthPointLabel(point),
           balance: point.bankCents,
         })),
         series: [
@@ -118,7 +119,7 @@ export async function buildCashDashboard(
         rows: monthPoints.map((point) => ({
           Month: point.label,
           Balance: formatCents(point.bankCents),
-          MonthToDate: point.isProvisional ? "yes" : "",
+          MonthToDate: monthToDateCell(point),
         })),
       },
       {
@@ -206,7 +207,7 @@ export async function buildBalanceOrWorkingCapitalDashboard(input: {
         variant: "line" as const,
         xKey: "label",
         data: monthPoints.map((point) => ({
-          label: point.isProvisional ? `${point.label} (MTD)` : point.label,
+          label: monthPointLabel(point),
           currentAssets: point.currentAssetsCents,
           currentLiabilities: point.currentLiabilitiesCents,
           workingCapital: point.workingCapitalCents,
@@ -238,7 +239,7 @@ export async function buildBalanceOrWorkingCapitalDashboard(input: {
         variant: "line" as const,
         xKey: "label",
         data: monthPoints.map((point) => ({
-          label: point.isProvisional ? `${point.label} (MTD)` : point.label,
+          label: monthPointLabel(point),
           assets: point.assetsCents,
           liabilities: point.liabilitiesCents,
           netAssets: point.netAssetsCents,
@@ -288,9 +289,7 @@ export async function buildBalanceOrWorkingCapitalDashboard(input: {
         label: "Balance-sheet source",
         description:
           "Balance sheet and working-capital figures come from stored monthly Xero account balances (month-end positions per account). Drill into Xero for day-level detail.",
-        // Same rule as the P&L views' source note above (#2314 review).
-        href: buildXeroReportsUrl({ shortCode: await getXeroOrgShortCode() }),
-        linkLabel: "Open Xero reports",
+        ...(await xeroReportsSourceLink()),
       },
     ],
     exportSections: [
@@ -305,7 +304,7 @@ export async function buildBalanceOrWorkingCapitalDashboard(input: {
           CurrentAssets: formatCents(point.currentAssetsCents),
           CurrentLiabilities: formatCents(point.currentLiabilitiesCents),
           WorkingCapital: formatCents(point.workingCapitalCents),
-          MonthToDate: point.isProvisional ? "yes" : "",
+          MonthToDate: monthToDateCell(point),
         })),
       },
     ],

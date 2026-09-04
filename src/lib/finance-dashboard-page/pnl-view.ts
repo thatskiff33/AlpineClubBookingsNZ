@@ -13,11 +13,12 @@ import {
 import { financeFinancialYearBuckets } from "@/lib/finance-ratio-shared";
 import type { FinanceMappedPnlCategorySummary } from "@/lib/finance-report-mappings";
 import { buildFinanceRevenueReconciliation } from "@/lib/finance-revenue-reconciliation";
-import { buildXeroReportsUrl } from "@/lib/xero-links";
-import { getXeroOrgShortCode } from "@/lib/xero-link-short-code";
+import { xeroReportsSourceLink } from "@/lib/finance-dashboard-page/xero-reports-source-note";
 import { formatCents } from "@/lib/utils";
 import {
   cardRows,
+  monthPointLabel,
+  monthToDateCell,
   type FinanceDashboardKpiCard,
   type FinanceDashboardStatusPanel,
   type FinanceDashboardTrend,
@@ -154,7 +155,7 @@ export async function buildMappedPnlDashboard(input: {
       variant: "bar",
       xKey: "label",
       data: summary.trend.map((point) => ({
-        label: point.isProvisional ? `${point.label} (MTD)` : point.label,
+        label: monthPointLabel(point),
         amount: point.amountCents,
         // A custom comparison window shorter than the primary leaves trailing
         // months unaligned (comparisonAmountCents null). Omit the key so the
@@ -218,7 +219,7 @@ export async function buildMappedPnlDashboard(input: {
           point.comparisonAmountCents === null
             ? ""
             : formatCents(point.comparisonAmountCents),
-        MonthToDate: point.isProvisional ? "yes" : "",
+        MonthToDate: monthToDateCell(point),
       })),
     },
     {
@@ -266,13 +267,7 @@ export async function buildMappedPnlDashboard(input: {
         label: "Xero monthly facts",
         description:
           "Revenue and costs come from stored monthly Xero account balances (one amount per account and month). Opening the dashboard does not call Xero live; drill into Xero for day-level detail.",
-        // #2314 review: the report centre is the highest-value Xero link in the
-        // product and its audience is exactly the multi-organisation treasurer
-        // #2314 exists for, so it resolves the short code like every other
-        // server-side producer. The cached read is what made that affordable
-        // (see getXeroOrgShortCode); a null one degrades to the generic link.
-        href: buildXeroReportsUrl({ shortCode: await getXeroOrgShortCode() }),
-        linkLabel: "Open Xero reports",
+        ...(await xeroReportsSourceLink()),
       },
       {
         label: "Mappings",

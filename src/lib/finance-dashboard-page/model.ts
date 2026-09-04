@@ -125,6 +125,20 @@ export interface FinanceDashboardPageModel {
   selectedLodgeId: string | null;
 }
 
+/**
+ * A month point on a trend axis; the month still in progress is flagged so a
+ * partial bar is never read as a whole one. Shared by the P&L and
+ * balance-sheet trends (one home, INV-SSOT-001).
+ */
+export function monthPointLabel(point: { label: string; isProvisional: boolean }) {
+  return point.isProvisional ? `${point.label} (MTD)` : point.label;
+}
+
+/** The same flag as an export cell, on every month-keyed export row. */
+export function monthToDateCell(point: { isProvisional: boolean }) {
+  return point.isProvisional ? "yes" : "";
+}
+
 export function cardRows(cards: FinanceDashboardKpiCard[]) {
   return cards.map((card) => ({
     Metric: card.title,

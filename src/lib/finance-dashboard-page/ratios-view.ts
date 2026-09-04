@@ -1,6 +1,9 @@
 import type { FinanceDashboardSelection } from "@/lib/finance-dashboard-ranges";
 import { buildFinanceRatioMatrix } from "@/lib/finance-ratio-insights";
-import { financeFinancialYearBuckets } from "@/lib/finance-ratio-shared";
+import {
+  financeFinancialYearBuckets,
+  sumRatioSeries,
+} from "@/lib/finance-ratio-shared";
 import { formatCents } from "@/lib/utils";
 import type {
   FinanceDashboardRatioExplorerModel,
@@ -41,35 +44,12 @@ export async function buildRatiosDashboard(
         rows: matrix.series.map((series) => ({
           Category: series.name,
           Kind: series.kind,
-          [buckets[0].label]: formatCents(
-            buckets[0]
-              ? matrix.months.reduce(
-                  (total, month, index) =>
-                    month >= buckets[0].fromMonth && month <= buckets[0].toMonth
-                      ? total + (series.valuesCents[index] ?? 0)
-                      : total,
-                  0
-                )
-              : 0
-          ),
-          [buckets[1].label]: formatCents(
-            matrix.months.reduce(
-              (total, month, index) =>
-                month >= buckets[1].fromMonth && month <= buckets[1].toMonth
-                  ? total + (series.valuesCents[index] ?? 0)
-                  : total,
-              0
-            )
-          ),
-          [buckets[2].label]: formatCents(
-            matrix.months.reduce(
-              (total, month, index) =>
-                month >= buckets[2].fromMonth && month <= buckets[2].toMonth
-                  ? total + (series.valuesCents[index] ?? 0)
-                  : total,
-              0
-            )
-          ),
+          // One FY total, one definition (INV-SSOT-001): the same
+          // `sumRatioSeries` the Financial-years panel and the ratio explorer
+          // use, so this export cannot disagree with the panel on the same page.
+          [buckets[0].label]: formatCents(sumRatioSeries(matrix, series, buckets[0])),
+          [buckets[1].label]: formatCents(sumRatioSeries(matrix, series, buckets[1])),
+          [buckets[2].label]: formatCents(sumRatioSeries(matrix, series, buckets[2])),
         })),
       },
     ],
