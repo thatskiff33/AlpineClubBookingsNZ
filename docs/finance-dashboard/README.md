@@ -67,6 +67,8 @@ containing month with a warning, and legacy option values (`last-quarter`,
 in-progress month appears only in ranges that include it (e.g. financial year
 to date) and is flagged as month-to-date. Day-level detail lives in Xero.
 
+The page model behind the route is built server-side by `buildFinanceDashboardPageModel` in `src/lib/finance-dashboard-page.ts`, which resolves the club zone, the reporting lodge, the seasons, the sync status and the selection, then dispatches to one view builder per `view` under `src/lib/finance-dashboard-page/` (`bookings-view.ts`, `pnl-view.ts` for revenue and costs, `ratios-view.ts`, `pricing-sensitivity-view.ts`, `balance-sheet-views.ts` for cash, balance sheet and working capital, `sync-health-view.ts`). The shared view-model shapes live in `model.ts` and the derived chart palette in `series-colors.ts` (#2957).
+
 The default dashboard state is:
 
 - view: Bookings
