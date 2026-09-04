@@ -1,7 +1,7 @@
 # File-size allowances for #3200
 
 file: src/app/api/bookings/[id]/guests/route.ts
-lines: 1404
+lines: 1406
 reason: the change itself is a net reduction — five inline lines restating
   `hasIssuedPrimaryXeroInvoice` become one call to it. The growth is the note
   saying why this door reads the shared rule instead of restating it, and why
