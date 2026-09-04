@@ -37,7 +37,7 @@ Two Claude Code specifics the imported contract cannot know:
   name the model at launch or the orchestrator's tier silently wins.
 - **The `Agent` tool exposes `model` but not effort.** Effort is pinned in an
   agent definition's frontmatter and selected with `subagent_type`; the
-  definitions, one per routing row, are named in that table. A definition added
+  definitions, one per routing row, are named beneath that table. A definition added
   while a session is running is picked up only if its directory existed at
   start-up; a launch that cannot use one inherits the session's effort, and the
   brief must say so.

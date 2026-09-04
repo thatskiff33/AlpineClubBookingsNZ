@@ -1,5 +1,7 @@
 # Subagent Guide
 
+**Audience: agent.**
+
 Follow the role split in root `AGENTS.md`, which is authoritative. The main
 session is the orchestrator; implementor subagents perform bounded edits in the
 issue's dedicated worktree, and separate adversarial-review subagents inspect
@@ -80,27 +82,11 @@ fixes the shape (which *kind* of tier at which effort, and why); this table
 names the products that fill it today. It goes stale, so re-measure and re-date
 it when the lineup changes rather than editing a row quietly.
 
-The shape in prose. Routine Low/Medium implementation, mechanical edits,
-bounded investigation and the standard review lenses go to the top tier at
-`medium`: its lower effort settings out-perform the previous generation's top
-ones in fewer turns, so it is cheaper per *completed task* despite twice the
-rate card. Gated-area implementation and its adversarial lenses — money,
-capacity, membership/family lifecycle, schema, live providers — take that tier
-at `high`. `xhigh` is reserved for work bounded by reasoning, because the top of
-the effort range is where that tier stops being cheaper than the
-generally-capable one. Checkable read-only scans may use a cheaper tier. When the
-top tier's share of the allowance is spent, or the picker refuses it, fall back
-to the strongest generally-capable model at the same effort and say so in the
-brief. This inverts the reading that held until 4 Sep 2026, under which the top
-tier was reserved for reasoning-frontier work and the generally-capable tier was
-the everyday choice — right for Fable 5, wrong for Fable 5.1, whose `medium`
-matches Fable 5 at `high` for less.
-
 | Work | Model | Effort | Why |
 | --- | --- | --- | --- |
-| Routine Low/Medium implementation, mechanical edits, bounded investigation, the standard review lenses | Claude Fable 5.1 | `medium` | At `medium` it matches or beats the previous generation at `high`/`xhigh` in fewer turns, so it is cheaper per **completed task** despite twice the rate card. Raise to `high` on evidence. |
+| Routine Low/Medium implementation, mechanical edits, bounded investigation, the standard review lenses | Claude Fable 5.1 | `medium` | At `medium` it roughly matches Fable 5 at `high`, and often its `xhigh`, in fewer turns, so it is cheaper per **completed task** despite twice the rate card. Raise to `high` on evidence. |
 | Gated-area implementation and its adversarial lenses — money, capacity, membership/family lifecycle, schema, live providers | Claude Fable 5.1 | `high` | Its gains over prior models are largest on long agentic coding, review and debugging — what a gated lane is. |
-| Reasoning-frontier items — Xero idempotency and frozen references, immutable-charge backfill correctness, irreversible member merge and DMMF completeness | Claude Fable 5.1 | `xhigh` | The top of the effort range is where Fable stops being cheaper than Opus, so it is reserved for work bounded by reasoning. `max` is banned. |
+| Reasoning-frontier items — Xero idempotency and frozen references, immutable-charge backfill correctness, irreversible member merge and DMMF completeness | Claude Fable 5.1 | `xhigh` | Fable's cost advantage is measured only at lower efforts — at `max` it costs more per task than Opus, and `xhigh` is unmeasured — so it is reserved for work bounded by reasoning. `max` is banned. |
 | **Anything security-shaped** — auth, sessions, tokens, permissions, exploit or vulnerability analysis, and security *tooling* such as Semgrep, Gitleaks, CSP and headers | Claude Opus (the strongest generally-capable model) | `xhigh` | Fable is excluded — `AGENTS.md` carries the reason and it is not restated here. |
 | Read-only scans whose output is checkable — a census, a many-file search | Claude Sonnet 5 | `medium` | The only place a tier cheaper than Fable saves anything once the deterministic tools are exhausted. |
 | Fallback when Fable's share of the allowance is spent, or the picker refuses it | Claude Opus | the effort the row above would have given Fable | Say so in the brief, so the routing stays visible. |
@@ -109,7 +95,10 @@ Where a launch interface exposes `model` but not effort, effort is pinned in an
 agent definition (frontmatter `model:` and `effort:`) selected by name. The
 Claude Code definitions live at user level in `~/.claude/agents/`, one per row
 above — `fable-medium`, `fable-high`, `fable-xhigh`, `opus-xhigh-security`,
-`sonnet-scan` — because this repository's `.claude/` directory is git-ignored.
+`sonnet-scan`, and `opus-medium` / `opus-high` for the fallback row — because
+this repository's `.claude/` directory is git-ignored. They are unversioned
+copies of this table; the table is authoritative, and whoever re-dates it
+re-points them.
 A definition is only visible to a session if its directory existed when the
 session started; a launch that cannot use one inherits the session's effort,
 and the brief must say so.
@@ -119,10 +108,13 @@ and the brief must say so.
 Fable 5.1 follows a brief closely, so a brief written for an earlier model —
 step lists, repeated reminders, "be thorough" scaffolding — makes its output
 *worse*, not safer. State the goal, the constraints and the evidence you want
-back, then include the lines below as written. They are Anthropic's published
-tuning for autonomous agents on this model, kept here as their one home so
-`AGENTS.md` can point at them rather than restate them (#3259). Adapt the
-bracketed parts; do not paraphrase the rest into a checklist.
+back, then include the lines below as written. They are adapted from
+Anthropic's published guidance for autonomous agents on this model — the
+Fable 5.1 sections of the
+[model migration guide](https://platform.claude.com/docs/en/about-claude/models/migration-guide)
+— with "the user" read as the issue thread and the owner, and are kept here as
+their one home so `AGENTS.md` can point at them rather than restate them
+(#3259). Use *this* wording as written; do not paraphrase it into a checklist.
 
 > When you have enough information to act, act. Do not re-derive facts already
 > established in the issue thread, re-litigate a decision the owner has already

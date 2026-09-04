@@ -275,8 +275,7 @@ validation gates.
   "routine" task types. Prefer repository commands over an MCP or browser round
   trip when they answer the same question, and delegate per "Delegate
   deliberately" below, with the smallest relevant artifact and file set. Gated
-  areas retain the strongest-model high/xhigh rules in the orchestration model
-  below, and `xhigh` remains the ceiling.
+  areas follow "Model selection" below; `xhigh` remains the ceiling.
 - **Gate the blueprint by risk.** A narrow Low/Medium issue with complete scope
   needs only a concise working plan. Before implementing High/Critical work,
   record a blueprint that names the affected invariants, counterpart writers,
@@ -367,8 +366,9 @@ an orchestrator with subagents, not a single agent doing everything inline:
   multi-file investigations, and the adversarial review lenses.
 - **Capability scaling:** the orchestrator chooses subagent model/effort by task
   complexity. Gated areas (money movement, booking capacity, membership/family
-  lifecycle, schema, auth/security, live providers) keep the strongest available
-  model at high reasoning effort, and auth/security runs at `xhigh`. The reason
+  lifecycle, schema, live providers) keep the top tier at high reasoning
+  effort; auth/security runs on the strongest generally-capable model at
+  `xhigh`, never the top tier. The reason
   an uncertain security blocker escalates in effort and never in model tier is
   in "Model selection" below, with the ceiling directive.
 - **Parallel lanes:** multiple issues may run concurrently, each in its own
@@ -761,27 +761,29 @@ handed an epic-with-children or asked to run several related issues at once.
 
 ### 4. Model selection
 
-- **Choose the tier at dispatch, from the lineup you actually have.** This
-  section names no product — a written-down name goes stale and gets followed
-  anyway; the dated table of names, efforts and measurements is
+- **Choose the tier at dispatch, from the lineup you actually have.** The rule
+  here names no product — the only names are the dated example on the security
+  floor below — because a written name goes stale yet gets followed; the dated
+  table of names, efforts and measurements is
   [`agents/SUBAGENT_GUIDE.md`](docs/agents/SUBAGENT_GUIDE.md) → "Model routing
-  table". Work down three questions in order. *Can a deterministic command answer this exactly?* Then run it — a
-  grep, a focused test, a typecheck, `npm run agent:context` — and spend no
-  model at all. *If not, what is the cheapest tier and effort I would trust to be
+  table". Work down three questions in order. *Can a deterministic command
+  answer this exactly?* Then run it — a grep, a focused test, a typecheck,
+  `npm run agent:context` — and spend no model at all. *If not, what is the cheapest tier and effort I would trust to be
   right here without checking its work?* Dispatch that. *Is this bounded by
   reasoning or by context?* Raise reasoning effort before reaching for a larger
   model; the two are separate dials and effort is usually the one that was
   short. Escalate on evidence — a wrong answer, a red check, a refusal — never
   on a hunch that bigger is safer.
-- **The shape, measured 4 Sep 2026** (owner decision; evidence on #3259):
+- **The shape** (owner decision, dated in the guide; evidence on #3259):
   routine Low/Medium work and the standard review lenses go to the **top
   Mythos-class tier at `medium`**, whose lower efforts out-perform the previous
   generation's top ones in fewer turns and so cost less per *completed task*;
   gated areas take that tier at `high`; `xhigh` is reserved for work bounded by
-  reasoning, where it stops being cheaper; the strongest generally-capable model
-  is the fallback when the top tier's allowance share is spent. This inverts the
-  earlier reading that reserved the top tier — right for the previous
-  generation, wrong now.
+  reasoning, since its cost advantage is measured only at lower efforts;
+  checkable read-only scans may use a cheaper tier; when the top tier's
+  allowance share is spent or the picker refuses it, the strongest
+  generally-capable model is the fallback at the same effort, said so in the
+  brief. This inverts the earlier reading, which reserved the top tier.
 - **State the model explicitly when you dispatch a subagent, and the effort
   with it.** A subagent launched without them **inherits the orchestrator's
   model** and effort, so an unstated choice is not a cheap default — it is the
@@ -789,7 +791,7 @@ handed an epic-with-children or asked to run several related issues at once.
   the brief why that tier fits; that line makes a wrong routing visible in
   review instead of invisible in a bill. If the launch interface has no effort
   control, pin it in an agent definition and name that. Brief the top tier with
-  the vendor's lines in the same guide → "Briefing the top tier", verbatim.
+  the guide's "Briefing the top tier" lines, verbatim.
 - **Never route security work to the top Mythos-class tier — keep it on the
   strongest generally-capable model at `xhigh` reasoning effort.** At the time
   of writing that means Fable is excluded and Opus is the right choice, but the
@@ -806,9 +808,8 @@ handed an epic-with-children or asked to run several related issues at once.
   would be visible to you as a failure rather than as a pass.
 - **`xhigh` is the effort ceiling — never use `max`, on any lane** (owner
   directive, 10 Aug 2026). At `max` the model overthinks and the outcome gets
-  *worse*, not better, and it is the one setting at which the top tier costs
-  more per task than the generally-capable one. `xhigh` is sufficient for the
-  hardest security and Critical work.
+  *worse*, not better. `xhigh` is sufficient for the hardest security and
+  Critical work.
 
 ### 5. Per-issue pipeline
 
