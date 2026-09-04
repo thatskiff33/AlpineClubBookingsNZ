@@ -392,7 +392,17 @@ export const AUDIT_CENSUS_TOTALS = {
   // `UNCATEGORISED_AUDIT_WRITERS` below. Measured by RUNNING
   // `npm run audit:census` on this tree (464 sites, 2225 files scanned), not by
   // adding one to the literal.
-  writeSites: 466,
+  // 466 -> 467 (#3214): `booking-payment.stored-night-price.reconcile`, the
+  // officer's record of what one guest strand's nights sold for, taken from the
+  // booking's own admin tools rather than while settling a review. It is the
+  // route behind the sentence #3214's other-lodge refusal ends on, and it is
+  // money-neutral by construction - the amounts must come to what the stay is
+  // already stored as being worth - which is why its entry carries BOTH totals
+  // and the previous per-night values. Categorised `payment` at the site, so it
+  // does not join `UNCATEGORISED_AUDIT_WRITERS` below. Measured by RUNNING
+  // `npm run audit:census` on this tree (467 sites, 2249 files scanned), not by
+  // adding one to the literal.
+  writeSites: 467,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -476,7 +486,11 @@ export const AUDIT_CENSUS_TOTALS = {
     // 119 -> 120 (#3039): the truncated-fan-out row above, written with the
     // awaited `createAuditLog` because it must land inside the transaction that
     // discovered the truncation.
-    createAuditLog: { total: 120, uncategorised: 0 },
+    // 120 -> 121 (#3214): the strand night-price reconcile above, written
+    // through `createAuditLog` like the payment writers around it and awaited
+    // inside the transaction that did the writing, so a rolled-back reconcile
+    // leaves no entry claiming it happened.
+    createAuditLog: { total: 121, uncategorised: 0 },
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -596,7 +610,11 @@ export const AUDIT_CENSUS_TOTALS = {
     // invoice for money a booking change's first invoice went out without, and
     // the person who answers a member asking why two invoices arrived is the one
     // who reconciles the club's money.
-    payment: 40,
+    // 40 -> 41 (#3214): `booking-payment.stored-night-price.reconcile`. Same
+    // audience for the same reason as the stored-night-price row above it - what
+    // it records is what a future refund will be computed from, and the person
+    // who answers for that is the one who reconciles the club's money.
+    payment: 41,
     // 27 -> 34 (#2581 child 2): the five family-group writers and the two
     // dependants writers. Both dependants writers also moved off a hand-built
     // Prisma literal and onto the audit boundary in the same change.
