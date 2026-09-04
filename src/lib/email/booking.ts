@@ -11,6 +11,7 @@ import {
   bookingBumpedTemplate, bookingCancelledTemplate, bookingConfirmedTemplate,
   bookingGuestsCancelledTemplate, bookingModifiedTemplate, bookingPendingTemplate,
   setupIntentFailedTemplate,
+  savedCardChargeFailedTemplate,
   splitGuestPortionCancelledTemplate,
 } from "@/lib/email-templates/booking";
 import {
@@ -1559,6 +1560,36 @@ export async function sendSetupIntentFailedEmail(params: {
     html: await renderEmailHtml(() => setupIntentFailedTemplate(params)),
     bookingContext: bookingOwnerEmailContext(params.bookingId, params.recipientMemberId),
     templateName: "setup-intent-failed",
+    templateData: {
+      firstName: params.firstName,
+      checkIn: emailCalendarDay(params.checkIn),
+      checkOut: emailCalendarDay(params.checkOut),
+    },
+    lodgeId: params.lodgeId,
+  });
+}
+
+/**
+ * #3268 — the auto-charge cron retired a permanently unusable saved card and is
+ * asking the member for a new one. Mirrors `sendSetupIntentFailedEmail`: same
+ * booking-owner context so the per-booking "No emails" switch applies, same
+ * date tokens, same lodge identity.
+ */
+export async function sendSavedCardChargeFailedEmail(params: {
+  bookingId: string;
+  recipientMemberId: string;
+  email: string;
+  firstName: string;
+  checkIn: Date;
+  checkOut: Date;
+  lodgeId?: string | null;
+}) {
+  await sendEmail({
+    to: params.email,
+    subject: `Your Saved Card Needs Replacing - ${EMAIL_DEFAULT_LODGE_NAME}`,
+    html: await renderEmailHtml(() => savedCardChargeFailedTemplate(params)),
+    bookingContext: bookingOwnerEmailContext(params.bookingId, params.recipientMemberId),
+    templateName: "saved-card-charge-failed",
     templateData: {
       firstName: params.firstName,
       checkIn: emailCalendarDay(params.checkIn),
