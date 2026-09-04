@@ -15,6 +15,7 @@ import type {
 import { buildMemberName } from "./xero-booking-repair-analysis";
 import {
   getOperationQueueTypeHint,
+  isSuccessfulXeroOperation,
   readStoredXeroAmountCents,
   toIsoDate,
 } from "./xero-booking-repair-utils";
@@ -109,7 +110,7 @@ function collectXeroAmountEvidence(params: {
     if (
       operation.entityType !== params.entityType ||
       operation.operationType !== params.operationType ||
-      !["SUCCEEDED", "PARTIAL"].includes(operation.status) ||
+      !isSuccessfulXeroOperation(operation) ||
       (operation.xeroObjectId && operation.xeroObjectId !== params.resolved.objectId) ||
       // #1427: an op of a DIFFERENT queueType is another money object's
       // ledger (e.g. an account-credit note beside the invoice-applied

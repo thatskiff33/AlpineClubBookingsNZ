@@ -3,7 +3,10 @@
 // xero-booking-repair.ts (#1208 item 2).
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import { getXeroOperationRetryMeta } from "@/lib/xero-operation-retry";
-import { getOperationQueueTypeHint } from "./xero-booking-repair-utils";
+import {
+  getOperationQueueTypeHint,
+  isSuccessfulXeroOperation,
+} from "./xero-booking-repair-utils";
 import type {
   BlockingOperationMatch,
   ResolvedLocalObject,
@@ -106,7 +109,7 @@ export function resolveObjectFromCandidates(params: {
     if (params.operationType && operation.operationType !== params.operationType) {
       continue;
     }
-    if (!["SUCCEEDED", "PARTIAL"].includes(operation.status)) {
+    if (!isSuccessfulXeroOperation(operation)) {
       continue;
     }
     if (operation.xeroObjectType && operation.xeroObjectType !== params.xeroObjectType) {
