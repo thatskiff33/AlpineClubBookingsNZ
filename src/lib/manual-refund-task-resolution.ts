@@ -294,6 +294,44 @@ export async function resolveManualRefundTask(
       );
     }
 
+    /*
+      #3213 (epic #2797): THE DISMISS-ONLY DOOR, and it is the whole safety
+      argument for the `UNCOLLECTED_EDIT_REVIEW_SHARE` kind.
+
+      That kind is a NOTICE about money the club may not have asked for. Nothing
+      is owed BACK on one, and nothing about it may move money at all - which is
+      the property the owner's 4 Sep 2026 decision bought by keeping the path
+      manual, on an area this epic has already found two defects in (#3199
+      double-billed; #3220 left a live payment intent standing).
+
+      COMPLETED would break that, and quietly. `settlementDirection` below reads
+      NULL as REFUND_TO_MEMBER for every kind older than EDIT_FINANCIAL_REVIEW,
+      because those kinds can mean nothing else - so a COMPLETED close here would
+      assert a refund to the member and reach the allocation path with an amount
+      that is not a refund at all. There is no direction this row could honestly
+      carry, so the answer is not a better default: it is that the completion
+      door does not open.
+
+      REFUSED HERE, before the claim and before any write, so no input reaches a
+      money path - not a hand-crafted POST, not a stale screen, not a future
+      caller of this function. The screen offers only the dismiss control
+      (`manual-refund-task-queue.tsx`), and this is what makes that a guarantee
+      rather than a UI convention.
+
+      DISMISSED is the honest close and is the one the officer wants: "reviewed,
+      and THIS SYSTEM MOVED NO MONEY", with the required note saying what Xero
+      actually showed and what was billed by hand. `INV-PAY-051`.
+    */
+    if (
+      task.kind === ManualRefundTaskKind.UNCOLLECTED_EDIT_REVIEW_SHARE &&
+      resolution === "completed"
+    ) {
+      throw new ManualBookingPaymentError(
+        "This item records money the club may not have asked for, so it cannot be closed as an amount settled here - nothing about it moves money. Check the booking's Xero invoices, bill any shortfall by hand, then close it with a note saying what you found and what you billed.",
+        400
+      );
+    }
+
     const isEditReview = task.kind === ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW;
 
     // #3030 (owner decision D2): work out the amount this completion closes at,
