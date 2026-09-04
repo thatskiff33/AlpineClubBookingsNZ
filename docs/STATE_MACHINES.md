@@ -277,10 +277,14 @@ captured money is never silently orphaned.
 Split-booking guest-portion settlement with no card on file (#1967). A split
 non-member child (#738) is normally auto-charged at its hold deadline to the
 member's saved card inherited from the parent payment
-(`savedPaymentMethodForBooking`). But a `PAYMENT_PENDING` parent can legitimately
+(`savedPaymentMethodForBooking`, `src/lib/saved-payment-method.ts` — since
+#3269 a card counts only with the `stripeSetupIntentId` that saved it beside it,
+`INV-PAY-053`). But a `PAYMENT_PENDING` parent can legitimately
 pay by **Internet Banking** (switch-at-pay flips the parent to `CONFIRMED` with
 an IB-source payment), which leaves the parent payment with no
-`stripeCustomerId`/`stripePaymentMethodId` — so the child resolves to no saved
+`stripeCustomerId`/`stripePaymentMethodId`; and a parent that paid by **one-off
+card checkout** leaves a payment method Stripe refuses to charge again, which
+#3269 reads as no card too — so either way the child resolves to no saved
 card and is not `originBookingRequest`. Rather than stranding the guests (the old
 `missing_payment_method` path only logged), `cron-confirm-pending.ts` now mirrors
 the #707 request-origin path — but only for a **genuine split child whose parent
@@ -1289,6 +1293,26 @@ minus what was refunded), so the mirror invariant is net-based —
 at repay settlement (see `docs/DOMAIN_INVARIANTS.md`). The repay path assumes
 no saved card: it always goes through the immediate card-entry PaymentIntent
 flow.
+
+Saved-card provenance (#3269, `INV-PAY-053`). Two writers put a
+`stripePaymentMethodId` on a `Payment` row and only one of them saves a card:
+`markBookingSetupIntentSucceeded` writes it together with `stripeSetupIntentId`
+(the card is attached to the customer for off-session reuse), while
+`markBookingPaymentSucceeded` writes the one-off PaymentIntent's card, which
+Stripe refuses to charge again. Every off-session charge path — the settlement
+cron, admin confirm-pending-guests, `charge-saved-method` — and the two readers
+that predict one (the member page's "will charge" wording, the payment-link
+`not_payable` gate) therefore ask `savedPaymentMethodForBooking`
+(`src/lib/saved-payment-method.ts`), which offers a card only when customer,
+payment method and SetupIntent are all on the same row: the booking's own row
+first, then its split parent's. The claim that charges a card borrowed from the
+parent writes the customer onto the child's row and never the parent's payment
+method (`savedPaymentMethodRowStamp`), so a one-off checkout card can no longer
+be laundered into a "saved card" by being copied; the rows that copy left in
+production (customer + pm, no SetupIntent) now read as no card without a
+migration. The row itself still transitions exactly as before — this changes
+which bookings enter `PENDING -> PROCESSING` off-session, not what happens once
+they do.
 
 Duplicate capture on an already-PAID booking (#1992): when a success arrives
 carrying the SAME intent the booking settled with, every reconciliation path
