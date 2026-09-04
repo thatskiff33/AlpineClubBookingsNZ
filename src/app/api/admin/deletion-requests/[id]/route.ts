@@ -1068,7 +1068,7 @@ export async function POST(
       // `@deleted.invalid` write happens earlier in this transaction against the
       // database row, while `member` is the read taken before it. That ordering
       // is what makes the exact-match safe, so it must not be reordered.
-      const retiredInheritedCopies = await retireInheritedEmailCopies(tx, {
+      await retireInheritedEmailCopies(tx, {
         id: member.id,
         email: member.email,
       });

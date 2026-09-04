@@ -1224,9 +1224,7 @@ async function buildCashDashboard(
   selection: FinanceDashboardSelection
 ) {
   const [series, latestSnapshot] = await Promise.all([
-    buildFinanceMonthlyBalanceSeries(selection.primary, {
-      currentMonth: selection.currentMonth,
-    }),
+    buildFinanceMonthlyBalanceSeries(selection.primary),
     loadLatestBankBalancesSnapshot(club),
   ]);
   const monthPoints = series.points.filter((point) => point.hasData);
@@ -1329,9 +1327,7 @@ async function buildBalanceOrWorkingCapitalDashboard(input: {
   selection: FinanceDashboardSelection;
   workingCapitalOnly: boolean;
 }) {
-  const series = await buildFinanceMonthlyBalanceSeries(input.selection.primary, {
-    currentMonth: input.selection.currentMonth,
-  });
+  const series = await buildFinanceMonthlyBalanceSeries(input.selection.primary);
   const monthPoints = series.points.filter((point) => point.hasData);
   const latest = series.latest;
   const currentRatio =

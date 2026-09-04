@@ -237,7 +237,6 @@ function buildPaidNarrative(
 }
 
 function buildCancelledPostPaymentNarrative(
-  booking: NarrativeBooking,
   paidEvent: NarrativeEvent,
   cancelEvent: NarrativeEvent | undefined,
   settlementEvent: NarrativeEvent | undefined,
@@ -360,7 +359,6 @@ function buildCancelledNarrative(
         !isDuplicateCaptureRefundEvent(e)
     );
     return buildCancelledPostPaymentNarrative(
-      booking,
       paidEvent,
       cancelEvent,
       settlementEvent,
