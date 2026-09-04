@@ -1325,6 +1325,18 @@ carried through exactly as stored and the headline moves by exactly what the
 strands moved by. Nothing else about the park changes: what a parked edit itself
 writes is still no amount at all.
 
+**Where the requirement does NOT yet reach, stated rather than left to be
+found.** The re-base rides on the night-price repair, so a review settled or
+dismissed with the boxes left blank — a valid answer, and the ordinary one where
+the settled amount is not simply what the nights were worth — leaves the headline
+where the park put it. On most parked edits that is already in step, because a
+park moves neither the booking's totals nor any strand's
+`BookingGuest.priceCents`. It is NOT in step after a parked guest REMOVAL, whose
+structural half commits and takes the strand away while the frozen headline still
+counts it. Bringing that case into line means asserting a booking total built
+from strands the system has said it cannot value, which is a decision rather than
+an omission to code around, and it is not what the #3219 decision settled.
+
 **What the re-based `BookingGuest.priceCents` is read by, since the booking's
 headline totals alone would leave that unsaid.** The strand total
 this repair moves is a Xero input, and the repair also flips a strand out of the
