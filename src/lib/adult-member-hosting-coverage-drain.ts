@@ -18,6 +18,10 @@ import {
   renewHostingCoverageReevaluationClaim,
   type HostingCoverageReevaluationItem,
 } from "@/lib/adult-member-hosting-coverage-queue";
+import {
+  expandWithSplitHalves,
+  resolveRowRemit,
+} from "@/lib/adult-member-hosting-coverage-remit";
 import { tryLockAdultMemberHostingPolicySet } from "@/lib/adult-member-hosting-policy-set";
 import {
   isHostingCoverageSourceBookingTerminal,
@@ -441,29 +445,6 @@ export async function drainHostingCoverageReevaluations(
 }
 
 /**
- * The given bookings plus their #738 split halves, de-duplicated.
- *
- * One place rather than two arms of a conditional, so the two cannot disagree about
- * whether the half carrying the non-member guests is reconciled (`INV-SSOT-001`). A
- * split child has neither canonical group relation, so a Group Trip fan-out names its
- * PARENT and only its parent, leaving the half that carries the non-member guests as
- * the one half nobody re-evaluated; the unconditional `SAME_BOOKING` borrow relation
- * is how the child is reached. `loadHostingCoverageSplitSiblingIds` already excludes
- * ids in its input and caps itself, so this is a concatenation and never a widening,
- * and every id it adds costs one idempotent existential re-read.
- */
-async function expandWithSplitHalves(
-  bookingIds: readonly string[],
-  db: Prisma.TransactionClient,
-): Promise<string[]> {
-  if (bookingIds.length === 0) return [];
-  return [
-    ...bookingIds,
-    ...(await loadHostingCoverageSplitSiblingIds(bookingIds, db)),
-  ];
-}
-
-/**
  * Settle one queued item: every active booking of that owner, at that lodge, over
  * those nights, bounded by the item itself (§10). §14's EXISTENTIAL RULE IS WHAT
  * THE LOOP BELOW IMPLEMENTS: not "did the source that used to cover this booking
@@ -577,13 +558,15 @@ async function processHostingCoverageReevaluation(
     db,
   );
 
-  // A SPLIT PAIR IS ONE BOOKING FOR AN OVERRIDE, never for a decline (INV-HOST-053).
-  const subject = refreshedItem.sourceBookingId;
-  const officer = refreshedItem.cause === "OFFICER_OVERRIDE";
-  const rowIsAbout = new Set(
-    subject && officer ? await expandWithSplitHalves([subject], db) : [subject],
+  // Whose story this row tells, and which bookings it must stay quiet about
+  // until their own row speaks (`INV-HOST-053`).
+  const { rowIsAbout, yieldTo } = await resolveRowRemit(
+    refreshedItem,
+    dependentIds,
+    db,
   );
   for (const bookingId of dependentIds) {
+    if (yieldTo.has(bookingId)) continue;
     const rowIsAboutThisBooking = rowIsAbout.has(bookingId);
     const outcome = await reconcileSameOwnerCoverageIncident(
       {

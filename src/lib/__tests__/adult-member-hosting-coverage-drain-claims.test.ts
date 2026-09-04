@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   defer: vi.fn(),
   fail: vi.fn(),
   loadClaimed: vi.fn(),
+  storyPending: vi.fn(),
   releaseContention: vi.fn(),
   renew: vi.fn(),
   tryPolicySet: vi.fn(),
@@ -37,6 +38,10 @@ vi.mock("@/lib/adult-member-hosting-coverage-queue", () => ({
   loadClaimedHostingCoverageReevaluation: mocks.loadClaimed,
   releaseHostingCoverageReevaluationContention: mocks.releaseContention,
   renewHostingCoverageReevaluationClaim: mocks.renew,
+  // #3241: the drain's remit module reads this one, so the factory owes it —
+  // a mock short of an export the widened graph reads throws at import and
+  // takes the whole file down before a test runs (`docs/TESTING.md`).
+  bookingsWithTheirOwnStoryPending: mocks.storyPending,
 }));
 
 vi.mock("@/lib/adult-member-hosting-policy-set", () => ({
@@ -143,6 +148,7 @@ describe("hosting coverage drain claim fences (#2596)", () => {
     mocks.sourceBookingIsTerminal.mockResolvedValue(false);
     mocks.loadDependents.mockResolvedValue([]);
     mocks.loadSplitSiblings.mockResolvedValue([]);
+    mocks.storyPending.mockResolvedValue(new Set<string>());
     mocks.loadGroupDependents.mockResolvedValue([]);
     mocks.resolveIncidents.mockResolvedValue(0);
     mocks.loadNotificationDelivery.mockResolvedValue({ ...DELIVERY });
@@ -399,6 +405,44 @@ describe("hosting coverage drain claim fences (#2596)", () => {
       },
       expect.anything(),
     );
+  });
+
+  it("leaves the opening to the row that owns the story", async () => {
+    // #3241, `INV-HOST-053`. Both rows are written in ONE transaction, and
+    // PostgreSQL gives every row in a transaction the same `now()` — so the claim
+    // ordering by `enqueuedAt` cannot separate them and either can arrive first.
+    // If this sweep opens the acknowledged booking's incident, the row that HAS
+    // the officer's reason can only promote it afterwards, which moves §7's
+    // mandatory reason off the OPENING event and onto an update. An officer
+    // filtering the audit log for "incident opened" would then never see why.
+    const sweep = {
+      ...CLAIMED_ITEM,
+      cause: "OFFICER_OVERRIDE" as const,
+      sourceBookingId: "booking-officer-acted-on",
+      actorMemberId: "officer-1",
+      reason: "Spoke with the family",
+    };
+    mocks.claim.mockReset();
+    mocks.claim.mockResolvedValueOnce([sweep]).mockResolvedValue([]);
+    mocks.lockMember.mockResolvedValue(0);
+    mocks.loadClaimed.mockResolvedValue(sweep);
+    mocks.loadDependents.mockResolvedValue([
+      "booking-officer-acted-on",
+      "booking-with-its-own-row",
+    ]);
+    mocks.storyPending.mockResolvedValue(new Set(["booking-with-its-own-row"]));
+    mocks.reconcile.mockResolvedValue({ action: "none" });
+
+    await drainHostingCoverageReevaluations({}, makeDb());
+
+    const touched = mocks.reconcile.mock.calls.map(
+      (call: unknown[]) => (call[0] as { bookingId: string }).bookingId,
+    );
+    expect(touched).toContain("booking-officer-acted-on");
+    expect(
+      touched,
+      "INV-HOST-053: the booking with its own story row is left to that row",
+    ).not.toContain("booking-with-its-own-row");
   });
 
   it("does NOT hand a split half a decision nobody asked its owner about", async () => {

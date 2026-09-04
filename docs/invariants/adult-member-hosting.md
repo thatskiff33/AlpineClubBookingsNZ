@@ -1980,7 +1980,27 @@ compliant indefinitely.
      existing overlap rule and the ordinary edit still writes exactly one row.
      The changed booking's own row does not carry the decision either: "asked whether to move this booking as well" is
      self-contradictory on the booking they were editing.
-  3. **The fold promotes by rank**: `OFFICER_OVERRIDE` outranks
+  3. **A sweep yields the OPENING to the row that owns the story.** Before a
+     story-carrying row opens an incident for a booking that is not its own, it
+     asks whether that booking already has an unprocessed row of its own carrying
+     a story, and if so leaves it alone entirely — that row will reconcile it
+     moments later, with the explanation.
+
+     This is about the AUDIT HISTORY, not the stored cause. Without it the sweep
+     can open the incident unexplained and the explained row can then only
+     promote it, which puts §7's mandatory reason on an *update* rather than on
+     the opening — and an officer filtering the audit log for "incident opened",
+     which is what the admin screen offers, would never see why. Ordering cannot
+     fix it: both rows are written in one transaction, PostgreSQL gives every row
+     in a transaction the same `now()`, and the claim orders by `enqueuedAt`.
+
+     It yields only to a row that can still run. A row at or past `maxAttempts`
+     is retired, so deferring to it would hold the incident closed for good — an
+     unnoticed hazard is worse than an unexplained opening. `resolveRowRemit` in
+     `adult-member-hosting-coverage-remit.ts` is the one home for both halves of
+     a row's remit, split out of the drain when that file reached its size budget
+     with a second job in it.
+  4. **The fold promotes by rank**: `OFFICER_OVERRIDE` outranks
      `OWNER_DECLINED_LINKED_MOVE`, which outranks `SYSTEM_CHANGE`. For an
      identical uncovered state a more explained cause overwrites a less explained
      one, and never the reverse. That is what makes drain order stop mattering: a
