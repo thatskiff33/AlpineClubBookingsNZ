@@ -1520,6 +1520,328 @@ export function auditIndexRows(files) {
 }
 
 /**
+ * ## Word budgets (#2789)
+ *
+ * One home per decision: a standing rule lives in its invariant, and the
+ * measurements, alternatives and history behind it live in the deciding issue.
+ * The owner's stated reason (11 Aug 2026) is that a decision that changed
+ * nothing once had to be recorded in seven files because earlier work had
+ * restated the same facts seven times. Two budgets make the rule mechanical:
+ *
+ *  - an index row's description is at most {@link INDEX_ROW_WORD_CAP} words —
+ *    the cap `SCHEME.md` §5.2 states, and the reason the index still fits the
+ *    always-read core; it has no exceptions and no ratchet;
+ *  - an invariant entry is at most {@link INVARIANT_ENTRY_WORD_BUDGET} words
+ *    unless {@link WORD_BUDGET_REGISTER} carries an approved exception for it
+ *    (its own fixed ceiling, the deciding issue and the reason it cannot be
+ *    split) or a migration-ratchet record (the exact count it had when it was
+ *    last measured, which may only go down).
+ *
+ * A **word** is a whitespace-separated token containing at least one letter or
+ * digit, so a lone pipe, dash, em dash or arrow is Markdown structure rather
+ * than a word. An **entry** runs from a canonical definition heading to the
+ * next canonical definition, or to the next heading of the same or a higher
+ * level that carries no invariant-shaped token. Everything in between counts,
+ * including fenced code and deeper sub-headings: the budget is about how much a
+ * reader has to hold, not about which syntax it arrived in. A heading that
+ * *looks* like a definition but is not canonical — a lookalike codepoint, a
+ * Setext underline, a heading inside a list — never ends an entry, so it cannot
+ * be used to split an oversize one into two compliant halves; the shape audit
+ * above fails the heading itself in the same run.
+ *
+ * Every failure names the id, the measured count and the limit that applied,
+ * because a person reading it has to know which of the three knobs to turn.
+ */
+
+/** The cap on an index row's description, in words. `SCHEME.md` §5.2. */
+export const INDEX_ROW_WORD_CAP = 12;
+
+/** The default budget for one invariant entry, in words. `SCHEME.md` §8. */
+export const INVARIANT_ENTRY_WORD_BUDGET = 300;
+
+/**
+ * The register of approved exceptions and migration-ratchet records. Absent is
+ * legal and means "no exceptions, no debt" — which is the intended end state
+ * once the ratchet has shrunk to nothing and the file is deleted.
+ */
+export const WORD_BUDGET_REGISTER = "docs/invariants/WORD_BUDGETS.md";
+
+/** The register's two table sections, matched on their exact `##` text. */
+export const WORD_BUDGET_EXCEPTIONS_HEADING = "Approved exceptions";
+export const WORD_BUDGET_RATCHET_HEADING = "Migration ratchet";
+
+const WORD_BUDGET_EXCEPTION_ROW_PATTERN =
+  /^ {0,3}\|\s*`(INV-[A-Z][A-Z0-9]*-\d{3})`\s*\|\s*(\d+)\s*\|\s*(#\d+)\s*\|\s*(\S.*?)\s*\|\s*$/;
+const WORD_BUDGET_RATCHET_ROW_PATTERN =
+  /^ {0,3}\|\s*`(INV-[A-Z][A-Z0-9]*-\d{3})`\s*\|\s*(\d+)\s*\|\s*$/;
+const TABLE_ROW_PATTERN = /^ {0,3}\|(.*)\|\s*$/;
+
+/** Count the words in a piece of text, per the definition above. */
+export function countWords(text) {
+  let count = 0;
+  for (const token of text.split(/\s+/)) {
+    if (/[\p{L}\p{N}]/u.test(token)) count += 1;
+  }
+  return count;
+}
+
+/**
+ * The description cell of an index row: everything after the id cell, with the
+ * closing pipe removed. One home, because the audit and the `--words` inventory
+ * must count the same text or the inventory is a rubber stamp (INV-SSOT-004).
+ */
+export function indexRowDescription(line, match = line.match(INDEX_ROW_PATTERN)) {
+  return line.slice(match[0].length).replace(/\|\s*$/, "");
+}
+
+/** The `#` depth of an ATX heading line; a Setext heading is level 1 or 2. */
+function headingLevel(heading) {
+  if (heading.kind !== "atx") return 2;
+  return heading.text.match(/^ {0,3}(#{1,6})/)[1].length;
+}
+
+/**
+ * Measure every invariant entry: id -> { at, words }.
+ *
+ * Definitions are the canonical headings {@link collectDefinitions} takes; the
+ * span rule is the one in the section comment above. A duplicate definition is
+ * reported by {@link auditInvariantIds}, so the first occurrence is measured
+ * here and the second is left to that audit.
+ */
+export function measureInvariantEntryWords(files) {
+  const entries = new Map();
+  const ordered = [...files].sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
+  for (const [rel, text] of ordered) {
+    if (!rel.startsWith(INVARIANT_DIR) || !rel.endsWith(".md")) continue;
+    const lines = text.split(/\r?\n/);
+    const headings = scanMarkdownBlocks(text).headings.map((heading) => ({
+      ...heading,
+      isDefinition:
+        heading.kind === "atx" &&
+        heading.containerDepth === 0 &&
+        DEFINITION_PATTERN.test(heading.text),
+      level: headingLevel(heading),
+      hasInvariantToken: INVARIANT_SHAPED_TOKEN_PATTERN.test(
+        headingInvariantShapeText(heading.text),
+      ),
+      startLine: heading.lineNumbers[0],
+    }));
+
+    for (const [index, heading] of headings.entries()) {
+      if (!heading.isDefinition) continue;
+      const id = heading.text.match(DEFINITION_PATTERN)[1];
+      let end = lines.length + 1;
+      for (const later of headings.slice(index + 1)) {
+        if (
+          later.isDefinition ||
+          (!later.hasInvariantToken && later.level <= heading.level)
+        ) {
+          end = later.startLine;
+          break;
+        }
+      }
+      let words = 0;
+      for (let number = heading.startLine + 1; number < end; number += 1) {
+        words += countWords(lines[number - 1]);
+      }
+      if (!entries.has(id)) entries.set(id, { at: `${rel}:${heading.startLine}`, words });
+    }
+  }
+  return entries;
+}
+
+/**
+ * Parse {@link WORD_BUDGET_REGISTER}: `{ exceptions, ratchet, problems }`.
+ *
+ * Strict on purpose. A row in either table that starts with something shaped
+ * like an id but does not match the exact row form is a failure rather than a
+ * row that is quietly not a record — that is the same discipline the heading
+ * shape audit applies, and for the same reason: a record that parses as
+ * nothing is a limit that is silently not enforced.
+ */
+export function parseWordBudgetRegister(files) {
+  const exceptions = new Map();
+  const ratchet = new Map();
+  const problems = [];
+  const text = files.get(WORD_BUDGET_REGISTER);
+  if (text === undefined) return { exceptions, ratchet, problems };
+
+  const duplicate = (at, id) =>
+    `${at} records ${id} a second time. One id has one limit: either one approved ` +
+    "exception or one ratchet record, never both and never twice.";
+
+  let section = null;
+  for (const { number, text: line } of scannableLines(text)) {
+    const heading = line.match(INDEX_SECTION_HEADING_PATTERN);
+    if (heading) {
+      section = heading[1];
+      continue;
+    }
+    const row = line.match(TABLE_ROW_PATTERN);
+    if (!row) continue;
+    const firstCell = row[1].split("|")[0];
+    const idShaped =
+      INVARIANT_SHAPED_TOKEN_PATTERN.test(headingInvariantShapeText(firstCell)) ||
+      nonAsciiInsideInvariantWord(firstCell) !== null;
+    if (!idShaped) continue;
+    const at = `${WORD_BUDGET_REGISTER}:${number}`;
+
+    if (section === WORD_BUDGET_EXCEPTIONS_HEADING) {
+      const match = line.match(WORD_BUDGET_EXCEPTION_ROW_PATTERN);
+      if (!match) {
+        problems.push(
+          `${at} is in the "${section}" table but is not a well-formed exception row. ` +
+            "The exact form is | `INV-<PREFIX>-<NNN>` | <ceiling> | #<issue> | <reason> |, " +
+            "with an ASCII id, a whole-number ceiling, the deciding issue as #<number> " +
+            "and a non-empty reason. A row that parses as nothing is a limit that is " +
+            "silently not enforced, so it fails instead.",
+        );
+        continue;
+      }
+      const [, id, ceiling, issue, reason] = match;
+      if (exceptions.has(id) || ratchet.has(id)) {
+        problems.push(duplicate(at, id));
+        continue;
+      }
+      exceptions.set(id, { at, ceiling: Number(ceiling), issue, reason });
+    } else if (section === WORD_BUDGET_RATCHET_HEADING) {
+      const match = line.match(WORD_BUDGET_RATCHET_ROW_PATTERN);
+      if (!match) {
+        problems.push(
+          `${at} is in the "${section}" table but is not a well-formed ratchet row. ` +
+            "The exact form is | `INV-<PREFIX>-<NNN>` | <words> |, with an ASCII id " +
+            "and the whole-number word count the entry had when it was last measured. " +
+            "A row that parses as nothing is a limit that is silently not enforced, so " +
+            "it fails instead.",
+        );
+        continue;
+      }
+      const [, id, words] = match;
+      if (exceptions.has(id) || ratchet.has(id)) {
+        problems.push(duplicate(at, id));
+        continue;
+      }
+      ratchet.set(id, { at, words: Number(words) });
+    } else {
+      problems.push(
+        `${at} is an id-shaped table row outside both budget tables ` +
+          `("${WORD_BUDGET_EXCEPTIONS_HEADING}" and "${WORD_BUDGET_RATCHET_HEADING}"). ` +
+          "Only those two tables are read, so a record anywhere else in the file is a " +
+          "record nothing enforces. Move it under the right heading, or take it out.",
+      );
+    }
+  }
+  return { exceptions, ratchet, problems };
+}
+
+/**
+ * Index rows within {@link INDEX_ROW_WORD_CAP} words; every entry within its
+ * applicable limit; the register exact — no stale, duplicate, unknown or
+ * malformed record, no exception that the default budget already covers.
+ */
+export function auditWordBudgets(files) {
+  const problems = [];
+
+  const indexText = files.get(INVARIANT_INDEX);
+  if (indexText !== undefined) {
+    for (const { number, text: line } of scannableLines(indexText)) {
+      const match = line.match(INDEX_ROW_PATTERN);
+      if (!match) continue;
+      const words = countWords(indexRowDescription(line, match));
+      if (words > INDEX_ROW_WORD_CAP) {
+        problems.push(
+          `${INVARIANT_INDEX}:${number} — the description for ${match[1]} is ${words} ` +
+            `words; the cap is ${INDEX_ROW_WORD_CAP} (SCHEME.md §5.2), with no exceptions ` +
+            "and no ratchet. The index is the part of the invariants everybody reads in " +
+            "full, and the cap is what keeps it inside the always-read core. Say what " +
+            "the rule covers, not what it says; the entry itself holds the rule.",
+        );
+      }
+    }
+  }
+
+  const register = parseWordBudgetRegister(files);
+  problems.push(...register.problems);
+  const entries = measureInvariantEntryWords(files);
+
+  for (const [id, { at, words }] of [...entries].sort()) {
+    const exception = register.exceptions.get(id);
+    const record = register.ratchet.get(id);
+    if (exception) {
+      if (exception.ceiling <= INVARIANT_ENTRY_WORD_BUDGET) {
+        problems.push(
+          `${exception.at} approves a ceiling of ${exception.ceiling} words for ${id}, which ` +
+            `is not above the default budget of ${INVARIANT_ENTRY_WORD_BUDGET}. An exception ` +
+            "that the default already covers is a record with no effect; delete it.",
+        );
+      } else if (words > exception.ceiling) {
+        problems.push(
+          `${id} at ${at} is ${words} words; its approved-exception ceiling is ` +
+            `${exception.ceiling} (${exception.at}, ${exception.issue}). The ceiling is the ` +
+            "limit the owner approved, not a floor to grow from. Compact the entry back " +
+            "under it, or take a fresh approval for a new ceiling on the deciding issue.",
+        );
+      } else if (words <= INVARIANT_ENTRY_WORD_BUDGET) {
+        problems.push(
+          `${exception.at} approves an exception for ${id}, but the entry at ${at} is ` +
+            `${words} words and the default budget is ${INVARIANT_ENTRY_WORD_BUDGET}. The ` +
+            "entry no longer needs the exception; delete the row so the register stays " +
+            "an exact inventory of what is really excepted.",
+        );
+      }
+      continue;
+    }
+    if (record) {
+      if (words <= INVARIANT_ENTRY_WORD_BUDGET) {
+        problems.push(
+          `${record.at} carries a ratchet record for ${id}, but the entry at ${at} is ` +
+            `${words} words and the default budget is ${INVARIANT_ENTRY_WORD_BUDGET}. It ` +
+            "is compliant now — delete the row. The ratchet only ever shrinks, and a " +
+            "record for a compliant entry is a ceiling it could grow back up to.",
+        );
+      } else if (words > record.words) {
+        problems.push(
+          `${id} at ${at} is ${words} words; its ratchet record is ${record.words} ` +
+            `(${record.at}). An oversize entry may only shrink toward the ` +
+            `${INVARIANT_ENTRY_WORD_BUDGET}-word budget, never grow. Take the addition ` +
+            "out, or compact the entry by at least as much as it adds and lower the record.",
+        );
+      } else if (words < record.words) {
+        problems.push(
+          `${id} at ${at} is ${words} words; its ratchet record is ${record.words} ` +
+            `(${record.at}). Good — it shrank. Record ${words} so it cannot grow back, ` +
+            "because the record is the ceiling and the ratchet is monotonic.",
+        );
+      }
+      continue;
+    }
+    if (words > INVARIANT_ENTRY_WORD_BUDGET) {
+      problems.push(
+        `${id} at ${at} is ${words} words; the budget is ${INVARIANT_ENTRY_WORD_BUDGET} ` +
+          `and ${WORD_BUDGET_REGISTER} carries neither an approved exception nor a ` +
+          "ratchet record for it. Keep the rule, the pin and the link; move the " +
+          "measurements, alternatives and history to the deciding issue and link it. " +
+          "Never broaden, narrow or reword the rule to fit — if it genuinely cannot be " +
+          "compacted or split, that is an approved exception with its own ceiling, " +
+          "taken on the deciding issue, not a silent overrun.",
+      );
+    }
+  }
+
+  for (const [id, { at }] of [...register.exceptions, ...register.ratchet].sort()) {
+    if (!entries.has(id)) {
+      problems.push(
+        `${at} records ${id}, but nothing under ${INVARIANT_DIR} defines it. A record ` +
+          "for an id that does not exist is either a typo — in which case the real " +
+          "entry is unguarded — or a leftover from a retired rule.",
+      );
+    }
+  }
+
+  return problems;
+}
+
+/**
  * Every heading named in {@link STABLE_INDEX_HEADINGS} is still a `##` heading
  * of the index, spelled exactly the same way.
  *
@@ -2299,6 +2621,7 @@ export function auditDocs(
     ...auditInvariantIds(files),
     ...auditInvariantFilesLinkedFromIndex(files),
     ...auditIndexRows(files),
+    ...auditWordBudgets(files),
     ...auditRoutingTable(files),
     ...auditLineNumberCitations(files),
     ...auditDocReachability(files),
@@ -2634,10 +2957,67 @@ export function loadInvariantFilesAtRef(repoRoot, ref) {
 }
 
 const invokedPath = process.argv[1] ? pathToFileURL(process.argv[1]).href : null;
+/**
+ * `--words`: print the word-count inventory instead of auditing.
+ *
+ * The same measurement the audit applies, over the same tracked tree, so a
+ * lane compacting an entry or proposing a budget reads the figure CI will hold
+ * it to rather than one from a script of its own (INV-SSOT-004: two instruments
+ * that measure differently agree where both are blind). Every entry, longest
+ * first, then the distribution, then every index row over the cap.
+ */
+export function formatWordInventory(files) {
+  const entries = [...measureInvariantEntryWords(files)].sort(
+    ([, left], [, right]) => right.words - left.words,
+  );
+  const lines = entries.map(
+    ([id, { at, words }]) => `${String(words).padStart(5)}  ${id.padEnd(16)} ${at}`,
+  );
+  const total = entries.reduce((sum, [, { words }]) => sum + words, 0);
+  lines.push("", `${entries.length} entries, ${total} words in total`);
+  const bands = [
+    [0, 100],
+    [101, 200],
+    [201, INVARIANT_ENTRY_WORD_BUDGET],
+    [INVARIANT_ENTRY_WORD_BUDGET + 1, 350],
+    [351, 500],
+    [501, 800],
+    [801, 1500],
+    [1501, Number.POSITIVE_INFINITY],
+  ];
+  for (const [low, high] of bands) {
+    const count = entries.filter(([, { words }]) => words >= low && words <= high).length;
+    lines.push(`  ${low}-${Number.isFinite(high) ? high : "up"}: ${count}`);
+  }
+  const register = parseWordBudgetRegister(files);
+  lines.push(
+    `  over the ${INVARIANT_ENTRY_WORD_BUDGET}-word budget: ${entries.filter(([, { words }]) => words > INVARIANT_ENTRY_WORD_BUDGET).length} ` +
+      `(${register.exceptions.size} approved exception(s), ${register.ratchet.size} ratchet record(s))`,
+  );
+  const indexText = files.get(INVARIANT_INDEX) ?? "";
+  const overCap = [];
+  for (const { number, text: line } of scannableLines(indexText)) {
+    const match = line.match(INDEX_ROW_PATTERN);
+    if (!match) continue;
+    const words = countWords(indexRowDescription(line, match));
+    if (words > INDEX_ROW_WORD_CAP) {
+      overCap.push(
+        `${String(words).padStart(5)}  ${match[1].padEnd(16)} ${INVARIANT_INDEX}:${number}`,
+      );
+    }
+  }
+  lines.push("", `index rows over the ${INDEX_ROW_WORD_CAP}-word cap: ${overCap.length}`, ...overCap);
+  return lines.join("\n");
+}
+
 if (invokedPath === import.meta.url) {
   const repoRoot = path.resolve(path.join(import.meta.dirname, "..", ".."));
   try {
     const files = loadTrackedFiles(repoRoot);
+    if (process.argv.includes("--words")) {
+      console.log(formatWordInventory(files));
+      process.exit(0);
+    }
     const baselineRef = resolveInvariantBaselineRef(repoRoot);
     const baselineFiles = loadInvariantFilesAtRef(repoRoot, baselineRef);
     const definitions = collectDefinitions(files);
@@ -2658,12 +3038,16 @@ if (invokedPath === import.meta.url) {
       process.exitCode = 1;
     } else {
       const prefixes = new Set([...definitions.keys()].map(prefixOf));
+      const wordRegister = parseWordBudgetRegister(files);
       const routedRows = routingTableRows(files.get(ROUTING_TABLE_FILE) ?? "").length;
       console.log(
         `Doc index check passed: ${definitions.size} invariant id(s) across ` +
           `${prefixes.size} prefix(es), each numbering densely from 001 so the next id in ` +
           "a prefix can only be max + 1, every citation resolves, every id is indexed, " +
           `every id present at base ${baselineRef.slice(0, 12)} is still defined, ` +
+          `every index row is within ${INDEX_ROW_WORD_CAP} words and every entry within its ` +
+          `word budget (${INVARIANT_ENTRY_WORD_BUDGET} by default, ${wordRegister.exceptions.size} approved ` +
+          `exception(s), ${wordRegister.ratchet.size} ratchet record(s)), ` +
           `every docs/ page is reachable, ${routedRows} routing row(s) resolve, all ` +
           `${STABLE_INDEX_HEADINGS.length} pre-split index headings are intact, no line ` +
           "number is cited into the invariants, no file is BOM'd or double-encoded, no " +

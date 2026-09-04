@@ -20,6 +20,14 @@ import {
   auditDocs,
   auditEncoding,
   auditTextScanCoverage,
+  auditWordBudgets,
+  countWords,
+  formatWordInventory,
+  INDEX_ROW_WORD_CAP,
+  INVARIANT_ENTRY_WORD_BUDGET,
+  measureInvariantEntryWords,
+  parseWordBudgetRegister,
+  WORD_BUDGET_REGISTER,
   auditIndexRows,
   auditInvariantFilesLinkedFromIndex,
   auditInvariantIds,
@@ -2824,6 +2832,500 @@ describe("the control-character checks are wired into the whole check", () => {
           problem.includes("hiding it from this scan"),
       ),
     ).toEqual([]);
+  });
+});
+
+describe("word budgets (#2789)", () => {
+  /** `n` distinct words, one per token, so the count is exactly what it says. */
+  const prose = (n) => Array.from({ length: n }, (_, i) => `w${i + 1}`).join(" ");
+
+  /** The fixture repository with `money.md` replaced by one entry of `n` words. */
+  const repoWithEntry = (n, extra = {}) =>
+    repo({
+      "docs/invariants/money.md": ["# Money", "", "## INV-MONEY-001", "", prose(n), ""].join(
+        "\n",
+      ),
+      ...extra,
+    });
+
+  /** A register file with the given exception and ratchet rows. */
+  const register = ({ exceptions = [], ratchet = [] } = {}) =>
+    [
+      "# Word budgets",
+      "",
+      "## Approved exceptions",
+      "",
+      "| ID | Ceiling | Deciding issue | Reason |",
+      "| --- | ---: | --- | --- |",
+      ...exceptions,
+      "",
+      "## Migration ratchet",
+      "",
+      "| ID | Words |",
+      "| --- | ---: |",
+      ...ratchet,
+      "",
+    ].join("\n");
+
+  const budgetProblems = auditWordBudgets;
+
+  describe("countWords", () => {
+    it("counts whitespace-separated tokens that carry a letter or digit", () => {
+      expect(countWords("Store and calculate money as integer cents")).toBe(7);
+      expect(countWords("  two\twords\n")).toBe(2);
+      expect(countWords("")).toBe(0);
+    });
+
+    it("does not count Markdown structure or bare punctuation as words", () => {
+      // A pipe, a list dash, an em dash, an arrow and a lone asterisk are not
+      // words; `**bold**`, `` `code` `` and `#2789` are.
+      expect(countWords("| - — -> * **bold** `code` #2789 v0.13")).toBe(4);
+    });
+
+    it("counts non-Latin letters, since the corpus carries te reo Maori", () => {
+      expect(countWords("Māori kupu")).toBe(2);
+    });
+  });
+
+  describe("index rows", () => {
+    it("passes the control repository, whose one row is seven words", () => {
+      expect(budgetProblems(repo())).toEqual([]);
+    });
+
+    it("accepts a description of exactly the cap", () => {
+      const files = repo();
+      files.set(
+        "docs/DOMAIN_INVARIANTS.md",
+        files
+          .get("docs/DOMAIN_INVARIANTS.md")
+          .replace("Store and calculate money as integer cents", prose(INDEX_ROW_WORD_CAP)),
+      );
+      expect(budgetProblems(files)).toEqual([]);
+    });
+
+    it("fails a description one word over the cap, naming id, count and cap", () => {
+      const files = repo();
+      files.set(
+        "docs/DOMAIN_INVARIANTS.md",
+        files
+          .get("docs/DOMAIN_INVARIANTS.md")
+          .replace(
+            "Store and calculate money as integer cents",
+            prose(INDEX_ROW_WORD_CAP + 1),
+          ),
+      );
+      const problems = budgetProblems(files);
+      expect(problems).toHaveLength(1);
+      expect(problems[0]).toContain("docs/DOMAIN_INVARIANTS.md:7");
+      expect(problems[0]).toContain("INV-MONEY-001");
+      expect(problems[0]).toContain(`is ${INDEX_ROW_WORD_CAP + 1} words`);
+      expect(problems[0]).toContain(`the cap is ${INDEX_ROW_WORD_CAP}`);
+    });
+
+    it("does not let punctuation-only tokens push a row over, or words hide behind pipes", () => {
+      const files = repo();
+      // Twelve words plus an em dash and an arrow: still twelve.
+      files.set(
+        "docs/DOMAIN_INVARIANTS.md",
+        files
+          .get("docs/DOMAIN_INVARIANTS.md")
+          .replace(
+            "Store and calculate money as integer cents",
+            `${prose(6)} — ${prose(6)} ->`,
+          ),
+      );
+      expect(budgetProblems(files)).toEqual([]);
+    });
+
+    it("is reached through auditDocs, so the CLI enforces it", () => {
+      const files = repo();
+      files.set(
+        "docs/DOMAIN_INVARIANTS.md",
+        files
+          .get("docs/DOMAIN_INVARIANTS.md")
+          .replace("Store and calculate money as integer cents", prose(40)),
+      );
+      expect(auditDocs(files).filter((problem) => problem.includes("the cap is"))).toHaveLength(1);
+    });
+  });
+
+  describe("measureInvariantEntryWords", () => {
+    it("measures from the definition heading to the next definition", () => {
+      const files = repo({
+        "docs/invariants/money.md": [
+          "# Money",
+          "",
+          "Front matter that belongs to no entry.",
+          "",
+          "## INV-MONEY-001",
+          "",
+          prose(10),
+          "",
+          "## INV-MONEY-002",
+          "",
+          prose(3),
+          "",
+        ].join("\n"),
+      });
+      const entries = measureInvariantEntryWords(files);
+      expect(entries.get("INV-MONEY-001")).toEqual({ at: "docs/invariants/money.md:5", words: 10 });
+      expect(entries.get("INV-MONEY-002")).toEqual({ at: "docs/invariants/money.md:9", words: 3 });
+    });
+
+    it("ends an entry at a same-level structural heading but keeps a deeper one inside it", () => {
+      const files = repo({
+        "docs/invariants/money.md": [
+          "# Money",
+          "",
+          "## Section one",
+          "",
+          "### INV-MONEY-001",
+          "",
+          prose(10),
+          "",
+          "#### Where it holds, and where it does not",
+          "",
+          prose(5),
+          "",
+          "### Narrative heading at the same level",
+          "",
+          prose(100),
+          "",
+          "## Section two",
+          "",
+          prose(100),
+          "",
+        ].join("\n"),
+      });
+      // 10 body words + the 8 words of the sub-heading + 5 words beneath it.
+      expect(measureInvariantEntryWords(files).get("INV-MONEY-001").words).toBe(23);
+    });
+
+    it("counts fenced code and table rows: bulk is bulk", () => {
+      const files = repo({
+        "docs/invariants/money.md": [
+          "# Money",
+          "",
+          "## INV-MONEY-001",
+          "",
+          prose(4),
+          "",
+          "```ts",
+          "const a = 1;",
+          "```",
+          "",
+          "| Column | Other |",
+          "| --- | --- |",
+          "| cell | cell |",
+          "",
+        ].join("\n"),
+      });
+      // 4 + ts + `const a = 1;` (4 tokens, 3 with a letter or digit) + 2 header
+      // cells + 2 body cells. The fence markers and `| --- | --- |` count nothing.
+      expect(measureInvariantEntryWords(files).get("INV-MONEY-001").words).toBe(4 + 1 + 3 + 4);
+    });
+
+    it("does not let a definition-shaped heading inside a fence start or end an entry", () => {
+      const files = repo({
+        "docs/invariants/money.md": [
+          "# Money",
+          "",
+          "## INV-MONEY-001",
+          "",
+          prose(10),
+          "",
+          "```",
+          "## INV-MONEY-002",
+          "```",
+          "",
+          prose(10),
+          "",
+        ].join("\n"),
+      });
+      const entries = measureInvariantEntryWords(files);
+      expect(entries.has("INV-MONEY-002")).toBe(false);
+      // 10 + the fenced heading's two tokens (`##` carries no letter) + 10.
+      expect(entries.get("INV-MONEY-001").words).toBe(21);
+    });
+
+    it("does not let a lookalike heading split an oversize entry into two compliant halves", () => {
+      // U+2011 NON-BREAKING HYPHEN where the id wants hyphen-minus. GitHub renders
+      // it as an ordinary `### INV-MONEY-002`; a reviewer sees a second, compliant
+      // rule where there is really one oversize one.
+      const lookalike = "## INV‑MONEY‑002";
+      const files = repo({
+        "docs/invariants/money.md": [
+          "# Money",
+          "",
+          "## INV-MONEY-001",
+          "",
+          prose(200),
+          "",
+          lookalike,
+          "",
+          prose(200),
+          "",
+        ].join("\n"),
+      });
+      const entries = measureInvariantEntryWords(files);
+      expect([...entries.keys()]).toEqual(["INV-MONEY-001"]);
+      expect(entries.get("INV-MONEY-001").words).toBe(401);
+
+      // Both defences fire in one run: the budget names the whole count, and the
+      // shape audit names the codepoint.
+      const problems = auditDocs(files);
+      expect(problems.some((problem) => problem.includes("is 401 words"))).toBe(true);
+      expect(problems.some((problem) => problem.includes("U+2011"))).toBe(true);
+    });
+
+    it("does not let a Setext, backticked, lower-cased or list-nested id heading end an entry", () => {
+      const files = repo({
+        "docs/invariants/money.md": [
+          "# Money",
+          "",
+          "## INV-MONEY-001",
+          "",
+          prose(100),
+          "",
+          "INV-MONEY-002",
+          "-------------",
+          "",
+          prose(100),
+          "",
+          "## `INV-MONEY-003`",
+          "",
+          prose(100),
+          "",
+          "## inv-money-004",
+          "",
+          prose(100),
+          "",
+          "- ## INV-MONEY-005",
+          "",
+          prose(100),
+          "",
+        ].join("\n"),
+      });
+      const entries = measureInvariantEntryWords(files);
+      expect([...entries.keys()]).toEqual(["INV-MONEY-001"]);
+      // 500 words of prose plus the four non-canonical heading tokens.
+      expect(entries.get("INV-MONEY-001").words).toBe(504);
+      expect(auditDefinitionHeadingShapes(files).length).toBeGreaterThanOrEqual(4);
+    });
+
+    it("counts an entry that runs to the end of the file", () => {
+      expect(measureInvariantEntryWords(repoWithEntry(37)).get("INV-MONEY-001").words).toBe(37);
+    });
+  });
+
+  describe("entry budget", () => {
+    it("accepts an entry of exactly the budget", () => {
+      expect(budgetProblems(repoWithEntry(INVARIANT_ENTRY_WORD_BUDGET))).toEqual([]);
+    });
+
+    it("fails an entry one word over, naming id, place, count and budget", () => {
+      const problems = budgetProblems(repoWithEntry(INVARIANT_ENTRY_WORD_BUDGET + 1));
+      expect(problems).toHaveLength(1);
+      expect(problems[0]).toContain("INV-MONEY-001 at docs/invariants/money.md:3");
+      expect(problems[0]).toContain(`is ${INVARIANT_ENTRY_WORD_BUDGET + 1} words`);
+      expect(problems[0]).toContain(`the budget is ${INVARIANT_ENTRY_WORD_BUDGET}`);
+      expect(problems[0]).toContain("neither an approved exception nor a ratchet record");
+    });
+
+    it("fails through the whole audit, so the CLI enforces it", () => {
+      const problems = auditDocs(repoWithEntry(INVARIANT_ENTRY_WORD_BUDGET + 50));
+      expect(problems).toHaveLength(1);
+      expect(problems[0]).toContain(`is ${INVARIANT_ENTRY_WORD_BUDGET + 50} words`);
+    });
+  });
+
+  describe("the register", () => {
+    it("treats an absent register as no exceptions and no debt", () => {
+      const files = repoWithEntry(INVARIANT_ENTRY_WORD_BUDGET);
+      expect(files.has(WORD_BUDGET_REGISTER)).toBe(false);
+      expect(parseWordBudgetRegister(files)).toEqual({
+        exceptions: new Map(),
+        ratchet: new Map(),
+        problems: [],
+      });
+    });
+
+    it("lets an approved exception carry an entry up to its own ceiling, and no further", () => {
+      const rows = {
+        exceptions: ["| `INV-MONEY-001` | 400 | #2789 | one atomic rule; splitting it fragments the money model |"],
+      };
+      expect(
+        budgetProblems(repoWithEntry(400, { [WORD_BUDGET_REGISTER]: register(rows) })),
+      ).toEqual([]);
+
+      const problems = budgetProblems(
+        repoWithEntry(401, { [WORD_BUDGET_REGISTER]: register(rows) }),
+      );
+      expect(problems).toHaveLength(1);
+      expect(problems[0]).toContain("INV-MONEY-001 at docs/invariants/money.md:3 is 401 words");
+      expect(problems[0]).toContain("approved-exception ceiling is 400");
+      expect(problems[0]).toContain("#2789");
+    });
+
+    it("fails an exception whose ceiling the default budget already covers", () => {
+      const problems = budgetProblems(
+        repoWithEntry(10, {
+          [WORD_BUDGET_REGISTER]: register({
+            exceptions: [`| \`INV-MONEY-001\` | ${INVARIANT_ENTRY_WORD_BUDGET} | #2789 | reason |`],
+          }),
+        }),
+      );
+      expect(problems).toHaveLength(1);
+      expect(problems[0]).toContain("not above the default budget");
+    });
+
+    it("fails an exception for an entry that has become compliant", () => {
+      const problems = budgetProblems(
+        repoWithEntry(10, {
+          [WORD_BUDGET_REGISTER]: register({
+            exceptions: ["| `INV-MONEY-001` | 400 | #2789 | reason |"],
+          }),
+        }),
+      );
+      expect(problems).toHaveLength(1);
+      expect(problems[0]).toContain("no longer needs the exception");
+    });
+
+    it("fails an exception row missing its issue or its reason", () => {
+      for (const row of [
+        "| `INV-MONEY-001` | 400 | | reason |",
+        "| `INV-MONEY-001` | 400 | #2789 | |",
+        "| `INV-MONEY-001` | 400 | 2789 | reason |",
+        "| `INV-MONEY-001` | four hundred | #2789 | reason |",
+      ]) {
+        const problems = budgetProblems(
+          repoWithEntry(10, { [WORD_BUDGET_REGISTER]: register({ exceptions: [row] }) }),
+        );
+        expect(problems, row).toHaveLength(1);
+        expect(problems[0], row).toContain("not a well-formed exception row");
+      }
+    });
+
+    it("holds a ratchet record exactly: grown fails, shrunk fails, equal passes", () => {
+      const at = { [WORD_BUDGET_REGISTER]: register({ ratchet: ["| `INV-MONEY-001` | 500 |"] }) };
+
+      expect(budgetProblems(repoWithEntry(500, at))).toEqual([]);
+
+      const grown = budgetProblems(repoWithEntry(501, at));
+      expect(grown).toHaveLength(1);
+      expect(grown[0]).toContain("is 501 words; its ratchet record is 500");
+      expect(grown[0]).toContain("may only shrink");
+
+      const shrunk = budgetProblems(repoWithEntry(499, at));
+      expect(shrunk).toHaveLength(1);
+      expect(shrunk[0]).toContain("is 499 words; its ratchet record is 500");
+      expect(shrunk[0]).toContain("Record 499");
+    });
+
+    it("fails a ratchet record for an entry that is now within budget", () => {
+      const problems = budgetProblems(
+        repoWithEntry(INVARIANT_ENTRY_WORD_BUDGET, {
+          [WORD_BUDGET_REGISTER]: register({ ratchet: ["| `INV-MONEY-001` | 500 |"] }),
+        }),
+      );
+      expect(problems).toHaveLength(1);
+      expect(problems[0]).toContain("compliant now");
+    });
+
+    it("fails an id recorded twice, or in both tables", () => {
+      const problems = budgetProblems(
+        repoWithEntry(500, {
+          [WORD_BUDGET_REGISTER]: register({
+            exceptions: ["| `INV-MONEY-001` | 600 | #2789 | reason |"],
+            ratchet: ["| `INV-MONEY-001` | 500 |"],
+          }),
+        }),
+      );
+      expect(problems.filter((problem) => problem.includes("a second time"))).toHaveLength(1);
+    });
+
+    it("fails a record for an id nothing defines", () => {
+      const problems = budgetProblems(
+        repoWithEntry(10, {
+          [WORD_BUDGET_REGISTER]: register({ ratchet: ["| `INV-MONEY-002` | 500 |"] }),
+        }),
+      );
+      expect(problems).toHaveLength(1);
+      expect(problems[0]).toContain("INV-MONEY-002");
+      expect(problems[0]).toContain("nothing under docs/invariants/ defines it");
+    });
+
+    it("fails a lookalike id in a record instead of skipping the row", () => {
+      // The same U+2011 that would make a heading invisible: here it would make
+      // the ratchet record parse as nothing and leave the entry unguarded.
+      const problems = budgetProblems(
+        repoWithEntry(10, {
+          [WORD_BUDGET_REGISTER]: register({
+            ratchet: ["| `INV‑MONEY‑001` | 500 |"],
+          }),
+        }),
+      );
+      expect(problems).toHaveLength(1);
+      expect(problems[0]).toContain("not a well-formed ratchet row");
+    });
+
+    it("fails an id-shaped row that sits outside both tables", () => {
+      const problems = budgetProblems(
+        repoWithEntry(10, {
+          [WORD_BUDGET_REGISTER]: [
+            "# Word budgets",
+            "",
+            "## Something else",
+            "",
+            "| `INV-MONEY-001` | 500 |",
+            "",
+          ].join("\n"),
+        }),
+      );
+      expect(problems).toHaveLength(1);
+      expect(problems[0]).toContain("outside both budget tables");
+    });
+
+    it("ignores a fenced example row in the register", () => {
+      const problems = budgetProblems(
+        repoWithEntry(10, {
+          [WORD_BUDGET_REGISTER]: [
+            "# Word budgets",
+            "",
+            "## Migration ratchet",
+            "",
+            "```markdown",
+            "| `INV-MONEY-001` | 500 |",
+            "```",
+            "",
+          ].join("\n"),
+        }),
+      );
+      expect(problems).toEqual([]);
+    });
+  });
+
+  describe("the real repository", () => {
+    it("states the enforced numbers in SCHEME.md, so the doc and the gate agree", () => {
+      const scheme = readFileSync(path.join(REPO_ROOT, INVARIANT_SCHEME), "utf8");
+      expect(scheme).toMatch(new RegExp(`\\*\\*${INDEX_ROW_WORD_CAP} words\\*\\*`));
+      expect(scheme).toMatch(new RegExp(`\\*\\*${INVARIANT_ENTRY_WORD_BUDGET} words\\*\\*`));
+    });
+
+    it("carries a register whose every row parses", () => {
+      const files = loadTrackedFiles(REPO_ROOT);
+      expect(files.has(WORD_BUDGET_REGISTER)).toBe(true);
+      expect(parseWordBudgetRegister(files).problems).toEqual([]);
+    });
+
+    it("prints the same figures from --words that the audit holds the tree to", () => {
+      const files = loadTrackedFiles(REPO_ROOT);
+      const inventory = formatWordInventory(files);
+      const entries = measureInvariantEntryWords(files);
+      const [largestId, largest] = [...entries].sort(([, a], [, b]) => b.words - a.words)[0];
+      expect(inventory.split("\n")[0]).toContain(`${largest.words}  ${largestId}`);
+      expect(inventory).toContain(`${entries.size} entries`);
+    });
   });
 });
 

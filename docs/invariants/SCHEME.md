@@ -790,6 +790,9 @@ shape guard flags every Xero invoice fixture in the test suite (§1.2.1).
 14. Every ID defined in the base revision is still defined in the current tree.
     This catches deletion of a prefix's highest ID and deletion of a whole
     prefix, which no snapshot-only density check can observe.
+15. Every index-row description is within 12 words, and every entry is within
+    its word budget — 300, or the ceiling on its row in `WORD_BUDGETS.md`, whose
+    every row must be exact (§8.1).
 
 The catalogue assertion is what stops the index rotting, which is the thing most
 likely to rot. Density makes §1.3's allocation rule mechanical rather than
@@ -806,6 +809,43 @@ on purpose, in prose, to explain what the guard catches.
 Anchor-style citations (`…#inv-cap-021`) are deliberately **not** handled here —
 `npm run docs:linkcheck` already validates fragments against real headings, so
 that half is covered and duplicating it would give two places to disagree.
+
+### 8.1 Word budgets: one home per decision (#2789)
+
+A standing rule lives in its invariant entry; the measurements, alternatives and
+history behind it live in the deciding GitHub issue; everything else — docs,
+tests, code comments — links to one of those two rather than restating them.
+The owner made that the rule on 11 Aug 2026 because a decision that changed
+nothing once had to be recorded in seven files. Two budgets make it mechanical,
+and the same script enforces both:
+
+- An index-row description is at most **12 words** (§5.2). Hard cap: no
+  exceptions, no ratchet. Say what the rule covers, not what it says.
+- An invariant entry is at most **300 words** by default. An entry runs from its
+  canonical definition heading to the next canonical definition, or to the next
+  heading of the same or a higher level that carries no invariant-shaped token;
+  everything between counts, fenced code and deeper sub-headings included. A
+  heading that only *looks* like a definition never ends an entry, so an
+  oversize one cannot be split into two compliant halves by a lookalike.
+
+A **word** is a whitespace-separated token containing at least one letter or
+digit; a lone pipe, dash or arrow is structure. Read a figure the way the gate
+does with `node scripts/ci/check-doc-index-integrity.mjs --words`.
+
+**Semantic correctness beats compactness, always.** Never broaden, narrow or
+distort a rule to meet a budget. Compaction keeps the rule, the pin and the
+link; it moves narrative to the deciding issue and links it. An entry that is
+genuinely one atomic rule and cannot be split or compacted without semantic
+damage is an **approved exception**: the owner approves it on the deciding
+issue and it is recorded in [`WORD_BUDGETS.md`](WORD_BUDGETS.md) with the
+reason, the issue and its own fixed ceiling, which CI enforces in place of 300.
+Convenience, history and copied rationale are not reasons.
+
+Entries that were already over budget when the gate landed are carried in the
+same file's **migration ratchet**: the exact count each had when last measured,
+which may only shrink and is removed when the entry is within budget. A
+compliant entry can never join it, and the section is deleted when it is empty.
+Every failure names the id, the measured count and the limit that applied.
 
 ---
 
