@@ -96,7 +96,7 @@ export async function POST(request: NextRequest) {
         // #3266 — succeeded intent, but NO card on the row: either the webhook
         // has not landed yet, or the card was retired after a terminal refusal
         // (#3268). Ask Stripe which (`setup-intent-card.ts`); never re-adopt a
-        // card it no longer holds for this customer (`INV-PAY-054`).
+        // card it no longer holds for this customer (`INV-PAY-052`).
         const customerId =
           booking.payment.stripeCustomerId ??
           stripeReferenceId(existingIntent.customer);
@@ -161,7 +161,7 @@ export async function POST(request: NextRequest) {
     });
 
     // Create or update Payment record. #3266 — minting a replacement RETIRES
-    // the previous card (`INV-PAY-054`): `stripePaymentMethodId` is cleared
+    // the previous card (`INV-PAY-052`): `stripePaymentMethodId` is cleared
     // here, and only `markBookingSetupIntentSucceeded` (the webhook, or the
     // re-adopt arm above) puts one back. Left in place, the old — possibly
     // dead — card stayed chargeable by the cron and both admin charge routes

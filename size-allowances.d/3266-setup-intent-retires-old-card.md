@@ -6,7 +6,7 @@ stays inside its 250-line budget; the page change is one condition plus the
 comment saying why it changed.
 
 file: src/app/(authenticated)/bookings/[id]/page.tsx
-lines: 2723
+lines: 2728
 reason: the "Save Payment Method" card's condition moves from "no SetupIntent
   yet" to the shared `needsSavedCardEntry` predicate, and the four-line comment
   beside it records why (an abandoned replacement or a retired card must show

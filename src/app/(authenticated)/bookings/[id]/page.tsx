@@ -1250,13 +1250,18 @@ export default async function BookingDetailPage({
   // Shown whenever the row carries NO card (#3266), not merely until the first
   // SetupIntent exists: an abandoned replacement or a card retired after a
   // Stripe refusal (#3268) leaves the intent id behind with nothing chargeable,
-  // and the member must be able to get back to the form.
+  // and the member must be able to get back to the form. Kept as ONE named
+  // boolean so the epic (#3270) can re-key it onto #3269's
+  // `reusableSavedPaymentMethodOnRow` in a single line — a legacy split child
+  // can carry a non-null pm that is not reusable, and the card column alone
+  // would hide the form for it.
+  const rowHasNoSavedCard = needsSavedCardEntry(booking.payment);
   const showSavePaymentMethodCard =
     isBookingOwner &&
     !isDeleted &&
     !internetBankingPayment &&
     booking.status === "PENDING" &&
-    needsSavedCardEntry(booking.payment);
+    rowHasNoSavedCard;
   // Suppress when a more specific provisional banner already explains the
   // on-hold/no-charge state (the split-booking child and the bumped-guest
   // flagged-provisional notices both render near the top of the page). Also

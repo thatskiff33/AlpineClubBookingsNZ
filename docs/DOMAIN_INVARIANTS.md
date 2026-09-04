@@ -222,7 +222,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-012` | The public payment link refuses a booking carrying an election rather than ignoring it |
 | `INV-PAY-013` | Stripe and Internet Banking/Xero settlement paths must remain distinct |
 | `INV-PAY-014` | Stripe paths own PaymentIntents, SetupIntents, refunds, webhooks and recovery operations |
-| `INV-PAY-054` | A replacement SetupIntent retires the previous card; a retired card is never re-adopted from a stale SetupIntent |
+| `INV-PAY-052` | A replacement SetupIntent retires the previous card; a retired card is never re-adopted from a stale SetupIntent |
 | `INV-PAY-015` | Internet Banking bookings issue Xero invoices and reconcile through Xero invoice/payment state |
 | `INV-PAY-016` | Internet Banking defaults are non-holding and no-cutoff; an enabled hold is released idempotently |
 | `INV-PAY-017` | Hold-expiry release and its invoice-clearing credit-note outbox row commit in one transaction |

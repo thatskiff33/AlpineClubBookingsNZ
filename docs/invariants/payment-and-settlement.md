@@ -569,7 +569,7 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
 - Stripe paths own PaymentIntents, SetupIntents, Stripe refunds, Stripe
   webhooks, and durable PaymentRecoveryOperation rows.
 
-## INV-PAY-054
+## INV-PAY-052
 
 - **A replacement SetupIntent retires the previous card, and a retired card is
   never re-adopted from a stale SetupIntent** (#3266, epic #3270). A PENDING

@@ -53,7 +53,9 @@ export function canCreateImmediatePaymentIntent(
  * member needs the form back. Nor is it the charge paths' own "reusable saved
  * card" question, which also needs the customer and the intent; that is a
  * different question with a different owner, and this one asks only whether
- * the member has something left to do.
+ * the member has something left to do. (Epic #3270 re-keys the page onto
+ * #3269's `reusableSavedPaymentMethodOnRow` once both lanes share a base, so a
+ * legacy row carrying an unusable pm shows the form too.)
  */
 export function needsSavedCardEntry(
   payment: { stripePaymentMethodId: string | null } | null | undefined

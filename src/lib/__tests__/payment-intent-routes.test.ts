@@ -934,7 +934,7 @@ describe("payment intent routes", () => {
   });
 
   // #3266 — a replacement SetupIntent retires the previous card, and a retired
-  // card is never re-adopted from a stale succeeded SetupIntent (INV-PAY-054).
+  // card is never re-adopted from a stale succeeded SetupIntent (INV-PAY-052).
   describe("create-setup-intent: replacement mint and stale succeeded intent (#3266)", () => {
     const savedCardBooking = (payment: Record<string, unknown> | null) => ({
       id: "booking-1",

@@ -23,7 +23,7 @@ import {
   stripeReferenceId,
 } from "@/lib/setup-intent-card";
 
-// #3266 / INV-PAY-054 — the provider, not a local guess, decides whether a
+// #3266 / INV-PAY-052 — the provider, not a local guess, decides whether a
 // succeeded SetupIntent's card may be re-adopted onto a row that carries none.
 describe("stripeReferenceId", () => {
   it("reads a bare id, an expanded object, and nothing", () => {

@@ -31,7 +31,7 @@ export function stripeReferenceId(
  * (re-adopt the card), or a charge path met a terminal Stripe refusal,
  * detached the card and cleared it from the row (#3268 — never re-adopt it).
  * The provider knows: a detached or deleted PaymentMethod no longer names this
- * customer, or no longer exists. That is `INV-PAY-054`.
+ * customer, or no longer exists. That is `INV-PAY-052`.
  *
  * Only `resource_missing` is read as "gone". Any other failure — outage, bad
  * key, rate limit — is rethrown, because it says nothing about the card and

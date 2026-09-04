@@ -1329,7 +1329,7 @@ charge route) charges it closer to check-in. The card lives on the `Payment`
 row as `stripePaymentMethodId`, beside `stripeSetupIntentId` and
 `stripeCustomerId`, and every charge path reads the card column without asking
 Stripe first — so the column must only ever name a card that may be charged
-(`INV-PAY-054`).
+(`INV-PAY-052`).
 
 ```text
 no card on row  --(member opens "Save Payment Method"; route mints)-->  intent open
