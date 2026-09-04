@@ -94,4 +94,6 @@ module is on but a dependency — credentials, an API key, inventory — is miss
 - Back to the [documentation hub](../README.md).
 - Sibling guides: [Setup](setup.md), [Login & Security](security.md),
   [Integrations](integrations.md), [Access Roles](access-roles.md).
-- Reference: module flags in [`CONFIGURATION.md`](../../CONFIGURATION.md).
+- Reference: how module settings are stored, and how cron jobs respect them, in
+  [`CONFIGURATION.md` → Module Controls](../../CONFIGURATION.md#module-controls-and-admin-modules).
+  The table above is the only per-module list; that section points back here.
