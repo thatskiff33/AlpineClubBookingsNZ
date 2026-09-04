@@ -1123,7 +1123,7 @@ figures rather than trusting a hand count: **92 components render a banner, and
 293 of the 346 `ViewOnlyActionButton` call sites opt out** of the per-button
 reason. (Earlier revisions of this page published 76/232/264/211 — those were
 upstream-historical and had drifted; the numbers here are the ones the contract
-test currently pins, which is the only authority.) Those split by WHICH rule
+test currently pins, which is the only authority.) Those 293 split by WHICH rule
 covers them: **259** pass the literal
 `describeReason={false}` and are covered by a banner in the same file, and **34**
 pass `describeReason={!ancestorRendersViewOnlyBanner}` and are covered by a

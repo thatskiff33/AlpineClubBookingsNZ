@@ -400,8 +400,10 @@ export const AUDIT_CENSUS_TOTALS = {
   // already stored as being worth - which is why its entry carries BOTH totals
   // and the previous per-night values. Categorised `payment` at the site, so it
   // does not join `UNCATEGORISED_AUDIT_WRITERS` below. Measured by RUNNING
-  // `npm run audit:census` on this tree (467 sites, 2249 files scanned), not by
-  // adding one to the literal.
+  // `npm run audit:census` on this tree (467 sites, 2259 files scanned), not by
+  // adding one to the literal. The file count was 2249 when this branch opened
+  // and was re-measured, not adjusted, after merging `main`: the merge brought
+  // ten more files under the scanned roots without adding a writer.
   writeSites: 467,
   /**
    * Of those, sites whose event object carries no `category` key.

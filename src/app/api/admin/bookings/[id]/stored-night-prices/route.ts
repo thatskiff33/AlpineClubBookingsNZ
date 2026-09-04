@@ -33,7 +33,14 @@ import {
  * `mark-paid` sibling is - so it is gated `finance:edit` and
  * `SPECIAL_ROUTE_AREA_PATTERNS` resolves the path the same way, which is what
  * keeps the declared gate and the inferred one from disagreeing.
- * `admin-route-area-matrix.test.ts` pins that agreement.
+ *
+ * IT TAKES TWO TESTS TO PIN THAT AGREEMENT, one per side, and neither can stand
+ * in for the other. `admin-route-area-matrix.test.ts` pins the INFERRED side: it
+ * resolves this path through `getAdminRouteRequirement()` against a frozen
+ * snapshot, and never reads what this handler passes to `requireAdmin`.
+ * `admin-booking-stored-night-prices-route.test.ts` pins the DECLARED side, by
+ * asserting the argument this handler actually calls `requireAdmin` with. Trim
+ * either and the two sides can drift apart in silence.
  *
  * ## What it deliberately does not do
  *
