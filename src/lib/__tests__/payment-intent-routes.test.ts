@@ -72,6 +72,10 @@ vi.mock("@/lib/stripe", () => ({
   createSetupIntent: vi.fn(),
   findOrCreateCustomer: vi.fn(),
   getPaymentIntent: vi.fn(),
+  // #3266 — read by `setup-intent-card.ts`, which is deliberately NOT mocked
+  // here so the "is the card still attached" decision runs for real over this
+  // double.
+  getPaymentMethod: vi.fn(),
   getSetupIntent: vi.fn(),
 }));
 
@@ -130,6 +134,7 @@ import {
   createSetupIntent as stripeCreateSetupIntent,
   findOrCreateCustomer,
   getPaymentIntent,
+  getPaymentMethod,
   getSetupIntent,
 } from "@/lib/stripe";
 import { POST as createPaymentIntentRoute } from "@/app/api/payments/create-payment-intent/route";
@@ -168,6 +173,7 @@ const mockStripeCreateSetupIntent = stripeCreateSetupIntent as ReturnType<typeof
 const mockFindOrCreateCustomer = findOrCreateCustomer as ReturnType<typeof vi.fn>;
 const mockGetPaymentIntent = getPaymentIntent as ReturnType<typeof vi.fn>;
 const mockGetSetupIntent = getSetupIntent as ReturnType<typeof vi.fn>;
+const mockGetPaymentMethod = getPaymentMethod as ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -925,6 +931,294 @@ describe("payment intent routes", () => {
     await expect(res.json()).resolves.toEqual({ error: "Forbidden" });
     expect(mockGetSetupIntent).not.toHaveBeenCalled();
     expect(mockStripeCreateSetupIntent).not.toHaveBeenCalled();
+  });
+
+  // #3266 — a replacement SetupIntent retires the previous card, and a retired
+  // card is never re-adopted from a stale succeeded SetupIntent (INV-PAY-054).
+  describe("create-setup-intent: replacement mint and stale succeeded intent (#3266)", () => {
+    const savedCardBooking = (payment: Record<string, unknown> | null) => ({
+      id: "booking-1",
+      memberId: "member-1",
+      status: "PENDING",
+      hasNonMembers: true,
+      finalPriceCents: 12500,
+      member: {
+        id: "member-1",
+        email: "member@example.com",
+        firstName: "Test",
+        lastName: "Member",
+      },
+      payment,
+    });
+
+    const postSetupIntent = () =>
+      createSetupIntentRoute(
+        new NextRequest("http://localhost/api/payments/create-setup-intent", {
+          method: "POST",
+          body: JSON.stringify({ bookingId: "booking-1" }),
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+
+    const freshMint = { id: "seti_new", client_secret: "seti_new_secret" };
+
+    beforeEach(() => {
+      mockStripeCreateSetupIntent.mockResolvedValue(freshMint);
+      mockPrisma.payment.upsert.mockResolvedValue({});
+    });
+
+    it("(a) minting a replacement clears the previous card from the row", async () => {
+      mockPrisma.booking.findUnique.mockResolvedValue(
+        savedCardBooking({
+          stripeSetupIntentId: "seti_old",
+          stripePaymentMethodId: "pm_old",
+          stripeCustomerId: "cus_123",
+        }),
+      );
+      // The stored intent is dead, so the route must mint afresh.
+      mockGetSetupIntent.mockResolvedValue({
+        id: "seti_old",
+        status: "canceled",
+        client_secret: null,
+      });
+
+      const res = await postSetupIntent();
+      const data = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(data).toEqual({ clientSecret: "seti_new_secret", setupIntentId: "seti_new" });
+      expect(mockStripeCreateSetupIntent).toHaveBeenCalledWith(
+        expect.objectContaining({ idempotencyKey: "seti_booking-1_seti_old" }),
+      );
+      expect(mockPrisma.payment.upsert).toHaveBeenCalledTimes(1);
+      const upsert = mockPrisma.payment.upsert.mock.calls[0][0];
+      expect(upsert.update).toEqual({
+        stripeSetupIntentId: "seti_new",
+        stripeCustomerId: "cus_123",
+        stripePaymentMethodId: null,
+      });
+      expect(upsert.create).toEqual(
+        expect.objectContaining({
+          stripeSetupIntentId: "seti_new",
+          stripeCustomerId: "cus_123",
+          stripePaymentMethodId: null,
+        }),
+      );
+      expect(mockGetPaymentMethod).not.toHaveBeenCalled();
+      expect(mocks.markBookingSetupIntentSucceeded).not.toHaveBeenCalled();
+    });
+
+    it("(b) succeeded intent with a card still on the row: alreadySaved, and Stripe is not asked about the card", async () => {
+      mockPrisma.booking.findUnique.mockResolvedValue(
+        savedCardBooking({
+          stripeSetupIntentId: "seti_old",
+          stripePaymentMethodId: "pm_old",
+          stripeCustomerId: "cus_123",
+        }),
+      );
+      mockGetSetupIntent.mockResolvedValue({
+        id: "seti_old",
+        status: "succeeded",
+        payment_method: "pm_old",
+        customer: "cus_123",
+      });
+
+      const res = await postSetupIntent();
+
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toEqual({ alreadySaved: true, setupIntentId: "seti_old" });
+      expect(mocks.markBookingSetupIntentSucceeded).toHaveBeenCalledWith({
+        bookingId: "booking-1",
+        setupIntentId: "seti_old",
+        paymentMethodId: "pm_old",
+      });
+      expect(mockGetPaymentMethod).not.toHaveBeenCalled();
+      expect(mockStripeCreateSetupIntent).not.toHaveBeenCalled();
+      expect(mockPrisma.payment.upsert).not.toHaveBeenCalled();
+    });
+
+    it("(c) succeeded intent, no card on the row, card still attached at Stripe (webhook race): stamp and alreadySaved", async () => {
+      mockPrisma.booking.findUnique.mockResolvedValue(
+        savedCardBooking({
+          stripeSetupIntentId: "seti_old",
+          stripePaymentMethodId: null,
+          stripeCustomerId: "cus_123",
+        }),
+      );
+      mockGetSetupIntent.mockResolvedValue({
+        id: "seti_old",
+        status: "succeeded",
+        payment_method: "pm_new",
+        customer: "cus_123",
+      });
+      mockGetPaymentMethod.mockResolvedValue({ id: "pm_new", customer: "cus_123" });
+
+      const res = await postSetupIntent();
+
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toEqual({ alreadySaved: true, setupIntentId: "seti_old" });
+      expect(mockGetPaymentMethod).toHaveBeenCalledWith("pm_new");
+      expect(mocks.markBookingSetupIntentSucceeded).toHaveBeenCalledWith({
+        bookingId: "booking-1",
+        setupIntentId: "seti_old",
+        paymentMethodId: "pm_new",
+      });
+      expect(mockStripeCreateSetupIntent).not.toHaveBeenCalled();
+      expect(mockPrisma.payment.upsert).not.toHaveBeenCalled();
+    });
+
+    it("(d) succeeded intent, no card on the row, card detached at Stripe: mint a fresh intent and leave the card empty", async () => {
+      mockPrisma.booking.findUnique.mockResolvedValue(
+        savedCardBooking({
+          stripeSetupIntentId: "seti_old",
+          stripePaymentMethodId: null,
+          stripeCustomerId: "cus_123",
+        }),
+      );
+      mockGetSetupIntent.mockResolvedValue({
+        id: "seti_old",
+        status: "succeeded",
+        payment_method: "pm_dead",
+        customer: "cus_123",
+      });
+      mockGetPaymentMethod.mockResolvedValue({ id: "pm_dead", customer: null });
+
+      const res = await postSetupIntent();
+      const data = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(data).toEqual({ clientSecret: "seti_new_secret", setupIntentId: "seti_new" });
+      expect(mocks.markBookingSetupIntentSucceeded).not.toHaveBeenCalled();
+      expect(mockStripeCreateSetupIntent).toHaveBeenCalledWith(
+        expect.objectContaining({ idempotencyKey: "seti_booking-1_seti_old" }),
+      );
+      const upsert = mockPrisma.payment.upsert.mock.calls[0][0];
+      expect(upsert.update).toEqual({
+        stripeSetupIntentId: "seti_new",
+        stripeCustomerId: "cus_123",
+        stripePaymentMethodId: null,
+      });
+    });
+
+    it("(d2) a card attached to a DIFFERENT customer is not this booking's card: mint afresh", async () => {
+      mockPrisma.booking.findUnique.mockResolvedValue(
+        savedCardBooking({
+          stripeSetupIntentId: "seti_old",
+          stripePaymentMethodId: null,
+          stripeCustomerId: "cus_123",
+        }),
+      );
+      mockGetSetupIntent.mockResolvedValue({
+        id: "seti_old",
+        status: "succeeded",
+        payment_method: "pm_other",
+        customer: "cus_123",
+      });
+      mockGetPaymentMethod.mockResolvedValue({ id: "pm_other", customer: "cus_someone_else" });
+
+      const res = await postSetupIntent();
+
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toEqual({
+        clientSecret: "seti_new_secret",
+        setupIntentId: "seti_new",
+      });
+      expect(mocks.markBookingSetupIntentSucceeded).not.toHaveBeenCalled();
+      expect(mockStripeCreateSetupIntent).toHaveBeenCalledTimes(1);
+    });
+
+    it("(e) Stripe no longer has the payment method (resource_missing): mint a fresh intent", async () => {
+      mockPrisma.booking.findUnique.mockResolvedValue(
+        savedCardBooking({
+          stripeSetupIntentId: "seti_old",
+          stripePaymentMethodId: null,
+          stripeCustomerId: "cus_123",
+        }),
+      );
+      mockGetSetupIntent.mockResolvedValue({
+        id: "seti_old",
+        status: "succeeded",
+        payment_method: "pm_gone",
+        customer: "cus_123",
+      });
+      mockGetPaymentMethod.mockRejectedValue(
+        Object.assign(new Error("No such PaymentMethod: 'pm_gone'"), {
+          type: "StripeInvalidRequestError",
+          code: "resource_missing",
+          statusCode: 404,
+        }),
+      );
+
+      const res = await postSetupIntent();
+
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toEqual({
+        clientSecret: "seti_new_secret",
+        setupIntentId: "seti_new",
+      });
+      expect(mocks.markBookingSetupIntentSucceeded).not.toHaveBeenCalled();
+      expect(mockStripeCreateSetupIntent).toHaveBeenCalledWith(
+        expect.objectContaining({ idempotencyKey: "seti_booking-1_seti_old" }),
+      );
+      const upsert = mockPrisma.payment.upsert.mock.calls[0][0];
+      expect(upsert.update.stripePaymentMethodId).toBeNull();
+    });
+
+    it("(f) any OTHER Stripe failure while asking about the card is not a verdict: 500, no mint, no re-adopt", async () => {
+      mockPrisma.booking.findUnique.mockResolvedValue(
+        savedCardBooking({
+          stripeSetupIntentId: "seti_old",
+          stripePaymentMethodId: null,
+          stripeCustomerId: "cus_123",
+        }),
+      );
+      mockGetSetupIntent.mockResolvedValue({
+        id: "seti_old",
+        status: "succeeded",
+        payment_method: "pm_unknown",
+        customer: "cus_123",
+      });
+      mockGetPaymentMethod.mockRejectedValue(
+        Object.assign(new Error("Stripe is unavailable"), {
+          type: "StripeAPIError",
+          statusCode: 503,
+        }),
+      );
+
+      const res = await postSetupIntent();
+
+      expect(res.status).toBe(500);
+      expect(mocks.markBookingSetupIntentSucceeded).not.toHaveBeenCalled();
+      expect(mockStripeCreateSetupIntent).not.toHaveBeenCalled();
+      expect(mockPrisma.payment.upsert).not.toHaveBeenCalled();
+    });
+
+    it("(g) a succeeded intent that names no payment method cannot be re-adopted: mint afresh without asking Stripe", async () => {
+      mockPrisma.booking.findUnique.mockResolvedValue(
+        savedCardBooking({
+          stripeSetupIntentId: "seti_old",
+          stripePaymentMethodId: null,
+          stripeCustomerId: "cus_123",
+        }),
+      );
+      mockGetSetupIntent.mockResolvedValue({
+        id: "seti_old",
+        status: "succeeded",
+        payment_method: null,
+        customer: "cus_123",
+      });
+
+      const res = await postSetupIntent();
+
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toEqual({
+        clientSecret: "seti_new_secret",
+        setupIntentId: "seti_new",
+      });
+      expect(mockGetPaymentMethod).not.toHaveBeenCalled();
+      expect(mocks.markBookingSetupIntentSucceeded).not.toHaveBeenCalled();
+      expect(mockStripeCreateSetupIntent).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("rejects immediate payment intents for pending non-member hold bookings", async () => {

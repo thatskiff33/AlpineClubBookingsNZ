@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   canCreateImmediatePaymentIntent,
   getBookingPaymentMode,
+  needsSavedCardEntry,
 } from "@/lib/booking-payment-flow";
 
 describe("getBookingPaymentMode", () => {
@@ -38,5 +39,28 @@ describe("canCreateImmediatePaymentIntent", () => {
         organiserSettled: true,
       })
     ).toBe(false);
+  });
+});
+
+// #3266 — the booking page's "Save Payment Method" card keys on this. It used
+// to key on "no SetupIntent yet", which hid the form from a member whose row
+// carried an intent id but no chargeable card.
+describe("needsSavedCardEntry", () => {
+  it("is true when there is no payment row at all", () => {
+    expect(needsSavedCardEntry(null)).toBe(true);
+    expect(needsSavedCardEntry(undefined)).toBe(true);
+  });
+
+  it("is true when a SetupIntent exists but the row carries no card (abandoned replacement, or a retired card)", () => {
+    const staleIntentNoCard = {
+      stripePaymentMethodId: null,
+      stripeSetupIntentId: "seti_stale",
+      stripeCustomerId: "cus_1",
+    };
+    expect(needsSavedCardEntry(staleIntentNoCard)).toBe(true);
+  });
+
+  it("is false once a card is on the row", () => {
+    expect(needsSavedCardEntry({ stripePaymentMethodId: "pm_live" })).toBe(false);
   });
 });
