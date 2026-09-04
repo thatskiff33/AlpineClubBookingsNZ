@@ -5,12 +5,11 @@
  * per-lodge advisory lock so at most one live token exists per booking. Token
  * resolution and the refusal vocabulary stay in `payment-link.ts`.
  */
-import { BookingStatus } from "@prisma/client";
 import { issueActionToken } from "@/lib/action-tokens";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
-import { paymentLinkExpiryForCheckIn } from "@/lib/payment-link-expiry";
+import { isBornExpired, paymentLinkExpiryForCheckIn } from "@/lib/payment-link-expiry";
 import {
   sendBookingRequestApprovedEmail,
   sendSplitGuestPaymentLinkEmail,
@@ -18,8 +17,8 @@ import {
 import logger from "@/lib/logger";
 import {
   NOT_PAYABLE_MESSAGE,
-  PAYMENT_LINK_PAYABLE_BOOKING_STATUSES,
   PaymentLinkError,
+  isPayableByLink,
   loadPaymentLinkRecord,
 } from "@/lib/payment-link";
 import { prisma } from "@/lib/prisma";
@@ -42,18 +41,14 @@ export async function reissuePaymentLinkForToken(
   const link = await loadPaymentLinkRecord(token);
   const booking = link.booking;
 
-  if (
-    !(PAYMENT_LINK_PAYABLE_BOOKING_STATUSES as readonly BookingStatus[]).includes(
-      booking.status
-    )
-  ) {
+  if (!isPayableByLink(booking.status)) {
     throw new PaymentLinkError(NOT_PAYABLE_MESSAGE, 410);
   }
 
   // Zone read BEFORE the mint transaction, which holds the capacity lock.
   const clubZone = await readClubTimeZoneOutsideRequest();
   const expiresAt = paymentLinkExpiryForCheckIn(booking.checkIn, clubZone);
-  if (expiresAt.getTime() < Date.now()) {
+  if (isBornExpired(expiresAt, new Date())) {
     throw new PaymentLinkError(
       "These dates have already passed, so a new payment link can't be issued.",
       410

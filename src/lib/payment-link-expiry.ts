@@ -57,3 +57,15 @@ export function paymentLinkExpiryForCheckIn(
 ): Instant {
   return endOfClubDayInclusive(calendarDateOfDateOnlyInstant(checkIn), zone);
 }
+
+/**
+ * Decision 2 above, as one function: a link whose expiry is at or before `now`
+ * would be born expired and must not be minted. `<=`, at every mint site
+ * (#2956). Before this the re-issue path wrote `<` and the split-guest path
+ * `<=` — two definitions of one fact, differing by the single millisecond of
+ * the equal instant. Unifying on `<=` tightens the re-issue refusal by exactly
+ * that millisecond.
+ */
+export function isBornExpired(expiresAt: Instant, now: Instant): boolean {
+  return expiresAt.getTime() <= now.getTime();
+}

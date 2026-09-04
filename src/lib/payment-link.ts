@@ -29,11 +29,17 @@ export function isPaidLikeStatus(status: BookingStatus): boolean {
 }
 
 /** Booking statuses a payment link can still pay for. */
-export const PAYMENT_LINK_PAYABLE_BOOKING_STATUSES = [
+const PAYMENT_LINK_PAYABLE_BOOKING_STATUSES: readonly BookingStatus[] = [
   BookingStatus.PENDING,
   BookingStatus.PAYMENT_PENDING,
   BookingStatus.CONFIRMED,
-] as const;
+];
+
+/** Whether a link can still pay for a booking in this status — the one home
+ * for that test across the re-issue and intent paths (#2956, `INV-SSOT`). */
+export function isPayableByLink(status: BookingStatus): boolean {
+  return PAYMENT_LINK_PAYABLE_BOOKING_STATUSES.includes(status);
+}
 
 export class PaymentLinkError extends Error {
   status: number;

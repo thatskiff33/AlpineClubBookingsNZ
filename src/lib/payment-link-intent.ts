@@ -5,7 +5,7 @@
  * capacity revalidation as the session-gated payment-intent route. Token
  * resolution and the refusal vocabulary it throws stay in `payment-link.ts`.
  */
-import { BookingStatus, PaymentStatus, PaymentTransactionKind } from "@prisma/client";
+import { PaymentStatus, PaymentTransactionKind } from "@prisma/client";
 import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "@/lib/capacity";
 import { bookingHasCapacityOverride } from "@/lib/booking-status";
 import { getDefaultLodgeId } from "@/lib/lodges";
@@ -21,11 +21,11 @@ import { isHostingCoverageParticipantRetry } from "@/lib/adult-member-hosting-qu
 import { queueSupersededPrimaryIntentCancellations } from "@/lib/booking-payment-cleanup";
 import {
   NOT_PAYABLE_MESSAGE,
-  PAYMENT_LINK_PAYABLE_BOOKING_STATUSES,
   PaymentLinkError,
   REVOKED_LINK_MESSAGE,
   USED_LINK_MESSAGE,
   isPaidLikeStatus,
+  isPayableByLink,
   resolvePaymentLink,
 } from "@/lib/payment-link";
 import { prisma } from "@/lib/prisma";
@@ -102,11 +102,7 @@ export async function createPaymentIntentForPaymentLink(
     throw new PaymentLinkError(USED_LINK_MESSAGE, 410);
   }
 
-  if (
-    !(PAYMENT_LINK_PAYABLE_BOOKING_STATUSES as readonly BookingStatus[]).includes(
-      booking.status
-    )
-  ) {
+  if (!isPayableByLink(booking.status)) {
     throw new PaymentLinkError(NOT_PAYABLE_MESSAGE, 410);
   }
 
@@ -250,12 +246,7 @@ export async function createPaymentIntentForPaymentLink(
       include: { guests: { include: { nights: true } } },
     });
 
-    if (
-      !freshBooking ||
-      !(PAYMENT_LINK_PAYABLE_BOOKING_STATUSES as readonly BookingStatus[]).includes(
-        freshBooking.status
-      )
-    ) {
+    if (!freshBooking || !isPayableByLink(freshBooking.status)) {
       throw new PaymentLinkError(NOT_PAYABLE_MESSAGE, 410);
     }
 

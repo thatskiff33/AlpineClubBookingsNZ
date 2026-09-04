@@ -14,11 +14,13 @@ import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import {
+  isBornExpired,
   paymentLinkExpiryForCheckIn,
   type ClubTimeZone,
 } from "@/lib/payment-link-expiry";
 import { sendSplitGuestPaymentLinkEmail } from "@/lib/email";
 import { recordWithheldBookingEmail } from "@/lib/booking-email-suppression";
+import type { EmailAuditTemplateName } from "@/lib/email-message-audit-defaults";
 import logger from "@/lib/logger";
 import { revokePaymentLinkById } from "@/lib/payment-link";
 import { prisma } from "@/lib/prisma";
@@ -94,7 +96,7 @@ export async function mintSplitGuestPaymentLinkIfAbsent(
 ): Promise<MintedSplitGuestPaymentLink | null> {
   const now = new Date();
   const expiresAt = paymentLinkExpiryForCheckIn(booking.checkIn, clubZone);
-  if (expiresAt.getTime() <= now.getTime()) {
+  if (isBornExpired(expiresAt, now)) {
     return null;
   }
 
@@ -112,9 +114,15 @@ export async function mintSplitGuestPaymentLinkIfAbsent(
   return mintFreshSplitGuestPaymentLink(tx, booking.id, expiresAt, now);
 }
 
-/** Registry template the split-guest pay-link email ships as (#1967). The one
- * home for the name (#2956, `INV-SSOT`): `cron-confirm-pending.ts` imports it. */
-export const SPLIT_GUEST_PAYMENT_LINK_TEMPLATE = "split-guest-payment-link";
+/**
+ * Registry template the split-guest pay-link email ships as (#1967): one
+ * constant for the withhold record's template name across the split-guest mint
+ * and the settlement cron (#2956). The slug itself is a registry key, defined
+ * by the sender and the email registry; `satisfies` makes a rename there a
+ * compile error here rather than a silent mismatch in the withheld list.
+ */
+export const SPLIT_GUEST_PAYMENT_LINK_TEMPLATE =
+  "split-guest-payment-link" satisfies EmailAuditTemplateName;
 
 export type IssueSplitGuestPaymentLinkResult =
   | { outcome: "sent" }
@@ -250,7 +258,7 @@ export async function issueSplitGuestPaymentLink(
       }
 
       const now = new Date();
-      if (expiresAt.getTime() <= now.getTime()) {
+      if (isBornExpired(expiresAt, now)) {
         // The check-in day has ended; a fresh link would be born expired.
         return { kind: "not_payable" };
       }
