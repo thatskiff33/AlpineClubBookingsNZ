@@ -41,6 +41,26 @@ export function canCreateImmediatePaymentIntent(
   return (IMMEDIATE_PAYMENT_BOOKING_STATUSES as readonly string[]).includes(state.status);
 }
 
+/**
+ * Does the member still have to enter a card for this saved-card booking?
+ *
+ * Keyed on the card alone (#3266): `stripePaymentMethodId` is the one column
+ * every charge path reads, so a row without it has nothing that can be
+ * charged, whatever else it carries. That is deliberately NOT "does the row
+ * carry a SetupIntent" — a SetupIntent id survives an abandoned replacement
+ * (the member started re-saving and never finished) and a retirement (Stripe
+ * refused the card and the charge path cleared it), and in both states the
+ * member needs the form back. Nor is it the charge paths' own "reusable saved
+ * card" question, which also needs the customer and the intent; that is a
+ * different question with a different owner, and this one asks only whether
+ * the member has something left to do.
+ */
+export function needsSavedCardEntry(
+  payment: { stripePaymentMethodId: string | null } | null | undefined
+): boolean {
+  return !payment?.stripePaymentMethodId;
+}
+
 export function getBookingPaymentMode(
   booking: string | BookingPaymentFlowState
 ): BookingPaymentMode {
