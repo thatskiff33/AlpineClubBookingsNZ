@@ -1299,17 +1299,22 @@ Saved-card provenance (#3269, `INV-PAY-053`). Two writers put a
 `markBookingSetupIntentSucceeded` writes it together with `stripeSetupIntentId`
 (the card is attached to the customer for off-session reuse), while
 `markBookingPaymentSucceeded` writes the one-off PaymentIntent's card, which
-Stripe refuses to charge again. Every off-session charge path — the settlement
-cron, admin confirm-pending-guests, `charge-saved-method` — and the two readers
-that predict one (the member page's "will charge" wording, the payment-link
-`not_payable` gate) therefore ask `savedPaymentMethodForBooking`
-(`src/lib/saved-payment-method.ts`), which offers a card only when customer,
-payment method and SetupIntent are all on the same row: the booking's own row
-first, then its split parent's. The claim that charges a card borrowed from the
-parent writes the customer onto the child's row and never the parent's payment
-method (`savedPaymentMethodRowStamp`), so a one-off checkout card can no longer
-be laundered into a "saved card" by being copied; the rows that copy left in
-production (customer + pm, no SetupIntent) now read as no card without a
+Stripe refuses to charge again. Every off-session charge path therefore asks
+`src/lib/saved-payment-method.ts`, which offers a card only when customer,
+payment method and SetupIntent are all on the same row. The settlement cron,
+admin confirm-pending-guests and the two readers that predict a charge (the
+member page's "will charge" wording, the payment-link `not_payable` gate) ask
+`savedPaymentMethodForBooking` — the booking's own row first, then its split
+parent's; `charge-saved-method` asks `reusableSavedPaymentMethodOnRow` for the
+own row only, because it records the capture on the row it read and creates
+none. No charge claim writes the card column: `savedPaymentMethodRowStamp`
+writes the customer onto the row and nothing else, so a parent's one-off
+checkout card can no longer be laundered onto the child by being copied, and a
+claim cannot resurrect an own-row card that a concurrent replacement SetupIntent
+mint just cleared. A capture still records the card that paid, as on every paid
+row (`reconcilePaymentAggregates`, `markBookingPaymentSucceeded`) — that copy
+carries no SetupIntent, so it never reads as reusable, and the laundered rows
+production already holds read as no card for the same reason, without a
 migration. The row itself still transitions exactly as before — this changes
 which bookings enter `PENDING -> PROCESSING` off-session, not what happens once
 they do.

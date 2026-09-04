@@ -1697,15 +1697,32 @@ one, check the other.
   card checkout therefore leaves the child with NO card, and the child takes the
   same payment-link path as a child of an Internet-Banking parent
   (`INV-CAP-005`), instead of a charge that cannot succeed.
-  - **A borrowed card is never written onto the row that borrowed it.** When
-    the card came from the parent, the charge claim's upsert writes the customer
-    the child is charged under and NOT the parent's payment method
-    (`savedPaymentMethodRowStamp`). Before #3269 the cron copied it, which turned
-    a one-off checkout artefact into a "saved card" the admin button and both
-    charge routes then trusted; in production the parent and child rows carried
-    the identical payment method. A legacy row of that shape — customer and
-    payment method, no `stripeSetupIntentId` — now correctly reads as "no card",
-    which repairs it without a migration.
+  - **No charge CLAIM writes the card column.** The claim's upsert
+    (`savedPaymentMethodRowStamp`, spread by the settlement cron and the admin
+    confirm-pending-guests route) writes the `stripeCustomerId` the booking is
+    charged under and nothing else, whichever row supplied the card. Not the
+    parent's payment method: copying it is what turned a one-off checkout
+    artefact into a "saved card" the admin button and both charge routes then
+    trusted — in production the parent and child rows carried the identical
+    payment method. And not the booking's own payment method either, even
+    though writing it back looks like a no-op: the claim races the setup-intent
+    route's replacement mint, which clears the payment method beside a fresh
+    `stripeSetupIntentId`, and a write-back of the value the claim read would
+    leave the old card next to the new id — a card mid-replacement that passes
+    this very check. A claim that writes only the customer can resurrect nothing.
+  - **A captured charge records the card that paid, as on every paid row, and
+    that copy never reads as reusable.** The claim is not the only writer. After
+    a charge attempt, `upsertPaymentIntentTransaction` →
+    `reconcilePaymentAggregates` mirrors the latest primary attempt's payment
+    method onto the row whether it succeeded, failed or is still pending, and
+    `markBookingPaymentSucceeded` writes the payment method that paid. So a PAID
+    child charged on its parent's card carries that card, and a PENDING child
+    whose borrowed charge failed or is pending carries it too — both without a
+    `stripeSetupIntentId`, so `reusableSavedPaymentMethodOnRow` offers neither
+    for a second charge. The predicate is what makes the copy harmless, not the
+    absence of the copy. A legacy row of the laundered shape — customer and
+    payment method, no `stripeSetupIntentId` — reads as "no card" for the same
+    reason, which repairs it without a migration.
   - **What the proxy does not prove, stated so nobody widens it by accident.**
     `stripeSetupIntentId` on a row does not prove the payment method beside it is
     the SetupIntent's card: a later Payment Element capture on a row that still
