@@ -135,12 +135,48 @@ function isFinancialReview(task: ManualRefundTask): boolean {
 }
 
 /**
+ * #3213: the one row kind that is a NOTICE rather than work the club owes.
+ *
+ * A settled review share that could not be added to its edit's Xero invoice,
+ * because that invoice had been picked up for sending and could no longer be
+ * raised. Nothing is billed automatically: a mid-send job can still come back to
+ * the queue and be raised to the full amount, so a second invoice raised now
+ * could bill the same money twice. An officer checks Xero and closes it.
+ *
+ * Typed against the Prisma enum for the reason the constant above is, and the
+ * wire field stays a loose string for the same reason: a cached client bundle
+ * reading a newer row degrades to a hand-back rather than throwing.
+ *
+ * REGISTERED BUT NOT YET WRITTEN. No row can carry this kind until the runtime
+ * half of the two-release enum addition ships (migration 20260910010000;
+ * `uncollected-edit-review-share-expand.test.ts` holds the line). The wording
+ * lands now so that release changes a writer rather than a writer plus a screen.
+ */
+const WITHHELD_SHARE_KIND: ManualRefundTaskKind = "UNCOLLECTED_EDIT_REVIEW_SHARE";
+
+function isWithheldShare(task: ManualRefundTask): boolean {
+  return task.kind === WITHHELD_SHARE_KIND;
+}
+
+/**
  * #2797: how a task's amount reads in the queue. A priced task shows the money;
  * an unpriced EDIT_FINANCIAL_REVIEW task shows that it is waiting for the club
  * to price it, so nobody mistakes an unknown amount for a settled $0.00.
  */
-function formatTaskAmount(amountCents: number | null): string {
-  return amountCents === null ? "Awaiting pricing" : formatCents(amountCents);
+function formatTaskAmount(task: ManualRefundTask): string {
+  if (task.amountCents !== null) return formatCents(task.amountCents);
+  /*
+    #3213: "unknown" means two different things on the two kinds that allow it,
+    and one sentence for both would be wrong on one of them.
+
+    A review is waiting for the CLUB to price it, and it will be priced on this
+    screen. A withheld share can never be priced here: the amount is unknown
+    because the writer that raised it - the payment-recovery replay - holds the
+    edit's combined total and cannot say which part the sent invoice already
+    carried. Telling an officer that row is "awaiting pricing" would send them
+    looking for a control that does not exist on it.
+  */
+  return isWithheldShare(task) ? "Amount not known" : "Awaiting pricing";
 }
 
 /**
@@ -310,6 +346,12 @@ const DIRECTION_CHOICES: ReadonlyArray<{
 
 function completionTitle({ task, resolution }: ResolutionTarget): string {
   if (resolution === "dismissed") {
+    if (isWithheldShare(task)) {
+      // #3213: not "dismiss", which on every other row means the club decided
+      // not to pay something. Here the officer has finished a job - checked
+      // Xero, billed anything missing - and is recording that they did.
+      return `Close this uncollected amount for ${task.memberName}?`;
+    }
     return isFinancialReview(task)
       ? `Close this review for ${task.memberName} with no adjustment?`
       : `Dismiss the refund for ${task.memberName}?`;
@@ -335,6 +377,9 @@ function resolutionDescription({
   resolution,
 }: ResolutionTarget): string {
   if (resolution === "dismissed") {
+    if (isWithheldShare(task)) {
+      return "This closes the item as dealt with. It moves no money and raises no invoice — closing it never has. Say what the booking's Xero invoices actually showed and what you billed by hand, if anything, because that note is the only record of how this amount was settled.";
+    }
     return isFinancialReview(task)
       ? "This closes the review as looked at, with nothing to pay back or credit. It moves no money and records none as having moved. Say what the evidence showed, so the finding makes sense to whoever reads it next."
       : "Dismissing closes the task without refunding anything — for a member who declined the refund, or money settled another way. Say which, so the record makes sense later.";
@@ -1049,7 +1094,19 @@ export function ManualRefundTaskQueue() {
   */
   const openTasks = tasks ?? [];
   const hasReviewRows = openTasks.some(isFinancialReview);
-  const hasHandBackRows = openTasks.some((task) => !isFinancialReview(task));
+  const hasWithheldShareRows = openTasks.some(isWithheldShare);
+  /*
+    #3213: a withheld share is neither a hand-back nor a review, so it must fall
+    out of the hand-back sentence rather than into it by default. That sentence
+    says the booking "was paid in cash or by a bank transfer that never reached
+    Xero, and [has] since been cancelled" - three claims, none of them true of a
+    live booking whose change invoice was mid-send. The default arm is what made
+    the same sentence wrong about reviews before #3033, and this is the same
+    mistake waiting one kind along.
+  */
+  const hasHandBackRows = openTasks.some(
+    (task) => !isFinancialReview(task) && !isWithheldShare(task),
+  );
   if (
     !showQueue &&
     autoRefunded.length === 0 &&
@@ -1116,6 +1173,22 @@ export function ManualRefundTaskQueue() {
                 owed.
               </p>
             ) : null}
+            {hasWithheldShareRows ? (
+              <p
+                className="text-sm text-muted-foreground"
+                data-testid="manual-refund-task-withheld-share-intro"
+              >
+                Some of these are amounts the club may not have asked for. A
+                booking change was settled as money the member owes, but the Xero
+                invoice for that change had already been picked up for sending,
+                so it could not be raised to include the extra. Nothing was
+                invoiced automatically, on purpose: an invoice in that state can
+                still come back and go out at the full amount, and a second one
+                raised now could bill the member twice. Check the booking&apos;s
+                invoices in Xero first — if they already come to the settled
+                total, nothing is owed and you can close the item saying so.
+              </p>
+            ) : null}
             {tasks === null ? (
               <p className="text-sm text-muted-foreground">Loading…</p>
             ) : (
@@ -1127,7 +1200,7 @@ export function ManualRefundTaskQueue() {
                   >
                     <div className="space-y-1 text-sm">
                       <p className="font-medium text-foreground">
-                        {task.memberName} — {formatTaskAmount(task.amountCents)}
+                        {task.memberName} — {formatTaskAmount(task)}
                         {/*
                           #3033: the row says on its face when the amount has
                           been amended since the task was raised, rather than
@@ -1183,6 +1256,32 @@ export function ManualRefundTaskQueue() {
                         )}
                       </p>
                       <p className="text-xs text-muted-foreground">{task.reason}</p>
+                      {/*
+                        #3213: what to DO, on the row, in the order an officer
+                        does it. The standing paragraph says why nothing was
+                        invoiced; this says what to check and what to raise, and
+                        names the amount rather than leaving them to carry the
+                        figure down from the heading.
+
+                        THE CHECK COMES BEFORE THE BILL, deliberately. The whole
+                        hazard here runs one way - billing a member a second time
+                        for money already asked for - so an instruction that led
+                        with "raise a supplementary invoice" would be the defect
+                        wearing an interface. On the row whose amount is not
+                        knowable it cannot say a figure at all, and says so
+                        rather than printing the settled total, which an officer
+                        could reasonably read as the thing to bill.
+                      */}
+                      {isWithheldShare(task) ? (
+                        <p
+                          className="text-xs text-warning-11"
+                          data-testid="manual-refund-task-withheld-share-instruction"
+                        >
+                          {task.amountCents === null
+                            ? "Open this booking's invoices in Xero and compare them against the settled total on the change. This item cannot say how much is missing — it was raised by the recovery pass, which knows the change's combined total but not which part the sent invoice already carried. If the invoices fall short, bill the difference by hand. Then close the item with a note saying what Xero showed and what you billed."
+                            : `Open this booking's invoices in Xero and check whether they already include ${formatCents(task.amountCents)}. If they do, nothing is owed. If they fall short, raise a supplementary invoice for that amount only — never for the change's full total, which the member has already been asked for. Then close the item with a note saying what Xero showed and what you billed.`}
+                        </p>
+                      ) : null}
                       {task.reviewEvidence ? (
                         <EditFinancialReviewEvidenceBlock
                           evidence={task.reviewEvidence}
@@ -1209,6 +1308,23 @@ export function ManualRefundTaskQueue() {
                       ) : null}
                     </div>
                     <div className="flex gap-2">
+                      {/*
+                        #3213: NO COMPLETION CONTROL ON A WITHHELD SHARE, and
+                        the button is absent rather than disabled.
+
+                        The kind is dismiss-only at the completion door
+                        (`manual-refund-task-resolution.ts`), because COMPLETED
+                        with no direction reads as REFUND_TO_MEMBER and reaches
+                        the allocation path. A control whose only outcome is a
+                        refusal is worse than no control - the house "no button
+                        that fails" rule, the same one that governs the unpriced
+                        review above - and a disabled one would still say the
+                        club might owe this money back, which it does not.
+
+                        The server refusal is the guarantee; this is the screen
+                        agreeing with it.
+                      */}
+                      {isWithheldShare(task) ? null : (
                       <ViewOnlyActionButton
                         canEdit={canEdit}
                         type="button"
@@ -1262,6 +1378,7 @@ export function ManualRefundTaskQueue() {
                           ? "Record the adjustment"
                           : "Mark paid back"}
                       </ViewOnlyActionButton>
+                      )}
                       <ViewOnlyActionButton
                         canEdit={canEdit}
                         type="button"
@@ -1277,7 +1394,9 @@ export function ManualRefundTaskQueue() {
                       >
                         {isFinancialReview(task)
                           ? "No adjustment"
-                          : "Dismiss"}
+                          : isWithheldShare(task)
+                            ? "Close this item"
+                            : "Dismiss"}
                       </ViewOnlyActionButton>
                     </div>
                   </li>

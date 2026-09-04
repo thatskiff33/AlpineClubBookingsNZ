@@ -1994,8 +1994,6 @@ describe("#3213 - a withheld review share is dismiss-only", () => {
       resolution: "dismissed",
       note: "Xero already showed $45.00 on invoice INV-0142 - nothing to bill",
       actingMemberId: "admin-1",
-      confirmedAmountCents: null,
-      direction: null,
       recordedNightPrices: null,
     });
 
@@ -2020,8 +2018,6 @@ describe("#3213 - a withheld review share is dismiss-only", () => {
         resolution: "dismissed",
         note: "   ",
         actingMemberId: "admin-1",
-        confirmedAmountCents: null,
-        direction: null,
         recordedNightPrices: null,
       })
     ).rejects.toThrow(/note is required/i);
