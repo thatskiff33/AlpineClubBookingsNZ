@@ -41,8 +41,10 @@ vi.mock("@/lib/booking-request", async () => {
   };
 });
 
-vi.mock("@/lib/payment-link", () => ({
+vi.mock("@/lib/payment-link-context", () => ({
   getPaymentLinkContext: vi.fn(),
+}));
+vi.mock("@/lib/payment-link", () => ({
   PaymentLinkError: class PaymentLinkError extends Error {
     status: number;
     constructor(message: string, status: number) {
@@ -146,7 +148,8 @@ import {
   calculateIndicativeNonMemberPriceCents,
   BookingRequestError,
 } from "@/lib/booking-request";
-import { getPaymentLinkContext, PaymentLinkError } from "@/lib/payment-link";
+import { PaymentLinkError } from "@/lib/payment-link";
+import { getPaymentLinkContext } from "@/lib/payment-link-context";
 import { reissuePaymentLinkForToken } from "@/lib/payment-link-reissue";
 import {
   createPaymentIntentForPaymentLink,
@@ -804,7 +807,7 @@ describe("GET /api/pay/[token]", () => {
     #3194 (epic #2797): this route is where the "is this booking's money still
     with the office" read happens, and it must be THE canonical read.
 
-    `payment-link.ts` cannot do it - the helper carries `import "server-only"`
+    `payment-link-context.ts` cannot do it - the helper carries `import "server-only"`
     and that module is deliberately importable outside a React server. So the
     route hands it down, and this asserts it hands down the real helper rather
     than a second `where` clause that agrees today and drifts tomorrow
