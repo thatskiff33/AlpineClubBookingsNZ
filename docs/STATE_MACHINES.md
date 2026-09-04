@@ -1321,6 +1321,32 @@ surface show nothing new. The rest of the audit trail (recovery-operation row,
 `PaymentRefund` ledger entries, error log, and the dedicated #2007 admin alert)
 is unchanged.
 
+Saved-card auto-charge failure (#3268, `INV-PAY-052`): when the confirm-pending
+cron's off-session charge THROWS, the Payment row's state does not move — the
+row stays `PENDING` and the capacity claim is released as before — but the
+error is now classified before the next run is allowed to try again:
+
+```text
+charge throws -> release claim (unchanged)
+  retry    (soft decline inside the window, api/rate-limit/idempotency error,
+            plain Error, anything unrecognised)
+             -> admin alert as before -> same card charged next run
+  terminal (Stripe rejects the pm itself; a "do not retry" decline code incl.
+            authentication_required; a soft decline two ~2-day windows after
+            the charge first became due)
+             -> pm detached at Stripe (best-effort, outside any transaction)
+             -> Payment.stripePaymentMethodId = null on EVERY row carrying it
+                (child AND borrowed-from parent)
+             -> PaymentTransaction.paymentMethodId = null on every ledger row
+                carrying it (so reconcilePaymentAggregates cannot re-stamp it)
+             -> ONE member email (saved-card-charge-failed) + ONE admin alert
+             -> next run: split child -> #1967 payment-link path;
+                          plain booking -> missing_payment_method (log only)
+```
+
+`stripeSetupIntentId` and `stripeCustomerId` are untouched. The PROCESSING /
+`requires_action` branch (an intent RETURNED, not thrown) is not part of this.
+
 ### Manual mark-paid (cash / off-Xero bank transfer), B5 #2262
 
 A finance:edit admin action that settles a booking's payment for money the app
@@ -2688,6 +2714,27 @@ failure -> run/failure visible and retryable where business-critical
 
 To verify: which cron jobs record `CronJobRun`, exact statuses, stale queue
 health thresholds, and skipped-module reporting.
+
+### Confirm-pending saved-card charge (#3268)
+
+`confirmPendingBookings` claims a hold-expired booking (PENDING -> CONFIRMED
+under `lock(1)` + the lodge lock), charges the saved card off-session, and on
+success moves it to PAID. A THROWN charge used to be one outcome — release the
+claim, alert admins, retry next run — which retried a permanently unusable card
+24 times over four days. It is now two:
+
+```text
+charge throws -> claim released (booking back to PENDING, beds reconciled away)
+  -> classify (src/lib/saved-card-charge-failure.ts)
+     retry    -> admin alert, same card next run            (as before)
+     terminal -> card retired everywhere + member told once + admins told once
+                 -> next run takes the no-card path for this booking
+```
+
+The full decision table and the row-clearing contract are in "Payment
+Lifecycle" above and `INV-PAY-052`. To verify: the classifier table
+(`saved-card-charge-failure.test.ts`) and the cron's terminal branch
+(`cron-confirm-pending.test.ts`, "#3268").
 
 ## Two-Factor Login Lifecycle
 

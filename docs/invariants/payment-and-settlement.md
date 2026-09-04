@@ -1670,3 +1670,51 @@ one, check the other.
     recalculation a parked removal skips, so the gross stored figure is evidence
     for the admin rather than a settlement the system may assert. **The rule:
     a parked edit never destroys a number the system could have known.**
+
+## INV-PAY-052
+
+**Related: `INV-PAY-027`, `INV-PAY-030`, `INV-INT-001`, `INV-INT-003`.**
+
+- **An unusable saved card is terminal for automation: retired at the provider,
+  cleared from every row carrying it, escalated once** (#3268, epic #3270). When
+  the confirm-pending cron's off-session charge THROWS, the error is classified
+  before anything is retried (`src/lib/saved-card-charge-failure.ts`). Three
+  shapes are terminal — Stripe rejecting the payment method itself
+  (`invalid_request_error` naming the pm by `param`, by a `payment_method_*` /
+  `resource_missing` code, or, as a commented last resort, by the documented
+  incident wording); a `card_error` whose code or `decline_code` Stripe documents
+  as "do not retry", including `authentication_required`, which no off-session
+  retry can satisfy; and a soft decline still failing once the hold is two
+  ~2-day windows past the moment the charge first became due. Everything else —
+  a soft decline inside that window, an `api_error`, a rate limit, an
+  idempotency error, a plain `Error` — keeps the pre-#3268 release-alert-retry
+  behaviour, so the classifier can only narrow the retry loop, never widen it.
+  - **Terminal means the card leaves every row, not just this booking's.** The
+    capacity claim is released first, exactly as before. Then the pm is detached
+    at Stripe (best-effort, a plain provider call outside any transaction —
+    `INV-INT-003`; a detach that errors is swallowed because an already-detached
+    pm is unusable either way), cleared from every `Payment.stripePaymentMethodId`
+    equal to it — the child's row AND the parent row a split child borrowed it
+    from, which is what stops the next run re-borrowing it — and nulled on every
+    `PaymentTransaction.paymentMethodId` equal to it, because
+    `reconcilePaymentAggregates` re-derives the `Payment` mirror from the latest
+    PRIMARY ledger row on every ledger upsert and would otherwise copy the retired
+    pm straight back. `stripeSetupIntentId` and `stripeCustomerId` are left in
+    place: the setup-intent route's idempotency chain depends on the previous id
+    staying put (#3266), and provider-side detachment is what makes "may not be
+    re-adopted anywhere" true.
+  - **Escalated once, by construction rather than by counter.** One member email
+    (`saved-card-charge-failed`, booking-scoped so the "No emails" switch applies)
+    and one admin alert through the existing payment-failure template, its body
+    saying in plain English that the card was found unusable, has been removed,
+    that the member has been asked to save a new one, and quoting Stripe. After
+    this run the pm is gone from every row, so the next run never reaches the
+    charge arm for it: a split child takes the #1967 payment-link path with its
+    capped cadence, a plain booking takes `missing_payment_method`, which only
+    logs. A rerun of the SAME run — a crash between the clear and the notices —
+    re-sends, the ordinary at-least-once shape every cron notice here accepts.
+    The soft-decline window is a pure function of time from the claim's own hold
+    deadline (clamped to creation), which `releaseChargeClaim` writes back
+    unchanged, so a rerun in the same window reaches the same answer
+    (`INV-INT-001`). Nothing in the PROCESSING / `requires_action` branch changes:
+    an intent that RETURNED is not a thrown failure.
