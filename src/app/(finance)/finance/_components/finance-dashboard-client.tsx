@@ -55,7 +55,7 @@ import {
   FINANCE_DASHBOARD_VIEWS,
   financeDashboardViewUsesLodgeScope,
 } from "@/lib/finance-dashboard-ranges";
-import type { FinanceDashboardPageModel } from "@/lib/finance-dashboard-page";
+import type { FinanceDashboardPageModel } from "@/lib/finance-dashboard-page/model";
 import {
   isFinanceDashboardDatasetDefault,
   resetFinanceDashboardDatasetSearchParams,

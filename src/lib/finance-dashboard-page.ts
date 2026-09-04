@@ -7,11 +7,6 @@ import {
   type BoundClubTime,
 } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
-import { buildThemeSubstrate } from "@/lib/theme/theme-substrate";
-import {
-  DEFAULT_CLUB_THEME_VALUES,
-  themeSeedsFromValues,
-} from "@/lib/club-theme-schema";
 import {
   getFinanceBookingMetrics,
   type FinanceBookingMetricsResult,
@@ -31,6 +26,17 @@ import {
 } from "@/lib/finance-dashboard-ranges";
 import { financeDashboardWindowDetail } from "@/lib/finance-dashboard-labels";
 import {
+  cardRows,
+  type FinanceDashboardKpiCard,
+  type FinanceDashboardPageModel,
+  type FinanceDashboardRatioExplorerModel,
+  type FinanceDashboardStatusPanel,
+  type FinanceDashboardSyncStatus,
+  type FinanceDashboardTrend,
+  type FinanceDashboardViewModel,
+} from "@/lib/finance-dashboard-page/model";
+import { SERIES_COLORS } from "@/lib/finance-dashboard-page/series-colors";
+import {
   formatDollarsDisplay,
   formatFinanceNumber as formatNumber,
   formatFinancePercent as formatPercent,
@@ -45,10 +51,7 @@ import {
   buildFinanceFinancialYearsPanelItems,
   buildFinanceRatioMatrix,
 } from "@/lib/finance-ratio-insights";
-import {
-  financeFinancialYearBuckets,
-  type FinanceRatioMatrix,
-} from "@/lib/finance-ratio-shared";
+import { financeFinancialYearBuckets } from "@/lib/finance-ratio-shared";
 import type { FinanceMappedPnlCategorySummary } from "@/lib/finance-report-mappings";
 import { buildFinanceRevenueReconciliation } from "@/lib/finance-revenue-reconciliation";
 import { refreshFinancialYearConfig } from "@/lib/financial-year-server";
@@ -82,155 +85,6 @@ import { formatCents } from "@/lib/utils";
 // and every exported row label, named the PREVIOUS day (INV-DATE-019).
 
 type SearchParams = Record<string, string | string[] | undefined>;
-type FinanceDashboardViewModel = Pick<
-  FinanceDashboardPageModel,
-  | "cards"
-  | "trends"
-  | "mix"
-  | "statusPanels"
-  | "costFilters"
-  | "sourceNotes"
-  | "exportSections"
-> & { warnings: string[] };
-
-interface FinanceDashboardKpiCard {
-  title: string;
-  value: string;
-  description: string;
-  footnote?: string;
-}
-
-interface FinanceDashboardTrend {
-  title: string;
-  description: string;
-  variant: "bar" | "area" | "line";
-  xKey: string;
-  data: Array<Record<string, number | string>>;
-  series: Array<{
-    key: string;
-    name: string;
-    color: string;
-    valueType: "currency" | "count" | "percent" | "ratio";
-    stackId?: string;
-  }>;
-}
-
-interface FinanceDashboardMix {
-  title: string;
-  description: string;
-  valueType: "currency" | "count" | "percent" | "ratio";
-  data: Array<{ name: string; value: number }>;
-}
-
-interface FinanceDashboardStatusPanel {
-  title: string;
-  description: string;
-  badgeLabel?: string;
-  badgeTone?: "success" | "warning" | "destructive" | "secondary";
-  items: Array<{
-    label: string;
-    value: string;
-    detail?: string;
-    // Set on subtype sub-heading / sub-total rows so the renderer can emphasise them.
-    emphasis?: boolean;
-    href?: string;
-    linkLabel?: string;
-  }>;
-}
-
-interface FinanceDashboardExportSection {
-  title: string;
-  rows: Array<Record<string, string | number>>;
-}
-
-interface FinanceDashboardCostFilters {
-  categories: Array<{ id: string; label: string }>;
-  lines: Array<{ value: string; label: string; categoryId: string }>;
-}
-
-interface FinanceDashboardSyncStatus {
-  label: string;
-  tone: "success" | "warning" | "destructive" | "secondary";
-  detail: string;
-  lastSyncedAt: string | null;
-}
-
-interface FinanceDashboardRatioExplorerModel {
-  matrix: FinanceRatioMatrix;
-  initialNumeratorId: string | null;
-  initialDenominatorId: string | null;
-  initialRangeKey: string | null;
-}
-
-export interface FinanceDashboardPageModel {
-  generatedOn: string;
-  isManager: boolean;
-  selection: FinanceDashboardSelection;
-  /** Present only on the Ratios view; drives the client-side explorer. */
-  ratios: FinanceDashboardRatioExplorerModel | null;
-  selectionLabels: {
-    view: string;
-    range: string;
-    compare: string;
-    forward: string;
-    primaryWindow: string;
-    comparisonWindow: string;
-    forwardWindow: string;
-  };
-  syncStatus: FinanceDashboardSyncStatus;
-  warnings: string[];
-  cards: FinanceDashboardKpiCard[];
-  trends: FinanceDashboardTrend[];
-  mix: FinanceDashboardMix | null;
-  statusPanels: FinanceDashboardStatusPanel[];
-  costFilters: FinanceDashboardCostFilters | null;
-  sourceNotes: Array<{
-    label: string;
-    description: string;
-    href?: string;
-    linkLabel?: string;
-  }>;
-  exportSections: FinanceDashboardExportSection[];
-  /**
-   * Active lodges for the booking-derived reporting scope (occupancy, guest
-   * nights, booked revenue). ADR-002: the selector only appears once a second
-   * active lodge exists, so a single-lodge club sees an empty list and no
-   * selector. Accounting views (P&L, cash, balances) stay club-wide and ignore
-   * this scope — including the seasons behind the "Rest of Season" forward
-   * window (#2919), which honour it only on the views that render the selector
-   * (FINANCE_DASHBOARD_LODGE_SCOPED_VIEWS), never on a lodgeId the query string
-   * happens to have carried over.
-   */
-  lodges: Array<{ id: string; name: string }>;
-  /** Selected reporting lodge, or null for all active lodges (summed capacity). */
-  selectedLodgeId: string | null;
-}
-
-// #2190 P4 (D15/J7): the trend/bar series colours are DERIVED from the generated
-// substrate rather than hand-picked hex (the old set led with a fork's brand gold
-// and its support orange). Like FINANCE_MIX_COLORS these feed Recharts
-// `fill`/`stroke` presentation attributes where `var()` does not resolve, so a
-// resolved hex is required; the scales chosen are club-independent at step 9 and
-// distinct from each other and from FINANCE_MIX_COLORS' first slots reused here
-// (cat1/cat3/cat4-9 read as the SAME hue across the two charts on purpose). Built
-// once from the shipping default reference seeds; pinned by
-// finance-dashboard-series-colors.test.ts. The dead `neutral`/`negative` slots
-// (zero references) were removed.
-function buildFinanceSeriesColors() {
-  const light = buildThemeSubstrate(themeSeedsFromValues(DEFAULT_CLUB_THEME_VALUES), "light");
-  const step9 = (scale: string) => light.scales[scale].hex[8];
-  return {
-    revenue: step9("cat1"), // headline revenue — categorical chart-1 tone
-    costs: step9("cat4"), // orange, reads as outflow; distinct from revenue
-    bookings: step9("cat3"), // magenta, distinct from revenue and costs
-    cash: step9("info"), // semantic info blue
-    positive: step9("success"), // semantic success green
-    comparison: light.neutralHex[8], // neutral-9: a muted grey reference line
-  } as const;
-}
-
-// Exported for finance-dashboard-series-colors.test.ts (pin to the default seeds).
-export const SERIES_COLORS = buildFinanceSeriesColors();
 
 // Exact cents (reconciliation and export rows only; displays use whole dollars).
 function formatSignedCents(value: number) {
@@ -260,15 +114,6 @@ function formatDateTime(club: BoundClubTime, value: string | Date) {
 
 function formatShortDate(dateOnly: string) {
   return formatClubDayMonth(requireCalendarDate(dateOnly));
-}
-
-function cardRows(cards: FinanceDashboardKpiCard[]) {
-  return cards.map((card) => ({
-    Metric: card.title,
-    Value: card.value,
-    Description: card.description,
-    Footnote: card.footnote ?? "",
-  }));
 }
 
 /**
