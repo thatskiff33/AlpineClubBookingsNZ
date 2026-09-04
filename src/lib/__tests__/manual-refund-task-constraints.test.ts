@@ -68,6 +68,15 @@ const FOUNDATION_MIGRATION =
 /** The migration under test (#3030). */
 const OCCURRENCE_KEY_MIGRATION =
   "prisma/migrations/20260903010000_manual_refund_task_edit_review_occurrence_key_required/migration.sql";
+/**
+ * #3213: registers `UNCOLLECTED_EDIT_REVIEW_SHARE` and RESTATES
+ * `ManualRefundTask_non_edit_review_amount_present` so that label may carry a
+ * NULL amount. Applied last, in real deploy order, so the predicate these tests
+ * meet is the one the shipped migrations actually leave behind rather than a
+ * hand-copied approximation of it.
+ */
+const WITHHELD_SHARE_MIGRATION =
+  "prisma/migrations/20260910010000_register_uncollected_edit_review_share_kind/migration.sql";
 
 /**
  * The foundation migration also constrains `BookingGuest` and
@@ -142,6 +151,7 @@ async function withManualRefundTaskSchema(
     for (const migrationPath of [
       FOUNDATION_MIGRATION,
       OCCURRENCE_KEY_MIGRATION,
+      WITHHELD_SHARE_MIGRATION,
     ]) {
       for (const statement of await manualRefundTaskStatements(migrationPath)) {
         await client.query(statement);
@@ -317,6 +327,57 @@ describeWithDatabase("ManualRefundTask database constraints (#3030)", () => {
         insert(client, {
           id: "legacy-unpriced",
           kind: "CANCELLED_BOOKING_HAND_BACK",
+          amountCents: null,
+          raisedAmountCents: null,
+        }),
+      ).rejects.toMatchObject({
+        code: "23514",
+        constraint: "ManualRefundTask_non_edit_review_amount_present",
+      });
+    });
+  });
+
+  it("accepts an UNCOLLECTED_EDIT_REVIEW_SHARE row with no amount, because the replay cannot know the figure (#3213)", async () => {
+    await withManualRefundTaskSchema(async (client) => {
+      // 20260910010000 relaxed "non_edit_review_amount_present" for this kind,
+      // and it is a money decision rather than a convenience. There are two
+      // writers of a withheld share and only one knows the figure: the
+      // settlement leg holds THIS task's own settled share, while the
+      // payment-recovery replay passes it as NULL by design - it re-derives the
+      // edit's COMBINED total and cannot say which part the sent invoice already
+      // carried.
+      //
+      // Storing that total here instead would put a number in the money column
+      // of an item whose sentence tells an officer to bill what is missing, and
+      // an officer who bills the total bills the member a SECOND time for money
+      // already asked for. NULL says "not knowable"; 0 may never be used to mean
+      // it, exactly as on EDIT_FINANCIAL_REVIEW.
+      await insert(client, {
+        id: "withheld-unknown",
+        kind: "UNCOLLECTED_EDIT_REVIEW_SHARE",
+        occurrenceKey: "uncollected-edit-review-share:v1:mod-1",
+        amountCents: null,
+        raisedAmountCents: null,
+        paymentId: null,
+      });
+
+      const { rows } = await client.query(
+        `SELECT "amountCents" FROM "ManualRefundTask" WHERE "id" = 'withheld-unknown'`,
+      );
+      expect(rows[0].amountCents).toBeNull();
+    });
+  });
+
+  it("still refuses a LEGACY-kind row with no amount after that relaxation, which is the half a widened constraint would have lost", async () => {
+    await withManualRefundTaskSchema(async (client) => {
+      // The mutation this pins: relaxing the constraint for the new kind by
+      // dropping it, or by widening it to every kind, would exempt exactly the
+      // rows 20260903010000 exists to refuse. Kept beside the acceptance above
+      // so the two are read together.
+      await expect(
+        insert(client, {
+          id: "legacy-unpriced-after-3213",
+          kind: "AUTOMATIC_LATE_CAPTURE_RECORD",
           amountCents: null,
           raisedAmountCents: null,
         }),
