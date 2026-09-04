@@ -384,6 +384,32 @@ export function hostingModeIsActive(
 }
 
 /**
+ * Can a same-owner stranding REFUSE the actor at this mode, or only escalate?
+ * (#3232, `INV-HOST-050`.)
+ *
+ * A NARROWER QUESTION THAN `hostingModeIsActive`, and a separate one. That asks
+ * whether the rule judges at all — `ADMIN_REVIEW_REQUIRED` does, which is why a
+ * dependent read still runs there. This asks whether the answer can be a refusal,
+ * and under `ADMIN_REVIEW_REQUIRED` it cannot: nothing there refuses and nothing
+ * opens an incident.
+ *
+ * IT EXISTS SO THERE IS ONE SPELLING OF IT. There were three — the settle path's
+ * early return on the literal `ADMIN_REVIEW_REQUIRED`, the read-only probe the
+ * linked-move OFFER uses on `mode !== "ENFORCED"`, and the wider active pair the
+ * plan they share gates on. They agree today, which is what makes it dangerous:
+ * extend the refusal to `ADMIN_REVIEW_REQUIRED` in one of them and the probe
+ * returns an empty list, so the caller raises a 409 naming nobody, the browser's
+ * fail-closed reader discards it, and the member is handed a body no reader
+ * matches — the "offer that named nobody" failure already fixed once here. With
+ * one predicate, extending the refusal moves every reader with it.
+ */
+export function hostingModeCanRefuseStranding(
+  mode: EffectiveAdultMemberHostingMode,
+): boolean {
+  return mode === "ENFORCED";
+}
+
+/**
  * Club-wide default with per-lodge override (ADR-001 resolved question 3), with
  * one difference from the minimum-stay policy SET: this policy is a single row
  * per scope, so a lodge overrides by holding a row whose mode is not INHERIT,

@@ -47,6 +47,7 @@ import {
   checkCapacityForPartnerSharedAdmission,
 } from "@/lib/capacity";
 import {
+  InsufficientCapacityError,
   OverCapacityConfirmationRequiredError,
   overCapacityNights,
   wholeLodgeBlockedNights,
@@ -1759,7 +1760,17 @@ export async function calculateModifiedPricing(
       if (!adminOverride) {
         // Member / non-override path: a held night is unavailable exactly like a
         // full lodge (ADR-001 decision 6, issue #118) — no exclusive signal.
-        throw new ApiError("Not enough beds available for these changes", 400);
+        //
+        // #3232: CLASSED, and the same 400 with the same sentence. A member's
+        // linked move asks the second booking's refusal what kind of refusal it
+        // is, and this is the only one a member can ever receive — the two
+        // over-capacity classes below are admin-only. As a bare `ApiError` it was
+        // indistinguishable from a minimum-stay block or a Xero lock date, so the
+        // "there are not beds for both" arm of the offer was unreachable and a
+        // full lodge refused the member with nothing to do about it.
+        throw new InsufficientCapacityError(
+          "Not enough beds available for these changes",
+        );
       }
       if (!confirmOverCapacity) {
         throw new OverCapacityConfirmationRequiredError(overCapacityNights(capacity));

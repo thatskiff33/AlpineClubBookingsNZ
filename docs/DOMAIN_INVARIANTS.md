@@ -377,6 +377,10 @@ Prefix `INV-HOST`.
 | `INV-HOST-046` | Stranding another account's Group Trip booking allows the change, escalates the sibling, and discloses nothing |
 | `INV-HOST-047` | Third optional scope, appended never reordered, off until a club enables it |
 | `INV-HOST-048` | Outside the all-or-none CHECK; NULL on a decided row means off |
+| `INV-HOST-049` | The same-owner dependent fan-out reads over the vacated window too, and each queue item carries the dependent's own nights |
+| `INV-HOST-050` | A member is never refused a change they cannot make; moving away from their own booking's cover offers the linked move |
+| `INV-HOST-051` | The linked move is atomic and settles once; both change fees are charged unless the club has turned the second off |
+| `INV-HOST-052` | A declined linked move has its own recorded cause, registered one release before anything writes it |
 
 ### Booking requests
 

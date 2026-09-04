@@ -340,8 +340,19 @@ export const SINGLETONS: SingletonSpec[] = [
   {
     entity: "booking-defaults",
     delegate: "bookingDefaults",
-    fields: ["nonMemberHoldEnabled", "nonMemberHoldDays", "waitlistCrossLodgeOrder"],
-    // All three columns are non-null (@default); a present null fails the dry-run
+    fields: [
+      "nonMemberHoldEnabled",
+      "nonMemberHoldDays",
+      "waitlistCrossLodgeOrder",
+      // #3232: whether the linked move charges the change fee on BOTH bookings.
+      // It TRAVELS, unlike the deployment-local settings excluded elsewhere in
+      // this file, because it is a club's answer to a fairness question about its
+      // own members — the same kind of answer as the non-member hold beside it —
+      // and a club adopting this codebase should carry its own answer with it
+      // rather than silently reverting to charging.
+      "linkedMoveChargesBothChangeFees",
+    ],
+    // All four columns are non-null (@default); a present null fails the dry-run
     // (#2200). nonMemberHoldDays mirrors the admin route's 1–365 bound
     // (booking-policies/cancellation route: z.number().int().min(1).max(365)).
     // waitlistCrossLodgeOrder is enum-validated automatically.
@@ -349,6 +360,7 @@ export const SINGLETONS: SingletonSpec[] = [
       nonMemberHoldEnabled: { required: true },
       nonMemberHoldDays: { required: true, min: 1, max: 365 },
       waitlistCrossLodgeOrder: { required: true },
+      linkedMoveChargesBothChangeFees: { required: true },
     },
     excluded: {
       lodgeId:

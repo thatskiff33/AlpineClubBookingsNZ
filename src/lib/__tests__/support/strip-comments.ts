@@ -3,7 +3,7 @@
  * preserved, plus the two other forms a scanner in this tree ever needs.
  *
  * THE ONE DEFINITION IN THE TREE, and since #3164 a rule ENFORCES that rather
- * than review doing it: 64 test files, one test helper and one CI script import this module, and
+ * than review doing it: 68 test files, one test helper and one CI script import this module, and
  * `ssot/no-local-comment-stripper` in `eslint.config.mjs` reports a second
  * scanner wherever one is written, in the editor. That FIGURE is measured
  * against the tree by `ssot-comment-stripper-guard.test.ts`, which also requires

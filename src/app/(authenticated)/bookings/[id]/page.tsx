@@ -601,6 +601,19 @@ export default async function BookingDetailPage({
           "booking.cancel",
           "booking.delete.draft",
           "booking.delete.cancelled.soft",
+          // #3232 D3, ADMIN VIEWERS ONLY, and the data feed is what is gated
+          // rather than the render (the #2008 duplicate-capture pattern above).
+          // `details` on these rows is whoever's explanation applies — a member's
+          // recorded decision about their own two bookings, or an officer's
+          // PRIVATE override reason, which the booking's own member must never
+          // read. An officer needs it here because this is the page the queue's
+          // "Review booking" button sends them to.
+          ...(canSeeAdminTools
+            ? ([
+                "booking.hostingCoverage.incidentOpened",
+                "booking.hostingCoverage.incidentUpdated",
+              ] as const)
+            : []),
         ],
       },
     },
@@ -837,6 +850,11 @@ export default async function BookingDetailPage({
 
   const bookingHistory = buildBookingHistoryItems({
     createdAt: booking.createdAt,
+    // #3232 D3 (owner, 4 September 2026): the incident's recorded explanation is
+    // readable by anyone with booking-edit access, and by nobody else. The audit
+    // query above already withholds the rows; this says the same thing to the
+    // builder, so a future edit to either one cannot open the door on its own.
+    audience: canSeeAdminTools ? "staff" : "member",
     payment: booking.payment
       ? {
           status: booking.payment.status,

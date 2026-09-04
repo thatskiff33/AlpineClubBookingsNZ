@@ -128,8 +128,19 @@ function makeIncidentDb(
           if (where.stateKey !== undefined && row.stateKey !== where.stateKey) {
             return false;
           }
-          if (where.cause !== undefined && row.cause !== where.cause) {
-            return false;
+          if (where.cause !== undefined) {
+            // `{ not: value }` as well as a bare label, because the promotion
+            // guard asks for "any cause that is not an override" rather than
+            // naming one label (#3232 D3). `HostingCoverageIncident.cause` is NOT
+            // NULL, so plain inequality is faithful here - there is no
+            // three-valued case to model, unlike the nullable notification
+            // columns below.
+            const filter = where.cause;
+            const matchesCause =
+              filter !== null && typeof filter === "object" && "not" in filter
+                ? row.cause !== filter.not
+                : row.cause === filter;
+            if (!matchesCause) return false;
           }
           if (where.OR !== undefined) {
             const matchesNotificationState = where.OR.some((branch: any) => {
@@ -280,6 +291,120 @@ describe("one active incident per booking, created or folded into (#2576 §16)",
     // NO AUTOMATIC CANCELLATION (§7, §16): this module writes no booking column at
     // all, which is why `booking` is not even in its client type.
     expect(Object.keys(db)).toEqual(["hostingCoverageIncident", "auditLog"]);
+  });
+
+  it("records a reason with NO override in the history, and attributes nobody", async () => {
+    // #3232 D3, `INV-HOST-052`. The owner was offered the linked move on their
+    // own other booking and declined it. That is not an override - nobody
+    // exercised authority over a booking that was not theirs - so the reason is
+    // history rather than a stored mandatory reason, and no officer is named.
+    // Until this landed the reason was computed, carried on the queue item all
+    // the way to this function, and then dropped, so the only officer-facing
+    // record of a deliberate decision was a cause code that also means "a
+    // qualification changed".
+    const { db, rows, audits } = makeIncidentDb();
+    await openOrUpdateHostingCoverageIncident(
+      {
+        bookingId: "b-main",
+        lodgeId: "lodge-a",
+        cause: "SYSTEM_CHANGE",
+        violation: UNCOVERED,
+        recordedReason: "The member was offered the linked move and declined it.",
+      },
+      db,
+    );
+
+    expect(audits[0]).toMatchObject({
+      action: "booking.hostingCoverage.incidentOpened",
+      details: "The member was offered the linked move and declined it.",
+      // #3232 D3: AND IT IS REACHABLE FROM THE BOOKING. The booking page's own
+      // history reads `auditLog.targetId = booking.id`, so without this the
+      // recorded explanation lived only in Admin -> Monitoring & Support -> Audit
+      // Log — while both the officer queue's "Review booking" button and the
+      // stuck-state row send an officer to the booking page, where they saw the
+      // generic cause and nothing else. D3's whole justification is that an
+      // officer reading the booking's history sees the decision.
+      targetId: "b-main",
+    });
+    // Actorless. `createAuditLog` maps a null actor to `undefined` so Prisma
+    // omits the column, which is why this reads the key rather than matching
+    // null; the officer-attribution test below is what proves a REAL id is not
+    // being dropped the same way.
+    expect(audits[0].actorMemberId ?? null).toBeNull();
+    // NOT onto the override columns, which would report a decision an officer
+    // never made.
+    expect(rows[0]).toMatchObject({
+      cause: "SYSTEM_CHANGE",
+      overriddenByMemberId: null,
+      overrideReason: null,
+    });
+  });
+
+  it("still puts an officer's mandatory reason in the history and on the row", async () => {
+    // The other half of the one derivation: an override's reason is stored AND
+    // audited, and adding the history-only field did not divert it.
+    const { db, rows, audits } = makeIncidentDb();
+    await openOrUpdateHostingCoverageIncident(
+      {
+        bookingId: "b-main",
+        lodgeId: "lodge-a",
+        cause: "OFFICER_OVERRIDE",
+        violation: UNCOVERED,
+        override: { byMemberId: "officer-1", reason: "Spoke with the family" },
+      },
+      db,
+    );
+
+    expect(audits[0]).toMatchObject({
+      details: "Spoke with the family",
+      actorMemberId: "officer-1",
+    });
+    expect(rows[0]).toMatchObject({
+      overriddenByMemberId: "officer-1",
+      overrideReason: "Spoke with the family",
+    });
+  });
+
+  it("lets an officer override promote ANY non-override cause, not just SYSTEM_CHANGE", async () => {
+    // The promotion guard used to name `cause: "SYSTEM_CHANGE"`. With a third
+    // label registered (#3232 D3) that made an officer's override silently
+    // impossible for a declined linked move: the guarded updateMany would match
+    // nothing, the loop would exhaust, and the caller would get the retry error
+    // instead of a recorded officer decision. Identical behaviour while only two
+    // labels are in use, which is why nothing else caught it.
+    //
+    // THIS TEST NAMES THE UNWRITTEN LABEL DELIBERATELY. Nothing under `src/`
+    // outside a test may produce it until the runtime half of `INV-HOST-052`
+    // lands (`hosting-coverage-incident-cause-expand.test.ts` is the gate), but
+    // the guard that will be needed the moment it does is worth having now.
+    const { db, rows } = makeIncidentDb([
+      {
+        id: "incident-1",
+        bookingId: "b-main",
+        lodgeId: "lodge-a",
+        cause: "OWNER_DECLINED_LINKED_MOVE",
+        stateKey: hostingCoverageStateKey(UNCOVERED),
+        resolvedAt: null,
+      },
+    ]);
+
+    const outcome = await openOrUpdateHostingCoverageIncident(
+      {
+        bookingId: "b-main",
+        lodgeId: "lodge-a",
+        cause: "OFFICER_OVERRIDE",
+        violation: UNCOVERED,
+        override: { byMemberId: "officer-1", reason: "Approved the exception" },
+      },
+      db,
+    );
+
+    expect(outcome.action).toBe("updated");
+    expect(rows[0]).toMatchObject({
+      cause: "OFFICER_OVERRIDE",
+      overriddenByMemberId: "officer-1",
+      overrideReason: "Approved the exception",
+    });
   });
 
   it("writes nothing the second time for the identical uncovered state", async () => {

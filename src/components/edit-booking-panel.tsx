@@ -68,6 +68,15 @@ import {
   useHostingCoverageOverride,
   type HostingOverrideState,
 } from "@/components/edit-booking/hooks/use-hosting-coverage-override";
+import {
+  useHostingCoverageLinkedMove,
+  type HostingLinkedMoveState,
+} from "@/components/edit-booking/hooks/use-hosting-coverage-linked-move";
+import { HostingCoverageLinkedMovePrompt } from "@/components/hosting-coverage-linked-move-prompt";
+import {
+  hostingCoverageLinkedMoveAnswer,
+  readHostingCoverageLinkedMovePrompt,
+} from "@/lib/hosting-coverage-linked-move-client";
 import { useMemberGuestFinder } from "@/components/edit-booking/hooks/use-member-guest-finder";
 import { useOtherLodgeRate } from "@/components/edit-booking/hooks/use-other-lodge-rate";
 import {
@@ -252,6 +261,21 @@ export function EditBookingPanel({
     [quote],
   );
   const [settlementMethod, setSettlementMethod] = useState<"card" | "credit" | null>(null);
+  /**
+   * #3232: where the money coming back on the OTHER booking should go.
+   *
+   * A SECOND SLOT, AND IT HAS TO BE. `settlementMethod` above is part of the save
+   * payload, and the payload is what the linked-move offer's proposal signature is
+   * taken over — so setting it would retire the very offer that asked the
+   * question, taking the member's chosen arm with it. This one is injected into
+   * the body AFTER that signature is captured, exactly as the offer's own answer
+   * is, so answering the question cannot invalidate it. Only one of the two is
+   * ever on screen: this control is drawn only when this booking's own quote asks
+   * for no choice.
+   */
+  const [linkedMoveSettlementMethod, setLinkedMoveSettlementMethod] = useState<
+    "card" | "credit" | null
+  >(null);
   /**
    * #2562 — the server-confirmed offer to ask a Booking Officer, or null.
    *
@@ -1179,7 +1203,33 @@ export function EditBookingPanel({
     activeHostingOverrideState,
   } = useHostingCoverageOverride(buildSavePayload);
 
+  // #3232: the member's answer to the linked-move offer. Its own hook rather than
+  // a slot on the override one, because the two are different questions asked of
+  // different people — the officer is asked to explain overriding somebody else's
+  // stranding, the member is asked to decide about their own two bookings — and
+  // only one of them can be open on any given save.
+  const {
+    setLinkedMoveState,
+    linkedMoveChoice,
+    setLinkedMoveChoice,
+    activeLinkedMoveState,
+  } = useHostingCoverageLinkedMove(buildSavePayload);
+
   function handleSaveClick() {
+    if (activeLinkedMoveState) {
+      // NO DEFAULT ANSWER. Saving without a choice would answer a money question
+      // on the member's behalf in one direction and strand a booking in the other.
+      if (!linkedMoveChoice) {
+        setSaveError("Choose whether to move both bookings or only this one.");
+        return;
+      }
+      void handleSave(
+        activeLinkedMoveState.notifyMemberChoice,
+        null,
+        activeLinkedMoveState,
+      );
+      return;
+    }
     if (activeHostingOverrideState) {
       if (!hostingOverrideConfirmed || hostingOverrideReason.trim().length < 10) {
         setSaveError(
@@ -1256,6 +1306,7 @@ export function EditBookingPanel({
   async function handleSave(
     notifyMemberChoice?: boolean,
     overrideState: HostingOverrideState | null = null,
+    linkedMoveState: HostingLinkedMoveState | null = null,
   ) {
     setSaveError("");
     // #2104: block submission with an inline error adjacent to the field (not the
@@ -1269,6 +1320,21 @@ export function EditBookingPanel({
       return;
     }
     if (quote?.settlementOptions?.requiresSettlementMethod && !settlementMethod) {
+      setSaveError("Choose a refund or account credit before saving");
+      return;
+    }
+    // #3232: and the same block when it is the OTHER booking's money that needs
+    // the choice, so the linked move is never submitted into the server's 400.
+    //
+    // ON THE ACCEPTING ARM ONLY (fix round). The other booking's money moves
+    // because the other booking moves; a member who chose "Move only this booking"
+    // is being asked where a refund that will never happen should go, and could not
+    // save until they answered it.
+    if (
+      linkedMoveSettlementRequired &&
+      linkedMoveChoice === "MOVE_BOTH" &&
+      !linkedMoveSettlementMethod
+    ) {
       setSaveError("Choose a refund or account credit before saving");
       return;
     }
@@ -1289,6 +1355,33 @@ export function EditBookingPanel({
           strandedStateKey: overrideState.prompt.strandedStateKey,
         };
       }
+      // #3232: the arm the member chose decides WHICH state key travels —
+      // accepting is bound to the moves and the money, declining only to the
+      // stranded set — so the key comes off the prompt rather than being picked
+      // here. A null answer means the arm is not answerable (the offer said there
+      // are not beds for both), and the save then carries no answer at all so the
+      // server re-prompts rather than acting on half of one.
+      if (linkedMoveState && linkedMoveChoice) {
+        const answer = hostingCoverageLinkedMoveAnswer(
+          linkedMoveState.prompt,
+          linkedMoveChoice,
+        );
+        if (answer) body.hostingCoverageLinkedMove = answer;
+        // #3232: and the return method for the other booking's refund, added HERE
+        // rather than in the payload builder for the reason its state slot gives —
+        // in the builder it would change the proposal signature and retire this
+        // very offer.
+        //
+        // KEYED ON THE CHOSEN ARM, NOT ON THE OFFER'S FLAG (fix round). Gating it on
+        // `linkedMoveSettlementRequired` meant the member's answer was DROPPED the
+        // moment a re-quote came back with the flag off — the server then priced the
+        // dependent on card again, the flag came back on, and the panel and the
+        // server swapped states forever with neither booking moving. It also
+        // attached the answer on the decline arm, where nothing it answers happens.
+        if (linkedMoveChoice === "MOVE_BOTH" && linkedMoveSettlementMethod) {
+          body.settlementMethod = linkedMoveSettlementMethod;
+        }
+      }
 
       const res = await fetch(`/api/bookings/${booking.id}/modify`, {
         method: "PUT",
@@ -1298,6 +1391,23 @@ export function EditBookingPanel({
 
       const data = await res.json();
       if (!res.ok) {
+        // #3232, BEFORE the officer's override prompt: a linked-move offer is
+        // raised for the BOOKING'S OWN MEMBER, admin or not, so it must not be
+        // gated on `actingAsAdmin` the way the override prompt is. The two bodies
+        // carry different codes, so only one reader can ever match.
+        const linkedMovePrompt = readHostingCoverageLinkedMovePrompt(data);
+        if (linkedMovePrompt) {
+          setLinkedMoveState({
+            prompt: linkedMovePrompt,
+            proposalSignature: refusedHostingProposalSignature,
+            notifyMemberChoice,
+          });
+          setLinkedMoveChoice(null);
+          setSaveError(
+            "Choose whether to move both bookings or only this one, then save again.",
+          );
+          return;
+        }
         const hostingPrompt = actingAsAdmin
           ? readHostingCoverageOverridePrompt(data)
           : null;
@@ -1478,6 +1588,31 @@ export function EditBookingPanel({
         booking.editPolicy.mode === "in-progress") &&
       (isLockedChangeError(quoteError) || isLockedChangeError(saveError)));
   const settlementRequired = quote?.settlementOptions?.requiresSettlementMethod ?? false;
+  /**
+   * #3232: the LINKED MOVE needs the card-or-credit choice and this booking's own
+   * quote does not ask for it.
+   *
+   * The chooser in the price summary belongs to THIS booking's money and appears
+   * only when this booking's net is a reduction. The other booking's compelled
+   * move has its own money, so whenever this booking needs no choice — it is
+   * unpaid, or its price went up — and the other one's price falls, the member was
+   * asked to choose a refund or account credit with no control anywhere on the
+   * page, and could then move neither booking. The control is drawn here, directly
+   * above the offer it belongs to.
+   *
+   * IT STAYS IN THE PANEL RATHER THAN MOVING INSIDE THE OFFER COMPONENT, decided
+   * deliberately. The answer travels as the top-level `settlementMethod` field of
+   * the save body, injected after the proposal signature is captured (see the
+   * state slot above for why that is not optional), and the offer component is
+   * presentational with no access to either. Moving the radios inside it would
+   * thread this state through it and change nothing else, so the offer's own money
+   * sentence is worded neutrally about WHERE the choice is made instead — which is
+   * also what makes it true in the bare 409 message a surface without this control
+   * falls back to.
+   */
+  const linkedMoveSettlementRequired =
+    Boolean(activeLinkedMoveState?.prompt.settlementMethodRequired) &&
+    !settlementRequired;
 
   // Issue #1668: over-capacity under an admin override is a confirmable warning,
   // not a hard block. The signal can come from the quote (preview) or from a
@@ -1751,6 +1886,52 @@ export function EditBookingPanel({
         </div>
       ) : (
         <>
+          {linkedMoveSettlementRequired &&
+          linkedMoveChoice !== "LEAVE_UNCOVERED" ? (
+            <div
+              className="space-y-2 rounded-md border p-3 text-sm"
+              role="status"
+              data-testid="linked-move-settlement-method"
+            >
+              <p className="font-medium">Return method</p>
+              <p className="text-xs text-muted-foreground">
+                Moving both bookings brings money back on the other booking.
+                Choose where it goes; the same choice covers both.
+              </p>
+              <label className="flex cursor-pointer items-start gap-2">
+                <input
+                  type="radio"
+                  name="linkedMoveSettlementMethod"
+                  value="card"
+                  className="mt-1"
+                  checked={linkedMoveSettlementMethod === "card"}
+                  disabled={saving}
+                  onChange={() => setLinkedMoveSettlementMethod("card")}
+                />
+                <span>Refund to the original card</span>
+              </label>
+              <label className="flex cursor-pointer items-start gap-2">
+                <input
+                  type="radio"
+                  name="linkedMoveSettlementMethod"
+                  value="credit"
+                  className="mt-1"
+                  checked={linkedMoveSettlementMethod === "credit"}
+                  disabled={saving}
+                  onChange={() => setLinkedMoveSettlementMethod("credit")}
+                />
+                <span>Hold as account credit</span>
+              </label>
+            </div>
+          ) : null}
+          <HostingCoverageLinkedMovePrompt
+            prompt={activeLinkedMoveState ? activeLinkedMoveState.prompt : null}
+            choice={linkedMoveChoice}
+            disabled={saving}
+            busy={saving}
+            idPrefix={`edit-booking-${booking.id}`}
+            onChoiceChange={setLinkedMoveChoice}
+          />
           <HostingCoverageOverridePrompt
             prompt={
               actingAsAdmin && activeHostingOverrideState
@@ -1778,6 +1959,15 @@ export function EditBookingPanel({
                 !quote ||
                 !capacityOk ||
                 (settlementRequired && !settlementMethod) ||
+                (linkedMoveSettlementRequired &&
+                  linkedMoveChoice === "MOVE_BOTH" &&
+                  !linkedMoveSettlementMethod) ||
+                // #3232: no arm chosen is not a save. Matching the officer-override
+                // arm below rather than the weaker bottom-slot error it used to
+                // take: that slot is where a member is LEAST likely to notice, it
+                // renders below Save while the radios sit above it, and the offer
+                // component's own docblock already promised this mechanism.
+                (Boolean(activeLinkedMoveState) && !linkedMoveChoice) ||
                 (Boolean(activeHostingOverrideState) &&
                   (!hostingOverrideConfirmed ||
                     hostingOverrideReason.trim().length < 10))
@@ -1791,9 +1981,16 @@ export function EditBookingPanel({
             </Button>
           </div>
 
-          {saveError && (
-            <div className="rounded-md bg-danger-3 p-3 text-sm text-danger-11">{saveError}</div>
-          )}
+          {/* #3232: PERMANENTLY MOUNTED ASSERTIVE REGION, for the reason both
+              hosting prompts give — inserting an already-populated role=alert is
+              missed by some screen-reader and browser pairs. Before this, a member
+              using a screen reader pressed Save, the server refused, and nothing
+              was announced at all. */}
+          <div role="alert" aria-atomic="true">
+            {saveError && (
+              <div className="rounded-md bg-danger-3 p-3 text-sm text-danger-11">{saveError}</div>
+            )}
+          </div>
 
           {/* #2562 — the exception-request door, drawn ONLY when the server's own
               refusal said every blocking failure is reviewable. It sits under Save

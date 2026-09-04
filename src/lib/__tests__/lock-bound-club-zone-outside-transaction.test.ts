@@ -130,6 +130,12 @@ const RESOLVERS = {
     "src/app/api/bookings/route.ts",
     "src/app/api/bookings/quote/route.ts",
     "src/app/api/bookings/[id]/modify/route.ts",
+    // #3232: `modify-dates` joined its `/modify` sibling here when the linked move
+    // reached it. Accepting the offer moves TWO bookings in one transaction through
+    // the transaction-AWARE batch service, so this route now has to resolve the
+    // club's day before that transaction opens for exactly the reason the door
+    // above does.
+    "src/app/api/bookings/[id]/modify-dates/route.ts",
     "src/app/api/admin/booking-requests/[id]/link-conflicts/route.ts",
     "src/app/api/admin/booking-exception-requests/[id]/route.ts",
     // The AI-diagnostics booking pack. Its person-night scan and its edit-policy
@@ -225,6 +231,12 @@ const PURE_CALLEES = [
   // nothing" is the only rule that holds on every path in.
   "src/lib/booking-request-shared.ts",
   "src/lib/booking-batch-modification-service.ts",
+  // #3232's linked move. It opens `prisma.$transaction` itself and drives the
+  // transaction-aware batch service twice inside it, so a club-day read anywhere
+  // in this file would be a `clubTimeSettings` query on a second pooled connection
+  // while the global money key and the lodge capacity key are both held. It takes
+  // the day its callers already resolved outside their own transactions.
+  "src/lib/booking-linked-date-move-service.ts",
 ] as const;
 
 /**
@@ -293,6 +305,80 @@ const CLUB_ZONE_READERS = [
   "clubTime(",
   "getClubTimeZone(",
 ] as const;
+
+/**
+ * ONE FRAME DEEPER (#3232). Helpers that are not themselves club-zone readers, so
+ * the list above cannot see them, and that reach one — or a live provider — the
+ * moment they are called.
+ *
+ * WHY THE LIST ABOVE WAS NOT ENOUGH, measured on this very pull request. It bans
+ * `readClubTimeZoneOutsideRequest(` and its siblings inside a transaction-aware
+ * service, and `booking-batch-modification-service.ts` was correctly in that
+ * population and correctly contained none of them. Its preamble called three
+ * helpers that each did, indirectly:
+ * `assertProposedDateEditClearsXeroLockDate` (the club zone, the module flags,
+ * the Xero connection and, on a cold cache, `getXeroLockDates` — a real HTTPS
+ * round trip with a possible OAuth refresh), `loadMemberGuestAddPolicy` (the club
+ * zone, and its own header says it must be called before the caller's
+ * transaction) and `resolveSubscriptionLockoutMode` (which `INV-LOCK-004` names
+ * explicitly, and which can refresh the financial year from Xero). Every one of
+ * them ran INSIDE the caller's transaction under `pg_advisory_xact_lock(1)` and
+ * the per-lodge capacity key, because the preamble sits above
+ * `withOptionalTransaction` and that reads as "before the transaction" while
+ * being false for a caller that supplies one. The census stopped exactly one
+ * frame short of it.
+ *
+ * A NAMED LIST RATHER THAN A CALL-GRAPH WALK, for the reason this file already
+ * gives about parsers: a transitive resolver in a guard is a larger liability
+ * than the property it protects. The list is short because the set is short —
+ * these are the club's settings singletons and its one provider read.
+ */
+const LOCK_BOUND_INDIRECT_RESOLVERS = [
+  "loadMemberGuestAddPolicy(",
+  "resolveSubscriptionLockoutMode(",
+  "resolveXeroLockDateFacts(",
+  // #3232 fix round: a MODULE-CLIENT booking read, and therefore the same hazard
+  // as the settings reads beside it — a second pooled connection taken while the
+  // global money key and the per-lodge capacity key are both held. It was missing
+  // from this list, so the one thing stopping it being called from inside a
+  // transaction was that nobody had.
+  "readXeroLockGuardDateEditBooking(",
+  "getXeroLockDates(",
+  "assertCheckInClearsXeroLockDate(",
+  "assertProposedCheckInClearsXeroLockDate(",
+  "assertProposedDateEditClearsXeroLockDate(",
+] as const;
+
+/**
+ * The ONE function in each pure callee that is allowed to call them, because it
+ * is the function a caller runs BEFORE opening its transaction.
+ *
+ * `prepareBookingBatchModification` exists for exactly this: it is what
+ * `modifyBookingBatch` calls when it owns its transaction, and what a caller that
+ * supplies one must call itself and hand in as `preTransaction` — which that
+ * service now REFUSES a caller transaction without. Confining the calls to one
+ * named function is what makes this rule checkable at all; the alternative was a
+ * scan that could not tell a preamble read from an in-transaction one, which is
+ * the gap that let this through.
+ */
+const PRE_TRANSACTION_RESOLVER_HOMES: Readonly<
+  Record<string, readonly string[]>
+> = {
+  "src/lib/booking-batch-modification-service.ts": [
+    "prepareBookingBatchModification",
+    // The STANDALONE path's own pre-transaction resolver (#3232 fix round). It is
+    // reached only where the caller supplied no transaction — the `else` branch of
+    // `if (preTransaction)` — so its one light booking read really does happen
+    // before anything is opened. A caller that supplies a transaction never enters
+    // it; that path decides from the facts it was handed, reading nothing.
+    "resolveOrdinaryXeroLockDateGuard",
+  ],
+  // The approval's own pre-transaction resolver, called by the route BEFORE
+  // `approveAndExecutePolicyExceptionRequest` opens its transaction and handed in
+  // on the context — the same arrangement, predating #3232, and its own comment
+  // says so at the call.
+  "src/lib/booking-exception-approval.ts": ["resolveNewBookingExecutionParams"],
+};
 
 /** The legacy environment-zone spellings this issue retires. */
 const ENVIRONMENT_ZONE_SPELLINGS = [
@@ -552,6 +638,37 @@ function closingBracket(
 }
 
 /**
+ * The span of one named top-level function's body, by the same bracket matching
+ * the rest of this file uses (#3232). `null` when the name is not declared here,
+ * which is itself reported by the vacuity check.
+ */
+function functionSpan(
+  source: string,
+  name: string,
+): { start: number; end: number } | null {
+  for (const opener of [
+    `function ${name}(`,
+    `const ${name} = (`,
+    `const ${name} = async (`,
+  ]) {
+    const at = source.indexOf(opener);
+    if (at === -1) continue;
+    // Past the PARAMETER LIST first: a signature like `(options: { … })` puts an
+    // object brace before the body's, and matching that one instead reports a
+    // span that ends before the function does — which is how the first draft of
+    // this helper judged its own allowed home to be out of bounds.
+    const parenClose = closingBracket(source, at + opener.length - 1, "(", ")");
+    if (parenClose === -1) continue;
+    const brace = source.indexOf("{", parenClose);
+    if (brace === -1) continue;
+    const end = closingBracket(source, brace, "{", "}");
+    if (end === -1) continue;
+    return { start: brace, end };
+  }
+  return null;
+}
+
+/**
  * The name of every function in this source that OPENS a transaction behind its
  * own name: it takes a callback parameter and its body calls `$transaction(`.
  *
@@ -773,6 +890,71 @@ describe("the club's day is resolved outside the locks and threaded in (#3123)",
         "in here. The day arrives as a required `today` parameter instead " +
         "(#3123, `INV-LOCK-004`).",
     ).toEqual([]);
+  });
+
+  it("the callees do not call anything that resolves for them, either (#3232)", () => {
+    // The direct rule above and this one are separately losable, and this is the
+    // one that was lost: a file with no zone reader in it whose preamble called
+    // three helpers that each had one. See `LOCK_BOUND_INDIRECT_RESOLVERS`.
+    const offenders: string[] = [];
+
+    for (const file of [...PURE_CALLEES, ...VALUE_ONLY_CALLEES]) {
+      const source = blankLiterals(read(file));
+      const homes = (PRE_TRANSACTION_RESOLVER_HOMES[file] ?? []).map((name) =>
+        functionSpan(source, name),
+      );
+      for (const resolver of LOCK_BOUND_INDIRECT_RESOLVERS) {
+        let at = source.indexOf(resolver);
+        while (at !== -1) {
+          const allowed = homes.some(
+            (span) => span !== null && at > span.start && at < span.end,
+          );
+          if (!allowed) {
+            offenders.push(
+              `${file}:${source.slice(0, at).split("\n").length} (${resolver})`,
+            );
+          }
+          at = source.indexOf(resolver, at + 1);
+        }
+      }
+    }
+
+    expect(
+      offenders,
+      "These modules run on a CALLER's transaction client with its locks already " +
+        "held, so a helper called from one of them that reads the club's " +
+        "settings, its module flags or the Xero organisation does that work " +
+        "INSIDE the transaction — a second pooled connection under " +
+        "`pg_advisory_xact_lock(1)` and the per-lodge capacity key, and in the " +
+        "Xero case an outbound HTTPS request the club's whole money path then " +
+        "serialises behind. Banning the readers themselves was not enough: this " +
+        "is the frame the #3232 review found the census stopping one short of. " +
+        "Put the call in the module's named pre-transaction function " +
+        "(`PRE_TRANSACTION_RESOLVER_HOMES`) and have the caller hand the answers " +
+        "in as values (`INV-LOCK-004`).",
+    ).toEqual([]);
+
+    // NOT VACUOUS, and this half is what says so. A rule keyed on spellings that
+    // appear nowhere passes for the wrong reason forever, and a `functionSpan`
+    // that stopped matching would fail this rather than the one above (a null
+    // span makes every call an offender, so the matcher fails closed). The
+    // batch service's pre-transaction function really does own all three of the
+    // reads that used to sit in a preamble the caller's transaction had already
+    // opened.
+    const prepared = blankLiterals(
+      read("src/lib/booking-batch-modification-service.ts"),
+    );
+    const home = functionSpan(prepared, "prepareBookingBatchModification");
+    expect(home, "the allowed home must be findable, or the rule is inverted")
+      .not.toBeNull();
+    const body = prepared.slice(home?.start ?? 0, home?.end ?? 0);
+    for (const resolver of [
+      "loadMemberGuestAddPolicy(",
+      "resolveSubscriptionLockoutMode(",
+      "resolveXeroLockDateFacts(",
+    ]) {
+      expect(body, resolver).toContain(resolver);
+    }
   });
 
   it("every resolver still reads the club's zone — a deleted read passes the rule above", () => {

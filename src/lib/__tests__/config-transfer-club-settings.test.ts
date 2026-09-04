@@ -625,6 +625,12 @@ describe("club-settings exports effective defaults for an unsaved singleton (#21
       nonMemberHoldEnabled: DEFAULT_BOOKING_DEFAULTS.nonMemberHoldEnabled,
       nonMemberHoldDays: DEFAULT_BOOKING_DEFAULTS.nonMemberHoldDays,
       waitlistCrossLodgeOrder: DEFAULT_BOOKING_DEFAULTS.waitlistCrossLodgeOrder,
+      // #3232: the linked move's change-fee answer travels with the club, and its
+      // export default has to be the schema default it stands in for — otherwise
+      // an unsaved club exports "waive" and a target install silently stops
+      // charging a fee the source club charges.
+      linkedMoveChargesBothChangeFees:
+        DEFAULT_BOOKING_DEFAULTS.linkedMoveChargesBothChangeFees,
     });
     expect(readJson(files, "booking-request-settings")).toEqual({
       ...DEFAULT_BOOKING_REQUEST_SETTINGS,

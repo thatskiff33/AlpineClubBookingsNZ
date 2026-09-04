@@ -125,12 +125,28 @@ import {
 import { buildModificationProposalParties } from "@/lib/booking-exception-request-service";
 import type { ConfirmedOverride } from "@/lib/booking-exception-execution";
 import { requireCalendarDate } from "@/lib/club-time";
+import type { BatchModificationPreTransaction } from "@/lib/booking-batch-modification-service";
 
 // #3123 (`INV-LOCK-004`) — the CLUB's day, resolved by the caller BEFORE it opens
 // its transaction and threaded in. Pinned to the frozen clock's club day, so
 // these fixtures answer exactly as they did while the guard read the club's zone
 // for itself.
 const FIXTURE_CLUB_DAY = requireCalendarDate("2026-07-01");
+
+// #3232 (`INV-LOCK-004`) — and the batch modification's own pre-transaction work,
+// threaded in for the same reason and from the same position. `not-applicable` is
+// what a club with the Xero module off, or no retroactive check-in, really
+// resolves to, which is every fixture here: none of them is about the lock-date
+// guard, and a fixture that pretended otherwise would be asserting Xero state
+// these tests never set up.
+const FIXTURE_PRE_TRANSACTION = {
+  memberGuestPolicy: {
+    enabled: false,
+    requiresConsent: false,
+  },
+  subscriptionLockoutMode: "off",
+  xeroLockDates: { kind: "not-applicable" },
+} as unknown as BatchModificationPreTransaction;
 
 const LODGE = "lodge-a";
 const OFFICER = "officer-1";
@@ -405,6 +421,7 @@ describe("recheckCapacity — the #2525 handoff contract", () => {
     const snapshot = frozenModificationSnapshot();
     const { hooks } = buildPolicyExceptionApprovalHooks({
       todayAtClub: FIXTURE_CLUB_DAY,
+      batchPreTransaction: FIXTURE_PRE_TRANSACTION,
       requestId: "req-1",
       actorMemberId: OFFICER,
       ipAddress: "1.2.3.4",
@@ -429,6 +446,7 @@ describe("recheckCapacity — the #2525 handoff contract", () => {
   it("excludes nothing for a new-booking proposal (there is no live booking)", async () => {
     const { hooks } = buildPolicyExceptionApprovalHooks({
       todayAtClub: FIXTURE_CLUB_DAY,
+      batchPreTransaction: FIXTURE_PRE_TRANSACTION,
       requestId: "req-1",
       actorMemberId: OFFICER,
       ipAddress: "1.2.3.4",
@@ -445,6 +463,7 @@ describe("recheckCapacity — the #2525 handoff contract", () => {
     });
     const { hooks } = buildPolicyExceptionApprovalHooks({
       todayAtClub: FIXTURE_CLUB_DAY,
+      batchPreTransaction: FIXTURE_PRE_TRANSACTION,
       requestId: "req-1",
       actorMemberId: OFFICER,
       ipAddress: "1.2.3.4",
@@ -460,6 +479,7 @@ describe("verifyLiveProposalIntegrity", () => {
     const snapshot = frozenModificationSnapshot();
     const { hooks } = buildPolicyExceptionApprovalHooks({
       todayAtClub: FIXTURE_CLUB_DAY,
+      batchPreTransaction: FIXTURE_PRE_TRANSACTION,
       requestId: "req-1",
       actorMemberId: OFFICER,
       ipAddress: "1.2.3.4",
@@ -473,6 +493,7 @@ describe("verifyLiveProposalIntegrity", () => {
     const snapshot = frozenModificationSnapshot();
     const { hooks } = buildPolicyExceptionApprovalHooks({
       todayAtClub: FIXTURE_CLUB_DAY,
+      batchPreTransaction: FIXTURE_PRE_TRANSACTION,
       requestId: "req-1",
       actorMemberId: OFFICER,
       ipAddress: "1.2.3.4",
@@ -499,6 +520,7 @@ describe("verifyLiveProposalIntegrity", () => {
     const snapshot = frozenModificationSnapshot();
     const { hooks } = buildPolicyExceptionApprovalHooks({
       todayAtClub: FIXTURE_CLUB_DAY,
+      batchPreTransaction: FIXTURE_PRE_TRANSACTION,
       requestId: "req-1",
       actorMemberId: OFFICER,
       ipAddress: "1.2.3.4",
@@ -537,6 +559,7 @@ describe("verifyLiveProposalIntegrity", () => {
     const snapshot = frozenModificationSnapshot();
     const { hooks } = buildPolicyExceptionApprovalHooks({
       todayAtClub: FIXTURE_CLUB_DAY,
+      batchPreTransaction: FIXTURE_PRE_TRANSACTION,
       requestId: "req-1",
       actorMemberId: OFFICER,
       ipAddress: "1.2.3.4",
@@ -560,6 +583,7 @@ describe("verifyLiveProposalIntegrity", () => {
     const snapshot = frozenModificationSnapshot();
     const { hooks } = buildPolicyExceptionApprovalHooks({
       todayAtClub: FIXTURE_CLUB_DAY,
+      batchPreTransaction: FIXTURE_PRE_TRANSACTION,
       requestId: "req-1",
       actorMemberId: OFFICER,
       ipAddress: "1.2.3.4",
@@ -573,6 +597,7 @@ describe("verifyLiveProposalIntegrity", () => {
   it("passes a new-booking proposal through — it has no live base to drift", async () => {
     const { hooks } = buildPolicyExceptionApprovalHooks({
       todayAtClub: FIXTURE_CLUB_DAY,
+      batchPreTransaction: FIXTURE_PRE_TRANSACTION,
       requestId: "req-1",
       actorMemberId: OFFICER,
       ipAddress: "1.2.3.4",
@@ -597,6 +622,7 @@ describe("executeApprovedProposal — modification", () => {
     const snapshot = frozenModificationSnapshot();
     const { hooks, outcome } = buildPolicyExceptionApprovalHooks({
       todayAtClub: FIXTURE_CLUB_DAY,
+      batchPreTransaction: FIXTURE_PRE_TRANSACTION,
       requestId: "req-1",
       actorMemberId: OFFICER,
       ipAddress: "1.2.3.4",
@@ -707,6 +733,7 @@ describe("executeApprovedProposal — modification", () => {
     const snapshot = frozenModificationSnapshot();
     const { hooks } = buildPolicyExceptionApprovalHooks({
       todayAtClub: FIXTURE_CLUB_DAY,
+      batchPreTransaction: FIXTURE_PRE_TRANSACTION,
       requestId: "req-1",
       actorMemberId: OFFICER,
       ipAddress: "1.2.3.4",
@@ -727,6 +754,7 @@ describe("executeApprovedProposal — new booking", () => {
   function hooksFor(adminNotes?: string) {
     return buildPolicyExceptionApprovalHooks({
       todayAtClub: FIXTURE_CLUB_DAY,
+      batchPreTransaction: FIXTURE_PRE_TRANSACTION,
       requestId: "req-1",
       actorMemberId: OFFICER,
       ipAddress: "1.2.3.4",
@@ -882,6 +910,7 @@ describe("executeApprovedProposal — new booking", () => {
   it("carries the member's own words as the review justification", async () => {
     const { hooks } = buildPolicyExceptionApprovalHooks({
       todayAtClub: FIXTURE_CLUB_DAY,
+      batchPreTransaction: FIXTURE_PRE_TRANSACTION,
       requestId: "req-1",
       actorMemberId: OFFICER,
       ipAddress: "1.2.3.4",
@@ -998,6 +1027,7 @@ describe("executeApprovedProposal — new booking", () => {
   it("refuses to execute without resolved execution parameters", async () => {
     const { hooks } = buildPolicyExceptionApprovalHooks({
       todayAtClub: FIXTURE_CLUB_DAY,
+      batchPreTransaction: FIXTURE_PRE_TRANSACTION,
       requestId: "req-1",
       actorMemberId: OFFICER,
       ipAddress: "1.2.3.4",

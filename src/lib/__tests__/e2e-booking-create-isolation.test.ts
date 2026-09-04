@@ -1893,14 +1893,14 @@ describe("E2E booking-create retry isolation (#2599)", () => {
     );
   });
 
-  it("binds the complete 33-request census to explicit typed consumers", () => {
-    expect(E2E_BOOKING_CREATE_CENSUS).toHaveLength(28);
+  it("binds the complete 35-request census to explicit typed consumers", () => {
+    expect(E2E_BOOKING_CREATE_CENSUS).toHaveLength(29);
     expect(
       E2E_BOOKING_CREATE_CENSUS.reduce(
         (total, entry) => total + ("requestsPerAttempt" in entry ? entry.requestsPerAttempt : 1),
         0,
       ),
-    ).toBe(33);
+    ).toBe(35);
     expect(
       E2E_BOOKING_CREATE_CENSUS.filter(
         (entry) => entry.classification === "intentional-limiter",

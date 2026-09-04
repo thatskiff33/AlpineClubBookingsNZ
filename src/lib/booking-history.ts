@@ -1,4 +1,10 @@
 import { additionalPaymentEpisodeStartedAt } from "@/lib/additional-payment-chase";
+import {
+  MODIFICATION_LABELS,
+  describeModification,
+  memberFacingNoteOf,
+  type BookingHistoryModification,
+} from "@/lib/booking-history-modification-narrative";
 import { hasCapturedPayment } from "@/lib/booking-payment-state";
 import { formatCents } from "@/lib/utils";
 
@@ -29,16 +35,6 @@ interface BookingHistoryPayment {
   latestAdditionalTransactionCreatedAt?: Date | null;
   createdAt: Date;
   updatedAt: Date;
-}
-
-interface BookingHistoryModification {
-  id: string;
-  modificationType: string;
-  previousData: unknown;
-  newData: unknown;
-  priceDiffCents: number;
-  changeFeeCents: number;
-  createdAt: Date;
 }
 
 interface BookingHistoryRefundRequest {
@@ -76,8 +72,27 @@ interface BookingHistoryDuplicateCaptureRefund {
   duplicatePaymentIntentId: string | null;
 }
 
+/**
+ * WHO is reading this timeline (#3232 fix round).
+ *
+ * REQUIRED, WITH NO DEFAULT, and that is the whole value of it. One row this
+ * builder renders replays an audit row's `details` verbatim, and `details` on a
+ * hosting-coverage incident can be an OFFICER'S PRIVATE OVERRIDE REASON, which the
+ * booking's own member must never read. Before this parameter the only thing
+ * standing between a member and that text was a conditional array a hundred and
+ * seventy lines away in the page that happens to call this function — a policed
+ * rule rather than an unrepresentable one, on an exported pure function anybody
+ * can call. A required argument makes the compiler enumerate every caller
+ * (`INV-SSOT-001`, `INV-PRIV`).
+ *
+ * `"staff"` means the viewer holds `bookings:edit` (the page's `canSeeAdminTools`),
+ * which is the readership the owner chose for that reason on 4 September 2026.
+ */
+export type BookingHistoryAudience = "member" | "staff";
+
 interface BuildBookingHistoryOptions {
   createdAt: Date;
+  audience: BookingHistoryAudience;
   payment: BookingHistoryPayment | null;
   modifications: BookingHistoryModification[];
   refundRequests: BookingHistoryRefundRequest[];
@@ -104,16 +119,6 @@ interface BuildBookingHistoryOptions {
   financialReviewPending?: boolean;
 }
 
-const MODIFICATION_LABELS: Record<string, string> = {
-  DATE_CHANGE: "Dates Changed",
-  GUEST_ADD: "Guests Added",
-  GUEST_REMOVE: "Guest Removed",
-  EXTEND_STAY: "Stay Extended",
-  BATCH_MODIFY: "Booking Modified",
-  // #2266: an edit that changed ONLY the stored credit election (#2265).
-  CREDIT_ELECTION: "Credit Choice Updated",
-};
-
 function formatSignedCents(cents: number): string {
   if (cents === 0) {
     return formatCents(0);
@@ -135,88 +140,9 @@ function parseAuditDetails(details: string | null): Record<string, unknown> | nu
   }
 }
 
-function isRemovedGuest(
-  value: unknown
-): value is { firstName?: string; lastName?: string } {
-  return Boolean(value) && typeof value === "object";
-}
-
-/**
- * A plain-English sentence an edit stored on its own modification record for the
- * member to read later, or null when that edit had nothing to say.
- *
- * Two keys use it: `promoCoverageNote`, the promotion-cap split a reprice
- * explained at the time (#2390), and `promoChangeNotAppliedNote`, the
- * promo-code change an edit saved without (#3179). One reader rather than two,
- * because both are the same thing — the exact words the member was shown,
- * replayed verbatim (`INV-SSOT`).
- *
- * Read defensively: `newData` is free-form JSON, and every modification written
- * before either key existed simply does not have it.
- */
-function memberFacingNoteOf(
-  modification: BookingHistoryModification,
-  key: "promoCoverageNote" | "promoChangeNotAppliedNote"
-): string | null {
-  const next =
-    modification.newData && typeof modification.newData === "object"
-      ? (modification.newData as Record<string, unknown>)
-      : {};
-  const note = next[key];
-  return typeof note === "string" && note.trim().length > 0 ? note : null;
-}
-
-function describeModification(modification: BookingHistoryModification): string | null {
-  const previous =
-    modification.previousData && typeof modification.previousData === "object"
-      ? (modification.previousData as Record<string, unknown>)
-      : {};
-  const next =
-    modification.newData && typeof modification.newData === "object"
-      ? (modification.newData as Record<string, unknown>)
-      : {};
-
-  switch (modification.modificationType) {
-    case "DATE_CHANGE":
-      return `${String(previous.checkIn)} to ${String(next.checkIn)} and ${String(previous.checkOut)} to ${String(next.checkOut)}`;
-    case "GUEST_ADD":
-      return `${String(previous.guestCount)} to ${String(next.guestCount)} guests.`;
-    case "GUEST_REMOVE": {
-      const removedGuest = previous.removedGuest;
-      const name = isRemovedGuest(removedGuest)
-        ? [removedGuest.firstName, removedGuest.lastName]
-            .filter(Boolean)
-            .join(" ")
-        : "guest";
-      return `Removed ${name}; ${String(previous.guestCount)} to ${String(next.guestCount)} guests.`;
-    }
-    case "BATCH_MODIFY": {
-      const parts: string[] = [];
-      if (previous.checkIn !== next.checkIn || previous.checkOut !== next.checkOut) {
-        parts.push(
-          `${String(previous.checkIn)}-${String(previous.checkOut)} to ${String(next.checkIn)}-${String(next.checkOut)}`
-        );
-      }
-      if (previous.guestCount !== next.guestCount) {
-        parts.push(`${String(previous.guestCount)} to ${String(next.guestCount)} guests`);
-      }
-      return parts.length > 0 ? `${parts.join(" and ")}.` : "Booking details were updated.";
-    }
-    // #2266: a credit-election-only edit. The new/previous election cents ride
-    // the modification data (see booking-batch-modification-service).
-    case "CREDIT_ELECTION": {
-      const electionCents = next.creditElectionCents;
-      return typeof electionCents === "number" && electionCents > 0
-        ? `${formatCents(electionCents)} of account credit will be applied at payment.`
-        : "The saved account-credit choice was removed.";
-    }
-    default:
-      return "Booking details were updated.";
-  }
-}
-
 export function buildBookingHistoryItems({
   createdAt,
+  audience,
   payment,
   modifications,
   refundRequests,
@@ -433,6 +359,28 @@ export function buildBookingHistoryItems({
         });
         break;
       }
+      // #3232 D3: WHY THIS BOOKING IS FLAGGED, in words, on the booking itself.
+      // STAFF ONLY, decided here from the audience rather than trusted to the
+      // caller's query, because `details` can be an officer's private override
+      // reason and this same page is read by the booking's own member. The page's
+      // feed is still gated too — two locks on one door, and the one that cannot be
+      // lost by editing a query lives here. Replayed verbatim, as the cancel row
+      // below is: it is the one derived explanation the incident writer recorded.
+      case "booking.hostingCoverage.incidentOpened":
+      case "booking.hostingCoverage.incidentUpdated":
+        if (audience !== "staff") break;
+        items.push({
+          id: `audit-${auditLog.id}`,
+          occurredAt: auditLog.createdAt,
+          category: "Booking",
+          title: auditLog.action.endsWith("incidentOpened")
+            ? "Adult member cover flagged"
+            : "Adult member cover flag updated",
+          detail: auditLog.details ?? "This booking needs adult member cover.",
+          amountDisplay: null,
+          tone: "warning",
+        });
+        break;
       case "booking.cancel":
         items.push({
           id: `audit-${auditLog.id}`,

@@ -3331,6 +3331,39 @@ model BookingDefaults {
   nonMemberHoldEnabled    Boolean                 @default(true)
   nonMemberHoldDays       Int                     @default(7)
   waitlistCrossLodgeOrder WaitlistCrossLodgeOrder @default(OWN_LODGE_FIRST)
+
+  // Whether the LINKED MOVE charges the change fee on BOTH bookings (#3232 D2,
+  // `INV-CONFIG-001`, `INV-HOST-051`).
+  //
+  // A club setting rather than a baked-in answer because clubs will genuinely
+  // disagree, and the disagreement is a fairness judgement no codebase should make
+  // for them: the member is moving a second booking because the CLUB's own adult-
+  // supervision rule compelled it, so one club reads the second fee as the honest
+  // cost of a second real change and another reads it as charging a member for
+  // obeying a rule they did not write.
+  //
+  // DEFAULTS TO true — charging both — which is the owner's decision and is also
+  // the conservative direction for a club's money: a club that means to waive it
+  // says so, and an upgrade never silently starts giving fees away. Both bookings
+  // really do move, so both really do attract their fee; the waiver is the
+  // exception.
+  //
+  // `Boolean @default(true)` AND NOT NULLABLE, unlike the host-scope columns on
+  // `AdultMemberHostingPolicy`. Those are nullable because "the club has not
+  // decided" has to be distinguishable from "the club chose the narrow answer",
+  // since deciding widens what counts as coverage. Nothing here widens: the
+  // default IS a complete, safe answer, so there is no undecided state to model
+  // and a NOT NULL default makes a draining old colour's INSERT succeed without
+  // naming a column it has never heard of.
+  //
+  // CLUB-WIDE, NOT PER LODGE, and that is a deliberate reading of the question.
+  // The change-fee TIERS are per lodge (`CancellationPolicy.lodgeId`) because they
+  // price a lodge's own cancellation risk; whether a second fee is FAIR when the
+  // club compelled the move is a question about how the club treats its members,
+  // which does not change between one of its lodges and another. A club that
+  // later disagrees gets the per-lodge conversion every other singleton on this
+  // model is already queued for.
+  linkedMoveChargesBothChangeFees Boolean @default(true)
   // Soft link for the phase-7 singleton-to-per-lodge conversion
   // (docs/multi-lodge/implementation-plan.md); unused by runtime reads today.
   lodgeId                 String?
@@ -3527,16 +3560,41 @@ model AdultMemberHostingPolicy {
 // ---------------------------------------------------------------------------
 
 /// Why a booking lost its required adult-member coverage AFTER it was confirmed
-/// (#2576 §7, §8). Exactly two causes, because there are exactly two ways it can
-/// happen: an authorised Booking Officer deliberately overrode the refusal, or an
-/// authoritative change outside the ordinary member edit flow (a membership
-/// lapse, an administrative cancellation, a lifecycle transition, a data
-/// correction) removed the cover and could not reasonably be blocked. An ordinary
-/// member self-service change is neither: it is refused before it commits, so it
-/// never produces an incident.
+/// (#2576 §7, §8; #3232 D3). Recorded rather than inferred, for the same reason
+/// `HostingCoverageIncidentResolution` below gives: a deliberate decision and an
+/// automatic change are the same absence of cover and a very different story for
+/// an officer reading the history — and the count of each is the number a club
+/// would use to judge whether its supervision setting is working.
+///
+/// APPENDED, NEVER REORDERED. PostgreSQL cannot remove or re-sort an enum label,
+/// and the stored value is the whole point of the column.
 enum HostingCoverageIncidentCause {
+  /// An authorised Booking Officer deliberately overrode the refusal (§7), with
+  /// the mandatory reason and their attribution on the incident row.
   OFFICER_OVERRIDE
+
+  /// An authoritative change outside the ordinary member edit flow — a membership
+  /// lapse, an administrative cancellation, a lifecycle transition, a data
+  /// correction — removed the cover and could not reasonably be blocked (§8).
   SYSTEM_CHANGE
+
+  /// The booking's OWNER was offered the linked move on their own other booking
+  /// and chose to move only the booking they were editing (#3232 D1, D3;
+  /// `INV-HOST-050`, `INV-HOST-052`).
+  ///
+  /// NOTHING WRITES THIS VALUE YET, and that is deliberate rather than unfinished.
+  /// `docs/BLUE_GREEN_MIGRATION_POLICY.md` binds every migration to stay readable
+  /// by the colour that is still draining, and that colour's generated client has
+  /// never heard of a third label — the incident writer's own fold read selects
+  /// `cause`, so a row carrying this value would fail to deserialise there. So
+  /// migration `20260909010000_add_owner_declined_linked_move_incident_cause`
+  /// REGISTERS the label (expand) and the release AFTER it starts writing it
+  /// (runtime). Until then a declined offer is still recorded as `SYSTEM_CHANGE`,
+  /// with the member's decision written in words into the incident's audit
+  /// history. `INV-HOST-052` is the rule, and a census fails the build if any
+  /// writer starts producing this value while the expand is still in its first
+  /// release.
+  OWNER_DECLINED_LINKED_MOVE
 }
 
 /// How an incident stopped being a live problem (#2576 §7, §16). Recorded rather

@@ -1,0 +1,67 @@
+-- #3232 D3. INV-HOST-052.
+--
+-- A booking left without adult supervision because its OWNER was offered the
+-- linked move and declined it gets its own recorded cause, instead of being filed
+-- as SYSTEM_CHANGE with the truth surviving only in prose. A member's deliberate
+-- decision and an automatic change are the same absence of cover and a very
+-- different story for an officer reading the history -- and merging them corrupts
+-- the one number a club would use to judge whether its supervision setting is
+-- working, quietly. That is the same argument the neighbouring
+-- "HostingCoverageIncidentResolution" already makes for its four values.
+--
+-- THIS IS THE EXPAND HALF OF A TWO-RELEASE SEQUENCE, and the halves must not be
+-- shipped together (docs/BLUE_GREEN_MIGRATION_POLICY.md -> "Required Sequence"):
+--
+--   * THIS RELEASE registers the label and NOTHING WRITES IT. The officer-facing
+--     wording is corrected in the same release, so the history reads accurately
+--     straight away, and a declined offer is still STORED as 'SYSTEM_CHANGE' with
+--     the member's decision recorded in words in the incident's audit history.
+--     src/lib/__tests__/hosting-coverage-incident-cause-expand.test.ts fails the
+--     build if any writer starts producing the value early.
+--   * THE FOLLOWING RELEASE starts writing it (the runtime half).
+--
+-- WHY THE WAIT IS REAL AND NOT PAPERWORK, concretely. A production deploy runs
+-- migrations BEFORE the new colour takes traffic, while the previous colour is
+-- still serving. That colour's generated Prisma client knows this type with two
+-- labels and cannot deserialize a third. Three live reads select the column:
+-- src/lib/adult-member-hosting-coverage-incidents.ts's own fold read
+-- (select { id, stateKey, cause }), which every re-evaluation drain performs, and
+-- the two officer surfaces src/app/(admin)/admin/bookings/page.tsx and
+-- src/lib/stuck-state-dashboard.ts. So a row written during the drain would break
+-- the drain itself, not merely a screen. Registering the label breaks none of
+-- them: a client that never meets a value of it is unaffected by its existence.
+--
+-- VERIFIED RATHER THAN ASSERTED, which is what the policy asks of a
+-- compatibility claim. Every migration in this branch was applied to a throwaway
+-- PostgreSQL 16, a Prisma client was generated from origin/main's OWN
+-- prisma/schema.prisma, and that client performed the fold read above three
+-- times:
+--   A. after the expand, with no row carrying the new label -> OK.
+--   B. with a row carrying 'SYSTEM_CHANGE', which is what THIS release writes
+--      for a declined offer -> OK.
+--   C. with that row's cause changed to 'OWNER_DECLINED_LINKED_MOVE', which is
+--      what release 2 writes -> FAILED, with
+--      "Value 'OWNER_DECLINED_LINKED_MOVE' not found in enum
+--      'HostingCoverageIncidentCause'".
+-- So the expand is safe now and the write is not, measured on the exact read the
+-- drain performs.
+--
+-- ONE STATEMENT, additive. Nothing is dropped, renamed, retyped, backfilled or
+-- indexed, and there is no DML of any kind, so every existing row in every
+-- existing table is byte-identical afterwards. The migration only REGISTERS the
+-- label and never USES it, so Prisma's per-migration transaction is safe -- the
+-- same pattern as 20260901010000 (CAPTURE_TRANSPORT_PUBLIC_HOST on
+-- "EmailDeliveryBlockReason") and 20260827010000 (SKIPPED_NON_PRODUCTION on
+-- "EmailLogStatus") before it. ALTER TYPE ... ADD VALUE is additive and is
+-- deliberately not matched by BREAKING_SQL_REGEX, unlike RENAME VALUE.
+--
+-- LOCK IMPACT: a brief lock on the TYPE itself. No table is read, altered,
+-- rewritten, indexed or constrained; no Booking, Payment, Member, capacity,
+-- credit or provider record is touched, and this migration composes no
+-- application writer, so INV-LOCK-001 and INV-LOCK-002 are unaffected.
+--
+-- IDEMPOTENT: IF NOT EXISTS, so a replay is a no-op rather than a 42710.
+-- IRREVERSIBLE BY DESIGN: PostgreSQL cannot remove an enum label, so the value
+-- stays registered after a rollback. That is harmless while nothing writes it,
+-- which is exactly the property this release preserves.
+ALTER TYPE "HostingCoverageIncidentCause" ADD VALUE IF NOT EXISTS 'OWNER_DECLINED_LINKED_MOVE';
