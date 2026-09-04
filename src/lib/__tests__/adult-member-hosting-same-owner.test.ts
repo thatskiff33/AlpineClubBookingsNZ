@@ -63,7 +63,10 @@ import {
   dependentNeedsOwnQueueItem,
   strandedCoverageStateKey,
 } from "@/lib/adult-member-hosting-same-owner";
-import { LINKED_MOVE_DECLINED_INCIDENT_REASON } from "@/lib/adult-member-hosting-coverage-incidents";
+import {
+  describeHostingCoverageIncidentCause,
+  LINKED_MOVE_DECLINED_INCIDENT_REASON,
+} from "@/lib/adult-member-hosting-coverage-incidents";
 
 const LODGE = "lodge-a";
 const OTHER_LODGE = "lodge-b";
@@ -1968,6 +1971,17 @@ describe("settling a dependent booking after the change (#2576 §7, §14, §16)"
         (data: any) => data.action === "booking.hostingCoverage.incidentOpened",
       );
     expect(opened?.details).toBe(LINKED_MOVE_DECLINED_INCIDENT_REASON);
+    // AND THE ONE-LINE SUMMARY READS AS ENGLISH, not as a schema token. This
+    // sentence is the primary line on the audit-log page, so it read "after a
+    // SYSTEM_CHANGE change" before #3241 and would have read "after a
+    // OWNER_DECLINED_LINKED_MOVE change" after it. It renders through the one
+    // wording home like both officer surfaces do; the raw label stays in
+    // `metadata.cause`, where a machine reader wants it.
+    expect(opened?.summary).toContain(
+      describeHostingCoverageIncidentCause("OWNER_DECLINED_LINKED_MOVE"),
+    );
+    expect(opened?.summary).not.toContain("OWNER_DECLINED_LINKED_MOVE");
+    expect(opened?.metadata?.cause).toBe("OWNER_DECLINED_LINKED_MOVE");
     // No officer is named, because none was involved. Inventing attribution is
     // the failure this arm exists to avoid.
     expect(opened?.actorMemberId ?? null).toBeNull();

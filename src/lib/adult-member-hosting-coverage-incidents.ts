@@ -43,20 +43,13 @@ export type HostingCoverageIncidentDb = Pick<
  * Why the cover went away. Mirrors the Prisma enum without importing it.
  *
  * `OWNER_DECLINED_LINKED_MOVE` is WRITTEN BY EXACTLY ONE ARM: the owner-declined
- * branch of `hostingCoverageActorOptions` (#3232 D3, #3241, `INV-HOST-052`). It
- * arrived over two releases, which is worth knowing here because the shape of
- * this type is what that split was about. Migration
- * `20260909010000_add_owner_declined_linked_move_incident_cause` registered the
- * label while nothing wrote it, so the colour still serving during that deploy
- * never met a third value its generated client could not deserialize; the
- * following release (#3241) added the writer. A NEW value of this type owes the
- * same sequence.
- *
- * That one writer is a census rather than a convention:
- * `hosting-coverage-incident-cause-expand.test.ts` fails on a second producer,
- * because "a member decided this" is a different fact from every automatic
- * change `SYSTEM_CHANGE` holds, and a second writer would quietly put one of
- * those back into the count a club judges its own setting by.
+ * branch of `hostingCoverageActorOptions` (#3232 D3, #3241, `INV-HOST-052`), and
+ * `hosting-coverage-incident-cause-expand.test.ts` censuses that — a second
+ * writer would put an automatic change back into the count a club judges its own
+ * setting by. A NEW value of this type owes the same two-release sequence this
+ * one had: migration `20260909010000_add_owner_declined_linked_move_incident_cause`
+ * registered the label while nothing wrote it, so the colour still serving during
+ * that deploy never met a value its client could not deserialize.
  */
 export type HostingCoverageIncidentCause =
   | "OFFICER_OVERRIDE"
@@ -206,8 +199,9 @@ export interface OpenHostingCoverageIncidentParams {
    * left describing the decline after a later automatic change moved the same
    * incident's uncovered state - and the existing fold deliberately preserves an
    * officer's reason across such a move, so there is no fold rule that is right
-   * for both. Until the runtime half of `INV-HOST-052` lands and `cause` itself
-   * carries the fact, this is where an officer reads it.
+   * for both. `cause` now names the decision too (#3241), and this is still
+   * where an officer reads WHICH booking they were asked about — a label cannot
+   * say that.
    */
   recordedReason?: string | null;
 }
@@ -675,10 +669,16 @@ async function recordIncidentAudit(
       // something an officer has to look at.
       severity: "important",
       outcome: "success",
+      // THE PHRASE, NOT THE STORED LABEL. This line read "after a SYSTEM_CHANGE
+      // change" on the audit-log page — a schema token in a sentence an officer
+      // reads, and the third surface this module's docblock says cannot invent a
+      // wording of its own. The raw value is still in `metadata.cause` below,
+      // where a machine reader wants it (#3241).
       summary:
         `Booking ${formatBookingReference(params.bookingId)} has ` +
         `${params.violation.requirements.uncoveredNonMemberGuestNights} ` +
-        `uncovered non-member guest-night(s) after a ${params.cause} change`,
+        `uncovered non-member guest-night(s) — ` +
+        describeHostingCoverageIncidentCause(params.cause),
       // The explanation, whoever gave it - an officer's mandatory override reason
       // or a booking owner's recorded decision (#3232 D3). This is where an
       // officer reads WHY, and it is per-event so it never goes stale.
