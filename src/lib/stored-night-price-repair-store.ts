@@ -46,7 +46,11 @@ import {
  *    `where` clause, and a race that filled the row first turns into a refusal
  *    rather than a silent overwrite;
  *  - the strand's stored total is fenced on its previous value in the same way,
- *    so two officers settling at once cannot both move it.
+ *    so two officers settling at once cannot both move it;
+ *  - and since #3219 the BOOKING's own two headline totals move with it, in the
+ *    same transaction and fenced the same way. Nothing here derives them from an
+ *    amount: they are RECOMPUTED from what the strands now say, read back after
+ *    the two writes above.
  *
  * `stored-night-price-repair-census.test.ts` pins that this is the only module in
  * the tree that updates an existing `BookingGuestNight` row's price in place, and
@@ -62,9 +66,8 @@ import {
  *
  * NO ADVISORY LOCK IS TAKEN, matching the completion path this rides on, which
  * `docs/CONCURRENCY_AND_LOCKING.md` records as deliberately holding none. The
- * single-flight guarantee is the task's own status claim; the two fences above
- * are what make a concurrent booking edit a loud refusal instead of a lost
- * update.
+ * single-flight guarantee is the task's own status claim; the fences above are
+ * what make a concurrent booking edit a loud refusal instead of a lost update.
  */
 
 /** The night rows and the total this module reads off a guest strand. */
@@ -257,6 +260,20 @@ export async function unpricedNightsSummariesForQueue(args: {
 export const NIGHT_PRICE_REPAIR_RACED_MESSAGE =
   "This booking's stored night prices changed while you were recording them, so nothing was saved. Reload the page and check the booking before trying again.";
 
+/**
+ * #3219: the review names a guest strand that is not on the booking the task is
+ * about, so there is no sound set of strands to re-base the headline from.
+ *
+ * A 409 for the same reason as the message above - the caller's transaction
+ * rolls back with it, so nothing is half-written and the task is still OPEN -
+ * but a DIFFERENT sentence, because this is not a race and reloading will not
+ * clear it. Nothing cross-checks the strand id an `EDIT_FINANCIAL_REVIEW`
+ * context carries against the task's own `bookingId`, so this is what stops one
+ * booking's headline being re-based from another booking's strands.
+ */
+export const NIGHT_PRICE_REPAIR_STRAND_NOT_ON_BOOKING_MESSAGE =
+  "This review names a guest who is not on this booking, so nothing was saved. Check the booking's guests before trying again.";
+
 /** One checked repair, ready to write once the task has been claimed. */
 export type StoredNightPriceRepairPlan = {
   bookingGuestId: string;
@@ -327,6 +344,11 @@ export async function planStoredNightPriceRepair({
  * a stay is recorded as having sold for - and the second can happen on a
  * DISMISSAL, whose entry says in as many words that nothing moved. Folding it in
  * would put a price change inside a row whose summary denies one.
+ *
+ * #3219: it also re-bases the BOOKING's two headline totals from the strands,
+ * which belongs in this entry rather than in one of its own - it is the same
+ * act, and separating them would leave a reader holding two rows and no
+ * statement that one caused the other.
  */
 export async function recordStoredNightPriceRepair({
   plan,
@@ -347,6 +369,15 @@ export async function recordStoredNightPriceRepair({
     bookingGuestId: plan.bookingGuestId,
     summary: plan.summary,
     entries: plan.entries,
+    store,
+  });
+  // #3219: and the booking's own headline totals come back into agreement with
+  // the strands, in this same transaction, on a dismissal exactly as on a
+  // completion - the park froze them and nothing else thaws them.
+  const bookingTotals = await rebaseBookingTotalsFromStrands({
+    bookingId: task.bookingId,
+    repairedGuestId: plan.bookingGuestId,
+    repairedGuestTotalCents: newGuestTotalCents,
     store,
   });
   await createAuditLog(
@@ -378,6 +409,14 @@ export async function recordStoredNightPriceRepair({
         previousGuestTotalCents: plan.summary.storedGuestTotalCents,
         newGuestTotalCents,
         knownNightTotalCents: plan.summary.knownNightTotalCents,
+        // #3219: the booking's headline totals moved with the strand, so the
+        // entry that records the act records what it did to them. Both figures,
+        // before and after, because a reader asking "why does this booking cost
+        // what it does?" months later has nowhere else to look.
+        previousBookingTotalPriceCents: bookingTotals.previousTotalPriceCents,
+        newBookingTotalPriceCents: bookingTotals.newTotalPriceCents,
+        previousBookingFinalPriceCents: bookingTotals.previousFinalPriceCents,
+        newBookingFinalPriceCents: bookingTotals.newFinalPriceCents,
       },
     },
     store,
@@ -434,4 +473,132 @@ export async function applyStoredNightPriceRepair({
   }
 
   return { newGuestTotalCents };
+}
+
+/**
+ * Re-base the BOOKING's two headline totals from its strands (#3219).
+ *
+ * MUST run after the strand write and on the same transaction, which already
+ * holds the completion's status claim.
+ *
+ * ## Why the headline moves at all
+ *
+ * Every ordinary edit path re-bases `Booking.totalPriceCents` to the repriced
+ * total. A PARKED edit deliberately freezes it, because a parked edit is
+ * precisely one whose money nobody may compute - and until this issue nothing
+ * thawed it when the review settled. So the freeze was right and the thaw was
+ * missing, and the booking was left saying one thing in its headline and another
+ * in its nights, permanently, with nothing reconciling the two.
+ *
+ * ## Why it is RECOMPUTED and never derived from the settled amount
+ *
+ * The obvious fix - apply the signed settlement delta to the stored headline -
+ * is wrong on the path that most parked strands actually end on. This writer
+ * also runs on a DISMISSAL, whose audit entry says in as many words that nothing
+ * moved: there is no delta to apply there, and the headline still has to come
+ * back into agreement with the strands. It would also be wrong wherever the park
+ * left the headline out of step by more than this settlement moves - a parked
+ * removal, say, whose strand is gone while the frozen headline still counts it.
+ *
+ * So the new figures are the sum of what the strands say once the writes above
+ * have landed. There is no second derivation to keep in step: the sum is read
+ * back from the rows this transaction has just written.
+ *
+ * ## Why BOTH figures, and why `promoAdjustmentCents` is not touched
+ *
+ * `Booking.finalPriceCents` is the total plus the signed promotion adjustment,
+ * and it is the figure settlement decisions actually read (`priceDiffCents` is
+ * built from it). Moving only `totalPriceCents` would trade one disagreement for
+ * another, so the two move together, by the same relation every other edit path
+ * writes them with. The promotion itself is NOT recalculated: a parked edit
+ * recalculates no promotion, and neither does settling one - so the adjustment
+ * is carried through exactly as stored and the headline moves by exactly what
+ * the strands moved by.
+ *
+ * ## The fences
+ *
+ * A compare-and-set on both stored figures, for the same reason the two writes
+ * above are fenced and by the same means: this path holds no advisory lock, so a
+ * concurrent booking edit that moved the headline underneath us must become a
+ * refusal that rolls the whole completion back, never a lost update. And the
+ * repaired strand must be one of the booking's own, carrying the value that was
+ * just written to it - without that check a task whose review context named a
+ * strand on some other booking would re-base this booking's headline from a set
+ * of strands that has nothing to do with it, and an empty guest list would zero
+ * the headline outright.
+ */
+export async function rebaseBookingTotalsFromStrands({
+  bookingId,
+  repairedGuestId,
+  repairedGuestTotalCents,
+  store,
+}: {
+  bookingId: string;
+  repairedGuestId: string;
+  /** What `applyStoredNightPriceRepair` has just written to that strand. */
+  repairedGuestTotalCents: number;
+  store: Prisma.TransactionClient;
+}): Promise<{
+  previousTotalPriceCents: number;
+  previousFinalPriceCents: number;
+  newTotalPriceCents: number;
+  newFinalPriceCents: number;
+}> {
+  const booking = await store.booking.findUnique({
+    where: { id: bookingId },
+    select: {
+      totalPriceCents: true,
+      promoAdjustmentCents: true,
+      finalPriceCents: true,
+      guests: { select: { id: true, priceCents: true } },
+    },
+  });
+  if (booking === null) {
+    throw new ManualBookingPaymentError(NIGHT_PRICE_REPAIR_RACED_MESSAGE, 409);
+  }
+
+  // The strand this settle just repaired has to be one of THESE strands, at the
+  // value it was just written to. That is what makes the sum below the sum of
+  // the booking's own nights rather than of somebody else's.
+  const repaired = booking.guests.find(
+    (guest) => guest.id === repairedGuestId,
+  );
+  if (
+    repaired === undefined ||
+    repaired.priceCents !== repairedGuestTotalCents
+  ) {
+    throw new ManualBookingPaymentError(
+      NIGHT_PRICE_REPAIR_STRAND_NOT_ON_BOOKING_MESSAGE,
+      409,
+    );
+  }
+
+  const newTotalPriceCents = booking.guests.reduce(
+    (sum, guest) => sum + guest.priceCents,
+    0,
+  );
+  const newFinalPriceCents =
+    newTotalPriceCents + booking.promoAdjustmentCents;
+
+  const rebased = await store.booking.updateMany({
+    where: {
+      id: bookingId,
+      totalPriceCents: booking.totalPriceCents,
+      finalPriceCents: booking.finalPriceCents,
+    },
+    data: {
+      totalPriceCents: newTotalPriceCents,
+      finalPriceCents: newFinalPriceCents,
+    },
+  });
+  if (rebased.count !== 1) {
+    throw new ManualBookingPaymentError(NIGHT_PRICE_REPAIR_RACED_MESSAGE, 409);
+  }
+
+  return {
+    previousTotalPriceCents: booking.totalPriceCents,
+    previousFinalPriceCents: booking.finalPriceCents,
+    newTotalPriceCents,
+    newFinalPriceCents,
+  };
 }

@@ -568,6 +568,11 @@ export async function resolveManualRefundTask(
     // claim writes no prices. It records its OWN audit entry rather than adding
     // to the one below - see `recordStoredNightPriceRepair` for why that is not
     // tidiness.
+    //
+    // #3219: and the booking's own `totalPriceCents` and `finalPriceCents` are
+    // re-based from the strands in the same call, so the headline can no longer
+    // disagree with the nights. It runs on a DISMISSAL as well, which is why the
+    // condition below is the repair and not the settlement.
     if (nightPriceRepair) {
       await recordStoredNightPriceRepair({
         plan: nightPriceRepair,
