@@ -159,35 +159,48 @@ RTL window forced back to its 1,000ms default** — the same both-directions pro
 
 ## Which project typechecks a test
 
-`npm run typecheck` runs two TypeScript projects, and between them they must
+`npm run typecheck` runs three TypeScript projects, and between them they must
 read every tracked `.ts`, `.tsx`, `.mts` and `.cts` file in the repository
 except `.semgrep/tests/acb-client-server-boundary.tsx` and
 `.semgrep/tests/acb-unsafe-raw-sql.ts`. Those two files are deliberately broken
 samples read only by Semgrep's `--test` runner; typechecking them would defeat
-their purpose:
+their purpose. Every other file is a root of exactly one project:
 
-- **`tsconfig.json`** — the app. It excludes Vitest test/spec files under
-  `src/` and `scripts/`, plus everything under `__tests__/`, so that test code
-  stays out of the app's type surface.
-- **`tsconfig.test.json`** — the Vitest project under `src/` and `scripts/`.
-  Its broad test/spec patterns deliberately cover TypeScript's `.ts`, `.tsx`,
-  `.mts` and `.cts` forms, and it supplies `vitest/globals`.
+- **`tsconfig.json`** — the app, and the canonical compiler baseline the other
+  two extend (#2693): `target` and `lib` at ES2022, `strict`,
+  `noImplicitOverride`, `noUnusedLocals`, `noUnusedParameters`, and
+  `allowJs: false`. It excludes Vitest test/spec files under `src/` and
+  `scripts/`, everything under `__tests__/`, the Playwright suite, and the
+  Vitest config and setup files, so none of that is in the app's type surface.
+- **`tsconfig.test.json`** — the Vitest project: every `.ts`, `.tsx`, `.mts`
+  and `.cts` test/spec file and `__tests__/` directory under `src/` and
+  `scripts/`, plus `vitest.config.mts` and the two setup files. It supplies
+  `vitest/globals` and Node's types.
+- **`tsconfig.e2e.json`** — the Playwright suite: `e2e/**/*.ts` and
+  `playwright.config.ts`, with Node's types and nothing from Vitest. Specs
+  reach application code through imports (`@/lib/...`), never by listing it.
 
-Vitest also collects JavaScript test/spec forms. The existing `.js`, `.jsx`,
-`.mjs` and `.cjs` files are loaded by `tsconfig.test.json` while `allowJs`
-remains on, but `checkJs` is explicitly off: they execute in Vitest, but this
-document does **not** claim TypeScript statically checks their bodies. MEP-E1
-(#2693) owns converting the remaining JavaScript dependencies, setting
-`allowJs: false`, and giving Playwright its deliberate long-term project.
+Vitest also collects JavaScript test files. The fifteen `scripts/**/*.test.mjs`
+suites — each the test of a `scripts/**` tool that CI runs with a bare `node`,
+so both stay `.mjs` — execute in Vitest and are typechecked by **no** project.
+That is not a loss: before #2693 they were loaded with `allowJs: true,
+checkJs: false`, which produced no diagnostics either. Their names are pinned in
+`src/lib/__tests__/typecheck-project-coverage.test.ts`, so a new JavaScript
+test fails that contract until it is either written in TypeScript (the default)
+or named there deliberately. Four JavaScript modules that TypeScript tests
+import — `eslint.config.mjs`, `scripts/ci/server-only-boundary-selftest.mjs`,
+`scripts/sync-user-guide-wiki.mjs` and `load/lib/contention-invariant.js` —
+carry a sibling `.d.mts` / `.d.ts` declaring their exports; the same contract
+pins each pair.
 
 Put a supported new Vitest test under `src/` or `scripts/` and the existing
 patterns cover it; put one somewhere else and you must add the pattern.
-`src/lib/__tests__/typecheck-project-coverage.test.ts` fails if any other
-tracked TypeScript file ends up in neither project. It also pins Vitest's actual
-default extension glob, requires every supported Vitest file in the test
-project, and refuses compound JSX extensions that Vitest would collect but
-TypeScript cannot load. It asks TypeScript itself which files each project
-resolves rather than reimplementing tsconfig's glob rules.
+`typecheck-project-coverage.test.ts` fails if any tracked TypeScript file ends
+up in no project or in more than one. It also pins Vitest's actual default
+extension glob, requires every TypeScript Vitest file in the test project only,
+requires `allowJs` off in every project, and refuses compound JSX extensions
+that Vitest would collect but TypeScript cannot load. It asks TypeScript itself
+which files each project lists rather than reimplementing tsconfig's glob rules.
 
 That guard exists because the gap was real and silent (#2875): `tsconfig.json`
 excluded the test files and `tsconfig.test.json` re-included only the `src/`
@@ -195,10 +208,13 @@ half, so everything under `scripts/__tests__/` was typechecked by neither
 project. Deliberate `const x: number = "string"` errors planted in those files
 produced a completely green `npm run typecheck`.
 
-Playwright specs under `e2e/` are not Vitest and are not in that project. They
-remain in the app project because the Vitest exclusions are scoped to `src/`
-and `scripts/`, leaving `e2e/` untouched. That home is still incidental rather
-than deliberate; choosing the long-term Playwright project is MEP-E1 (#2693).
+Two habits the baseline depends on. Delete `tsconfig*.tsbuildinfo` before
+trusting a clean run after a compiler-option change — `incremental` build info
+has false-passed a config change here before. And `useDefineForClassFields` is
+pinned `false` on purpose: Next's SWC reads only that explicit key, Vite/Vitest
+derive `true` from an ES2022 target when it is absent, and the tree has some
+eighty `Error` subclasses that declare fields and assign them after `super()`.
+Flipping it is a runtime change to decide separately, not a tidy-up.
 
 ## The frozen test clock
 
