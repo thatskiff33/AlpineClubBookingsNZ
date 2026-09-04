@@ -569,6 +569,47 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
 - Stripe paths own PaymentIntents, SetupIntents, Stripe refunds, Stripe
   webhooks, and durable PaymentRecoveryOperation rows.
 
+## INV-PAY-054
+
+- **A replacement SetupIntent retires the previous card, and a retired card is
+  never re-adopted from a stale SetupIntent** (#3266, epic #3270). A PENDING
+  booking with non-member guests is charged later from the card its
+  `Payment.stripePaymentMethodId` names, by the cron and by both admin charge
+  routes, and none of them asks Stripe first. So the row's card column must
+  mean "a card that may be charged", and two rules keep it meaning that:
+  - **Minting a replacement clears the card.** When `create-setup-intent` mints
+    a new SetupIntent for a row that already has one, its upsert sets
+    `stripePaymentMethodId` to NULL alongside the new intent id. Only
+    `markBookingSetupIntentSucceeded` — the `setup_intent.succeeded` webhook, or
+    the route's own re-adopt arm — puts a card back, and it puts back the card
+    that intent saved. Before this the old, possibly dead, card stayed on the row
+    for as long as the member took to finish re-saving; in production that was
+    never, and the cron failed against it 24 times in a row. This is the same
+    convention `booking-modify-settlement.ts` follows when it invalidates a card;
+    the one deliberate exception (`booking-credit-election.ts` keeping a settled
+    split parent's card for the child's deferred charge) is a settled row this
+    route never reaches.
+  - **A succeeded SetupIntent is not, by itself, proof of a chargeable card.**
+    Two histories leave a row with a succeeded intent and no card, and nothing
+    local tells them apart: the member confirmed a card seconds ago and the
+    webhook has not landed, or a charge path met a terminal Stripe refusal and
+    retired the card (#3268 detaches it at Stripe and clears the column, leaving
+    the intent id). The route asks the PROVIDER (`setupIntentCardStillAttached`
+    in `setup-intent-card.ts`): the intent's payment method is re-adopted only if
+    Stripe still reports it attached to the customer the row charges with.
+    Detached, attached to someone else, or `resource_missing` means the card is
+    gone and a fresh SetupIntent is minted under the chained idempotency key.
+    Any OTHER Stripe failure is not a verdict — the route fails rather than
+    guess, because re-adopting risks charging a dead card and minting afresh
+    would strip a live one. A row that already carries a card skips the
+    question: its succeeded intent is simply the one that saved it.
+  - **The member can always get back to the form.** The booking page's "Save
+    Payment Method" card keys on `needsSavedCardEntry` — the card column alone —
+    not on "no SetupIntent yet", so an abandoned replacement or a retired card
+    shows the form again rather than a dead end. Pinned by
+    `payment-intent-routes.test.ts` (cases (a)-(g)),
+    `setup-intent-card.test.ts` and `booking-payment-flow.test.ts`.
+
 ## INV-PAY-015
 
 - Internet Banking bookings issue Xero-backed invoices and reconcile settlement
