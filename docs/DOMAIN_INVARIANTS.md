@@ -145,8 +145,11 @@ number and prefix, and it is listed at the end of the table below.
 | `INV-DATE-025` | Club-local wall time may be missing or doubled; three probes resolve |
 | `INV-DATE-026` | Calendar-day columns are `@db.Date`; Prisma bounds against them are UTC midnight |
 | `INV-DATE-019` | Ask the club's calendar for "today", never the UTC clock |
+| `INV-DATE-027` | Never truncate a `DateTime` to its UTC day; census the call graph |
+| `INV-DATE-028` | Days added to a document date are calendar days via `addDaysDateOnly` |
 | `INV-DATE-014` | Client-side a lodge night is an NZ `yyyy-MM-dd` string, end to end |
 | `INV-DATE-015` | Rendering has one seam, `@/lib/club-time`; bare `toLocale*`, unzoned `Intl`, `date-fns` lint-blocked |
+| `INV-DATE-029` | Naming the environment zone is lint-blocked; escape-hatch ceilings are tight, only fall |
 | `INV-DATE-016` | The long spelled-out date shape is reserved for four named member-facing surfaces |
 | `INV-DATE-017` | Two check-out boundaries coexist: completion `<` today, queues `<=` today |
 | `INV-DATE-018` | Base Reports uses lodge nights, one positive cohort, cents-exact allocation |
@@ -157,12 +160,14 @@ number and prefix, and it is listed at the end of the table below.
 | `INV-CAP-005` | A split guest portion always settles or is notified, never stranded |
 | `INV-CAP-006` | Bed-allocation eligibility is a status-only superset of capacity-holding |
 | `INV-CAP-032` | Every guest-creating path writes the canonical `BookingGuestNight` set, half-open and cents-exact |
+| `INV-CAP-035` | The guest-night backfill is idempotent; re-run it verbatim after cutover |
 | `INV-CAP-007` | Auto-allocated stays are room-continuous per booking, with bounded fallback |
 | `INV-CAP-008` | Allocation preferences are per lodge and advisory, never safety overrides |
 | `INV-CAP-009` | Automated placement never mixes one booking's minors with another's adult; manual warns |
 | `INV-CAP-010` | DOUBLE: two confirmed partners; breaking that precondition sweeps future shared rows |
 | `INV-CAP-030` | Member merge sweeps only future shared bed-nights its validity re-check refuses |
-| `INV-CAP-031` | Cancellation and archive need no sweep; placement, planner keys, indexes, headroom, auto-promotion |
+| `INV-CAP-031` | Shared doubles: placement rule, planner keys, DB caps, partner-shared headroom |
+| `INV-CAP-036` | A shared double losing its primary auto-promotes the survivor, audited |
 | `INV-CAP-011` | Waitlisted and offered bookings hold no capacity until confirmed |
 | `INV-CAP-012` | A waitlist offer reprices at current rates and states what is payable |
 | `INV-CAP-013` | A member is present on only one live booking per lodge night |

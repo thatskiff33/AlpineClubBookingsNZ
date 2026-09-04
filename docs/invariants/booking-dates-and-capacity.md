@@ -86,83 +86,60 @@ derivation).
   departure date is never occupied. The **operational-day model** is canonical
   for chore-roster eligibility, the kiosk, print manifests and day statuses —
   every human-facing "who is here today" question. Ownership is strict in both
-  directions: an operational-day caller must not reach the night helpers, and
-  a capacity caller must not reach the operational-day ones.
-  **The operational-day helpers** (#2622) are
-  `getGuestOperationalDayPresence` (both halves plus the derived labels),
-  `isGuestOperationallyPresentOnDay`, `isGuestArrivingOnDay`,
-  `isGuestDepartingOnDay` and `getOperationallyPresentGuestsForDay`. They
-  implement the pure rule above, sparse segments included, and take a private
-  key-based copy of the night predicate rather than refactoring the frozen
-  night helpers. **Status of the code against this rule:** chore-roster
-  eligibility is converted. There is one chore-eligibility query,
-  `getOperationalRosterGuestsForDate` (`src/lib/roster-eligibility.ts`), read by
-  both the admin roster service and the kiosk generate route; roster-confirm
-  validation and both chore-cleanup paths read the same helpers (D-M6), and the
-  arriving/departing labels are derived from the night set on the operational
-  date. **Every read surface is now converted.**
+  directions: an operational-day caller must not reach the night helpers, and a
+  capacity caller must not reach the operational-day ones.
+  **The operational-day helpers** (#2622) are `getGuestOperationalDayPresence`
+  (both halves plus the derived labels), `isGuestOperationallyPresentOnDay`,
+  `isGuestArrivingOnDay`, `isGuestDepartingOnDay` and
+  `getOperationallyPresentGuestsForDay`. They implement the pure rule above,
+  sparse segments included, and take a private key-based copy of the night
+  predicate rather than refactoring the frozen night helpers. There is one
+  chore-eligibility query, `getOperationalRosterGuestsForDate`
+  (`src/lib/roster-eligibility.ts`), read by the admin roster service and the
+  kiosk generate route; roster-confirm validation and both chore-cleanup paths
+  read the same helpers (D-M6). **Every read surface is converted.**
   `getLodgeVisibleGuestsForDate` survives as a deprecated wrapper that DEFINES
-  NOTHING: since #2735 both of its branches are a straight delegation, with
-  `includeDepartureDate: false` the night model and `includeDepartureDate: true`
-  `isGuestOperationallyPresentOnDay`. It exists only so the lobby wall keeps a
-  single named entry point that a source contract can fence. It carried the
-  LEGACY lodge-date meaning until #2735 — the guest's own nights plus the single
-  morning after their FINAL listed night — and #2622 and #2628 both refused to
-  widen it, because the lobby wall (fenced, below) derived its night counts from
-  that list and a per-segment gap morning would have become a phantom night on a
-  public screen (issue #58). #2735 removed that coupling FIRST and widened the
-  predicate second; see [INV-DATE-023], which is the standing rule that keeps
-  them apart. A source contract freezes the wrapper's caller list. #2631
-  converted the two kiosk read surfaces that used to call it (`api/lodge/week`
-  and `api/lodge/guests/[date]`) onto the named operational-day helpers, so
-  `lodge-display-state` — the lobby wall — is its **only** caller. No surface may
-  grow a second call.
+  NOTHING: since #2735 both branches are a straight delegation
+  (`includeDepartureDate: false` → the night model, `true` →
+  `isGuestOperationallyPresentOnDay`). It exists only so the lobby wall keeps a
+  single named entry point a source contract can fence; `lodge-display-state` is
+  its **only** caller and no surface may grow a second call. [INV-DATE-023] is
+  the standing rule that let its predicate widen safely.
 
 ### INV-DATE-020
 
 - **One place turns a stay into nights, and its envelope branch is half-open**
   (#2628). `BookingGuestNight` is the canonical night set;
   `BookingGuest.stayStart`/`stayEnd` is a DERIVED envelope whose `stayEnd` is the
-  morning after the last night [INV-DATE-012]. They agree for a contiguous stay;
-  for a sparse one the envelope silently fills the internal gaps, so an expander
-  that reads it reports nights the guest is not there. Six sites expanded a stay
-  independently and disagreed. The named helpers in
-  `src/lib/booking-guest-stay-ranges.ts` are now the one definition and every
-  read surface routes at them: `expandStayEnvelopeToNightKeys` (the raw
-  half-open expansion), `getGuestBedNightKeys` (night set when the guest has
-  one, else the envelope — the set form of `isGuestActiveOnNight`, and agreeing
-  with it night for night), `getExplicitGuestBedNightKeys` (explicit rows only,
-  `null` when the guest carries none, for the bed-allocation surfaces that
-  place only listed nights), `getGuestDepartureMorningKeys` /
-  `isGuestDepartureMorning` (one departure per SEGMENT, not one per stay),
-  `getNextGuestBedNightAfter` / `isGuestReturningOnDay` (the bounds anything
-  scoped to ONE segment needs), and `getEarliestCurrentBedNightDate`. Do not
-  write another `eachDateOnlyInRange(guest.stayStart, guest.stayEnd)`;
+  morning after the last night [INV-DATE-012], and for a sparse stay it silently
+  fills the internal gaps. The named helpers in
+  `src/lib/booking-guest-stay-ranges.ts` are the one definition and every read
+  surface routes at them: `expandStayEnvelopeToNightKeys` (raw half-open
+  expansion), `getGuestBedNightKeys` (night set when the guest has one, else the
+  envelope — the set form of `isGuestActiveOnNight`),
+  `getExplicitGuestBedNightKeys` (explicit rows only, `null` when none, for the
+  bed-allocation surfaces), `getGuestDepartureMorningKeys` /
+  `isGuestDepartureMorning` (one departure per SEGMENT),
+  `getNextGuestBedNightAfter` / `isGuestReturningOnDay` (single-segment bounds),
+  and `getEarliestCurrentBedNightDate`. Do not write another
+  `eachDateOnlyInRange(guest.stayStart, guest.stayEnd)`;
   `guest-stay-expansion-census.test.ts` counts them per site, so a second copy
-  inside an already-declared file fails too.
+  in a declared file fails too.
   **`expandStayEnvelopeToNightKeys` must stay half-open.** Both bed-allocation
-  planners are fed ONE PSEUDO-GUEST PER NIGHT, each carrying
-  `stayStart = night` and `stayEnd = night + 1`; an inclusive expansion gives
-  every one of them a phantom second night and the planner claims the
-  morning-after bed while its occupant is still in it — a double booking, on the
-  automatic path, silently. `bed-allocation.test.ts` →
-  "pseudo-guest envelope (#2628)" is the mutation probe for that and the reason
-  the rule is written here rather than only in a comment. Two deliberate
-  non-callers: the lifecycle's `getGuestNightDatesInRange` reads the explicit
-  night rows and has NO envelope fallback (its output feeds both placement and
-  the prune diff, so a fallback would place rows the next reconcile sweeps), and
-  the planner's `guestStayNights` treats an explicitly EMPTY night list as "no
-  demand" rather than falling back. A guard on whether a bed is still spoken for
-  starts at LAST NIGHT, not today: night N runs to midday NZ on date N+1
-  [INV-DATE-002], so `stayDate >= today` forgets this morning's occupant and
-  lets an admin retire a bed somebody is lying in. That widening is for
-  REFUSALS only — the partner-share sweeps DELETE rows and stay at
-  `stayDate >= today`, because night D-1 is occupancy that has already happened
-  and past lodge nights are history and stay untouched [INV-CAP-010]. A refusal
-  built on this rule states only WHAT blocks, never the whole history: the bed
-  guard names the first few dates and occupants and says "and more", because the
-  delete branch has no date predicate at all and would otherwise put every night
-  a bed has ever held into one error string and into the audit trail.
+  planners are fed ONE PSEUDO-GUEST PER NIGHT (`stayStart = night`,
+  `stayEnd = night + 1`); an inclusive expansion gives each a phantom second
+  night and the planner claims the morning-after bed while its occupant is still
+  in it. `bed-allocation.test.ts` → "pseudo-guest envelope (#2628)" is the
+  mutation probe. Two deliberate non-callers: the lifecycle's
+  `getGuestNightDatesInRange` reads the explicit rows with NO envelope fallback
+  (it feeds both placement and the prune diff), and the planner's
+  `guestStayNights` treats an explicitly EMPTY night list as "no demand". A
+  guard on whether a bed is still spoken for starts at LAST NIGHT, not today:
+  night N runs to midday NZ on date N+1 [INV-DATE-002], so `stayDate >= today`
+  forgets this morning's occupant. That widening is for REFUSALS only — the
+  partner-share sweeps DELETE rows and stay at `stayDate >= today`, because past
+  lodge nights are history [INV-CAP-010]. A refusal built on this rule names the
+  first few dates and occupants and says "and more", never the whole history.
 
 ### INV-DATE-021
 
@@ -195,44 +172,33 @@ derivation).
 
 - **A SQL stay filter is a COARSE FILTER, never the answer: every kiosk write
   lookup loads the envelope and then decides over the night rows** (#2737). A
-  `where` on `stayStart`/`stayEnd` can only ever describe the envelope, and the
-  envelope is a strict SUPERSET of the canonical night set for a sparse stay
-  [INV-DATE-020] — its internal gap nights sit inside it. So a lookup whose
+  `where` on `stayStart`/`stayEnd` describes only the envelope, a strict
+  SUPERSET of the night set for a sparse stay [INV-DATE-020], so a lookup whose
   authority stops at the `where` accepts a write for a night the guest is at
-  home. Both kiosk write lookups in `src/lib/lodge-date-scoping.ts` therefore
-  load coarse and decide in code: `findLodgeGuestForDate` (arrive) with
+  home. Both kiosk write lookups in `src/lib/lodge-date-scoping.ts` load coarse
+  and decide in code: `findLodgeGuestForDate` (arrive) with
   `isGuestActiveOnNight`, `findLodgeGuestDepartingOnDate` (depart) with
-  `isGuestDepartureMorning`. Three things about that are load-bearing:
+  `isGuestDepartureMorning`. Three things are load-bearing:
   - **The night rule is NOT folded into the `where`.** The fragments there are
     the enforcement gates — member consent [D-12/#2307], pending admin review
     [#1372/#1422], lodge scope and booking status — and they collapse to one
-    deliberately uninformative "nothing matched" precisely so a refused caller
-    learns nothing. "You are not booked in tonight" is a fact about the booking,
-    not about the caller's rights; keeping it separate is what lets the arrive
-    endpoint answer `409 GUEST_NOT_BOOKED_THIS_NIGHT` with a sentence a hut
-    leader can act on while `403` stays authorisation and `404` stays uniform.
-    **Depart deliberately keeps the uniform `404` for "not a departure
-    morning".** It is already correct — no wrong write is reachable — so the
-    difference is copy, not safety, and buying that copy means widening the
-    return type of a lookup that runs inside the depart transaction's advisory
-    locks. It is also not the same clean fact: a guest refused a check-out
-    mid-stay is refused because they are STAYING tonight, which is a different
-    sentence from "not booked in", and choosing it is a decision rather than a
-    port. Anyone who does add it must not do so by folding the rule into the
-    `where`, for the reason above.
+    uninformative "nothing matched" so a refused caller learns nothing. "You are
+    not booked in tonight" is a fact about the booking, not the caller's rights,
+    so arrive answers `409 GUEST_NOT_BOOKED_THIS_NIGHT` while `403` stays
+    authorisation and `404` stays uniform. **Depart deliberately keeps the
+    uniform `404` for "not a departure morning"**; anyone who adds a specific
+    answer must not fold the rule into the `where`.
   - **The coarse filters stay as narrow as each rule allows and are not
     unified.** Arrive's is half-open (`stayEnd: { gt: date }`) because a
     departure morning is never an occupied night [INV-DATE-003]; depart's is
-    checkout-inclusive because a departure morning is exactly what it looks for.
-    Widening either only loads rows the in-code rule then refuses.
+    checkout-inclusive because a departure morning is what it looks for.
   - **A guest carrying no `BookingGuestNight` rows still falls back to the
-    envelope**, so every pre-#713 row behaves exactly as it always has. A fixture
-    that omits `nights` is therefore exercising the fallback, not the rule — the
-    silent-staleness class #2628's sweep found across eight suites.
+    envelope**, so every pre-#713 row behaves as it always has; a fixture that
+    omits `nights` exercises the fallback, not the rule.
   A server guard is required even where no screen sends the request: the kiosk's
-  `canMarkArrived`/`canMarkDeparted` flags [INV-DATE-021] make the offer and the
-  acceptance agree by construction, but a stale open page or a direct call
-  bypasses the offer entirely.
+  `canMarkArrived`/`canMarkDeparted` flags [INV-DATE-021] make offer and
+  acceptance agree by construction, but a stale page or a direct call bypasses
+  the offer.
 
 ### INV-DATE-006
 
@@ -254,14 +220,13 @@ derivation).
 
 - **The lobby wall's night count is derived independently of what the wall
   shows** (#2735). `nightTotals` in `src/lib/lodge-display-state.ts` — the input
-  to sole-occupancy / whole-lodge detection, which is what decides whether an
+  to sole-occupancy / whole-lodge detection, which decides whether an
   unauthenticated public screen prints guests' names and phone numbers — is
   taken from the booking's whole guest set through the night model
-  (`getActiveGuestsForNight`), never by filtering, subtracting from or otherwise
-  reading the visible list. It shares no term with the visibility rule in either
-  direction, so no change to who is DISPLAYED can add or remove a night. This
-  ordering is the standing safety rule and not an implementation detail: the
-  wall's visibility predicate could only be widened to per-segment presence
+  (`getActiveGuestsForNight`), never by reading the visible list. It shares no
+  term with the visibility rule in either direction, so no change to who is
+  DISPLAYED can add or remove a night. This ordering is the standing safety rule:
+  the wall's visibility predicate could only be widened to per-segment presence
   because the count had already been decoupled, and anything that couples them
   again must narrow the predicate back first. A departure morning is never a
   night (INV-DATE-003), and `lodge-display-state.test.ts` fails on a sparse-stay
@@ -273,15 +238,11 @@ derivation).
   conditions) and `soleOccupancyBookingIds`, a SUPERSET that also covers a group
   whose only presence in the window is its departure morning. The privacy gate
   (`namesAllowedForBooking`, and the chore-assignee labels that reuse it) asks
-  the superset; the blockout view asks the narrow set. Being a superset is the
-  safety property — a widening here can only withhold more names. A row that
-  reaches the wall on a departure morning alone must NOT be flagged
-  `wholeLodge`: it holds no night tonight, and a "the lodge is fully booked"
-  statement over an empty lodge is its own kind of wrong. A `wholeLodge` row is
-  also not guaranteed contiguous — the heuristic never inspects the nights
-  between the ones a booking covers — so any DAY span painted from such a row
-  (blockout panel, week strip, night count on the welcome panel) is derived from
-  the row's `nights`, never from its envelope.
+  the superset; the blockout view asks the narrow set — a widening here can only
+  withhold more names. A row that reaches the wall on a departure morning alone
+  must NOT be flagged `wholeLodge`. A `wholeLodge` row is not guaranteed
+  contiguous, so any DAY span painted from it is derived from the row's
+  `nights`, never from its envelope.
 
 ### INV-DATE-007
 
@@ -370,434 +331,156 @@ derivation).
 
 - `@db.Date` columns (e.g. `Booking.checkIn`/`checkOut`,
   `BookingGuest.stayStart`/`stayEnd`, `HutLeaderAssignment.endDate`) store an NZ
-  calendar date, encoded internally at UTC midnight (the storage-encoding note
-  in the invariant above). Compare them only against date-only values
-  (`getTodayDateOnly()` for today; `storedDateOnly()` from
+  calendar date, encoded at UTC midnight. Compare them only against date-only
+  values (`getTodayDateOnly()` for today; `storedDateOnly()` from
   `src/lib/stored-calendar-day.ts` to normalise one of these columns), never a
   raw `new Date()` or a local-midnight (`setHours(0,0,0,0)`) instant (F8/F32,
-  #1888).
+  #1888). **Not `normalizeDateOnlyForTimeZone()` on one of these columns**: it
+  projects the value through the environment zone — the PREVIOUS day for a club
+  behind Greenwich (#3107).
 
-  **Not `normalizeDateOnlyForTimeZone()` on one of these columns**, which this
-  bullet used to name. It projects the value through the environment zone
-  before re-encoding it — the identity for a club at or ahead of Greenwich and
-  the PREVIOUS day for one behind it — so it decodes a stored day by asking a
-  zone, which is what `INV-DATE-019`'s first exact boundary and `INV-DATE-026`
-  settle without one (#3107). It remains correct for a real instant, which is a
-  different receiver.
-
-  **The two mistakes fail differently, and the local-midnight one is the worse
-  of them (#2838).** A bound value is narrowed to a `DATE` parameter by its UTC
-  calendar date, with the time thrown away — `mapArg`'s `case "DATE"` in
-  `@prisma/adapter-pg`, which is the adapter `src/lib/prisma.ts` uses. So a raw
-  `new Date()` lands on the previous NZ day only for the first ~12-13h of each
-  NZ day, whereas `setHours(0,0,0,0)` under the `TZ=Pacific/Auckland` server pin
-  is the PREVIOUS UTC day and therefore narrows to `D-1` **all day, every day**.
-  There is no window in which it is right, which is why it reads as a stable
-  product rule ("access starts on the check-in day") rather than as an
-  intermittent bug. **The shorthand `(D-1)T12:00Z` for that value is the NZST
-  half of the year only** — under NZ daylight saving (UTC+13) club midnight is
-  `(D-1)T11:00Z` — and both narrow to `D-1` identically, which is why the
-  shorthand is harmless as long as nobody reads an hour out of it. Wherever it
-  appears unqualified in the tree, read it as "the previous UTC day".
-
-  Being one day early on the value means being one day LATE on the window: a
-  `checkIn <= tomorrow` / `checkOut >= today` pair evaluated at `D-1` admits
-  `[checkIn, checkOut+1]` instead of the intended `[checkIn-1, checkOut]`.
-
-  **What #2838 changed on those surfaces is which LINKS a member is shown, not
-  what they are allowed to do**, and that distinction is the whole risk
-  assessment. Lodge access itself is decided by `getKioskAccessTier`
-  (`src/lib/kiosk-access.ts:31-81`), which derives the day from
-  `getTodayDateOnly()` and already implemented `[checkIn-1, checkOut]` for a stay
-  (`:71-73`) and `[startDate-1, endDate]` for a hut-leader assignment (`:46-47`);
-  every `/api/lodge/*` route enforces it, `src/lib/lodge-auth.ts` re-derives the
-  same pair, and both dashboard buttons and the nav link point at
-  `/lodge/kiosk`. That gate is also the best independent evidence that
-  `[checkIn-1, checkOut]` is the INTENDED rule rather than something #2838 chose.
-  So the defect was **one-directional**:
-  - On the day BEFORE check-in the member's lodge access already worked; they
-    simply had no button and no nav link offering it. A lockout by missing
-    affordance, which is what #2838 removes.
-  - On the day AFTER check-out the surviving link was DEAD — the kiosk behind it
-    answered `tier: "none"`. Nobody ever held access they should not have held,
-    and nothing here takes access away.
-
-  That dead day-after link was also far shorter than a day on the staying-guest
-  side: both of those reads filter `status: "PAID"`, and `completeBookings`
-  (`src/lib/cron-complete-bookings.ts:24-30`, scheduled daily at 01:00 NZ) flips
-  PAID → COMPLETED as soon as `checkOut < today` [INV-DATE-017], so it survived
-  roughly 00:00-01:00 NZ. The hut-leader half has no completion sweep and so
-  lasted the whole day — still a dead link, not access.
-
-  #2838 fixed **three** such constructions feeding **five** `@db.Date` reads: the
-  dashboard (`src/app/(authenticated)/dashboard/page.tsx` — the staying-guest
-  read, the hut-leader read, and the Upcoming Bookings list), the authenticated
-  layout's staying-guest read (`src/app/(authenticated)/layout.tsx`), and the
-  age-tier removal guard's live-guest count
-  (`src/app/api/admin/age-tier-settings/route.ts`). Their boundaries are pinned
-  by `src/app/(authenticated)/dashboard/__tests__/dashboard-club-day-boundaries.test.tsx`
-  and `src/lib/__tests__/authenticated-layout-club-day-boundaries.test.tsx`.
-
-  **Those three were not the whole class.** #2684's inventory named them;
-  `src/lib/xero-booking-repair-utils.ts` also exported a bare `setHours` wrapper
-  as `startOfDay`, and `xero-booking-repair-load.ts` built the operator repair
-  sweep's `[from, to]` window from it — so a sweep asked for `[1 Jul, 31 Jul]`
-  covered `[30 Jun, 30 Jul]`, and its own report header printed the shifted days
-  back. Fixed by **#2868**, which is where the fourth-consumer detail lives: that
-  one window fed `Booking.checkIn` (`@db.Date`) in the same `OR` as
-  `Booking.createdAt`, `Booking.updatedAt` and `BookingModification.createdAt`
-  (bare `DateTime`), so the repair was a SPLIT — a date-only bound for the
-  calendar day, a `startOfDateOnlyForTimeZone` bound for the three instants —
-  and never a rename. Pinned by
-  `src/lib/__tests__/xero-booking-repair-scope-window.test.ts`, which asserts the
-  values the adapter hands the driver under three host pins, because each pin can
-  only see one half of the defect.
+  **The two mistakes fail differently, and the local-midnight one is worse
+  (#2838).** A bound is narrowed to a `DATE` parameter by its UTC calendar date
+  (`mapArg`'s `case "DATE"` in `@prisma/adapter-pg`). A raw `new Date()` lands on
+  the previous NZ day for the first ~12-13h of each NZ day; `setHours(0,0,0,0)`
+  under the `TZ=Pacific/Auckland` pin narrows to `D-1` **all day, every day**,
+. One day early on the
+  value is one day LATE on the window: `checkIn <= tomorrow` / `checkOut >=
+  today` evaluated at `D-1` admits `[checkIn, checkOut+1]` instead of
+  `[checkIn-1, checkOut]` — the window `getKioskAccessTier`
+  (`src/lib/kiosk-access.ts`) enforces for a stay (`[startDate-1, endDate]` for a
+  hut-leader assignment). #2838 fixed the member-facing reads
+  (`dashboard-club-day-boundaries.test.tsx`,
+  `authenticated-layout-club-day-boundaries.test.tsx`); #2868 fixed the Xero
+  repair sweep's window as a SPLIT — a date-only bound for `Booking.checkIn`, a
+  `startOfDateOnlyForTimeZone` bound for the three `DateTime` columns in the
+  same `OR` — pinned under three host pins by
+  `xero-booking-repair-scope-window.test.ts`.
 
   **A spelling finds candidates; only the CALL GRAPH settles them.** `setHours`
-  is not an ISO truncation, so #2684's lint rule cannot see it, and an exported
-  wrapper puts it beyond a grep for the pattern — the same way `formatDate` hid
-  roughly eighteen Xero document dates from #2682's census. #2868's census was
-  therefore two steps, and it is worth being exact about which step is which,
-  because only the second one proves anything: every `setHours` in `src/`,
-  `scripts/`, `e2e/` and `prisma/` was enumerated (the seed), and each survivor
-  was then traced forward to the columns it actually binds (the census).
+  is not an ISO truncation, so #2684's lint rule cannot see it. After #2870 the only `setHours` in non-test
+  application code is `guest-chore-token.ts`'s hour-adding expiry. **Read that as
+  "no site is currently known", never "the class is closed"**; #2684's lint rule
+  is what would close it.
 
-  That left one site in application code: `monthGridRange`
-  (`src/lib/calendar-client.ts`), whose `setHours(0, 0, 0, 0)` and
-  `setHours(23, 59, 59, 999)` were the two ends of one browser-side month-grid
-  range. Traced through the calendar view, its query parameters and the events
-  route, both ends bound `CalendarEvent.startsAt`/`endsAt` — both bare
-  `DateTime` — so the pair was outside this class by column type, not by luck.
-
-  **That site is gone (CT-4 group F5, #2870), and for a different reason than
-  this rule.** It was not binding a `@db.Date` column, but the two `setHours`
-  ends were still the BROWSER's day rather than the club's, so a member abroad
-  fetched a window shifted from the grid they were shown. Both ends are now club
-  day boundaries from `startOfClubDay` / `endOfClubDayExclusive`.
-
-  Re-censused on that change, the only `setHours` left in non-test application
-  code is `guest-chore-token.ts`'s `setHours(getHours() + N)`, which ADDS hours
-  to an expiry instant rather than truncating a day — a different operation, and
-  outside this class. Every other occurrence under `src/` is prose in a comment
-  recording the history above, or a fixture in a test.
-
-  **Read that as "no site is currently known", never as "the class is closed",**
-  and note precisely where the residual sits: the trace is sound for everything
-  it reached, but the ENUMERATION that fed it is still a spelling, and a wrapper
-  named something else is exactly what it would miss. That is not a hypothetical
-  — it is how this very site outlived two earlier censuses. #2684's lint rule is
-  still what would close the class.
-
-  A `DateTime` column in the same statement is NOT the same comparison and must
-  not be given the date-only value: it holds a real instant, so it takes the
-  start-of-club-day instant from `startOfDateOnlyForTimeZone()`. A date-only
-  value would push it to club MIDDAY. The dashboard carries both encodings side
-  by side (`Booking.draftExpiresAt` and `CalendarEvent.startsAt` against
-  `Booking.checkIn`/`checkOut`) and names which is which.
+  A `DateTime` column in the same statement takes the start-of-club-day instant
+  from `startOfDateOnlyForTimeZone()`, never the date-only value, which would
+  push it to club MIDDAY.
 
 ### INV-DATE-025
 
 - **A club-local wall time is not guaranteed to exist, and may exist twice.**
   Deriving an instant from "this date at this clock time in the club's zone" has
-  two failure modes that a single offset lookup cannot see, and both are the
-  DST transition itself rather than an edge case invented for a test.
-- **The kernel resolves it with THREE probes, not two.** Measured across all 418
-  zones this runtime knows, on every transition-adjacent day from 2015 to 2036:
-  local midnight is **skipped in 19 zones** and **ambiguous in 8**. The
-  two-probe correction the legacy helper used names the **wrong calendar day in
-  11** of them — Havana, Santiago, São Paulo, Asunción, Cuiabá, Campo Grande,
-  Coyhaique, Punta Arenas, Scoresbysund, Palmer, Azores — and differs from the
-  correct answer in 16. It is also blind to an ambiguity when both probes land
-  the same side of the transition: on `Asia/Amman`, 2015-10-30 midnight occurs at
-  21:00Z **and again** at 22:00Z, the old code returns the later, and "the start
-  of 30 October" silently loses its own first hour. Probing a day before, at, and
-  a day after — and reading every candidate back — is what closes both.
+  two failure modes a single offset lookup cannot see, both the DST transition
+  itself.
+- **The kernel resolves it with THREE probes, not two** — a day before, at, and
+  a day after, reading every candidate back. Across all 418 zones this runtime
+  knows, 2015 to 2036, local midnight is skipped in 19 zones and ambiguous in 8;
+  a two-probe correction names the wrong calendar day in 11 of them and is blind
+  to an ambiguity when both probes land the same side of the transition.
 - **The policy is explicit at the call site, on two independent axes.** A
-  *skipped* wall time defaults to `reject`, because nothing asks on purpose for a
-  moment that never happened; a day-boundary caller opts into
+  *skipped* wall time defaults to `reject`; a day-boundary caller opts into
   `nextExistingInstant` so a booking screen can never fail to render. An
-  *ambiguous* wall time defaults to `earliest`, because a job scheduled at 01:30
-  on a fall-back day should run once, at the first 01:30 — refusing there would
-  break a legitimate schedule.
-- **Noon is measurably safer than midnight, and that is an argument for the stay
-  boundary rather than a happy accident — but it is not a guarantee, and the
-  first draft of this bullet over-claimed it.** In the sweep above — 418 zones,
-  2015 to 2036 — local noon is **never skipped and never ambiguous**, where
-  midnight is skipped in 19 zones and ambiguous in 8. Over a wider 1900–2100
-  window noon *is* skipped in 16 zones, and while eleven of those are pre-1968
-  local-mean-time one-offs, **five are date-line moves and the most recent was
-  2011**: Apia and Fakaofo (2011-12-30), Kiritimati and Enderbury (1994-12-31),
-  Kwajalein (1993-08-21). A country moving across the date line skips a whole
-  calendar day, noon included. Four such moves in twenty years is a live class,
-  not a museum piece.
-- So the honest rule is: **the noon-to-noon stay window needs no policy on any
-  zone any club runs today, and `noonOfClubDay` still carries one** — because the
-  case that would defeat it is a whole-day skip, and a booking screen must render
-  rather than throw. Do not read "noon is safe" as "noon cannot be skipped".
-- Decided on #2990 (CT-2) under epic #2988; the measurements are that issue's,
-  re-runnable from the sweep it records.
+  *ambiguous* wall time defaults to `earliest`, so a job scheduled at 01:30 on a
+  fall-back day runs once, at the first 01:30.
+- **Noon is measurably safer than midnight — but not a guarantee.** In that
+  sweep local noon is never skipped and never ambiguous; over 1900–2100 noon
+  *is* skipped in 16 zones, five of them date-line moves, the most recent in
+  2011. So **the noon-to-noon stay window needs no policy on any zone any club
+  runs today, and `noonOfClubDay` still carries one**, because a booking screen
+  must render rather than throw. Do not read "noon is safe" as "noon cannot be
+  skipped".
+- Decided on #2990 (CT-2) under epic #2988; the measurements are that issue's.
 
 ### INV-DATE-024
 
 - **`Member.dateOfBirth` is a CALENDAR DAY, stored at UTC midnight.** The column
-  is `@db.Date` as of **#2872**, which the owner settled as a follow-up on
-  14 August 2026 in the decision recorded on #2859, and which shipped with a
-  fail-closed migration and a sweep of every reader. **The writer rule below did
-  not go away with it.** A column type pins what the database stores, not the
-  value a writer computes: a writer that builds server-local midnight now has
-  its wrong day truncated to a wrong day, which is no improvement at all. What
-  the typing adds is that the wrong value can no longer hide a time inside it.
-  Build it with `parseDateOnly(\`${yyyy}-${mm}-${dd}\`)`, an explicit
-  `T00:00:00.000Z`, or `Date.UTC(...)`. **Never**
-  `new Date(\`${yyyy}-${mm}-${dd}T00:00:00\`)`: with no `Z` and no offset that
-  is SERVER-LOCAL midnight, and under the `TZ=Pacific/Auckland` pin it stores
-  `(D-1)T12:00Z` or `(D-1)T11:00Z` — a day early, every hour of every day, not
-  only in a morning window. That is the F8/F32 hazard [INV-DATE-013] on a column
-  that is not a lodge date, and it reached 10 of the 375 stored dates of birth
-  before #2859 repaired them: six at `11:00`, four at `12:00`, each one exactly
-  a day behind what the member's own Xero contact holds.
-
-  **`new Date("yyyy-MM-dd")` is not on that list, deliberately.** ECMAScript
-  does define the date-only form as UTC, so the *zone* is right — but the
-  constructor does not validate the day, and rolls an impossible one over
-  silently: `new Date("1990-02-31")` is 3 March and `new Date("1990-04-31")` is
-  1 May. `parseDateOnly` round-trips the day and returns an invalid `Date`
-  instead, so a value nobody can read as a calendar day never becomes a
-  birthday. Prefer it everywhere.
-- **Compare a stored date of birth only against another date-only value.** A SQL
-  range filter compares instants, so the bound the age-up candidate query filters
-  on must cover the whole cutoff calendar day rather than compare instants
-  (`src/lib/cron-age-up.ts`, #2859). Getting that wrong moves an age tier, and an
-  age tier moves a member's price and their hosting eligibility.
+  is `@db.Date` as of **#2872** (owner decision recorded on #2859). **The writer
+  rule did not go away with it**: a column type pins what the database stores,
+  not the value a writer computes. Build it with
+  `parseDateOnly(\`${yyyy}-${mm}-${dd}\`)`, an explicit `T00:00:00.000Z`, or
+  `Date.UTC(...)`. **Never** `new Date(\`${yyyy}-${mm}-${dd}T00:00:00\`)`: with
+  no `Z` and no offset that is SERVER-LOCAL midnight, a day early every hour of
+  every day under the `TZ=Pacific/Auckland` pin — the F8/F32 hazard
+  [INV-DATE-013] on a column that is not a lodge date.
+  **`new Date("yyyy-MM-dd")` is not on that list, deliberately**: the zone is
+  right, but the constructor rolls an impossible day over silently
+; `parseDateOnly` returns an invalid
+  `Date` instead.
+- **Compare a stored date of birth only against another date-only value.** The
+  age-up candidate query's bound must cover the whole cutoff calendar day
+  (`src/lib/cron-age-up.ts`, #2859); an age tier moves a price and hosting
+  eligibility.
 - **Both sides of the age comparison are calendar days, and they read one
   frame** (#3082). `computeAge` (`src/lib/policies/age-tier.ts`) decodes its date
-  of birth **and** its reference date in UTC through
-  `requireStoredCalendarDay`, which refuses a value carrying a UTC time of day
-  rather than flooring it; `getSeasonStartDate` is that day encoded at UTC
-  midnight, and `getSeasonStartCalendarDate` is the same day as text. Do not
-  correct one half: they were interlocked, and the straddle is worse than either
-  end. The reasoning lives in the `policies/age-tier.ts` module docblock and is
-  not repeated here.
+  of birth **and** its reference date in UTC through `requireStoredCalendarDay`,
+  which refuses a value carrying a UTC time of day; `getSeasonStartDate` is that
+  day at UTC midnight and `getSeasonStartCalendarDate` the same day as text. Do
+  not correct one half.
 
-  **What #3082 fixed, because the shape recurs.** Both functions used to be
-  host-local. The reference side survived that by a round trip — local getters
-  read back exactly the parts the local constructor was given, in every zone
-  (swept: 418 zones, 2015-2036, all twelve possible season-start months, zero
-  failures) — and the date-of-birth side did not, because it is stored at UTC
-  midnight. A host behind Greenwich read it a day early, which makes the member
-  look a day **older**, so the misclassified member is the one born the day
-  **after** a tier boundary, not on it. Measured across every stored date of
-  birth in a year: **161 of 418 zones moved exactly one day of birthdays, by +1
-  year.** Every zone at or ahead of Greenwich, this deployment included, was
-  already right — which is how it stayed latent.
-
-  **The age-up cron was not affected**, and an earlier version of this paragraph
-  implied otherwise. `cron-age-up.ts` prefilters candidates on a bound whose
-  exclusive edge coincides exactly with the misclassification boundary, so the one
-  day of birthdays the old read got wrong was never proposed as a candidate — and
-  for candidates it did misread, both readings land at or above the tier minimum,
-  which `validateAgeTierPartition` guarantees means ADULT either way. Swept over
-  27 638 160 admitted candidates across 418 zones: **zero promote-or-skip verdict
-  changes**, and the candidate set itself byte-identical. Price bands and hosting
-  eligibility DID move, because billing calls `computeAgeTierWithSettings` with no
-  prefilter in front of it.
-
-  `member-age.ts` had the same dependence in a subtler form before #2872: it read
-  through the club zone, agreed in New Zealand, and reported an age a year old on
-  the day before a birthday for any club behind UTC. It reads `formatDateOnly`
-  now; "today" on the other side of that comparison is still the club's, and
-  correctly so. Its 29 February convention differs from `computeAge`'s
-  deliberately — it clamps the anniversary to 28 February for an identity check,
-  where `computeAge` compares the day as written. The two can only disagree when
-  the REFERENCE date is 28 February, and `computeAge`'s reference is always a
-  season start, which is always day 1 of a month — so on the price path the
-  divergence is **structurally unreachable** and aligning the conventions would
-  move nobody's tier. This document used to say aligning them "would move a real
-  member's tier for one day a year, so it needs a decision rather than a
-  tidy-up"; that was measured false (enumerated in
-  `computeAgeOnCalendarDays`'s docblock). The conventions still stand as they
-  are, on the ground that the divergence is harmless and `member-age.ts` serves a
-  different purpose — not on the ground that changing them would move somebody.
+  `member-age.ts` reads `formatDateOnly`. Its 29
+  February convention differs from `computeAge`'s deliberately (clamp to 28
+  February for an identity check versus compare the day as written); the two can
+  only disagree when the REFERENCE date is 28 February, and `computeAge`'s
+  reference is always a season start, day 1 of a month, so on the price path the
+  divergence is **structurally unreachable** (`computeAgeOnCalendarDays`'s
+  docblock).
 
   The correct reading of a UTC-midnight column is UTC getters, `formatDateOnly`
-  or the kernel's `calendarDateOfDateOnlyInstant`. A local-getter reader is
-  working by deployment accident, not by construction — there are none left on
-  this path.
+  or the kernel's `calendarDateOfDateOnlyInstant`; no local-getter reader is left
+  on this path.
 
 ### INV-DATE-026
 
 - **A column holding a calendar day is `@db.Date`.** Not a bare `DateTime` that
   writers agree to keep at UTC midnight — the schema states it, and PostgreSQL
   refuses to keep a time. #2872 narrowed eleven such columns and the reviewed
-  exception list `DATE_ONLY_IN_DATETIME_COLUMN` is now **empty**, which is the
-  terminal state it was always meant to reach rather than a temporary quiet.
+  exception list `DATE_ONLY_IN_DATETIME_COLUMN` is now **empty**, its terminal
+  state.
 - **A column only qualifies if EVERY writer agrees.** Three were examined and
-  deliberately left as `DateTime`, and the reason is the same each time — one
-  writer puts a real moment in them. `MemberInduction.inductionDate` is stamped
-  with the clock when the last sign-off lands. `MembershipNominationSettings.gateEffectiveFrom`
-  is a date the admin types, except on the branch where they leave it blank and
-  the panel's own help text promises it "defaults to the date you first enable
-  the gate" — which the route implements as `new Date()`. `CalendarEventSeries.until`
-  is written at local **noon**, so a UTC-day truncation would move the stored
-  day for half the year and not the other half. Narrowing a mixed column does
-  not tidy it; it destroys the evidence of which rows were which, and here it
-  would also abort the deploy, because the preflight is fail-closed and every
-  such row is an offender.
+  deliberately left as `DateTime` because one writer puts a real moment in them:
+  `MemberInduction.inductionDate` (stamped with the clock at the last sign-off),
+  `MembershipNominationSettings.gateEffectiveFrom` (defaults to `new Date()`
+  when left blank, as the panel's help text promises) and
+  `CalendarEventSeries.until` (written at local **noon**). Narrowing a mixed
+  column destroys the evidence of which rows were which, and the fail-closed
+  preflight would abort the deploy on every such row.
 - **A bare `DateTime` may hold a calendar day only through that list**, one entry
   per field, naming the write that proves it. An entry dies when its column is
   narrowed, and `date-only-encoding-guard.test.ts` fails an entry that outlives
-  its fix, so the list cannot silently accumulate.
-- **The corollary is the part that actually breaks things: a Prisma bound against
-  a `@db.Date` column must be a calendar day at UTC midnight.** The adapter
+  its fix.
+- **The corollary is the part that breaks things: a Prisma bound against a
+  `@db.Date` column must be a calendar day at UTC midnight.** The adapter
   narrows whatever instant you hand it, so a bound built as midnight in the club
-  zone — or, worse, on the host — becomes the **previous day**, and nothing warns
-  you. That is not visible in a schema diff, which is why narrowing a column
-  without censusing its readers is the dangerous half of the change. #2872 found
-  three: an age-up cutoff that dropped the member born exactly on the
-  season-start anniversary (an age tier, and therefore a price), a joined-date
-  report bound that started a day early, and a date of birth projected through a
-  club zone, which agrees in New Zealand and returns the previous day for any
-  club behind UTC.
+  zone — or on the host — becomes the **previous day**, and nothing warns you.
+  That is invisible in a schema diff, which is why narrowing a column without
+  censusing its readers is the dangerous half of the change (#2872 found three
+  such readers, one of them an age-up cutoff and therefore a price).
 - `src/lib/__tests__/prisma-date-column-binding.test.ts` is the executable form
-  of the corollary, and `DATE_ONLY_COLUMN_FIELDS` — parsed from
-  `schema.prisma` rather than hand-listed — is what keeps the field set honest.
+  of the corollary, and `DATE_ONLY_COLUMN_FIELDS` — parsed from `schema.prisma`
+  rather than hand-listed — keeps the field set honest.
 - Minted on #2872 (CT-3) under epic #2988.
-
 
 ### INV-DATE-019
 
 - **When a server asks for "today", it asks the club's calendar.**
   `todayDateOnlyForTimeZone()` returns it as a `yyyy-MM-dd` string and
-  `getTodayDateOnly()` as a date-only `Date`; both live in
-  `src/lib/date-only.ts` and both work on the server and in the browser. Since
-  CT-2 (#2990) both are adapters over `clubToday()` in `@/lib/club-time`, which
-  is where new code should ask; the answer is unchanged and the signatures are
-  preserved. Never
-  `new Date().toISOString().slice(0, 10)` (or `.substring(0, 10)`, or
-  `.split("T")[0]`) — that is the **UTC** day, which is still *yesterday* in New
-  Zealand for roughly the first half of every NZ day. #2682 fixed fifteen sites
-  that did this, including the `min` on two public lodge-night pickers and the
-  default `asOfDate` cut-off on two finance windows;
+  `getTodayDateOnly()` as a date-only `Date`; both live in `src/lib/date-only.ts`,
+  both work on the server and in the browser, and since CT-2 (#2990) both are
+  adapters over `clubToday()` in `@/lib/club-time`, which is where new code should
+  ask. Never `new Date().toISOString().slice(0, 10)` (or `.substring(0, 10)`, or
+  `.split("T")[0]`) — that is the **UTC** day, still *yesterday* in New Zealand
+  for roughly the first half of every NZ day (#2682);
   `src/lib/__tests__/nz-today-date-only.test.tsx` freezes the clock inside the
   divergence window and fails the build if the pattern comes back.
 
-  Three exact boundaries on that rule, because each is easy to get wrong:
-
-  - *Truncating an existing `@db.Date` value the same way is fine* — those are
-    already pinned to UTC midnight and encode a calendar day, not an instant.
-    **It is not fine for a `DateTime` column.** `createdAt`, `updatedAt` and
-    friends are real instants, so `booking.createdAt.toISOString().slice(0, 10)`
-    is the clock one hop removed and lands on the previous NZ day all morning.
-    #2697 closed the two `Booking.createdAt` sites (the Xero booking-invoice due
-    date and the legacy finance export's `created_date`), and #2834 closed the
-    twenty Xero document dates that remained: every invoice, credit note,
-    payment and allocation date derived from the clock or from a stored
-    `DateTime`, across ten modules. Every one of them is now
-    `formatDateOnlyForTimeZone`. **Most of them were invisible to a grep**,
-    because they reached the pattern through the `formatDate` wrapper in
-    `src/lib/xero-invoice-helpers.ts` (which is `toISOString().split("T")[0]`)
-    or through a private clone of it in `membership-cancellation-xero.ts` — so
-    census that call graph, not the spelling. `formatDate` is still correct and
-    still used, but only for `@db.Date` receivers, and its docblock says so.
-    #2839 closed the only member-facing one: the "Details last confirmed by X
-    on date" line built from `Member.detailsConfirmedAt` in
-    `src/lib/member-family-service.ts`, which reached the pattern through that
-    file's own `toDateInputValue` wrapper. That wrapper is still correct, and
-    still used, for the three date-only receivers beside it — with one
-    exception worth knowing about. `Member.dateOfBirth` has been `@db.Date`
-    since #2872, but that pins storage rather than the value a writer hands it,
-    and the Xero import parses `dd/MM/yyyy` as SERVER-LOCAL midnight
-    (`parseXeroCompanyNumberDate`, in `src/lib/xero-contacts.ts` and a
-    byte-identical clone in the import-member-contact route). Under the
-    container's `TZ=Pacific/Auckland` that stores the previous UTC day, so a
-    Xero-imported date of birth is a day early in storage and reads a day early
-    everywhere — #2859, which is fixed at the writer, not at the reader. Every
-    reader shows what is stored, so those rows keep reading a day early until
-    #2859 lands.
-
-    #2839 did **not** close the last one outside Xero. The member-merge
-    comparison screen (`src/app/(admin)/admin/members/[id]/merge/page.tsx`)
-    truncated every `Date` in the field-by-field diff to its UTC day from a
-    single generic renderer, so real instants such as `photoUpdatedAt` and
-    `hutLeaderEligibleAt` read a day early there for the first half of every NZ
-    day — in front of an irreversible merge. That is fixed by #2860, below.
-    Treat any census reporting this class as empty outside Xero, including one
-    that ships an empty known-defects list (#2855), as not yet meeting the bar.
-    #2684's lint rule is where the whole class gets caught; until then it is a
-    known trap, not a permitted pattern.
-
-    The `setHours(0, 0, 0, 0)` comparisons against `@db.Date` lodge nights are a
-    **different** class, and are tracked separately under [INV-DATE-013]: #2838
-    closed the three member-facing ones and #2868 closed the Xero
-    booking-repair wrapper that #2684's inventory missed — leaving no site
-    currently known, which is not the same as the class being closed (see
-    [INV-DATE-013] for why the distinction matters here). Neither #2684's lint
-    rule nor its guard test sees that class — `setHours` is not an ISO
-    truncation — which is why a clean report from either says nothing about it.
-
-    **A generic renderer cannot decide any of this from the runtime type**,
-    because an instant and a calendar day are the same `Date` and the same ISO
-    string — so a `value instanceof Date` branch has to guess, and guessing is
-    how #2860 dated the member-merge comparison screen a day early. That screen
-    renders both kinds side by side, so since #2860 the kind is DECLARED per
-    field in `src/lib/member-merge-field-kinds.ts`, stamped onto each diff row,
-    and the renderer is told which it holds rather than sniffing for it.
-
-    **That declaration adds no exception to the rule above; it applies it.**
-    `photoUpdatedAt` and `hutLeaderEligibleAt` are real instants and are read
-    through `formatDateOnlyForTimeZone`, exactly as this bullet requires.
-    `dateOfBirth`, `joinedDate` and `lifeMemberDate` are `@db.Date` columns
-    since #2872 and the merge screen reads them as the calendar days they are.
-    All three used to be bare `DateTime?` and sat on the reviewed exception list
-    `DATE_ONLY_IN_DATETIME_COLUMN` instead; narrowing the columns emptied that
-    list, which is the state it was always meant to reach. The flat prohibition on truncating a `DateTime` is unchanged: it is
-    the *column type* that never settles the question, and the reviewed list is
-    where a field is allowed to settle it instead.
-
-    Note which way each goes, because it is the opposite of the reflex: the
-    calendar days are deliberately NOT routed through
-    `formatDateOnlyForTimeZone`. In New Zealand that would agree — UTC midnight
-    is midday NZ — which is exactly why only a test reading them from a club
-    BEHIND UTC can tell the two apart.
-
-    One caveat on the calendar days, because the guard's list records the
-    *intent* of the writers and one writer does not honour it:
-    `parseXeroCompanyNumberDate` stores SERVER-LOCAL midnight, as recorded
-    above. That is a storage defect on a calendar-day field (**#2859**), not a
-    second meaning, and fixing it means fixing the write.
-  - *A number of days added to a document date is added in CALENDAR days*, with
-    `addDaysDateOnly` over the date-only value — never by adding `days x 24h` to
-    an instant and then reading the result on the club's calendar. The Xero
-    entrance-fee invoice's 30-day due date and the subscription invoice's
-    `dueDays` both step date-only values since #2834.
-
-    Be exact about where that hazard lives, because the pre-#2834 code did not
-    have it and a reader should not go hunting a bug that was never there. Both
-    due dates were previously derived in **UTC** from a UTC-truncated issue date
-    — the entrance fee by adding `30 x 24h` to the instant, the subscription by
-    `setUTCDate` — so both ends moved together and the interval came out exactly
-    the intended number of days, daylight saving included. Their only defect was
-    the UTC-day one above.
-
-    The hazard belongs to the FIX. Once the issue date is the club's calendar
-    day, deriving the due date as
-    `formatDateOnlyForTimeZone(instant + days x 24h)` reads a shifted instant in
-    a zone whose offset may have changed in between. New Zealand leaves daylight
-    saving at 03:00 on 5 April 2026, making that local day 25 hours long, so
-    `30 x 24h` from 00:30 on 15 March lands at 23:30 on 13 April and yields the
-    13th where thirty calendar days is the 14th. On the subscription invoice that
-    is worse than a wrong date: `subscriptionInvoiceMatchesSnapshot` adopts a
-    pre-existing Xero invoice only when `invoiceDueIntervalDays` equals the
-    charge's frozen `dueDays`, so a 29-day interval would stop an immutable
-    charge adopting its own invoice.
-    `src/lib/__tests__/xero-document-dates-club-calendar.test.ts` pins both ends
-    of that at the 5 April boundary.
-  - *The member booking calendar and the admin kiosk deliberately derive today
-    from the BROWSER's calendar day* (`src/components/booking-calendar.tsx`,
-    `src/app/(admin)/admin/book/page.tsx`, #2474 — see the next invariant), so
-    "one way to ask" holds for server-side and club-facing derivations, not
-    literally everywhere. Any comparison the SERVER then makes is still the club
-    day.
+  Three exact boundaries on that rule: truncating a `DateTime` column is
+  `INV-DATE-027`; adding days to a document date is `INV-DATE-028`; and *the
+  member booking calendar and the admin kiosk deliberately derive today from the
+  BROWSER's calendar day* (`src/components/booking-calendar.tsx`,
+  `src/app/(admin)/admin/book/page.tsx`, #2474, `INV-DATE-014`), so "one way to
+  ask" holds for server-side and club-facing derivations, not literally
+  everywhere. Any comparison the SERVER then makes is still the club day.
 
   A date-only value compared against the raw clock is the same mistake in
   reverse: `parseDateOnly("<today NZ>")` is UTC midnight of that day, which is
@@ -806,97 +489,125 @@ derivation).
   offers. Compare date-only against date-only (`> getTodayDateOnly()`), which is
   what the date-of-birth guards do since #2682.
 
+### INV-DATE-027
+
+- **Truncating an existing `@db.Date` value to its UTC day is fine — it already
+  encodes a calendar day at UTC midnight. It is not fine for a `DateTime`
+  column.** `createdAt`, `updatedAt` and friends are real instants, so
+  `booking.createdAt.toISOString().slice(0, 10)` lands on the previous NZ day all
+  morning. Every Xero document date derived from the clock or a stored
+  `DateTime` is `formatDateOnlyForTimeZone` (#2697, #2834), as is the
+  member-facing "Details last confirmed" line (#2839). **Most such sites are
+  invisible to a grep** because they reach the pattern through a wrapper —
+  `formatDate` in `src/lib/xero-invoice-helpers.ts`, `toDateInputValue` in
+  `src/lib/member-family-service.ts` — so census the call graph, not the
+  spelling. Both wrappers remain correct for `@db.Date` receivers only.
+
+  **A generic renderer cannot decide this from the runtime type**: an instant
+  and a calendar day are the same `Date` and the same ISO string (#2860). Where
+  both kinds render side by side — the member-merge comparison screen — the kind
+  is DECLARED per field in `src/lib/member-merge-field-kinds.ts`. That adds no
+  exception to the rule; it applies it: instants (`photoUpdatedAt`,
+  `hutLeaderEligibleAt`) read through `formatDateOnlyForTimeZone`, while
+  `dateOfBirth`, `joinedDate` and `lifeMemberDate` (`@db.Date` since #2872) are
+  deliberately NOT — a calendar day decodes in UTC, and only a test reading them
+  from a club BEHIND UTC can tell the two apart. `DATE_ONLY_IN_DATETIME_COLUMN`
+  is now empty (`INV-DATE-026`).
+
+  One writer does not honour the calendar-day intent: `parseXeroCompanyNumberDate`
+  (`src/lib/xero-contacts.ts` and its clone in the import-member-contact route)
+  stores SERVER-LOCAL midnight, so a Xero-imported date of birth reads a day
+  early until #2859 lands — a storage defect fixed at the writer. The
+  `setHours(0, 0, 0, 0)` class is `INV-DATE-013`; neither #2684's lint rule nor
+  its guard test sees it. Until that rule lands this class is a known trap, not
+  a permitted pattern.
+
+### INV-DATE-028
+
+- **A number of days added to a document date is added in CALENDAR days**, with
+  `addDaysDateOnly` over the date-only value — never by adding `days x 24h` to an
+  instant and then reading the result on the club's calendar. The Xero
+  entrance-fee invoice's 30-day due date and the subscription invoice's
+  `dueDays` both step date-only values since #2834.
+
+  The hazard belongs to the club-calendar FIX, not to the pre-#2834 UTC code:
+  once the issue date is the club's calendar day, deriving the due date as
+  `formatDateOnlyForTimeZone(instant + days x 24h)` reads a shifted instant in a
+  zone whose offset may have changed in between. New Zealand leaves daylight
+  saving at 03:00 on 5 April 2026, so `30 x 24h` from 00:30 on 15 March yields
+  the 13th where thirty calendar days is the 14th. On the subscription invoice
+  that is worse than a wrong date: `subscriptionInvoiceMatchesSnapshot` adopts a
+  pre-existing Xero invoice only when `invoiceDueIntervalDays` equals the
+  charge's frozen `dueDays`, so a 29-day interval would stop an immutable charge
+  adopting its own invoice.
+  `src/lib/__tests__/xero-document-dates-club-calendar.test.ts` pins both ends
+  at the 5 April boundary.
+
 ### INV-DATE-014
 
 - **Client-side, a selected lodge night is an NZ date-only `yyyy-MM-dd` string
   carried end-to-end.** The booking calendar (`src/components/booking-calendar.tsx`),
   the member booking wizard, and the admin "book on behalf" kiosk
   (`src/app/(admin)/admin/book/page.tsx`) never hold a lodge night as a
-  local-midnight `new Date(year, month, day)` (#2474). That construction is
-  midnight in the BROWSER's zone, so the moment such a value reached an
-  instant-based API (a club-pinned `Intl` formatter, a UTC serialiser, or
-  DST-crossing day arithmetic) it named the day the browser sat on — off by one
-  for a booker far enough from New Zealand. The value submitted, the club-pinned
-  label displayed, the night count, and the hold deadline are all derived from
-  the string via `parseDateOnly` / `addDaysDateOnly` / `countNightsDateOnly`,
-  which encode the club calendar day internally at UTC midnight — an encoding and
-  not a moment, per `INV-DATE-010`, which is also where the qualification lives:
-  that encoding renders as club midday only for a club at or ahead of Greenwich,
-  and the day it names comes back correctly because it is decoded in UTC rather
-  than projected.
-  `formatCalendarDayOnly(year, monthIndex, day)` is the
-  canonical encoder; the #2264 `localCalendarDayToDateOnly` bridge, which patched
-  only the display half of this hazard while the fragile encoding lived on, is
-  gone. `src/lib/__tests__/booking-calendar-timezone.test.tsx` pins the
-  lodge-night identity across browsers behind, at, and ahead of NZ, on an NZ
-  DST-transition night. (This is the CLIENT representation; server-side capacity
-  date arithmetic keeps its own `@db.Date`/date-only helpers, above.)
+  local-midnight `new Date(year, month, day)` (#2474): that is midnight in the
+  BROWSER's zone, off by one for a booker far enough from New Zealand the moment
+  it reaches an instant-based API. The value submitted, the club-pinned label,
+  the night count, and the hold deadline are all derived from the string via
+  `parseDateOnly` / `addDaysDateOnly` / `countNightsDateOnly`, which encode the
+  club calendar day at UTC midnight — an encoding and not a moment, per
+  `INV-DATE-010`, which also holds the qualification about clubs behind
+  Greenwich. `formatCalendarDayOnly(year, monthIndex, day)` is the canonical
+  encoder; the #2264 `localCalendarDayToDateOnly` bridge is gone.
+  `src/lib/__tests__/booking-calendar-timezone.test.tsx` pins the lodge-night
+  identity across browsers behind, at, and ahead of NZ, on an NZ DST-transition
+  night. (This is the CLIENT representation; server-side capacity date
+  arithmetic keeps its own `@db.Date`/date-only helpers, above.)
 - **Since CT-6 (#2991) this fails mechanically rather than by review.** Two
   `no-restricted-syntax` arms over `src/**` ban reading or writing a `Date`
   through the host's clock face — `getFullYear`/`getMonth`/`getDate` and their
-  `set*` counterparts, in both the plain and the computed spelling — and ban
-  importing `date-fns`, which performs the identical read inside `node_modules`
-  where no selector can see it. The host-clock arm ships with NO exemption: the
-  seventeen call sites it found in eight files were all migrated, three of them
-  live daylight-saving defects. `date-fns` keeps a seven-file ratchet, each entry
-  naming what it uses and what blocks it. `club-time-boundary-guard.test.ts`
-  proves both arms twice — that they RESOLVE at every production path, and that
-  they actually REPORT a violation there — with a clean control at each path so
-  the ban is about the host's clock rather than about `Date`.
+  `set*` counterparts, plain and computed — and ban importing `date-fns`, which
+  performs the identical read inside `node_modules`. The host-clock arm ships
+  with NO exemption; `date-fns` keeps a seven-file ratchet, each entry naming
+  what it uses and what blocks it. `club-time-boundary-guard.test.ts` proves
+  both arms twice — that they RESOLVE at every production path, and that they
+  REPORT a violation there — with a clean control at each path so the ban is
+  about the host's clock rather than about `Date`.
 
 ### INV-DATE-015
 
 - **Rendering** a date or a time is a separate invariant from storing or
-  comparing one, and has its own single seam: `@/lib/club-time`. The six house
+  comparing one, with its own single seam: `@/lib/club-time`. The six house
   shapes — "16 Apr 2026", "16 Apr 2026, 11:30 am", "16 April 2026", "11:30 am",
   "April 2026" and "Thu, 16 Apr 2026" — each pin `APP_LOCALE`, and each comes in
-  a CALENDAR-DAY form that takes no zone and an INSTANT form that requires one.
-  Until #3123 the seam was `src/lib/nzst-date.ts` and those shapes were its six
-  `formatNZ*` helpers, which pinned `APP_LOCALE` and `APP_TIME_ZONE` together;
-  that file is deleted and the kernel is the only seam. A bare
-  `toLocaleDateString()` / `toLocaleTimeString()` /
-  `toLocaleString()` renders in the VIEWER's zone and locale, so an
-  administrator abroad read a different lodge night than the one stored, and a
-  lobby-display television reported its own local time (#2256, #2264). An
-  `eslint` `no-restricted-syntax` rule over `src/**` now blocks all three calls;
-  the documented exclusions are written out in `eslint.config.mjs`. Three files
-  format NUMBERS with `Number.prototype.toLocaleString` (thousands separators)
-  and are listed there with a narrowed rule that lifts only `toLocaleString`,
-  keeping both date restrictions. The rule's selector is syntactic, so computed
-  access (`d["toLocaleDateString"]()`) and detached-method aliasing escape it —
-  an accepted limitation, not a gap anyone writes by accident. A screen whose
-  format is legitimately none of the six — weekday-bearing boards, compact
-  grids, the seconds-bearing audit log, an `en-CA` ISO extractor — declares a
-  module-level
-  `new Intl.DateTimeFormat(APP_LOCALE, { timeZone: APP_TIME_ZONE, … })` constant
-  instead. That, not an `eslint-disable`, is the escape hatch, and there are no
-  disables in the tree.
+  a CALENDAR-DAY form that takes no zone (the kernel pins `timeZone: "UTC"` over
+  the UTC-midnight encoding, so the projection is provably the identity) and an
+  INSTANT form that requires the club zone explicitly. A bare
+  `toLocaleDateString()` / `toLocaleTimeString()` / `toLocaleString()` renders in
+  the VIEWER's zone and locale (#2256, #2264); an `eslint` `no-restricted-syntax`
+  rule over `src/**` blocks all three, with its documented exclusions in
+  `eslint.config.mjs`. Three files format NUMBERS with
+  `Number.prototype.toLocaleString` and carry a narrowed rule lifting only that
+  call. The selector is syntactic, so computed access and detached-method
+  aliasing escape it — an accepted limitation. A screen whose format is
+  legitimately none of the six declares a module-level
+  `new Intl.DateTimeFormat(APP_LOCALE, { timeZone: APP_TIME_ZONE, … })` constant;
+  that, not an `eslint-disable`, is the escape hatch, and there are no disables
+  in the tree.
 - **Since CT-2 (#2990) the seam is `@/lib/club-time`, and since #3123 it is the
-  ONLY one.** Code formats through the kernel: a CALENDAR DATE takes no zone
-  argument at all (16 April 2026 is a Thursday everywhere, and the kernel pins
-  `timeZone: "UTC"` over the UTC-midnight encoding so the projection is provably
-  the identity), while an INSTANT takes the club zone explicitly. CT-2 made the
-  six legacy helpers one-line delegations so no call site changed; CT-3 to CT-5
-  and then #3113/#3118 and #3107/#3121 moved those call sites onto the right
-  temporal question; #3123 deleted `src/lib/nzst-date.ts` once no production file
-  imported it. It had already left the `toLocale*` exemption block in CT-2,
-  because it no longer formatted anything. **It was not replaced by a shim, a
-  re-export or a test-only stub, and must not be** — two rendering seams is one
-  too many, which is the whole reason the file went;
-  `club-time-kernel-census.test.ts` asserts it has not come back. The lint arms
-  above are unchanged in what they MATCH — deliberately, so none of the
-  unmigrated `date-only` call sites newly fails — and changed only in where
-  their message sends you.
-- **Where the zone those formatters pin comes from is now a different
-  invariant.** Since CT-1 (#2989) the club's timezone is the persisted
-  `ClubTimeSettings.timeZone`, read through `getClubTimeZone()` — `INV-CONFIG-002`
-  in [`product-configuration.md`](product-configuration.md). `APP_TIME_ZONE` is
+  ONLY one.** `src/lib/nzst-date.ts` and its six `formatNZ*` helpers are
+  deleted, **not replaced by a shim, a re-export or a test-only stub, and must
+  not be**; `club-time-kernel-census.test.ts` asserts the file has not come
+  back. The lint arms are unchanged in what they MATCH.
+- **Where the zone those formatters pin comes from is a different invariant.**
+  Since CT-1 (#2989) it is the persisted `ClubTimeSettings.timeZone`, read
+  through `getClubTimeZone()` — `INV-CONFIG-002` in
+  [`product-configuration.md`](product-configuration.md). `APP_TIME_ZONE` is
   the transitional constant `src/lib/date-only.ts` and the module-level
-  formatters still read, and it still derives from `TZ` / `NEXT_PUBLIC_TZ`; CT-2
-  to CT-5 migrate the call sites and CT-6 (#2991) retires it. Nothing about the
-  rendering seam changes here — this note exists so that the next reader of those
-  helpers knows the zone has an owner elsewhere, and does not conclude from
-  `APP_TIME_ZONE` that the environment is still the club's civil-time authority.
+  formatters still read; do not conclude from it that the environment is the
+  club's civil-time authority. Naming the environment's zone is `INV-DATE-029`.
+
+### INV-DATE-029
+
 - **CT-6 (#2991) closed the recurrence path and counted the remainder.** Naming
   the environment's zone — `process.env.TZ`, `NEXT_PUBLIC_TZ`, or an
   `APP_TIME_ZONE` import — is a lint error under `src/**` outside a named
@@ -907,10 +618,7 @@ derivation).
   zone-defaulting `@/lib/date-only` helper take the environment's answer. Every
   ceiling there is TIGHT — equal to the live count, with no deliberate slack — so
   a measurement below one means the ceiling is stale, not that there is room.
-  They may only fall, and they have: #3113/#3118 took `nzst-date` from 25
-  importers to 13, #3107/#3121 took the defaulted calls from 123 in 56 files to
-  81 in 52, and **#3123 took the `nzst-date` importer count to zero and then
-  deleted the module**, so that ceiling is retired along with its subject.
+  They may only fall; a ceiling whose subject is deleted is retired with it.
 
 ### INV-DATE-016
 
@@ -1035,45 +743,33 @@ derivation).
 - Split-booking guest portion always settles or is notified, never silently
   stranded (#1967). A split non-member child (#738) is auto-charged at its hold
   deadline to the member's card inherited from the parent payment. When the
-  parent is genuinely settled without a saved card (Internet Banking, or already
+  parent is settled without a saved card (Internet Banking, or already
   CONFIRMED/PAID/COMPLETED), `cron-confirm-pending.ts` instead mints a tokenised
-  `/pay/<token>` PaymentLink (the #707 machinery) and emails it to the member —
-  once per mint, deduped on the absence of an active (unexpired) PaymentLink for
-  the child (`mintSplitGuestPaymentLinkIfAbsent`) — and fires an admin alert on
-  **every** hold-extension run until the child settles. If the parent itself is
-  unpaid (abandoned card), no link is minted or emailed (the guest portion never
-  settles ahead of the member's own place) and the alert fires with
-  parent-unpaid wording instead. Only genuine split children qualify: a #796
-  group joiner also carries `parentBookingId` but always has a
-  `GroupBookingJoin` row, which excludes it everywhere (cron, page, send route).
-  At most one live token exists per booking (every mint revokes-then-creates
-  under the per-lodge advisory lock; undelivered emails revoke their minted link
-  by id so the next run re-mints), and the tokenised link and the saved-card
-  auto-charge never both settle durably (the charge claim revokes links; the
-  /pay intent path re-reads the link under the same lock; the on-demand path
-  refuses when a saved card exists — though a link PaymentIntent minted just
-  before the claim can still transiently coexist with the charge in flight).
-  That residual in-flight window is narrowed and backstopped (#1992): a link
-  PaymentIntent minted BEFORE the claim (client secret already
-  in the member's browser) is best-effort cancelled on Stripe by the charge
-  claim before it charges the saved card, and if the member's confirm still
-  wins that race, `markBookingPaymentSucceeded` auto-refunds whichever DISTINCT
-  capture arrives second on the already-PAID booking — durably
-  (enqueue-then-execute, exactly the duplicate's captured amount, pinned to the
-  duplicate's own transaction) with a loud admin alert — while a SAME-intent
-  replay keeps its byte-identical `already_paid` outcome and at most one side
-  of the pair can ever be refunded (adjudication under `lock(1)`). A capture
-  whose money is already owned by the superseded-intent recovery machinery (a
-  live `CANCEL_PAYMENT_INTENT` / `REFUND_SUPERSEDED_PAYMENT` operation, e.g.
-  the succeeded-superseded-intent handoff) is never mistaken for the
-  settlement side of such a pair: the real settlement's replay stays
-  `already_paid` and that machinery's cron refunds the superseded capture. Money still
-  stays integer cents and no beds are held for the child until it is actually
-  paid. The same machinery backs the
-  on-demand `POST /api/bookings/[id]/send-guest-payment-link` re-send
-  affordance. A child can end PAID while its parent is unpaid or later
-  cancelled — the parent-cancel sweep only cancels still-PENDING children — and
-  there is deliberately no auto-cancel past check-in (owner policy decision).
+  `/pay/<token>` PaymentLink (#707) and emails it to the member — once per mint,
+  deduped on the absence of an active PaymentLink for the child
+  (`mintSplitGuestPaymentLinkIfAbsent`) — and fires an admin alert on **every**
+  hold-extension run until the child settles. If the parent itself is unpaid, no
+  link is minted or emailed. Only genuine
+  split children qualify: a #796 group joiner always has a `GroupBookingJoin`
+  row. At most one live token exists per booking
+  (every mint revokes-then-creates under the per-lodge advisory lock;
+  undelivered emails revoke their link), and the link
+  and the saved-card auto-charge never both settle durably: the charge claim
+  revokes links, the /pay intent path re-reads the link and
+  the on-demand path refuses when a saved card exists. The residual in-flight
+  window is backstopped (#1992): a link PaymentIntent minted BEFORE the claim is
+  best-effort cancelled on Stripe first, and if the member's confirm still wins,
+  `markBookingPaymentSucceeded` auto-refunds whichever DISTINCT capture arrives
+  second — durably with a loud admin alert —
+  while a SAME-intent replay keeps its `already_paid` outcome and at most one
+  side can ever be refunded (adjudication under `lock(1)`). A capture already
+  owned by the superseded-intent recovery machinery (`CANCEL_PAYMENT_INTENT` /
+  `REFUND_SUPERSEDED_PAYMENT`) is never mistaken for the settlement side of such
+  a pair. No beds are held for the child until it is paid. The same machinery
+  backs `POST /api/bookings/[id]/send-guest-payment-link`. A child can end PAID
+  while its parent is unpaid or later cancelled — the parent-cancel sweep only
+  cancels still-PENDING children — and there is deliberately no auto-cancel past
+  check-in (owner policy decision).
 
 ### INV-CAP-006
 
@@ -1086,129 +782,65 @@ derivation).
 ### INV-CAP-032
 
 - **Every path that creates a booking guest writes their `BookingGuestNight`
-  rows (#2739).** `BookingGuestNight` is the canonical night set — the whole
-  bed-allocation surface reads it and only it, and since #2628 the officer card
-  reads it too ("a guest carrying no night rows has no placeable nights, so the
-  board never lists them and this card must not count them either"). A guest
-  created with no rows is therefore not a guest with an unknown night set; they
-  are a guest the system believes is nowhere. They are not listed on the board,
-  not placed by the planner, and not counted as awaiting a bed, while being a
-  real person on a confirmed booking who turns up at the lodge.
-  **This is a creation-path obligation, not a read-path fallback**: the envelope
-  fallback in [INV-DATE-003] exists for pre-#713 history and must not be relied
-  on to cover a path that could have written rows and did not.
-  The **five** booking-request write points had exactly that gap until #2739:
-  the public approval create (`approveBookingRequest`, `booking-request.ts`), the
-  school approval create and the member whole-lodge approval create
-  (`approveSchoolBookingRequest` and `approveMemberWholeLodgeRequest`,
-  `school-booking-request.ts`), the held-booking reassign
-  (`reassignHeldBookingGuests`, `booking-request.ts`) and the quote hold
-  (`holdBookingRequestSlots`, `booking-request-quotes.ts`). That is why
-  `HeldBookingGuestInput.nights` is a REQUIRED field, why the quote hold's inline
-  producer is annotated with that type, and why `toPipelineGuestCreateData`
-  requires `nights` with no fallback: a sixth pipeline that supplies no night set
-  is a TYPE ERROR, pinned by the `@ts-expect-error` case in
-  `src/lib/__tests__/booking-request-guest-nights.test.ts`, so it cannot be added
-  without answering the question. Each of the five has a test reading its own
-  Prisma create payload; none of them passes with the night set removed.
-- **The rows are half-open and NZ date-only, like every other night row.** Built
-  from the approved envelope through the pricing engine's own night list, so a
-  converted booking's encoding is identical to a directly-created one's: nights
-  over `[checkIn, checkOut)` [INV-DATE-003] at the storage encoding
-  [INV-DATE-013]. A row on the check-out morning would be a phantom night, and
-  the planner would claim that bed while its real occupant is still in it.
-- **The per-night cents are the engine's where the engine priced the guest, and
-  a division of the total where an officer set it.** Which case applies is
-  decided by the write point, because only it knows where the number came from,
-  and `buildApprovalGuestNights` refuses any supplied vector that does not
-  reconcile to the guest's stored `priceCents` and divides instead.
-  - ENGINE-PRICED (school approval and member whole-lodge approval, whenever the
-    officer set no flat total): the rows store
-    `PriceBreakdown.guests[i].perNightCents` verbatim, which is exactly what the
-    canonical direct-create writer (`buildGuestCreateData`) stores. A season
-    boundary inside the stay, or a per-night group discount, makes those nights
-    genuinely different prices; a flat re-split would carry the right total on
-    the wrong nights, and these rows are what the finance revenue reconciliation
-    sums inside a DATE WINDOW and what a later edit re-uses as #1036 locked
-    prices.
-  - OFFICER-TOTAL (public approval, quote hold, flat whole-lodge or manual
-    override, and the backfill): the number is a negotiated total's share, not a
-    rate — the distinction #1098 recorded when its backfill skipped these
-    bookings — so there is no per-night truth and nothing is re-priced. The share
-    divides to the exact cent with the extra cents on the EARLIEST nights, which
-    is deliberately the vector `evenlySplitCents`
-    (`src/lib/xero-booking-invoices.ts`) already synthesises for a guest carrying
-    no rows and bills from. That equality is what keeps such a booking's Xero
-    line items byte-identical whether the rows exist or not, on a fresh invoice
-    and on an invoice-update diff of a backfilled booking alike; it is pinned by
-    `src/lib/__tests__/booking-request-guest-nights.test.ts`. A split that totals
-    the same but distributes differently still emits different Xero lines, which
-    on an already-raised invoice reads as a change to push.
-- **The rows are the #1036 locked prices on the one edit path that reaches these
-  bookings, and that is deliberate.** Standard edits refuse a booking-request
-  booking outright (`assertBookingNotQuotePriced` / `isQuotePricedBooking`,
-  #1032) — including the admin date shift
-  (`booking-date-modification-service.ts`) and guest removal
-  (`booking-guest-removal-service.ts`), both of which assert before they ever
-  reach `lockedNightPricesForGuest`. `booking-batch-modification-service.ts`
-  exempts three request shapes from that block, and only ONE of them prices:
-  identity-only (#1099) and credit-election-only (#2266) take
-  `buildIdentityOnlyPricing`, which echoes the stored totals and never runs the
-  engine, so no lock set can reach them. The third is a link-only #2337
-  placeholder→member request on a member whole-lodge booking. That path
-  reprices, and `prepareGuestPlan` passes
-  `link ? [] : lockedNightPricesForGuest(guest)` — so the LINKED row re-rates at
-  the member rate (its locks are cleared on purpose) while every UNLINKED
-  placeholder is protected only by its stored night rows. While this pipeline
-  wrote none, those placeholders repriced at whatever the season rate happened to
-  be on the day of the link, silently replacing the negotiated whole-lodge basis
-  the #1032 block exists to protect. Writing the rows closes that leak, so the
-  negotiated price now holds; the join is asserted in
-  `src/lib/__tests__/school-booking-request.test.ts` with the real reader and the
-  real engine.
-  **This is a real change to what that path charges, and it needs the owner's
-  approval before it ships** — it is not an incidental consequence to be waved
-  through as part of a bed-board fix. It moves a bill in BOTH directions,
-  which is the part a reader assumes away: rates up since the quote means the
-  member is now charged LESS than the old behaviour took, rates down means they
-  are charged MORE, because what stands is the price that was agreed rather than
-  whichever was cheaper on the day an officer clicked Link. Both totals are
-  pinned as executable assertions in that same test — the old empty lock set and
-  the new stored one, priced against the same moved rate — so the size of the
-  change is a fact in the suite rather than a claim in prose. The alternative
-  considered and rejected was suppressing the locked prices on this path: it
-  would have kept the leak open by design, broken this invariant's own
-  reconcile-to-`priceCents` rule, and needed a booking-request special case
-  inside the shared edit planner, which is a wider money surface than the one
-  being protected.
-- **The backfill for existing rows is `20260810010000_backfill_booking_request_guest_nights`**,
-  the exact complement of #1098's `20260704150000_backfill_booking_guest_nights`.
-  It is idempotent (per-guest "has no rows at all" guard plus
-  `ON CONFLICT DO NOTHING`), skips cancelled, bumped and soft-deleted bookings,
-  and is proven against a real PostgreSQL by its #2418 verification fixture. Two
-  consequences of filling the gap are intended, not incidental: booking-request
-  hut fees now reach the finance revenue reconciliation's booking side (it summed
-  night rows, so these bookings contributed zero against invoices Xero already
-  held), and a member an officer linked to a converted booking's guest is now
-  credited with the nights they really stayed by `countMemberStayNights`.
-- **It is a DATA write taken before cutover, which makes three operator facts
-  true that no schema migration makes true.** `prisma migrate deploy` runs at
-  step 13 of `docs/PRODUCTION_UPGRADE_RUNBOOK.md`, while the old colour is still
-  serving traffic, and this migration is not `windowed` (no ledger row is
-  required, and the blue/green validator matches nothing hot or breaking in it).
-  So: (1) every booking-request approval and quote hold taken between `migrate`
-  and cutover is written by pre-#2739 code, gets no night rows, and is already
-  behind the one-shot `INSERT` — **re-run the statement verbatim after cutover**,
-  which is safe and inserts nothing where the first pass already ran; (2) aborting
-  the cutover un-does the code but NOT the inserted rows, so this is the only
-  irreversible part of the release; and (3) in that same window the old colour's
-  in-place hold reassignment updates `stayStart`/`stayEnd`/`priceCents` without
-  rewriting night rows (this branch is what adds that rewrite), so a quote
-  accepted in the window at a different option than the hold was taken at can
-  leave backfilled rows describing the hold's dates and total — and invoicing
-  prefers stored rows over the guest's flat `priceCents`. Remedy: re-raise or
-  refresh the invoice for any request approved in the window, or take the deploy
-  with quoting paused.
+  rows (#2739).** `BookingGuestNight` is the canonical night set; the whole
+  bed-allocation surface and (since #2628) the officer card read it and only it.
+  A guest created with no rows is a guest the system believes is nowhere. **This is a creation-path
+  obligation, not a read-path fallback**: the envelope fallback in
+  [INV-DATE-003] exists for pre-#713 history only. The five booking-request
+  write points — `approveBookingRequest`, `approveSchoolBookingRequest`,
+  `approveMemberWholeLodgeRequest`, `reassignHeldBookingGuests` and
+  `holdBookingRequestSlots` — all write them. `HeldBookingGuestInput.nights` is
+  REQUIRED and `toPipelineGuestCreateData` requires `nights` with no fallback, so
+  a sixth pipeline without a night set is a TYPE ERROR, pinned by the
+  `@ts-expect-error` case in
+  `src/lib/__tests__/booking-request-guest-nights.test.ts`.
+- **The rows are half-open and NZ date-only**, built through the pricing
+  engine's own night list: nights over `[checkIn, checkOut)` [INV-DATE-003] at
+  the storage encoding [INV-DATE-013].
+- **Per-night cents are the engine's where the engine priced the guest, and a
+  division of the total where an officer set it.** ENGINE-PRICED (school and
+  member whole-lodge approval with no flat total) stores
+  `PriceBreakdown.guests[i].perNightCents` verbatim, as `buildGuestCreateData`
+  does. OFFICER-TOTAL (public approval, quote hold, flat whole-lodge or manual
+  override, backfill) divides to the exact cent with the extra cents on the
+  EARLIEST nights — the `evenlySplitCents` vector
+  (`src/lib/xero-booking-invoices.ts`) — so Xero line items are byte-identical
+  whether the rows exist or not. `buildApprovalGuestNights` refuses a vector that
+  does not reconcile to the stored `priceCents` and divides instead.
+- **The rows are the #1036 locked prices on the one edit path reaching these
+  bookings.** Standard edits refuse a booking-request booking
+  (`assertBookingNotQuotePriced`, #1032); of the three shapes
+  `booking-batch-modification-service.ts` exempts, only the link-only #2337
+  placeholder→member path prices, passing
+  `link ? [] : lockedNightPricesForGuest(guest)`: the LINKED row re-rates at the
+  member rate, every UNLINKED placeholder keeps its negotiated price
+  (`src/lib/__tests__/school-booking-request.test.ts`). Owner-approved on
+  #2739. Backfill and operator facts: `INV-CAP-035`.
+
+### INV-CAP-035
+
+- **The backfill for existing rows is
+  `20260810010000_backfill_booking_request_guest_nights`**, the exact complement
+  of #1098's `20260704150000_backfill_booking_guest_nights`. It is idempotent
+  (per-guest "has no rows at all" guard plus `ON CONFLICT DO NOTHING`), skips
+  cancelled, bumped and soft-deleted bookings, and is proven against a real
+  PostgreSQL by its #2418 verification fixture. Two consequences are intended:
+  booking-request hut fees now reach the finance revenue reconciliation's booking
+  side, and a member an officer linked to a converted booking's guest is credited
+  with the nights they really stayed by `countMemberStayNights`.
+- **It is a DATA write taken before cutover**, at step 13 of
+  `docs/PRODUCTION_UPGRADE_RUNBOOK.md` while the old colour still serves, and it
+  is not `windowed`. So: (1) every approval and quote hold taken between
+  `migrate` and cutover is written by pre-#2739 code and gets no night rows —
+  **re-run the statement verbatim after cutover**, which inserts nothing where
+  the first pass already ran; (2) aborting the cutover un-does the code but NOT
+  the inserted rows, the only irreversible part of the release; (3) in that
+  window the old colour's in-place hold reassignment updates
+  `stayStart`/`stayEnd`/`priceCents` without rewriting night rows, so a quote
+  accepted at a different option than the hold can leave backfilled rows
+  describing the hold's dates and total — and invoicing prefers stored rows over
+  the guest's flat `priceCents`. Remedy: re-raise or refresh the invoice for any
+  request approved in the window, or take the deploy with quoting paused.
 
 ### INV-CAP-007
 
@@ -1269,27 +901,22 @@ derivation).
   not adults. Same-booking mixing is unrestricted, and minors-only ROOMS are
   allowed: the booking-level rule stays night-scoped (Phase 0
   `NO_BOOKING_ADULT` — a minor needs a same-booking adult on-site that night,
-  not in the same room), so a large group's minors overflow into rooms of
-  their own instead of being capped at one room per adult. SCHOOL-request
-  bookings (`isSchoolGroup`, from the origin/held `BookingRequest.type`)
-  prefer adults together and students separate. **A shared DOUBLE bed grants no
-  composition exemption (#2656, owner-set):** each of its two occupants counts
-  toward the room-night composition under that occupant's OWN booking key, so a
-  double holding an adult of booking A and an adult of booking B blocks a third
-  booking's minor from that room-night exactly as one adult alone would. The
-  index behind the guard was already correct for this shape — it is maintained
-  per `bookingGuestId:stayDate`, which is lossless, and no composition predicate
-  reads the occupant view — and the #2656 occupant-view fix deliberately did not
-  change it; the behaviour is now pinned by paired regression tests, including
-  the positive control that the same minor IS placed with no unrelated adult
-  present. The planner never rewrites
-  persisted violations (manual/legacy rows) — the board surfaces them as
-  `MINOR_ADULT_MIX` warnings; the manual board itself is warned, not blocked,
-  **by design** (owner decision, 2026-07-11, closing the deferral from
-  #1768/PR #1775): the invariant binds every automated placement path, while
-  the manual board deliberately stays an admin-judgment escape hatch with the
-  warning as its guard. Do not add a hard block without a fresh owner
-  decision.
+  not in the same room). SCHOOL-request bookings (`isSchoolGroup`, from the
+  origin/held `BookingRequest.type`) prefer adults together and students
+  separate. **A shared DOUBLE bed grants no composition exemption (#2656,
+  owner-set):** each of its two occupants counts toward the room-night
+  composition under that occupant's OWN booking key, so a double holding an
+  adult of booking A and an adult of booking B blocks a third booking's minor
+  from that room-night exactly as one adult alone would; the index behind the
+  guard is maintained per `bookingGuestId:stayDate` and no composition
+  predicate reads the occupant view, pinned by paired regression tests including
+  the positive control. The planner never rewrites persisted violations
+  (manual/legacy rows) — the board surfaces them as `MINOR_ADULT_MIX` warnings;
+  the manual board itself is warned, not blocked, **by design** (owner decision,
+  2026-07-11, closing the deferral from #1768/PR #1775): the invariant binds
+  every automated placement path, while the manual board deliberately stays an
+  admin-judgment escape hatch with the warning as its guard. Do not add a hard
+  block without a fresh owner decision.
 
 ### INV-CAP-010
 
@@ -1323,144 +950,101 @@ derivation).
 ### INV-CAP-030
 
 **Member merge is the fifth writer of this invariant, and needs its own,
-validity-driven form (#2595).** Merge is not a pair-breaking event about one
-pair — it COLLAPSES two identities. `planPartnerLinkMerge` keeps at most one
-CONFIRMED partner for the surviving master, so merging a duplicate that
-already had its own confirmed partner DROPS that link, and `applyMoves` then
-re-points `BookingGuest.memberId` onto the master and leaves every bed
-allocation exactly where it was — so the master and the duplicate's
-ex-partner are left sharing a future DOUBLE with nothing behind it. Neither
-#1756 scope fits: the pair scope knows only one pair (a merge can invalidate
-several bed-nights against several counterparts), and the member scope would
-also remove the master's OWN still-CONFIRMED share, which the merge did
-nothing to invalidate. So merge runs
-`sweepUnbackedFutureSharedDoublesWithLocksHeld`
-(`bed-allocation-lifecycle.ts`) instead: for the `[master, loser]` scope it
-re-derives each candidate future bed-night's actual two occupants and
-re-asks the same single source of truth (`mayShareDoubleBedWith`, the
-batched form of `mayShareDoubleBed`) whether they may still share, sweeping
-ONLY the bed-nights that fail — again only the `isSecondOccupant` row, with
-the same `BED_ALLOCATION_PARTNER_SHARE_SWEPT` audit against both bookings
-(reason `members_merged`, `issue: 2595`) and the same post-commit admin
-alert. A guest with no member on either side is unbacked by construction
-(placement requires a member on both sides) and is swept without an
-eligibility round-trip; a bed-night whose primary is missing is left to the
-#1750 promotion pass rather than judged as a pair that does not exist. Being
-validity-driven it is idempotent and vacuous on a merge that broke nothing.
+validity-driven form (#2595).** Merge COLLAPSES two identities:
+`planPartnerLinkMerge` keeps at most one CONFIRMED partner for the master, and
+`applyMoves` re-points `BookingGuest.memberId` onto the master while leaving
+every bed allocation where it was. Neither #1756 scope
+fits, so merge runs `sweepUnbackedFutureSharedDoublesWithLocksHeld`
+(`bed-allocation-lifecycle.ts`): for the `[master, loser]` scope it re-derives
+each candidate future bed-night's actual two occupants and re-asks
+`mayShareDoubleBedWith` (the batched `mayShareDoubleBed`) whether they may still
+share, sweeping ONLY the bed-nights that fail — only the `isSecondOccupant` row,
+with the same `BED_ALLOCATION_PARTNER_SHARE_SWEPT` audit against both bookings
+(reason `members_merged`, `issue: 2595`) and the same post-commit admin alert. A
+guest with no member on either side is swept without an eligibility round-trip;
+a bed-night whose primary is missing is left to the #1750 promotion pass. It is
+idempotent.
+
 Its lock prefix is DELIBERATELY narrower than its #1756 sibling's:
-`acquireMemberMergePartnerSharedLodgeLocks` takes every affected lodge
-capacity key in sorted order BEFORE any member-lifecycle key, and takes NO
-global cohort `lock(1)` — a merge holds its keys for up to 120s and the global
-key would reject every 5s-budget cohort writer in the club. What replaces it
-is a wider lodge derivation (the members' future bed allocations UNION the
-lodges of EVERY booking they hold a guest row on — no date filter since #2672,
-because the stay columns a date filter tests are rewritten by writers merge
-cannot exclude — so a lodge a placement could still land in is covered) plus
-two run-time checks: the sweep is handed the locked lodge set, re-derives the
-guest-row lodges under merge's `Member … FOR UPDATE` and refuses the whole
-merge with a 409 if the prefix no longer covers them, and refuses again rather
-than judge a bed-night whose own room sits outside the set (see
-docs/CONCURRENCY_AND_LOCKING.md -> "Merge joins the bed-allocation cohort").
-That derivation reads `Booking.lodgeId` as **immutable for the row's life** — a
-booking is never moved between lodges — which nothing in the schema enforces, so
-`bed-allocation-lock-topology-contract.test.ts` fails the build on any writer of
-that column. Breaking it would reopen the same escape in a SILENT form: a
-`Booking` update takes no lock on `Member`, so the `Member … FOR UPDATE` above
-does not fence it and the coverage re-derivation cannot see a move committed
-after it, leaving the sweep judging bed inventory in an unserialised lodge with
-no refusal at all. What this costs when it holds: on a two-lodge club a merge of
-a long-standing member effectively holds every lodge capacity key for its whole
-120s budget, so concurrent capacity writers at those lodges are rejected with
-`P2028` rather than merely delayed.
+`acquireMemberMergePartnerSharedLodgeLocks` takes every affected lodge capacity
+key in sorted order BEFORE any member-lifecycle key, and NO global cohort
+`lock(1)`. Instead: a wider lodge
+derivation (the members' future bed allocations UNION the lodges of EVERY
+booking they hold a guest row on, no date filter since #2672) plus two run-time
+checks — the sweep re-derives the guest-row lodges under merge's `Member … FOR
+UPDATE` and refuses the whole merge with a 409 if the prefix no longer covers
+them, and refuses rather than judge a bed-night whose room sits outside the set
+(docs/CONCURRENCY_AND_LOCKING.md → "Merge joins the bed-allocation cohort"). That
+derivation reads `Booking.lodgeId` as **immutable for the row's life**, which the
+schema does not enforce, so `bed-allocation-lock-topology-contract.test.ts` fails
+the build on any writer of that column: a `Booking` update takes no lock on
+`Member`, so a move committed after the re-derivation would leave the sweep
+judging an unserialised lodge with no refusal.
 
 ### INV-CAP-031
 
-Membership cancellation and archive need no sweep call: approval
-is blocked while ANY future booking or member guest appearance exists, so a
-cancellable member cannot occupy a future shared bed-night. Only an admin adds the second occupant on the board,
-and only onto a bed whose primary already **holds capacity**. That check is
-made at PLACEMENT time only and is not maintained afterwards, so it is a
-strong default rather than a guarantee: `BED_ALLOCATABLE_BOOKING_STATUSES` is
-a deliberate superset of the capacity-holding statuses, so a primary can later
-stop holding capacity while keeping its rows, and displacement can then reach
-it. Since #2656 the planner **represents** a shared double rather than
-collapsing it — occupant identity is keyed `bedId:stayDate:bookingGuestId`,
-distinct from the `bedId:stayDate` capacity key — so it never frees a
-bed-night one of the pair still occupies, never treats a bed-night whose
-occupants span two bookings as a SINGLE-BED displacement target, and counts an
-emptied double as one freed bed. (The whole-stay room path is deliberately
-different: it makes every occupant of a bed-night an eviction candidate and
-gains the bed only once ALL of them are in the eviction set, so both bookings
-on a shared double are displaced together or the room is not chosen — see
-docs/CAPACITY_MODEL.md rule 3.) Auto-allocation never
-creates a second occupant; every other bed type stays exactly one occupant per
-night. DB-enforced without CHECK constraints:
-`@@unique([bedId, stayDate, isSecondOccupant])` caps a bed-night at ≤2 rows and
-a raw-SQL partial unique index (`WHERE "bedType" <> 'DOUBLE'`, recorded in
-`prisma/partial-unique-indexes.tsv`) caps every non-DOUBLE bed at exactly one;
-`BedAllocation.bedType` is a denormalized copy the partial index reads (a
-partial index cannot join to `LodgeBed`). The **base** capacity figure is
-unchanged — a shared double is still ONE bed of `activeBedCount` and each
-occupant is a full person-night (pricing/settlement untouched) — but each
-active DOUBLE adds one **partner-shared slot** of admission headroom above
-it (#1745): reserved (only `checkCapacityForPartnerSharedAdmission` on the
-admin-initiated partner flow may use it — every public/member/system path
-reads the unchanged base `getLodgeCapacity`), bounded (≤ active DOUBLE
-count per night, with the sharer's partner required to hold an ordinary
-base-backed place — a sharer can never anchor another sharer — so a
-feasible pairing always exists, modulo the documented #1668 forced-overbook
-residual), and capped by an explicit `LodgeSettings.capacity`, which limits
-*people*, so a `capped_beds` lodge gets no headroom (see
-docs/CAPACITY_MODEL.md, "Partner-shared double-bed headroom"). Initiation
-is admin-only (#1746): the `partnerSharedGuests` flags on the booking
-modify routes are rejected for non-admin actors at BOTH route and service,
-the edit panel's quick-add candidates are server-computed
+Membership cancellation and archive need no sweep call: approval is blocked while
+ANY future booking or member guest appearance exists. Only an admin adds the
+second occupant on the board, and only onto a bed whose primary already **holds
+capacity** — checked at PLACEMENT time only (`BED_ALLOCATABLE_BOOKING_STATUSES`
+is a deliberate superset of the capacity-holding statuses), so a strong default
+rather than a guarantee. Since #2656 the planner **represents** a shared double —
+occupant identity is keyed `bedId:stayDate:bookingGuestId`, distinct from the
+`bedId:stayDate` capacity key — so it never frees a bed-night one of the pair
+still occupies, never treats a two-booking bed-night as a SINGLE-BED displacement
+target, and counts an emptied double as one freed bed. Auto-allocation never creates a second occupant;
+every other bed type stays one occupant per night. DB-enforced without CHECK
+constraints: `@@unique([bedId, stayDate, isSecondOccupant])` caps a bed-night at
+≤2 rows and a raw-SQL partial unique index (`WHERE "bedType" <> 'DOUBLE'`,
+`prisma/partial-unique-indexes.tsv`) caps every non-DOUBLE bed at one;
+`BedAllocation.bedType` is the denormalized copy that index reads.
+
+The **base** capacity figure is unchanged — a shared double is ONE bed of
+`activeBedCount`, each occupant a full person-night — but each active DOUBLE adds
+one **partner-shared slot** of admission headroom (#1745): reserved (only
+`checkCapacityForPartnerSharedAdmission` on the admin-initiated partner flow may
+use it; every other path reads the base `getLodgeCapacity`), bounded (≤ active
+DOUBLE count per night, the sharer's partner holding a base-backed place, modulo
+the #1668 forced-overbook residual), and capped by an explicit
+`LodgeSettings.capacity`, which limits *people*, so a `capped_beds` lodge gets no
+headroom (docs/CAPACITY_MODEL.md, "Partner-shared double-bed headroom").
+Initiation is admin-only (#1746): `partnerSharedGuests` flags are rejected for
+non-admin actors at route and service, quick-add candidates are server-computed
 (`listBookingPartnerSharingCandidates`), and the public wizard carries no
-shared-slot affordance. A DOUBLE
-holding a second occupant
-cannot be retyped to a non-double until that occupant is removed. Whenever a
-shared double loses its primary — a reviewed removal (#2594), a board move of
-the primary onto another bed, or a cross-booking cancellation / reconcile prune
-(#1750) — the surviving partner is **auto-promoted** to primary on the vacated
-bed-night atomically with the removal on transactional paths. Single-row paths
-write one `BED_ALLOCATION_PARTNER_PROMOTED` audit per promotion because the
-partner may belong to a different booking (sharing eligibility is
-member-level). **The lifecycle displacement apply path (#1387/#1677) promotes
-too, since #2656** — it was the one removal path that did not, so displacing
-the primary of a shared double left exactly the orphan this list says never
-survives. It reads the rows it is about to move or delete BEFORE the write,
-promotes the survivor on every bed-night that lost its primary, and clears
-`isSecondOccupant` on a MOVE (a relocated row lands alone on a bed that was
-free at plan start, so it is the primary there and must not carry a fresh
-orphan to its destination). Two bulk paths batch that audit:
-**range assignment** (#2251),
-which can vacate up to 366
-bed-nights, and **reviewed removal** (#2594), which can span a booking or the
-board's 31-night lodge window. Each records **one batched
-`BED_ALLOCATION_PARTNERS_PROMOTED`** entry instead, targeted at the booking
-anchoring the operation when one exists and listing each promotion
-(`{allocationId, bookingId, bookingGuestId, bedId, stayDate}`) up to
-its 50-identity bound (the audit sanitiser's array limit),
-with the exact `promotedCount` and a `promotionsTruncated` flag alongside — so
-the promoted partner's own booking is still named per promotion, and the audit
-rows written inside that transaction stay bounded independently of the range
-length. Promotion is gated on
-`isSecondOccupant` alone, never the denormalized `bedType` of the removed row or
-the survivor: an AUTO-allocated row on a real DOUBLE carries the SINGLE default,
-so trusting that type would strand the partner it needs to promote. The
-bed-night is
-therefore never left dead-ended behind the orphaned-second-occupant guard in
-`resolveSecondOccupant`, and re-pairing follows the normal sharing rules (in
-particular the promoted primary's booking must hold capacity before a new
-partner may join). The reviewed-removal and board-move services self-wrap
-their read + write + promote in a transaction, while the lifecycle prune
-captures-before / flips-after on the caller's own client. Reconcile is
-usually already inside a transaction, but a few callers
-reconcile on the bare `prisma` singleton (e.g. `cron-complete-bookings`, the
-confirm-pending-guests route); on those a crash between the delete and the flip
-regresses to the pre-#1750 state — a recoverable orphaned second occupant,
-visible on the board and cleared by the next successful reconcile or a manual
-move, never a capacity or double-booking violation.
+shared-slot affordance. A DOUBLE holding a second occupant cannot be retyped to a
+non-double until that occupant is removed. Survivor promotion: `INV-CAP-036`.
+
+### INV-CAP-036
+
+Whenever a shared double loses its primary — a reviewed removal (#2594), a board
+move of the primary, a cross-booking cancellation / reconcile prune (#1750), or
+the lifecycle displacement apply path (#1387/#1677, promoting since #2656) — the
+surviving partner is **auto-promoted** to primary on the vacated bed-night
+atomically with the removal on transactional paths. The displacement path reads
+the rows it is about to move or delete BEFORE the write, promotes the survivor on
+every bed-night that lost its primary, and clears `isSecondOccupant` on a MOVE (a
+relocated row lands alone on a bed that was free at plan start). Promotion is
+gated on `isSecondOccupant` alone, never the denormalized `bedType` of either
+row: an AUTO-allocated row on a real DOUBLE carries the SINGLE default. The
+bed-night is therefore never dead-ended behind the orphaned-second-occupant guard
+in `resolveSecondOccupant`, and re-pairing follows the normal sharing rules.
+
+Single-row paths write one `BED_ALLOCATION_PARTNER_PROMOTED` audit per promotion,
+because the partner may belong to a different booking. Two bulk paths batch it —
+**range assignment** (#2251, up to 366 bed-nights) and **reviewed removal**
+(#2594) — each recording **one `BED_ALLOCATION_PARTNERS_PROMOTED`** entry
+targeted at the anchoring booking, listing each promotion (`{allocationId,
+bookingId, bookingGuestId, bedId, stayDate}`) up to the audit sanitiser's
+50-identity bound with the exact `promotedCount` and a `promotionsTruncated`
+flag, so audit rows stay bounded independently of the range length.
+
+The reviewed-removal and board-move services self-wrap read + write + promote in
+a transaction; the lifecycle prune captures-before / flips-after on the caller's
+client. Stated limit: callers that reconcile on the bare `prisma` singleton
+(e.g. `cron-complete-bookings`, the confirm-pending-guests route) can, on a crash
+between delete and flip, leave a recoverable orphaned second occupant — visible
+on the board and cleared by the next reconcile or a manual move, never a
+capacity or double-booking violation.
 
 ### INV-CAP-011
 
@@ -1628,50 +1212,31 @@ move, never a capacity or double-booking violation.
 - **A held booking's nights ARE occupied as far as both planners are concerned
   (ADR-001 amendment, #2285, resolved by #2317):** a whole-lodge hold's nights
   are synthesised into both bed-allocation planners as **unattributed,
-  non-displaceable** occupancy — every active bed of that lodge, every held
-  night — while the hold still owns no `BedAllocation` row anywhere. The rows
-  carry a null booking and a null guest (#1768 "unknown occupant" shape,
-  exactly like a custodian bed hold), which is what makes them unattributed (no
-  name, no booking id, no age tier — a hold can begin life as a public school
-  request) and non-displaceable (there is no row for a `MOVE` or `UNALLOCATE`
-  to target). A tierless unknown occupant counts as an adult, so the
-  cross-booking age-mix guard treats a held lodge's rooms conservatively.
-  An officer-kept overlapping booking is therefore never auto-placed onto beds
-  the held group is using: those guest-nights surface as `NO_BED_AVAILABLE` in
-  the awaiting-allocation list, which is the visible form of a clash the
-  officer has already been told about (#119/#177). Being unattributed is a
-  property of the bed-NIGHT and not only of the row: a real `BedAllocation` row
-  can legitimately share a held bed-night (decision 1 never refuses the
-  overlapping booking), and planner occupancy is keyed `bedId:stayDate`, so the
-  planner pins every null-booking bed-night as permanently occupied and
-  evicting the co-located booking releases that booking's claim and never the
-  hold's. **The blocking predicate is the capacity engine's own** —
-  `wholeLodgeHold` AND `bookingHoldsCapacity` / `capacityHoldingBookingFilter()`
-  over the same lodge, which is `getLodgeHeldNights`'s population — so a planner
-  can never report a night as held that the engine would admit into, and a stale
-  hold flag on a booking that stopped holding capacity blocks nothing in either
-  place. (The one deliberate asymmetry is direction-safe: where the planner
-  cannot resolve a lodge for a hold or a room it treats the night as held, which
-  refuses a bed the engine would have admitted rather than the reverse. Both
-  columns are NOT NULL, so this is a dead branch kept conservative.) Both
-  writers re-read the live holds on the client that is about to write, so a hold
-  committing between plan and write cannot be written over; every placement
-  transaction this code **opens itself** takes the per-lodge advisory lock as
-  its first statement, while a reconcile running inside a CALLER's transaction —
-  or the lifecycle's common no-displacement path, which opens none — inherits
-  that caller's lock discipline and relies on the re-read alone, exactly as the
-  custodian exclusion does. **Manual placement is deliberately untouched:**
-  ADR-001 decision 1 hands an overlap to the booking officer to resolve by hand,
-  and a write-time refusal would remove that path. The officer's view of a hold
-  is the board's banner plus the **Overlaps exclusive hold** chip on the
-  clashing booking; the bed GRID does not mark held cells, and the banner is
-  built from the board's booking load (which needs a guest row overlapping the
-  window) rather than from the deliberately-unfiltered blocking query, so a hold
-  with no guests entered yet blocks without appearing there. Source:
-  `src/lib/exclusive-hold-occupancy.ts`; guards:
+  non-displaceable** occupancy — every active bed, every held night — while the
+  hold owns no `BedAllocation` row. The rows carry a null booking and a null
+  guest (#1768 "unknown occupant" shape): unattributed and non-displaceable (no row for a `MOVE` or `UNALLOCATE` to
+  target). A tierless unknown occupant counts as an adult for the cross-booking
+  age-mix guard. An officer-kept overlapping booking is therefore never
+  auto-placed onto beds the held group is using; those guest-nights surface as
+  `NO_BED_AVAILABLE` (#119/#177). Being unattributed is a property of the
+  bed-NIGHT: a real `BedAllocation` row can legitimately share a held bed-night
+  (decision 1 never refuses the overlapping booking), planner occupancy is keyed
+  `bedId:stayDate`, and evicting the co-located booking releases that booking's
+  claim and never the hold's. **The blocking predicate is the capacity engine's
+  own** — `wholeLodgeHold` AND `bookingHoldsCapacity` /
+  `capacityHoldingBookingFilter()` over the same lodge — so a planner can never
+  report a night as held that the engine would admit into, and a stale hold flag
+  blocks nothing in either place. Both writers re-read the live holds on the
+  client that is about to write; every placement transaction this code **opens
+  itself** takes the per-lodge advisory lock first, while a reconcile inside a
+  CALLER's transaction inherits that caller's lock discipline and relies on the
+  re-read. **Manual placement is deliberately
+  untouched:** ADR-001 decision 1 hands an overlap to the booking officer, and a
+  write-time refusal would remove that path. The officer sees the board's banner
+  plus the **Overlaps exclusive hold** chip, and a hold with no guests entered yet blocks without appearing in the
+  banner. Source: `src/lib/exclusive-hold-occupancy.ts`; guards:
   `src/lib/__tests__/exclusive-hold-planner-occupancy.test.ts` and the
-  whole-lodge entries in
-  `src/lib/__tests__/custodian-write-path-contract.test.ts`.
+  whole-lodge entries in `src/lib/__tests__/custodian-write-path-contract.test.ts`.
 
 ### INV-CAP-024
 
@@ -1722,14 +1287,12 @@ move, never a capacity or double-booking violation.
 
 - **Existing allocation moves preserve their lodge nights, require review, and
   commit atomically (#2366, #2595):** an existing-chip drag or **Move to bed**
-  menu choice selects a destination bed only. The hovered column is
-  presentation input, never a target date, and both pointer and keyboard paths
-  open the same confirmation dialog before any write. The reviewed request is
-  an exclusive typed shape: anchor allocation, destination bed,
-  `ALLOCATION_NIGHT` or `BOOKING_GUEST` scope, and `v1:<sha256>` preview digest.
-  The unchanged legacy `{ allocationIds, bedId }` request remains capped at the
-  31-night board limit for older callers; the board no longer uses it for an
-  existing-chip move.
+  menu choice selects a destination bed only; the hovered column is never a
+  target date, and both pointer and keyboard paths open the same confirmation
+  dialog before any write. The reviewed request is an exclusive typed shape:
+  anchor allocation, destination bed, `ALLOCATION_NIGHT` or `BOOKING_GUEST`
+  scope, and `v1:<sha256>` preview digest. The legacy `{ allocationIds, bedId }`
+  request remains capped at the 31-night board limit for older callers.
 
   Night scope resolves the anchor only. Person scope resolves every existing
   row for that guest on that booking, including sparse/off-screen nights, up to
@@ -1752,9 +1315,9 @@ move, never a capacity or double-booking violation.
   audits. Unchanged rows are digest-bound but excluded from feasibility,
   promotion, write, re-draft, and audit. An all-noop confirmation succeeds with
   explicit feedback and no audit. Any stale fact, conflict, or guarded-count
-  mismatch returns/refuses atomically; a stale digest carries a refreshed
-  preview and requires confirmation again. Bucket-to-board placement keeps its
-  separate per-night partial-conflict contract.
+  mismatch refuses atomically; a stale digest carries a refreshed preview and
+  requires confirmation again. Bucket-to-board placement keeps its separate
+  per-night partial-conflict contract.
 
 ### INV-CAP-028
 
@@ -1794,204 +1357,128 @@ move, never a capacity or double-booking violation.
 - **A range assignment writes all or nothing, and records itself once (#2251):**
   `assignBedRange` scans, writes and audits inside one transaction. If any
   requested night is blocked, NOTHING is written and the caller receives a
-  per-night refusal in one of three categories that are never merged —
-  `BED_TAKEN` (a clash; a provisional occupant counts, so nothing is silently
-  overwritten), `GUEST_NOT_BOOKED` (a bad request, never a silent skip, and it
-  includes a gap night of a non-contiguous stay, #713), and `EXCLUSIVE_HOLD` —
-  which here means **the guest's OWN booking** holds the lodge (ADR-001's
-  short-circuit, scoped to the held booking's own guests). Another booking's
-  overlapping hold is surfaced on the board (`overlapsExclusiveHold`), not
-  refused here: no allocation path in the domain hard-blocks on it, and this one
-  must not be the exception. A partial result exists only when a human sends the
-  explicit `nights` list they were shown — the server writes exactly that set or
-  refuses it with a fresh report, never a set it re-derived. Every attempt that
-  COMPLETES — applied or refused — produces exactly ONE
-  `BED_ALLOCATION_RANGE_SET` audit entry against the booking id, committed in the
-  same transaction as the rows; an attempt that THROWS (unknown guest/bed,
-  cancelled booking, deactivated bed, over-cap range, lost write race) rolls back
-  and records nothing, because nothing happened. That entry records shape, not
-  people: night counts and runs per category plus the involved booking ids, with
-  the occupying guests' names carried only in the API response to the admin who
-  asked. The only other row the transaction may write is the single batched
-  `BED_ALLOCATION_PARTNERS_PROMOTED` entry when the move stranded partners on
-  shared doubles (see the sharing invariant above), so **both the statement count
-  and the audit-row count are fixed whatever the night count**. Proceeding past
-  `GUEST_NOT_BOOKED` nights additionally requires an explicit on-screen
-  confirmation naming how many nights are not part of the guest's booking (never
-  "outside the stay" — a GAP night of a non-contiguous stay is inside the span and
-  still refused, #713) and how many
-  will be written, so a partial result is never one click from a warning. The
-  31-night `MAX_BED_ALLOCATION_RANGE_NIGHTS` bounds
-  the board's READ window, not this write: lodge capacity is the active bed
-  count and never reads `BedAllocation` rows. Placement paths nevertheless take
-  the destination lodge's capacity lock because custodian holds share the bed
-  inventory (#2286); reviewed existing-allocation moves take their complete
-  sorted lodge/member/row topology before an authoritative re-read. The separate write bound
-  (`MAX_BED_ALLOCATION_ASSIGN_RANGE_NIGHTS`, 366) exists only to keep one
-  transaction finite, and is **refused at, never silently truncated to** — as is
-  every board window the admin types.
+  per-night refusal in one of three never-merged categories — `BED_TAKEN` (a
+  provisional occupant counts), `GUEST_NOT_BOOKED` (a bad request, never a
+  silent skip, including a gap night of a non-contiguous stay, #713), and
+  `EXCLUSIVE_HOLD`, meaning **the guest's OWN booking** holds the lodge
+  (ADR-001's short-circuit). Another booking's overlapping hold is surfaced on
+  the board (`overlapsExclusiveHold`), not refused here. A partial result exists
+  only when a human sends the explicit `nights` list they were shown — the
+  server writes exactly that set or refuses it with a fresh report. Every
+  attempt that COMPLETES — applied or refused — produces exactly ONE
+  `BED_ALLOCATION_RANGE_SET` audit entry against the booking id in the same
+  transaction; an attempt that THROWS rolls back and records nothing. That entry
+  records shape, not people: night counts and runs per category plus booking
+  ids, with guests' names only in the API response. The only other row the
+  transaction may write is the single batched `BED_ALLOCATION_PARTNERS_PROMOTED`
+  entry (`INV-CAP-036`), so **both the statement count and the audit-row count
+  are fixed whatever the night count**. Proceeding past `GUEST_NOT_BOOKED`
+  nights requires an explicit on-screen confirmation naming how many nights are
+  not part of the guest's booking (never "outside the stay") and how many will
+  be written. The 31-night `MAX_BED_ALLOCATION_RANGE_NIGHTS` bounds the board's
+  READ window, not this write; lodge capacity never reads `BedAllocation` rows.
+  Placement paths nevertheless take the destination lodge's capacity lock because
+  custodian holds share the bed inventory (#2286). The write bound
+  (`MAX_BED_ALLOCATION_ASSIGN_RANGE_NIGHTS`, 366) keeps one transaction finite
+  and is **refused at, never silently truncated to** — as is every board window
+  the admin types.
 
 ### INV-CAP-033
 
 - **The bed-allocation board never offers a bed choice without a concrete lodge,
   and every club-wide board says why it is club-wide (#2701):** the board's
   lodge scope is one of five named states — `lodge`, `all`, `empty`,
-  `resolving`, `unavailable` — never a single nullable value standing for
-  several of them, and **the set is total**: every combination of selection,
-  permission, failure, loading and option count lands on exactly one, with no
-  fall-through. A club with zero active lodges is `empty` and says so; before
-  that state existed it fell through to `resolving` and sat on a spinner for
-  ever.
-  `all` carries the REASON it was reached — `chosen` from the selector (the only
-  page that offers the option), or `no-lodge-permission` for a role that may
-  open this board and may not read the lodge list, which the shipped
-  `ADMIN_MEMBERSHIP` and `FINANCE_ADMIN` presets both are. Both are honest
-  club-wide views, both are read-only, and each says which it is; neither is an
-  outage wearing a club-wide costume. A `?lodgeId=` naming the sentinel also
-  reaches `chosen`, which is the same deliberate act by another route.
-  `resolving` fetches no dashboard at all, so a direct visit cannot render a
-  club-wide board on its way to a real lodge; `unavailable` (a `/api/admin/lodges`
-  failure that is **not** a 403) is an error with a retry, and is distinguishable
-  from `all` **by construction** — with no options there is nothing that could
-  have been chosen — rather than by a message.
-  Without a concrete lodge, every
-  allocation control that needs one is disabled with its reason on screen: the
-  bucket's Select bed and Allocate, the chip's Move to bed, drag-and-drop onto a
-  cell, Assign range, Run Auto Allocation, Approve Visible (which otherwise
-  approves the whole club's visible window), Reset allocations, Remove
-  allocation, and the per-lodge preferences section. This is a rule about what
-  the operator is OFFERED. It layers on top of, and never replaces, the
-  writer-side refusals — `assertGuestAndBedForAllocation` and
-  `LODGE_MISMATCH` in `bed-allocation-move.ts` — which stay exactly as they
-  were and remain the thing that protects the data. A read-side backstop mirrors
-  them: `GET /api/admin/bed-allocation` refuses a `lodgeId` contradicting a
-  named `bookingId` with a 409 `LODGE_MISMATCH`, and an unresolvable `bookingId`
-  never triggers it.
-  **What keeps that 409 off honest navigation is a single rule: while a booking
-  is focused, its lodge is authoritative and the selector's ADR-002 default must
-  not write at all.** That default fires whenever fewer than two ACTIVE lodges
-  are offered — including when it renders nothing — so left running it
-  overwrites the lodge the server derived, which both re-fires the request in a
-  loop and pairs the wrong lodge with the booking. A booking at a DEACTIVATED
-  lodge is the reachable case: the lodge is filtered out of the options, so the
-  default would substitute the surviving one and refuse a link the product
-  itself built.
+  `resolving`, `unavailable` — and **the set is total**: every combination of
+  selection, permission, failure, loading and option count lands on exactly one.
+  `all` carries the REASON it was reached — `chosen` from the selector (or a
+  `?lodgeId=` naming the sentinel), or `no-lodge-permission` for a role that may
+  open this board but not read the lodge list (the shipped `ADMIN_MEMBERSHIP`
+  and `FINANCE_ADMIN` presets); both are honest, read-only views that say which
+  they are. `resolving` fetches no dashboard, so a direct visit cannot render a
+  club-wide board on its way to a real lodge; `unavailable` (a
+  `/api/admin/lodges` failure that is **not** a 403) is an error with a retry,
+  distinguishable from `all` **by construction**. Without a concrete lodge,
+  every allocation control that needs one is disabled with its reason on
+  screen: Select bed and Allocate, Move to bed, drag-and-drop, Assign range, Run
+  Auto Allocation, Approve Visible, Reset allocations, Remove allocation, and the
+  per-lodge preferences section. This is a rule about what the operator is
+  OFFERED; it layers on top of, never replaces, the writer-side refusals
+  (`assertGuestAndBedForAllocation` and `LODGE_MISMATCH` in
+  `bed-allocation-move.ts`). A read-side backstop mirrors them:
+  `GET /api/admin/bed-allocation` refuses a `lodgeId` contradicting a named
+  `bookingId` with a 409 `LODGE_MISMATCH`; an unresolvable `bookingId` never
+  triggers it. **While a booking is focused, its lodge is authoritative and the
+  selector's ADR-002 default must not write at all** — that default fires
+  whenever fewer than two ACTIVE lodges are offered, so left running it
+  overwrites the server-derived lodge and re-fires the request in a loop; a
+  booking at a DEACTIVATED lodge is the reachable case.
 
 ### INV-CAP-034
 
 - **A booking names its lodge, and the server never fills the blank (#2701):**
   `POST /api/bookings` refuses a create carrying no `lodgeId` with a 400 and
   `code: "BOOKING_LODGE_REQUIRED"`, checked BEFORE any lodge resolution so the
-  club's default lodge is not merely unused but unreached. It is not enough to
-  fix the screens: this is one gate instead of one guard per surface, so the
-  next booking screen somebody writes fails loudly here rather than writing
-  quietly to the wrong lodge.
-  The path that made it worth doing was not a hand-crafted request. When the
-  lodge list fails, `useLodgeOptions` returns an empty list, `LodgeSelect`
-  renders nothing at all below two lodges (ADR-002) and normalises the selection
-  to `null`, and both booking wizards then posted no lodge — which
-  `resolveOptionalActiveLodgeId` answered with the default lodge. In a
-  multi-lodge club that stamped a real, paid booking with a lodge nobody had
-  shown the member, and the member's review step suppressed its own "Lodge:"
-  line in exactly that state.
+  club's default lodge is unreached — one gate instead of one guard per surface.
   Four consequences are load-bearing:
   - **The shared resolver stays permissive.** `resolveOptionalActiveLodgeId`
     still defaults for READS, where an omitted lodge legitimately means the
-    whole club — the mode `INV-INT-016` retains for consumers outside this
-    repository. The strictness belongs on the write, not in the helper, because
-    an unscoped create is not a question anybody can answer.
+    whole club — the mode `INV-INT-016` retains for outside consumers. The
+    strictness belongs on the write, not in the helper.
   - **A member is always shown the lodge they are booking**, on every booking
-    including in a single-lodge club. The line used to be conditional on there
-    being more than one lodge, which is precisely why an outage was
-    indistinguishable from a one-lodge club, and why the screen looked normal in
-    the one state where it was lying.
+    including in a single-lodge club.
   - **A member cannot complete a booking whose lodge is unknown; an admin
     booking on someone's behalf may continue**, with the lodge named on screen
-    before anything is written. An admin will notice a wrong lodge name and
-    knows how to correct it; a member paying online will not.
-    The member Dates step is the transport boundary as well as the visual one:
-    loading, failed, forbidden and successful-empty lodge lists mount no
-    availability calendar and issue no lodge-dependent room, availability,
-    policy, quote, create, waitlist, draft or exception-request call. A retry
-    returns to Dates, reloads the options and waits for a selected id validated
-    by that successful response.
+    before anything is written. The member Dates step is the transport boundary
+    as well as the visual one: loading, failed, forbidden and successful-empty
+    lodge lists mount no availability calendar and issue no lodge-dependent
+    room, availability, policy, quote, create, waitlist, draft or
+    exception-request call. A retry returns to Dates, reloads the options and
+    waits for a selected id validated by that successful response.
   - **Every booking-create service requires the authoritative lodge, including
     callers that bypass the HTTP route.** Copying a booking carries the source
     booking's `lodgeId`; a member joining a group carries the organiser
     booking's resolved lodge. The shared TypeScript input makes `lodgeId`
     required, and every public create service runtime-refuses a missing, blank
     or unchecked value before it can call the permissive read resolver. The
-    exact production call-site census in
-    `booking-create-requires-lodge.test.ts` fails on insertion/deletion drift,
-    indirect argument objects and an explicit `undefined`, `null` or `void`
-    value. Required types catch ordinary aliases/wrappers and the runtime guard
-    catches unchecked JavaScript or `any` callers.
+    exact call-site census in `booking-create-requires-lodge.test.ts` fails on
+    insertion/deletion drift, indirect argument objects and an explicit
+    `undefined`, `null` or `void` value.
 
 ### INV-LIFE-062
 
-A `HutLeaderAssignment` may additionally hold ONE bed (`bedId`), which makes it
-a **custodian occupancy** (#2286). The invariants:
+A `HutLeaderAssignment` may additionally hold ONE bed (`bedId`): a **custodian
+occupancy** (#2286).
 
-- **Optional and inert by default.** `bedId = null` is a role only and has zero
-  capacity effect — the pre-#2286 behaviour, and what every
-  `hut-leader-auto-assign` cron row is. Only a bed-holding assignment reaches a
-  capacity or allocation consumer.
-- **One explicit lodge owns the interactive workflow.** The hut-leader admin
-  assignment list, uncovered dates, occupancy overlay, eligible guests/owners,
-  existing coverage and create all carry the same validated lodge id. The create
-  refuses an omitted lodge before member lookup. Club-wide dashboard coverage is
-  still valid, but its caller must opt into an explicit `all` scope rather than
-  obtaining it by omission.
-- **Inclusive night semantics.** The hold covers the night of every date from
-  `startDate` to `endDate` **inclusive**, never the half-open booking envelope.
-  The bed is bookable again for the night after `endDate`. (This is the
-  custodian exception the stay-boundary invariant in "Booking Dates And
-  Capacity" names deliberately: an assignment's `endDate` is a covered day,
-  not a departure morning.)
-- **Counted as an occupant, never as a smaller lodge.** The capacity engines add
-  the per-night custodian **count** to `occupiedBeds` rather than reducing
-  `lodgeCapacity`, so `occupiedBeds + availableBeds === lodgeCapacity` still
-  holds on every night. It is a count, never a boolean: two custodians handing
-  over on different beds subtract two.
+- **Optional and inert by default.** `bedId = null` is a role only, with zero
+  capacity effect.
+- **One explicit lodge owns the interactive workflow.**
+- **Inclusive night semantics.** The hold covers every night from `startDate`
+  to `endDate` **inclusive**, never the half-open booking envelope.
+- **Counted as an occupant, never as a smaller lodge.** The per-night custodian
+  **count** is added to `occupiedBeds`, not subtracted from `lodgeCapacity`, so
+  `occupiedBeds + availableBeds === lodgeCapacity` holds every night.
 - **No booking, no allocation row, no guest.** A custodian is not a
-  `BookingGuest`, so they are structurally absent from the chore roster, the
-  booking rows and the display occupancy counts. They may still make an ordinary
-  booking of their own anywhere, including at the same lodge, and capacity then
-  correctly counts both their held bed and their booked bed.
-- **Two assignments may never hold the SAME bed on an overlapping night.** The
-  one-day handover overlap assignments already permit is allowed only on
-  different beds; the same-bed case is refused at create and update.
-- **A whole-lodge hold and a custodian never contend.** The hold reserves the
-  *bookable* lodge; the custodian's bed sits outside that pool. Neither refuses
-  the other, and the ADR-001 held-night pin is unchanged.
+  `BookingGuest`: absent from the chore roster, booking rows and display
+  occupancy counts.
+- **Two assignments never hold the SAME bed on an overlapping night**; the
+  one-day handover overlap is allowed only on different beds, refused on write.
+- **A whole-lodge hold and a custodian never contend**: the hold reserves the
+  *bookable* lodge; the custodian's bed sits outside that pool.
 - **Exclusion is enforced in application code, never by a database constraint**
-  (owner decision 28 Jul 2026, option (a)). Two things make that safe, and both
-  are required:
-  1. **Every** `BedAllocation` write path that places a guest on a bed re-reads
-     the live holds **on the same client, immediately before the write**, and
-     refuses or drops what would land on one: the manual funnel
-     `allocateBedNightWithLocksHeld`, the range assign's `CUSTODIAN_HOLD` classification,
-     `runAutoBedAllocation`'s in-transaction re-filter, and the lifecycle
-     reconcile's write-time re-filter (`dropRowsOnCustodianHeldBedNights`). A
-     read at plan time alone is NOT enough — a reconcile is routinely called
-     post-commit, so a hold committed between the plan and the write would
-     otherwise be written over.
-  2. Every placement transaction this code **opens itself** takes the per-lodge
-     advisory lock (`acquireLodgeCapacityLock`) as its first statement, sorted
-     when it can span several lodges, so that re-read and the write serialise
-     against the hold writer, which takes the same key. A reconcile running
-     inside a CALLER's transaction inherits that caller's lock discipline
-     instead of adding a key to an ordering it does not control; its write-time
-     re-filter still runs on that client.
-
-  `custodian-write-path-contract.test.ts` fails CI when a new write
-  path appears undeclared — including a SECOND write added to a file already on
-  the list, which each site's declared occurrence count catches — and asserts
-  point 2 as an ORDER over each self-wrapping writer's own body rather than as a
-  symbol present somewhere in its module (#2688). `CUSTODIAN_BED_CONFLICT` on the
-  allocation board surfaces any row that got through anyway.
-- **A held bed cannot be deactivated or deleted**, nor can its room, while the
-  hold exists (`onDelete: Restrict` is the FK backstop behind the app guards).
+  (owner decision 28 Jul 2026). (1)
+  **every** `BedAllocation` write path re-reads the live holds **on the same
+  client, immediately before the write**, and refuses or drops what would land
+  on one — `allocateBedNightWithLocksHeld`, the range assign's `CUSTODIAN_HOLD`
+  classification, `runAutoBedAllocation`'s in-transaction re-filter, and the
+  lifecycle reconcile's `dropRowsOnCustodianHeldBedNights`. (2) Every placement transaction this code **opens itself**
+  takes `acquireLodgeCapacityLock` as its first statement, sorted across lodges
+; a reconcile inside a CALLER's transaction inherits
+  that caller's lock discipline and still re-filters at write time.
+  `custodian-write-path-contract.test.ts` fails CI on an undeclared write path
+ and asserts (2) as an ORDER over
+  each self-wrapping writer's body (#2688). `CUSTODIAN_BED_CONFLICT` on the board
+  surfaces any row that got through.
+- **A held bed cannot be deactivated or deleted**, nor its room, while the hold
+  exists (`onDelete: Restrict` backstop).
 - **Minor privacy.** A minor-age custodian is never individually named on the
-  lobby display at any name-display granularity; the slot shows the role word
-  alone.
+  lobby display.
