@@ -276,8 +276,21 @@ that turns out to owe nothing is one of the commonest ones to have this problem.
   wants plain dollars and cents — `45.00` — with no dollar sign, no comma and no
   minus.
 
+**Filling them in also brings the booking's own total back in line.** While a
+booking is waiting for review its headline total is deliberately frozen, because
+nobody yet knows what the change was worth — so the figure at the top of the
+booking and the figures on its nights can be saying different things while you
+are looking at it. Recording the night prices ends that: the booking's total is
+worked out again from its guests and written back, on **No adjustment** exactly
+as on **Record the adjustment**. It is worked out from the guests, not from the
+amount you settled, so it can move by more or less than you just settled — for
+example when the change that parked the booking also took a guest off it. If
+somebody edits the booking while your settle box is open the save is refused and
+nothing is written, and you can reload and try again.
+
 Filling them in is a money-affecting act and is audited as one, in its own entry:
-what each night was set to, and what the guest's stay was worth before and after.
+what each night was set to, what the guest's stay was worth before and after, and
+what the booking's total and final price were before and after.
 
 **It settles that guest, not the whole booking.** A change to a booking raises
 one review for each guest whose nights could not be read, so a booking with two

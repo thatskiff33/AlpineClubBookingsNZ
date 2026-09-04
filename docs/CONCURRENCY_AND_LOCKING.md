@@ -2854,6 +2854,31 @@ listed above; and the blanks are re-read on the caller's transaction rather than
 trusted from the browser, so a screen minutes old cannot price a night the
 booking no longer holds. `INV-MOD-028` carries the rest of the rule.
 
+**#3219 ADDS A THIRD ROW TO THAT SAME LOCKLESS TRANSACTION - THE BOOKING ITSELF -
+AND STILL NO KEY.** Once the strand write above has landed, the booking's own
+`totalPriceCents` and `finalPriceCents` are re-based from its strands, so the
+headline can no longer disagree with the nights. Same reasoning a third time: it
+rides inside the completion's transaction, whose single-flight guarantee is the
+status claim, and a key here would sit over the Stripe round trip that follows
+the commit. Safety against a concurrent booking edit - which writes those very
+columns, in its own transaction, under its own locks - is again a compare-and-set
+rather than a lock:
+
+- the `updateMany` is fenced on BOTH stored figures as they were read inside this
+  transaction, so an edit that moved either underneath us matches nothing;
+- a `count` of anything but 1 raises the same 409 and rolls the whole completion
+  back, so the task is still `OPEN` and its money question survives;
+- and the strand this settle just repaired must be one of the booking's own,
+  carrying the value just written to it. Nothing cross-checks the guest id an
+  `EDIT_FINANCIAL_REVIEW` context holds against its task's `bookingId`, so
+  without that check a mismatched context would re-base one booking's headline
+  from another booking's strands - and an empty guest list would zero it.
+
+The new figures are RECOMPUTED from the strands rather than derived by applying
+the settled amount, which matters here as well as in `INV-MOD-028`: the writer is
+handed no settlement amount at all, so a reader does not have to check whether it
+is the right one.
+
 **#3194 ADDS A READ TO THAT SAME LOCKLESS TRANSACTION AND STILL NO KEY.** Where
 the task carries no `paymentId` of its own — a review parked before the member
 paid — the route decision re-reads the BOOKING's payment on the caller's

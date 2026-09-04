@@ -1291,14 +1291,42 @@ reason from the other two: it has no blanks, so the summary is `null` and the
 screen stays silent. That strand parks on every edit for as long as it exists,
 exactly as it did before #3191, because what it needs is a decision about which
 of two stored numbers is wrong rather than a number nobody has.
-`Booking.totalPriceCents` is likewise untouched: the park froze it and the
-settlement moves the money through the club's own instruments, so re-basing the
-booking's headline total is a separate question from recording what a stay sold
-for. A parked edit already leaves the booking's headline total and its guest rows
-disagreeing by design, and nothing in the tree asserts that they agree.
 
-**What the re-based `BookingGuest.priceCents` is read by, since "only the
-booking's headline total is frozen" would leave that unsaid.** The strand total
+**The BOOKING'S OWN two headline totals move with the strands, and after a
+settlement or a dismissal they are required to agree with them** (#3219, epic
+#2797; owner decision 2 September 2026). `Booking.totalPriceCents` is the sum of
+its strands' `BookingGuest.priceCents`, and `Booking.finalPriceCents` is that
+sum plus the booking's signed `promoAdjustmentCents` — the same relation every
+edit path writes them with. A parked edit freezes both, correctly: a parked edit
+is precisely one whose money nobody may compute. Nothing thawed them when the
+review settled, so the headline and the nights were left disagreeing by exactly
+what had been settled, permanently, with nothing reconciling them.
+
+Three things about how they move are load-bearing:
+
+- **both, or neither.** `finalPriceCents` is what settlement decisions actually
+  read — `priceDiffCents` is built from it — so moving only `totalPriceCents`
+  would trade one disagreement for another;
+- **recomputed from the strands, never derived by applying the settled amount.**
+  The repair also runs on a **dismissal**, whose audit entry says in as many
+  words that nothing moved: there is no delta to apply there and the totals must
+  still come back into agreement. A delta would be wrong wherever the park left
+  the headline out of step by more than this settlement moves, too;
+- **in the same transaction as the strand write**, under the claim that write
+  already holds, fenced on both stored figures. This path takes no advisory lock,
+  so a concurrent edit that moved the headline is a 409 that rolls the whole
+  completion back rather than a lost update, and the repaired strand must be one
+  of the booking's own at the value just written to it — nothing else
+  cross-checks a review context's strand id against its task's booking.
+
+The promotion is **not** recalculated. A parked edit recalculates none and
+neither does settling one, so `promoAdjustmentCents` and `discountCents` are
+carried through exactly as stored and the headline moves by exactly what the
+strands moved by. Nothing else about the park changes: what a parked edit itself
+writes is still no amount at all.
+
+**What the re-based `BookingGuest.priceCents` is read by, since the booking's
+headline totals alone would leave that unsaid.** The strand total
 this repair moves is a Xero input, and the repair also flips a strand out of the
 whole-stay fallback into per-night runs (`buildInvoiceLineItems` sends a guest
 holding any unknown night down the legacy branch, #3170). Three consumers, and

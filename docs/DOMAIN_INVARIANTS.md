@@ -317,7 +317,7 @@ Prefix `INV-MOD`.
 | `INV-MOD-022` | The admin exemption is not one predicate, and is stated per path |
 | `INV-MOD-023` | Advisory surfaces report the same facts and gate nothing; no row is persisted, no capacity reserved |
 | `INV-MOD-024` | Minimum-stay policy administration is versioned; a stale version is refused, not overwritten |
-| `INV-MOD-028` | EVERY edit path values historical nights only from exact, reconciling stored sold-price rows; anything else commits the stay change, writes `NULL` for what it cannot value and parks the money as an explicit financial review with typed causes and no numeric result, and a second money-affecting edit is then refused until it is settled. No writer repairs a blank into a number by re-pricing it; the ONE exception is a person typing every one of a strand's blanks while settling that review, which must reconcile and is audited as a money-affecting act |
+| `INV-MOD-028` | EVERY edit path values historical nights only from exact, reconciling stored sold-price rows; anything else commits the stay change, writes `NULL` for what it cannot value and parks the money as an explicit financial review with typed causes and no numeric result, and a second money-affecting edit is then refused until it is settled. No writer repairs a blank into a number by re-pricing it; the ONE exception is a person typing every one of a strand's blanks while settling that review, which must reconcile and is audited as a money-affecting act. Settling or dismissing that review re-bases the booking's `totalPriceCents` and `finalPriceCents` from its strands, in the same transaction and recomputed rather than derived from the settled amount |
 
 ### Adult-member hosting
 
