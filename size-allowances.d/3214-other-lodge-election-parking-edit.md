@@ -20,7 +20,7 @@ reason: the refusal has to sit inside `parkedQuoteResponse`, the one composer
   and the file is where the next reader meets it.
 
 file: src/lib/booking-batch-modification-service.ts
-lines: 1903
+lines: 2432
 reason: the guard must fire after `calculateModifiedPricing` returns and before
   the first write, and the comment records exactly that — which lines above it
   are reads and locks, and why no earlier or later placement is correct. That is
@@ -31,7 +31,7 @@ a booking's nights sold for, which is what makes this issue's refusal message
 true rather than merely written.
 
 file: src/app/(authenticated)/bookings/[id]/page.tsx
-lines: 2719
+lines: 2737
 reason: the offers have to be read where `financialReviewPending` already is.
   The page holds that flag for the member's own banner, and the same flag is what
   withholds this section while a review is open - so reading the offers anywhere
