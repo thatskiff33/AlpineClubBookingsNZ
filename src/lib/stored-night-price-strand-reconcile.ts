@@ -402,16 +402,13 @@ export async function recordStrandNightPriceReconcile({
     });
 
   /*
-    THE SAME GUARANTEE, RE-CHECKED AFTER THE WRITE, against what the writer
-    actually re-based to rather than against what the plan expected. The plan's
-    assertion covers the arithmetic it hands over; this covers the writer. It
-    throws inside the caller's transaction, so the rows go back with it.
+    THE SAME GUARANTEE, RE-CHECKED AFTER THE WRITE, lives in
+    `applyStrandNightPriceReconcile` itself rather than here (#3214 review): it
+    is a property of the WRITER, whose name carries the promise, not of this one
+    caller. It throws inside the caller's transaction, so the rows go back with
+    it, and `newGuestTotalCents` below is therefore already known to be the
+    strand's stored total.
   */
-  if (newGuestTotalCents !== plan.summary.storedGuestTotalCents) {
-    throw new Error(
-      "Recording night prices moved what the stay is stored as being worth, which this act may never do.",
-    );
-  }
 
   await createAuditLog(
     {

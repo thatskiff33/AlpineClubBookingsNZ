@@ -565,11 +565,22 @@ export async function applyStoredNightPriceRepair({
  * reach the same fenced writer, so there is still exactly one place a night
  * price is written (`INV-SSOT`).
  *
- * The caller owns the arithmetic guarantee: with `summary.knownNightTotalCents`
+ * THE MONEY-NEUTRALITY GUARANTEE IS ENFORCED HERE, by the function that makes
+ * the write, rather than a module away by the one caller that happens to have
+ * it. The caller supplies the arithmetic - with `summary.knownNightTotalCents`
  * at 0 and every held night in `writes`, the re-based total is `sum(writes)`,
  * which `checkStoredNightPriceRepair` has already forced to equal
- * `summary.storedGuestTotalCents`. So the total write is a no-op, and
- * `stored-night-price-strand-reconcile.ts` asserts that rather than trusting it.
+ * `summary.storedGuestTotalCents` - but an exported function taking an arbitrary
+ * `summary` and `writes` will re-base the strand's total to whatever those two
+ * add up to, and its NAME promises otherwise. A second caller would inherit the
+ * promise and none of the check. So the check sits on this side of the call: it
+ * throws inside the caller's transaction, so every row goes back with it.
+ *
+ * WHAT IT DOES AND DOES NOT GUARANTEE. It guarantees that the MEMBER'S TOTAL is
+ * unchanged - `BookingGuest.priceCents` holds the number it already held, so
+ * nothing anybody owes moves. It does NOT guarantee that nothing else moves: see
+ * `stored-night-price-strand-reconcile.ts`'s module docblock for the two
+ * consequences that follow from the night rows themselves changing.
  */
 export async function applyStrandNightPriceReconcile({
   bookingGuestId,
@@ -582,10 +593,16 @@ export async function applyStrandNightPriceReconcile({
   writes: readonly FencedNightWrite[];
   store: Prisma.TransactionClient;
 }): Promise<{ newGuestTotalCents: number; rowsCreated: number }> {
-  return applyFencedStrandNightPrices({
+  const result = await applyFencedStrandNightPrices({
     bookingGuestId,
     summary,
     writes,
     store,
   });
+  if (result.newGuestTotalCents !== summary.storedGuestTotalCents) {
+    throw new Error(
+      "Recording night prices moved what the stay is stored as being worth, which this act may never do.",
+    );
+  }
+  return result;
 }
