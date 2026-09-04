@@ -493,6 +493,56 @@ describe("a booking whose blanks are all cleared stops parking (#3191)", () => {
   });
 });
 
+describe("the settle path's write is UNCHANGED by #3214's generalised writer", () => {
+  it("reaches the database with the same fenced arguments it always did", async () => {
+    /*
+      #3214 generalised this writer so a second caller could share it: the night
+      fence became "the value the row was read holding" rather than a literal
+      `priceCents: null`, and a create arm was added for a night the strand holds
+      with no row behind it.
+
+      NEITHER CAN REACH THIS PATH, and that is a property of how the settle plan
+      is built rather than a rule anybody has to keep:
+      `unpricedNightsSummaryForGuest` takes its dates only from rows this strand
+      ALREADY has whose price is exactly `NULL`, so every entry is an existing
+      row expected to be blank.
+
+      So this pins the arguments byte for byte - the `where` including its
+      `priceCents: null`, and no `create` at all - which is what lets a reviewer
+      see the settle path is untouched without re-reading the writer.
+    */
+    const nightUpdateMany = vi.fn(async () => ({ count: 1 }));
+    const nightCreate = vi.fn(async () => ({ id: "night-1" }));
+    const guestUpdateMany = vi.fn(async () => ({ count: 1 }));
+    const store = {
+      bookingGuestNight: { updateMany: nightUpdateMany, create: nightCreate },
+      bookingGuest: { updateMany: guestUpdateMany },
+    };
+
+    await applyStoredNightPriceRepair({
+      bookingGuestId: "guest-1",
+      summary: summaryOf(["2026-08-02"], 4_000, 10_000),
+      entries: [{ date: requireCalendarDate("2026-08-02"), priceCents: 8_000 }],
+      store: asStore(store),
+    });
+
+    expect(nightUpdateMany).toHaveBeenCalledTimes(1);
+    expect(nightUpdateMany).toHaveBeenCalledWith({
+      where: {
+        bookingGuestId: "guest-1",
+        stayDate: new Date("2026-08-02T00:00:00.000Z"),
+        priceCents: null,
+      },
+      data: { priceCents: 8_000 },
+    });
+    expect(nightCreate).not.toHaveBeenCalled();
+    expect(guestUpdateMany).toHaveBeenCalledWith({
+      where: { id: "guest-1", priceCents: 10_000 },
+      data: { priceCents: 12_000 },
+    });
+  });
+});
+
 describe("the writes cannot overwrite a price somebody else recorded", () => {
   it("refuses when a night stopped being blank underneath it", async () => {
     const { guest, store } = guestStore({

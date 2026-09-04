@@ -84,10 +84,21 @@ vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), warn: vi.fn(), info: vi.fn() },
 }));
 
+// The acceptance lane at the foot of this file drives the REAL reconcile path,
+// whose module is `server-only` and which writes one audit entry.
+vi.mock("server-only", () => ({}));
+vi.mock("@/lib/audit", () => ({ createAuditLog: vi.fn() }));
+
 import { modifyBookingBatch } from "@/lib/booking-batch-modification-service";
 import { OTHER_LODGE_RATE_AMOUNT_UNDER_REVIEW_MESSAGE } from "@/lib/booking-other-lodge-rate";
 import { addDaysDateOnly, getTodayDateOnly } from "@/lib/date-only";
 import { requireCalendarDate } from "@/lib/club-time";
+import { getGuestBedNightKeys } from "@/lib/booking-guest-stay-ranges";
+import { storedSoldPriceEvidenceForGuest } from "@/lib/stored-sold-price-evidence";
+import {
+  planStrandNightPriceReconcile,
+  recordStrandNightPriceReconcile,
+} from "@/lib/stored-night-price-strand-reconcile";
 
 /*
  * #3123 (`INV-LOCK-004`) — the CLUB's day, resolved by the caller before it
@@ -412,5 +423,200 @@ describe("modifyBookingBatch: an other-lodge election on the edit that parks", (
     ).rejects.toThrow(APPLY_SENTINEL);
 
     expect(h.applyGuestChanges).toHaveBeenCalledTimes(1);
+  });
+});
+
+/*
+  THE ACCEPTANCE TEST FOR THE WHOLE OF #3214.
+
+  The refusal above ends by telling an officer that the booking's unpriced
+  nights have to carry a price before anything on it can be re-rated, and names
+  where they do that. Until #3214 built the route, that sentence was
+  UNSATISFIABLE on exactly the population it most often meets: a booking
+  converted from a public request is quote-priced by origin, and on such a
+  booking nothing could reach the settle-time repair, because nothing could
+  raise the review that repair runs inside.
+
+  So this lane runs the sentence. One booking, one strand, three saves:
+
+    1. the election-only edit is refused, because the strand cannot be read;
+    2. the officer records what the nights sold for, through the REAL plan and
+       the REAL writer;
+    3. the same edit is made again and prices normally, and the tick reaches the
+       writer.
+
+  WHAT MAKES IT AN ACCEPTANCE TEST RATHER THAN THREE STUBS. The pricing verdict
+  is not hard-coded per save: `calculateModifiedPricing` answers from
+  `storedSoldPriceEvidenceForGuest` over the strand's LIVE rows - the same
+  classifier the real pricing pass consults. So step 3 prices normally only
+  because step 2 really changed the data. Delete the reconcile and step 3 fails.
+
+  The booking is QUOTE-PRICED here, unlike the cases above, because that is the
+  population the refusal names - and it is what proves the route needs no
+  exemption from `assertBookingNotQuotePriced`: the election-only exemption is
+  what carries the edit, and the reconcile never touches the pricing engine at
+  all.
+*/
+describe("#3214 acceptance: the refusal's sentence is satisfiable", () => {
+  /** The strand, mutable, as the database would hold it. */
+  type Strand = {
+    id: string;
+    bookingId: string;
+    firstName: string;
+    lastName: string;
+    priceCents: number;
+    stayStart: Date | null;
+    stayEnd: Date | null;
+    nights: Array<{ stayDate: Date; priceCents: number | null }>;
+  };
+
+  const bookingRange = { checkIn: storedCheckIn, checkOut: storedCheckOut };
+
+  function reconcileStore(strand: Strand) {
+    return {
+      booking: {
+        findUnique: async ({ where }: { where: { id: string } }) =>
+          where.id === "booking-1"
+            ? { memberId: "member-1", ...bookingRange }
+            : null,
+      },
+      bookingGuest: {
+        findFirst: async ({
+          where,
+        }: {
+          where: { id: string; bookingId: string };
+        }) =>
+          where.id === strand.id && where.bookingId === strand.bookingId
+            ? strand
+            : null,
+        updateMany: async ({
+          where,
+          data,
+        }: {
+          where: { id: string; priceCents?: number };
+          data: { priceCents: number };
+        }) => {
+          if (where.id !== strand.id) return { count: 0 };
+          if ("priceCents" in where && where.priceCents !== strand.priceCents) {
+            return { count: 0 };
+          }
+          strand.priceCents = data.priceCents;
+          return { count: 1 };
+        },
+      },
+      bookingGuestNight: {
+        updateMany: async () => ({ count: 0 }),
+        create: async ({
+          data,
+        }: {
+          data: { stayDate: Date; priceCents: number };
+        }) => {
+          // A NEW ARRAY, never a push: the night-key helper caches its set per
+          // `nights` array reference, so a mutation in place would hand every
+          // later read the world as it was before the write.
+          strand.nights = [
+            ...strand.nights,
+            { stayDate: data.stayDate, priceCents: data.priceCents },
+          ];
+          return { id: "night-new" };
+        },
+      },
+      // No review is open: this booking's edit was REFUSED, so it raised none -
+      // which is the deadlock the route exists to break.
+      manualRefundTask: { findFirst: async () => null },
+    };
+  }
+
+  it("is refused, then recorded, then priced normally", async () => {
+    const strand: Strand = {
+      id: GUEST.id,
+      bookingId: "booking-1",
+      firstName: GUEST.firstName,
+      lastName: GUEST.lastName,
+      priceCents: GUEST.priceCents,
+      stayStart: GUEST.stayStart,
+      stayEnd: GUEST.stayEnd,
+      // NO NIGHT ROWS AT ALL - the #2739 backfill skipped a request-derived
+      // guest whose stored stay was degenerate, so the strand holds its nights
+      // through the envelope and the settle-time repair cannot touch it.
+      nights: [],
+    };
+
+    h.isQuotePricedBooking.mockResolvedValue(true);
+    h.prepareGuestPlan.mockResolvedValue(
+      guestPlan(
+        election({
+          requested: true,
+          flagged: [GUEST.id],
+          reprice: [GUEST.id],
+          otherLodgeId: "lodge-partner",
+        }),
+      ),
+    );
+    // The verdict follows the DATA, through the same classifier the real
+    // pricing pass consults. This is what makes step 3 evidence rather than a
+    // restated assumption.
+    h.calculateModifiedPricing.mockImplementation(async () =>
+      storedSoldPriceEvidenceForGuest(strand, bookingRange).kind === "exact"
+        ? PRICED_RESULT
+        : PARKED_RESULT,
+    );
+
+    const election1 = {
+      otherLodgeId: "lodge-partner",
+      otherLodgeMemberGuestIds: [GUEST.id],
+    };
+
+    // 1. REFUSED, and nothing saved - not the ticks, not the lodge.
+    await expect(save(election1)).rejects.toThrow(
+      OTHER_LODGE_RATE_AMOUNT_UNDER_REVIEW_MESSAGE,
+    );
+    expect(h.applyGuestChanges).not.toHaveBeenCalled();
+    expect(writes).toEqual([]);
+
+    // 2. The officer records what the nights sold for. Three figures they
+    //    supplied, not an even split of the total - which 9600 over three
+    //    nights would have been, and is not what this is.
+    const heldNights = getGuestBedNightKeys(strand, bookingRange).map((key) =>
+      requireCalendarDate(key),
+    );
+    expect(heldNights).toHaveLength(3);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const store = reconcileStore(strand) as any;
+    const plan = await planStrandNightPriceReconcile({
+      bookingId: "booking-1",
+      bookingGuestId: GUEST.id,
+      entries: [
+        { date: heldNights[0], priceCents: 3_000 },
+        { date: heldNights[1], priceCents: 3_000 },
+        { date: heldNights[2], priceCents: 3_600 },
+      ],
+      store,
+    });
+    await recordStrandNightPriceReconcile({
+      plan,
+      actingMemberId: "admin-9",
+      note: null,
+      store,
+    });
+
+    // What the stay is worth did not move, and the strand now reads back.
+    expect(strand.priceCents).toBe(GUEST.priceCents);
+    expect(storedSoldPriceEvidenceForGuest(strand, bookingRange).kind).toBe(
+      "exact",
+    );
+
+    // 3. The SAME edit now prices normally and the tick reaches the writer.
+    h.bookingFindUnique.mockReset();
+    h.bookingFindUnique
+      .mockResolvedValueOnce({ lodgeId: LODGE })
+      .mockResolvedValueOnce(loadedBooking());
+
+    await expect(save(election1)).rejects.toThrow(APPLY_SENTINEL);
+    expect(h.applyGuestChanges).toHaveBeenCalledTimes(1);
+    const [, applyArgs] = h.applyGuestChanges.mock.calls[0];
+    expect(applyArgs.otherLodgeElection.flaggedGuestIds).toEqual(
+      new Set([GUEST.id]),
+    );
   });
 });
