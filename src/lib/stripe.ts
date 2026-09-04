@@ -298,6 +298,22 @@ export async function getSetupIntent(
 }
 
 /**
+ * Detach a saved PaymentMethod from its Customer (#3268). Used when the
+ * auto-charge cron has classified the card as permanently unusable: detaching
+ * it at the provider is what makes "this card may not be re-adopted anywhere"
+ * true — the setup-intent route (#3266) asks Stripe whether a candidate pm is
+ * still attached before re-adopting it, and a detached pm answers no. Plain
+ * call, no idempotency key: detaching an already-detached or never-attached pm
+ * errors, and the caller treats that as success (the pm is unusable either way).
+ */
+export async function detachPaymentMethod(
+  paymentMethodId: string
+): Promise<Stripe.PaymentMethod> {
+  const stripe = await getStripe();
+  return stripe.paymentMethods.detach(paymentMethodId);
+}
+
+/**
  * Best-effort cancellation of an in-flight SetupIntent when a pending booking
  * is cancelled or otherwise leaves the saved-card flow.
  */
