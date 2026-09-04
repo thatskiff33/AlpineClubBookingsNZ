@@ -402,6 +402,8 @@ describe("PATCH — approve", () => {
           reference: "BK-DEPENDENT",
           lodgeName: "Example Lodge",
           nights: ["2026-07-01", "2026-07-02"],
+          checkIn: "2026-07-01",
+          checkOut: "2026-07-03",
         },
       ]),
     );
@@ -598,7 +600,7 @@ describe("PATCH — approve", () => {
     // pending" named no action and the screen offered none, so the request was
     // permanently un-approvable and could only be refused.
     const { BookingModificationSettlementMethodRequiredError } = await import(
-      "@/lib/booking-modify-settlement"
+      "@/lib/booking-modify-settlement-required"
     );
     mocks.approve.mockRejectedValue(
       new BookingModificationSettlementMethodRequiredError(),

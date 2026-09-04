@@ -646,6 +646,9 @@ async function performBookingCancellation(
       // own hosting review, since a cancelled stay has no hazard.
       await reconcileAdultMemberHostingReviewWithSiblings(bookingId, tx, {
         ...hostingCoverageActorOptions({
+          // #3232: a cancellation removes a stay rather than moving it, so the
+          // dependent fan-out has no second window to look at.
+          vacatedRange: null,
           actorRole: sessionUserRole,
           hasBookingsEditAccess,
           actorMemberId: sessionUserId,
@@ -823,6 +826,9 @@ async function performBookingCancellation(
       // own hosting review, since a cancelled stay has no hazard.
       await reconcileAdultMemberHostingReviewWithSiblings(bookingId, tx, {
         ...hostingCoverageActorOptions({
+          // #3232: a cancellation removes a stay rather than moving it, so the
+          // dependent fan-out has no second window to look at.
+          vacatedRange: null,
           actorRole: sessionUserRole,
           hasBookingsEditAccess,
           actorMemberId: sessionUserId,
@@ -1077,6 +1083,9 @@ async function performBookingCancellation(
       // own hosting review, since a cancelled stay has no hazard.
       await reconcileAdultMemberHostingReviewWithSiblings(bookingId, tx, {
         ...hostingCoverageActorOptions({
+          // #3232: a cancellation removes a stay rather than moving it, so the
+          // dependent fan-out has no second window to look at.
+          vacatedRange: null,
           actorRole: sessionUserRole,
           hasBookingsEditAccess,
           actorMemberId: sessionUserId,
@@ -1619,6 +1628,9 @@ async function performBookingCancellation(
     // own hosting review, since a cancelled stay has no hazard.
     await reconcileAdultMemberHostingReviewWithSiblings(bookingId, tx, {
       ...hostingCoverageActorOptions({
+        // #3232: a cancellation removes a stay rather than moving it, so the
+        // dependent fan-out has no second window to look at.
+        vacatedRange: null,
         actorRole: sessionUserRole,
         hasBookingsEditAccess,
         actorMemberId: sessionUserId,

@@ -65,6 +65,39 @@ export function wholeLodgeBlockedNights(capacity: {
 }
 
 /**
+ * "There are not enough beds for this", on a path with no override to offer
+ * (ADR-001 decision 6, issue #118; classed for #3232, `INV-HOST-051`).
+ *
+ * A SUBCLASS OF `ApiError` WITH THE SAME MESSAGE AND THE SAME 400, so nothing on
+ * the wire changes: every route's generic `instanceof ApiError` branch answers it
+ * exactly as it answered the bare error this replaces. What the class adds is that
+ * the refusal can be RECOGNISED by a caller instead of read.
+ *
+ * WHY THAT MATTERS, AND IT IS NOT TIDINESS. The linked move (#3232) offers a member
+ * whose second booking cannot fit on the new nights a "cannot" arm: it says so
+ * plainly and offers the warn-and-continue path, because nothing about a full lodge
+ * should stop a member moving their own booking. That arm is selected by asking the
+ * dependent's refusal what KIND of refusal it is. The two classed capacity errors
+ * below are admin-only — the member path throws before either of them is reached —
+ * so keying the arm on them alone left it unreachable for the one actor who can
+ * ever get there, and a full lodge refused the member with no door at all: the
+ * deadlock the whole issue exists to remove. A message match would have worked
+ * until somebody reworded the message; a class cannot drift (`INV-SSOT-001`,
+ * prefer unrepresentable over policed).
+ *
+ * ONLY THE ORDINARY CAPACITY REFUSAL. The partner-shared admission's rejection
+ * (#1746) stays a bare `ApiError`: it is admin-initiated by owner decision, so it
+ * cannot reach a member's linked move, and its reason text is the check's own
+ * rather than "there are no beds".
+ */
+export class InsufficientCapacityError extends ApiError {
+  constructor(message: string) {
+    super(message, 400);
+    this.name = "InsufficientCapacityError";
+  }
+}
+
+/**
  * Non-confirmable capacity refusal (ADR-001, issue #118). Raised when an admin
  * over-capacity override (`confirmOverCapacity`) would admit a guest onto a
  * night that is exclusively held for another booking. Unlike

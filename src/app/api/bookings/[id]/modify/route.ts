@@ -25,7 +25,12 @@ import {
   handleMemberGuestAddRefusal,
   startMemberGuestRefusalClock,
 } from "@/lib/member-guest-probe-guard";
-import { modifyBookingBatch } from "@/lib/booking-batch-modification-service";
+import {
+  SameOwnerCoverageLinkedMoveRequiredError,
+  buildSameOwnerCoverageLinkedMoveBody,
+  hostingCoverageLinkedMoveSchema,
+} from "@/lib/adult-member-hosting-linked-move";
+import { modifyBookingWithLinkedMoveSupport } from "@/lib/booking-linked-date-move-arms";
 import { clubTime } from "@/lib/club-time/server";
 import { adminShiftBookingDates } from "@/lib/booking-date-modification-service";
 import { EditFinancialReviewPendingError } from "@/lib/edit-financial-review";
@@ -136,6 +141,10 @@ const batchModifySchema = z.object({
   // first submission never carries it — the officer is asked only when the change
   // would actually strand another booking on the account.
   hostingCoverageOverride: hostingCoverageOverrideSchema.optional(),
+  // #3232: the member's answer to the linked-move offer. Absent on a first
+  // submission, which is the normal case — the question is only asked when the
+  // change would actually strand another booking on their own account.
+  hostingCoverageLinkedMove: hostingCoverageLinkedMoveSchema.optional(),
 });
 
 const OVERRIDE_DATE_ONLY_FIELDS = [
@@ -303,11 +312,14 @@ export async function PUT(
             },
             ipAddress,
           })
-        : await modifyBookingBatch({
+        : await modifyBookingWithLinkedMoveSupport({
             bookingId,
             actor: { id: session.user.id, role: actorRole },
             ...(parsed.data.hostingCoverageOverride
               ? { hostingCoverageOverride: parsed.data.hostingCoverageOverride }
+              : {}),
+            ...(parsed.data.hostingCoverageLinkedMove
+              ? { linkedMove: parsed.data.hostingCoverageLinkedMove }
               : {}),
             input: parsed.data,
             ipAddress,
@@ -449,6 +461,17 @@ export async function PUT(
     // as its neighbour: a batch edit that would leave another booking on the
     // member's own account without adult-member cover is refused, and the body is
     // what names the affected booking, its lodge and the uncovered nights.
+    // #3232 D1, ABOVE its bare-refusal sibling. Moving this booking would strand
+    // another of the member's own bookings that they cannot move themselves, so
+    // they are OFFERED the linked move — both together on one combined figure, or
+    // this one alone with the other left uncovered and the officer told. The bare
+    // refusal below is still right for a stranding they CAN fix on the affected
+    // booking; this one is for the shape where every such remedy is closed.
+    if (err instanceof SameOwnerCoverageLinkedMoveRequiredError) {
+      return NextResponse.json(buildSameOwnerCoverageLinkedMoveBody(err), {
+        status: err.status,
+      });
+    }
     if (err instanceof SameOwnerCoverageWouldBreakError) {
       return NextResponse.json(buildSameOwnerCoverageRefusalBody(err), {
         status: err.status,

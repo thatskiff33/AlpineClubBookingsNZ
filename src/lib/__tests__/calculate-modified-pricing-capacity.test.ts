@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api-error";
 import {
+  InsufficientCapacityError,
   OverCapacityConfirmationRequiredError,
   WholeLodgeHoldBlockedError,
 } from "@/lib/over-capacity-confirmation";
@@ -187,7 +188,16 @@ describe("calculateModifiedPricing capacity (issue #1668)", () => {
         adminOverride: false,
       }),
     ).rejects.toMatchObject({
-      constructor: ApiError,
+      // #3232: THE CLASS IS THE ASSERTION, not decoration on top of the message.
+      // The member's linked move decides its "there are not beds for both" arm by
+      // asking this refusal what kind of refusal it is, and this is the only
+      // capacity refusal a member can ever receive — the two over-capacity classes
+      // below are raised on the admin-override path only. While this was a bare
+      // `ApiError` the arm was unreachable and a full lodge refused the member
+      // with nothing to do about it. The other half of the pair lives in
+      // `booking-linked-date-move-service.test.ts` ("the arm a full lodge
+      // reaches"); neither half is meaningful alone, so do not delete one.
+      constructor: InsufficientCapacityError,
       status: 400,
       message: "Not enough beds available for these changes",
     });
@@ -214,7 +224,7 @@ describe("calculateModifiedPricing capacity (issue #1668)", () => {
         adminOverride: false,
       }),
     ).rejects.toMatchObject({
-      constructor: ApiError,
+      constructor: InsufficientCapacityError,
       status: 400,
       message: "Not enough beds available for these changes",
     });
@@ -403,7 +413,7 @@ describe("calculateModifiedPricing in-progress check-out-day capacity (#2029)", 
         ...inProgressArgs({ editableFrom: "2026-08-25", newCheckOut: "2026-08-25" }),
       }),
     ).rejects.toMatchObject({
-      constructor: ApiError,
+      constructor: InsufficientCapacityError,
       status: 400,
       message: "Not enough beds available for these changes",
     });

@@ -306,7 +306,7 @@ are permanent: never renumbered, never reused.
   `INV-OPS` fact is the real risk, because the eleventh nobody tightened is the one
   that connects to something real. This change converged its own caller only.
 - **`src/lib/__tests__/support/strip-comments.ts` is the canonical
-  `stripComments`, and since #3164 a lint rule enforces it.** 63 test files, a test
+  `stripComments`, and since #3164 a lint rule enforces it.** 66 test files, a test
   helper and one CI script import it, and `ssot/no-local-comment-stripper` in
   `eslint.config.mjs` reports a second scanner as it is written rather than
   twelve minutes later in CI. **Use it; do not write a second.** The figure was
