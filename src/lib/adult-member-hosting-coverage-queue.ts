@@ -420,3 +420,46 @@ function parseNights(value: unknown): string[] {
   );
   return [...new Set(nights)].sort();
 }
+
+/**
+ * The bookings in `candidates` that already have an unprocessed row of their OWN
+ * carrying a story — an officer's override or a member's decision (#3241,
+ * `INV-HOST-053`).
+ *
+ * WHY A SWEEP HAS TO YIELD TO THEM. One row reaches every same-owner booking on
+ * its nights, and a row's cause and reason stop at the booking it is about — so
+ * when a sweep meets an ACKNOWLEDGED booking it has nothing to say about it and
+ * would open its incident as a plain automatic change. The row that does have
+ * the story then finds an incident already open and can only PROMOTE it, which
+ * moves the officer's mandatory reason off the opening event and onto an update.
+ * An officer filtering the audit log for "incident opened" would not see why.
+ *
+ * Both rows are written in one transaction, so ordering cannot separate them:
+ * PostgreSQL gives every row in a transaction the same `now()`, and the claim
+ * orders by `enqueuedAt`. Yielding is what makes the opening deterministic.
+ *
+ * IT YIELDS ONLY TO A ROW THAT CAN STILL RUN. A row at or past `maxAttempts` is
+ * retired, so deferring to it would hold the incident closed forever — the
+ * hazard would go unnoticed, which is worse than an unexplained opening.
+ */
+export async function bookingsWithTheirOwnStoryPending(
+  candidates: readonly string[],
+  db: Prisma.TransactionClient,
+  options: { maxAttempts?: number } = {},
+): Promise<Set<string>> {
+  if (candidates.length === 0) return new Set();
+  const rows = await db.hostingCoverageReevaluation.findMany({
+    where: {
+      processedAt: null,
+      sourceBookingId: { in: [...candidates] },
+      attempts: { lt: options.maxAttempts ?? 5 },
+      OR: [{ cause: { not: "SYSTEM_CHANGE" } }, { NOT: { reason: null } }],
+    },
+    select: { sourceBookingId: true },
+  });
+  return new Set(
+    rows
+      .map((row) => row.sourceBookingId)
+      .filter((id): id is string => typeof id === "string"),
+  );
+}
