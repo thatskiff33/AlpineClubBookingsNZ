@@ -211,10 +211,15 @@ produced a completely green `npm run typecheck`.
 Two habits the baseline depends on. Delete `tsconfig*.tsbuildinfo` before
 trusting a clean run after a compiler-option change — `incremental` build info
 has false-passed a config change here before. And `useDefineForClassFields` is
-pinned `false` on purpose: Next's SWC reads only that explicit key, Vite/Vitest
-derive `true` from an ES2022 target when it is absent, and the tree has some
-eighty `Error` subclasses that declare fields and assign them after `super()`.
-Flipping it is a runtime change to decide separately, not a tidy-up.
+pinned `false` on purpose. Next's SWC reads only that explicit key (never the
+target), so the pin governs the whole production build; Vite/Vitest apply the
+resolved `tsconfig.json` to the files it includes and derive `true` from an
+ES2022 target when the key is absent, so the pin also governs every app module
+a test imports. Classes declared inside test files — excluded from
+`tsconfig.json` — are transformed with the default [[Define]] semantics, as
+they were before #2693. The tree has some eighty `Error` subclasses that
+declare fields and assign them after `super()`; flipping the pin is a runtime
+change to decide separately, not a tidy-up.
 
 ## The frozen test clock
 

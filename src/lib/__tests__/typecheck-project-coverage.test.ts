@@ -146,6 +146,7 @@ function projectCoverage(configName: string): ProjectCoverage {
   };
 }
 
+/** Tracked files only — `git add` a new file before trusting a local run. */
 function trackedFiles(): string[] {
   return execFileSync("git", ["ls-files", "-z"], {
     cwd: ROOT,
