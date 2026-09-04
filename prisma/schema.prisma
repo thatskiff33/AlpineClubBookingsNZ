@@ -3584,18 +3584,21 @@ enum HostingCoverageIncidentCause {
   /// and chose to move only the booking they were editing (#3232 D1, D3;
   /// `INV-HOST-050`, `INV-HOST-052`).
   ///
-  /// NOTHING WRITES THIS VALUE YET, and that is deliberate rather than unfinished.
+  /// WRITTEN BY EXACTLY ONE ARM: the owner-declined branch of
+  /// `hostingCoverageActorOptions` (#3241). A census in
+  /// `hosting-coverage-incident-cause-expand.test.ts` fails the build on a second
+  /// producer, because a member's prompted decision and an automatic change are
+  /// the two things this label exists to keep apart in a club's own count.
+  ///
+  /// IT ARRIVED OVER TWO RELEASES, AND A FOURTH VALUE HERE OWES THE SAME ORDER.
   /// `docs/BLUE_GREEN_MIGRATION_POLICY.md` binds every migration to stay readable
-  /// by the colour that is still draining, and that colour's generated client has
+  /// by the colour that is still draining, and that colour's generated client had
   /// never heard of a third label — the incident writer's own fold read selects
-  /// `cause`, so a row carrying this value would fail to deserialise there. So
-  /// migration `20260909010000_add_owner_declined_linked_move_incident_cause`
-  /// REGISTERS the label (expand) and the release AFTER it starts writing it
-  /// (runtime). Until then a declined offer is still recorded as `SYSTEM_CHANGE`,
-  /// with the member's decision written in words into the incident's audit
-  /// history. `INV-HOST-052` is the rule, and a census fails the build if any
-  /// writer starts producing this value while the expand is still in its first
-  /// release.
+  /// `cause`, so a row carrying the value would have failed to deserialise there.
+  /// So migration `20260909010000_add_owner_declined_linked_move_incident_cause`
+  /// REGISTERED the label with nothing writing it (expand, #3232), a declined
+  /// offer was recorded as `SYSTEM_CHANGE` for that release, and the release
+  /// after it added the writer (runtime, #3241). `INV-HOST-052` is the rule.
   OWNER_DECLINED_LINKED_MOVE
 }
 
