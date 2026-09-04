@@ -762,52 +762,53 @@ handed an epic-with-children or asked to run several related issues at once.
 ### 4. Model selection
 
 - **Choose the tier at dispatch, from the lineup you actually have.** This
-  section deliberately does not name a default model: the lineup changes faster
-  than this file, and a stale name gets followed literally long after it stops
-  being the right answer. You know the task and the current models at the moment
-  you dispatch; decide there. Work down three questions in order. *Can a
-  deterministic command answer this exactly?* Then run it — a grep, a focused
-  test, a typecheck, `npm run agent:context` — and spend no model at all.
-  *If not, what is the cheapest tier I would trust to be right here without
-  checking its work?* Dispatch that one. *Is this bounded by reasoning or by
-  context?* Raise reasoning effort before reaching for a larger model, since the
-  two are separate dials and effort is usually the one that was actually short.
-  Escalate on evidence — a wrong answer, a refusal, a task that proves harder
-  than it read — never on a hunch that bigger is safer. Bounded searches,
-  mechanical edits and routine Low/Medium implementation rarely need the top of
-  the lineup; money, schema, auth, capacity, lifecycle and provider work almost
-  always need the strongest generally-capable tier at high or `xhigh`.
-- **State the model explicitly when you dispatch a subagent.** A subagent
-  launched without one **inherits the orchestrator's model**, so an unstated
-  choice is not a cheap default — it is the orchestrator's tier, silently. Name
-  the model and the effort in the launch, and put one line in the brief saying
-  why that tier fits the task. That line is what makes a wrong routing visible
-  in review instead of invisible in a bill.
-- **Reserve the top Mythos-class tier for genuine reasoning-frontier work** —
-  deep Xero-idempotency/frozen-reference contracts, immutable-charge backfill
-  correctness, or irreversible member-merge + DMMF-completeness reasoning. Do
-  not use it blanket for everything labelled "Critical"; scale model *and*
-  reasoning effort to the task.
+  section names no product — a written-down name goes stale and gets followed
+  anyway; the dated table of names, efforts and measurements is
+  [`agents/SUBAGENT_GUIDE.md`](docs/agents/SUBAGENT_GUIDE.md) → "Model routing
+  table". Work down three questions in order. *Can a deterministic command answer this exactly?* Then run it — a
+  grep, a focused test, a typecheck, `npm run agent:context` — and spend no
+  model at all. *If not, what is the cheapest tier and effort I would trust to be
+  right here without checking its work?* Dispatch that. *Is this bounded by
+  reasoning or by context?* Raise reasoning effort before reaching for a larger
+  model; the two are separate dials and effort is usually the one that was
+  short. Escalate on evidence — a wrong answer, a red check, a refusal — never
+  on a hunch that bigger is safer.
+- **The shape, measured 4 Sep 2026** (owner decision; evidence on #3259):
+  routine Low/Medium work and the standard review lenses go to the **top
+  Mythos-class tier at `medium`**, whose lower efforts out-perform the previous
+  generation's top ones in fewer turns and so cost less per *completed task*;
+  gated areas take that tier at `high`; `xhigh` is reserved for work bounded by
+  reasoning, where it stops being cheaper; the strongest generally-capable model
+  is the fallback when the top tier's allowance share is spent. This inverts the
+  earlier reading that reserved the top tier — right for the previous
+  generation, wrong now.
+- **State the model explicitly when you dispatch a subagent, and the effort
+  with it.** A subagent launched without them **inherits the orchestrator's
+  model** and effort, so an unstated choice is not a cheap default — it is the
+  orchestrator's tier, silently. Name both in the launch and say in one line of
+  the brief why that tier fits; that line makes a wrong routing visible in
+  review instead of invisible in a bill. If the launch interface has no effort
+  control, pin it in an agent definition and name that. Brief the top tier with
+  the vendor's lines in the same guide → "Briefing the top tier", verbatim.
 - **Never route security work to the top Mythos-class tier — keep it on the
   strongest generally-capable model at `xhigh` reasoning effort.** At the time
   of writing that means Fable is excluded and Opus is the right choice, but the
   rule is the shape, not the names. The top tier's safety classifiers target
-  cyber content, so a security review or exploit analysis can come back
-  *refused* rather than answered. The refusal arrives as
-  `stop_reason: "refusal"` on an HTTP 200, not as an error — an unwary
-  orchestrator reads the empty or truncated result as a clean pass. Its
-  bug-finding gains also explicitly exclude security-focused analysis, so the
-  escalation buys nothing here even when it does answer. The strongest
-  generally-capable tier refuses far less on this material and falls back rather
-  than stopping outright, which is why an uncertain security blocker escalates
-  in *effort*, not in tier. Before routing security work to any tier you have
-  not used for it before, check that a refusal would be visible to you as a
-  failure rather than as a pass.
+  cyber content, so a security review, exploit analysis or scanner-configuration
+  task can come back *refused* rather than answered. The refusal arrives as
+  `stop_reason: "refusal"` on an HTTP 200, not as an error — inside a subagent,
+  an unwary orchestrator reads the empty or truncated result as a clean pass.
+  Its vendor states that tier's bug-finding gains **exclude security-focused
+  analysis**, so the escalation buys nothing here even when it answers, and the
+  generally-capable tier refuses far less — which is why an uncertain security
+  blocker escalates in *effort*, not in tier. Before routing
+  security work to a tier you have not used for it before, check that a refusal
+  would be visible to you as a failure rather than as a pass.
 - **`xhigh` is the effort ceiling — never use `max`, on any lane** (owner
   directive, 10 Aug 2026). At `max` the model overthinks and the outcome gets
-  *worse*, not better; `xhigh` is sufficient for the hardest security and
-  Critical work. Effort escalation for an uncertain blocker therefore tops out
-  at `xhigh`.
+  *worse*, not better, and it is the one setting at which the top tier costs
+  more per task than the generally-capable one. `xhigh` is sufficient for the
+  hardest security and Critical work.
 
 ### 5. Per-issue pipeline
 
