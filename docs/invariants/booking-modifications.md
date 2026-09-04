@@ -1517,7 +1517,12 @@ and nothing is being settled, so the target is the stored total flat and the
 writer re-bases that total to the number already on file. What it CAN do is
 re-apportion, within that fixed total, what each night is recorded as having sold
 for — which is the officer's judgement, is what a mismatch needs, and is why the
-audit entry carries the previous per-night values as well as both totals.
+audit entry carries the previous per-night values as well as both totals. The
+guarantee is about what anybody OWES and is deliberately no wider: two readers
+elsewhere count night rows or sum them inside a date window, so a member's
+nomination nights and which month income lands in can both move. Stated once, in
+`src/lib/stored-night-price-strand-reconcile.ts`'s module docblock, and analysed
+in [`CONCURRENCY_AND_LOCKING.md`](../CONCURRENCY_AND_LOCKING.md).
 
 **Its fence is eligibility, not arithmetic.** A strand the exactness classifier
 calls `exact` is refused outright, so this is not a general re-pricer; so is a

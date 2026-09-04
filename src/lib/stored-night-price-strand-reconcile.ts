@@ -72,7 +72,45 @@ import {
  *     write is provably a no-op, so this act cannot change what anybody owes,
  *     whatever is typed into the boxes. Both halves are ASSERTED below rather
  *     than trusted, because a claim about money is worth what its check is
- *     worth.
+ *     worth. What that guarantee does and does not extend to is the next
+ *     section, and it is narrower than "changes nothing else".
+ *
+ * ## WHAT THE NO-OP GUARANTEE COVERS, AND WHAT IT DOES NOT
+ *
+ * It covers THE MEMBER'S TOTAL, precisely and only: `BookingGuest.priceCents` is
+ * re-based to the number already in it, so nothing anybody owes moves, no
+ * settlement is created, no credit is written and no provider is called. That is
+ * the whole of the claim, which is why the copy everywhere says "what anybody
+ * owes" rather than "anything". The unqualified sentence would be false: two
+ * things elsewhere read the NIGHT ROWS rather than the strand total, and both
+ * move when this act writes.
+ *
+ *  1. **The member's NOMINATION eligibility.** `countMemberStayNights`
+ *     (`member-stay-nights.ts`) counts `BookingGuestNight` rows, so a member
+ *     strand holding NO rows contributes nothing to the nomination gate's
+ *     `minimumNights` today and contributes every night of the stay once the
+ *     create arm has run. A member whose only committed stay is a three-night
+ *     converted request can therefore become able to nominate the moment an
+ *     officer records what those nights sold for. THE NEW NUMBER IS THE TRUER
+ *     ONE - `INV-CAP-032` is that a guest with no night rows is one the system
+ *     believes is nowhere - so this is a correction of the same kind the
+ *     capacity paragraph in `docs/CONCURRENCY_AND_LOCKING.md` welcomes, not a
+ *     defect. It is written down because it is invisible from the screen: the
+ *     officer is not thinking about who may nominate, and nothing on the page
+ *     would tell them.
+ *  2. **Which MONTH the club's income lands in.** `loadBookingHutFees`
+ *     (`finance-revenue-reconciliation.ts`) sums night prices inside a DATE
+ *     WINDOW. Filling or creating rows adds revenue into a window, which closes
+ *     the positive Xero variance that function's own docblock describes and is
+ *     the point. But on the `STORED_TOTAL_MISMATCH` shape this act
+ *     RE-APPORTIONS within a fixed total, and a stay crossing a month end
+ *     therefore moves income between two months while the booking's total is
+ *     unchanged: 31 Jul + 1 Aug stored $40/$40 against a stored total of $100,
+ *     recorded as the true $0/$100, drops July's hut-fee figure by $40 and
+ *     raises August's by $60, so a July reconciliation already reported to the
+ *     committee no longer reproduces. Recoverable rather than lost - the audit
+ *     entry carries `previousNightPrices` - and the officer is told about the
+ *     month end on screen before they record.
  *
  * ## What it deliberately does NOT do
  *

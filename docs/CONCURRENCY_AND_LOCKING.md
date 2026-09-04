@@ -2882,6 +2882,33 @@ Three things differ from the settle path and each matters:
   than a 500. The created dates are exactly `getGuestBedNightKeys`, so no
   capacity count moves (`INV-CAP-032`).
 
+**"PROVABLY A NO-OP" IS A CLAIM ABOUT THE MEMBER'S TOTAL, AND NOT ABOUT
+EVERYTHING.** That is the claim the "no key" decision above rests on, and it
+holds: `BookingGuest.priceCents` is written back as the number already in it, no
+settlement is created, no credit is written and no provider is called. Two
+readers elsewhere read the night ROWS rather than that total, and both see a
+different answer afterwards. Neither takes a lock, because neither is a writer —
+they are readers that will now see truer rows — but both were analysed, and the
+same care the capacity bullet above got is owed to them:
+
+- **`countMemberStayNights`** (`src/lib/member-stay-nights.ts`) counts
+  `BookingGuestNight` rows, and feeds the membership-nomination gate's
+  `minimumNights`. A member strand with no rows contributes zero nights today and
+  contributes the whole stay once the create arm has run, so a member can become
+  able to nominate from this act. The higher figure is the truer one for the same
+  reason the bullet above gives (`INV-CAP-032`), so this is a correction rather
+  than a defect — but it is invisible from the officer's screen, which is why it
+  is written down here rather than left to be discovered;
+- **`loadBookingHutFees`** (`src/lib/finance-revenue-reconciliation.ts`) sums
+  night prices inside a DATE WINDOW. Filling or creating rows adds revenue into a
+  window, which closes the positive Xero variance that report exists to raise. But
+  re-apportioning a `STORED_TOTAL_MISMATCH` strand moves income ACROSS a month
+  end while the booking's total is unchanged, so a period figure already reported
+  can stop reproducing. It is recoverable — the audit entry carries
+  `previousNightPrices` — and the officer is warned about the month end on
+  screen. The one home for the full statement is
+  `stored-night-price-strand-reconcile.ts`'s module docblock.
+
 Against a concurrent booking edit — which holds `pg_advisory_xact_lock(1)` and
 `acquireLodgeCapacityLock`, and deletes and recreates these very rows in
 `applyGuestChanges` — the fences turn a race into a 409 and a rollback, never a

@@ -44,6 +44,12 @@
   no current rates, no starting figure in any box — and $0.00 is a real price
   for a night that was genuinely free.
 
+  One thing does move, and the screen says so: where a stay crosses the end of a
+  month, shifting an amount between its nights shifts which month the club counts
+  that income in, so a revenue figure already reported for the earlier month will
+  not come out the same afterwards. The booking's own total is untouched, and the
+  audit entry keeps what each night held before, so the change can be traced.
+
   It covers the three ways the records can fail: some nights with no price, no
   night prices stored at all, and night prices that do not add up to the stay.
   It is offered per guest, so a booking with two such guests needs both. It is

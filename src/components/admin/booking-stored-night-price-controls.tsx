@@ -74,6 +74,15 @@ const NOTE_MAX_LENGTH = 500;
  * nights, its eligibility - so nothing on this screen is load-bearing for
  * safety; it is here so the officer sees the refusal before they post rather
  * than after.
+ *
+ * THE PROMISE IS "WHAT ANYBODY OWES", NOT "NOTHING ELSE", and this screen must
+ * not say the wider thing. Within that fixed total the act re-apportions what
+ * each night sold for, and a stay crossing a month end therefore moves income
+ * between two months - so the copy says so in the officer's own words. The full
+ * statement of what does and does not move, including the nomination-eligibility
+ * consequence an officer has no way to see from here, is
+ * `stored-night-price-strand-reconcile.ts`'s module docblock and is not restated
+ * here (`INV-SSOT`).
  */
 
 /**
@@ -299,8 +308,15 @@ export function BookingStoredNightPriceControls({
       <p className="text-xs text-warning-11">
         Until these are recorded, every change to this booking has to be priced
         by hand, and an other-club member rate cannot be set on it. Recording
-        them does not move any money: the figures have to come to what each stay
-        is already stored as being worth.
+        them does not change what anybody owes: the figures have to come to what
+        each stay is already stored as being worth.
+      </p>
+      <p className="text-xs text-warning-11">
+        What it does change is how that figure is made up, night by night. Where
+        a stay crosses the end of a month, moving an amount from one night to
+        another moves which month the club counts that income in, so a report
+        already run for the earlier month will no longer come out the same. The
+        booking&apos;s own total is untouched either way.
       </p>
       <AdminViewOnlySectionBanner canEdit={canEdit} />
       {offers.map((offer) => (

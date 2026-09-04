@@ -310,10 +310,17 @@ why, and shows what is on file for each of their nights.
   including any that already show an amount — and they have to come to what
   that guest's stay is already stored as being worth. The total is shown, and the
   running total under the boxes says what you have typed and what it needs to be.
-- **It cannot move any money.** Because the figures have to come to the figure
-  already on file, what the guest owes is exactly the same afterwards. What
-  changes is how that figure is made up, night by night — which matters,
-  because a later part-refund is worked out from those nights.
+- **It cannot change what anybody owes.** Because the figures have to come to
+  the figure already on file, what the guest owes is exactly the same
+  afterwards. What changes is how that figure is made up, night by night — which
+  matters, because a later part-refund is worked out from those nights.
+- **One thing that does move: which month the income lands in.** If the stay
+  crosses the end of a month and you move an amount from a night in one month to
+  a night in the next, the club's income for those two months changes to match —
+  so a revenue figure you have already reported for the earlier month will no
+  longer come out the same. The booking's own total is untouched, and the audit
+  entry keeps what each night held before, so the change can always be traced.
+  Where it matters, say so in the note.
 - **Nothing is filled in for you**, here or anywhere in this feature. If the
   figures will not add up honestly, do not adjust one to close the gap; a figure
   typed to close a gap is a price nobody decided.
