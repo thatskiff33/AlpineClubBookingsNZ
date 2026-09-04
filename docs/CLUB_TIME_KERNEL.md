@@ -110,7 +110,15 @@ One place: `getClubTimeZone()` (CT-1, `INV-CONFIG-002`), the persisted
   reachable from **no** CLI root, and from `src/instrumentation.node.ts` by all
   four — the cron through `general-cron-runner`, `group-booking` through the Xero
   inbound chain. So all four take the runtime reader, and the rule decided the
-  answer without a judgement call. Where such a module also runs under a lock, it
+  answer without a judgement call. #2956 then split `payment-link.ts` by
+  responsibility: the split-child mint (`payment-link-split-guest.ts`) and the
+  revocation helpers keep the instrumentation edge through the cron, while
+  `payment-link-context.ts`, `payment-link-intent.ts` and
+  `payment-link-reissue.ts` are reached only from the `/pay` routes. They kept
+  the runtime reader when they moved — a move, not a re-measurement — so
+  whether any of them may now take `club-time/server` is an open question for
+  its own change, not something this note decides. Where such a module also
+  runs under a lock, it
   resolves the zone before the transaction and threads it in as a value; see
   `docs/CONCURRENCY_AND_LOCKING.md` -> "Which client reads the club's timezone".
 - **Client component** — `useClubTime()`, from `@/components/club-time-provider`.

@@ -228,8 +228,8 @@ and the pay route hands its PAID claim to `payment-reconciliation.ts` /
 `booking-credit-election.ts`. A gate one layer down strands the same member as a
 gate in the route, so the census covers `stripe-webhook-service.ts`,
 `payment-reconciliation.ts`, `booking-credit-election.ts`,
-`booking-payment-flow.ts`, `payment-transactions.ts` and `payment-link.ts` by
-name. It does NOT cover the transitive import closure of those routes, which
+`booking-payment-flow.ts`, `payment-transactions.ts` and the five
+`payment-link*.ts` modules (#2956) by name. It does NOT cover the transitive import closure of those routes, which
 reaches pricing and booking-policy modules where the gate legitimately belongs.
 Together with the `!isAuthorizedOnBehalf` term on the create gate
 (`INV-LOCKOUT-003`), that is what makes one journey possible: an admin books on

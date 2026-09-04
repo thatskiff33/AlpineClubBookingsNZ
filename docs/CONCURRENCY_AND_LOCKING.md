@@ -1120,7 +1120,8 @@ inside a transaction was that nobody had.
 The same rule again, and the one place it decides whether a member keeps a bed.
 A payment link expires at the end of the check-in day in the club's **persisted**
 timezone (`INV-CONFIG-002`), and four decisions read that one boundary: the mint
-in `payment-link.ts` / `booking-request.ts` / `group-booking.ts`, the refusal to
+in `payment-link-reissue.ts` / `payment-link-split-guest.ts` /
+`booking-request.ts` / `group-booking.ts`, the refusal to
 mint a link that would be born expired, and the two capacity-releasing
 `PENDING -> CANCELLED` terminal cancels in `cron-confirm-pending.ts`. Three of
 those sites are inside a `prisma.$transaction` already holding

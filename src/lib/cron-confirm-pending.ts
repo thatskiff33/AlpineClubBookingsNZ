@@ -17,10 +17,7 @@ import { recordBookingEvent } from "@/lib/booking-events";
 import { bookingHasCapacityOverride } from "@/lib/booking-status";
 import { recordWithheldBookingEmail } from "@/lib/booking-email-suppression";
 import logger from "@/lib/logger";
-import {
-  revokePaymentLinkById,
-  revokePaymentLinksForBooking,
-} from "@/lib/payment-link";
+import { revokePaymentLinkById, revokePaymentLinksForBooking } from "@/lib/payment-link";
 import {
   mintSplitGuestPaymentLinkIfAbsent,
   type MintedSplitGuestPaymentLink,

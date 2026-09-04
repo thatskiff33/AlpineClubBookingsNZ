@@ -4,8 +4,8 @@
  * A `/pay` link stays valid to the END OF THE CHECK-IN DAY, inclusive, and four
  * separate decisions are bound to that single moment:
  *
- * 1. what `PaymentLink.expiresAt` is minted as — `payment-link.ts`,
- *    `booking-request.ts` and `group-booking.ts`;
+ * 1. what `PaymentLink.expiresAt` is minted as — `payment-link-reissue.ts`,
+ *    `payment-link-split-guest.ts`, `booking-request.ts` and `group-booking.ts`;
  * 2. whether a fresh mint would be born expired and must therefore not happen;
  * 3. the request-hold TERMINAL CANCEL in `cron-confirm-pending.ts` (#2012),
  *    which releases real capacity;
