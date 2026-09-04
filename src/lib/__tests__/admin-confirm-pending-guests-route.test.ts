@@ -285,18 +285,20 @@ describe("POST /api/admin/bookings/[id]/confirm-pending-guests", () => {
       mocks.upsertPaymentIntentTransaction.mock.invocationCallOrder[0]
     ).toBeLessThan(mocks.markBookingPaymentSucceeded.mock.invocationCallOrder[0]);
     expect(mocks.createStructuredAuditLog).toHaveBeenCalled();
-    // The booking's OWN saved card is charged and stamped back onto its row.
+    // The booking's OWN saved card is charged; the claim writes only the
+    // customer onto its row (#3269 — a pm write-back would race the
+    // setup-intent route's replacement mint and resurrect a cleared card).
     expect(mocks.chargePaymentMethod).toHaveBeenCalledWith(
       expect.objectContaining({ customerId: "cus_1", paymentMethodId: "pm_1" })
     );
-    expect(mocks.paymentUpsert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        create: expect.objectContaining({
-          stripeCustomerId: "cus_1",
-          stripePaymentMethodId: "pm_1",
-        }),
-      })
-    );
+    const ownUpsertArgs = mocks.paymentUpsert.mock.calls[0][0] as {
+      create: Record<string, unknown>;
+      update: Record<string, unknown>;
+    };
+    expect(ownUpsertArgs.create).toMatchObject({ stripeCustomerId: "cus_1" });
+    expect(ownUpsertArgs.update).toMatchObject({ stripeCustomerId: "cus_1" });
+    expect(Object.keys(ownUpsertArgs.create)).not.toContain("stripePaymentMethodId");
+    expect(Object.keys(ownUpsertArgs.update)).not.toContain("stripePaymentMethodId");
   });
 
   // #3269 / INV-PAY-053: the route asks the same question the cron asks — "may

@@ -853,7 +853,7 @@ describe("Cron: Confirm Pending Bookings", () => {
     expect(mockSendSplitGuestPaymentLinkEmail).toHaveBeenCalled();
   });
 
-  it("charges the child's own SetupIntent-saved card ahead of the parent's, and stamps it back onto the row (#3269)", async () => {
+  it("charges the child's own SetupIntent-saved card ahead of the parent's, and the claim writes only the customer onto the row (#3269)", async () => {
     // Own row: the fixture default is a SetupIntent-saved card. The parent's
     // one-off card is present and must be ignored.
     const booking = makePendingBooking("child_1", {
@@ -884,18 +884,21 @@ describe("Cron: Confirm Pending Bookings", () => {
         paymentMethodId: "pm_child_1",
       })
     );
-    // Own card: stamping it back is a no-op and is done.
+    // Own card: the claim still writes only the customer. Writing the pm back
+    // "as a no-op" races the setup-intent route's replacement mint (#3266),
+    // which nulls the pm beside a fresh SetupIntent id — the write-back would
+    // resurrect the old card next to the new id and pass the provenance check.
     expect(mockPaymentUpsert).toHaveBeenCalledWith({
       where: { bookingId: "child_1" },
-      create: expect.objectContaining({
-        stripeCustomerId: "cus_child_1",
-        stripePaymentMethodId: "pm_child_1",
-      }),
-      update: expect.objectContaining({
-        stripeCustomerId: "cus_child_1",
-        stripePaymentMethodId: "pm_child_1",
-      }),
+      create: expect.objectContaining({ stripeCustomerId: "cus_child_1" }),
+      update: expect.objectContaining({ stripeCustomerId: "cus_child_1" }),
     });
+    const ownUpsertArgs = mockPaymentUpsert.mock.calls[0][0] as {
+      create: Record<string, unknown>;
+      update: Record<string, unknown>;
+    };
+    expect(Object.keys(ownUpsertArgs.create)).not.toContain("stripePaymentMethodId");
+    expect(Object.keys(ownUpsertArgs.update)).not.toContain("stripePaymentMethodId");
     expect(mockMintSplitGuestPaymentLinkIfAbsent).not.toHaveBeenCalled();
   });
 

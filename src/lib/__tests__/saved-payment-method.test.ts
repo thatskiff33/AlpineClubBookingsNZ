@@ -139,16 +139,10 @@ describe("savedPaymentMethodForBooking", () => {
 });
 
 describe("savedPaymentMethodRowStamp", () => {
-  it("writes customer and payment method back when the card came from this row (a no-op stamp)", () => {
-    expect(
-      savedPaymentMethodRowStamp({
-        stripeCustomerId: "cus_saved",
-        stripePaymentMethodId: "pm_saved",
-        source: "own",
-      })
-    ).toEqual({ stripeCustomerId: "cus_saved", stripePaymentMethodId: "pm_saved" });
-  });
-
+  // The claim writes the customer and NOTHING else, whichever row supplied the
+  // card. The KEY must be absent, not present-and-undefined: Prisma writes an
+  // explicit `undefined` as "leave unchanged" today, but an absent key is the
+  // only shape that cannot become a write under a future client.
   it("writes ONLY the customer when the card was borrowed from the parent — never launders the pm onto the child", () => {
     const stamp = savedPaymentMethodRowStamp({
       stripeCustomerId: "cus_parent",
@@ -156,9 +150,20 @@ describe("savedPaymentMethodRowStamp", () => {
       source: "parent",
     });
     expect(stamp).toEqual({ stripeCustomerId: "cus_parent" });
-    // The KEY must be absent, not present-and-undefined: Prisma writes an
-    // explicit `undefined` as "leave unchanged" today, but an absent key is the
-    // only shape that cannot become a write under a future client.
+    expect(Object.keys(stamp)).toEqual(["stripeCustomerId"]);
+  });
+
+  it("writes ONLY the customer when the card came from this row too — a write-back would resurrect a pm a concurrent replacement mint just cleared", () => {
+    // Race (#3266 × #3269): the claim reads (pm1, seti1); the setup-intent
+    // route's replacement mint writes (pm null, seti2); a claim that wrote pm1
+    // back would leave (pm1, seti2), a card mid-replacement that passes the
+    // provenance check. Writing only the customer cannot resurrect anything.
+    const stamp = savedPaymentMethodRowStamp({
+      stripeCustomerId: "cus_saved",
+      stripePaymentMethodId: "pm_saved",
+      source: "own",
+    });
+    expect(stamp).toEqual({ stripeCustomerId: "cus_saved" });
     expect(Object.keys(stamp)).toEqual(["stripeCustomerId"]);
   });
 });
