@@ -25,6 +25,7 @@ import {
   buildMappedPnlDashboard,
   buildRevenueDashboard,
 } from "@/lib/finance-dashboard-page/pnl-view";
+import { buildRatiosDashboard } from "@/lib/finance-dashboard-page/ratios-view";
 import {
   cardRows,
   type FinanceDashboardKpiCard,
@@ -47,10 +48,6 @@ import { buildFinanceMonthlyBalanceSeries } from "@/lib/finance-monthly-balance"
 import {
   buildFinanceMonthlyPnlSummary,
 } from "@/lib/finance-monthly-pnl";
-import {
-  buildFinanceRatioMatrix,
-} from "@/lib/finance-ratio-insights";
-import { financeFinancialYearBuckets } from "@/lib/finance-ratio-shared";
 import { refreshFinancialYearConfig } from "@/lib/financial-year-server";
 import { hasFinanceManagerAccess } from "@/lib/admin-permissions";
 import { buildXeroReportsUrl } from "@/lib/xero-links";
@@ -204,81 +201,6 @@ function buildSelectionLabels(selection: FinanceDashboardSelection) {
     forwardWindow: selection.forwardWindow.seasonLodgeName
       ? selection.forwardWindow.label
       : financeDashboardWindowDetail(selection.forwardWindow),
-  };
-}
-
-async function buildRatiosDashboard(
-  selection: FinanceDashboardSelection
-): Promise<FinanceDashboardViewModel & { ratios: FinanceDashboardRatioExplorerModel }> {
-  const matrix = await buildFinanceRatioMatrix({
-    financialYearEndMonth: selection.financialYearEndMonth,
-    currentMonth: selection.currentMonth,
-  });
-  const buckets = financeFinancialYearBuckets(matrix);
-
-  return {
-    ratios: {
-      matrix,
-      initialNumeratorId: selection.ratioNumeratorId,
-      initialDenominatorId: selection.ratioDenominatorId,
-      initialRangeKey: selection.ratioRangeKey,
-    },
-    cards: [],
-    trends: [],
-    mix: null,
-    statusPanels: [],
-    costFilters: null,
-    sourceNotes: [
-      {
-        label: "Ratio source",
-        description:
-          "Ratios divide stored monthly Xero account balances grouped by the treasurer's category mappings. Unmapped accounts are included in the totals series.",
-      },
-    ],
-    exportSections: [
-      {
-        title: "Category totals by financial year",
-        rows: matrix.series.map((series) => ({
-          Category: series.name,
-          Kind: series.kind,
-          [buckets[0].label]: formatCents(
-            buckets[0]
-              ? matrix.months.reduce(
-                  (total, month, index) =>
-                    month >= buckets[0].fromMonth && month <= buckets[0].toMonth
-                      ? total + (series.valuesCents[index] ?? 0)
-                      : total,
-                  0
-                )
-              : 0
-          ),
-          [buckets[1].label]: formatCents(
-            matrix.months.reduce(
-              (total, month, index) =>
-                month >= buckets[1].fromMonth && month <= buckets[1].toMonth
-                  ? total + (series.valuesCents[index] ?? 0)
-                  : total,
-              0
-            )
-          ),
-          [buckets[2].label]: formatCents(
-            matrix.months.reduce(
-              (total, month, index) =>
-                month >= buckets[2].fromMonth && month <= buckets[2].toMonth
-                  ? total + (series.valuesCents[index] ?? 0)
-                  : total,
-              0
-            )
-          ),
-        })),
-      },
-    ],
-    warnings:
-      matrix.months.length === 0
-        ? [
-            "No monthly Xero data is stored yet. Run the finance sync, or the monthly-facts backfill for older history.",
-          ]
-        : [],
   };
 }
 
