@@ -1709,8 +1709,12 @@ type DeferredSupplementaryInvoiceAttempt =
  * `null` means the row predates that column: not recorded, therefore not
  * answerable, therefore NOT RAISED. The asymmetry is the argument - an invoice
  * this pass fails to raise is surfaced by the booking-vs-Xero repair pass as a
- * critical, one-click `MISSING_SUPPLEMENTARY_INVOICE`, while a duplicate invoice
- * it raises in error is surfaced by nobody and lands on the member.
+ * `MISSING_SUPPLEMENTARY_INVOICE`, while a duplicate invoice it raises in error
+ * is surfaced by nobody and lands on the member. Since #3199 that finding is the
+ * critical, one-click kind only where that pass can establish from the Xero
+ * operation history that the primary invoice went out FIRST; where it cannot, it
+ * still names the booking, at `manual_review` and without an action. Surfaced
+ * either way, which is all this asymmetry rests on.
  *
  * BEST-EFFORT, AND NOT A RETRY, which is the one thing here that is not obvious.
  * Throwing would hand the row to `failPaymentRecoveryOperation` and buy a retry -

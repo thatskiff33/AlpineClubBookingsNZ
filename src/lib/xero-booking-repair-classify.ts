@@ -34,6 +34,8 @@ import {
   getUnpaidCancellationClearingAmountCents,
   hasSuccessfulPrimaryInvoiceCreateAfter,
   hasSuccessfulPrimaryInvoiceUpdateAfter,
+  modificationAddedGuestCount,
+  resolvePrimaryInvoiceEditTiming,
 } from "./xero-booking-repair-analysis";
 import {
   addAction,
@@ -47,6 +49,8 @@ import {
 } from "./xero-booking-repair-findings";
 import {
   getOperationQueueTypeHint,
+  isSuccessfulXeroOperation,
+  toIsoDate,
 } from "./xero-booking-repair-utils";
 import { hasCapturedPayment } from "@/lib/booking-payment-state";
 import {
@@ -259,6 +263,25 @@ export function classifyBookingContext(
   }
 
   const latestDateChangingModification = getLatestDateChangingModification(booking);
+  /**
+   * THIS ARM READS `operation.createdAt`; THE MONEY ARM BELOW MAY NOT (#3199
+   * fix round). The two sit a few lines apart and answer questions that look
+   * alike, so the difference is stated here rather than left to be inferred.
+   *
+   * `createdAt` is when the operation was ENQUEUED, which is a LOWER bound on
+   * when Xero was written - a row enqueued before an edit can dispatch after
+   * it. That is sound in the `>=` direction these two helpers ask: a row
+   * enqueued at or after the date change is one whose dispatch is certainly
+   * after it, so the invoice narration it wrote is current. The false negatives
+   * run the other way - a row enqueued before the change but dispatched after
+   * it is missed - and the cost is one redundant description-only invoice
+   * update, no money.
+   *
+   * `resolvePrimaryInvoiceEditTiming` cannot borrow it. That question needs the
+   * UPPER bound (`completedAt`), because the wrong answer there queues a
+   * supplementary invoice for money the primary invoice already bills. Do not
+   * copy this cheaper timestamp into a money arm.
+   */
   if (
     payment &&
     primaryInvoice &&
@@ -399,6 +422,66 @@ export function classifyBookingContext(
           "INVOICE",
           "CREATE"
         );
+        /**
+         * WAS THE PRIMARY INVOICE ALREADY RAISED WHEN THIS EDIT HAPPENED
+         * (#3199, epic #2797)? The gate above cannot see that - it asks only
+         * whether a primary invoice exists NOW - and a primary invoice minted
+         * AFTER the edit already bills it, so a supplementary invoice on top
+         * bills the money twice. `resolvePrimaryInvoiceEditTiming` carries the
+         * reasoning: where the answer comes from, and why not from
+         * `primaryInvoice.operation`, a link timestamp, or the recovery row's
+         * frozen `hadIssuedXeroInvoice`.
+         *
+         * WHAT A LATER PRIMARY INVOICE CAN CARRY is what this engages on, and
+         * it is NOT the same question as "what does this edit ask for". The
+         * primary invoice bills `booking.guests[]` and their nights, so an edit
+         * is at risk of being double-billed exactly when it moved one of those:
+         *
+         * - the modification row's own net is positive - a priced edit, whose
+         *   increase moved the booking's stored totals AND its guest nights, so
+         *   a primary invoice minted afterwards carries it; or
+         * - the edit ADDED A GUEST (#3199 fix round). This one is not visible
+         *   in any amount on the row. A parked edit writes 0 to both components
+         *   - the money is on its review tasks - and still writes each added
+         *   guest with a real `priceCents` and real priced nights, because the
+         *   current rate for a guest who did not exist before is the one amount
+         *   a parked edit can always work out. A primary invoice minted after
+         *   such an edit bills that guest; the officer pricing the review is
+         *   told the added guests' amount "has not been charged" and includes
+         *   it; and the ordinary #3187 arm would then auto-apply a
+         *   supplementary invoice for the same money. `modificationNetAmountCents`
+         *   alone read that case as "nothing at risk" and it was the live
+         *   double-bill this arm exists to stop.
+         *
+         * NOT the expected ask, and that boundary is load-bearing. Widening to
+         * `netAmountCents` would engage on every review-priced finding - a
+         * review whose money is genuinely NOT on the primary invoice, because
+         * the invoice bills guest-night lines and a promo adjustment and
+         * nothing else - and would undo #3187 by sweeping those bookings into
+         * manual review. A parked edit that added no guest is exactly that
+         * case, and it keeps its one-click repair.
+         *
+         * A STATED LIMIT, not an oversight: a change fee is not a line on the
+         * primary invoice either, so an edit whose positive net is part price
+         * increase and part change fee is only PARTLY double-billed. That case
+         * reports for manual review rather than queueing a part-invoice,
+         * because sizing what is left owed is exactly the judgement the
+         * decision on #3199 put in a person's hands.
+         */
+        const editAddedGuestCount = modificationAddedGuestCount(modification);
+        const primaryInvoiceEditTiming =
+          modificationNetAmountCents > 0 || editAddedGuestCount > 0
+            ? resolvePrimaryInvoiceEditTiming({
+                operations: paymentOperations,
+                primaryInvoiceObjectId: primaryInvoice.objectId,
+                editedAt: modification.createdAt,
+              })
+            : null;
+        const primaryInvoiceEditTimingRefusal =
+          primaryInvoiceEditTiming &&
+          primaryInvoiceEditTiming.outcome !== "invoice-preceded-edit"
+            ? primaryInvoiceEditTiming
+            : null;
         if (blockingOperation && blockingOperation.retryMeta.supported) {
           const action = addAction(
             actionMap,
@@ -415,6 +498,60 @@ export function classifyBookingContext(
               operationStatus: blockingOperation.operation.status,
             },
             actionKeys: [action.key],
+          });
+        } else if (!blockingOperation && primaryInvoiceEditTimingRefusal) {
+          /**
+           * REPORTED, NEVER APPLIED, AND NEVER SILENTLY SKIPPED (#3199).
+           *
+           * The same finding code the ordinary arm raises, at `manual_review`
+           * severity with no queue action - the shape this file already uses
+           * for every other case it will not size itself. An officer still sees
+           * the booking; what they no longer get is a button that bills money
+           * the club may not be owed.
+           */
+          const summary =
+            primaryInvoiceEditTimingRefusal.outcome === "invoice-followed-edit"
+              ? "This booking edit happened before the primary Xero invoice was raised, so that invoice already bills the change - raising a supplementary invoice would bill the same money twice. Check the invoice in Xero and bill only what is genuinely still owed."
+              : primaryInvoiceEditTimingRefusal.reason ===
+                  "only-re-asserted-completion"
+                ? "The only Xero record of this booking's primary invoice is a later re-run that found the invoice already there, so the history no longer says when it was first raised and whether it already bills this edit cannot be established. Check the invoice in Xero before raising a supplementary invoice for it."
+                : "No Xero operation history says when this booking's primary invoice was raised, so whether it already bills this edit cannot be established. Check the invoice in Xero before raising a supplementary invoice for it.";
+          const manualAction = addAction(
+            actionMap,
+            buildManualReviewAction(booking.id, summary)
+          );
+          addFinding(findings, {
+            code: "MISSING_SUPPLEMENTARY_INVOICE",
+            severity: "manual_review",
+            summary,
+            safeToAutoApply: false,
+            details: {
+              modificationId: modification.id,
+              netAmountCents,
+              priceDiffCents: expectedAsk.priceDiffCents,
+              changeFeeCents: expectedAsk.changeFeeCents,
+              ...(editReviewChargeCents > 0 ? { editReviewChargeCents } : {}),
+              // #3199 fix round: why this engaged at all on an edit whose own
+              // row nets 0 - the added guests a later primary invoice bills.
+              ...(editAddedGuestCount > 0
+                ? { addedGuestCount: editAddedGuestCount }
+                : {}),
+              xeroInvoiceId: primaryInvoice.objectId,
+              primaryInvoiceTiming: primaryInvoiceEditTimingRefusal.outcome,
+              ...(primaryInvoiceEditTimingRefusal.outcome === "unknown"
+                ? {
+                    primaryInvoiceTimingReason:
+                      primaryInvoiceEditTimingRefusal.reason,
+                  }
+                : {
+                    primaryInvoiceRaisedAt: toIsoDate(
+                      primaryInvoiceEditTimingRefusal.raisedAt
+                    ),
+                    primaryInvoiceOperationId:
+                      primaryInvoiceEditTimingRefusal.operationId,
+                  }),
+            },
+            actionKeys: [manualAction.key],
           });
         } else if (!blockingOperation) {
           // #3187: a review-priced ask must not be queued as if the member had
@@ -658,7 +795,7 @@ export function classifyBookingContext(
           (operation) =>
             operation.entityType === "CREDIT_NOTE" &&
             operation.operationType === "CREATE" &&
-            ["SUCCEEDED", "PARTIAL"].includes(operation.status) &&
+            isSuccessfulXeroOperation(operation) &&
             getOperationQueueTypeHint(operation) ===
               XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE
         );

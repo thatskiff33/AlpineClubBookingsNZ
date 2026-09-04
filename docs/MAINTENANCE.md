@@ -806,6 +806,54 @@ CREATED on 30 June was covered — it was not. Re-run any sweep whose check-in
 dates mattered; the created/updated/modified findings in an archived report can
 be taken at face value.
 
+**A supplementary invoice is only offered when the main invoice went out
+FIRST (#3199).** When a booking edit adds money the club normally raises a small
+extra Xero invoice for the difference, and whether that is right depends on
+which came first. If the booking's main invoice had already gone out when the
+edit happened, it bills the old total and the difference is genuinely unbilled -
+the ordinary case, because the main invoice is raised at confirmation. If it had
+NOT gone out yet - a Xero outage, or the window between the card clearing and
+the queue running - the main invoice is raised later and bills the booking as it
+then stands, so it already includes the edit. An extra invoice on top of that
+bills the club's books for money nobody owes.
+
+The tool works the answer out from the Xero operation history: the successful
+invoice-create row carrying that invoice's Xero id, and when it completed. Three
+outcomes, and only the first is a click:
+
+- **the main invoice completed before the edit** - `MISSING_SUPPLEMENTARY_INVOICE`
+  at critical severity with its `QUEUE_SUPPLEMENTARY_INVOICE` action, exactly as
+  before;
+- **the main invoice completed at or after the edit** - reported at
+  `manual_review` severity with no queue action, carrying
+  `primaryInvoiceTiming: invoice-followed-edit` and the date it was raised.
+  Open the invoice in Xero and bill only what is genuinely still owed. It will
+  usually be nothing; a **change fee** is the exception, because a change fee is
+  not a line on the main invoice and so is still owed even when the price
+  difference is not;
+- **the history cannot answer** - reported the same way with
+  `primaryInvoiceTiming: unknown`. An invoice raised before this system kept an
+  operation history, or entered into Xero by hand, has no row to read. So does
+  one whose only remaining record is a **later re-run** that found the invoice
+  already there: retrying a failed or partial Xero operation re-uses the same
+  record and stamps it with the retry's own time, which erases the time the
+  invoice actually went out. Check the invoice in Xero before raising anything.
+
+`--apply` skips the second and third: they are reported, never applied and never
+silently dropped.
+
+**Which edits this asks the question about.** Any edit whose own recorded
+difference is a charge, and - less obviously - any edit that **added a guest**,
+even when its recorded difference is zero. A main invoice bills the booking's
+guests and their nights rather than its stored total, so a guest added by an
+edit whose amount was parked for a financial review is still on that invoice if
+it went out afterwards, at the real price they are being charged. Those two are
+the ways an edit can end up on a main invoice raised later. Everything else an
+edit priced by a financial review asks for is unaffected: that money lives on
+the review tasks and is never a line on a main invoice (see below), so the
+timing question does not arise for it and those findings keep their one-click
+repair.
+
 **Booking edits priced by a financial review (#3187).** When an edit's money
 cannot be worked out from the booking's own history, the change is saved and the
 amount is parked for an officer to confirm. The booking's stored totals do not
