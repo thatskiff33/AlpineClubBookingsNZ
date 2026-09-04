@@ -781,9 +781,9 @@ handed an epic-with-children or asked to run several related issues at once.
   gated areas take that tier at `high`; `xhigh` is reserved for work bounded by
   reasoning, since its cost advantage is measured only at lower efforts;
   checkable read-only scans may use a cheaper tier; when the top tier's
-  allowance share is spent or the picker refuses it, the strongest
-  generally-capable model is the fallback at the same effort, said so in the
-  brief. This inverts the earlier reading, which reserved the top tier.
+  allowance share is spent or the picker refuses it, fall back to the strongest
+  generally-capable model at the same effort and say so in the brief. This
+  inverts the earlier reading, which reserved the top tier.
 - **State the model explicitly when you dispatch a subagent, and the effort
   with it.** A subagent launched without them **inherits the orchestrator's
   model** and effort, so an unstated choice is not a cheap default — it is the
@@ -797,11 +797,11 @@ handed an epic-with-children or asked to run several related issues at once.
   of writing that means Fable is excluded and Opus is the right choice, but the
   rule is the shape, not the names. The top tier's safety classifiers target
   cyber content, so a security review, exploit analysis or scanner-configuration
-  task can come back *refused* rather than answered. The refusal arrives as
+  task can come back *refused*. The refusal arrives as
   `stop_reason: "refusal"` on an HTTP 200, not as an error — inside a subagent,
   an unwary orchestrator reads the empty or truncated result as a clean pass.
   Its vendor states that tier's bug-finding gains **exclude security-focused
-  analysis**, so the escalation buys nothing here even when it answers, and the
+  analysis**, so the escalation buys nothing even when it answers, and the
   generally-capable tier refuses far less — which is why an uncertain security
   blocker escalates in *effort*, not in tier. Before routing
   security work to a tier you have not used for it before, check that a refusal
