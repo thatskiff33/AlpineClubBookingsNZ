@@ -469,6 +469,25 @@ the member, the amount, the day the money went back, the stay dates, the booking
 identifier as plain text, and both the reason the payment was queued and the note
 saying it is already settled.
 
+**A third kind of row, and it has no settle box at all (#3213, registered in this
+release and written in the next).** A booking change settled as money the member
+owes, whose Xero invoice was already being sent and could not be raised to carry
+it. Nothing is invoiced automatically, because an invoice in that state can still
+come back and go out at the full amount, and a second one raised now would bill
+the member twice. The row carries one control - **Close this item** - and no
+completion control at all: the completion door refuses a settlement against this
+kind outright (it would assert a refund the club never made), and a control whose
+only outcome is a refusal is worse than none. Its own standing paragraph appears
+only when such a row is present, and the cash hand-back paragraph deliberately
+does NOT fall through to it - the booking is live, nothing was cancelled and no
+cash was involved, which is the #3033 mistake one kind further along. Beside the
+amount it says what to do in the order it matters: check Xero first, then bill
+only the missing part, never the change's full total. A row raised by the
+payment-recovery pass shows **Amount not known** rather than **Awaiting
+pricing** - nothing on this screen can ever price it, because the pass that
+raised it holds the change's combined total and cannot say which part the sent
+invoice carried.
+
 **The settle box asks a second question when the booking has unpriced nights
 (#3191).** A financial-review row whose guest strand holds nights with no stored
 price carries a list of those nights inside the settle dialog, one money box each,
