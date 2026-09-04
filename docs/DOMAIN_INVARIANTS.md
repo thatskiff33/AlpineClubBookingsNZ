@@ -466,7 +466,7 @@ Prefix `INV-LOCKOUT`.
 | `INV-LOCKOUT-035` | That hook derives only into an absent mode, before field validation |
 | `INV-LOCKOUT-036` | Reversal is a mode change: no migration, no code, nothing repriced |
 | `INV-LOCKOUT-037` | The admin-only date override: date-only, explicit `pricingMode`; `shift` freezes every cent |
-| `INV-LOCKOUT-073` | Emailing the member about an admin edit is a per-action choice; four always-notify |
+| `INV-LOCKOUT-073` | Emailing a member about an admin edit is a per-action choice |
 | `INV-LOCKOUT-044` | #1780 sweep extends the per-action notify choice to remaining admin emails |
 | `INV-LOCKOUT-045` | An account-deletion approval with bookings to cancel claims `APPROVAL_IN_PROGRESS` before cancelling |
 | `INV-LOCKOUT-046` | That claim is taken only when there is something irreversible to protect |
