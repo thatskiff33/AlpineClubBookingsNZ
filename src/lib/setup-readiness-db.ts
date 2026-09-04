@@ -1,3 +1,4 @@
+import { CLUB_MODULE_SETTINGS_COLUMN_SELECT } from "@/config/modules";
 import { prisma } from "@/lib/prisma";
 import { CLUB_TIME_SETTINGS_ID } from "@/lib/club-time-zone";
 import { resolveEnvironmentRole } from "@/lib/environment-role";
@@ -92,37 +93,14 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
     prisma.member.count({ where: { role: "ADMIN", active: true } }),
     prisma.clubModuleSettings.findUnique({
       where: { id: "default" },
-      select: {
-        kiosk: true,
-        chores: true,
-        financeDashboard: true,
-        waitlist: true,
-        xeroIntegration: true,
-        bedAllocation: true,
-        internetBankingPayments: true,
-        addressAutocomplete: true,
-        groupBookings: true,
-        lockers: true,
-        induction: true,
-        workParties: true,
-        promoCodes: true,
-        hutLeaders: true,
-        communications: true,
-        memberNotices: true,
-        eventsCalendar: true,
-        skifieldConditions: true,
-        twoFactor: true,
-        magicLink: true,
-        googleLogin: true,
-        analytics: true,
-        lobbyDisplay: true,
-        aiAssistant: true,
-        memberGuests: true,
-        aiDiagnostics: true,
-        maintenanceReports: true,
-        alpineCentralServer: true,
-        commsPortal: true,
-      },
+      // The canonical projection (#2996). This read used to spell every module
+      // key by hand — a second copy of MODULE_KEYS that each new module had to
+      // be added to separately, with nothing comparing the two. Reading the
+      // shared select means a module reaches setup readiness the moment it is
+      // registered, and keeps the blue/green property that select's docblock
+      // describes. Its two audit columns ride along unread: the snapshot type
+      // narrows them away and the only consumer is normalizeAdminModuleSettings.
+      select: CLUB_MODULE_SETTINGS_COLUMN_SELECT,
     }),
     prisma.ageTierSetting.count(),
     prisma.season.count({ where: { active: true } }),
