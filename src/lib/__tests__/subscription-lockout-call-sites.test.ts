@@ -246,6 +246,7 @@ describe("the payment path is DELIBERATELY ungated (#2779, INV-LOCKOUT-069)", ()
     // responsibility; every piece stays listed so the door is still covered).
     "src/lib/payment-link.ts",
     "src/lib/payment-link-intent.ts",
+    "src/lib/payment-link-reissue.ts",
     "src/lib/payment-link-split-guest.ts",
   ] as const;
 

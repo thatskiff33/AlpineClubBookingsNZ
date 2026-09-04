@@ -43,7 +43,6 @@ vi.mock("@/lib/booking-request", async () => {
 
 vi.mock("@/lib/payment-link", () => ({
   getPaymentLinkContext: vi.fn(),
-  reissuePaymentLinkForToken: vi.fn(),
   PaymentLinkError: class PaymentLinkError extends Error {
     status: number;
     constructor(message: string, status: number) {
@@ -52,6 +51,9 @@ vi.mock("@/lib/payment-link", () => ({
       this.status = status;
     }
   },
+}));
+vi.mock("@/lib/payment-link-reissue", () => ({
+  reissuePaymentLinkForToken: vi.fn(),
 }));
 vi.mock("@/lib/payment-link-intent", () => ({
   createPaymentIntentForPaymentLink: vi.fn(),
@@ -144,11 +146,8 @@ import {
   calculateIndicativeNonMemberPriceCents,
   BookingRequestError,
 } from "@/lib/booking-request";
-import {
-  getPaymentLinkContext,
-  reissuePaymentLinkForToken,
-  PaymentLinkError,
-} from "@/lib/payment-link";
+import { getPaymentLinkContext, PaymentLinkError } from "@/lib/payment-link";
+import { reissuePaymentLinkForToken } from "@/lib/payment-link-reissue";
 import {
   createPaymentIntentForPaymentLink,
   PaymentLinkPaymentRecoveryError,

@@ -112,11 +112,11 @@ import {
 } from "@/lib/booking-financial-review-copy";
 import {
   getPaymentLinkContext,
-  reissuePaymentLinkForToken,
   resolvePaymentLink,
   revokePaymentLinkById,
   revokePaymentLinksForBooking,
 } from "@/lib/payment-link";
+import { reissuePaymentLinkForToken } from "@/lib/payment-link-reissue";
 import { createPaymentIntentForPaymentLink } from "@/lib/payment-link-intent";
 import {
   issueSplitGuestPaymentLink,
