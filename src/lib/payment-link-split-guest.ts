@@ -112,8 +112,9 @@ export async function mintSplitGuestPaymentLinkIfAbsent(
   return mintFreshSplitGuestPaymentLink(tx, booking.id, expiresAt, now);
 }
 
-/** Registry template the split-guest pay-link email ships as (#1967). */
-const SPLIT_GUEST_PAYMENT_LINK_TEMPLATE = "split-guest-payment-link";
+/** Registry template the split-guest pay-link email ships as (#1967). The one
+ * home for the name (#2956, `INV-SSOT`): `cron-confirm-pending.ts` imports it. */
+export const SPLIT_GUEST_PAYMENT_LINK_TEMPLATE = "split-guest-payment-link";
 
 export type IssueSplitGuestPaymentLinkResult =
   | { outcome: "sent" }

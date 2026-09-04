@@ -16,8 +16,9 @@
  * one of the two callers, and until #2956 split it out it sat inside
  * `payment-link.ts`, which is reachable from `src/instrumentation.node.ts`, so
  * `server-only` — which is what reading the persisted zone here would drag in —
- * would have killed it at import. The split moved that caller without
- * re-deciding its reader, so the constraint stands as inherited.
+ * would have killed it at import. The split moved that caller and kept its
+ * outside-request reader; changing which client reads the club's zone is an
+ * `INV-CONFIG-002` decision, not a refactor, so this module stays pure.
  *
  * ## Two kinds of date, in the same sentence (#3123)
  *

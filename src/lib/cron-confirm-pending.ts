@@ -19,6 +19,7 @@ import { recordWithheldBookingEmail } from "@/lib/booking-email-suppression";
 import logger from "@/lib/logger";
 import { revokePaymentLinkById, revokePaymentLinksForBooking } from "@/lib/payment-link";
 import {
+  SPLIT_GUEST_PAYMENT_LINK_TEMPLATE,
   mintSplitGuestPaymentLinkIfAbsent,
   type MintedSplitGuestPaymentLink,
 } from "@/lib/payment-link-split-guest";
@@ -56,9 +57,6 @@ import { getNonMemberHoldDays } from "./cancellation";
 import { processWaitlistForDates } from "./waitlist";
 
 /** How long to extend the hold for request-origin bookings (no saved card) at hold expiry. */
-/** Registry template the split-guest pay-link email ships as (#1967). */
-const SPLIT_GUEST_PAYMENT_LINK_TEMPLATE = "split-guest-payment-link";
-
 const REQUEST_HOLD_EXTENSION_MS = 2 * 24 * 60 * 60 * 1000;
 
 const DAY_MS = 24 * 60 * 60 * 1000;

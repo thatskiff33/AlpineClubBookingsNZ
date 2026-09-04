@@ -160,6 +160,7 @@ vi.mock("@/lib/payment-link", () => ({
     mockRevokePaymentLinkById(...args),
 }));
 vi.mock("@/lib/payment-link-split-guest", () => ({
+  SPLIT_GUEST_PAYMENT_LINK_TEMPLATE: "split-guest-payment-link",
   mintSplitGuestPaymentLinkIfAbsent: (...args: unknown[]) =>
     mockMintSplitGuestPaymentLinkIfAbsent(...args),
 }));

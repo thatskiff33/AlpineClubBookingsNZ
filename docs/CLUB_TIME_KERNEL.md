@@ -114,10 +114,10 @@ One place: `getClubTimeZone()` (CT-1, `INV-CONFIG-002`), the persisted
   responsibility: the split-child mint (`payment-link-split-guest.ts`) and the
   revocation helpers keep the instrumentation edge through the cron, while
   `payment-link-context.ts`, `payment-link-intent.ts` and
-  `payment-link-reissue.ts` are reached only from the `/pay` routes. They kept
-  the runtime reader when they moved — a move, not a re-measurement — so
-  whether any of them may now take `club-time/server` is an open question for
-  its own change, not something this note decides. Where such a module also
+  `payment-link-reissue.ts` are reached only from the `/pay` routes. All three
+  keep the outside-request reader: a split moves code and does not change which
+  client reads the club's zone, because that is an `INV-CONFIG-002` decision and
+  would be its own change, not a refactor. Where such a module also
   runs under a lock, it
   resolves the zone before the transaction and threads it in as a value; see
   `docs/CONCURRENCY_AND_LOCKING.md` -> "Which client reads the club's timezone".
