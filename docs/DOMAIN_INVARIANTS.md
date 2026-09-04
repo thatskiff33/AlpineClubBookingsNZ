@@ -402,6 +402,7 @@ Prefix `INV-HOST`.
 | `INV-HOST-050` | Never refuse a change the member cannot make; linked move offered |
 | `INV-HOST-051` | Linked move is atomic, settles once; both change fees unless disabled |
 | `INV-HOST-052` | Declined linked moves record their own cause, registered a release early |
+| `INV-HOST-053` | Re-evaluation explanations belong to their booking; explained causes never overwritten |
 
 ### Booking requests
 

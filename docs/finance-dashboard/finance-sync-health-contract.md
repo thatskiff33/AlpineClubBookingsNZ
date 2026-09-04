@@ -14,7 +14,7 @@ It is intentionally narrow: the view **aggregates health signals the platform al
   - `buildFinanceRevenueReconciliation()` — overall tie-out status.
   - `getXeroAdminHealthSnapshot()` — failed/pending outbox operations, bookings missing invoices, refunds missing credit notes.
   - `FinanceAccountMonthlyBalance` freshness per statement kind — max `syncedAt` and newest non-provisional month.
-- `buildSyncHealthDashboard` in `finance-dashboard-page.ts` maps sections onto the existing KPI-card/status-panel shapes; status-panel items may carry `href`/`linkLabel` (Xero admin console `/admin/xero`, setup mappings `/admin/setup/finance`).
+- `buildSyncHealthDashboard` in `finance-dashboard-page/sync-health-view.ts` maps sections onto the existing KPI-card/status-panel shapes; status-panel items may carry `href`/`linkLabel` (Xero admin console `/admin/xero`, setup mappings `/admin/setup/finance`).
 
 ## Traffic light
 
