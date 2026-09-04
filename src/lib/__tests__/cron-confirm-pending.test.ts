@@ -156,10 +156,12 @@ const mockRevokePaymentLinkById = vi.fn().mockResolvedValue(1);
 vi.mock("@/lib/payment-link", () => ({
   revokePaymentLinksForBooking: (...args: unknown[]) =>
     mockRevokePaymentLinksForBooking(...args),
-  mintSplitGuestPaymentLinkIfAbsent: (...args: unknown[]) =>
-    mockMintSplitGuestPaymentLinkIfAbsent(...args),
   revokePaymentLinkById: (...args: unknown[]) =>
     mockRevokePaymentLinkById(...args),
+}));
+vi.mock("@/lib/payment-link-split-guest", () => ({
+  mintSplitGuestPaymentLinkIfAbsent: (...args: unknown[]) =>
+    mockMintSplitGuestPaymentLinkIfAbsent(...args),
 }));
 
 // Mock promo cleanup used by the whole-bump path.

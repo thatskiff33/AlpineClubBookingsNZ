@@ -18,11 +18,13 @@ import { bookingHasCapacityOverride } from "@/lib/booking-status";
 import { recordWithheldBookingEmail } from "@/lib/booking-email-suppression";
 import logger from "@/lib/logger";
 import {
-  mintSplitGuestPaymentLinkIfAbsent,
   revokePaymentLinkById,
   revokePaymentLinksForBooking,
-  type MintedSplitGuestPaymentLink,
 } from "@/lib/payment-link";
+import {
+  mintSplitGuestPaymentLinkIfAbsent,
+  type MintedSplitGuestPaymentLink,
+} from "@/lib/payment-link-split-guest";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import {
   paymentLinkExpiryForCheckIn,
@@ -680,7 +682,7 @@ async function resolveHoldWindowUnderLock(
         // #1993 Part A (Option 1) — terminal state. Once the child's check-in
         // day has ended, stop extending/re-minting and auto-cancel the still-
         // unsettled guest portion. Use the SAME boundary the link-mint stop
-        // uses (payment-link.ts:mintSplitGuestPaymentLinkIfAbsent) so the two
+        // uses (payment-link-split-guest.ts:mintSplitGuestPaymentLinkIfAbsent) so the two
         // can never disagree about "check-in has passed". The child holds no
         // capacity, so this is bookkeeping + notification: a guarded
         // PENDING -> CANCELLED CAS (count 0 => a payment won the lock seconds

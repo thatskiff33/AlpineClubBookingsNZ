@@ -121,11 +121,11 @@ import path from "node:path";
 import { hashActionToken, issueActionToken } from "@/lib/action-tokens";
 import type { ClubTimeZone } from "@/lib/club-time";
 import { paymentLinkExpiryForCheckIn } from "@/lib/payment-link-expiry";
+import { reissuePaymentLinkForToken } from "@/lib/payment-link";
 import {
   issueSplitGuestPaymentLink,
   mintSplitGuestPaymentLinkIfAbsent,
-  reissuePaymentLinkForToken,
-} from "@/lib/payment-link";
+} from "@/lib/payment-link-split-guest";
 
 import { divergentClubZone } from "./helpers/club-time-zone";
 import { blankLiterals } from "./support/strip-comments";
@@ -497,6 +497,7 @@ describe("every payment-link expiry goes through the one helper", () => {
   const REPO_ROOT = process.cwd();
   const OWNERS = [
     "src/lib/payment-link.ts",
+    "src/lib/payment-link-split-guest.ts",
     "src/lib/booking-request.ts",
     "src/lib/group-booking.ts",
     "src/lib/cron-confirm-pending.ts",

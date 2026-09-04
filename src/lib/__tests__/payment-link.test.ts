@@ -113,13 +113,15 @@ import {
 import {
   createPaymentIntentForPaymentLink,
   getPaymentLinkContext,
-  issueSplitGuestPaymentLink,
-  mintSplitGuestPaymentLinkIfAbsent,
   reissuePaymentLinkForToken,
   resolvePaymentLink,
   revokePaymentLinkById,
   revokePaymentLinksForBooking,
 } from "@/lib/payment-link";
+import {
+  issueSplitGuestPaymentLink,
+  mintSplitGuestPaymentLinkIfAbsent,
+} from "@/lib/payment-link-split-guest";
 
 const mockedFindUnique = vi.mocked(prisma.paymentLink.findUnique);
 const mockedUpdate = vi.mocked(prisma.paymentLink.update);
