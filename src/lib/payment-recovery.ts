@@ -52,6 +52,44 @@ const CAPTURED_TRANSACTION_STATUSES = new Set<PaymentStatus>([
   PaymentStatus.REFUNDED,
 ]);
 
+/**
+ * THE THREE STATUS SETS THIS MODULE READS, EACH SPELLED ONCE (#3220,
+ * `INV-SSOT`).
+ *
+ * `FAILED` is not one state here, it is two readings of one column, and the
+ * distinction is the whole reason #3220 exists. A `FAILED` row with attempts
+ * left is a RETRY waiting its turn; a `FAILED` row with none is DEAD, and the
+ * booking-vs-Xero repair tool reads that deadness as permission to stop
+ * deferring (`OPEN_PAYMENT_RECOVERY_STATUSES` in
+ * `xero-booking-repair-load.ts`). The `attempts < MAX` filter beside each use of
+ * `CLAIMABLE_PAYMENT_RECOVERY_STATUSES` is what separates them, so it belongs to
+ * the query rather than to the constant.
+ *
+ * They were three inline `in: [...]` literals, and the pre-decision review on
+ * #3220 counted them among the module's six mentions of
+ * `PaymentRecoveryOperationStatus.FAILED`. They are reads, so they can never be
+ * the transition anything hangs off - but a reader looking for "where does this
+ * module decide a recovery is dead" had six candidates to eliminate, and
+ * `payment-recovery-terminal-failure-census.test.ts` now pins that there are
+ * exactly these two plus the one write.
+ */
+const CLAIMABLE_PAYMENT_RECOVERY_STATUSES = [
+  PaymentRecoveryOperationStatus.PENDING,
+  PaymentRecoveryOperationStatus.FAILED,
+] as const;
+
+/** Everything a live operation can be. Excludes only the terminal SUCCEEDED. */
+const NON_TERMINAL_PAYMENT_RECOVERY_STATUSES = [
+  PaymentRecoveryOperationStatus.PENDING,
+  PaymentRecoveryOperationStatus.PROCESSING,
+  PaymentRecoveryOperationStatus.FAILED,
+] as const;
+
+/** What the stale-worker reaper is allowed to move a row out of. */
+const STALE_PROCESSING_RECOVERY_STATUSES = [
+  PaymentRecoveryOperationStatus.PROCESSING,
+] as const;
+
 export interface PaymentRecoveryProcessResult {
   found: number;
   processed: number;
@@ -1050,6 +1088,87 @@ async function alertPaymentRecoveryFailure(
   });
 }
 
+/**
+ * THE ONE PLACE A `PaymentRecoveryOperation` BECOMES `FAILED` (#3220,
+ * `INV-PAY-052`, `INV-SSOT`).
+ *
+ * Before this function there were three of them - the worker's own catch, and
+ * the stale-`PROCESSING` reaper's two arms - each spelling out its own status
+ * write, its own `nextRetryAt` policy and its own idea of whether the row was
+ * finished. The pre-decision review on #3220 counted the module's references to
+ * `PaymentRecoveryOperationStatus.FAILED` and found six, which is why the issue
+ * says six; three of those are `where` filters that READ the status and cannot
+ * be a transition (they are named constants now, immediately below). What
+ * mattered is the same either way: "this recovery is dead" was expressed in more
+ * than one place, so anything that has to happen when a recovery dies had to be
+ * bolted onto each of them and would silently miss the ones nobody remembered.
+ *
+ * TERMINAL IS AN ARGUMENT, NOT A DERIVATION. The two callers know different
+ * things - the worker knows it has just burnt an attempt, the reaper knows the
+ * row never came back - and a shared re-derivation from `attempts` would be a
+ * fourth opinion. `nextRetryAt` is forced to `null` when terminal rather than
+ * trusted from the caller, because a terminal row that keeps a retry time is
+ * re-claimable and is therefore not terminal at all.
+ *
+ * STATUS-FENCED, like `completePaymentRecoveryOperation` and for the same
+ * reason. The worker's arm used `update` by id, which throws `P2025` when a
+ * manual mark-paid reversal has DELETED the row mid-flight - and it is called
+ * from inside the loop's `catch`, so that throw escaped the loop and abandoned
+ * every remaining operation in the batch. `updateMany` matches nothing instead,
+ * and the fence also stops a `SUCCEEDED` row being dragged back to `FAILED` by a
+ * worker holding a stale in-memory copy.
+ */
+type PaymentRecoveryFailureOutcome = "failed" | "retry" | "gone";
+
+async function markPaymentRecoveryOperationFailed({
+  operation,
+  message,
+  terminal,
+  nextRetryAt,
+  fromStatuses,
+}: {
+  operation: PaymentRecoveryOperation;
+  /** Recorded verbatim on `lastError`, and quoted in the exhaustion alert. */
+  message: string;
+  /** Whether this failure ENDS the operation: nothing will replay it again. */
+  terminal: boolean;
+  /** When the next attempt is due. Ignored - and forced `null` - when terminal. */
+  nextRetryAt: Date;
+  /** The statuses this transition may move FROM. Anything else is left alone. */
+  fromStatuses: readonly PaymentRecoveryOperationStatus[];
+}): Promise<PaymentRecoveryFailureOutcome> {
+  const marked = await prisma.paymentRecoveryOperation.updateMany({
+    where: { id: operation.id, status: { in: [...fromStatuses] } },
+    data: {
+      status: PaymentRecoveryOperationStatus.FAILED,
+      lastError: message,
+      processingStartedAt: null,
+      nextRetryAt: terminal ? null : nextRetryAt,
+    },
+  });
+
+  if (marked.count === 0) {
+    logger.warn(
+      { operationId: operation.id, terminal },
+      "Payment recovery failure matched no live operation (already succeeded, or deleted by a manual mark-paid reversal); nothing was marked failed"
+    );
+    return "gone";
+  }
+
+  if (!terminal) {
+    return "retry";
+  }
+
+  await alertPaymentRecoveryFailure(operation, message).catch((alertError) =>
+    logger.error(
+      { err: alertError, operationId: operation.id },
+      "Failed to send payment recovery failure alert"
+    )
+  );
+
+  return "failed";
+}
+
 async function failPaymentRecoveryOperation(
   operation: PaymentRecoveryOperation,
   error: unknown
@@ -1057,26 +1176,22 @@ async function failPaymentRecoveryOperation(
   const message = errorMessage(error);
   const exhausted = operation.attempts >= MAX_PAYMENT_RECOVERY_ATTEMPTS;
 
-  await prisma.paymentRecoveryOperation.update({
-    where: { id: operation.id },
-    data: {
-      status: PaymentRecoveryOperationStatus.FAILED,
-      lastError: message,
-      processingStartedAt: null,
-      nextRetryAt: exhausted ? null : nextRetryDate(operation.attempts),
-    },
+  const outcome = await markPaymentRecoveryOperationFailed({
+    operation,
+    message,
+    terminal: exhausted,
+    nextRetryAt: nextRetryDate(operation.attempts),
+    // Everything but SUCCEEDED, matching `completePaymentRecoveryOperation`'s
+    // fence: the row was PROCESSING when this worker claimed it, but the
+    // webhook-side closers can move it underneath us and a finished operation
+    // must never be reopened as a failure.
+    fromStatuses: NON_TERMINAL_PAYMENT_RECOVERY_STATUSES,
   });
 
-  if (exhausted) {
-    await alertPaymentRecoveryFailure(operation, message).catch((alertError) =>
-      logger.error(
-        { err: alertError, operationId: operation.id },
-        "Failed to send payment recovery failure alert"
-      )
-    );
-  }
-
-  return exhausted ? "failed" : "retry";
+  // A row that matched nothing is gone or already finished, so there is no
+  // failure to count differently: the caller's tallies stay exactly what they
+  // were before this transition was centralised.
+  return outcome === "gone" ? (exhausted ? "failed" : "retry") : outcome;
 }
 
 async function claimPaymentRecoveryOperation(operationId: string) {
@@ -1084,12 +1199,7 @@ async function claimPaymentRecoveryOperation(operationId: string) {
   const claim = await prisma.paymentRecoveryOperation.updateMany({
     where: {
       id: operationId,
-      status: {
-        in: [
-          PaymentRecoveryOperationStatus.PENDING,
-          PaymentRecoveryOperationStatus.FAILED,
-        ],
-      },
+      status: { in: [...CLAIMABLE_PAYMENT_RECOVERY_STATUSES] },
       attempts: { lt: MAX_PAYMENT_RECOVERY_ATTEMPTS },
       nextRetryAt: { lte: now },
     },
@@ -1110,63 +1220,45 @@ async function claimPaymentRecoveryOperation(operationId: string) {
   });
 }
 
+/**
+ * A worker that died mid-attempt leaves its row `PROCESSING` for ever, because
+ * nothing else moves it and no exception fires from this process. This reaper
+ * hands those rows back.
+ *
+ * ONE READ, TWO ENDINGS (#3220). It used to be a bulk `updateMany` for the rows
+ * with attempts left plus a separate `findMany`/loop for the exhausted ones, and
+ * the two spelled the same transition differently: only the second was fenced,
+ * only the second alerted, and each carried its own copy of the status write.
+ * Both endings now go through `markPaymentRecoveryOperationFailed`, which is
+ * what decides what "dead" costs. `attempts` cannot move between the read and
+ * the write - the only writer that increments it is the claim, and a claim moves
+ * PENDING/FAILED to PROCESSING, never out of PROCESSING - so reading terminality
+ * a moment earlier is exact rather than optimistic.
+ */
 async function resetStaleProcessingOperations() {
   const staleBefore = new Date(
     Date.now() - STALE_PROCESSING_MINUTES * 60 * 1000
   );
 
-  await prisma.paymentRecoveryOperation.updateMany({
+  const stale = await prisma.paymentRecoveryOperation.findMany({
     where: {
       status: PaymentRecoveryOperationStatus.PROCESSING,
       processingStartedAt: { lt: staleBefore },
-      attempts: { lt: MAX_PAYMENT_RECOVERY_ATTEMPTS },
-    },
-    data: {
-      status: PaymentRecoveryOperationStatus.FAILED,
-      nextRetryAt: new Date(),
-      processingStartedAt: null,
-      lastError: "Payment recovery worker timed out before completion.",
     },
   });
 
-  // If a worker died mid-processing on the final attempt the row never
-  // moves out of PROCESSING because the `< MAX` guard above excludes it
-  // and no exception fires from this process to drive the alert path.
-  // Mark these terminally failed and alert.
-  const exhaustedStale = await prisma.paymentRecoveryOperation.findMany({
-    where: {
-      status: PaymentRecoveryOperationStatus.PROCESSING,
-      processingStartedAt: { lt: staleBefore },
-      attempts: { gte: MAX_PAYMENT_RECOVERY_ATTEMPTS },
-    },
-  });
+  for (const operation of stale) {
+    const terminal = operation.attempts >= MAX_PAYMENT_RECOVERY_ATTEMPTS;
 
-  for (const operation of exhaustedStale) {
-    const claimed = await prisma.paymentRecoveryOperation.updateMany({
-      where: {
-        id: operation.id,
-        status: PaymentRecoveryOperationStatus.PROCESSING,
-      },
-      data: {
-        status: PaymentRecoveryOperationStatus.FAILED,
-        nextRetryAt: null,
-        processingStartedAt: null,
-        lastError:
-          "Payment recovery worker timed out on the final attempt before completion.",
-      },
-    });
-
-    if (claimed.count !== 1) continue;
-
-    await alertPaymentRecoveryFailure(
+    await markPaymentRecoveryOperationFailed({
       operation,
-      "Payment recovery worker timed out on the final attempt before completion.",
-    ).catch((alertError) =>
-      logger.error(
-        { err: alertError, operationId: operation.id },
-        "Failed to send stale payment recovery failure alert",
-      ),
-    );
+      message: terminal
+        ? "Payment recovery worker timed out on the final attempt before completion."
+        : "Payment recovery worker timed out before completion.",
+      terminal,
+      nextRetryAt: new Date(),
+      fromStatuses: STALE_PROCESSING_RECOVERY_STATUSES,
+    });
   }
 }
 
@@ -1248,13 +1340,7 @@ async function handoffSucceededSupersededIntentToRefund({
   const claimed = await prisma.paymentRecoveryOperation.updateMany({
     where: {
       id: operation.id,
-      status: {
-        in: [
-          PaymentRecoveryOperationStatus.PENDING,
-          PaymentRecoveryOperationStatus.PROCESSING,
-          PaymentRecoveryOperationStatus.FAILED,
-        ],
-      },
+      status: { in: [...NON_TERMINAL_PAYMENT_RECOVERY_STATUSES] },
     },
     data: {
       status: PaymentRecoveryOperationStatus.PROCESSING,
@@ -2388,12 +2474,7 @@ export async function processPaymentRecoveryOperations(options?: {
   const limit = Math.min(Math.max(options?.limit ?? 10, 1), 50);
   const queuedOperations = await prisma.paymentRecoveryOperation.findMany({
     where: {
-      status: {
-        in: [
-          PaymentRecoveryOperationStatus.PENDING,
-          PaymentRecoveryOperationStatus.FAILED,
-        ],
-      },
+      status: { in: [...CLAIMABLE_PAYMENT_RECOVERY_STATUSES] },
       attempts: { lt: MAX_PAYMENT_RECOVERY_ATTEMPTS },
       nextRetryAt: { lte: new Date() },
     },

@@ -272,6 +272,27 @@ function makeOperation(overrides: Record<string, unknown> = {}) {
   };
 }
 
+/**
+ * `resetStaleProcessingOperations`'s own read, told apart from the worker's
+ * queue read (#3220).
+ *
+ * It used to be told apart by `attempts: { gte: MAX }` - the filter the reaper's
+ * SECOND arm used - and that predicate was copied into 24 `findMany` mocks in
+ * this file. When the reaper's two arms became one read through the terminal
+ * chokepoint, that filter stopped existing, every copy answered "this is the
+ * queue read", and the sweep was handed the operation under test and failed it.
+ * `processingStartedAt` is the filter only the sweep uses, and it lives here
+ * once so the next change to that query has one place to correct.
+ */
+function isStaleWorkerSweep(args?: unknown) {
+  // `unknown` rather than a shape, because the 24 mocks that ask this each
+  // declare their own idea of the `where` they receive and none of them is the
+  // real Prisma argument type.
+  const where = (args as { where?: { processingStartedAt?: unknown } } | undefined)
+    ?.where;
+  return where?.processingStartedAt != null;
+}
+
 describe("payment recovery worker", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -279,7 +300,7 @@ describe("payment recovery worker", () => {
     mockPaymentRecoveryFindMany.mockImplementation(
       (args?: { where?: { status?: unknown; attempts?: { gte?: number } } }) => {
         // resetStaleProcessingOperations queries for exhausted PROCESSING rows.
-        if (args?.where?.attempts && "gte" in args.where.attempts) {
+        if (isStaleWorkerSweep(args)) {
           return Promise.resolve([]);
         }
         return Promise.resolve([makeOperation({ status: "PENDING" })]);
@@ -414,8 +435,20 @@ describe("payment recovery worker", () => {
       retried: 1,
       failed: 0,
     });
-    expect(mockPaymentRecoveryUpdate).toHaveBeenCalledWith({
-      where: { id: "recovery-1" },
+    expect(mockPaymentRecoveryUpdateMany).toHaveBeenCalledWith({
+      where: {
+        id: "recovery-1",
+        // #3220: fenced rather than an `update` by id, so a row a manual
+        // mark-paid reversal deleted mid-flight matches nothing instead of
+        // throwing out of the loop's own catch.
+        status: {
+          in: [
+            PaymentRecoveryOperationStatus.PENDING,
+            PaymentRecoveryOperationStatus.PROCESSING,
+            PaymentRecoveryOperationStatus.FAILED,
+          ],
+        },
+      },
       data: expect.objectContaining({
         status: PaymentRecoveryOperationStatus.FAILED,
         lastError: "Stripe unavailable",
@@ -439,8 +472,20 @@ describe("payment recovery worker", () => {
       failed: 1,
       retried: 0,
     });
-    expect(mockPaymentRecoveryUpdate).toHaveBeenCalledWith({
-      where: { id: "recovery-1" },
+    expect(mockPaymentRecoveryUpdateMany).toHaveBeenCalledWith({
+      where: {
+        id: "recovery-1",
+        // #3220: fenced rather than an `update` by id, so a row a manual
+        // mark-paid reversal deleted mid-flight matches nothing instead of
+        // throwing out of the loop's own catch.
+        status: {
+          in: [
+            PaymentRecoveryOperationStatus.PENDING,
+            PaymentRecoveryOperationStatus.PROCESSING,
+            PaymentRecoveryOperationStatus.FAILED,
+          ],
+        },
+      },
       data: expect.objectContaining({
         status: PaymentRecoveryOperationStatus.FAILED,
         lastError: "Stripe still unavailable",
@@ -455,6 +500,93 @@ describe("payment recovery worker", () => {
         errorMessage: expect.stringContaining("failed after 5 attempts"),
       })
     );
+  });
+
+  /**
+   * #3220: the three failure transitions became ONE, so these pin what that one
+   * transition guarantees for every caller rather than for the arm each used to
+   * live in.
+   */
+  it("does not alert, or act, on a failure that matched no live operation", async () => {
+    // The row a manual mark-paid reversal DELETED mid-flight. The worker still
+    // holds its in-memory copy and still runs its catch; before the chokepoint
+    // this was `update` by id, which throws P2025 - out of the loop's own catch,
+    // abandoning every remaining operation in the batch.
+    mockPaymentRecoveryFindUnique.mockResolvedValue(makeOperation({ attempts: 5 }));
+    mockCancelPaymentIntentIfCancellableWithResult.mockRejectedValue(
+      new Error("Stripe still unavailable")
+    );
+    // Only the FAILURE write misses: the claim that put the row in PROCESSING
+    // still has to succeed, or the worker never reaches its catch at all.
+    mockPaymentRecoveryUpdateMany.mockImplementation(
+      (args: { where?: { id?: string }; data?: { status?: string } }) =>
+        Promise.resolve({
+          count:
+            args?.data?.status === PaymentRecoveryOperationStatus.FAILED ? 0 : 1,
+        })
+    );
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    // The batch completes rather than throwing, and the tally is what it was
+    // before this transition was centralised.
+    expect(result).toMatchObject({ processed: 1, failed: 1, retried: 0 });
+    // Nothing is alerted about a row that is gone or already finished.
+    expect(mockSendAdminPaymentFailureAlert).not.toHaveBeenCalled();
+  });
+
+  it("never drags a SUCCEEDED operation back to FAILED", async () => {
+    mockCancelPaymentIntentIfCancellableWithResult.mockRejectedValue(
+      new Error("Stripe unavailable")
+    );
+
+    await processPaymentRecoveryOperations({ limit: 1 });
+
+    const failureWrites = mockPaymentRecoveryUpdateMany.mock.calls.filter(
+      (call) =>
+        (call[0] as { data?: { status?: string } })?.data?.status === "FAILED"
+    );
+    expect(failureWrites).toHaveLength(1);
+    const where = (failureWrites[0][0] as {
+      where: { status: { in: string[] } };
+    }).where;
+    expect(where.status.in).not.toContain(
+      PaymentRecoveryOperationStatus.SUCCEEDED
+    );
+  });
+
+  it("re-arms a stale PROCESSING row that still has attempts left, without alerting", async () => {
+    // The arm that used to be a bulk `updateMany` over every stale row at once.
+    // It is now the same fenced, per-row transition the exhausted arm takes -
+    // with `terminal` false, which is the only thing that differs.
+    const staleRetryable = makeOperation({
+      id: "recovery-stale-2",
+      attempts: 2,
+      status: PaymentRecoveryOperationStatus.PROCESSING,
+      processingStartedAt: new Date("2026-05-01T00:00:00.000Z"),
+    });
+
+    mockPaymentRecoveryFindMany.mockImplementation(
+      (args?: { where?: { processingStartedAt?: unknown } }) =>
+        Promise.resolve(isStaleWorkerSweep(args) ? [staleRetryable] : [])
+    );
+
+    await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(mockPaymentRecoveryUpdateMany).toHaveBeenCalledWith({
+      where: {
+        id: "recovery-stale-2",
+        status: { in: [PaymentRecoveryOperationStatus.PROCESSING] },
+      },
+      data: {
+        status: PaymentRecoveryOperationStatus.FAILED,
+        lastError: "Payment recovery worker timed out before completion.",
+        processingStartedAt: null,
+        // A retry time, not null: this row is re-armed, not dead.
+        nextRetryAt: expect.any(Date),
+      },
+    });
+    expect(mockSendAdminPaymentFailureAlert).not.toHaveBeenCalled();
   });
 
   it("marks stale PROCESSING rows at max attempts terminally failed and alerts admins", async () => {
@@ -476,7 +608,7 @@ describe("payment recovery worker", () => {
     expect(mockPaymentRecoveryUpdateMany).toHaveBeenCalledWith({
       where: {
         id: "recovery-stale-5",
-        status: PaymentRecoveryOperationStatus.PROCESSING,
+        status: { in: [PaymentRecoveryOperationStatus.PROCESSING] },
       },
       data: expect.objectContaining({
         status: PaymentRecoveryOperationStatus.FAILED,
@@ -709,7 +841,7 @@ describe("payment recovery worker", () => {
     );
     mockPaymentRecoveryFindMany.mockImplementation(
       (args?: { where?: { status?: unknown; attempts?: { gte?: number } } }) => {
-        if (args?.where?.attempts && "gte" in args.where.attempts) {
+        if (isStaleWorkerSweep(args)) {
           return Promise.resolve([]);
         }
         return Promise.resolve([
@@ -782,7 +914,7 @@ describe("payment recovery worker", () => {
     mockPaymentRecoveryFindUnique.mockResolvedValue(planned);
     mockPaymentRecoveryFindMany.mockImplementation(
       (args?: { where?: { attempts?: { gte?: number } } }) => {
-        if (args?.where?.attempts && "gte" in args.where.attempts) {
+        if (isStaleWorkerSweep(args)) {
           return Promise.resolve([]);
         }
         return Promise.resolve([{ ...planned, status: "PENDING" }]);
@@ -818,7 +950,7 @@ describe("payment recovery worker", () => {
     mockPaymentRecoveryFindUnique.mockResolvedValue(stored);
     mockPaymentRecoveryFindMany.mockImplementation(
       (args?: { where?: { attempts?: { gte?: number } } }) => {
-        if (args?.where?.attempts && "gte" in args.where.attempts) {
+        if (isStaleWorkerSweep(args)) {
           return Promise.resolve([]);
         }
         return Promise.resolve([{ ...stored, status: "PENDING" }]);
@@ -868,7 +1000,7 @@ describe("payment recovery worker", () => {
     mockPaymentRecoveryFindUnique.mockResolvedValue(crashed);
     mockPaymentRecoveryFindMany.mockImplementation(
       (args?: { where?: { attempts?: { gte?: number } } }) => {
-        if (args?.where?.attempts && "gte" in args.where.attempts) {
+        if (isStaleWorkerSweep(args)) {
           return Promise.resolve([]);
         }
         return Promise.resolve([{ ...crashed, status: "PENDING" }]);
@@ -916,7 +1048,7 @@ describe("payment recovery worker", () => {
     mockPaymentRecoveryFindUnique.mockResolvedValue(crashed);
     mockPaymentRecoveryFindMany.mockImplementation(
       (args?: { where?: { attempts?: { gte?: number } } }) => {
-        if (args?.where?.attempts && "gte" in args.where.attempts) {
+        if (isStaleWorkerSweep(args)) {
           return Promise.resolve([]);
         }
         return Promise.resolve([{ ...crashed, status: "PENDING" }]);
@@ -982,7 +1114,7 @@ describe("payment recovery worker", () => {
     );
     mockPaymentRecoveryFindMany.mockImplementation(
       (args?: { where?: { status?: unknown; attempts?: { gte?: number } } }) => {
-        if (args?.where?.attempts && "gte" in args.where.attempts) {
+        if (isStaleWorkerSweep(args)) {
           return Promise.resolve([]);
         }
         return Promise.resolve([
@@ -1044,7 +1176,7 @@ describe("payment recovery worker", () => {
     mockPaymentRecoveryFindUnique.mockResolvedValue(crashed);
     mockPaymentRecoveryFindMany.mockImplementation(
       (args?: { where?: { attempts?: { gte?: number } } }) => {
-        if (args?.where?.attempts && "gte" in args.where.attempts) {
+        if (isStaleWorkerSweep(args)) {
           return Promise.resolve([]);
         }
         return Promise.resolve([{ ...crashed, status: "PENDING" }]);
@@ -1112,7 +1244,7 @@ describe("payment recovery worker", () => {
     mockPaymentRecoveryFindUnique.mockResolvedValue(legacy);
     mockPaymentRecoveryFindMany.mockImplementation(
       (args?: { where?: { attempts?: { gte?: number } } }) => {
-        if (args?.where?.attempts && "gte" in args.where.attempts) {
+        if (isStaleWorkerSweep(args)) {
           return Promise.resolve([]);
         }
         return Promise.resolve([{ ...legacy, status: "PENDING" }]);
@@ -1183,7 +1315,7 @@ describe("payment recovery worker", () => {
     );
     mockPaymentRecoveryFindMany.mockImplementation(
       (args?: { where?: { attempts?: { gte?: number } } }) => {
-        if (args?.where?.attempts && "gte" in args.where.attempts) {
+        if (isStaleWorkerSweep(args)) {
           return Promise.resolve([]);
         }
         return Promise.resolve([
@@ -1244,7 +1376,7 @@ describe("payment recovery worker", () => {
     mockPaymentRecoveryFindUnique.mockResolvedValue(crashed);
     mockPaymentRecoveryFindMany.mockImplementation(
       (args?: { where?: { attempts?: { gte?: number } } }) => {
-        if (args?.where?.attempts && "gte" in args.where.attempts) {
+        if (isStaleWorkerSweep(args)) {
           return Promise.resolve([]);
         }
         return Promise.resolve([{ ...crashed, status: "PENDING" }]);
@@ -1292,7 +1424,7 @@ describe("payment recovery worker", () => {
     mockPaymentRecoveryFindUnique.mockResolvedValue(crashed);
     mockPaymentRecoveryFindMany.mockImplementation(
       (args?: { where?: { attempts?: { gte?: number } } }) => {
-        if (args?.where?.attempts && "gte" in args.where.attempts) {
+        if (isStaleWorkerSweep(args)) {
           return Promise.resolve([]);
         }
         return Promise.resolve([{ ...crashed, status: "PENDING" }]);
@@ -1409,7 +1541,7 @@ describe("payment recovery worker", () => {
     mockPaymentRecoveryFindUnique.mockResolvedValue(capacityOp);
     mockPaymentRecoveryFindMany.mockImplementation(
       (args?: { where?: { attempts?: { gte?: number } } }) => {
-        if (args?.where?.attempts && "gte" in args.where.attempts) {
+        if (isStaleWorkerSweep(args)) {
           return Promise.resolve([]);
         }
         return Promise.resolve([{ ...capacityOp, status: "PENDING" }]);
@@ -1456,7 +1588,7 @@ describe("payment recovery worker", () => {
     mockPaymentRecoveryFindUnique.mockResolvedValue(groupOp);
     mockPaymentRecoveryFindMany.mockImplementation(
       (args?: { where?: { attempts?: { gte?: number } } }) => {
-        if (args?.where?.attempts && "gte" in args.where.attempts) {
+        if (isStaleWorkerSweep(args)) {
           return Promise.resolve([]);
         }
         return Promise.resolve([{ ...groupOp, status: "PENDING" }]);
@@ -1496,7 +1628,7 @@ describe("payment recovery worker", () => {
     mockPaymentRecoveryFindUnique.mockResolvedValue(groupOp);
     mockPaymentRecoveryFindMany.mockImplementation(
       (args?: { where?: { attempts?: { gte?: number } } }) => {
-        if (args?.where?.attempts && "gte" in args.where.attempts) {
+        if (isStaleWorkerSweep(args)) {
           return Promise.resolve([]);
         }
         return Promise.resolve([{ ...groupOp, status: "PENDING" }]);
@@ -1511,9 +1643,11 @@ describe("payment recovery worker", () => {
     expect(result.retried).toBe(1);
     // Not exhausted yet: retry scheduled, NO admin alert.
     expect(mockSendAdminPaymentFailureAlert).not.toHaveBeenCalled();
-    expect(mockPaymentRecoveryUpdate).toHaveBeenCalledWith(
+    expect(mockPaymentRecoveryUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "recovery-group-settlement-fail" },
+        where: expect.objectContaining({
+          id: "recovery-group-settlement-fail",
+        }),
         data: expect.objectContaining({
           status: PaymentRecoveryOperationStatus.FAILED,
           nextRetryAt: expect.any(Date),
@@ -1579,7 +1713,7 @@ describe("payment recovery worker", () => {
     );
     mockPaymentRecoveryFindMany.mockImplementation(
       (args?: { where?: { attempts?: { gte?: number } } }) => {
-        if (args?.where?.attempts && "gte" in args.where.attempts) {
+        if (isStaleWorkerSweep(args)) {
           return Promise.resolve([]);
         }
         return Promise.resolve([
@@ -1624,7 +1758,7 @@ describe("payment recovery worker", () => {
     mockPaymentRecoveryFindUnique.mockResolvedValue(exhaustedOperation);
     mockPaymentRecoveryFindMany.mockImplementation(
       (args?: { where?: { attempts?: { gte?: number } } }) => {
-        if (args?.where?.attempts && "gte" in args.where.attempts) {
+        if (isStaleWorkerSweep(args)) {
           return Promise.resolve([]);
         }
         return Promise.resolve([
@@ -1721,7 +1855,7 @@ describe("payment recovery worker", () => {
       mockPaymentRecoveryFindUnique.mockResolvedValue(operation);
       mockPaymentRecoveryFindMany.mockImplementation(
         (args?: { where?: { attempts?: { gte?: number } } }) => {
-          if (args?.where?.attempts && "gte" in args.where.attempts) {
+          if (isStaleWorkerSweep(args)) {
             return Promise.resolve([]);
           }
           return Promise.resolve([{ ...operation, status: "PENDING" }]);
@@ -2299,7 +2433,7 @@ describe("payment recovery worker", () => {
       const dupOp = makeDuplicateCaptureOp();
       mockPaymentRecoveryFindMany.mockImplementation(
         (args?: { where?: { attempts?: { gte?: number } } }) => {
-          if (args?.where?.attempts && "gte" in args.where.attempts) {
+          if (isStaleWorkerSweep(args)) {
             return Promise.resolve([]);
           }
           return Promise.resolve([dupOp]);
@@ -2334,7 +2468,7 @@ describe("payment recovery worker", () => {
       const dupOp = makeDuplicateCaptureOp();
       mockPaymentRecoveryFindMany.mockImplementation(
         (args?: { where?: { attempts?: { gte?: number } } }) => {
-          if (args?.where?.attempts && "gte" in args.where.attempts) {
+          if (isStaleWorkerSweep(args)) {
             return Promise.resolve([]);
           }
           return Promise.resolve([dupOp]);
@@ -2439,7 +2573,7 @@ describe("#2262 — deleted-operation coherence (H1/H2)", () => {
     const op = makeOperation({ status: PaymentRecoveryOperationStatus.PENDING });
     mockPaymentRecoveryFindMany.mockImplementation(
       (args?: { where?: { attempts?: { gte?: number } } }) => {
-        if (args?.where?.attempts && "gte" in args.where.attempts) {
+        if (isStaleWorkerSweep(args)) {
           return Promise.resolve([]);
         }
         return Promise.resolve([op]);
@@ -2514,7 +2648,7 @@ describe("#2262 L3 — the recovery dispatcher is exhaustive", () => {
     });
     mockPaymentRecoveryFindMany.mockImplementation(
       (args?: { where?: { attempts?: { gte?: number } } }) => {
-        if (args?.where?.attempts && "gte" in args.where.attempts) {
+        if (isStaleWorkerSweep(args)) {
           return Promise.resolve([]);
         }
         return Promise.resolve([rogue]);
@@ -2531,8 +2665,20 @@ describe("#2262 L3 — the recovery dispatcher is exhaustive", () => {
     // no Stripe refund.
     expect(mockPaymentTransactionFindUnique).not.toHaveBeenCalled();
     expect(mockProcessRefund).not.toHaveBeenCalled();
-    expect(mockPaymentRecoveryUpdate).toHaveBeenCalledWith({
-      where: { id: "recovery-rogue" },
+    expect(mockPaymentRecoveryUpdateMany).toHaveBeenCalledWith({
+      where: {
+        id: "recovery-rogue",
+        // #3220: fenced rather than an `update` by id, so a row a manual
+        // mark-paid reversal deleted mid-flight matches nothing instead of
+        // throwing out of the loop's own catch.
+        status: {
+          in: [
+            PaymentRecoveryOperationStatus.PENDING,
+            PaymentRecoveryOperationStatus.PROCESSING,
+            PaymentRecoveryOperationStatus.FAILED,
+          ],
+        },
+      },
       data: expect.objectContaining({
         status: PaymentRecoveryOperationStatus.FAILED,
         lastError: expect.stringContaining(
@@ -2612,7 +2758,7 @@ describe("edit-financial-review charge recovery (#3170)", () => {
     mockPaymentRecoveryFindUnique.mockResolvedValue(operation);
     mockPaymentRecoveryFindMany.mockImplementation(
       (args?: { where?: { attempts?: { gte?: number } } }) => {
-        if (args?.where?.attempts && "gte" in args.where.attempts) {
+        if (isStaleWorkerSweep(args)) {
           return Promise.resolve([]);
         }
         return Promise.resolve([{ ...operation, status: "PENDING" }]);
@@ -2657,8 +2803,17 @@ describe("edit-financial-review charge recovery (#3170)", () => {
 
   /** Did this run leave the operation FAILED with a retry still to come? */
   function wasLeftForRetry() {
-    return mockPaymentRecoveryUpdate.mock.calls.some((call) => {
-      const data = (call[0] as { data?: Record<string, unknown> })?.data;
+    return mockPaymentRecoveryUpdateMany.mock.calls.some((call) => {
+      const args = call[0] as {
+        where?: { id?: string };
+        data?: Record<string, unknown>;
+      };
+      // Scoped to THIS operation (#3220). Every failure transition is one
+      // fenced `updateMany` now, and the stale-worker reaper writes the same
+      // shape - so a helper matching on the data alone would answer for a row
+      // this test never asked about.
+      if (args?.where?.id !== "recovery-review-charge") return false;
+      const data = args?.data;
       return data?.status === "FAILED" && data?.nextRetryAt != null;
     });
   }
@@ -2900,7 +3055,7 @@ describe("edit-financial-review charge recovery (#3170)", () => {
     mockPaymentRecoveryFindUnique.mockResolvedValue(operation);
     mockPaymentRecoveryFindMany.mockImplementation(
       (args?: { where?: { attempts?: { gte?: number } } }) => {
-        if (args?.where?.attempts && "gte" in args.where.attempts) {
+        if (isStaleWorkerSweep(args)) {
           return Promise.resolve([]);
         }
         return Promise.resolve([{ ...operation, status: "PENDING" }]);
