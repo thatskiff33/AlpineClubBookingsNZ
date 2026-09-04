@@ -99,6 +99,7 @@ import {
 } from "@/lib/booking-review";
 import { nameField } from "@/lib/zod-helpers";
 import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
+import { hasIssuedPrimaryXeroInvoice, isSettledBookingStatus } from "@/lib/booking-payment-state";
 import { clubTime } from "@/lib/club-time/server";
 import { dateOnlyInstantOf } from "@/lib/club-time";
 import {
@@ -308,6 +309,12 @@ export async function POST(
         throw new ApiError("Forbidden", 403);
       }
 
+      // #3200: this door admits no finished stay, which is why the shared
+      // invoice test further down — it answers COMPLETED as "invoice issued" —
+      // has nothing new to handle here. Widening this gate is a real change.
+      // #3245 proposes routing this list through `canModifyBookingStatusForRole`
+      // rather than restating it; that is a convergence, not a widening, and the
+      // COMPLETED exclusion has to survive it either way.
       if (!["PENDING", "PAYMENT_PENDING", "CONFIRMED", "PAID"].includes(booking.status)) {
         throw new ApiError(
           "Only PENDING, PAYMENT_PENDING, CONFIRMED, or PAID bookings can be modified",
@@ -875,14 +882,26 @@ export async function POST(
 
       // Calculate additional amount for confirmed+paid bookings
       let additionalAmountCents = 0;
+      /**
+       * #3200: "has the main Xero invoice already been raised?" is asked at four
+       * edit doors and DEFINED in one — `hasIssuedPrimaryXeroInvoice`
+       * (`INV-SSOT-001`). The other three reach it through
+       * `applyPaymentAdjustments`; this door settles for itself, so it reads the
+       * rule rather than restating it. Restating it is what went wrong: the copy
+       * took its status list from the eligibility gate above instead, omitting
+       * COMPLETED. Worked example in `docs/invariants/single-source-of-truth.md`.
+       *
+       * The SUCCEEDED-only test below is deliberately left alone rather than
+       * folded into `hasCapturedPayment`: that would newly treat a refunded
+       * payment as settled and charge a card, which is a money decision this
+       * issue does not make.
+       */
       const hasSettledPayment =
-        ["PAYMENT_PENDING", "CONFIRMED", "PAID"].includes(booking.status) &&
+        isSettledBookingStatus(booking.status) &&
         booking.payment?.status === "SUCCEEDED";
       const hasSucceededPayment =
         hasSettledPayment && booking.payment?.source === PaymentSource.STRIPE;
-      const hasIssuedXeroInvoice =
-        ["PAYMENT_PENDING", "CONFIRMED", "PAID"].includes(booking.status) &&
-        !!booking.payment?.xeroInvoiceId;
+      const hasIssuedXeroInvoice = hasIssuedPrimaryXeroInvoice(booking);
 
       if ((hasSucceededPayment || hasIssuedXeroInvoice) && priceDiffCents > 0) {
         additionalAmountCents = priceDiffCents;
