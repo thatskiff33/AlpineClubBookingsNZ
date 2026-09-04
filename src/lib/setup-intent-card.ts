@@ -5,33 +5,24 @@
  */
 import "server-only";
 
+import type Stripe from "stripe";
 import logger from "@/lib/logger";
 import { getPaymentMethod } from "@/lib/stripe";
 import { isStripeResourceMissingError } from "@/lib/stripe-errors";
-
-/**
- * The id behind a Stripe reference, which the SDK types as either a bare id or
- * an expanded object.
- */
-export function stripeReferenceId(
-  reference: string | { id: string } | null | undefined,
-): string | null {
-  if (typeof reference === "string") return reference;
-  return reference?.id ?? null;
-}
+import { stripeReferenceId } from "@/lib/stripe-references";
 
 /**
  * #3266 — asks STRIPE whether the card a succeeded SetupIntent saved is still
  * attached to the customer this booking charges with.
  *
- * `create-setup-intent` reaches this only when the Payment row carries a
- * succeeded SetupIntent and NO card. Two very different histories produce that
- * state, and nothing local tells them apart: the member confirmed a card
- * seconds ago and the `setup_intent.succeeded` webhook has not landed yet
- * (re-adopt the card), or a charge path met a terminal Stripe refusal,
- * detached the card and cleared it from the row (#3268 — never re-adopt it).
- * The provider knows: a detached or deleted PaymentMethod no longer names this
- * customer, or no longer exists. That is `INV-PAY-052`.
+ * Reached only when a succeeded SetupIntent names a card the Payment row does
+ * not carry. Two very different histories produce that state, and nothing
+ * local tells them apart: the member confirmed a card seconds ago and the
+ * `setup_intent.succeeded` webhook has not landed yet (re-adopt the card), or a
+ * charge path met a terminal Stripe refusal, detached the card and cleared it
+ * from the row (#3268 — never re-adopt it). The provider knows: a detached or
+ * deleted PaymentMethod no longer names this customer, or no longer exists.
+ * That is `INV-PAY-052`.
  *
  * Only `resource_missing` is read as "gone". Any other failure — outage, bad
  * key, rate limit — is rethrown, because it says nothing about the card and
@@ -63,4 +54,58 @@ export async function setupIntentCardStillAttached({
     }
     throw error;
   }
+}
+
+/**
+ * What a SUCCEEDED SetupIntent may do to the card column of the Payment row
+ * that names it (#3266, `INV-PAY-052`).
+ */
+export type SucceededSetupIntentCardVerdict =
+  /** The intent names no payment method; there is nothing to adopt. */
+  | { outcome: "no_payment_method" }
+  /** The row already carries exactly this intent's card; a stamp changes nothing. */
+  | { outcome: "already_on_row"; paymentMethodId: string }
+  /** Stripe still holds the card for the row's customer; it may be stamped. */
+  | { outcome: "attached"; paymentMethodId: string }
+  /** Detached, another customer's, or gone; it must never be stamped. */
+  | { outcome: "detached"; paymentMethodId: string };
+
+/**
+ * The one rule for adopting a succeeded SetupIntent's card onto a Payment row,
+ * shared by `create-setup-intent`'s `alreadySaved` arm and the
+ * `setup_intent.succeeded` webhook so the two cannot drift (`INV-SSOT-001`).
+ *
+ * The fast path is deliberately narrow: only a row that ALREADY carries this
+ * intent's own card skips the provider. A row carrying no card, or a different
+ * card, gets the attached-check — a row naming card B while intent X saved card
+ * A is not evidence that A may still be charged, and neither is the bare fact
+ * that X once succeeded. The caller supplies the row it read; whether that row
+ * still names this intent is the caller's guard (`markBookingSetupIntentSucceeded`
+ * re-checks it under the write), not this function's.
+ */
+export async function classifySucceededSetupIntentCard({
+  bookingId,
+  setupIntent,
+  row,
+}: {
+  bookingId: string;
+  setupIntent: Pick<Stripe.SetupIntent, "id" | "payment_method" | "customer">;
+  row: { stripePaymentMethodId: string | null; stripeCustomerId: string | null };
+}): Promise<SucceededSetupIntentCardVerdict> {
+  const paymentMethodId = stripeReferenceId(setupIntent.payment_method);
+  if (!paymentMethodId) {
+    return { outcome: "no_payment_method" };
+  }
+  if (row.stripePaymentMethodId === paymentMethodId) {
+    return { outcome: "already_on_row", paymentMethodId };
+  }
+  const customerId =
+    row.stripeCustomerId ?? stripeReferenceId(setupIntent.customer);
+  const attached = await setupIntentCardStillAttached({
+    bookingId,
+    setupIntentId: setupIntent.id,
+    paymentMethodId,
+    customerId,
+  });
+  return { outcome: attached ? "attached" : "detached", paymentMethodId };
 }

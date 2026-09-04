@@ -2890,6 +2890,20 @@ export async function reverseManualBookingPayment({
   };
 }
 
+/**
+ * Stamps a succeeded SetupIntent's card onto the booking's Payment row — but
+ * ONLY while that row still names this intent (#3266, `INV-PAY-052`).
+ *
+ * Stripe redelivers a failed `setup_intent.succeeded` for up to three days and
+ * the processed-event dedupe only knows events that were already handled, so
+ * this can run for an intent the row has long since replaced: a member who
+ * re-saved would have had the OLD card written back over the new one. The
+ * intent id is the guard and is never written here; the mint path
+ * (`create-setup-intent`) is the only writer of `stripeSetupIntentId`. Callers
+ * decide first whether the card may be adopted at all
+ * (`classifySucceededSetupIntentCard`); this is the write-time re-check under
+ * it. `stamped: false` means the row moved on and nothing changed.
+ */
 export async function markBookingSetupIntentSucceeded({
   bookingId,
   setupIntentId,
@@ -2898,12 +2912,16 @@ export async function markBookingSetupIntentSucceeded({
   bookingId: string;
   setupIntentId: string;
   paymentMethodId: string;
-}) {
-  await prisma.payment.update({
-    where: { bookingId },
-    data: {
-      stripePaymentMethodId: paymentMethodId,
-      stripeSetupIntentId: setupIntentId,
-    },
+}): Promise<{ stamped: boolean }> {
+  const { count } = await prisma.payment.updateMany({
+    where: { bookingId, stripeSetupIntentId: setupIntentId },
+    data: { stripePaymentMethodId: paymentMethodId },
   });
+  if (count === 0) {
+    logger.info(
+      { bookingId, setupIntentId, paymentMethodId },
+      "SetupIntent is no longer the one the booking's payment row names; its card was not stamped",
+    );
+  }
+  return { stamped: count > 0 };
 }
