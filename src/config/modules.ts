@@ -85,8 +85,11 @@ export interface ClubModuleSettingsReadClient<TRecord> {
  * THE ONE READ of the ClubModuleSettings singleton (#2996; INV-SSOT-001, and
  * the "unrepresentable over policed" preference of INV-SSOT-003). It owns the
  * select, so no caller spells one; the guard in
- * `club-module-settings-select-guard.test.ts` refuses a read call anywhere
- * else, which makes the rule exact rather than a threshold.
+ * `club-module-settings-select-guard.test.ts` refuses a direct read call
+ * anywhere else, which makes the rule exact rather than a threshold. The one
+ * path it cannot see is config-transfer's generic `delegateOf(...)` read in
+ * `src/lib/config-transfer/categories/club-settings.ts`, which threads the same
+ * select through `spec.select` and is pinned by its own contract test.
  *
  * It returns the RAW row — null when the club has never saved the Modules page
  * — and neither normalises nor defaults nor catches. That is deliberate: setup

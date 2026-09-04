@@ -67,7 +67,7 @@ deploy-time setup default **off**; general-purpose modules default **on**):
 | Ski-field conditions (`skifieldConditions`) | Mountain/road status panel and the Mountain Conditions page, the public conditions API routes, and the admin cache controls | On |
 | Two-factor authentication (`twoFactor`) | Second-factor after password login | Off |
 | Email sign-in link (`magicLink`) | Single-use email sign-in links | Off |
-| Google sign-in (`googleLogin`) | Sign in with a linked Google account | Off |
+| Google sign-in (`googleLogin`) | Sign in with a linked Google account. Credentials are entered in-app at **Admin › Integrations › Google sign-in**; see [Integrations](integrations.md) | Off |
 | Google Analytics (`analytics`) | GA4 on the public website. This toggle is the master switch; the measurement id, the visitor consent banner and its wording are configured at **Admin › Integrations › Google Analytics** (no env vars, no restart). See [Integrations](integrations.md) | Off |
 | Lobby TV display (`lobbyDisplay`) | Read-only paired lobby screens | Off |
 | AI help assistant (`aiAssistant`) | Free-text help questions answered by a paid AI model, grounded in each page's help content; the curated page help works without it. Needs your Anthropic API key under **Admin › Integrations** — there is no enable-gate on the key, so with the module on and no key the ask box degrades to a structured fallback. A monthly spend cap stops answers for the rest of the month once it is reached. See [AI Help Assistant](ai-help.md) | Off |
