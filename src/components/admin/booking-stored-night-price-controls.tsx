@@ -236,6 +236,12 @@ function StrandNightPriceForm({
       <ViewOnlyActionButton
         canEdit={canEdit}
         size="sm"
+        // The canonical settings pattern: the view-only reason is stated ONCE,
+        // by the `AdminViewOnlySectionBanner` at the head of this section, which
+        // is in this same file. A disabled button is out of the tab order and
+        // its `title` never fires, so repeating it here would be saying it in
+        // the one place nobody reads it.
+        describeReason={false}
         disabled={submitting || check?.ok !== true}
         onClick={submit}
       >

@@ -84,6 +84,8 @@ const nightBox = (date: string) =>
     (_content, element) => element?.id === `unpriced-night-${date}`,
   );
 
+type FetchCall = [string, { body: string }];
+
 function stubFetch(status = 200) {
   const fetchMock = vi.fn(async () => ({
     ok: status < 400,
@@ -94,10 +96,12 @@ function stubFetch(status = 200) {
   return fetchMock;
 }
 
+const fetchCalls = (fetchMock: ReturnType<typeof stubFetch>) =>
+  fetchMock.mock.calls as unknown as FetchCall[];
+
 const postBodies = (fetchMock: ReturnType<typeof stubFetch>) =>
-  fetchMock.mock.calls.map(
-    ([, init]: [unknown, { body: string }]) =>
-      JSON.parse(init.body) as Record<string, unknown>,
+  fetchCalls(fetchMock).map(
+    ([, init]) => JSON.parse(init.body) as Record<string, unknown>,
   );
 
 beforeEach(() => {
@@ -248,7 +252,7 @@ describe("what a complete answer posts", () => {
     );
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
 
-    expect(fetchMock.mock.calls[0][0]).toBe(
+    expect(fetchCalls(fetchMock)[0][0]).toBe(
       "/api/admin/bookings/booking-1/stored-night-prices",
     );
     expect(postBodies(fetchMock)[0]).toEqual({

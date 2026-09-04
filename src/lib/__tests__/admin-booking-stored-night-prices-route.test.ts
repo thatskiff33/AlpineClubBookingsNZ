@@ -103,7 +103,7 @@ describe("POST /api/admin/bookings/[id]/stored-night-prices", () => {
   it("refuses a body with no explicit confirmation", async () => {
     // Recording what a stay sold for is never a single-click accident, matching
     // the settle route's own rule.
-    const { confirmed: _confirmed, ...unconfirmed } = validBody;
+    const unconfirmed = { ...validBody, confirmed: undefined };
 
     const response = await POST(makeRequest(unconfirmed), { params });
 

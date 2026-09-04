@@ -230,8 +230,7 @@ function makeStore(options: {
   return store;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const asStore = (store: unknown) => store as any;
+const asStore = (store: unknown) => store as never;
 
 const bookingRange = { checkIn: CHECK_IN, checkOut: CHECK_OUT };
 
