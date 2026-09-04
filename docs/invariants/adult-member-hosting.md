@@ -1951,21 +1951,34 @@ compliant indefinitely.
      confirmed a change to one booking, and its two halves are that booking. The
      extra read is therefore taken only for an override, and the ordinary sweep
      pays nothing (`adult-member-hosting-coverage-drain.ts`).
-  2. **The enqueue** writes a row per **stranded** dependent for a declined linked
-     move, even where the changed booking's own night window already reaches it.
+  2. **The enqueue** writes a row per **acknowledged** dependent — the member's
+     declined set, or the exact set an officer was shown and confirmed under §7,
+     both fingerprinted by the same stranded state key — even where the changed
+     booking's own night window already reaches it.
      A dependent that PARTIALLY overlaps the new dates — the adult's booking
      still covers one of the kid's nights and leaves the other short — is an
      ordinary family shape, and it is reached only by the sweep. Without a row of
      its own it would lose the decision entirely.
+
+     **AN OFFICER'S OVERRIDE IS AN ACKNOWLEDGEMENT TOO**, and the same rule
+     carries it: the officer is shown the exact bookings their change would
+     strand and confirms that set with a mandatory reason, so the incident opened
+     on each of them is the record of who authorised it — and there is no other
+     durable home for that reason. A dependent reached only by the changed
+     booking's sweep, and so filed as a plain automatic change, would lose it.
+     The end-to-end contract from #2576/#2597 asserts exactly this, and caught it
+     when #3241's first attempt confined attribution without carrying it.
 
      **STRANDED, NOT EVERY DEPENDENT, AND THE DIFFERENCE IS THE WHOLE POINT.**
      `inspectSameOwnerDependents` drops from `stranded` any dependent whose
      uncovered state is already recorded — a stored review or an open incident at
      the same state key — and those are precisely the bookings uncovered for
      reasons of their own. They stay in the dependent set. Giving each of them a
-     row of its own would hand them the decision under their own name, where the
-     drain's filter cannot help. The changed booking's own row does not carry the
-     decision either: "asked whether to move this booking as well" is
+     row of its own would hand them the story under their own name, where the
+     drain's filter cannot help. A change that explains nothing about who — a
+     plain `SYSTEM_CHANGE` with no reason — has nothing to carry, so it keeps the
+     existing overlap rule and the ordinary edit still writes exactly one row.
+     The changed booking's own row does not carry the decision either: "asked whether to move this booking as well" is
      self-contradictory on the booking they were editing.
   3. **The fold promotes by rank**: `OFFICER_OVERRIDE` outranks
      `OWNER_DECLINED_LINKED_MOVE`, which outranks `SYSTEM_CHANGE`. For an

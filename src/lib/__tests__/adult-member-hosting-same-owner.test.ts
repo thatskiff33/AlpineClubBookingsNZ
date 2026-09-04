@@ -1068,13 +1068,25 @@ describe("a change that would strand another booking (#2576 §6, §7, §14)", ()
         },
       }),
     );
-    expect(queued).toHaveLength(1);
+    // TWO ROWS, AND THE SECOND ONE IS THE OFFICER'S RECORD (#3241,
+    // `INV-HOST-053`). The changed booking's own row is bounded to the nights it
+    // touched (§10), exactly as before. The dependent the officer was SHOWN and
+    // confirmed gets a row of its own, because a row's cause and reason now stop
+    // at the booking it names — without it, §7's mandatory reason would reach the
+    // stranded booking's incident nowhere, and that incident is its only home.
+    expect(queued).toHaveLength(2);
     expect(queued[0]).toMatchObject({
       memberId: "owner-1",
       lodgeId: LODGE,
       cause: "OFFICER_OVERRIDE",
       actorMemberId: "officer-1",
       sourceBookingId: "b-source",
+    });
+    expect(queued[1]).toMatchObject({
+      cause: "OFFICER_OVERRIDE",
+      actorMemberId: "officer-1",
+      sourceBookingId: "b-main",
+      reason: "Member rang; taking the adult off at their request",
     });
     // Bounded to the nights this booking actually touched (§10).
     expect(queued[0].nights).toEqual(["2026-07-03", "2026-07-04"]);
@@ -1126,7 +1138,16 @@ describe("a change that would strand another booking (#2576 §6, §7, §14)", ()
         },
       }),
     );
-    expect(accepted.queued).toHaveLength(1);
+    // Two rows since #3241: the changed booking's own, and one for the dependent
+    // the officer was shown and confirmed, which is where §7's reason has to land
+    // now that a row's story stops at the booking it names (`INV-HOST-053`). The
+    // point of THIS test is unchanged and asserted below — a PENDING dependent
+    // opens no incident from either of them.
+    expect(accepted.queued).toHaveLength(2);
+    expect(accepted.queued[1]).toMatchObject({
+      sourceBookingId: "b-main",
+      cause: "OFFICER_OVERRIDE",
+    });
 
     const incident = await reconcileSameOwnerCoverageIncident(
       {
@@ -3505,6 +3526,63 @@ describe("a member is offered the linked move, never deadlocked (#3232)", () => 
     // regression to `SYSTEM_CHANGE` here files a member's prompted decision as an
     // automatic change, which is the count the value exists to keep clean.
     expect(dependentItem?.cause).toBe("OWNER_DECLINED_LINKED_MOVE");
+  });
+
+  it("keeps §7's officer reason on the stranded booking they confirmed", async () => {
+    // #3241, `INV-HOST-053`, and the contract #2576/#2597 pinned end to end: the
+    // officer is SHOWN the exact bookings their change would strand and confirms
+    // that set with a mandatory reason, so the incident it opens on each of them
+    // is the record of who authorised it. That record lives nowhere else — there
+    // is no other durable home for §7's reason — so a dependent reached only by
+    // the changed booking's sweep, and therefore filed as a plain automatic
+    // change, would lose it outright.
+    //
+    // This is the same rule as the declined arm, not a second one: attribution
+    // follows the acknowledged set, whichever cause acknowledged it.
+    const rows = [
+      sourceWithAdult("b-source", ["2026-07-20", "2026-07-21"]),
+      booking({ id: "b-main", guests: [guestRow("kid", ["2026-07-03", "2026-07-04"])] }),
+    ];
+    const refusal = await reconcileAdultMemberHostingReviewWithSiblings(
+      "b-source",
+      makeStore(rows).db,
+      hostingCoverageActorOptions({
+        actorRole: "ADMIN",
+        actorMemberId: "officer-1",
+        vacatedRange: VACATED,
+      }),
+    ).then(
+      () => null,
+      (err: unknown) => err as SameOwnerCoverageOverrideRequiredError,
+    );
+    expect(refusal, "an officer with no reason is refused, which carries the key").toBeTruthy();
+
+    const { db, queued } = makeStore(rows);
+    await expect(
+      reconcileAdultMemberHostingReviewWithSiblings(
+        "b-source",
+        db,
+        hostingCoverageActorOptions({
+          actorRole: "ADMIN",
+          actorMemberId: "officer-1",
+          vacatedRange: VACATED,
+          override: {
+            acknowledged: true,
+            reason: "Spoke with the family; they are cancelling the other one",
+            strandedStateKey: refusal!.strandedStateKey,
+          },
+        }),
+      ),
+    ).resolves.toBeTruthy();
+
+    const ownRow = queued.find((item) => item.sourceBookingId === "b-main");
+    expect(
+      ownRow,
+      "INV-HOST-053: the booking the officer confirmed stranding keeps their reason",
+    ).toMatchObject({
+      cause: "OFFICER_OVERRIDE",
+      reason: "Spoke with the family; they are cancelling the other one",
+    });
   });
 
   it("does not tell a booking uncovered for its own reason that the member declined it", async () => {

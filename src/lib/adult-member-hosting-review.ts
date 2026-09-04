@@ -2635,16 +2635,21 @@ async function enqueueSameOwnerDependentItems(
   askedAbout: ReadonlySet<string>,
 ): Promise<number> {
   let queued = 0;
-  const declined = context.cause === "OWNER_DECLINED_LINKED_MOVE";
+  // A plain automatic change explains nothing about who, so there is nothing to
+  // confine and nothing to carry: those dependents keep the existing overlap
+  // rule and the ordinary edit still writes exactly one item.
+  const hasAStory = context.cause !== "SYSTEM_CHANGE" || context.reason !== null;
   for (const dependent of dependents) {
-    // #3241, `INV-HOST-053`. THE STORY GOES TO THE BOOKINGS THE MEMBER WAS ASKED
-    // ABOUT AND TO NO OTHERS, and each of those needs a row of its own even where
-    // the changed booking's window already reaches it — the skip below avoids
-    // duplicate work, but a row's explanation now stops at the booking it names,
-    // so an overlapping stranded booking reached only by the sweep would lose the
-    // decision. A PARTIAL overlap is exactly that: still sharing a night with the
-    // new dates, still left short on the others.
-    const carriesItsOwnStory = declined && askedAbout.has(dependent.id);
+    // #3241, `INV-HOST-053`. THE STORY GOES TO THE BOOKINGS THAT WERE ACKNOWLEDGED
+    // AND TO NO OTHERS — the member's declined set, or the exact set an officer
+    // was shown and confirmed under §7, both fingerprinted by the same stranded
+    // state key. Each needs a row of its own even where the changed booking's
+    // window already reaches it: the skip below avoids duplicate work, but a
+    // row's explanation now stops at the booking it names, so an acknowledged
+    // booking reached only by the sweep would lose it. A PARTIAL overlap is
+    // exactly that — still sharing a night with the new dates, still left short
+    // on the others.
+    const carriesItsOwnStory = hasAStory && askedAbout.has(dependent.id);
     if (!carriesItsOwnStory && !dependentNeedsOwnQueueItem(booking, dependent)) {
       continue;
     }
@@ -2653,12 +2658,13 @@ async function enqueueSameOwnerDependentItems(
         memberId: dependent.memberId,
         lodgeId: dependent.lodgeId,
         nights: coverageNightsOf(dependent),
-        // A dependent's own item is never labelled as somebody's override: the
-        // officer authorised stranding on the booking they were working on, not a
-        // decision about this one. Nor does a booking nobody mentioned get the
-        // member's decision (#3241). The actor is still recorded, so the audit
-        // trail says who did it — the same reasoning
+        // A BOOKING NOBODY NAMED GETS NO STORY (#3241): not the member's decision,
+        // and not an officer's override either — the actor is still recorded, so
+        // the audit trail says who did it, which is the reasoning
         // `settleGroupTripDependentCoverage` applies to a third party's booking.
+        // AN ACKNOWLEDGED ONE KEEPS BOTH, and for an override that is §7's
+        // mandatory reason landing on the booking the officer confirmed
+        // stranding — the record of who authorised it, which lives nowhere else.
         cause: carriesItsOwnStory ? context.cause : "SYSTEM_CHANGE",
         sourceBookingId: dependent.id,
         actorMemberId,
