@@ -24,11 +24,19 @@ import {
   nightPriceRepairUnreadableMessage,
   unpricedNightTargetCents,
   unreconciledStrandExplanation,
+  STORED_NIGHT_PRICE_RECORD_CONTROL_LABEL,
   type NonEmptyDates,
   type RecordedNightPrice,
   type StoredNightPriceRepairCheck,
   type StrandNightPriceOffer,
 } from "@/lib/stored-night-price-repair";
+
+// Mirrors MANUAL_PAYMENT_NOTE_MAX in src/lib/manual-subscription-payment.ts,
+// which cannot be imported here: that module is `server-only`. The same mirror
+// the three sibling note fields on this card and the refund queue carry, and
+// the route enforces the real cap — without it the officer can type past a
+// limit the screen never mentions and gets back a generic refusal.
+const NOTE_MAX_LENGTH = 500;
 
 /**
  * #3214 (epic #2797): the officer's control for recording what one guest's
@@ -226,6 +234,7 @@ function StrandNightPriceForm({
           onChange={(event) => setNote(event.target.value)}
           disabled={submitting || canEdit !== true}
           rows={2}
+          maxLength={NOTE_MAX_LENGTH}
           {...noteHint.fieldProps}
         />
         <FieldHint {...noteHint.hintProps}>
@@ -245,7 +254,13 @@ function StrandNightPriceForm({
         disabled={submitting || check?.ok !== true}
         onClick={submit}
       >
-        Record what these nights sold for
+        {/*
+          The one home for this name is the client-safe rules module, because
+          the other-lodge parking refusal quotes it to tell an officer where to
+          go. Renaming the button alone would send them looking for a control
+          that does not exist.
+        */}
+        {STORED_NIGHT_PRICE_RECORD_CONTROL_LABEL}
       </ViewOnlyActionButton>
     </div>
   );

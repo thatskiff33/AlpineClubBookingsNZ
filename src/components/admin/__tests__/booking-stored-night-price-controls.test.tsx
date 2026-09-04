@@ -24,7 +24,10 @@ vi.mock("@/hooks/use-admin-area-edit-access", async (importOriginal) => ({
 
 import { BookingStoredNightPriceControls } from "@/components/admin/booking-stored-night-price-controls";
 import { requireCalendarDate } from "@/lib/club-time";
-import type { StrandNightPriceOffer } from "@/lib/stored-night-price-repair";
+import {
+  STORED_NIGHT_PRICE_RECORD_CONTROL_LABEL,
+  type StrandNightPriceOffer,
+} from "@/lib/stored-night-price-repair";
 
 /**
  * #3214 (epic #2797) - the officer's control for recording what a guest's
@@ -161,7 +164,7 @@ describe("nothing on this screen produces an amount", () => {
     expect(nightBox("2026-08-01")).toHaveValue("");
     expect(nightBox("2026-08-02")).toHaveValue("");
     expect(
-      screen.getByRole("button", { name: "Record what these nights sold for" }),
+      screen.getByRole("button", { name: STORED_NIGHT_PRICE_RECORD_CONTROL_LABEL }),
     ).toBeDisabled();
   });
 
@@ -181,19 +184,25 @@ describe("nothing on this screen produces an amount", () => {
     const buttonName = (button: HTMLElement) =>
       (button.textContent ?? "").trim();
     /*
-      The inventory, pinned. A new control on this form fails HERE and has to be
-      added below - at which point the loop underneath presses it and proves it
-      does not fill a box in. Without this the loop would be a guard that only
-      arms itself once somebody has already added the thing it guards against.
+      The inventory, pinned. A new control fails HERE and has to be added below
+      - at which point the loop underneath presses it and proves it does not
+      fill a box in. Without this the loop would be a guard that only arms
+      itself once somebody has already added the thing it guards against.
+
+      OVER THE WHOLE SCREEN, not `within(strand)`. A "fill the rest" control put
+      on the outer SECTION rather than inside a strand would be neither
+      inventoried nor pressed, and a remainder fill is the one shape the source
+      census provably cannot see - so the scope that matters is every button
+      this component renders, wherever it hangs.
     */
-    expect(
-      new Set(within(strand).getAllByRole("button").map(buttonName)),
-    ).toEqual(new Set(["Record what these nights sold for"]));
+    expect(new Set(screen.getAllByRole("button").map(buttonName))).toEqual(
+      new Set([STORED_NIGHT_PRICE_RECORD_CONTROL_LABEL]),
+    );
 
     const confirm = within(strand).getByRole("button", {
-      name: "Record what these nights sold for",
+      name: STORED_NIGHT_PRICE_RECORD_CONTROL_LABEL,
     });
-    for (const button of within(strand).getAllByRole("button")) {
+    for (const button of screen.getAllByRole("button")) {
       if (button === confirm) continue;
       fireEvent.click(button);
     }
@@ -226,7 +235,7 @@ describe("nothing on this screen produces an amount", () => {
     expect(status).toHaveTextContent("$70.00");
     expect(status).toHaveTextContent("$100.00");
     fireEvent.click(
-      screen.getByRole("button", { name: "Record what these nights sold for" }),
+      screen.getByRole("button", { name: STORED_NIGHT_PRICE_RECORD_CONTROL_LABEL }),
     );
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -248,7 +257,7 @@ describe("what a complete answer posts", () => {
     });
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Record what these nights sold for" }),
+      screen.getByRole("button", { name: STORED_NIGHT_PRICE_RECORD_CONTROL_LABEL }),
     );
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
 
@@ -278,7 +287,7 @@ describe("what a complete answer posts", () => {
     fireEvent.change(nightBox("2026-08-02"), { target: { value: "100.00" } });
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Record what these nights sold for" }),
+      screen.getByRole("button", { name: STORED_NIGHT_PRICE_RECORD_CONTROL_LABEL }),
     );
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     expect(postBodies(fetchMock)[0].nightPrices).toEqual([
@@ -304,7 +313,7 @@ describe("what a complete answer posts", () => {
       screen.getByTestId("unpriced-night-price-reconciliation"),
     ).toHaveTextContent("is not one this box can read");
     fireEvent.click(
-      screen.getByRole("button", { name: "Record what these nights sold for" }),
+      screen.getByRole("button", { name: STORED_NIGHT_PRICE_RECORD_CONTROL_LABEL }),
     );
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -327,7 +336,7 @@ describe("a view-only finance admin", () => {
     expect(nightBox("2026-08-01")).toBeDisabled();
     expect(screen.getByLabelText("Note (optional)")).toBeDisabled();
     const confirm = screen.getByRole("button", {
-      name: "Record what these nights sold for",
+      name: STORED_NIGHT_PRICE_RECORD_CONTROL_LABEL,
     });
     expect(confirm).toBeDisabled();
     fireEvent.click(confirm);

@@ -1,5 +1,6 @@
 import type { Prisma, Role } from "@prisma/client";
 import { ApiError } from "@/lib/api-error";
+import { STORED_NIGHT_PRICE_RECORD_CONTROL_LABEL } from "@/lib/stored-night-price-repair";
 
 /**
  * The reciprocal "other club member" rate on a booking (Other Lodges epic,
@@ -149,8 +150,10 @@ export const OTHER_LODGE_RATE_IN_PROGRESS_MESSAGE =
  * member of another lodge?" answer arrives and a converted request is
  * quote-priced by origin.
  *
- * That gap is now closed. `Admin tools` on the booking's own page offers
- * "Record what these nights sold for" for every guest strand whose stored rows
+ * That gap is now closed. `Admin tools` on the booking's own page offers the
+ * control named by {@link STORED_NIGHT_PRICE_RECORD_CONTROL_LABEL} — the one
+ * home for that name, interpolated into the message below rather than typed
+ * into it — for every guest strand whose stored rows
  * cannot be read back — blank rows, no rows at all, or rows that do not add up
  * — fenced so the amounts must come to what the stay is ALREADY stored as being
  * worth, which is what lets it run outside any review and change nothing anybody
@@ -165,8 +168,7 @@ export const OTHER_LODGE_RATE_IN_PROGRESS_MESSAGE =
  * already open, and here none is. This is a request two of whose parts cannot be
  * combined, which is what every other refusal in this module is.
  */
-export const OTHER_LODGE_RATE_AMOUNT_UNDER_REVIEW_MESSAGE =
-  "The other-lodge member rate cannot be set on this change, because this booking has nights whose original price the club's records cannot tell us. That means an officer has to work the amount out by hand, and this change prices nothing — so a tick here would record a rate nobody was charged. Nothing has been saved: not the ticks, and not the lodge. Those nights have to carry a price before anything on this booking can be re-rated: an officer does that under Admin tools on this booking, with \"Record what these nights sold for\", and the other-lodge rate can be set once it is done.";
+export const OTHER_LODGE_RATE_AMOUNT_UNDER_REVIEW_MESSAGE = `The other-lodge member rate cannot be set on this change, because this booking has nights whose original price the club's records cannot tell us. That means an officer has to work the amount out by hand, and this change prices nothing — so a tick here would record a rate nobody was charged. Nothing has been saved: not the ticks, and not the lodge. Those nights have to carry a price before anything on this booking can be re-rated: an officer does that under Admin tools on this booking, with "${STORED_NIGHT_PRICE_RECORD_CONTROL_LABEL}", and the other-lodge rate can be set once it is done.`;
 
 /**
  * The status BOTH whole-request refusals above answer with, in one place.
