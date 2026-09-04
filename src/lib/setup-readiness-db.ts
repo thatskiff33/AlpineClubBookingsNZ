@@ -1,4 +1,4 @@
-import { CLUB_MODULE_SETTINGS_COLUMN_SELECT } from "@/config/modules";
+import { readClubModuleSettingsRecord } from "@/config/modules";
 import { prisma } from "@/lib/prisma";
 import { CLUB_TIME_SETTINGS_ID } from "@/lib/club-time-zone";
 import { resolveEnvironmentRole } from "@/lib/environment-role";
@@ -91,17 +91,14 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
     publicContentSettings,
   ] = await Promise.all([
     prisma.member.count({ where: { role: "ADMIN", active: true } }),
-    prisma.clubModuleSettings.findUnique({
-      where: { id: "default" },
-      // The canonical projection (#2996). This read used to spell every module
-      // key by hand — a second copy of MODULE_KEYS that each new module had to
-      // be added to separately, with nothing comparing the two. Reading the
-      // shared select means a module reaches setup readiness the moment it is
-      // registered, and keeps the blue/green property that select's docblock
-      // describes. Its two audit columns ride along unread: the snapshot type
-      // narrows them away and the only consumer is normalizeAdminModuleSettings.
-      select: CLUB_MODULE_SETTINGS_COLUMN_SELECT,
-    }),
+    // The one read of the module row (#2996). This used to spell every module
+    // key by hand — a second copy of MODULE_KEYS that each new module had to be
+    // added to separately, with nothing comparing the two. The raw row is what
+    // this snapshot wants: null here means "never saved", which the
+    // feature-flags step reports as first-install defaults, so the tolerant
+    // loaders that map null to defaults would erase that distinction. The two
+    // audit columns ride along unread — the snapshot type narrows them away.
+    readClubModuleSettingsRecord(prisma),
     prisma.ageTierSetting.count(),
     prisma.season.count({ where: { active: true } }),
     prisma.cancellationPolicy.count(),

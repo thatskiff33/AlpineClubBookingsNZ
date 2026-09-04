@@ -60,7 +60,7 @@ const PROJECTING_METHODS = [
 ];
 
 const CALL_PATTERN = new RegExp(
-  `clubModuleSettings\\??\\.(?:${PROJECTING_METHODS.join("|")})\\(`,
+  `clubModuleSettings\\??\\.(${PROJECTING_METHODS.join("|")})\\(`,
   "g",
 );
 
@@ -78,14 +78,25 @@ const CALL_PATTERN = new RegExp(
   a stale one that has lost a key or two, which a count of "all of them" would
   wave through.
 
-  Measured when the rule was written: ZERO literal selects on this model. Every
-  call site spreads CLUB_MODULE_SETTINGS_COLUMN_SELECT (or threads it through
-  the config-transfer spec), so the threshold binds nothing today and exists for
-  the next copy. The structural remedy — making a literal unrepresentable — is
-  not available: Prisma's `select` accepts any literal, and nothing at the type
-  level tells a literal from the shared constant, so this is the policed form
-  INV-SSOT-001 permits when the structural one is genuinely unavailable.
+  Measured when the rule was written: ZERO literal selects on this model, so the
+  threshold binds nothing today and exists for the next copy.
+
+  The STRUCTURAL remedy has since been taken (PR #3265 review, INV-SSOT-003):
+  every READ of the row goes through `readClubModuleSettingsRecord` in
+  src/config/modules.ts, which owns the select, and the exact rule below refuses
+  a read call anywhere else. The two threshold censuses stay as defence in depth
+  for what the exact rule cannot express — a WRITE, whose RETURNING needs the
+  same select but cannot use a read helper, and a vocabulary hoisted into a
+  constant that is never passed to this delegate at all.
 */
+const READ_HELPER_HOME = "src/config/modules.ts";
+const READ_METHODS = new Set([
+  "findUnique",
+  "findUniqueOrThrow",
+  "findFirst",
+  "findFirstOrThrow",
+  "findMany",
+]);
 const MAX_HAND_SPELLED_MODULE_KEYS = Math.floor(MODULE_KEYS.length / 2);
 
 function walk(dir: string, files: string[] = []): string[] {
@@ -115,7 +126,9 @@ function extractCallArgs(source: string, openParenIndex: number): string {
 }
 
 interface ProjectingCall {
+  file: string;
   location: string;
+  method: string;
   args: string;
 }
 
@@ -133,10 +146,11 @@ function projectingCalls(): ProjectingCall[] {
     while ((match = CALL_PATTERN.exec(code))) {
       const openParenIndex = match.index + match[0].length - 1;
       const line = code.slice(0, match.index).split("\n").length;
+      const rel = path.relative(process.cwd(), file).replace(/\\/g, "/");
       calls.push({
-        location: `${path
-          .relative(process.cwd(), file)
-          .replace(/\\/g, "/")}:${line}`,
+        file: rel,
+        location: `${rel}:${line}`,
+        method: match[1],
         args: extractCallArgs(code, openParenIndex),
       });
     }
@@ -233,6 +247,29 @@ describe("ClubModuleSettings reads use an explicit column select", () => {
       .filter((call) => !/\bselect\s*:/.test(call.args))
       .map((call) => call.location);
     expect(offenders).toEqual([]);
+  });
+
+  it("reads the row only through readClubModuleSettingsRecord, and writes only with the canonical select (#2996, INV-SSOT-003)", () => {
+    const isTest = (file: string) =>
+      /(^|\/)__tests__\//.test(file) || /\.test\.tsx?$/.test(file);
+    const runtime = calls.filter((call) => !isTest(call.file));
+    // The helper itself must be what the rule exempts, or the exemption is a hole.
+    expect(
+      runtime.filter((call) => call.file === READ_HELPER_HOME).map((c) => c.method),
+    ).toEqual(["findUnique"]);
+    const offenders = runtime
+      .filter((call) => call.file !== READ_HELPER_HOME)
+      .filter((call) =>
+        READ_METHODS.has(call.method)
+          ? true
+          : !/\bselect\s*:\s*CLUB_MODULE_SETTINGS_COLUMN_SELECT\b/.test(call.args),
+      )
+      .map((call) =>
+        READ_METHODS.has(call.method)
+          ? `${call.location} reads the row directly — call readClubModuleSettingsRecord(db) instead`
+          : `${call.location} writes without \`select: CLUB_MODULE_SETTINGS_COLUMN_SELECT\``,
+      );
+    expect(offenders, "INV-SSOT-003: one read of ClubModuleSettings, in " + READ_HELPER_HOME).toEqual([]);
   });
 
   it("spells no hand-maintained copy of the module vocabulary into a call (#2996, INV-SSOT-001)", () => {
