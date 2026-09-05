@@ -13,10 +13,11 @@
  *
  * Two exports, one policy (INV-PAY-054):
  *
- *   - `classifySavedCardChargeFailure` reads the thrown error by duck-typing
- *     (the SDK class is mocked in tests and `instanceof` across module
- *     boundaries is brittle anyway) and returns `terminal` only when an
- *     automated retry cannot succeed. Everything it does not recognise is
+ *   - `classifySavedCardChargeFailure` reads the thrown error structurally
+ *     through `readStripeErrorFields` (`stripe-errors.ts`) — the SDK puts the
+ *     API type in `rawType`, not `type`, and the raw webhook /
+ *     `last_payment_error` shape puts it in `type`; the reader accepts both —
+ *     and returns `terminal` only when an automated retry cannot succeed. Everything it does not recognise is
  *     `retry`, which is exactly today's behaviour — the classifier can only
  *     narrow the retry loop, never widen it.
  *
@@ -34,6 +35,7 @@
 import logger from "@/lib/logger";
 import { prisma } from "./prisma";
 import { detachPaymentMethod } from "./stripe";
+import { readStripeErrorFields, stripeErrorApiType } from "./stripe-errors";
 import {
   sendAdminPaymentFailureAlert,
   sendSavedCardChargeFailedEmail,
@@ -49,9 +51,12 @@ export type SavedCardChargeFailureReason =
 
 /** The provider fields the decision was made on, for logs and the admin alert. */
 export interface SavedCardChargeFailureEvidence {
+  /** The API error type (`card_error`, `invalid_request_error`, ...), not the SDK class name. */
   stripeType: string | null;
   stripeCode: string | null;
   declineCode: string | null;
+  /** Stripe's own retry advice on a decline; `do_not_try_again` is terminal. */
+  adviceCode: string | null;
   message: string;
 }
 
@@ -113,7 +118,14 @@ const PERMANENT_DECLINE_CODES: ReadonlySet<string> = new Set([
   "fraudulent",
   "merchant_blacklist",
   "authentication_required",
+  "do_not_try_again",
 ]);
+
+/**
+ * Stripe's documented do-not-retry signal, sent alongside a decline as
+ * `advice_code` (SDK `Error.d.ts`). Terminal whatever the decline code says.
+ */
+const DO_NOT_TRY_AGAIN_ADVICE = "do_not_try_again";
 
 /**
  * A soft decline (insufficient funds, try again later, issuer unavailable, a
@@ -123,11 +135,6 @@ const PERMANENT_DECLINE_CODES: ReadonlySet<string> = new Set([
  * declined two days after the charge first became due is treated as unusable.
  */
 export const SOFT_DECLINE_TERMINAL_WINDOW = 2;
-
-function optionalString(source: object, key: string): string | null {
-  const value = (source as Record<string, unknown>)[key];
-  return typeof value === "string" && value.length > 0 ? value : null;
-}
 
 /**
  * Decide whether a thrown saved-card charge failure is worth retrying.
@@ -141,22 +148,16 @@ export function classifySavedCardChargeFailure(
   err: unknown,
   ctx: { holdOverdueWindows: number }
 ): SavedCardChargeFailureClassification {
+  const fields = readStripeErrorFields(err);
   const evidence: SavedCardChargeFailureEvidence = {
-    stripeType: null,
-    stripeCode: null,
-    declineCode: null,
-    message: err instanceof Error ? err.message : String(err),
+    stripeType: fields.apiType,
+    stripeCode: fields.code,
+    declineCode: fields.declineCode,
+    adviceCode: fields.adviceCode,
+    message: fields.message,
   };
-  if (typeof err !== "object" || err === null) {
-    return { outcome: "retry", ...evidence };
-  }
-
-  evidence.stripeType = optionalString(err, "type");
-  evidence.stripeCode = optionalString(err, "code");
-  evidence.declineCode = optionalString(err, "decline_code");
-  const param = optionalString(err, "param");
-  const message = optionalString(err, "message") ?? "";
-  evidence.message = message || evidence.message;
+  const param = fields.param;
+  const message = fields.message;
 
   if (evidence.stripeType === "invalid_request_error") {
     const codeNamesPaymentMethod =
@@ -192,7 +193,8 @@ export function classifySavedCardChargeFailure(
       (evidence.stripeCode !== null &&
         PERMANENT_CARD_ERROR_CODES.has(evidence.stripeCode)) ||
       (evidence.declineCode !== null &&
-        PERMANENT_DECLINE_CODES.has(evidence.declineCode))
+        PERMANENT_DECLINE_CODES.has(evidence.declineCode)) ||
+      evidence.adviceCode === DO_NOT_TRY_AGAIN_ADVICE
     ) {
       return { outcome: "terminal", reason: "card_permanently_declined", ...evidence };
     }
@@ -214,29 +216,48 @@ export function classifySavedCardChargeFailure(
  * it from every row that carries it. Returns the number of rows cleared.
  *
  * Provider call first and OUTSIDE any transaction (INV-INT-003). A detach that
- * errors is swallowed and logged: an already-detached or never-attached pm
- * errors here, and it is unusable either way — the local clear is what stops
- * the retry loop, and it runs regardless.
+ * fails with `invalid_request_error` — the pm is already detached, was never
+ * attached, or no longer exists — is swallowed and logged: the card is
+ * unusable either way, and the local clear is what stops the retry loop. Any
+ * OTHER detach failure (an `api_error`, a rate limit, a connection error) is
+ * RETHROWN before a single row is written, so the cron's outer catch falls back
+ * to the ordinary retry alert and the card stays on the rows. Clearing on a
+ * transient failure would leave the card attached at Stripe while telling the
+ * member to re-save; the setup-intent route (#3266) would then find it still
+ * attached and re-adopt it, the next run would fail terminally again, and the
+ * member would be emailed again. "A cleared card is a detached card" is the
+ * invariant this ordering buys (INV-PAY-054).
  *
  * TWO tables, not one. `Payment.stripePaymentMethodId` is what the cron reads,
- * but it is a DERIVED mirror: `reconcilePaymentAggregates`
- * (`payment-transactions.ts`) re-stamps it from the latest PRIMARY
- * `PaymentTransaction`'s `paymentMethodId` whenever any PRIMARY row exists, and
- * it runs on every ledger upsert — including webhook-driven ones. Clearing the
- * `Payment` row alone would hold only until the next reconcile, which would
- * copy the retired pm back off a PROCESSING/FAILED (or `legacy_primary_backfill`)
- * ledger row that recorded it, the cron would charge it again, and the member
- * would be emailed again. So the ledger rows carrying this pm are nulled too.
- * That field has exactly one production reader — the reconcile derivation
- * itself — so nothing else changes meaning: refunds and recovery key on the
- * intent id, never on the pm.
+ * but `reconcilePaymentAggregates` (`payment-transactions.ts`) re-derives it
+ * from the latest PRIMARY `PaymentTransaction`'s `paymentMethodId` on every
+ * ledger upsert — including webhook-driven ones — for a `Payment` row that
+ * carries NO `stripeSetupIntentId` (a row that carries one owns its card column
+ * through the SetupIntent writers and this retire path, and the derivation
+ * leaves it alone). A split child's row is exactly such a row: its pm was
+ * stamped by borrowing, not by a SetupIntent, and its PROCESSING /
+ * `legacy_primary_backfill` ledger row recorded that pm. Clearing the `Payment`
+ * row alone would hold only until the next reconcile copied the retired pm back
+ * off that ledger row, the cron would charge it again, and the member would be
+ * emailed again. So the ledger rows carrying this pm are nulled too.
  *
- * No lock is taken for these field writes. The setup-intent route writes the
- * same `Payment` fields unlocked today, and the race that matters is harmless:
- * a charge that read this pm a moment before the clear hands it to Stripe,
- * Stripe refuses it for the same reason, and that run lands in this same
- * terminal branch — the second clear matches zero rows and the second detach
- * errors quietly. Idempotent by construction (INV-PAY-027).
+ * What that ledger column is for, precisely: the reconcile derivation above is
+ * its only production READER; `xero-booking-repair-types.ts` also SELECTS it
+ * into the repair snapshot, where nothing reads it. Refunds and recovery key on
+ * the intent id, never on the pm. The trade-off is provenance: nulling it on a
+ * captured historical row loses "which card paid" for that row. Accepted,
+ * because a parent's captured row keeping the pm would let a later reconcile
+ * of the parent restore the card onto the parent's `Payment` row, and the child
+ * would re-borrow it.
+ *
+ * No lock is taken for these field writes. The setup-intent route writes
+ * `Payment.stripePaymentMethodId` unlocked today, and nothing writes
+ * `PaymentTransaction.paymentMethodId` after the row is created. The race that
+ * matters is harmless: a charge that read this pm a moment before the clear
+ * hands it to Stripe, Stripe refuses it for the same reason, and that run lands
+ * in this same terminal branch — the second clear matches zero rows and the
+ * second detach fails with `invalid_request_error`, which is swallowed.
+ * Idempotent by construction (INV-PAY-027).
  */
 export async function retireUnusableSavedCard(params: {
   paymentMethodId: string;
@@ -245,13 +266,17 @@ export async function retireUnusableSavedCard(params: {
   try {
     await detachPaymentMethod(params.paymentMethodId);
   } catch (detachErr) {
+    if (stripeErrorApiType(detachErr) !== "invalid_request_error") {
+      // Transient or unknown: the card may still be attached. Do NOT clear.
+      throw detachErr;
+    }
     logger.warn(
       {
         err: detachErr,
         bookingId: params.bookingId,
         job: "confirmPendingBookings",
       },
-      "Could not detach the unusable saved card at Stripe; clearing it locally anyway (#3268)"
+      "Stripe reports the unusable saved card is already detached or gone; clearing it locally (#3268)"
     );
   }
 
@@ -274,9 +299,15 @@ export async function retireUnusableSavedCard(params: {
  * Plain-English admin alert body for a terminal failure. Says what happened,
  * what the system did about it, what the member has been asked to do, and
  * quotes Stripe's own words so the operator can look it up.
+ *
+ * `claimReleased` is whether `releaseChargeClaim` succeeded. It normally does,
+ * and the booking is back to PENDING with its beds unheld; when it did not, the
+ * booking is stuck CONFIRMED and unpaid with no card, and the alert must say
+ * that rather than assert a pending state the row is not in.
  */
 export function describeTerminalSavedCardChargeFailure(
-  classification: Extract<SavedCardChargeFailureClassification, { outcome: "terminal" }>
+  classification: Extract<SavedCardChargeFailureClassification, { outcome: "terminal" }>,
+  { claimReleased }: { claimReleased: boolean }
 ): string {
   const why =
     classification.reason === "payment_method_unusable"
@@ -293,7 +324,9 @@ export function describeTerminalSavedCardChargeFailure(
   return (
     `The saved card for this booking was found unusable: ${why}. ` +
     "It has been removed from the booking, and the member has been emailed asking them to save a new card. " +
-    "The booking stays pending; no further automatic charge will be attempted until a card is saved. " +
+    (claimReleased
+      ? "The booking stays pending; no further automatic charge will be attempted until a card is saved. "
+      : "The booking could NOT be returned to pending after the failed charge and is still marked confirmed but unpaid, with no card on file — it needs an administrator to correct it. ") +
     `Stripe said: "${classification.message}"${stripeDetail ? ` (${stripeDetail})` : ""}.`
   );
 }
@@ -321,6 +354,10 @@ export interface TerminalSavedCardChargeBooking {
  * the same error and re-sends, which is the ordinary at-least-once shape every
  * cron notice here accepts (INV-INT-001).
  *
+ * `retireUnusableSavedCard` may THROW (a detach failure Stripe did not call
+ * `invalid_request_error`): nothing has been cleared and no notice has gone,
+ * and the caller's catch falls back to the ordinary retry alert.
+ *
  * The member email is best-effort: a send failure is logged and never thrown,
  * and it cannot undo the clear, which has already committed. The admin alert
  * carries the plain-English account and Stripe's own words. Log fields are
@@ -331,6 +368,8 @@ export async function retireAndEscalateUnusableSavedCard(params: {
   paymentMethodId: string;
   paymentIntentId: string;
   failure: Extract<SavedCardChargeFailureClassification, { outcome: "terminal" }>;
+  /** Whether `releaseChargeClaim` succeeded; false changes the alert's wording. */
+  claimReleased: boolean;
 }): Promise<void> {
   const { booking, failure } = params;
   const { clearedPaymentRows, clearedLedgerRows } = await retireUnusableSavedCard({
@@ -345,6 +384,8 @@ export async function retireAndEscalateUnusableSavedCard(params: {
       stripeType: failure.stripeType,
       stripeCode: failure.stripeCode,
       declineCode: failure.declineCode,
+      adviceCode: failure.adviceCode,
+      claimReleased: params.claimReleased,
       clearedPaymentRows,
       clearedLedgerRows,
       job: "confirmPendingBookings",
@@ -375,7 +416,9 @@ export async function retireAndEscalateUnusableSavedCard(params: {
       checkIn: booking.checkIn,
       checkOut: booking.checkOut,
       amountCents: booking.finalPriceCents,
-      errorMessage: describeTerminalSavedCardChargeFailure(failure),
+      errorMessage: describeTerminalSavedCardChargeFailure(failure, {
+        claimReleased: params.claimReleased,
+      }),
       paymentIntentId: params.paymentIntentId,
     });
   } catch (alertErr) {

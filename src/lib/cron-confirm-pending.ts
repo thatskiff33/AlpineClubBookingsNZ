@@ -1679,17 +1679,24 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
       // Only roll back the capacity claim when Stripe never confirmed a
       // successful charge. If Stripe succeeded, leave the booking in its
       // claimed state for webhook/admin recovery.
+      // #3268: whether the release actually landed is threaded into the
+      // terminal alert below, so it never says "stays pending" about a
+      // booking that is stuck CONFIRMED and unpaid.
+      let claimReleased = false;
       if (claimForCharge && !paymentSucceeded) {
-        await releaseChargeClaim(claimForCharge).catch((revertErr) =>
-          logger.error(
-            {
-              err: revertErr,
-              bookingId: claimForCharge?.booking.id,
-              job: "confirmPendingBookings",
-            },
-            "Failed to release pending booking charge claim"
-          )
-        );
+        claimReleased = await releaseChargeClaim(claimForCharge)
+          .then(() => true)
+          .catch((revertErr) => {
+            logger.error(
+              {
+                err: revertErr,
+                bookingId: claimForCharge?.booking.id,
+                job: "confirmPendingBookings",
+              },
+              "Failed to release pending booking charge claim"
+            );
+            return false;
+          });
       } else if (paymentSucceeded) {
         logger.error(
           { bookingId: candidate.id, job: "confirmPendingBookings" },
@@ -1724,6 +1731,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
                 paymentMethodId: claimForCharge.payment.stripePaymentMethodId,
                 paymentIntentId,
                 failure,
+                claimReleased,
               });
               escalatedAsTerminal = true;
             }
