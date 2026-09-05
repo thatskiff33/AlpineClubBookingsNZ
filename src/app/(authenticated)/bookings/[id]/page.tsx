@@ -42,6 +42,9 @@ import { RefundAppealButton } from "@/components/refund-appeal-button";
 import { humanizeStatus, paymentStatusClass } from "@/lib/status-colors";
 import { BookingHelpExtras } from "./_components/booking-help-extras";
 import { loadBookingDetail } from "./_lib/load-booking-detail";
+import { resolveBookingDetailViewer } from "./_lib/booking-detail-viewer";
+import { resolveBookingDetailConsent } from "./_lib/booking-detail-consent";
+import { loadBookingDetailHistory } from "./_lib/booking-detail-history";
 import {
   NonMemberGuestsSection,
   type NonMemberGuestChild,
@@ -54,19 +57,8 @@ import {
   getCancellationSettlementBreakdown,
   getPaymentDisplayStatus,
 } from "@/lib/payment-status-display";
-import {
-  buildBookingHistoryItems,
-  type BookingHistoryTone,
-} from "@/lib/booking-history";
-import {
-  resolveBookingNarrative,
-  type BookingNarrativeState,
-  type NarrativeEvent,
-} from "@/lib/booking-narrative";
-import {
-  asDuplicateCaptureRefundSnapshot,
-  isDuplicateCaptureRefundEvent,
-} from "@/lib/duplicate-capture-refund-event";
+import type { BookingHistoryTone } from "@/lib/booking-history";
+import type { BookingNarrativeState } from "@/lib/booking-narrative";
 import {
   getRemainingRefundableCents,
   hasCapturedPayment,
@@ -100,17 +92,13 @@ import {
   getBookingFinancialReviewWarnings,
   getBookingProviderMismatches,
 } from "@/lib/booking-provider-mismatches";
-import { bookingHasOpenFinancialReview } from "@/lib/booking-financial-review-visibility";
 import { loadEmailMessageSettingsForLodge } from "@/lib/email-message-settings";
 import { loadPublicBookingMessages } from "@/lib/booking-message-settings";
 import { renderBookingMessageTemplate } from "@/lib/booking-message-definitions";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { resolveInternalReturnPath } from "@/lib/internal-return-path";
 import { OPENABLE_ORGANISER_STATUSES } from "@/lib/group-booking";
-import { hasAdminAccess } from "@/lib/access-roles";
 import { SelfRemoveFromBookingCard } from "@/components/self-remove-from-booking-card";
-import { resolveBookingSelfRemovalCard } from "@/lib/booking-guest-self-removal";
-import { isQuotePricedBooking } from "@/lib/booking-modify-validation";
 import { MemberGuestConsentCard } from "@/components/member-guest-consent-card";
 import {
   describeConsentDeclineRefusal,
@@ -120,7 +108,6 @@ import {
   formatConsentNightsLabel,
   formatConsentStayLabel,
   formatConsentWeekdayDate,
-  resolveBookingConsentCard,
 } from "@/lib/member-guest-consent-card";
 // Kept as its OWN single-line import, deliberately: a source contract in
 // arrival-instructions-consent-gate.test.ts matches this line verbatim, because
@@ -137,16 +124,7 @@ import { resolveOtherLodgeRateEligibleGuestIds } from "@/lib/membership-type-pol
 import { refreshFinancialYearConfig } from "@/lib/financial-year-server";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import { getPublicOtherLodges } from "@/lib/booking-request";
-// The two ZONE-FREE date-only helpers this page still needs: `formatDateOnly`
-// (imported above) is the canonical `@db.Date` encoder the #2684 census keys on
-// by name, and `eachDateOnlyInRange` is pure UTC calendar arithmetic feeding
-// `formatConsentNightsLabel`, which takes `Date[]`. Neither reads a timezone, so
-// neither is a second temporal authority; CT-6 (#2991) retires the module.
-import { eachDateOnlyInRange } from "@/lib/date-only";
-import {
-  bookingManagementAuthorizationRole,
-  hasAdminAreaAccess,
-} from "@/lib/admin-permissions";
+import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 import {
   OrganiserGroupBookingCard,
   type OrganiserGroupState,
@@ -226,12 +204,6 @@ export default async function BookingDetailPage({
   const query = searchParams ? await searchParams : {};
   const session = await auth();
   if (!session) redirect("/login");
-  const isAdmin = hasAdminAccess(session.user);
-  // Issue #1313 (option A2): a Booking Officer (bookings:edit) resolves to ADMIN
-  // so the edit policy and the BookingEditor treat them as acting on-behalf of
-  // the member — matching the widened /api/bookings/[id]/modify authority. A
-  // Full Admin already resolves to ADMIN; member / read-only viewers stay USER.
-  const viewerAuthorizationRole = bookingManagementAuthorizationRole(session.user);
   /*
     THE CLUB'S OWN CLOCK, once, for the whole page (CT-4, #2870; INV-CONFIG-002).
 
@@ -258,277 +230,50 @@ export default async function BookingDetailPage({
   const booking = await loadBookingDetail(id);
 
   if (!booking) notFound();
+  const {
+    isAdmin,
+    viewerAuthorizationRole,
+    isBookingOwner,
+    viewerGuestRow,
+    isLinkedGuestViewer,
+    canManageBooking,
+    canViewAsAdmin,
+    canAdminEditBookings,
+    canSeeAdminTools,
+    actingOnBehalf,
+    nonOwnerAdminViewer,
+  } = resolveBookingDetailViewer({ session, booking });
   if (booking.deletedAt && !isAdmin) notFound();
-  const isBookingOwner = booking.memberId === session.user.id;
-  // The viewer's OWN guest row, kept rather than thrown away: its consent state
-  // decides what operational detail (the door code, below) this viewer may see.
-  const viewerGuestRow =
-    booking.guests.find((guest) => guest.memberId === session.user.id) ?? null;
-  const isLinkedGuestViewer = !isBookingOwner && !isAdmin && viewerGuestRow !== null;
-  const canManageBooking = isBookingOwner || isAdmin;
-  // Issue #1289: Booking Officer / Read-only Admin reach the admin bookings
-  // list and calendar (gated on bookings-area view), so the member-facing
-  // detail route must admit the same viewers read-only for list/detail parity.
-  // This is a genuinely read-only path (same shape as isLinkedGuestViewer):
-  // every write/cancel/pay/modify/notes/admin-tools control below stays gated
-  // on canManageBooking or isAdmin, so this predicate never widens a mutation.
-  const canViewAsAdmin = hasAdminAreaAccess(session.user, {
-    area: "bookings",
-    level: "view",
-  });
   if (!canManageBooking && !isLinkedGuestViewer && !canViewAsAdmin) {
     redirect("/bookings");
   }
-  // Issue #1313 (option A2): a Booking Officer (the ADMIN_BOOKINGS bundle carries
-  // bookings:edit) may operate the admin-tooling cluster AND the member-facing
-  // write controls on ANY booking, not just one they own. The admin-tooling
-  // controls front routes under /api/admin/bookings/* (copy,
-  // confirm-pending-guests, admin requested-room) that already authorize on
-  // bookings:edit. The member-facing /api/bookings/[id]/* routes (cancel, modify,
-  // notes, arrival-time) are now widened to also accept bookings:edit (this PR),
-  // so their buttons include canAdminEditBookings and flow through the same
-  // admin-on-behalf path as a Full Admin (see actingOnBehalf below) — the button
-  // and its backing API widen together, never a button ahead of its route.
-  const canAdminEditBookings = hasAdminAreaAccess(session.user, {
-    area: "bookings",
-    level: "edit",
-  });
-  // Full Admins and Booking Officers both see the admin-operational tooling.
-  const canSeeAdminTools = isAdmin || canAdminEditBookings;
-  // Issue #1313 (option A2): a non-owner Full Admin OR Booking Officer cancels /
-  // modifies on behalf of the member. Both flow through the SAME admin-on-behalf
-  // semantics (suppress owner second-person framing, policy wording, and the
-  // suppress-customer-notification path) rather than a separate officer code
-  // path — so this one predicate replaces the earlier isAdmin-only actingAsAdmin.
-  const actingOnBehalf = (isAdmin || canAdminEditBookings) && !isBookingOwner;
-  // A non-owner admin-type viewer (Full Admin, Booking Officer, or read-only
-  // admin) must not be addressed with owner second-person copy ("your place /
-  // your stay") — issue #1289. Linked guests keep the member framing.
-  const nonOwnerAdminViewer = !isBookingOwner && canViewAsAdmin;
-  // Issue #2250: a member put on somebody else's booking must be able to take
-  // themselves off it from the booking itself, not only from the wizard's
-  // night-conflict card while attempting a clashing booking of their own.
-  // Eligibility is the shared server-side rule (evaluateGuestSelfRemoval), the
-  // same one that produces `canSelfRemove` on a night conflict and whose status
-  // gate the removal service enforces — never re-derived in the browser.
-  // The gate itself lives in `resolveBookingSelfRemovalCard` so it is unit
-  // testable: rendering this card for an owner, a full admin, a non-participant,
-  // or a soft-deleted booking must fail a test, not just review.
-  const selfRemovalInput = {
-    actorMemberId: session.user.id,
-    isBookingOwner,
-    isAdminViewer: isAdmin,
-    bookingDeletedAt: booking.deletedAt,
-    bookingOwnerMemberId: booking.memberId,
-    bookingStatus: booking.status,
-    bookingCheckIn: booking.checkIn,
-    guests: booking.guests,
-    // The club's today, resolved ONCE for this page above and threaded here
-    // rather than defaulted inside the predicate (#3123). It is the same binding
-    // the started-stay test and both edit policies take, and the consent card
-    // below takes it too — so no two answers on this page can straddle midnight
-    // and disagree about whether the stay has started.
-    today: clubTodayDateOnly,
-  };
-  const selfRemovalCandidate = resolveBookingSelfRemovalCard(selfRemovalInput);
-  // The removal service also refuses a quote-priced booking
-  // (assertBookingNotQuotePriced), and unlike its settled-payment election that
-  // refusal is one indexed lookup — so predict it here rather than offering a
-  // control the server would reject. Only run when the action would otherwise
-  // be offered, so an ordinary booking view adds no query.
-  const selfRemovalCard = selfRemovalCandidate?.canSelfRemove
-    ? resolveBookingSelfRemovalCard({
-        ...selfRemovalInput,
-        isQuotePriced: await isQuotePricedBooking(prisma, booking.id),
-      })
-    : selfRemovalCandidate;
-
-  // #2307: the viewer's own member-guest consent state — the ask card while
-  // their consent is PENDING (owner decision D-11 gives that row this whole
-  // page, so the card sits inside it), or the told-not-asked notice for a
-  // notify-only add. Two-phase like the self-removal card above: the
-  // quote-priced lookup (one indexed query) only runs when the ask card will
-  // actually render, because its refusal prediction is the only consumer.
-  const consentCardInput = {
-    actorMemberId: session.user.id,
-    bookingDeletedAt: booking.deletedAt,
-    bookingStatus: booking.status,
-    bookingCheckIn: booking.checkIn,
-    guests: booking.guests,
-    selfRemovalCardPresent: Boolean(selfRemovalCard),
-    // The day is stated HERE, by name, and passed down: the card resolver and
-    // its refusal prediction are pure, so "today" is this page's fact to state
-    // rather than something a helper quietly looks up for itself. Stating it is
-    // not the same as RESOLVING it — this is the page's one resolved value from
-    // above, not a second reading of the clock.
-    today: clubTodayDateOnly,
-  };
-  const consentCandidate = resolveBookingConsentCard({
-    ...consentCardInput,
-    isQuotePriced: false,
-  });
-  const consentIsQuotePriced =
-    consentCandidate?.kind === "PENDING_ASK"
-      ? await isQuotePricedBooking(prisma, booking.id)
-      : false;
-  const consentCard =
-    consentCandidate?.kind === "PENDING_ASK"
-      ? resolveBookingConsentCard({
-          ...consentCardInput,
-          isQuotePriced: consentIsQuotePriced,
-        })
-      : consentCandidate;
   // THIS booking's lodge identity, not the club default's. The ask card, the
   // arrival instructions and the booking-message merge data (#2919) all want it
   // and the last is unconditional, so it is loaded once rather than twice.
   const bookingLodgeEmailSettings = await loadEmailMessageSettingsForLodge(
     booking.lodgeId,
   );
-  // The ask card names the lodge the way the request email does.
-  const consentLodgeName =
-    consentCard?.kind === "PENDING_ASK"
-      ? bookingLodgeEmailSettings.lodgeName
-      : null;
-  const viewerConsentGuest =
-    consentCard?.kind === "PENDING_ASK"
-      ? booking.guests.find((guest) => guest.id === consentCard.guestId) ?? null
-      : null;
-  const viewerConsentNights = viewerConsentGuest
-    ? viewerConsentGuest.nights.length > 0
-      ? viewerConsentGuest.nights.map((night) => night.stayDate)
-      : eachDateOnlyInRange(viewerConsentGuest.stayStart, viewerConsentGuest.stayEnd)
-    : [];
-
-  // #2307 (owner decision MG2-M-2): the per-guest consent badge, shown to
-  // everyone who can see the guest list — member and admin read the same page.
-  // Family and non-member rows get no badge and no layout change.
-  //
-  // WHICH BADGE WORDING depends on who is reading, because the two signed-off
-  // mockups differ: the member pack draws the bare "Consented" / "Added by the
-  // club" forms, the admin pack the named and dated ones. The person who
-  // answered is routinely a family adult with no place on this booking (D-9),
-  // so their name is the club's business, not every co-guest's. For a member
-  // viewer the responder names are therefore never even looked up.
-  const consentBadgeAudience = isAdmin || canViewAsAdmin ? "ADMIN" : "MEMBER";
-  const consentResponderIds =
-    consentBadgeAudience === "ADMIN"
-      ? [
-          ...new Set(
-            booking.guests
-              .filter((guest) => guest.consentStatus !== null)
-              .map((guest) => guest.consentRespondedByMemberId)
-              .filter((memberId): memberId is string => Boolean(memberId)),
-          ),
-        ]
-      : [];
-  const consentResponders =
-    consentResponderIds.length > 0
-      ? await prisma.member.findMany({
-          where: { id: { in: consentResponderIds } },
-          select: { id: true, firstName: true, lastName: true },
-        })
-      : [];
-  const consentResponderNameById = new Map(
-    consentResponders.map((member) => [
-      member.id,
-      `${member.firstName} ${member.lastName}`.trim(),
-    ]),
-  );
-
-  const bookingAuditLogs = await prisma.auditLog.findMany({
-    where: {
-      targetId: booking.id,
-      action: {
-        in: [
-          "booking.payment.confirmed",
-          "booking.payment.failed",
-          "booking.modification.payment.confirmed",
-          "booking.modification.payment.failed",
-          // #2397: the cash / off-Xero settlement of an outstanding price
-          // increase, so the extra is never absorbed silently.
-          "booking-payment.manual-payment.additional-settled",
-          // #2265 (#2319 door 2): the settle-time note telling the member their
-          // saved credit choice was not applied and is still on their account.
-          "booking.credit_election.unapplied",
-          "booking.cancel",
-          "booking.delete.draft",
-          "booking.delete.cancelled.soft",
-          // #3232 D3, ADMIN VIEWERS ONLY, and the data feed is what is gated
-          // rather than the render (the #2008 duplicate-capture pattern above).
-          // `details` on these rows is whoever's explanation applies — a member's
-          // recorded decision about their own two bookings, or an officer's
-          // PRIVATE override reason, which the booking's own member must never
-          // read. An officer needs it here because this is the page the queue's
-          // "Review booking" button sends them to.
-          ...(canSeeAdminTools
-            ? ([
-                "booking.hostingCoverage.incidentOpened",
-                "booking.hostingCoverage.incidentUpdated",
-              ] as const)
-            : []),
-        ],
-      },
-    },
-    orderBy: { createdAt: "desc" },
-    select: {
-      id: true,
-      action: true,
-      details: true,
-      createdAt: true,
-    },
+  const {
+    selfRemovalCard,
+    consentCard,
+    consentIsQuotePriced,
+    consentLodgeName,
+    viewerConsentGuest,
+    viewerConsentNights,
+    consentBadgeAudience,
+    consentResponderNameById,
+  } = await resolveBookingDetailConsent({
+    session,
+    booking,
+    isBookingOwner,
+    isAdmin,
+    canViewAsAdmin,
+    clubTodayDateOnly,
+    bookingLodgeEmailSettings,
   });
 
-  // Durable lifecycle events (issue #740) drive the same plain-language
-  // narrative shown on the public payment-link page, so guests and admins read
-  // identical wording for every booking state.
-  const bookingEvents = await prisma.bookingEvent.findMany({
-    where: { bookingId: booking.id },
-    orderBy: { occurredAt: "asc" },
-    select: {
-      id: true,
-      type: true,
-      occurredAt: true,
-      amountCents: true,
-      reason: true,
-      snapshot: true,
-    },
-  });
-  /*
-    #3033: money held for review on this booking. Read HERE, once, and handed to
-    the pure narrative resolver as data — the resolver is reachable from
-    instrumentation and a database read inside it would break it at import.
-
-    Read for every viewer, member and admin alike, because the member-facing
-    banner is the whole point: this is not admin-gated information, it is what
-    the member is owed after their change saved.
-  */
-  const financialReviewPending = await bookingHasOpenFinancialReview(booking.id);
-
-  const bookingNarrative = resolveBookingNarrative({
-    // The event stamps in the narrative are real instants and read in the
-    // club's zone; its stay dates are @db.Date lodge nights and do not (#3123).
-    club,
-    financialReviewPending,
-    booking: {
-      status: booking.status,
-      finalPriceCents: booking.finalPriceCents,
-      checkIn: booking.checkIn,
-      checkOut: booking.checkOut,
-      firstName: booking.member.firstName,
-      adminReviewStatus: booking.adminReviewStatus,
-      adminReviewNotes: booking.adminReviewNotes,
-      adminReviewReason: booking.adminReviewReason,
-    },
-    events: bookingEvents.map(
-      (event): NarrativeEvent => ({
-        type: event.type,
-        occurredAt: event.occurredAt,
-        amountCents: event.amountCents,
-        reason: event.reason,
-        snapshot: event.snapshot,
-      })
-    ),
-  });
+  const { financialReviewPending, bookingNarrative, bookingHistory } =
+    await loadBookingDetailHistory({ booking, club, canSeeAdminTools });
 
   // Nights are CALENDAR arithmetic over the half-open `[checkIn, checkOut)`
   // night range, never elapsed milliseconds divided by 24 hours: across a DST
@@ -683,55 +428,6 @@ export default async function BookingDetailPage({
     : 0;
   const latestRefundAppeal = booking.refundRequests[0] ?? null;
   const maxRefundableCents = getRemainingRefundableCents(booking.payment);
-  // #2008 — the #1992 duplicate-capture auto-refund is an ADMIN-ONLY history
-  // entry: it never enters the shared member/guest narrative, and only admin
-  // viewers see it on the timeline. Gating the data feed (not just the render)
-  // keeps it off member-facing surfaces entirely.
-  const duplicateCaptureRefunds = canSeeAdminTools
-    ? bookingEvents
-        .filter((event) => isDuplicateCaptureRefundEvent(event))
-        .map((event) => ({
-          id: event.id,
-          occurredAt: event.occurredAt,
-          amountCents: event.amountCents ?? 0,
-          duplicatePaymentIntentId:
-            asDuplicateCaptureRefundSnapshot(event.snapshot)
-              ?.duplicatePaymentIntentId ?? null,
-        }))
-    : [];
-
-  const bookingHistory = buildBookingHistoryItems({
-    createdAt: booking.createdAt,
-    // #3232 D3 (owner, 4 September 2026): the incident's recorded explanation is
-    // readable by anyone with booking-edit access, and by nobody else. The audit
-    // query above already withholds the rows; this says the same thing to the
-    // builder, so a future edit to either one cannot open the door on its own.
-    audience: canSeeAdminTools ? "staff" : "member",
-    payment: booking.payment
-      ? {
-          status: booking.payment.status,
-          amountCents: booking.payment.amountCents,
-          refundedAmountCents: booking.payment.refundedAmountCents,
-          additionalAmountCents: booking.payment.additionalAmountCents,
-          additionalPaymentStatus: booking.payment.additionalPaymentStatus,
-          // #2350: dates the "additional payment requested" timeline entry from
-          // the obligation itself rather than the payment row's last touch.
-          latestAdditionalTransactionCreatedAt:
-            booking.payment.transactions[0]?.createdAt ?? null,
-          createdAt: booking.payment.createdAt,
-          updatedAt: booking.payment.updatedAt,
-        }
-      : null,
-    modifications: booking.modifications,
-    refundRequests: booking.refundRequests,
-    auditLogs: bookingAuditLogs,
-    duplicateCaptureRefunds,
-    // #3033: the same flag the banner above is built from, so the timeline's
-    // priced modification row and the banner cannot disagree about whether this
-    // booking's money is settled.
-    financialReviewPending,
-  });
-
   // #2266: the edit panel's account-credit card (its own card above the
   // Return-method radio — owner-decided placement). Only statuses whose stored
   // election (#2265) a pay-time consumer will honour are eligible; PENDING is
