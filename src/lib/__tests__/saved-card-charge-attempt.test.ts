@@ -5,7 +5,9 @@ import {
   PaymentTransactionKind,
   type Prisma,
 } from "@prisma/client";
+import type Stripe from "stripe";
 import { stripeSdkError } from "./support/stripe-sdk-error";
+import type { SavedCardChargeReason } from "../saved-card-charge-attempt";
 
 // #3267 (INV-PAY-055) — one saved-card charge attempt is one durable ledger row
 // with its own Stripe idempotency key. This file pins the attempt contract on
@@ -202,7 +204,10 @@ const MEMBER = "mem_1";
 const CARD = { stripeCustomerId: "cus_1", stripePaymentMethodId: "pm_1" };
 const NEW_CARD = { stripeCustomerId: "cus_1", stripePaymentMethodId: "pm_2" };
 
-function begin(card = CARD, reason = SAVED_CARD_CHARGE_REASON.cron) {
+function begin(
+  card = CARD,
+  reason: SavedCardChargeReason = SAVED_CARD_CHARGE_REASON.cron
+) {
   return beginSavedCardChargeAttempt(tx, {
     paymentId: PAYMENT,
     bookingId: BOOKING,
@@ -535,7 +540,7 @@ describe("chargeSavedCardAttempt", () => {
     const old = seedAttempt({ status: PaymentStatus.PROCESSING, stripePaymentIntentId: "pi_old" });
     const attempt = await begin(NEW_CARD);
     expect(row(old.id).status).toBe(PaymentStatus.FAILED);
-    const capturedOld = { id: "pi_old", status: "succeeded", amount: 10000, payment_method: "pm_1" };
+    const capturedOld = { id: "pi_old", status: "succeeded" as const, amount: 10000, payment_method: "pm_1" };
     mocks.cancelPaymentIntentIfCancellableWithResult.mockResolvedValue({
       canceled: false,
       paymentIntent: capturedOld,
@@ -737,7 +742,13 @@ describe("settleSavedCardChargeAttempt", () => {
 
     const settled = await settleSavedCardChargeAttempt({
       attemptRowId: attempt.attemptRowId,
-      paymentIntent: { id: "pi_x", status: "succeeded", amount: 9900, payment_method: { id: "pm_expanded" } },
+      paymentIntent: {
+        id: "pi_x",
+        status: "succeeded",
+        amount: 9900,
+        // The expanded-object shape of a Stripe reference (#3266's fold).
+        payment_method: { id: "pm_expanded" } as unknown as Stripe.PaymentMethod,
+      },
     });
 
     expect(settled).toEqual({ transactionId: attempt.attemptRowId, ledgerStatus: PaymentStatus.SUCCEEDED, keptExistingRow: false });
@@ -787,7 +798,7 @@ describe("settleSavedCardChargeAttempt", () => {
   it("P2002 race: the unique violation on the intent id takes the keep-existing branch instead of throwing on a path that has just captured money", async () => {
     const attempt = await begin();
     // Not visible to the pre-check, present by the time the update runs.
-    const winner = { id: "txn_hook", paymentId: PAYMENT };
+    const winner = { id: "txn_hook", paymentId: PAYMENT } as unknown as LedgerRow;
     ledger.paymentTransaction.findUnique
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce(winner);
