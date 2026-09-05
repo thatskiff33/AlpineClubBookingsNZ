@@ -14,14 +14,6 @@ reason: the terminal-versus-retry decision itself lives in the new module
   release happens so the terminal alert never asserts a pending state the row
   is not in.
 
-file: src/lib/payment-transactions.ts
-lines: 1158
-reason: the saved-card derivation rule (INV-PAY-054, "the ledger never moves a
-  saved card") is one conditional inside `reconcilePaymentAggregates`, next to
-  the intent-id derivation it deliberately diverges from; lifting one column's
-  rule out of the function that derives every other column would hide exactly
-  the divergence a reader needs to see.
-
 file: src/lib/email/booking.ts
 lines: 1600
 reason: the new `saved-card-charge-failed` sender must sit beside
