@@ -31,6 +31,7 @@ import { getBookingPaymentMode } from "@/lib/booking-payment-flow";
 import { RefundAppealButton } from "@/components/refund-appeal-button";
 import { humanizeStatus, paymentStatusClass } from "@/lib/status-colors";
 import { BookingHelpExtras } from "./_components/booking-help-extras";
+import { BookingNotesAndHistory } from "./_components/booking-notes-and-history";
 import { BookingCancellationOutcome } from "./_components/booking-cancellation-outcome";
 import { BookingLifecycleActions } from "./_components/booking-lifecycle-actions";
 import { BookingPaymentCards } from "./_components/booking-payment-cards";
@@ -89,13 +90,6 @@ import {
 // compiler and break the guard.
 import { isOperationallyPresentConsent } from "@/lib/member-guest-consent";
 import { OrganiserGroupBookingCard } from "@/components/group-booking/organiser-group-booking-card";
-
-const historyToneClasses: Record<BookingHistoryTone, string> = {
-  default: "border-border bg-muted text-muted-foreground",
-  success: "border-success-6 bg-success-3 text-success-11",
-  warning: "border-warning-6 bg-warning-3 text-warning-11",
-  danger: "border-danger-6 bg-danger-3 text-danger-11",
-};
 
 // Candidate anchors for this long, mostly-conditional page. SectionNav prunes
 // any whose target id is absent from the DOM after mount, so listing the full
@@ -485,69 +479,12 @@ export default async function BookingDetailPage({
         payment={payment}
       />
 
-      <Card id="notes" className="scroll-mt-20">
-        <CardHeader>
-          <CardTitle>Notes</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <BookingNotesEditor
-            bookingId={booking.id}
-            initialNotes={booking.notes ?? ""}
-            canEdit={canCancel}
-          />
-        </CardContent>
-      </Card>
-
-      <Card id="transaction-history" className="scroll-mt-20">
-        <CardHeader>
-          <CardTitle>Transaction History</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="divide-y">
-            {bookingHistory.map((item) => (
-              <div
-                key={item.id}
-                className="flex flex-col gap-2 py-3 sm:flex-row sm:items-start sm:justify-between"
-              >
-                <div className="space-y-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Badge
-                      variant="outline"
-                      className={historyToneClasses[item.tone]}
-                    >
-                      {item.category}
-                    </Badge>
-                    <span className="text-sm font-medium text-foreground">
-                      {item.title}
-                    </span>
-                    <span className="text-xs text-muted-foreground">
-                      {club.instantDateTime(item.occurredAt)}
-                    </span>
-                  </div>
-                  {item.detail ? (
-                    <p className="text-sm text-muted-foreground">{item.detail}</p>
-                  ) : null}
-                </div>
-                {item.amountDisplay ? (
-                  <span
-                    className={`text-sm font-medium ${
-                      item.tone === "danger"
-                        ? "text-danger-11"
-                        : item.tone === "success"
-                          ? "text-success-11"
-                          : item.tone === "warning"
-                            ? "text-warning-11"
-                            : "text-muted-foreground"
-                    }`}
-                  >
-                    {item.amountDisplay}
-                  </span>
-                ) : null}
-              </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
+      <BookingNotesAndHistory
+        booking={booking}
+        club={club}
+        access={access}
+        history={history}
+      />
 
       <p className="text-xs text-muted-foreground">
         Waiting on a booking email? This page always shows the live status of
