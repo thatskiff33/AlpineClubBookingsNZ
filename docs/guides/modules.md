@@ -52,26 +52,29 @@ deploy-time setup default **off**; general-purpose modules default **on**):
 | Finance dashboard (`financeDashboard`) | Finance reports, sync diagnostics, finance-only dashboards | Off |
 | Waitlist (`waitlist`) | Waitlist state, admin queue, offer handling | Off |
 | Xero integration (`xeroIntegration`) | Xero linking, sync, reconciliation, and the Integrations page | Off |
-| Bed allocation (`bedAllocation`) | Room/bed setup and guest-to-bed allocation | Off |
+| Bed allocation (`bedAllocation`) | Room/bed setup, guest-to-bed allocation, auto-allocation, and allocation approvals | Off |
 | Internet Banking payments (`internetBankingPayments`) | Member bank-transfer option backed by Xero invoices | Off |
-| Address autocomplete (`addressAutocomplete`) | Addy-powered address suggestions | Off |
+| Address autocomplete (`addressAutocomplete`) | Addy-powered address suggestions. Manual address entry remains available whenever the module is off, credentials are missing, Addy fails, or rate limiting applies | Off |
 | Group bookings (`groupBookings`) | Organiser-run group bookings with a join code | On |
 | Lockers (`lockers`) | Physical locker records and member allocation | On |
 | Lodge induction (`induction`) | Induction checklists, signers, and sign-off | On |
 | Work parties (`workParties`) | Volunteer working bees and their booking discounts | On |
 | Promo codes (`promoCodes`) | Discount codes on bookings | On |
 | Hut leaders (`hutLeaders`) | Daily hut-leader assignment and auto-assignment | On |
-| Communications (`communications`) | Admin bulk email to members | On |
+| Communications (`communications`) | Admin bulk email to members. Transactional notifications (booking, payment and membership emails) are unaffected | On |
 | Member notices (`memberNotices`) | Committee news notices targeted to member audiences, shown on the dashboard with read/acknowledge tracking | On |
 | Events calendar (`eventsCalendar`) | Club events calendar, recurring events, and the dashboard Events card | On |
-| Ski-field conditions (`skifieldConditions`) | Mountain/road status panel and the Mountain Conditions page | On |
+| Ski-field conditions (`skifieldConditions`) | Mountain/road status panel and the Mountain Conditions page, the public conditions API routes, and the admin cache controls | On |
 | Two-factor authentication (`twoFactor`) | Second-factor after password login | Off |
 | Email sign-in link (`magicLink`) | Single-use email sign-in links | Off |
-| Google sign-in (`googleLogin`) | Sign in with a linked Google account | Off |
+| Google sign-in (`googleLogin`) | Sign in with a linked Google account. Credentials are entered in-app at **Admin › Integrations › Google sign-in**; see [Integrations](integrations.md) | Off |
 | Google Analytics (`analytics`) | GA4 on the public website. This toggle is the master switch; the measurement id, the visitor consent banner and its wording are configured at **Admin › Integrations › Google Analytics** (no env vars, no restart). See [Integrations](integrations.md) | Off |
 | Lobby TV display (`lobbyDisplay`) | Read-only paired lobby screens | Off |
+| AI help assistant (`aiAssistant`) | Free-text help questions answered by a paid AI model, grounded in each page's help content; the curated page help works without it. Needs your Anthropic API key under **Admin › Integrations** — there is no enable-gate on the key, so with the module on and no key the ask box degrades to a structured fallback. A monthly spend cap stops answers for the rest of the month once it is reached. See [AI Help Assistant](ai-help.md) | Off |
 | Add another member as a guest (`memberGuests`) | Lets a member put another club member — outside their own family group — on their booking, on the create path and when editing. By default the other member is emailed and asked first and a bed is held until they answer. Also brings admin adds, the admin booking-copy and the booking-request pipeline under the same notify rule. Its policy lives on **Admin › Bookings setup › Member guests** | Off |
 | AI Diagnostics (`aiDiagnostics`) | A separate admin-only paid assistant that will explain the deployed system and retrieve bounded, permission-scoped operational evidence. Distinct from the AI help assistant: its own **dedicated** Anthropic key and monthly spend budget. Turning it on authorises no spend — it also needs a dedicated key and a positive budget, and stays "not ready" until both are set. Configuration is per-deployment and does not travel in config bundles. See [`docs/ai-diagnostics/README.md`](../ai-diagnostics/README.md) | Off |
+| Maintenance reports (`maintenanceReports`) | Members report a physical fault at the lodge from a card on their dashboard, and the report lands in a queue for whoever holds Lodge Operations. The printed QR code that opens the same form **without** signing in is a separate, off-by-default setting under **Admin › Lodge › Maintenance reports**, so turning this module on opens nothing to the public. See [Maintenance reports](maintenance-reports.md) | On |
+| Alpine Central Server (`alpineCentralServer`) | Connects this club to the Alpine Central Server (ServerNZ) to upload and download data shared across clubs, starting with the Other Clubs registry. **Shares data outside your club**: your lodges' names, locations, bed counts and booking-officer contact details go to the central server and on to every other connected club. Nothing is sent until you also enable an item on its setup page. Needs an API key from the central server, entered under **Admin › Integrations › Alpine Central Server**. See [Integrations](integrations.md) | Off |
 | Message board (`commsPortal`) | A member-written message board for the club. Posts stay inside your club unless a member ticks **share with all clubs**, which sends that post to every other club connected through the Alpine Central Server. The board itself needs no central-server connection; only sharing does. Off by default because switching it on is a decision about publishing your members' writing beyond your own club | Off |
 
 Each card's **readiness** badge reads Enabled, Disabled, or **Needs setup** (the
@@ -91,4 +94,6 @@ module is on but a dependency — credentials, an API key, inventory — is miss
 - Back to the [documentation hub](../README.md).
 - Sibling guides: [Setup](setup.md), [Login & Security](security.md),
   [Integrations](integrations.md), [Access Roles](access-roles.md).
-- Reference: module flags in [`CONFIGURATION.md`](../../CONFIGURATION.md).
+- Reference: how module settings are stored, and how cron jobs respect them, in
+  [`CONFIGURATION.md` → Module Controls](../../CONFIGURATION.md#module-controls-and-admin-modules).
+  The table above is the only per-module list; that section points back here.
