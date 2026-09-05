@@ -61,6 +61,34 @@ the live configuration rather than trusting a document:
   vulnerability in the built container image. HIGH findings are reported in the
   same job but are advisory and cannot block.
 
+### The scheduled sweep is a different job with a different remit
+
+`Secret scan (gitleaks)` above is the **gate**: it decides whether a change may
+merge, so it is scoped to what a merge can affect — this pull request's commits,
+the history of `main`, and the checked-out tree.
+
+`Scheduled secret sweep` (#2852, `.github/workflows/gitleaks-scheduled.yml`) is
+the **sweep**: weekly and on demand, over **every** branch's history, because a
+secret on an unmerged branch of a public repository is public whether or not
+anyone ever merges it. It is not a required check and cannot become one by
+accident — it has no `pull_request` or `push` trigger, so it reports no status
+on a pull request for branch protection to require. A finding there is a task,
+not a merge freeze. That is deliberate: `--all` in the gate would let one leak
+on somebody's abandoned branch redden a required check on every open pull
+request, unfixable by the author (#2686).
+
+Neither one is allowed its own scanner. The version is pinned once in
+`scripts/ci/gitleaks-image.sh`, the invocation once in
+`scripts/ci/gitleaks-scan.sh`, and both workflows call it; the rule set and
+allowlists are the same `.gitleaks.toml` and `.gitleaksignore`. That script also
+separates a scan that came back clean from a scanner that never ran — gitleaks
+exits 1 for both, so findings are moved to `--exit-code=2` and every other
+non-zero is reported as a scanner failure. Both still fail the job.
+
+The sweep's findings appear as a rule/file/line/commit table in the run summary
+and as a redacted JSON artifact kept for fourteen days. `docs/MAINTENANCE.md` →
+"The repository-wide secret sweep" is where to look when one turns up.
+
 CodeQL runs as **advisory** analysis through GitHub code scanning default setup
 (`actions`, `javascript`, `javascript-typescript`, `typescript`). Its findings
 are investigated but never block a merge, and it does not report on pull requests

@@ -494,13 +494,14 @@ At the successful end of a meaningful piece of work:
    **Advisory, and deliberately NOT required** — a finding is investigated, but
    it cannot block a merge: `CodeQL`, `Analyze (javascript-typescript)` and
    `Analyze (actions)` (GitHub code scanning **default setup**, configured in
-   repository settings rather than in a workflow file — there is no `codeql.yml`
-   and adding one would first require disabling default setup); `Semgrep OSS`
-   (the code-scanning results check GitHub raises from the SARIF that
-   `Static analysis gate` uploads — not a second scan);
-   `semgrep-cloud-platform/scan` (a Semgrep AppSec Platform GitHub App
-   integration configured outside this repository); `dependency-review`;
-   `Markdown relative-link check (offline)`; and the clock-rollover canary, which
+   repository settings, not a workflow file — there is no `codeql.yml`
+   and adding one would require disabling default setup); `Semgrep OSS`
+   (the code-scanning check GitHub raises from `Static analysis gate`'s
+   SARIF — not a second scan);
+   `semgrep-cloud-platform/scan` (a Semgrep AppSec Platform App
+   configured outside this repository); `dependency-review`;
+   `Markdown relative-link check (offline)`; `Scheduled secret sweep` (#2852),
+   weekly and unrequirable; and the clock-rollover canary, which
    its own workflow comment says must never become a pull-request check.
    Measured on fork PRs #2782/#2813, the CodeQL contexts do not appear at
    all — a second reason they can never be required.
