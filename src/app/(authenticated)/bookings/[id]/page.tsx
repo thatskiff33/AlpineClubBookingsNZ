@@ -31,6 +31,7 @@ import { getBookingPaymentMode } from "@/lib/booking-payment-flow";
 import { RefundAppealButton } from "@/components/refund-appeal-button";
 import { humanizeStatus, paymentStatusClass } from "@/lib/status-colors";
 import { BookingHelpExtras } from "./_components/booking-help-extras";
+import { BookingLinkedPartySections } from "./_components/booking-linked-party-sections";
 import { BookingConsentCards } from "./_components/booking-consent-cards";
 import { BookingStatusBanners } from "./_components/booking-status-banners";
 import { BookingAdminToolsSection } from "./_components/booking-admin-tools-section";
@@ -434,32 +435,12 @@ export default async function BookingDetailPage({
         consent={consent}
       />
 
-      {/* #1975: "Your non-member guests" — the parent card surfaces each genuine
-          split child inline (status, differing dates, amount, link), so the
-          member reads one family stay with the guest portion nested, not a
-          disconnected sibling booking. Presentation only: no pricing, capacity,
-          settlement, or invoicing behaviour changes here. */}
-      {showNonMemberGuestsSection && (
-        <section id="non-member-guests" className="scroll-mt-20">
-          <NonMemberGuestsSection
-            guests={nonMemberGuestChildren}
-            nonOwnerAdminViewer={nonOwnerAdminViewer}
-          />
-        </section>
-      )}
-
-      {showGroupSection && (
-        <section id="group" className="scroll-mt-20">
-          <OrganiserGroupBookingCard
-            bookingId={booking.id}
-            canOpenGroup={canOpenGroup}
-            group={organiserGroupState}
-            /* #2919: the card renders booking-message bodies of its own, so it
-               needs THIS booking's lodge for {{CLUB_LODGE_NAME}} too. */
-            lodgeName={bookingLodgeEmailSettings.lodgeName}
-          />
-        </section>
-      )}
+      <BookingLinkedPartySections
+        booking={booking}
+        viewer={viewer}
+        party={party}
+        bookingLodgeEmailSettings={bookingLodgeEmailSettings}
+      />
 
       {booking.createdBy && (
         <div className="rounded-md bg-muted border border-border px-4 py-3 text-sm text-muted-foreground">
