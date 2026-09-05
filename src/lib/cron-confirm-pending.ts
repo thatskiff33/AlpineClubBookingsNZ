@@ -42,7 +42,6 @@ import { getDefaultLodgeId } from "@/lib/lodges";
 import { cancelPaymentIntentIfCancellable } from "./stripe";
 import {
   beginSavedCardChargeAttempt,
-  cancelStaleSavedCardChargeIntents,
   chargeSavedCardAttempt,
   SAVED_CARD_CHARGE_KEY_PREFIX,
   SAVED_CARD_CHARGE_REASON,
@@ -970,9 +969,11 @@ async function releaseChargeClaim(
  *     this run's attempt and is about to be asked about, so cancelling its
  *     intent here would cancel this run's own charge; one on a replaced card
  *     has already been ended and its intent is cancelled by
- *     `cancelStaleSavedCardChargeIntents`, not here. Before #3267 this
+ *     `chargeSavedCardAttempt` before it charges, not here. Before #3267 this
  *     exclusion matched two `reason` literals, which never covered the admin
- *     route's rows at all.
+ *     route's rows at all — and a LEGACY row minted under the shared key
+ *     before #3267 (reason set, no `reference`) is now swept like a link
+ *     intent, which is right: no shared key re-returns its intent any more.
  *
  * Deliberately Stripe-side only and best-effort (no durable
  * CANCEL_PAYMENT_INTENT recovery operation): the durable cancel path's
@@ -1523,19 +1524,17 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
       // (best-effort, outside any transaction, before the charge — see the
       // helper's ordering analysis).
       await cancelSupersededLinkIntentsBestEffort(resolution);
-      // #3267: likewise for the intents of earlier attempts the claim ended
-      // (a replaced or retired card) — best-effort, outside any transaction.
-      await cancelStaleSavedCardChargeIntents(resolution.attempt, {
-        bookingId: resolution.booking.id,
-      });
 
       chargeAttempted = true;
 
       // #3267 (`INV-PAY-055`): the one charge call, keyed by the attempt row.
-      // A fresh attempt charges under its own key; a replay asks Stripe about
-      // the earlier attempt instead of starting a second one. A DEFINITE
-      // refusal marks the row FAILED before the throw reaches the catch below,
-      // which is what lets #3268's retire null the row's card safely.
+      // It first cancels (best-effort, outside any transaction) the intents of
+      // earlier attempts the claim ended — a replaced or retired card — and
+      // treats one found already captured as the answer. Then a fresh attempt
+      // charges under its own key and a replay asks Stripe about the earlier
+      // attempt instead of starting a second one. A DEFINITE refusal marks the
+      // row FAILED before the throw reaches the catch below, which is what
+      // lets #3268's retire null the row's card safely.
       const paymentIntent = await chargeSavedCardAttempt({
         attempt: resolution.attempt,
         bookingId: resolution.booking.id,

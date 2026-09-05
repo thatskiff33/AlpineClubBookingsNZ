@@ -23,17 +23,20 @@
  *      after the status-guarded PENDING -> CONFIRMED claim. It reads this
  *      payment's PRIMARY Stripe rows and decides, under those locks, whether an
  *      earlier attempt is still unresolved (replay it), has been overtaken by a
- *      new card (end it and cancel its intent), or has already captured money
- *      (refuse). Otherwise it creates the attempt row and mints the key from the
- *      row's OWN id, so the key exists before Stripe is asked anything.
- *   2. `cancelStaleSavedCardChargeIntents` — AFTER that transaction commits,
- *      best-effort, a plain provider call (`INV-INT-003`).
- *   3. `chargeSavedCardAttempt` — the ONLY place a saved card is charged. Same
- *      metadata for every caller, key from the row, and the thrown failure is
+ *      new card (end it; its intent is cancelled in step 2), or whether money
+ *      has already been captured (refuse). Otherwise it creates the attempt row
+ *      and mints the key from the row's OWN id, so the key exists before Stripe
+ *      is asked anything.
+ *   2. `chargeSavedCardAttempt` — AFTER that transaction commits; the ONLY place
+ *      a saved card is charged. It first cancels, best-effort, the intents of
+ *      the attempts step 1 ended (a plain provider call, `INV-INT-003`), and if
+ *      one of them turns out to have CAPTURED already, that capture is the
+ *      answer and no charge is made. Then it asks Stripe about this attempt:
+ *      same metadata for every caller, key from the row. A thrown failure is
  *      partitioned into DEFINITE (Stripe answered: the row is marked FAILED so
  *      the next attempt is fresh) and AMBIGUOUS (nothing certain came back: the
  *      row stays PENDING so the next attempt asks about THIS one).
- *   4. `settleSavedCardChargeAttempt` — records the intent Stripe answered with
+ *   3. `settleSavedCardChargeAttempt` — records the intent Stripe answered with
  *      on the attempt row and re-derives the Payment aggregate.
  *
  * Why the guard holds without a shared key. Every path writes its attempt row
@@ -54,14 +57,24 @@
  * with no key and no window — and the recorded key is re-sent only for a row
  * whose first POST never answered at all, where the key is the one thing that
  * identifies the attempt at Stripe. Either way there is exactly one instrument
- * per attempt, which is the property the owner chose.
+ * per attempt, which is the property the owner chose; "replayed (same key)" on
+ * the issue is honoured in its purpose (Stripe tells us what happened to THAT
+ * attempt) by the only mechanism that actually does so.
  *
  * What the ledger rows now mean, so nobody "tidies" them: a PRIMARY Stripe row
- * with a `reference` in this module's key format is a saved-card charge attempt.
- * PENDING with no intent id: minted, Stripe not yet (or not certainly) asked.
- * PROCESSING with an intent id: Stripe answered with an unfinished intent.
- * FAILED: this attempt is over — a definite refusal, a dead intent, or overtaken
- * by a later card (`reason` suffixed with why). SUCCEEDED: captured.
+ * whose `reference` is this module's key built from ITS OWN id is a saved-card
+ * charge attempt. PENDING with no intent id: minted, Stripe not yet (or not
+ * certainly) asked. PROCESSING with an intent id: Stripe answered with an
+ * unfinished intent. FAILED: this attempt is over — a definite refusal, a dead
+ * intent, or overtaken by a later card (`reason` suffixed with why). SUCCEEDED:
+ * captured. Rows that are NOT attempt rows — an in-flight /pay link intent, or a
+ * legacy row minted under the shared key before #3267 — are left to the
+ * mechanisms that already own them: the cron's #1992 pre-charge sweep (whose
+ * exclusion narrowed from two `reason` literals to the key prefix, so a legacy
+ * shared-key row is now swept like a link intent, which is right: nothing
+ * re-returns its intent any more) and the `payment_intent.*` webhooks. This
+ * module only ever counts them for one thing — captured money — because money
+ * is money whoever minted the row.
  *
  * Ordering with #3268 (INV-PAY-054), written here because it is load-bearing and
  * invisible from either side alone: `retireUnusableSavedCard` nulls
@@ -70,8 +83,19 @@
  * marks the attempt FAILED before the rethrow reaches the cron's terminal
  * branch. Were the row still PENDING with its pm nulled, the next attempt would
  * read "unresolved, no card, no intent" and replay a key whose stored body names
- * the retired card — an `idempotency_error` on the new card. Pinned in
- * `saved-card-charge-attempt.test.ts` and `cron-confirm-pending.test.ts`.
+ * the retired card — an `idempotency_error` on the new card, one wasted run.
+ * Pinned in `saved-card-charge-attempt.test.ts` and `cron-confirm-pending.test.ts`.
+ *
+ * The one shape that CAN still reach that replay: two split children borrowing
+ * one parent card, where child A's attempt fails AMBIGUOUSLY (row PENDING, pm
+ * set, no intent) and child B's then fails terminally, so #3268 nulls A's pm.
+ * A's next attempt on a re-saved card replays its key: if the first POST never
+ * executed, Stripe executes it once on the new card; if it did, Stripe answers
+ * `idempotency_error` (definite), the row is ended and the run after mints
+ * fresh. Only if that first POST also CAPTURED — a lost webhook on top of two
+ * rare failures — is the fresh charge a duplicate, and then the #1992
+ * duplicate-capture refund is the backstop. Stated rather than engineered
+ * around: the alternative is a Stripe search API call on every such replay.
  */
 import {
   PaymentSource,
@@ -84,7 +108,7 @@ import type Stripe from "stripe";
 import logger from "@/lib/logger";
 import { prisma } from "./prisma";
 import {
-  cancelPaymentIntentIfCancellable,
+  cancelPaymentIntentIfCancellableWithResult,
   chargePaymentMethod,
   getPaymentIntent,
 } from "./stripe";
@@ -112,7 +136,9 @@ export const SAVED_CARD_CHARGE_KEY_PREFIX = "pending_charge_";
  * records WHICH path started the attempt (the metadata no longer does — see
  * `buildSavedCardChargeMetadata`); the row's `reference` is what identifies it
  * as an attempt. Typed as a closed union so a fourth caller has to add itself
- * here rather than invent a spelling.
+ * here rather than invent a spelling. The cron's and charge-saved-method's
+ * literals are the ones those paths stamped before #3267, so a ledger reader
+ * sees one spelling per path across the deploy.
  */
 export const SAVED_CARD_CHARGE_REASON = {
   cron: "pending_hold_auto_charge",
@@ -130,12 +156,13 @@ export type SavedCardChargeReason =
  * pure function of the two ids and carries no per-path value, because the admin
  * route's `source: "admin_confirm_pending_guests"` is exactly what made Stripe
  * refuse the shared key with an idempotency parameter mismatch. Which path
- * minted an attempt is recorded on the ledger row's `reason` instead. Nothing
- * downstream reads this metadata off the intent; it is dashboard-only — the
- * webhook reads `bookingId` from it, which is unchanged.
+ * minted an attempt is recorded on the ledger row's `reason` instead. The
+ * webhook reads `bookingId` off this metadata, which is unchanged; nothing
+ * downstream reads `memberId` — it is dashboard-only.
  *
- * Exported for the docblock and the tests; `chargeSavedCardAttempt` builds it
- * itself from the ids it is handed, so no caller can pass a different shape.
+ * `chargeSavedCardAttempt` builds it itself from the ids it is handed, so no
+ * caller can pass a different shape; exported so the tests can pin the shape
+ * without reaching into the charge call.
  */
 export function buildSavedCardChargeMetadata(
   bookingId: string,
@@ -166,8 +193,8 @@ export interface SavedCardToCharge {
 
 /**
  * What `beginSavedCardChargeAttempt` hands back: which row this attempt IS, how
- * to ask Stripe about it, and which earlier intents the caller must cancel
- * best-effort once its transaction has committed.
+ * to ask Stripe about it, and which earlier intents `chargeSavedCardAttempt`
+ * must cancel best-effort before it charges.
  *
  * - `fresh`: a new row; `idempotencyKey` is to be sent with the charge.
  * - `replay`: an earlier attempt on the same card is unresolved. When it names
@@ -195,10 +222,13 @@ export type SavedCardChargeAttempt =
  * already holds captured money while the booking is somehow still PENDING.
  * Thrown rather than returned so the caller's claim transaction ROLLS BACK —
  * which is precisely "release the claim": the PENDING -> CONFIRMED claim, the bed
- * reconcile and the link revocation all unwind, and no charge is attempted.
+ * reconcile and the hosting enqueue all unwind, and no charge is attempted.
  * Callers catch it by type, log at error level and alert an administrator; the
  * message is plain English because it is what the alert and the admin response
- * say.
+ * say. The state it names is transient when a webhook is merely late (the
+ * `payment_intent.succeeded` redelivery settles the booking through the row it
+ * still finds by intent id) and permanent when a person has to look; either way
+ * charging on top of it is the one thing that must not happen.
  */
 export class SavedCardChargeRefusedError extends Error {
   readonly bookingId: string;
@@ -223,14 +253,18 @@ type AttemptLedgerRow = {
   stripePaymentIntentId: string | null;
   reference: string | null;
   reason: string | null;
-  createdAt: Date;
 };
 
-const UNRESOLVED_STATUSES: ReadonlySet<PaymentStatus> = new Set([
+const UNRESOLVED_STATUSES: readonly PaymentStatus[] = [
   PaymentStatus.PENDING,
   PaymentStatus.PROCESSING,
-]);
+];
 
+function isUnresolved(status: PaymentStatus): boolean {
+  return UNRESOLVED_STATUSES.includes(status);
+}
+
+/** An attempt row is one whose `reference` is the key minted from its OWN id. */
 function isAttemptRow(row: AttemptLedgerRow, bookingId: string): boolean {
   return row.reference === savedCardChargeIdempotencyKey(bookingId, row.id);
 }
@@ -241,39 +275,46 @@ function isAttemptRow(row: AttemptLedgerRow, bookingId: string): boolean {
  *
  * MUST run inside the caller's claim transaction: global `lock(1)`, then the
  * lodge capacity lock, after the status-guarded PENDING -> CONFIRMED claim and
- * the `Payment` upsert that yields `paymentId`. The type cannot enforce that (a
- * `PrismaClient` is assignable to `Prisma.TransactionClient`); the callers' lock
- * sites are registered in `advisory-lock-guard.test.ts` (`INV-LOCK-003`) and the
- * per-caller tests pin the ordering. Every write here is status-guarded so a
- * replayed transaction cannot regress a row another writer has since moved.
+ * with the `Payment` row that yields `paymentId` already written. The type
+ * cannot enforce that (a `PrismaClient` is assignable to
+ * `Prisma.TransactionClient`); the callers' lock sites are registered in
+ * `advisory-lock-guard.test.ts` (`INV-LOCK-003`) and the per-caller tests pin
+ * the ordering. Every write here is status-guarded so a replayed transaction
+ * cannot regress a row another writer has since moved.
  *
  * In order:
  *
  *   a. Load this payment's PRIMARY Stripe rows.
- *   b. A row still holding net captured cash (SUCCEEDED or PARTIALLY_REFUNDED —
- *      `isCapturedTransactionStatus` minus the fully refunded, which is #1765
- *      history a repay may legitimately follow) means money is already taken
- *      while the booking is still PENDING: THROW `SavedCardChargeRefusedError`.
- *      Never charge on top of it.
- *   c. An unresolved (PENDING/PROCESSING) attempt row on the SAME card — or
+ *   b. A row still holding net captured cash (`isCapturedTransactionStatus`
+ *      minus the fully refunded, which is #1765 history a repay may
+ *      legitimately follow) means money is already taken while the booking is
+ *      still PENDING: THROW `SavedCardChargeRefusedError`. Never charge on top
+ *      of it. Every PRIMARY Stripe row counts here, attempt row or not.
+ *   c. An unresolved (PENDING/PROCESSING) ATTEMPT row on the SAME card — or
  *      with no card and no intent, the shape #3268's retire leaves when it nulls
  *      the pm off a row whose first POST never answered — is REPLAYED. The
  *      newest such row is the attempt; any older one is a duplicate and is
- *      ended.
- *   d. Every other unresolved row is ENDED: a row on a DIFFERENT card (the
- *      previous card was retired by #3268 or replaced via #3266), a row whose
- *      card was nulled but whose intent still exists, or a row that is not an
- *      attempt row at all (no key of ours to re-send). It is marked FAILED with
- *      its `reason` suffixed, and its intent id, if any, is returned for the
- *      caller to cancel best-effort AFTER commit (`cancelStaleSavedCardChargeIntents`,
- *      a provider call kept out of the transaction — `INV-INT-003`). If that
- *      intent succeeds anyway — the member finished a 3DS challenge as the cancel
- *      arrived — its webhook settles the booking through the FAILED row it still
- *      names, and this attempt's capture is the duplicate the #1992 auto-refund
- *      hands back (`INV-PAY-043`).
+ *      ended (defensive: the locks make two live attempts unreachable).
+ *   d. An unresolved ATTEMPT row on a DIFFERENT card (the previous card was
+ *      retired by #3268 or replaced via #3266), or whose card was nulled but
+ *      whose intent still exists, is ENDED: marked FAILED with its `reason`
+ *      suffixed `:superseded_by_new_card`, and its intent id, if any, is
+ *      returned for `chargeSavedCardAttempt` to cancel best-effort AFTER commit
+ *      (a provider call kept out of the transaction — `INV-INT-003`). Marking it
+ *      FAILED before Stripe has confirmed the cancel is deliberate and repaired
+ *      in two places if it turns out to be wrong: `chargeSavedCardAttempt`
+ *      treats an intent the cancel finds already `succeeded` as THE capture and
+ *      charges nothing, and a `payment_intent.succeeded` webhook for it moves
+ *      the row to SUCCEEDED (`markPaymentIntentTransactionSucceeded` does not
+ *      guard on FAILED). If it captures after this attempt has captured too, the
+ *      #1992 duplicate-capture auto-refund hands the second capture back
+ *      (`INV-PAY-043`).
  *   e. Otherwise create the attempt row (PENDING, this card, this path's reason)
  *      and stamp its `reference` with the key built from ITS OWN id — two
  *      statements, one transaction.
+ *
+ * Rows that are not attempt rows (link intents, legacy shared-key rows) are
+ * read for (b) and otherwise left alone — see the module docblock.
  *
  * The Payment aggregate is deliberately NOT re-derived here: the claim's own
  * upsert has just set it, and `settleSavedCardChargeAttempt` reconciles once
@@ -312,7 +353,6 @@ export async function beginSavedCardChargeAttempt(
       stripePaymentIntentId: true,
       reference: true,
       reason: true,
-      createdAt: true,
     },
   });
 
@@ -329,25 +369,23 @@ export async function beginSavedCardChargeAttempt(
     });
   }
 
-  const unresolved = rows.filter((row) => UNRESOLVED_STATUSES.has(row.status));
-  const replayable = unresolved.filter(
-    (row) =>
-      isAttemptRow(row, bookingId) &&
-      (row.paymentMethodId === card.stripePaymentMethodId ||
-        (row.paymentMethodId === null && row.stripePaymentIntentId === null))
+  const unresolvedAttempts = rows.filter(
+    (row) => isUnresolved(row.status) && isAttemptRow(row, bookingId)
   );
-  // Newest first: the last replayable row is THE attempt; anything older is a
-  // duplicate that should never have coexisted with it.
+  const replayable = unresolvedAttempts.filter(
+    (row) =>
+      row.paymentMethodId === card.stripePaymentMethodId ||
+      (row.paymentMethodId === null && row.stripePaymentIntentId === null)
+  );
+  // Oldest-first read, so the LAST replayable row is the newest: THE attempt.
   const replay = replayable.length > 0 ? replayable[replayable.length - 1]! : null;
 
   const staleIntentIdsToCancel: string[] = [];
-  for (const row of unresolved) {
+  for (const row of unresolvedAttempts) {
     if (row === replay) continue;
-    const suffix = !isAttemptRow(row, bookingId)
-      ? "superseded_unknown_key"
-      : replayable.includes(row)
-        ? "superseded_duplicate_attempt"
-        : "superseded_by_new_card";
+    const suffix = replayable.includes(row)
+      ? "superseded_duplicate_attempt"
+      : "superseded_by_new_card";
     // Status-guarded: a webhook that has since settled or failed this row wins.
     const ended = await tx.paymentTransaction.updateMany({
       where: { id: row.id, status: { in: [...UNRESOLVED_STATUSES] } },
@@ -376,8 +414,9 @@ export async function beginSavedCardChargeAttempt(
     return {
       kind: "replay",
       attemptRowId: replay.id,
-      // Guaranteed by isAttemptRow; spelled out so the type is honest.
-      idempotencyKey: replay.reference ?? savedCardChargeIdempotencyKey(bookingId, replay.id),
+      // Equal to `replay.reference` by `isAttemptRow`; rebuilt so the type is
+      // honest without a null-coalesce nobody can reach.
+      idempotencyKey: savedCardChargeIdempotencyKey(bookingId, replay.id),
       paymentIntentId: replay.stripePaymentIntentId,
       staleIntentIdsToCancel,
     };
@@ -407,42 +446,6 @@ export async function beginSavedCardChargeAttempt(
     idempotencyKey,
     staleIntentIdsToCancel,
   };
-}
-
-/**
- * Best-effort Stripe-side cancellation of the intents `beginSavedCardChargeAttempt`
- * ended, run by the caller AFTER its claim transaction has committed and BEFORE
- * it charges (`INV-INT-003`: never a provider call inside the transaction).
- * Same shape and same reasoning as the cron's #1992 link-intent sweep: a cancel
- * that loses its race (the intent already succeeded) is logged as expected and
- * the #1992 duplicate-capture refund is the backstop; a cancel that errors is
- * logged and never blocks the charge.
- */
-export async function cancelStaleSavedCardChargeIntents(
-  attempt: SavedCardChargeAttempt,
-  ctx: { bookingId: string }
-): Promise<void> {
-  for (const paymentIntentId of attempt.staleIntentIdsToCancel) {
-    try {
-      const canceled = await cancelPaymentIntentIfCancellable(paymentIntentId);
-      if (canceled) {
-        logger.info(
-          { bookingId: ctx.bookingId, paymentIntentId },
-          "Cancelled the intent of a superseded saved-card charge attempt (#3267)"
-        );
-      } else {
-        logger.warn(
-          { bookingId: ctx.bookingId, paymentIntentId },
-          "A superseded saved-card charge attempt's intent was not cancellable (it may have succeeded); the #1992 duplicate-capture refund is the backstop (#3267)"
-        );
-      }
-    } catch (cancelErr) {
-      logger.error(
-        { err: cancelErr, bookingId: ctx.bookingId, paymentIntentId },
-        "Failed to cancel a superseded saved-card charge attempt's intent; proceeding with the charge (best-effort, #3267)"
-      );
-    }
-  }
 }
 
 /**
@@ -480,9 +483,11 @@ export function isDefiniteSavedCardChargeFailure(err: unknown): boolean {
  * FAILED): a row a webhook has since settled is left alone. Runs on the base
  * client — the caller holds no lock at this point, and the write is a
  * single-row status flip that races nothing (the intent, if Stripe created one
- * before refusing, is already terminal). The Payment aggregate is not
- * re-derived here; the next settle or webhook reconcile derives FAILED from
- * the ledger, which is the same shape today's thrown charge leaves behind.
+ * before refusing, is already terminal). The Payment aggregate is deliberately
+ * not re-derived: before #3267 a thrown charge left no ledger row at all and
+ * the `Payment` stayed at the PENDING the claim wrote, which is exactly what a
+ * pending booking whose charge failed should read as; the next claim's upsert
+ * writes PENDING again anyway.
  */
 export async function failSavedCardChargeAttempt(
   attemptRowId: string,
@@ -496,7 +501,61 @@ export async function failSavedCardChargeAttempt(
 }
 
 /**
+ * Best-effort Stripe-side cancellation of the intents `beginSavedCardChargeAttempt`
+ * ended — run AFTER the claim transaction has committed and BEFORE the charge
+ * (`INV-INT-003`: never a provider call inside the transaction). Same shape and
+ * same reasoning as the cron's #1992 link-intent sweep: a cancel that loses its
+ * race is expected and a cancel that errors is logged and never blocks the
+ * charge.
+ *
+ * One outcome is NOT best-effort, because it is money: an intent that is not
+ * cancellable because it already `succeeded` has captured this booking's price.
+ * It is returned so the caller settles the booking with THAT capture and makes
+ * no second charge. Before #3267 this state (a PROCESSING saved-card row whose
+ * intent quietly captured while the webhook was lost) stalled until the webhook
+ * was redelivered; now the next attempt finds the money.
+ */
+async function cancelSupersededAttemptIntents(
+  attempt: SavedCardChargeAttempt,
+  bookingId: string
+): Promise<Stripe.PaymentIntent | null> {
+  for (const paymentIntentId of attempt.staleIntentIdsToCancel) {
+    try {
+      const result = await cancelPaymentIntentIfCancellableWithResult(paymentIntentId);
+      if (result.canceled) {
+        logger.info(
+          { bookingId, paymentIntentId },
+          "Cancelled the intent of a superseded saved-card charge attempt (#3267)"
+        );
+        continue;
+      }
+      if (result.paymentIntent.status === "succeeded") {
+        logger.error(
+          { bookingId, paymentIntentId, attemptRowId: attempt.attemptRowId },
+          "A superseded saved-card charge attempt's intent had already captured; settling with that capture instead of charging again (#3267)"
+        );
+        return result.paymentIntent;
+      }
+      logger.warn(
+        { bookingId, paymentIntentId, paymentStatus: result.paymentIntent.status },
+        "A superseded saved-card charge attempt's intent was not cancellable and did not capture; nothing to do (#3267)"
+      );
+    } catch (cancelErr) {
+      logger.error(
+        { err: cancelErr, bookingId, paymentIntentId },
+        "Failed to cancel a superseded saved-card charge attempt's intent; proceeding with the charge and relying on the #1992 duplicate-capture backstop (best-effort, #3267)"
+      );
+    }
+  }
+  return null;
+}
+
+/**
  * Ask Stripe about this attempt — the ONLY place a saved card is charged.
+ *
+ * First the intents of the attempts the claim ended are cancelled best-effort
+ * (`cancelSupersededAttemptIntents`); one found already captured is returned as
+ * the answer and no charge is made. Then:
  *
  * - `fresh`: `chargePaymentMethod` under the row's key.
  * - `replay` with a known intent: `getPaymentIntent` — the intent's CURRENT
@@ -525,6 +584,10 @@ export async function chargeSavedCardAttempt(params: {
   card: SavedCardToCharge;
 }): Promise<Stripe.PaymentIntent> {
   const { attempt, bookingId, memberId, amountCents, card } = params;
+
+  const alreadyCaptured = await cancelSupersededAttemptIntents(attempt, bookingId);
+  if (alreadyCaptured) return alreadyCaptured;
+
   try {
     if (attempt.kind === "replay" && attempt.paymentIntentId) {
       return await getPaymentIntent(attempt.paymentIntentId);
@@ -537,6 +600,7 @@ export async function chargeSavedCardAttempt(params: {
       idempotencyKey: attempt.idempotencyKey,
     });
   } catch (err) {
+    const fields = readStripeErrorFields(err);
     if (isDefiniteSavedCardChargeFailure(err)) {
       try {
         const { ended } = await failSavedCardChargeAttempt(attempt.attemptRowId);
@@ -545,8 +609,8 @@ export async function chargeSavedCardAttempt(params: {
             bookingId,
             attemptRowId: attempt.attemptRowId,
             ended,
-            stripeType: readStripeErrorFields(err).apiType,
-            stripeCode: readStripeErrorFields(err).code,
+            stripeType: fields.apiType,
+            stripeCode: fields.code,
           },
           "Saved-card charge attempt definitely refused; ended it so the next attempt is fresh (#3267)"
         );
@@ -558,7 +622,7 @@ export async function chargeSavedCardAttempt(params: {
       }
     } else {
       logger.warn(
-        { bookingId, attemptRowId: attempt.attemptRowId },
+        { bookingId, attemptRowId: attempt.attemptRowId, stripeType: fields.apiType },
         "Saved-card charge attempt failed without a definite answer from Stripe; leaving it pending so the next attempt asks about this one (#3267)"
       );
     }
@@ -574,7 +638,8 @@ export async function chargeSavedCardAttempt(params: {
  * asking about a dead intent for ever; everything else (`requires_action`,
  * `processing`, `requires_confirmation`, `requires_capture`) is still in
  * flight and stays PROCESSING for the webhook — or the next attempt — to
- * resolve.
+ * resolve. Before #3267 every non-succeeded answer was recorded PROCESSING;
+ * the two terminal states are the addition a retrieve-based replay needs.
  */
 export function ledgerStatusForPaymentIntent(
   status: Stripe.PaymentIntent.Status
@@ -600,7 +665,7 @@ export function describeUnsettledPaymentIntent(
 ): string {
   switch (status) {
     case "requires_action":
-      return "The saved card needs the cardholder to complete authentication (3D Secure), which cannot be done automatically; the booking stays pending until they do, or until a new attempt is started.";
+      return "The saved card needs the cardholder to complete authentication (3D Secure), which cannot be done automatically; the booking stays pending until they do, or until the member saves a different card.";
     case "processing":
       return "The charge is still being processed by the card network; Stripe will report the outcome, and the booking stays pending until it does.";
     case "canceled":
@@ -617,8 +682,9 @@ export interface SettledSavedCardChargeAttempt {
   transactionId: string;
   ledgerStatus: PaymentStatus;
   /**
-   * True when a row for this intent already existed (written by a webhook that
-   * beat this write) and was kept, the attempt row being deleted in its favour.
+   * True when a row for this intent already existed and was kept, the attempt
+   * row being deleted in its favour — a webhook that beat this write, or a
+   * superseded attempt's intent that turned out to have captured.
    */
   keptExistingRow: boolean;
 }
@@ -631,23 +697,27 @@ export interface SettledSavedCardChargeAttempt {
  * — exactly what `upsertPaymentIntentTransaction` did for the old inline rows,
  * which every caller used to call here and no longer does.
  *
- * The race this guards, and how live it is: `stripePaymentIntentId` is unique,
- * so if a row for this intent already exists — a webhook that arrived before
- * this write — the ATTEMPT row is deleted and the existing row is kept, gaining
- * the attempt's `reference` and `reason` so later attempts recognise it as one
- * of theirs. Today no webhook or recovery path CREATES a row for an intent
- * nobody recorded (`handlePaymentIntentSucceeded` and both failure handlers
- * look the intent up first and log a warning when nothing is found), so the
- * pre-check and the `P2002` catch below are defensive; they exist because the
- * write is on a unique column and the alternative is a thrown constraint error
- * on a path that has just captured money.
+ * `stripePaymentIntentId` is unique, so if a row for this intent already exists
+ * the ATTEMPT row is deleted and the existing row is kept, its status moved
+ * FORWARD to what Stripe answered — never backward: a captured answer is written
+ * over anything but refund history (a webhook may already have written it, in
+ * which case this is a no-op), and a non-captured answer is written only over an
+ * unresolved row, so a stale `processing` read can never undo a webhook's
+ * SUCCEEDED. Two histories reach this branch. A superseded attempt's intent
+ * that `chargeSavedCardAttempt` found already captured: its row was marked
+ * FAILED under the claim and is corrected here. And a webhook that wrote the
+ * intent's row first — which no handler does today (`handlePaymentIntentSucceeded`
+ * and both failure handlers look the intent up and warn when nothing is found),
+ * so for that history the pre-check and the `P2002` catch are defensive; they
+ * exist because the write is on a unique column and the alternative is a thrown
+ * constraint error on a path that has just captured money.
  *
- * `store`: the cron's PROCESSING branch records inside the same locked release
- * transaction it always used (`store: tx`), keeping the lock topology unchanged.
- * A unique violation inside a caller's transaction cannot be recovered from
- * (PostgreSQL aborts the transaction on the first error), so on a transaction
- * client the pre-check is the only defence and the violation propagates —
- * stated here rather than discovered.
+ * `store`: the cron's and charge-saved-method's non-captured branches record
+ * inside the same locked release transaction they always used (`store: tx`),
+ * keeping the lock topology unchanged. A unique violation inside a caller's
+ * transaction cannot be recovered from (PostgreSQL aborts the transaction on
+ * the first error), so on a transaction client the pre-check is the only
+ * defence and the violation propagates — stated here rather than discovered.
  */
 export async function settleSavedCardChargeAttempt(params: {
   attemptRowId: string;
@@ -658,13 +728,14 @@ export async function settleSavedCardChargeAttempt(params: {
   const store = params.store ?? prisma;
   const ledgerStatus = ledgerStatusForPaymentIntent(paymentIntent.status);
   const paymentMethodId = stripeReferenceId(paymentIntent.payment_method);
+  const answer = { ledgerStatus, amountCents: paymentIntent.amount, paymentMethodId };
 
   const existing = await store.paymentTransaction.findUnique({
     where: { stripePaymentIntentId: paymentIntent.id },
     select: { id: true, paymentId: true },
   });
   if (existing && existing.id !== attemptRowId) {
-    return keepExistingRow(store, { attemptRowId, existing, ledgerStatus });
+    return keepExistingRow(store, { attemptRowId, existing, answer });
   }
 
   try {
@@ -687,7 +758,7 @@ export async function settleSavedCardChargeAttempt(params: {
       select: { id: true, paymentId: true },
     });
     if (!winner || winner.id === attemptRowId) throw err;
-    return keepExistingRow(store, { attemptRowId, existing: winner, ledgerStatus });
+    return keepExistingRow(store, { attemptRowId, existing: winner, answer });
   }
 }
 
@@ -696,35 +767,54 @@ async function keepExistingRow(
   params: {
     attemptRowId: string;
     existing: { id: string; paymentId: string };
-    ledgerStatus: PaymentStatus;
+    answer: {
+      ledgerStatus: PaymentStatus;
+      amountCents: number;
+      paymentMethodId: string | null;
+    };
   }
 ): Promise<SettledSavedCardChargeAttempt> {
-  const ours = await store.paymentTransaction.findUnique({
-    where: { id: params.attemptRowId },
-    select: { reference: true, reason: true },
-  });
+  const { attemptRowId, existing, answer } = params;
+  // Forward only. A capture overwrites anything but refund history; a
+  // non-capture overwrites only an unresolved row.
+  const moved =
+    answer.ledgerStatus === PaymentStatus.SUCCEEDED
+      ? await store.paymentTransaction.updateMany({
+          where: {
+            id: existing.id,
+            status: {
+              notIn: [PaymentStatus.REFUNDED, PaymentStatus.PARTIALLY_REFUNDED],
+            },
+          },
+          data: {
+            status: PaymentStatus.SUCCEEDED,
+            amountCents: answer.amountCents,
+            ...(answer.paymentMethodId !== null
+              ? { paymentMethodId: answer.paymentMethodId }
+              : {}),
+          },
+        })
+      : await store.paymentTransaction.updateMany({
+          where: { id: existing.id, status: { in: [...UNRESOLVED_STATUSES] } },
+          data: { status: answer.ledgerStatus, amountCents: answer.amountCents },
+        });
   // Only an attempt row that never got its intent is ours to remove.
   await store.paymentTransaction.deleteMany({
-    where: { id: params.attemptRowId, stripePaymentIntentId: null },
+    where: { id: attemptRowId, stripePaymentIntentId: null },
   });
-  await store.paymentTransaction.update({
-    where: { id: params.existing.id },
-    data: {
-      ...(ours?.reference ? { reference: ours.reference } : {}),
-      ...(ours?.reason ? { reason: ours.reason } : {}),
-    },
-  });
-  await reconcilePaymentAggregates({ paymentId: params.existing.paymentId, store });
+  await reconcilePaymentAggregates({ paymentId: existing.paymentId, store });
   logger.warn(
     {
-      attemptRowId: params.attemptRowId,
-      keptTransactionId: params.existing.id,
+      attemptRowId,
+      keptTransactionId: existing.id,
+      ledgerStatus: answer.ledgerStatus,
+      moved: moved.count > 0,
     },
-    "A ledger row for this intent already existed (webhook first); kept it and removed the attempt row (#3267)"
+    "A ledger row for this intent already existed; kept it, moved its status forward and removed the attempt row (#3267)"
   );
   return {
-    transactionId: params.existing.id,
-    ledgerStatus: params.ledgerStatus,
+    transactionId: existing.id,
+    ledgerStatus: answer.ledgerStatus,
     keptExistingRow: true,
   };
 }

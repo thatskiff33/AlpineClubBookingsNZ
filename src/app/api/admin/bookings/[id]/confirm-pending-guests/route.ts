@@ -10,7 +10,6 @@ import { readStripeErrorFields } from "@/lib/stripe-errors";
 import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
 import {
   beginSavedCardChargeAttempt,
-  cancelStaleSavedCardChargeIntents,
   chargeSavedCardAttempt,
   describeUnsettledPaymentIntent,
   SAVED_CARD_CHARGE_REASON,
@@ -554,14 +553,12 @@ export async function POST(
       });
     };
 
-    // #3267: earlier attempts the claim ended (a replaced card) have their
-    // intents cancelled best-effort here, after commit and before the charge.
-    await cancelStaleSavedCardChargeIntents(claim.attempt, { bookingId });
-
     // Charge the saved payment method through the one attempt contract every
-    // path uses (#3267, `INV-PAY-055`): a fresh attempt charges under the row's
-    // own key; an unresolved earlier attempt (the cron's, or a previous click)
-    // is asked about instead of repeated. The never-double-charge property the
+    // path uses (#3267, `INV-PAY-055`): earlier attempts the claim ended (a
+    // replaced card) have their intents cancelled best-effort first, after
+    // commit; a fresh attempt charges under the row's own key; an unresolved
+    // earlier attempt (the cron's, or a previous click) is asked about instead
+    // of repeated. The never-double-charge property the
     // shared `pending_charge_<bookingId>` key used to provide is now enforced by
     // the ledger inside the claim transaction above, so this route no longer
     // meets Stripe's idempotency parameter-mismatch error — what comes back is
