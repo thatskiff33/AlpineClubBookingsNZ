@@ -180,8 +180,8 @@ derivation).
   `isGuestActiveOnNight`, `findLodgeGuestDepartingOnDate` (depart) with
   `isGuestDepartureMorning`. Three things are load-bearing:
   - **The night rule is NOT folded into the `where`.** The fragments there are
-    the enforcement gates — member consent, pending admin review
-, lodge scope and booking status — and they collapse to one
+    the enforcement gates — member consent, pending admin review,
+    lodge scope and booking status — and they collapse to one
     uninformative "nothing matched" so a refused caller learns nothing. "You are
     not booked in tonight" is a fact about the booking, not the caller's rights,
     so arrive answers `409 GUEST_NOT_BOOKED_THIS_NIGHT` while `403` stays
@@ -363,9 +363,9 @@ derivation).
   `[checkIn, checkOut+1]` instead of the intended `[checkIn-1, checkOut]`.
 
   Lodge access itself is decided by `getKioskAccessTier`
-  (`src/lib/kiosk-access.ts:31-81`), which derives the day from
+  (`src/lib/kiosk-access.ts`), which derives the day from
   `getTodayDateOnly()` and already implemented `[checkIn-1, checkOut]` for a stay
-  (`:71-73`) and `[startDate-1, endDate]` for a hut-leader assignment (`:46-47`);
+  and `[startDate-1, endDate]` for a hut-leader assignment;
   every `/api/lodge/*` route enforces it, `src/lib/lodge-auth.ts` re-derives the
   same pair, and both dashboard buttons and the nav link point at
   `/lodge/kiosk`. #2838 fixed **three** such constructions feeding **five**
@@ -480,8 +480,6 @@ derivation).
   only disagree when the REFERENCE date is 28 February, and `computeAge`'s
   reference is always a season start, day 1 of a month, so on the price path the
   divergence is **structurally unreachable**.
-
-
 
 ### INV-DATE-026
 
@@ -860,8 +858,8 @@ derivation).
   `PriceBreakdown.guests[i].perNightCents` verbatim, as `buildGuestCreateData`
   does. OFFICER-TOTAL (public approval, quote hold, flat whole-lodge or manual
   override, backfill) divides to the exact cent with the extra cents on the
-  EARLIEST nights — the `evenlySplitCents` vector
- — so Xero line items are byte-identical
+  EARLIEST nights — the `evenlySplitCents` vector —
+  so Xero line items are byte-identical
   whether the rows exist or not. `buildApprovalGuestNights` refuses a vector that
   does not reconcile to the stored `priceCents` and divides instead.
 - **The rows are the #1036 locked prices on the one edit path reaching these
@@ -1359,7 +1357,8 @@ capacity or double-booking violation.
   source/destination/booking/occupant lodge union -> sorted member-lifecycle ->
   sorted member-partner-link -> deterministic allocation-row locks. It re-reads
   and re-digests before one guarded `UPDATE ... FROM (VALUES ...)` statement
-  (up to 366 rows, bounded budgets). Cancellation uses the same global key, so a move can never resurrect
+  (up to 366 rows, explicit 30-second transaction and 10-second acquisition
+  budgets). Cancellation uses the same global key, so a move can never resurrect
   a pruned row. Changed rows keep their original NZ dates, become unapproved
   `MANUAL` drafts, and commit with any partner promotions and bounded causal
   audits. Unchanged rows are digest-bound but excluded from feasibility,

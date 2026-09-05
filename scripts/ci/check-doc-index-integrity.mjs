@@ -1662,9 +1662,12 @@ function readsAsInvariantHeading(heading) {
  * entry ends ONLY at the next canonical definition, or at a heading that sits
  * ABOVE the definition's own level and does not read as an invariant id — the
  * file's section headings (`##` in a file whose definitions are `###`, the
- * title in a file whose definitions are `##`). A heading at the same level or
- * deeper — `### Background`, `### Worked example`, a Setext underline, a closed
- * `### Background ###` — stays INSIDE the entry and its prose counts, because
+ * title in a file whose definitions are `##`) — or at a SAME-level heading
+ * that introduces a nested group, i.e. the next definition after it is deeper
+ * (a `##` section between `##` definitions whose own rules are `###`). Any
+ * other heading at the same level or deeper — `### Background`, `### Worked
+ * example`, a Setext underline, a closed `### Background ###` — stays INSIDE
+ * the entry and its prose counts, because
  * splitting an oversize entry with a narrative heading is exactly the move
  * compaction pressure invites, and prose that belongs to no entry is prose the
  * budget never sees. A duplicate definition is reported by
@@ -1691,12 +1694,25 @@ export function measureInvariantEntryWords(files) {
       if (!heading.isDefinition) continue;
       const id = heading.text.match(DEFINITION_PATTERN)[1];
       let end = lines.length + 1;
-      for (const later of headings.slice(index + 1)) {
-        if (
-          later.isDefinition ||
-          (!later.readsAsInvariant && later.level < heading.level)
-        ) {
-          end = later.startLine;
+      const later = headings.slice(index + 1);
+      for (const [offset, next] of later.entries()) {
+        if (next.isDefinition) {
+          end = next.startLine;
+          break;
+        }
+        if (next.readsAsInvariant) continue;
+        // A heading above the entry's level is a section heading. A heading AT
+        // the entry's level is one too when it introduces a nested group — the
+        // next definition after it sits deeper (a `##` section between `##`
+        // definitions whose rules are `###`). Otherwise it is narrative and
+        // stays inside the entry.
+        const nextDefinition = later.slice(offset + 1).find((h) => h.isDefinition);
+        const introducesNestedGroup =
+          next.level === heading.level &&
+          nextDefinition !== undefined &&
+          nextDefinition.level > next.level;
+        if (next.level < heading.level || introducesNestedGroup) {
+          end = next.startLine;
           break;
         }
       }
@@ -1762,8 +1778,10 @@ export function parseWordBudgetRegister(files) {
             "The exact form is | `INV-<PREFIX>-<NNN>` | <ceiling> | #<issue> | <reason> |, " +
             "with an ASCII id, a whole-number ceiling with no leading zero and at most " +
             `${WORD_BUDGET_EXCEPTION_CEILING_MAX}, the deciding issue as #<number> and a ` +
-            "reason that says something (not empty, not a dash). A row that parses as " +
-            "nothing is a limit that is silently not enforced, so it fails instead.",
+            "reason that says something (not empty, not a dash); the reason may not " +
+            "contain a `|`, even inside backticks, because cells are split on pipes. A " +
+            "row that parses as nothing is a limit that is silently not enforced, so it " +
+            "fails instead.",
         );
         continue;
       }
@@ -2376,7 +2394,9 @@ export function auditControlCharacters(files) {
  * words joined by U+2800 measured as ten (#2789 gate-bypass review). Every
  * tracked Markdown file is therefore free of them, with no allowlist; a
  * byte-order mark at offset 0 is {@link auditEncoding}'s and is not reported
- * twice.
+ * twice. U+200D ZERO WIDTH JOINER is Cf too, so a ZWJ emoji sequence (a family
+ * or a flag built from joined code points) is not permitted in tracked Markdown
+ * — none exists today, and a plain single-code-point emoji is unaffected.
  */
 export const INVISIBLE_CHARACTER_PATTERN = /[\p{Cf}\u2800]/gu;
 
@@ -3198,7 +3218,8 @@ if (invokedPath === import.meta.url) {
           `every docs/ page is reachable, ${routedRows} routing row(s) resolve, all ` +
           `${STABLE_INDEX_HEADINGS.length} pre-split index headings are intact, no line ` +
           "number is cited into the invariants, no file is BOM'd or double-encoded, no " +
-          "file carries a raw control character, and nothing outside the declared binary " +
+          "file carries a raw control character or an invisible format character, every " +
+          "catalogue-table row is an id row, and nothing outside the declared binary " +
           "assets has an early NUL hiding it from this scan. " +
           `Scanned ${files.size} of ${trackedCount} tracked file(s) — the gap is Git's ` +
           "binary classification, and the clause above is what accounts for it.",

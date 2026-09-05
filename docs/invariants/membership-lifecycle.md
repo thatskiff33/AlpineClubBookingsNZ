@@ -101,7 +101,8 @@ access via the legacy enum values (`USER`, `ADMIN`, `ADMIN_READONLY`,
 never editable or deletable, and Full Admin always keeps full permissions.
 Deleting a definition is blocked while any member holds it. Custom
 definition-backed roles are privileged for the Full-Admin separation-of-duties
-gate, exactly like the seeded bundles. `Member.role` is limited to `USER`,
+gate, exactly like the seeded bundles;
+`Member.role` is limited to `USER`,
 `ADMIN`, `LODGE`, `NON_MEMBER`, and `SCHOOL`, and `financeAccessLevel` is a
 compatibility field. Neither field may be used as a runtime permission gate or
 for new membership-category semantics. Bundled and definition-backed rows are
@@ -559,7 +560,7 @@ Configuration and lifecycle guards:
   self-heal). The reconcile phase writes one critical summary audit row with the
   reconciled/swept counts and a bounded per-member before/after sample (#2106).
 - The Xero member-import (#2108) only ever CREATES current-season assignments,
-  never modifies an existing one. That never-overwrite rule is enforced by a
+  never modifies an existing one. That never-overwrite invariant is enforced by a
   PRE-READ skip, not by the save path: when a mapped group carries a
   `membershipTypeId`, a matched-EXISTING member who already holds a current-season
   assignment is filtered out and reported before any write (remediation is the

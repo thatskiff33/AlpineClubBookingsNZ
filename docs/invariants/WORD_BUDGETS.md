@@ -25,7 +25,7 @@ rule that cannot be split or compacted without semantic damage or artificial
 fragmentation. Convenience, history, copied rationale, rejected alternatives
 and narrative are not reasons. Each row is an owner approval taken on the
 deciding issue, and the ceiling on the row is the exact number CI enforces.
-Exact form, one row per id:
+The reason may not contain a `|`, even inside backticks (cells are split on pipes). Exact form, one row per id:
 
 | ID | Ceiling | Deciding issue | Reason |
 | --- | ---: | --- | --- |
@@ -74,7 +74,7 @@ file; the checker treats an absent register as "no exceptions, no debt".
 | `INV-MOD-026` | 828 |
 | `INV-PRIV-011` | 814 |
 | `INV-HOST-041` | 794 |
-| `INV-DATE-013` | 784 |
+| `INV-DATE-013` | 781 |
 | `INV-GUEST-016` | 781 |
 | `INV-INT-016` | 762 |
 | `INV-HOST-049` | 715 |
@@ -133,3 +133,4 @@ file; the checker treats an absent register as "no exceptions, no debt".
 | `INV-HOST-004` | 310 |
 | `INV-PAY-046` | 308 |
 | `INV-CAP-036` | 303 |
+| `INV-CAP-027` | 303 |

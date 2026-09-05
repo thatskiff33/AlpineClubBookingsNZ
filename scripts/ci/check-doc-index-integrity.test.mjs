@@ -3477,6 +3477,62 @@ describe("word budgets — gate-bypass review", () => {
         expect(measureInvariantEntryWords(files).get("INV-MONEY-001").words).toBe(401);
       });
 
+      it("a ## section heading between ## definitions ends the preceding entry", () => {
+        // The shape of integrations.md and membership-lifecycle.md: `##` rules,
+        // then a `##` section whose own rules are `###`. The section heading
+        // introduces a nested group, so it is structure, not narrative.
+        const files = repoWithEntry(0, {
+          "docs/invariants/money.md": bodyOf(0, () => [
+            "## INV-MONEY-001",
+            "",
+            prose(10),
+            "",
+            "## Xero member grouping and the rules that govern it",
+            "",
+            prose(50),
+            "",
+            "### INV-MONEY-002",
+            "",
+            prose(5),
+          ]),
+        });
+        const entries = measureInvariantEntryWords(files);
+        expect(entries.get("INV-MONEY-001").words).toBe(10);
+        expect(entries.get("INV-MONEY-002").words).toBe(5);
+      });
+
+      it("a same-level narrative heading directly followed by another same-level definition stays inside", () => {
+        const files = repoWithEntry(0, {
+          "docs/invariants/money.md": bodyOf(0, () => [
+            "## Section",
+            "",
+            "### INV-MONEY-001",
+            "",
+            prose(10),
+            "",
+            "### Background",
+            "",
+            prose(20),
+            "",
+            "### INV-MONEY-002",
+            "",
+            prose(5),
+          ]),
+        });
+        const entries = measureInvariantEntryWords(files);
+        expect(entries.get("INV-MONEY-001").words).toBe(31);
+        expect(entries.get("INV-MONEY-002").words).toBe(5);
+      });
+
+      it("the pipe rule is stated when a reason cell carries one", () => {
+        const problems = parseWordBudgetRegister(
+          repoWithEntry(10, {
+            [WORD_BUDGET_REGISTER]: register({ exceptions: ["| `INV-MONEY-001` | 400 | #2789 | a | b |"] }),
+          }),
+        ).problems;
+        expect(problems[0]).toContain("may not contain a `|`");
+      });
+
       it("treats a closed ATX heading (### Background ###) the same way", () => {
         const files = repoWithEntry(0, {
           "docs/invariants/money.md": bodyOf(0, () => [

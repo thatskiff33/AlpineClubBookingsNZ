@@ -191,7 +191,7 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
 - **Reachability, stated plainly.** With the read-time refusal in place, no
   production path is known that presents the coverage question on a settle that
   can COMPLETE other than the reverse-then-re-settle loop and legacy pre-ledger
-  rows: Every writer of `additionalAmountCents` requires the payment to be captured at the moment the delta is recorded (`applyPaymentAdjustments` arm (a) needs `hasCapturedPayment`; arm (b) needs an issued Xero invoice, which this settle refuses outright and which nothing ever clears), and a captured payment is not a legal settle-from. Re-check this if the settle-from status set or the delta writers
+  rows. Every writer of `additionalAmountCents` requires the payment to be captured at the moment the delta is recorded (`applyPaymentAdjustments` arm (a) needs `hasCapturedPayment`; arm (b) needs an issued Xero invoice, which this settle refuses outright and which nothing ever clears), and a captured payment is not a legal settle-from. Re-check this if the settle-from status set or the delta writers
   change.
 
 ## INV-PAY-047

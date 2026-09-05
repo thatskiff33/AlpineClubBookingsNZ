@@ -824,7 +824,9 @@ and the same script enforces both:
 - An invariant entry is at most **300 words** by default. An entry runs from its
   canonical definition heading to the next canonical definition, or to the next
   heading ABOVE its own level that carries no invariant-shaped token — the
-  file's section headings. Everything between counts, fenced code and
+  file's section headings — or to a same-level heading that introduces a
+  nested group (the next definition after it is deeper, as a `##` section
+  between `##` definitions whose rules are `###`). Everything between counts, fenced code and
   same-level or deeper sub-headings included: `### Background` inside an entry
   is part of it, never a way to split it. A heading that only *looks* like a
   definition — a lookalike, a homoglyph, a Setext underline — never ends an
@@ -834,7 +836,8 @@ A **word** is a run of letters, digits, combining marks, connector punctuation,
 apostrophes and hyphens that contains a letter or digit; a lone pipe, dash or
 arrow is structure, a path counts one word per segment, and no invisible
 character can join two words (every tracked Markdown file is free of Unicode
-format characters and the Braille blank, checked by the same gate). Read a figure the way the gate
+format characters and the Braille blank, checked by the same gate; that
+includes U+200D, so a ZWJ emoji sequence is not permitted in tracked Markdown). Read a figure the way the gate
 does with `node scripts/ci/check-doc-index-integrity.mjs --words`.
 
 **Semantic correctness beats compactness, always.** Never broaden, narrow or

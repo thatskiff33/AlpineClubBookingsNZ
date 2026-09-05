@@ -628,8 +628,8 @@ per-action choice covers the standalone **guest-removal** route
 (`POST /api/bookings/[id]/cancel`, "Cancel and email member" / "Cancel without
 emailing", the suppression also covering the linked provisional split children
 cancelled with the parent) (#1705). Both routes 403 the flag from any
-non-(booking-management)-ADMIN caller, force notify for non-admin actors
-, default to notify when the flag is absent, and record a suppressed
+non-(booking-management)-ADMIN caller, force notify for non-admin actors,
+default to notify when the flag is absent, and record a suppressed
 send as `notifyMember: false` in the audit metadata. Refund/credit settlement,
 audit, booking events, waitlist processing, and the admin-facing alerts are
 never affected by the choice.
