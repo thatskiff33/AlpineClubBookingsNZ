@@ -19,21 +19,13 @@ vi.mock("@/lib/logger", () => ({
 }));
 
 import {
+  classifySucceededSetupIntentCard,
   setupIntentCardStillAttached,
-  stripeReferenceId,
 } from "@/lib/setup-intent-card";
 
 // #3266 / INV-PAY-052 — the provider, not a local guess, decides whether a
-// succeeded SetupIntent's card may be re-adopted onto a row that carries none.
-describe("stripeReferenceId", () => {
-  it("reads a bare id, an expanded object, and nothing", () => {
-    expect(stripeReferenceId("cus_1")).toBe("cus_1");
-    expect(stripeReferenceId({ id: "cus_2" })).toBe("cus_2");
-    expect(stripeReferenceId(null)).toBeNull();
-    expect(stripeReferenceId(undefined)).toBeNull();
-  });
-});
-
+// succeeded SetupIntent's card may be re-adopted onto a row that does not
+// already carry it.
 describe("setupIntentCardStillAttached", () => {
   const ask = (customerId: string | null = "cus_123") =>
     setupIntentCardStillAttached({
@@ -98,5 +90,103 @@ describe("setupIntentCardStillAttached", () => {
     mockGetPaymentMethod.mockRejectedValue(outage);
     await expect(ask()).rejects.toBe(outage);
     expect(mockLoggerInfo).not.toHaveBeenCalled();
+  });
+});
+
+// The one rule the route's alreadySaved arm and the setup_intent.succeeded
+// webhook share (INV-SSOT-001): the fast path is only "the row already carries
+// THIS intent's card"; everything else is the provider's call.
+describe("classifySucceededSetupIntentCard", () => {
+  const classify = (
+    row: { stripePaymentMethodId: string | null; stripeCustomerId: string | null },
+    setupIntent: {
+      id: string;
+      payment_method: string | { id: string } | null;
+      customer: string | { id: string } | null;
+    } = { id: "seti_1", payment_method: "pm_new", customer: "cus_123" },
+  ) =>
+    classifySucceededSetupIntentCard({
+      bookingId: "booking-1",
+      setupIntent: setupIntent as never,
+      row,
+    });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("an intent naming no payment method has nothing to adopt, and Stripe is not asked", async () => {
+    await expect(
+      classify(
+        { stripePaymentMethodId: null, stripeCustomerId: "cus_123" },
+        { id: "seti_1", payment_method: null, customer: "cus_123" },
+      ),
+    ).resolves.toEqual({ outcome: "no_payment_method" });
+    expect(mockGetPaymentMethod).not.toHaveBeenCalled();
+  });
+
+  it("a row already carrying exactly this intent's card is the ONLY fast path", async () => {
+    await expect(
+      classify({ stripePaymentMethodId: "pm_new", stripeCustomerId: "cus_123" }),
+    ).resolves.toEqual({ outcome: "already_on_row", paymentMethodId: "pm_new" });
+    expect(mockGetPaymentMethod).not.toHaveBeenCalled();
+  });
+
+  it("a row with no card asks Stripe: attached when the card still names the row's customer", async () => {
+    mockGetPaymentMethod.mockResolvedValue({ id: "pm_new", customer: "cus_123" });
+    await expect(
+      classify({ stripePaymentMethodId: null, stripeCustomerId: "cus_123" }),
+    ).resolves.toEqual({ outcome: "attached", paymentMethodId: "pm_new" });
+    expect(mockGetPaymentMethod).toHaveBeenCalledWith("pm_new");
+  });
+
+  it("a row carrying a DIFFERENT card is not evidence about this one: Stripe is asked", async () => {
+    mockGetPaymentMethod.mockResolvedValue({ id: "pm_new", customer: "cus_123" });
+    await expect(
+      classify({ stripePaymentMethodId: "pm_other", stripeCustomerId: "cus_123" }),
+    ).resolves.toEqual({ outcome: "attached", paymentMethodId: "pm_new" });
+    expect(mockGetPaymentMethod).toHaveBeenCalledWith("pm_new");
+  });
+
+  it("a detached card is 'detached' whatever the row carries", async () => {
+    mockGetPaymentMethod.mockResolvedValue({ id: "pm_new", customer: null });
+    await expect(
+      classify({ stripePaymentMethodId: "pm_other", stripeCustomerId: "cus_123" }),
+    ).resolves.toEqual({ outcome: "detached", paymentMethodId: "pm_new" });
+  });
+
+  it("compares against the row's customer first, falling back to the intent's when the row has none", async () => {
+    mockGetPaymentMethod.mockResolvedValue({ id: "pm_new", customer: "cus_from_intent" });
+    await expect(
+      classify(
+        { stripePaymentMethodId: null, stripeCustomerId: null },
+        { id: "seti_1", payment_method: "pm_new", customer: { id: "cus_from_intent" } },
+      ),
+    ).resolves.toEqual({ outcome: "attached", paymentMethodId: "pm_new" });
+
+    // A row customer that disagrees with where the card is attached wins over
+    // the intent's customer: the row is what the charge paths run against.
+    mockGetPaymentMethod.mockResolvedValue({ id: "pm_new", customer: "cus_from_intent" });
+    await expect(
+      classify(
+        { stripePaymentMethodId: null, stripeCustomerId: "cus_row" },
+        { id: "seti_1", payment_method: "pm_new", customer: "cus_from_intent" },
+      ),
+    ).resolves.toEqual({ outcome: "detached", paymentMethodId: "pm_new" });
+  });
+
+  it("resource_missing is 'detached'; any other Stripe failure propagates", async () => {
+    mockGetPaymentMethod.mockRejectedValue(
+      Object.assign(new Error("No such PaymentMethod"), { code: "resource_missing" }),
+    );
+    await expect(
+      classify({ stripePaymentMethodId: null, stripeCustomerId: "cus_123" }),
+    ).resolves.toEqual({ outcome: "detached", paymentMethodId: "pm_new" });
+
+    const outage = Object.assign(new Error("Stripe is unavailable"), { statusCode: 503 });
+    mockGetPaymentMethod.mockRejectedValue(outage);
+    await expect(
+      classify({ stripePaymentMethodId: null, stripeCustomerId: "cus_123" }),
+    ).rejects.toBe(outage);
   });
 });

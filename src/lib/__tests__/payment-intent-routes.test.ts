@@ -1008,7 +1008,7 @@ describe("payment intent routes", () => {
       expect(mocks.markBookingSetupIntentSucceeded).not.toHaveBeenCalled();
     });
 
-    it("(b) succeeded intent with a card still on the row: alreadySaved, and Stripe is not asked about the card", async () => {
+    it("(b) succeeded intent whose OWN card is on the row: alreadySaved, and Stripe is not asked about the card", async () => {
       mockPrisma.booking.findUnique.mockResolvedValue(
         savedCardBooking({
           stripeSetupIntentId: "seti_old",
@@ -1035,6 +1035,72 @@ describe("payment intent routes", () => {
       expect(mockGetPaymentMethod).not.toHaveBeenCalled();
       expect(mockStripeCreateSetupIntent).not.toHaveBeenCalled();
       expect(mockPrisma.payment.upsert).not.toHaveBeenCalled();
+    });
+
+    // (b2) — the fast path is ONLY "the row carries this intent's own card". A
+    // row naming a DIFFERENT card says nothing about the intent's card, so it
+    // goes through the provider check exactly like an empty row (fix round 1).
+    it("(b2) succeeded intent, row carries a DIFFERENT card, intent's card still attached: Stripe is asked, then stamp and alreadySaved", async () => {
+      mockPrisma.booking.findUnique.mockResolvedValue(
+        savedCardBooking({
+          stripeSetupIntentId: "seti_old",
+          stripePaymentMethodId: "pm_other",
+          stripeCustomerId: "cus_123",
+        }),
+      );
+      mockGetSetupIntent.mockResolvedValue({
+        id: "seti_old",
+        status: "succeeded",
+        payment_method: "pm_intent",
+        customer: "cus_123",
+      });
+      mockGetPaymentMethod.mockResolvedValue({ id: "pm_intent", customer: "cus_123" });
+
+      const res = await postSetupIntent();
+
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toEqual({ alreadySaved: true, setupIntentId: "seti_old" });
+      expect(mockGetPaymentMethod).toHaveBeenCalledWith("pm_intent");
+      // The stamp names the intent whose card it writes, so the guarded write
+      // in markBookingSetupIntentSucceeded is satisfied by construction.
+      expect(mocks.markBookingSetupIntentSucceeded).toHaveBeenCalledWith({
+        bookingId: "booking-1",
+        setupIntentId: "seti_old",
+        paymentMethodId: "pm_intent",
+      });
+      expect(mockStripeCreateSetupIntent).not.toHaveBeenCalled();
+    });
+
+    it("(b2) succeeded intent, row carries a DIFFERENT card, intent's card detached: fresh mint, nothing re-adopted", async () => {
+      mockPrisma.booking.findUnique.mockResolvedValue(
+        savedCardBooking({
+          stripeSetupIntentId: "seti_old",
+          stripePaymentMethodId: "pm_other",
+          stripeCustomerId: "cus_123",
+        }),
+      );
+      mockGetSetupIntent.mockResolvedValue({
+        id: "seti_old",
+        status: "succeeded",
+        payment_method: "pm_intent",
+        customer: "cus_123",
+      });
+      mockGetPaymentMethod.mockResolvedValue({ id: "pm_intent", customer: null });
+
+      const res = await postSetupIntent();
+
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toEqual({
+        clientSecret: "seti_new_secret",
+        setupIntentId: "seti_new",
+      });
+      expect(mockGetPaymentMethod).toHaveBeenCalledWith("pm_intent");
+      expect(mocks.markBookingSetupIntentSucceeded).not.toHaveBeenCalled();
+      expect(mockStripeCreateSetupIntent).toHaveBeenCalledWith(
+        expect.objectContaining({ idempotencyKey: "seti_booking-1_seti_old" }),
+      );
+      const upsert = mockPrisma.payment.upsert.mock.calls[0][0];
+      expect(upsert.update.stripePaymentMethodId).toBeNull();
     });
 
     it("(c) succeeded intent, no card on the row, card still attached at Stripe (webhook race): stamp and alreadySaved", async () => {
