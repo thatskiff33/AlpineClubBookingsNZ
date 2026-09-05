@@ -7,7 +7,7 @@ the over-budget files is the call sites, the guard on an existing writer, and
 the comments saying why. The route handler stays inside its 250-line budget.
 
 file: src/app/(authenticated)/bookings/[id]/page.tsx
-lines: 2728
+lines: 2773
 reason: the "Save Payment Method" card's condition moves from "no SetupIntent
   yet" to the shared `needsSavedCardEntry` predicate, and the four-line comment
   beside it records why (an abandoned replacement or a retired card must show
