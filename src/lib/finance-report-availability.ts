@@ -1,7 +1,5 @@
-import {
-  type FinanceAccessMember,
-  hasFinanceManagerAccess,
-} from "@/lib/finance-auth";
+import { hasFinanceManagerAccess } from "@/lib/admin-permissions";
+import type { FinanceAccessMember } from "@/lib/finance-auth";
 import { getFinanceSyncDiagnosticsStatus } from "@/lib/finance-sync-diagnostics";
 import { getXeroConnectionStatus } from "@/lib/xero";
 

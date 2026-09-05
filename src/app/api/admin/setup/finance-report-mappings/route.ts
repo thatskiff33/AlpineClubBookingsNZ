@@ -6,10 +6,8 @@ import {
   getFinanceReportMappingsState,
   saveFinanceReportMappings,
 } from "@/lib/finance-report-mappings";
-import {
-  hasFinanceManagerAccess,
-  loadFinanceAccessMember,
-} from "@/lib/finance-auth";
+import { hasFinanceManagerAccess } from "@/lib/admin-permissions";
+import { loadFinanceAccessMember } from "@/lib/finance-auth";
 import { requireAdmin } from "@/lib/session-guards";
 
 const mappingSchema = z.object({
