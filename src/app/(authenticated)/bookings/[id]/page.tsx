@@ -31,6 +31,7 @@ import { getBookingPaymentMode } from "@/lib/booking-payment-flow";
 import { RefundAppealButton } from "@/components/refund-appeal-button";
 import { humanizeStatus, paymentStatusClass } from "@/lib/status-colors";
 import { BookingHelpExtras } from "./_components/booking-help-extras";
+import { BookingReviewNotices } from "./_components/booking-review-notices";
 import { BookingLinkedPartySections } from "./_components/booking-linked-party-sections";
 import { BookingConsentCards } from "./_components/booking-consent-cards";
 import { BookingStatusBanners } from "./_components/booking-status-banners";
@@ -442,92 +443,10 @@ export default async function BookingDetailPage({
         bookingLodgeEmailSettings={bookingLodgeEmailSettings}
       />
 
-      {booking.createdBy && (
-        <div className="rounded-md bg-muted border border-border px-4 py-3 text-sm text-muted-foreground">
-          Created by <strong>{booking.createdBy.firstName} {booking.createdBy.lastName}</strong> (admin) on behalf of this member
-        </div>
-      )}
-
-      {booking.requiresAdminReview && (
-        <div className="space-y-2 rounded-md border border-warning-6 bg-warning-3 px-4 py-3 text-sm text-warning-11">
-          <p>
-            <strong>
-              {booking.adminReviewStatus === "PENDING"
-                ? "Awaiting admin review."
-                : booking.adminReviewStatus === "APPROVED"
-                  ? "Approved by admin."
-                  : booking.adminReviewStatus === "REJECTED"
-                    ? "Declined by admin."
-                    : "Admin review required."}
-            </strong>{" "}
-            {booking.adminReviewReason ?? "This booking needs manual review by an admin."}
-          </p>
-          {booking.adminReviewStatus === "PENDING" && (
-            <p>
-              Payment cannot be taken until an admin approves. You can amend the
-              booking to include an adult guest if you would like to clear this flag.
-            </p>
-          )}
-          {booking.memberReviewJustification && (
-            <p>
-              <span className="font-medium">Your reason:</span>{" "}
-              {booking.memberReviewJustification}
-            </p>
-          )}
-          {booking.adminReviewNotes && booking.adminReviewStatus !== "PENDING" && (
-            <p>
-              <span className="font-medium">Admin note:</span> {booking.adminReviewNotes}
-            </p>
-          )}
-        </div>
-      )}
-
-      {booking.changeRequests.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Change Requests</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {booking.changeRequests.map((request) => {
-              const requested = request.requestedChanges as {
-                requested?: { summary?: string | null };
-              };
-              return (
-                <div key={request.id} className="rounded-md border p-3 text-sm">
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="font-medium">
-                      {requested.requested?.summary ?? "Booking change request"}
-                    </p>
-                    <Badge variant={request.status === "REQUESTED" ? "outline" : "secondary"}>
-                      {humanizeStatus(request.status)}
-                    </Badge>
-                  </div>
-                  <p className="mt-1 text-muted-foreground">
-                    Submitted{" "}
-                    {club.instantDate(request.createdAt)}
-                  </p>
-                  {request.reason ? (
-                    <p className="mt-2 text-muted-foreground">{request.reason}</p>
-                  ) : null}
-                  {/* The officer's MEMBER-FACING explanation (#2562), labelled so
-                      the member knows who wrote it and can act on it. The officer
-                      panel says this field is member-visible before they submit
-                      it; the internal note is a different column and is neither
-                      selected above nor rendered anywhere here. */}
-                  {request.adminNotes ? (
-                    <div className="mt-2">
-                      <p className="font-medium">What the club said</p>
-                      <p className="mt-1 whitespace-pre-wrap text-muted-foreground">
-                        {request.adminNotes}
-                      </p>
-                    </div>
-                  ) : null}
-                </div>
-              );
-            })}
-          </CardContent>
-        </Card>
-      )}
+      <BookingReviewNotices
+        booking={booking}
+        club={club}
+      />
 
       {showArrivalTime && (
         <Card id="arrival" className="scroll-mt-20">
