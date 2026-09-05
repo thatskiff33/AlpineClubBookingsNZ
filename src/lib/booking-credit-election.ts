@@ -406,7 +406,7 @@ export const UNAPPLIED_CREDIT_ELECTION_AUDIT_ACTION =
  * What clearing is NOT for: a settlement that has not yet taken the money. There
  * the election is still honourable and the caller must refuse or defer, never
  * clear — throwing away a member's request to make a charge simpler would be the
- * original #2265 bug wearing a different hat. `payment-link.ts` shows both
+ * original #2265 bug wearing a different hat. `payment-link-intent.ts` shows both
  * halves of that distinction in one function.
  *
  * Guarded claim, the same discipline `consumeStoredCreditElection` uses: the row
@@ -523,13 +523,13 @@ export async function settleFullyCreditCoveredBooking(
       // Note on the two OTHER card doors, since an earlier draft of this comment
       // named them as producers here and was wrong (#2319). A public payment
       // link cannot reach a booking carrying an unconsumed election — it now
-      // refuses one outright (payment-link.ts) — and `charge-saved-method`
+      // refuses one outright (payment-link-intent.ts) — and `charge-saved-method`
       // requires `PENDING`, a status no election-bearing booking is ever in.
       //
       // `stripePaymentMethodId` is DELIBERATELY kept (unlike the
       // booking-modify-settlement sibling): a split parent's saved card is the
       // fallback the deferred non-member guest charge uses
-      // (cron-confirm-pending.ts, payment-link.ts both read
+      // (cron-confirm-pending.ts, payment-link-split-guest.ts both read
       // `parentBooking.payment.stripePaymentMethodId`), so clearing it here
       // would strip the card the child booking is charged on later. Nothing
       // about this booking's own settlement needs it gone.
