@@ -102,10 +102,29 @@ const DECLARED_JAVASCRIPT_MODULES = [
 /**
  * The runtime export names a declaration file promises: every
  * `export declare const|function NAME`, plus `default` when it has one.
- * `export type` is type-only and has no runtime counterpart, so it is skipped.
+ * `export type` and `export interface` are type-only and have no runtime
+ * counterpart, so they are skipped. Any OTHER `export` form (`export { … }`
+ * lists, `export declare let|class`, `export * from`) is refused rather than
+ * silently ignored — the #3280 delta review appended each of those to a
+ * declaration and this parser passed every one, promising names the module
+ * never had. Failing closed keeps "exactly" true: add the form here when a
+ * declaration genuinely needs it.
  */
 function declaredRuntimeExports(declaration: string): string[] {
   const source = readFileSync(path.join(ROOT, declaration), "utf8");
+  const unsupported = [
+    ...source.matchAll(
+      /^export (?!declare (?:const|function) |type |interface |default )(.*)$/gm,
+    ),
+  ].map((match) => match[0].trim());
+  if (unsupported.length > 0) {
+    throw new Error(
+      `${declaration} uses export forms this parity check does not read, so it ` +
+        `cannot say what the module promises: ${unsupported.join(" | ")}. Write ` +
+        `\`export declare const|function NAME\` (or \`export default\`), or teach ` +
+        `declaredRuntimeExports the form.`,
+    );
+  }
   const names = [
     ...source.matchAll(/^export declare (?:const|function) ([A-Za-z_$][\w$]*)/gm),
   ].map((match) => match[1]);
