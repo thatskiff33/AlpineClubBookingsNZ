@@ -1337,7 +1337,8 @@ no card on row  --(member opens "Save Payment Method"; route mints)-->  intent o
         stripePaymentMethodId = NULL        <- a replacement CLEARS the old card
 intent open  --(setup_intent.succeeded webhook, or the route's re-adopt arm)-->  card saved
    row: stripePaymentMethodId = the intent's card    (markBookingSetupIntentSucceeded)
-intent open  --(setup_intent.canceled)-->  no intent      (stripeSetupIntentId = NULL; card untouched)
+intent open  --(setup_intent.canceled)-->  intent canceled  (row UNCHANGED: the id is kept so the next
+   mint's idempotency key chains from it; card untouched)
 card saved   --(member mints a replacement)-->  intent open  (card cleared again)
 card saved   --(terminal Stripe refusal on charge, #3268)-->  no card on row
    row: stripePaymentMethodId = NULL, stripeSetupIntentId LEFT IN PLACE (succeeded)
@@ -1349,11 +1350,23 @@ decides from the intent's live status plus the row's card column:
 | Stored intent | Row card | Route does |
 | --- | --- | --- |
 | open (has a client secret, not canceled) | any | hands back the existing client secret; no new intent |
-| succeeded | present | re-stamps the intent's card, answers `alreadySaved` |
-| succeeded | NULL, and Stripe still reports the intent's card attached to the row's customer | stamps it, answers `alreadySaved` — the webhook simply had not landed yet |
-| succeeded | NULL, and the card is detached, belongs to another customer, or is `resource_missing` | mints a fresh SetupIntent under the chained key `seti_<bookingId>_<oldIntentId>`; card stays NULL until that one succeeds |
-| succeeded | NULL, and Stripe fails for any other reason | 500 — not a verdict either way, so nothing is stamped and nothing minted |
-| canceled, or no client secret | any | mints a fresh SetupIntent, clearing the card |
+| succeeded | this intent's OWN card | re-stamps it (a no-op write), answers `alreadySaved`; Stripe is not asked |
+| succeeded | NULL or a DIFFERENT card, and Stripe still reports the intent's card attached to the row's customer | stamps it, answers `alreadySaved` — the webhook simply had not landed yet |
+| succeeded | NULL or a DIFFERENT card, and the intent's card is detached, belongs to another customer, or is `resource_missing` | mints a fresh SetupIntent under the chained key `seti_<bookingId>_<oldIntentId>`; card stays NULL until that one succeeds |
+| succeeded | NULL or a DIFFERENT card, and Stripe fails for any other reason | 500 — not a verdict either way, so nothing is stamped and nothing minted |
+| canceled, or no client secret | any | mints a fresh SetupIntent under the chained key, clearing the card |
+
+The verdict in the middle three rows is `classifySucceededSetupIntentCard`
+(`setup-intent-card.ts`), and the `setup_intent.succeeded` webhook applies the
+SAME one — it is the one rule for adopting a succeeded intent's card. The
+webhook adds the guard the route satisfies by construction: it stamps only when
+the row STILL names this intent (a redelivery for an intent the row has since
+replaced writes nothing), and `markBookingSetupIntentSucceeded` re-checks that
+under the write (`updateMany` on `bookingId` + `stripeSetupIntentId`, card column
+only; the intent id is written by the mint alone). `setup_intent.canceled`
+writes nothing: nulling the id sent the next mint back to the
+`seti_<bookingId>_initial` key, which inside Stripe's 24-hour idempotency window
+replays the ORIGINAL intent's creation.
 
 The booking page's owner-only "Save Payment Method" card shows whenever the
 row carries no card (`needsSavedCardEntry`), so an abandoned replacement or a

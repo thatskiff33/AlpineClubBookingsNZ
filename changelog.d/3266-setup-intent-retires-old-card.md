@@ -12,4 +12,6 @@
   first card had been started. And when the system finds a booking with a
   completed card set-up but no card on file, it asks Stripe whether that card is
   still attached before reusing it, so a card Stripe has already let go is never
-  silently put back. No operator action is needed.
+  silently put back — including when Stripe's own confirmation of an old card
+  set-up arrives late, days after the member has moved on to a new one. No
+  operator action is needed.
