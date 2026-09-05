@@ -37,7 +37,10 @@ import { RequestedRoomEditor } from "@/components/requested-room-editor";
 import { WaitlistOfferCard } from "@/components/waitlist-offer-card";
 import { DeleteBookingButton } from "@/components/delete-booking-button";
 import { getBookingEditPolicy, bookingStayHasStarted } from "@/lib/booking-edit-policy";
-import { getBookingPaymentMode } from "@/lib/booking-payment-flow";
+import {
+  getBookingPaymentMode,
+  needsSavedCardEntry,
+} from "@/lib/booking-payment-flow";
 import { RefundAppealButton } from "@/components/refund-appeal-button";
 import { humanizeStatus, paymentStatusClass } from "@/lib/status-colors";
 import { BookingHelpExtras } from "./_components/booking-help-extras";
@@ -1245,12 +1248,21 @@ export default async function BookingDetailPage({
   // the booking owner so a non-owner admin never sees it. An admin entering
   // their own card on a member's booking is a footgun with no legitimate use,
   // and the owner-positive gate is robust to read-only admin viewers (#1289).
+  // Shown whenever the row carries NO card (#3266), not merely until the first
+  // SetupIntent exists: an abandoned replacement or a card retired after a
+  // Stripe refusal (#3268) leaves the intent id behind with nothing chargeable,
+  // and the member must be able to get back to the form. Kept as ONE named
+  // boolean so the epic (#3270) can re-key it onto #3269's
+  // `reusableSavedPaymentMethodOnRow` in a single line — a legacy split child
+  // can carry a non-null pm that is not reusable, and the card column alone
+  // would hide the form for it.
+  const rowHasNoSavedCard = needsSavedCardEntry(booking.payment);
   const showSavePaymentMethodCard =
     isBookingOwner &&
     !isDeleted &&
     !internetBankingPayment &&
     booking.status === "PENDING" &&
-    (!booking.payment || !booking.payment.stripeSetupIntentId);
+    rowHasNoSavedCard;
   // Suppress when a more specific provisional banner already explains the
   // on-hold/no-charge state (the split-booking child and the bumped-guest
   // flagged-provisional notices both render near the top of the page). Also
