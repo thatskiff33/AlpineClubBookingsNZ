@@ -322,7 +322,11 @@ export async function getPaymentMethod(
  * true — the setup-intent route (#3266) asks Stripe whether a candidate pm is
  * still attached before re-adopting it, and a detached pm answers no. Plain
  * call, no idempotency key: detaching an already-detached or never-attached pm
- * errors, and the caller treats that as success (the pm is unusable either way).
+ * fails with `invalid_request_error`, and ONLY that failure does the caller
+ * (`retireUnusableSavedCard`) treat as success — the pm is unusable either way.
+ * Any other failure (an `api_error`, a rate limit, a connection error) is
+ * rethrown there so no row is cleared while the card may still be attached
+ * (INV-PAY-054).
  */
 export async function detachPaymentMethod(
   paymentMethodId: string
