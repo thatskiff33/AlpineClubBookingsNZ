@@ -1805,11 +1805,17 @@ one, check the other.
     payment method, no `stripeSetupIntentId` — reads as "no card" for the same
     reason, which repairs it without a migration.
   - **What the proxy does not prove, stated so nobody widens it by accident.**
-    `stripeSetupIntentId` on a row does not prove the payment method beside it is
-    the SetupIntent's card: a later Payment Element capture on a row that still
-    carries an old SetupIntent id overwrites the payment method with a one-off
-    one and passes this check, and #3268's terminal handling of a Stripe refusal
-    is the backstop. Nor does it prove the SetupIntent succeeded: the
+    On a legacy row, `stripeSetupIntentId` does not prove the payment method
+    beside it is the SetupIntent's card: before `INV-PAY-054`'s derivation rule
+    a later Payment Element capture on a row still carrying an old SetupIntent
+    id overwrote the payment method with a one-off one, which passed this
+    check. Since that rule the only writers of the card column are the guarded
+    SetupIntent stamp, the ledger reconcile — which leaves a row carrying a
+    SetupIntent alone — and the null-writers, so a row carrying a SetupIntent
+    written after it shipped holds that intent's card or nothing and the proxy
+    is exact for it; the hazard survives only in rows the old reconcile wrote,
+    and #3268's terminal handling of a Stripe refusal is the backstop there.
+    Nor does it prove the SetupIntent succeeded: the
     setup-intent route stamps a freshly minted id, and a row holding a stale
     payment method beside a replacement id is #3266's repair. The rule here is
     the gate, not the whole defence.
@@ -1847,15 +1853,20 @@ one, check the other.
     `Payment.stripePaymentMethodId` equal to it — the child's row AND the parent
     row a split child borrowed it from, which is what stops the next run
     re-borrowing it — and nulled on every `PaymentTransaction.paymentMethodId`
-    equal to it. The ledger clear is still needed under the derivation rule
-    below: a split child's `Payment` row carries no `stripeSetupIntentId` (its pm
-    was borrowed, not saved), so the next ledger reconcile of that row derives
-    the card from its latest PRIMARY ledger row, and a stale PROCESSING or
-    `legacy_primary_backfill` row still carrying the retired pm would copy it
-    straight back; a captured parent row keeping it would let a later parent
-    reconcile restore the card the child then re-borrows. That costs provenance
-    — a captured historical row no longer records which card paid — and is
-    accepted; refunds and recovery key on the intent id, never on the pm.
+    equal to it. The ledger clear is hygiene, not a charge-loop guard. Under
+    the derivation rule below a split child's `Payment` row (no
+    `stripeSetupIntentId` — its pm was borrowed, not saved) would have a stale
+    PROCESSING or `legacy_primary_backfill` ledger row's retired pm copied back
+    onto it by the next reconcile, but that copy is refused for charging by
+    `reusableSavedPaymentMethodOnRow` (`INV-PAY-053`), and the parent row it
+    borrowed from always carries a SetupIntent, so the derivation never touches
+    the parent's card column and no later parent reconcile can restore the card
+    for the child to re-borrow. The ledger rows are nulled anyway so that no row
+    anywhere names a retired card — a `paymentMethodId` on a captured row is
+    informational (the reconcile derivation is its only production reader;
+    refunds and recovery key on the intent id, never on the pm). That costs
+    provenance — a captured historical row no longer records which card paid —
+    and is accepted.
     `stripeSetupIntentId` and `stripeCustomerId` are left in place: the
     setup-intent route's idempotency chain depends on the previous id staying
     put (#3266), and provider-side detachment is what makes "may not be

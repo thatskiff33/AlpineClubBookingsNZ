@@ -1318,11 +1318,17 @@ none. No charge claim writes the card column: `savedPaymentMethodRowStamp`
 writes the customer onto the row and nothing else, so a parent's one-off
 checkout card can no longer be laundered onto the child by being copied, and a
 claim cannot resurrect an own-row card that a concurrent replacement SetupIntent
-mint just cleared. A capture still records the card that paid, as on every paid
-row (`reconcilePaymentAggregates`, `markBookingPaymentSucceeded`) — that copy
-carries no SetupIntent, so it never reads as reusable, and the laundered rows
-production already holds read as no card for the same reason, without a
-migration. The row itself still transitions exactly as before — this changes
+mint just cleared. A capture still records the card that paid on its ledger row
+(`markBookingPaymentSucceeded`), and `reconcilePaymentAggregates` mirrors it
+onto the `Payment` row only when that row carries no SetupIntent (`INV-PAY-054`,
+"the ledger never moves a saved card"). What that buys: a row carrying a
+SetupIntent holds that intent's card or nothing, so the provenance proxy is
+exact for every row written since the rule shipped — a one-off capture sitting
+beside a saved card's SetupIntent survives only in legacy rows, where #3268's
+terminal handling of a Stripe refusal is the backstop — and the copy on a row
+without a SetupIntent never reads as reusable, which is also why the laundered
+rows production already holds read as no card, without a migration. The row
+itself still transitions exactly as before — this changes
 which bookings enter `PENDING -> PROCESSING` off-session, not what happens once
 they do.
 

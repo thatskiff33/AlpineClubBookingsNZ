@@ -11,8 +11,9 @@ lines: 2792
 reason: the "Save Payment Method" card's condition moves from "no SetupIntent
   yet" to the one saved-card answer (`savedPaymentMethodForBooking`, own row then split parent — the composition pass replaced the interim `needsSavedCardEntry` with it), and the four-line comment
   beside it records why (an abandoned replacement or a retired card must show
-  the form again). The predicate itself lives in `booking-payment-flow.ts`;
-  what remains here is the one call site and its reasoning, which belongs next
+  the form again). The answer itself lives in `src/lib/saved-payment-method.ts`
+  (the interim `needsSavedCardEntry` predicate was deleted); what remains here
+  is the one call site and its reasoning, which belongs next
   to the other owner/status gates in the same expression.
 
   #3269 (same epic) grows the same page: its query selects the split parent's
