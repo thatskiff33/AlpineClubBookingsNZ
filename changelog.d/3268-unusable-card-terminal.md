@@ -15,4 +15,11 @@
   asking them to save a new card, and administrators receive one alert that
   says in plain English what happened and what the member has been asked to
   do. A temporary problem — insufficient funds inside the first two days, or
-  Stripe itself being unavailable — is still retried exactly as before.
+  Stripe itself being unavailable — is still retried exactly as before, and if
+  Stripe cannot be reached to remove the card, nothing is removed and the
+  ordinary retry alert goes out instead.
+
+  Alongside this, a card a member has saved for a booking is no longer wiped
+  when a late Stripe event about an earlier, abandoned payment attempt arrives
+  after they have saved a new one: the saved card is owned by the "save a card"
+  step, not re-derived from the payment history.

@@ -1332,20 +1332,35 @@ charge throws -> release claim (unchanged)
             plain Error, anything unrecognised)
              -> admin alert as before -> same card charged next run
   terminal (Stripe rejects the pm itself; a "do not retry" decline code incl.
-            authentication_required; a soft decline two ~2-day windows after
-            the charge first became due)
-             -> pm detached at Stripe (best-effort, outside any transaction)
+            authentication_required, or advice_code do_not_try_again; a soft
+            decline still declining two days after the charge first became
+            due — the second ~2-day window)
+             -> pm detached at Stripe (outside any transaction). Only an
+                invalid_request_error refusal is swallowed; any other detach
+                failure rethrows -> nothing cleared -> the retry alert instead
              -> Payment.stripePaymentMethodId = null on EVERY row carrying it
                 (child AND borrowed-from parent)
              -> PaymentTransaction.paymentMethodId = null on every ledger row
-                carrying it (so reconcilePaymentAggregates cannot re-stamp it)
+                carrying it (so a reconcile of a row WITHOUT a SetupIntent —
+                a split child's — cannot re-stamp it)
              -> ONE member email (saved-card-charge-failed) + ONE admin alert
+                (which says "stays pending" only when the claim release itself
+                succeeded; otherwise that the booking is stuck confirmed-unpaid)
              -> next run: split child -> #1967 payment-link path;
                           plain booking -> missing_payment_method (log only)
 ```
 
 `stripeSetupIntentId` and `stripeCustomerId` are untouched. The PROCESSING /
 `requires_action` branch (an intent RETURNED, not thrown) is not part of this.
+
+The same change bounds how `reconcilePaymentAggregates` derives
+`Payment.stripePaymentMethodId` from the latest PRIMARY ledger row (the rule is
+the last bullet of `INV-PAY-054`): a `Payment` carrying a `stripeSetupIntentId`
+keeps its card column untouched by the ledger — the SetupIntent writers and the
+retire path own it — so a late `payment_intent.canceled` for an old intent can
+no longer null a card the member has just re-saved; without a SetupIntent the
+ledger row's pm is followed, except that a Stripe row recording no pm never
+nulls a card that is set; an Internet Banking latest PRIMARY still yields null.
 
 ### Manual mark-paid (cash / off-Xero bank transfer), B5 #2262
 

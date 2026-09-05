@@ -2995,13 +2995,17 @@ cron's own `pending_hold_auto_charge` transactions because Stripe's shared
 `pending_charge_<bookingId>` idempotency key re-returns a prior run's intent.
 The same cron's terminal branch for a permanently unusable saved card (#3268,
 `INV-PAY-054`) runs AFTER `releaseChargeClaim` has committed and holds no lock
-at all: the Stripe detach is a plain provider call outside any transaction, and
-the two `updateMany` clears (`Payment.stripePaymentMethodId`,
-`PaymentTransaction.paymentMethodId`, both matched by the exact pm id) are
-unlocked single-field writes, as the setup-intent route's writes to the same
-fields are today. The race that matters is harmless: a charge that read the pm
-a moment before the clear is refused by Stripe for the same reason and lands in
-the same branch, where the second clear matches zero rows.
+at all: the Stripe detach is a plain provider call outside any transaction that
+gates what follows (a detach failure other than `invalid_request_error` rethrows
+before either write), and the two `updateMany` clears
+(`Payment.stripePaymentMethodId`, `PaymentTransaction.paymentMethodId`, both
+matched by the exact pm id) are unlocked single-field writes: the setup-intent
+route already writes `Payment.stripePaymentMethodId` unlocked, and nothing
+writes `PaymentTransaction.paymentMethodId` after the row is created. The race
+that matters is harmless: a charge that read the pm a moment before the clear is
+refused by Stripe for the same reason and lands in the same branch, where the
+second clear matches zero rows and the second detach is an
+`invalid_request_error`, which is swallowed.
 
 Organiser cancellation adds a durable veto before it releases the lock:
 `group-cancel.ts` writes `GroupBooking.status = CANCELLED` under `lock(1)`
