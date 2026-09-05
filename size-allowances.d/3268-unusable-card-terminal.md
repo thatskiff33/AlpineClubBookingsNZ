@@ -1,18 +1,8 @@
 # File-size allowances for #3268
 
-file: src/lib/cron-confirm-pending.ts
-lines: 1760
-reason: the terminal-versus-retry decision itself lives in the new module
-  `saved-card-charge-failure.ts`; what grows here is the one call site in the
-  per-booking catch block that has to run AFTER `releaseChargeClaim` and
-  BEFORE today's admin alert, plus the anchor for the soft-decline window,
-  which reads the claim's own `previousHoldUntil` and the cron-private
-  `resolveOriginalHoldExpiry`. Lifting that catch block out would split the
-  release, the classification and the fallback alert across two files, which
-  is the ordering a reviewer most needs to see in one place. The fix round
-  added the `claimReleased` outcome of `releaseChargeClaim`, read where the
-  release happens so the terminal alert never asserts a pending state the row
-  is not in.
+The cron's growth is declared in `size-allowances.d/3267-one-charge-attempt-per-key.md`
+(one allowance per path across the epic; #3267 grows the same file further and
+carries this lane's reason too: the terminal branch of the charge arm).
 
 file: src/lib/email/booking.ts
 lines: 1600
