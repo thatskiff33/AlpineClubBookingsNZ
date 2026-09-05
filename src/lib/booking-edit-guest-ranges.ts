@@ -19,7 +19,6 @@ import { storedDateOnly } from "@/lib/stored-calendar-day";
 import {
   expandStayEnvelopeToNightKeys,
   getExplicitGuestBedNightKeys,
-  type GuestNightInput,
 } from "@/lib/booking-guest-stay-ranges";
 import type { MemberGuestConsentGuestFields } from "@/lib/member-guest-add-policy";
 import type {
@@ -33,7 +32,10 @@ import {
   unusableStoredSoldPriceEvidence,
   type HeldNightPrice,
 } from "@/lib/stored-sold-price-evidence";
-import { storedNightPriceDetailsByKey } from "@/lib/stored-night-price-write";
+import {
+  proposedNightPriceSources,
+  storedNightPriceDetailsByKey,
+} from "@/lib/stored-night-price-write";
 
 interface ExistingBookingEditGuest {
   id: string;
@@ -78,20 +80,17 @@ interface ExistingBookingEditGuest {
  * One loaded `BookingGuestNight` row as this plan reads it: the night, and what
  * the member was charged for it (#2744).
  *
- * `GuestNightInput` (a bare `Date`, a `yyyy-MM-dd` string, or `{ stayDate }`) is
- * what the canonical stay-range helpers accept and is kept in the union so a
- * caller holding any of those shapes still type-checks. The extra member is
- * assignable to `{ stayDate }`, so the night set still flows into
- * `getExplicitGuestBedNightKeys` unchanged; the price is simply no longer
- * dropped on the floor on the way in.
+ * Unlike the generic stay-range input, this stored-row shape requires the
+ * provenance selected beside the amount. An omitted SELECT is a wiring defect
+ * and must fail closed rather than manufacturing UNKNOWN or SOLD. The shape is
+ * still assignable to `{ stayDate }`, so it flows into the canonical night-key
+ * helpers unchanged.
  */
-type StoredGuestNight =
-  | GuestNightInput
-  | {
-      stayDate: Date | string;
-      priceCents?: number | null;
-      priceSource?: BookingGuestNightPriceSource;
-    };
+type StoredGuestNight = {
+  stayDate: Date | string;
+  priceCents?: number | null;
+  priceSource: BookingGuestNightPriceSource;
+};
 
 // Extends MemberGuestConsentGuestFields ("+ Add Member Guest", epic #2305, MG2
 // #2307) so a cross-family guest added to an IN-PROGRESS stay carries its consent
@@ -1592,11 +1591,11 @@ export function buildInProgressGuestRangePlan(
           futurePerNightCents: [],
           onNightWithNoAmount: "record-as-unknown",
         }),
-        perNightPriceSources: entry.proposedNightKeys.map((key) => {
-          const stored = entry.storedNightDetailsByKey.get(key);
-          return entry.heldNightKeySet.has(key) && stored?.priceCents !== null
-            ? (stored?.priceSource ?? "UNKNOWN")
-            : "UNKNOWN";
+        perNightPriceSources: proposedNightPriceSources({
+          proposedNightKeys: entry.proposedNightKeys,
+          retainedNightKeys: entry.heldNightKeySet,
+          storedNightDetailsByKey: entry.storedNightDetailsByKey,
+          newNightSource: "UNKNOWN",
         }),
         // The STORED total, untouched. How much this edit changes it is the
         // question the OPEN task exists to answer.
@@ -1810,11 +1809,12 @@ export function buildInProgressGuestRangePlan(
       stayEnd: entry.proposedStayEnd,
       nights: proposedNightKeys.map((key) => parseDateOnly(key)),
       perNightCents,
-      perNightPriceSources: proposedNightKeys.map((key) =>
-        heldNightKeySet.has(key)
-          ? (entry.storedNightDetailsByKey.get(key)?.priceSource ?? "UNKNOWN")
-          : "SOLD",
-      ),
+      perNightPriceSources: proposedNightPriceSources({
+        proposedNightKeys,
+        retainedNightKeys: heldNightKeySet,
+        storedNightDetailsByKey: entry.storedNightDetailsByKey,
+        newNightSource: "SOLD",
+      }),
       futureNights: futureNightKeys.map((key) => parseDateOnly(key)),
       priceCents,
       oldFuturePriceCents,

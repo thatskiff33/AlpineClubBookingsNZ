@@ -9,7 +9,8 @@ SET "priceSource" = 'EVEN_SPLIT'
 WHERE bgn."id" =
   'bgn_' || md5(
     bgn."bookingGuestId" || ':' || to_char(bgn."stayDate", 'YYYY-MM-DD')
-  );
+  )
+  AND bgn."priceCents" IS NOT NULL;
 
 -- The two later backfills generated identifiers with gen_random_uuid()::text,
 -- which produces RFC 4122 version-4 UUIDs. Runtime Prisma inserts use cuid
@@ -18,7 +19,8 @@ WHERE bgn."id" =
 UPDATE "BookingGuestNight" AS bgn
 SET "priceSource" = 'EVEN_SPLIT'
 WHERE bgn."id" ~
-  '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$';
+  '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+  AND bgn."priceCents" IS NOT NULL;
 
 -- #3247 landed two officer repair writers before provenance existed. Their
 -- successful AuditLog rows were committed atomically with the exact repaired

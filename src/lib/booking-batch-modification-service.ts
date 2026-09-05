@@ -347,7 +347,16 @@ function buildIdentityOnlyPricing(booking: LoadedBookingForModify): PricingResul
           `Booking guest ${guest.id} night ${night.stayDate.toISOString()} was loaded without its stored sold price (#3031)`,
         );
       }
-      return { stayDate: night.stayDate, priceCents: night.priceCents, priceSource: night.priceSource ?? "UNKNOWN" };
+      if (night.priceSource === undefined) {
+        throw new Error(
+          `Booking guest ${guest.id} night ${night.stayDate.toISOString()} was loaded without price provenance (#3275)`,
+        );
+      }
+      return {
+        stayDate: night.stayDate,
+        priceCents: night.priceCents,
+        priceSource: night.priceSource,
+      };
     }),
   );
   return {

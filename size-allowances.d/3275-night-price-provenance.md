@@ -6,7 +6,7 @@ reason: the nested night writer must stamp the new provenance beside the sold
   amount; extracting one field would split a single atomic row definition.
 
 file: src/lib/booking-batch-modification-service.ts
-lines: 2433
+lines: 2442
 reason: identity-only edits must echo the stored source beside the stored amount;
   the one added projection belongs with the existing pricing projection.
 
@@ -21,7 +21,7 @@ reason: the structural planner must carry source vectors alongside its existing
   amount vectors so retained rows cannot silently become newly sold rows.
 
 file: src/lib/booking-modify-plan.ts
-lines: 2958
+lines: 2953
 reason: the canonical modify planner owns the locked, parked, and newly priced
   vectors that reach its night-row writer; splitting them would duplicate alignment logic.
 

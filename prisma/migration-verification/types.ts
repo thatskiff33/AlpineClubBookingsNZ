@@ -64,6 +64,13 @@ export type DataMigrationCase = {
    * holds rather than what the fixture author believed it holds.
    */
   seed: string;
+  /**
+   * Optional SQL run after the migration-under-test and before expectations.
+   * Use this only to exercise a schema object the migration creates (for
+   * example a trigger); ordinary data migrations keep all pre-state in `seed`.
+   * The runner also executes it for mutants and the no-migration control.
+   */
+  afterMigration?: string;
   expectations: DataMigrationExpectation[];
 };
 

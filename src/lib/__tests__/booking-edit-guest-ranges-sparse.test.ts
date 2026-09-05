@@ -122,7 +122,11 @@ type TestGuest = {
   // `lockedNightPricesForGuest` reads on the other edit paths — carried here so
   // a test can show whether this plan consults it. Optional, because most cases
   // do not care.
-  nights?: Array<{ stayDate: Date; priceCents?: number }>;
+  nights?: Array<{
+    stayDate: Date;
+    priceCents?: number;
+    priceSource: "SOLD" | "UNKNOWN";
+  }>;
   priceCents: number;
 };
 
@@ -178,6 +182,7 @@ function guestFromNights(
           nights: sorted.map((night) => ({
             stayDate: D(night),
             ...(withStoredPrices ? { priceCents: rateFor(night) } : {}),
+            priceSource: withStoredPrices ? ("SOLD" as const) : ("UNKNOWN" as const),
           })),
         }
       : {}),
@@ -1950,6 +1955,7 @@ function guestWhoPaid(
     nights: nights.map((night) => ({
       stayDate: D(night),
       priceCents: paidByNight[night],
+      priceSource: "SOLD",
     })),
     priceCents: nights.reduce((sum, night) => sum + paidByNight[night], 0),
   };
@@ -2116,8 +2122,8 @@ describe("#2744 a night is credited back at the price it was sold for", () => {
     const stringDated: TestGuest = {
       ...guestFromNights(["2026-08-23", "2026-08-24"], "g1"),
       nights: [
-        { stayDate: "2026-08-23" as unknown as Date, priceCents: LOW },
-        { stayDate: "2026-08-24" as unknown as Date, priceCents: LOW },
+        { stayDate: "2026-08-23" as unknown as Date, priceCents: LOW, priceSource: "SOLD" },
+        { stayDate: "2026-08-24" as unknown as Date, priceCents: LOW, priceSource: "SOLD" },
       ],
       priceCents: 2 * LOW,
     };
@@ -2573,6 +2579,7 @@ function partyGuest(args: {
           nights: sorted.map((night) => ({
             stayDate: D(night),
             priceCents: soldRateCents,
+            priceSource: "SOLD",
           })),
         }),
     priceCents: sorted.length * paidRateCents,

@@ -211,7 +211,7 @@ export type LoadedBookingForModify = Booking & {
       nights?: {
         stayDate: Date;
         priceCents?: number | null;
-        priceSource?: BookingGuestNightPriceSource;
+        priceSource: BookingGuestNightPriceSource;
       }[];
     }
   >;

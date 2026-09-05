@@ -66,6 +66,7 @@ function guest(stayStart: string, stayEnd: string, priceCents: number, id = "g1"
       return dates.map((stayDate, index) => ({
         stayDate,
         priceCents: index === 0 ? base + remainder : base,
+        priceSource: "SOLD" as const,
       }));
     })(),
     priceCents,

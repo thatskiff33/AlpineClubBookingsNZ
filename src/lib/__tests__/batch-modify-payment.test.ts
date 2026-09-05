@@ -388,7 +388,15 @@ function reconcilingNightRows<G extends Record<string, unknown>>(
   guests: G[],
 ): G[] {
   return guests.map((guest) => {
-    if (guest.nights !== undefined) return guest;
+    if (Array.isArray(guest.nights)) {
+      return {
+        ...guest,
+        nights: guest.nights.map((night) => ({
+          priceSource: "UNKNOWN" as const,
+          ...(night as Record<string, unknown>),
+        })),
+      };
+    }
     const start = (guest.stayStart ?? booking.checkIn) as Date;
     const end = (guest.stayEnd ?? booking.checkOut) as Date;
     const nights: Date[] = [];
@@ -406,6 +414,7 @@ function reconcilingNightRows<G extends Record<string, unknown>>(
       nights: nights.map((stayDate, index) => ({
         stayDate,
         priceCents: index === 0 ? total - base * (nights.length - 1) : base,
+        priceSource: "EVEN_SPLIT" as const,
       })),
     };
   });
@@ -709,8 +718,8 @@ describe("PUT /api/bookings/[id]/modify", () => {
   it("passes stored night prices to the pricing engine on batch edits (#1036)", async () => {
     const booking = makeBooking();
     (booking.guests as Array<Record<string, unknown>>)[0].nights = [
-      { stayDate: new Date("2026-06-01"), priceCents: 2500 },
-      { stayDate: new Date("2026-06-02"), priceCents: 2500 },
+      { stayDate: new Date("2026-06-01"), priceCents: 2500, priceSource: "SOLD" },
+      { stayDate: new Date("2026-06-02"), priceCents: 2500, priceSource: "SOLD" },
     ];
     const tx = makeTx(booking);
     mockTransaction.mockImplementation((fn: (innerTx: typeof tx) => unknown) =>
@@ -757,8 +766,8 @@ describe("PUT /api/bookings/[id]/modify", () => {
   it("tx-mode (#2525): runs the modification on the caller's tx and DEFERS post-commit", async () => {
     const booking = makeBooking();
     (booking.guests as Array<Record<string, unknown>>)[0].nights = [
-      { stayDate: new Date("2026-06-01"), priceCents: 2500 },
-      { stayDate: new Date("2026-06-02"), priceCents: 2500 },
+      { stayDate: new Date("2026-06-01"), priceCents: 2500, priceSource: "SOLD" },
+      { stayDate: new Date("2026-06-02"), priceCents: 2500, priceSource: "SOLD" },
     ];
     const tx = makeTx(booking);
     // Deliberately DO NOT stub mockTransaction: in tx-mode the service MUST run
@@ -2832,7 +2841,11 @@ describe("PUT /api/bookings/[id]/modify", () => {
               }
             ).nights.map((night) =>
               night.priceCents === -100
-                ? { stayDate: night.stayDate, priceCents: null }
+                ? {
+                    stayDate: night.stayDate,
+                    priceCents: null,
+                    priceSource: "UNKNOWN" as const,
+                  }
                 : night,
             ),
           },

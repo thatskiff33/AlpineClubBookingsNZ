@@ -47,6 +47,7 @@ import {
   classifyNightPriceToWrite,
   preservedNightPriceWrites,
   repricedNightPriceSources,
+  requiredNightPriceSourceToWrite,
 } from "@/lib/stored-night-price-write";
 import { bookingHasOpenFinancialReview } from "@/lib/booking-financial-review-visibility";
 import {
@@ -1012,12 +1013,10 @@ export async function modifyBookingDates({
         //
         // A BLANK IS NEVER REPAIRED BY A REPRICE, on this path or any other. It
         // is cleared only by a person supplying the amount.
-        const repricedSources = parked
-          ? undefined
-          : repricedNightPriceSources(
-              guestsForPricing[i]?.lockedNightPrices,
-              nightDates,
-            );
+        const repricedSources = repricedNightPriceSources(
+          guestsForPricing[i]?.lockedNightPrices,
+          nightDates,
+        );
         const nightWrites = parked
           ? preservedNightPriceWrites(
               dateEditEvidence.storedNightPriceByGuestId.get(g.id),
@@ -1025,7 +1024,7 @@ export async function modifyBookingDates({
             )
           : priceBreakdown.guests[i].perNightCents.map((priceCents, index) => ({
               priceCents,
-              priceSource: repricedSources?.[index] ?? "SOLD",
+              priceSource: repricedSources[index],
             }));
         if (nightDates.length > 0) {
           await tx.bookingGuestNight.createMany({
@@ -1081,10 +1080,11 @@ export async function modifyBookingDates({
                 stayDate,
                 priceCents:
                   decision.kind === "not-known" ? null : decision.priceCents,
-                priceSource:
-                  decision.kind === "not-known"
-                    ? "UNKNOWN"
-                    : (nightWrites[k]?.priceSource ?? "SOLD"),
+                priceSource: requiredNightPriceSourceToWrite(
+                  nightWrites[k]?.priceSource,
+                  decision.kind === "not-known" ? null : decision.priceCents,
+                  `The booking date modification writer for ${stayDate.toISOString()}`,
+                ),
               };
             }),
           });

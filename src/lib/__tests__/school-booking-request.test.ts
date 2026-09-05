@@ -3,6 +3,7 @@ import {
   BookingRequestStatus,
   BookingRequestType,
   BookingStatus,
+  type BookingGuestNightPriceSource,
   PaymentSource,
   PaymentStatus,
 } from "@prisma/client";
@@ -2256,7 +2257,11 @@ describe("approveMemberWholeLodgeRequest (#2263)", () => {
     };
     const storedNights = (
       data.guests.create[0].nights as {
-        create: Array<{ stayDate: Date; priceCents: number }>;
+        create: Array<{
+          stayDate: Date;
+          priceCents: number;
+          priceSource: BookingGuestNightPriceSource;
+        }>;
       }
     ).create;
 
@@ -2271,7 +2276,11 @@ describe("approveMemberWholeLodgeRequest (#2263)", () => {
     /** What the #2337 link charges this untouched placeholder, at `rateCents`. */
     const priceUnlinkedPlaceholderAt = (
       rateCents: number,
-      lockedNightPrices: Array<{ stayDate: Date; priceCents: number }>,
+      lockedNightPrices: Array<{
+        stayDate: Date;
+        priceCents: number;
+        priceSource: BookingGuestNightPriceSource;
+      }>,
     ) =>
       calculateBookingPrice(
         CHECK_IN,

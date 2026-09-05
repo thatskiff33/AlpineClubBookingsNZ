@@ -67,7 +67,7 @@ function placeholder(id: string) {
     stayEnd: CHECK_OUT,
     // A booked non-member night price — this is what the re-rate must displace
     // for the linked row and keep for the non-linked one.
-    nights: [{ stayDate: NIGHT_1, priceCents: 5000 }],
+    nights: [{ stayDate: NIGHT_1, priceCents: 5000, priceSource: "SOLD" }],
   };
 }
 
@@ -181,7 +181,7 @@ describe("#2337: prepareGuestPlan threads a placeholder→member link into prici
     expect(untouched?.isMember).toBe(false);
     expect(untouched?.memberId).toBeNull();
     expect(untouched?.lockedNightPrices).toEqual([
-      { stayDate: NIGHT_1, priceCents: 5000, priceSource: "UNKNOWN" },
+      { stayDate: NIGHT_1, priceCents: 5000, priceSource: "SOLD" },
     ]);
 
     // A family-scope link writes no consent columns and asks nobody.
