@@ -2767,6 +2767,11 @@ enum ManualRefundTaskKind {
   /// The share becomes an item an officer checks against Xero and closes
   /// deliberately.
   ///
+  /// ONE ITEM PER WITHHELD SHARE: this kind mints an `occurrenceKey`, and
+  /// `ManualRefundTask_edit_review_occurrence_key_present` refuses a row of this
+  /// kind without one (migration 20260910010000). The unique index exempts NULL,
+  /// so without that CHECK a writer could raise a fresh item on every replay.
+  ///
   /// DISMISS-ONLY, and that is the whole safety argument. COMPLETED on a kind
   /// whose `settlementDirection` is null asserts REFUND_TO_MEMBER and reaches
   /// the refund-allocation path, so `resolveManualRefundTask` refuses a

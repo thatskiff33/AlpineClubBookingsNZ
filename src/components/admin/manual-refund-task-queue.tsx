@@ -35,6 +35,12 @@ import {
 } from "@/lib/club-time";
 import { unverifiedWriteMessage } from "@/lib/unverified-write-copy";
 import { zeroCompletionRefusal } from "@/lib/manual-refund-task-copy";
+// #3213: whether a row may be closed as money that moved is decided ONCE, in a
+// client-safe home, and the completion door throws on the same answer
+// (`manual-refund-task-resolution.ts`, `INV-SSOT`). Deciding it again here is
+// what would let this card go on offering a control the server has started
+// refusing - a disagreement nobody sees until an officer presses the button.
+import { manualRefundTaskKindAllowsSettlement } from "@/lib/manual-refund-task-settlement-rules";
 import {
   checkStoredNightPriceRepair,
   nightPriceRepairUnreadableMessage,
@@ -1321,10 +1327,17 @@ export function ManualRefundTaskQueue() {
                         review above - and a disabled one would still say the
                         club might owe this money back, which it does not.
 
+                        ASKED OF THE SHARED RULE rather than of `isWithheldShare`
+                        beside it, so this control's existence and the server's
+                        refusal are one decision and not two that agree today
+                        (`INV-SSOT`). The wording branches below are about which
+                        kind a row IS; this one is about what may be done to it,
+                        and only the second is a rule the door also holds.
+
                         The server refusal is the guarantee; this is the screen
                         agreeing with it.
                       */}
-                      {isWithheldShare(task) ? null : (
+                      {manualRefundTaskKindAllowsSettlement(task.kind) ? (
                       <ViewOnlyActionButton
                         canEdit={canEdit}
                         type="button"
@@ -1378,7 +1391,7 @@ export function ManualRefundTaskQueue() {
                           ? "Record the adjustment"
                           : "Mark paid back"}
                       </ViewOnlyActionButton>
-                      )}
+                      ) : null}
                       <ViewOnlyActionButton
                         canEdit={canEdit}
                         type="button"

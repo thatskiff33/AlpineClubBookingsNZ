@@ -1225,9 +1225,14 @@ one, check the other.
     unknowable - the payment-recovery replay holds the edit's combined total and
     cannot say which part the sent invoice carried - so `0` may no more be used
     for it than on a review, and the settled TOTAL may not be substituted, which
-    would tell an officer to bill money already asked for. The accepted trade is
-    that the item is *visible and actionable*, never self-resolving: closing it
-    is a person's act. **Registered in one release and written in the next**
+    would tell an officer to bill money already asked for. **One withheld share
+    is one item**: the kind mints an `occurrenceKey` and
+    `ManualRefundTask_edit_review_occurrence_key_present` refuses a row of this
+    kind without one, because the unique index exempts NULL and a writer that
+    omitted the key would raise a fresh item on every replay - the officer would
+    be told twice to check one booking and could bill it twice. The accepted
+    trade is that the item is *visible and actionable*, never self-resolving:
+    closing it is a person's act. **Registered in one release and written in the next**
     (migration `20260910010000`), because the previously deployed colour cannot
     deserialize the label and the finance queue selects `kind` over every OPEN
     row; `uncollected-edit-review-share-expand.test.ts` holds that line.

@@ -69,11 +69,13 @@ const FOUNDATION_MIGRATION =
 const OCCURRENCE_KEY_MIGRATION =
   "prisma/migrations/20260903010000_manual_refund_task_edit_review_occurrence_key_required/migration.sql";
 /**
- * #3213: registers `UNCOLLECTED_EDIT_REVIEW_SHARE` and RESTATES
- * `ManualRefundTask_non_edit_review_amount_present` so that label may carry a
- * NULL amount. Applied last, in real deploy order, so the predicate these tests
- * meet is the one the shipped migrations actually leave behind rather than a
- * hand-copied approximation of it.
+ * #3213: registers `UNCOLLECTED_EDIT_REVIEW_SHARE` and RESTATES two constraints
+ * around it - `ManualRefundTask_non_edit_review_amount_present`, so that label
+ * may carry a NULL amount, and
+ * `ManualRefundTask_edit_review_occurrence_key_present`, so it may NOT carry a
+ * null occurrence key. Applied last, in real deploy order, so the predicates
+ * these tests meet are the ones the shipped migrations actually leave behind
+ * rather than hand-copied approximations of them.
  */
 const WITHHELD_SHARE_MIGRATION =
   "prisma/migrations/20260910010000_register_uncollected_edit_review_share_kind/migration.sql";
@@ -365,6 +367,76 @@ describeWithDatabase("ManualRefundTask database constraints (#3030)", () => {
         `SELECT "amountCents" FROM "ManualRefundTask" WHERE "id" = 'withheld-unknown'`,
       );
       expect(rows[0].amountCents).toBeNull();
+    });
+  });
+
+  it("refuses an UNCOLLECTED_EDIT_REVIEW_SHARE row with no occurrence key, so one withheld share cannot become two items (#3213)", async () => {
+    await withManualRefundTaskSchema(async (client) => {
+      // THE DUPLICATE FENCE, and it is a CHECK rather than the unique index
+      // because the unique index cannot do this job alone: PostgreSQL exempts
+      // NULL from a unique index, so two rows that both leave the key unset do
+      // not collide - with each other or with anything. A withheld-share writer
+      // that forgot the key would raise a fresh item on every replay, and the
+      // officer would be told twice to check the same booking and could bill it
+      // twice. 20260903010000 made that unrepresentable for EDIT_FINANCIAL_REVIEW;
+      // 20260910010000 extends the same predicate to this kind.
+      await expect(
+        insert(client, {
+          id: "withheld-no-key",
+          kind: "UNCOLLECTED_EDIT_REVIEW_SHARE",
+          occurrenceKey: null,
+          amountCents: 4500,
+          raisedAmountCents: null,
+          paymentId: null,
+        }),
+      ).rejects.toMatchObject({
+        code: "23514",
+        constraint: "ManualRefundTask_edit_review_occurrence_key_present",
+      });
+    });
+  });
+
+  it("refuses a SECOND withheld-share item under the same occurrence key, which is what the fence is for", async () => {
+    await withManualRefundTaskSchema(async (client) => {
+      const occurrenceKey = "uncollected-edit-review-share:v1:mod-1";
+      await insert(client, {
+        id: "withheld-first",
+        kind: "UNCOLLECTED_EDIT_REVIEW_SHARE",
+        occurrenceKey,
+        amountCents: 4500,
+        raisedAmountCents: null,
+        paymentId: null,
+      });
+
+      await expect(
+        insert(client, {
+          id: "withheld-replay",
+          kind: "UNCOLLECTED_EDIT_REVIEW_SHARE",
+          occurrenceKey,
+          amountCents: 4500,
+          raisedAmountCents: null,
+          paymentId: null,
+        }),
+      ).rejects.toMatchObject({ code: "23505" });
+    });
+  });
+
+  it("still exempts a LEGACY-kind row from the occurrence key after that widening, which is the half it would be easy to lose", async () => {
+    await withManualRefundTaskSchema(async (client) => {
+      // The mutation this pins: widening the occurrence-key requirement to every
+      // kind - the obvious way to write it - would refuse the legacy hand-back
+      // rows, which carry their idempotency in their own writers and have never
+      // minted a key.
+      await insert(client, {
+        id: "legacy-no-key-after-3213",
+        kind: "CANCELLED_BOOKING_HAND_BACK",
+        occurrenceKey: null,
+      });
+
+      const { rows } = await client.query(
+        `SELECT "occurrenceKey" FROM "ManualRefundTask" WHERE "id" = 'legacy-no-key-after-3213'`,
+      );
+      expect(rows[0].occurrenceKey).toBeNull();
     });
   });
 

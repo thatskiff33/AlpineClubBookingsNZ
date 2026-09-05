@@ -113,3 +113,50 @@ ALTER TABLE "ManualRefundTask"
     OR "kind"::text IS NOT DISTINCT FROM 'UNCOLLECTED_EDIT_REVIEW_SHARE'
     OR "amountCents" IS NOT NULL
   );
+
+-- ================= 3. ONE ITEM PER WITHHELD SHARE =================
+--
+-- The duplicate fence on this table is @@unique("occurrenceKey"), and PostgreSQL
+-- EXEMPTS NULL from a unique index -- so a row that leaves the key unset does not
+-- collide with anything, including another row that also left it unset. A writer
+-- that forgot the key would therefore raise a second item for the same withheld
+-- share on every replay, silently, and the officer would be told twice to check
+-- the same booking and could bill it twice.
+--
+-- 20260903010000 made that unrepresentable for 'EDIT_FINANCIAL_REVIEW' and only
+-- for it, because it was the only kind then minting a key. The new kind mints one
+-- too -- its writer arrives next release -- so it needs the same fence, and NOW is
+-- the only moment the fence is free: no row can carry the label yet, so the
+-- validating scan is provably trivial and can refuse nothing. Added after the
+-- writer ships, the same constraint would have to be NOT VALID and would leave
+-- exactly the rows it exists to police outside it.
+--
+-- STRICTLY STRONGER, AND ONLY FOR A LABEL NO ROW CAN CARRY. Every existing row
+-- lands the same way as under the predicate this replaces:
+--   * kind = 'EDIT_FINANCIAL_REVIEW'          -> still requires a key;
+--   * any other non-null kind                 -> still exempt;
+--   * kind IS NULL (rows predating the column) -> still exempt. The original
+--     spelling reached that by three-valued logic (`<>` on NULL yields NULL, and
+--     a CHECK accepts anything that is not FALSE); IS DISTINCT FROM reaches it by
+--     answering TRUE. Same verdict on every stored row, and the null-safe form is
+--     the one that stays right when a fourth arm is added.
+--
+-- ::text ON THE COLUMN for the reason statement 2 gives: PostgreSQL refuses to
+-- USE a label in the transaction that added it, and Prisma runs one per
+-- migration.
+--
+-- IDEMPOTENT: DROP ... IF EXISTS then ADD, so a replay restates the predicate.
+--
+-- LOCK IMPACT: the same ACCESS EXCLUSIVE window on "ManualRefundTask" already
+-- taken by statement 2, on a table of tens of rows. No DML, no other table.
+ALTER TABLE "ManualRefundTask"
+  DROP CONSTRAINT IF EXISTS "ManualRefundTask_edit_review_occurrence_key_present";
+
+ALTER TABLE "ManualRefundTask"
+  ADD CONSTRAINT "ManualRefundTask_edit_review_occurrence_key_present" CHECK (
+    (
+      "kind"::text IS DISTINCT FROM 'EDIT_FINANCIAL_REVIEW'
+      AND "kind"::text IS DISTINCT FROM 'UNCOLLECTED_EDIT_REVIEW_SHARE'
+    )
+    OR "occurrenceKey" IS NOT NULL
+  );

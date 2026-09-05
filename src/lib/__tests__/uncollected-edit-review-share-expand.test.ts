@@ -52,14 +52,21 @@ const EXPAND_MIGRATION =
  * Naming is not writing, and the write-shape assertion below still applies to
  * both of them.
  *
- *   * the completion door holds the dismiss-only guard, which must compare
- *     against the label to refuse a COMPLETED close;
+ *   * the settlement rules hold the dismiss-only rule itself, which must compare
+ *     against the label to answer whether one of these may be settled at all.
+ *     The completion door and the queue card both ASK it rather than deciding
+ *     again, so the label is named once for that purpose (`INV-SSOT`);
  *   * the queue card holds the officer's wording, which lands in this release
  *     for the same reason #3232's did - when the runtime half comes it changes a
  *     writer, not a writer plus a screen.
+ *
+ * THE COMPLETION DOOR IS DELIBERATELY NOT ON THIS LIST. It refuses the close by
+ * calling the rule above rather than by comparing the label itself, so it never
+ * names it - and leaving it listed would be an allowance for something that is
+ * not there, which is how an allowlist stops describing the tree it guards.
  */
 const DECLARING_MODULES = [
-  "src/lib/manual-refund-task-resolution.ts",
+  "src/lib/manual-refund-task-settlement-rules.ts",
   "src/components/admin/manual-refund-task-queue.tsx",
 ];
 
@@ -147,9 +154,19 @@ describe("INV-PAY-051: the withheld-share item type is registered, not yet writt
     // unknown. Compared as text on purpose: PostgreSQL refuses to USE a new enum
     // label in the transaction that added it, and Prisma runs each migration in
     // one.
-    expect(statements).toHaveLength(3);
+    expect(statements).toHaveLength(5);
     expect(statements[2]).toContain(`"kind"::text`);
     expect(statements[2]).toContain(PENDING_KIND);
+    // The duplicate fence: the unique index on `occurrenceKey` exempts NULL, so
+    // the key has to be MANDATORY for this kind or a replaying writer raises a
+    // second item for the same withheld share and an officer bills it twice.
+    // Free to add now and only now - no row can carry the label, so the
+    // validating scan can refuse nothing.
+    expect(statements[4]).toContain(
+      `"ManualRefundTask_edit_review_occurrence_key_present"`,
+    );
+    expect(statements[4]).toContain(PENDING_KIND);
+    expect(statements[4]).toContain(`"occurrenceKey" IS NOT NULL`);
     expect(statements.join(" ")).not.toMatch(/::"ManualRefundTaskKind"/);
     // No DML, so every existing row is byte-identical afterwards and the
     // data-migration verification gate has nothing to demand.

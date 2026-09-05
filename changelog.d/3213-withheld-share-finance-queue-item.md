@@ -17,7 +17,10 @@
   the change's full total — and then to close the row with a note saying what
   they found. Closing it moves no money and there is no control that does: unlike
   every other row in that card, this one has nothing for the club to pay or to
-  take, and the system refuses a settlement against one however it is asked.
+  take, and the system refuses a settlement against one however it is asked. One
+  withheld amount can only ever produce one row, however many times the recovery
+  pass runs over the same booking change, so nobody is asked to check the same
+  thing twice.
 
   **Nothing has changed on screen yet, and that is on purpose.** A database
   change like this one has to be released a step ahead of the code that uses it,
