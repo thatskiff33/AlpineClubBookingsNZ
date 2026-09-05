@@ -251,6 +251,7 @@ import {
   processPaymentRecoveryOperations,
   queueSupersededPaymentIntentRefundRecovery,
 } from "@/lib/payment-recovery";
+import { MAX_PAYMENT_RECOVERY_ATTEMPTS } from "@/lib/payment-recovery-constants";
 import {
   bookingModificationIdForAdditionalIntentRecoveryKey,
   buildAdditionalIntentRecoveryIdempotencyKey,
@@ -590,6 +591,9 @@ describe("payment recovery worker", () => {
       where: {
         id: "recovery-stale-2",
         status: { in: [PaymentRecoveryOperationStatus.PROCESSING] },
+        // #3220 fix round: the exact attempt the sweep read. Status alone would
+        // also match a row that has since been re-claimed.
+        processingStartedAt: new Date("2026-05-01T00:00:00.000Z"),
       },
       data: {
         status: PaymentRecoveryOperationStatus.FAILED,
@@ -622,6 +626,9 @@ describe("payment recovery worker", () => {
       where: {
         id: "recovery-stale-5",
         status: { in: [PaymentRecoveryOperationStatus.PROCESSING] },
+        // #3220 fix round: as above - the read and the write are fenced to one
+        // attempt, so a re-claimed row falls out instead of being killed.
+        processingStartedAt: new Date("2026-05-01T00:00:00.000Z"),
       },
       data: expect.objectContaining({
         status: PaymentRecoveryOperationStatus.FAILED,
@@ -3181,5 +3188,303 @@ describe("edit-financial-review charge recovery (#3170)", () => {
     expect(result.succeeded).toBe(1);
     expect(mockSyncEditFinancialReviewChargeRequest).not.toHaveBeenCalled();
     expect(mockAttachIntentToWaitingOps).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * #3220: A DEAD RECOVERY WITHDRAWS THE ASK IT LEFT STANDING.
+ *
+ * A `CREATE_ADDITIONAL_PAYMENT_INTENT` recovery is the club still owing itself
+ * the job of asking a member for money a booking edit raised. While it is alive
+ * the booking-vs-Xero repair tool defers; the moment it dies the repair raises
+ * that edit's supplementary invoice UNPAID (`OPEN_PAYMENT_RECOVERY_STATUSES`,
+ * the #3202 control). So an ask still standing at the terminal transition is a
+ * SECOND live instrument for one debt, and paying it leaves the club holding a
+ * payment and an unpaid invoice for the same money.
+ *
+ * Everything here is about the TERMINAL transition specifically, and about the
+ * cancel being unable to make the recovery worse than not trying.
+ */
+describe("#3220 - the terminal transition withdraws a stranded ask", () => {
+  const MOD = "mod-3220";
+  const RECOVERY_ID = "recovery-3220";
+
+  function deadOnThisAttempt(overrides: Record<string, unknown> = {}) {
+    return makeOperation({
+      id: RECOVERY_ID,
+      type: PaymentRecoveryOperationType.CREATE_ADDITIONAL_PAYMENT_INTENT,
+      // The claim has already burnt the last attempt, so this failure is the
+      // one that ends the operation.
+      attempts: MAX_PAYMENT_RECOVERY_ATTEMPTS,
+      amountCents: 20000,
+      paymentIntentId: buildEditFinancialReviewAdditionalIntentStripeKey(MOD),
+      idempotencyKey:
+        buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey(MOD),
+      paymentTransactionId: null,
+      hadIssuedXeroInvoice: true,
+      ...overrides,
+    });
+  }
+
+  /** The ask as the ledger holds it, i.e. what a live intent looks like. */
+  function liveAsk(overrides: Record<string, unknown> = {}) {
+    return {
+      paymentTransactionId: "txn-ask",
+      stripePaymentIntentId: "pi_stranded_ask",
+      amountCents: 23000,
+      status: PaymentStatus.PENDING,
+      ...overrides,
+    };
+  }
+
+  function markedTerminallyFailed() {
+    return mockPaymentRecoveryUpdateMany.mock.calls.some((call) => {
+      const args = call[0] as {
+        where?: { id?: string };
+        data?: Record<string, unknown>;
+      };
+      if (args?.where?.id !== RECOVERY_ID) return false;
+      return args?.data?.status === "FAILED" && args?.data?.nextRetryAt === null;
+    });
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    settlementModuleLoadFailure.current = null;
+    const operation = deadOnThisAttempt();
+    mockPaymentRecoveryFindUnique.mockResolvedValue(operation);
+    mockPaymentRecoveryFindMany.mockImplementation((args?: unknown) =>
+      Promise.resolve(
+        isStaleWorkerSweep(args) ? [] : [{ ...operation, status: "PENDING" }],
+      ),
+    );
+    mockPaymentRecoveryUpdateMany.mockImplementation(
+      ({ where }: { where?: { id?: string } }) =>
+        Promise.resolve({ count: where?.id ? 1 : 0 }),
+    );
+    mockPaymentRecoveryUpdate.mockResolvedValue({});
+    mockBookingFindUnique.mockResolvedValue({
+      status: "PAID",
+      checkIn: new Date("2026-07-01"),
+      checkOut: new Date("2026-07-03"),
+      member: {
+        id: "m1",
+        email: "alice@test.com",
+        firstName: "Alice",
+        lastName: "Smith",
+      },
+      payment: { stripeCustomerId: "cus_123", status: PaymentStatus.SUCCEEDED },
+    });
+    // The replay's own work fails, which is what drives the terminal
+    // transition. WHY it failed is not this block's subject.
+    mockSyncEditFinancialReviewChargeRequest.mockRejectedValue(
+      new Error("Stripe is unavailable"),
+    );
+    mockFindEditReviewChargeRequest.mockResolvedValue(liveAsk());
+    mockCancelPaymentIntentIfCancellableWithResult.mockResolvedValue({
+      canceled: true,
+      paymentIntent: { id: "pi_stranded_ask", status: "canceled" },
+    });
+  });
+
+  it("cancels the stranded ask, and says abandoned rather than blaming the member", async () => {
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result.failed).toBe(1);
+    expect(markedTerminallyFailed()).toBe(true);
+    /**
+     * `requested_by_customer` - what the helper hard-coded before #3220 - would
+     * be a lie in the club's own Stripe record. The member never declined this
+     * ask; the club ran out of attempts to raise it.
+     */
+    expect(mockCancelPaymentIntentIfCancellableWithResult).toHaveBeenCalledWith(
+      "pi_stranded_ask",
+      { cancellationReason: "abandoned" },
+    );
+  });
+
+  it("leaves an ask the member has ALREADY PAID completely alone", async () => {
+    // The acceptance criterion from the decision comment. The Stripe helper
+    // would refuse a `succeeded` intent anyway, so this is the second lock on
+    // the same door - but getting it wrong here would take money back off a
+    // member who paid, so the door has two locks.
+    mockFindEditReviewChargeRequest.mockResolvedValue(
+      liveAsk({ status: PaymentStatus.SUCCEEDED }),
+    );
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result.failed).toBe(1);
+    expect(markedTerminallyFailed()).toBe(true);
+    expect(
+      mockCancelPaymentIntentIfCancellableWithResult,
+    ).not.toHaveBeenCalled();
+  });
+
+  it("makes no provider call at all when the mint never produced an ask", async () => {
+    // The ORDINARY ending: the recovery existed precisely because nothing was
+    // minted, so there is no second instrument and nothing to withdraw. A
+    // provider call here would be a round trip on every dead recovery.
+    mockFindEditReviewChargeRequest.mockResolvedValue(null);
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result.failed).toBe(1);
+    expect(
+      mockCancelPaymentIntentIfCancellableWithResult,
+    ).not.toHaveBeenCalled();
+  });
+
+  it("does not touch the ask while the recovery still has attempts left", async () => {
+    // A retry is not a death. Withdrawing the ask here would cancel an intent
+    // the very next attempt is going to raise.
+    const retryable = deadOnThisAttempt({ attempts: 1 });
+    mockPaymentRecoveryFindUnique.mockResolvedValue(retryable);
+    mockPaymentRecoveryFindMany.mockImplementation((args?: unknown) =>
+      Promise.resolve(
+        isStaleWorkerSweep(args) ? [] : [{ ...retryable, status: "PENDING" }],
+      ),
+    );
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result.retried).toBe(1);
+    expect(
+      mockCancelPaymentIntentIfCancellableWithResult,
+    ).not.toHaveBeenCalled();
+  });
+
+  /**
+   * THE REFUSAL PATH, which the decision comment singles out: `processing` is in
+   * Stripe's cancellable set and Stripe routinely refuses to cancel a processing
+   * intent, so this is a live path rather than a theoretical one.
+   */
+  it("records a refused cancel and still leaves the recovery dead, not blocked", async () => {
+    mockCancelPaymentIntentIfCancellableWithResult.mockRejectedValue(
+      new Error("You cannot cancel this PaymentIntent because it is processing"),
+    );
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    // The status write happened BEFORE the cancel and cannot be undone by it.
+    // If a Stripe refusal could hold the row out of FAILED, the repair tool
+    // would defer this edit's invoice for ever - the #3202 control.
+    expect(markedTerminallyFailed()).toBe(true);
+    expect(result.failed).toBe(1);
+
+    // A logger.error is not a record an officer can find, and this one asks
+    // them to do something before the member pays an already-invoiced ask.
+    expect(mockCreateAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "payment.recovery.strandedIntentCancellationRefused",
+        category: "payment",
+        outcome: "failure",
+        entityId: "booking-1",
+      }),
+    );
+  });
+
+  it("never lets a refused cancel abandon the rest of the batch", async () => {
+    /**
+     * `failPaymentRecoveryOperation` is called from inside the worker loop's own
+     * `catch`. A throw from there escapes the loop and abandons every remaining
+     * operation - the exact bug the chokepoint was built to fix - so the cancel
+     * is best-effort in the strongest sense: even the AUDIT write failing must
+     * not propagate.
+     */
+    mockCancelPaymentIntentIfCancellableWithResult.mockRejectedValue(
+      new Error("Stripe refused"),
+    );
+    mockCreateAuditLog.mockRejectedValue(new Error("the audit write also died"));
+
+    const first = deadOnThisAttempt({ id: RECOVERY_ID });
+    const second = deadOnThisAttempt({ id: "recovery-3220-second" });
+    mockPaymentRecoveryFindMany.mockImplementation((args?: unknown) =>
+      Promise.resolve(
+        isStaleWorkerSweep(args)
+          ? []
+          : [
+              { ...first, status: "PENDING" },
+              { ...second, status: "PENDING" },
+            ],
+      ),
+    );
+    mockPaymentRecoveryFindUnique.mockImplementation(
+      ({ where }: { where: { id: string } }) =>
+        Promise.resolve(where.id === second.id ? second : first),
+    );
+
+    const result = await processPaymentRecoveryOperations({ limit: 5 });
+
+    // BOTH were processed. One failing cancel must not cost the other one its
+    // terminal transition, its alert, or its own withdrawal.
+    expect(result.processed).toBe(2);
+    expect(result.failed).toBe(2);
+  });
+
+  it("is idempotent on replay: an already-cancelled ask makes no second cancel", async () => {
+    /**
+     * Idempotency here is STRUCTURAL rather than defensive.
+     * `cancelPaymentIntentIfCancellableWithResult` reads the intent first and
+     * returns `canceled: false` without calling Stripe at all unless the status
+     * is one it can cancel - so a replay of this transition finds `canceled`,
+     * makes no provider mutation, and cannot error or double-cancel. This pins
+     * that the caller treats that answer as success rather than retrying it.
+     */
+    mockCancelPaymentIntentIfCancellableWithResult.mockResolvedValue({
+      canceled: false,
+      paymentIntent: { id: "pi_stranded_ask", status: "canceled" },
+    });
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result.failed).toBe(1);
+    expect(
+      mockCancelPaymentIntentIfCancellableWithResult,
+    ).toHaveBeenCalledTimes(1);
+    // Not an error, so no officer is asked to chase a non-problem.
+    expect(mockCreateAuditLog).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * #3220 fix round: THE STALE-WORKER REAPER FENCES THE ATTEMPT IT READ.
+ *
+ * Folding the reaper's two arms into the terminal chokepoint turned one bulk
+ * `updateMany` into read-then-write. The bulk form's `where` carried
+ * `processingStartedAt < staleBefore`; a fence of `status: PROCESSING` alone
+ * does not, and matches a row that left `PROCESSING` and came straight back -
+ * a concurrent reaper marks it failed with a `nextRetryAt` of NOW and the very
+ * next queue read claims it. Taking that path kills a live attempt and acts on
+ * terminality one attempt out of date.
+ */
+describe("#3220 - the stale-worker reaper cannot kill a re-claimed attempt", () => {
+  it("pins the exact attempt it read, not merely the status", async () => {
+    vi.clearAllMocks();
+    const readAt = new Date("2026-06-01T00:00:00.000Z");
+    const stale = makeOperation({
+      id: "recovery-stale-fence",
+      status: PaymentRecoveryOperationStatus.PROCESSING,
+      attempts: 1,
+      processingStartedAt: readAt,
+    });
+    mockPaymentRecoveryFindMany.mockImplementation((args?: unknown) =>
+      Promise.resolve(isStaleWorkerSweep(args) ? [stale] : []),
+    );
+    mockPaymentRecoveryUpdateMany.mockResolvedValue({ count: 1 });
+
+    await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(mockPaymentRecoveryUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          id: "recovery-stale-fence",
+          status: { in: [PaymentRecoveryOperationStatus.PROCESSING] },
+          // Without this the reaper matches a row that has since been failed,
+          // re-armed and re-claimed - and kills the live attempt.
+          processingStartedAt: readAt,
+        },
+      }),
+    );
   });
 });
