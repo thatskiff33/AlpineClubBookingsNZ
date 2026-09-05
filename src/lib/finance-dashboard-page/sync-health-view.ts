@@ -3,16 +3,14 @@ import {
   buildFinanceSyncHealth,
   type FinanceSyncHealthTone,
 } from "@/lib/finance-sync-health";
+import type { BadgeVariant } from "@/components/ui/badge";
 import type {
   FinanceDashboardKpiCard,
   FinanceDashboardStatusPanel,
   FinanceDashboardViewModel,
 } from "@/lib/finance-dashboard-page/model";
 
-const SYNC_HEALTH_BADGE_TONES: Record<
-  FinanceSyncHealthTone,
-  "success" | "warning" | "destructive"
-> = {
+const SYNC_HEALTH_BADGE_TONES: Record<FinanceSyncHealthTone, BadgeVariant> = {
   green: "success",
   amber: "warning",
   red: "destructive",
