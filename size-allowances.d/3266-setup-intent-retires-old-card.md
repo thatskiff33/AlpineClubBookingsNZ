@@ -45,4 +45,3 @@ reason: the `setup_intent.succeeded` handler now reads the Payment row and
   caused. The verdict itself lives in the new module; what grows here is the
   handler's guard, its four outcome branches and their logging, which belong
   beside the other event handlers and their dedupe.
-
