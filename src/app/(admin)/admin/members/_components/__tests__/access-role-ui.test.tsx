@@ -566,7 +566,6 @@ describe("admin member access-role UI", () => {
     const roleCheckbox = (name: string) =>
       screen.getByRole("checkbox", {
         // Test helper: name is escaped via escapeRegExp and test-controlled; not user input.
-        // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp
         name: new RegExp(`^${escapeRegExp(name)}(?:\\b|Can)`),
       });
 

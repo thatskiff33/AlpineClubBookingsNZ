@@ -65,18 +65,15 @@ function createTree(
 
   for (const migration of migrations) {
     // Test fixture: joins the temp migrations dir with a test-controlled name; no user input.
-    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
     const dir = path.join(migrationsDir, migration.name);
     mkdirSync(dir, { recursive: true });
     // Test fixture: appends the hardcoded "migration.sql" filename.
-    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
     writeFileSync(path.join(dir, "migration.sql"), migration.sql);
   }
 
   mkdirSync(fixturesDir, { recursive: true });
   for (const fixture of options.fixtures ?? []) {
     // Test fixture: joins the temp fixtures dir with a test-controlled name; no user input.
-    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
     writeFileSync(
       path.join(fixturesDir, `${fixture}.ts`),
       `export default { migration: "${fixture}" };\n`,
@@ -417,7 +414,6 @@ describe("the two statement splitters agree (#2418)", () => {
     for (const name of names) {
       // Test helper: joins the repo's own migrations directory with a name read
       // from that same listing; no user input.
-      // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
       const file = path.join(migrationsRoot, name, "migration.sql");
       const awkResult = spawnSync(
         "bash",
@@ -584,7 +580,6 @@ describe("the shell gates share one awk program (#2418)", () => {
     const splitter = "scripts/lib/split-sql-statements.awk";
     for (const script of [GATE, "scripts/validate-blue-green-migrations.sh"]) {
       // Test helper: reads a hardcoded repository path.
-      // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
       const source = readFileSync(path.join(REPO_ROOT, script), "utf8");
       expect(source, `${script} must load ${splitter}`).toContain(
         "split-sql-statements.awk",

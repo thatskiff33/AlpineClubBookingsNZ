@@ -321,7 +321,6 @@ describe("unverified-write copy contract (#2668)", () => {
     for (const file of allSourceFiles()) {
       // Test helper: reads a fixed repo file under process.cwd(); the path comes
       // from the walk above, not from user input.
-      // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
       const source = readFileSync(repoPath(file), "utf8");
       if (!/^\s*["']use client["']/m.test(source)) continue;
       if (!/\bfetch\s*\(/.test(source)) continue;
@@ -353,7 +352,6 @@ describe("unverified-write copy contract (#2668)", () => {
 
   it("each honest 'nothing changed' claim still reads before it writes", () => {
     for (const allowed of HONEST_CLAIMS) {
-      // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
       const source = readFileSync(repoPath(allowed.file), "utf8");
       expect(
         source.includes(allowed.mustContain),
@@ -570,7 +568,6 @@ describe("unverified-write copy contract (#2668)", () => {
     ];
 
     for (const fixed of FIXED) {
-      // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
       const source = blankComments(readFileSync(repoPath(fixed.file), "utf8"));
       if (fixed.outcome !== undefined) {
         expect(

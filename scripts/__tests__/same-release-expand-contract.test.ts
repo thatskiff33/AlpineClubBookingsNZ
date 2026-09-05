@@ -94,18 +94,14 @@ function newFixture(): Fixture {
   const addMigration = (name: string, sql = "SELECT 1;\n") => {
     // Test fixture: joins the fixture's own migrations directory with a
     // test-controlled name; no user input.
-    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
     const dir = path.join(migrationsDir, name);
     mkdirSync(dir, { recursive: true });
-    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
     writeFileSync(path.join(dir, "migration.sql"), sql, "utf8");
   };
 
   const addFileToMigration = (name: string, file: string, body: string) => {
-    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
     const dir = path.join(migrationsDir, name);
     mkdirSync(dir, { recursive: true });
-    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
     writeFileSync(path.join(dir, file), body, "utf8");
   };
 
@@ -489,10 +485,8 @@ describe("same-release expand/contract check (#3002)", () => {
       const bare = mkdtempSync(path.join(tmpdir(), "acb-samerelease-bare-"));
       ROOTS.push(bare);
       const migrationsDir = path.join(bare, "migrations");
-      // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
       mkdirSync(path.join(migrationsDir, "20990101000000_add_thing"), { recursive: true });
       writeFileSync(
-        // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
         path.join(migrationsDir, "20990101000000_add_thing", "migration.sql"),
         "SELECT 1;\n",
         "utf8",

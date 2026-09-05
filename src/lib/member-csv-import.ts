@@ -816,7 +816,6 @@ function getMappedColumnLabels(
     if (columnIndex !== null) {
       // The bracket key is definition.key from the MEMBER_IMPORT_FIELD_DEFINITIONS
       // constant, not user input; the CSV header only supplies the string value.
-      // nosemgrep: javascript.express.security.audit.remote-property-injection.remote-property-injection
       labels[definition.key] =
         csv.headers[columnIndex]?.trim() || `Column ${columnIndex + 1}`;
     }

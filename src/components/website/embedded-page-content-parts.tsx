@@ -141,7 +141,7 @@ export function EmbeddedPageContentParts({
         return (
           <div
             key={`${keyPrefix}-html-${index}`}
-            /* Admin-authored page HTML, sanitised on write and read. nosemgrep: typescript.react.security.audit.react-dangerouslysetinnerhtml.react-dangerouslysetinnerhtml */
+            /* Admin-authored page HTML, sanitised on write and read. */
             dangerouslySetInnerHTML={{ __html: part.value }}
           />
         );

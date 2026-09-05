@@ -29,7 +29,6 @@ const TESTS_DIR = ".semgrep/tests";
 
 function repoPath(relativePath: string) {
   // Test helper: fixed repo-relative paths, not user input.
-  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
   return path.resolve(process.cwd(), relativePath);
 }
 
