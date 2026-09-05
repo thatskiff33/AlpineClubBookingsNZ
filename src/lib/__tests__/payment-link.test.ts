@@ -1453,6 +1453,8 @@ describe("issueSplitGuestPaymentLink (#1967)", () => {
             id: "pay-parent",
             stripeCustomerId: "cus_parent",
             stripePaymentMethodId: "pm_parent",
+            // #3269: a saved card is one a SetupIntent saved.
+            stripeSetupIntentId: "seti_parent",
           },
         },
       }) as never
@@ -1472,6 +1474,7 @@ describe("issueSplitGuestPaymentLink (#1967)", () => {
           id: "pay-child",
           stripeCustomerId: "cus_child",
           stripePaymentMethodId: "pm_child",
+          stripeSetupIntentId: "seti_child",
         },
       }) as never
     );
@@ -1481,6 +1484,34 @@ describe("issueSplitGuestPaymentLink (#1967)", () => {
     expect(result).toEqual({ outcome: "not_payable" });
     expect(mockedPaymentLinkCreate).not.toHaveBeenCalled();
     expect(sendSplitGuestPaymentLinkEmail).not.toHaveBeenCalled();
+  });
+
+  it("mints the link when the parent's card came from a one-off checkout (no SetupIntent): the cron will not charge it, so the link is the only settlement path (#3269)", async () => {
+    // Pre-#3269 this read as "has a saved card" and refused the link, while the
+    // cron's charge on the same card was refused by Stripe — nothing settled.
+    mockedBookingFindUnique
+      .mockResolvedValueOnce(
+        splitChild({
+          parentBooking: {
+            id: "parent-1",
+            payment: {
+              id: "pay-parent",
+              stripeCustomerId: "cus_parent",
+              stripePaymentMethodId: "pm_parent",
+              stripeSetupIntentId: null,
+            },
+          },
+        }) as never
+      )
+      .mockResolvedValueOnce({ status: BookingStatus.PENDING } as never);
+    mockedPaymentLinkFindFirst.mockResolvedValue(null);
+    mockedPaymentLinkCreate.mockResolvedValue({ id: "pl-1" } as never);
+
+    const result = await issueSplitGuestPaymentLink("child-1");
+
+    expect(result).toEqual({ outcome: "sent" });
+    expect(mockedPaymentLinkCreate).toHaveBeenCalled();
+    expect(sendSplitGuestPaymentLinkEmail).toHaveBeenCalled();
   });
 
   it("returns not_payable when the under-lock re-read finds the booking has left PENDING (#1967)", async () => {

@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   defer: vi.fn(),
   fail: vi.fn(),
   loadClaimed: vi.fn(),
+  storyPending: vi.fn(),
   releaseContention: vi.fn(),
   renew: vi.fn(),
   tryPolicySet: vi.fn(),
@@ -37,6 +38,10 @@ vi.mock("@/lib/adult-member-hosting-coverage-queue", () => ({
   loadClaimedHostingCoverageReevaluation: mocks.loadClaimed,
   releaseHostingCoverageReevaluationContention: mocks.releaseContention,
   renewHostingCoverageReevaluationClaim: mocks.renew,
+  // #3241: the drain's remit module reads this one, so the factory owes it —
+  // a mock short of an export the widened graph reads throws at import and
+  // takes the whole file down before a test runs (`docs/TESTING.md`).
+  bookingsWithTheirOwnStoryPending: mocks.storyPending,
 }));
 
 vi.mock("@/lib/adult-member-hosting-policy-set", () => ({
@@ -143,6 +148,7 @@ describe("hosting coverage drain claim fences (#2596)", () => {
     mocks.sourceBookingIsTerminal.mockResolvedValue(false);
     mocks.loadDependents.mockResolvedValue([]);
     mocks.loadSplitSiblings.mockResolvedValue([]);
+    mocks.storyPending.mockResolvedValue(new Set<string>());
     mocks.loadGroupDependents.mockResolvedValue([]);
     mocks.resolveIncidents.mockResolvedValue(0);
     mocks.loadNotificationDelivery.mockResolvedValue({ ...DELIVERY });
@@ -284,12 +290,22 @@ describe("hosting coverage drain claim fences (#2596)", () => {
       },
       expect.anything(),
     );
-    expect(mocks.reconcile).toHaveBeenCalledWith(
+    // THE REFRESHED ACTOR, AND DELIBERATELY NOT THE OFFICER'S STORY (#3241,
+    // `INV-HOST-053`). This row is about `source-after`; `dependent-after` is a
+    // different booking the sweep reached because it shares the nights. It used
+    // to be handed `OFFICER_OVERRIDE` and the officer's own private reason —
+    // words about a stranding they authorised on a booking that is not this one.
+    // What survives is the actor, because "who did the thing that revealed this"
+    // is true of every booking in the sweep.
+    expect(
+      mocks.reconcile,
+      "INV-HOST-053: an officer's private reason belongs to the booking they acted on",
+    ).toHaveBeenCalledWith(
       {
         bookingId: "dependent-after",
-        cause: "OFFICER_OVERRIDE",
+        cause: "SYSTEM_CHANGE",
         actorMemberId: "actor-master-2",
-        reason: "authoritative reason",
+        reason: null,
       },
       expect.anything(),
     );
@@ -298,6 +314,174 @@ describe("hosting coverage drain claim fences (#2596)", () => {
       expect.anything(),
     );
     expect(mocks.resolveIncidents).not.toHaveBeenCalled();
+  });
+
+  it("gives a declined move's story to the booking it is about and to no other", async () => {
+    // #3241, `INV-HOST-053`. One row reaches every same-owner booking on its
+    // nights, and §14 asks "is this booking covered NOW" rather than "did this
+    // change uncover it" — so the sweep also finds bookings that were already
+    // uncovered for reasons of their own. Handing them this row's cause told an
+    // officer that a member had been asked about a booking nobody mentioned, and
+    // corrupted the one count `INV-HOST-052` exists to keep honest: a club
+    // counting declines would have counted this.
+    const declined = {
+      ...CLAIMED_ITEM,
+      cause: "OWNER_DECLINED_LINKED_MOVE" as const,
+      sourceBookingId: "booking-asked-about",
+      actorMemberId: "owner-1",
+      reason: "The member was asked whether to move this booking",
+    };
+    mocks.claim.mockReset();
+    mocks.claim.mockResolvedValueOnce([declined]).mockResolvedValue([]);
+    mocks.lockMember.mockResolvedValue(0);
+    mocks.loadClaimed.mockResolvedValue(declined);
+    // The booking the offer named, and one of the member's own that merely shares
+    // the nights.
+    mocks.loadDependents.mockResolvedValue([
+      "booking-asked-about",
+      "booking-nobody-mentioned",
+    ]);
+    mocks.reconcile.mockResolvedValue({ action: "none" });
+
+    await drainHostingCoverageReevaluations({}, makeDb());
+
+    expect(mocks.reconcile).toHaveBeenCalledWith(
+      {
+        bookingId: "booking-asked-about",
+        cause: "OWNER_DECLINED_LINKED_MOVE",
+        actorMemberId: "owner-1",
+        reason: "The member was asked whether to move this booking",
+      },
+      expect.anything(),
+    );
+    expect(
+      mocks.reconcile,
+      "INV-HOST-053: a booking the offer never named must not be told a member declined it",
+    ).toHaveBeenCalledWith(
+      {
+        bookingId: "booking-nobody-mentioned",
+        cause: "SYSTEM_CHANGE",
+        actorMemberId: "owner-1",
+        reason: null,
+      },
+      expect.anything(),
+    );
+  });
+
+  it("treats a split pair as one booking, so §7's reason is not lost with it", async () => {
+    // #3241, `INV-HOST-053`. A #738 split half never equals `sourceBookingId` —
+    // `loadHostingCoverageSplitSiblingIds` excludes its own input — so confining a
+    // row's story to that one id would hand the half a bare `SYSTEM_CHANGE`. That
+    // matters most for an officer: the mandatory reason is stored ONLY on the
+    // incident, the half carrying the non-member guests is often the uncovered
+    // one, and its parent may have no violation to record anything against. So
+    // the officer's reason would exist nowhere durable at all.
+    const override = {
+      ...CLAIMED_ITEM,
+      cause: "OFFICER_OVERRIDE" as const,
+      sourceBookingId: "booking-officer-acted-on",
+      actorMemberId: "officer-1",
+      reason: "Approved after speaking with the family",
+    };
+    mocks.claim.mockReset();
+    mocks.claim.mockResolvedValueOnce([override]).mockResolvedValue([]);
+    mocks.lockMember.mockResolvedValue(0);
+    mocks.loadClaimed.mockResolvedValue(override);
+    mocks.loadDependents.mockResolvedValue(["booking-officer-acted-on"]);
+    mocks.loadSplitSiblings.mockResolvedValue(["booking-split-half"]);
+    mocks.reconcile.mockResolvedValue({ action: "none" });
+
+    await drainHostingCoverageReevaluations({}, makeDb());
+
+    expect(
+      mocks.reconcile,
+      "INV-HOST-053: the officer acted on the pair, so the half keeps the reason",
+    ).toHaveBeenCalledWith(
+      {
+        bookingId: "booking-split-half",
+        cause: "OFFICER_OVERRIDE",
+        actorMemberId: "officer-1",
+        reason: "Approved after speaking with the family",
+      },
+      expect.anything(),
+    );
+  });
+
+  it("leaves the opening to the row that owns the story", async () => {
+    // #3241, `INV-HOST-053`. Both rows are written in ONE transaction, and
+    // PostgreSQL gives every row in a transaction the same `now()` — so the claim
+    // ordering by `enqueuedAt` cannot separate them and either can arrive first.
+    // If this sweep opens the acknowledged booking's incident, the row that HAS
+    // the officer's reason can only promote it afterwards, which moves §7's
+    // mandatory reason off the OPENING event and onto an update. An officer
+    // filtering the audit log for "incident opened" would then never see why.
+    const sweep = {
+      ...CLAIMED_ITEM,
+      cause: "OFFICER_OVERRIDE" as const,
+      sourceBookingId: "booking-officer-acted-on",
+      actorMemberId: "officer-1",
+      reason: "Spoke with the family",
+    };
+    mocks.claim.mockReset();
+    mocks.claim.mockResolvedValueOnce([sweep]).mockResolvedValue([]);
+    mocks.lockMember.mockResolvedValue(0);
+    mocks.loadClaimed.mockResolvedValue(sweep);
+    mocks.loadDependents.mockResolvedValue([
+      "booking-officer-acted-on",
+      "booking-with-its-own-row",
+    ]);
+    mocks.storyPending.mockResolvedValue(new Set(["booking-with-its-own-row"]));
+    mocks.reconcile.mockResolvedValue({ action: "none" });
+
+    await drainHostingCoverageReevaluations({}, makeDb());
+
+    const touched = mocks.reconcile.mock.calls.map(
+      (call: unknown[]) => (call[0] as { bookingId: string }).bookingId,
+    );
+    expect(touched).toContain("booking-officer-acted-on");
+    expect(
+      touched,
+      "INV-HOST-053: the booking with its own story row is left to that row",
+    ).not.toContain("booking-with-its-own-row");
+  });
+
+  it("does NOT hand a split half a decision nobody asked its owner about", async () => {
+    // The other side of the pair rule (#3241, `INV-HOST-053`). An override names
+    // no set of bookings — the officer confirmed a change to one booking, and its
+    // two halves are that booking — but a DECLINE is an answer about an exact set,
+    // and every booking in that set already holds a row of its own. A half that
+    // was not in the set is a booking the member was never shown, so inheriting
+    // the decision through the pair would be this invariant's own defect wearing
+    // a different hat, and would count as a decline nobody made.
+    const declined = {
+      ...CLAIMED_ITEM,
+      cause: "OWNER_DECLINED_LINKED_MOVE" as const,
+      sourceBookingId: "booking-asked-about",
+      actorMemberId: "owner-1",
+      reason: "The member was asked whether to move this booking",
+    };
+    mocks.claim.mockReset();
+    mocks.claim.mockResolvedValueOnce([declined]).mockResolvedValue([]);
+    mocks.lockMember.mockResolvedValue(0);
+    mocks.loadClaimed.mockResolvedValue(declined);
+    mocks.loadDependents.mockResolvedValue(["booking-asked-about"]);
+    mocks.loadSplitSiblings.mockResolvedValue(["booking-split-half"]);
+    mocks.reconcile.mockResolvedValue({ action: "none" });
+
+    await drainHostingCoverageReevaluations({}, makeDb());
+
+    expect(
+      mocks.reconcile,
+      "INV-HOST-053: a half outside the asked-about set must not inherit the decision",
+    ).toHaveBeenCalledWith(
+      {
+        bookingId: "booking-split-half",
+        cause: "SYSTEM_CHANGE",
+        actorMemberId: "owner-1",
+        reason: null,
+      },
+      expect.anything(),
+    );
   });
 
   it("resolves a directly verified terminal source even when the bounded list omits it", async () => {

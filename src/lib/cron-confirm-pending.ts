@@ -31,6 +31,11 @@ import {
 import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
 import { upsertPaymentIntentTransaction } from "@/lib/payment-transactions";
 import { deletePromoRedemptionAndAdjustCount } from "@/lib/promo";
+import {
+  savedPaymentMethodForBooking,
+  savedPaymentMethodRowStamp,
+  type SavedPaymentMethodForBooking,
+} from "@/lib/saved-payment-method";
 import { prisma } from "./prisma";
 import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "./capacity";
 import { getDefaultLodgeId } from "@/lib/lodges";
@@ -155,11 +160,6 @@ type PendingBooking = Prisma.BookingGetPayload<{
   include: typeof pendingBookingInclude;
 }>;
 
-type SavedPaymentMethod = {
-  stripeCustomerId: string;
-  stripePaymentMethodId: string;
-};
-
 type HoldResolution =
   | { type: "already_processed" }
   | { type: "bumped"; booking: PendingBooking; flagged: boolean }
@@ -235,7 +235,7 @@ type HoldResolution =
   | {
       type: "claimed_for_charge";
       booking: PendingBooking;
-      payment: SavedPaymentMethod;
+      payment: SavedPaymentMethodForBooking;
       paymentId: string;
       previousHoldUntil: Date | null;
     };
@@ -304,27 +304,6 @@ async function savedCardChargeDueAt(
       claim.booking.createdAt.getTime()
     )
   );
-}
-
-function savedPaymentMethodForBooking(
-  booking: PendingBooking
-): SavedPaymentMethod | null {
-  if (booking.payment?.stripeCustomerId && booking.payment.stripePaymentMethodId) {
-    return {
-      stripeCustomerId: booking.payment.stripeCustomerId,
-      stripePaymentMethodId: booking.payment.stripePaymentMethodId,
-    };
-  }
-
-  const parentPayment = booking.parentBooking?.payment;
-  if (parentPayment?.stripeCustomerId && parentPayment.stripePaymentMethodId) {
-    return {
-      stripeCustomerId: parentPayment.stripeCustomerId,
-      stripePaymentMethodId: parentPayment.stripePaymentMethodId,
-    };
-  }
-
-  return null;
 }
 
 async function queueXeroInvoice(bookingId: string, logMessage: string) {
@@ -580,7 +559,14 @@ async function resolveHoldWindowUnderLock(
       return { type: "confirmed_zero", booking };
     }
 
-    const savedPayment = savedPaymentMethodForBooking(booking);
+    // #3269 (`INV-PAY-053`): own row first, then the split parent's, each
+    // gated on SetupIntent provenance — a parent that paid by one-off card
+    // checkout offers no card here and the child takes the payment-link path
+    // below, exactly as an Internet-Banking parent does.
+    const savedPayment = savedPaymentMethodForBooking({
+      payment: booking.payment,
+      parentBooking: booking.parentBooking,
+    });
     if (!savedPayment) {
       if (booking.originBookingRequest) {
         // Request-origin bookings (#707) pay via a tokenised PaymentLink, not
@@ -875,20 +861,23 @@ async function resolveHoldWindowUnderLock(
       },
     });
 
+    // #3269: the card is charged from the returned object; the claim writes
+    // only the customer onto this row (`savedPaymentMethodRowStamp`), so it can
+    // neither launder a parent's pm nor resurrect one a concurrent replacement
+    // mint just cleared.
+    const rowStamp = savedPaymentMethodRowStamp(savedPayment);
     const payment = await tx.payment.upsert({
       where: { bookingId: booking.id },
       create: {
         bookingId: booking.id,
         amountCents: booking.finalPriceCents,
         status: PaymentStatus.PENDING,
-        stripeCustomerId: savedPayment.stripeCustomerId,
-        stripePaymentMethodId: savedPayment.stripePaymentMethodId,
+        ...rowStamp,
       },
       update: {
         amountCents: booking.finalPriceCents,
         status: PaymentStatus.PENDING,
-        stripeCustomerId: savedPayment.stripeCustomerId,
-        stripePaymentMethodId: savedPayment.stripePaymentMethodId,
+        ...rowStamp,
       },
     });
 

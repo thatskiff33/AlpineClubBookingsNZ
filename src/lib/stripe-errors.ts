@@ -5,7 +5,7 @@
  * constructs the SDK client, so every route and cron test replaces it wholesale
  * with a `vi.mock` factory. A reader that lived there would be mocked away with
  * it and never run under test. This module imports nothing, so a caller can use
- * the real reader while the provider calls beside it are doubles.
+ * the real reader while the provider calls beside it are doubles (#3266, #3268).
  *
  * The one fact this module exists to get right (#3268): **the SDK does not put
  * the API error type where it looks like it does.** On a thrown
@@ -23,6 +23,10 @@
  * same reason `config-self-heal.ts` reads Prisma's `P2002` structurally: the
  * error may have crossed a module boundary where the class identity is not the
  * one this bundle holds, and a test double has no class at all.
+ *
+ * `readStripeErrorFields` is the ONE reader of the provider fields; every
+ * predicate here is a derivation of it (`INV-SSOT-001`), so there is exactly one
+ * place that knows where a Stripe error keeps its `code`.
  */
 
 /**
@@ -80,6 +84,18 @@ export function readStripeErrorFields(err: unknown): StripeErrorFields {
     adviceCode: optionalString(err, "advice_code"),
     message: optionalString(err, "message") ?? fallbackMessage,
   };
+}
+
+/**
+ * True when Stripe answered that the object does not exist — the
+ * `resource_missing` error code (HTTP 404) (#3266). A caller that asked about a
+ * PaymentMethod and gets this has learned that Stripe no longer holds the
+ * card; it has NOT learned anything from an outage, a bad key, or a rate limit,
+ * all of which arrive as other codes and must be treated as "unknown", never
+ * as "gone". A derivation of `readStripeErrorFields`, not a second reader.
+ */
+export function isStripeResourceMissingError(error: unknown): boolean {
+  return readStripeErrorFields(error).code === "resource_missing";
 }
 
 function optionalString(source: object, key: string): string | null {

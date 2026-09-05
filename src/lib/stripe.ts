@@ -298,6 +298,24 @@ export async function getSetupIntent(
 }
 
 /**
+ * Retrieve a PaymentMethod by ID (#3266).
+ *
+ * Thin wrapper, and deliberately so: it throws the SDK error unchanged. The
+ * caller decides what a failure means, because the two failures matter
+ * differently — `resource_missing` (see `isStripeResourceMissingError` in
+ * `stripe-errors.ts`) says Stripe no longer holds the card, while anything else
+ * says nothing about the card at all. `create-setup-intent` uses it to ask the
+ * PROVIDER whether a succeeded SetupIntent's card is still attached to the
+ * customer before re-adopting it onto a Payment row that carries no card.
+ */
+export async function getPaymentMethod(
+  paymentMethodId: string
+): Promise<Stripe.PaymentMethod> {
+  const stripe = await getStripe();
+  return stripe.paymentMethods.retrieve(paymentMethodId);
+}
+
+/**
  * Detach a saved PaymentMethod from its Customer (#3268). Used when the
  * auto-charge cron has classified the card as permanently unusable: detaching
  * it at the provider is what makes "this card may not be re-adopted anywhere"

@@ -155,6 +155,8 @@ describe("POST /api/payments/charge-saved-method", () => {
         id: "payment-1",
         stripePaymentMethodId: "pm_123",
         stripeCustomerId: "cus_123",
+        // #3269: saved through a SetupIntent, so reusable off-session.
+        stripeSetupIntentId: "seti_123",
       },
       member: {
         firstName: "Alice",
@@ -233,6 +235,64 @@ describe("POST /api/payments/charge-saved-method", () => {
     );
   });
 
+  it("refuses (400) a card written by a one-off checkout — no SetupIntent — and never calls Stripe (#3269)", async () => {
+    mockBookingFindUnique.mockResolvedValue({
+      id: "booking-1",
+      memberId: "member-1",
+      status: "PENDING",
+      finalPriceCents: 12500,
+      checkIn: new Date("2026-07-10"),
+      checkOut: new Date("2026-07-12"),
+      guests: [],
+      // Customer + pm alone used to pass this route's guard. Stripe refuses to
+      // charge a payment method it captured without customer attachment, so
+      // the route must refuse first.
+      payment: {
+        id: "payment-1",
+        stripePaymentMethodId: "pm_oneoff",
+        stripeCustomerId: "cus_123",
+        stripeSetupIntentId: null,
+      },
+      member: { firstName: "Alice", lastName: "Example" },
+    });
+
+    const request = new NextRequest("http://localhost/api/payments/charge-saved-method", {
+      method: "POST",
+      body: JSON.stringify({ bookingId: "booking-1" }),
+      headers: { "content-type": "application/json" },
+    });
+
+    const response = await POST(request);
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: "No saved payment method found for this booking",
+    });
+    expect(mockChargePaymentMethod).not.toHaveBeenCalled();
+    expect(mockMarkBookingPaymentSucceeded).not.toHaveBeenCalled();
+  });
+
+  it("charges the row's own SetupIntent-saved card (#3269)", async () => {
+    mockChargePaymentMethod.mockResolvedValue({
+      id: "pi_own",
+      status: "succeeded",
+      amount: 12500,
+    });
+
+    const request = new NextRequest("http://localhost/api/payments/charge-saved-method", {
+      method: "POST",
+      body: JSON.stringify({ bookingId: "booking-1" }),
+      headers: { "content-type": "application/json" },
+    });
+
+    const response = await POST(request);
+
+    expect(response.status).toBe(200);
+    expect(mockChargePaymentMethod).toHaveBeenCalledWith(
+      expect.objectContaining({ customerId: "cus_123", paymentMethodId: "pm_123" })
+    );
+  });
+
   it("returns 409 without charging when saved-card capacity preflight fails", async () => {
     mockCheckCapacityForGuestRanges.mockResolvedValue({
       available: false,
@@ -270,7 +330,11 @@ describe("POST /api/payments/charge-saved-method", () => {
       capacityOverriddenAt: new Date("2026-06-01"),
       capacityOverriddenByMemberId: "admin-1",
       guests: [{ id: "guest-1", stayStart: new Date("2026-07-10"), stayEnd: new Date("2026-07-12") }],
-      payment: { stripePaymentMethodId: "pm_123", stripeCustomerId: "cus_123" },
+      payment: {
+        stripePaymentMethodId: "pm_123",
+        stripeCustomerId: "cus_123",
+        stripeSetupIntentId: "seti_123",
+      },
       member: { firstName: "Alice", lastName: "Example" },
     });
     mockCheckCapacityForGuestRanges.mockResolvedValue({
