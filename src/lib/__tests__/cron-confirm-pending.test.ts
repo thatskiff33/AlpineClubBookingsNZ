@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import Stripe from "stripe";
 
 // Mock Stripe
 vi.stubEnv("STRIPE_SECRET_KEY", "sk_test_fake");
@@ -318,6 +319,8 @@ function makePendingBooking(
       id: string;
       stripePaymentMethodId: string;
       stripeCustomerId: string;
+      // #3268/#3269: whether the parent SAVED the card through a SetupIntent.
+      stripeSetupIntentId?: string | null;
     } | null;
     // Full parent snapshot (#1967): lets tests model the parent's lifecycle
     // status and payment source (IB-settled vs abandoned card). Takes
@@ -2819,15 +2822,31 @@ describe("Cron: Confirm Pending Bookings", () => {
   });
 
   describe("#3268 an unusable saved card is terminal for the cron, never retried forever", () => {
-    /** A thrown Stripe error, shaped the way the SDK shapes one. */
+    /**
+     * A thrown Stripe error built by the SDK's OWN factory from the raw API
+     * body, as `chargePaymentMethod` really throws it: `type` is the CLASS NAME
+     * and the API type (`card_error`, `invalid_request_error`) is `rawType`. A
+     * hand-built `{ type: "card_error" }` literal is a shape the SDK never
+     * produces and kept the first cut of #3268 green while it was inert in
+     * production — so these tests throw the real thing.
+     */
+    const SDK_STATUS_FOR_TYPE: Record<string, number> = {
+      card_error: 402,
+      invalid_request_error: 400,
+      api_error: 500,
+    };
     function stripeError(fields: {
       type: string;
       code?: string;
       decline_code?: string;
       param?: string;
       message?: string;
-    }): Error {
-      return Object.assign(new Error(fields.message ?? `stripe ${fields.type}`), fields);
+    }): Stripe.errors.StripeError {
+      return Stripe.errors.StripeError.generate({
+        ...fields,
+        message: fields.message ?? `stripe ${fields.type}`,
+        statusCode: SDK_STATUS_FOR_TYPE[fields.type] ?? 500,
+      } as never);
     }
 
     const INCIDENT_MESSAGE =
@@ -2907,7 +2926,7 @@ describe("Cron: Confirm Pending Bookings", () => {
       expect(alert.errorMessage).toContain(INCIDENT_MESSAGE);
     });
 
-    it("clears the PARENT's row when a split child was charging a borrowed parent card — the production shape", async () => {
+    it("clears the PARENT's row when a split child was charging a borrowed parent card the member had SAVED through a SetupIntent — after #3269 a one-off parent card can no longer reach the charge arm, so this is the shape a terminal refusal retires", async () => {
       mockPendingBookings([
         makePendingBooking("child_1", {
           hasPaymentMethod: false,
@@ -2916,6 +2935,9 @@ describe("Cron: Confirm Pending Bookings", () => {
             id: "pay_parent_1",
             stripeCustomerId: "cus_parent_1",
             stripePaymentMethodId: "pm_parent_1",
+            // The parent SAVED this card (SetupIntent), which is the only way a
+            // parent card reaches the child's charge arm once #3269 lands.
+            stripeSetupIntentId: "seti_parent_1",
           },
           finalPriceCents: 12000,
           guestCount: 1,
@@ -3083,6 +3105,35 @@ describe("Cron: Confirm Pending Bookings", () => {
       expect(mockPaymentTransactionUpdateMany).toHaveBeenCalledTimes(1);
       expect(mockSendSavedCardChargeFailedEmail).toHaveBeenCalledTimes(1);
       expect(mockSendAdminPaymentFailureAlert).toHaveBeenCalledTimes(1);
+    });
+
+    it("when the claim release itself fails, the terminal alert says the booking is stuck confirmed-unpaid — never 'stays pending'", async () => {
+      mockPendingBookings([makePendingBooking("b1")]);
+      capacityAvailable();
+      mockChargePaymentMethod.mockRejectedValue(
+        stripeError({ type: "invalid_request_error", message: INCIDENT_MESSAGE }),
+      );
+      // The claim (PENDING -> CONFIRMED) lands; the release (CONFIRMED -> PENDING)
+      // is the write that fails.
+      mockBookingUpdateMany.mockImplementation(async (call: any) => {
+        if (call?.where?.status === "CONFIRMED" && call?.data?.status === "PENDING") {
+          throw new Error("release lost its connection");
+        }
+        return { count: 1 };
+      });
+
+      const result = await confirmPendingBookings();
+
+      expect(result.failedBookingIds).toEqual(["b1"]);
+      // The card is still retired and both notices still go — the member's
+      // card is unusable whether or not the release landed.
+      expect(mockPaymentUpdateMany).toHaveBeenCalledTimes(1);
+      expect(mockSendSavedCardChargeFailedEmail).toHaveBeenCalledTimes(1);
+      expect(mockSendAdminPaymentFailureAlert).toHaveBeenCalledTimes(1);
+      const [alert] = mockSendAdminPaymentFailureAlert.mock.calls[0] as [{ errorMessage: string }];
+      expect(alert.errorMessage).toContain("found unusable");
+      expect(alert.errorMessage).not.toContain("stays pending");
+      expect(alert.errorMessage).toContain("still marked confirmed but unpaid");
     });
 
     it("a failure inside the terminal decision falls back to today's release-and-alert, and never escapes the loop", async () => {

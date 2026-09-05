@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import Stripe from "stripe";
 import {
   PaymentSource,
   PaymentStatus,
@@ -47,15 +48,37 @@ const {
 } = await import("../saved-card-charge-failure");
 const { reconcilePaymentAggregates } = await import("../payment-transactions");
 
-/** A thrown Stripe error, shaped the way the SDK shapes one (duck-typed). */
+/**
+ * A thrown Stripe error, built by the SDK's OWN factory from the raw API error
+ * body, exactly as `RequestSender` does on a non-2xx response. The SDK picks
+ * the class from the HTTP status (`generateV1Error`), sets `type` to the CLASS
+ * NAME and keeps the API type in `rawType` — which is the shape the classifier
+ * must read. The first review of #3268 found the classifier comparing `type`
+ * to `"card_error"`, a value the SDK never puts there, so every production
+ * failure classified `retry` while a hand-built `{ type: "card_error" }`
+ * fixture kept the tests green. Hence: real SDK errors here, never a literal.
+ */
+const SDK_STATUS_FOR_TYPE: Record<string, number> = {
+  card_error: 402,
+  invalid_request_error: 400,
+  idempotency_error: 400,
+  authentication_error: 401,
+  rate_limit_error: 429,
+  api_error: 500,
+};
 function stripeError(fields: {
   type: string;
   code?: string;
   decline_code?: string;
+  advice_code?: string;
   param?: string;
   message?: string;
-}): Error {
-  return Object.assign(new Error(fields.message ?? `stripe ${fields.type}`), fields);
+}): Stripe.errors.StripeError {
+  return Stripe.errors.StripeError.generate({
+    ...fields,
+    message: fields.message ?? `stripe ${fields.type}`,
+    statusCode: SDK_STATUS_FOR_TYPE[fields.type] ?? 500,
+  } as never);
 }
 
 const IN_WINDOW = { holdOverdueWindows: 1 };
@@ -65,6 +88,52 @@ const INCIDENT_MESSAGE =
   "The provided PaymentMethod was previously used with a PaymentIntent without Customer attachment or was detached from a Customer. It may not be used again. To use a PaymentMethod multiple times, you must attach it to a Customer first.";
 
 describe("classifySavedCardChargeFailure (#3268)", () => {
+  describe("reads the SDK's thrown shape and the raw API shape alike", () => {
+    it("the factory really produces the SDK shape: class name in `type`, API type in `rawType`", () => {
+      const err = stripeError({ type: "card_error", code: "card_declined", decline_code: "lost_card" });
+      expect(err).toBeInstanceOf(Stripe.errors.StripeCardError);
+      expect(err.type).toBe("StripeCardError");
+      expect(err.rawType).toBe("card_error");
+      const irr = stripeError({ type: "invalid_request_error", message: INCIDENT_MESSAGE });
+      expect(irr).toBeInstanceOf(Stripe.errors.StripeInvalidRequestError);
+      expect(irr.type).toBe("StripeInvalidRequestError");
+      expect(irr.rawType).toBe("invalid_request_error");
+    });
+
+    it("classifies a real SDK card decline as card_error, reporting the API type not the class name", () => {
+      const result = classifySavedCardChargeFailure(
+        stripeError({ type: "card_error", code: "card_declined", decline_code: "lost_card" }),
+        IN_WINDOW,
+      );
+      expect(result.outcome).toBe("terminal");
+      expect(result.stripeType).toBe("card_error");
+    });
+
+    it("classifies the raw API object — `type` holding the API type, no `rawType` — the same way (webhook / last_payment_error shape)", () => {
+      const rawDecline = { type: "card_error", code: "card_declined", decline_code: "lost_card", message: "Your card was declined." };
+      const decline = classifySavedCardChargeFailure(rawDecline, IN_WINDOW);
+      expect(decline.outcome).toBe("terminal");
+      expect(decline.outcome === "terminal" && decline.reason).toBe("card_permanently_declined");
+      expect(decline.stripeType).toBe("card_error");
+
+      const rawIncident = { type: "invalid_request_error", message: INCIDENT_MESSAGE };
+      const incident = classifySavedCardChargeFailure(rawIncident, IN_WINDOW);
+      expect(incident.outcome).toBe("terminal");
+      expect(incident.outcome === "terminal" && incident.reason).toBe("payment_method_unusable");
+      expect(incident.message).toBe(INCIDENT_MESSAGE);
+    });
+
+    it("does not mistake an SDK class name for an API type (a connection error has no rawType)", () => {
+      const result = classifySavedCardChargeFailure(
+        new Stripe.errors.StripeConnectionError({ message: "socket hang up" }),
+        PAST_WINDOW,
+      );
+      expect(result.outcome).toBe("retry");
+      expect(result.stripeType).toBeNull();
+      expect(result.message).toBe("socket hang up");
+    });
+  });
+
   describe("payment_method_unusable — invalid_request_error about the pm itself", () => {
     it.each([
       ["param names the payment method", { type: "invalid_request_error", param: "payment_method", message: "Invalid payment_method" }],
@@ -108,6 +177,7 @@ describe("classifySavedCardChargeFailure (#3268)", () => {
         stripeType: "invalid_request_error",
         stripeCode: "resource_missing",
         declineCode: null,
+        adviceCode: null,
         message: "No such PaymentMethod: 'pm_x'",
       });
     });
@@ -148,6 +218,7 @@ describe("classifySavedCardChargeFailure (#3268)", () => {
       "fraudulent",
       "merchant_blacklist",
       "authentication_required",
+      "do_not_try_again",
     ])("is terminal for decline_code %s even inside the window", (decline_code) => {
       const result = classifySavedCardChargeFailure(
         stripeError({ type: "card_error", code: "card_declined", decline_code }),
@@ -156,6 +227,35 @@ describe("classifySavedCardChargeFailure (#3268)", () => {
       expect(result.outcome).toBe("terminal");
       expect(result.outcome === "terminal" && result.reason).toBe("card_permanently_declined");
       expect(result.declineCode).toBe(decline_code);
+    });
+
+    it("is terminal when Stripe's advice_code says do_not_try_again, whatever the decline code", () => {
+      const result = classifySavedCardChargeFailure(
+        stripeError({
+          type: "card_error",
+          code: "card_declined",
+          decline_code: "generic_decline",
+          advice_code: "do_not_try_again",
+        }),
+        IN_WINDOW,
+      );
+      expect(result.outcome).toBe("terminal");
+      expect(result.outcome === "terminal" && result.reason).toBe("card_permanently_declined");
+      expect(result.adviceCode).toBe("do_not_try_again");
+    });
+
+    it("any other advice_code leaves a soft decline soft", () => {
+      const result = classifySavedCardChargeFailure(
+        stripeError({
+          type: "card_error",
+          code: "card_declined",
+          decline_code: "generic_decline",
+          advice_code: "try_again_later",
+        }),
+        IN_WINDOW,
+      );
+      expect(result.outcome).toBe("retry");
+      expect(result.adviceCode).toBe("try_again_later");
     });
   });
 
@@ -203,7 +303,7 @@ describe("classifySavedCardChargeFailure (#3268)", () => {
       ["rate_limit_error", stripeError({ type: "rate_limit_error" })],
       ["authentication_error (our key)", stripeError({ type: "authentication_error" })],
       ["idempotency_error", stripeError({ type: "idempotency_error" })],
-      ["a connection error", stripeError({ type: "StripeConnectionError", message: "socket hang up" })],
+      ["a connection error", new Stripe.errors.StripeConnectionError({ message: "socket hang up" })],
       ["a plain Error", new Error("Card declined")],
       ["a string", "boom"],
       ["null", null],
@@ -222,30 +322,58 @@ describe("classifySavedCardChargeFailure (#3268)", () => {
 
 describe("describeTerminalSavedCardChargeFailure (#3268)", () => {
   it("tells the admin what happened, what was done, what the member was asked, and what Stripe said", () => {
-    const text = describeTerminalSavedCardChargeFailure({
-      outcome: "terminal",
-      reason: "payment_method_unusable",
-      stripeType: "invalid_request_error",
-      stripeCode: "resource_missing",
-      declineCode: null,
-      message: "No such PaymentMethod: 'pm_x'",
-    });
+    const text = describeTerminalSavedCardChargeFailure(
+      {
+        outcome: "terminal",
+        reason: "payment_method_unusable",
+        stripeType: "invalid_request_error",
+        stripeCode: "resource_missing",
+        declineCode: null,
+        adviceCode: null,
+        message: "No such PaymentMethod: 'pm_x'",
+      },
+      { claimReleased: true },
+    );
     expect(text).toContain("found unusable");
     expect(text).toContain("removed from the booking");
     expect(text).toContain("save a new card");
+    expect(text).toContain("The booking stays pending");
     expect(text).toContain("No such PaymentMethod: 'pm_x'");
     expect(text).toContain("code resource_missing");
   });
 
+  it("says the booking is stuck confirmed-unpaid when the claim release itself failed, never 'stays pending'", () => {
+    const text = describeTerminalSavedCardChargeFailure(
+      {
+        outcome: "terminal",
+        reason: "payment_method_unusable",
+        stripeType: "invalid_request_error",
+        stripeCode: null,
+        declineCode: null,
+        adviceCode: null,
+        message: INCIDENT_MESSAGE,
+      },
+      { claimReleased: false },
+    );
+    expect(text).not.toContain("stays pending");
+    expect(text).toContain("could NOT be returned to pending");
+    expect(text).toContain("still marked confirmed but unpaid");
+    expect(text).toContain("needs an administrator");
+  });
+
   it("names the two-day rule for an exhausted soft decline", () => {
-    const text = describeTerminalSavedCardChargeFailure({
-      outcome: "terminal",
-      reason: "soft_decline_exhausted",
-      stripeType: "card_error",
-      stripeCode: "card_declined",
-      declineCode: "insufficient_funds",
-      message: "Your card has insufficient funds.",
-    });
+    const text = describeTerminalSavedCardChargeFailure(
+      {
+        outcome: "terminal",
+        reason: "soft_decline_exhausted",
+        stripeType: "card_error",
+        stripeCode: "card_declined",
+        declineCode: "insufficient_funds",
+        adviceCode: null,
+        message: "Your card has insufficient funds.",
+      },
+      { claimReleased: true },
+    );
     expect(text).toContain("two days");
     expect(text).toContain("decline insufficient_funds");
   });
@@ -278,7 +406,7 @@ describe("retireUnusableSavedCard (#3268)", () => {
     expect(mockPaymentUpdateMany.mock.invocationCallOrder[0]!).toBeGreaterThan(detachOrder);
   });
 
-  it("swallows a detach failure and still clears the rows (an already-detached pm is unusable either way)", async () => {
+  it("swallows an invalid_request_error from the detach and still clears the rows (an already-detached pm is unusable either way)", async () => {
     mockDetachPaymentMethod.mockRejectedValue(
       stripeError({ type: "invalid_request_error", message: "The payment method you provided is not attached to a customer" }),
     );
@@ -288,6 +416,33 @@ describe("retireUnusableSavedCard (#3268)", () => {
     expect(mockPaymentUpdateMany).toHaveBeenCalledTimes(1);
     expect(mockPaymentTransactionUpdateMany).toHaveBeenCalledTimes(1);
     expect(result.clearedPaymentRows).toBe(2);
+  });
+
+  it("also swallows resource_missing (the pm no longer exists at Stripe) and clears", async () => {
+    mockDetachPaymentMethod.mockRejectedValue(
+      stripeError({ type: "invalid_request_error", code: "resource_missing", param: "payment_method", message: "No such PaymentMethod: 'pm_dead'" }),
+    );
+
+    await retireUnusableSavedCard({ paymentMethodId: "pm_dead", bookingId: "b1" });
+
+    expect(mockPaymentUpdateMany).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["api_error", stripeError({ type: "api_error", message: "Stripe is having a moment" })],
+    ["rate_limit_error", stripeError({ type: "rate_limit_error" })],
+    ["authentication_error", stripeError({ type: "authentication_error" })],
+    ["a connection error", new Stripe.errors.StripeConnectionError({ message: "socket hang up" })],
+    ["a plain Error", new Error("network down")],
+  ])("RETHROWS a detach failure of %s and clears NOTHING — a cleared card must be a detached card", async (_label, detachErr) => {
+    mockDetachPaymentMethod.mockRejectedValue(detachErr);
+
+    await expect(
+      retireUnusableSavedCard({ paymentMethodId: "pm_dead", bookingId: "b1" }),
+    ).rejects.toBe(detachErr);
+
+    expect(mockPaymentUpdateMany).not.toHaveBeenCalled();
+    expect(mockPaymentTransactionUpdateMany).not.toHaveBeenCalled();
   });
 
   it("leaves the setup intent and customer alone — only the payment-method fields are written", async () => {
@@ -395,6 +550,7 @@ describe("retireAndEscalateUnusableSavedCard (#3268)", () => {
     stripeType: "invalid_request_error",
     stripeCode: null,
     declineCode: null,
+    adviceCode: null,
     message: INCIDENT_MESSAGE,
   };
 
@@ -413,6 +569,7 @@ describe("retireAndEscalateUnusableSavedCard (#3268)", () => {
       paymentMethodId: "pm_dead",
       paymentIntentId: "N/A",
       failure,
+      claimReleased: true,
     });
 
     expect(mockPaymentUpdateMany).toHaveBeenCalledTimes(1);
@@ -438,18 +595,45 @@ describe("retireAndEscalateUnusableSavedCard (#3268)", () => {
     mockSendSavedCardChargeFailedEmail.mockRejectedValue(new Error("SES down"));
 
     await expect(
-      retireAndEscalateUnusableSavedCard({ booking, paymentMethodId: "pm_dead", paymentIntentId: "N/A", failure }),
+      retireAndEscalateUnusableSavedCard({ booking, paymentMethodId: "pm_dead", paymentIntentId: "N/A", failure, claimReleased: true }),
     ).resolves.toBeUndefined();
 
     expect(mockPaymentUpdateMany).toHaveBeenCalledTimes(1);
     expect(mockSendAdminPaymentFailureAlert).toHaveBeenCalledTimes(1);
   });
 
+  it("threads a failed claim release into the admin alert's wording", async () => {
+    await retireAndEscalateUnusableSavedCard({
+      booking,
+      paymentMethodId: "pm_dead",
+      paymentIntentId: "N/A",
+      failure,
+      claimReleased: false,
+    });
+
+    const [alert] = mockSendAdminPaymentFailureAlert.mock.calls[0] as [{ errorMessage: string }];
+    expect(alert.errorMessage).toContain("still marked confirmed but unpaid");
+    expect(alert.errorMessage).not.toContain("stays pending");
+  });
+
+  it("propagates a non-invalid_request detach failure: nothing cleared, nobody emailed — the caller falls back to the retry alert", async () => {
+    const outage = stripeError({ type: "api_error", message: "Stripe is having a moment" });
+    mockDetachPaymentMethod.mockRejectedValue(outage);
+
+    await expect(
+      retireAndEscalateUnusableSavedCard({ booking, paymentMethodId: "pm_dead", paymentIntentId: "N/A", failure, claimReleased: true }),
+    ).rejects.toBe(outage);
+
+    expect(mockPaymentUpdateMany).not.toHaveBeenCalled();
+    expect(mockSendSavedCardChargeFailedEmail).not.toHaveBeenCalled();
+    expect(mockSendAdminPaymentFailureAlert).not.toHaveBeenCalled();
+  });
+
   it("does not throw when the admin alert fails", async () => {
     mockSendAdminPaymentFailureAlert.mockRejectedValue(new Error("SES down"));
 
     await expect(
-      retireAndEscalateUnusableSavedCard({ booking, paymentMethodId: "pm_dead", paymentIntentId: "N/A", failure }),
+      retireAndEscalateUnusableSavedCard({ booking, paymentMethodId: "pm_dead", paymentIntentId: "N/A", failure, claimReleased: true }),
     ).resolves.toBeUndefined();
     expect(mockSendSavedCardChargeFailedEmail).toHaveBeenCalledTimes(1);
   });
