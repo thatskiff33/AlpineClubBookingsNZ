@@ -966,6 +966,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
           bookingGuestId: "g2",
           stayDate: sparseNight,
           priceCents: 3000,
+          priceSource: "SOLD",
         },
       ],
     });
@@ -1205,14 +1206,14 @@ describe("PUT /api/bookings/[id]/modify", () => {
     expect(mockCalculateBookingPrice).not.toHaveBeenCalled();
     expect(tx.bookingGuestNight.createMany).toHaveBeenCalledWith({
       data: [
-        { bookingGuestId: "g1", stayDate: memberNights[0].stayDate, priceCents: 1000 },
-        { bookingGuestId: "g1", stayDate: memberNights[1].stayDate, priceCents: 1500 },
+        { bookingGuestId: "g1", stayDate: memberNights[0].stayDate, priceCents: 1000, priceSource: "UNKNOWN" },
+        { bookingGuestId: "g1", stayDate: memberNights[1].stayDate, priceCents: 1500, priceSource: "UNKNOWN" },
       ],
     });
     expect(tx.bookingGuestNight.createMany).toHaveBeenCalledWith({
       data: [
-        { bookingGuestId: "g2", stayDate: guestNights[0].stayDate, priceCents: 900 },
-        { bookingGuestId: "g2", stayDate: guestNights[1].stayDate, priceCents: 1600 },
+        { bookingGuestId: "g2", stayDate: guestNights[0].stayDate, priceCents: 900, priceSource: "UNKNOWN" },
+        { bookingGuestId: "g2", stayDate: guestNights[1].stayDate, priceCents: 1600, priceSource: "UNKNOWN" },
       ],
     });
   });

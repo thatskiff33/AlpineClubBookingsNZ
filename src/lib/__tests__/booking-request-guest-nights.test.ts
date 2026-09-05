@@ -255,9 +255,9 @@ describe("buildApprovalGuestCreates gives every guest a night set (#2739)", () =
     const prismaData = toPipelineGuestCreateData(guestCreate);
     expect(prismaData.nights).toEqual({
       create: [
-        { stayDate: parseDateOnly("2026-08-01"), priceCents: 3000 },
-        { stayDate: parseDateOnly("2026-08-02"), priceCents: 3000 },
-        { stayDate: parseDateOnly("2026-08-03"), priceCents: 3000 },
+        { stayDate: parseDateOnly("2026-08-01"), priceCents: 3000, priceSource: "SOLD" },
+        { stayDate: parseDateOnly("2026-08-02"), priceCents: 3000, priceSource: "SOLD" },
+        { stayDate: parseDateOnly("2026-08-03"), priceCents: 3000, priceSource: "SOLD" },
       ],
     });
     // The planning-only fields never reach Prisma.

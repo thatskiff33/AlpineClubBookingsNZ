@@ -620,6 +620,7 @@ describe("#3031 no magic zero reaches a night row", () => {
         bookingGuestId: "g1",
         stayDate: D(night),
         priceCents: RATE,
+        priceSource: "SOLD",
       })),
     ]);
   });

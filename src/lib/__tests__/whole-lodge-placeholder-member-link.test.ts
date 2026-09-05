@@ -181,7 +181,7 @@ describe("#2337: prepareGuestPlan threads a placeholder→member link into prici
     expect(untouched?.isMember).toBe(false);
     expect(untouched?.memberId).toBeNull();
     expect(untouched?.lockedNightPrices).toEqual([
-      { stayDate: NIGHT_1, priceCents: 5000 },
+      { stayDate: NIGHT_1, priceCents: 5000, priceSource: "UNKNOWN" },
     ]);
 
     // A family-scope link writes no consent columns and asks nobody.

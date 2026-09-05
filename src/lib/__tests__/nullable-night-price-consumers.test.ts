@@ -107,8 +107,8 @@ describe("#3170 the lenient lock reader: an unknown night carries no lock", () =
     });
 
     expect(locks).toEqual([
-      { stayDate: D("2026-08-20"), priceCents: RATE },
-      { stayDate: D("2026-08-22"), priceCents: 0 },
+      { stayDate: D("2026-08-20"), priceCents: RATE, priceSource: "UNKNOWN" },
+      { stayDate: D("2026-08-22"), priceCents: 0, priceSource: "UNKNOWN" },
     ]);
   });
 });

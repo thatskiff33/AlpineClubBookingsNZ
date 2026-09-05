@@ -59,6 +59,7 @@ export type OwnerSubstitution = {
 export type ApprovalGuestNight = {
   stayDate: Date;
   priceCents: number;
+  priceSource: "SOLD";
 };
 
 /**
@@ -160,6 +161,7 @@ export function buildApprovalGuestNights(params: {
     return nightDates.map((stayDate, index) => ({
       stayDate,
       priceCents: engine[index],
+      priceSource: "SOLD",
     }));
   }
   const base = Math.floor(params.priceCents / count);
@@ -167,6 +169,7 @@ export function buildApprovalGuestNights(params: {
   return nightDates.map((stayDate, index) => ({
     stayDate,
     priceCents: base + (index < remainder ? 1 : 0),
+    priceSource: "SOLD",
   }));
 }
 
