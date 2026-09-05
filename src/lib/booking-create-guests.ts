@@ -203,6 +203,7 @@ export function buildGuestCreateData(
             stayDate,
             "the booking-create guest writer"
           ),
+          priceSource: "SOLD" as const,
         })),
       },
     };

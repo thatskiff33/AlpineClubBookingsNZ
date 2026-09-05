@@ -303,7 +303,7 @@ export async function POST(
       // quote. Deterministic order (#2266 MED-4): must match the apply path's
       // fetch so preview and apply price and target the same guest order.
       guests: {
-        include: { nights: { select: { stayDate: true, priceCents: true } } },
+        include: { nights: { select: { stayDate: true, priceCents: true, priceSource: true } } },
         orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       },
       payment: true,

@@ -639,8 +639,8 @@ describe("processWaitlistForDates", () => {
     });
     expect(mockTx.bookingGuestNight.createMany).toHaveBeenCalledWith({
       data: [
-        { bookingGuestId: "g1", stayDate: night1, priceCents: 6000 },
-        { bookingGuestId: "g1", stayDate: night2, priceCents: 7000 },
+        { bookingGuestId: "g1", stayDate: night1, priceCents: 6000, priceSource: "SOLD" },
+        { bookingGuestId: "g1", stayDate: night2, priceCents: 7000, priceSource: "SOLD" },
       ],
     });
     // The property that matters, stated as itself rather than left implied by

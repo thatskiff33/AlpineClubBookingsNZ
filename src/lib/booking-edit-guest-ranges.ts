@@ -1,4 +1,4 @@
-import type { AgeTier } from "@prisma/client";
+import type { AgeTier, BookingGuestNightPriceSource } from "@prisma/client";
 import {
   calculateBookingPrice,
   type GroupDiscountConfig,
@@ -30,10 +30,10 @@ import {
   classifyStoredSoldPriceEvidence,
   counterpartStrandReviewOccurrence,
   editFinancialReviewOccurrence,
-  storedNightPricesByKey,
   unusableStoredSoldPriceEvidence,
   type HeldNightPrice,
 } from "@/lib/stored-sold-price-evidence";
+import { storedNightPriceDetailsByKey } from "@/lib/stored-night-price-write";
 
 interface ExistingBookingEditGuest {
   id: string;
@@ -87,7 +87,11 @@ interface ExistingBookingEditGuest {
  */
 type StoredGuestNight =
   | GuestNightInput
-  | { stayDate: Date | string; priceCents?: number | null };
+  | {
+      stayDate: Date | string;
+      priceCents?: number | null;
+      priceSource?: BookingGuestNightPriceSource;
+    };
 
 // Extends MemberGuestConsentGuestFields ("+ Add Member Guest", epic #2305, MG2
 // #2307) so a cross-family guest added to an IN-PROGRESS stay carries its consent
@@ -136,6 +140,7 @@ interface ProposedExistingGuestRange {
   // edit newly buys), not the guest's total divided by their night count. See
   // `composeProposedNightPrices` for the one case that still has to average.
   perNightCents: number[];
+  perNightPriceSources: BookingGuestNightPriceSource[];
   // The subset of `nights` from `futureStart` onwards — the nights this edit
   // actually prices and capacity-checks. Empty means the guest holds no future
   // night at all, which is how a sparse guest whose remaining nights are all
@@ -172,6 +177,7 @@ interface ProposedAddedGuestRange {
   // season rate straight from `calculateBookingPrice` — a guest added across a
   // season boundary now stores 50/50/90/90 rather than four averaged 70s.
   perNightCents: number[];
+  perNightPriceSources: BookingGuestNightPriceSource[];
   priceCents: number;
 }
 
@@ -202,6 +208,7 @@ export interface ParkedExistingGuestRange {
   stayEnd: Date;
   nights: Date[];
   perNightCents: (number | null)[];
+  perNightPriceSources: BookingGuestNightPriceSource[];
   /** `BookingGuest.priceCents` as stored. Untouched by a parked edit. */
   priceCents: number;
   futureNights: Date[];
@@ -1034,7 +1041,13 @@ export function buildInProgressGuestRangePlan(
     // night that has one is priced at it in BOTH windows below, so a night given
     // back is credited at the price it was sold for and a night kept still
     // cancels between the two (INV-MOD-005).
-    const storedNightPriceByKey = storedNightPricesByKey(guest.nights);
+    const storedNightDetailsByKey = storedNightPriceDetailsByKey(guest.nights);
+    const storedNightPriceByKey = new Map(
+      [...storedNightDetailsByKey].map(([key, stored]) => [
+        key,
+        stored.priceCents,
+      ]),
+    );
 
     const oldFutureStart = maxDate(stayStart, editableFrom);
     const oldFutureStartKey = dateOnlyKey(oldFutureStart);
@@ -1187,6 +1200,7 @@ export function buildInProgressGuestRangePlan(
       stayStart,
       proposedStayEnd,
       storedNightPriceByKey,
+      storedNightDetailsByKey,
       // The nights this guest holds TODAY, and the same as a set. Both are read
       // by the evidence gate below — a night the guest keeps is one this edit
       // must preserve the stored price of, a night that is not in the proposed
@@ -1578,6 +1592,12 @@ export function buildInProgressGuestRangePlan(
           futurePerNightCents: [],
           onNightWithNoAmount: "record-as-unknown",
         }),
+        perNightPriceSources: entry.proposedNightKeys.map((key) => {
+          const stored = entry.storedNightDetailsByKey.get(key);
+          return entry.heldNightKeySet.has(key) && stored?.priceCents !== null
+            ? (stored?.priceSource ?? "UNKNOWN")
+            : "UNKNOWN";
+        }),
         // The STORED total, untouched. How much this edit changes it is the
         // question the OPEN task exists to answer.
         priceCents: entry.guest.priceCents,
@@ -1598,6 +1618,7 @@ export function buildInProgressGuestRangePlan(
           stayEnd: newCheckOut,
           nights: addedGuestNightKeys.map((key) => parseDateOnly(key)),
           perNightCents,
+          perNightPriceSources: perNightCents.map(() => "SOLD" as const),
           priceCents: sumCents(perNightCents),
         };
       }
@@ -1789,6 +1810,11 @@ export function buildInProgressGuestRangePlan(
       stayEnd: entry.proposedStayEnd,
       nights: proposedNightKeys.map((key) => parseDateOnly(key)),
       perNightCents,
+      perNightPriceSources: proposedNightKeys.map((key) =>
+        heldNightKeySet.has(key)
+          ? (entry.storedNightDetailsByKey.get(key)?.priceSource ?? "UNKNOWN")
+          : "SOLD",
+      ),
       futureNights: futureNightKeys.map((key) => parseDateOnly(key)),
       priceCents,
       oldFuturePriceCents,
@@ -1850,6 +1876,7 @@ export function buildInProgressGuestRangePlan(
       stayEnd: newCheckOut,
       nights: addedGuestNightKeys.map((key) => parseDateOnly(key)),
       perNightCents,
+      perNightPriceSources: perNightCents.map(() => "SOLD" as const),
       priceCents: sumCents(perNightCents),
     };
   });

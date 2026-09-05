@@ -9,6 +9,7 @@ import {
   BookingStatus,
   type AgeTier,
   type BookingGuest,
+  type BookingGuestNightPriceSource,
   type Prisma,
   type Role,
 } from "@prisma/client";
@@ -114,7 +115,8 @@ import {
 } from "@/lib/stored-sold-price-evidence";
 import {
   classifyNightPriceToWrite,
-  preservedNightPrices,
+  preservedNightPriceWrites,
+  repricedNightPriceSources,
 } from "@/lib/stored-night-price-write";
 import {
   isOperationallyPresentConsent,
@@ -155,13 +157,23 @@ type ProposedGuestPricingInput = {
   // pricing pass reads this. A linked placeholder clears it to re-rate at the
   // member season rate (see the carve-out where `proposedGuestRows` is built),
   // so the field is part of this type rather than only present at runtime.
-  lockedNightPrices?: Array<{ stayDate: Date; priceCents: number }>;
+  lockedNightPrices?: Array<{
+    stayDate: Date;
+    priceCents: number;
+    priceSource: BookingGuestNightPriceSource;
+  }>;
 };
 
 type ProposedRemainingGuest = {
   // #3170: `priceCents` is nullable — see `LoadedBookingForModify`, which these
   // rows are lifted from, for what each of undefined / null / a number means.
-  guest: BookingGuest & { nights?: { stayDate: Date; priceCents?: number | null }[] };
+  guest: BookingGuest & {
+    nights?: {
+      stayDate: Date;
+      priceCents?: number | null;
+      priceSource?: BookingGuestNightPriceSource;
+    }[];
+  };
   stayStart: Date;
   stayEnd: Date;
   nights?: Date[];
@@ -194,11 +206,25 @@ export function lockedNightPricesForGuest(guest: {
   // contract is "a night the edit is BUYING prices at current policy"; a path
   // whose money depends on the history being complete asks
   // `storedSoldPriceEvidenceForGuest` instead and gets a verdict.
-  nights?: { stayDate: Date; priceCents?: number | null }[];
-}): Array<{ stayDate: Date; priceCents: number }> {
+  nights?: {
+    stayDate: Date;
+    priceCents?: number | null;
+    priceSource?: BookingGuestNightPriceSource;
+  }[];
+}): Array<{
+  stayDate: Date;
+  priceCents: number;
+  priceSource: BookingGuestNightPriceSource;
+}> {
   return (guest.nights ?? []).flatMap((night) =>
     isNonNegativeIntegerCents(night.priceCents)
-      ? [{ stayDate: night.stayDate, priceCents: night.priceCents }]
+      ? [
+          {
+            stayDate: night.stayDate,
+            priceCents: night.priceCents,
+            priceSource: night.priceSource ?? "UNKNOWN",
+          },
+        ]
       : [],
   );
 }
@@ -1269,6 +1295,7 @@ export type PricedModification = {
       priceCents: number;
       perNightCents: (number | null)[];
       nightDates: Date[];
+      perNightPriceSources?: BookingGuestNightPriceSource[];
     }>;
   };
   guestNightRates: Array<{
@@ -1385,15 +1412,18 @@ function guestNightBreakdown<Cents extends number | null>(entry: {
   // unknown through. Widening this to `number | null` unconditionally would have
   // let a null into the priced breakdown, where every amount is settled.
   perNightCents: ReadonlyArray<Cents>;
+  perNightPriceSources: ReadonlyArray<BookingGuestNightPriceSource>;
   priceCents: number;
 }): {
   priceCents: number;
   perNightCents: Cents[];
   nightDates: Date[];
+  perNightPriceSources: BookingGuestNightPriceSource[];
 } {
   return {
     priceCents: entry.priceCents,
     perNightCents: [...entry.perNightCents],
+    perNightPriceSources: [...entry.perNightPriceSources],
     // #3107: `storedDateOnly`, not `normalizeDateOnlyForTimeZone` (INV-DATE-013).
     // These arrive from the in-progress plan already on the true calendar, and
     // this is the projection that REACHES THE DATABASE - `syncGuestNights`
@@ -1831,6 +1861,18 @@ export async function calculateModifiedPricing(
     }
     throw new ApiError("No season rate found for the requested dates", 400);
   }
+  if (!inProgressPlan) {
+    priceBreakdown = {
+      ...priceBreakdown,
+      guests: priceBreakdown.guests.map((priced, index) => ({
+        ...priced,
+        perNightPriceSources: repricedNightPriceSources(
+          policyAdjustedGuestsForPricing[index]?.lockedNightPrices,
+          priced.nightDates ?? [],
+        ),
+      })),
+    };
+  }
 
   /**
    * #3166 (epic #2797): THE SAME EVIDENCE GATE, ON THE PATH MEMBERS ACTUALLY
@@ -1919,14 +1961,18 @@ export async function calculateModifiedPricing(
                 `Parked edit has no stored guest for ${bookingGuestId} (#3166)`,
               );
             }
+            const preserved = preservedNightPriceWrites(
+              evidence.storedNightPriceByGuestId.get(bookingGuestId),
+              priced.nightDates,
+            );
             return {
               // The STORED total, unchanged. Not a recomputed one, not a delta,
               // not a zero: how much this edit alters it is the question the
               // OPEN task exists to answer.
               priceCents: stored.priceCents,
-              perNightCents: preservedNightPrices(
-                evidence.soldNightPriceByGuestId.get(bookingGuestId),
-                priced.nightDates,
+              perNightCents: preserved.map((night) => night.priceCents),
+              perNightPriceSources: preserved.map(
+                (night) => night.priceSource,
               ),
               nightDates: priced.nightDates,
               // `rateMembershipTypeId` is deliberately NOT carried through for
@@ -2408,6 +2454,7 @@ function parkedPriceBreakdown(plan: ParkedEditStructuralPlan): {
     priceCents: number;
     perNightCents: (number | null)[];
     nightDates: Date[];
+    perNightPriceSources: BookingGuestNightPriceSource[];
   }>;
 } {
   return {
@@ -2470,6 +2517,7 @@ export async function applyGuestChanges(
         priceCents: number;
         perNightCents: ReadonlyArray<number | null>;
         nightDates: Date[];
+        perNightPriceSources?: ReadonlyArray<BookingGuestNightPriceSource>;
       }>;
     };
     inProgressPlan: BookingEditGuestRangePlan | ParkedEditStructuralPlan | null;
@@ -2502,6 +2550,7 @@ export async function applyGuestChanges(
     // this breakdown that night k's price is not known. It is not the same as
     // the vector simply being short — see `nightPriceCentsToWrite` below.
     perNightCents: ReadonlyArray<number | null>;
+    perNightPriceSources?: ReadonlyArray<BookingGuestNightPriceSource>;
   };
 
   // Re-sync a guest's BookingGuestNight rows to the priced nights (issue #713),
@@ -2610,6 +2659,9 @@ export async function applyGuestChanges(
           // `classifyNightPriceToWrite` (#3166) — the one place that rule is
           // stated, and the same one the date path narrows.
           priceCents: nightPriceCentsToWrite(bg, k, stayDate),
+          priceSource:
+            bg?.perNightPriceSources?.[k] ??
+            (bg?.perNightCents[k] === null ? "UNKNOWN" : "SOLD"),
         })),
       });
       return {

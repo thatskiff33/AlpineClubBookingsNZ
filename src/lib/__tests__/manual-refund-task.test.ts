@@ -1354,7 +1354,7 @@ describe("recording per-night amounts while settling (#3191)", () => {
         stayDate: new Date("2026-08-02T00:00:00.000Z"),
         priceCents: null,
       },
-      data: { priceCents: 1_500 },
+      data: { priceCents: 1_500, priceSource: "OFFICER_PRICED" },
     });
     expect(mocks.bookingGuestUpdateMany).toHaveBeenCalledWith({
       where: { id: "guest-1", priceCents: 10_000 },

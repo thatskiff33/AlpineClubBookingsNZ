@@ -180,9 +180,9 @@ function makeBooking(overrides: Record<string, unknown> = {}) {
         stayStart: D("2026-09-10"),
         stayEnd: D("2026-09-13"),
         nights: [
-          { stayDate: D("2026-09-10"), priceCents: 10000 },
-          { stayDate: D("2026-09-11"), priceCents: 10000 },
-          { stayDate: D("2026-09-12"), priceCents: 10000 },
+          { stayDate: D("2026-09-10"), priceCents: 10000, priceSource: "EVEN_SPLIT" },
+          { stayDate: D("2026-09-11"), priceCents: 10000, priceSource: "EVEN_SPLIT" },
+          { stayDate: D("2026-09-12"), priceCents: 10000, priceSource: "EVEN_SPLIT" },
         ],
       },
     ],
@@ -275,9 +275,9 @@ describe("adminShiftBookingDates (issue #1668 — pure translation)", () => {
     // Night rows rebuilt at shifted dates with the SAME per-night priceCents.
     const createManyArgs = h.txGuestNightCreateMany.mock.calls[0][0];
     expect(createManyArgs.data).toEqual([
-      { bookingGuestId: "g1", stayDate: D("2026-09-12"), priceCents: 10000 },
-      { bookingGuestId: "g1", stayDate: D("2026-09-13"), priceCents: 10000 },
-      { bookingGuestId: "g1", stayDate: D("2026-09-14"), priceCents: 10000 },
+      { bookingGuestId: "g1", stayDate: D("2026-09-12"), priceCents: 10000, priceSource: "EVEN_SPLIT" },
+      { bookingGuestId: "g1", stayDate: D("2026-09-13"), priceCents: 10000, priceSource: "EVEN_SPLIT" },
+      { bookingGuestId: "g1", stayDate: D("2026-09-14"), priceCents: 10000, priceSource: "EVEN_SPLIT" },
     ]);
 
     // Modification row is a zero-money ADMIN_DATE_SHIFT.
@@ -615,9 +615,9 @@ describe("adminShiftBookingDates (issue #1668 — pure translation)", () => {
           stayStart: D("2026-09-10"),
           stayEnd: D("2026-09-13"),
           nights: [
-            { stayDate: D("2026-09-10"), priceCents: 10000 },
-            { stayDate: D("2026-09-11"), priceCents: 10000 },
-            { stayDate: D("2026-09-12"), priceCents: 10000 },
+            { stayDate: D("2026-09-10"), priceCents: 10000, priceSource: "SOLD" },
+            { stayDate: D("2026-09-11"), priceCents: 10000, priceSource: "SOLD" },
+            { stayDate: D("2026-09-12"), priceCents: 10000, priceSource: "SOLD" },
           ],
         },
       ],

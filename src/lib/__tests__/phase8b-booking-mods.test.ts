@@ -851,9 +851,9 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
     expect(res.status).toBe(200);
     expect(tx.bookingGuestNight.createMany).toHaveBeenCalledWith({
       data: [
-        { bookingGuestId: "g1", stayDate: movedNights[0], priceCents: 4000 },
-        { bookingGuestId: "g1", stayDate: movedNights[1], priceCents: 5000 },
-        { bookingGuestId: "g1", stayDate: movedNights[2], priceCents: 6000 },
+        { bookingGuestId: "g1", stayDate: movedNights[0], priceCents: 4000, priceSource: "SOLD" },
+        { bookingGuestId: "g1", stayDate: movedNights[1], priceCents: 5000, priceSource: "SOLD" },
+        { bookingGuestId: "g1", stayDate: movedNights[2], priceCents: 6000, priceSource: "SOLD" },
       ],
     });
   });
