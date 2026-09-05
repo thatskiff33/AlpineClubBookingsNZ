@@ -12,11 +12,13 @@ vi.mock("@/lib/rate-limit", () => ({
 }));
 
 vi.mock("@/lib/payment-link", () => ({
-  createPaymentIntentForPaymentLink: (...args: unknown[]) =>
-    h.createPaymentIntentForPaymentLink(...args),
   PaymentLinkError: class PaymentLinkError extends Error {
     status = 400;
   },
+}));
+vi.mock("@/lib/payment-link-intent", () => ({
+  createPaymentIntentForPaymentLink: (...args: unknown[]) =>
+    h.createPaymentIntentForPaymentLink(...args),
   PaymentLinkPaymentRecoveryError: class PaymentLinkPaymentRecoveryError extends Error {
     kind = "payment_received_status_unconfirmed";
   },

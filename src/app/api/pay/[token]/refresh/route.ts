@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { reissuePaymentLinkForToken, PaymentLinkError } from "@/lib/payment-link";
+import { PaymentLinkError } from "@/lib/payment-link";
+import { reissuePaymentLinkForToken } from "@/lib/payment-link-reissue";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 
 /**

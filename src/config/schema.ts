@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MODULE_KEYS, type ModuleKey } from "./modules";
 
 function isHttpUrl(value: string): boolean {
   try {
@@ -123,38 +124,18 @@ export const clubConfigSchema = z
 
 export type ClubConfig = z.infer<typeof clubConfigSchema>;
 
+// Derived from MODULE_KEYS rather than spelled out (#2996). The hand-written
+// form was not type-linked to the registry: a key missing here was silently
+// STRIPPED by z.object on parse, so a new module's flag could vanish between
+// storage and every reader with a green typecheck. `modules.ts` imports only the
+// FeatureFlags TYPE from this file, so the import below is not a runtime cycle.
 export const featureFlagsSchema = z
-  .object({
-    kiosk: z.boolean(),
-    chores: z.boolean(),
-    financeDashboard: z.boolean(),
-    waitlist: z.boolean(),
-    xeroIntegration: z.boolean(),
-    bedAllocation: z.boolean(),
-    internetBankingPayments: z.boolean(),
-    addressAutocomplete: z.boolean(),
-    groupBookings: z.boolean(),
-    lockers: z.boolean(),
-    induction: z.boolean(),
-    workParties: z.boolean(),
-    promoCodes: z.boolean(),
-    hutLeaders: z.boolean(),
-    communications: z.boolean(),
-    memberNotices: z.boolean(),
-    eventsCalendar: z.boolean(),
-    skifieldConditions: z.boolean(),
-    twoFactor: z.boolean(),
-    magicLink: z.boolean(),
-    googleLogin: z.boolean(),
-    analytics: z.boolean(),
-    lobbyDisplay: z.boolean(),
-    aiAssistant: z.boolean(),
-    memberGuests: z.boolean(),
-    aiDiagnostics: z.boolean(),
-    maintenanceReports: z.boolean(),
-    alpineCentralServer: z.boolean(),
-    commsPortal: z.boolean(),
-  })
+  .object(
+    Object.fromEntries(MODULE_KEYS.map((key) => [key, z.boolean()])) as Record<
+      ModuleKey,
+      z.ZodBoolean
+    >,
+  )
   .strict();
 
 export type FeatureFlags = z.infer<typeof featureFlagsSchema>;

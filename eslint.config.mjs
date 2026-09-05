@@ -2023,10 +2023,10 @@ const eslintConfig = defineConfig([
       its own measurement.
     */
     /*
-      Every extension the ratchet treats as production, not just .ts/.tsx. Next
-      serves .js/.jsx by default and tsconfig sets allowJs, so a component
-      written as .jsx in this folder would otherwise be scoped out of the very
-      rule this block exists to apply — and, as file-size-budget.ts records, a
+      Every extension the ratchet treats as production, not just .ts/.tsx. Next's
+      default pageExtensions serve .js/.jsx whatever tsconfig says (allowJs has
+      been off since #2693), so a component written as .jsx in this folder
+      would otherwise be scoped out of the very rule this block exists to apply — and, as file-size-budget.ts records, a
       .js file under src is policed by nothing at all.
     */
     files: ["src/components/edit-booking/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}"],

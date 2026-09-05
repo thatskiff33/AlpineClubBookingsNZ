@@ -1,5 +1,5 @@
 import { Role } from "@prisma/client";
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 import { shouldShowMemberOnboarding, type MemberOnboardingProfile } from "@/lib/member-onboarding";
 import {
   MEMBER_LEVEL_ROLE_VALUES,
@@ -111,9 +111,12 @@ describe("account-holder classification (#2383)", () => {
     // checks assignability, NOT coverage: a value added to `enum Role` in
     // prisma/schema.prisma compiles fine while missing from the list, and would
     // then fall straight through to the cancellable default with no test
-    // failing. `RolesMissingFromRoleValues` in member-roles.ts fails the
-    // typecheck in that case; this asserts the same property at runtime against
-    // the generated enum object, so a stale build cannot hide it either.
+    // failing. The type-level line below closes that direction: `Exclude` is
+    // empty today and becomes the missing literal the moment the enum grows,
+    // which fails `npm run typecheck` (#2693 moved it here from an unreferenced
+    // alias in member-roles.ts). The runtime line asserts the same property
+    // against the generated enum object, so a stale build cannot hide it either.
+    expectTypeOf<Exclude<Role, (typeof ROLE_VALUES)[number]>>().toBeNever();
     expect([...ROLE_VALUES].sort()).toEqual(Object.values(Role).sort());
   });
 

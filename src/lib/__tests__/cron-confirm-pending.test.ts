@@ -156,10 +156,16 @@ const mockRevokePaymentLinkById = vi.fn().mockResolvedValue(1);
 vi.mock("@/lib/payment-link", () => ({
   revokePaymentLinksForBooking: (...args: unknown[]) =>
     mockRevokePaymentLinksForBooking(...args),
-  mintSplitGuestPaymentLinkIfAbsent: (...args: unknown[]) =>
-    mockMintSplitGuestPaymentLinkIfAbsent(...args),
   revokePaymentLinkById: (...args: unknown[]) =>
     mockRevokePaymentLinkById(...args),
+}));
+// Partial mock: the mint is stubbed, the real SPLIT_GUEST_PAYMENT_LINK_TEMPLATE
+// flows through so the withheld-row assertion below compares against the
+// production constant rather than a second literal (INV-SSOT-002).
+vi.mock("@/lib/payment-link-split-guest", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/payment-link-split-guest")>()),
+  mintSplitGuestPaymentLinkIfAbsent: (...args: unknown[]) =>
+    mockMintSplitGuestPaymentLinkIfAbsent(...args),
 }));
 
 // Mock promo cleanup used by the whole-bump path.
@@ -1787,11 +1793,14 @@ describe("Cron: Confirm Pending Bookings", () => {
     expect(mockMintSplitGuestPaymentLinkIfAbsent).not.toHaveBeenCalled();
     expect(mockSendSplitGuestPaymentLinkEmail).not.toHaveBeenCalled();
     expect(mockRevokePaymentLinkById).not.toHaveBeenCalled();
+    const { SPLIT_GUEST_PAYMENT_LINK_TEMPLATE } = await import(
+      "@/lib/payment-link-split-guest"
+    );
     expect(mockEmailLogCreate).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
           bookingId: "child_1",
-          templateName: "split-guest-payment-link",
+          templateName: SPLIT_GUEST_PAYMENT_LINK_TEMPLATE,
           status: "SKIPPED_NO_EMAILS",
         }),
       })

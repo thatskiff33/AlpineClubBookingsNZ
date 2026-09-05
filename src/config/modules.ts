@@ -1,4 +1,4 @@
-import type { Prisma } from "@prisma/client";
+import type { ClubModuleSettings, Prisma, PrismaClient } from "@prisma/client";
 import type { FeatureFlags } from "./schema";
 
 export const MODULE_KEYS = [
@@ -55,6 +55,80 @@ export const CLUB_MODULE_SETTINGS_COLUMN_SELECT = {
   updatedAt: true,
   updatedByMemberId: true,
 } satisfies Prisma.ClubModuleSettingsSelect;
+
+/** The id of the one ClubModuleSettings row. `module-settings.ts` re-exports it. */
+export const CLUB_MODULE_SETTINGS_ID = "default";
+
+/** Exactly the columns the canonical select projects. */
+export type ClubModuleSettingsRecord = Pick<
+  ClubModuleSettings,
+  ModuleKey | "updatedAt" | "updatedByMemberId"
+>;
+
+/**
+ * What `readClubModuleSettingsRecord` needs from a client. Structural so that
+ * Prisma's own delegate and the narrow fakes tests inject both satisfy it, and
+ * generic in what `findUnique` resolves to, so a real client yields the full
+ * record and a Partial fake yields its Partial — the caller's own type, not a
+ * cast.
+ */
+export interface ClubModuleSettingsReadClient<TRecord> {
+  clubModuleSettings: {
+    findUnique: (args: {
+      where: { id: string };
+      select: typeof CLUB_MODULE_SETTINGS_COLUMN_SELECT;
+    }) => PromiseLike<TRecord>;
+  };
+}
+
+/**
+ * THE ONE READ of the ClubModuleSettings singleton (#2996; INV-SSOT-001, and
+ * the "unrepresentable over policed" preference of INV-SSOT-003). It owns the
+ * select, so no caller spells one; the guard in
+ * `club-module-settings-select-guard.test.ts` refuses a direct read call
+ * anywhere else, which makes the rule exact rather than a threshold. The one
+ * path it cannot see is config-transfer's generic `delegateOf(...)` read in
+ * `src/lib/config-transfer/categories/club-settings.ts`, which threads the same
+ * select through `spec.select` and is pinned by its own contract test.
+ *
+ * It returns the RAW row — null when the club has never saved the Modules page
+ * — and neither normalises nor defaults nor catches. That is deliberate: setup
+ * readiness tells never-saved from saved by exactly that null, and the tolerant
+ * loaders that map null to the defaults or swallow a read failure sit above
+ * this in `module-settings.ts` and `admin-modules.ts`, each with its own
+ * documented reason.
+ *
+ * WHY HERE and not in `module-settings.ts`: this module has no runtime imports,
+ * so a caller gains no prisma or logger edge by reaching it; and 65 test files
+ * replace `@/lib/module-settings` with a mock factory, every one of which would
+ * have needed this export added before `admin-modules` and `lodge-capacity`
+ * could call it. Nothing mocks this module with a factory.
+ */
+export function readClubModuleSettingsRecord(
+  db: Pick<PrismaClient, "clubModuleSettings">,
+): Promise<ClubModuleSettingsRecord | null>;
+export function readClubModuleSettingsRecord<TRecord>(
+  db: ClubModuleSettingsReadClient<TRecord>,
+): Promise<TRecord>;
+export async function readClubModuleSettingsRecord(
+  db: Pick<PrismaClient, "clubModuleSettings"> | ClubModuleSettingsReadClient<unknown>,
+): Promise<unknown> {
+  // Two overloads because Prisma's delegate is generic over its own args and
+  // TypeScript cannot unify that with a concrete structural signature — it
+  // infers the UNNARROWED row and then rejects the narrowed one the call
+  // returns. The real client therefore gets the projection type stated
+  // outright, a fake keeps whatever its own findUnique resolves to, and the one
+  // place the two meet is this narrowing of the delegate.
+  //
+  // Written as `client.clubModuleSettings.findUnique(` on purpose: the guard
+  // recognises the delegate call by that spelling and asserts this file is the
+  // one read it exempts, so a shape it cannot see would fail the self-check.
+  const client = db as unknown as ClubModuleSettingsReadClient<unknown>;
+  return client.clubModuleSettings.findUnique({
+    where: { id: CLUB_MODULE_SETTINGS_ID },
+    select: CLUB_MODULE_SETTINGS_COLUMN_SELECT,
+  });
+}
 
 // Default activation for a club that has not saved its Modules page yet. The
 // optional "capability" modules (which require deploy-time setup such as Xero

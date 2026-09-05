@@ -111,15 +111,17 @@ import {
   FINANCIAL_REVIEW_WORKING_IT_OUT,
 } from "@/lib/booking-financial-review-copy";
 import {
-  createPaymentIntentForPaymentLink,
-  getPaymentLinkContext,
-  issueSplitGuestPaymentLink,
-  mintSplitGuestPaymentLinkIfAbsent,
-  reissuePaymentLinkForToken,
   resolvePaymentLink,
   revokePaymentLinkById,
   revokePaymentLinksForBooking,
 } from "@/lib/payment-link";
+import { getPaymentLinkContext } from "@/lib/payment-link-context";
+import { reissuePaymentLinkForToken } from "@/lib/payment-link-reissue";
+import { createPaymentIntentForPaymentLink } from "@/lib/payment-link-intent";
+import {
+  issueSplitGuestPaymentLink,
+  mintSplitGuestPaymentLinkIfAbsent,
+} from "@/lib/payment-link-split-guest";
 
 const mockedFindUnique = vi.mocked(prisma.paymentLink.findUnique);
 const mockedUpdate = vi.mocked(prisma.paymentLink.update);
@@ -692,7 +694,7 @@ describe("getPaymentLinkContext under an open financial review", () => {
     WHAT THIS CHECKS, EXACTLY (renamed in review, #3194): that this module hands
     the review answer to the shared resolver and then adds NO WORDING OF ITS OWN.
     Both sides below are the same pure function over the same facts, so it is a
-    pin on `payment-link.ts`, not on the booking-detail page - it renders none of
+    pin on `payment-link-context.ts`, not on the booking-detail page - it renders none of
     that page and would not notice a change to it.
 
     It is kept rather than deleted because the second assertion gives it teeth:
