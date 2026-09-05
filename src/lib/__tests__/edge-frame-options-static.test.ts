@@ -97,20 +97,49 @@ function readEdgeConfig(relativePath: string) {
  * directive stand in for the app site's floor — verified by deleting the app
  * site's line and watching the unscoped assertion still pass.
  */
+/** Index of the `}` closing the block opened at `start`. */
+function endOfBlock(source: string, start: number) {
+  let depth = 0;
+
+  for (let i = start; i < source.length; i += 1) {
+    if (source[i] === "{") depth += 1;
+    else if (source[i] === "}" && --depth === 0) return i;
+  }
+
+  throw new Error("unbalanced braces: could not find the end of the block");
+}
+
+/**
+ * A Caddyfile's GLOBAL OPTIONS block is the one whose address is empty, so
+ * nothing but comments and whitespace precedes its `{`.
+ *
+ * It has to be recognised and skipped rather than counted, because it is not a
+ * site: it carries no `header` directive, so treating it as the primary site
+ * block made the eager-DENY assertion below scan an empty haystack. #3293 added
+ * one to `Caddyfile` and `Caddyfile.staging` (the redacting default logger), and
+ * the guard went red — correctly, but for the wrong reason. A site address is
+ * blanked to `PLACEHOLDER` by the caller before this runs, so `{$DOMAIN} {`
+ * leaves `PLACEHOLDER ` in front of its brace and is never mistaken for one.
+ */
+function opensWithGlobalOptionsBlock(source: string, firstBrace: number) {
+  return /^(?:\s*(?:#[^\n]*)?\n)*\s*$/.test(source.slice(0, firstBrace));
+}
+
 function primarySiteBlock(config: string) {
   // Caddy placeholders (`{$DOMAIN}`, `{uri}`, `{path}`) use braces too. They
   // never contain whitespace and a block opener always does (a newline follows
   // it), so blanking them leaves only real block delimiters to count.
   const source = config.replace(/\{[^{}\s]*\}/g, "PLACEHOLDER");
-  const start = source.indexOf("{");
-  let depth = 0;
+  const firstBrace = source.indexOf("{");
+  const start = opensWithGlobalOptionsBlock(source, firstBrace)
+    ? source.indexOf("{", endOfBlock(source, firstBrace) + 1)
+    : firstBrace;
 
-  for (let i = start; i < source.length; i += 1) {
-    if (source[i] === "{") depth += 1;
-    else if (source[i] === "}" && --depth === 0) return source.slice(start + 1, i);
+  if (start === -1) {
+    throw new Error("no site block follows the global options block");
   }
 
-  throw new Error("unbalanced braces: could not find the primary site block");
+  return source.slice(start + 1, endOfBlock(source, start));
 }
 
 /** Every `X-Frame-Options` directive in the file, with its matcher token. */
@@ -129,6 +158,39 @@ function frameOptionsDirectives(config: string) {
       ),
     );
 }
+
+describe("primarySiteBlock", () => {
+  // The eager-DENY assertion would pass VACUOUSLY if this helper ever returned
+  // the wrong block and `frameOptionsDirectives` therefore found nothing, so the
+  // skip is asserted directly rather than left to be implied.
+  it("skips a leading global options block and returns the first site block", () => {
+    const config = [
+      "# leading comment",
+      "{",
+      "\tlog default {",
+      "\t\tformat json",
+      "\t}",
+      "}",
+      "",
+      "{$DOMAIN} {",
+      '\theader { X-Frame-Options "DENY" }',
+      "}",
+    ].join("\n");
+
+    const block = primarySiteBlock(config);
+
+    expect(block).toContain('X-Frame-Options "DENY"');
+    expect(block).not.toContain("log default");
+  });
+
+  it("returns the first block when there is no global options block", () => {
+    const config = ['{$DOMAIN} {', '\theader { X-Frame-Options "DENY" }', "}"].join(
+      "\n",
+    );
+
+    expect(primarySiteBlock(config)).toContain('X-Frame-Options "DENY"');
+  });
+});
 
 describe.each(EDGE_CONFIGS)("%s edge X-Frame-Options (#2246)", (configName) => {
   const config = readEdgeConfig(configName);
