@@ -46,6 +46,7 @@ import {
   type NewBookingExceptionExtras,
 } from "@/lib/booking-exception-offer";
 import { useAgeTierOptions } from "@/lib/use-age-tier-options";
+import { formatCents, formatSignedCents } from "@/lib/utils";
 import { CheckCircle2, CreditCard, Landmark } from "lucide-react";
 import type {
   AvailablePromoCode,
@@ -55,15 +56,6 @@ import type {
   RoomOption,
   WorkPartyEvent,
 } from "./types";
-
-function formatCents(cents: number) {
-  return `$${(cents / 100).toFixed(2)}`;
-}
-
-function formatSignedCents(cents: number) {
-  const prefix = cents > 0 ? "+" : "-";
-  return `${prefix}${formatCents(Math.abs(cents))}`;
-}
 
 export function ReviewStep({
   checkIn,
