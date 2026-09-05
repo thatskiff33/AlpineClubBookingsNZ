@@ -731,7 +731,13 @@ under `pg_advisory_xact_lock` on both member ids (sorted order, so pair
 transactions cannot deadlock) and backstopped by two raw partial unique indexes
 (`MemberPartnerLink_memberA/B_confirmed_unique WHERE status = 'CONFIRMED'`,
 documented in `prisma/partial-unique-indexes.tsv`); both members must be ADULT
-and active; consent is required from the other member unless (a) an admin
+and active; and **neither a PENDING nor a CONFIRMED partner pair may also be a
+direct parent/dependant pair in either orientation**, through either
+`Member.parentMemberId` or `Member.secondaryParentId`. The exclusion is
+symmetric: every partner writer checks direct parentage, and every writer that
+adds a parent to an existing member checks every partner status. Candidate
+lists are a usability aid only; the under-lock write guard is authoritative.
+Consent is required from the other member unless (a) an admin
 assigns the link directly (`assignedByAdminId` recorded, CONFIRMED
 immediately; both members are then emailed unless the assigning admin chose
 not to notify — the suppression is audited `notifyMember: false`, #1769a),
@@ -769,9 +775,15 @@ same message, no link id or status — with the suppressed attempt audited
 confirmed-partner check runs only after every requester-side conflict so no
 error ordering re-opens the probe. Unknown-email (404) and
 not-adult (422) feedback stays distinguishable, and the family memberId path
-keeps its specific conflict errors. A link claim conflict on token claim (either side already has a confirmed
-partner, inviter no longer eligible) skips the link without failing the
-family-group join, and the skip is audited.
+keeps its specific conflict errors. A link claim conflict on token claim
+(either side already has a confirmed partner, inviter no longer eligible, or
+the two members are directly related as parent/dependant) skips the link without
+failing the family-group join, and the skip is audited. The successful family
+join retains its own audit and notifications; no partner-link success audit or
+partner notification is emitted for the skipped relationship. A by-email
+direct-parent conflict follows the same generic-success privacy boundary as the
+already-partnered suppression: no link, partner email, or partner-link success
+audit, and no membership oracle.
 
 ## INV-LIFE-025
 
