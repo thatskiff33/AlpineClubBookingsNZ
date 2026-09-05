@@ -1,7 +1,7 @@
 # File-size allowances for #3268
 
 file: src/lib/cron-confirm-pending.ts
-lines: 1773
+lines: 1760
 reason: the terminal-versus-retry decision itself lives in the new module
   `saved-card-charge-failure.ts`; what grows here is the one call site in the
   per-booking catch block that has to run AFTER `releaseChargeClaim` and
@@ -15,7 +15,7 @@ reason: the terminal-versus-retry decision itself lives in the new module
   is not in.
 
 file: src/lib/payment-transactions.ts
-lines: 1170
+lines: 1158
 reason: the saved-card derivation rule (INV-PAY-054, "the ledger never moves a
   saved card") is one conditional inside `reconcilePaymentAggregates`, next to
   the intent-id derivation it deliberately diverges from; lifting one column's
