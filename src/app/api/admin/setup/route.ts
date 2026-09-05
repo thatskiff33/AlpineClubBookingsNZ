@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { getDefaultLodgeCapacity } from "@/lib/lodge-capacity";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 import { getSetupDatabaseSnapshot } from "@/lib/setup-readiness-db";

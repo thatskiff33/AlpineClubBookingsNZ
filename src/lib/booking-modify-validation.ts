@@ -16,7 +16,6 @@ import {
 } from "@prisma/client";
 
 import { ApiError } from "@/lib/api-error";
-import type { EditFinancialReviewOccurrence } from "@/lib/edit-financial-review-context";
 import {
   OtherLodgeRateInProgressError,
   requestCarriesOtherLodgeElection,

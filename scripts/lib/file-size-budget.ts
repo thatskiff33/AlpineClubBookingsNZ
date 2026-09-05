@@ -80,10 +80,11 @@ export type OversizedFileStat = FileStat & Budget & { overBy: number };
  * to read as progress. The file could then grow 500 lines with the gate green.
  * It was reachable, not theoretical: Next's default `pageExtensions` is
  * `['tsx','ts','jsx','js']` and `next.config.ts` overrides nothing, so
- * `route.js` and `page.jsx` are served normally; `tsconfig.json` sets
- * `allowJs: true` and its `include` names `.mts` explicitly; and every custom
- * lint rule block is scoped to `.ts`/`.tsx` under `src`, so a `.js` file there
- * was policed by nothing at all — not the ratchet, not the lint rules, not tsc.
+ * `route.js` and `page.jsx` are served normally whatever `tsconfig.json` says
+ * (`allowJs` has been off since #2693, so tsc reads no `.js` at all); and every
+ * custom lint rule block is scoped to `.ts`/`.tsx` under `src`, so a `.js` file
+ * there was policed by nothing at all — not the ratchet, not the lint rules,
+ * not tsc.
  *
  * Widening this set is zero churn today — tracked `src/` is 2500 `.ts`, 874
  * `.tsx`, 2 `.css`, 1 `.md`, 1 `.json` — but the set is still a list, and a

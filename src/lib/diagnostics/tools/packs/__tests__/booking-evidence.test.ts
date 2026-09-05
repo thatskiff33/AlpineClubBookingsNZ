@@ -228,7 +228,6 @@ import {
   DIAGNOSTICS_READ_ONLY_TRANSACTION_TIMEOUT_MS,
   resolveReadOnlyMaxWaitMs,
 } from "../../read-only-transaction";
-import { DIAGNOSTICS_TOOL_BOUNDS } from "../../types";
 import {
   AID6B_BOOKING_GUEST_CEILING,
   AID6B_CAPACITY_NIGHT_CEILING,
