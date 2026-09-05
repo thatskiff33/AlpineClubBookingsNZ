@@ -180,8 +180,8 @@ derivation).
   `isGuestActiveOnNight`, `findLodgeGuestDepartingOnDate` (depart) with
   `isGuestDepartureMorning`. Three things are load-bearing:
   - **The night rule is NOT folded into the `where`.** The fragments there are
-    the enforcement gates — member consent [D-12/#2307], pending admin review
-    [#1372/#1422], lodge scope and booking status — and they collapse to one
+    the enforcement gates — member consent, pending admin review
+, lodge scope and booking status — and they collapse to one
     uninformative "nothing matched" so a refused caller learns nothing. "You are
     not booked in tonight" is a fact about the booking, not the caller's rights,
     so arrive answers `409 GUEST_NOT_BOOKED_THIS_NIGHT` while `403` stays
@@ -341,15 +341,14 @@ derivation).
 
   **The two mistakes fail differently, and the local-midnight one is worse
   (#2838).** A bound is narrowed to a `DATE` parameter by its UTC calendar date
-  (`mapArg`'s `case "DATE"` in `@prisma/adapter-pg`). A raw `new Date()` lands on
+. A raw `new Date()` lands on
   the previous NZ day for the first ~12-13h of each NZ day; `setHours(0,0,0,0)`
   under the `TZ=Pacific/Auckland` pin narrows to `D-1` **all day, every day**,
 . One day early on the
   value is one day LATE on the window: `checkIn <= tomorrow` / `checkOut >=
   today` evaluated at `D-1` admits `[checkIn, checkOut+1]` instead of
   `[checkIn-1, checkOut]` — the window `getKioskAccessTier`
-  (`src/lib/kiosk-access.ts`) enforces for a stay (`[startDate-1, endDate]` for a
-  hut-leader assignment). #2838 fixed the member-facing reads
+ enforces for a stay. #2838 fixed the member-facing reads
   (`dashboard-club-day-boundaries.test.tsx`,
   `authenticated-layout-club-day-boundaries.test.tsx`); #2868 fixed the Xero
   repair sweep's window as a SPLIT — a date-only bound for `Booking.checkIn`, a
@@ -358,8 +357,7 @@ derivation).
   `xero-booking-repair-scope-window.test.ts`.
 
   **A spelling finds candidates; only the CALL GRAPH settles them.** `setHours`
-  is not an ISO truncation, so #2684's lint rule cannot see it. After #2870 the only `setHours` in non-test
-  application code is `guest-chore-token.ts`'s hour-adding expiry. **Read that as
+  is not an ISO truncation, so #2684's lint rule cannot see it. **Read that as
   "no site is currently known", never "the class is closed"**; #2684's lint rule
   is what would close it.
 
@@ -423,12 +421,9 @@ derivation).
   February for an identity check versus compare the day as written); the two can
   only disagree when the REFERENCE date is 28 February, and `computeAge`'s
   reference is always a season start, day 1 of a month, so on the price path the
-  divergence is **structurally unreachable** (`computeAgeOnCalendarDays`'s
-  docblock).
+  divergence is **structurally unreachable**.
 
-  The correct reading of a UTC-midnight column is UTC getters, `formatDateOnly`
-  or the kernel's `calendarDateOfDateOnlyInstant`; no local-getter reader is left
-  on this path.
+
 
 ### INV-DATE-026
 
@@ -587,8 +582,7 @@ derivation).
   rule over `src/**` blocks all three, with its documented exclusions in
   `eslint.config.mjs`. Three files format NUMBERS with
   `Number.prototype.toLocaleString` and carry a narrowed rule lifting only that
-  call. The selector is syntactic, so computed access and detached-method
-  aliasing escape it — an accepted limitation. A screen whose format is
+  call. A screen whose format is
   legitimately none of the six declares a module-level
   `new Intl.DateTimeFormat(APP_LOCALE, { timeZone: APP_TIME_ZONE, … })` constant;
   that, not an `eslint-disable`, is the escape hatch, and there are no disables
@@ -745,7 +739,7 @@ derivation).
   deadline to the member's card inherited from the parent payment. When the
   parent is settled without a saved card (Internet Banking, or already
   CONFIRMED/PAID/COMPLETED), `cron-confirm-pending.ts` instead mints a tokenised
-  `/pay/<token>` PaymentLink (#707) and emails it to the member — once per mint,
+  `/pay/<token>` PaymentLink and emails it to the member — once per mint,
   deduped on the absence of an active PaymentLink for the child
   (`mintSplitGuestPaymentLinkIfAbsent`) — and fires an admin alert on **every**
   hold-extension run until the child settles. If the parent itself is unpaid, no
@@ -758,11 +752,11 @@ derivation).
   revokes links, the /pay intent path re-reads the link and
   the on-demand path refuses when a saved card exists. The residual in-flight
   window is backstopped (#1992): a link PaymentIntent minted BEFORE the claim is
-  best-effort cancelled on Stripe first, and if the member's confirm still wins,
+ cancelled on Stripe first, and if the member's confirm still wins,
   `markBookingPaymentSucceeded` auto-refunds whichever DISTINCT capture arrives
   second — durably with a loud admin alert —
   while a SAME-intent replay keeps its `already_paid` outcome and at most one
-  side can ever be refunded (adjudication under `lock(1)`). A capture already
+  side can ever be refunded. A capture already
   owned by the superseded-intent recovery machinery (`CANCEL_PAYMENT_INTENT` /
   `REFUND_SUPERSEDED_PAYMENT`) is never mistaken for the settlement side of such
   a pair. No beds are held for the child until it is paid. The same machinery
@@ -791,9 +785,7 @@ derivation).
   `approveMemberWholeLodgeRequest`, `reassignHeldBookingGuests` and
   `holdBookingRequestSlots` — all write them. `HeldBookingGuestInput.nights` is
   REQUIRED and `toPipelineGuestCreateData` requires `nights` with no fallback, so
-  a sixth pipeline without a night set is a TYPE ERROR, pinned by the
-  `@ts-expect-error` case in
-  `src/lib/__tests__/booking-request-guest-nights.test.ts`.
+  a sixth pipeline without a night set is a TYPE ERROR, pinned by `booking-request-guest-nights.test.ts`.
 - **The rows are half-open and NZ date-only**, built through the pricing
   engine's own night list: nights over `[checkIn, checkOut)` [INV-DATE-003] at
   the storage encoding [INV-DATE-013].
@@ -804,7 +796,7 @@ derivation).
   does. OFFICER-TOTAL (public approval, quote hold, flat whole-lodge or manual
   override, backfill) divides to the exact cent with the extra cents on the
   EARLIEST nights — the `evenlySplitCents` vector
-  (`src/lib/xero-booking-invoices.ts`) — so Xero line items are byte-identical
+ — so Xero line items are byte-identical
   whether the rows exist or not. `buildApprovalGuestNights` refuses a vector that
   does not reconcile to the stored `priceCents` and divides instead.
 - **The rows are the #1036 locked prices on the one edit path reaching these
@@ -957,7 +949,7 @@ every bed allocation where it was. Neither #1756 scope
 fits, so merge runs `sweepUnbackedFutureSharedDoublesWithLocksHeld`
 (`bed-allocation-lifecycle.ts`): for the `[master, loser]` scope it re-derives
 each candidate future bed-night's actual two occupants and re-asks
-`mayShareDoubleBedWith` (the batched `mayShareDoubleBed`) whether they may still
+`mayShareDoubleBedWith` whether they may still
 share, sweeping ONLY the bed-nights that fail — only the `isSecondOccupant` row,
 with the same `BED_ALLOCATION_PARTNER_SHARE_SWEPT` audit against both bookings
 (reason `members_merged`, `issue: 2595`) and the same post-commit admin alert. A
@@ -974,7 +966,7 @@ booking they hold a guest row on, no date filter since #2672) plus two run-time
 checks — the sweep re-derives the guest-row lodges under merge's `Member … FOR
 UPDATE` and refuses the whole merge with a 409 if the prefix no longer covers
 them, and refuses rather than judge a bed-night whose room sits outside the set
-(docs/CONCURRENCY_AND_LOCKING.md → "Merge joins the bed-allocation cohort"). That
+(docs/CONCURRENCY_AND_LOCKING.md). That
 derivation reads `Booking.lodgeId` as **immutable for the row's life**, which the
 schema does not enforce, so `bed-allocation-lock-topology-contract.test.ts` fails
 the build on any writer of that column: a `Booking` update takes no lock on
@@ -995,8 +987,7 @@ still occupies, never treats a two-booking bed-night as a SINGLE-BED displacemen
 target, and counts an emptied double as one freed bed. Auto-allocation never creates a second occupant;
 every other bed type stays one occupant per night. DB-enforced without CHECK
 constraints: `@@unique([bedId, stayDate, isSecondOccupant])` caps a bed-night at
-≤2 rows and a raw-SQL partial unique index (`WHERE "bedType" <> 'DOUBLE'`,
-`prisma/partial-unique-indexes.tsv`) caps every non-DOUBLE bed at one;
+≤2 rows and a raw-SQL partial unique index (`prisma/partial-unique-indexes.tsv`) caps every non-DOUBLE bed at one;
 `BedAllocation.bedType` is the denormalized copy that index reads.
 
 The **base** capacity figure is unchanged — a shared double is ONE bed of
@@ -1004,10 +995,9 @@ The **base** capacity figure is unchanged — a shared double is ONE bed of
 one **partner-shared slot** of admission headroom (#1745): reserved (only
 `checkCapacityForPartnerSharedAdmission` on the admin-initiated partner flow may
 use it; every other path reads the base `getLodgeCapacity`), bounded (≤ active
-DOUBLE count per night, the sharer's partner holding a base-backed place, modulo
-the #1668 forced-overbook residual), and capped by an explicit
+DOUBLE count per night, the sharer's partner holding a base-backed place), and capped by an explicit
 `LodgeSettings.capacity`, which limits *people*, so a `capped_beds` lodge gets no
-headroom (docs/CAPACITY_MODEL.md, "Partner-shared double-bed headroom").
+headroom (docs/CAPACITY_MODEL.md).
 Initiation is admin-only (#1746): `partnerSharedGuests` flags are rejected for
 non-admin actors at route and service, quick-add candidates are server-computed
 (`listBookingPartnerSharingCandidates`), and the public wizard carries no
@@ -1218,7 +1208,7 @@ capacity or double-booking violation.
   target). A tierless unknown occupant counts as an adult for the cross-booking
   age-mix guard. An officer-kept overlapping booking is therefore never
   auto-placed onto beds the held group is using; those guest-nights surface as
-  `NO_BED_AVAILABLE` (#119/#177). Being unattributed is a property of the
+  `NO_BED_AVAILABLE`. Being unattributed is a property of the
   bed-NIGHT: a real `BedAllocation` row can legitimately share a held bed-night
   (decision 1 never refuses the overlapping booking), planner occupancy is keyed
   `bedId:stayDate`, and evicting the co-located booking releases that booking's
@@ -1234,9 +1224,7 @@ capacity or double-booking violation.
   untouched:** ADR-001 decision 1 hands an overlap to the booking officer, and a
   write-time refusal would remove that path. The officer sees the board's banner
   plus the **Overlaps exclusive hold** chip, and a hold with no guests entered yet blocks without appearing in the
-  banner. Source: `src/lib/exclusive-hold-occupancy.ts`; guards:
-  `src/lib/__tests__/exclusive-hold-planner-occupancy.test.ts` and the
-  whole-lodge entries in `src/lib/__tests__/custodian-write-path-contract.test.ts`.
+  banner. Source `exclusive-hold-occupancy.ts`; guards `exclusive-hold-planner-occupancy.test.ts` and `custodian-write-path-contract.test.ts`.
 
 ### INV-CAP-024
 
@@ -1308,8 +1296,7 @@ capacity or double-booking violation.
   source/destination/booking/occupant lodge union -> sorted member-lifecycle ->
   sorted member-partner-link -> deterministic allocation-row locks. It re-reads
   and re-digests before one guarded `UPDATE ... FROM (VALUES ...)` statement
-  (up to 366 rows, explicit 30-second transaction and 10-second acquisition
-  budgets). Cancellation uses the same global key, so a move can never resurrect
+  (up to 366 rows, bounded budgets). Cancellation uses the same global key, so a move can never resurrect
   a pruned row. Changed rows keep their original NZ dates, become unapproved
   `MANUAL` drafts, and commit with any partner promotions and bounded causal
   audits. Unchanged rows are digest-bound but excluded from feasibility,
@@ -1471,7 +1458,7 @@ occupancy** (#2286).
   on one — `allocateBedNightWithLocksHeld`, the range assign's `CUSTODIAN_HOLD`
   classification, `runAutoBedAllocation`'s in-transaction re-filter, and the
   lifecycle reconcile's `dropRowsOnCustodianHeldBedNights`. (2) Every placement transaction this code **opens itself**
-  takes `acquireLodgeCapacityLock` as its first statement, sorted across lodges
+  takes `acquireLodgeCapacityLock` as its first statement
 ; a reconcile inside a CALLER's transaction inherits
   that caller's lock discipline and still re-filters at write time.
   `custodian-write-path-contract.test.ts` fails CI on an undeclared write path

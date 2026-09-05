@@ -782,7 +782,7 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   inbound reconcile creates the member credit and enqueues the offsetting
   account-credit note — both sized at the minted amount — and retires the
   now-obsolete still-PENDING invoice-clearing refund note, all in ONE
-  transaction, then alerts the admins exactly once. Cash arriving AFTER a mint
+  transaction, then alerts once. Cash arriving AFTER a mint
   never credits automatically; when a later event's fully-verified cash exceeds
   the minted credit the reconcile alerts with the delta, and cash-classified
   evidence that quantifies to zero on a never-settled payment alerts as a payload
@@ -1252,7 +1252,7 @@ one, check the other.
 
 - **The card route is capped before it claims, and keyed to the TASK.** The cap
   is measured off the booking's captured `PaymentTransaction` rows, not off
-  `Payment.source`, which DEFAULTS to `STRIPE`. Both the cap and the frozen
+  `Payment.source`. Both the cap and the frozen
   per-transaction allocation are answered before the claim, because
   `refundPaymentTransactions` refuses after the commit, where a refusal would
   leave a permanently COMPLETED task with nothing moved. The Stripe idempotency

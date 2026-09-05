@@ -629,8 +629,7 @@ per-action choice covers the standalone **guest-removal** route
 emailing", the suppression also covering the linked provisional split children
 cancelled with the parent) (#1705). Both routes 403 the flag from any
 non-(booking-management)-ADMIN caller, force notify for non-admin actors
-(cancellation at the service, `cancelBooking`; guest removal in the route
-handler), default to notify when the flag is absent, and record a suppressed
+, default to notify when the flag is absent, and record a suppressed
 send as `notifyMember: false` in the audit metadata. Refund/credit settlement,
 audit, booking events, waitlist processing, and the admin-facing alerts are
 never affected by the choice.
@@ -758,9 +757,7 @@ full sense: an approve and a reject race the same guard, and a later approval
 releasing that claim in turn writes the marker again. The fact travels **in the
 row**: `PENDING` with a `reviewedAt` and no `reviewedBy` is a combination no
 other writer can produce, so it is a marker and not a heuristic
-(`deletionApprovalWasReleased`, `src/lib/deletion-request-decision.ts`; it
-deliberately overloads `reviewedAt` instead of adding a column, and every reader
-goes through that predicate). It is written by the same single guarded mutation
+(`deletionApprovalWasReleased` in `deletion-request-decision.ts`; every reader goes through that predicate). It is written by the same single guarded mutation
 as the transition, so it cannot lag, be lost or be forged in a note. The admin
 queue shows it as "approval started and released back to pending" with the
 release reason, never as a completed review; the reject dialog repeats it; and

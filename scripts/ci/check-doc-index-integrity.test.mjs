@@ -21,6 +21,9 @@ import {
   auditEncoding,
   auditTextScanCoverage,
   auditWordBudgets,
+  auditIndexCatalogueRows,
+  auditInvisibleCharacters,
+  WORD_BUDGET_EXCEPTION_CEILING_MAX,
   countWords,
   formatWordInventory,
   INDEX_ROW_WORD_CAP,
@@ -2878,8 +2881,9 @@ describe("word budgets (#2789)", () => {
 
     it("does not count Markdown structure or bare punctuation as words", () => {
       // A pipe, a list dash, an em dash, an arrow and a lone asterisk are not
-      // words; `**bold**`, `` `code` `` and `#2789` are.
-      expect(countWords("| - — -> * **bold** `code` #2789 v0.13")).toBe(4);
+      // words; `**bold**`, `` `code` `` and `#2789` are, and `v0.13` is two
+      // (the dot separates, so a path counts one word per segment).
+      expect(countWords("| - — -> * **bold** `code` #2789 v0.13")).toBe(5);
     });
 
     it("counts non-Latin letters, since the corpus carries te reo Maori", () => {
@@ -2972,7 +2976,7 @@ describe("word budgets (#2789)", () => {
       expect(entries.get("INV-MONEY-002")).toEqual({ at: "docs/invariants/money.md:9", words: 3 });
     });
 
-    it("ends an entry at a same-level structural heading but keeps a deeper one inside it", () => {
+    it("keeps same-level and deeper narrative headings inside the entry; only the section above ends it", () => {
       const files = repo({
         "docs/invariants/money.md": [
           "# Money",
@@ -2997,8 +3001,9 @@ describe("word budgets (#2789)", () => {
           "",
         ].join("\n"),
       });
-      // 10 body words + the 8 words of the sub-heading + 5 words beneath it.
-      expect(measureInvariantEntryWords(files).get("INV-MONEY-001").words).toBe(23);
+      // 10 body + 8 (deeper heading) + 5 + 6 (same-level heading) + 100 beneath it;
+      // the 100 words under `## Section two` are structure and count nowhere.
+      expect(measureInvariantEntryWords(files).get("INV-MONEY-001").words).toBe(129);
     });
 
     it("counts fenced code and table rows: bulk is bulk", () => {
@@ -3069,12 +3074,14 @@ describe("word budgets (#2789)", () => {
       });
       const entries = measureInvariantEntryWords(files);
       expect([...entries.keys()]).toEqual(["INV-MONEY-001"]);
-      expect(entries.get("INV-MONEY-001").words).toBe(401);
+      // 200 + 200 + the three tokens of the lookalike heading (its hyphens are
+      // U+2011, which is a separator, not part of a word).
+      expect(entries.get("INV-MONEY-001").words).toBe(403);
 
       // Both defences fire in one run: the budget names the whole count, and the
       // shape audit names the codepoint.
       const problems = auditDocs(files);
-      expect(problems.some((problem) => problem.includes("is 401 words"))).toBe(true);
+      expect(problems.some((problem) => problem.includes("is 403 words"))).toBe(true);
       expect(problems.some((problem) => problem.includes("U+2011"))).toBe(true);
     });
 
@@ -3325,6 +3332,367 @@ describe("word budgets (#2789)", () => {
       const [largestId, largest] = [...entries].sort(([, a], [, b]) => b.words - a.words)[0];
       expect(inventory.split("\n")[0]).toContain(`${largest.words}  ${largestId}`);
       expect(inventory).toContain(`${entries.size} entries`);
+    });
+  });
+});
+
+describe("word budgets — gate-bypass review", () => {
+  describe("gate-bypass review (#2789 F1-F7)", () => {
+    const prose = (n) => Array.from({ length: n }, (_, i) => `w${i + 1}`).join(" ");
+    const repoWithEntry = (n, extra = {}) =>
+      repo({
+        "docs/invariants/money.md": ["# Money", "", "## INV-MONEY-001", "", prose(n), ""].join(
+          "\n",
+        ),
+        ...extra,
+      });
+    const register = ({ exceptions = [], ratchet = [] } = {}) =>
+      [
+        "# Word budgets",
+        "",
+        "## Approved exceptions",
+        "",
+        "| ID | Ceiling | Deciding issue | Reason |",
+        "| --- | ---: | --- | --- |",
+        ...exceptions,
+        "",
+        "## Migration ratchet",
+        "",
+        "| ID | Words |",
+        "| --- | ---: |",
+        ...ratchet,
+        "",
+      ].join("\n");
+
+    describe("F1 — invisible characters cannot glue words", () => {
+      // Each is a format character (Cf) except U+2800, the Braille blank.
+      const glue = {
+        "U+200B ZERO WIDTH SPACE": "​",
+        "U+2060 WORD JOINER": "⁠",
+        "U+00AD SOFT HYPHEN": "­",
+        "U+180E MONGOLIAN VOWEL SEPARATOR": "᠎",
+        "U+2800 BRAILLE PATTERN BLANK": "⠀",
+      };
+
+      it.each(Object.entries(glue))("counts words joined by %s separately", (_, ch) => {
+        const joined = Array.from({ length: 30 }, (_, i) => `w${i}`).join(ch);
+        expect(countWords(joined)).toBe(30);
+        // The bypass measured 300 glued words as 10 tokens.
+        const groups = Array.from({ length: 10 }, () =>
+          Array.from({ length: 30 }, (_, i) => `x${i}`).join(ch),
+        ).join(" ");
+        expect(countWords(groups)).toBe(300);
+      });
+
+      it("still counts a hyphenated word, a contraction and a marked word once", () => {
+        expect(countWords("date-only isn’t Māori")).toBe(3);
+      });
+
+      it("counts a path per segment and an issue number as one word", () => {
+        expect(countWords("`src/lib/date-only.ts` #2789")).toBe(5);
+      });
+
+      it.each(Object.entries(glue))(
+        "fails any tracked Markdown file carrying %s, naming file, line and column",
+        (_, ch) => {
+          const files = repoWithEntry(10, {
+            "docs/guide.md": `# Guide\n\nSee [invariants](DOMAIN_INVARIANTS.md).\n\nplain ${ch}glued\n`,
+          });
+          files.set(
+            "docs/README.md",
+            `${files.get("docs/README.md")}- [Guide](guide.md)\n`,
+          );
+          const problems = auditInvisibleCharacters(files);
+          expect(problems).toHaveLength(1);
+          expect(problems[0]).toContain("docs/guide.md:5:7");
+          expect(problems[0]).toContain(
+            `U+${ch.codePointAt(0).toString(16).toUpperCase().padStart(4, "0")}`,
+          );
+          expect(auditDocs(files).filter((p) => p.includes("invisible"))).toHaveLength(1);
+        },
+      );
+
+      it("does not report the byte-order mark twice, and ignores non-Markdown files", () => {
+        const files = repoWithEntry(10, {
+          "src/lib/x.ts": "const zwsp = 'a​b';\n",
+        });
+        expect(auditInvisibleCharacters(files)).toEqual([]);
+        files.set("docs/invariants/money.md", `﻿${files.get("docs/invariants/money.md")}`);
+        expect(auditInvisibleCharacters(files)).toEqual([]);
+        expect(auditEncoding(files).some((p) => p.includes("byte-order mark"))).toBe(true);
+      });
+
+      it("an oversize entry glued with U+2800 fails the budget AND the invisible audit", () => {
+        const glued = Array.from({ length: 10 }, () =>
+          Array.from({ length: 31 }, (_, i) => `g${i}`).join("⠀"),
+        ).join(" ");
+        const problems = auditDocs(repoWithEntry(0).set(
+          "docs/invariants/money.md",
+          ["# Money", "", "## INV-MONEY-001", "", glued, ""].join("\n"),
+        ));
+        expect(problems.some((p) => p.includes("is 310 words; the budget is 300"))).toBe(true);
+        expect(problems.filter((p) => p.includes("U+2800")).length).toBeGreaterThan(0);
+      });
+    });
+
+    describe("F2 — an entry ends only at a definition or a section heading", () => {
+      const bodyOf = (n, extraLines) =>
+        ["# Money", "", ...extraLines(n), ""].join("\n");
+
+      it("keeps a deeper narrative heading and its prose inside the entry", () => {
+        const files = repoWithEntry(0, {
+          "docs/invariants/money.md": bodyOf(0, () => [
+            "## INV-MONEY-001",
+            "",
+            prose(200),
+            "",
+            "### Background",
+            "",
+            prose(200),
+          ]),
+        });
+        expect(measureInvariantEntryWords(files).get("INV-MONEY-001").words).toBe(401);
+        expect(auditDocs(files).some((p) => p.includes("is 401 words"))).toBe(true);
+      });
+
+      it("keeps a SAME-level narrative heading inside a ### entry; only the ## section ends it", () => {
+        const files = repoWithEntry(0, {
+          "docs/invariants/money.md": bodyOf(0, () => [
+            "## Section one",
+            "",
+            "### INV-MONEY-001",
+            "",
+            prose(200),
+            "",
+            "### Background",
+            "",
+            prose(200),
+            "",
+            "## Section two",
+            "",
+            prose(500),
+          ]),
+        });
+        // 200 + "Background" + 200; the 500 words under the next section are structure.
+        expect(measureInvariantEntryWords(files).get("INV-MONEY-001").words).toBe(401);
+      });
+
+      it("treats a closed ATX heading (### Background ###) the same way", () => {
+        const files = repoWithEntry(0, {
+          "docs/invariants/money.md": bodyOf(0, () => [
+            "## INV-MONEY-001",
+            "",
+            prose(200),
+            "",
+            "### Background ###",
+            "",
+            prose(200),
+          ]),
+        });
+        expect(measureInvariantEntryWords(files).get("INV-MONEY-001").words).toBe(401);
+      });
+
+      it("keeps a Setext-underlined heading inside a ## entry", () => {
+        const files = repoWithEntry(0, {
+          "docs/invariants/money.md": bodyOf(0, () => [
+            "## INV-MONEY-001",
+            "",
+            prose(200),
+            "",
+            "Background",
+            "----------",
+            "",
+            prose(200),
+          ]),
+        });
+        expect(measureInvariantEntryWords(files).get("INV-MONEY-001").words).toBe(401);
+      });
+
+      it("still ends at the next canonical definition and at the file's section heading", () => {
+        const files = repoWithEntry(0, {
+          "docs/invariants/money.md": bodyOf(0, () => [
+            "## INV-MONEY-001",
+            "",
+            prose(10),
+            "",
+            "## INV-MONEY-002",
+            "",
+            prose(20),
+            "",
+            "# Appendix",
+            "",
+            prose(100),
+          ]),
+        });
+        const entries = measureInvariantEntryWords(files);
+        expect(entries.get("INV-MONEY-001").words).toBe(10);
+        expect(entries.get("INV-MONEY-002").words).toBe(20);
+      });
+    });
+
+    describe("F3 — a homoglyph in the id's letters is caught, not skipped", () => {
+      it("does not let a Cyrillic І in ІNV-… end an entry, and the shape audit names it", () => {
+        // U+0406 CYRILLIC CAPITAL LETTER BYELORUSSIAN-UKRAINIAN I, not ASCII I.
+        const files = repoWithEntry(0, {
+          "docs/invariants/money.md": ["# Money", "", "## Section", "", "### INV-MONEY-001", "", prose(200), "", "## ІNV-MONEY-002", "", prose(200), ""].join("\n"),
+        });
+        const entries = measureInvariantEntryWords(files);
+        expect([...entries.keys()]).toEqual(["INV-MONEY-001"]);
+        expect(entries.get("INV-MONEY-001").words).toBe(401);
+        const problems = auditDefinitionHeadingShapes(files);
+        expect(problems.some((p) => p.includes("U+0406"))).toBe(true);
+      });
+
+      it("fails a homoglyph id in a register row instead of skipping it", () => {
+        const problems = auditWordBudgets(
+          repoWithEntry(10, {
+            [WORD_BUDGET_REGISTER]: register({ ratchet: ["| `ІNV-MONEY-001` | 500 |"] }),
+          }),
+        );
+        expect(problems.some((p) => p.includes("not a well-formed ratchet row"))).toBe(true);
+      });
+    });
+
+    describe("F4 — the documented numbers are pinned exactly", () => {
+      const scheme = () => readFileSync(path.join(REPO_ROOT, INVARIANT_SCHEME), "utf8");
+      const section81 = (text) => {
+        const start = text.indexOf("### 8.1 ");
+        expect(start).toBeGreaterThan(0);
+        const rest = text.slice(start);
+        const end = rest.search(/\n---\n|\n## /);
+        return end > 0 ? rest.slice(0, end) : rest;
+      };
+      const boldWordValues = (text) =>
+        [...text.matchAll(/\*\*(\d+) words\*\*/g)].map((m) => Number(m[1]));
+
+      it("§8.1 states both budgets in the exact sentence shapes", () => {
+        const s = section81(scheme());
+        expect(s).toMatch(
+          new RegExp(`An index-row description is at most \\*\\*${INDEX_ROW_WORD_CAP} words\\*\\*`),
+        );
+        expect(s).toMatch(
+          new RegExp(`An invariant entry is at most \\*\\*${INVARIANT_ENTRY_WORD_BUDGET} words\\*\\*`),
+        );
+        expect(new Set(boldWordValues(s))).toEqual(
+          new Set([INDEX_ROW_WORD_CAP, INVARIANT_ENTRY_WORD_BUDGET]),
+        );
+      });
+
+      it("every **N words** in SCHEME.md and WORD_BUDGETS.md is one of the two constants", () => {
+        const registerText = readFileSync(path.join(REPO_ROOT, WORD_BUDGET_REGISTER), "utf8");
+        const values = [...boldWordValues(scheme()), ...boldWordValues(registerText)];
+        expect(values.length).toBeGreaterThanOrEqual(4);
+        expect(new Set(values)).toEqual(new Set([INDEX_ROW_WORD_CAP, INVARIANT_ENTRY_WORD_BUDGET]));
+      });
+
+      it("would fail if §8.1 said 13", () => {
+        const mutated = scheme().replace(
+          `An index-row description is at most **${INDEX_ROW_WORD_CAP} words**`,
+          "An index-row description is at most **13 words**",
+        );
+        expect(mutated).not.toBe(scheme());
+        expect(new Set(boldWordValues(section81(mutated)))).not.toEqual(
+          new Set([INDEX_ROW_WORD_CAP, INVARIANT_ENTRY_WORD_BUDGET]),
+        );
+      });
+    });
+
+    describe("F5 — every row of a catalogue table is an id row", () => {
+      it("fails a continuation row with an empty first cell", () => {
+        const files = repo();
+        files.set(
+          "docs/DOMAIN_INVARIANTS.md",
+          `${files.get("docs/DOMAIN_INVARIANTS.md").trimEnd()}\n| | and forty more words that the cap never sees |\n`,
+        );
+        const problems = auditIndexCatalogueRows(files);
+        expect(problems).toHaveLength(1);
+        expect(problems[0]).toContain("docs/DOMAIN_INVARIANTS.md:8");
+        expect(problems[0]).toContain("not a backticked invariant id");
+        expect(auditDocs(files).filter((p) => p.includes("not a backticked"))).toHaveLength(1);
+      });
+
+      it("fails a prose row too, and leaves the header and separator alone", () => {
+        const files = repo();
+        files.set(
+          "docs/DOMAIN_INVARIANTS.md",
+          `${files.get("docs/DOMAIN_INVARIANTS.md").trimEnd()}\n| See above | more |\n`,
+        );
+        expect(auditIndexCatalogueRows(files)).toHaveLength(1);
+        expect(auditIndexCatalogueRows(repo())).toEqual([]);
+      });
+
+      it("ignores tables whose header is not ID, such as the routing table", () => {
+        const files = repo();
+        files.set(
+          "docs/DOMAIN_INVARIANTS.md",
+          `${files.get("docs/DOMAIN_INVARIANTS.md")}\n| File | Prefixes | Read it when |\n| --- | --- | --- |\n| [\`money.md\`](invariants/money.md) | \`INV-MONEY\` | cents |\n`,
+        );
+        expect(auditIndexCatalogueRows(files)).toEqual([]);
+      });
+    });
+
+    describe("F6 — register rows parse in linear time", () => {
+      it("parses an exception row padded with 16k spaces well under a bound", () => {
+        const padded = `| \`INV-MONEY-001\` | 400 | #2789 | reason${" ".repeat(16_000)}|`;
+        const files = repoWithEntry(10, { [WORD_BUDGET_REGISTER]: register({ exceptions: [padded] }) });
+        const started = process.hrtime.bigint();
+        const parsed = parseWordBudgetRegister(files);
+        const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
+        expect(parsed.problems).toEqual([]);
+        expect(parsed.exceptions.get("INV-MONEY-001").reason).toBe("reason");
+        expect(elapsedMs).toBeLessThan(50);
+      });
+
+      it("refuses a cell that carries a literal pipe rather than guessing the columns", () => {
+        const problems = parseWordBudgetRegister(
+          repoWithEntry(10, {
+            [WORD_BUDGET_REGISTER]: register({
+              exceptions: ["| `INV-MONEY-001` | 400 | #2789 | a | b |"],
+            }),
+          }),
+        ).problems;
+        expect(problems).toHaveLength(1);
+        expect(problems[0]).toContain("not a well-formed exception row");
+      });
+    });
+
+    describe("F7 — numeric and reason cells are strict", () => {
+      it.each([
+        ["| `INV-MONEY-001` | 04615 |", "leading zero"],
+        ["| `INV-MONEY-001` | 0 |", "zero"],
+        ["| `INV-MONEY-001` | 4,615 |", "thousands separator"],
+      ])("rejects the ratchet count %s (%s)", (row) => {
+        const problems = parseWordBudgetRegister(
+          repoWithEntry(10, { [WORD_BUDGET_REGISTER]: register({ ratchet: [row] }) }),
+        ).problems;
+        expect(problems).toHaveLength(1);
+        expect(problems[0]).toContain("not a well-formed ratchet row");
+      });
+
+      it.each([
+        ["| `INV-MONEY-001` | 5001 | #2789 | reason |", "ceiling above the maximum"],
+        ["| `INV-MONEY-001` | 0400 | #2789 | reason |", "leading zero"],
+        ["| `INV-MONEY-001` | 400 | #2789 | - |", "dash reason"],
+        ["| `INV-MONEY-001` | 400 | #2789 | — |", "em-dash reason"],
+      ])("rejects the exception row %s (%s)", (row) => {
+        const problems = parseWordBudgetRegister(
+          repoWithEntry(10, { [WORD_BUDGET_REGISTER]: register({ exceptions: [row] }) }),
+        ).problems;
+        expect(problems).toHaveLength(1);
+        expect(problems[0]).toContain("not a well-formed exception row");
+      });
+
+      it("accepts the maximum ceiling itself", () => {
+        const parsed = parseWordBudgetRegister(
+          repoWithEntry(10, {
+            [WORD_BUDGET_REGISTER]: register({
+              exceptions: [`| \`INV-MONEY-001\` | ${WORD_BUDGET_EXCEPTION_CEILING_MAX} | #2789 | atomic |`],
+            }),
+          }),
+        );
+        expect(parsed.problems).toEqual([]);
+        expect(parsed.exceptions.get("INV-MONEY-001").ceiling).toBe(WORD_BUDGET_EXCEPTION_CEILING_MAX);
+      });
     });
   });
 });

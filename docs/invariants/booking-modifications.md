@@ -475,8 +475,7 @@ aspirational: the snapshot is per GUEST, the locked prices are per NIGHT
 guest and applies it to every night run of that guest even though runs are split by
 price change. So overwriting the snapshot on a stay that mixes locked and
 newly-priced nights posts the locked MEMBER-rate nights under the newly resolved
-NON_MEMBER item code. Pre-#2543 the trigger was a mid-booking membership-type
-change, i.e. rare; #2543 made it the ordinary case for any unpaid member editing a
+NON_MEMBER item code. #2543 made this the ordinary case for any unpaid member editing a
 booking in a `NON_MEMBER_PRICING` club. The residual, stated plainly, is that such a
 guest keeps the OLD item code for the newly priced nights too — the same direction
 the locked price itself takes, and the only per-guest answer available until an item

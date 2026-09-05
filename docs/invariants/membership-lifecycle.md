@@ -539,12 +539,11 @@ Configuration and lifecycle guards:
   save surfaces the old/new age tier in its critical audit record, and binds the
   resulting tier into the preview's HMAC token so a tier-relevant drift is
   stale-detected. The same save backs the members-page BULK membership-type
-  change (#2107, `bulkSaveSeasonalMembershipAssignments`): each member is
+  change (#2107): each member is
   previewed and saved individually with its own HMAC token and its own critical
-  per-member audit row (plus one important-severity summary), a stale token or a
+  per-member audit row, a stale token or a
   linked-guest block isolates that member as a per-member outcome without
-  aborting the rest, and the up-to-100 per-member Xero contact-group syncs are
-  suppressed in favour of one deferred batched reconcile after the loop.
+  aborting the rest, and per-member Xero syncs are replaced by one deferred batched reconcile.
 - Season roll-forward and the Xero member-import are `INV-LIFE-091`.
 
 ## INV-LIFE-091
@@ -739,9 +738,8 @@ self-partnering is unrepresentable) with a `PENDING -> CONFIRMED` lifecycle,
 independent of family groups, and the eligibility signal for double-bed shared
 occupancy (#1741). **At most one CONFIRMED partner per member at a time**,
 enforced in `src/lib/member-partner-link.ts` under `pg_advisory_xact_lock` on
-both member ids in sorted order and backstopped by two raw partial unique indexes
-(`MemberPartnerLink_memberA/B_confirmed_unique WHERE status = 'CONFIRMED'`,
-`prisma/partial-unique-indexes.tsv`). Both members must be ADULT and active.
+both member ids and backstopped by two raw partial unique indexes
+(`prisma/partial-unique-indexes.tsv`). Both members must be ADULT and active.
 Consent is required from the other member unless (a) an admin assigns the link
 directly (`assignedByAdminId` recorded, CONFIRMED immediately; both members
 emailed unless the admin suppressed notification, audited, #1769a), (b) the target has **no login** and the initiator is the adult recorded
@@ -1465,8 +1463,7 @@ Every Family Group admin workflow (link, approve, create, edit, remove) shows th
 member's **calculated age**. The invariants:
 
 - **One helper.** `src/lib/member-age.ts` is the only place age is derived, and
-  `src/lib/__tests__/member-identity-age-surfaces.test.ts` pins the complete list
-  of modules that call it or carry its `ageLabel` output.
+  `member-identity-age-surfaces.test.ts` pins every caller.
 - **Nothing is stored.** There is no age column and no cached value; age is
   recomputed on every read. `Member.ageTier` remains a separate, deliberately
   stored classification and is never used to infer an age.
@@ -1481,10 +1478,9 @@ member's **calculated age**. The invariants:
 - **Age is as at today; an age tier is as at the season start.**
   `formatMemberIdentityAge` defaults to the club's current calendar day, while
   `Member.ageTier` is
-  `computeAgeTierWithSettings(dob, getSeasonStartDate(...))` and holds until the
-  next rollover in `cron-age-up.ts`. Wherever a tier label carrying a numeric
+  `computeAgeTierWithSettings(dob, getSeasonStartDate(...))`. Wherever a tier label carrying a numeric
   range is rendered next to an age, the UI states the season-start basis
-  (`request-review-card.tsx`).
+.
 - **The browser is sent the age, not the birth date.** Every family-group payload
   that needs identity information carries a finished `ageLabel` string and no
   `dateOfBirth`. The one date of birth still rendered is the value the REQUESTER
@@ -1581,11 +1577,7 @@ participants, no DB CHECK constraint.
     (password-reset / email-verification / email-change tokens, all 2FA rows,
     partner-invite tokens) are never moved; they die with `member.delete(loser)`.
   - **snapshot** — FK-less scalar member-id columns
-    (`MemberLifecycleActionRequest.memberId`, `BookingModification.memberId`,
-    `MemberApplication` nominator/reviewer ids, `NominationToken`,
-    `IssueReport.resolvedById`, `AuditLog` columns, the settings-audit
-    `updatedByMemberId` columns, `CalendarEvent`/`CalendarEventSeries.createdById`,
-    …) are **left pointing at the loser's id by design** as immutable history.
+    (`MemberLifecycleActionRequest.memberId`, `BookingModification.memberId`, `AuditLog` columns, …) are **left pointing at the loser's id by design** as immutable history.
     These carry no `@relation`, so the relation walk cannot see them; they are
     enumerated mechanically instead: any FK-less `String` column whose name is
     used elsewhere in the schema as a Member FK column must appear in

@@ -73,7 +73,7 @@ File: [`invariants/public-content.md`](invariants/public-content.md). Prefix
 
 | ID | Covers |
 | --- | --- |
-| `INV-PUB-001` | Fee/policy PageContent blocks are enabled and server-rendered; a token alone publishes nothing |
+| `INV-PUB-001` | Fee/policy PageContent blocks are enabled and server-rendered; tokens alone publish nothing |
 | `INV-PUB-002` | Public fees use current effective-dated schedules; joining fees resolve from `JoiningFee` only |
 | `INV-PUB-003` | A named lodge token resolves one active lodge or nothing |
 
@@ -127,7 +127,7 @@ number and prefix, and it is listed at the end of the table below.
 | `INV-DATE-001` | The stay boundary is stated once here; reference it, never restate it |
 | `INV-DATE-002` | Night N runs midday NZ date N to midday N+1 |
 | `INV-DATE-003` | A stay is `[checkIn, checkOut)` expanded to nights; explicit `BookingGuestNight` rows override |
-| `INV-DATE-004` | Presence on day D: morning half from D−1's night, evening from D's |
+| `INV-DATE-004` | Presence on day D: morning from the previous night, evening from D |
 | `INV-DATE-005` | Two helper families — night model for resources, operational-day for people |
 | `INV-DATE-020` | One expander turns a stay into nights; its envelope branch stays half-open |
 | `INV-DATE-021` | Kiosk attendance is one current state per stay, re-read per segment |
@@ -137,7 +137,7 @@ number and prefix, and it is listed at the end of the table below.
 | `INV-DATE-007` | Departing lodge A and arriving at lodge B same date is legal |
 | `INV-DATE-008` | Zero-night bookings expand to no nights and every route refuses them |
 | `INV-DATE-009` | Six areas sit deliberately outside the boundary and must not be aligned |
-| `INV-DATE-010` | `@db.Date` holds a club calendar date; UTC midnight is encoding, not meaning |
+| `INV-DATE-010` | `@db.Date` holds a club calendar date; UTC midnight is encoding only |
 | `INV-DATE-011` | Lodge bookings use NZ date-only nights, not arbitrary timestamps |
 | `INV-DATE-012` | `BookingGuest.stayStart`/`stayEnd` are date-only occupancy in the envelope |
 | `INV-DATE-013` | Compare date columns only against date-only values, never a raw clock |
@@ -242,7 +242,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-012` | The public payment link refuses a booking carrying an election |
 | `INV-PAY-013` | Stripe and Internet Banking/Xero settlement paths must remain distinct |
 | `INV-PAY-014` | Stripe paths own PaymentIntents, SetupIntents, refunds, webhooks and recovery operations |
-| `INV-PAY-015` | Internet Banking bookings issue Xero invoices and reconcile through Xero invoice/payment state |
+| `INV-PAY-015` | Internet Banking bookings issue Xero invoices and reconcile through Xero state |
 | `INV-PAY-016` | Internet Banking defaults are non-holding and no-cutoff; an enabled hold releases idempotently |
 | `INV-PAY-017` | Hold-expiry release and its invoice-clearing credit-note outbox row commit in one transaction |
 | `INV-PAY-018` | Cancelling never rewrites captured-payment truth; "captured" is decided on ledger evidence |
@@ -263,7 +263,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-032` | Group children confirmed before payment have a reaper releasing beds and notifying |
 | `INV-PAY-033` | Reverted group children end terminally: a second reap window cancels once |
 | `INV-PAY-034` | Organiser-cancel cleanup is re-drivable; the frozen per-child refund plan is never recomputed |
-| `INV-PAY-035` | Organiser cancellation is a durable settlement fence, written under global `lock(1)` first |
+| `INV-PAY-035` | Organiser cancellation is a durable settlement fence, written under `lock(1)` first |
 | `INV-PAY-036` | Each group-cancel child's refund credit-note enqueue commits inside that child's cancel transaction |
 | `INV-PAY-037` | Failed settlement refunds stay durably owed; no child mirror applies twice |
 
@@ -489,7 +489,7 @@ Prefix `INV-LOCKOUT`.
 | `INV-LOCKOUT-060` | A silenced waitlist entry keeps its place and quoted position |
 | `INV-LOCKOUT-061` | Xero-sent invoice emails are gated too, superseding the #1705 always-send carve-out |
 | `INV-LOCKOUT-062` | Enabling the switch requires an acknowledgement; both set and clear are audited |
-| `INV-LOCKOUT-063` | The acknowledgement is a two-button dialog, never a checkbox, gated on `bookings:edit` |
+| `INV-LOCKOUT-063` | The acknowledgement is a two-button dialog, never a checkbox; `bookings:edit` |
 | `INV-LOCKOUT-064` | A persistent banner lists what was withheld, grouped per template with counts |
 | `INV-LOCKOUT-065` | Two consequences nothing can record are stated in the acknowledgement dialog |
 | `INV-LOCKOUT-066` | A member must never learn the switch exists, render or RSC |
@@ -660,7 +660,7 @@ is now `INV-OPS-005` to `INV-OPS-011` in
 | `INV-LIFE-068` | MG4's member-guest picker: email mode `bookings:edit`, name mode also `membership:view` |
 | `INV-LIFE-069` | On-behalf creation matches modification, and no on-behalf actor may target themselves |
 | `INV-LIFE-070` | A Booking Officer may inline-create a non-login non-member booking owner |
-| `INV-LIFE-071` | Legacy `Member.role` reads, seasonal assignment storage, and age tiers stay separate axes |
+| `INV-LIFE-071` | Legacy `Member.role`, seasonal assignment storage and age tiers stay separate axes |
 | `INV-LIFE-072` | Built-in membership types never delete or merge; custom merges have preconditions |
 | `INV-LIFE-073` | `NOT_APPLICABLE` is resolved by one shared helper on a four-step precedence ladder |
 | `INV-LIFE-018` | Guards for age-exempt types, allowed-tier edits and N/A flips |
@@ -752,7 +752,7 @@ File: [`invariants/integrations.md`](invariants/integrations.md). Prefix
 | `INV-INT-013` | Mode or rule changes never auto-resync; members re-group on next trigger |
 | `INV-INT-014` | Per-member sync: Xero calls outside transactions, ops ledgered, adds before removes |
 | `INV-INT-015` | The bulk re-sync is admin-triggered, dry-run-first, chunked, resumable, never moves the watermark |
-| `INV-INT-016` | `GET /api/bookings/rooms` keeps its no-`lodgeId` mode for external consumers only |
+| `INV-INT-016` | The rooms API keeps its no-`lodgeId` mode for external consumers only |
 | `INV-INT-017` | Xero NZBN field carries date of birth via one shared codec |
 
 ## Operations
@@ -780,7 +780,7 @@ the row-locking rules it is the sibling of.
 | `INV-OPS-007` | The surviving guard test pins the generated client's shape and raw SQL |
 | `INV-OPS-008` | Payload readers must be gone before the drop, not just authorisation readers |
 | `INV-OPS-009` | How the role-column drop shipped, and why the two-step plan was superseded |
-| `INV-OPS-010` | A windowed drop: the `windowed` ledger row, `rollback.sql`, and the operator sequence |
+| `INV-OPS-010` | A windowed drop: the `windowed` ledger row, rollback SQL, operator sequence |
 | `INV-OPS-011` | The dropped column's stored values were meaningless rather than frozen |
 | `INV-OPS-003` | Public CI and local validation must use test/demo credentials or placeholders |
 | `INV-OPS-004` | Production data, backups, live providers and webhooks are not test inputs |

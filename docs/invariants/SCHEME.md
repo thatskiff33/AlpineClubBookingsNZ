@@ -823,13 +823,18 @@ and the same script enforces both:
   exceptions, no ratchet. Say what the rule covers, not what it says.
 - An invariant entry is at most **300 words** by default. An entry runs from its
   canonical definition heading to the next canonical definition, or to the next
-  heading of the same or a higher level that carries no invariant-shaped token;
-  everything between counts, fenced code and deeper sub-headings included. A
-  heading that only *looks* like a definition never ends an entry, so an
-  oversize one cannot be split into two compliant halves by a lookalike.
+  heading ABOVE its own level that carries no invariant-shaped token — the
+  file's section headings. Everything between counts, fenced code and
+  same-level or deeper sub-headings included: `### Background` inside an entry
+  is part of it, never a way to split it. A heading that only *looks* like a
+  definition — a lookalike, a homoglyph, a Setext underline — never ends an
+  entry either.
 
-A **word** is a whitespace-separated token containing at least one letter or
-digit; a lone pipe, dash or arrow is structure. Read a figure the way the gate
+A **word** is a run of letters, digits, combining marks, connector punctuation,
+apostrophes and hyphens that contains a letter or digit; a lone pipe, dash or
+arrow is structure, a path counts one word per segment, and no invisible
+character can join two words (every tracked Markdown file is free of Unicode
+format characters and the Braille blank, checked by the same gate). Read a figure the way the gate
 does with `node scripts/ci/check-doc-index-integrity.mjs --words`.
 
 **Semantic correctness beats compactness, always.** Never broaden, narrow or

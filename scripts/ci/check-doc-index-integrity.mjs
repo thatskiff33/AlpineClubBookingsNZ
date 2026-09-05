@@ -1171,9 +1171,12 @@ function stripInlineHtmlTags(text) {
  */
 function nonAsciiInsideInvariantWord(line) {
   for (const run of line.split(/[^\p{L}\p{N}\p{Pd}_&#;]+/u)) {
-    if (!/INV/i.test(run.normalize("NFKC")) || !/[^\x20-\x7e]/.test(run)) {
-      continue;
-    }
+    if (!/[^\x20-\x7e]/.test(run)) continue;
+    const folded = run.normalize("NFKC");
+    // Either the run says INV in any script that folds to it, or it has the
+    // whole three-letters-prefix-number shape with a non-ASCII letter standing
+    // in for one of the ASCII ones (Cyrillic І for I, for example).
+    if (!/INV/i.test(folded) && !/\p{Lu}{3}-\p{Lu}+-\d/u.test(folded)) continue;
     const offender = [...run].find((ch) => !/[\x20-\x7e]/.test(ch));
     const codePoint = offender.codePointAt(0).toString(16).toUpperCase();
     return {
@@ -1537,17 +1540,21 @@ export function auditIndexRows(files) {
  *    split) or a migration-ratchet record (the exact count it had when it was
  *    last measured, which may only go down).
  *
- * A **word** is a whitespace-separated token containing at least one letter or
- * digit, so a lone pipe, dash, em dash or arrow is Markdown structure rather
- * than a word. An **entry** runs from a canonical definition heading to the
- * next canonical definition, or to the next heading of the same or a higher
- * level that carries no invariant-shaped token. Everything in between counts,
- * including fenced code and deeper sub-headings: the budget is about how much a
- * reader has to hold, not about which syntax it arrived in. A heading that
- * *looks* like a definition but is not canonical — a lookalike codepoint, a
- * Setext underline, a heading inside a list — never ends an entry, so it cannot
- * be used to split an oversize one into two compliant halves; the shape audit
- * above fails the heading itself in the same run.
+ * A **word** is a run of letters, digits, combining marks, connector
+ * punctuation, apostrophes and hyphens containing at least one letter or digit
+ * ({@link WORD_SEPARATOR_PATTERN}); a lone pipe, dash, em dash or arrow is
+ * Markdown structure, a path is as many words as it has segments, and no
+ * invisible character can join two words ({@link auditInvisibleCharacters}).
+ * An **entry** runs from a canonical definition heading to the next canonical
+ * definition, or to the next heading ABOVE the definition's own level that
+ * carries no invariant-shaped token — the file's section headings. Everything
+ * in between counts, including fenced code and same-level or deeper
+ * sub-headings: the budget is about how much a reader has to hold, not about
+ * which syntax it arrived in. A heading that *looks* like a definition but is
+ * not canonical — a lookalike codepoint, a homoglyph, a Setext underline, a
+ * heading inside a list — never ends an entry, so it cannot be used to split an
+ * oversize one into two compliant halves; the shape audit above fails the
+ * heading itself in the same run.
  *
  * Every failure names the id, the measured count and the limit that applied,
  * because a person reading it has to know which of the three knobs to turn.
@@ -1570,16 +1577,45 @@ export const WORD_BUDGET_REGISTER = "docs/invariants/WORD_BUDGETS.md";
 export const WORD_BUDGET_EXCEPTIONS_HEADING = "Approved exceptions";
 export const WORD_BUDGET_RATCHET_HEADING = "Migration ratchet";
 
-const WORD_BUDGET_EXCEPTION_ROW_PATTERN =
-  /^ {0,3}\|\s*`(INV-[A-Z][A-Z0-9]*-\d{3})`\s*\|\s*(\d+)\s*\|\s*(#\d+)\s*\|\s*(\S.*?)\s*\|\s*$/;
-const WORD_BUDGET_RATCHET_ROW_PATTERN =
-  /^ {0,3}\|\s*`(INV-[A-Z][A-Z0-9]*-\d{3})`\s*\|\s*(\d+)\s*\|\s*$/;
+/**
+ * A table row is split on its pipes and each cell validated on its own, never
+ * matched by one regex over the whole line: the first cut used
+ * `(\S.*?)\s*\|\s*$` for the reason cell and was quadratic in the run of
+ * spaces before the closing pipe (24 ms at 8k spaces, 99 ms at 16k). A cell
+ * containing a literal pipe is therefore not representable, which is stated
+ * rather than worked around.
+ */
 const TABLE_ROW_PATTERN = /^ {0,3}\|(.*)\|\s*$/;
+const ID_CELL_PATTERN = /^`(INV-[A-Z][A-Z0-9]*-\d{3})`$/;
+/** A whole number with no leading zero: `04615` is a typo, not a count. */
+const WHOLE_NUMBER_PATTERN = /^[1-9]\d*$/;
+const ISSUE_CELL_PATTERN = /^#\d+$/;
+/** No approved ceiling is plausibly above this; a larger one is a typo. */
+export const WORD_BUDGET_EXCEPTION_CEILING_MAX = 5000;
+
+/** The cells of a table row, trimmed, or `null` when the line is not a row. */
+function splitTableCells(line) {
+  const row = line.match(TABLE_ROW_PATTERN);
+  if (!row) return null;
+  return row[1].split("|").map((cell) => cell.trim());
+}
+
+/**
+ * What separates words. Anything that is not a letter, a number, a combining
+ * mark, connector punctuation, an apostrophe or a hyphen ends a token — so the
+ * format characters (U+200B ZERO WIDTH SPACE, U+2060 WORD JOINER, U+00AD SOFT
+ * HYPHEN, U+180E) and U+2800 BRAILLE PATTERN BLANK, which `\\s` does not match
+ * and GitHub renders as a space or as nothing, cannot glue words into one
+ * token. A path such as `src/lib/date-only.ts` therefore counts as four
+ * words and `#2789` as one; the budgets are measured that way and the ratchet
+ * records were re-measured when this rule landed (#2789).
+ */
+export const WORD_SEPARATOR_PATTERN = /[^\p{L}\p{N}\p{M}\p{Pc}'\u2019-]+/u;
 
 /** Count the words in a piece of text, per the definition above. */
 export function countWords(text) {
   let count = 0;
-  for (const token of text.split(/\s+/)) {
+  for (const token of text.split(WORD_SEPARATOR_PATTERN)) {
     if (/[\p{L}\p{N}]/u.test(token)) count += 1;
   }
   return count;
@@ -1608,6 +1644,32 @@ function headingLevel(heading) {
  * reported by {@link auditInvariantIds}, so the first occurrence is measured
  * here and the second is left to that audit.
  */
+/**
+ * A heading that reads as an invariant id — canonical or not — so that no
+ * lookalike, decorated, Setext or homoglyph heading can end an entry early.
+ */
+function readsAsInvariantHeading(heading) {
+  return (
+    INVARIANT_SHAPED_TOKEN_PATTERN.test(headingInvariantShapeText(heading.text)) ||
+    nonAsciiInsideInvariantWord(heading.text) !== null
+  );
+}
+
+/**
+ * Measure every invariant entry: id -> { at, words }.
+ *
+ * Definitions are the canonical headings {@link collectDefinitions} takes. An
+ * entry ends ONLY at the next canonical definition, or at a heading that sits
+ * ABOVE the definition's own level and does not read as an invariant id — the
+ * file's section headings (`##` in a file whose definitions are `###`, the
+ * title in a file whose definitions are `##`). A heading at the same level or
+ * deeper — `### Background`, `### Worked example`, a Setext underline, a closed
+ * `### Background ###` — stays INSIDE the entry and its prose counts, because
+ * splitting an oversize entry with a narrative heading is exactly the move
+ * compaction pressure invites, and prose that belongs to no entry is prose the
+ * budget never sees. A duplicate definition is reported by
+ * {@link auditInvariantIds}, so the first occurrence is measured here.
+ */
 export function measureInvariantEntryWords(files) {
   const entries = new Map();
   const ordered = [...files].sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
@@ -1621,9 +1683,7 @@ export function measureInvariantEntryWords(files) {
         heading.containerDepth === 0 &&
         DEFINITION_PATTERN.test(heading.text),
       level: headingLevel(heading),
-      hasInvariantToken: INVARIANT_SHAPED_TOKEN_PATTERN.test(
-        headingInvariantShapeText(heading.text),
-      ),
+      readsAsInvariant: readsAsInvariantHeading(heading),
       startLine: heading.lineNumbers[0],
     }));
 
@@ -1634,7 +1694,7 @@ export function measureInvariantEntryWords(files) {
       for (const later of headings.slice(index + 1)) {
         if (
           later.isDefinition ||
-          (!later.hasInvariantToken && later.level <= heading.level)
+          (!later.readsAsInvariant && later.level < heading.level)
         ) {
           end = later.startLine;
           break;
@@ -1677,46 +1737,54 @@ export function parseWordBudgetRegister(files) {
       section = heading[1];
       continue;
     }
-    const row = line.match(TABLE_ROW_PATTERN);
-    if (!row) continue;
-    const firstCell = row[1].split("|")[0];
+    const cells = splitTableCells(line);
+    if (!cells) continue;
+    const firstCell = cells[0];
     const idShaped =
       INVARIANT_SHAPED_TOKEN_PATTERN.test(headingInvariantShapeText(firstCell)) ||
       nonAsciiInsideInvariantWord(firstCell) !== null;
     if (!idShaped) continue;
     const at = `${WORD_BUDGET_REGISTER}:${number}`;
+    const id = firstCell.match(ID_CELL_PATTERN)?.[1] ?? null;
 
     if (section === WORD_BUDGET_EXCEPTIONS_HEADING) {
-      const match = line.match(WORD_BUDGET_EXCEPTION_ROW_PATTERN);
-      if (!match) {
+      const [, ceiling, issue, reason] = cells;
+      const wellFormed =
+        id !== null &&
+        cells.length === 4 &&
+        WHOLE_NUMBER_PATTERN.test(ceiling) &&
+        Number(ceiling) <= WORD_BUDGET_EXCEPTION_CEILING_MAX &&
+        ISSUE_CELL_PATTERN.test(issue) &&
+        /[\p{L}\p{N}]/u.test(reason);
+      if (!wellFormed) {
         problems.push(
           `${at} is in the "${section}" table but is not a well-formed exception row. ` +
             "The exact form is | `INV-<PREFIX>-<NNN>` | <ceiling> | #<issue> | <reason> |, " +
-            "with an ASCII id, a whole-number ceiling, the deciding issue as #<number> " +
-            "and a non-empty reason. A row that parses as nothing is a limit that is " +
-            "silently not enforced, so it fails instead.",
+            "with an ASCII id, a whole-number ceiling with no leading zero and at most " +
+            `${WORD_BUDGET_EXCEPTION_CEILING_MAX}, the deciding issue as #<number> and a ` +
+            "reason that says something (not empty, not a dash). A row that parses as " +
+            "nothing is a limit that is silently not enforced, so it fails instead.",
         );
         continue;
       }
-      const [, id, ceiling, issue, reason] = match;
       if (exceptions.has(id) || ratchet.has(id)) {
         problems.push(duplicate(at, id));
         continue;
       }
       exceptions.set(id, { at, ceiling: Number(ceiling), issue, reason });
     } else if (section === WORD_BUDGET_RATCHET_HEADING) {
-      const match = line.match(WORD_BUDGET_RATCHET_ROW_PATTERN);
-      if (!match) {
+      const [, words] = cells;
+      const wellFormed = id !== null && cells.length === 2 && WHOLE_NUMBER_PATTERN.test(words);
+      if (!wellFormed) {
         problems.push(
           `${at} is in the "${section}" table but is not a well-formed ratchet row. ` +
             "The exact form is | `INV-<PREFIX>-<NNN>` | <words> |, with an ASCII id " +
-            "and the whole-number word count the entry had when it was last measured. " +
-            "A row that parses as nothing is a limit that is silently not enforced, so " +
-            "it fails instead.",
+            "and the whole-number word count (no leading zero) the entry had when it " +
+            "was last measured. A row that parses as nothing is a limit that is " +
+            "silently not enforced, so it fails instead.",
         );
         continue;
       }
-      const [, id, words] = match;
       if (exceptions.has(id) || ratchet.has(id)) {
         problems.push(duplicate(at, id));
         continue;
@@ -1838,6 +1906,48 @@ export function auditWordBudgets(files) {
     }
   }
 
+  return problems;
+}
+
+/**
+ * Inside a catalogue table of the index — a table whose header's first cell is
+ * `ID` — every body row's first cell is a backticked id. A row with an empty
+ * first cell renders as a continuation of the description above it and is
+ * counted by nothing, which is a way past the 12-word cap that this closes.
+ */
+export function auditIndexCatalogueRows(files) {
+  const indexText = files.get(INVARIANT_INDEX);
+  if (indexText === undefined) return [];
+  const problems = [];
+  let inCatalogue = false;
+  let sawSeparator = false;
+  for (const { number, text: line } of scannableLines(indexText)) {
+    const cells = splitTableCells(line);
+    if (!cells) {
+      inCatalogue = false;
+      continue;
+    }
+    if (!inCatalogue) {
+      if (cells[0] === "ID") {
+        inCatalogue = true;
+        sawSeparator = false;
+      }
+      continue;
+    }
+    if (!sawSeparator) {
+      sawSeparator = true;
+      if (/^:?-+:?$/.test(cells[0])) continue;
+    }
+    if (!INDEX_ROW_PATTERN.test(line)) {
+      problems.push(
+        `${INVARIANT_INDEX}:${number} is a row of a catalogue table whose first cell is ` +
+          "not a backticked invariant id. Every row of an ID table is one id and its " +
+          "description; a row that starts with anything else — an empty cell, prose, a " +
+          "second description — renders as a continuation of the row above and is " +
+          "counted by nothing.",
+      );
+    }
+  }
   return problems;
 }
 
@@ -2258,6 +2368,41 @@ export function auditControlCharacters(files) {
  * confirms the NUL is really there before reporting it, so the message is true
  * by construction rather than inferred from an absence.
  */
+/**
+ * Format characters and the Braille blank are not words, not spaces and not
+ * visible: U+200B, U+2060, U+00AD, U+180E and friends (Unicode category Cf) and
+ * U+2800 BRAILLE PATTERN BLANK render as nothing or as a space on GitHub while
+ * gluing tokens together for any counter that splits on `\\s`. Three hundred
+ * words joined by U+2800 measured as ten (#2789 gate-bypass review). Every
+ * tracked Markdown file is therefore free of them, with no allowlist; a
+ * byte-order mark at offset 0 is {@link auditEncoding}'s and is not reported
+ * twice.
+ */
+export const INVISIBLE_CHARACTER_PATTERN = /[\p{Cf}\u2800]/gu;
+
+export function auditInvisibleCharacters(files) {
+  const problems = [];
+  for (const rel of [...files.keys()].sort()) {
+    if (!rel.endsWith(".md")) continue;
+    const text = files.get(rel);
+    for (const [index, line] of text.split(/\r?\n/).entries()) {
+      for (const match of line.matchAll(INVISIBLE_CHARACTER_PATTERN)) {
+        if (index === 0 && match.index === 0 && match[0] === BYTE_ORDER_MARK) continue;
+        const codePoint = match[0].codePointAt(0).toString(16).toUpperCase().padStart(4, "0");
+        problems.push(
+          `${rel}:${index + 1}:${match.index + 1} carries U+${codePoint}, an invisible ` +
+            "format character (or the Braille blank). It renders as nothing or as a " +
+            "space, so a reader cannot see it, while it glues words together for any " +
+            "counter that splits on whitespace — which is how a 300-word passage was " +
+            "measured as ten. Delete it; if a soft break or a joiner was meant, use " +
+            "ordinary punctuation instead.",
+        );
+      }
+    }
+  }
+  return problems;
+}
+
 export function auditTextScanCoverage(hiddenFilesWithEarlyNul) {
   return [...hiddenFilesWithEarlyNul]
     .sort((left, right) => left.path.localeCompare(right.path))
@@ -2621,12 +2766,14 @@ export function auditDocs(
     ...auditInvariantIds(files),
     ...auditInvariantFilesLinkedFromIndex(files),
     ...auditIndexRows(files),
+    ...auditIndexCatalogueRows(files),
     ...auditWordBudgets(files),
     ...auditRoutingTable(files),
     ...auditLineNumberCitations(files),
     ...auditDocReachability(files),
     ...auditEncoding(files),
     ...auditControlCharacters(files),
+    ...auditInvisibleCharacters(files),
     ...auditTextScanCoverage(hiddenFilesWithEarlyNul),
     ...auditNumberSequences(files),
     ...(baselineFiles

@@ -215,7 +215,7 @@ configurable palette):
   defaults to the current teal defaults; completed, partially customised, and
   Tokoroa themes remain untouched.
 - **Booking calendar** day buttons now expose their selected state to screen
-  readers (`aria-label` gains ", selected as check-in/​check-out/​within your
+  readers (`aria-label` gains ", selected as check-in/check-out/within your
   selected stay" and `aria-pressed` on the check-in/out days); previously only
   the blue highlight conveyed selection.
 - **Booking wizard step indicator** is now a `nav > ol` with `aria-current="step"`
