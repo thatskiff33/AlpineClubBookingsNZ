@@ -10,6 +10,7 @@ import {
   BookingManualPaymentControls,
   type BookingManualPaymentState,
 } from "@/components/admin/booking-manual-payment-controls";
+import { BookingStoredNightPriceControls } from "@/components/admin/booking-stored-night-price-controls";
 import { AdminReturnToWaitlistControls } from "@/components/admin/admin-return-to-waitlist-controls";
 import { ConfirmPendingGuestsButton } from "@/components/admin/confirm-pending-guests-button";
 import { CopyBookingButton } from "@/components/admin/copy-booking-button";
@@ -21,6 +22,7 @@ import type {
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 import { buildXeroRecordActivityUrl } from "@/lib/xero-record-links";
 import { formatDateOnly } from "@/lib/date-only";
+import type { StrandNightPriceOffer } from "@/lib/stored-night-price-repair";
 import { isFeatureHrefVisible } from "@/config/feature-routes";
 import type { FeatureFlags } from "@/config/schema";
 
@@ -79,6 +81,7 @@ export function AdminBookingToolsCard({
   exclusiveHold,
   noEmails,
   manualPayment,
+  storedNightPriceOffers = [],
   showReturnToWaitlist = false,
   returnToWaitlistReleasesHold = false,
 }: {
@@ -155,6 +158,17 @@ export function AdminBookingToolsCard({
    * booking, which settles nothing.
    */
   manualPayment?: BookingManualPaymentState;
+  /**
+   * #3214 (epic #2797): guest strands on this booking whose stored night prices
+   * cannot be read back, offered to an officer to record.
+   *
+   * The page supplies an EMPTY LIST rather than deciding not to pass the prop:
+   * whether the act is available is a server-side question about the strands
+   * themselves, answered once by `strandNightPriceOffersForBooking`, and a second
+   * condition here would be a second answer to it (`INV-SSOT`). Empty on the
+   * overwhelming majority of bookings, whose rows read back exactly.
+   */
+  storedNightPriceOffers?: StrandNightPriceOffer[];
   /**
    * #2649: offer the stranded-zero-dollar-waitlist-confirm repair. The page
    * sets this only for a booking the audit log PROVES was stranded by a waitlist
@@ -273,6 +287,17 @@ export function AdminBookingToolsCard({
               memberName={memberName}
               state={manualPayment}
               noEmails={noEmails?.noEmails ?? false}
+            />
+          )}
+          {/* #3214: recording what a guest's nights sold for. It sits with the
+              other money controls on this card rather than on the finance
+              queue, because the bookings it is for raise no queue task at all —
+              that is the deadlock the issue exists to break. The component is
+              finance:edit-gated in its own right, matching the route. */}
+          {!isDeleted && storedNightPriceOffers.length > 0 && (
+            <BookingStoredNightPriceControls
+              bookingId={bookingId}
+              offers={storedNightPriceOffers}
             />
           )}
           {/* #2649: the repair for a free waitlist confirm that got half-way.
