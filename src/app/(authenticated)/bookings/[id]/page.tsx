@@ -37,13 +37,11 @@ import { loadBookingDetail } from "./_lib/load-booking-detail";
 import { resolveBookingDetailViewer } from "./_lib/booking-detail-viewer";
 import { resolveBookingDetailConsent } from "./_lib/booking-detail-consent";
 import { loadBookingDetailHistory } from "./_lib/booking-detail-history";
+import { resolveBookingDetailLinkedParty } from "./_lib/booking-detail-linked-party";
 import { buildBookingDetailEditorData } from "./_lib/booking-detail-editor-data";
 import { renderBookingDetailMessages } from "./_lib/booking-detail-messages";
 import { loadBookingDetailAdminTools } from "./_lib/booking-detail-admin-tools";
-import {
-  NonMemberGuestsSection,
-  type NonMemberGuestChild,
-} from "@/app/(authenticated)/bookings/_components/non-member-guests-section";
+import { NonMemberGuestsSection } from "@/app/(authenticated)/bookings/_components/non-member-guests-section";
 import { loadCancellationPolicy } from "@/lib/cancellation";
 import { describeCancellationSchedule } from "@/lib/cancellation-schedule";
 import { WAITLIST_OFFER_HOURS } from "@/lib/waitlist";
@@ -78,7 +76,6 @@ import { loadEmailMessageSettingsForLodge } from "@/lib/email-message-settings";
 import { loadPublicBookingMessages } from "@/lib/booking-message-settings";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { resolveInternalReturnPath } from "@/lib/internal-return-path";
-import { OPENABLE_ORGANISER_STATUSES } from "@/lib/group-booking";
 import { SelfRemoveFromBookingCard } from "@/components/self-remove-from-booking-card";
 import { MemberGuestConsentCard } from "@/components/member-guest-consent-card";
 import {
@@ -95,10 +92,7 @@ import {
 // than a hand-rolled filter. Folding it into the import below would satisfy the
 // compiler and break the guard.
 import { isOperationallyPresentConsent } from "@/lib/member-guest-consent";
-import {
-  OrganiserGroupBookingCard,
-  type OrganiserGroupState,
-} from "@/components/group-booking/organiser-group-booking-card";
+import { OrganiserGroupBookingCard } from "@/components/group-booking/organiser-group-booking-card";
 
 const historyToneClasses: Record<BookingHistoryTone, string> = {
   default: "border-border bg-muted text-muted-foreground",
@@ -447,54 +441,23 @@ export default async function BookingDetailPage({
     ? bookingLodgeEmailSettings
     : null;
 
-  // Split-booking group presentation (#738). Genuine split children only:
-  // #796 group joiners also link via parentBookingId but are presented by the
-  // organiser group card, not as "your provisional non-member guests" — and
-  // the guest-payment-link affordance below must match the send route's
-  // filter (PENDING + hasNonMembers + no join row) so the button never
-  // renders for children the route would refuse.
-  const linkedProvisionalChildren = booking.linkedBookings.filter(
-    (linked) =>
-      linked.status === "PENDING" &&
-      linked.hasNonMembers &&
-      !linked.groupBookingJoin
-  );
-  const provisionalChildGuestCount = linkedProvisionalChildren.reduce(
-    (total, linked) => total + linked.guests.length,
-    0
-  );
-  const hasProvisionalChildren = provisionalChildGuestCount > 0;
-  const isProvisionalChild = Boolean(booking.parentBooking);
-  // #1975: the "Your non-member guests" section lists every genuine #738 split
-  // child regardless of status (a cancelled or bumped child must still be
-  // visible to the member paying for the party), unlike linkedProvisionalChildren
-  // above which is PENDING-only because it gates the guest-payment-link route.
-  // #796 group joiners (which carry a join row) stay excluded — the organiser
-  // group card presents them. Dates are compared as date-only NZ lodge nights.
-  const parentCheckInDate = formatDateOnly(booking.checkIn);
-  const parentCheckOutDate = formatDateOnly(booking.checkOut);
-  const nonMemberGuestChildren: NonMemberGuestChild[] = booking.linkedBookings
-    .filter((linked) => linked.hasNonMembers && !linked.groupBookingJoin)
-    .map((linked) => {
-      const childCheckIn = formatDateOnly(linked.checkIn);
-      const childCheckOut = formatDateOnly(linked.checkOut);
-      return {
-        id: linked.id,
-        status: linked.status,
-        guestCount: linked.guests.length,
-        finalPriceCents: linked.finalPriceCents,
-        datesDiffer:
-          childCheckIn !== parentCheckInDate ||
-          childCheckOut !== parentCheckOutDate,
-        checkIn: linked.checkIn,
-        checkOut: linked.checkOut,
-      };
-    });
-  // Owner and admin viewers see the section; a linked non-member guest viewer
-  // (someone listed on the child) does not manage the parent, so they never
-  // land on this member-facing parent card with children to present.
-  const showNonMemberGuestsSection =
-    !isDeleted && canManageBooking && nonMemberGuestChildren.length > 0;
+  const {
+    provisionalChildGuestCount,
+    hasProvisionalChildren,
+    isProvisionalChild,
+    showNonMemberGuestsSection,
+    nonMemberGuestChildren,
+    isFlaggedProvisional,
+    organiserGroupState,
+    canOpenGroup,
+    showGroupSection,
+  } = resolveBookingDetailLinkedParty({
+    booking,
+    modules,
+    isDeleted,
+    canManageBooking,
+    isBookingOwner,
+  });
   // #1967: once the member's own place is settled by Internet Banking there is
   // no card on file for the later guest charge, so keep the guest-payment-link
   // affordance visible AFTER the switch too (the pre-switch warning below only
@@ -506,11 +469,6 @@ export default async function BookingDetailPage({
     hasProvisionalChildren &&
     Boolean(internetBankingPayment) &&
     booking.status !== "CANCELLED";
-  const isFlaggedProvisional =
-    !booking.parentBookingId &&
-    booking.status === "PENDING" &&
-    booking.cancelIfGuestsBumped &&
-    booking.hasNonMembers;
 
   // Issue #777: a provisional/on-hold PENDING booking shows no pay control,
   // which left testers unsure whether one should exist. The "Save Payment
@@ -581,53 +539,6 @@ export default async function BookingDetailPage({
     retainedAfterCancellationCents,
     internetBankingPayment,
   });
-
-  // Group booking organiser card (#796+). Only the owner manages their group;
-  // the API enforces ownership too. Non-member joins appear once they verify
-  // (i.e. once a child booking exists), so the roster is built from joins that
-  // have a booking.
-  const organiserGroup = booking.groupBookingAsOrganiser;
-  const organiserGroupState: OrganiserGroupState | null = organiserGroup
-    ? {
-        code: organiserGroup.joinCode,
-        status: organiserGroup.status,
-        paymentMode: organiserGroup.paymentMode,
-        joinDeadline: organiserGroup.joinDeadline?.toISOString() ?? null,
-        maxJoiners: organiserGroup.maxJoiners,
-        settlement: organiserGroup.settlement
-          ? {
-              status: organiserGroup.settlement.status,
-              amountCents: organiserGroup.settlement.amountCents,
-              paidAt: organiserGroup.settlement.paidAt?.toISOString() ?? null,
-            }
-          : null,
-        joiners: organiserGroup.joins
-          .filter((join) => join.booking)
-          .map((join) => ({
-            id: join.id,
-            name: join.joinerMember
-              ? `${join.joinerMember.firstName} ${join.joinerMember.lastName}`.trim()
-              : [join.contactFirstName, join.contactLastName]
-                  .filter(Boolean)
-                  .join(" ") || "Guest",
-            guestCount: join.booking?.guests.length ?? 0,
-            status: join.booking?.status ?? null,
-            priceCents: join.booking?.finalPriceCents ?? null,
-            isMember: join.isMember,
-          })),
-      }
-    : null;
-  const canOpenGroup =
-    isBookingOwner &&
-    !isDeleted &&
-    !booking.parentBookingId &&
-    !organiserGroup &&
-    OPENABLE_ORGANISER_STATUSES.includes(booking.status);
-  const showGroupSection =
-    modules.groupBookings &&
-    canManageBooking &&
-    isBookingOwner &&
-    (Boolean(organiserGroupState) || canOpenGroup);
 
   const {
     providerMismatches,
