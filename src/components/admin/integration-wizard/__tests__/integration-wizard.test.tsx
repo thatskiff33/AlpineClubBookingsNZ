@@ -46,7 +46,7 @@ let mockedProgress: {
 beforeEach(() => {
   mockedProgress = null;
   // Cursor GET returns the configured persisted progress; POST is a no-op success.
-  global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+  global.fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
     const method = init?.method ?? "GET";
     if (method === "GET") {
       return {

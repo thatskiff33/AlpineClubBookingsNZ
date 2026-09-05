@@ -2655,6 +2655,7 @@ rate-limited, or temporarily unavailable.
 | Variable                               | Description                                                           |
 | -------------------------------------- | --------------------------------------------------------------------- |
 | `DOMAIN`                               | Public domain used by Caddy.                                          |
+| `KEEP_ALIVE_TIMEOUT`                   | How long the Next.js server holds an idle keep-alive connection open, in milliseconds. Default `65000`, set on every app service in `docker-compose.yml`. **It must stay above the proxy's idle-connection timeout** — Caddy's is `30s`, set as `transport http { keepalive }` in `deploy/caddy/tacbookings-active.caddy` and `Caddyfile.staging`. Left unset it falls back to Node's ~5s, which is *below* Caddy's 2-minute default pool, so the proxy reuses connections the app has already closed and every `POST`/`PUT` that lands on the boundary fails with a bare `502` (#3293). See `DEPLOYMENT.md` → "Keep-alive windows must stay ordered". |
 | `COMPOSE_PROJECT_NAME`                 | Docker Compose project name; defaults vary by script.                 |
 | `APP_IMAGE`                            | Prebuilt app image override for blue/green deployment.                |
 | `MIGRATE_IMAGE`                        | Prebuilt migration image override for blue/green deployment.          |

@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { logAudit } from "@/lib/audit";
 import {
-  assertValidClubPostContent,
   CLUB_POST_PAGE_SIZE,
   ClubPostValidationError,
   createClubPost,
