@@ -37,10 +37,7 @@ import { RequestedRoomEditor } from "@/components/requested-room-editor";
 import { WaitlistOfferCard } from "@/components/waitlist-offer-card";
 import { DeleteBookingButton } from "@/components/delete-booking-button";
 import { getBookingEditPolicy, bookingStayHasStarted } from "@/lib/booking-edit-policy";
-import {
-  getBookingPaymentMode,
-  needsSavedCardEntry,
-} from "@/lib/booking-payment-flow";
+import { getBookingPaymentMode } from "@/lib/booking-payment-flow";
 import { RefundAppealButton } from "@/components/refund-appeal-button";
 import { humanizeStatus, paymentStatusClass } from "@/lib/status-colors";
 import { BookingHelpExtras } from "./_components/booking-help-extras";
@@ -1263,21 +1260,27 @@ export default async function BookingDetailPage({
   // the booking owner so a non-owner admin never sees it. An admin entering
   // their own card on a member's booking is a footgun with no legitimate use,
   // and the owner-positive gate is robust to read-only admin viewers (#1289).
-  // Shown whenever the row carries NO card (#3266), not merely until the first
-  // SetupIntent exists: an abandoned replacement or a card retired after a
-  // Stripe refusal (#3268) leaves the intent id behind with nothing chargeable,
-  // and the member must be able to get back to the form. Kept as ONE named
-  // boolean so the epic (#3270) can re-key it onto #3269's
-  // `reusableSavedPaymentMethodOnRow` in a single line — a legacy split child
-  // can carry a non-null pm that is not reusable, and the card column alone
-  // would hide the form for it.
-  const rowHasNoSavedCard = needsSavedCardEntry(booking.payment);
+  // Shown exactly when the auto-charge cron would find nothing to charge
+  // (#3266, #3269, epic #3270): `savedPaymentMethodForBooking` is the ONE answer
+  // to "may this booking be charged off-session?" — the booking's own row first,
+  // then its split parent's, each needing customer, card AND SetupIntent
+  // (`INV-PAY-053`). Keyed on that rather than on "no SetupIntent yet" or on the
+  // card column alone: an abandoned replacement or a card retired after a
+  // Stripe refusal (#3268) leaves an intent id behind with nothing chargeable,
+  // and a legacy split child can carry a copied card that was never saved
+  // through a SetupIntent — both must show the form. The same const drives the
+  // admin "Confirm pending guests" button's will-charge wording below, so the
+  // page can never promise a charge while asking for a card, or the reverse.
+  const savedCard = savedPaymentMethodForBooking({
+    payment: booking.payment,
+    parentBooking: booking.parentBooking,
+  });
   const showSavePaymentMethodCard =
     isBookingOwner &&
     !isDeleted &&
     !internetBankingPayment &&
     booking.status === "PENDING" &&
-    rowHasNoSavedCard;
+    savedCard === null;
   // Suppress when a more specific provisional banner already explains the
   // on-hold/no-charge state (the split-booking child and the bumped-guest
   // flagged-provisional notices both render near the top of the page). Also
@@ -1680,15 +1683,11 @@ export default async function BookingDetailPage({
               booking.hasNonMembers &&
               booking.nonMemberHoldUntil,
           )}
-          // The same predicate the confirm-pending-guests route charges on
-          // (#3269, `INV-PAY-053`), so the button never promises a charge the
-          // route will not make.
-          hasSavedPaymentMethod={
-            savedPaymentMethodForBooking({
-              payment: booking.payment,
-              parentBooking: booking.parentBooking,
-            }) !== null
-          }
+          // `savedCard` is the answer the confirm-pending-guests route charges
+          // on (#3269, `INV-PAY-053`) and the one the "Save Payment Method" card
+          // above keys on, so the button never promises a charge the route will
+          // not make — and never promises one while the page asks for a card.
+          hasSavedPaymentMethod={savedCard !== null}
           finalPriceCents={booking.finalPriceCents}
           providerMismatches={providerMismatches}
           financialReviewWarnings={financialReviewWarnings}

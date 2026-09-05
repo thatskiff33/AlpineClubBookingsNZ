@@ -16,7 +16,7 @@ wording now derives from the shared predicate over the split parent's three
 card columns, selected in the page query.
 
 file: src/app/api/admin/bookings/[id]/confirm-pending-guests/route.ts
-lines: 758
+lines: 756
 reason: the route loads the parent's payment row (three lines), derives the
   card through the shared predicate, and spreads `savedPaymentMethodRowStamp`
   into its claim upsert so the claim writes only the customer onto the child's
@@ -25,7 +25,7 @@ reason: the route loads the parent's payment row (three lines), derives the
   would otherwise put the populated-fields check back.
 
 file: src/app/api/payments/charge-saved-method/route.ts
-lines: 360
+lines: 355
 reason: one guard becomes one call to the shared predicate plus the eight-line
   comment explaining why THIS route deliberately has no split-parent fallback:
   it records the capture on the row it read and creates none. Without that

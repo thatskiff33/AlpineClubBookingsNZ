@@ -83,6 +83,10 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
     "defaultSubject": "Card Setup Failed - {{CLUB_LODGE_NAME}}",
     "defaultBody": "Card Setup Failed\n\nHi {{firstName}},\n\nWe were unable to save your card details for your upcoming booking ({{checkIn}} – {{checkOut}}). Your booking is still held, but we won't be able to charge you automatically when it's confirmed.\n\nPlease log in and update your payment method to avoid your booking being cancelled.\n\nUpdate Payment Method: {{BASE_URL}}/bookings\n\nIf you need help, contact the club at {{SUPPORT_EMAIL}}."
   },
+  "saved-card-charge-failed": {
+    "defaultSubject": "Your Saved Card Needs Replacing - {{CLUB_LODGE_NAME}}",
+    "defaultBody": "We Couldn't Charge Your Saved Card\n\nHi {{firstName}},\n\nWe couldn't charge the card saved for your booking ({{checkIn}} – {{checkOut}}). It has been removed from the booking; please log in and save a new card so we can confirm your booking.\n\nYour booking is still held for now.\n\nSave a New Card: {{BASE_URL}}/bookings\n\nIf you need help, contact the club at {{SUPPORT_EMAIL}}."
+  },
   "waitlist-confirmation": {
     "defaultSubject": "Waitlist Confirmation - {{CLUB_LODGE_NAME}}",
     "defaultBody": "You're on the Waitlist\n\nHi {{firstName}}, the lodge is currently fully booked for your requested dates, but you've been added to the waitlist.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nWaitlist Position: #{{position}}\n\nWe'll email you as soon as a spot opens up. You'll have 48 hours to confirm your booking.\n\nView Booking: {{BASE_URL}}/bookings\n\nYou can cancel your waitlist entry at any time from your booking page."

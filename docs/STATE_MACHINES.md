@@ -1318,11 +1318,17 @@ none. No charge claim writes the card column: `savedPaymentMethodRowStamp`
 writes the customer onto the row and nothing else, so a parent's one-off
 checkout card can no longer be laundered onto the child by being copied, and a
 claim cannot resurrect an own-row card that a concurrent replacement SetupIntent
-mint just cleared. A capture still records the card that paid, as on every paid
-row (`reconcilePaymentAggregates`, `markBookingPaymentSucceeded`) — that copy
-carries no SetupIntent, so it never reads as reusable, and the laundered rows
-production already holds read as no card for the same reason, without a
-migration. The row itself still transitions exactly as before — this changes
+mint just cleared. A capture still records the card that paid on its ledger row
+(`markBookingPaymentSucceeded`), and `reconcilePaymentAggregates` mirrors it
+onto the `Payment` row only when that row carries no SetupIntent (`INV-PAY-054`,
+"the ledger never moves a saved card"). What that buys: a row carrying a
+SetupIntent holds that intent's card or nothing, so the provenance proxy is
+exact for every row written since the rule shipped — a one-off capture sitting
+beside a saved card's SetupIntent survives only in legacy rows, where #3268's
+terminal handling of a Stripe refusal is the backstop — and the copy on a row
+without a SetupIntent never reads as reusable, which is also why the laundered
+rows production already holds read as no card, without a migration. The row
+itself still transitions exactly as before — this changes
 which bookings enter `PENDING -> PROCESSING` off-session, not what happens once
 they do.
 
@@ -1404,10 +1410,54 @@ writes nothing: nulling the id sent the next mint back to the
 `seti_<bookingId>_initial` key, which inside Stripe's 24-hour idempotency window
 replays the ORIGINAL intent's creation.
 
-The booking page's owner-only "Save Payment Method" card shows whenever the
-row carries no card (`needsSavedCardEntry`), so an abandoned replacement or a
-retired card puts the form back rather than leaving a dead end; the "Payment on
-hold" notice takes its place only once a card is on file.
+The booking page's owner-only "Save Payment Method" card shows whenever
+`savedPaymentMethodForBooking` (`INV-PAY-053`) finds no reusable card on the
+booking's own row or its split parent's — the same const that drives the admin
+button's will-charge wording — so an abandoned replacement, a retired card, or a
+legacy copied card with no SetupIntent puts the form back rather than leaving a
+dead end; the "Payment on hold" notice takes its place only once a chargeable
+card is on file.
+
+Saved-card auto-charge failure (#3268, `INV-PAY-054`): when the confirm-pending
+cron's off-session charge THROWS, the Payment row's state does not move — the
+row stays `PENDING` and the capacity claim is released as before — but the
+error is now classified before the next run is allowed to try again:
+
+```text
+charge throws -> release claim (unchanged)
+  retry    (soft decline inside the window, api/rate-limit/idempotency error,
+            plain Error, anything unrecognised)
+             -> admin alert as before -> same card charged next run
+  terminal (Stripe rejects the pm itself; a "do not retry" decline code incl.
+            authentication_required, or advice_code do_not_try_again; a soft
+            decline still declining two days after the charge first became
+            due — the second ~2-day window)
+             -> pm detached at Stripe (outside any transaction). Only an
+                invalid_request_error refusal is swallowed; any other detach
+                failure rethrows -> nothing cleared -> the retry alert instead
+             -> Payment.stripePaymentMethodId = null on EVERY row carrying it
+                (child AND borrowed-from parent)
+             -> PaymentTransaction.paymentMethodId = null on every ledger row
+                carrying it (so a reconcile of a row WITHOUT a SetupIntent —
+                a split child's — cannot re-stamp it)
+             -> ONE member email (saved-card-charge-failed) + ONE admin alert
+                (which says "stays pending" only when the claim release itself
+                succeeded; otherwise that the booking is stuck confirmed-unpaid)
+             -> next run: split child -> #1967 payment-link path;
+                          plain booking -> missing_payment_method (log only)
+```
+
+`stripeSetupIntentId` and `stripeCustomerId` are untouched. The PROCESSING /
+`requires_action` branch (an intent RETURNED, not thrown) is not part of this.
+
+The same change bounds how `reconcilePaymentAggregates` derives
+`Payment.stripePaymentMethodId` from the latest PRIMARY ledger row (the rule is
+the last bullet of `INV-PAY-054`): a `Payment` carrying a `stripeSetupIntentId`
+keeps its card column untouched by the ledger — the SetupIntent writers and the
+retire path own it — so a late `payment_intent.canceled` for an old intent can
+no longer null a card the member has just re-saved; without a SetupIntent the
+ledger row's pm is followed, except that a Stripe row recording no pm never
+nulls a card that is set; an Internet Banking latest PRIMARY still yields null.
 
 ### Manual mark-paid (cash / off-Xero bank transfer), B5 #2262
 
@@ -2776,6 +2826,27 @@ failure -> run/failure visible and retryable where business-critical
 
 To verify: which cron jobs record `CronJobRun`, exact statuses, stale queue
 health thresholds, and skipped-module reporting.
+
+### Confirm-pending saved-card charge (#3268)
+
+`confirmPendingBookings` claims a hold-expired booking (PENDING -> CONFIRMED
+under `lock(1)` + the lodge lock), charges the saved card off-session, and on
+success moves it to PAID. A THROWN charge used to be one outcome — release the
+claim, alert admins, retry next run — which retried a permanently unusable card
+24 times over four days. It is now two:
+
+```text
+charge throws -> claim released (booking back to PENDING, beds reconciled away)
+  -> classify (src/lib/saved-card-charge-failure.ts)
+     retry    -> admin alert, same card next run            (as before)
+     terminal -> card retired everywhere + member told once + admins told once
+                 -> next run takes the no-card path for this booking
+```
+
+The full decision table and the row-clearing contract are in "Payment
+Lifecycle" above and `INV-PAY-054`. To verify: the classifier table
+(`saved-card-charge-failure.test.ts`) and the cron's terminal branch
+(`cron-confirm-pending.test.ts`, "#3268").
 
 ## Two-Factor Login Lifecycle
 

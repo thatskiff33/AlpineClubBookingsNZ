@@ -18,6 +18,7 @@ import {
   markPaymentIntentTransactionFailed,
   PartialRefundError,
   planStripeRefundAllocation,
+  reconcilePaymentAggregates,
   recordInternetBankingPaymentTransaction,
   RefundAllocationRacedError,
   refundPaymentTransactions,
@@ -35,6 +36,9 @@ function createRefundStore() {
     reference: null,
     stripePaymentIntentId: "pi_1" as string | null,
     stripePaymentMethodId: "pm_1" as string | null,
+    // #3268: a Payment that carries a SetupIntent owns its saved-card column
+    // through the SetupIntent writers, not through the ledger (INV-PAY-054).
+    stripeSetupIntentId: null as string | null,
     xeroInvoiceId: null as string | null,
     xeroInvoiceNumber: null as string | null,
     additionalPaymentIntentId: null,
@@ -779,4 +783,108 @@ describe("#3032 - applyLocalRefundAllocation cannot lose an update", () => {
     // of phantom headroom created.
     expect(transaction.refundedAmountCents).toBe(3000);
   });
+});
+
+describe("#3268 - reconcilePaymentAggregates and the saved-card column (INV-PAY-054)", () => {
+  /*
+    The failure this pins: the cron retires an unusable card (nulling the pm on
+    every Payment row and ledger row carrying it), the member re-saves a new
+    card (the setup_intent.succeeded webhook writes `Payment.stripePaymentMethodId`
+    directly), and THEN a late `payment_intent.canceled` for the OLD intent
+    reconciles. The latest PRIMARY is still the old, nulled row. A derivation
+    that mirrored it would wipe the card the member just saved.
+
+    The rule: a Payment with a `stripeSetupIntentId` never has its card moved by
+    the ledger; without one the ledger is followed, but a Stripe row that
+    recorded no pm never NULLS a card that is set. Internet Banking still nulls
+    it (#1967 depends on the IB switch dropping the card).
+  */
+  function stampedPaymentMethod(store: ReturnType<typeof createRefundStore>["store"]) {
+    const call = store.payment.update.mock.calls.at(-1) as [{ data: Record<string, unknown> }] | undefined;
+    expect(call).toBeDefined();
+    expect(call![0].data).toHaveProperty("stripePaymentMethodId");
+    return call![0].data.stripePaymentMethodId;
+  }
+
+  it("(a) Stripe latest PRIMARY with no pm + Payment pm set + SetupIntent set -> unchanged", async () => {
+    const { store, payment, transaction } = createRefundStore();
+    payment.stripePaymentMethodId = "pm_resaved";
+    payment.stripeSetupIntentId = "seti_1";
+    transaction.paymentMethodId = null;
+    transaction.status = "CANCELED";
+
+    await reconcilePaymentAggregates({ paymentId: payment.id, store: store as any });
+
+    expect(stampedPaymentMethod(store)).toBe("pm_resaved");
+  });
+
+  it("(b) Stripe latest PRIMARY with no pm + Payment pm set + NO SetupIntent -> unchanged (a row without a card never nulls one)", async () => {
+    const { store, payment, transaction } = createRefundStore();
+    payment.stripePaymentMethodId = "pm_kept";
+    payment.stripeSetupIntentId = null;
+    transaction.paymentMethodId = null;
+
+    await reconcilePaymentAggregates({ paymentId: payment.id, store: store as any });
+
+    expect(stampedPaymentMethod(store)).toBe("pm_kept");
+  });
+
+  it("(b') ... and that holds when the Stripe row carries no intent id either (a pre-charge attempt row)", async () => {
+    const { store, payment, transaction } = createRefundStore();
+    payment.stripePaymentMethodId = "pm_kept";
+    payment.stripeSetupIntentId = null;
+    // No intent anywhere yet: otherwise `ensurePaymentTransactionsBackfilled`
+    // would mint a newer legacy Stripe row carrying the Payment's own pm and
+    // this would pass for the wrong reason.
+    payment.stripePaymentIntentId = null;
+    transaction.paymentMethodId = null;
+    transaction.stripePaymentIntentId = null;
+    transaction.status = "PENDING";
+
+    await reconcilePaymentAggregates({ paymentId: payment.id, store: store as any });
+
+    expect(stampedPaymentMethod(store)).toBe("pm_kept");
+  });
+
+  it("(c) Stripe latest PRIMARY with pm X + Payment pm Y + SetupIntent set -> stays Y (the SetupIntent writers own the column)", async () => {
+    const { store, payment, transaction } = createRefundStore();
+    payment.stripePaymentMethodId = "pm_Y_saved";
+    payment.stripeSetupIntentId = "seti_1";
+    transaction.paymentMethodId = "pm_X_one_off";
+
+    await reconcilePaymentAggregates({ paymentId: payment.id, store: store as any });
+
+    expect(stampedPaymentMethod(store)).toBe("pm_Y_saved");
+  });
+
+  it("(d) Stripe latest PRIMARY with pm X + Payment pm Y + NO SetupIntent -> X (the ledger is the only witness)", async () => {
+    const { store, payment, transaction } = createRefundStore();
+    payment.stripePaymentMethodId = "pm_Y";
+    payment.stripeSetupIntentId = null;
+    transaction.paymentMethodId = "pm_X";
+
+    await reconcilePaymentAggregates({ paymentId: payment.id, store: store as any });
+
+    expect(stampedPaymentMethod(store)).toBe("pm_X");
+  });
+
+  it.each([["with a SetupIntent", "seti_1"], ["without one", null]])(
+    "(e) Internet Banking latest PRIMARY -> null %s (#1967: the IB switch drops the card)",
+    async (_label, setupIntentId) => {
+      const { store, payment, transaction } = createRefundStore();
+      // An IB-settled payment: the switch-at-pay flip left no intent pointer,
+      // so the backfill has nothing to mint and the IB row IS the latest PRIMARY.
+      payment.source = PaymentSource.INTERNET_BANKING;
+      payment.stripePaymentIntentId = null;
+      payment.stripePaymentMethodId = "pm_old";
+      payment.stripeSetupIntentId = setupIntentId;
+      transaction.source = PaymentSource.INTERNET_BANKING;
+      transaction.stripePaymentIntentId = null;
+      transaction.paymentMethodId = null;
+
+      await reconcilePaymentAggregates({ paymentId: payment.id, store: store as any });
+
+      expect(stampedPaymentMethod(store)).toBeNull();
+    },
+  );
 });

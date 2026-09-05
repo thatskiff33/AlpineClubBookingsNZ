@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { stripeSdkError as stripeError } from "./support/stripe-sdk-error";
 
 // Mock Stripe
 vi.stubEnv("STRIPE_SECRET_KEY", "sk_test_fake");
@@ -7,6 +8,9 @@ const mockChargePaymentMethod = vi.fn();
 // #1992: the auto-charge claim sweeps and cancels in-flight /pay link intents
 // before charging the saved card (best-effort, outside any transaction).
 const mockCancelPaymentIntentIfCancellable = vi.fn();
+// #3268: a permanently unusable saved card is detached at Stripe (best-effort)
+// before it is cleared from every row that carries it.
+const mockDetachPaymentMethod = vi.fn();
 const mockMarkBookingPaymentSucceeded = vi.fn();
 const mockUpsertPaymentIntentTransaction = vi.fn();
 const mockEnqueueXeroBookingInvoiceOperation = vi.fn().mockResolvedValue({
@@ -24,6 +28,7 @@ vi.mock("../stripe", () => ({
   chargePaymentMethod: (...args: unknown[]) => mockChargePaymentMethod(...args),
   cancelPaymentIntentIfCancellable: (...args: unknown[]) =>
     mockCancelPaymentIntentIfCancellable(...args),
+  detachPaymentMethod: (...args: unknown[]) => mockDetachPaymentMethod(...args),
 }));
 vi.mock("../xero-operation-outbox", () => ({
   enqueueXeroBookingInvoiceOperation: (...args: unknown[]) =>
@@ -107,7 +112,11 @@ const mockSendAdminBookingRequestHoldCancelledEmail = vi
 const mockSendBookingRequestPaymentExpiredEmail = vi
   .fn()
   .mockResolvedValue(undefined);
+// #3268: the one member notice for a saved card the cron has given up on.
+const mockSendSavedCardChargeFailedEmail = vi.fn().mockResolvedValue(undefined);
 vi.mock("../email", () => ({
+  sendSavedCardChargeFailedEmail: (...args: unknown[]) =>
+    mockSendSavedCardChargeFailedEmail(...args),
   sendBookingConfirmedEmail: (...args: unknown[]) => mockSendConfirmedEmail(...args),
   sendBookingBumpedEmail: (...args: unknown[]) => mockSendBumpedEmail(...args),
   sendBookingGuestsRemovedEmail: (...args: unknown[]) => mockSendGuestsRemovedEmail(...args),
@@ -201,6 +210,12 @@ const mockEmailLogFindFirst = vi.fn().mockResolvedValue(null);
 const mockEmailLogCreate = vi.fn().mockResolvedValue({ id: "emaillog_1" });
 const mockPrismaTransaction = vi.fn();
 const mockExecuteRaw = vi.fn();
+// #3268: retiring an unusable saved card clears it from every Payment row and
+// every ledger row carrying that exact id, on the base client (no lock).
+const mockPaymentUpdateMany = vi.fn().mockResolvedValue({ count: 1 });
+const mockPaymentTransactionUpdateMany = vi
+  .fn()
+  .mockResolvedValue({ count: 0 });
 // #2576: no hosting policy row, so the rule resolves off and the coverage enqueue
 // never fires. Present because the production path reads them, not because these
 // tests exercise them.
@@ -234,9 +249,12 @@ vi.mock("../prisma", () => ({
     payment: {
       update: (...args: unknown[]) => mockPaymentUpdate(...args),
       upsert: (...args: unknown[]) => mockPaymentUpsert(...args),
+      updateMany: (...args: unknown[]) => mockPaymentUpdateMany(...args),
     },
     paymentTransaction: {
       findMany: (...args: unknown[]) => mockPaymentTransactionFindMany(...args),
+      updateMany: (...args: unknown[]) =>
+        mockPaymentTransactionUpdateMany(...args),
     },
     promoRedemption: {
       findUnique: (...args: unknown[]) => mockPromoRedemptionFindUnique(...args),
@@ -305,6 +323,7 @@ function makePendingBooking(
       id: string;
       stripePaymentMethodId: string;
       stripeCustomerId: string;
+      // #3268/#3269: whether the parent SAVED the card through a SetupIntent.
       stripeSetupIntentId: string | null;
     } | null;
     // Full parent snapshot (#1967): lets tests model the parent's lifecycle
@@ -488,6 +507,10 @@ describe("Cron: Confirm Pending Bookings", () => {
     );
     mockPaymentTransactionFindMany.mockResolvedValue([]);
     mockCancelPaymentIntentIfCancellable.mockResolvedValue(null);
+    mockDetachPaymentMethod.mockResolvedValue({ id: "pm_detached" });
+    mockPaymentUpdateMany.mockResolvedValue({ count: 1 });
+    mockPaymentTransactionUpdateMany.mockResolvedValue({ count: 0 });
+    mockSendSavedCardChargeFailedEmail.mockResolvedValue(undefined);
     mockClubTimeSettingsFindUnique.mockResolvedValue(null);
     mockPromoRedemptionFindUnique.mockResolvedValue(null);
     mockDeletePromoRedemption.mockResolvedValue(undefined);
@@ -2978,6 +3001,365 @@ describe("Cron: Confirm Pending Bookings", () => {
           "query in there is a settings read under both — resolve the zone " +
           "before the transaction and thread it in (`payment-link-expiry.ts`).",
       ).toBe(0);
+    });
+  });
+
+  describe("#3268 an unusable saved card is terminal for the cron, never retried forever", () => {
+    const INCIDENT_MESSAGE =
+      "The provided PaymentMethod was previously used with a PaymentIntent without Customer attachment or was detached from a Customer. It may not be used again.";
+
+    function capacityAvailable() {
+      mockCheckCapacityForGuestRanges.mockResolvedValue({
+        available: true,
+        minAvailable: 10,
+        nightDetails: [],
+      });
+    }
+
+    function releasedClaimCall() {
+      return mockBookingUpdateMany.mock.calls.find(
+        ([call]) =>
+          call?.where?.status === "CONFIRMED" && call?.data?.status === "PENDING",
+      );
+    }
+
+    it("invalid_request_error about the pm: releases the claim, retires the card everywhere, tells the member once and admins once", async () => {
+      // Default fixture: hold expired 2026-07-08, now 2026-07-09 — window 1.
+      mockPendingBookings([makePendingBooking("b1")]);
+      capacityAvailable();
+      mockChargePaymentMethod.mockRejectedValue(
+        stripeError({ type: "invalid_request_error", message: INCIDENT_MESSAGE }),
+      );
+
+      const result = await confirmPendingBookings();
+
+      expect(result.failedBookingIds).toEqual(["b1"]);
+      expect(result.confirmedBookingIds).toEqual([]);
+
+      // The capacity claim is released first, exactly as before.
+      const release = releasedClaimCall();
+      expect(release).toBeDefined();
+
+      // Then the card is retired: detached at Stripe, cleared from every
+      // Payment row and every ledger row carrying that exact id.
+      expect(mockDetachPaymentMethod).toHaveBeenCalledTimes(1);
+      expect(mockDetachPaymentMethod).toHaveBeenCalledWith("pm_b1");
+      expect(mockPaymentUpdateMany).toHaveBeenCalledTimes(1);
+      expect(mockPaymentUpdateMany).toHaveBeenCalledWith({
+        where: { stripePaymentMethodId: "pm_b1" },
+        data: { stripePaymentMethodId: null },
+      });
+      expect(mockPaymentTransactionUpdateMany).toHaveBeenCalledWith({
+        where: { paymentMethodId: "pm_b1" },
+        data: { paymentMethodId: null },
+      });
+      // Release BEFORE retire: the clear is not made under the claim's locks.
+      const releaseOrder = mockBookingUpdateMany.mock.invocationCallOrder[
+        mockBookingUpdateMany.mock.calls.indexOf(release!)
+      ]!;
+      expect(mockPaymentUpdateMany.mock.invocationCallOrder[0]!).toBeGreaterThan(releaseOrder);
+
+      // ONE member notice, with the "No emails" switch's booking context.
+      expect(mockSendSavedCardChargeFailedEmail).toHaveBeenCalledTimes(1);
+      expect(mockSendSavedCardChargeFailedEmail).toHaveBeenCalledWith(
+        expect.objectContaining({
+          bookingId: "b1",
+          recipientMemberId: "member_b1",
+          email: "b1@example.com",
+          firstName: "Test",
+        }),
+      );
+
+      // ONE admin alert, in plain English, quoting Stripe.
+      expect(mockSendAdminPaymentFailureAlert).toHaveBeenCalledTimes(1);
+      const [alert] = mockSendAdminPaymentFailureAlert.mock.calls[0] as [
+        { errorMessage: string; memberName: string },
+      ];
+      expect(alert.memberName).toBe("Test User");
+      expect(alert.errorMessage).toContain("found unusable");
+      expect(alert.errorMessage).toContain("removed from the booking");
+      expect(alert.errorMessage).toContain("save a new card");
+      expect(alert.errorMessage).toContain(INCIDENT_MESSAGE);
+    });
+
+    it("clears the PARENT's row when a split child was charging a borrowed parent card the member had SAVED through a SetupIntent — after #3269 a one-off parent card can no longer reach the charge arm, so this is the shape a terminal refusal retires", async () => {
+      mockPendingBookings([
+        makePendingBooking("child_1", {
+          hasPaymentMethod: false,
+          parentBookingId: "parent_1",
+          parentPayment: {
+            id: "pay_parent_1",
+            stripeCustomerId: "cus_parent_1",
+            stripePaymentMethodId: "pm_parent_1",
+            // The parent SAVED this card (SetupIntent), which is the only way a
+            // parent card reaches the child's charge arm once #3269 lands.
+            stripeSetupIntentId: "seti_parent_1",
+          },
+          finalPriceCents: 12000,
+          guestCount: 1,
+        }),
+      ]);
+      capacityAvailable();
+      mockChargePaymentMethod.mockRejectedValue(
+        stripeError({ type: "invalid_request_error", message: INCIDENT_MESSAGE }),
+      );
+
+      const result = await confirmPendingBookings();
+
+      expect(result.failedBookingIds).toEqual(["child_1"]);
+      expect(mockDetachPaymentMethod).toHaveBeenCalledWith("pm_parent_1");
+      // By pm id, not by booking: this is what stops the next run re-borrowing it.
+      expect(mockPaymentUpdateMany).toHaveBeenCalledWith({
+        where: { stripePaymentMethodId: "pm_parent_1" },
+        data: { stripePaymentMethodId: null },
+      });
+      expect(mockSendSavedCardChargeFailedEmail).toHaveBeenCalledTimes(1);
+      expect(mockSendAdminPaymentFailureAlert).toHaveBeenCalledTimes(1);
+    });
+
+    it("soft decline inside the first window: today's behaviour — release, admin alert, retry next run; nothing cleared", async () => {
+      mockPendingBookings([makePendingBooking("b1")]);
+      capacityAvailable();
+      mockChargePaymentMethod.mockRejectedValue(
+        stripeError({
+          type: "card_error",
+          code: "card_declined",
+          decline_code: "insufficient_funds",
+          message: "Your card has insufficient funds.",
+        }),
+      );
+
+      const result = await confirmPendingBookings();
+
+      expect(result.failedBookingIds).toEqual(["b1"]);
+      expect(releasedClaimCall()).toBeDefined();
+      expect(mockDetachPaymentMethod).not.toHaveBeenCalled();
+      expect(mockPaymentUpdateMany).not.toHaveBeenCalled();
+      expect(mockPaymentTransactionUpdateMany).not.toHaveBeenCalled();
+      expect(mockSendSavedCardChargeFailedEmail).not.toHaveBeenCalled();
+      expect(mockSendAdminPaymentFailureAlert).toHaveBeenCalledTimes(1);
+      expect(mockSendAdminPaymentFailureAlert).toHaveBeenCalledWith(
+        expect.objectContaining({ errorMessage: "Your card has insufficient funds." }),
+      );
+    });
+
+    it("soft decline still failing two windows after the charge became due: terminal", async () => {
+      // Hold expired 2026-07-04, now 2026-07-09: five days overdue = window 3.
+      mockPendingBookings([makePendingBooking("b1", { holdUntil: "2026-07-04" })]);
+      capacityAvailable();
+      mockChargePaymentMethod.mockRejectedValue(
+        stripeError({
+          type: "card_error",
+          code: "card_declined",
+          decline_code: "insufficient_funds",
+          message: "Your card has insufficient funds.",
+        }),
+      );
+
+      const result = await confirmPendingBookings();
+
+      expect(result.failedBookingIds).toEqual(["b1"]);
+      expect(mockDetachPaymentMethod).toHaveBeenCalledWith("pm_b1");
+      expect(mockPaymentUpdateMany).toHaveBeenCalledTimes(1);
+      expect(mockSendSavedCardChargeFailedEmail).toHaveBeenCalledTimes(1);
+      expect(mockSendAdminPaymentFailureAlert).toHaveBeenCalledTimes(1);
+      const [alert] = mockSendAdminPaymentFailureAlert.mock.calls[0] as [{ errorMessage: string }];
+      expect(alert.errorMessage).toContain("two days");
+      expect(alert.errorMessage).toContain("insufficient funds");
+    });
+
+    it("counts the window from the hold the claim actually acted on, clamped to creation — a last-minute booking is not exhausted on its first decline", async () => {
+      // Booked 2026-07-08 for a stay whose hold deadline (checkIn - 7d) was
+      // already a week in the past at creation. Anchoring on that deadline
+      // would call the FIRST soft decline exhausted; the createdAt clamp is
+      // what gives the member their two days.
+      const booking = makePendingBooking("b_late", {
+        checkIn: "2026-07-10",
+        checkOut: "2026-07-12",
+        holdUntil: "2026-07-03",
+      });
+      booking.createdAt = new Date("2026-07-08T00:00:00.000Z");
+      mockPendingBookings([booking]);
+      capacityAvailable();
+      mockChargePaymentMethod.mockRejectedValue(
+        stripeError({ type: "card_error", code: "card_declined", decline_code: "insufficient_funds" }),
+      );
+
+      await confirmPendingBookings();
+
+      expect(mockPaymentUpdateMany).not.toHaveBeenCalled();
+      expect(mockSendSavedCardChargeFailedEmail).not.toHaveBeenCalled();
+      expect(mockSendAdminPaymentFailureAlert).toHaveBeenCalledTimes(1);
+    });
+
+    it("api_error is retried however overdue the hold is", async () => {
+      mockPendingBookings([makePendingBooking("b1", { holdUntil: "2026-07-01" })]);
+      capacityAvailable();
+      mockChargePaymentMethod.mockRejectedValue(
+        stripeError({ type: "api_error", message: "Stripe is having a moment" }),
+      );
+
+      const result = await confirmPendingBookings();
+
+      expect(result.failedBookingIds).toEqual(["b1"]);
+      expect(mockDetachPaymentMethod).not.toHaveBeenCalled();
+      expect(mockPaymentUpdateMany).not.toHaveBeenCalled();
+      expect(mockSendSavedCardChargeFailedEmail).not.toHaveBeenCalled();
+      expect(mockSendAdminPaymentFailureAlert).toHaveBeenCalledTimes(1);
+      expect(mockSendAdminPaymentFailureAlert).toHaveBeenCalledWith(
+        expect.objectContaining({ errorMessage: "Stripe is having a moment" }),
+      );
+    });
+
+    it("a permanently declined card (decline_code lost_card) is terminal on the very first attempt", async () => {
+      mockPendingBookings([makePendingBooking("b1")]);
+      capacityAvailable();
+      mockChargePaymentMethod.mockRejectedValue(
+        stripeError({ type: "card_error", code: "card_declined", decline_code: "lost_card", message: "Your card was declined." }),
+      );
+
+      await confirmPendingBookings();
+
+      expect(mockPaymentUpdateMany).toHaveBeenCalledTimes(1);
+      expect(mockSendSavedCardChargeFailedEmail).toHaveBeenCalledTimes(1);
+      const [alert] = mockSendAdminPaymentFailureAlert.mock.calls[0] as [{ errorMessage: string }];
+      expect(alert.errorMessage).toContain("decline lost_card");
+    });
+
+    it("a member-email failure does not throw, does not undo the clear, and the admin alert still goes", async () => {
+      mockPendingBookings([makePendingBooking("b1")]);
+      capacityAvailable();
+      mockChargePaymentMethod.mockRejectedValue(
+        stripeError({ type: "invalid_request_error", message: INCIDENT_MESSAGE }),
+      );
+      mockSendSavedCardChargeFailedEmail.mockRejectedValue(new Error("SES down"));
+
+      const result = await confirmPendingBookings();
+
+      expect(result.failedBookingIds).toEqual(["b1"]);
+      expect(mockPaymentUpdateMany).toHaveBeenCalledTimes(1);
+      expect(mockSendAdminPaymentFailureAlert).toHaveBeenCalledTimes(1);
+      const [alert] = mockSendAdminPaymentFailureAlert.mock.calls[0] as [{ errorMessage: string }];
+      expect(alert.errorMessage).toContain("found unusable");
+    });
+
+    it("a detach Stripe refuses with invalid_request_error (already detached or gone) is swallowed and the rows are still cleared", async () => {
+      mockPendingBookings([makePendingBooking("b1")]);
+      capacityAvailable();
+      mockChargePaymentMethod.mockRejectedValue(
+        stripeError({ type: "invalid_request_error", message: INCIDENT_MESSAGE }),
+      );
+      mockDetachPaymentMethod.mockRejectedValue(
+        stripeError({ type: "invalid_request_error", message: "The payment method you provided is not attached to a customer" }),
+      );
+
+      const result = await confirmPendingBookings();
+
+      expect(result.failedBookingIds).toEqual(["b1"]);
+      expect(mockDetachPaymentMethod).toHaveBeenCalledTimes(1);
+      expect(mockPaymentUpdateMany).toHaveBeenCalledTimes(1);
+      expect(mockPaymentTransactionUpdateMany).toHaveBeenCalledTimes(1);
+      expect(mockSendSavedCardChargeFailedEmail).toHaveBeenCalledTimes(1);
+      expect(mockSendAdminPaymentFailureAlert).toHaveBeenCalledTimes(1);
+    });
+
+    it("a detach that fails for any other reason (api_error) clears nothing, tells the member nothing, and falls back to the ordinary retry alert quoting the charge error", async () => {
+      mockPendingBookings([makePendingBooking("b1")]);
+      capacityAvailable();
+      mockChargePaymentMethod.mockRejectedValue(
+        stripeError({ type: "invalid_request_error", message: INCIDENT_MESSAGE }),
+      );
+      mockDetachPaymentMethod.mockRejectedValue(
+        stripeError({ type: "api_error", message: "Stripe is having a moment" }),
+      );
+
+      const result = await confirmPendingBookings();
+
+      expect(result.failedBookingIds).toEqual(["b1"]);
+      expect(mockDetachPaymentMethod).toHaveBeenCalledTimes(1);
+      // The card may still be attached at Stripe, so it must stay on the rows:
+      // "a cleared card is always a detached card" (INV-PAY-054).
+      expect(mockPaymentUpdateMany).not.toHaveBeenCalled();
+      expect(mockPaymentTransactionUpdateMany).not.toHaveBeenCalled();
+      expect(mockSendSavedCardChargeFailedEmail).not.toHaveBeenCalled();
+      // One alert, and it is the pre-#3268 retry alert carrying the CHARGE
+      // error's own words — not the terminal "found unusable" account, which
+      // would claim a retirement that did not happen.
+      expect(mockSendAdminPaymentFailureAlert).toHaveBeenCalledTimes(1);
+      const [alert] = mockSendAdminPaymentFailureAlert.mock.calls[0] as [{ errorMessage: string }];
+      expect(alert.errorMessage).toBe(INCIDENT_MESSAGE);
+      expect(alert.errorMessage).not.toContain("found unusable");
+    });
+
+    it("when the claim release itself fails, the terminal alert says the booking is stuck confirmed-unpaid — never 'stays pending'", async () => {
+      mockPendingBookings([makePendingBooking("b1")]);
+      capacityAvailable();
+      mockChargePaymentMethod.mockRejectedValue(
+        stripeError({ type: "invalid_request_error", message: INCIDENT_MESSAGE }),
+      );
+      // The claim (PENDING -> CONFIRMED) lands; the release (CONFIRMED -> PENDING)
+      // is the write that fails.
+      mockBookingUpdateMany.mockImplementation(async (call: any) => {
+        if (call?.where?.status === "CONFIRMED" && call?.data?.status === "PENDING") {
+          throw new Error("release lost its connection");
+        }
+        return { count: 1 };
+      });
+
+      const result = await confirmPendingBookings();
+
+      expect(result.failedBookingIds).toEqual(["b1"]);
+      // The card is still retired and both notices still go — the member's
+      // card is unusable whether or not the release landed.
+      expect(mockPaymentUpdateMany).toHaveBeenCalledTimes(1);
+      expect(mockSendSavedCardChargeFailedEmail).toHaveBeenCalledTimes(1);
+      expect(mockSendAdminPaymentFailureAlert).toHaveBeenCalledTimes(1);
+      const [alert] = mockSendAdminPaymentFailureAlert.mock.calls[0] as [{ errorMessage: string }];
+      expect(alert.errorMessage).toContain("found unusable");
+      expect(alert.errorMessage).not.toContain("stays pending");
+      expect(alert.errorMessage).toContain("still marked confirmed but unpaid");
+    });
+
+    it("a failure inside the terminal decision falls back to today's release-and-alert, and never escapes the loop", async () => {
+      mockPendingBookings([
+        makePendingBooking("b1"),
+        makePendingBooking("b2", { holdUntil: "2026-07-07" }),
+      ]);
+      capacityAvailable();
+      mockChargePaymentMethod.mockRejectedValue(
+        stripeError({ type: "invalid_request_error", message: INCIDENT_MESSAGE }),
+      );
+      mockPaymentUpdateMany.mockRejectedValueOnce(new Error("DB down"));
+
+      const result = await confirmPendingBookings();
+
+      expect(result.failedBookingIds).toEqual(["b1", "b2"]);
+      // b1: the clear threw, so the generic alert went out with Stripe's words;
+      // b2: retired normally. Two admin alerts, one member email.
+      expect(mockSendAdminPaymentFailureAlert).toHaveBeenCalledTimes(2);
+      expect(mockSendSavedCardChargeFailedEmail).toHaveBeenCalledTimes(1);
+      const messages = mockSendAdminPaymentFailureAlert.mock.calls.map(
+        ([call]) => (call as { errorMessage: string }).errorMessage,
+      );
+      expect(messages[0]).toBe(INCIDENT_MESSAGE);
+      expect(messages[1]).toContain("found unusable");
+    });
+
+    it("leaves the PROCESSING / requires_action branch alone (an intent RETURNED, not thrown, is not a charge failure)", async () => {
+      mockPendingBookings([makePendingBooking("b1")]);
+      capacityAvailable();
+      mockChargePaymentMethod.mockResolvedValue({
+        id: "pi_auto_1",
+        status: "requires_action",
+        amount: 10000,
+        payment_method: "pm_b1",
+      });
+
+      await confirmPendingBookings();
+
+      expect(mockDetachPaymentMethod).not.toHaveBeenCalled();
+      expect(mockPaymentUpdateMany).not.toHaveBeenCalled();
+      expect(mockSendSavedCardChargeFailedEmail).not.toHaveBeenCalled();
     });
   });
 });

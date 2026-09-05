@@ -4,6 +4,7 @@ import { isHostingCoverageParticipantRetry } from "@/lib/adult-member-hosting-qu
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
 import { chargePaymentMethod } from "@/lib/stripe";
+import { stripeReferenceId } from "@/lib/stripe-references";
 import {
   enqueueXeroBookingInvoiceOperation,
   kickQueuedXeroOutboxOperationsIfConnected,
@@ -176,9 +177,7 @@ export async function POST(request: NextRequest) {
           amountCents: paymentIntent.amount,
           status: PaymentStatus.SUCCEEDED,
           paymentMethodId:
-            typeof paymentIntent.payment_method === "string"
-              ? paymentIntent.payment_method
-              : paymentIntent.payment_method?.id ?? null,
+            stripeReferenceId(paymentIntent.payment_method),
           stripeCustomerId: savedPayment.stripeCustomerId,
         });
       } catch (recordError) {
@@ -192,9 +191,7 @@ export async function POST(request: NextRequest) {
         paymentIntentId: paymentIntent.id,
         amountCents: paymentIntent.amount,
         paymentMethodId:
-          typeof paymentIntent.payment_method === "string"
-            ? paymentIntent.payment_method
-            : paymentIntent.payment_method?.id ?? null,
+          stripeReferenceId(paymentIntent.payment_method),
       });
 
       if (
@@ -240,9 +237,7 @@ export async function POST(request: NextRequest) {
           amountCents: paymentIntent.amount,
           status: PaymentStatus.PROCESSING,
           paymentMethodId:
-            typeof paymentIntent.payment_method === "string"
-              ? paymentIntent.payment_method
-              : paymentIntent.payment_method?.id ?? null,
+            stripeReferenceId(paymentIntent.payment_method),
           reason: "pending_saved_method_charge",
           store: tx,
         });

@@ -28,11 +28,19 @@ import type { Payment } from "@prisma/client";
  *
  * What the proxy does NOT prove:
  *
- * - That the pm on the row IS the SetupIntent's card. A later Payment Element
- *   capture on a row that still carries an old `stripeSetupIntentId` overwrites
- *   the pm with a one-off one and passes this check. #3268's terminal handling
- *   of a Stripe refusal is the backstop for that shape — it cannot be told
- *   apart from here.
+ * - That the pm on a LEGACY row IS the SetupIntent's card. Before #3268's
+ *   derivation rule (`INV-PAY-054`, "the ledger never moves a saved card") a
+ *   later Payment Element capture on a row that still carried an old
+ *   `stripeSetupIntentId` overwrote the pm with a one-off one, which passed
+ *   this check. That writer is gone: the only writers of the card column are
+ *   now the guarded SetupIntent stamp (`markBookingSetupIntentSucceeded`), the
+ *   ledger reconcile — which leaves a row carrying a SetupIntent alone — and
+ *   the four null-writers (the setup-intent route's replacement mint, the
+ *   retire path and the two booking-modification settlers). So a row carrying
+ *   a SetupIntent that was written after that rule shipped holds that intent's
+ *   card or null, and the proxy is exact for it; the hazard survives only in
+ *   rows the old reconcile wrote, where #3268's terminal handling of a Stripe
+ *   refusal is the backstop — it cannot be told apart from here.
  * - That the SetupIntent succeeded. The setup-intent route stamps the id of a
  *   freshly minted, not-yet-confirmed SetupIntent; the pm arrives only when it
  *   succeeds, so a row with the id and no pm is correctly "no card". A row

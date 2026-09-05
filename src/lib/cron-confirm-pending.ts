@@ -36,10 +36,15 @@ import {
   savedPaymentMethodRowStamp,
   type SavedPaymentMethodForBooking,
 } from "@/lib/saved-payment-method";
+import { stripeReferenceId } from "@/lib/stripe-references";
 import { prisma } from "./prisma";
 import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "./capacity";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { cancelPaymentIntentIfCancellable, chargePaymentMethod } from "./stripe";
+import {
+  classifySavedCardChargeFailure,
+  retireAndEscalateUnusableSavedCard,
+} from "./saved-card-charge-failure";
 import {
   enqueueXeroBookingInvoiceOperation,
   kickQueuedXeroOutboxOperationsIfConnected,
@@ -277,6 +282,29 @@ async function resolveOriginalHoldExpiry(
   const holdDays = await getNonMemberHoldDays(booking.checkIn, booking.lodgeId);
   const scheduledFirstExpiry = booking.checkIn.getTime() - holdDays * DAY_MS;
   return new Date(Math.max(scheduledFirstExpiry, booking.createdAt.getTime()));
+}
+
+/**
+ * #3268 — when the saved-card charge first became due: the anchor for the
+ * soft-decline window count in `classifySavedCardChargeFailure`. The claim's
+ * own `previousHoldUntil` is the deadline this run actually acted on (a hold a
+ * request-origin booking had extended while cardless counts from the extension,
+ * not from a pre-card expiry), clamped to `createdAt` for the same last-minute
+ * reason as `resolveOriginalHoldExpiry`, which is the fallback when the row
+ * carries no hold. Every input is immutable across reruns — `releaseChargeClaim`
+ * writes `previousHoldUntil` back unchanged — so the window index is stable
+ * (INV-INT-001).
+ */
+async function savedCardChargeDueAt(
+  claim: Extract<HoldResolution, { type: "claimed_for_charge" }>
+): Promise<Date> {
+  if (!claim.previousHoldUntil) return resolveOriginalHoldExpiry(claim.booking);
+  return new Date(
+    Math.max(
+      claim.previousHoldUntil.getTime(),
+      claim.booking.createdAt.getTime()
+    )
+  );
 }
 
 async function queueXeroInvoice(bookingId: string, logMessage: string) {
@@ -1497,10 +1525,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
       });
       paymentIntentId = paymentIntent.id;
 
-      const paymentMethodId =
-        typeof paymentIntent.payment_method === "string"
-          ? paymentIntent.payment_method
-          : paymentIntent.payment_method?.id ?? null;
+      const paymentMethodId = stripeReferenceId(paymentIntent.payment_method);
 
       if (paymentIntent.status === "succeeded") {
         paymentSucceeded = true;
@@ -1641,17 +1666,24 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
       // Only roll back the capacity claim when Stripe never confirmed a
       // successful charge. If Stripe succeeded, leave the booking in its
       // claimed state for webhook/admin recovery.
+      // #3268: whether the release actually landed is threaded into the
+      // terminal alert below, so it never says "stays pending" about a
+      // booking that is stuck CONFIRMED and unpaid.
+      let claimReleased = false;
       if (claimForCharge && !paymentSucceeded) {
-        await releaseChargeClaim(claimForCharge).catch((revertErr) =>
-          logger.error(
-            {
-              err: revertErr,
-              bookingId: claimForCharge?.booking.id,
-              job: "confirmPendingBookings",
-            },
-            "Failed to release pending booking charge claim"
-          )
-        );
+        claimReleased = await releaseChargeClaim(claimForCharge)
+          .then(() => true)
+          .catch((revertErr) => {
+            logger.error(
+              {
+                err: revertErr,
+                bookingId: claimForCharge?.booking.id,
+                job: "confirmPendingBookings",
+              },
+              "Failed to release pending booking charge claim"
+            );
+            return false;
+          });
       } else if (paymentSucceeded) {
         logger.error(
           { bookingId: candidate.id, job: "confirmPendingBookings" },
@@ -1663,19 +1695,55 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
 
       // Only emit a payment-failure alert when the Stripe charge attempt itself failed.
       if (chargeAttempted && !paymentSucceeded) {
-        sendAdminPaymentFailureAlert({
-          memberName: `${candidate.member.firstName} ${candidate.member.lastName}`,
-          checkIn: candidate.checkIn,
-          checkOut: candidate.checkOut,
-          amountCents: candidate.finalPriceCents,
-          errorMessage: err instanceof Error ? err.message : String(err),
-          paymentIntentId,
-        }).catch((alertErr) =>
-          logger.error(
-            { err: alertErr, bookingId: candidate.id },
-            "Failed to send admin payment failure alert"
-          )
-        );
+        // #3268 — after the claim is released, ask whether a retry could ever
+        // help. A permanently unusable card is TERMINAL: retire it (detached at
+        // Stripe, cleared from every row carrying it), tell the member and the
+        // admins once, and let the next run take the no-card path instead of
+        // failing identically every three hours. Anything not recognised as
+        // terminal — and any error inside this decision — keeps today's
+        // release-alert-retry behaviour, so the classifier can only narrow the
+        // retry loop (INV-PAY-054).
+        let escalatedAsTerminal = false;
+        if (claimForCharge) {
+          try {
+            const failure = classifySavedCardChargeFailure(err, {
+              holdOverdueWindows: splitSettlementExtensionNumber(
+                await savedCardChargeDueAt(claimForCharge),
+                now
+              ),
+            });
+            if (failure.outcome === "terminal") {
+              await retireAndEscalateUnusableSavedCard({
+                booking: claimForCharge.booking,
+                paymentMethodId: claimForCharge.payment.stripePaymentMethodId,
+                paymentIntentId,
+                failure,
+                claimReleased,
+              });
+              escalatedAsTerminal = true;
+            }
+          } catch (terminalErr) {
+            logger.error(
+              { err: terminalErr, bookingId: candidate.id, job: "confirmPendingBookings" },
+              "Failed to classify or retire an unusable saved card; falling back to the retry alert (#3268)"
+            );
+          }
+        }
+        if (!escalatedAsTerminal) {
+          sendAdminPaymentFailureAlert({
+            memberName: `${candidate.member.firstName} ${candidate.member.lastName}`,
+            checkIn: candidate.checkIn,
+            checkOut: candidate.checkOut,
+            amountCents: candidate.finalPriceCents,
+            errorMessage: err instanceof Error ? err.message : String(err),
+            paymentIntentId,
+          }).catch((alertErr) =>
+            logger.error(
+              { err: alertErr, bookingId: candidate.id },
+              "Failed to send admin payment failure alert"
+            )
+          );
+        }
       }
     }
   }

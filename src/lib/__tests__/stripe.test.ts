@@ -14,6 +14,8 @@ const mockPaymentIntentsRetrieve = vi.fn();
 const mockPaymentIntentsCancel = vi.fn();
 const mockSetupIntentsRetrieve = vi.fn();
 const mockPaymentMethodsRetrieve = vi.fn();
+// #3268: retiring a permanently unusable saved card.
+const mockPaymentMethodsDetach = vi.fn();
 const mockCustomersCreate = vi.fn();
 const mockCustomersList = vi.fn();
 const mockWebhooksConstructEvent = vi.fn();
@@ -32,6 +34,7 @@ vi.mock("stripe", () => {
       },
       paymentMethods: {
         retrieve: mockPaymentMethodsRetrieve,
+        detach: mockPaymentMethodsDetach,
       },
       refunds: {
         create: mockRefundsCreate,
@@ -58,6 +61,7 @@ const {
   cancelPaymentIntentIfCancellable,
   getSetupIntent,
   getPaymentMethod,
+  detachPaymentMethod,
   constructWebhookEvent,
 } = await import("../stripe");
 
@@ -329,6 +333,23 @@ describe("Stripe library", () => {
       mockPaymentMethodsRetrieve.mockRejectedValue(missing);
 
       await expect(getPaymentMethod("pm_gone")).rejects.toBe(missing);
+    });
+  });
+
+  describe("detachPaymentMethod (#3268)", () => {
+    it("detaches the PaymentMethod by id and returns Stripe's object", async () => {
+      mockPaymentMethodsDetach.mockResolvedValue({ id: "pm_dead", customer: null });
+
+      const result = await detachPaymentMethod("pm_dead");
+
+      expect(mockPaymentMethodsDetach).toHaveBeenCalledWith("pm_dead");
+      expect(result).toEqual({ id: "pm_dead", customer: null });
+    });
+
+    it("lets a Stripe rejection propagate — the caller decides it is harmless", async () => {
+      mockPaymentMethodsDetach.mockRejectedValue(new Error("not attached"));
+
+      await expect(detachPaymentMethod("pm_dead")).rejects.toThrow("not attached");
     });
   });
 
