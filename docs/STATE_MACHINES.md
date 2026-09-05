@@ -1404,10 +1404,13 @@ writes nothing: nulling the id sent the next mint back to the
 `seti_<bookingId>_initial` key, which inside Stripe's 24-hour idempotency window
 replays the ORIGINAL intent's creation.
 
-The booking page's owner-only "Save Payment Method" card shows whenever the
-row carries no card (`needsSavedCardEntry`), so an abandoned replacement or a
-retired card puts the form back rather than leaving a dead end; the "Payment on
-hold" notice takes its place only once a card is on file.
+The booking page's owner-only "Save Payment Method" card shows whenever
+`savedPaymentMethodForBooking` (`INV-PAY-053`) finds no reusable card on the
+booking's own row or its split parent's — the same const that drives the admin
+button's will-charge wording — so an abandoned replacement, a retired card, or a
+legacy copied card with no SetupIntent puts the form back rather than leaving a
+dead end; the "Payment on hold" notice takes its place only once a chargeable
+card is on file.
 
 Saved-card auto-charge failure (#3268, `INV-PAY-054`): when the confirm-pending
 cron's off-session charge THROWS, the Payment row's state does not move — the

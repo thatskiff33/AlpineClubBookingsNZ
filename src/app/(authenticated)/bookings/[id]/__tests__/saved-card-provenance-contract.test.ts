@@ -13,6 +13,10 @@
 //    "may this card be charged off-session" — and not by a truthiness check on
 //    `stripePaymentMethodId`, which is what read a one-off checkout card (and a
 //    laundered copy of one) as a saved card;
+//  * the member's "Save Payment Method" card keys on the SAME named const
+//    (epic #3270, composing #3266 with #3269): the form shows exactly when the
+//    cron would find nothing to charge, so the page can never ask for a card
+//    while promising a charge, or promise a charge while asking for a card;
 //  * the query gives that function what it needs: the split parent's payment
 //    row, including `stripeSetupIntentId`, without which a child charged on
 //    its parent's genuinely saved card would read as "no card".
@@ -36,13 +40,29 @@ function readPageSource(): string {
 describe("#3269 saved-card provenance on the member booking page (INV-PAY-053)", () => {
   const source = stripComments(readPageSource());
 
-  it("derives the confirm button's will-charge answer from savedPaymentMethodForBooking, own row and parent row", () => {
+  it("derives ONE named answer from savedPaymentMethodForBooking, own row and parent row", () => {
     expect(source).toContain(
       'import { savedPaymentMethodForBooking } from "@/lib/saved-payment-method";',
     );
     expect(source).toMatch(
-      /hasSavedPaymentMethod=\{\s*savedPaymentMethodForBooking\(\{\s*payment: booking\.payment,\s*parentBooking: booking\.parentBooking,\s*\}\) !== null\s*\}/,
+      /const savedCard = savedPaymentMethodForBooking\(\{\s*payment: booking\.payment,\s*parentBooking: booking\.parentBooking,\s*\}\);/,
     );
+    // Exactly one call: a second derivation is a second place the answer could
+    // drift, which is the defect this contract exists to make unrepresentable.
+    expect(source.match(/savedPaymentMethodForBooking\(/g)).toHaveLength(1);
+  });
+
+  it("the confirm button's will-charge wording reads that const", () => {
+    expect(source).toMatch(/hasSavedPaymentMethod=\{savedCard !== null\}/);
+  });
+
+  it("the member's Save Payment Method card shows exactly when that const finds no card (epic #3270)", () => {
+    expect(source).toMatch(
+      /const showSavePaymentMethodCard =\s*isBookingOwner &&\s*!isDeleted &&\s*!internetBankingPayment &&\s*booking\.status === "PENDING" &&\s*savedCard === null;/,
+    );
+    // Not the retired #3266 predicate over the card column alone, which hid the
+    // form from a legacy split child carrying a copied, unchargeable card.
+    expect(source).not.toMatch(/needsSavedCardEntry/);
   });
 
   it("never falls back to the populated-fields check that read a one-off checkout card as saved", () => {

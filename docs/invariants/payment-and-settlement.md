@@ -1735,14 +1735,21 @@ one, check the other.
     cancel says nothing about the card on file. A cancelled BOOKING clears its own
     intent id inside its locked claim (`booking-cancel.ts`), so nothing relied on
     the webhook to do it.
-  - **The member can always get back to the form.** The booking page's "Save
-    Payment Method" card keys on `needsSavedCardEntry` — the card column alone —
-    not on "no SetupIntent yet", so an abandoned replacement or a retired card
-    shows the form again rather than a dead end.
+  - **The member can always get back to the form, and the form shows exactly
+    when the cron would find nothing to charge.** The booking page's "Save
+    Payment Method" card keys on `savedPaymentMethodForBooking` (`INV-PAY-053`:
+    own row, then split parent's, each needing customer, card AND SetupIntent)
+    returning `null` — one named const the admin button's will-charge wording
+    also reads — not on "no SetupIntent yet" and not on the card column alone.
+    So an abandoned replacement, a retired card, and a legacy split child
+    carrying a copied card that was never saved through a SetupIntent all show
+    the form again rather than a dead end, while a child whose parent holds a
+    reusable card is not asked for one the cron will not need. Pinned by
+    `saved-card-provenance-contract.test.ts`.
   - Pinned by `payment-intent-routes.test.ts` (cases (a)-(g) and (b2)),
     `setup-intent-card.test.ts`, `payment-reconciliation.test.ts`
     (`markBookingSetupIntentSucceeded`), `stripe-webhook-alerts.test.ts`
-    ("SetupIntent webhooks") and `booking-payment-flow.test.ts`.
+    ("SetupIntent webhooks") and `saved-card-provenance-contract.test.ts`.
 
 ## INV-PAY-053
 
@@ -1764,7 +1771,8 @@ one, check the other.
   reader of that question — the settlement cron, the admin
   confirm-pending-guests route (which loads the parent's payment row so a child
   can still be confirmed on the parent's genuinely saved card), the member
-  booking page's "will charge" wording, `charge-saved-method` (own row only: it
+  booking page (its "Save Payment Method" form and the admin button's "will
+  charge" wording, from one const), `charge-saved-method` (own row only: it
   records the capture on the row it read and creates none) and the payment-link
   `not_payable` gate — imports it. A parent that paid its own place by one-off
   card checkout therefore leaves the child with NO card, and the child takes the
