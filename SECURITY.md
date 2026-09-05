@@ -81,9 +81,8 @@ Neither one is allowed its own scanner. The version is pinned once in
 `scripts/ci/gitleaks-image.sh`, the invocation once in
 `scripts/ci/gitleaks-scan.sh`, and both workflows call it; the rule set and
 allowlists are the same `.gitleaks.toml` and `.gitleaksignore`. That script also
-separates a scan that came back clean from a scanner that never ran — gitleaks
-exits 1 for both, so findings are moved to `--exit-code=2` and every other
-non-zero is reported as a scanner failure. Both still fail the job.
+separates a scan that came back clean from a scanner that never ran, which
+gitleaks itself does not — `docs/MAINTENANCE.md` states the rule and why.
 
 The sweep's findings appear as a rule/file/line/commit table in the run summary
 and as a redacted JSON artifact kept for fourteen days. `docs/MAINTENANCE.md` →
@@ -96,37 +95,43 @@ from forks.
 
 ### Reproducing the secret scan locally
 
-The same pinned image CI uses, in the same three scopes. Run all three: they
-report overlapping but different sets, because a rule that needs surrounding
-context sees less in a diff hunk than in a whole file.
+Through the same script CI calls, so a local run and a CI run cannot disagree
+about the version, the flags or the exit-code contract — which is the whole
+reason the invocation has one home. Run all three scopes: they report
+overlapping but different sets, because a rule that needs surrounding context
+sees less in a diff hunk than in a whole file.
 
 ```bash
 # 1. The history of main. `--diff-merges=first-parent` is not optional: git log
 #    emits no patch for a merge commit, and about a third of this repository's
 #    commits are merges, so without it the scan silently skips them — including
 #    any secret written while resolving a conflict.
-docker run --rm -v "$PWD:/repo:ro" ghcr.io/gitleaks/gitleaks:v8.28.0 \
-  git /repo --log-opts="--diff-merges=first-parent origin/main" \
-  --exit-code=1 --redact
+GITLEAKS_SCAN_LABEL="the history of main" \
+GITLEAKS_LOG_OPTS="--diff-merges=first-parent origin/main" \
+  bash scripts/ci/gitleaks-scan.sh git
 
 # 2. Your own branch's commits, the way the pull-request step scans them.
-docker run --rm -v "$PWD:/repo:ro" ghcr.io/gitleaks/gitleaks:v8.28.0 \
-  git /repo --log-opts="--diff-merges=first-parent origin/main..HEAD" \
-  --exit-code=1 --redact
+GITLEAKS_SCAN_LABEL="this branch's own commits" \
+GITLEAKS_LOG_OPTS="--diff-merges=first-parent origin/main..HEAD" \
+  bash scripts/ci/gitleaks-scan.sh git
 
 # 3. The working tree as it stands.
-docker run --rm -v "$PWD:/repo:ro" ghcr.io/gitleaks/gitleaks:v8.28.0 \
-  dir /repo --exit-code=1 --redact
+GITLEAKS_SCAN_LABEL="the checked-out tree" \
+  bash scripts/ci/gitleaks-scan.sh dir
 ```
 
 Note the scope is `origin/main`, not `--all`. `--all` walks every
 `refs/remotes/origin/*` branch that `fetch-depth: 0` materialised, which makes
 the required check hostage to a leak on somebody else's unrelated branch and
-gives a different answer here than in CI.
+gives a different answer here than in CI. The `--all` sweep is the scheduled
+job's job, and `docs/MAINTENANCE.md` carries its command.
 
-Add `--report-format=json --report-path=/repo/leaks.json` to see the unredacted
-detail. That report contains every matched value in clear text and is **not**
-git-ignored — write it outside the repository, or delete it before you commit.
+Set `GITLEAKS_REPORT_PATH` to a path **outside this repository** for a JSON
+report carrying the rule, file, line, commit and fingerprint of each finding.
+The script always passes `--redact`, so the matched value comes back as the
+literal string `REDACTED` — but the surrounding detail still says where a
+credential is, so treat the file as sensitive and do not write it into a tree
+you might commit.
 
 To prove the scanner can still fail before trusting a green — which this
 repository has needed three separate times — run the failure injection CI runs:

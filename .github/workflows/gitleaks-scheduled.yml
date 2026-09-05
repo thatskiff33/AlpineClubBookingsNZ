@@ -94,26 +94,56 @@ jobs:
       # line and the commit, in the run's own summary. `--redact` means the
       # matched value is the literal string REDACTED in these reports, so none of
       # this republishes the secret it is reporting.
+      # The summary reads the step's OUTCOME, not just its report, and that is
+      # load-bearing rather than tidy. A scan that failed at the git source still
+      # writes a well-formed report containing `[]`, so a summary that trusted
+      # the file alone would print "No findings." for a scope it never walked —
+      # the same false green `gitleaks-scan.sh` refuses to return, arriving by a
+      # different door. "No findings." is printed only when the step succeeded.
       - name: Summarise the findings
         if: always()
         env:
           REPORT_DIR: ${{ runner.temp }}/gitleaks-sweep
+          HISTORY_OUTCOME: ${{ steps.history.outcome }}
+          TREE_OUTCOME: ${{ steps.tree.outcome }}
         run: |
+          # A missing `jq` would make every branch below read as "no findings",
+          # which is the failure mode this whole job exists to refuse. Fail
+          # instead; the job is advisory, so a red here costs a task, not a merge.
+          command -v jq >/dev/null || {
+            echo "::error::jq is not on PATH, so the sweep summary cannot be rendered. Read the scan steps' logs." >&2
+            exit 1
+          }
           {
             echo "## Scheduled secret sweep"
             echo
             for scope in history tree; do
               report="${REPORT_DIR}/${scope}.json"
+              case "$scope" in
+                history) outcome="${HISTORY_OUTCOME}" ;;
+                tree) outcome="${TREE_OUTCOME}" ;;
+              esac
+              # Empty means "could not be counted" — an absent report, or one
+              # `jq` could not parse. That is never the same as zero.
+              findings=""
+              if [ -s "$report" ]; then
+                findings="$(jq 'length' "$report")" || findings=""
+              fi
               echo "### ${scope}"
               echo
-              if [ ! -s "$report" ]; then
-                echo "No report was written — the scan did not complete. Read the step log above."
-              elif [ "$(jq 'length' "$report")" -eq 0 ]; then
-                echo "No findings."
-              else
+              if [ -n "$findings" ] && [ "$findings" -gt 0 ]; then
                 echo "| Rule | File | Line | Commit |"
                 echo "| --- | --- | --- | --- |"
-                jq -r '.[] | "| \(.RuleID) | `\(.File)` | \(.StartLine) | \(.Commit[0:12]) |"' "$report"
+                # `File` is container-absolute for a `dir` scan and repository-
+                # relative for a `git` one; the prefix is noise either way.
+                # Only File and Commit are ever printed — `Match` and `Secret`
+                # are `REDACTED` in the report and are not republished here
+                # regardless.
+                jq -r '.[] | "| \(.RuleID) | `\(.File | sub("^/repo/"; ""))` | \(.StartLine) | \(.Commit[0:12]) |"' "$report"
+              elif [ "$outcome" != "success" ] || [ -z "$findings" ]; then
+                echo "The scan did not complete (step outcome: \`${outcome}\`, report readable: $([ -n "$findings" ] && echo yes || echo no)) — nothing here can be read as clean. See the step log above."
+              else
+                echo "No findings."
               fi
               echo
             done

@@ -1,6 +1,35 @@
-import { readFileSync } from "fs";
+import { readdirSync, readFileSync } from "fs";
 import path from "path";
 import { describe, expect, it } from "vitest";
+
+/**
+ * Every tracked file under `dir` whose extension is in `exts`, repository-
+ * relative, recursively.
+ *
+ * Written because the census below used to loop over a HARDCODED PAIR of
+ * workflow files while `gitleaks-image.sh` claimed it covered `scripts/` too.
+ * Probed during review: a third workflow running
+ * `ghcr.io/gitleaks/gitleaks:v8.0.0 --exit-code=1` passed 22 of 22. A census
+ * that names its inputs cannot notice a new one, which for a drift guard is
+ * the only thing it is for.
+ */
+function filesUnder(dir: string, exts: readonly string[]): string[] {
+  const root = path.resolve(process.cwd(), dir);
+  const out: string[] = [];
+  const walk = (absolute: string, relative: string) => {
+    for (const entry of readdirSync(absolute, { withFileTypes: true })) {
+      const nextRelative = `${relative}/${entry.name}`;
+      if (entry.isDirectory()) {
+        if (entry.name === "node_modules") continue;
+        walk(path.join(absolute, entry.name), nextRelative);
+      } else if (exts.some((ext) => entry.name.endsWith(ext))) {
+        out.push(nextRelative);
+      }
+    }
+  };
+  walk(root, dir);
+  return out.sort();
+}
 
 function readRepoFile(relativePath: string) {
   // Test helper: reads a fixed repo file under process.cwd(); relativePath is test-controlled, not user input.
@@ -22,6 +51,9 @@ function directivesOnly(text: string) {
     .filter((line) => !line.trim().startsWith("#"))
     .join("\n");
 }
+
+/** The one file allowed to name the gitleaks container. */
+const GITLEAKS_PIN_HOME = "scripts/ci/gitleaks-image.sh";
 
 describe("deployment image contracts", () => {
   it("lets production Compose use prebuilt app and migration images", () => {
@@ -60,11 +92,19 @@ describe("deployment image contracts", () => {
     // string is how #2686's 8.24.3-versus-8.28.0 split happened. The
     // assertion follows it; the census below proves that file is its only
     // home, which is the half a `toContain` here could never do.
+    // Tag AND digest. A tag is a pointer its publisher can move, so the one
+    // file whose entire job is to be immutable does not rely on one.
     expect(readRepoFile("scripts/ci/gitleaks-image.sh")).toContain(
-      "GITLEAKS_IMAGE=ghcr.io/gitleaks/gitleaks:v8.28.0",
+      "GITLEAKS_IMAGE=ghcr.io/gitleaks/gitleaks:v8.28.0@sha256:" +
+        "cdbb7c955abce02001a9f6c9f602fb195b7fadc1e812065883f695d1eeaba854",
     );
     expect(workflow).toContain("uses: aquasecurity/trivy-action@v0.36.0");
-    expect(workflow).not.toMatch(/uses:\s+\S+@(master|main)\b/);
+    for (const file of filesUnder(".github/workflows", [".yml", ".yaml"])) {
+      expect(
+        readRepoFile(file),
+        `${file} pins an action to a moving branch ref`,
+      ).not.toMatch(/uses:\s+\S+@(master|main)\b/);
+    }
   });
 
   it("mounts scanner source checkouts read-only", () => {
@@ -207,10 +247,29 @@ describe("deployment image contracts", () => {
       // clean 0, findings 2, fatal error 1, bad flag 126, unresolvable image
       // 125. Both outcomes still fail the caller, so nothing about what
       // blocks a merge changed. The discrimination is fail-closed in both
-      // directions, and exit 0 is reachable only from gitleaks exiting 0.
+      // directions.
+      //
+      // And exit 0 is NOT sufficient on its own. Measured on v8.28.0: when
+      // the git source itself fails — an unresolvable range, or
+      // `detected dubious ownership` — gitleaks logs the git error, reports
+      // `0 commits scanned … no leaks found`, and exits 0, because from its
+      // point of view it completed. `--exit-code` never applies. That lands
+      // on the REQUIRED gate, whose pull-request scope resolves
+      // `${PR_BASE_SHA}..${PR_HEAD_SHA}` and is unresolvable whenever the
+      // base commit is missing from the checkout. Zero commits is never a
+      // legitimate result for any caller here, so the script refuses it.
+      expect(scan).toContain("[1-9][0-9]* commits scanned");
+      expect(scan).toContain("walked ZERO commits");
+      expect(scan).toContain('-e NO_COLOR=1');
       expect(scan).toContain("LEAK_EXIT=2");
       expect(scan).toContain('args=(--exit-code="${LEAK_EXIT}" --redact)');
-      expect(scan).toMatch(/if \[ "\$\{status\}" -eq 0 \]; then\n\s+echo "gitleaks found nothing/);
+      // The clean path is the LAST branch, reached only after the findings
+      // exit, the non-zero exit and the zero-commit check have each declined
+      // it. Anchored on that ordering because an early `exit 0` is precisely
+      // the regression that would restore the false green.
+      expect(
+        scan.indexOf('echo "gitleaks found nothing in ${LABEL}."'),
+      ).toBeGreaterThan(scan.indexOf("walked ZERO commits"));
       expect(scan).toContain("SCANNER FAILURE, not a clean scan");
       // The action is no longer USED: it installed a DIFFERENT gitleaks (8.24.3
       // by default) than the pinned container, so the two jobs disagreed about
@@ -293,18 +352,39 @@ describe("deployment image contracts", () => {
       expect(sweep).toContain("bash scripts/ci/gitleaks-scan.sh dir");
       expect(gate).toContain("bash scripts/ci/gitleaks-scan.sh git");
       expect(gate).toContain("bash scripts/ci/gitleaks-scan.sh dir");
-      // And neither one may reach for a container of its own. Asserted against
-      // the DIRECTIVES because both files' comments discuss the image at
-      // length, and a comment explaining the rule must not satisfy it.
-      for (const [name, text] of [
-        [".github/workflows/ci.yml", gate],
-        [".github/workflows/gitleaks-scheduled.yml", sweep],
-      ] as const) {
-        expect(
-          directivesOnly(text),
-          `${name} names a gitleaks container of its own; the pin lives in scripts/ci/gitleaks-image.sh`,
-        ).not.toContain("ghcr.io/gitleaks/gitleaks");
-      }
+      // And NOTHING may reach for a container of its own. This used to loop
+      // over the two workflow files by name, which is the shape of guard that
+      // cannot see the file it most needs to: a third workflow with its own
+      // `ghcr.io/gitleaks/gitleaks:v8.0.0` passed the named version 22 of 22.
+      // So the search is a WALK, and the allowlist is one file.
+      const searched = [
+        ...filesUnder(".github/workflows", [".yml", ".yaml"]),
+        ...filesUnder(".github/actions", [".yml", ".yaml"]),
+        ...filesUnder("scripts", [".sh", ".mjs", ".ts", ".js"]),
+        "SECURITY.md",
+        "docs/MAINTENANCE.md",
+        "docs/SECURITY-ATTACK-SURFACE.md",
+      ];
+      // Not vacuous: a walk that found nothing would pass silently, which is
+      // the failure mode of every census that selects its own inputs.
+      expect(searched.length).toBeGreaterThan(30);
+      expect(searched).toContain(GITLEAKS_PIN_HOME);
+      expect(searched).toContain(".github/workflows/gitleaks-scheduled.yml");
+      const offenders = searched
+        .filter((file) => file !== GITLEAKS_PIN_HOME)
+        .filter((file) => {
+          const text = readRepoFile(file);
+          // Comments stripped for YAML and shell, because both discuss the
+          // image at length and a comment explaining the rule must not
+          // satisfy it. NOT stripped for Markdown: a document that restates
+          // the version IS the second home, prose or not.
+          const body = /\.(ya?ml|sh)$/.test(file) ? directivesOnly(text) : text;
+          return body.includes("ghcr.io/gitleaks/gitleaks");
+        });
+      expect(
+        offenders,
+        `these name a gitleaks container of their own; the pin lives in ${GITLEAKS_PIN_HOME}`,
+      ).toEqual([]);
       // The sweep proves the scanner can still fail before trusting its green,
       // exactly as the gate does. A weekly job nobody watches needs this more
       // than the gate does, not less.
@@ -374,14 +454,27 @@ describe("deployment image contracts", () => {
       // `RuleID` are intact.
       expect(scan).toContain("--report-format=json");
       expect(scan).toContain("--redact");
-      expect(sweep).toContain("\\(.RuleID) | `\\(.File)` | \\(.StartLine) | \\(.Commit[0:12])");
+      expect(sweep).toContain(
+        '\\(.RuleID) | `\\(.File | sub("^/repo/"; ""))` | \\(.StartLine) | \\(.Commit[0:12])',
+      );
+      // Only these four fields are ever rendered. `Match` and `Secret` are
+      // REDACTED in the report and must not be republished even so.
+      expect(sweep).not.toContain(".Secret");
+      expect(sweep).not.toContain(".Match");
       // Both scans run even when the first one fails, so one sweep gives one
       // complete answer rather than a partial one that has to be re-run.
       expect(sweep).toMatch(/- name: Sweep the checked-out tree\n\s+id: tree\n\s+if: always\(\)/);
-      // A missing report is NOT "no findings". The distinction is the same one
-      // `gitleaks-scan.sh` draws between a failed scan and a clean one, and it
-      // has to survive into the summary or the sweep's green means nothing.
-      expect(sweep).toContain("the scan did not complete");
+      // A missing report is NOT "no findings", and neither is a well-formed
+      // report of `[]` from a scan that failed at the git source — which is
+      // exactly what gitleaks writes in that case. So the summary reads the
+      // step's OUTCOME, and prints "No findings." only when it succeeded.
+      expect(sweep).toContain("HISTORY_OUTCOME: ${{ steps.history.outcome }}");
+      expect(sweep).toContain("TREE_OUTCOME: ${{ steps.tree.outcome }}");
+      expect(sweep).toContain('[ "$outcome" != "success" ]');
+      expect(sweep).toContain("The scan did not complete (step outcome:");
+      // ...and a missing `jq` must fail rather than render every scope as
+      // clean, which is this job's own failure mode arriving through a tool.
+      expect(sweep).toContain("jq is not on PATH");
     });
 
     it("names the Trivy gate for what it blocks and keeps it off the verify critical path", () => {

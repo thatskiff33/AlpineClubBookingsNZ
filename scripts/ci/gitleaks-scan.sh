@@ -24,10 +24,23 @@
 # acceptance criterion. `--exit-code=2` moves FINDINGS to 2 and leaves every
 # other non-zero meaning "the scan did not complete". Both still fail the caller,
 # so nothing about what blocks a merge changes; what changes is that the log now
-# says which of the two happened. Note the discrimination is fail-CLOSED in both
+# says which of the two happened. The discrimination is fail-CLOSED in both
 # directions: if gitleaks ever reported a finding as 1, this script would call it
-# a scanner failure and still exit non-zero. The only path to exit 0 is gitleaks
-# exiting 0.
+# a scanner failure and still exit non-zero.
+#
+# The exit MATRIX, measured against v8.28.0 rather than read off the manual:
+#
+#   clean                       0
+#   findings                    2   (because of `--exit-code=2`)
+#   unreadable scan path        1
+#   unparseable .gitleaks.toml  1
+#   unknown flag              126
+#   image cannot be resolved  125   (docker, not gitleaks)
+#   THE GIT SOURCE FAILED       0   <- see the zero-commit check at the bottom
+#
+# That last row is why exit 0 is not sufficient on its own: the only path to
+# exit 0 here is gitleaks exiting 0 AND, in `git` mode, having scanned at least
+# one commit.
 #
 # Usage — every knob is an environment variable, never an argument spliced into a
 # shell program, because these workflows interpolate `${{ }}` values and the
@@ -109,18 +122,49 @@ esac
 
 echo "gitleaks ${GITLEAKS_IMAGE} scanning ${LABEL}"
 
-status=0
-docker run --rm "${mounts[@]}" "${GITLEAKS_IMAGE}" "${scan[@]}" "${args[@]}" || status=$?
+# The output is captured rather than streamed because exit status alone cannot
+# answer the question below, and then printed in full so a reader loses nothing.
+# `NO_COLOR=1` keeps the ANSI escapes out of what gets grepped.
+log="$(mktemp)"
+trap 'rm -f "${log}"' EXIT
 
-if [ "${status}" -eq 0 ]; then
-  echo "gitleaks found nothing in ${LABEL}."
-  exit 0
-fi
+status=0
+docker run --rm -e NO_COLOR=1 "${mounts[@]}" "${GITLEAKS_IMAGE}" "${scan[@]}" "${args[@]}" \
+  >"${log}" 2>&1 || status=$?
+cat "${log}"
 
 if [ "${status}" -eq "${LEAK_EXIT}" ]; then
   echo "::error::gitleaks reported findings in ${LABEL}. The values above are redacted; the file, commit and rule id are not." >&2
   exit 1
 fi
 
-echo "::error::gitleaks did NOT complete over ${LABEL} (exit ${status}). This is a SCANNER FAILURE, not a clean scan — nothing has been checked." >&2
-exit 1
+if [ "${status}" -ne 0 ]; then
+  echo "::error::gitleaks did NOT complete over ${LABEL} (exit ${status}). This is a SCANNER FAILURE, not a clean scan — nothing has been checked." >&2
+  exit 1
+fi
+
+# THE ZERO-COMMIT FALSE GREEN, and it is the reason exit 0 is not trusted on its
+# own. When the git source itself fails — an unresolvable range, or
+# `detected dubious ownership` — gitleaks logs the git error, decides it
+# completed, and exits 0:
+#
+#   ERR [git] fatal: ambiguous argument 'deadbeef..cafebabe': unknown revision…
+#   INF 0 commits scanned.
+#   INF no leaks found
+#
+# Measured on v8.28.0. `--exit-code` never applies, because from gitleaks' point
+# of view there was nothing to find. That lands on the REQUIRED gate: the
+# pull-request scope's `${PR_BASE_SHA}..${PR_HEAD_SHA}` is unresolvable whenever
+# the base commit is missing from the checkout, and the gate would report a
+# clean scan of nothing at all.
+#
+# Zero commits is never a legitimate result for any caller here — every scope
+# this repository scans contains at least one commit — so it is treated as the
+# scanner failure it is.
+if [ "${MODE}" = "git" ] && ! grep -Eq '(^|[^0-9])[1-9][0-9]* commits scanned' "${log}"; then
+  echo "::error::gitleaks completed but walked ZERO commits over ${LABEL} — git rejected the range, so nothing was scanned. This is a SCANNER FAILURE, not a clean scan." >&2
+  exit 1
+fi
+
+echo "gitleaks found nothing in ${LABEL}."
+exit 0
