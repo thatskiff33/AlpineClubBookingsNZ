@@ -2,8 +2,12 @@ reverse_proxy {
   lb_policy first
   lb_try_duration 10s
   fail_duration 30s
+  max_fails 3
   health_uri /api/health/ready
   health_interval 10s
   health_timeout 5s
+  transport http {
+    keepalive 30s
+  }
   to app_blue:3000 app:3000
 }
