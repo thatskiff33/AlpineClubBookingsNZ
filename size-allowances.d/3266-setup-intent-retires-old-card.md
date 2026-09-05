@@ -7,13 +7,17 @@ the over-budget files is the call sites, the guard on an existing writer, and
 the comments saying why. The route handler stays inside its 250-line budget.
 
 file: src/app/(authenticated)/bookings/[id]/page.tsx
-lines: 2773
+lines: 2793
 reason: the "Save Payment Method" card's condition moves from "no SetupIntent
   yet" to the shared `needsSavedCardEntry` predicate, and the four-line comment
   beside it records why (an abandoned replacement or a retired card must show
   the form again). The predicate itself lives in `booking-payment-flow.ts`;
   what remains here is the one call site and its reasoning, which belongs next
   to the other owner/status gates in the same expression.
+
+  #3269 (same epic) grows the same page: its query selects the split parent's
+  three card columns and derives the admin button's will-charge wording from
+  the shared predicate — declared here because one path gets one allowance.
 
 file: src/lib/payment-reconciliation.ts
 lines: 2927
@@ -41,4 +45,3 @@ reason: the `setup_intent.succeeded` handler now reads the Payment row and
   caused. The verdict itself lives in the new module; what grows here is the
   handler's guard, its four outcome branches and their logging, which belong
   beside the other event handlers and their dedupe.
-

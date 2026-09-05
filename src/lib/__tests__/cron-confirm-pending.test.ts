@@ -297,10 +297,15 @@ function makePendingBooking(
     hasPaymentMethod?: boolean;
     finalPriceCents?: number;
     parentBookingId?: string | null;
+    // #3269: provenance is REQUIRED here so every test states whether the
+    // parent's card was saved through a SetupIntent (reusable off-session) or
+    // written by a one-off Payment Element checkout (Stripe refuses to charge it
+    // again). Customer + pm alone no longer means "has a card".
     parentPayment?: {
       id: string;
       stripePaymentMethodId: string;
       stripeCustomerId: string;
+      stripeSetupIntentId: string | null;
     } | null;
     // Full parent snapshot (#1967): lets tests model the parent's lifecycle
     // status and payment source (IB-settled vs abandoned card). Takes
@@ -314,8 +319,18 @@ function makePendingBooking(
         source?: string;
         stripeCustomerId?: string | null;
         stripePaymentMethodId?: string | null;
+        stripeSetupIntentId?: string | null;
       } | null;
     } | null;
+    // #3269: overrides on the booking's OWN payment row (applied over the
+    // default SetupIntent-saved card when `hasPaymentMethod` is true), so a test
+    // can model a legacy laundered row — customer + pm copied from the parent,
+    // no `stripeSetupIntentId`.
+    ownPayment?: {
+      stripeCustomerId?: string | null;
+      stripePaymentMethodId?: string | null;
+      stripeSetupIntentId?: string | null;
+    };
     // #1967: a #796 group joiner's booking always carries a join row.
     groupBookingJoin?: { id: string } | null;
     originBookingRequest?: { id: string } | null;
@@ -335,6 +350,7 @@ function makePendingBooking(
     parentBookingId = null,
     parentPayment = null,
     parentBooking,
+    ownPayment = {},
     groupBookingJoin = null,
     originBookingRequest = null,
     memberCanLogin = true,
@@ -407,6 +423,7 @@ function makePendingBooking(
           stripeSetupIntentId: `seti_${id}`,
           amountCents: finalPriceCents,
           status: "PENDING",
+          ...ownPayment,
         }
       : null,
   };
@@ -663,7 +680,7 @@ describe("Cron: Confirm Pending Bookings", () => {
     );
   });
 
-  it("charges a split non-member child using the parent booking's saved card", async () => {
+  it("charges a split non-member child using the parent booking's SetupIntent-saved card, without copying the card onto the child's row (#3269)", async () => {
     const booking = makePendingBooking("child_1", {
       hasPaymentMethod: false,
       parentBookingId: "parent_1",
@@ -671,6 +688,8 @@ describe("Cron: Confirm Pending Bookings", () => {
         id: "pay_parent_1",
         stripeCustomerId: "cus_parent_1",
         stripePaymentMethodId: "pm_parent_1",
+        // Saved through a SetupIntent: attached to the customer, reusable.
+        stripeSetupIntentId: "seti_parent_1",
       },
       finalPriceCents: 12000,
       guestCount: 1,
@@ -697,14 +716,22 @@ describe("Cron: Confirm Pending Bookings", () => {
         bookingId: "child_1",
         amountCents: 12000,
         stripeCustomerId: "cus_parent_1",
-        stripePaymentMethodId: "pm_parent_1",
       }),
       update: expect.objectContaining({
         amountCents: 12000,
         stripeCustomerId: "cus_parent_1",
-        stripePaymentMethodId: "pm_parent_1",
       }),
     });
+    // #3269: the parent's pm is charged from the resolved card object and is
+    // NOT written onto the child's row — that copy is what turned a one-off
+    // checkout artefact into a "saved card" every other reader trusted. The
+    // key is absent, not undefined.
+    const upsertArgs = mockPaymentUpsert.mock.calls[0][0] as {
+      create: Record<string, unknown>;
+      update: Record<string, unknown>;
+    };
+    expect(Object.keys(upsertArgs.create)).not.toContain("stripePaymentMethodId");
+    expect(Object.keys(upsertArgs.update)).not.toContain("stripePaymentMethodId");
     expect(mockChargePaymentMethod).toHaveBeenCalledWith(
       expect.objectContaining({
         amountCents: 12000,
@@ -723,6 +750,158 @@ describe("Cron: Confirm Pending Bookings", () => {
     );
   });
 
+  // #3269 / INV-PAY-053. What `markBookingPaymentSucceeded` leaves on a parent
+  // that paid its own place by one-off Payment Element checkout: PAID, with the
+  // customer and the payment method the PaymentIntent used, and NO SetupIntent.
+  // Stripe refuses to charge that payment method again — so the child has no
+  // card, and takes the same payment-link path as an Internet-Banking parent.
+  const ONE_OFF_CHECKOUT_PARENT = {
+    status: "PAID",
+    payment: {
+      id: "pay_parent_1",
+      source: "STRIPE",
+      stripeCustomerId: "cus_parent_1",
+      stripePaymentMethodId: "pm_parent_1",
+      stripeSetupIntentId: null,
+    },
+  };
+
+  it("never borrows a parent's one-off checkout card: the split child is routed to the payment-link path and nothing is copied onto its row (#3269)", async () => {
+    const booking = makePendingBooking("child_1", {
+      hasPaymentMethod: false,
+      parentBookingId: "parent_1",
+      parentBooking: ONE_OFF_CHECKOUT_PARENT,
+      finalPriceCents: 12000,
+      guestCount: 2,
+    });
+    mockPendingBookings([booking]);
+    mockCheckCapacityForGuestRanges.mockResolvedValue({
+      available: true,
+      minAvailable: 5,
+      nightDetails: [],
+    });
+
+    const result = await confirmPendingBookings();
+
+    // The production incident: this used to charge pm_parent_1 (refused by
+    // Stripe) and stamp it onto the child's Payment row.
+    expect(mockChargePaymentMethod).not.toHaveBeenCalled();
+    expect(mockPaymentUpsert).not.toHaveBeenCalled();
+    expect(result.confirmedBookingIds).toEqual([]);
+    expect(result.failedBookingIds).toEqual([]);
+
+    // Genuine split child with a settled parent: link minted, member emailed,
+    // hold extended — the #1967 path, reached now by provenance, not by the
+    // absence of ids.
+    expect(mockMintSplitGuestPaymentLinkIfAbsent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ id: "child_1" }),
+      expect.any(String)
+    );
+    expect(mockSendSplitGuestPaymentLinkEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        email: "child_1@example.com",
+        token: "tok_split_1",
+        priceCents: 12000,
+        guestCount: 2,
+      })
+    );
+    expect(mockBookingUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: "child_1", status: "PENDING" }),
+        data: { nonMemberHoldUntil: expect.any(Date) },
+      })
+    );
+    expect(mockSendAdminSplitSettlementUnpaidAlert).toHaveBeenCalledWith(
+      expect.objectContaining({ parentUnpaid: false, totalCents: 12000 })
+    );
+  });
+
+  it("no longer treats a legacy laundered child row (parent's one-off card copied on, no SetupIntent) as a saved card (#3269)", async () => {
+    // A row the pre-#3269 cron left behind in production: the child's own
+    // Payment carries the parent's customer + pm and no stripeSetupIntentId.
+    // Reading it by provenance repairs it without a migration.
+    const booking = makePendingBooking("child_1", {
+      parentBookingId: "parent_1",
+      parentBooking: ONE_OFF_CHECKOUT_PARENT,
+      ownPayment: {
+        stripeCustomerId: "cus_parent_1",
+        stripePaymentMethodId: "pm_parent_1",
+        stripeSetupIntentId: null,
+      },
+      finalPriceCents: 12000,
+      guestCount: 2,
+    });
+    mockPendingBookings([booking]);
+    mockCheckCapacityForGuestRanges.mockResolvedValue({
+      available: true,
+      minAvailable: 5,
+      nightDetails: [],
+    });
+
+    const result = await confirmPendingBookings();
+
+    expect(mockChargePaymentMethod).not.toHaveBeenCalled();
+    expect(mockPaymentUpsert).not.toHaveBeenCalled();
+    expect(result.confirmedBookingIds).toEqual([]);
+    expect(result.failedBookingIds).toEqual([]);
+    expect(mockMintSplitGuestPaymentLinkIfAbsent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ id: "child_1" }),
+      expect.any(String)
+    );
+    expect(mockSendSplitGuestPaymentLinkEmail).toHaveBeenCalled();
+  });
+
+  it("charges the child's own SetupIntent-saved card ahead of the parent's, and the claim writes only the customer onto the row (#3269)", async () => {
+    // Own row: the fixture default is a SetupIntent-saved card. The parent's
+    // one-off card is present and must be ignored.
+    const booking = makePendingBooking("child_1", {
+      parentBookingId: "parent_1",
+      parentBooking: ONE_OFF_CHECKOUT_PARENT,
+      finalPriceCents: 12000,
+      guestCount: 1,
+    });
+    mockPendingBookings([booking]);
+    mockCheckCapacityForGuestRanges.mockResolvedValue({
+      available: true,
+      minAvailable: 3,
+      nightDetails: [],
+    });
+    mockChargePaymentMethod.mockResolvedValue({
+      id: "pi_child_1",
+      status: "succeeded",
+      amount: 12000,
+      payment_method: "pm_child_1",
+    });
+
+    const result = await confirmPendingBookings();
+
+    expect(result.confirmedBookingIds).toEqual(["child_1"]);
+    expect(mockChargePaymentMethod).toHaveBeenCalledWith(
+      expect.objectContaining({
+        customerId: "cus_child_1",
+        paymentMethodId: "pm_child_1",
+      })
+    );
+    // Own card: the claim still writes only the customer. Writing the pm back
+    // "as a no-op" races the setup-intent route's replacement mint (#3266),
+    // which nulls the pm beside a fresh SetupIntent id — the write-back would
+    // resurrect the old card next to the new id and pass the provenance check.
+    expect(mockPaymentUpsert).toHaveBeenCalledWith({
+      where: { bookingId: "child_1" },
+      create: expect.objectContaining({ stripeCustomerId: "cus_child_1" }),
+      update: expect.objectContaining({ stripeCustomerId: "cus_child_1" }),
+    });
+    const ownUpsertArgs = mockPaymentUpsert.mock.calls[0][0] as {
+      create: Record<string, unknown>;
+      update: Record<string, unknown>;
+    };
+    expect(Object.keys(ownUpsertArgs.create)).not.toContain("stripePaymentMethodId");
+    expect(Object.keys(ownUpsertArgs.update)).not.toContain("stripePaymentMethodId");
+    expect(mockMintSplitGuestPaymentLinkIfAbsent).not.toHaveBeenCalled();
+  });
+
   it("cancels a split non-member child without charge or invoice when capacity is gone", async () => {
     const booking = makePendingBooking("child_1", {
       hasPaymentMethod: false,
@@ -731,6 +910,7 @@ describe("Cron: Confirm Pending Bookings", () => {
         id: "pay_parent_1",
         stripeCustomerId: "cus_parent_1",
         stripePaymentMethodId: "pm_parent_1",
+        stripeSetupIntentId: "seti_parent_1",
       },
     });
     mockPendingBookings([booking]);
@@ -2181,6 +2361,8 @@ describe("Cron: Confirm Pending Bookings", () => {
           id: "pay_parent_1",
           stripeCustomerId: "cus_parent_1",
           stripePaymentMethodId: "pm_parent_1",
+          // #3269: "DOES have a saved card" means saved through a SetupIntent.
+          stripeSetupIntentId: "seti_parent_1",
         },
         finalPriceCents: 12000,
         guestCount: 1,
@@ -2314,6 +2496,8 @@ describe("Cron: Confirm Pending Bookings", () => {
           id: "pay_parent_1",
           stripeCustomerId: "cus_parent_1",
           stripePaymentMethodId: "pm_parent_1",
+          // #3269: chargeable means SetupIntent-saved, not merely populated.
+          stripeSetupIntentId: "seti_parent_1",
         },
         finalPriceCents: 12000,
         guestCount: 1,

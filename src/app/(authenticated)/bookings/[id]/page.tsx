@@ -145,6 +145,7 @@ import { getPublicOtherLodges } from "@/lib/booking-request";
 // `formatConsentNightsLabel`, which takes `Date[]`. Neither reads a timezone, so
 // neither is a second temporal authority; CT-6 (#2991) retires the module.
 import { eachDateOnlyInRange } from "@/lib/date-only";
+import { savedPaymentMethodForBooking } from "@/lib/saved-payment-method";
 import {
   bookingManagementAuthorizationRole,
   hasAdminAreaAccess,
@@ -356,7 +357,21 @@ export default async function BookingDetailPage({
       // Split-booking group (#738): the member booking links to its provisional
       // non-member child(ren); the child links back to its member booking.
       parentBooking: {
-        select: { id: true, status: true, finalPriceCents: true },
+        select: {
+          id: true,
+          status: true,
+          finalPriceCents: true,
+          // #3269: the admin confirm-pending-guests button's "will charge"
+          // wording must agree with the route, which may charge a split child
+          // on its parent's SetupIntent-saved card.
+          payment: {
+            select: {
+              stripeCustomerId: true,
+              stripePaymentMethodId: true,
+              stripeSetupIntentId: true,
+            },
+          },
+        },
       },
       linkedBookings: {
         select: {
@@ -1665,10 +1680,15 @@ export default async function BookingDetailPage({
               booking.hasNonMembers &&
               booking.nonMemberHoldUntil,
           )}
-          hasSavedPaymentMethod={Boolean(
-            booking.payment?.stripePaymentMethodId &&
-              booking.payment?.stripeCustomerId,
-          )}
+          // The same predicate the confirm-pending-guests route charges on
+          // (#3269, `INV-PAY-053`), so the button never promises a charge the
+          // route will not make.
+          hasSavedPaymentMethod={
+            savedPaymentMethodForBooking({
+              payment: booking.payment,
+              parentBooking: booking.parentBooking,
+            }) !== null
+          }
           finalPriceCents={booking.finalPriceCents}
           providerMismatches={providerMismatches}
           financialReviewWarnings={financialReviewWarnings}
