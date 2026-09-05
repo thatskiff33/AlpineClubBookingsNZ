@@ -31,6 +31,7 @@ import { getBookingPaymentMode } from "@/lib/booking-payment-flow";
 import { RefundAppealButton } from "@/components/refund-appeal-button";
 import { humanizeStatus, paymentStatusClass } from "@/lib/status-colors";
 import { BookingHelpExtras } from "./_components/booking-help-extras";
+import { BookingLifecycleActions } from "./_components/booking-lifecycle-actions";
 import { BookingPaymentCards } from "./_components/booking-payment-cards";
 import { BookingStayPreferences } from "./_components/booking-stay-preferences";
 import { BookingReviewNotices } from "./_components/booking-review-notices";
@@ -467,61 +468,16 @@ export default async function BookingDetailPage({
         messages={messages}
       />
 
-      {canCancel && (
-        <CancelBookingButton
-          bookingId={booking.id}
-          refundAppealDescription={refundAppealDescription}
-          onBehalfOfMember={actingOnBehalf}
-          // Issue #1705: the notify dialog shows iff the cancel route will
-          // honour the choice — viewerAuthorizationRole is the same
-          // booking-management role the route resolves for its 403 gate.
-          canChooseMemberEmail={viewerAuthorizationRole === "ADMIN"}
-          canOverrideHostingCoverage={viewerAuthorizationRole === "ADMIN"}
-          // #2259: with the switch on there is no email choice to honour, so
-          // the dialog states that instead of asking. Spread rather than a
-          // conditional value, so a member's payload carries no `noEmails` KEY
-          // at all — React Flight serialises the key too, and `noEmails:false`
-          // would still tell a member the switch exists.
-          {...(viewerAuthorizationRole === "ADMIN"
-            ? { noEmails: booking.noEmails }
-            : {})}
-        />
-      )}
-
-      {canDeleteDraft ? (
-        <DeleteBookingButton
-          bookingId={booking.id}
-          mode="draft"
-          returnHref={backHref}
-        />
-      ) : null}
-
-      {canSoftDeleteCancelled ? (
-        <DeleteBookingButton
-          bookingId={booking.id}
-          mode="cancelled"
-          returnHref={backHref}
-        />
-      ) : null}
-
-      {/* Refund appeal: owner-or-Full-Admin only, matching its backing route
-          (/api/bookings/[id]/refund-request, owner-or-hasAdminAccess). The
-          #1289 read-only guard now admits Booking Officers / read-only admins to
-          this page, and this control previously carried no viewer gate, so it
-          would have shown them a button that 403s. canManageBooking restores the
-          intended owner + Full-Admin audience. */}
-      {canManageBooking &&
-        !isDeleted &&
-        booking.status === "CANCELLED" &&
-        booking.payment &&
-        booking.payment.status !== "REFUNDED" &&
-        maxRefundableCents > 0 && (
-          <RefundAppealButton
-            bookingId={booking.id}
-            maxRefundableCents={maxRefundableCents}
-            description={refundAppealDescription}
-          />
-        )}
+      <BookingLifecycleActions
+        booking={booking}
+        viewer={viewer}
+        access={access}
+        payment={payment}
+        messages={messages}
+        canDeleteDraft={canDeleteDraft}
+        canSoftDeleteCancelled={canSoftDeleteCancelled}
+        backHref={backHref}
+      />
 
       {booking.status === "CANCELLED" && (
         <Card id="cancellation" className="scroll-mt-20">
