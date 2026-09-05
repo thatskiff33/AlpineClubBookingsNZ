@@ -590,9 +590,9 @@ Prefix `INV-ADDPAY`.
 | `INV-ADDPAY-034` | One shared "cancelled or removed" sentence for surfaces that explain |
 | `INV-ADDPAY-035` | Soft-deleted bookings take no member-guest consent answer, from any role |
 | `INV-ADDPAY-036` | Modification payments captured on deleted bookings are queued for a human |
-| `INV-ADDPAY-037` | Late-capture auto-refunds on cancelled bookings leave a DISMISSED finance-queue task |
-| `INV-ADDPAY-038` | That alert names payment and population, cannot be muted, real recipient |
-| `INV-ADDPAY-039` | A late capture already hand-refunded is never refunded again; alerted |
+| `INV-ADDPAY-037` | Auto-refund leaves DISMISSED task — #2773 orchestrator decision; owner has not ruled; `INV-ADDPAY-039` |
+| `INV-ADDPAY-038` | Unmutable alert names population — #2773 orchestrator decision; owner has not ruled; `INV-ADDPAY-039` |
+| `INV-ADDPAY-039` | Hand-refunded late capture never refunded again — orchestrator decision; owner has not ruled |
 
 ## Analytics And Privacy
 
