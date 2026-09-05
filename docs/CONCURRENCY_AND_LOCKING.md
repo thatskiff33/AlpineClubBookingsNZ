@@ -2515,8 +2515,9 @@ pattern is:
 `cron-confirm-pending.ts` is the reference implementation; the same shape is in
 `booking-create.ts`, `payment-reconciliation.ts`, `group-settlement.ts`
 (`commitChildrenToConfirmed`, keyed on each child's own lodge in sorted order),
-the confirm-pending-guests / waitlist-confirm / switch-to-internet-banking
-routes, the booking modify/cancel/settlement services, and
+the confirm-pending-guests / charge-saved-method (#3267) / waitlist-confirm /
+switch-to-internet-banking routes, the booking modify/cancel/settlement
+services, and
 `xero-inbound/invoice-paid-effects.ts`. Skipping step 3 (acting on the pre-lock
 snapshot) is a TOCTOU.
 
@@ -3053,9 +3054,34 @@ shared `duplicate_capture_refund_<bookingId>_<pi>` key prefix the recovery cron
 replays. Relatedly, the auto-charge cron's pre-charge sweep that cancels
 superseded /pay link intents (#1992 Option 1) is a plain Stripe call strictly
 OUTSIDE any transaction, after the claim commit: the claim's link revocation
-under the lodge lock freezes the set of link intents, and the sweep excludes the
-cron's own `pending_hold_auto_charge` transactions because Stripe's shared
-`pending_charge_<bookingId>` idempotency key re-returns a prior run's intent.
+under the lodge lock freezes the set of link intents, and the sweep excludes
+every saved-card charge ATTEMPT row — recognised by the `pending_charge_` prefix
+on `reference`, the constant the attempt module mints with (#3267,
+`INV-PAY-055`) — because a still-unresolved attempt row on this card IS this
+run's attempt and is about to be asked about. (It used to exclude two `reason`
+literals because Stripe's shared `pending_charge_<bookingId>` key re-returned a
+prior run's intent; there is no shared key any more, and a legacy row of that
+shape is now swept like a link intent.)
+
+**#3267 added one writer to every saved-card charge CLAIM, at the same tiers
+in the same order.** The claim transactions of `resolveHoldWindowUnderLock`
+(the cron), the admin confirm-pending-guests charge branch and — new to the
+cohort — `charge-saved-method`, which until #3267 charged with no claim at all,
+each call `beginSavedCardChargeAttempt` after the status-guarded PENDING ->
+CONFIRMED claim: under `lock(1)` then the lodge lock it reads the payment's
+PRIMARY Stripe rows, status-guards a superseded attempt to FAILED, and creates
+the attempt row whose own id is the Stripe key. Holding both locks across that
+read-then-write is what makes the ledger the double-charge guard the shared key
+used to be: two paths can never both hold an open attempt for one payment. The
+Stripe-side cancel of a superseded attempt's intent, and the charge itself, run
+AFTER commit in `chargeSavedCardAttempt` — plain provider calls outside any
+transaction (`INV-INT-003`). A payment already holding captured cash THROWS
+inside the claim, which rolls the whole claim back rather than compensating it.
+The non-captured release (CONFIRMED -> PENDING) records Stripe's answer on the
+attempt row inside the same locked release transaction each path already had
+(`settleSavedCardChargeAttempt`, `store: tx`); a definite refusal's FAILED mark
+is a single-row status-guarded `updateMany` on the base client, holding no
+lock, because it races nothing (the intent, if any, is already terminal).
 The same cron's terminal branch for a permanently unusable saved card (#3268,
 `INV-PAY-054`) runs AFTER `releaseChargeClaim` has committed and holds no lock
 at all: the Stripe detach is a plain provider call outside any transaction that
@@ -3085,7 +3111,8 @@ so a stale child snapshot can never overwrite a terminal transition.
 ### Writer doing both → `lock(1)` first, then per-lodge
 
 The Stripe capture (`markBookingPaymentSucceeded`), the confirm-pending-guests
-zero-dollar and charge branches, the waitlist-confirm $0 PAID claim, the admin
+zero-dollar and charge branches, the `charge-saved-method` claim and release
+(#3267), the waitlist-confirm $0 PAID claim, the admin
 return-to-waitlist repair (#2649), the
 switch-to-internet-banking hold, the quote-accept conversion
 (`approveBookingRequest`), and every booking modification service
