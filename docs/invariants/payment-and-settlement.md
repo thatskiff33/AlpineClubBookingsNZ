@@ -152,8 +152,7 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   (`additionalPaymentStatus = "SUCCEEDED"`, re-asserted in the fenced write) AND
   as a durable INTERNET_BANKING ADDITIONAL `PaymentTransaction` with reason
   `manual_mark_paid_additional`, because `reconcilePaymentAggregates` re-derives
-  those columns from the latest ADDITIONAL transaction. **No money is created:**
-  the settle collects `finalPriceCents - credit` in one go, SPLIT (the ADDITIONAL
+  those columns from the latest ADDITIONAL transaction. **No money is created:** an upward modification raises `Booking.finalPriceCents` by the same delta it records as the extra, and this settle collects `finalPriceCents - credit` in one go, so the cash is SPLIT (the ADDITIONAL
   row carries the delta, the PRIMARY row the rest), so `Payment.amountCents` is
   the money the club took. An extra LARGER than the whole amount owing is
   refused on BOTH answers.
@@ -188,13 +187,11 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   says so, and the admin booking page's advisory state applies the same rule so
   the action is not offered at all. The three payment-level refusals are checked
   in the SAME ORDER on both surfaces — refund history, then already-captured,
-  then Xero evidence.
+  then Xero evidence. Refund history leads because it is the most specific truth (a fully REFUNDED payment is a captured one too, and only the refund message names the remedy); Xero trails because the cheap in-memory refusals should settle it without the extra lookups `assertNoXeroInvoiceEvidence` costs inside the locked transaction.
 - **Reachability, stated plainly.** With the read-time refusal in place, no
   production path is known that presents the coverage question on a settle that
   can COMPLETE other than the reverse-then-re-settle loop and legacy pre-ledger
-  rows: every writer of `additionalAmountCents` requires the payment to be
-  captured when the delta is recorded, and a captured payment is not a legal
-  settle-from. Re-check this if the settle-from status set or the delta writers
+  rows: Every writer of `additionalAmountCents` requires the payment to be captured at the moment the delta is recorded (`applyPaymentAdjustments` arm (a) needs `hasCapturedPayment`; arm (b) needs an issued Xero invoice, which this settle refuses outright and which nothing ever clears), and a captured payment is not a legal settle-from. Re-check this if the settle-from status set or the delta writers
   change.
 
 ## INV-PAY-047
@@ -576,7 +573,7 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   `(sourceBookingId, type=CANCELLATION_REFUND)`, because three legitimate paths
   (`restoreCreditFromBooking`, `createCancellationCredit`'s held-as-credit
   refund, and the Xero inbound late-cash credit) all write that shape for one
-  booking. Each branch's atomic status flip remains the primary single-flight.
+  booking. Each branch's atomic status flip remains the primary single-flight — the never-captured and `PENDING` branches are status-guarded claim-first under the booking advisory lock too — but the unique key removes the cross-path lock-granularity dependence, so moving a credit-restoring path off the shared `lock(1)` (e.g. a per-lodge release lock) can no longer double a restore.
   A CANCELLED booking may legitimately hold consumed credit with NO restore row
   only when its payment captured money (0%-tier paid cancels write no restore
   row; held-as-credit refunds keep the applied rows) or settled without cash
@@ -712,18 +709,14 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   clearing term is exact. Stated limit, the partial-window residual: a
   concurrent CANCEL treats the credit as unallocated and Xero rejects the excess
   LOUDLY; a concurrent HOLD-EXPIRY settles its clearing note by bank payment and
-  silently over-credits Xero by the already-allocated slice — bookkeeping-only
-, reconciled by an
-  operator in Xero. The op's idempotent retry (the `@@unique(memberCreditId,
+  silently over-credits Xero by the already-allocated slice — a bookkeeping-only divergence (member LOCAL money is conserved either way by the 100% restore) that an operator reconciles in Xero. The op's idempotent retry (the `@@unique(memberCreditId,
   appliedToBookingId)` join key + per-row completion links) finishes the
   allocations then stamps; its re-plan reads each lot's remaining balance
   EXCLUDING this booking's own already-committed allocation rows. A
   FAILED allocation op has no auto FAILED→PENDING reaper; recovery runs through
   the Xero outbox retry stack (`xero-operation-retry.ts`). Cancellation is
   UNCHANGED and still conserves: the 100% restore + `finalPrice − allocated`
-  clearing note void the invoice while returning the credit LOCALLY; the
-  restored credit is then local-only until next used, via the noteless
-  mint-fresh branch. ACCOUNTING-POLICY flag (open): the minted remainder note
+  clearing note void the invoice while returning the credit LOCALLY; after a cancel of an allocated-credit booking the restored credit is local-only (its funding note was consumed by the cancelled invoice); the local ledger is the source of truth and Xero catches up when the credit is next used, via the noteless mint-fresh branch. ACCOUNTING-POLICY flag (open): the minted remainder note
   posts to the shared `hutFeeRefunds` mapping; a distinct write-off account is
   an owner call.
 
@@ -748,7 +741,7 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   fire-after-invoice outbox op is NOT used on card; `createXeroInvoiceForBooking`
   records the NET captured Stripe cash — gross captures − refunds, capped at the
   invoice's amount due (#1765: settlement evidence is captured-status + positive
-  net cash, never `status === "SUCCEEDED"` alone) — and then SYNCHRONOUSLY
+  net cash, never `status === "SUCCEEDED"` alone, which misreads a repay-settled PARTIALLY_REFUNDED aggregate; every skip logs a populated reason) — and then SYNCHRONOUSLY
   re-drives the same allocation engine (gated the same way, plus
   `creditAppliedCents > 0`) so the invoice settles to PAID via effective cash +
   credit-note allocation. The allocation throws on failure (the invoice op fails
@@ -763,8 +756,7 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
 - A payment landing on an already-CANCELLED booking's stale open invoice must
   never settle silently (#1357). Minting therefore requires positive CASH evidence on the invoice
   (`amountPaid`, falling back to actual payment records), a payment that never
-  settled (PENDING/FAILED), and no credit already minted by this pipeline
-. Both
+  settled (PENDING/FAILED), and no credit already minted by this pipeline (matched by its own credit descriptions — never by amount, which collides with unrelated cancellation-flow rows). Both
   credit-minting arms (already-cancelled and late-capacity-failure) size the mint
   by the invoice's QUANTIFIED cash (#1459), clamped per payment to the payment's
   own amount — `amountPaid` plus overpayment/prepayment allocations, falling back
@@ -778,7 +770,7 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   two never-settled payments on one invoice can never in aggregate mint more
   than the invoice's cash. The remaining-cash figure is read INSIDE each payment's reconcile
   transaction, under the shared advisory lock and excluding the payment's own
-  booking, so the cap is idempotent under retry. When it mints, the
+  booking, so the cap is idempotent under retry (a replayed payment finds its own credit via the per-booking dedup and mints nothing); an apportioned or fully-exhausted mint raises the same loud admin alert the partial-mint path uses, never a silent overmint. When it mints, the
   inbound reconcile creates the member credit and enqueues the offsetting
   account-credit note — both sized at the minted amount — and retires the
   now-obsolete still-PENDING invoice-clearing refund note, all in ONE
@@ -1229,8 +1221,7 @@ one, check the other.
   primary invoice counts as raised before an edit only when a SUCCEEDED or
   PARTIAL `INVOICE`/`CREATE` operation carrying that invoice's `xeroObjectId`
   has an EARLIEST `completedAt` strictly before `BookingModification.createdAt`;
-  anything else is `unknown` and reports at `manual_review` with no action, and
-  `--apply` skips it (`resolvePrimaryInvoiceEditTiming` in
+  anything else is `unknown`, and reports at `manual_review` with no action rather than billing; `--apply` skips it and nothing is dropped silently. The check engages on an edit whose modification row nets positive OR that added a guest, never on the expected ask (`resolvePrimaryInvoiceEditTiming` in
   `xero-booking-repair-analysis.ts`, pinned by `xero-booking-repair.test.ts`).
 - **A replay raises no invoice against an ask that was already paid** (#3181):
   its webhook cannot fire again, so a WAITING_PAYMENT invoice would never be
@@ -1286,7 +1277,7 @@ one, check the other.
   refused** (#3032, `assertNoPendingEditFinancialReview`), because pricing one
   would mean starting from the amount under review. **All FOUR money-affecting
   doors are fenced**: the batch edit, the date edit, the single-guest removal,
-  and `POST /api/bookings/[id]/guests`, which reprices inline in the route. Each is called inside the transaction after the post-lock re-read and surfaces the 409 with its `code`. Identity-only edits, credit elections, the price-preserving admin date
+  and `POST /api/bookings/[id]/guests`, which reprices inline in the route. Each is called inside the transaction, after the locks and the post-lock re-read, below authorisation and before any write, and each surfaces the 409 with its `code` above its handler's generic `ApiError` branch. Identity-only edits, credit elections, the price-preserving admin date
   shift and consent-authority removals (owner decision D-14) are not fenced.
 - **Three database constraints, because prose is not enforcement** (migration
   `20260903010000`). An `EDIT_FINANCIAL_REVIEW` row must carry its
