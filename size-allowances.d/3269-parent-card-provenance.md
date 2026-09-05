@@ -2,19 +2,18 @@
 
 The rule itself went into a NEW module, `src/lib/saved-payment-method.ts`
 (inside budget), and `src/lib/cron-confirm-pending.ts` SHRANK by thirteen lines
-when its private copy of the predicate moved there. Four already-over-budget
-readers grow because each now states, at the call site, why it asks the shared
+when its private copy of the predicate moved there. Three already-over-budget
+readers grow here (the page is declared beside #3266's entry, below) because each now states, at the call site, why it asks the shared
 module rather than testing the columns it has in hand: the previous line at each
 site read as trivially correct and was the defect.
 
-file: src/app/(authenticated)/bookings/[id]/page.tsx
-lines: 2736
-reason: the admin "Confirm pending guests" button's will-charge wording has to
-  agree with the route that charges, so the query now selects the split parent's
-  three card columns and the prop is derived by the shared predicate. Eleven of
-  the twenty lines are the nested `select`; the rest is the comment saying which
-  route this must stay in step with. Splitting the page is a refactor of its own
-  and would not remove this select.
+The booking page's growth is declared in
+`size-allowances.d/3266-setup-intent-retires-old-card.md` (one allowance per
+path across the epic — the gate refuses two files naming one path, and both
+lanes land through the same integration branch); that entry carries this
+lane's reason too: the admin "Confirm pending guests" button's will-charge
+wording now derives from the shared predicate over the split parent's three
+card columns, selected in the page query.
 
 file: src/app/api/admin/bookings/[id]/confirm-pending-guests/route.ts
 lines: 758

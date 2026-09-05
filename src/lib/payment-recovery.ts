@@ -33,6 +33,7 @@ import { sendAdminPaymentFailureAlert } from "@/lib/email";
 import { recordDuplicateCaptureRefundEvent } from "@/lib/booking-events";
 import logger from "@/lib/logger";
 import { MAX_PAYMENT_RECOVERY_ATTEMPTS } from "@/lib/payment-recovery-constants";
+import { stripeReferenceId } from "@/lib/stripe-references";
 import { claimAlertCooldown } from "@/lib/alert-cooldown";
 
 type PaymentRecoveryStore = Prisma.TransactionClient | typeof prisma;
@@ -2493,10 +2494,14 @@ export async function queueSupersededPaymentIntentRefundRecovery({
   return true;
 }
 
+/**
+ * A named derivation of `stripeReferenceId` (`stripe-references.ts`, the one
+ * home for "the id behind a Stripe expandable reference" — #3266). Kept under
+ * its own name so the charge call sites that read it did not all have to move
+ * in the same lane; #3267 routes their inline copies when it edits them.
+ */
 export function getStripePaymentMethodId(
   paymentIntent: Pick<Stripe.PaymentIntent, "payment_method">
 ) {
-  return typeof paymentIntent.payment_method === "string"
-    ? paymentIntent.payment_method
-    : paymentIntent.payment_method?.id ?? null;
+  return stripeReferenceId(paymentIntent.payment_method);
 }

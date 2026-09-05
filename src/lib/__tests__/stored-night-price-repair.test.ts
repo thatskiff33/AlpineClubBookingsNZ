@@ -18,6 +18,7 @@ import {
 } from "@/lib/stored-night-price-repair";
 import {
   applyStoredNightPriceRepair,
+  applyStrandNightPriceReconcile,
   unpricedNightsSummaryForGuest,
   NIGHT_PRICE_REPAIR_RACED_MESSAGE,
 } from "@/lib/stored-night-price-repair-store";
@@ -493,6 +494,56 @@ describe("a booking whose blanks are all cleared stops parking (#3191)", () => {
   });
 });
 
+describe("the settle path's write is UNCHANGED by #3214's generalised writer", () => {
+  it("reaches the database with the same fenced arguments it always did", async () => {
+    /*
+      #3214 generalised this writer so a second caller could share it: the night
+      fence became "the value the row was read holding" rather than a literal
+      `priceCents: null`, and a create arm was added for a night the strand holds
+      with no row behind it.
+
+      NEITHER CAN REACH THIS PATH, and that is a property of how the settle plan
+      is built rather than a rule anybody has to keep:
+      `unpricedNightsSummaryForGuest` takes its dates only from rows this strand
+      ALREADY has whose price is exactly `NULL`, so every entry is an existing
+      row expected to be blank.
+
+      So this pins the arguments byte for byte - the `where` including its
+      `priceCents: null`, and no `create` at all - which is what lets a reviewer
+      see the settle path is untouched without re-reading the writer.
+    */
+    const nightUpdateMany = vi.fn(async () => ({ count: 1 }));
+    const nightCreate = vi.fn(async () => ({ id: "night-1" }));
+    const guestUpdateMany = vi.fn(async () => ({ count: 1 }));
+    const store = {
+      bookingGuestNight: { updateMany: nightUpdateMany, create: nightCreate },
+      bookingGuest: { updateMany: guestUpdateMany },
+    };
+
+    await applyStoredNightPriceRepair({
+      bookingGuestId: "guest-1",
+      summary: summaryOf(["2026-08-02"], 4_000, 10_000),
+      entries: [{ date: requireCalendarDate("2026-08-02"), priceCents: 8_000 }],
+      store: asStore(store),
+    });
+
+    expect(nightUpdateMany).toHaveBeenCalledTimes(1);
+    expect(nightUpdateMany).toHaveBeenCalledWith({
+      where: {
+        bookingGuestId: "guest-1",
+        stayDate: new Date("2026-08-02T00:00:00.000Z"),
+        priceCents: null,
+      },
+      data: { priceCents: 8_000 },
+    });
+    expect(nightCreate).not.toHaveBeenCalled();
+    expect(guestUpdateMany).toHaveBeenCalledWith({
+      where: { id: "guest-1", priceCents: 10_000 },
+      data: { priceCents: 12_000 },
+    });
+  });
+});
+
 describe("the writes cannot overwrite a price somebody else recorded", () => {
   it("refuses when a night stopped being blank underneath it", async () => {
     const { guest, store } = guestStore({
@@ -543,5 +594,101 @@ describe("the writes cannot overwrite a price somebody else recorded", () => {
         store: asStore(store),
       }),
     ).rejects.toThrow(NIGHT_PRICE_REPAIR_RACED_MESSAGE);
+  });
+});
+
+describe("the money-neutrality promise belongs to the writer (#3214 review)", () => {
+  /*
+    `applyStrandNightPriceReconcile` is EXPORTED and takes an arbitrary
+    `summary` and `writes`, so a second caller could hand it a set that re-bases
+    the strand's total to a different number - and the function's name would
+    still be promising it had not. The check therefore sits inside the writer
+    rather than in `recordStrandNightPriceReconcile`, and this drives it the way
+    a second caller would: directly, with no plan in front of it.
+  */
+  it("refuses a set that would move what the stay is stored as being worth", async () => {
+    const { guest, store } = guestStore({
+      id: "g1",
+      priceCents: 10_000,
+      nights: [
+        { stayDate: day("2026-08-01"), priceCents: 4_000 },
+        { stayDate: day("2026-08-02"), priceCents: 6_000 },
+      ],
+    });
+
+    await expect(
+      applyStrandNightPriceReconcile({
+        bookingGuestId: guest.id,
+        summary: {
+          dates: [
+            requireCalendarDate("2026-08-01"),
+            requireCalendarDate("2026-08-02"),
+          ],
+          knownNightTotalCents: 0,
+          storedGuestTotalCents: 10_000,
+        },
+        // $150 against a stay stored at $100: exactly the re-base the name
+        // promises cannot happen.
+        writes: [
+          {
+            date: requireCalendarDate("2026-08-01"),
+            priceCents: 9_000,
+            expectedPriceCents: 4_000,
+            rowExists: true,
+          },
+          {
+            date: requireCalendarDate("2026-08-02"),
+            priceCents: 6_000,
+            expectedPriceCents: 6_000,
+            rowExists: true,
+          },
+        ],
+        store: asStore(store),
+      }),
+    ).rejects.toThrow(/may never do/);
+  });
+
+  it("accepts a set that re-apportions within the same total", async () => {
+    // THE CONTROL. Without it the refusal above could be passing because the
+    // writer refuses everything.
+    const { guest, store } = guestStore({
+      id: "g1",
+      priceCents: 10_000,
+      nights: [
+        { stayDate: day("2026-08-01"), priceCents: 4_000 },
+        { stayDate: day("2026-08-02"), priceCents: 6_000 },
+      ],
+    });
+
+    const { newGuestTotalCents } = await applyStrandNightPriceReconcile({
+      bookingGuestId: guest.id,
+      summary: {
+        dates: [
+          requireCalendarDate("2026-08-01"),
+          requireCalendarDate("2026-08-02"),
+        ],
+        knownNightTotalCents: 0,
+        storedGuestTotalCents: 10_000,
+      },
+      writes: [
+        {
+          date: requireCalendarDate("2026-08-01"),
+          priceCents: 0,
+          expectedPriceCents: 4_000,
+          rowExists: true,
+        },
+        {
+          date: requireCalendarDate("2026-08-02"),
+          priceCents: 10_000,
+          expectedPriceCents: 6_000,
+          rowExists: true,
+        },
+      ],
+      store: asStore(store),
+    });
+
+    expect(newGuestTotalCents).toBe(10_000);
+    expect(guest.priceCents).toBe(10_000);
+    expect(guest.nights.map((night) => night.priceCents)).toEqual([0, 10_000]);
   });
 });

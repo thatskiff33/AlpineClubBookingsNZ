@@ -1712,11 +1712,11 @@ export function hostingCoverageActorOptions(actor: {
       coverageActorMemberId: actorMemberId,
       coverageChangeVacatedRange,
       coverageChange: {
-        // NOT `OFFICER_OVERRIDE`: no officer was involved and inventing one would
-        // put a name and a reason against a decision they never considered. The
-        // incident's own `reason` says a member was asked and answered, so the
-        // officer reading their queue is not left to infer it.
-        cause: "SYSTEM_CHANGE",
+        // THE ONE CENSUSED WRITER OF THIS LABEL (#3241, `INV-HOST-052`'s runtime
+        // half). NOT `SYSTEM_CHANGE`, which means a change nobody could block, so
+        // it told an officer the wrong story and put a member's own prompted
+        // choice into the count a club judges its setting by; nor an officer's.
+        cause: "OWNER_DECLINED_LINKED_MOVE",
         actorMemberId,
         reason: LINKED_MOVE_DECLINED_INCIDENT_REASON,
         strandedStateKey: declinedLinkedMove,
@@ -2632,24 +2632,43 @@ async function enqueueSameOwnerDependentItems(
   actorMemberId: string | null,
   participantProof: HostingCoverageQueueParticipantProof,
   db: AdultMemberHostingReviewDb,
+  askedAbout: ReadonlySet<string>,
 ): Promise<number> {
   let queued = 0;
+  // A plain automatic change explains nothing about who, so there is nothing to
+  // confine and nothing to carry: those dependents keep the existing overlap
+  // rule and the ordinary edit still writes exactly one item.
+  const hasAStory = context.cause !== "SYSTEM_CHANGE" || context.reason !== null;
   for (const dependent of dependents) {
-    if (!dependentNeedsOwnQueueItem(booking, dependent)) continue;
+    // #3241, `INV-HOST-053`. THE STORY GOES TO THE BOOKINGS THAT WERE ACKNOWLEDGED
+    // AND TO NO OTHERS — the member's declined set, or the exact set an officer
+    // was shown and confirmed under §7, both fingerprinted by the same stranded
+    // state key. Each needs a row of its own even where the changed booking's
+    // window already reaches it: the skip below avoids duplicate work, but a
+    // row's explanation now stops at the booking it names, so an acknowledged
+    // booking reached only by the sweep would lose it. A PARTIAL overlap is
+    // exactly that — still sharing a night with the new dates, still left short
+    // on the others.
+    const carriesItsOwnStory = hasAStory && askedAbout.has(dependent.id);
+    if (!carriesItsOwnStory && !dependentNeedsOwnQueueItem(booking, dependent)) {
+      continue;
+    }
     const id = await enqueueHostingCoverageReevaluation(
       {
         memberId: dependent.memberId,
         lodgeId: dependent.lodgeId,
         nights: coverageNightsOf(dependent),
-        // A dependent's own item is never labelled as somebody's override: the
-        // officer authorised stranding on the booking they were working on, not a
-        // decision about this one. The actor is still recorded, so the audit trail
-        // says who did it — the same reasoning `settleGroupTripDependentCoverage`
-        // applies to a third party's booking.
-        cause: context.cause === "OFFICER_OVERRIDE" ? "SYSTEM_CHANGE" : context.cause,
+        // A BOOKING NOBODY NAMED GETS NO STORY (#3241): not the member's decision,
+        // and not an officer's override either — the actor is still recorded, so
+        // the audit trail says who did it, which is the reasoning
+        // `settleGroupTripDependentCoverage` applies to a third party's booking.
+        // AN ACKNOWLEDGED ONE KEEPS BOTH, and for an override that is §7's
+        // mandatory reason landing on the booking the officer confirmed
+        // stranding — the record of who authorised it, which lives nowhere else.
+        cause: carriesItsOwnStory ? context.cause : "SYSTEM_CHANGE",
         sourceBookingId: dependent.id,
         actorMemberId,
-        reason: context.cause === "OFFICER_OVERRIDE" ? null : context.reason,
+        reason: carriesItsOwnStory ? context.reason : null,
       },
       participantProof,
       db,
@@ -2826,6 +2845,8 @@ async function settleSameOwnerDependentCoverage(
       actorMemberId,
       participantProof,
       db,
+      // Nothing was asked of anybody on this path: it carries no story to give.
+      new Set(),
     );
     return;
   }
@@ -3007,6 +3028,7 @@ async function settleSameOwnerDependentCoverage(
     return;
   }
 
+  const ownerDeclined = context.cause === "OWNER_DECLINED_LINKED_MOVE";
   await enqueueHostingCoverageReevaluation(
     {
       memberId: booking.memberId,
@@ -3022,10 +3044,14 @@ async function settleSameOwnerDependentCoverage(
       // with nothing logged. The item below is still right for what it names; the
       // dependents it cannot name get their own, immediately after.
       nights,
-      cause: context.cause,
+      // #3241: NOT the declined-move story, which is about the OTHER booking —
+      // "asked whether to move this booking as well" is self-contradictory on the
+      // booking they were editing. Every booking the member really was asked
+      // about gets its own row below (`INV-HOST-053`).
+      cause: ownerDeclined ? "SYSTEM_CHANGE" : context.cause,
       sourceBookingId: booking.id,
       actorMemberId,
-      reason: context.reason ?? null,
+      reason: ownerDeclined ? null : context.reason ?? null,
     },
     participantProof,
     db,
@@ -3041,6 +3067,11 @@ async function settleSameOwnerDependentCoverage(
     actorMemberId,
     participantProof,
     db,
+    // #3241: WHICH OF THEM THE MEMBER WAS ACTUALLY ASKED ABOUT. `stranded` is
+    // narrower than `verifiedDependents` by design — a dependent whose uncovered
+    // state is already recorded is dropped from it, and those are precisely the
+    // bookings uncovered for reasons of their own (`INV-HOST-053`).
+    new Set(stranded.map((row) => row.bookingId)),
   );
 }
 

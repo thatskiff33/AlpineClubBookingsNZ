@@ -467,6 +467,15 @@ const SPECIAL_ROUTE_AREA_PATTERNS: Array<{
     area: "finance",
     pattern: /^\/api\/admin\/bookings\/[^/]+\/mark-paid$/,
   },
+  // #3214 (epic #2797): the same shape as the row above. Recording what a
+  // booking guest's nights sold for writes money evidence - it is fenced so it
+  // cannot change what anybody owes, but what it records is what a refund will
+  // one day be computed from - so it is gated finance:edit despite the
+  // bookings-shaped path, and the handler declares the same requirement.
+  {
+    area: "finance",
+    pattern: /^\/api\/admin\/bookings\/[^/]+\/stored-night-prices$/,
+  },
 ];
 
 function cloneEmptyMatrix(): AdminPermissionMatrix {

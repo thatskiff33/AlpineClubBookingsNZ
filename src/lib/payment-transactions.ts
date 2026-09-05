@@ -7,11 +7,10 @@ import {
 import { APP_STRIPE_CURRENCY } from "@/config/operational";
 import { prisma } from "@/lib/prisma";
 import { processRefund } from "@/lib/stripe";
+import { stripeReferenceId, type StripeReference } from "@/lib/stripe-references";
 import Stripe from "stripe";
 
 type PaymentStore = Prisma.TransactionClient | typeof prisma;
-
-type StripeReference = string | { id?: string | null } | null | undefined;
 
 type StripeRefundLedgerInput = {
   id: string;
@@ -32,17 +31,6 @@ const CAPTURED_TRANSACTION_STATUSES = new Set<PaymentStatus>([
 
 const EXCLUDED_LEDGER_REFUND_STATUSES = ["failed", "canceled"];
 
-function stripeReferenceId(reference: StripeReference) {
-  if (!reference) {
-    return null;
-  }
-
-  if (typeof reference === "string") {
-    return reference;
-  }
-
-  return reference.id ?? null;
-}
 
 function stripeCreatedAtToDate(created: number | null | undefined) {
   if (!created) {
