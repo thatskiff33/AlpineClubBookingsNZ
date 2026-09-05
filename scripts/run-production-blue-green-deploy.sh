@@ -83,9 +83,23 @@ write_active_upstream_file() {
     echo "  lb_policy first"
     echo "  lb_try_duration 10s"
     echo "  fail_duration 30s"
+    # One transient upstream error must not eject a healthy colour (#3293).
+    # `max_fails` defaults to 1, so a single reset took the serving colour out
+    # for the whole `fail_duration` and moved live traffic onto the fallback —
+    # the cron leader, which runs a deliberately smaller connection pool.
+    echo "  max_fails 3"
     echo "  health_uri ${READINESS_PATH}"
     echo "  health_interval 10s"
     echo "  health_timeout 5s"
+    # Caddy must give up a pooled connection BEFORE the app closes it (#3293).
+    # The app holds idle connections for KEEP_ALIVE_TIMEOUT (docker-compose.yml,
+    # 65s); Caddy's undeclared default was 2 minutes, so it reused connections
+    # the app had already closed and a reuse landing on that boundary was reset.
+    # A reset POST/PUT cannot be replayed by Caddy's transport, so it reached the
+    # browser as a bare 502 and every admin form showed its generic save error.
+    echo "  transport http {"
+    echo "    keepalive 30s"
+    echo "  }"
     if [ -n "$fallback_service" ] && [ "$fallback_service" != "$primary_service" ]; then
       printf '  to %s:3000 %s:3000\n' "$primary_service" "$fallback_service"
     else
@@ -2177,9 +2191,23 @@ write_active_upstream_file() {
     echo "  lb_policy first"
     echo "  lb_try_duration 10s"
     echo "  fail_duration 30s"
+    # One transient upstream error must not eject a healthy colour (#3293).
+    # `max_fails` defaults to 1, so a single reset took the serving colour out
+    # for the whole `fail_duration` and moved live traffic onto the fallback —
+    # the cron leader, which runs a deliberately smaller connection pool.
+    echo "  max_fails 3"
     echo "  health_uri ${READINESS_PATH}"
     echo "  health_interval 10s"
     echo "  health_timeout 5s"
+    # Caddy must give up a pooled connection BEFORE the app closes it (#3293).
+    # The app holds idle connections for KEEP_ALIVE_TIMEOUT (docker-compose.yml,
+    # 65s); Caddy's undeclared default was 2 minutes, so it reused connections
+    # the app had already closed and a reuse landing on that boundary was reset.
+    # A reset POST/PUT cannot be replayed by Caddy's transport, so it reached the
+    # browser as a bare 502 and every admin form showed its generic save error.
+    echo "  transport http {"
+    echo "    keepalive 30s"
+    echo "  }"
     if [ -n "$fallback_service" ] && [ "$fallback_service" != "$primary_service" ]; then
       printf '  to %s:3000 %s:3000\n' "$primary_service" "$fallback_service"
     else
