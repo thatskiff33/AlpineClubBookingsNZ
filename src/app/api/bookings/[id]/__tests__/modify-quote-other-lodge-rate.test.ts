@@ -170,6 +170,10 @@ vi.mock("@/lib/booking-policies", () => ({
 }));
 
 import { POST } from "@/app/api/bookings/[id]/modify-quote/route";
+import {
+  OTHER_LODGE_RATE_AMOUNT_UNDER_REVIEW_MESSAGE,
+  OTHER_LODGE_RATE_IN_PROGRESS_MESSAGE,
+} from "@/lib/booking-other-lodge-rate";
 
 const D = (s: string) => new Date(`${s}T00:00:00.000Z`);
 
@@ -530,5 +534,152 @@ describe("modify-quote — other-lodge member rate", () => {
     );
 
     expect(res.status).toBe(400);
+  });
+});
+
+/**
+ * #3214 (epic #2797): THE PREVIEW HALF OF THE PARKED-EDIT REFUSAL.
+ *
+ * The save refuses an other-lodge election on the edit that parks a booking's
+ * money (`OTHER_LODGE_RATE_AMOUNT_UNDER_REVIEW_MESSAGE`). A preview that went on
+ * returning the parked quote would show the officer "an officer will confirm the
+ * amount", and then Save would 400 — the quote/charge disagreement this whole
+ * module exists to prevent, and the same preview/save parity the mid-stay
+ * refusal already keeps.
+ *
+ * The fixture parks by making ONE strand unreadable: `g-stranger` carries a
+ * stored total that does not reconcile with its own night rows, which
+ * `storedSoldPriceEvidenceForGuest` classes as an absence of usable evidence
+ * (INV-MOD-028). Nothing about that guest is ticked, which is the point — a
+ * parked edit is judged over every existing strand, not over the ticked subset.
+ */
+describe("modify-quote — an election on an edit whose money parks", () => {
+  /** The same booking, with one strand whose stored total has drifted. */
+  function unpriceable() {
+    const stored = booking();
+    return {
+      ...stored,
+      guests: stored.guests.map((guest) =>
+        guest.id === "g-stranger" ? { ...guest, priceCents: 5000 } : guest,
+      ),
+    };
+  }
+
+  beforeEach(() => {
+    h.bookingFindUnique.mockResolvedValue(unpriceable());
+  });
+
+  it("parks with no election, which is what makes the refusal below narrow", async () => {
+    // The control. Parking is not itself a refusal: an edit that never mentions
+    // the rate still gets its parked quote, unchanged by #3214.
+    const res = await POST(req({ checkOut: "2026-08-04" }), { params });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ financialReviewRequired: true });
+  });
+
+  it("REFUSES a tick instead of quoting a park", async () => {
+    const res = await POST(
+      req({
+        otherLodgeId: "lodge-partner",
+        otherLodgeMemberGuestIds: ["g-visitor"],
+      }),
+      { params },
+    );
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: OTHER_LODGE_RATE_AMOUNT_UNDER_REVIEW_MESSAGE,
+    });
+  });
+
+  it("REFUSES an untick as well, which is the direction that left the records disagreeing", async () => {
+    const stored = unpriceable();
+    h.bookingFindUnique.mockResolvedValue({
+      ...stored,
+      otherLodgeId: "lodge-partner",
+      guests: stored.guests.map((guest) =>
+        guest.id === "g-visitor" ? { ...guest, otherLodgeMember: true } : guest,
+      ),
+    });
+
+    const res = await POST(
+      req({ otherLodgeId: "lodge-partner", otherLodgeMemberGuestIds: [] }),
+      { params },
+    );
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: OTHER_LODGE_RATE_AMOUNT_UNDER_REVIEW_MESSAGE,
+    });
+  });
+});
+
+/**
+ * THE MID-STAY REFUSAL, which had no test at all until #3214's review round.
+ *
+ * `OTHER_LODGE_RATE_IN_PROGRESS_MESSAGE` refuses an election once the stay is
+ * under way, on both surfaces, because the in-progress plan prices the STORED
+ * guest rows and would settle $0. That refusal is now load-bearing for a SECOND
+ * rule: the parked guard above says the in-progress exit "cannot reach it — a
+ * mid-stay election is refused several hundred lines above". A reader trusts
+ * that sentence, so the refusal it names is pinned here rather than assumed.
+ */
+describe("modify-quote — an election once the stay is under way", () => {
+  /** The same booking, moved so the frozen clock (2026-07-01) sits inside it. */
+  function inProgress(overrides: Record<string, unknown> = {}) {
+    const stored = booking();
+    return {
+      ...stored,
+      checkIn: D("2026-06-29"),
+      checkOut: D("2026-07-03"),
+      guests: stored.guests.map((guest) => ({
+        ...guest,
+        stayStart: D("2026-06-29"),
+        stayEnd: D("2026-07-03"),
+      })),
+      ...overrides,
+    };
+  }
+
+  it("REFUSES a tick rather than quoting a $0 re-rate", async () => {
+    h.bookingFindUnique.mockResolvedValue(inProgress());
+
+    const res = await POST(
+      req({
+        otherLodgeId: "lodge-partner",
+        otherLodgeMemberGuestIds: ["g-visitor"],
+      }),
+      { params },
+    );
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: OTHER_LODGE_RATE_IN_PROGRESS_MESSAGE,
+    });
+  });
+
+  it("REFUSES a request that names only the lodge, the half a `!== undefined` pair is easiest to lose", async () => {
+    h.bookingFindUnique.mockResolvedValue(inProgress());
+
+    const res = await POST(req({ otherLodgeId: "lodge-partner" }), { params });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: OTHER_LODGE_RATE_IN_PROGRESS_MESSAGE,
+    });
+  });
+
+  it("REFUSES a request that CLEARS the lodge, so `null` is not read as silence", async () => {
+    h.bookingFindUnique.mockResolvedValue(
+      inProgress({ otherLodgeId: "lodge-partner" }),
+    );
+
+    const res = await POST(req({ otherLodgeId: null }), { params });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: OTHER_LODGE_RATE_IN_PROGRESS_MESSAGE,
+    });
   });
 });

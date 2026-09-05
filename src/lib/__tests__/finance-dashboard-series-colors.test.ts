@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { SERIES_COLORS } from "@/lib/finance-dashboard-page";
+import { SERIES_COLORS } from "@/lib/finance-dashboard-page/series-colors";
 import { FINANCE_MIX_COLORS } from "@/components/finance/charts/finance-chart-theme";
 import { buildThemeSubstrate } from "@/lib/theme/theme-substrate";
 import {

@@ -16,7 +16,10 @@ import {
 } from "@prisma/client";
 
 import { ApiError } from "@/lib/api-error";
-import { OTHER_LODGE_RATE_IN_PROGRESS_MESSAGE } from "@/lib/booking-other-lodge-rate";
+import {
+  OtherLodgeRateInProgressError,
+  requestCarriesOtherLodgeElection,
+} from "@/lib/booking-other-lodge-rate";
 import {
   getBookingEditPolicy,
   canModifyBookingStatusForRole,
@@ -410,11 +413,13 @@ export function resolveTargetDates({
     // Other Lodges epic: the same hazard, the same refusal. The in-progress plan
     // prices the STORED guest rows, so a mid-stay election would stamp the flag
     // and settle $0 — see OTHER_LODGE_RATE_IN_PROGRESS_MESSAGE.
-    if (
-      input.otherLodgeId !== undefined ||
-      input.otherLodgeMemberGuestIds !== undefined
-    ) {
-      throw new ApiError(OTHER_LODGE_RATE_IN_PROGRESS_MESSAGE, 400);
+    //
+    // Through `requestCarriesOtherLodgeElection` rather than a hand-written pair
+    // of `!== undefined` tests (`INV-SSOT`): "this request mentions the rate" has
+    // one definition, and the batch service's #3214 parking guard is placed on
+    // the argument that this refusal already fired for a mid-stay edit.
+    if (requestCarriesOtherLodgeElection(input)) {
+      throw new OtherLodgeRateInProgressError();
     }
   } else if (
     role !== "ADMIN" &&

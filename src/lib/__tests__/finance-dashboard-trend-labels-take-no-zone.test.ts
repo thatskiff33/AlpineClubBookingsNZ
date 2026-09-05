@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from "vitest";
  *
  * ## The defect this closes, in plain English
  *
- * Both labels describe a CALENDAR value. `finance-dashboard-page.ts`'s day label
+ * Both labels describe a CALENDAR value. `finance-dashboard-page/bookings-view.ts`'s day label
  * ("14 Jun") is handed a `yyyy-MM-dd` metric key minted by `buildIsoDateRange`;
  * `finance-dashboard-labels.ts`'s month label ("Jun 2026") is handed a `YYYY-MM`
  * month key. A calendar date has no timezone — 16 April 2026 is a Thursday

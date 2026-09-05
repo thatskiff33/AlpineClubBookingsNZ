@@ -100,7 +100,7 @@ a `GAP`, replace it with a relative link to that file (e.g.
 | `membership-cancellations` | membership | `CANCELLATIONS.md`, `ARCHITECTURE.md` (cancellation review queue) | [guide](guides/membership-cancellations.md) | 2 |
 | `membership-setup` | membership | `ARCHITECTURE.md` (membership types) | [guide](guides/membership-setup.md) | 2 |
 | `membership-types` | membership | `ARCHITECTURE.md` (seasonal membership types) | [guide](guides/membership-types.md) | 2 |
-| `modules` | support | `CONFIGURATION.md` (module flags) | [guide](guides/modules.md) | 4 |
+| `modules` | support | `guides/modules.md` → Settings reference (the one module list); `CONFIGURATION.md` for storage mechanics | [guide](guides/modules.md) | 4 |
 | `mountain-conditions` | content | — | [guide](guides/mountain-conditions.md) | 4 |
 | `notification-recipients` | support | `ARCHITECTURE.md` (email / notifications) | [guide](guides/notification-recipients.md) | 4 |
 | `notification-rules` | support | `ARCHITECTURE.md` (email / notifications) | [guide](guides/notification-rules.md) | 4 |

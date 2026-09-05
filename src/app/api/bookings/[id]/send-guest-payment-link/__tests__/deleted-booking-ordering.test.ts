@@ -39,7 +39,7 @@ vi.mock("@/lib/prisma", () => ({
     },
   },
 }));
-vi.mock("@/lib/payment-link", () => ({
+vi.mock("@/lib/payment-link-split-guest", () => ({
   issueSplitGuestPaymentLink: (...args: unknown[]) =>
     mocks.issueSplitGuestPaymentLink(...args),
 }));

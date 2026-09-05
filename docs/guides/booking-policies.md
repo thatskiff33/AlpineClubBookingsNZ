@@ -358,13 +358,14 @@ the thing they were actually trying to do:
   move only this one** — under "Adult member cover flagged", which only staff
   see, because the same entry can carry an officer's private override reason. So
   you are not left guessing whether somebody decided it or a qualification
-  quietly changed. The one-line reason beside the queue entry will name that
-  choice on its own from the next update; until then it reads "no longer covered
-  after a later change", which is the shared wording for every booking that stops
-  being covered without an officer overriding anything. The reason it waits one
-  update is that a stored label has to be readable by the version of the site
-  still running while a new one is being put in place, and it cannot be until that
-  version has gone.
+  quietly changed. **The one-line reason beside the queue entry names that choice
+  on its own** — "member chose not to move this booking too" — rather than the
+  shared "no longer covered after a later change" that every other uncovered
+  booking carries. That matters beyond the wording: counting the entries by
+  reason now separates a member's own decision from an administrative
+  cancellation, a lifecycle change or a rule your club tightened, which is the
+  count to look at when you are judging whether the supervision setting is
+  working.
 - **Where the beds are not there for both**, the first option is shown greyed out
   with the reason on it, rather than hidden. The member is told plainly that there
   are not enough beds free on the new nights, and the second option is still there

@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FinanceDashboardClient } from "@/app/(finance)/finance/_components/finance-dashboard-client";
 import { parseDateOnly } from "@/lib/date-only";
 import { resolveFinanceDashboardSelection } from "@/lib/finance-dashboard-ranges";
-import type { FinanceDashboardPageModel } from "@/lib/finance-dashboard-page";
+import type { FinanceDashboardPageModel } from "@/lib/finance-dashboard-page/model";
 
 const mocks = vi.hoisted(() => ({
   routerReplace: vi.fn(),
