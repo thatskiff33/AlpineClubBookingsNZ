@@ -120,9 +120,17 @@ function endOfBlock(source: string, start: number) {
  * the guard went red — correctly, but for the wrong reason. A site address is
  * blanked to `PLACEHOLDER` by the caller before this runs, so `{$DOMAIN} {`
  * leaves `PLACEHOLDER ` in front of its brace and is never mistaken for one.
+ *
+ * Written as a line scan rather than the obvious `/^(\s*(#.*)?\n)*\s*$/`: that
+ * shape nests `\s*` (which matches `\n`) inside a `*`, so the two ways of
+ * consuming a newline are ambiguous and a long run of blank lines with no match
+ * at the end backtracks exponentially. CodeQL's `js/redos` flagged it here.
  */
 function opensWithGlobalOptionsBlock(source: string, firstBrace: number) {
-  return /^(?:\s*(?:#[^\n]*)?\n)*\s*$/.test(source.slice(0, firstBrace));
+  return source
+    .slice(0, firstBrace)
+    .split("\n")
+    .every((line) => line.trim() === "" || line.trim().startsWith("#"));
 }
 
 function primarySiteBlock(config: string) {
