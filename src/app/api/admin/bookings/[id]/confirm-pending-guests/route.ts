@@ -10,6 +10,7 @@ import { z } from "zod";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { chargePaymentMethod } from "@/lib/stripe";
+import { stripeReferenceId } from "@/lib/stripe-references";
 import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
 import { upsertPaymentIntentTransaction } from "@/lib/payment-transactions";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
@@ -579,10 +580,7 @@ export async function POST(
       );
     }
 
-    const paymentMethodId =
-      typeof paymentIntent.payment_method === "string"
-        ? paymentIntent.payment_method
-        : paymentIntent.payment_method?.id ?? null;
+    const paymentMethodId = stripeReferenceId(paymentIntent.payment_method);
 
     // Durably record the captured charge BEFORE reconciliation (#1418).
     // markBookingPaymentSucceeded writes this same PRIMARY transaction inside

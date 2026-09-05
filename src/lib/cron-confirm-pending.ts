@@ -36,6 +36,7 @@ import {
   savedPaymentMethodRowStamp,
   type SavedPaymentMethodForBooking,
 } from "@/lib/saved-payment-method";
+import { stripeReferenceId } from "@/lib/stripe-references";
 import { prisma } from "./prisma";
 import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "./capacity";
 import { getDefaultLodgeId } from "@/lib/lodges";
@@ -1524,10 +1525,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
       });
       paymentIntentId = paymentIntent.id;
 
-      const paymentMethodId =
-        typeof paymentIntent.payment_method === "string"
-          ? paymentIntent.payment_method
-          : paymentIntent.payment_method?.id ?? null;
+      const paymentMethodId = stripeReferenceId(paymentIntent.payment_method);
 
       if (paymentIntent.status === "succeeded") {
         paymentSucceeded = true;
