@@ -39,6 +39,8 @@ const {
   mockCompleteDeferredSupplementaryInvoice,
   mockRecordShortEditReviewChargeInvoice,
   mockRecordUncollectedEditReviewChargeShare,
+  mockFindEditReviewChargeRequest,
+  mockCreateAuditLog,
   settlementModuleLoadFailure,
 } = vi.hoisted(() => ({
   mockPaymentRecoveryFindMany: vi.fn(),
@@ -55,6 +57,8 @@ const {
   mockPaymentFindUnique: vi.fn(),
   mockBookingFindUnique: vi.fn(),
   mockCancelPaymentIntentIfCancellableWithResult: vi.fn(),
+  mockFindEditReviewChargeRequest: vi.fn(),
+  mockCreateAuditLog: vi.fn().mockResolvedValue(undefined),
   mockProcessRefund: vi.fn(),
   mockReconcilePaymentAggregates: vi.fn().mockResolvedValue(undefined),
   mockRecordStripeRefundLedgerEntry: vi.fn().mockResolvedValue({
@@ -190,6 +194,15 @@ vi.mock("@/lib/edit-financial-review-charge-request", () => ({
     mockRecordShortEditReviewChargeInvoice(...args),
   recordUncollectedEditReviewChargeShare: (...args: unknown[]) =>
     mockRecordUncollectedEditReviewChargeShare(...args),
+  // #3220: the dead-recovery cancel reads this module for the edit's ask. The
+  // factory replaces the whole module, so an export it omits throws at IMPORT
+  // and kills the file before a test runs.
+  findEditReviewChargeRequest: (...args: unknown[]) =>
+    mockFindEditReviewChargeRequest(...args),
+}));
+
+vi.mock("@/lib/audit", () => ({
+  createAuditLog: (...args: unknown[]) => mockCreateAuditLog(...args),
 }));
 
 vi.mock("@/lib/payment-transactions", () => ({
