@@ -228,27 +228,26 @@ export function classifySavedCardChargeFailure(
  * member would be emailed again. "A cleared card is a detached card" is the
  * invariant this ordering buys (INV-PAY-054).
  *
- * TWO tables, not one. `Payment.stripePaymentMethodId` is what the cron reads,
- * but `reconcilePaymentAggregates` (`payment-transactions.ts`) re-derives it
- * from the latest PRIMARY `PaymentTransaction`'s `paymentMethodId` on every
- * ledger upsert — including webhook-driven ones — for a `Payment` row that
- * carries NO `stripeSetupIntentId` (a row that carries one owns its card column
- * through the SetupIntent writers and this retire path, and the derivation
- * leaves it alone). A split child's row is exactly such a row: its pm was
- * stamped by borrowing, not by a SetupIntent, and its PROCESSING /
- * `legacy_primary_backfill` ledger row recorded that pm. Clearing the `Payment`
- * row alone would hold only until the next reconcile copied the retired pm back
- * off that ledger row, the cron would charge it again, and the member would be
- * emailed again. So the ledger rows carrying this pm are nulled too.
- *
- * What that ledger column is for, precisely: the reconcile derivation above is
- * its only production READER; `xero-booking-repair-types.ts` also SELECTS it
- * into the repair snapshot, where nothing reads it. Refunds and recovery key on
- * the intent id, never on the pm. The trade-off is provenance: nulling it on a
- * captured historical row loses "which card paid" for that row. Accepted,
- * because a parent's captured row keeping the pm would let a later reconcile
- * of the parent restore the card onto the parent's `Payment` row, and the child
- * would re-borrow it.
+ * TWO tables, not one — as hygiene, not as a charge-loop guard.
+ * `reconcilePaymentAggregates` (`payment-transactions.ts`) re-derives
+ * `Payment.stripePaymentMethodId` from the latest PRIMARY `PaymentTransaction`'s
+ * `paymentMethodId` on every ledger upsert — including webhook-driven ones — for
+ * a `Payment` row that carries NO `stripeSetupIntentId`. A split child's row is
+ * exactly such a row (its pm was borrowed, not saved), so without this clear a
+ * stale PROCESSING / `legacy_primary_backfill` ledger row could copy the retired
+ * pm straight back onto it. On the composed code that copy could not be
+ * charged: `reusableSavedPaymentMethodOnRow` refuses a card on a row without a
+ * SetupIntent (INV-PAY-053), and the parent row a child borrows from always
+ * carries a SetupIntent, so the derivation never touches the parent's card
+ * column and no later parent reconcile can restore the card for the child to
+ * re-borrow. The ledger rows are nulled anyway so that no row anywhere names a
+ * retired card: a `paymentMethodId` on a captured row is informational only —
+ * the reconcile derivation is its only production READER,
+ * `xero-booking-repair-types.ts` SELECTS it into the repair snapshot where
+ * nothing reads it, and refunds and recovery key on the intent id, never on the
+ * pm — and a retired pm left on a ledger row would read as a card the system
+ * still knows about. The cost is provenance: nulling it on a captured
+ * historical row loses "which card paid" for that row. Accepted (INV-PAY-054).
  *
  * No lock is taken for these field writes. The setup-intent route writes
  * `Payment.stripePaymentMethodId` unlocked today, and nothing writes
