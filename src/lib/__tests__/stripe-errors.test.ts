@@ -5,15 +5,10 @@ import {
   readStripeErrorFields,
   stripeErrorApiType,
 } from "@/lib/stripe-errors";
+import { stripeSdkError as sdkError } from "./support/stripe-sdk-error";
 
 const INCIDENT_MESSAGE =
   "The provided PaymentMethod was previously used with a PaymentIntent without Customer attachment or was detached from a Customer. It may not be used again.";
-
-/** A thrown SDK error built by the SDK's OWN factory from the raw API body, as
- * `RequestSender` does — class name in `type`, API type in `rawType`. */
-function sdkError(raw: Record<string, unknown>): Stripe.errors.StripeError {
-  return Stripe.errors.StripeError.generate(raw as never);
-}
 
 // #3268 — the ONE reader of a Stripe error's provider fields. Everything that
 // decides on a Stripe failure (the saved-card classifier, the setup-intent

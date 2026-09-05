@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import Stripe from "stripe";
+import { stripeSdkError as stripeError } from "./support/stripe-sdk-error";
 import {
   PaymentSource,
   PaymentStatus,
@@ -47,39 +48,6 @@ const {
   SOFT_DECLINE_TERMINAL_WINDOW,
 } = await import("../saved-card-charge-failure");
 const { reconcilePaymentAggregates } = await import("../payment-transactions");
-
-/**
- * A thrown Stripe error, built by the SDK's OWN factory from the raw API error
- * body, exactly as `RequestSender` does on a non-2xx response. The SDK picks
- * the class from the HTTP status (`generateV1Error`), sets `type` to the CLASS
- * NAME and keeps the API type in `rawType` — which is the shape the classifier
- * must read. The first review of #3268 found the classifier comparing `type`
- * to `"card_error"`, a value the SDK never puts there, so every production
- * failure classified `retry` while a hand-built `{ type: "card_error" }`
- * fixture kept the tests green. Hence: real SDK errors here, never a literal.
- */
-const SDK_STATUS_FOR_TYPE: Record<string, number> = {
-  card_error: 402,
-  invalid_request_error: 400,
-  idempotency_error: 400,
-  authentication_error: 401,
-  rate_limit_error: 429,
-  api_error: 500,
-};
-function stripeError(fields: {
-  type: string;
-  code?: string;
-  decline_code?: string;
-  advice_code?: string;
-  param?: string;
-  message?: string;
-}): Stripe.errors.StripeError {
-  return Stripe.errors.StripeError.generate({
-    ...fields,
-    message: fields.message ?? `stripe ${fields.type}`,
-    statusCode: SDK_STATUS_FOR_TYPE[fields.type] ?? 500,
-  } as never);
-}
 
 const IN_WINDOW = { holdOverdueWindows: 1 };
 const PAST_WINDOW = { holdOverdueWindows: SOFT_DECLINE_TERMINAL_WINDOW };

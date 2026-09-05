@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import Stripe from "stripe";
+import { stripeSdkError as stripeError } from "./support/stripe-sdk-error";
 
 // Mock Stripe
 vi.stubEnv("STRIPE_SECRET_KEY", "sk_test_fake");
@@ -3005,33 +3005,6 @@ describe("Cron: Confirm Pending Bookings", () => {
   });
 
   describe("#3268 an unusable saved card is terminal for the cron, never retried forever", () => {
-    /**
-     * A thrown Stripe error built by the SDK's OWN factory from the raw API
-     * body, as `chargePaymentMethod` really throws it: `type` is the CLASS NAME
-     * and the API type (`card_error`, `invalid_request_error`) is `rawType`. A
-     * hand-built `{ type: "card_error" }` literal is a shape the SDK never
-     * produces and kept the first cut of #3268 green while it was inert in
-     * production — so these tests throw the real thing.
-     */
-    const SDK_STATUS_FOR_TYPE: Record<string, number> = {
-      card_error: 402,
-      invalid_request_error: 400,
-      api_error: 500,
-    };
-    function stripeError(fields: {
-      type: string;
-      code?: string;
-      decline_code?: string;
-      param?: string;
-      message?: string;
-    }): Stripe.errors.StripeError {
-      return Stripe.errors.StripeError.generate({
-        ...fields,
-        message: fields.message ?? `stripe ${fields.type}`,
-        statusCode: SDK_STATUS_FOR_TYPE[fields.type] ?? 500,
-      } as never);
-    }
-
     const INCIDENT_MESSAGE =
       "The provided PaymentMethod was previously used with a PaymentIntent without Customer attachment or was detached from a Customer. It may not be used again.";
 
@@ -3270,7 +3243,7 @@ describe("Cron: Confirm Pending Bookings", () => {
       expect(alert.errorMessage).toContain("found unusable");
     });
 
-    it("a detach failure at Stripe is swallowed and the rows are still cleared", async () => {
+    it("a detach Stripe refuses with invalid_request_error (already detached or gone) is swallowed and the rows are still cleared", async () => {
       mockPendingBookings([makePendingBooking("b1")]);
       capacityAvailable();
       mockChargePaymentMethod.mockRejectedValue(
@@ -3288,6 +3261,34 @@ describe("Cron: Confirm Pending Bookings", () => {
       expect(mockPaymentTransactionUpdateMany).toHaveBeenCalledTimes(1);
       expect(mockSendSavedCardChargeFailedEmail).toHaveBeenCalledTimes(1);
       expect(mockSendAdminPaymentFailureAlert).toHaveBeenCalledTimes(1);
+    });
+
+    it("a detach that fails for any other reason (api_error) clears nothing, tells the member nothing, and falls back to the ordinary retry alert quoting the charge error", async () => {
+      mockPendingBookings([makePendingBooking("b1")]);
+      capacityAvailable();
+      mockChargePaymentMethod.mockRejectedValue(
+        stripeError({ type: "invalid_request_error", message: INCIDENT_MESSAGE }),
+      );
+      mockDetachPaymentMethod.mockRejectedValue(
+        stripeError({ type: "api_error", message: "Stripe is having a moment" }),
+      );
+
+      const result = await confirmPendingBookings();
+
+      expect(result.failedBookingIds).toEqual(["b1"]);
+      expect(mockDetachPaymentMethod).toHaveBeenCalledTimes(1);
+      // The card may still be attached at Stripe, so it must stay on the rows:
+      // "a cleared card is always a detached card" (INV-PAY-054).
+      expect(mockPaymentUpdateMany).not.toHaveBeenCalled();
+      expect(mockPaymentTransactionUpdateMany).not.toHaveBeenCalled();
+      expect(mockSendSavedCardChargeFailedEmail).not.toHaveBeenCalled();
+      // One alert, and it is the pre-#3268 retry alert carrying the CHARGE
+      // error's own words — not the terminal "found unusable" account, which
+      // would claim a retirement that did not happen.
+      expect(mockSendAdminPaymentFailureAlert).toHaveBeenCalledTimes(1);
+      const [alert] = mockSendAdminPaymentFailureAlert.mock.calls[0] as [{ errorMessage: string }];
+      expect(alert.errorMessage).toBe(INCIDENT_MESSAGE);
+      expect(alert.errorMessage).not.toContain("found unusable");
     });
 
     it("when the claim release itself fails, the terminal alert says the booking is stuck confirmed-unpaid — never 'stays pending'", async () => {
