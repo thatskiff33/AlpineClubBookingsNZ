@@ -164,7 +164,8 @@ jobs:
               --exclude node_modules \
               --exclude .next \
               --exclude .semgrep/tests \
-              --sarif-output /out/semgrep-results.sarif
+              --sarif-output /out/semgrep-results.sarif \
+              --json-output /out/semgrep-results.json
 
       # The RAW scan output, suppressed results included. This is the audit
       # record, and it is what the #2841 triage measured the `suppressions`
@@ -184,6 +185,26 @@ jobs:
         uses: actions/setup-node@v7.0.0
         with:
           node-version: 24
+
+      # #2842. The scan above exits 0 on findings-free code even when it could
+      # not PARSE some of that code: parse failures are reported at `warn` level
+      # in the JSON `errors` array and nowhere in the exit status. Measured on
+      # the epic base, 177 of 4,219 scanned files carried a parse error behind a
+      # green gate, three of them whole-file failures where no rule ran at all.
+      # A file the scanner cannot read must not be indistinguishable from a file
+      # the scanner read and cleared.
+      #
+      # `if: always()` because a findings failure above must not hide a coverage
+      # regression here - they are independent facts and both need reporting.
+      # This is a STEP condition, never a job one: a job-level `if:` on a
+      # required check reports `skipped`, which GitHub counts as SATISFYING
+      # branch protection.
+      - name: Check Semgrep parse coverage did not shrink
+        if: always()
+        run: |
+          node scripts/ci/check-semgrep-coverage.mjs \
+            "$RUNNER_TEMP/semgrep-output/semgrep-results.json" \
+            .semgrep/unparsed-allowlist.json
 
       # #2841. Semgrep honours a `nosemgrep` comment and marks the result
       # `"suppressions": [{"kind": "inSource"}]`, which is why the blocking scan
