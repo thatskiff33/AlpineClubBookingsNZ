@@ -90,3 +90,5 @@ export function resolveBookingDetailViewer({
     nonOwnerAdminViewer,
   };
 }
+
+export type BookingDetailViewer = ReturnType<typeof resolveBookingDetailViewer>;

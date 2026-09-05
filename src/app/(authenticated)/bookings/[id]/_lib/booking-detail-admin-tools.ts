@@ -14,6 +14,9 @@ import {
   getBookingProviderMismatches,
 } from "@/lib/booking-provider-mismatches";
 import type { BookingDetailRecord } from "./load-booking-detail";
+import type { BookingDetailViewer } from "./booking-detail-viewer";
+import type { BookingDetailEditAccess } from "./booking-detail-edit-access";
+import type { BookingDetailHistory } from "./booking-detail-history";
 
 /**
  * WHAT THE ADMIN TOOLS CARD IS TOLD (#2958): every admin-gated read the booking
@@ -33,18 +36,19 @@ import type { BookingDetailRecord } from "./load-booking-detail";
 export async function loadBookingDetailAdminTools({
   booking,
   modules,
-  isAdmin,
-  canSeeAdminTools,
-  isDeleted,
-  financialReviewPending,
+  viewer,
+  access,
+  history,
 }: {
   booking: BookingDetailRecord;
   modules: FeatureFlags;
-  isAdmin: boolean;
-  canSeeAdminTools: boolean;
-  isDeleted: boolean;
-  financialReviewPending: boolean;
+  viewer: BookingDetailViewer;
+  access: BookingDetailEditAccess;
+  history: BookingDetailHistory;
 }) {
+  const { isAdmin, canSeeAdminTools } = viewer;
+  const { isDeleted } = access;
+  const { financialReviewPending } = history;
   const providerMismatches = isAdmin
     ? await getBookingProviderMismatches(booking.id)
     : [];
@@ -220,3 +224,7 @@ export async function loadBookingDetailAdminTools({
     exclusiveHoldConflicts,
   };
 }
+
+export type BookingDetailAdminTools = Awaited<
+  ReturnType<typeof loadBookingDetailAdminTools>
+>;

@@ -4,6 +4,8 @@ import { OPENABLE_ORGANISER_STATUSES } from "@/lib/group-booking";
 import type { NonMemberGuestChild } from "@/app/(authenticated)/bookings/_components/non-member-guests-section";
 import type { OrganiserGroupState } from "@/components/group-booking/organiser-group-booking-card";
 import type { BookingDetailRecord } from "./load-booking-detail";
+import type { BookingDetailViewer } from "./booking-detail-viewer";
+import type { BookingDetailEditAccess } from "./booking-detail-edit-access";
 
 /**
  * THE REST OF THE PARTY (#2958): the bookings LINKED to this one — the #738
@@ -17,16 +19,16 @@ import type { BookingDetailRecord } from "./load-booking-detail";
 export function resolveBookingDetailLinkedParty({
   booking,
   modules,
-  isDeleted,
-  canManageBooking,
-  isBookingOwner,
+  viewer,
+  access,
 }: {
   booking: BookingDetailRecord;
   modules: FeatureFlags;
-  isDeleted: boolean;
-  canManageBooking: boolean;
-  isBookingOwner: boolean;
+  viewer: BookingDetailViewer;
+  access: BookingDetailEditAccess;
 }) {
+  const { canManageBooking, isBookingOwner } = viewer;
+  const { isDeleted } = access;
   // Split-booking group presentation (#738). Genuine split children only:
   // #796 group joiners also link via parentBookingId but are presented by the
   // organiser group card, not as "your provisional non-member guests" — and
@@ -140,3 +142,7 @@ export function resolveBookingDetailLinkedParty({
     showGroupSection,
   };
 }
+
+export type BookingDetailLinkedParty = ReturnType<
+  typeof resolveBookingDetailLinkedParty
+>;

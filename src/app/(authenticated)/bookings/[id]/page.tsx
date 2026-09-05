@@ -1,5 +1,4 @@
 import { auth } from "@/lib/auth";
-import { prisma } from "@/lib/prisma";
 import { notFound, redirect } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -182,6 +181,7 @@ export default async function BookingDetailPage({
   const booking = await loadBookingDetail(id);
 
   if (!booking) notFound();
+  const viewer = resolveBookingDetailViewer({ session, booking });
   const {
     isAdmin,
     viewerAuthorizationRole,
@@ -194,7 +194,7 @@ export default async function BookingDetailPage({
     canSeeAdminTools,
     actingOnBehalf,
     nonOwnerAdminViewer,
-  } = resolveBookingDetailViewer({ session, booking });
+  } = viewer;
   if (booking.deletedAt && !isAdmin) notFound();
   if (!canManageBooking && !isLinkedGuestViewer && !canViewAsAdmin) {
     redirect("/bookings");
@@ -205,6 +205,13 @@ export default async function BookingDetailPage({
   const bookingLodgeEmailSettings = await loadEmailMessageSettingsForLodge(
     booking.lodgeId,
   );
+  const consent = await resolveBookingDetailConsent({
+    session,
+    booking,
+    viewer,
+    clubTodayDateOnly,
+    bookingLodgeEmailSettings,
+  });
   const {
     selfRemovalCard,
     consentCard,
@@ -212,20 +219,10 @@ export default async function BookingDetailPage({
     consentLodgeName,
     viewerConsentGuest,
     viewerConsentNights,
-    consentBadgeAudience,
-    consentResponderNameById,
-  } = await resolveBookingDetailConsent({
-    session,
-    booking,
-    isBookingOwner,
-    isAdmin,
-    canViewAsAdmin,
-    clubTodayDateOnly,
-    bookingLodgeEmailSettings,
-  });
+  } = consent;
 
-  const { financialReviewPending, bookingNarrative, bookingHistory } =
-    await loadBookingDetailHistory({ booking, club, canSeeAdminTools });
+  const history = await loadBookingDetailHistory({ booking, club, viewer });
+  const { bookingNarrative, bookingHistory } = history;
 
   // Nights are CALENDAR arithmetic over the half-open `[checkIn, checkOut)`
   // night range, never elapsed milliseconds divided by 24 hours: across a DST
@@ -240,6 +237,12 @@ export default async function BookingDetailPage({
 
   const modules = await loadEffectiveModuleFlags();
   const bookingMessages = await loadPublicBookingMessages();
+  const access = await resolveBookingDetailEditAccess({
+    booking,
+    modules,
+    clubTodayDateOnly,
+    viewer,
+  });
   const {
     isDraft,
     isWaitlisted,
@@ -252,36 +255,16 @@ export default async function BookingDetailPage({
     showBedAllocationPanel,
     bookingCanHoldBeds,
     editPolicy,
-    canModify,
-    canAdminOverride,
     canEditRequestedRoom,
-    canEditNonMemberGuestNames,
-    canFixNonMemberGuestNameTypos,
-  } = await resolveBookingDetailEditAccess({
-    booking,
-    modules,
-    clubTodayDateOnly,
-    viewerAuthorizationRole,
-    isAdmin,
-    isBookingOwner,
-    canManageBooking,
-    canAdminEditBookings,
-    canSeeAdminTools,
-  });
+  } = access;
   const editorData = await buildBookingDetailEditorData({
     session,
     booking,
     club,
     nights,
-    viewerAuthorizationRole,
-    isDeleted,
-    canModify,
-    canAdminOverride,
-    canEditNonMemberGuestNames,
-    canFixNonMemberGuestNameTypos,
-    editPolicy,
-    consentBadgeAudience,
-    consentResponderNameById,
+    viewer,
+    consent,
+    access,
   });
   const backHref = resolveInternalReturnPath(
     query.returnTo,
@@ -317,6 +300,19 @@ export default async function BookingDetailPage({
     ? bookingLodgeEmailSettings
     : null;
 
+  const party = resolveBookingDetailLinkedParty({
+    booking,
+    modules,
+    viewer,
+    access,
+  });
+  const payment = resolveBookingDetailPayment({
+    booking,
+    modules,
+    viewer,
+    access,
+    party,
+  });
   const {
     provisionalChildGuestCount,
     hasProvisionalChildren,
@@ -327,13 +323,7 @@ export default async function BookingDetailPage({
     organiserGroupState,
     canOpenGroup,
     showGroupSection,
-  } = resolveBookingDetailLinkedParty({
-    booking,
-    modules,
-    isDeleted,
-    canManageBooking,
-    isBookingOwner,
-  });
+  } = party;
   const {
     cancellationSettlement,
     paymentDisplay,
@@ -350,16 +340,14 @@ export default async function BookingDetailPage({
     creditAppliedCents,
     showCreditApplied,
     amountDueAfterCreditCents,
-  } = resolveBookingDetailPayment({
+  } = payment;
+  const messages = renderBookingDetailMessages({
     booking,
+    club,
     modules,
-    isDeleted,
-    canManageBooking,
-    isBookingOwner,
-    nonOwnerAdminViewer,
-    hasProvisionalChildren,
-    isProvisionalChild,
-    isFlaggedProvisional,
+    bookingMessages,
+    bookingLodgeEmailSettings,
+    payment,
   });
   const {
     paymentRequiredDescription,
@@ -367,18 +355,15 @@ export default async function BookingDetailPage({
     switchToInternetBankingDescription,
     financialReviewPendingDescription,
     refundAppealDescription,
-  } = renderBookingDetailMessages({
-    booking,
-    club,
-    modules,
-    bookingMessages,
-    bookingLodgeEmailSettings,
-    amountDueAfterCreditCents,
-    cancellationSettlement,
-    retainedAfterCancellationCents,
-    internetBankingPayment,
-  });
+  } = messages;
 
+  const adminTools = await loadBookingDetailAdminTools({
+    booking,
+    modules,
+    viewer,
+    access,
+    history,
+  });
   const {
     providerMismatches,
     financialReviewWarnings,
@@ -389,14 +374,7 @@ export default async function BookingDetailPage({
     storedNightPriceOffers,
     showReturnToWaitlist,
     exclusiveHoldConflicts,
-  } = await loadBookingDetailAdminTools({
-    booking,
-    modules,
-    isAdmin,
-    canSeeAdminTools,
-    isDeleted,
-    financialReviewPending,
-  });
+  } = adminTools;
 
   // Surface the applicable cancellation refund schedule to the member up front
   // (#1371 F28): the exact per-booking amount already shows inside the cancel

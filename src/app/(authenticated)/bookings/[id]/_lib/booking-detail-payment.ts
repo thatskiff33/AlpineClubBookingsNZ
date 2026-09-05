@@ -9,6 +9,9 @@ import {
 } from "@/lib/booking-payment-state";
 import { isPaymentOwedBookingStatus } from "@/lib/booking-status";
 import type { BookingDetailRecord } from "./load-booking-detail";
+import type { BookingDetailViewer } from "./booking-detail-viewer";
+import type { BookingDetailEditAccess } from "./booking-detail-edit-access";
+import type { BookingDetailLinkedParty } from "./booking-detail-linked-party";
 
 /**
  * WHERE THE MONEY STANDS (#2958): the payment projection every payment card
@@ -24,24 +27,20 @@ import type { BookingDetailRecord } from "./load-booking-detail";
 export function resolveBookingDetailPayment({
   booking,
   modules,
-  isDeleted,
-  canManageBooking,
-  isBookingOwner,
-  nonOwnerAdminViewer,
-  hasProvisionalChildren,
-  isProvisionalChild,
-  isFlaggedProvisional,
+  viewer,
+  access,
+  party,
 }: {
   booking: BookingDetailRecord;
   modules: FeatureFlags;
-  isDeleted: boolean;
-  canManageBooking: boolean;
-  isBookingOwner: boolean;
-  nonOwnerAdminViewer: boolean;
-  hasProvisionalChildren: boolean;
-  isProvisionalChild: boolean;
-  isFlaggedProvisional: boolean;
+  viewer: BookingDetailViewer;
+  access: BookingDetailEditAccess;
+  party: BookingDetailLinkedParty;
 }) {
+  const { canManageBooking, isBookingOwner, nonOwnerAdminViewer } = viewer;
+  const { isDeleted } = access;
+  const { hasProvisionalChildren, isProvisionalChild, isFlaggedProvisional } =
+    party;
   const cancellationSettlement = booking.payment
     ? getCancellationSettlementBreakdown(
         booking.payment.refundedAmountCents,
@@ -161,3 +160,5 @@ export function resolveBookingDetailPayment({
     amountDueAfterCreditCents,
   };
 }
+
+export type BookingDetailPayment = ReturnType<typeof resolveBookingDetailPayment>;

@@ -2,7 +2,6 @@ import type { BoundClubTime } from "@/lib/club-time";
 import type { FeatureFlags } from "@/config/schema";
 import type { EmailMessageSettings } from "@/lib/email-message-settings";
 import type { EffectiveBookingMessageMap } from "@/lib/booking-message-settings";
-import type { getCancellationSettlementBreakdown } from "@/lib/payment-status-display";
 import { renderBookingMessageTemplate } from "@/lib/booking-message-definitions";
 import { formatCents } from "@/lib/utils";
 import {
@@ -10,6 +9,7 @@ import {
   formatClubLongDate,
 } from "@/lib/club-time";
 import type { BookingDetailRecord } from "./load-booking-detail";
+import type { BookingDetailPayment } from "./booking-detail-payment";
 
 /**
  * THE CLUB'S OWN WORDS ON THIS PAGE (#2958): the merge data a booking message
@@ -27,23 +27,21 @@ export function renderBookingDetailMessages({
   modules,
   bookingMessages,
   bookingLodgeEmailSettings,
-  amountDueAfterCreditCents,
-  cancellationSettlement,
-  retainedAfterCancellationCents,
-  internetBankingPayment,
+  payment,
 }: {
   booking: BookingDetailRecord;
   club: BoundClubTime;
   modules: FeatureFlags;
   bookingMessages: EffectiveBookingMessageMap;
   bookingLodgeEmailSettings: EmailMessageSettings;
-  amountDueAfterCreditCents: number;
-  cancellationSettlement: ReturnType<
-    typeof getCancellationSettlementBreakdown
-  > | null;
-  retainedAfterCancellationCents: number;
-  internetBankingPayment: BookingDetailRecord["payment"] | null;
+  payment: BookingDetailPayment;
 }) {
+  const {
+    amountDueAfterCreditCents,
+    cancellationSettlement,
+    retainedAfterCancellationCents,
+    internetBankingPayment,
+  } = payment;
   const bookingMessageData = {
     bookerFirstName: booking.member.firstName,
     bookerFullName: `${booking.member.firstName} ${booking.member.lastName}`,
@@ -137,3 +135,5 @@ export function renderBookingDetailMessages({
     refundAppealDescription,
   };
 }
+
+export type BookingDetailMessages = ReturnType<typeof renderBookingDetailMessages>;

@@ -1,6 +1,5 @@
 import type { FeatureFlags } from "@/config/schema";
 import type { Instant } from "@/lib/club-time";
-import type { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
 import { getBookingEditPolicy, bookingStayHasStarted } from "@/lib/booking-edit-policy";
 import { isBookingFullyPaidForGuestNameEdits } from "@/lib/booking-modify";
 import {
@@ -8,6 +7,7 @@ import {
 } from "@/lib/bed-allocation-approval";
 import { BED_ALLOCATABLE_BOOKING_STATUSES } from "@/lib/bed-allocation-lifecycle";
 import type { BookingDetailRecord } from "./load-booking-detail";
+import type { BookingDetailViewer } from "./booking-detail-viewer";
 
 /**
  * WHAT THIS VIEWER MAY DO TO THIS BOOKING (#2958): the lifecycle flags, the
@@ -25,23 +25,21 @@ export async function resolveBookingDetailEditAccess({
   booking,
   modules,
   clubTodayDateOnly,
-  viewerAuthorizationRole,
-  isAdmin,
-  isBookingOwner,
-  canManageBooking,
-  canAdminEditBookings,
-  canSeeAdminTools,
+  viewer,
 }: {
   booking: BookingDetailRecord;
   modules: FeatureFlags;
   clubTodayDateOnly: Instant;
-  viewerAuthorizationRole: ReturnType<typeof bookingManagementAuthorizationRole>;
-  isAdmin: boolean;
-  isBookingOwner: boolean;
-  canManageBooking: boolean;
-  canAdminEditBookings: boolean;
-  canSeeAdminTools: boolean;
+  viewer: BookingDetailViewer;
 }) {
+  const {
+    viewerAuthorizationRole,
+    isAdmin,
+    isBookingOwner,
+    canManageBooking,
+    canAdminEditBookings,
+    canSeeAdminTools,
+  } = viewer;
   const isDraft = booking.status === "DRAFT";
   const isWaitlisted = booking.status === "WAITLISTED";
   const isWaitlistOffered = booking.status === "WAITLIST_OFFERED";
@@ -166,3 +164,7 @@ export async function resolveBookingDetailEditAccess({
     canFixNonMemberGuestNameTypos,
   };
 }
+
+export type BookingDetailEditAccess = Awaited<
+  ReturnType<typeof resolveBookingDetailEditAccess>
+>;

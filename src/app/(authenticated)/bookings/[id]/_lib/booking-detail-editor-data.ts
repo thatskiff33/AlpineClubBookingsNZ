@@ -2,11 +2,7 @@ import { prisma } from "@/lib/prisma";
 import type { auth } from "@/lib/auth";
 import type { BoundClubTime } from "@/lib/club-time";
 import type { BookingEditorData } from "@/components/booking-editor";
-import type { BookingEditPolicy } from "@/lib/booking-edit-policy";
-import {
-  hasAdminAreaAccess,
-  type bookingManagementAuthorizationRole,
-} from "@/lib/admin-permissions";
+import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 import { hasCapturedPayment } from "@/lib/booking-payment-state";
 import {
   deriveBookingAppliedCreditCents,
@@ -14,10 +10,7 @@ import {
 } from "@/lib/member-credit";
 import { isMemberWholeLodgeBooking } from "@/lib/booking-modify";
 import { formatDateOnly } from "@/lib/date-only";
-import {
-  describeMemberGuestConsentBadge,
-  type MemberGuestConsentBadgeAudience,
-} from "@/lib/member-guest-consent-card";
+import { describeMemberGuestConsentBadge } from "@/lib/member-guest-consent-card";
 import { MEMBER_GUEST_MODULE_KEY } from "@/lib/member-guest-consent";
 import { classifyMemberGuestConsent } from "@/lib/member-guest-consent";
 import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
@@ -28,6 +21,9 @@ import { refreshFinancialYearConfig } from "@/lib/financial-year-server";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import { getPublicOtherLodges } from "@/lib/booking-request";
 import type { BookingDetailRecord } from "./load-booking-detail";
+import type { BookingDetailViewer } from "./booking-detail-viewer";
+import type { BookingDetailConsent } from "./booking-detail-consent";
+import type { BookingDetailEditAccess } from "./booking-detail-edit-access";
 
 /**
  * WHAT THE EDIT PANEL IS HANDED (#2958): the `BookingEditorData` payload — the
@@ -45,30 +41,28 @@ export async function buildBookingDetailEditorData({
   booking,
   club,
   nights,
-  viewerAuthorizationRole,
-  isDeleted,
-  canModify,
-  canAdminOverride,
-  canEditNonMemberGuestNames,
-  canFixNonMemberGuestNameTypos,
-  editPolicy,
-  consentBadgeAudience,
-  consentResponderNameById,
+  viewer,
+  consent,
+  access,
 }: {
   session: NonNullable<Awaited<ReturnType<typeof auth>>>;
   booking: BookingDetailRecord;
   club: BoundClubTime;
   nights: number;
-  viewerAuthorizationRole: ReturnType<typeof bookingManagementAuthorizationRole>;
-  isDeleted: boolean;
-  canModify: boolean;
-  canAdminOverride: boolean;
-  canEditNonMemberGuestNames: boolean;
-  canFixNonMemberGuestNameTypos: boolean;
-  editPolicy: BookingEditPolicy;
-  consentBadgeAudience: MemberGuestConsentBadgeAudience;
-  consentResponderNameById: ReadonlyMap<string, string>;
+  viewer: BookingDetailViewer;
+  consent: BookingDetailConsent;
+  access: BookingDetailEditAccess;
 }): Promise<BookingEditorData> {
+  const { viewerAuthorizationRole } = viewer;
+  const { consentBadgeAudience, consentResponderNameById } = consent;
+  const {
+    isDeleted,
+    canModify,
+    canAdminOverride,
+    canEditNonMemberGuestNames,
+    canFixNonMemberGuestNameTypos,
+    editPolicy,
+  } = access;
   // #2266: the edit panel's account-credit card (its own card above the
   // Return-method radio — owner-decided placement). Only statuses whose stored
   // election (#2265) a pay-time consumer will honour are eligible; PENDING is

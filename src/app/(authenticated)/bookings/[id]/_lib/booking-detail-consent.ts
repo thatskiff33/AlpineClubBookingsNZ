@@ -13,6 +13,7 @@ import {
 } from "@/lib/member-guest-consent-card";
 import type { auth } from "@/lib/auth";
 import type { BookingDetailRecord } from "./load-booking-detail";
+import type { BookingDetailViewer } from "./booking-detail-viewer";
 
 /**
  * THE VIEWER'S OWN PLACE ON SOMEBODY ELSE'S BOOKING (#2958): the #2250
@@ -31,20 +32,17 @@ import type { BookingDetailRecord } from "./load-booking-detail";
 export async function resolveBookingDetailConsent({
   session,
   booking,
-  isBookingOwner,
-  isAdmin,
-  canViewAsAdmin,
+  viewer,
   clubTodayDateOnly,
   bookingLodgeEmailSettings,
 }: {
   session: NonNullable<Awaited<ReturnType<typeof auth>>>;
   booking: BookingDetailRecord;
-  isBookingOwner: boolean;
-  isAdmin: boolean;
-  canViewAsAdmin: boolean;
+  viewer: BookingDetailViewer;
   clubTodayDateOnly: Instant;
   bookingLodgeEmailSettings: EmailMessageSettings;
 }) {
+  const { isBookingOwner, isAdmin, canViewAsAdmin } = viewer;
   // Issue #2250: a member put on somebody else's booking must be able to take
   // themselves off it from the booking itself, not only from the wizard's
   // night-conflict card while attempting a clashing booking of their own.
@@ -181,3 +179,7 @@ export async function resolveBookingDetailConsent({
     consentResponderNameById,
   };
 }
+
+export type BookingDetailConsent = Awaited<
+  ReturnType<typeof resolveBookingDetailConsent>
+>;

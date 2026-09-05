@@ -11,6 +11,7 @@ import {
 } from "@/lib/duplicate-capture-refund-event";
 import { bookingHasOpenFinancialReview } from "@/lib/booking-financial-review-visibility";
 import type { BookingDetailRecord } from "./load-booking-detail";
+import type { BookingDetailViewer } from "./booking-detail-viewer";
 
 /**
  * WHAT HAS HAPPENED TO THIS BOOKING (#2958): the audit rows and lifecycle
@@ -26,12 +27,13 @@ import type { BookingDetailRecord } from "./load-booking-detail";
 export async function loadBookingDetailHistory({
   booking,
   club,
-  canSeeAdminTools,
+  viewer,
 }: {
   booking: BookingDetailRecord;
   club: BoundClubTime;
-  canSeeAdminTools: boolean;
+  viewer: BookingDetailViewer;
 }) {
+  const { canSeeAdminTools } = viewer;
   const bookingAuditLogs = await prisma.auditLog.findMany({
     where: {
       targetId: booking.id,
@@ -178,3 +180,7 @@ export async function loadBookingDetailHistory({
 
   return { financialReviewPending, bookingNarrative, bookingHistory };
 }
+
+export type BookingDetailHistory = Awaited<
+  ReturnType<typeof loadBookingDetailHistory>
+>;
