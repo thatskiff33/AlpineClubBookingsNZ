@@ -55,7 +55,14 @@ describe("deployment image contracts", () => {
     const workflow = readRepoFile(".github/workflows/ci.yml");
 
     expect(workflow).toContain("SEMGREP_IMAGE: semgrep/semgrep:1.161.0");
-    expect(workflow).toContain("ghcr.io/gitleaks/gitleaks:v8.28.0");
+    // The gitleaks pin moved OUT of this workflow in #2852, because the
+    // scheduled sweep needs the same binary and a second copy of a version
+    // string is how #2686's 8.24.3-versus-8.28.0 split happened. The
+    // assertion follows it; the census below proves that file is its only
+    // home, which is the half a `toContain` here could never do.
+    expect(readRepoFile("scripts/ci/gitleaks-image.sh")).toContain(
+      "GITLEAKS_IMAGE=ghcr.io/gitleaks/gitleaks:v8.28.0",
+    );
     expect(workflow).toContain("uses: aquasecurity/trivy-action@v0.36.0");
     expect(workflow).not.toMatch(/uses:\s+\S+@(master|main)\b/);
   });
@@ -65,7 +72,12 @@ describe("deployment image contracts", () => {
 
     expect(workflow).toContain('-v "$PWD:/src:ro"');
     expect(workflow).toContain('-v "$RUNNER_TEMP/semgrep-output:/out"');
-    expect(workflow).toContain('-v "$PWD:/repo:ro"');
+    // gitleaks mounts from the shared script now (#2852). `:ro` is the load-
+    // bearing half: a scanner has no business writing to the tree it reads,
+    // and the report path is a separate mount for exactly that reason.
+    expect(readRepoFile("scripts/ci/gitleaks-scan.sh")).toContain(
+      '-v "$(host_path "${REPO_ROOT}"):/repo:ro"',
+    );
     expect(workflow).toContain("${{ runner.temp }}/semgrep-output/semgrep-results.sarif");
   });
 
@@ -144,15 +156,20 @@ describe("deployment image contracts", () => {
     it("keeps the gitleaks gate on one pinned container, covering the PR range, main's history and the tree", () => {
       const workflow = readRepoFile(".github/workflows/ci.yml");
 
+      const scan = readRepoFile("scripts/ci/gitleaks-scan.sh");
+
       expect(workflow).toContain("name: Secret scan (gitleaks)");
-      expect(workflow).toContain("GITLEAKS_IMAGE: ghcr.io/gitleaks/gitleaks:v8.28.0");
+      // One container for all three scopes, and since #2852 the same one the
+      // scheduled sweep runs. The gate names the SCOPES; the script owns the
+      // image and the flags.
+      expect(scan).toContain('. "${SCRIPT_DIR}/gitleaks-image.sh"');
       // THREE scopes, and each covers a hole the other two leave.
       //
       // The PR range is the precise signal, and it carries the merge flag too
       // because a PR that merges `main` into itself to resolve a conflict would
       // otherwise have that resolution scanned by nothing.
       expect(workflow).toContain(
-        '--log-opts="--diff-merges=first-parent ${PR_BASE_SHA}..${PR_HEAD_SHA}"',
+        'GITLEAKS_LOG_OPTS="--diff-merges=first-parent ${PR_BASE_SHA}..${PR_HEAD_SHA}"',
       );
       // The history scan is scoped to a RESOLVED ref, never `--all`.
       // `actions/checkout` with `fetch-depth: 0` materialises every branch as
@@ -160,7 +177,7 @@ describe("deployment image contracts", () => {
       // hostage to a leak on anyone's unrelated branch — red on every open PR,
       // and unfixable from your own branch.
       expect(workflow).toContain(
-        '--log-opts="--diff-merges=first-parent ${HISTORY_SCAN_SCOPE}"',
+        'GITLEAKS_LOG_OPTS="--diff-merges=first-parent ${HISTORY_SCAN_SCOPE}"',
       );
       // Asserted against the DIRECTIVES: the job's comment quotes `--all` at
       // length while explaining why it is gone, and a banned flag named in order
@@ -178,11 +195,23 @@ describe("deployment image contracts", () => {
       // The tree scan is topology-independent: whatever is in the checked-out
       // files right now is covered however it got there, including a pull
       // request's merge PREVIEW, which is not any commit either patch scan
-      // walks. Anchored to the `dir` subcommand's own argument line.
-      expect(workflow).toMatch(/^ +dir \/repo \\$/m);
+      // walks. Anchored to the `dir` mode the gate asks the script for.
+      expect(workflow).toContain("bash scripts/ci/gitleaks-scan.sh dir");
+      expect(scan).toContain("scan=(dir /repo)");
       // Non-zero exit on a finding, and no secret echoed into a public log.
-      expect(workflow).toContain("--exit-code=1");
-      expect(workflow).toContain("--redact");
+      //
+      // `--exit-code=2`, not 1, and that is #2852's acceptance criterion
+      // rather than a preference: gitleaks exits 1 BOTH when it finds a leak
+      // and when it fails to run, so on 1 alone a required gate cannot say
+      // which happened. Measured against v8.28.0 while writing this --
+      // clean 0, findings 2, fatal error 1, bad flag 126, unresolvable image
+      // 125. Both outcomes still fail the caller, so nothing about what
+      // blocks a merge changed. The discrimination is fail-closed in both
+      // directions, and exit 0 is reachable only from gitleaks exiting 0.
+      expect(scan).toContain("LEAK_EXIT=2");
+      expect(scan).toContain('args=(--exit-code="${LEAK_EXIT}" --redact)');
+      expect(scan).toMatch(/if \[ "\$\{status\}" -eq 0 \]; then\n\s+echo "gitleaks found nothing/);
+      expect(scan).toContain("SCANNER FAILURE, not a clean scan");
       // The action is no longer USED: it installed a DIFFERENT gitleaks (8.24.3
       // by default) than the pinned container, so the two jobs disagreed about
       // which tool was enforcing the gate. Matched on `uses:` rather than on the
@@ -244,6 +273,115 @@ describe("deployment image contracts", () => {
       // real failure.
       expect(job).not.toMatch(/^ {4}if:/m);
       expect(job).toMatch(/^ {8}if: github\.event_name == 'pull_request'$/m);
+    });
+
+    /*
+      #2852 added a SECOND thing that scans this repository for secrets, and a
+      second scanner is a liability unless it is provably the same scanner. The
+      four assertions below are the whole reason the pin and the invocation were
+      moved into `scripts/ci/`: they are what stops the sweep quietly becoming a
+      different tool over a different rule set, which is precisely the state
+      #2686 found the two jobs it deleted in.
+    */
+    it("runs the scheduled sweep on the same pinned scanner as the required gate", () => {
+      const sweep = readRepoFile(".github/workflows/gitleaks-scheduled.yml");
+      const gate = readRepoFile(".github/workflows/ci.yml");
+
+      // Both go through the one script, so a version bump is one edit and
+      // cannot land on only one of them.
+      expect(sweep).toContain("bash scripts/ci/gitleaks-scan.sh git");
+      expect(sweep).toContain("bash scripts/ci/gitleaks-scan.sh dir");
+      expect(gate).toContain("bash scripts/ci/gitleaks-scan.sh git");
+      expect(gate).toContain("bash scripts/ci/gitleaks-scan.sh dir");
+      // And neither one may reach for a container of its own. Asserted against
+      // the DIRECTIVES because both files' comments discuss the image at
+      // length, and a comment explaining the rule must not satisfy it.
+      for (const [name, text] of [
+        [".github/workflows/ci.yml", gate],
+        [".github/workflows/gitleaks-scheduled.yml", sweep],
+      ] as const) {
+        expect(
+          directivesOnly(text),
+          `${name} names a gitleaks container of its own; the pin lives in scripts/ci/gitleaks-image.sh`,
+        ).not.toContain("ghcr.io/gitleaks/gitleaks");
+      }
+      // The sweep proves the scanner can still fail before trusting its green,
+      // exactly as the gate does. A weekly job nobody watches needs this more
+      // than the gate does, not less.
+      expect(sweep).toContain("run: bash scripts/ci/gitleaks-selftest.sh");
+      // ...and the self-test runs the pinned binary rather than a default of
+      // its own, or it proves nothing about the gate it guards.
+      expect(readRepoFile("scripts/ci/gitleaks-selftest.sh")).toContain(
+        '. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/gitleaks-image.sh"',
+      );
+    });
+
+    it("keeps `--all` in the sweep and out of the required gate", () => {
+      const sweep = readRepoFile(".github/workflows/gitleaks-scheduled.yml");
+
+      // The division of responsibility, pinned in both directions because each
+      // half is a real defect. `--all` in the gate makes a required check
+      // hostage to a leak on anybody's abandoned branch, red on every open pull
+      // request and unfixable by its author (#2686). `--all` missing from the
+      // sweep leaves the sweep scanning what the gate already scanned, which is
+      // the "full repository scan" that #2686 measured doing nothing.
+      expect(sweep).toContain(
+        "GITLEAKS_LOG_OPTS: --diff-merges=first-parent --all",
+      );
+      expect(directivesOnly(readRepoFile(".github/workflows/ci.yml"))).not.toContain(
+        "--all",
+      );
+      // Every branch's history is only reachable from a full clone. Against
+      // the DIRECTIVES, because this workflow's own header quotes
+      // `fetch-depth: 0` while explaining why the gate cannot use `--all` --
+      // found by mutation-testing, which is the fourth time in this file a
+      // comment about a directive has satisfied the guard on that directive.
+      expect(directivesOnly(sweep)).toContain("fetch-depth: 0");
+    });
+
+    it("keeps the scheduled sweep incapable of becoming a merge gate by accident", () => {
+      const sweep = readRepoFile(".github/workflows/gitleaks-scheduled.yml");
+      const triggers = sweep.slice(sweep.indexOf("\non:"), sweep.indexOf("\npermissions:"));
+
+      // #2852 explicitly does not add a branch-protection requirement, and the
+      // mechanism that keeps it that way is the trigger list: a workflow with no
+      // `pull_request` and no `push` trigger reports no status context on a pull
+      // request at all, so there is nothing for branch protection to require and
+      // nothing to sit "Expected — waiting for status" on an open PR. Making it
+      // required later is the three-step sequence in `AGENTS.md`.
+      expect(triggers).toContain("schedule:");
+      expect(triggers).toContain("workflow_dispatch:");
+      expect(triggers).not.toContain("pull_request");
+      expect(triggers).not.toContain("push:");
+      // A cancelled security scan reports neither clean nor dirty, and the next
+      // one is a week away.
+      expect(sweep).toContain("cancel-in-progress: false");
+      // Read-only, and no `security-events: write`: the sweep publishes its
+      // findings as a run summary and an artifact, so it never needs a token
+      // that can write to the repository.
+      expect(directivesOnly(sweep)).not.toContain(": write");
+    });
+
+    it("reports sweep findings with context and without the secret", () => {
+      const sweep = readRepoFile(".github/workflows/gitleaks-scheduled.yml");
+      const scan = readRepoFile("scripts/ci/gitleaks-scan.sh");
+
+      // Actionable a week later means the rule, the file, the line and the
+      // commit — and `--redact` means the matched value in that report is the
+      // literal string REDACTED, so summarising it republishes nothing.
+      // Verified against v8.28.0: the JSON report's `Match` and `Secret` fields
+      // both come back as "REDACTED" while `File`, `StartLine`, `Commit` and
+      // `RuleID` are intact.
+      expect(scan).toContain("--report-format=json");
+      expect(scan).toContain("--redact");
+      expect(sweep).toContain("\\(.RuleID) | `\\(.File)` | \\(.StartLine) | \\(.Commit[0:12])");
+      // Both scans run even when the first one fails, so one sweep gives one
+      // complete answer rather than a partial one that has to be re-run.
+      expect(sweep).toMatch(/- name: Sweep the checked-out tree\n\s+id: tree\n\s+if: always\(\)/);
+      // A missing report is NOT "no findings". The distinction is the same one
+      // `gitleaks-scan.sh` draws between a failed scan and a clean one, and it
+      // has to survive into the summary or the sweep's green means nothing.
+      expect(sweep).toContain("the scan did not complete");
     });
 
     it("names the Trivy gate for what it blocks and keeps it off the verify critical path", () => {
