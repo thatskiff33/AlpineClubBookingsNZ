@@ -10,7 +10,7 @@ import { processRefund } from "@/lib/stripe";
 import { stripeReferenceId, type StripeReference } from "@/lib/stripe-references";
 import Stripe from "stripe";
 
-type PaymentStore = Prisma.TransactionClient | typeof prisma;
+export type PaymentStore = Prisma.TransactionClient | typeof prisma;
 
 type StripeRefundLedgerInput = {
   id: string;

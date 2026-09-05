@@ -1,18 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
-import {
-  BookingStatus,
-  PaymentStatus,
-  PaymentTransactionKind,
-} from "@prisma/client";
+import { BookingStatus, PaymentStatus } from "@prisma/client";
 import { z } from "zod";
 
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
-import { chargePaymentMethod } from "@/lib/stripe";
 import { stripeReferenceId } from "@/lib/stripe-references";
+import { readStripeErrorFields } from "@/lib/stripe-errors";
 import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
-import { upsertPaymentIntentTransaction } from "@/lib/payment-transactions";
+import {
+  beginSavedCardChargeAttempt,
+  cancelStaleSavedCardChargeIntents,
+  chargeSavedCardAttempt,
+  describeUnsettledPaymentIntent,
+  SAVED_CARD_CHARGE_REASON,
+  SavedCardChargeRefusedError,
+  settleSavedCardChargeAttempt,
+} from "@/lib/saved-card-charge-attempt";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { enqueueOwnHostingCoverageReevaluation } from "@/lib/adult-member-hosting-review";
 import {
@@ -351,14 +355,20 @@ export async function POST(
       });
     }
 
-    // Claim-first (#1418, the cron's pattern at cron-confirm-pending.ts:347-398):
+    // Claim-first (#1418, the cron's pattern in `resolveHoldWindowUnderLock`):
     // claim PENDING -> CONFIRMED under the advisory lock BEFORE the Stripe
     // call. CONFIRMED holds capacity and is out of the cron's bump scope, so a
     // successful charge can no longer race a concurrent cron cancel into
     // markBookingPaymentSucceeded's "not payable" throw, and the pre-#1418
     // charge-then-refund churn window is gone. The lock is released before
     // Stripe — never hold a DB lock across a payment-provider network call.
-    const claim = await prisma.$transaction(async (tx) => {
+    //
+    // #3267 (`INV-PAY-055`): the same transaction now also makes the charge
+    // ATTEMPT durable (`beginSavedCardChargeAttempt`), which is what stops this
+    // route and the cron double-charging one booking now that they no longer
+    // share a Stripe key. A payment already holding captured cash throws
+    // `SavedCardChargeRefusedError`, rolling the whole claim back.
+    const runClaim = () => prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
       // Two-tier protocol (#1881): this branch CLAIMS capacity (PENDING ->
       // CONFIRMED), so it takes BOTH locks — global lock(1) first, then the
@@ -461,8 +471,45 @@ export async function POST(
           ...rowStamp,
         },
       });
-      return { ok: true as const, paymentId: payment.id };
+      const attempt = await beginSavedCardChargeAttempt(tx, {
+        paymentId: payment.id,
+        bookingId,
+        amountCents: booking.finalPriceCents,
+        card: savedPayment,
+        reason: SAVED_CARD_CHARGE_REASON.adminConfirmPendingGuests,
+      });
+      return { ok: true as const, paymentId: payment.id, attempt };
     });
+
+    let claim: Awaited<ReturnType<typeof runClaim>>;
+    try {
+      claim = await runClaim();
+    } catch (claimErr) {
+      if (!(claimErr instanceof SavedCardChargeRefusedError)) throw claimErr;
+      // Nothing was claimed and nothing charged; a person has to look.
+      logger.error(
+        { bookingId, paymentIntentId: claimErr.paymentIntentId },
+        "Admin confirm-pending-guests: refused to charge, a captured charge is already recorded on this pending booking (#3267)"
+      );
+      sendAdminPaymentFailureAlert({
+        memberName: `${booking.member.firstName} ${booking.member.lastName}`,
+        checkIn: booking.checkIn,
+        checkOut: booking.checkOut,
+        amountCents: booking.finalPriceCents,
+        errorMessage: claimErr.message,
+        paymentIntentId: claimErr.paymentIntentId ?? "N/A",
+      }).catch((alertErr) =>
+        logger.error(
+          { err: alertErr, bookingId },
+          "Failed to send admin payment failure alert"
+        )
+      );
+      await audit("charge_refused_captured_exists", false);
+      return NextResponse.json(
+        { error: claimErr.message, paymentIntentId: claimErr.paymentIntentId },
+        { status: 409 }
+      );
+    }
 
     if ("error" in claim) {
       return NextResponse.json(
@@ -507,39 +554,49 @@ export async function POST(
       });
     };
 
-    // Charge the saved payment method — same path and Stripe idempotency key
-    // as the cron (`pending_charge_<bookingId>`), so the two paths can never
-    // double-charge the same booking.
+    // #3267: earlier attempts the claim ended (a replaced card) have their
+    // intents cancelled best-effort here, after commit and before the charge.
+    await cancelStaleSavedCardChargeIntents(claim.attempt, { bookingId });
+
+    // Charge the saved payment method through the one attempt contract every
+    // path uses (#3267, `INV-PAY-055`): a fresh attempt charges under the row's
+    // own key; an unresolved earlier attempt (the cron's, or a previous click)
+    // is asked about instead of repeated. The never-double-charge property the
+    // shared `pending_charge_<bookingId>` key used to provide is now enforced by
+    // the ledger inside the claim transaction above, so this route no longer
+    // meets Stripe's idempotency parameter-mismatch error — what comes back is
+    // the attempt's true outcome.
     let paymentIntent;
     try {
-      paymentIntent = await chargePaymentMethod({
+      paymentIntent = await chargeSavedCardAttempt({
+        attempt: claim.attempt,
+        bookingId,
+        memberId: booking.memberId,
         amountCents: booking.finalPriceCents,
-        customerId: savedPayment.stripeCustomerId,
-        paymentMethodId: savedPayment.stripePaymentMethodId,
-        metadata: {
-          bookingId,
-          memberId: booking.memberId,
-          source: "admin_confirm_pending_guests",
-        },
-        idempotencyKey: `pending_charge_${bookingId}`,
+        card: savedPayment,
       });
     } catch (chargeErr) {
       // Charge attempt failed with nothing captured: release the claim and
-      // alert admins, exactly like the cron path (#1418).
+      // alert admins, exactly like the cron path (#1418). A definite Stripe
+      // refusal has already ended the attempt row, so the next click starts a
+      // fresh one; an ambiguous failure leaves it to be asked about.
       await releaseChargeClaim().catch((revertErr) =>
         logger.error(
           { err: revertErr, bookingId },
           "Failed to release confirm-pending-guests charge claim"
         )
       );
+      const stripeFields = readStripeErrorFields(chargeErr);
       sendAdminPaymentFailureAlert({
         memberName: `${booking.member.firstName} ${booking.member.lastName}`,
         checkIn: booking.checkIn,
         checkOut: booking.checkOut,
         amountCents: booking.finalPriceCents,
-        errorMessage:
-          chargeErr instanceof Error ? chargeErr.message : String(chargeErr),
-        paymentIntentId: booking.payment?.stripePaymentIntentId || "N/A",
+        errorMessage: stripeFields.message,
+        paymentIntentId:
+          (claim.attempt.kind === "replay" ? claim.attempt.paymentIntentId : null) ??
+          booking.payment?.stripePaymentIntentId ??
+          "N/A",
       }).catch((alertErr) =>
         logger.error(
           { err: alertErr, bookingId },
@@ -551,19 +608,32 @@ export async function POST(
         { err: chargeErr, bookingId },
         "Admin confirm-pending-guests: Stripe charge failed"
       );
+      // Say what Stripe actually said when Stripe said it; a local failure's
+      // message is not for the response body.
+      const detail =
+        stripeFields.apiType !== null
+          ? ` Stripe said: "${stripeFields.message}".`
+          : "";
       return NextResponse.json(
         {
-          error:
-            "The card charge failed; the booking was returned to pending and admins have been alerted.",
+          error: `The card charge failed; the booking was returned to pending and admins have been alerted.${detail}`,
         },
         { status: 502 }
       );
     }
 
     if (paymentIntent.status !== "succeeded") {
-      // Requires further action (e.g. 3DS): release the claim and leave the
-      // booking pending for the Stripe webhook to resolve rather than
+      // The intent exists but did not capture (3DS challenge outstanding, still
+      // processing, or — on a replay — an earlier attempt that has since died).
+      // Record what Stripe answered on the attempt row FIRST, so the next click
+      // or cron run asks about this intent rather than minting a second one
+      // (or, for a dead intent, starts fresh), then release the claim and leave
+      // the booking pending for the Stripe webhook to resolve rather than
       // confirming optimistically.
+      await settleSavedCardChargeAttempt({
+        attemptRowId: claim.attempt.attemptRowId,
+        paymentIntent,
+      });
       await releaseChargeClaim().catch((revertErr) =>
         logger.error(
           { err: revertErr, bookingId },
@@ -572,8 +642,7 @@ export async function POST(
       );
       return NextResponse.json(
         {
-          error:
-            "The saved card needs further authorisation; the charge could not be completed automatically.",
+          error: describeUnsettledPaymentIntent(paymentIntent.status),
           paymentStatus: paymentIntent.status,
         },
         { status: 409 }
@@ -589,15 +658,12 @@ export async function POST(
     // payment transaction"), which is exactly how captured money used to go
     // silent. With the row committed here, the webhook can always finish the
     // promotion (or route a cancelled booking through the #1350 refund guard).
+    // Since #3267 the row already exists (the attempt); this stamps the intent
+    // and SUCCEEDED onto it.
     try {
-      await upsertPaymentIntentTransaction({
-        paymentId: claim.paymentId,
-        kind: PaymentTransactionKind.PRIMARY,
-        paymentIntentId: paymentIntent.id,
-        amountCents: paymentIntent.amount,
-        status: PaymentStatus.SUCCEEDED,
-        paymentMethodId,
-        stripeCustomerId: savedPayment.stripeCustomerId,
+      await settleSavedCardChargeAttempt({
+        attemptRowId: claim.attempt.attemptRowId,
+        paymentIntent,
       });
     } catch (recordErr) {
       // Non-fatal: reconciliation below upserts the identical row.
