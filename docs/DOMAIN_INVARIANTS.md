@@ -298,7 +298,7 @@ Prefix `INV-MOD`.
 | `INV-MOD-005` | Nightly prices lock at booking time; only changed guests and nights price at current rates |
 | `INV-MOD-006` | Every edit path passes the default group discount into pricing; locked nights win over it |
 | `INV-MOD-026` | One club switch, applied at one chokepoint, decides whether a later edit's new nights earn the group discount; default on, locked nights untouched either way |
-| `INV-MOD-027` | An officer may price a guest who is on the club's non-member rate at its member rate as a partner-lodge member; eligibility follows the RATE rather than `isMember`, is withheld from anybody owing a subscription under every lockout mode, changes the rate only, stores the flag only for guests pricing actually rated, and reprices exactly the guests whose tick changed |
+| `INV-MOD-027` | An officer may price a guest who is on the club's non-member rate at its member rate as a partner-lodge member; eligibility follows the RATE rather than `isMember`, is withheld from anybody owing a subscription under every lockout mode, changes the rate only, stores the flag only for guests pricing actually rated, and reprices exactly the guests whose tick changed. Refused whole - preview and save alike - on a mid-stay edit and on an edit whose money parks for financial review (#3214) |
 | `INV-MOD-007` | Hut nightly rates key on membership type and optional age tier, never a member boolean |
 | `INV-MOD-008` | An unpaid member repriced under `NON_MEMBER_PRICING` is `NON_MEMBER_DEFAULT`, not forced |
 | `INV-MOD-009` | Membership, not the subscription, gates member-only promotions; a repriced member stays eligible |
@@ -318,7 +318,7 @@ Prefix `INV-MOD`.
 | `INV-MOD-022` | The admin exemption is not one predicate, and is stated per path |
 | `INV-MOD-023` | Advisory surfaces report the same facts and gate nothing; no row is persisted, no capacity reserved |
 | `INV-MOD-024` | Minimum-stay policy administration is versioned; a stale version is refused, not overwritten |
-| `INV-MOD-028` | EVERY edit path values historical nights only from exact, reconciling stored sold-price rows; anything else commits the stay change, writes `NULL` for what it cannot value and parks the money as an explicit financial review with typed causes and no numeric result, and a second money-affecting edit is then refused until it is settled. No writer repairs a blank into a number by re-pricing it; the ONE exception is a person typing every one of a strand's blanks while settling that review, which must reconcile and is audited as a money-affecting act |
+| `INV-MOD-028` | EVERY edit path values historical nights only from exact, reconciling stored sold-price rows; anything else commits the stay change, writes `NULL` for what it cannot value and parks the money as an explicit financial review with typed causes and no numeric result, and a second money-affecting edit is then refused until it is settled. An other-club rate election is the one thing a parking edit may not carry: it is refused whole, preview and save alike (#3214). No writer repairs a blank into a number by re-pricing it; the TWO exceptions are both a person typing every figure — every one of a strand's blanks while settling that review, and every night a non-reconciling strand holds on a booking with no open review (#3214), which must sum to the strand's stored total and therefore cannot change it. Both must reconcile and both are audited as money-affecting acts |
 
 ### Adult-member hosting
 
@@ -381,7 +381,8 @@ Prefix `INV-HOST`.
 | `INV-HOST-049` | The same-owner dependent fan-out reads over the vacated window too, and each queue item carries the dependent's own nights |
 | `INV-HOST-050` | A member is never refused a change they cannot make; moving away from their own booking's cover offers the linked move |
 | `INV-HOST-051` | The linked move is atomic and settles once; both change fees are charged unless the club has turned the second off |
-| `INV-HOST-052` | A declined linked move has its own recorded cause, registered one release before anything writes it |
+| `INV-HOST-052` | A declined linked move has its own recorded cause, written by exactly one arm and registered one release before anything wrote it |
+| `INV-HOST-053` | A re-evaluation row's explanation belongs to the booking it is about, and an explained cause is never overwritten by an unexplained one |
 
 ### Booking requests
 
