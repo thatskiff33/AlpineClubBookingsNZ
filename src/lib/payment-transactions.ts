@@ -883,7 +883,7 @@ export class PartialRefundError extends Error {
     refundId: string;
     amountCents: number;
   }>;
-  cause: unknown;
+  override cause: unknown;
 
   constructor({
     completedRefundCents,

@@ -242,8 +242,13 @@ describe("the payment path is DELIBERATELY ungated (#2779, INV-LOCKOUT-069)", ()
     "src/lib/booking-payment-flow.ts",
     // Payment row writes shared by every settle path.
     "src/lib/payment-transactions.ts",
-    // The emailed pay-by-link door onto the same journey.
+    // The emailed pay-by-link door onto the same journey (#2956 split it by
+    // responsibility; every piece stays listed so the door is still covered).
     "src/lib/payment-link.ts",
+    "src/lib/payment-link-context.ts",
+    "src/lib/payment-link-intent.ts",
+    "src/lib/payment-link-reissue.ts",
+    "src/lib/payment-link-split-guest.ts",
   ] as const;
 
   it.each(UNGATED_SETTLEMENT_MODULES)(

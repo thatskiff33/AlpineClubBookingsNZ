@@ -278,7 +278,6 @@ async function planLodgeOps(ctx: PlanContext): Promise<CategoryPlanResult> {
   const batch = await loadOpsBatch(ctx.db, slugs);
 
   const planInstruction = (
-    key: string,
     displayKey: string,
     raw: Record<string, string>,
     current: { contentHtml: string } | null,
@@ -299,7 +298,7 @@ async function planLodgeOps(ctx: PlanContext): Promise<CategoryPlanResult> {
   readCsvRows(ctx.files, CLUB_INSTRUCTION_FILE).forEach((raw, i) => {
     const parsed = parseInstructionRow(CLUB_INSTRUCTION_FILE, i, raw, errors);
     if (!parsed) return;
-    planInstruction(parsed.key, `club/${parsed.key}`, raw, batch.clubInstructions.get(parsed.key) ?? null);
+    planInstruction(`club/${parsed.key}`, raw, batch.clubInstructions.get(parsed.key) ?? null);
   });
 
   // Per-lodge instructions + chore templates.
@@ -313,7 +312,7 @@ async function planLodgeOps(ctx: PlanContext): Promise<CategoryPlanResult> {
       const parsed = parseInstructionRow(paths.instructions, i, raw, errors);
       if (!parsed) return;
       const current = lodgeId ? batch.lodgeInstructions.get(`${lodgeId}/${parsed.key}`) ?? null : null;
-      planInstruction(parsed.key, `${slug}/${parsed.key}`, raw, current);
+      planInstruction(`${slug}/${parsed.key}`, raw, current);
     });
 
     const bundleChoreNames = new Set<string>();

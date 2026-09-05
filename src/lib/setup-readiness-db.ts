@@ -1,3 +1,4 @@
+import { readClubModuleSettingsRecord } from "@/config/modules";
 import { prisma } from "@/lib/prisma";
 import { CLUB_TIME_SETTINGS_ID } from "@/lib/club-time-zone";
 import { resolveEnvironmentRole } from "@/lib/environment-role";
@@ -90,40 +91,14 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
     publicContentSettings,
   ] = await Promise.all([
     prisma.member.count({ where: { role: "ADMIN", active: true } }),
-    prisma.clubModuleSettings.findUnique({
-      where: { id: "default" },
-      select: {
-        kiosk: true,
-        chores: true,
-        financeDashboard: true,
-        waitlist: true,
-        xeroIntegration: true,
-        bedAllocation: true,
-        internetBankingPayments: true,
-        addressAutocomplete: true,
-        groupBookings: true,
-        lockers: true,
-        induction: true,
-        workParties: true,
-        promoCodes: true,
-        hutLeaders: true,
-        communications: true,
-        memberNotices: true,
-        eventsCalendar: true,
-        skifieldConditions: true,
-        twoFactor: true,
-        magicLink: true,
-        googleLogin: true,
-        analytics: true,
-        lobbyDisplay: true,
-        aiAssistant: true,
-        memberGuests: true,
-        aiDiagnostics: true,
-        maintenanceReports: true,
-        alpineCentralServer: true,
-        commsPortal: true,
-      },
-    }),
+    // The one read of the module row (#2996). This used to spell every module
+    // key by hand — a second copy of MODULE_KEYS that each new module had to be
+    // added to separately, with nothing comparing the two. The raw row is what
+    // this snapshot wants: null here means "never saved", which the
+    // feature-flags step reports as first-install defaults, so the tolerant
+    // loaders that map null to defaults would erase that distinction. The two
+    // audit columns ride along unread — the snapshot type narrows them away.
+    readClubModuleSettingsRecord(prisma),
     prisma.ageTierSetting.count(),
     prisma.season.count({ where: { active: true } }),
     prisma.cancellationPolicy.count(),

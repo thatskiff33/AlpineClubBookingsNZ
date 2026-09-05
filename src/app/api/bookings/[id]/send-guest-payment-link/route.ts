@@ -4,7 +4,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { hasAdminAccess } from "@/lib/access-roles";
-import { issueSplitGuestPaymentLink } from "@/lib/payment-link";
+import { issueSplitGuestPaymentLink } from "@/lib/payment-link-split-guest";
 import logger from "@/lib/logger";
 
 /**
