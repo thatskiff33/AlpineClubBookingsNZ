@@ -11,32 +11,6 @@ import type { BookingDetailPayment } from "../_lib/booking-detail-payment";
 import type { BookingDetailHistory } from "../_lib/booking-detail-history";
 import type { BookingDetailMessages } from "../_lib/booking-detail-messages";
 
-/**
- * THE BANNERS ABOVE THE BOOKING (#2958): payment required, deleted, the shared
- * lifecycle narrative, the three provisional/split-party notices and the #2266
- * saved-credit promise. Presentation only, over projections the page derived;
- * every audience gate (owner second person, admin third person, linked guest
- * nothing) is the one the page applied. Moved verbatim from `page.tsx`.
- */
-export function BookingStatusBanners({
-  booking,
-  club,
-  viewer,
-  access,
-  party,
-  payment,
-  history,
-  messages,
-}: {
-  booking: BookingDetailRecord;
-  club: BoundClubTime;
-  viewer: BookingDetailViewer;
-  access: BookingDetailEditAccess;
-  party: BookingDetailLinkedParty;
-  payment: BookingDetailPayment;
-  history: BookingDetailHistory;
-  messages: BookingDetailMessages;
-}) {
 // States with a self-contained outcome worth surfacing as a banner. Active
 // states (payable / under_review) already have their own dedicated UI below.
 const NARRATIVE_BANNER_STATES = new Set<BookingNarrativeState>([
@@ -64,6 +38,32 @@ const narrativeBannerClasses: Record<string, string> = {
   financial_review_pending: "border-info-6 bg-info-3 text-info-11",
 };
 
+/**
+ * THE BANNERS ABOVE THE BOOKING (#2958): payment required, deleted, the shared
+ * lifecycle narrative, the three provisional/split-party notices and the #2266
+ * saved-credit promise. Presentation only, over projections the page derived;
+ * every audience gate (owner second person, admin third person, linked guest
+ * nothing) is the one the page applied. Moved verbatim from `page.tsx`.
+ */
+export function BookingStatusBanners({
+  booking,
+  club,
+  viewer,
+  access,
+  party,
+  payment,
+  history,
+  messages,
+}: {
+  booking: BookingDetailRecord;
+  club: BoundClubTime;
+  viewer: BookingDetailViewer;
+  access: BookingDetailEditAccess;
+  party: BookingDetailLinkedParty;
+  payment: BookingDetailPayment;
+  history: BookingDetailHistory;
+  messages: BookingDetailMessages;
+}) {
   const { isBookingOwner, nonOwnerAdminViewer } = viewer;
   const { isDeleted } = access;
   const {

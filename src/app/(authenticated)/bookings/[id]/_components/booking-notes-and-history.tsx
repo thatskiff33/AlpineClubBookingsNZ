@@ -7,6 +7,13 @@ import type { BoundClubTime } from "@/lib/club-time";
 import type { BookingDetailEditAccess } from "../_lib/booking-detail-edit-access";
 import type { BookingDetailHistory } from "../_lib/booking-detail-history";
 
+const historyToneClasses: Record<BookingHistoryTone, string> = {
+  default: "border-border bg-muted text-muted-foreground",
+  success: "border-success-6 bg-success-3 text-success-11",
+  warning: "border-warning-6 bg-warning-3 text-warning-11",
+  danger: "border-danger-6 bg-danger-3 text-danger-11",
+};
+
 /**
  * NOTES AND THE TIMELINE (#2958): the notes editor (editable on the same
  * predicate as cancel) and the transaction history built in
@@ -23,13 +30,6 @@ export function BookingNotesAndHistory({
   access: BookingDetailEditAccess;
   history: BookingDetailHistory;
 }) {
-const historyToneClasses: Record<BookingHistoryTone, string> = {
-  default: "border-border bg-muted text-muted-foreground",
-  success: "border-success-6 bg-success-3 text-success-11",
-  warning: "border-warning-6 bg-warning-3 text-warning-11",
-  danger: "border-danger-6 bg-danger-3 text-danger-11",
-};
-
   const { canCancel } = access;
   const { bookingHistory } = history;
   return (

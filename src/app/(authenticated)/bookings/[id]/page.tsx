@@ -1,35 +1,10 @@
 import { auth } from "@/lib/auth";
 import { notFound, redirect } from "next/navigation";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
-import { formatCents } from "@/lib/utils";
-import { CancelBookingButton } from "@/components/cancel-booking-button";
-import { BookingPaymentSection } from "@/components/booking-payment-section";
-import { SwitchToInternetBankingButton } from "@/components/switch-to-internet-banking-button";
-import { SendGuestPaymentLinkButton } from "@/components/send-guest-payment-link-button";
-import { BookingNotesEditor } from "@/components/booking-notes-editor";
 import { BookingEditor } from "@/components/booking-editor";
-import { AdditionalPaymentCard } from "@/components/additional-payment-card";
-import { BookingAdditionalPaymentPanel } from "@/components/admin/booking-additional-payment-panel";
-import {
-  additionalPaymentEpisodeStartedAt,
-  isAdditionalPayableBookingStatus,
-} from "@/lib/additional-payment-chase";
-import { ConfirmDraftButton } from "@/components/confirm-draft-button";
-import { AdminBookingToolsCard } from "@/components/admin/admin-booking-tools-card";
-import { BookingBedAllocationPanel } from "@/components/admin/booking-bed-allocation-panel";
-import { BookingWithheldEmailsBanner } from "@/components/admin/booking-withheld-emails-banner";
 import { ScrollToHash } from "@/components/scroll-to-hash";
 import { SectionNav, type SectionNavItem } from "@/components/section-nav";
-import { ArrivalTimeEditor } from "@/components/arrival-time-editor";
-import { RequestedRoomEditor } from "@/components/requested-room-editor";
-import { WaitlistOfferCard } from "@/components/waitlist-offer-card";
-import { DeleteBookingButton } from "@/components/delete-booking-button";
-import { getBookingPaymentMode } from "@/lib/booking-payment-flow";
-import { RefundAppealButton } from "@/components/refund-appeal-button";
-import { humanizeStatus, paymentStatusClass } from "@/lib/status-colors";
 import { BookingHelpExtras } from "./_components/booking-help-extras";
 import { BookingNotesAndHistory } from "./_components/booking-notes-and-history";
 import { BookingCancellationOutcome } from "./_components/booking-cancellation-outcome";
@@ -51,18 +26,8 @@ import { resolveBookingDetailLinkedParty } from "./_lib/booking-detail-linked-pa
 import { buildBookingDetailEditorData } from "./_lib/booking-detail-editor-data";
 import { renderBookingDetailMessages } from "./_lib/booking-detail-messages";
 import { loadBookingDetailAdminTools } from "./_lib/booking-detail-admin-tools";
-import { NonMemberGuestsSection } from "@/app/(authenticated)/bookings/_components/non-member-guests-section";
 import { loadCancellationPolicy } from "@/lib/cancellation";
 import { describeCancellationSchedule } from "@/lib/cancellation-schedule";
-import { WAITLIST_OFFER_HOURS } from "@/lib/waitlist";
-import type { BookingHistoryTone } from "@/lib/booking-history";
-import type { BookingNarrativeState } from "@/lib/booking-narrative";
-import { resolveCreditElectionNoticeAudience } from "@/lib/booking-credit-election";
-import {
-  bookingHoldsCapacity,
-  isPaymentOwedBookingStatus,
-} from "@/lib/booking-status";
-import { formatDateOnly } from "@/lib/date-only";
 import {
   calendarDateOfDateOnlyInstant,
   countClubNights,
@@ -73,23 +38,12 @@ import { loadEmailMessageSettingsForLodge } from "@/lib/email-message-settings";
 import { loadPublicBookingMessages } from "@/lib/booking-message-settings";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { resolveInternalReturnPath } from "@/lib/internal-return-path";
-import { SelfRemoveFromBookingCard } from "@/components/self-remove-from-booking-card";
-import { MemberGuestConsentCard } from "@/components/member-guest-consent-card";
-import {
-  describeConsentDeclineRefusal,
-  describeConsentNightsCount,
-  formatConsentFullDate,
-  formatConsentNightsLabel,
-  formatConsentStayLabel,
-  formatConsentWeekdayDate,
-} from "@/lib/member-guest-consent-card";
 // Kept as its OWN single-line import, deliberately: a source contract in
 // arrival-instructions-consent-gate.test.ts matches this line verbatim, because
 // D-12's exclusion has to be visibly the SHARED predicate on this page rather
 // than a hand-rolled filter. Folding it into the import below would satisfy the
 // compiler and break the guard.
 import { isOperationallyPresentConsent } from "@/lib/member-guest-consent";
-import { OrganiserGroupBookingCard } from "@/components/group-booking/organiser-group-booking-card";
 
 // Candidate anchors for this long, mostly-conditional page. SectionNav prunes
 // any whose target id is absent from the DOM after mount, so listing the full
@@ -160,16 +114,11 @@ export default async function BookingDetailPage({
   const viewer = resolveBookingDetailViewer({ session, booking });
   const {
     isAdmin,
-    viewerAuthorizationRole,
     isBookingOwner,
     viewerGuestRow,
     isLinkedGuestViewer,
     canManageBooking,
     canViewAsAdmin,
-    canAdminEditBookings,
-    canSeeAdminTools,
-    actingOnBehalf,
-    nonOwnerAdminViewer,
   } = viewer;
   if (booking.deletedAt && !isAdmin) notFound();
   if (!canManageBooking && !isLinkedGuestViewer && !canViewAsAdmin) {
@@ -188,17 +137,8 @@ export default async function BookingDetailPage({
     clubTodayDateOnly,
     bookingLodgeEmailSettings,
   });
-  const {
-    selfRemovalCard,
-    consentCard,
-    consentIsQuotePriced,
-    consentLodgeName,
-    viewerConsentGuest,
-    viewerConsentNights,
-  } = consent;
 
   const history = await loadBookingDetailHistory({ booking, club, viewer });
-  const { bookingNarrative, bookingHistory } = history;
 
   // Nights are CALENDAR arithmetic over the half-open `[checkIn, checkOut)`
   // night range, never elapsed milliseconds divided by 24 hours: across a DST
@@ -221,17 +161,11 @@ export default async function BookingDetailPage({
   });
   const {
     isDraft,
-    isWaitlisted,
-    isWaitlistOffered,
     isDeleted,
     canCancel,
-    showArrivalTime,
-    showRequestedRoom,
-    bedAllocationLocked,
+    canModify,
+    canAdminOverride,
     showBedAllocationPanel,
-    bookingCanHoldBeds,
-    editPolicy,
-    canEditRequestedRoom,
   } = access;
   const editorData = await buildBookingDetailEditorData({
     session,
@@ -289,34 +223,7 @@ export default async function BookingDetailPage({
     access,
     party,
   });
-  const {
-    provisionalChildGuestCount,
-    hasProvisionalChildren,
-    isProvisionalChild,
-    showNonMemberGuestsSection,
-    nonMemberGuestChildren,
-    isFlaggedProvisional,
-    organiserGroupState,
-    canOpenGroup,
-    showGroupSection,
-  } = party;
-  const {
-    cancellationSettlement,
-    paymentDisplay,
-    internetBankingPayment,
-    canSwitchToInternetBanking,
-    originalPaymentCaptured,
-    retainedAfterCancellationCents,
-    latestRefundAppeal,
-    maxRefundableCents,
-    showGuestPaymentLinkStandalone,
-    showSavePaymentMethodCard,
-    showPaymentOnHoldNotice,
-    showCompletePaymentCard,
-    creditAppliedCents,
-    showCreditApplied,
-    amountDueAfterCreditCents,
-  } = payment;
+  const { originalPaymentCaptured } = payment;
   const messages = renderBookingDetailMessages({
     booking,
     club,
@@ -325,13 +232,6 @@ export default async function BookingDetailPage({
     bookingLodgeEmailSettings,
     payment,
   });
-  const {
-    paymentRequiredDescription,
-    internetBankingPendingDescription,
-    switchToInternetBankingDescription,
-    financialReviewPendingDescription,
-    refundAppealDescription,
-  } = messages;
 
   const adminTools = await loadBookingDetailAdminTools({
     booking,
@@ -340,17 +240,6 @@ export default async function BookingDetailPage({
     access,
     history,
   });
-  const {
-    providerMismatches,
-    financialReviewWarnings,
-    withheldEmails,
-    withheldEmailGroups,
-    noEmailsState,
-    manualPaymentState,
-    storedNightPriceOffers,
-    showReturnToWaitlist,
-    exclusiveHoldConflicts,
-  } = adminTools;
 
   // Surface the applicable cancellation refund schedule to the member up front
   // (#1371 F28): the exact per-booking amount already shows inside the cancel
