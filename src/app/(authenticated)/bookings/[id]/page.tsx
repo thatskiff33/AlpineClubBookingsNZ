@@ -31,6 +31,7 @@ import { getBookingPaymentMode } from "@/lib/booking-payment-flow";
 import { RefundAppealButton } from "@/components/refund-appeal-button";
 import { humanizeStatus, paymentStatusClass } from "@/lib/status-colors";
 import { BookingHelpExtras } from "./_components/booking-help-extras";
+import { BookingStayPreferences } from "./_components/booking-stay-preferences";
 import { BookingReviewNotices } from "./_components/booking-review-notices";
 import { BookingLinkedPartySections } from "./_components/booking-linked-party-sections";
 import { BookingConsentCards } from "./_components/booking-consent-cards";
@@ -448,107 +449,12 @@ export default async function BookingDetailPage({
         club={club}
       />
 
-      {showArrivalTime && (
-        <Card id="arrival" className="scroll-mt-20">
-          <CardHeader>
-            <CardTitle>Expected Arrival Time</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ArrivalTimeEditor
-              bookingId={booking.id}
-              initialTime={booking.expectedArrivalTime}
-              canEdit={(canManageBooking || canAdminEditBookings) && editPolicy.mode === "future"}
-            />
-          </CardContent>
-        </Card>
-      )}
-
-      {showRequestedRoom && (
-        <Card id="room-request" className="scroll-mt-20">
-          <CardHeader>
-            <CardTitle>Room Request</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {canEditRequestedRoom && !canSeeAdminTools ? (
-              <p className="text-sm text-muted-foreground">
-                Let us know if you&apos;d prefer a particular room. This is a
-                request, not a guaranteed allocation. The lodge confirms beds
-                closer to your stay.
-              </p>
-            ) : null}
-            <RequestedRoomEditor
-              bookingId={booking.id}
-              initialRoom={booking.requestedRoom}
-              canEdit={canEditRequestedRoom}
-              endpoint={
-                canSeeAdminTools
-                  ? undefined
-                  : `/api/bookings/${booking.id}/requested-room`
-              }
-              lockedNote={
-                bedAllocationLocked && !canSeeAdminTools
-                  ? "Your beds have been allocated by the lodge and can no longer be changed here."
-                  : undefined
-              }
-            />
-          </CardContent>
-        </Card>
-      )}
-
-      {/* In-booking bed allocation (#2252). Admin-only by construction — the
-          same gate as the tools card above, so a member (including the booking
-          owner) never receives the component, let alone the data. The
-          server-side module flag matches the routes' own gate, which 404s when
-          bed allocation is off. A booking that cannot hold beds (cancelled,
-          deleted, held) keeps the card and says so honestly, per the owner's
-          29 Jul decision — it is never silently hidden.
-
-          Rendered HERE, immediately after the room request, because that is the
-          position BOOKING_SECTIONS declares for it (#2252 review): the rail is
-          presentation-only and never reorders content, so the card must sit
-          where its anchor says it does. It also reads well — the bed the lodge
-          allocated sits directly under the room the member asked for. */}
-      {showBedAllocationPanel && (
-        <BookingBedAllocationPanel
-          bookingId={booking.id}
-          lodgeId={booking.lodgeId}
-          lodgeName={booking.lodge.name}
-          memberName={`${booking.member.firstName} ${booking.member.lastName}`}
-          checkIn={formatDateOnly(booking.checkIn)}
-          checkOut={formatDateOnly(booking.checkOut)}
-          wholeLodgeHold={booking.wholeLodgeHold}
-          bookingStatus={booking.status}
-          isDeleted={isDeleted}
-          canHoldBeds={bookingCanHoldBeds}
-          guests={booking.guests.map((guest) => ({
-            id: guest.id,
-            name: `${guest.firstName} ${guest.lastName}`,
-          }))}
-        />
-      )}
-
-      {memberArrivalInstructions ? (
-        <Card id="directions" className="scroll-mt-20">
-          <CardHeader>
-            <CardTitle>How to Get to the Lodge</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3 text-sm text-muted-foreground">
-            <p className="whitespace-pre-wrap">
-              {memberArrivalInstructions.lodgeTravelNote}
-            </p>
-            {memberArrivalInstructions.doorCode ? (
-              <div>
-                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                  Door code
-                </p>
-                <p className="mt-1 text-lg font-semibold tracking-wide text-foreground">
-                  {memberArrivalInstructions.doorCode}
-                </p>
-              </div>
-            ) : null}
-          </CardContent>
-        </Card>
-      ) : null}
+      <BookingStayPreferences
+        booking={booking}
+        viewer={viewer}
+        access={access}
+        memberArrivalInstructions={memberArrivalInstructions}
+      />
 
       {/* Draft booking: $0 confirm or payment to complete */}
       {canManageBooking && !isDeleted && isDraft && booking.finalPriceCents === 0 && (
