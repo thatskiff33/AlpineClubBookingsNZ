@@ -31,6 +31,7 @@ import { getBookingPaymentMode } from "@/lib/booking-payment-flow";
 import { RefundAppealButton } from "@/components/refund-appeal-button";
 import { humanizeStatus, paymentStatusClass } from "@/lib/status-colors";
 import { BookingHelpExtras } from "./_components/booking-help-extras";
+import { BookingConsentCards } from "./_components/booking-consent-cards";
 import { BookingStatusBanners } from "./_components/booking-status-banners";
 import { BookingAdminToolsSection } from "./_components/booking-admin-tools-section";
 import { loadBookingDetail } from "./_lib/load-booking-detail";
@@ -427,88 +428,11 @@ export default async function BookingDetailPage({
         />
       </section>
 
-      {/* #2307: the viewer's own member-guest consent. The ask card sits
-          immediately above the #2250 self-removal card, under the #consent
-          anchor the request email deep-links to; the notify-only notice has no
-          question to answer and only points at the #2250 card below it. */}
-      {consentCard?.kind === "PENDING_ASK" && viewerConsentGuest ? (
-        <section id="consent" className="scroll-mt-20">
-          <MemberGuestConsentCard
-            bookingId={booking.id}
-            guestId={consentCard.guestId}
-            bookerName={`${booking.member.firstName} ${booking.member.lastName}`.trim()}
-            bookerFirstName={booking.member.firstName}
-            lodgeName={consentLodgeName ?? ""}
-            stayLabel={formatConsentStayLabel(booking.checkIn, booking.checkOut)}
-            nightsLabel={formatConsentNightsLabel(viewerConsentNights)}
-            nightsCountLabel={describeConsentNightsCount(viewerConsentNights.length)}
-            answerByLabel={
-              consentCard.consentExpiresAt
-                ? formatConsentFullDate(consentCard.consentExpiresAt, club.zone)
-                : "—"
-            }
-            lapseByLabel={
-              consentCard.consentExpiresAt
-                ? formatConsentWeekdayDate(consentCard.consentExpiresAt, club.zone)
-                : "the deadline"
-            }
-            party={booking.guests.map((guest) => ({
-              name: `${guest.firstName} ${guest.lastName}`.trim(),
-              isViewer: guest.id === consentCard.guestId,
-            }))}
-            quotePriced={consentIsQuotePriced}
-            refusalWarning={
-              consentCard.refusalBlocker
-                ? describeConsentDeclineRefusal({
-                    blocker: consentCard.refusalBlocker,
-                    voice: { kind: "TARGET" },
-                    bookerFirstName: booking.member.firstName,
-                  })
-                : null
-            }
-          />
-        </section>
-      ) : consentCard?.kind === "NOTIFY_ONLY_NOTICE" ? (
-        <Card>
-          <CardHeader className="space-y-2">
-            <div>
-              <Badge
-                variant="outline"
-                className="border-success-6 bg-success-3 text-success-11"
-              >
-                You&apos;re on this booking
-              </Badge>
-            </div>
-            <CardTitle>
-              {`${booking.member.firstName} ${booking.member.lastName}`.trim()}{" "}
-              added you to this booking
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-muted-foreground">
-              Your place is already held — the club does not ask first for
-              member guests. If you would rather not go, take yourself off
-              below.
-            </p>
-          </CardContent>
-        </Card>
-      ) : null}
-
-      {/* #2250: the member's own way off somebody else's booking. Only ever
-          rendered for a linked guest viewer (never the owner, never an admin —
-          they change the guest list through the booking edit flow above), and
-          the action itself is hidden, with the reason stated, whenever the
-          shared server-side rule says the removal service would refuse. No
-          BOOKING_SECTIONS anchor: this is a short action card, not a section. */}
-      {selfRemovalCard ? (
-        <SelfRemoveFromBookingCard
-          bookingId={booking.id}
-          guestId={selfRemovalCard.guestId}
-          ownerFirstName={booking.member.firstName}
-          canSelfRemove={selfRemovalCard.canSelfRemove}
-          blockedReason={selfRemovalCard.blockedReason}
-        />
-      ) : null}
+      <BookingConsentCards
+        booking={booking}
+        club={club}
+        consent={consent}
+      />
 
       {/* #1975: "Your non-member guests" — the parent card surfaces each genuine
           split child inline (status, differing dates, amount, link), so the
