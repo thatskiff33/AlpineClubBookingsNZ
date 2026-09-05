@@ -1295,7 +1295,7 @@ export type PricedModification = {
       priceCents: number;
       perNightCents: (number | null)[];
       nightDates: Date[];
-      perNightPriceSources?: BookingGuestNightPriceSource[];
+      perNightPriceSources: BookingGuestNightPriceSource[];
     }>;
   };
   guestNightRates: Array<{
@@ -1378,6 +1378,7 @@ export type PricingResult =
           priceCents: number;
           perNightCents: (number | null)[];
           nightDates: Date[];
+          perNightPriceSources: BookingGuestNightPriceSource[];
         }>;
       };
       capacityOverridden: boolean;
@@ -1833,15 +1834,16 @@ export async function calculateModifiedPricing(
 
   let priceBreakdown: PricedModification["priceBreakdown"];
   try {
-    priceBreakdown = inProgressPlan
-      ? {
-          totalPriceCents: inProgressPlan.newTotalPriceCents,
-          guests: [
-            ...inProgressPlan.proposedExistingGuests.map(guestNightBreakdown),
-            ...inProgressPlan.proposedAddedGuests.map(guestNightBreakdown),
-          ],
-        }
-      : await priceBookingGuestsWithMembershipTypePolicy(tx, {
+    if (inProgressPlan) {
+      priceBreakdown = {
+        totalPriceCents: inProgressPlan.newTotalPriceCents,
+        guests: [
+          ...inProgressPlan.proposedExistingGuests.map(guestNightBreakdown),
+          ...inProgressPlan.proposedAddedGuests.map(guestNightBreakdown),
+        ],
+      };
+    } else {
+      const priced = await priceBookingGuestsWithMembershipTypePolicy(tx, {
           ownerMemberId: booking.memberId,
           checkIn: newCheckIn,
           checkOut: newCheckOut,
@@ -1855,25 +1857,23 @@ export async function calculateModifiedPricing(
           skipAuthorization,
           subscriptionLockoutMode,
         });
+      priceBreakdown = {
+        ...priced,
+        guests: priced.guests.map((guest, index) => ({
+          ...guest,
+          perNightPriceSources: repricedNightPriceSources(
+            policyAdjustedGuestsForPricing[index]?.lockedNightPrices,
+            guest.nightDates ?? [],
+          ),
+        })),
+      };
+    }
   } catch (error) {
     if (error instanceof MembershipTypeBookingPolicyError) {
       throw error;
     }
     throw new ApiError("No season rate found for the requested dates", 400);
   }
-  if (!inProgressPlan) {
-    priceBreakdown = {
-      ...priceBreakdown,
-      guests: priceBreakdown.guests.map((priced, index) => ({
-        ...priced,
-        perNightPriceSources: repricedNightPriceSources(
-          policyAdjustedGuestsForPricing[index]?.lockedNightPrices,
-          priced.nightDates ?? [],
-        ),
-      })),
-    };
-  }
-
   /**
    * #3166 (epic #2797): THE SAME EVIDENCE GATE, ON THE PATH MEMBERS ACTUALLY
    * USE — every edit to a booking that has not started yet.
@@ -2517,7 +2517,7 @@ export async function applyGuestChanges(
         priceCents: number;
         perNightCents: ReadonlyArray<number | null>;
         nightDates: Date[];
-        perNightPriceSources?: ReadonlyArray<BookingGuestNightPriceSource>;
+        perNightPriceSources: ReadonlyArray<BookingGuestNightPriceSource>;
       }>;
     };
     inProgressPlan: BookingEditGuestRangePlan | ParkedEditStructuralPlan | null;
@@ -2550,7 +2550,7 @@ export async function applyGuestChanges(
     // this breakdown that night k's price is not known. It is not the same as
     // the vector simply being short — see `nightPriceCentsToWrite` below.
     perNightCents: ReadonlyArray<number | null>;
-    perNightPriceSources?: ReadonlyArray<BookingGuestNightPriceSource>;
+    perNightPriceSources: ReadonlyArray<BookingGuestNightPriceSource>;
   };
 
   // Re-sync a guest's BookingGuestNight rows to the priced nights (issue #713),
@@ -2632,6 +2632,31 @@ export async function applyGuestChanges(
     return decision.kind === "not-known" ? null : decision.priceCents;
   };
 
+  /**
+   * Provenance is paired position-for-position with the amount vector. A short
+   * source vector is a wiring defect, not permission to guess SOLD. An explicit
+   * NULL amount can only carry UNKNOWN because there is no stored price to
+   * attribute to a quote, officer action, or split.
+   */
+  const nightPriceSourceToWrite = (
+    guest: BreakdownGuest | undefined,
+    index: number,
+    stayDate: Date,
+  ): BookingGuestNightPriceSource => {
+    const source = guest?.perNightPriceSources[index];
+    if (!source) {
+      throw new Error(
+        `No price provenance for the night of ${stayDate.toISOString()} (#3275)`,
+      );
+    }
+    if (guest?.perNightCents[index] === null && source !== "UNKNOWN") {
+      throw new Error(
+        `An unknown night price must have UNKNOWN provenance for ${stayDate.toISOString()} (#3275)`,
+      );
+    }
+    return source;
+  };
+
   const syncGuestNights = async (
     bookingGuestId: string,
     bg: BreakdownGuest | undefined,
@@ -2659,9 +2684,7 @@ export async function applyGuestChanges(
           // `classifyNightPriceToWrite` (#3166) — the one place that rule is
           // stated, and the same one the date path narrows.
           priceCents: nightPriceCentsToWrite(bg, k, stayDate),
-          priceSource:
-            bg?.perNightPriceSources?.[k] ??
-            (bg?.perNightCents[k] === null ? "UNKNOWN" : "SOLD"),
+          priceSource: nightPriceSourceToWrite(bg, k, stayDate),
         })),
       });
       return {

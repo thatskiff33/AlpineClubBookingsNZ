@@ -488,8 +488,18 @@ describe("applyGuestChanges persists the planned consent columns", () => {
   const priceBreakdown = {
     totalPriceCents: 2000,
     guests: [
-      { priceCents: 1000, perNightCents: [500, 500], nightDates: [NEW_CHECK_IN] },
-      { priceCents: 1000, perNightCents: [500, 500], nightDates: [NEW_CHECK_IN] },
+      {
+        priceCents: 1000,
+        perNightCents: [500, 500],
+        perNightPriceSources: ["SOLD", "SOLD"] as const,
+        nightDates: [NEW_CHECK_IN],
+      },
+      {
+        priceCents: 1000,
+        perNightCents: [500, 500],
+        perNightPriceSources: ["SOLD", "SOLD"] as const,
+        nightDates: [NEW_CHECK_IN],
+      },
     ],
   };
 

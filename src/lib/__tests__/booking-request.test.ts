@@ -1642,8 +1642,8 @@ describe("approveBookingRequest", () => {
     // phantom night there is a double booking.
     expect(guestCreates[0].nights).toEqual({
       create: [
-        { stayDate: new Date("2026-08-01T00:00:00.000Z"), priceCents: 6000, priceSource: "SOLD" },
-        { stayDate: new Date("2026-08-02T00:00:00.000Z"), priceCents: 6000, priceSource: "SOLD" },
+        { stayDate: new Date("2026-08-01T00:00:00.000Z"), priceCents: 6000, priceSource: "EVEN_SPLIT" },
+        { stayDate: new Date("2026-08-02T00:00:00.000Z"), priceCents: 6000, priceSource: "EVEN_SPLIT" },
       ],
     });
     // Money does not move: the nights sum to the guest's stored price.

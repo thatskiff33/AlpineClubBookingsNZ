@@ -2081,9 +2081,10 @@ enum MemberGuestConsentStatus {
 }
 
 // Where the amount on a BookingGuestNight came from (#3275, INV-MONEY-028).
-// UNKNOWN is the blue/green-safe default for a writer from the draining colour
-// and for history whose origin cannot be proved. Readers do not act on this
-// value until stage 3 of programme #3272.
+// UNKNOWN is the blue/green-safe default for an ordinary writer from the
+// draining colour and for history whose origin cannot be proved. The #3275
+// migration trigger recognises only its two transactional officer-repair audit
+// actions. Readers do not act on this value until stage 3 of programme #3272.
 enum BookingGuestNightPriceSource {
   SOLD
   OFFICER_PRICED
