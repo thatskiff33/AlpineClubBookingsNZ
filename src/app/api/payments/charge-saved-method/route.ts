@@ -33,11 +33,13 @@ import { reusableSavedPaymentMethodOnRow } from "@/lib/saved-payment-method";
 import {
   beginSavedCardChargeAttempt,
   chargeSavedCardAttempt,
-  describeUnsettledPaymentIntent,
   SAVED_CARD_CHARGE_REASON,
   SavedCardChargeRefusedError,
-  settleSavedCardChargeAttempt,
 } from "@/lib/saved-card-charge-attempt";
+import {
+  describeUnsettledPaymentIntent,
+  settleSavedCardChargeAttempt,
+} from "@/lib/saved-card-charge-settle";
 import { hasAdminAccess } from "@/lib/access-roles";
 import { PAYMENT_RECEIVED_STATUS_UNCONFIRMED_BODY } from "@/lib/payment-recovery-contract";
 

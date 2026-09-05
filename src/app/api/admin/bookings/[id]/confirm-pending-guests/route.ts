@@ -11,11 +11,13 @@ import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
 import {
   beginSavedCardChargeAttempt,
   chargeSavedCardAttempt,
-  describeUnsettledPaymentIntent,
   SAVED_CARD_CHARGE_REASON,
   SavedCardChargeRefusedError,
-  settleSavedCardChargeAttempt,
 } from "@/lib/saved-card-charge-attempt";
+import {
+  describeUnsettledPaymentIntent,
+  settleSavedCardChargeAttempt,
+} from "@/lib/saved-card-charge-settle";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { enqueueOwnHostingCoverageReevaluation } from "@/lib/adult-member-hosting-review";
 import {
