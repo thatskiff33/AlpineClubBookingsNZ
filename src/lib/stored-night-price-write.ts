@@ -11,13 +11,11 @@ export type StoredNightPriceWithSource = {
   priceSource: BookingGuestNightPriceSource;
 };
 
-export type StoredNightPriceInput =
-  | GuestNightInput
-  | {
-      stayDate: Date | string;
-      priceCents?: number | null;
-      priceSource?: BookingGuestNightPriceSource;
-    };
+export type StoredNightPriceInput = {
+  stayDate: Date | string;
+  priceCents?: number | null;
+  priceSource: BookingGuestNightPriceSource;
+};
 
 /**
  * #3166 (epic #2797): WHAT MAY BE WRITTEN INTO `BookingGuestNight.priceCents`.
@@ -67,6 +65,28 @@ export function storedNightPriceDetailsByKey(
 ): Map<string, StoredNightPriceWithSource> {
   const byKey = new Map<string, StoredNightPriceWithSource>();
   for (const entry of nights ?? []) {
+    if (entry.priceSource === undefined) {
+      throw new Error(
+        "A stored booking guest night was loaded without price provenance (#3275)",
+      );
+    }
+    const priceCents = entry.priceCents;
+    const [key] = getExplicitGuestBedNightKeys({ nights: [entry] }) ?? [];
+    if (key !== undefined) {
+      byKey.set(key, {
+        priceCents: isNonNegativeIntegerCents(priceCents) ? priceCents : null,
+        priceSource: entry.priceSource,
+      });
+    }
+  }
+  return byKey;
+}
+
+export function storedNightPricesByKey(
+  nights: ReadonlyArray<GuestNightInput> | null | undefined,
+): Map<string, number | null> {
+  const byKey = new Map<string, number | null>();
+  for (const entry of nights ?? []) {
     const priceCents =
       entry instanceof Date || typeof entry === "string"
         ? undefined
@@ -75,30 +95,10 @@ export function storedNightPriceDetailsByKey(
           : undefined;
     const [key] = getExplicitGuestBedNightKeys({ nights: [entry] }) ?? [];
     if (key !== undefined) {
-      const priceSource =
-        entry instanceof Date || typeof entry === "string"
-          ? "UNKNOWN"
-          : "priceSource" in entry && entry.priceSource !== undefined
-            ? entry.priceSource
-            : "UNKNOWN";
-      byKey.set(key, {
-        priceCents: isNonNegativeIntegerCents(priceCents) ? priceCents : null,
-        priceSource,
-      });
+      byKey.set(key, isNonNegativeIntegerCents(priceCents) ? priceCents : null);
     }
   }
   return byKey;
-}
-
-export function storedNightPricesByKey(
-  nights: ReadonlyArray<StoredNightPriceInput> | null | undefined,
-): Map<string, number | null> {
-  return new Map(
-    [...storedNightPriceDetailsByKey(nights)].map(([key, stored]) => [
-      key,
-      stored.priceCents,
-    ]),
-  );
 }
 
 export function preservedNightPriceWrites(
@@ -121,6 +121,28 @@ export function preservedNightPriceWrites(
 }
 
 /**
+ * Attribute a proposed night set from the writer's own retained/new decision.
+ * A retained row keeps its recorded source only while it carries usable money;
+ * a retained blank is UNKNOWN. An unretained night takes the caller's explicit
+ * source for the act that created it. Comparing amounts is forbidden: an
+ * equal-rate reprice is still a new sale.
+ */
+export function proposedNightPriceSources(params: {
+  proposedNightKeys: ReadonlyArray<string>;
+  retainedNightKeys: ReadonlySet<string>;
+  storedNightDetailsByKey: ReadonlyMap<string, StoredNightPriceWithSource>;
+  newNightSource: BookingGuestNightPriceSource;
+}): BookingGuestNightPriceSource[] {
+  return params.proposedNightKeys.map((key) => {
+    if (!params.retainedNightKeys.has(key)) return params.newNightSource;
+    const stored = params.storedNightDetailsByKey.get(key);
+    return isNonNegativeIntegerCents(stored?.priceCents)
+      ? stored.priceSource
+      : "UNKNOWN";
+  });
+}
+
+/**
  * Sources for a pricing result that may mix stored locked nights with nights
  * priced now. The lock vector is the pricing engine's own statement of which
  * amounts it reused; comparing amounts would misclassify an equal-rate reprice.
@@ -129,28 +151,56 @@ export function repricedNightPriceSources(
   lockedNightPrices:
     | ReadonlyArray<{
         stayDate: Date | string;
-        priceSource?: BookingGuestNightPriceSource;
+        priceCents: number;
+        priceSource: BookingGuestNightPriceSource;
       }>
     | null
     | undefined,
   nightDates: readonly Date[],
 ): BookingGuestNightPriceSource[] {
-  const lockedSources = new Map<CalendarDate, BookingGuestNightPriceSource>();
+  const lockedDetails = new Map<CalendarDate, StoredNightPriceWithSource>();
+  const lockedKeys = new Set<CalendarDate>();
   for (const locked of lockedNightPrices ?? []) {
     const [key] = getExplicitGuestBedNightKeys({ nights: [locked] }) ?? [];
     if (key !== undefined) {
-      lockedSources.set(
-        requireCalendarDate(key),
-        locked.priceSource ?? "UNKNOWN",
-      );
+      const calendarKey = requireCalendarDate(key);
+      lockedKeys.add(calendarKey);
+      lockedDetails.set(calendarKey, {
+        priceCents: locked.priceCents,
+        priceSource: locked.priceSource,
+      });
     }
   }
-  return nightDates.map((night) => {
+  const proposedNightKeys = nightDates.map((night) => {
     const [key] = getExplicitGuestBedNightKeys({ nights: [night] }) ?? [];
-    return key === undefined
-      ? "SOLD"
-      : (lockedSources.get(requireCalendarDate(key)) ?? "SOLD");
+    if (key === undefined) {
+      throw new Error("A priced night has no calendar-date key (#3275)");
+    }
+    return requireCalendarDate(key);
   });
+  return proposedNightPriceSources({
+    proposedNightKeys,
+    retainedNightKeys: lockedKeys,
+    storedNightDetailsByKey: lockedDetails,
+    newNightSource: "SOLD",
+  });
+}
+
+/** Required provenance/amount alignment at every BookingGuestNight writer. */
+export function requiredNightPriceSourceToWrite(
+  source: BookingGuestNightPriceSource | undefined,
+  priceCents: number | null | undefined,
+  writer: string,
+): BookingGuestNightPriceSource {
+  if (source === undefined) {
+    throw new Error(`${writer} received no price provenance (#3275)`);
+  }
+  if (priceCents === null && source !== "UNKNOWN") {
+    throw new Error(
+      `${writer} received a NULL price with non-UNKNOWN provenance (#3275)`,
+    );
+  }
+  return source;
 }
 
 /**

@@ -289,7 +289,9 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   night was sold for. Unknown provenance stays
   unknown: no reader or migration may re-derive it from the amount, rate table,
   guest total, timestamp, or any other present-day data (#3275, programme
-  #3272).
+  #3272). Migration verification must mutation-prove both the historical
+  writer classifiers (including zero and null amounts) and every predicate that
+  admits a draining-colour officer-repair audit.
 
 ## INV-MONEY-006
 

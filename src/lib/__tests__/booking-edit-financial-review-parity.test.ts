@@ -96,7 +96,13 @@ const NO_DISCOUNT_TX = {
   groupDiscountSetting: { findUnique: async () => null },
 } as never;
 
-function guest(nights: Array<{ stayDate: Date; priceCents?: number }>) {
+function guest(
+  nights: Array<{
+    stayDate: Date;
+    priceCents?: number;
+    priceSource: "SOLD" | "UNKNOWN";
+  }>,
+) {
   return {
     id: "g1",
     firstName: "Alice",
@@ -115,7 +121,11 @@ function guest(nights: Array<{ stayDate: Date; priceCents?: number }>) {
 
 /** The booking as the QUOTE route hands it to the planner. */
 function planInput(
-  nights: Array<{ stayDate: Date; priceCents?: number }>,
+  nights: Array<{
+    stayDate: Date;
+    priceCents?: number;
+    priceSource: "SOLD" | "UNKNOWN";
+  }>,
 ): BuildInProgressGuestRangePlanInput {
   const guests = [guest(nights)];
   const totalPriceCents = guests.reduce((sum, g) => sum + g.priceCents, 0);
@@ -137,7 +147,13 @@ function planInput(
 }
 
 /** The same edit as the APPLY path hands it to `calculateModifiedPricing`. */
-function pricingArgs(nights: Array<{ stayDate: Date; priceCents?: number }>) {
+function pricingArgs(
+  nights: Array<{
+    stayDate: Date;
+    priceCents?: number;
+    priceSource: "SOLD" | "UNKNOWN";
+  }>,
+) {
   const input = planInput(nights);
   return {
     booking: {
@@ -171,9 +187,13 @@ function pricingArgs(nights: Array<{ stayDate: Date; priceCents?: number }>) {
 const PRICED_NIGHTS = HELD.map((night) => ({
   stayDate: D(night),
   priceCents: RATE,
+  priceSource: "SOLD" as const,
 }));
 /** The same stay with no per-night record of what it cost. */
-const UNPRICED_NIGHTS = HELD.map((night) => ({ stayDate: D(night) }));
+const UNPRICED_NIGHTS = HELD.map((night) => ({
+  stayDate: D(night),
+  priceSource: "UNKNOWN" as const,
+}));
 
 describe("#3031 quote and apply consume one discriminated result", () => {
   it("both price the same exact booking, and agree on the amount", async () => {
@@ -618,7 +638,7 @@ describe("#3031 no magic zero reaches a night row", () => {
           proposedAddedGuests: [],
         } as never,
       }),
-    ).rejects.toThrow(/No price provenance for the night of/);
+    ).rejects.toThrow(/received no price provenance/);
 
     expect(created).toEqual([]);
   });

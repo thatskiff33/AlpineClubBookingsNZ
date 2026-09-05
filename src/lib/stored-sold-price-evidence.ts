@@ -32,13 +32,11 @@ import {
  * `BookingGuest.priceCents` by the night count for guests with no rows, and
  * `20260810010000_backfill_booking_request_guest_nights` (#2739) did the same
  * for request-derived bookings — its own header says it "deliberately does NOT
- * reprice anything: it reads the stored total and divides it". There is no
- * `source` column, and `createdAt` does not separate a backfilled row from a
- * live one. So the database holds rows that are indistinguishable from what the
- * member was really quoted per night and are not that.
- *
- * Exactness therefore CANNOT be tested on provenance, and this module does not
- * try. It tests RECONCILIATION, which is what epic #2797 asks for in as many
+ * reprice anything: it reads the stored total and divides it". The new source
+ * column distinguishes those migration-authored averages, but stage 1 records
+ * that fact without changing a reader decision. This module therefore still
+ * tests RECONCILIATION only; stage 3 of programme #3272 owns the deliberate
+ * switch to provenance-aware evidence. That is what epic #2797 asks for in as many
  * words — "a deliberate negotiated-flat initial allocation remains valid once
  * stored", and "if required historical amount is missing/unusable or rows do
  * not reconcile … the financial adjustment becomes explicit pending admin
@@ -425,7 +423,7 @@ export type PreCheckInEditStrand = {
   nights?: ReadonlyArray<{
     stayDate: Date | string;
     priceCents?: number | null;
-    priceSource?: BookingGuestNightPriceSource;
+    priceSource: BookingGuestNightPriceSource;
   }> | null;
   /** The nights this strand ends up holding. Empty for a strand being removed. */
   proposedNightDates: ReadonlyArray<Date | string>;
@@ -648,6 +646,7 @@ export function preCheckInEditStrands(args: {
     nights?: ReadonlyArray<{
       stayDate: Date | string;
       priceCents?: number | null;
+      priceSource: BookingGuestNightPriceSource;
     }> | null;
   }>;
   guestsForPricing: ReadonlyArray<{ bookingGuestId?: string | null }>;

@@ -48,7 +48,15 @@ const verification: DataMigrationVerification = {
            DATE '2026-08-01', DATE '2026-08-02', 2500),
           ('ps-g-zero', 'ps-booking', 'Zero', 'Price', 'ADULT',
            DATE '2026-08-01', DATE '2026-08-02', 0),
+          ('ps-g-zero-md5', 'ps-booking', 'Zero', 'MD5', 'ADULT',
+           DATE '2026-08-01', DATE '2026-08-02', 0),
+          ('ps-g-zero-uuid', 'ps-booking', 'Zero', 'UUID', 'ADULT',
+           DATE '2026-08-01', DATE '2026-08-02', 0),
           ('ps-g-null', 'ps-booking', 'Unknown', 'Price', 'ADULT',
+           DATE '2026-08-01', DATE '2026-08-02', 0),
+          ('ps-g-null-md5', 'ps-booking', 'Null', 'MD5', 'ADULT',
+           DATE '2026-08-01', DATE '2026-08-02', 0),
+          ('ps-g-null-uuid', 'ps-booking', 'Null', 'UUID', 'ADULT',
            DATE '2026-08-01', DATE '2026-08-02', 0),
           ('ps-g-repaired-history', 'ps-booking', 'Historic', 'Repair', 'ADULT',
            DATE '2026-08-01', DATE '2026-08-02', 6000),
@@ -71,7 +79,15 @@ const verification: DataMigrationVerification = {
           ('55555555-5555-5555-8555-555555555555',
            'ps-g-v5', DATE '2026-08-01', 2500, TIMESTAMP '2026-01-01 00:00:00'),
           ('cm-zero-night', 'ps-g-zero', DATE '2026-08-01', 0, TIMESTAMP '2026-01-01 00:00:00'),
+          ('bgn_' || md5('ps-g-zero-md5:2026-08-01'),
+           'ps-g-zero-md5', DATE '2026-08-01', 0, TIMESTAMP '2026-01-01 00:00:00'),
+          ('66666666-6666-4666-8666-666666666666',
+           'ps-g-zero-uuid', DATE '2026-08-01', 0, TIMESTAMP '2026-01-01 00:00:00'),
           ('cm-null-night', 'ps-g-null', DATE '2026-08-01', NULL, TIMESTAMP '2026-01-01 00:00:00'),
+          ('bgn_' || md5('ps-g-null-md5:2026-08-01'),
+           'ps-g-null-md5', DATE '2026-08-01', NULL, TIMESTAMP '2026-01-01 00:00:00'),
+          ('77777777-7777-4777-8777-777777777777',
+           'ps-g-null-uuid', DATE '2026-08-01', NULL, TIMESTAMP '2026-01-01 00:00:00'),
           ('33333333-3333-4333-8333-333333333333',
            'ps-g-repaired-history', DATE '2026-08-01', 6000, TIMESTAMP '2026-01-01 00:00:00'),
           ('cm-draining-repair',
@@ -108,11 +124,15 @@ const verification: DataMigrationVerification = {
             { id: "cm-live-night", guest: "ps-g-live", night: "2026-08-01", priceCents: 5001, priceSource: "UNKNOWN" },
             { id: "bgn_not-the_migration_hash", guest: "ps-g-live", night: "2026-08-02", priceCents: 5000, priceSource: "UNKNOWN" },
             { id: "cm-null-night", guest: "ps-g-null", night: "2026-08-01", priceCents: null, priceSource: "UNKNOWN" },
-            { id: "33333333-3333-4333-8333-333333333333", guest: "ps-g-repaired-history", night: "2026-08-01", priceCents: 6000, priceSource: "OFFICER_PRICED" },
+            { id: "bgn_1c7fb008d897b582fdddf312a1fa2b85", guest: "ps-g-null-md5", night: "2026-08-01", priceCents: null, priceSource: "UNKNOWN" },
+            { id: "77777777-7777-4777-8777-777777777777", guest: "ps-g-null-uuid", night: "2026-08-01", priceCents: null, priceSource: "UNKNOWN" },
             { id: "cm-draining-repair", guest: "ps-g-repaired-draining", night: "2026-08-01", priceCents: 8000, priceSource: "OFFICER_PRICED" },
+            { id: "33333333-3333-4333-8333-333333333333", guest: "ps-g-repaired-history", night: "2026-08-01", priceCents: 6000, priceSource: "OFFICER_PRICED" },
             { id: "22222222-2222-4222-8222-222222222222", guest: "ps-g-request", night: "2026-08-01", priceCents: 3501, priceSource: "EVEN_SPLIT" },
             { id: "55555555-5555-5555-8555-555555555555", guest: "ps-g-v5", night: "2026-08-01", priceCents: 2500, priceSource: "UNKNOWN" },
             { id: "cm-zero-night", guest: "ps-g-zero", night: "2026-08-01", priceCents: 0, priceSource: "UNKNOWN" },
+            { id: "bgn_c03822756b4da2c6ada3dd7da63a66fc", guest: "ps-g-zero-md5", night: "2026-08-01", priceCents: 0, priceSource: "EVEN_SPLIT" },
+            { id: "66666666-6666-4666-8666-666666666666", guest: "ps-g-zero-uuid", night: "2026-08-01", priceCents: 0, priceSource: "EVEN_SPLIT" },
           ],
         },
       ],
@@ -126,7 +146,8 @@ const verification: DataMigrationVerification = {
       find: `WHERE bgn."id" =
   'bgn_' || md5(
     bgn."bookingGuestId" || ':' || to_char(bgn."stayDate", 'YYYY-MM-DD')
-  );`,
+  )
+  AND bgn."priceCents" IS NOT NULL;`,
       replace: "WHERE FALSE;",
     },
     {
@@ -134,8 +155,27 @@ const verification: DataMigrationVerification = {
       harm:
         "Rows created by the two later backfills remain indistinguishable from real quotes even though those migrations alone wrote version-4 UUID identifiers.",
       find: `WHERE bgn."id" ~
-  '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$';`,
+  '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+  AND bgn."priceCents" IS NOT NULL;`,
       replace: "WHERE FALSE;",
+    },
+    {
+      name: "exclude a zero-priced deterministic backfill row",
+      harm:
+        "A comped night written by the deterministic even-split migration is left UNKNOWN even though zero is a real amount and the writer is proved.",
+      find: `  )
+  AND bgn."priceCents" IS NOT NULL;`,
+      replace: `  )
+  AND bgn."priceCents" > 0;`,
+    },
+    {
+      name: "exclude a zero-priced UUID backfill row",
+      harm:
+        "A comped night written by a UUID even-split migration is left UNKNOWN even though zero is a real amount and the writer is proved.",
+      find: `  '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+  AND bgn."priceCents" IS NOT NULL;`,
+      replace: `  '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+  AND bgn."priceCents" > 0;`,
     },
     {
       name: "accept UUID versions that gen_random_uuid did not write",
@@ -171,7 +211,8 @@ WHERE bgn."id" =`,
       harm:
         "Live quoted rows and genuinely unproved history are relabelled from UNKNOWN as EVEN_SPLIT, manufacturing provenance from no evidence.",
       find: `WHERE bgn."id" ~
-  '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$';`,
+  '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+  AND bgn."priceCents" IS NOT NULL;`,
       replace: "WHERE TRUE;",
     },
   ],

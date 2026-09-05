@@ -117,6 +117,7 @@ import {
   classifyNightPriceToWrite,
   preservedNightPriceWrites,
   repricedNightPriceSources,
+  requiredNightPriceSourceToWrite,
 } from "@/lib/stored-night-price-write";
 import {
   isOperationallyPresentConsent,
@@ -171,7 +172,7 @@ type ProposedRemainingGuest = {
     nights?: {
       stayDate: Date;
       priceCents?: number | null;
-      priceSource?: BookingGuestNightPriceSource;
+      priceSource: BookingGuestNightPriceSource;
     }[];
   };
   stayStart: Date;
@@ -209,7 +210,7 @@ export function lockedNightPricesForGuest(guest: {
   nights?: {
     stayDate: Date;
     priceCents?: number | null;
-    priceSource?: BookingGuestNightPriceSource;
+    priceSource: BookingGuestNightPriceSource;
   }[];
 }): Array<{
   stayDate: Date;
@@ -222,7 +223,7 @@ export function lockedNightPricesForGuest(guest: {
           {
             stayDate: night.stayDate,
             priceCents: night.priceCents,
-            priceSource: night.priceSource ?? "UNKNOWN",
+            priceSource: night.priceSource,
           },
         ]
       : [],
@@ -1573,6 +1574,7 @@ export async function calculateModifiedPricing(
       lockedNightPrices?: ReadonlyArray<{
         stayDate: Date | string;
         priceCents: number;
+        priceSource: BookingGuestNightPriceSource;
       }> | null;
     }>;
     skipBookingLifecycleRules: boolean;
@@ -2643,18 +2645,11 @@ export async function applyGuestChanges(
     index: number,
     stayDate: Date,
   ): BookingGuestNightPriceSource => {
-    const source = guest?.perNightPriceSources[index];
-    if (!source) {
-      throw new Error(
-        `No price provenance for the night of ${stayDate.toISOString()} (#3275)`,
-      );
-    }
-    if (guest?.perNightCents[index] === null && source !== "UNKNOWN") {
-      throw new Error(
-        `An unknown night price must have UNKNOWN provenance for ${stayDate.toISOString()} (#3275)`,
-      );
-    }
-    return source;
+    return requiredNightPriceSourceToWrite(
+      guest?.perNightPriceSources[index],
+      guest?.perNightCents[index],
+      `The booking modification writer for ${stayDate.toISOString()}`,
+    );
   };
 
   const syncGuestNights = async (

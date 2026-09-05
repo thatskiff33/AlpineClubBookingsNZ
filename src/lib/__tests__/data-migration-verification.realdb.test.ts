@@ -366,6 +366,12 @@ describeWithDatabase("data migrations against a real PostgreSQL (#2418)", () => 
         // inside a transaction this case will roll back.
         await runScript(version, `applying the migration for "${testCase.name}"`);
       }
+      if (testCase.afterMigration?.trim()) {
+        await runScript(
+          testCase.afterMigration,
+          `exercising the migrated shape for "${testCase.name}"`,
+        );
+      }
       for (const expectation of testCase.expectations) {
         // Test fixture: the fixture's own read-only assertion query.
         // nosemgrep: javascript.express.db.pg-express.pg-express
