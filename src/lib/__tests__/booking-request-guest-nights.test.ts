@@ -112,6 +112,11 @@ describe("buildApprovalGuestNights — the engine's own rates (#2739)", () => {
     });
 
     expect(nights.map((night) => night.priceCents)).toEqual([5000, 5000, 8000]);
+    expect(nights.map((night) => night.priceSource)).toEqual([
+      "SOLD",
+      "SOLD",
+      "SOLD",
+    ]);
   });
 
   it.each([
@@ -130,6 +135,11 @@ describe("buildApprovalGuestNights — the engine's own rates (#2739)", () => {
     });
 
     expect(nights.map((night) => night.priceCents)).toEqual([6000, 6000, 6000]);
+    expect(nights.map((night) => night.priceSource)).toEqual([
+      "EVEN_SPLIT",
+      "EVEN_SPLIT",
+      "EVEN_SPLIT",
+    ]);
     expect(nights.reduce((sum, night) => sum + night.priceCents, 0)).toBe(18000);
   });
 });
@@ -255,9 +265,9 @@ describe("buildApprovalGuestCreates gives every guest a night set (#2739)", () =
     const prismaData = toPipelineGuestCreateData(guestCreate);
     expect(prismaData.nights).toEqual({
       create: [
-        { stayDate: parseDateOnly("2026-08-01"), priceCents: 3000, priceSource: "SOLD" },
-        { stayDate: parseDateOnly("2026-08-02"), priceCents: 3000, priceSource: "SOLD" },
-        { stayDate: parseDateOnly("2026-08-03"), priceCents: 3000, priceSource: "SOLD" },
+        { stayDate: parseDateOnly("2026-08-01"), priceCents: 3000, priceSource: "EVEN_SPLIT" },
+        { stayDate: parseDateOnly("2026-08-02"), priceCents: 3000, priceSource: "EVEN_SPLIT" },
+        { stayDate: parseDateOnly("2026-08-03"), priceCents: 3000, priceSource: "EVEN_SPLIT" },
       ],
     });
     // The planning-only fields never reach Prisma.

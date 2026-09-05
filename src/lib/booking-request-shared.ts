@@ -59,7 +59,7 @@ export type OwnerSubstitution = {
 export type ApprovalGuestNight = {
   stayDate: Date;
   priceCents: number;
-  priceSource: "SOLD";
+  priceSource: "SOLD" | "EVEN_SPLIT";
 };
 
 /**
@@ -169,7 +169,9 @@ export function buildApprovalGuestNights(params: {
   return nightDates.map((stayDate, index) => ({
     stayDate,
     priceCents: base + (index < remainder ? 1 : 0),
-    priceSource: "SOLD",
+    // The writer knows exactly what it did: this is a mechanical allocation
+    // of a guest total, not a per-night amount the pricing engine quoted.
+    priceSource: "EVEN_SPLIT",
   }));
 }
 

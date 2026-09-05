@@ -49,12 +49,12 @@ const defaultNights = (priceCents = 5000) => [
   {
     stayDate: new Date("2026-08-01T00:00:00.000Z"),
     priceCents: Math.ceil(priceCents / 2),
-    priceSource: "SOLD" as const,
+    priceSource: "EVEN_SPLIT" as const,
   },
   {
     stayDate: new Date("2026-08-02T00:00:00.000Z"),
     priceCents: Math.floor(priceCents / 2),
-    priceSource: "SOLD" as const,
+    priceSource: "EVEN_SPLIT" as const,
   },
 ];
 

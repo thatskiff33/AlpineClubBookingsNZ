@@ -150,8 +150,9 @@
  * names is the authority, and a stale count here discredits the paragraph it
  * sits in. It was last recounted against the tree on 5 Sep 2026. The separate
  * `booking-guest-night-price-source-census.test.ts` pins the wider set of direct
- * and nested `BookingGuestNight` writers and the explicit provenance each now
- * carries (INV-MONEY-028); this module still owns amount completeness only.
+ * and nested runtime `BookingGuestNight` writers, including the executable demo
+ * and E2E seeds outside `src`, and the explicit provenance each now carries
+ * (INV-MONEY-028); this module still owns amount completeness only.
  */
 
 /**

@@ -15,20 +15,61 @@ CREATE TYPE "BookingGuestNightPriceSource" AS ENUM (
 ALTER TABLE "BookingGuestNight"
 ADD COLUMN "priceSource" "BookingGuestNightPriceSource" NOT NULL DEFAULT 'UNKNOWN';
 
--- The table-creation backfill wrote a deterministic id from the guest id and
--- night. Match that exact formula, not the amount or timestamp.
-UPDATE "BookingGuestNight" AS bgn
-SET "priceSource" = 'EVEN_SPLIT'
-WHERE bgn."id" =
-  'bgn_' || md5(
-    bgn."bookingGuestId" || ':' || to_char(bgn."stayDate", 'YYYY-MM-DD')
-  );
+-- Both officer-repair paths write their AuditLog row in the same transaction
+-- as the repaired BookingGuestNight rows. Keep that evidence useful while the
+-- draining colour still runs code compiled before priceSource existed: its
+-- data write receives UNKNOWN from the column default, then this trigger marks
+-- only the exact guest/date/amount pairs named by the successful repair audit.
+-- The createdAt boundary prevents an old audit row from relabelling a later
+-- delete-and-recreate of the same guest night.
+CREATE FUNCTION "applyBookingGuestNightOfficerPriceSourceFromAudit"(
+  p_guest_id TEXT,
+  p_night_prices JSONB,
+  p_audit_created_at TIMESTAMP(3)
+) RETURNS VOID
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF jsonb_typeof(p_night_prices) <> 'array' THEN
+    RETURN;
+  END IF;
 
--- The two later backfills were the only production writers that generated
--- BookingGuestNight identifiers with gen_random_uuid()::text. Runtime Prisma
--- inserts use cuid identifiers. The UUID shape therefore comes from what those
--- migrations wrote; no price, rate, total or createdAt inference is involved.
-UPDATE "BookingGuestNight" AS bgn
-SET "priceSource" = 'EVEN_SPLIT'
-WHERE bgn."id" ~
-  '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$';
+  UPDATE "BookingGuestNight" AS bgn
+  SET "priceSource" = 'OFFICER_PRICED'
+  FROM jsonb_array_elements(p_night_prices) AS item
+  WHERE bgn."bookingGuestId" = p_guest_id
+    AND bgn."createdAt" <= p_audit_created_at
+    AND item->>'date' ~ '^\d{4}-\d{2}-\d{2}$'
+    AND item->>'priceCents' ~ '^(0|[1-9][0-9]*)$'
+    AND bgn."stayDate" = (item->>'date')::date
+    AND bgn."priceCents" = (item->>'priceCents')::integer;
+END;
+$$;
+
+CREATE FUNCTION "setBookingGuestNightOfficerPriceSourceFromAudit"()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW."action" IN (
+      'booking-payment.stored-night-price.record',
+      'booking-payment.stored-night-price.reconcile'
+    )
+    AND NEW."entityType" = 'BookingGuest'
+    AND NEW."outcome" = 'success'
+  THEN
+    PERFORM "applyBookingGuestNightOfficerPriceSourceFromAudit"(
+      NEW."entityId",
+      NEW."metadata"->'nightPrices',
+      NEW."createdAt"
+    );
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER "AuditLog_set_booking_guest_night_officer_price_source"
+AFTER INSERT ON "AuditLog"
+FOR EACH ROW
+EXECUTE FUNCTION "setBookingGuestNightOfficerPriceSourceFromAudit"();

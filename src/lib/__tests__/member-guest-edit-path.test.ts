@@ -141,6 +141,7 @@ describe("D-13: an edit never revisits a consent that has already been given", (
             {
               priceCents: 8000,
               perNightCents: [2000, 2000, 2000, 2000],
+              perNightPriceSources: ["SOLD", "SOLD", "SOLD", "SOLD"],
               nightDates: [NEW_CHECK_IN],
             },
           ],

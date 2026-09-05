@@ -21,14 +21,14 @@ reason: the structural planner must carry source vectors alongside its existing
   amount vectors so retained rows cannot silently become newly sold rows.
 
 file: src/lib/booking-modify-plan.ts
-lines: 2935
+lines: 2958
 reason: the canonical modify planner owns the locked, parked, and newly priced
   vectors that reach its night-row writer; splitting them would duplicate alignment logic.
 
 file: src/lib/booking-request.ts
 lines: 2904
-reason: the two direct request-conversion writers must stamp SOLD on the same
-  row objects that already carry their quoted amounts.
+reason: the two direct request-conversion writers must carry each quoted or
+  mechanically split source on the same row objects that already carry the amounts.
 
 file: src/lib/waitlist.ts
 lines: 1419

@@ -522,6 +522,7 @@ describe("#3031 no magic zero reaches a night row", () => {
               priceCents: 3 * RATE,
               // One amount short of the three nights below.
               perNightCents: [RATE, RATE],
+              perNightPriceSources: ["SOLD", "SOLD", "SOLD"],
               nightDates: HELD.map((night) => D(night)),
             },
           ],
@@ -567,6 +568,7 @@ describe("#3031 no magic zero reaches a night row", () => {
             // Same LENGTH as the night list — nothing is missing. The middle
             // night's price is stated to be unknown.
             perNightCents: [RATE, null, RATE],
+            perNightPriceSources: ["SOLD", "UNKNOWN", "SOLD"],
             nightDates: HELD.map((night) => D(night)),
           },
         ],
@@ -584,6 +586,41 @@ describe("#3031 no magic zero reaches a night row", () => {
     // night), so 0 can never stand in for "not known".
     expect(rows[1].priceCents).toBeNull();
     expect(rows[1].priceCents).not.toBe(0);
+  });
+
+  it("refuses a source vector shorter than the priced night vector (#3275)", async () => {
+    const { applyGuestChanges } = await import("@/lib/booking-modify-plan");
+    const { tx, created } = writeDouble();
+
+    await expect(
+      applyGuestChanges(tx, {
+        bookingId: "bk-parity",
+        newCheckIn: D(HELD[0]),
+        newCheckOut: D("2026-08-23"),
+        removedGuests: [],
+        remainingGuests: [],
+        proposedRemainingGuests: [],
+        normalizedAddGuests: undefined,
+        priceBreakdown: {
+          guests: [
+            {
+              priceCents: 3 * RATE,
+              perNightCents: [RATE, RATE, RATE],
+              // One provenance entry short: this is not permission to guess
+              // SOLD for the final night.
+              perNightPriceSources: ["SOLD", "SOLD"],
+              nightDates: HELD.map((night) => D(night)),
+            },
+          ],
+        },
+        inProgressPlan: {
+          proposedExistingGuests: [PLAN_ENTRY],
+          proposedAddedGuests: [],
+        } as never,
+      }),
+    ).rejects.toThrow(/No price provenance for the night of/);
+
+    expect(created).toEqual([]);
   });
 
   it("writes the priced amounts when the breakdown is complete", async () => {
@@ -605,6 +642,7 @@ describe("#3031 no magic zero reaches a night row", () => {
           {
             priceCents: 3 * RATE,
             perNightCents: [RATE, RATE, RATE],
+            perNightPriceSources: ["SOLD", "SOLD", "SOLD"],
             nightDates: HELD.map((night) => D(night)),
           },
         ],
