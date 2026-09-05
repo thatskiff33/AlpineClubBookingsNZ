@@ -23,3 +23,25 @@
   differently. What changes is that a batch is never abandoned half done, a
   finished retry cannot be reopened, and anything the system needs to do when a
   retry dies now has exactly one place to be done.
+
+- **A booking change's card request is now withdrawn when the club gives up on
+  it (#3220).** Some card requests cannot be set up at the moment a booking is
+  changed, so the system records what is owed and keeps retrying in the
+  background. When those retries run out, the invoice for the change is raised
+  in Xero as unpaid and collected the ordinary way.
+
+  Until now, if a card request had nevertheless ended up sitting against that
+  change, it was left live. The member could still pay it - and then the club
+  held both a payment and an unpaid invoice for the same money, with no way to
+  tell which was right except by someone noticing and working it out.
+
+  The system now withdraws that card request at the moment it gives up. A
+  request the member has already paid is never touched, and neither is one that
+  has already been withdrawn, so nothing is taken back and no member is charged
+  or refunded by this. Nothing is written off either: the money is still owed
+  and the invoice still stands - what goes away is the second way to pay it.
+
+  If the card provider refuses to withdraw the request - it will not cancel one
+  it is already processing - that is now recorded in the audit log against the
+  booking, with what an officer needs to do about it, instead of being left for
+  somebody to find. A refusal never stops the retry being closed off properly.

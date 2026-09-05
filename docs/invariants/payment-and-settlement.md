@@ -1677,9 +1677,9 @@ one, check the other.
   place owns what a dead recovery costs** (#3220). A
   `PaymentRecoveryOperation` reaching `FAILED` with no attempts left is not a
   local bookkeeping detail: it is the moment the rest of the system is told to
-  stop waiting for that debt. The booking-vs-Xero repair tool reads that
-  deadness as permission to stop deferring and raise the edit's supplementary
-  invoice UNPAID (`OPEN_PAYMENT_RECOVERY_STATUSES` in
+  stop waiting for that debt. The booking-vs-Xero repair tool stops deferring
+  and raises the edit's supplementary invoice UNPAID once the row is no longer
+  `PENDING` or `PROCESSING` (`OPEN_PAYMENT_RECOVERY_STATUSES` in
   `xero-booking-repair-load.ts`, the control #3202 pins). So anything that must
   happen when a recovery dies has to happen on every route to that status —
   and there were three, each with its own status write, its own `nextRetryAt`
@@ -1707,4 +1707,55 @@ one, check the other.
   the status sets themselves are named once
   (`CLAIMABLE_PAYMENT_RECOVERY_STATUSES`,
   `NON_TERMINAL_PAYMENT_RECOVERY_STATUSES`) rather than spelled inline at each
-  reader.
+  reader. **That distinction is `payment-recovery.ts`'s own, and no other
+  module's.** `OPEN_PAYMENT_RECOVERY_STATUSES` carries no `attempts` filter, so
+  the repair tool stops deferring at the first failure rather than at death.
+  Anyone reading the two-readings rule into that query will predict a deferral
+  that is not there; `INV-PAY-053` states what follows from the gap.
+
+## INV-PAY-053
+
+- **A dead additional-payment recovery withdraws the ask it left standing**
+  (#3220). A `CREATE_ADDITIONAL_PAYMENT_INTENT` recovery exists because a
+  booking edit raised money the member has not been asked for yet. While it is
+  `PENDING` or `PROCESSING` the booking-vs-Xero repair tool DEFERS the edit's
+  supplementary invoice; once it leaves those statuses that deferral stops and
+  the repair raises the invoice
+  **unpaid** (`INV-PAY-052`, and the control #3202 pins). So a live
+  PaymentIntent still standing at that transition is a **second instrument for
+  one debt** — pay it and the club holds a payment and an unpaid invoice for the
+  same money, which #3187 accepted as *visible but not fixed*. The terminal
+  transition now cancels it, in `cancelStrandedAdditionalIntentForDeadRecovery`.
+- **The withdrawal fires at the LAST failure; the deferral stops at the FIRST.**
+  A retrying `FAILED` row is already outside `OPEN_PAYMENT_RECOVERY_STATUSES`, so
+  it can meet an unpaid invoice while its ask is still live — the same
+  two-instrument shape, but transient and self-healing: the retry either raises
+  ask and invoice together or runs out and reaches this withdrawal. Cancelling on
+  a non-terminal failure would be wrong, because the replay still intends to
+  collect against that very ask. **This is a stated limit, not an oversight** —
+  closing it means widening the repair tool's deferral to non-terminal `FAILED`
+  rows, which is a change to #3202's counterpart and needs its own decision.
+- **This removes the duplicate instrument. It does not write off the debt.** The
+  unpaid invoice still stands and is collected the ordinary way; what goes away
+  is the second way to pay it. Nobody may read the cancel as a forgiveness.
+- **Idempotent by construction, not by care.**
+  `cancelPaymentIntentIfCancellableWithResult` reads the intent before it acts
+  and makes **no provider call at all** unless the status is one it can cancel,
+  so a replay finds `canceled` and does nothing, and an intent the member paid
+  in the meantime is left strictly alone. The ledger's own captured-status check
+  is a second lock on that same door rather than the only one.
+- **A refusal leaves the recovery exactly as not trying would.** The cancel runs
+  **after** the status write and **never throws**: a provider outage must not be
+  able to hold a recovery out of `FAILED`, which would re-block the repair tool
+  for ever and break the #3202 control, and a throw from inside the worker
+  loop's own `catch` abandons every remaining operation in the batch. Stripe
+  routinely refuses to cancel a `processing` intent, so the refusal branch is
+  live rather than theoretical; it is written to the **audit log**, because it
+  asks an officer to reconcile by hand and a `logger.error` is not a record
+  anybody can find.
+- **The cancellation reason states the real cause.**
+  `cancelPaymentIntentIfCancellableWithResult` takes it as a parameter rather
+  than having gained a twin, and this path passes `abandoned`. The member never
+  declined the ask; the club ran out of attempts to raise it, and
+  `requested_by_customer` in the club's own Stripe record would misstate a money
+  decision.

@@ -59,12 +59,20 @@ const CAPTURED_TRANSACTION_STATUSES = new Set<PaymentStatus>([
  *
  * `FAILED` is not one state here, it is two readings of one column, and the
  * distinction is the whole reason #3220 exists. A `FAILED` row with attempts
- * left is a RETRY waiting its turn; a `FAILED` row with none is DEAD, and the
- * booking-vs-Xero repair tool reads that deadness as permission to stop
- * deferring (`OPEN_PAYMENT_RECOVERY_STATUSES` in
- * `xero-booking-repair-load.ts`). The `attempts < MAX` filter beside each use of
+ * left is a RETRY waiting its turn; a `FAILED` row with none is DEAD. The
+ * `attempts < MAX` filter beside each use of
  * `CLAIMABLE_PAYMENT_RECOVERY_STATUSES` is what separates them, so it belongs to
  * the query rather than to the constant.
+ *
+ * BEWARE: THAT IS THIS MODULE'S DISTINCTION, AND ONLY THIS MODULE'S. The
+ * booking-vs-Xero repair tool defers on `OPEN_PAYMENT_RECOVERY_STATUSES`
+ * (`xero-booking-repair-load.ts`), which is `[PENDING, PROCESSING]` and carries
+ * no `attempts` filter at all - so it stops deferring at the FIRST failure, not
+ * at death. Do not read the two-readings rule into that query: a retry waiting
+ * its turn already looks dead to it. The consequence is bounded and is stated
+ * with `INV-PAY-053` rather than papered over - a retry that later succeeds
+ * raises the ask and its invoice together, and a retry that runs out reaches the
+ * terminal branch below, which withdraws the ask.
  *
  * They were three inline `in: [...]` literals, and the pre-decision review on
  * #3220 counted them among the module's six mentions of
@@ -1204,12 +1212,20 @@ async function markPaymentRecoveryOperationFailed({
  * THE ASK DIES WITH THE RECOVERY THAT OWED IT (#3220, `INV-PAY-053`).
  *
  * A `CREATE_ADDITIONAL_PAYMENT_INTENT` recovery exists because a booking edit
- * raised money the member has not been asked for yet. While it is alive the
- * booking-vs-Xero repair tool DEFERS - it must not raise the edit's
- * supplementary invoice, because the replay is going to raise the ask and the
- * invoice belongs to that ask. The moment the recovery dies that deferral stops
- * (`OPEN_PAYMENT_RECOVERY_STATUSES`, the #3202 control), and the repair tool
- * raises the invoice UNPAID.
+ * raised money the member has not been asked for yet. While it is PENDING or
+ * PROCESSING the booking-vs-Xero repair tool DEFERS - it must not raise the
+ * edit's supplementary invoice, because the replay is going to raise the ask and
+ * the invoice belongs to that ask. Once the row leaves those two statuses that
+ * deferral stops (`OPEN_PAYMENT_RECOVERY_STATUSES`, the #3202 control), and the
+ * repair tool raises the invoice UNPAID.
+ *
+ * NOTE THE ASYMMETRY, because it decides what this function can and cannot fix.
+ * The repair tool stops deferring at the FIRST failure; this withdrawal fires
+ * only at the LAST one. Between them a retrying row can meet an unpaid invoice
+ * while its ask is still live - the same two-instrument shape, but transient and
+ * self-healing, because the retry either raises ask and invoice together or runs
+ * out and lands here. Cancelling on a non-terminal failure would be wrong: the
+ * replay still intends to collect against that very ask.
  *
  * So if an ask DOES exist at that moment, the club now has two live instruments
  * for one debt: an unpaid Xero invoice, and a Stripe PaymentIntent the member

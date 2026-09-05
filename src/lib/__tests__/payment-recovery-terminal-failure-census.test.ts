@@ -9,9 +9,10 @@ import { stripComments } from "@/lib/__tests__/support/strip-comments";
  *
  * A `PaymentRecoveryOperation` going terminally `FAILED` is the moment the rest
  * of the system is told to stop waiting for it. The booking-vs-Xero repair tool
- * reads that deadness as permission to stop deferring and to raise the edit's
- * supplementary invoice UNPAID (`OPEN_PAYMENT_RECOVERY_STATUSES` in
- * `xero-booking-repair-load.ts`, the #3202 control). So whatever has to happen
+ * stops deferring and raises the edit's supplementary invoice UNPAID once the
+ * row leaves `OPEN_PAYMENT_RECOVERY_STATUSES` in `xero-booking-repair-load.ts`,
+ * which is `[PENDING, PROCESSING]` and carries no `attempts` filter (the #3202
+ * control). So whatever has to happen
  * when a recovery dies has to happen on EVERY route to that status, and before
  * this issue there were three of them - the worker's own catch and the
  * stale-worker reaper's two arms - each with its own status write, its own
