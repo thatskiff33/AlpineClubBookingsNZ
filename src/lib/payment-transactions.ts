@@ -346,9 +346,20 @@ export async function reconcilePaymentAggregates({
     latestPrimary && isStripeTransaction(latestPrimary)
       ? latestPrimary.stripePaymentIntentId
       : null;
+  // #3268 (INV-PAY-054, "the ledger never moves a saved card"): a Payment with
+  // a `stripeSetupIntentId` owns its card column through the SetupIntent
+  // writers and the cron's retire path, so the ledger leaves it alone — a late
+  // `payment_intent.canceled` for an old intent must not null a card the member
+  // has just re-saved. Without one the ledger is followed, but a Stripe row
+  // that recorded no pm never nulls a card that is set (`??`). No intent-id
+  // gate here, deliberately (a pre-charge attempt row has none). A non-Stripe
+  // (IB) latest PRIMARY still yields null — #1967 depends on the IB switch
+  // dropping the card.
   const latestPrimaryStripePaymentMethodId =
-    latestPrimaryStripeIntentId && latestPrimary
-      ? latestPrimary.paymentMethodId ?? null
+    latestPrimary && latestPrimary.source === PaymentSource.STRIPE
+      ? payment.stripeSetupIntentId != null
+        ? payment.stripePaymentMethodId
+        : latestPrimary.paymentMethodId ?? payment.stripePaymentMethodId
       : null;
   const latestAdditionalStripeIntentId =
     latestAdditional && isStripeTransaction(latestAdditional)
