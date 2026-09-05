@@ -31,9 +31,6 @@ import { prisma } from "@/lib/prisma";
 // this module is `server-only` - so the sentence lives in a client-safe home and
 // both read it (`INV-SSOT`).
 import { zeroCompletionRefusal } from "@/lib/manual-refund-task-copy";
-// #3213: the dismiss-only rule and its sentence, in a client-safe home so the
-// settle screen decides whether the control exists from the same source the
-// server refuses on (`INV-SSOT`). Same split, same reason, as the line above.
 import { manualRefundTaskSettlementRefusal } from "@/lib/manual-refund-task-settlement-rules";
 import type { RecordedNightPrice } from "@/lib/stored-night-price-repair";
 import {
@@ -297,35 +294,12 @@ export async function resolveManualRefundTask(
         409
       );
     }
-
-    /*
-      #3213 (epic #2797): THE DISMISS-ONLY DOOR, and it is the whole safety
-      argument for the `UNCOLLECTED_EDIT_REVIEW_SHARE` kind.
-
-      REFUSED HERE, before the claim and before any write, so no input reaches a
-      money path - not a hand-crafted POST, not a stale screen, not a future
-      caller of this function. The screen offers only the dismiss control
-      (`manual-refund-task-queue.tsx`), and this is what makes that a guarantee
-      rather than a UI convention.
-
-      THE RULE AND ITS SENTENCE LIVE IN ONE CLIENT-SAFE HOME, because this module
-      is `server-only` and the settle screen cannot import from it. A copy
-      written beside the screen would drift from the one thrown here, and the
-      failure mode of that is not a visible disagreement but a silent one: a card
-      still offering a control the server has started refusing (`INV-SSOT`).
-
-      WHY the completion door does not open - that a NULL `settlementDirection`
-      reads as REFUND_TO_MEMBER on every older kind, so a COMPLETED close would
-      assert a refund the club never made - is `INV-PAY-051`, which is the part a
-      reader needs to understand rather than to call.
-    */
-    const settlementRefusal = manualRefundTaskSettlementRefusal(
-      task.kind,
-      resolution
-    );
-    if (settlementRefusal) {
-      throw new ManualBookingPaymentError(settlementRefusal, 400);
-    }
+    // #3213 (`INV-PAY-051`): the DISMISS-ONLY door. Refused before the claim and
+    // before any write, so no input reaches a money path - and asked of
+    // `manual-refund-task-settlement-rules.ts`, the one client-safe home the
+    // settle screen reads to decide whether that control exists at all.
+    const refusal = manualRefundTaskSettlementRefusal(task.kind, resolution);
+    if (refusal) throw new ManualBookingPaymentError(refusal, 400);
 
     const isEditReview = task.kind === ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW;
 
