@@ -579,9 +579,9 @@ export async function resolveManualRefundTask(
         note: trimmedNote,
         todayAtClub,
         hasIssuedXeroInvoice,
-        // #3219: a route is picked only on a completion, so a DISMISSAL issues
-        // no Xero document - exactly when the invoice keeps the old figure.
-        settlementIssuesXeroDocument: settlementRoute !== null,
+        // #3219: the store asks the Xero leg whether a document is issued.
+        settlementRoute,
+        settlementAmountCents: settlement?.amountCents ?? null,
         store: tx,
       });
     }
