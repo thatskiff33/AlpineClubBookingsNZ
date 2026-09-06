@@ -49,7 +49,6 @@ file; the checker treats an absent register as "no exceptions, no debt".
 | ID | Words |
 | --- | ---: |
 | `INV-MOD-025` | 4650 |
-| `INV-MOD-028` | 4377 |
 | `INV-ADDPAY-037` | 2769 |
 | `INV-SSOT-004` | 2658 |
 | `INV-HOST-050` | 2220 |
@@ -58,7 +57,6 @@ file; the checker treats an absent register as "no exceptions, no debt".
 | `INV-HOST-046` | 1726 |
 | `INV-HOST-045` | 1680 |
 | `INV-ADDPAY-039` | 1570 |
-| `INV-MOD-027` | 1538 |
 | `INV-SSOT-001` | 1531 |
 | `INV-PRIV-016` | 1512 |
 | `INV-OPS-013` | 1508 |

@@ -1444,8 +1444,11 @@ describe("tracked citation source extensions", () => {
     // the audit reports nothing, and this case fails with a bare "expected 1,
     // got 0" that says nothing about why. The assertion below turns that into a
     // readable failure, and it was earned — INV-MOD-027 shipped and this case
-    // went red on a branch whose author had no reason to look here.
-    const planted = "INV-MOD-029";
+    // went red on a branch whose author had no reason to look here. It went red
+    // a second time when #2789 split INV-MOD-027 and INV-MOD-028 into
+    // INV-MOD-029..054, which is the same lesson at scale: a split mints a
+    // whole range, so re-read this number after one.
+    const planted = "INV-MOD-055";
     // The precondition the fixture rests on. When this fails, `planted` has been
     // taken by a real invariant: move it up one, and no further.
     expect(files.get("docs/DOMAIN_INVARIANTS.md")).not.toContain(planted);

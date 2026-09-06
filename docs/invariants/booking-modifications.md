@@ -197,6 +197,14 @@ resolves to the built-in `FULL` type's rate rows with `rateSource`
 `resolveGuestRateMembershipTypes`, the one gate every pricing path already
 passes through (INV-MOD-007), so no write path can be missing the rule.
 
+The rest of the election: who may be elected `INV-MOD-029`; the tick withheld
+under every lockout mode `INV-MOD-030`; the eligibility predicate
+`INV-MOD-031`; what the flag records `INV-MOD-032`; the quote-priced exemption
+`INV-MOD-033`; the end state and the locks `INV-MOD-034`; the gates and the
+refusals `INV-MOD-035`.
+
+## INV-MOD-029
+
 **WHO MAY BE ELECTED IS A RATE QUESTION, NOT AN `isMember` QUESTION (#2978).**
 The eligible set is everyone the club currently charges its non-member rate, and
 that is NOT the same as everyone with `isMember` false: a non-member contact
@@ -217,6 +225,8 @@ them and `isMember` plus the unpaid set does. Electing them would restore the
 member rate and silently undo a lockout the club configured on purpose, which is
 a money outcome, so both the API boundary and the rate resolver refuse it.
 
+## INV-MOD-030
+
 **Owing the subscription withholds the tick under EVERY lockout mode** (owner
 decision, 21 Aug 2026). It is not conditional on the club having chosen
 `NON_MEMBER_PRICING`: the fact that matters is the debt, not the club's chosen
@@ -230,18 +240,13 @@ are separate functions on purpose: `resolveMemberIdsOwingSubscription` answers
 non-member rates" for the REPRICE. Nothing about the offer rule moves money on an
 existing booking: a flag already stored keeps pricing exactly as it did.
 
-**Why a lapsed member of this club who is paid up at a partner lodge still gets
-no tick, and why that is intended rather than a bug.** It looks harsh, and it was
-put to the owner as its own question. Letting reciprocity win there would let
-anybody lapse their subscription, claim membership of a partner lodge, and keep
-paying the member rate indefinitely — the lockout exists precisely to chase an
-unpaid subscription, and somebody in that position does still owe this club one.
-It was weighed against offering the tick with an officer-facing warning, and the
-clean rule was preferred. The officer is told the tick is withheld and why (see
+The officer is told the tick is withheld and why (see
 [the booking officer's guide](../guides/bookings.md) and
 [Subscription lockout](../guides/subscription-lockout.md)); the way to apply the
 reciprocal rate to that person is to settle their subscription, not to work
 around the rule here.
+
+## INV-MOD-031
 
 **Eligibility answers `bookingBehavior === "NON_MEMBER_RATE"`, not
 `!== "MEMBER_RATE"`.** The third value, `BLOCK_BOOKING`, means "may not book at
@@ -249,6 +254,8 @@ all", which is not "is on the non-member rate"; the looser test admitted it, and
 was unreachable only because `assertMembershipTypeBookingAllowed` refuses such a
 guest earlier in every pricing path. A money fence must not depend on an
 unrelated guard continuing to exist.
+
+## INV-MOD-032
 
 **A stored flag records what was CHARGED, never what was asked for.** The
 election fence is judged against the stored booking rows while pricing is judged
@@ -271,6 +278,8 @@ Only the rate resolver reads the flag, which is what confines the blast radius t
 price — and the resolver re-checks eligibility itself, so a row that somehow
 carries the flag without qualifying still resolves through the ordinary rules.
 The API refusal is the first fence, not the only one.
+
+## INV-MOD-033
 
 **An election-only edit is EXEMPT from the quote-priced edit block, on both the
 preview and the save** (owner decision, 21 Aug 2026). A booking converted from a
@@ -299,6 +308,8 @@ For the same reason an election never takes the identity-only price-preserving
 echo: that path writes the flag without running the rate resolver, so the tick
 would land and the money would not move.
 
+## INV-MOD-034
+
 **The election is an END STATE, and the guests whose flag CHANGES are exactly the
 guests whose locked nights are cleared.** `resolveOtherLodgeRateElection`
 (`src/lib/booking-other-lodge-rate.ts`) is shared verbatim by the modify-quote
@@ -310,6 +321,8 @@ rate, and an unticked guest whose nights stay locked at the member price never
 leaves it. A guest whose flag did not change keeps their locks, so an unrelated
 edit reprices nobody. Because the locks are cleared, the guest is correctly
 re-snapshotted under INV-MOD-010 and the Xero hut-fee line follows the rate.
+
+## INV-MOD-035
 
 **The gates are admin-only, non-member-only, and lodge-required**, enforced in
 the shared resolver rather than at each call site: a member self-service request
@@ -329,15 +342,6 @@ same preview-and-save parity (#3214). The rule sits with the other parking rules
 in INV-MOD-028; the reasoning is written once, in
 `OTHER_LODGE_RATE_AMOUNT_UNDER_REVIEW_MESSAGE`'s docblock
 (`src/lib/booking-other-lodge-rate.ts`).
-
-**It is exempt from the quote-priced edit block when it rides alone**, again
-mirroring #2337. A booking converted from a public request is quote-priced and
-carries an even split of the negotiated total (#1032 blocks ordinary edits so
-nothing disturbs that basis) — but the public request form is exactly where the
-"member of another lodge" answer arrives, so re-rating one named person
-afterwards is the officer's deliberate act, not an ordinary edit. Every guest not
-re-rated keeps their locked split price. Pair the election with a date change or
-a guest add and the ordinary block applies again.
 
 ## INV-MOD-026
 
@@ -1228,54 +1232,42 @@ strand already held whose row carried no usable money, or one the edit newly put
 that strand on while its stored total is frozen. A night an edit BUYS at a price
 the member is charged always carries that integer.
 
+The rest of this rule: how a blank is filled and what the repair does not
+repair `INV-MOD-036` to `INV-MOD-040`; where it holds, the five paths that park
+and every other night-price writer `INV-MOD-041` to `INV-MOD-048`; the limits it
+does not close and where all of it is pinned `INV-MOD-049` to `INV-MOD-054`.
+
+## INV-MOD-036
+
 **A `NULL` may be filled in afterwards by a PERSON, and by nothing else** (#3191,
-epic #2797; owner decision 31 Aug 2026). Without that the rule was a ratchet: a
-booking parked once parked forever, because no path could ever clear a blank and
-every later edit read the same absent evidence. Settling the review that the park
+epic #2797; owner decision 31 Aug 2026). Settling the review that the park
 raised may now also record what each of that guest strand's unpriced nights sold
 for, under four conditions, none of which is optional:
 
 - **the officer types every figure.** A partial answer is refused rather than
   completed, and there is no derivation anywhere in that path - no even split, no
-  rate lookup, no rounding, no defaulted zero. Two instruments, because neither
-  covers the other, and what each one really covers is worth stating precisely
-  because an earlier draft of this paragraph overstated both and a review lens
-  disproved it by building the thing and watching it pass.
-  `stored-night-price-repair-census.test.ts` reads the source three ways: it
-  names the ONE module in the tree that may update a night row's price in place,
-  so a second writer appearing anywhere fails there with its own file name; it
-  scans the two rules modules, the boxes component and **the whole of** the
-  settle screen - minus one five-line, capped, published money-display exemption
-  - for a division, a rounding, a split helper, an average or a defaulted zero;
-  and it fences the reference to `unpricedNightTargetCents`, the single
-  definition of what the blanks must come to, to those four files, so the
-  arithmetic cannot be lifted into a helper one module away. What a source scan
-  cannot see is a REMAINDER FILL - `targetCents - enteredCents` is a subtraction
-  and matches none of those patterns, and the server cannot catch one either
-  because it arrives as a complete, reconciling vector - so that half is
-  behaviour: `manual-refund-task-queue-financial-review.test.tsx` fills every
-  night but one on the real settle dialog, presses **every** control in that
-  dialog that is not a way out - so a fill button is caught whatever it is
-  called, which a name-matching regex was not - re-asserts the boxes, and then
-  asserts the confirm button is still disabled and that a press posts nothing,
-  which is what catches a fill made straight into the posted entries where there
-  is no box value to look at;
+  rate lookup, no rounding, no defaulted zero.
+
 - **the figures reconcile.** Together with the strand's already-priced nights
   they must come to `BookingGuest.priceCents` adjusted by the settled amount -
   minus a refund, plus a charge - which is what makes the strand exact under the
   definition above, and is therefore what stops it parking again. The strand's
   stored total is re-based to that sum in the same write, so what it is worth and
   what its nights say cannot disagree afterwards;
+
 - **an existing price is never rewritten.** Every write is fenced on
   `priceCents: null`, so a night that already carries a figure - a real stored
   `0` included - cannot be touched by this path at all, and a race becomes a
   refusal rather than a lost update. The strand's total is fenced on its previous
   value the same way. `src/lib/stored-night-price-repair-store.ts` is the one
   module in the tree permitted to update an existing night row's price in place;
+
 - **it is audited as a money-affecting act**, in its own entry
   (`booking-payment.stored-night-price.record`, category `payment`) rather than
   as metadata on the settlement beside it - it can also happen on a DISMISSAL,
   whose entry says in as many words that nothing moved.
+
+## INV-MOD-037
 
 It is OPTIONAL, and that is a decision rather than an omission. A settled amount
 is not always a restatement of what the nights were worth - a change fee, or a
@@ -1299,8 +1291,9 @@ of two stored numbers is wrong rather than a number nobody has.
 `Booking.totalPriceCents` is likewise untouched: the park froze it and the
 settlement moves the money through the club's own instruments, so re-basing the
 booking's headline total is a separate question from recording what a stay sold
-for. A parked edit already leaves the booking's headline total and its guest rows
-disagreeing by design, and nothing in the tree asserts that they agree.
+for.
+
+## INV-MOD-038
 
 **What the re-based `BookingGuest.priceCents` is read by, since "only the
 booking's headline total is frozen" would leave that unsaid.** The strand total
@@ -1328,6 +1321,8 @@ none of them restates an amount already billed:
   that variance, which is the report working as intended rather than a number
   moving under it.
 
+## INV-MOD-039
+
 The test is RECONCILIATION and not provenance: two of the three events that populated that table were themselves
 even splits (migrations `20260704150000` #1098 and `20260810010000` #2739), there
 is no provenance column and `createdAt` does not separate a backfilled row from a
@@ -1342,6 +1337,8 @@ result at all** — not zero, not an amount, not an optional a caller can defaul
 only a typed cause (`NO_STORED_NIGHT_PRICES`, `PARTIAL_STORED_NIGHT_PRICES`,
 `STORED_TOTAL_MISMATCH`, `COUNTERPART_STRAND_UNREADABLE`) and the evidence as it
 stands.
+
+## INV-MOD-040
 
 **No AMOUNT is written; the STRUCTURAL change may be** (#3170). Every stored
 money value stays exactly as it is: a retained row is preserved byte for byte,
@@ -1358,12 +1355,11 @@ of a total across nights; and a clamp of a credit against a derived total. The
 captured-cash settlement caps in `booking-modify-settlement.ts` are NOT in this
 class and are untouched — they cap a refund against money actually taken.
 
+## INV-MOD-041
+
 ### Where it holds, and the two places it deliberately does not reach
 
-**It holds on EVERY edit path** (#3166, epic #2797). That wording was false when
-first written, was narrowed by #3031 to the two paths the code actually enforced,
-and is restored here because the five paths below now enforce it — not because
-the sentence reads better. A documented claim is a contract in this repository,
+**It holds on EVERY edit path** (#3166, epic #2797). A documented claim is a contract in this repository,
 so if a sixth edit door is added it is gated or this heading changes.
 
 **All five PARK on the FIRST such edit. None of them refuses for want of
@@ -1393,6 +1389,8 @@ Two things follow that are worth stating plainly rather than discovering:
   on every later edit. The review queue is the only route back to a fully priced
   booking.
 
+## INV-MOD-042
+
 What every parked path does, identically: the structural change commits and the
 capacity check still runs on the same ranges a priced edit would be checked
 against — parking withholds the money, never the beds. Nothing is repriced, no
@@ -1410,8 +1408,7 @@ money genuinely did not move, NOT because 0 was chosen as the adjustment.
 request, and they are told so** (#3179). A parked edit re-runs no promotion, so a
 `promoCode` or `removePromoCode` carried alongside the structural change is
 dropped and the booking's stored discount figures are written back untouched.
-That half of the request used to end in an HTTP 200 with nothing said - a member
-walking away believing they had applied a discount they had not. The edit still
+The edit still
 saves: the owner's decision on #3179 was to save what can be honoured and warn
 clearly about what cannot, because refusing the date change too would remove
 something that works in order to fix something that does not. The preview, the
@@ -1420,6 +1417,8 @@ row now all carry ONE sentence, composed in
 `src/lib/promo-change-not-applied.ts` (`INV-SSOT`). It does not make the promo
 change happen; applying a promotion to a stay whose money is already with a
 person is separate work, and money-shaped enough to deserve its own review.
+
+## INV-MOD-043
 
 A stay already **under way** produces that sentence too, and today it always
 comes out empty. Both surfaces refuse a promo change on an in-progress stay
@@ -1439,6 +1438,8 @@ normally takes neither of the caller's branches, calls the helper, and receives
 the stub — so a predicate written at the call site would have covered the parked
 branch and left that one silent.
 
+## INV-MOD-044
+
 **The five paths that park**, and what is peculiar to each:
 
 - the IN-PROGRESS edit planner, `buildInProgressGuestRangePlan`
@@ -1454,12 +1455,7 @@ branch and left that one silent.
   expressible with no valuation at all, and no remaining strand's price or rate
   snapshot is rewritten;
 - **the ordinary PRE-CHECK-IN edit**, `calculateModifiedPricing`
-  (`src/lib/booking-modify-plan.ts`), which is the busiest edit path in the
-  product and the one the member edit panel uses (#3166). Every existing strand
-  is judged, not only the ones giving nights back, because `applyGuestChanges`
-  deletes and recreates EVERY existing guest's night rows — so a strand whose
-  stored prices cannot be preserved would have its history rewritten at today's
-  rate by an edit that never touched it. There is no carve-out for a strand the
+  (`src/lib/booking-modify-plan.ts`) (#3166). There is no carve-out for a strand the
   edit deliberately reprices in full: a parked edit charges nobody, so a
   placeholder→member link's flag recording what was charged is written as
   un-honoured, which is what `otherLodgeRatedGuestIds` already promises. **An
@@ -1471,19 +1467,12 @@ branch and left that one silent.
   identical gate over the identical night sets, so it can never quote money the
   save will not move;
 - **the date change**, `modifyBookingDates`
-  (`src/lib/booking-date-modification-service.ts`) (#3166). It read night prices
-  through the LENIENT `lockedNightPricesForGuest`, so a blank night got no lock,
-  was repriced at today's rate and was written back as a real integer — fenced
-  only while a review task was still OPEN. Since **nothing ever clears a blank**,
-  the first date change after a review closed converted "not known" into a guess
-  and wrote it into the column the next edit reads as evidence;
-- **the guest-add route**, `POST /api/bookings/[id]/guests` (#3166). It rewrites
-  no existing strand's night rows, so it is not the write-back mechanism — but it
-  recomputed `Booking.totalPriceCents` from a full-party pass in which a blank
-  night priced at today's rate, and billed the member the difference as an
-  additional amount for a night nobody added. The guests it adds are still
+  (`src/lib/booking-date-modification-service.ts`) (#3166);
+- **the guest-add route**, `POST /api/bookings/[id]/guests` (#3166). The guests it adds are still
   created and still priced at what they are genuinely being sold for; that money
   is known.
+
+## INV-MOD-045
 
 **A BLANK IS NEVER REPAIRED BY A REPRICE.** It is cleared only by a person
 supplying the amount. That is the rule the date path broke and is the reason it
@@ -1510,6 +1499,8 @@ covers the two unusable shapes the settle-time repair structurally cannot — a
 strand with **no night rows at all**, whose nights come from the stay envelope,
 and a strand whose rows are all readable but **do not add up**.
 
+## INV-MOD-046
+
 **The second act cannot change what anybody owes, and that is arithmetic rather
 than policy.** With every held night asked for, nothing counts as already known
 and nothing is being settled, so the target is the stored total flat and the
@@ -1531,6 +1522,8 @@ same compare-and-set basis, and creates a night row only where the strand holds
 that night through its envelope with no row behind it — which cannot move a
 capacity count, because those are exactly the nights the guest already occupies
 (`INV-CAP-032`).
+
+## INV-MOD-047
 
 It binds every writer of `BookingGuestNight.priceCents`, not only the five edit
 doors — a wholesale night-row rewriter destroys a blank exactly as effectively as
@@ -1560,6 +1553,8 @@ missing a writer is worse than no enumeration:
   to an even split of the total across the nights. Both are things this rule
   prohibits; they are simply out of its reach here.
 
+## INV-MOD-048
+
 NOT GATED, and named rather than left to be discovered. Both are outside this
 rule rather than exceptions to it, because neither values a historical night:
 
@@ -1573,6 +1568,8 @@ rule rather than exceptions to it, because neither values a historical night:
   #3031, writes the per-night rows it prices so the next edit reads real
   evidence. It values no historical night, so this rule does not reach it — but
   it IS bound by the blank clause above, and is fenced accordingly (#3166).
+
+## INV-MOD-049
 
 ### Three limits this rule does NOT close, named rather than left to be found
 
@@ -1591,6 +1588,9 @@ removes any of them is a change to the rule above, not a tidy-up.
   on a `PAYMENT_PENDING` booking they cannot pay for, on a booking the club then
   holds no money against. The member is told, by the banner and by the email,
   that the adjustment is still being worked out.
+
+## INV-MOD-050
+
 - **A placeholder→member link (#2337) HALF-lands on a parked edit.** The identity
   columns — `isMember`, `memberId`, name and consent — are written
   unconditionally, while the price and the rate-membership-type snapshot stay
@@ -1601,6 +1601,7 @@ removes any of them is a change to the rule above, not a tidy-up.
   already makes: the flag says what was CHARGED, and nothing was. Undoing it
   would mean either withholding an identity correction the member asked for, or
   charging money the edit was parked for being unable to price.
+
 - **A placeholder link half-lands; an other-club rate tick no longer does.**
   The tick used to be written back as `false` with no message on screen, on the
   same reasoning as the bullet above — the flag records a rate that was
@@ -1608,6 +1609,8 @@ removes any of them is a change to the rule above, not a tidy-up.
   disclosing it: the whole edit is now refused, ticks and lodge together, and the
   refusal says what has to be true first. The link's half-landing above stands,
   because an identity correction is not a rate.
+
+## INV-MOD-051
 
 **The consequence this rule used to carry, and what is left of it.** It read:
 because nothing clears a blank, a booking parked once is unreadable for good, so
@@ -1631,6 +1634,8 @@ that is #2745's audited decision. Forward only.
 
 Quote and apply consume the identical discriminated result, so a preview can
 never show a price the save would decline to honour.
+
+## INV-MOD-052
 
 Pinned by `booking-edit-guest-ranges-sparse.test.ts` (the 960-case matrix and one
 refusal proof per removed estimator), `booking-edit-financial-review-parity.test.ts`,
@@ -1657,7 +1662,11 @@ left it), that the waitlist offer sweep declines to
 reprice over a blank in `waitlist.test.ts`, the date change in
 `fix-mod-payment.test.ts`
 (including that a moved range which still covers a night keeps that night at the
-price it was sold for), and the guest add in `guests-add-notify-choice.test.ts`. The removal PARK is pinned by
+price it was sold for), and the guest add in `guests-add-notify-choice.test.ts`.
+
+## INV-MOD-053
+
+The removal PARK is pinned by
 `booking-guest-consent-authority.test.ts` (the consent decline and the expiry
 sweep, each against a priced control that raises nothing) and by
 `guest-removal-minors-alert-route.test.ts`, which drives the real route and
@@ -1676,6 +1685,8 @@ and its re-derivation of the night list are each mutation-verified.
 the election-only edit on a quote-priced booking is refused, the strand is
 recorded, and the same edit then prices normally — which is what makes #3214's
 refusal sentence true rather than merely written.
+
+## INV-MOD-054
 
 The REPAIR is pinned by `stored-night-price-repair.test.ts`, whose last block is
 the proof that matters: it takes a strand this rule's own classifier calls

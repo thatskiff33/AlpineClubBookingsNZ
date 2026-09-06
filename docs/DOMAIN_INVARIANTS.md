@@ -318,7 +318,14 @@ Prefix `INV-MOD`.
 | `INV-MOD-005` | Nightly prices lock at booking time; only changed guests and nights reprice |
 | `INV-MOD-006` | Every edit path passes the default group discount; locked nights win |
 | `INV-MOD-026` | One club switch, one chokepoint: whether later-added nights earn group discount |
-| `INV-MOD-027` | Officers may member-rate a non-member-rate guest; refused on mid-stay or parking edits |
+| `INV-MOD-027` | Officers may rate a non-member-rate guest as a partner lodge's member |
+| `INV-MOD-029` | Eligibility is a rate question; a member owing a subscription is excluded |
+| `INV-MOD-030` | The tick is withheld under every lockout mode; settle the subscription |
+| `INV-MOD-031` | Eligibility tests `NON_MEMBER_RATE` exactly, never merely not `MEMBER_RATE` |
+| `INV-MOD-032` | The flag records the rate charged; `isMember` is never written |
+| `INV-MOD-033` | Election-only edits are exempt from the quote-priced edit block |
+| `INV-MOD-034` | The election is an end state; changed guests' locked nights clear |
+| `INV-MOD-035` | Admin-only and lodge-required; refused on mid-stay and parking edits |
 | `INV-MOD-007` | Hut nightly rates key on membership type and optional age tier |
 | `INV-MOD-008` | An unpaid member repriced under `NON_MEMBER_PRICING` is `NON_MEMBER_DEFAULT`, not forced |
 | `INV-MOD-009` | Membership, not the subscription, gates member-only promotions; a repriced member stays eligible |
@@ -339,6 +346,25 @@ Prefix `INV-MOD`.
 | `INV-MOD-023` | Advisory surfaces report the same facts and gate nothing; nothing persisted |
 | `INV-MOD-024` | Minimum-stay policy administration is versioned; a stale version is refused, not overwritten |
 | `INV-MOD-028` | Historical nights value only from sold-price rows; else `NULL` and parked review |
+| `INV-MOD-036` | A blank is filled only by a person, on four conditions |
+| `INV-MOD-037` | The repair is optional, and four things it deliberately does not repair |
+| `INV-MOD-038` | Three consumers read a re-based strand total; none restates a billed amount |
+| `INV-MOD-039` | Reconciliation, not provenance; an exact strand values every night from its rows |
+| `INV-MOD-040` | A parked edit writes structure, never an amount; prohibited estimate sources |
+| `INV-MOD-041` | It holds on every edit path; a second edit is refused |
+| `INV-MOD-042` | What every parked path does; a dropped promotion is disclosed |
+| `INV-MOD-043` | The in-progress promo notice is built even where nothing calls for it |
+| `INV-MOD-044` | The five edit paths that park, and what is peculiar to each |
+| `INV-MOD-045` | A blank is never repaired by a reprice; two repair acts |
+| `INV-MOD-046` | The second act re-apportions within a fixed total; eligibility is its fence |
+| `INV-MOD-047` | It binds every night-price writer, not only the five edit doors |
+| `INV-MOD-048` | Two writers sit outside this rule; neither values a historical night |
+| `INV-MOD-049` | A member may still pay the pre-edit price during an open review |
+| `INV-MOD-050` | A placeholder link half-lands; an other-club rate tick no longer does |
+| `INV-MOD-051` | What is left of parked-once-parked-forever; negative rows stay unrepaired |
+| `INV-MOD-052` | Where the base rule and the three added paths are pinned |
+| `INV-MOD-053` | Where the removal park and the second act are pinned |
+| `INV-MOD-054` | Where the settle-time repair is pinned |
 
 ### Adult-member hosting
 
