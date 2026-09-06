@@ -53,11 +53,13 @@ function createRefundStore() {
     stripePaymentIntentId: "pi_1" as string | null,
     xeroInvoiceId: null,
     xeroInvoiceNumber: null,
-    reference: null,
+    reference: null as string | null,
     amountCents: 5000,
     refundedAmountCents: 0,
     status: "SUCCEEDED",
     paymentMethodId: "pm_1" as string | null,
+    // #3267: a saved-card charge ATTEMPT row carries its Stripe key here, so
+    // the fixture's column has to admit one.
     reason: null as string | null,
     createdAt: new Date("2026-01-01T00:00:00.000Z"),
     updatedAt: new Date("2026-01-01T00:00:00.000Z"),
