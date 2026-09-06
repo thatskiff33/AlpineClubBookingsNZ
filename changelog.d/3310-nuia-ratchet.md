@@ -6,8 +6,5 @@
   either impossible by construction or answered the same way the surrounding
   rule already did.
 
-  Behind the scenes, the repository now records every place the stricter
-  TypeScript `noUncheckedIndexedAccess` check would complain — 1,089 at the
-  start of this stage — and the build fails if that list ever grows. Later
-  stages of the same programme (#2694) pay the list down area by area until the
-  check can be switched on for good.
+  Behind the scenes, a new build safeguard makes sure this kind of assumption
+  cannot creep back in while the rest of the codebase is tidied up the same way.

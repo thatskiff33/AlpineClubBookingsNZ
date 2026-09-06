@@ -14,6 +14,7 @@ filename-only selection misses; add focused tests for the contracts you changed.
 npm run db:generate
 npm run lint
 DATABASE_URL=postgresql://user:pass@localhost:5432/tacbookings npm run typecheck
+npm run typecheck:nuia       # when TypeScript under src/, scripts/ or prisma/ changes
 npm run test:related -- $(git diff --name-only main...HEAD)
 npm test -- path/to/focused.test.ts
 npm run knip                 # when files or exports change
