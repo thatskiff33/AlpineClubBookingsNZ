@@ -32,10 +32,10 @@ import { bookingHasCapacityOverride } from "@/lib/booking-status";
 import { reusableSavedPaymentMethodOnRow } from "@/lib/saved-payment-method";
 import {
   beginSavedCardChargeAttempt,
-  chargeSavedCardAttempt,
   SAVED_CARD_CHARGE_REASON,
   SavedCardChargeRefusedError,
 } from "@/lib/saved-card-charge-attempt";
+import { chargeSavedCardAttempt } from "@/lib/saved-card-charge-request";
 import {
   describeUnsettledPaymentIntent,
   settleSavedCardChargeAttempt,

@@ -1353,12 +1353,27 @@ attempt row: PENDING  -- Stripe THREW -->
 next attempt finds an unresolved (PENDING/PROCESSING) attempt row:
   same card, intent known      -> replay: RETRIEVE that intent (no new charge)
   same card, no intent yet     -> replay: re-send its key (Stripe answers or executes once)
+                                  ... unless the row is older than 23h -> REFUSED
+                                      (`attempt_key_expired`: Stripe's key window is
+                                       24h, so a re-send after it is a NEW charge)
   different card               -> FAILED (reason suffixed `:superseded_by_new_card`),
                                   its intent cancelled best-effort after commit;
-                                  one found already `succeeded` IS the capture
+                                  one found already `succeeded` IS the capture;
+                                  one found still `processing` is put BACK to
+                                  PROCESSING and IS the answer (never charged beside)
 next attempt finds a PRIMARY row still holding captured cash -> REFUSED
   (`SavedCardChargeRefusedError`: claim rolls back, admins alerted, no charge)
+`payment_intent.succeeded` / `.payment_failed` for an intent the ledger does not know
+  -> adopt the PENDING no-intent attempt row whose `reference` equals the event's
+     `request.idempotency_key`, settle it, then handle as usual (lost-response recovery)
 ```
+
+Every write onto an attempt row is FORWARD ONLY. A capture is written over
+anything but refund history; a non-capture only over an unresolved row. So a
+`processing` answer a path retrieved cannot undo a `succeeded` the webhook has
+already recorded, and each path's locked release re-reads the booking under its
+locks and hands the claim back only while it is still CONFIRMED — a booking the
+webhook has since settled PAID is left alone.
 
 Before #3267 all three paths shared one key, `pending_charge_<bookingId>`, so
 the admin route's different metadata could only ever answer an idempotency
@@ -1375,7 +1390,7 @@ returns `already_paid` unchanged (webhook redelivery, confirm-payment racing
 the webhook, payment-link reconcile, a saved-card charge attempt replayed by
 the cron, charge-saved-method or confirm-pending-guests — since #3267 a replay
 retrieves the recorded attempt's own intent rather than re-sending a shared
-`pending_charge_` key, see "Saved-card charge attempt" below). A success
+`pending_charge_` key, see "Saved-card charge attempt" above). A success
 carrying a DIFFERENT intent while
 another captured PRIMARY transaction still holds net cash is double money (the
 residual #1967 split-child link-vs-auto-charge window) and is auto-refunded:

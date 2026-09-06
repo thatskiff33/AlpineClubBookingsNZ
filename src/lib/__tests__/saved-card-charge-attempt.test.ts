@@ -230,18 +230,18 @@ vi.mock("../logger", () => ({
 const {
   beginSavedCardChargeAttempt,
   buildSavedCardChargeMetadata,
-  chargeSavedCardAttempt,
-  isDefiniteSavedCardChargeFailure,
   SAVED_CARD_CHARGE_KEY_PREFIX,
   SAVED_CARD_CHARGE_KEY_RESEND_WINDOW_MS,
   SAVED_CARD_CHARGE_REASON,
   savedCardChargeIdempotencyKey,
   SavedCardChargeRefusedError,
 } = await import("../saved-card-charge-attempt");
-// The other half of the contract — recording Stripe's answer — lives in its own
-// module (split at the seam so each stays inside the size budget) and is
-// exercised here beside `begin`/`charge` because the scenarios that matter run
-// across both.
+// The contract is one thing in three files, split where the provider call is
+// (the ledger decision under the claim's locks, the Stripe call with no lock
+// held, recording the answer). It is exercised from this one suite because the
+// scenarios that matter run across all three.
+const { chargeSavedCardAttempt, isDefiniteSavedCardChargeFailure } =
+  await import("../saved-card-charge-request");
 const {
   adoptSavedCardChargeAttemptForIntent,
   describeUnsettledPaymentIntent,

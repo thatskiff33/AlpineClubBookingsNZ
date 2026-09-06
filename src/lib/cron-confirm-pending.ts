@@ -42,12 +42,12 @@ import { getDefaultLodgeId } from "@/lib/lodges";
 import { cancelPaymentIntentIfCancellable } from "./stripe";
 import {
   beginSavedCardChargeAttempt,
-  chargeSavedCardAttempt,
   SAVED_CARD_CHARGE_KEY_PREFIX,
   SAVED_CARD_CHARGE_REASON,
   SavedCardChargeRefusedError,
   type SavedCardChargeAttempt,
 } from "./saved-card-charge-attempt";
+import { chargeSavedCardAttempt } from "./saved-card-charge-request";
 import { settleSavedCardChargeAttempt } from "./saved-card-charge-settle";
 import {
   classifySavedCardChargeFailure,

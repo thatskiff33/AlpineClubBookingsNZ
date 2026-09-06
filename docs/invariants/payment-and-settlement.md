@@ -1970,7 +1970,13 @@ one, check the other.
     the moment the cron has failed, not a day later. `api_error`,
     `rate_limit_error`, a connection error and any non-Stripe error leave it
     uncertain whether the charge happened: the row stays PENDING and the next
-    attempt replays it, so Stripe resolves whether the first call executed. The
+    attempt replays it, so Stripe resolves whether the first call executed. That
+    partition is for the POST. A replay that RETRIEVES its intent is a GET, where
+    only `resource_missing` says anything about the attempt (the intent is gone,
+    so the attempt is over): an `authentication_error` or an
+    `invalid_request_error` on a read says nothing about an intent that may be
+    `processing` right now, so every other read failure is ambiguous and the row
+    is left for the next attempt to ask again. The
     Payment aggregate is not re-derived on a definite failure — before #3267 a
     thrown charge left no row and the Payment stayed at the claim's PENDING,
     which is what a pending booking whose charge failed should read as.
@@ -1982,10 +1988,19 @@ one, check the other.
     cancelled best-effort by `chargeSavedCardAttempt` AFTER commit and BEFORE the
     charge — a plain provider call, never inside the transaction
     (`INV-INT-003`). Marking FAILED before Stripe confirms the cancel is
-    deliberate and repaired twice over if wrong: a superseded intent the cancel
-    finds already `succeeded` IS the capture — it is returned as the answer,
-    nothing is charged, and `settleSavedCardChargeAttempt` moves that row to
-    SUCCEEDED and removes the fresh attempt row — and a `payment_intent.succeeded`
+    deliberate and repaired three times over if wrong. A superseded intent the
+    cancel finds already `succeeded` IS the capture — it is returned as the
+    answer, nothing is charged, and `settleSavedCardChargeAttempt` moves that row
+    to SUCCEEDED and removes the fresh attempt row. One it finds still
+    `processing` is LIVE and may capture any second — Stripe refuses to cancel a
+    card payment in that state, and that refusal must never read as "not
+    cancellable, nothing to do", which was a second charge with only #1992
+    between it and the member — so its row is put BACK to PROCESSING and the
+    intent is returned as the answer: this run waits on it, and the next run ends
+    and asks about it again until it captures or dies. Every stale intent is
+    visited before an answer is returned, so one that CAN be cancelled still is;
+    a capture outranks a live intent when both are found. And a
+    `payment_intent.succeeded`
     webhook for it moves the row to SUCCEEDED too. A superseded intent that
     captures after this attempt has also captured is the second capture the
     #1992 duplicate-capture auto-refund hands back (`INV-PAY-043`).
@@ -1994,8 +2009,12 @@ one, check the other.
     which is #1765 history) on a still-PENDING booking THROWS
     `SavedCardChargeRefusedError` from inside the claim, so the whole claim rolls
     back — nothing claimed, nothing charged — and the caller logs at error level
-    and alerts an administrator on every attempt until a person, or a redelivered
-    webhook that finds the row by intent id, settles it. Every PRIMARY Stripe row
+    on every attempt until a person, or a redelivered webhook that finds the row
+    by intent id, settles it. The admin ALERT is capped: the cron sends it on the
+    #1993 extension cadence (windows 1, 2, 3, then every 7th, once each),
+    anchored on when the refused state began, rather than eight times a day for
+    ever; the two routes alert per click, which is a person's own action.
+    Every PRIMARY Stripe row
     counts here, attempt row or not; rows that are not attempt rows (an in-flight
     /pay link intent, a legacy row minted under the shared key before #3267) are
     otherwise left to the mechanisms that own them.
@@ -2009,15 +2028,64 @@ one, check the other.
     moved FORWARD only — a captured answer over anything but refund history, a
     non-captured answer over an unresolved row only — and the `P2002` race on the
     unique intent id takes the same branch. No webhook creates such a row today;
-    the branch is defensive and stated.
+    the branch is defensive and stated. Forward-only applies to the attempt's OWN
+    row as much as to a kept one, and it is what makes the release safe: the
+    retrieve says `processing`, the `succeeded` webhook lands and settles the
+    booking PAID before the release takes its locks, and an unguarded write would
+    put PROCESSING over SUCCEEDED, `reconcilePaymentAggregates` would derive
+    `Payment.status = PROCESSING`, and the release's status-guarded
+    CONFIRMED -> PENDING would match nothing and throw nothing — a PAID booking
+    whose ledger shows no captured money. When the guard refuses the write the
+    row's current status is read back and returned instead, nothing is
+    reconciled, and the caller branches on that LEDGER status rather than on the
+    intent's. All three paths then record inside their locked release
+    transaction and, still under those locks, re-read the booking: one no longer
+    CONFIRMED is not released at all — the webhook has settled it, and saying so
+    in the log beats releasing into the dark.
+  - **The Payment's intent pointer is not nulled by an attempt row.** An attempt
+    row is a Stripe PRIMARY row born with NO intent id, and it stays so after a
+    definite failure. `reconcilePaymentAggregates` derives
+    `Payment.stripePaymentIntentId` from the latest PRIMARY row, so while an
+    attempt row is the latest, any reconcile (the #1992 sweep's
+    `payment_intent.canceled` webhook, a failed webhook) would null the pointer;
+    `/pay` and `create-payment-intent` read that pointer to decide whether to
+    mint, and a nulled pointer sends them back to the `_initial` key, which
+    Stripe answers with the CANCELLED first intent — a dead client secret. So a
+    Stripe latest PRIMARY without an intent keeps the pointer the Payment already
+    holds, the same rule `INV-PAY-054` applies to the card column. A non-Stripe
+    (Internet Banking) latest PRIMARY still yields null, unchanged.
+  - **A key may only be RE-SENT inside Stripe's window, and a lost response is
+    recovered by that key.** Stripe keeps an idempotency key for 24 hours; the
+    same key sent after that is a new request and executes a NEW charge, with
+    nothing local able to tell it apart from the first. So an attempt row that is
+    PENDING with no intent and older than
+    `SAVED_CARD_CHARGE_KEY_RESEND_WINDOW_MS` (23 hours, an hour of margin,
+    measured from a `createdAt` stamped before the POST so the margin errs
+    towards refusing) is NOT re-sent: `beginSavedCardChargeAttempt` throws
+    `SavedCardChargeRefusedError` (`attempt_key_expired`) and a person checks
+    Stripe. That state is rare because the normal recovery is quicker: a
+    `payment_intent.succeeded` or `.payment_failed` webhook for an intent the
+    ledger does not know adopts the PENDING no-intent attempt row whose
+    `reference` equals the event's `request.idempotency_key` — the key is the one
+    thing both sides hold — and settles it, forward only, before the handler
+    proceeds as usual (`adoptSavedCardChargeAttemptForIntent`). Without that
+    adoption a captured charge whose response was lost was invisible even to
+    `INV-PAY-043`, and the re-send after 24 hours was a second charge.
   - **The #1992 pre-charge sweep excludes attempt rows by the key prefix, and
     the sweep and the mint share the constant** (`SAVED_CARD_CHARGE_KEY_PREFIX`,
     `INV-SSOT-002`). A still-unresolved attempt row on this card is this run's
     attempt, so cancelling its intent would cancel this run's own charge. The
     exclusion used to match two `reason` literals, which never covered the admin
-    route's rows at all; a legacy row minted under the shared key before #3267
-    (reason set, no `reference`) is now swept like a link intent, which is right
-    because no shared key re-returns its intent any more.
+    route's rows at all. The sweep also excludes, BY ID, the row this run's claim
+    chose to replay, because a row that is NOT an attempt row can still be this
+    run's attempt: an unresolved PRIMARY Stripe row that names an intent and
+    carries the very card about to be charged — a legacy row minted under the
+    shared key before #3267 (reason set, no `reference`), or a /pay link intent
+    the member is paying with that same saved card — is this booking's money in
+    flight on this card, so the claim replays it by retrieve rather than charging
+    beside it. Without that, at the deploy a legacy `processing` intent would be
+    swept, found uncancellable, and charged beside — the very double charge this
+    invariant exists to prevent.
   - **Ordering with `INV-PAY-054`, load-bearing and invisible from either side
     alone.** The retire path nulls `PaymentTransaction.paymentMethodId` on every
     row carrying the retired card, attempt rows included. That is safe ONLY
@@ -2042,5 +2110,8 @@ one, check the other.
     ledger that applies the status guards), `cron-confirm-pending.test.ts`
     ("#3267" and the "#3268" ordering pin),
     `admin-confirm-pending-guests-route.test.ts`,
-    `charge-saved-method-route.test.ts` (the claim it gained) and
-    `advisory-lock-guard.test.ts` (the two new `charge-saved-method` sites).
+    `charge-saved-method-route.test.ts` (the claim it gained),
+    `payment-transactions-refunds.test.ts` (the intent pointer an attempt row
+    must not null), `stripe-webhook-alerts.test.ts` (adoption by the event's
+    idempotency key) and `advisory-lock-guard.test.ts` (the two new
+    `charge-saved-method` sites).

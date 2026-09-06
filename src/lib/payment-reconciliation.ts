@@ -1073,8 +1073,10 @@ async function settleBookingPaymentInTransaction(
       // exactly-once replay outcome for a success that carries the SAME intent
       // the booking settled with (webhook redelivery, the confirm-payment
       // route racing the webhook, payment-link reconcile, charge-saved-method
-      // and cron-confirm-pending reruns replaying their `pending_charge_`
-      // Stripe idempotency key, confirm-pending-guests retries). But a
+      // and cron-confirm-pending reruns replaying the attempt row's OWN intent
+      // — since #3267 a replay retrieves the intent the attempt recorded
+      // rather than re-sending a shared `pending_charge_<bookingId>` key,
+      // which no path mints any more — confirm-pending-guests retries). But a
       // DIFFERENT intent capturing against an already-PAID booking is double
       // money: the residual #1967 split-child window, where the /pay link
       // intent (client secret already in the member's browser) and the

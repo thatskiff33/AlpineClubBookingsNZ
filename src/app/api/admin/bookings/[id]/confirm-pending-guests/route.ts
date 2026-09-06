@@ -10,10 +10,10 @@ import { readStripeErrorFields } from "@/lib/stripe-errors";
 import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
 import {
   beginSavedCardChargeAttempt,
-  chargeSavedCardAttempt,
   SAVED_CARD_CHARGE_REASON,
   SavedCardChargeRefusedError,
 } from "@/lib/saved-card-charge-attempt";
+import { chargeSavedCardAttempt } from "@/lib/saved-card-charge-request";
 import {
   describeUnsettledPaymentIntent,
   settleSavedCardChargeAttempt,
