@@ -4,7 +4,9 @@ import {
   type AgeTier,
   type Prisma,
 } from "@prisma/client";
-import { type SeasonRateData } from "@/lib/pricing";
+import {
+  type SeasonRateData,
+} from "@/lib/pricing";
 import {
   assertMembershipTypeBookingAllowed,
   priceBookingGuestsWithMembershipTypePolicy,
@@ -87,16 +89,14 @@ import { SELF_REMOVABLE_GUEST_BOOKING_STATUSES } from "@/lib/booking-guest-self-
 export class BookingGuestRemovalError extends Error {
   constructor(
     message: string,
-    public readonly status: number,
+    public readonly status: number
   ) {
     super(message);
   }
 }
 
 export type RemoveBookingGuestResult = {
-  booking: Prisma.BookingGetPayload<{
-    include: { guests: true; payment: true };
-  }>;
+  booking: Prisma.BookingGetPayload<{ include: { guests: true; payment: true } }>;
   removedGuest: Prisma.BookingGuestGetPayload<Record<string, never>>;
   priceDiffCents: number;
   refundAmountCents: number;
@@ -363,17 +363,17 @@ export async function removeBookingGuestInTransaction({
       },
       payment: true,
       member: true,
-      promoRedemption: {
-        include: {
-          guestTargets: { select: { bookingGuestId: true } },
-          promoCode: {
-            include: {
-              assignments: { select: { memberId: true } },
-              lodges: { select: { lodgeId: true } },
+        promoRedemption: {
+          include: {
+            guestTargets: { select: { bookingGuestId: true } },
+            promoCode: {
+              include: {
+                assignments: { select: { memberId: true } },
+                lodges: { select: { lodgeId: true } },
+              },
             },
           },
         },
-      },
     },
   });
 
@@ -461,13 +461,11 @@ export async function removeBookingGuestInTransaction({
 
   if (
     !isSelfRemoval &&
-    !["PENDING", "PAYMENT_PENDING", "CONFIRMED", "PAID"].includes(
-      booking.status,
-    )
+    !["PENDING", "PAYMENT_PENDING", "CONFIRMED", "PAID"].includes(booking.status)
   ) {
     throw new BookingGuestRemovalError(
       "Only PENDING, PAYMENT_PENDING, CONFIRMED, or PAID bookings can be modified",
-      400,
+      400
     );
   }
   if (
@@ -503,7 +501,7 @@ export async function removeBookingGuestInTransaction({
   if (!isSelfRemoval && !editPolicy.canModify) {
     throw new BookingGuestRemovalError(
       editPolicy.reason ?? "This booking cannot be modified",
-      400,
+      400
     );
   }
   if (isSelfRemoval && !selfRemovalIsFuture) {
@@ -515,14 +513,14 @@ export async function removeBookingGuestInTransaction({
   if (!isSelfRemoval && editPolicy.mode !== "future") {
     throw new BookingGuestRemovalError(
       "Use the full booking edit flow for in-progress booking guest changes",
-      400,
+      400
     );
   }
 
   if (booking.guests.length <= 1) {
     throw new BookingGuestRemovalError(
       "Cannot remove the last guest. Cancel the booking instead.",
-      400,
+      400
     );
   }
 
@@ -656,9 +654,7 @@ export async function removeBookingGuestInTransaction({
 
   await tx.bookingGuest.delete({ where: { id: guestId } });
 
-  const remainingGuests = booking.guests.filter(
-    (guest) => guest.id !== guestId,
-  );
+  const remainingGuests = booking.guests.filter((guest) => guest.id !== guestId);
   const seasonRateData = await loadSeasonRateData(tx, bookingLodgeId);
 
   const guestsForPricing = remainingGuests.map((guest) => ({
@@ -818,8 +814,8 @@ export async function removeBookingGuestInTransaction({
     });
     const repriced = priceBreakdown;
     // Each guest's own priced row, read once. The breakdown was built from
-    // `guestsForPricing`, so a guest with no row is a wiring defect and there is
-    // no amount to promo-allocate against — refused, not guessed (#2800).
+    // `guestsForPricing`, so a guest with no row is a wiring defect and there
+    // is no amount to promo-allocate against — refused, not guessed (#2800).
     const guestNightRates = guestsForPricing.map((guest, index) => {
       const priced = repriced.guests[index];
       if (priced === undefined) {
@@ -959,6 +955,9 @@ export async function removeBookingGuestInTransaction({
   if (repricedGuests) {
     await Promise.all(
       remainingGuests.map((guest, index) => {
+        // Same rule as the reprice above (#3031): this row's stored total is
+        // written straight from the breakdown, so a guest the engine produced
+        // no row for has no total and no safe substitute (#2800).
         const priced = repricedGuests.guests[index];
         if (priced === undefined) {
           throw new Error(
@@ -980,7 +979,7 @@ export async function removeBookingGuestInTransaction({
             ),
           },
         });
-      }),
+      })
     );
   }
 
@@ -1186,10 +1185,7 @@ export async function loadSeasonRateData(
   lodgeId?: string,
 ): Promise<SeasonRateData[]> {
   const seasons = await tx.season.findMany({
-    where: {
-      active: true,
-      ...(lodgeId ? lodgeNullTolerantScope(lodgeId) : {}),
-    },
+    where: { active: true, ...(lodgeId ? lodgeNullTolerantScope(lodgeId) : {}) },
     include: { membershipTypeRates: true },
   });
 
@@ -1202,7 +1198,7 @@ export async function loadSeasonRateData(
 
 async function removeGuestChoreAssignments(
   tx: Prisma.TransactionClient,
-  guestId: string,
+  guestId: string
 ) {
   const choreWarnings: string[] = [];
   const lockCandidates = await tx.choreAssignment.findMany({
@@ -1210,10 +1206,7 @@ async function removeGuestChoreAssignments(
     select: { date: true },
   });
 
-  await lockRosterDates(
-    tx,
-    lockCandidates.map((assignment) => assignment.date),
-  );
+  await lockRosterDates(tx, lockCandidates.map((assignment) => assignment.date));
 
   const guestAssignments = await tx.choreAssignment.findMany({
     where: { bookingGuestId: guestId },
@@ -1226,7 +1219,7 @@ async function removeGuestChoreAssignments(
       assignment.status === "COMPLETED"
     ) {
       choreWarnings.push(
-        `${assignment.choreTemplate.name} on ${formatDateOnly(assignment.date)} was ${assignment.status}`,
+        `${assignment.choreTemplate.name} on ${formatDateOnly(assignment.date)} was ${assignment.status}`
       );
     }
   }
@@ -1250,17 +1243,17 @@ export async function recalculateBookingPromo({
   bookingId: string;
   booking: Prisma.BookingGetPayload<{
     include: {
-      promoRedemption: {
-        include: {
-          guestTargets: { select: { bookingGuestId: true } };
-          promoCode: {
+          promoRedemption: {
             include: {
-              assignments: { select: { memberId: true } };
-              lodges: { select: { lodgeId: true } };
+              guestTargets: { select: { bookingGuestId: true } };
+              promoCode: {
+                include: {
+                  assignments: { select: { memberId: true } };
+                  lodges: { select: { lodgeId: true } };
+                };
+              };
             };
           };
-        };
-      };
     };
   }>;
   newTotalPriceCents: number;
@@ -1295,11 +1288,11 @@ export async function recalculateBookingPromo({
     // capacity lock is already held, so the order stays lodge -> promo row.
     const promo = await lockAndRefreshPromoCodeUsage(
       tx,
-      booking.promoRedemption.promoCode,
+      booking.promoRedemption.promoCode
     );
     const selectedGuestIndexes = selectedIndexesForStoredGuestTargets(
       booking.promoRedemption,
-      guestNightRates,
+      guestNightRates
     );
     const bookingLodgeId = booking.lodgeId ?? (await getDefaultLodgeId(tx));
     const application = await validateAndCalculatePromoDiscount(
@@ -1348,16 +1341,11 @@ export async function recalculateBookingPromo({
         discount.allocations,
         targetBookingGuestIdsForSelectedIndexes(
           guestNightRates,
-          application.selectedGuestIndexes,
+          application.selectedGuestIndexes
         ),
       );
     }
   }
 
-  return {
-    newDiscountCents,
-    newPromoAdjustmentCents,
-    promoRemoved,
-    promoCoverage,
-  };
+  return { newDiscountCents, newPromoAdjustmentCents, promoRemoved, promoCoverage };
 }
