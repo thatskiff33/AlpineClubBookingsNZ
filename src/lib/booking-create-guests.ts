@@ -164,13 +164,28 @@ export function buildGuestCreateData(
   checkOut: Date
 ) {
   return guests.map((g, i) => {
+    // #3167 (epic #2797) one level up from the per-night rule below: every call
+    // site hands this an engine breakdown built for exactly these guests, so a
+    // guest with no priced row is a wiring defect and there is no amount to
+    // write for them. Refusing is the only answer that does not invent money
+    // (#2800).
     const priced = price.guests[i];
+    if (priced === undefined) {
+      throw new Error(
+        `The booking-create guest writer has no priced guest at breakdown position ${i} of ${price.guests.length} (#3167).`,
+      );
+    }
     const nightDates = priced.nightDates ?? [];
-    const hasNights = nightDates.length > 0;
-    const stayStart = hasNights ? nightDates[0] : (g.stayStart ?? checkIn);
-    const stayEnd = hasNights
-      ? addDaysDateOnly(nightDates[nightDates.length - 1], 1)
-      : (g.stayEnd ?? checkOut);
+    // Both ends of the priced night set, read where the envelope is derived. A
+    // guest with no priced night keeps the booking-range fallback exactly as
+    // the length check gave it (INV-DATE, half-open).
+    const firstNight = nightDates[0];
+    const lastNight = nightDates.at(-1);
+    const stayStart = firstNight ?? (g.stayStart ?? checkIn);
+    const stayEnd =
+      lastNight !== undefined
+        ? addDaysDateOnly(lastNight, 1)
+        : (g.stayEnd ?? checkOut);
     return {
       firstName: g.firstName,
       lastName: g.lastName,

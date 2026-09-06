@@ -1752,13 +1752,24 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
     const assignedMemberIds = promoCode?.assignments?.length
       ? promoCode.assignments.map((a) => a.memberId)
       : null;
-    const guestNightRates = guests.map((guest, index) => ({
-      memberId: guest.memberId ?? null,
-      isMember: guest.isMember,
-      perNightRates: price.guests[index].perNightCents,
-      firstNight: guest.stayStart ?? checkIn,
-      nightDates: price.guests[index].nightDates,
-    }));
+    // Each guest's own priced row, read once. The breakdown was built for
+    // exactly this party, so a guest with no row would be a promo evaluated
+    // against nothing — refused rather than discounted on a guess (#2800).
+    const guestNightRates = guests.map((guest, index) => {
+      const priced = price.guests[index];
+      if (priced === undefined) {
+        throw new Error(
+          `Promo evaluation has no priced guest at breakdown position ${index} of ${price.guests.length} (#3167).`,
+        );
+      }
+      return {
+        memberId: guest.memberId ?? null,
+        isMember: guest.isMember,
+        perNightRates: priced.perNightCents,
+        firstNight: guest.stayStart ?? checkIn,
+        nightDates: priced.nightDates,
+      };
+    });
     const application = await validateAndCalculatePromoDiscount(
       promoCode,
       {

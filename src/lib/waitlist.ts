@@ -218,14 +218,25 @@ async function repriceWaitlistCandidate(
     });
 
     const newTotalPriceCents = priceBreakdown.totalPriceCents;
-    const guestNightRates = guestsForPricing.map((guest, index) => ({
-      bookingGuestId: guest.bookingGuestId,
-      memberId: guest.memberId,
-      isMember: guest.isMember,
-      perNightRates: priceBreakdown.guests[index].perNightCents,
-      nightDates: priceBreakdown.guests[index].nightDates,
-      firstNight: candidate.checkIn,
-    }));
+    // Each guest's own priced row, read once. The breakdown was built from
+    // `guestsForPricing`, so a guest with no row is a wiring defect and there
+    // is no amount to promo-allocate against — refused, not guessed (#2800).
+    const guestNightRates = guestsForPricing.map((guest, index) => {
+      const priced = priceBreakdown.guests[index];
+      if (priced === undefined) {
+        throw new Error(
+          `The waitlist offer reprice has no priced guest at breakdown position ${index} of ${priceBreakdown.guests.length} (#3031).`,
+        );
+      }
+      return {
+        bookingGuestId: guest.bookingGuestId,
+        memberId: guest.memberId,
+        isMember: guest.isMember,
+        perNightRates: priced.perNightCents,
+        nightDates: priced.nightDates,
+        firstNight: candidate.checkIn,
+      };
+    });
     const promoResult = await recalculateBookingPromo({
       tx,
       bookingId: candidate.id,
@@ -259,9 +270,18 @@ async function repriceWaitlistCandidate(
     // BETWEEN two writes would commit half a reprice — a guest at the new total
     // with its night rows already deleted. Everything that can refuse is
     // therefore resolved here, before the first mutation.
-    const repricedNightRows = candidate.guests.map((guest, index) => {
-      const nightDates = priceBreakdown.guests[index].nightDates ?? [];
-      return nightDates.map((stayDate, k) => ({
+    //
+    // Each guest is paired with its own priced row here, so the writes below
+    // read the pair rather than the breakdown by position again (#2800).
+    const repricedGuests = candidate.guests.map((guest, index) => {
+      const priced = priceBreakdown.guests[index];
+      if (priced === undefined) {
+        throw new Error(
+          `The waitlist offer reprice has no priced guest at breakdown position ${index} for booking guest ${guest.id} (#3031).`,
+        );
+      }
+      const nightDates = priced.nightDates ?? [];
+      const nightRows = nightDates.map((stayDate, k) => ({
         bookingGuestId: guest.id,
         stayDate,
         // NO `?? 0`. These rows become the booking's sold-price history from
@@ -271,25 +291,25 @@ async function repriceWaitlistCandidate(
         // stated once in `required-price-cents.ts` (#3031, #3167); all this
         // site says is which writer it is.
         priceCents: requiredNightPriceCents(
-          priceBreakdown.guests[index].perNightCents,
+          priced.perNightCents,
           k,
           stayDate,
           "the waitlist offer reprice",
         ),
       }));
+      return { guest, priced, nightRows };
     });
 
     await Promise.all(
-      candidate.guests.map(async (guest, index) => {
+      repricedGuests.map(async ({ guest, priced, nightRows }) => {
         await tx.bookingGuest.update({
           where: { id: guest.id },
           // Reprice overwrites the rate-membership-type snapshot alongside the
           // price (#1930, E4): the offer re-bases the whole booking at current
           // rates before the member confirms.
           data: {
-            priceCents: priceBreakdown.guests[index].priceCents,
-            rateMembershipTypeId:
-              priceBreakdown.guests[index].rateMembershipTypeId,
+            priceCents: priced.priceCents,
+            rateMembershipTypeId: priced.rateMembershipTypeId,
           },
         });
         // Delete-then-create, exactly as every other night writer does, because
@@ -297,10 +317,8 @@ async function repriceWaitlistCandidate(
         await tx.bookingGuestNight.deleteMany({
           where: { bookingGuestId: guest.id },
         });
-        if (repricedNightRows[index].length > 0) {
-          await tx.bookingGuestNight.createMany({
-            data: repricedNightRows[index],
-          });
+        if (nightRows.length > 0) {
+          await tx.bookingGuestNight.createMany({ data: nightRows });
         }
       })
     );

@@ -201,13 +201,24 @@ export async function resolvePromoInTransaction(
     promoLodges = lodgeRows;
   }
 
-  const guestNightRates = guests.map((guest, index) => ({
-    memberId: guest.memberId ?? null,
-    isMember: guest.isMember,
-    perNightRates: perNightCentsByGuest[index],
-    firstNight: guest.stayStart ?? checkIn,
-    nightDates: nightDatesByGuest?.[index],
-  }));
+  // Each guest's own per-night rates, read once. The caller builds this vector
+  // for exactly this party, so a guest with no rates would be a promo evaluated
+  // against nothing — refused rather than discounted on a guess (#2800).
+  const guestNightRates = guests.map((guest, index) => {
+    const perNightRates = perNightCentsByGuest[index];
+    if (perNightRates === undefined) {
+      throw new Error(
+        `Promo evaluation has no per-night rates for guest ${index + 1} of ${guests.length} (#3167).`,
+      );
+    }
+    return {
+      memberId: guest.memberId ?? null,
+      isMember: guest.isMember,
+      perNightRates,
+      firstNight: guest.stayStart ?? checkIn,
+      nightDates: nightDatesByGuest?.[index],
+    };
+  });
   const application = await validateAndCalculatePromoDiscount(
     promoCode ? { ...promoCode, lodges: promoLodges } : null,
     {
