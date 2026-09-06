@@ -25,3 +25,17 @@
   administrator now sees Stripe's own words. The charge-saved-method endpoint
   also now holds the booking's places while it charges, exactly as the other
   two paths do. No operator action is needed.
+
+  Three more cases are now handled rather than hoped about. If an earlier
+  attempt's payment is still going through at the card network, the system
+  waits for it instead of starting a second charge beside it — a card payment
+  in that state cannot be cancelled, and the old code read that refusal as
+  "nothing to do". If a charge was sent but Stripe's reply never arrived, the
+  payment confirmation Stripe sends separately is now matched back to the
+  attempt that made it, so the money is recorded; and if that has not happened
+  within a day, the system refuses to re-send rather than risk charging twice,
+  and alerts an administrator to check Stripe — repeating that alert on the
+  same reducing schedule the other stuck-booking alerts use, instead of eight
+  times a day. Finally, a charge that is still being attempted no longer
+  clears the booking's payment link, which could leave a member with a payment
+  page that would not go through.

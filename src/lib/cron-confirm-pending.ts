@@ -1015,9 +1015,16 @@ async function releaseChargeClaim(
  *     has already been ended and its intent is cancelled by
  *     `chargeSavedCardAttempt` before it charges, not here. Before #3267 this
  *     exclusion matched two `reason` literals, which never covered the admin
- *     route's rows at all — and a LEGACY row minted under the shared key
- *     before #3267 (reason set, no `reference`) is now swept like a link
- *     intent, which is right: no shared key re-returns its intent any more.
+ *     route's rows at all.
+ *   - It also excludes, BY ID, the one row the claim chose to REPLAY. A row
+ *     that is not an attempt row can still be this run's attempt: an
+ *     unresolved row naming an intent on the very card about to be charged —
+ *     a LEGACY row minted under the shared key before #3267 (reason set, no
+ *     `reference`), or a /pay link intent the member is paying with that same
+ *     saved card — is this booking's money in flight on this card, so the
+ *     claim replays it by retrieve. Sweeping it would cancel the intent this
+ *     run is waiting on, and at the deploy a legacy `processing` intent would
+ *     be swept, found uncancellable, and charged beside.
  *
  * Deliberately Stripe-side only and best-effort (no durable
  * CANCEL_PAYMENT_INTENT recovery operation): the durable cancel path's
