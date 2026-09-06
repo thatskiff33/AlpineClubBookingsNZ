@@ -22,6 +22,7 @@
     "",
     "Background: docs/MAINTENANCE.md -> \"Semgrep parse coverage\"."
   ],
+  "minimumScannedFiles": 4000,
   "files": [
     "src/app/(admin)/admin/ai-diagnostics/__tests__/diagnostics-budget-card.test.tsx",
     "src/app/(admin)/admin/book/__tests__/retroactive-club-day.test.tsx",

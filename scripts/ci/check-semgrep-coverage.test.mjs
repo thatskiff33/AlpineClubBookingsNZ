@@ -5,6 +5,7 @@ import {
   findCoverageFailures,
   normalisePath,
   readAllowlistFiles,
+  readMinimumScannedFiles,
   summariseCoverage,
 } from "./check-semgrep-coverage.mjs";
 
@@ -34,8 +35,17 @@ describe("classifyErrorType", () => {
     expect(classifyErrorType(partialSpan("a.ts", 1))).toBe("partial");
   });
 
-  it("leaves timeouts to the scan step rather than calling them unparsed source", () => {
-    expect(classifyErrorType("Timeout")).toBe("not-parse");
+  it("treats a timeout as rules abandoned, not as somebody else's problem", () => {
+    // This test used to assert `"not-parse"`, on the premise that the scan
+    // step fails on a timeout. MEASURED, and false: the exact blocking
+    // invocation plus `--timeout 1` exits 0 with 11 `Timeout` errors over 7
+    // files. Nothing failed, and a live `react-dangerouslysetinnerhtml`
+    // finding went missing behind one.
+    expect(classifyErrorType("Timeout")).toBe("abandoned");
+    expect(classifyErrorType("Out of memory")).toBe("abandoned");
+    expect(classifyErrorType("Timeout during interfile analysis")).toBe(
+      "abandoned",
+    );
   });
 
   it("fails closed on a type it has never seen", () => {
@@ -61,6 +71,7 @@ describe("summariseCoverage", () => {
 
     expect(summary.wholeFile).toEqual(["src/dead.ts"]);
     expect(summary.partial).toEqual(["src/partial.tsx"]);
+    expect(summary.abandoned).toEqual(["src/slow.ts"]);
     expect(summary.unknown).toEqual([]);
     expect(summary.scannedCount).toBe(3);
   });
@@ -110,12 +121,27 @@ describe("readAllowlistFiles", () => {
   });
 });
 
+describe("readMinimumScannedFiles", () => {
+  it("reads a positive integer floor", () => {
+    expect(readMinimumScannedFiles({ minimumScannedFiles: 4000 })).toBe(4000);
+  });
+
+  it("refuses a missing or nonsensical floor rather than scanning without one", () => {
+    expect(() => readMinimumScannedFiles({})).toThrow(/minimumScannedFiles/);
+    expect(() => readMinimumScannedFiles({ minimumScannedFiles: 0 })).toThrow();
+    expect(() =>
+      readMinimumScannedFiles({ minimumScannedFiles: "4000" }),
+    ).toThrow();
+  });
+});
+
 describe("findCoverageFailures", () => {
   const summary = (over = {}) => ({
     wholeFile: [],
     partial: [],
+    abandoned: [],
     unknown: [],
-    scannedCount: 0,
+    scannedCount: 5000,
     ...over,
   });
 
@@ -178,6 +204,68 @@ describe("findCoverageFailures", () => {
     expect(failures[0].detail).toContain("no longer exists");
   });
 
+  it("fails a file whose rules were abandoned, because the scan step will not", () => {
+    // The blocker this gate was missing: measured, `semgrep scan --error`
+    // exits 0 with timeouts, and Semgrep's default --timeout-threshold 3 drops
+    // ALL remaining rules on a file after three of them time out. So a busy
+    // runner silently stops running the security rules on the biggest files.
+    const failures = findCoverageFailures(
+      summary({ abandoned: ["src/big.ts"] }),
+      [],
+      alwaysExists,
+      4000,
+    );
+
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toMatchObject({
+      kind: "rules abandoned on a readable file",
+      path: "src/big.ts",
+    });
+  });
+
+  it("does not also call an abandoned file's allowlist entry stale", () => {
+    // An abandoned file reports no PartialParsing, so it LOOKS like it started
+    // parsing cleanly. It is not evidence of anything, and reporting it as
+    // stale makes a required check flap in both directions at once.
+    const failures = findCoverageFailures(
+      summary({ abandoned: ["src/known.tsx"] }),
+      ["src/known.tsx"],
+      alwaysExists,
+      4000,
+    );
+
+    expect(failures).toHaveLength(1);
+    expect(failures[0].kind).toBe("rules abandoned on a readable file");
+    expect(failures.some((f) => f.kind === "stale allowlist entry")).toBe(false);
+  });
+
+  it("refuses a scan that scanned nothing", () => {
+    const failures = findCoverageFailures(
+      summary({ scannedCount: 0 }),
+      [],
+      alwaysExists,
+      4000,
+    );
+
+    expect(failures).toHaveLength(1);
+    expect(failures[0].kind).toBe("scan covered nothing");
+  });
+
+  it("refuses a scan that fell below the committed file floor", () => {
+    // Closes the axis the allowlist cannot see: a new --exclude or
+    // .semgrepignore entry drops files from coverage with no error at all.
+    const failures = findCoverageFailures(
+      summary({ scannedCount: 120 }),
+      [],
+      alwaysExists,
+      4000,
+    );
+
+    expect(failures).toHaveLength(1);
+    expect(failures[0].kind).toBe("scan covered too little");
+    expect(failures[0].detail).toContain("4000");
+  });
+
   it("fails an unrecognised scan error rather than ignoring it", () => {
     const failures = findCoverageFailures(
       summary({ unknown: [{ path: "src/x.ts", type: '"Brand new failure"' }] }),
@@ -206,12 +294,6 @@ describe("normalisePath", () => {
   });
 
   it("matches a backslash report against a forward-slash allowlist", () => {
-    const coverage = {
-      wholeFile: [],
-      partial: [],
-      unknown: [],
-      scannedCount: 0,
-    };
     const summary = summariseCoverage({
       errors: [
         {
@@ -220,7 +302,6 @@ describe("normalisePath", () => {
         },
       ],
     });
-    void coverage;
     expect(summary.partial).toEqual(["src/lib/known.tsx"]);
     expect(
       findCoverageFailures(summary, readAllowlistFiles({ files: ["src/lib/known.tsx"] }), () => true),

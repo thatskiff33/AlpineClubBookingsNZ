@@ -161,6 +161,7 @@ jobs:
               --config p/react \
               --error \
               --metrics=off \
+              --timeout 0 \
               --exclude node_modules \
               --exclude .next \
               --exclude .semgrep/tests \
@@ -185,6 +186,21 @@ jobs:
         uses: actions/setup-node@v7.0.0
         with:
           node-version: 24
+
+      # `--timeout 0` (#2842) disables the per-rule timeout, and it is a
+      # SECURITY fix rather than a performance tweak. Semgrep's default is 5s
+      # per rule per file with `--timeout-threshold 3`, which abandons ALL
+      # REMAINING RULES on a file after three rule timeouts. Measured on this
+      # tree: a loaded machine produced 7 such files and the run lost a live
+      # `react-dangerouslysetinnerhtml` XSS finding, with `--error` still
+      # exiting 0 and no error attributed to that path - the security rules
+      # stop running on exactly the biggest files and nothing says so.
+      # Measured cost of removing the cliff: 78s wall for the whole tree with
+      # `--timeout 0` versus the same 4,235 targets and 169 partial-parse
+      # files with it on, i.e. no measurable cost here. The job's
+      # `timeout-minutes: 30` remains the backstop against a pathological
+      # rule, and the coverage gate below fails the build if a timeout or an
+      # OOM ever does abandon a file.
 
       # #2842. The scan above exits 0 on findings-free code even when it could
       # not PARSE some of that code: parse failures are reported at `warn` level

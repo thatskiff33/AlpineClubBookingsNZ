@@ -43,11 +43,24 @@ const WHOLE_FILE_PARSE_ERROR_TYPES = new Set([
 ]);
 
 /**
- * `errors[].type` values that are not about parsing. A timeout is a real
- * problem, but it is the scan step's to fail on, not this gate's to classify
- * as unparsed source.
+ * `errors[].type` values that mean Semgrep GAVE UP running rules on a file it
+ * could parse perfectly well.
+ *
+ * These were once treated as "not this gate's problem, the scan step fails on
+ * them". **That premise was false and it cost a live finding.** Measured on
+ * this tree with the exact blocking invocation plus `--timeout 1` to force the
+ * condition: `semgrep scan --error` exits **0** with 11 `Timeout` errors across
+ * 7 files. It does not fail. And Semgrep's default `--timeout-threshold 3`
+ * abandons ALL REMAINING RULES on a file after three rule timeouts, so on a
+ * loaded runner the security rules - `react-unsanitized-*`, `express-ssrf`,
+ * `xss.direct-response-write` - stop running on exactly the biggest files,
+ * with no error attributed to the finding they would have reported. A
+ * `react-dangerouslysetinnerhtml` XSS finding vanished that way while the scan
+ * exited 0 and this gate printed "coverage did not shrink".
+ *
+ * So they are a coverage hole, they are this gate's problem, and they FAIL it.
  */
-const NON_PARSE_ERROR_TYPES = new Set([
+const RULES_ABANDONED_ERROR_TYPES = new Set([
   "Timeout",
   "Out of memory",
   "Timeout during interfile analysis",
@@ -60,7 +73,7 @@ const NON_PARSE_ERROR_TYPES = new Set([
  * array - `["PartialParsing", [span, ...]]` - for a recovered region.
  *
  * @param {unknown} type
- * @returns {"whole-file" | "partial" | "not-parse" | "unknown"}
+ * @returns {"whole-file" | "partial" | "abandoned" | "unknown"}
  */
 export function classifyErrorType(type) {
   if (Array.isArray(type)) {
@@ -68,7 +81,7 @@ export function classifyErrorType(type) {
   }
   if (typeof type !== "string") return "unknown";
   if (WHOLE_FILE_PARSE_ERROR_TYPES.has(type)) return "whole-file";
-  if (NON_PARSE_ERROR_TYPES.has(type)) return "not-parse";
+  if (RULES_ABANDONED_ERROR_TYPES.has(type)) return "abandoned";
   return "unknown";
 }
 
@@ -96,6 +109,7 @@ export function normalisePath(path) {
 export function summariseCoverage(report) {
   const wholeFile = new Set();
   const partial = new Set();
+  const abandoned = new Set();
   /** @type {{ path: string, type: string }[]} */
   const unknown = [];
 
@@ -111,7 +125,8 @@ export function summariseCoverage(report) {
       case "partial":
         partial.add(path);
         break;
-      case "not-parse":
+      case "abandoned":
+        abandoned.add(path);
         break;
       default:
         unknown.push({ path, type: JSON.stringify(error.type) });
@@ -126,6 +141,7 @@ export function summariseCoverage(report) {
   return {
     wholeFile: [...wholeFile].sort(),
     partial: [...partial].sort(),
+    abandoned: [...abandoned].sort(),
     unknown,
     scannedCount: report.paths?.scanned?.length ?? 0,
   };
@@ -135,6 +151,16 @@ export function summariseCoverage(report) {
  * @param {{ files?: unknown }} allowlist
  * @returns {string[]}
  */
+export function readMinimumScannedFiles(allowlist) {
+  const floor = allowlist?.minimumScannedFiles;
+  if (typeof floor !== "number" || !Number.isInteger(floor) || floor < 1) {
+    throw new Error(
+      "Allowlist is malformed: expected a positive integer `minimumScannedFiles`.",
+    );
+  }
+  return floor;
+}
+
 export function readAllowlistFiles(allowlist) {
   if (!Array.isArray(allowlist?.files)) {
     throw new Error(
@@ -167,11 +193,51 @@ const KNOWN_CONSTRUCTS =
  * @param {ReadonlyArray<string>} allowlisted
  * @param {(path: string) => boolean} fileExists
  */
-export function findCoverageFailures(coverage, allowlisted, fileExists) {
+export function findCoverageFailures(
+  coverage,
+  allowlisted,
+  fileExists,
+  minimumScannedFiles,
+) {
   const allowed = new Set(allowlisted);
   const partial = new Set(coverage.partial);
+  const abandoned = new Set(coverage.abandoned ?? []);
   /** @type {{ kind: string, path: string, detail: string }[]} */
   const failures = [];
+
+  // F3: a scan that scanned nothing must never read as a pass. `scannedCount`
+  // was computed and printed but never compared to anything, so `echo "{}" |`
+  // this gate printed OK. The 169-entry allowlist masked it by accident, and
+  // the entire point of a shrinking allowlist is that the mask goes away. The
+  // floor also closes the other axis: a new `--exclude` or `.semgrepignore`
+  // entry can drop hundreds of files from coverage with no error at all.
+  if (typeof minimumScannedFiles === "number") {
+    if (coverage.scannedCount === 0) {
+      failures.push({
+        kind: "scan covered nothing",
+        path: "(whole scan)",
+        detail:
+          "The report lists zero scanned files. That is a broken scan, not clean code; refusing to report coverage on it.",
+      });
+    } else if (coverage.scannedCount < minimumScannedFiles) {
+      failures.push({
+        kind: "scan covered too little",
+        path: "(whole scan)",
+        detail: `Only ${coverage.scannedCount} files were scanned, below the committed floor of ${minimumScannedFiles}. Something removed files from the scan's scope - usually a new --exclude or .semgrepignore entry. If the drop is legitimate, lower \`minimumScannedFiles\` in .semgrep/unparsed-allowlist.json in the same change and say why.`,
+      });
+    }
+  }
+
+  // F1: rules abandoned on a file Semgrep could read. Measured: the scan step
+  // exits 0 on these, so if this gate stays quiet nothing reports them.
+  for (const path of coverage.abandoned ?? []) {
+    failures.push({
+      kind: "rules abandoned on a readable file",
+      path,
+      detail:
+        "Semgrep timed out or ran out of memory running rules on this file, so an unknown subset of rules never ran on it - with no finding and no parse error to show for it. The scan step exits 0 on this, which is why the check lives here. Re-run to see whether it is load-dependent; if it is persistent, shrink or split the file, and if the runner is simply too slow raise the scan's --timeout.",
+    });
+  }
 
   for (const entry of coverage.unknown) {
     failures.push({
@@ -200,6 +266,14 @@ export function findCoverageFailures(coverage, allowlisted, fileExists) {
 
   for (const path of allowlisted) {
     if (partial.has(path)) continue;
+    // F2: a file whose rules were abandoned reports no PartialParsing, so it
+    // LOOKS like it started parsing cleanly. It is not evidence of anything -
+    // measured, the entries that flipped to stale on a loaded machine were
+    // exactly the files that hit the timeout threshold. Reporting them as
+    // stale makes a required check flap in both directions, and a check that
+    // flaps gets re-run reflexively and then stops being read. The abandoned
+    // failure above already reports the real problem.
+    if (abandoned.has(path)) continue;
     const detail = fileExists(path)
       ? "This file is on the unparsed allowlist but Semgrep parsed all of it in this run. The allowlist only shrinks: delete this entry."
       : "This file is on the unparsed allowlist but no longer exists. Delete this entry.";
@@ -218,10 +292,14 @@ export function checkSemgrepCoverage(reportPath, allowlistPath) {
   const allowlist = JSON.parse(fs.readFileSync(allowlistPath, "utf8"));
   const coverage = summariseCoverage(report);
   const allowlisted = readAllowlistFiles(allowlist);
-  const failures = findCoverageFailures(coverage, allowlisted, (path) =>
-    fs.existsSync(path),
+  const minimumScannedFiles = readMinimumScannedFiles(allowlist);
+  const failures = findCoverageFailures(
+    coverage,
+    allowlisted,
+    (path) => fs.existsSync(path),
+    minimumScannedFiles,
   );
-  return { coverage, allowlisted, failures };
+  return { coverage, allowlisted, minimumScannedFiles, failures };
 }
 
 const invokedPath = process.argv[1] ? pathToFileURL(process.argv[1]).href : null;
@@ -244,16 +322,15 @@ if (invokedPath === import.meta.url) {
     process.exitCode = 1;
   } else {
     try {
-      const { coverage, allowlisted, failures } = checkSemgrepCoverage(
-        reportPath,
-        allowlistPath,
-      );
+      const { coverage, allowlisted, minimumScannedFiles, failures } =
+        checkSemgrepCoverage(reportPath, allowlistPath);
 
       console.log(
         [
           "Semgrep coverage gate (#2842):",
-          `  files scanned                 ${coverage.scannedCount}`,
+          `  files scanned                 ${coverage.scannedCount} (floor ${minimumScannedFiles})`,
           `  scanned by nothing            ${coverage.wholeFile.length}`,
+          `  rules abandoned (timeout/OOM) ${coverage.abandoned.length}`,
           `  partially unparsed            ${coverage.partial.length}`,
           `  allowlisted as unparsed       ${allowlisted.length}`,
         ].join("\n"),
