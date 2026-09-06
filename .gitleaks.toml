@@ -92,6 +92,10 @@ description = "A readable snake_case fixture id used as the idempotency key in t
 regexes = ['''^pending_charge_b1$''']
 
 [[allowlists]]
+description = "A fabricated idempotency key from ANOTHER subsystem (the late-cancel refund path), used in `saved-card-charge-attempt.test.ts` as the \"a key that is not ours\" case: the test proves a `payment_intent.succeeded` carrying somebody else's key adopts nothing. Readable snake_case, no credential, and it names no real intent or booking — the same class as `pending_charge_b1` above (#3267)."
+regexes = ['''^late_cancel_refund_bk_1_pi_x$''']
+
+[[allowlists]]
 description = "Prose, not credentials. `generic-api-key` matches the entropy of a sentence listing what the diagnostics tool returns — an auth outcome, then row, byte and timing counts — written as a slash-separated list. Same sentence in `diagnostics/tools/types.ts`, in the ADR that introduced it, and in the knowledge-bundle doc."
 regexes = ['''^row/byte/timing$''', '''^row/count/byte/timing$''']
 
