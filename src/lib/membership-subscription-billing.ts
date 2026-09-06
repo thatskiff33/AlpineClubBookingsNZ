@@ -893,7 +893,11 @@ export async function buildSubscriptionBillingPreview(input: {
         }));
         continue;
       }
-      if (member.familyGroupMemberships.length === 0) {
+      // Reading the member's first family is what says they are in one; the
+      // MISSING_FAMILY exception below is that same check, now stated by the
+      // value the resolution goes on to use (#2800).
+      const firstMembership = member.familyGroupMemberships[0];
+      if (firstMembership === undefined) {
         exceptions.push(exception({
           code: "MISSING_FAMILY", message: `${memberName} has a per-family fee but is not in a family.`,
           seasonYear: input.seasonYear, memberId: member.id, familyGroupId: null,
@@ -913,19 +917,7 @@ export async function buildSubscriptionBillingPreview(input: {
       // The chosen family then flows through the SAME downstream recipient checks
       // (MISSING_FAMILY_RECIPIENT / INVALID_FAMILY_RECIPIENT) as an unambiguous
       // family — no duplicated path.
-      // Reading the first membership is what says the member belongs to a
-      // family at all; the guard above has already excluded the no-family case,
-      // and a member with none has no family to bill (#2800, INV-LIFE).
-      let membership = member.familyGroupMemberships[0];
-      if (membership === undefined) {
-        exceptions.push(exception({
-          code: "AMBIGUOUS_FAMILY", message: `${memberName} belongs to no family; choose one before billing.`,
-          seasonYear: input.seasonYear, memberId: member.id, familyGroupId: null,
-          membershipTypeId: membershipType.id,
-          context: { memberName, familyGroupIds: [] },
-        }));
-        continue;
-      }
+      let membership = firstMembership;
       if (member.familyGroupMemberships.length > 1) {
         if (!member.billingFamilyGroupId) {
           exceptions.push(exception({

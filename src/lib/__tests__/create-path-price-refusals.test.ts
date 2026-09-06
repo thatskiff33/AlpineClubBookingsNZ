@@ -165,6 +165,71 @@ describe("buildGuestCreateData refuses a short per-night vector (#3167)", () => 
   });
 });
 
+/**
+ * One level up from the per-night vector: the GUEST's own row (#2800).
+ *
+ * `buildGuestCreateData` walks the guest list and reads `price.guests[i]` for
+ * each one. Every caller hands it a breakdown built for exactly those guests,
+ * so a guest with no row is a wiring defect — but before this it reached
+ * `priced.priceCents` on `undefined` and died with a TypeError naming nothing,
+ * three frames from the caller that built the short breakdown. The refusal is
+ * #3167's, moved up one level to where the money leaves the breakdown, and the
+ * alternative was a default that is invented money by definition.
+ */
+describe("buildGuestCreateData refuses a guest with no priced row (#3167, #2800)", () => {
+  it("CONTROL: two guests with two priced rows each write their own amount", () => {
+    const data = buildGuestCreateData(
+      [guestInput({ firstName: "Ada" }), guestInput({ firstName: "Grace" })],
+      {
+        guests: [
+          pricedGuest(),
+          pricedGuest({ priceCents: 12_000, perNightCents: [4_000, 4_000, 4_000] }),
+        ],
+      },
+      CHECK_IN,
+      CHECK_OUT
+    );
+
+    expect(data.map((guest) => guest.priceCents)).toEqual([24_000, 12_000]);
+    expect(data.map((guest) => guest.nights.create.length)).toEqual([3, 3]);
+  });
+
+  it("REFUSAL: a breakdown shorter than the guest list throws, naming the position", () => {
+    expect(() =>
+      buildGuestCreateData(
+        [guestInput({ firstName: "Ada" }), guestInput({ firstName: "Grace" })],
+        { guests: [pricedGuest()] },
+        CHECK_IN,
+        CHECK_OUT
+      )
+    ).toThrow(
+      "The booking-create guest writer has no priced guest at breakdown position 1 of 1 (#3167)."
+    );
+  });
+
+  it("REFUSAL: an empty breakdown refuses on the very first guest", () => {
+    expect(() =>
+      buildGuestCreateData([guestInput()], { guests: [] }, CHECK_IN, CHECK_OUT)
+    ).toThrow(
+      "The booking-create guest writer has no priced guest at breakdown position 0 of 0 (#3167)."
+    );
+  });
+
+  it("the stay envelope still comes from the priced nights, half-open", () => {
+    // The same read that now proves the row present also derives the envelope,
+    // so this pins that the range did not move with it (INV-DATE).
+    const data = buildGuestCreateData(
+      [guestInput()],
+      { guests: [pricedGuest()] },
+      CHECK_IN,
+      CHECK_OUT
+    );
+
+    expect(data[0].stayStart).toEqual(NIGHTS[0]);
+    expect(data[0].stayEnd).toEqual(dateOnlyFromParts(2026, 7, 4));
+  });
+});
+
 describe("requiredNightPriceCents (#3031, #3167)", () => {
   const stayDate = NIGHTS[0];
 

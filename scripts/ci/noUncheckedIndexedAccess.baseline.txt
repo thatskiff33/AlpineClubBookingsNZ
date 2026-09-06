@@ -276,8 +276,6 @@ src/lib/admin-members-service.ts:TS2532:Object is possibly 'undefined'.
 src/lib/admin-occupancy.ts:TS18048:'monthPart' is possibly 'undefined'.
 src/lib/admin-occupancy.ts:TS18048:'yearPart' is possibly 'undefined'.
 src/lib/admin-operational-state.ts:TS2322:Type '"accountCredit" | "cardRefund" | "restoredCredit" | undefined' is not assignable to type 'SettlementKind'. Type 'undefined' is not assignable to type 'SettlementKind'.
-src/lib/adult-member-hosting-review.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/adult-member-hosting-review.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
 src/lib/analytics-route-policy.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
 src/lib/analytics-route-policy.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
 src/lib/audit-query.ts:TS2532:Object is possibly 'undefined'.
@@ -287,246 +285,6 @@ src/lib/backup.ts:TS18048:'paymentCount' is possibly 'undefined'.
 src/lib/backup.ts:TS2322:Type 'number | undefined' is not assignable to type 'number'. Type 'undefined' is not assignable to type 'number'.
 src/lib/backup.ts:TS2322:Type 'number | undefined' is not assignable to type 'number'. Type 'undefined' is not assignable to type 'number'.
 src/lib/backup.ts:TS2322:Type 'number | undefined' is not assignable to type 'number'. Type 'undefined' is not assignable to type 'number'.
-src/lib/bed-allocation-manual-writes.ts:TS18048:'firstAllocation' is possibly 'undefined'.
-src/lib/bed-allocation-manual-writes.ts:TS18048:'firstAllocation' is possibly 'undefined'.
-src/lib/bed-allocation-manual-writes.ts:TS18048:'firstAllocation' is possibly 'undefined'.
-src/lib/bed-allocation-manual-writes.ts:TS18048:'firstAllocation' is possibly 'undefined'.
-src/lib/bed-allocation-manual-writes.ts:TS18048:'firstAllocation' is possibly 'undefined'.
-src/lib/bed-allocation-manual-writes.ts:TS18048:'firstAllocation' is possibly 'undefined'.
-src/lib/bed-allocation-manual-writes.ts:TS18048:'firstAllocation' is possibly 'undefined'.
-src/lib/bed-allocation-move.ts:TS18048:'primary' is possibly 'undefined'.
-src/lib/bed-allocation-move.ts:TS18048:'primary' is possibly 'undefined'.
-src/lib/bed-allocation-move.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/bed-allocation-move.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/bed-allocation-move.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/bed-allocation-move.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/bed-allocation-move.ts:TS2532:Object is possibly 'undefined'.
-src/lib/bed-allocation-placement.ts:TS18048:'primary' is possibly 'undefined'.
-src/lib/bed-allocation-placement.ts:TS18048:'primary' is possibly 'undefined'.
-src/lib/bed-allocation-placement.ts:TS18048:'primary' is possibly 'undefined'.
-src/lib/bed-allocation-range-assign.ts:TS18048:'primary' is possibly 'undefined'.
-src/lib/bed-allocation-range-assign.ts:TS18048:'primary' is possibly 'undefined'.
-src/lib/bed-allocation-range-assign.ts:TS18048:'primary' is possibly 'undefined'.
-src/lib/bed-allocation-range-assign.ts:TS18048:'primary' is possibly 'undefined'.
-src/lib/bed-allocation-range-assign.ts:TS18048:'primary' is possibly 'undefined'.
-src/lib/bed-allocation-range-assign.ts:TS18048:'primary' is possibly 'undefined'.
-src/lib/bed-allocation-range-assign.ts:TS18048:'primary' is possibly 'undefined'.
-src/lib/bed-allocation-range-assign.ts:TS18048:'primary' is possibly 'undefined'.
-src/lib/bed-allocation-range-assign.ts:TS18048:'primary' is possibly 'undefined'.
-src/lib/bed-allocation-range-assign.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/bed-allocation-warnings.ts:TS18048:'first' is possibly 'undefined'.
-src/lib/bed-allocation-warnings.ts:TS18048:'first' is possibly 'undefined'.
-src/lib/bed-allocation-warnings.ts:TS18048:'first' is possibly 'undefined'.
-src/lib/bed-allocation-warnings.ts:TS18048:'first' is possibly 'undefined'.
-src/lib/bed-allocation-warnings.ts:TS18048:'first' is possibly 'undefined'.
-src/lib/bed-allocation-warnings.ts:TS18048:'first' is possibly 'undefined'.
-src/lib/bed-allocation-warnings.ts:TS18048:'first' is possibly 'undefined'.
-src/lib/bed-allocation-warnings.ts:TS18048:'first' is possibly 'undefined'.
-src/lib/bed-allocation-warnings.ts:TS18048:'first' is possibly 'undefined'.
-src/lib/bed-allocation-warnings.ts:TS18048:'first' is possibly 'undefined'.
-src/lib/bed-allocation-warnings.ts:TS18048:'first' is possibly 'undefined'.
-src/lib/bed-allocation-warnings.ts:TS18048:'first' is possibly 'undefined'.
-src/lib/bed-allocation-warnings.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/bed-allocation.ts:TS18048:'a' is possibly 'undefined'.
-src/lib/bed-allocation.ts:TS18048:'a' is possibly 'undefined'.
-src/lib/bed-allocation.ts:TS18048:'a' is possibly 'undefined'.
-src/lib/bed-allocation.ts:TS18048:'a' is possibly 'undefined'.
-src/lib/bed-allocation.ts:TS18048:'a' is possibly 'undefined'.
-src/lib/bed-allocation.ts:TS18048:'b' is possibly 'undefined'.
-src/lib/bed-allocation.ts:TS18048:'b' is possibly 'undefined'.
-src/lib/bed-allocation.ts:TS18048:'b' is possibly 'undefined'.
-src/lib/bed-allocation.ts:TS18048:'b' is possibly 'undefined'.
-src/lib/bed-allocation.ts:TS18048:'b' is possibly 'undefined'.
-src/lib/bed-allocation.ts:TS18048:'current' is possibly 'undefined'.
-src/lib/bed-allocation.ts:TS18048:'current' is possibly 'undefined'.
-src/lib/bed-allocation.ts:TS18048:'guestOrder' is possibly 'undefined'.
-src/lib/bed-allocation.ts:TS18048:'occupant' is possibly 'undefined'.
-src/lib/bed-allocation.ts:TS18048:'occupant' is possibly 'undefined'.
-src/lib/bed-allocation.ts:TS18048:'occupant' is possibly 'undefined'.
-src/lib/bed-allocation.ts:TS18048:'occupant' is possibly 'undefined'.
-src/lib/bed-allocation.ts:TS18048:'occupant' is possibly 'undefined'.
-src/lib/bed-allocation.ts:TS18048:'previous' is possibly 'undefined'.
-src/lib/bed-allocation.ts:TS18048:'previous' is possibly 'undefined'.
-src/lib/bed-allocation.ts:TS18048:'selected' is possibly 'undefined'.
-src/lib/bed-allocation.ts:TS18048:'selected' is possibly 'undefined'.
-src/lib/bed-allocation.ts:TS2322:Type '(StayGuest | undefined)[]' is not assignable to type 'StayGuest[]'. Type 'StayGuest | undefined' is not assignable to type 'StayGuest'. Type 'undefined' is not assignable to type 'StayGuest'.
-src/lib/bed-allocation.ts:TS2322:Type '(StayGuest[] | undefined)[]' is not assignable to type 'StayGuest[][]'. Type 'StayGuest[] | undefined' is not assignable to type 'StayGuest[]'. Type 'undefined' is not assignable to type 'StayGuest[]'.
-src/lib/bed-allocation.ts:TS2322:Type 'StayGuest | undefined' is not assignable to type 'StayGuest'. Type 'undefined' is not assignable to type 'StayGuest'.
-src/lib/bed-allocation.ts:TS2322:Type 'StayGuest | undefined' is not assignable to type 'StayGuest'. Type 'undefined' is not assignable to type 'StayGuest'.
-src/lib/bed-allocation.ts:TS2322:Type 'number | undefined' is not assignable to type 'number'. Type 'undefined' is not assignable to type 'number'.
-src/lib/bed-allocation.ts:TS2322:Type 'number | undefined' is not assignable to type 'number'. Type 'undefined' is not assignable to type 'number'.
-src/lib/bed-allocation.ts:TS2322:Type 'number | undefined' is not assignable to type 'number'. Type 'undefined' is not assignable to type 'number'.
-src/lib/bed-allocation.ts:TS2322:Type 'number | undefined' is not assignable to type 'number'. Type 'undefined' is not assignable to type 'number'.
-src/lib/bed-allocation.ts:TS2322:Type 'number | undefined' is not assignable to type 'number'. Type 'undefined' is not assignable to type 'number'.
-src/lib/bed-allocation.ts:TS2345:Argument of type '(SortedRoomWithBeds | undefined)[]' is not assignable to parameter of type 'SortedRoomWithBeds[]'. Type 'SortedRoomWithBeds | undefined' is not assignable to type 'SortedRoomWithBeds'. Type 'undefined' is not assignable to type 'SortedRoomWithBeds'.
-src/lib/bed-allocation.ts:TS2345:Argument of type 'PartyGuest | undefined' is not assignable to parameter of type 'PartyGuest'. Type 'undefined' is not assignable to type 'PartyGuest'.
-src/lib/bed-allocation.ts:TS2345:Argument of type 'StayGuest | undefined' is not assignable to parameter of type 'StayGuest'. Type 'undefined' is not assignable to type 'StayGuest'.
-src/lib/bed-allocation.ts:TS2345:Argument of type 'StayGuest | undefined' is not assignable to parameter of type 'StayGuest'. Type 'undefined' is not assignable to type 'StayGuest'.
-src/lib/bed-allocation.ts:TS2345:Argument of type 'StayGuest | undefined' is not assignable to parameter of type 'StayGuest'. Type 'undefined' is not assignable to type 'StayGuest'.
-src/lib/bed-allocation.ts:TS2345:Argument of type 'StayGuest | undefined' is not assignable to parameter of type 'StayGuest'. Type 'undefined' is not assignable to type 'StayGuest'.
-src/lib/bed-allocation.ts:TS2345:Argument of type 'StayGuest | undefined' is not assignable to parameter of type '{ familyGroupIds?: string[] | undefined; }'. Type 'undefined' is not assignable to type '{ familyGroupIds?: string[] | undefined; }'.
-src/lib/bed-allocation.ts:TS2345:Argument of type 'StayGuest | undefined' is not assignable to parameter of type '{ familyGroupIds?: string[] | undefined; }'. Type 'undefined' is not assignable to type '{ familyGroupIds?: string[] | undefined; }'.
-src/lib/bed-allocation.ts:TS2345:Argument of type 'number | undefined' is not assignable to parameter of type 'number'. Type 'undefined' is not assignable to type 'number'.
-src/lib/bed-allocation.ts:TS2345:Argument of type 'number | undefined' is not assignable to parameter of type 'number'. Type 'undefined' is not assignable to type 'number'.
-src/lib/bed-allocation.ts:TS2345:Argument of type 'number | undefined' is not assignable to parameter of type 'number'. Type 'undefined' is not assignable to type 'number'.
-src/lib/bed-allocation.ts:TS2345:Argument of type 'number | undefined' is not assignable to parameter of type 'number'. Type 'undefined' is not assignable to type 'number'.
-src/lib/bed-allocation.ts:TS2345:Argument of type 'number | undefined' is not assignable to parameter of type 'number'. Type 'undefined' is not assignable to type 'number'.
-src/lib/bed-allocation.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/bed-allocation.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/bed-allocation.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/bed-allocation.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/bed-allocation.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/bed-allocation.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/bed-allocation.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/bed-allocation.ts:TS2345:Argument of type '{ guestId: string; stayDate: string; roomId: string; bedId: string; ageTier: AgeTier | null | undefined; familyGroupIds: string[]; isNew: boolean; } | undefined' is not assignable to parameter of type '{ familyGroupIds?: string[] | undefined; }'. Type 'undefined' is not assignable to type '{ familyGroupIds?: string[] | undefined; }'.
-src/lib/bed-allocation.ts:TS2532:Object is possibly 'undefined'.
-src/lib/bed-allocation.ts:TS2532:Object is possibly 'undefined'.
-src/lib/bed-allocation.ts:TS2532:Object is possibly 'undefined'.
-src/lib/bed-allocation.ts:TS2538:Type 'undefined' cannot be used as an index type.
-src/lib/bed-allocation.ts:TS2538:Type 'undefined' cannot be used as an index type.
-src/lib/bed-allocation.ts:TS2538:Type 'undefined' cannot be used as an index type.
-src/lib/bed-allocation.ts:TS2538:Type 'undefined' cannot be used as an index type.
-src/lib/bed-allocation.ts:TS2538:Type 'undefined' cannot be used as an index type.
-src/lib/bed-allocation.ts:TS2538:Type 'undefined' cannot be used as an index type.
-src/lib/bed-allocation.ts:TS2538:Type 'undefined' cannot be used as an index type.
-src/lib/bed-allocation.ts:TS2538:Type 'undefined' cannot be used as an index type.
-src/lib/bed-allocation.ts:TS2538:Type 'undefined' cannot be used as an index type.
-src/lib/bed-allocation.ts:TS2538:Type 'undefined' cannot be used as an index type.
-src/lib/bed-allocation.ts:TS2538:Type 'undefined' cannot be used as an index type.
-src/lib/bed-allocation.ts:TS2538:Type 'undefined' cannot be used as an index type.
-src/lib/bed-allocation.ts:TS2538:Type 'undefined' cannot be used as an index type.
-src/lib/bed-allocation.ts:TS2538:Type 'undefined' cannot be used as an index type.
-src/lib/bed-allocation.ts:TS2769:No overload matches this call. Overload 1 of 3, '(that: string, locales?: LocalesArgument, options?: CollatorOptions | undefined): number', gave the following error. Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'. Overload 2 of 3, '(that: string, locales?: string | string[] | undefined, options?: CollatorOptions | undefined): number', gave the following error. Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'. Overload 3 of 3, '(that: string): number', gave the following error. Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/booking-batch-modification-service.ts:TS2532:Object is possibly 'undefined'.
-src/lib/booking-batch-modification-service.ts:TS2532:Object is possibly 'undefined'.
-src/lib/booking-batch-modification-service.ts:TS2532:Object is possibly 'undefined'.
-src/lib/booking-create-guests.ts:TS18048:'priced' is possibly 'undefined'.
-src/lib/booking-create-guests.ts:TS18048:'priced' is possibly 'undefined'.
-src/lib/booking-create-guests.ts:TS18048:'priced' is possibly 'undefined'.
-src/lib/booking-create-guests.ts:TS18048:'priced' is possibly 'undefined'.
-src/lib/booking-create-guests.ts:TS2345:Argument of type 'Date | undefined' is not assignable to parameter of type 'Date'. Type 'undefined' is not assignable to type 'Date'.
-src/lib/booking-create-promo.ts:TS2322:Type '{ memberId: string | null; isMember: boolean; perNightRates: number[] | undefined; firstNight: Date; nightDates: Date[] | undefined; }[]' is not assignable to type 'PromoDiscountGuestWithNights[]'. Type '{ memberId: string | null; isMember: boolean; perNightRates: number[] | undefined; firstNight: Date; nightDates: Date[] | undefined; }' is not assignable to type 'PromoDiscountGuestWithNights'. Types of property 'perNightRates' are incompatible. Type 'number[] | undefined' is not assignable to type 'number[]'. Type 'undefined' is not assignable to type 'number[]'.
-src/lib/booking-create.ts:TS2322:Type '{ id: string; createdAt: Date; updatedAt: Date; memberId: string; checkIn: Date; checkOut: Date; status: BookingStatus; totalPriceCents: number; discountCents: number; ... 45 more ...; otherLodgeId: string | null; }' is not assignable to type 'BookingWithGuests'. Property 'guests' is missing in type '{ id: string; createdAt: Date; updatedAt: Date; memberId: string; checkIn: Date; checkOut: Date; status: BookingStatus; totalPriceCents: number; discountCents: number; ... 45 more ...; otherLodgeId: string | null; }' but required in type '{ guests: { id: string; createdAt: Date; memberId: string | null; firstName: string; lastName: string; ageTier: AgeTier; bookingId: string; isMember: boolean; stayStart: Date; ... 10 more ...; departedAt: Date | null; }[]; }'.
-src/lib/booking-create.ts:TS2322:Type '{ id: string; createdAt: Date; updatedAt: Date; memberId: string; checkIn: Date; checkOut: Date; status: BookingStatus; totalPriceCents: number; discountCents: number; ... 45 more ...; otherLodgeId: string | null; }' is not assignable to type 'BookingWithGuests'. Property 'guests' is missing in type '{ id: string; createdAt: Date; updatedAt: Date; memberId: string; checkIn: Date; checkOut: Date; status: BookingStatus; totalPriceCents: number; discountCents: number; ... 45 more ...; otherLodgeId: string | null; }' but required in type '{ guests: { id: string; createdAt: Date; memberId: string | null; firstName: string; lastName: string; ageTier: AgeTier; bookingId: string; isMember: boolean; stayStart: Date; ... 10 more ...; departedAt: Date | null; }[]; }'.
-src/lib/booking-create.ts:TS2322:Type '{ nights: { create: { stayDate: Date; priceCents: number; }[]; }; consentStatus?: MemberGuestConsentStatus | null | undefined; consentRequestedAt?: Date | null | undefined; ... 11 more ...; rateMembershipTypeId: string | null; }[]' is not assignable to type '(((Without<BookingGuestCreateWithoutBookingInput, BookingGuestUncheckedCreateWithoutBookingInput> & BookingGuestUncheckedCreateWithoutBookingInput) | (Without<...> & BookingGuestCreateWithoutBookingInput)) & object) | BookingGuestCreateWithoutBookingInput[] | BookingGuestUncheckedCreateWithoutBookingInput[] | undefi...'. Type '{ nights: { create: { stayDate: Date; priceCents: number; }[]; }; consentStatus?: MemberGuestConsentStatus | null | undefined; consentRequestedAt?: Date | null | undefined; ... 11 more ...; rateMembershipTypeId: string | null; }[]' is not assignable to type 'BookingGuestCreateWithoutBookingInput[]'. Type '{ nights: { create: { stayDate: Date; priceCents: number; }[]; }; consentStatus?: $Enums.MemberGuestConsentStatus | null | undefined; consentRequestedAt?: Date | null | undefined; ... 11 more ...; rateMembershipTypeId: string | null; }' is not assignable to type 'BookingGuestCreateWithoutBookingInput'. Types of property 'stayStart' are incompatible. Type 'Date | undefined' is not assignable to type 'string | Date'. Type 'undefined' is not assignable to type 'string | Date'.
-src/lib/booking-create.ts:TS2322:Type '{ nights: { create: { stayDate: Date; priceCents: number; }[]; }; consentStatus?: MemberGuestConsentStatus | null | undefined; consentRequestedAt?: Date | null | undefined; ... 11 more ...; rateMembershipTypeId: string | null; }[]' is not assignable to type '(((Without<BookingGuestCreateWithoutBookingInput, BookingGuestUncheckedCreateWithoutBookingInput> & BookingGuestUncheckedCreateWithoutBookingInput) | (Without<...> & BookingGuestCreateWithoutBookingInput)) & object) | BookingGuestCreateWithoutBookingInput[] | BookingGuestUncheckedCreateWithoutBookingInput[] | undefi...'. Type '{ nights: { create: { stayDate: Date; priceCents: number; }[]; }; consentStatus?: MemberGuestConsentStatus | null | undefined; consentRequestedAt?: Date | null | undefined; ... 11 more ...; rateMembershipTypeId: string | null; }[]' is not assignable to type 'BookingGuestCreateWithoutBookingInput[]'. Type '{ nights: { create: { stayDate: Date; priceCents: number; }[]; }; consentStatus?: $Enums.MemberGuestConsentStatus | null | undefined; consentRequestedAt?: Date | null | undefined; ... 11 more ...; rateMembershipTypeId: string | null; }' is not assignable to type 'BookingGuestCreateWithoutBookingInput'. Types of property 'stayStart' are incompatible. Type 'Date | undefined' is not assignable to type 'string | Date'. Type 'undefined' is not assignable to type 'string | Date'.
-src/lib/booking-create.ts:TS2322:Type '{ nights: { create: { stayDate: Date; priceCents: number; }[]; }; consentStatus?: MemberGuestConsentStatus | null | undefined; consentRequestedAt?: Date | null | undefined; ... 11 more ...; rateMembershipTypeId: string | null; }[]' is not assignable to type '(((Without<BookingGuestCreateWithoutBookingInput, BookingGuestUncheckedCreateWithoutBookingInput> & BookingGuestUncheckedCreateWithoutBookingInput) | (Without<...> & BookingGuestCreateWithoutBookingInput)) & object) | BookingGuestCreateWithoutBookingInput[] | BookingGuestUncheckedCreateWithoutBookingInput[] | undefi...'. Type '{ nights: { create: { stayDate: Date; priceCents: number; }[]; }; consentStatus?: MemberGuestConsentStatus | null | undefined; consentRequestedAt?: Date | null | undefined; ... 11 more ...; rateMembershipTypeId: string | null; }[]' is not assignable to type 'BookingGuestCreateWithoutBookingInput[]'. Type '{ nights: { create: { stayDate: Date; priceCents: number; }[]; }; consentStatus?: $Enums.MemberGuestConsentStatus | null | undefined; consentRequestedAt?: Date | null | undefined; ... 11 more ...; rateMembershipTypeId: string | null; }' is not assignable to type 'BookingGuestCreateWithoutBookingInput'. Types of property 'stayStart' are incompatible. Type 'Date | undefined' is not assignable to type 'string | Date'. Type 'undefined' is not assignable to type 'string | Date'.
-src/lib/booking-create.ts:TS2322:Type '{ nights: { create: { stayDate: Date; priceCents: number; }[]; }; consentStatus?: MemberGuestConsentStatus | null | undefined; consentRequestedAt?: Date | null | undefined; ... 11 more ...; rateMembershipTypeId: string | null; }[]' is not assignable to type '(((Without<BookingGuestCreateWithoutBookingInput, BookingGuestUncheckedCreateWithoutBookingInput> & BookingGuestUncheckedCreateWithoutBookingInput) | (Without<...> & BookingGuestCreateWithoutBookingInput)) & object) | BookingGuestCreateWithoutBookingInput[] | BookingGuestUncheckedCreateWithoutBookingInput[] | undefi...'. Type '{ nights: { create: { stayDate: Date; priceCents: number; }[]; }; consentStatus?: MemberGuestConsentStatus | null | undefined; consentRequestedAt?: Date | null | undefined; ... 11 more ...; rateMembershipTypeId: string | null; }[]' is not assignable to type 'BookingGuestCreateWithoutBookingInput[]'. Type '{ nights: { create: { stayDate: Date; priceCents: number; }[]; }; consentStatus?: $Enums.MemberGuestConsentStatus | null | undefined; consentRequestedAt?: Date | null | undefined; ... 11 more ...; rateMembershipTypeId: string | null; }' is not assignable to type 'BookingGuestCreateWithoutBookingInput'. Types of property 'stayStart' are incompatible. Type 'Date | undefined' is not assignable to type 'string | Date'. Type 'undefined' is not assignable to type 'string | Date'.
-src/lib/booking-create.ts:TS2339:Property 'guests' does not exist on type '{ id: string; createdAt: Date; updatedAt: Date; memberId: string; checkIn: Date; checkOut: Date; status: BookingStatus; totalPriceCents: number; discountCents: number; ... 45 more ...; otherLodgeId: string | null; }'.
-src/lib/booking-create.ts:TS2339:Property 'guests' does not exist on type '{ id: string; createdAt: Date; updatedAt: Date; memberId: string; checkIn: Date; checkOut: Date; status: BookingStatus; totalPriceCents: number; discountCents: number; ... 45 more ...; otherLodgeId: string | null; }'.
-src/lib/booking-create.ts:TS2339:Property 'guests' does not exist on type '{ id: string; createdAt: Date; updatedAt: Date; memberId: string; checkIn: Date; checkOut: Date; status: BookingStatus; totalPriceCents: number; discountCents: number; ... 45 more ...; otherLodgeId: string | null; }'.
-src/lib/booking-create.ts:TS2339:Property 'guests' does not exist on type '{ id: string; createdAt: Date; updatedAt: Date; memberId: string; checkIn: Date; checkOut: Date; status: BookingStatus; totalPriceCents: number; discountCents: number; ... 45 more ...; otherLodgeId: string | null; }'.
-src/lib/booking-create.ts:TS2532:Object is possibly 'undefined'.
-src/lib/booking-create.ts:TS2532:Object is possibly 'undefined'.
-src/lib/booking-date-modification-service.ts:TS2532:Object is possibly 'undefined'.
-src/lib/booking-date-modification-service.ts:TS2532:Object is possibly 'undefined'.
-src/lib/booking-date-modification-service.ts:TS2532:Object is possibly 'undefined'.
-src/lib/booking-date-modification-service.ts:TS2532:Object is possibly 'undefined'.
-src/lib/booking-date-modification-service.ts:TS2532:Object is possibly 'undefined'.
-src/lib/booking-date-modification-service.ts:TS2532:Object is possibly 'undefined'.
-src/lib/booking-edit-guest-ranges.ts:TS18048:'entry' is possibly 'undefined'.
-src/lib/booking-edit-guest-ranges.ts:TS18048:'entry' is possibly 'undefined'.
-src/lib/booking-edit-guest-ranges.ts:TS18048:'entry' is possibly 'undefined'.
-src/lib/booking-edit-guest-ranges.ts:TS18048:'entry' is possibly 'undefined'.
-src/lib/booking-edit-guest-ranges.ts:TS18048:'guestBreakdown' is possibly 'undefined'.
-src/lib/booking-edit-guest-ranges.ts:TS18048:'guestBreakdown' is possibly 'undefined'.
-src/lib/booking-edit-guest-ranges.ts:TS18048:'priced' is possibly 'undefined'.
-src/lib/booking-edit-guest-ranges.ts:TS18048:'soldNightPriceByKey' is possibly 'undefined'.
-src/lib/booking-edit-guest-ranges.ts:TS2322:Type 'ReadonlyMap<string, number> | undefined' is not assignable to type 'ReadonlyMap<string, number>'. Type 'undefined' is not assignable to type 'ReadonlyMap<string, number>'.
-src/lib/booking-edit-guest-ranges.ts:TS2345:Argument of type 'Map<string, number> | undefined' is not assignable to parameter of type 'ReadonlyMap<string, number>'. Type 'undefined' is not assignable to type 'ReadonlyMap<string, number>'.
-src/lib/booking-edit-guest-ranges.ts:TS2345:Argument of type 'Map<string, number> | undefined' is not assignable to parameter of type 'ReadonlyMap<string, number>'. Type 'undefined' is not assignable to type 'ReadonlyMap<string, number>'.
-src/lib/booking-edit-guest-ranges.ts:TS2345:Argument of type 'Map<string, number> | undefined' is not assignable to parameter of type 'ReadonlyMap<string, number>'. Type 'undefined' is not assignable to type 'ReadonlyMap<string, number>'.
-src/lib/booking-edit-guest-ranges.ts:TS2345:Argument of type 'ReadonlyMap<string, number> | undefined' is not assignable to parameter of type 'ReadonlyMap<string, number>'. Type 'undefined' is not assignable to type 'ReadonlyMap<string, number>'.
-src/lib/booking-edit-guest-ranges.ts:TS2345:Argument of type 'number | undefined' is not assignable to parameter of type 'number'. Type 'undefined' is not assignable to type 'number'.
-src/lib/booking-edit-guest-ranges.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/booking-edit-guest-ranges.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/booking-edit-guest-ranges.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/booking-edit-guest-ranges.ts:TS2345:Argument of type '{ guest: ExistingBookingEditGuest; stayStart: Date; proposedStayEnd: Date; storedNightPriceByKey: Map<string, number | null>; heldNightKeys: string[]; ... 7 more ...; removedFromFuture: boolean; } | undefined' is not assignable to parameter of type '{ heldNightKeys: readonly string[]; proposedNightKeySet: ReadonlySet<string>; }'. Type 'undefined' is not assignable to type '{ heldNightKeys: readonly string[]; proposedNightKeySet: ReadonlySet<string>; }'.
-src/lib/booking-edit-guest-ranges.ts:TS2345:Argument of type '{ guest: ExistingBookingEditGuest; stayStart: Date; proposedStayEnd: Date; storedNightPriceByKey: Map<string, number | null>; heldNightKeys: string[]; ... 7 more ...; removedFromFuture: boolean; } | undefined' is not assignable to parameter of type '{ proposedNightKeys: readonly string[]; heldNightKeySet: ReadonlySet<string>; }'. Type 'undefined' is not assignable to type '{ proposedNightKeys: readonly string[]; heldNightKeySet: ReadonlySet<string>; }'.
-src/lib/booking-email-html.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/booking-exception-approval.ts:TS18048:'normalized' is possibly 'undefined'.
-src/lib/booking-exception-approval.ts:TS18048:'normalized' is possibly 'undefined'.
-src/lib/booking-exception-approval.ts:TS18048:'normalized' is possibly 'undefined'.
-src/lib/booking-exception-approval.ts:TS18048:'normalized' is possibly 'undefined'.
-src/lib/booking-exception-approval.ts:TS18048:'normalized' is possibly 'undefined'.
-src/lib/booking-exception-approval.ts:TS18048:'normalized' is possibly 'undefined'.
-src/lib/booking-exception-approval.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/booking-exception-approval.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/booking-exception-approval.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/booking-exception-approval.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/booking-exception-offer.ts:TS2532:Object is possibly 'undefined'.
-src/lib/booking-exception-request-service.ts:TS2322:Type '{ firstName: string; lastName: string; ageTier: string; isMember: boolean; memberId: string | null; nights: string[] | undefined; }[]' is not assignable to type 'ProposalGuest[]'. Type '{ firstName: string; lastName: string; ageTier: string; isMember: boolean; memberId: string | null; nights: string[] | undefined; }' is not assignable to type 'ProposalGuest'. Types of property 'nights' are incompatible. Type 'string[] | undefined' is not assignable to type 'string[]'. Type 'undefined' is not assignable to type 'string[]'.
-src/lib/booking-exception-request-service.ts:TS2345:Argument of type 'NormalizedBookingGuestStayRange | undefined' is not assignable to parameter of type '{ stayStart: Date; stayEnd: Date; nights?: Date[] | undefined; }'. Type 'undefined' is not assignable to type '{ stayStart: Date; stayEnd: Date; nights?: Date[] | undefined; }'.
-src/lib/booking-exception-request-service.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/booking-exception-request-service.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/booking-guest-removal-service.ts:TS2532:Object is possibly 'undefined'.
-src/lib/booking-guest-removal-service.ts:TS2532:Object is possibly 'undefined'.
-src/lib/booking-guest-removal-service.ts:TS2532:Object is possibly 'undefined'.
-src/lib/booking-guest-stay-range-input.ts:TS2322:Type 'Date | undefined' is not assignable to type 'Date'. Type 'undefined' is not assignable to type 'Date'.
-src/lib/booking-guest-stay-range-input.ts:TS2345:Argument of type 'Date | undefined' is not assignable to parameter of type 'Date'. Type 'undefined' is not assignable to type 'Date'.
-src/lib/booking-member-night-conflict-messages.ts:TS18048:'conflict' is possibly 'undefined'.
-src/lib/booking-member-night-conflict-messages.ts:TS18048:'conflict' is possibly 'undefined'.
-src/lib/booking-member-night-conflict-messages.ts:TS2322:Type 'string | undefined' is not assignable to type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/booking-member-night-conflict-messages.ts:TS2345:Argument of type 'BookingMemberNightConflictCopyInput | undefined' is not assignable to parameter of type 'BookingMemberNightConflictCopyInput'. Type 'undefined' is not assignable to type 'BookingMemberNightConflictCopyInput'.
-src/lib/booking-member-night-conflict-messages.ts:TS2345:Argument of type 'BookingMemberNightConflictCopyInput | undefined' is not assignable to parameter of type 'BookingMemberNightConflictCopyInput'. Type 'undefined' is not assignable to type 'BookingMemberNightConflictCopyInput'.
-src/lib/booking-member-night-conflicts.ts:TS2532:Object is possibly 'undefined'.
-src/lib/booking-member-night-conflicts.ts:TS2769:No overload matches this call. Overload 1 of 3, '(that: string, locales?: LocalesArgument, options?: CollatorOptions | undefined): number', gave the following error. Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'. Overload 2 of 3, '(that: string, locales?: string | string[] | undefined, options?: CollatorOptions | undefined): number', gave the following error. Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'. Overload 3 of 3, '(that: string): number', gave the following error. Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/booking-message-definitions.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/booking-modify-plan.ts:TS18048:'bg' is possibly 'undefined'.
-src/lib/booking-modify-plan.ts:TS18048:'entry' is possibly 'undefined'.
-src/lib/booking-modify-plan.ts:TS18048:'entry' is possibly 'undefined'.
-src/lib/booking-modify-plan.ts:TS18048:'entry' is possibly 'undefined'.
-src/lib/booking-modify-plan.ts:TS18048:'entry' is possibly 'undefined'.
-src/lib/booking-modify-plan.ts:TS18048:'entry' is possibly 'undefined'.
-src/lib/booking-modify-plan.ts:TS18048:'entry' is possibly 'undefined'.
-src/lib/booking-modify-plan.ts:TS18048:'entry' is possibly 'undefined'.
-src/lib/booking-modify-plan.ts:TS18048:'entry' is possibly 'undefined'.
-src/lib/booking-modify-plan.ts:TS18048:'entry' is possibly 'undefined'.
-src/lib/booking-modify-plan.ts:TS18048:'entry' is possibly 'undefined'.
-src/lib/booking-modify-plan.ts:TS18048:'entry' is possibly 'undefined'.
-src/lib/booking-modify-plan.ts:TS18048:'entry' is possibly 'undefined'.
-src/lib/booking-modify-plan.ts:TS18048:'entry' is possibly 'undefined'.
-src/lib/booking-modify-plan.ts:TS18048:'g' is possibly 'undefined'.
-src/lib/booking-modify-plan.ts:TS18048:'g' is possibly 'undefined'.
-src/lib/booking-modify-plan.ts:TS18048:'g' is possibly 'undefined'.
-src/lib/booking-modify-plan.ts:TS18048:'g' is possibly 'undefined'.
-src/lib/booking-modify-plan.ts:TS18048:'g' is possibly 'undefined'.
-src/lib/booking-modify-plan.ts:TS18048:'g' is possibly 'undefined'.
-src/lib/booking-modify-plan.ts:TS18048:'g' is possibly 'undefined'.
-src/lib/booking-modify-plan.ts:TS18048:'g' is possibly 'undefined'.
-src/lib/booking-modify-plan.ts:TS2322:Type 'Date | undefined' is not assignable to type 'Date'. Type 'undefined' is not assignable to type 'Date'.
-src/lib/booking-modify-plan.ts:TS2345:Argument of type 'Date | undefined' is not assignable to parameter of type 'Date'. Type 'undefined' is not assignable to type 'Date'.
-src/lib/booking-modify-plan.ts:TS2532:Object is possibly 'undefined'.
-src/lib/booking-modify-plan.ts:TS2532:Object is possibly 'undefined'.
-src/lib/booking-modify-plan.ts:TS2532:Object is possibly 'undefined'.
-src/lib/booking-modify-plan.ts:TS2532:Object is possibly 'undefined'.
-src/lib/booking-modify-plan.ts:TS2532:Object is possibly 'undefined'.
-src/lib/booking-modify-plan.ts:TS2532:Object is possibly 'undefined'.
-src/lib/booking-modify-plan.ts:TS2532:Object is possibly 'undefined'.
-src/lib/booking-modify-plan.ts:TS2532:Object is possibly 'undefined'.
-src/lib/booking-modify-plan.ts:TS2532:Object is possibly 'undefined'.
-src/lib/booking-modify-plan.ts:TS2532:Object is possibly 'undefined'.
-src/lib/booking-modify-plan.ts:TS2532:Object is possibly 'undefined'.
-src/lib/booking-modify-plan.ts:TS2532:Object is possibly 'undefined'.
-src/lib/booking-policies.ts:TS18048:'firstNight' is possibly 'undefined'.
-src/lib/booking-policies.ts:TS18048:'lastNight' is possibly 'undefined'.
-src/lib/booking-request-quotes.ts:TS2532:Object is possibly 'undefined'.
-src/lib/booking-request-shared.ts:TS2322:Type '{ stayDate: Date; priceCents: number | undefined; }[]' is not assignable to type 'ApprovalGuestNight[]'. Type '{ stayDate: Date; priceCents: number | undefined; }' is not assignable to type 'ApprovalGuestNight'. Types of property 'priceCents' are incompatible. Type 'number | undefined' is not assignable to type 'number'. Type 'undefined' is not assignable to type 'number'.
-src/lib/booking-request.ts:TS18048:'guest' is possibly 'undefined'.
-src/lib/booking-request.ts:TS18048:'guest' is possibly 'undefined'.
-src/lib/booking-request.ts:TS18048:'guest' is possibly 'undefined'.
-src/lib/booking-request.ts:TS18048:'guest' is possibly 'undefined'.
-src/lib/booking-request.ts:TS18048:'guest' is possibly 'undefined'.
-src/lib/booking-request.ts:TS18048:'guest' is possibly 'undefined'.
-src/lib/booking-request.ts:TS18048:'guest' is possibly 'undefined'.
-src/lib/booking-request.ts:TS18048:'guest' is possibly 'undefined'.
-src/lib/booking-request.ts:TS18048:'guest' is possibly 'undefined'.
-src/lib/booking-request.ts:TS18048:'guest' is possibly 'undefined'.
-src/lib/booking-request.ts:TS18048:'guest' is possibly 'undefined'.
-src/lib/booking-request.ts:TS18048:'previous' is possibly 'undefined'.
-src/lib/booking-request.ts:TS18048:'previous' is possibly 'undefined'.
-src/lib/booking-request.ts:TS2532:Object is possibly 'undefined'.
-src/lib/booking-request.ts:TS2532:Object is possibly 'undefined'.
 src/lib/calendar-client.ts:TS18048:'hour' is possibly 'undefined'.
 src/lib/calendar-client.ts:TS18048:'hour' is possibly 'undefined'.
 src/lib/calendar-client.ts:TS18048:'minute' is possibly 'undefined'.
@@ -576,10 +334,6 @@ src/lib/config-transfer/bundle.ts:TS2345:Argument of type 'string | undefined' i
 src/lib/config-transfer/bundle.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
 src/lib/config-transfer/bundle.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
 src/lib/config-transfer/bundle.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/config-transfer/categories/adult-member-hosting.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/config-transfer/categories/adult-member-hosting.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/config-transfer/categories/booking-policies.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/config-transfer/categories/booking-policies.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
 src/lib/config-transfer/categories/club-settings.ts:TS2322:Type 'SingletonDelegate | undefined' is not assignable to type 'SingletonDelegate'. Type 'undefined' is not assignable to type 'SingletonDelegate'.
 src/lib/config-transfer/categories/club-settings.ts:TS2532:Object is possibly 'undefined'.
 src/lib/config-transfer/categories/lodge-ops.ts:TS18048:'raw.key' is possibly 'undefined'.
@@ -639,8 +393,6 @@ src/lib/email-text.ts:TS2345:Argument of type 'string | undefined' is not assign
 src/lib/family-suggestions.ts:TS2532:Object is possibly 'undefined'.
 src/lib/family-suggestions.ts:TS2532:Object is possibly 'undefined'.
 src/lib/family-suggestions.ts:TS2532:Object is possibly 'undefined'.
-src/lib/finance-booking-metrics.ts:TS2322:Type '{ date: string; committed: FinanceBookingDailyMetric | undefined; atRisk: FinanceBookingDailyMetric | undefined; totalPipeline: FinanceBookingDailyMetric; }[]' is not assignable to type 'FinanceBookingPipelineDailyMetric[]'. Type '{ date: string; committed: FinanceBookingDailyMetric | undefined; atRisk: FinanceBookingDailyMetric | undefined; totalPipeline: FinanceBookingDailyMetric; }' is not assignable to type 'FinanceBookingPipelineDailyMetric'. Types of property 'committed' are incompatible. Type 'FinanceBookingDailyMetric | undefined' is not assignable to type 'FinanceBookingDailyMetric'. Type 'undefined' is not assignable to type 'FinanceBookingDailyMetric'.
-src/lib/finance-booking-metrics.ts:TS2345:Argument of type 'FinanceBookingDailyMetric | undefined' is not assignable to parameter of type 'FinanceBookingDailyMetric'. Type 'undefined' is not assignable to type 'FinanceBookingDailyMetric'.
 src/lib/finance-dashboard-page.ts:TS2322:Type '{ cards: FinanceDashboardKpiCard[]; trends: ({ title: string; description: string; variant: "line"; xKey: string; data: { label: string; currentAssets: number; currentLiabilities: number; workingCapital: number; }[]; series: { ...; }[]; } | { ...; })[]; ... 5 more ...; warnings: string[]; }' is not assignable to type 'FinanceDashboardViewModel'. Type '{ cards: FinanceDashboardKpiCard[]; trends: ({ title: string; description: string; variant: "line"; xKey: string; data: { label: string; currentAssets: number; currentLiabilities: number; workingCapital: number; }[]; series: { ...; }[]; } | { ...; })[]; ... 5 more ...; warnings: string[]; }' is not assignable to type 'Pick<FinanceDashboardPageModel, "mix" | "cards" | "trends" | "statusPanels" | "costFilters" | "sourceNotes" | "exportSections">'. Types of property 'trends' are incompatible. Type '({ title: string; description: string; variant: "line"; xKey: string; data: { label: string; currentAssets: number; currentLiabilities: number; workingCapital: number; }[]; series: { key: string; name: string; color: string | undefined; valueType: "currency"; }[]; } | { ...; })[]' is not assignable to type 'FinanceDashboardTrend[]'. Type '{ title: string; description: string; variant: "line"; xKey: string; data: { label: string; currentAssets: number; currentLiabilities: number; workingCapital: number; }[]; series: { key: string; name: string; color: string | undefined; valueType: "currency"; }[]; } | { ...; }' is not assignable to type 'FinanceDashboardTrend'. Type '{ title: string; description: string; variant: "line"; xKey: string; data: { label: string; currentAssets: number; currentLiabilities: number; workingCapital: number; }[]; series: { key: string; name: string; color: string | undefined; valueType: "currency"; }[]; }' is not assignable to type 'FinanceDashboardTrend'. Types of property 'series' are incompatible. Type '{ key: string; name: string; color: string | undefined; valueType: "currency"; }[]' is not assignable to type '{ key: string; name: string; color: string; valueType: "count" | "currency" | "percent" | "ratio"; stackId?: string | undefined; }[]'. Type '{ key: string; name: string; color: string | undefined; valueType: "currency"; }' is not assignable to type '{ key: string; name: string; color: string; valueType: "count" | "currency" | "percent" | "ratio"; stackId?: string | undefined; }'. Types of property 'color' are incompatible. Type 'string | undefined' is not assignable to type 'string'. Type 'undefined' is not assignable to type 'string'.
 src/lib/finance-dashboard-page.ts:TS2322:Type '{ cards: FinanceDashboardKpiCard[]; trends: ({ title: string; description: string; variant: "line"; xKey: string; data: { label: string; currentAssets: number; currentLiabilities: number; workingCapital: number; }[]; series: { ...; }[]; } | { ...; })[]; ... 5 more ...; warnings: string[]; }' is not assignable to type 'FinanceDashboardViewModel'. Type '{ cards: FinanceDashboardKpiCard[]; trends: ({ title: string; description: string; variant: "line"; xKey: string; data: { label: string; currentAssets: number; currentLiabilities: number; workingCapital: number; }[]; series: { ...; }[]; } | { ...; })[]; ... 5 more ...; warnings: string[]; }' is not assignable to type 'Pick<FinanceDashboardPageModel, "mix" | "cards" | "trends" | "statusPanels" | "costFilters" | "sourceNotes" | "exportSections">'. Types of property 'trends' are incompatible. Type '({ title: string; description: string; variant: "line"; xKey: string; data: { label: string; currentAssets: number; currentLiabilities: number; workingCapital: number; }[]; series: { key: string; name: string; color: string | undefined; valueType: "currency"; }[]; } | { ...; })[]' is not assignable to type 'FinanceDashboardTrend[]'. Type '{ title: string; description: string; variant: "line"; xKey: string; data: { label: string; currentAssets: number; currentLiabilities: number; workingCapital: number; }[]; series: { key: string; name: string; color: string | undefined; valueType: "currency"; }[]; } | { ...; }' is not assignable to type 'FinanceDashboardTrend'. Type '{ title: string; description: string; variant: "line"; xKey: string; data: { label: string; currentAssets: number; currentLiabilities: number; workingCapital: number; }[]; series: { key: string; name: string; color: string | undefined; valueType: "currency"; }[]; }' is not assignable to type 'FinanceDashboardTrend'. Types of property 'series' are incompatible. Type '{ key: string; name: string; color: string | undefined; valueType: "currency"; }[]' is not assignable to type '{ key: string; name: string; color: string; valueType: "count" | "currency" | "percent" | "ratio"; stackId?: string | undefined; }[]'. Type '{ key: string; name: string; color: string | undefined; valueType: "currency"; }' is not assignable to type '{ key: string; name: string; color: string; valueType: "count" | "currency" | "percent" | "ratio"; stackId?: string | undefined; }'. Types of property 'color' are incompatible. Type 'string | undefined' is not assignable to type 'string'. Type 'undefined' is not assignable to type 'string'.
 src/lib/finance-dashboard-page.ts:TS2322:Type '{ cards: FinanceDashboardKpiCard[]; trends: { title: string; description: string; variant: "bar"; xKey: string; data: { label: string; requiredRate: number; realizedRevenue: number; }[]; series: { ...; }[]; }[]; ... 5 more ...; warnings: string[]; }' is not assignable to type 'FinanceDashboardViewModel'. Type '{ cards: FinanceDashboardKpiCard[]; trends: { title: string; description: string; variant: "bar"; xKey: string; data: { label: string; requiredRate: number; realizedRevenue: number; }[]; series: { ...; }[]; }[]; ... 5 more ...; warnings: string[]; }' is not assignable to type 'Pick<FinanceDashboardPageModel, "mix" | "cards" | "trends" | "statusPanels" | "costFilters" | "sourceNotes" | "exportSections">'. Types of property 'trends' are incompatible. Type '{ title: string; description: string; variant: "bar"; xKey: string; data: { label: string; requiredRate: number; realizedRevenue: number; }[]; series: { key: string; name: string; color: string | undefined; valueType: "currency"; }[]; }[]' is not assignable to type 'FinanceDashboardTrend[]'. Type '{ title: string; description: string; variant: "bar"; xKey: string; data: { label: string; requiredRate: number; realizedRevenue: number; }[]; series: { key: string; name: string; color: string | undefined; valueType: "currency"; }[]; }' is not assignable to type 'FinanceDashboardTrend'. Types of property 'series' are incompatible. Type '{ key: string; name: string; color: string | undefined; valueType: "currency"; }[]' is not assignable to type '{ key: string; name: string; color: string; valueType: "count" | "currency" | "percent" | "ratio"; stackId?: string | undefined; }[]'. Type '{ key: string; name: string; color: string | undefined; valueType: "currency"; }' is not assignable to type '{ key: string; name: string; color: string; valueType: "count" | "currency" | "percent" | "ratio"; stackId?: string | undefined; }'. Types of property 'color' are incompatible. Type 'string | undefined' is not assignable to type 'string'. Type 'undefined' is not assignable to type 'string'.
@@ -687,11 +439,7 @@ src/lib/finance-ratio-shared.ts:TS18048:'month' is possibly 'undefined'.
 src/lib/finance-ratio-shared.ts:TS18048:'year' is possibly 'undefined'.
 src/lib/finance-sync-health.ts:TS18048:'month' is possibly 'undefined'.
 src/lib/finance-sync-health.ts:TS2769:No overload matches this call. Overload 1 of 2, '(year: number, monthIndex?: number | undefined, date?: number | undefined, hours?: number | undefined, minutes?: number | undefined, seconds?: number | undefined, ms?: number | undefined): number', gave the following error. Argument of type 'number | undefined' is not assignable to parameter of type 'number'. Type 'undefined' is not assignable to type 'number'. Overload 2 of 2, '(year: number, monthIndex: number, date?: number | undefined, hours?: number | undefined, minutes?: number | undefined, seconds?: number | undefined, ms?: number | undefined): number', gave the following error. Argument of type 'number | undefined' is not assignable to parameter of type 'number'. Type 'undefined' is not assignable to type 'number'.
-src/lib/finance-sync-xero-datasets/date-format.ts:TS2769:No overload matches this call. Overload 1 of 2, '(year: number, monthIndex?: number | undefined, date?: number | undefined, hours?: number | undefined, minutes?: number | undefined, seconds?: number | undefined, ms?: number | undefined): number', gave the following error. Argument of type 'number | undefined' is not assignable to parameter of type 'number'. Type 'undefined' is not assignable to type 'number'. Overload 2 of 2, '(year: number, monthIndex: number, date?: number | undefined, hours?: number | undefined, minutes?: number | undefined, seconds?: number | undefined, ms?: number | undefined): number', gave the following error. Argument of type 'number | undefined' is not assignable to parameter of type 'number'. Type 'undefined' is not assignable to type 'number'.
-src/lib/finance-sync-xero-datasets/invoice-helpers.ts:TS2322:Type 'string | undefined' is not assignable to type 'string | null'. Type 'undefined' is not assignable to type 'string | null'.
-src/lib/finance-sync-xero-datasets/monthly-facts.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
 src/lib/general-cron-runner.ts:TS2532:Object is possibly 'undefined'.
-src/lib/group-booking.ts:TS2322:Type '{ nights: { create: { stayDate: Date; priceCents: number; }[]; }; consentStatus?: MemberGuestConsentStatus | null | undefined; consentRequestedAt?: Date | null | undefined; ... 11 more ...; rateMembershipTypeId: string | null; }[]' is not assignable to type '(((Without<BookingGuestCreateWithoutBookingInput, BookingGuestUncheckedCreateWithoutBookingInput> & BookingGuestUncheckedCreateWithoutBookingInput) | (Without<...> & BookingGuestCreateWithoutBookingInput)) & object) | BookingGuestCreateWithoutBookingInput[] | BookingGuestUncheckedCreateWithoutBookingInput[] | undefi...'. Type '{ nights: { create: { stayDate: Date; priceCents: number; }[]; }; consentStatus?: MemberGuestConsentStatus | null | undefined; consentRequestedAt?: Date | null | undefined; ... 11 more ...; rateMembershipTypeId: string | null; }[]' is not assignable to type 'BookingGuestCreateWithoutBookingInput[]'. Type '{ nights: { create: { stayDate: Date; priceCents: number; }[]; }; consentStatus?: $Enums.MemberGuestConsentStatus | null | undefined; consentRequestedAt?: Date | null | undefined; ... 11 more ...; rateMembershipTypeId: string | null; }' is not assignable to type 'BookingGuestCreateWithoutBookingInput'. Types of property 'stayStart' are incompatible. Type 'Date | undefined' is not assignable to type 'string | Date'. Type 'undefined' is not assignable to type 'string | Date'.
 src/lib/group-cancel.ts:TS2532:Object is possibly 'undefined'.
 src/lib/group-cancel.ts:TS2532:Object is possibly 'undefined'.
 src/lib/guest-name-similarity.ts:TS18048:'nextToken' is possibly 'undefined'.
@@ -770,44 +518,6 @@ src/lib/member-guest-email-notes.ts:TS2345:Argument of type 'Date | undefined' i
 src/lib/member-guest-email-notes.ts:TS2345:Argument of type 'Date | undefined' is not assignable to parameter of type 'Date'. Type 'undefined' is not assignable to type 'Date'.
 src/lib/member-guest-find.ts:TS2322:Type 'string | undefined' is not assignable to type 'string'. Type 'undefined' is not assignable to type 'string'.
 src/lib/member-guest-find.ts:TS2322:Type 'string | undefined' is not assignable to type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/member-lifecycle-actions.ts:TS18048:'count' is possibly 'undefined'.
-src/lib/member-merge-schema-coverage.ts:TS2322:Type 'string | undefined' is not assignable to type 'string | null'. Type 'undefined' is not assignable to type 'string | null'.
-src/lib/member-merge-schema-coverage.ts:TS2322:Type 'string | undefined' is not assignable to type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/member-merge-schema-coverage.ts:TS2345:Argument of type 'ModelScan | null' is not assignable to parameter of type 'ModelScan'. Type 'null' is not assignable to type 'ModelScan'.
-src/lib/member-merge-schema-coverage.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/member-merge-schema-coverage.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/member-merge-schema-coverage.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/member-merge-schema-coverage.ts:TS2532:Object is possibly 'undefined'.
-src/lib/member-merge-schema-coverage.ts:TS2532:Object is possibly 'undefined'.
-src/lib/member-merge-schema-coverage.ts:TS2532:Object is possibly 'undefined'.
-src/lib/member-merge.ts:TS18048:'delegate' is possibly 'undefined'.
-src/lib/member-merge.ts:TS18048:'delegate' is possibly 'undefined'.
-src/lib/member-merge.ts:TS18048:'delegate' is possibly 'undefined'.
-src/lib/member-merge.ts:TS18048:'delegate' is possibly 'undefined'.
-src/lib/member-merge.ts:TS18048:'delegate' is possibly 'undefined'.
-src/lib/member-merge.ts:TS18048:'delegate' is possibly 'undefined'.
-src/lib/member-merge.ts:TS18048:'delegate' is possibly 'undefined'.
-src/lib/member-merge.ts:TS18048:'delegate' is possibly 'undefined'.
-src/lib/member-merge.ts:TS18048:'delegate' is possibly 'undefined'.
-src/lib/member-merge.ts:TS18048:'delegate' is possibly 'undefined'.
-src/lib/member-merge.ts:TS18048:'delegate' is possibly 'undefined'.
-src/lib/member-merge.ts:TS18048:'memberFindMany' is possibly 'undefined'.
-src/lib/member-merge.ts:TS18048:'model' is possibly 'undefined'.
-src/lib/member-merge.ts:TS2322:Type 'number | undefined' is not assignable to type 'number'. Type 'undefined' is not assignable to type 'number'.
-src/lib/member-merge.ts:TS2322:Type 'number | undefined' is not assignable to type 'number'. Type 'undefined' is not assignable to type 'number'.
-src/lib/member-merge.ts:TS2322:Type 'number | undefined' is not assignable to type 'number'. Type 'undefined' is not assignable to type 'number'.
-src/lib/member-merge.ts:TS2322:Type '{ model: string; count: number | undefined; }[]' is not assignable to type '{ model: string; count: number; }[]'. Type '{ model: string; count: number | undefined; }' is not assignable to type '{ model: string; count: number; }'. Types of property 'count' are incompatible. Type 'number | undefined' is not assignable to type 'number'. Type 'undefined' is not assignable to type 'number'.
-src/lib/member-merge.ts:TS2532:Object is possibly 'undefined'.
-src/lib/member-merge.ts:TS2532:Object is possibly 'undefined'.
-src/lib/member-merge.ts:TS2532:Object is possibly 'undefined'.
-src/lib/member-merge.ts:TS2532:Object is possibly 'undefined'.
-src/lib/member-merge.ts:TS2532:Object is possibly 'undefined'.
-src/lib/membership-subscription-billing.ts:TS18048:'membership' is possibly 'undefined'.
-src/lib/membership-subscription-billing.ts:TS18048:'membership' is possibly 'undefined'.
-src/lib/membership-subscription-billing.ts:TS2532:Object is possibly 'undefined'.
-src/lib/membership-type-policy.ts:TS2532:Object is possibly 'undefined'.
-src/lib/membership-type-policy.ts:TS2532:Object is possibly 'undefined'.
-src/lib/mirotalk-token.ts:TS2532:Object is possibly 'undefined'.
 src/lib/nomination.ts:TS18048:'familyMember' is possibly 'undefined'.
 src/lib/nomination.ts:TS18048:'familyMember' is possibly 'undefined'.
 src/lib/nomination.ts:TS18048:'familyMember' is possibly 'undefined'.
@@ -823,7 +533,6 @@ src/lib/notices-email.ts:TS18048:'recipient' is possibly 'undefined'.
 src/lib/page-content-embeds.ts:TS2322:Type 'string | undefined' is not assignable to type 'string'. Type 'undefined' is not assignable to type 'string'.
 src/lib/page-content-embeds.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
 src/lib/page-content-embeds.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/payment-recovery.ts:TS18048:'delayMinutes' is possibly 'undefined'.
 src/lib/promo-cap-coverage.ts:TS2322:Type 'string | undefined' is not assignable to type 'string'. Type 'undefined' is not assignable to type 'string'.
 src/lib/promo.ts:TS2345:Argument of type '(PromoDiscountGuest | undefined)[]' is not assignable to parameter of type 'PromoDiscountGuest[]'. Type 'PromoDiscountGuest | undefined' is not assignable to type 'PromoDiscountGuest'. Type 'undefined' is not assignable to type 'PromoDiscountGuest'.
 src/lib/promo.ts:TS2345:Argument of type '(PromoDiscountGuest | undefined)[]' is not assignable to parameter of type 'PromoDiscountGuest[]'. Type 'PromoDiscountGuest | undefined' is not assignable to type 'PromoDiscountGuest'. Type 'undefined' is not assignable to type 'PromoDiscountGuest'.
@@ -841,7 +550,6 @@ src/lib/servernz-settings.ts:TS18048:'b' is possibly 'undefined'.
 src/lib/servernz-settings.ts:TS18048:'b' is possibly 'undefined'.
 src/lib/servernz-settings.ts:TS18048:'b' is possibly 'undefined'.
 src/lib/servernz-settings.ts:TS18048:'n' is possibly 'undefined'.
-src/lib/session-guards.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
 src/lib/text-diff.ts:TS2322:Type 'string | undefined' is not assignable to type 'string'. Type 'undefined' is not assignable to type 'string'.
 src/lib/text-diff.ts:TS2322:Type 'string | undefined' is not assignable to type 'string'. Type 'undefined' is not assignable to type 'string'.
 src/lib/text-diff.ts:TS2322:Type 'string | undefined' is not assignable to type 'string'. Type 'undefined' is not assignable to type 'string'.
@@ -960,117 +668,6 @@ src/lib/theme/theme-substrate.ts:TS2322:Type 'string | undefined' is not assigna
 src/lib/theme/theme-substrate.ts:TS2345:Argument of type 'number | undefined' is not assignable to parameter of type 'number'. Type 'undefined' is not assignable to type 'number'.
 src/lib/theme/theme-substrate.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
 src/lib/theme/theme-substrate.ts:TS2532:Object is possibly 'undefined'.
-src/lib/waitlist-offer-email-visibility.ts:TS2345:Argument of type 'WaitlistOfferBooking | undefined' is not assignable to parameter of type 'WaitlistOfferBooking'. Type 'undefined' is not assignable to type 'WaitlistOfferBooking'.
-src/lib/waitlist.ts:TS2322:Type '{ bookingGuestId: string; stayDate: Date; priceCents: number; }[] | undefined' is not assignable to type 'BookingGuestNightCreateManyInput | BookingGuestNightCreateManyInput[]'. Type 'undefined' is not assignable to type 'BookingGuestNightCreateManyInput | BookingGuestNightCreateManyInput[]'.
-src/lib/waitlist.ts:TS2532:Object is possibly 'undefined'.
-src/lib/waitlist.ts:TS2532:Object is possibly 'undefined'.
-src/lib/waitlist.ts:TS2532:Object is possibly 'undefined'.
-src/lib/waitlist.ts:TS2532:Object is possibly 'undefined'.
-src/lib/waitlist.ts:TS2532:Object is possibly 'undefined'.
-src/lib/waitlist.ts:TS2532:Object is possibly 'undefined'.
-src/lib/waitlist.ts:TS2532:Object is possibly 'undefined'.
 src/lib/webhook-log.ts:TS2532:Object is possibly 'undefined'.
 src/lib/webhook-log.ts:TS2532:Object is possibly 'undefined'.
 src/lib/webhook-log.ts:TS2532:Object is possibly 'undefined'.
-src/lib/xero-admin-failures.ts:TS18048:'representative' is possibly 'undefined'.
-src/lib/xero-admin-failures.ts:TS18048:'representative' is possibly 'undefined'.
-src/lib/xero-admin-failures.ts:TS18048:'representative' is possibly 'undefined'.
-src/lib/xero-admin-failures.ts:TS18048:'representative' is possibly 'undefined'.
-src/lib/xero-admin-failures.ts:TS18048:'representative' is possibly 'undefined'.
-src/lib/xero-admin-failures.ts:TS18048:'representative' is possibly 'undefined'.
-src/lib/xero-admin-failures.ts:TS18048:'representative' is possibly 'undefined'.
-src/lib/xero-admin-failures.ts:TS18048:'representative' is possibly 'undefined'.
-src/lib/xero-admin-failures.ts:TS18048:'representative' is possibly 'undefined'.
-src/lib/xero-admin-failures.ts:TS18048:'representative' is possibly 'undefined'.
-src/lib/xero-admin-failures.ts:TS18048:'representative' is possibly 'undefined'.
-src/lib/xero-admin-failures.ts:TS18048:'representative' is possibly 'undefined'.
-src/lib/xero-admin-failures.ts:TS18048:'representative' is possibly 'undefined'.
-src/lib/xero-admin-failures.ts:TS18048:'representative' is possibly 'undefined'.
-src/lib/xero-admin-failures.ts:TS18048:'representative' is possibly 'undefined'.
-src/lib/xero-applied-credit-allocation-repair.ts:TS18048:'current' is possibly 'undefined'.
-src/lib/xero-applied-credit-allocation-repair.ts:TS18048:'current' is possibly 'undefined'.
-src/lib/xero-applied-credit-allocation-repair.ts:TS18048:'current' is possibly 'undefined'.
-src/lib/xero-applied-credit-allocation-repair.ts:TS18048:'current' is possibly 'undefined'.
-src/lib/xero-applied-credit-allocation-repair.ts:TS18048:'current' is possibly 'undefined'.
-src/lib/xero-applied-credit-allocation-repair.ts:TS18048:'current' is possibly 'undefined'.
-src/lib/xero-applied-credit-allocation-repair.ts:TS18048:'current' is possibly 'undefined'.
-src/lib/xero-applied-credit-allocation-repair.ts:TS18048:'current' is possibly 'undefined'.
-src/lib/xero-applied-credit-allocation-repair.ts:TS18048:'current' is possibly 'undefined'.
-src/lib/xero-applied-credit-allocation-repair.ts:TS18048:'lot' is possibly 'undefined'.
-src/lib/xero-applied-credit-allocation-repair.ts:TS18048:'lot' is possibly 'undefined'.
-src/lib/xero-applied-credit-allocation-repair.ts:TS18048:'lot' is possibly 'undefined'.
-src/lib/xero-applied-credit-allocation-repair.ts:TS18048:'lot' is possibly 'undefined'.
-src/lib/xero-applied-credit-allocation-repair.ts:TS18048:'lot' is possibly 'undefined'.
-src/lib/xero-applied-credit-allocation-repair.ts:TS18048:'lot' is possibly 'undefined'.
-src/lib/xero-applied-credit-allocation-repair.ts:TS18048:'lot' is possibly 'undefined'.
-src/lib/xero-applied-credit-allocation-repair.ts:TS18048:'lot' is possibly 'undefined'.
-src/lib/xero-applied-credit-allocation-repair.ts:TS2322:Type '(Slice | undefined)[]' is not assignable to type 'Slice[]'. Type 'Slice | undefined' is not assignable to type 'Slice'. Type 'undefined' is not assignable to type 'Slice'.
-src/lib/xero-applied-credit-allocation-repair.ts:TS2322:Type 'Slice | undefined' is not assignable to type 'Slice'. Type 'undefined' is not assignable to type 'Slice'.
-src/lib/xero-applied-credit-allocation-repair.ts:TS2322:Type '{ amountCents: number; id?: string | undefined; memberCreditId?: string | undefined; xeroCreditNoteId?: string | undefined; createdAt?: Date | undefined; }' is not assignable to type 'Slice'. Types of property 'id' are incompatible. Type 'string | undefined' is not assignable to type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/xero-applied-credit-allocation-repair.ts:TS2488:Type '[string, number] | undefined' must have a '[Symbol.iterator]()' method that returns an iterator.
-src/lib/xero-applied-credit-deallocation.ts:TS2532:Object is possibly 'undefined'.
-src/lib/xero-booking-repair-object-resolution.ts:TS18048:'chosen' is possibly 'undefined'.
-src/lib/xero-booking-repair-object-resolution.ts:TS2322:Type '{ conflicts: string[]; objectId?: string | undefined; objectNumber?: string | null | undefined; objectUrl?: string | null | undefined; source?: "link" | "operation" | "field" | undefined; link?: { ...; } | ... 1 more ... | undefined; operation?: { ...; } | ... 1 more ... | undefined; }' is not assignable to type 'ResolvedLocalObject'. Types of property 'objectId' are incompatible. Type 'string | undefined' is not assignable to type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/xero-booking-repair-object-resolution.ts:TS2322:Type '{ id: string; createdAt: Date; updatedAt: Date; status: string; idempotencyKey: string | null; lastErrorCode: string | null; lastErrorMessage: string | null; completedAt: Date | null; ... 15 more ...; xeroObjectUrl: string | null; } | undefined' is not assignable to type '{ id: string; createdAt: Date; updatedAt: Date; status: string; idempotencyKey: string | null; lastErrorCode: string | null; lastErrorMessage: string | null; completedAt: Date | null; ... 15 more ...; xeroObjectUrl: string | null; }'. Type 'undefined' is not assignable to type '{ id: string; createdAt: Date; updatedAt: Date; status: string; idempotencyKey: string | null; lastErrorCode: string | null; lastErrorMessage: string | null; completedAt: Date | null; ... 15 more ...; xeroObjectUrl: string | null; }'.
-src/lib/xero-booking-repair-object-resolution.ts:TS2345:Argument of type '{ id: string; createdAt: Date; updatedAt: Date; status: string; idempotencyKey: string | null; lastErrorCode: string | null; lastErrorMessage: string | null; completedAt: Date | null; ... 15 more ...; xeroObjectUrl: string | null; } | undefined' is not assignable to parameter of type 'RetryableOperation'. Type 'undefined' is not assignable to type 'RetryableOperation'. Type 'undefined' is not assignable to type 'Pick<{ id: string; createdAt: Date; updatedAt: Date; status: string; idempotencyKey: string | null; lastErrorCode: string | null; lastErrorMessage: string | null; attemptCount: number; ... 19 more ...; manuallyResolvedById: string | null; }, "id" | ... 10 more ... | "xeroObjectNumber">'.
-src/lib/xero-booking-repair.ts:TS18048:'finalPass' is possibly 'undefined'.
-src/lib/xero-booking-repair.ts:TS18048:'finalPass' is possibly 'undefined'.
-src/lib/xero-booking-repair.ts:TS18048:'finalPass' is possibly 'undefined'.
-src/lib/xero-booking-repair.ts:TS18048:'finalPass' is possibly 'undefined'.
-src/lib/xero-contact-group-tone.ts:TS2322:Type 'CategoricalScale | undefined' is not assignable to type 'CategoricalScale'. Type 'undefined' is not assignable to type 'CategoricalScale'.
-src/lib/xero-contact-groups.ts:TS2532:Object is possibly 'undefined'.
-src/lib/xero-contacts.ts:TS2345:Argument of type 'Contact | undefined' is not assignable to parameter of type 'Pick<Contact, "name" | "firstName" | "lastName">'. Type 'undefined' is not assignable to type 'Pick<Contact, "name" | "firstName" | "lastName">'.
-src/lib/xero-contacts.ts:TS2532:Object is possibly 'undefined'.
-src/lib/xero-cron-runner.ts:TS2532:Object is possibly 'undefined'.
-src/lib/xero-hardening-report.ts:TS18048:'firstLink' is possibly 'undefined'.
-src/lib/xero-hardening-report.ts:TS2345:Argument of type 'CanonicalLinkRecord | undefined' is not assignable to parameter of type 'CanonicalLinkRecord'. Type 'undefined' is not assignable to type 'CanonicalLinkRecord'.
-src/lib/xero-inbound/credit-note-repairs.ts:TS18048:'appliedCredit' is possibly 'undefined'.
-src/lib/xero-inbound/credit-note-repairs.ts:TS18048:'appliedCredit' is possibly 'undefined'.
-src/lib/xero-inbound/credit-note-repairs.ts:TS18048:'payment' is possibly 'undefined'.
-src/lib/xero-inbound/credit-note-repairs.ts:TS18048:'payment' is possibly 'undefined'.
-src/lib/xero-inbound/credit-note-repairs.ts:TS18048:'payment' is possibly 'undefined'.
-src/lib/xero-inbound/credit-note-repairs.ts:TS18048:'payment' is possibly 'undefined'.
-src/lib/xero-inbound/credit-note-repairs.ts:TS18048:'payment' is possibly 'undefined'.
-src/lib/xero-inbound/credit-note-repairs.ts:TS18048:'payment' is possibly 'undefined'.
-src/lib/xero-inbound/credit-note-repairs.ts:TS18048:'payment' is possibly 'undefined'.
-src/lib/xero-inbound/credit-note-repairs.ts:TS18048:'payment' is possibly 'undefined'.
-src/lib/xero-inbound/credit-note-repairs.ts:TS18048:'payment' is possibly 'undefined'.
-src/lib/xero-inbound/credit-note-repairs.ts:TS18048:'payment' is possibly 'undefined'.
-src/lib/xero-inbound/credit-note-repairs.ts:TS18048:'payment' is possibly 'undefined'.
-src/lib/xero-inbound/credit-note-repairs.ts:TS18048:'payment' is possibly 'undefined'.
-src/lib/xero-inbound/credit-note-repairs.ts:TS18048:'payment' is possibly 'undefined'.
-src/lib/xero-inbound/credit-note-repairs.ts:TS18048:'payment' is possibly 'undefined'.
-src/lib/xero-inbound/credit-note-repairs.ts:TS18048:'payment' is possibly 'undefined'.
-src/lib/xero-inbound/credit-note-repairs.ts:TS18048:'payment' is possibly 'undefined'.
-src/lib/xero-inbound/credit-note-repairs.ts:TS18048:'payment' is possibly 'undefined'.
-src/lib/xero-inbound/credit-note-repairs.ts:TS18048:'payment' is possibly 'undefined'.
-src/lib/xero-inbound/credit-note-repairs.ts:TS18048:'payment' is possibly 'undefined'.
-src/lib/xero-inbound/credit-note-repairs.ts:TS18048:'payment' is possibly 'undefined'.
-src/lib/xero-inbound/credit-note-repairs.ts:TS18048:'payment' is possibly 'undefined'.
-src/lib/xero-inbound/credit-note-repairs.ts:TS18048:'payment' is possibly 'undefined'.
-src/lib/xero-inbound/credit-note-repairs.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/xero-inbound/credit-note-repairs.ts:TS2532:Object is possibly 'undefined'.
-src/lib/xero-invoice-rounding-audit.ts:TS2532:Object is possibly 'undefined'.
-src/lib/xero-invoice-rounding-audit.ts:TS2532:Object is possibly 'undefined'.
-src/lib/xero-member-grouping-resync.ts:TS2322:Type 'AgeTier | undefined' is not assignable to type 'AgeTier | AgeTier[] | null'. Type 'undefined' is not assignable to type 'AgeTier | AgeTier[] | null'.
-src/lib/xero-membership-sync.ts:TS18048:'best' is possibly 'undefined'.
-src/lib/xero-membership-sync.ts:TS18048:'best' is possibly 'undefined'.
-src/lib/xero-membership-sync.ts:TS18048:'best' is possibly 'undefined'.
-src/lib/xero-membership-sync.ts:TS18048:'member' is possibly 'undefined'.
-src/lib/xero-membership-sync.ts:TS18048:'member' is possibly 'undefined'.
-src/lib/xero-membership-sync.ts:TS18048:'member' is possibly 'undefined'.
-src/lib/xero-membership-sync.ts:TS18048:'member' is possibly 'undefined'.
-src/lib/xero-membership-sync.ts:TS18048:'member' is possibly 'undefined'.
-src/lib/xero-membership-sync.ts:TS18048:'member' is possibly 'undefined'.
-src/lib/xero-membership-sync.ts:TS18048:'member' is possibly 'undefined'.
-src/lib/xero-membership-sync.ts:TS18048:'member' is possibly 'undefined'.
-src/lib/xero-membership-sync.ts:TS18048:'member' is possibly 'undefined'.
-src/lib/xero-membership-sync.ts:TS18048:'member' is possibly 'undefined'.
-src/lib/xero-membership-sync.ts:TS2532:Object is possibly 'undefined'.
-src/lib/xero-membership-sync.ts:TS2532:Object is possibly 'undefined'.
-src/lib/xero-oauth-state.ts:TS18048:'pathOnly' is possibly 'undefined'.
-src/lib/xero-subscription-invoices.ts:TS2345:Argument of type 'LineItem | undefined' is not assignable to parameter of type 'LineItem'. Type 'undefined' is not assignable to type 'LineItem'.
-src/lib/xero-token-store.ts:TS2322:Type 'string' is not assignable to type 'NonSharedBuffer & string'. Type 'string' is not assignable to type 'NonSharedBuffer'.
-src/lib/xero-token-store.ts:TS2769:No overload matches this call. Overload 1 of 4, '(arrayBuffer: WithImplicitCoercion<ArrayBufferLike>, byteOffset?: number | undefined, length?: number | undefined): Buffer<ArrayBufferLike>', gave the following error. Argument of type 'string | undefined' is not assignable to parameter of type 'WithImplicitCoercion<ArrayBufferLike>'. Type 'undefined' is not assignable to type 'WithImplicitCoercion<ArrayBufferLike>'. Overload 2 of 4, '(string: WithImplicitCoercion<string>, encoding?: BufferEncoding | undefined): Buffer<ArrayBuffer>', gave the following error. Argument of type 'string | undefined' is not assignable to parameter of type 'WithImplicitCoercion<string>'. Type 'undefined' is not assignable to type 'WithImplicitCoercion<string>'.
-src/lib/xero-token-store.ts:TS2769:No overload matches this call. Overload 1 of 4, '(arrayBuffer: WithImplicitCoercion<ArrayBufferLike>, byteOffset?: number | undefined, length?: number | undefined): Buffer<ArrayBufferLike>', gave the following error. Argument of type 'string | undefined' is not assignable to parameter of type 'WithImplicitCoercion<ArrayBufferLike>'. Type 'undefined' is not assignable to type 'WithImplicitCoercion<ArrayBufferLike>'. Overload 2 of 4, '(string: WithImplicitCoercion<string>, encoding?: BufferEncoding | undefined): Buffer<ArrayBuffer>', gave the following error. Argument of type 'string | undefined' is not assignable to parameter of type 'WithImplicitCoercion<string>'. Type 'undefined' is not assignable to type 'WithImplicitCoercion<string>'.
-src/lib/xero-token-store.ts:TS2769:No overload matches this call. Overload 1 of 4, '(data: ArrayBufferView<ArrayBufferLike>, inputEncoding: undefined, outputEncoding: Encoding): string', gave the following error. Argument of type 'string | undefined' is not assignable to parameter of type 'ArrayBufferView<ArrayBufferLike>'. Type 'undefined' is not assignable to type 'ArrayBufferView<ArrayBufferLike>'. Overload 2 of 4, '(data: string, inputEncoding: Encoding | undefined, outputEncoding: Encoding): string', gave the following error. Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
