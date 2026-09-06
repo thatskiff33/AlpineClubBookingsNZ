@@ -97,8 +97,13 @@ function formatNight(night: string): string {
 }
 
 function joinWithAnd(items: string[]): string {
-  if (items.length === 1) return items[0];
-  return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+  // One item reads as itself; the last is spliced off the tail. Both are read
+  // rather than indexed on the strength of a length, and an empty list joins to
+  // nothing — this is display copy on a 409, so it must not throw (#2800).
+  const [onlyItem, ...extraItems] = items;
+  if (onlyItem !== undefined && extraItems.length === 0) return onlyItem;
+  const lastItem = items.at(-1) ?? "";
+  return `${items.slice(0, -1).join(", ")} and ${lastItem}`;
 }
 
 function capitaliseFirst(sentence: string): string {
@@ -200,12 +205,12 @@ export function buildBookingMemberNightConflictSummary(
     return "Someone in this party is already booked on one or more of these nights.";
   }
 
-  if (conflicts.length === 1) {
-    const conflict = conflicts[0];
-    const nights = formatNightList(conflict.conflictingNights);
-    return isViewersOwnPlace(conflict)
+  const [soleConflict, ...extraConflicts] = conflicts;
+  if (soleConflict !== undefined && extraConflicts.length === 0) {
+    const nights = formatNightList(soleConflict.conflictingNights);
+    return isViewersOwnPlace(soleConflict)
       ? `You are already on another booking for ${nights}.`
-      : `${conflict.memberName} is already on a booking for ${nights}.`;
+      : `${soleConflict.memberName} is already on a booking for ${nights}.`;
   }
 
   // The viewer is addressed as "you" wherever they appear in the list, and the
@@ -218,10 +223,11 @@ export function buildBookingMemberNightConflictSummary(
     ...new Set(conflicts.flatMap((conflict) => conflict.conflictingNights)),
   ]);
 
-  if (labels.length === 1) {
-    const verb = labels[0] === "you" ? "are" : "is";
+  const [onlyLabel, ...extraLabels] = labels;
+  if (onlyLabel !== undefined && extraLabels.length === 0) {
+    const verb = onlyLabel === "you" ? "are" : "is";
     return capitaliseFirst(
-      `${labels[0]} ${verb} already on other bookings for ${nights}.`,
+      `${onlyLabel} ${verb} already on other bookings for ${nights}.`,
     );
   }
   return capitaliseFirst(
@@ -240,8 +246,9 @@ export function buildBookingMemberNightConflictMessage(
 ): string {
   const summary = buildBookingMemberNightConflictSummary(conflicts);
 
-  if (conflicts.length === 1) {
-    return `${summary} ${describeBookingMemberNightConflictNextStep(conflicts[0], options)}`;
+  const [soleConflict, ...extraConflicts] = conflicts;
+  if (soleConflict !== undefined && extraConflicts.length === 0) {
+    return `${summary} ${describeBookingMemberNightConflictNextStep(soleConflict, options)}`;
   }
 
   const nextStep = options.canChooseDifferentDates

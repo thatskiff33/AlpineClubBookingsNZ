@@ -11,9 +11,7 @@ import {
 import { ApiError } from "@/lib/api-error";
 import { MinimumStayPolicyViolationError } from "@/lib/booking-policy-exceptions";
 import { logAudit } from "@/lib/audit";
-import {
-  queueSupersededPrimaryIntentCancellations,
-} from "@/lib/booking-payment-cleanup";
+import { queueSupersededPrimaryIntentCancellations } from "@/lib/booking-payment-cleanup";
 import {
   canModifyBookingStatusForRole,
   getBookingEditPolicy,
@@ -112,9 +110,7 @@ import {
   targetBookingGuestIdsForSelectedIndexes,
 } from "@/lib/promo-stored-guest-targets";
 import { prisma } from "@/lib/prisma";
-import {
-  type SeasonRateData,
-} from "@/lib/pricing";
+import { type SeasonRateData } from "@/lib/pricing";
 import {
   assertMembershipTypeBookingAllowed,
   MembershipTypeBookingPolicyError,
@@ -160,37 +156,36 @@ type ModifiedBooking = Booking & {
   payment: Payment | null;
 };
 
-type DateModificationTransactionResult =
-  BookingModificationPaymentContext & {
-    booking: ModifiedBooking;
-    priceDiffCents: number;
-    changeFeeCents: number;
-    refundAmountCents: number;
-    accountCreditAmountCents: number;
-    settlementMethod: BookingModificationSettlementMethod | null;
-    policyRetainedAmountCents: number;
-    promoRemoved: boolean;
-    // #2390: set only when a usage cap stopped the promotion reaching somebody
-    // on the repriced booking; null means everyone it applies to is covered.
-    promoCoverage: PromoCoverageNotice | null;
-    choreWarnings: string[];
-    datesChanged: boolean;
-    adminOverride: boolean;
-    notifyMember: boolean;
-    capacityOverridden: boolean;
-    oldCheckIn: Date;
-    oldCheckOut: Date;
-    hasIssuedXeroInvoice: boolean;
-    paymentStatus: PaymentStatus | null;
-    paymentSource: PaymentSource | null;
-    paymentReference: string | null;
-    xeroInvoiceNumber: string | null;
-    xeroRefundAmountCents: number;
-    xeroAdditionalAmountCents: number;
-    // F20 (#1887): the reprice landed the booking fully credit-covered and it
-    // was auto-confirmed at $0, so the primary Xero invoice must be created.
-    zeroDollarAutoPaid: boolean;
-  };
+type DateModificationTransactionResult = BookingModificationPaymentContext & {
+  booking: ModifiedBooking;
+  priceDiffCents: number;
+  changeFeeCents: number;
+  refundAmountCents: number;
+  accountCreditAmountCents: number;
+  settlementMethod: BookingModificationSettlementMethod | null;
+  policyRetainedAmountCents: number;
+  promoRemoved: boolean;
+  // #2390: set only when a usage cap stopped the promotion reaching somebody
+  // on the repriced booking; null means everyone it applies to is covered.
+  promoCoverage: PromoCoverageNotice | null;
+  choreWarnings: string[];
+  datesChanged: boolean;
+  adminOverride: boolean;
+  notifyMember: boolean;
+  capacityOverridden: boolean;
+  oldCheckIn: Date;
+  oldCheckOut: Date;
+  hasIssuedXeroInvoice: boolean;
+  paymentStatus: PaymentStatus | null;
+  paymentSource: PaymentSource | null;
+  paymentReference: string | null;
+  xeroInvoiceNumber: string | null;
+  xeroRefundAmountCents: number;
+  xeroAdditionalAmountCents: number;
+  // F20 (#1887): the reprice landed the booking fully credit-covered and it
+  // was auto-confirmed at $0, so the primary Xero invoice must be created.
+  zeroDollarAutoPaid: boolean;
+};
 
 export type DateModificationResponse = {
   booking: ModifiedBooking;
@@ -459,7 +454,8 @@ export async function modifyBookingDates({
     }
 
     if (actor.role !== "ADMIN") {
-      const { validateMinimumStay, formatViolationsDetail } = await import("@/lib/booking-policies");
+      const { validateMinimumStay, formatViolationsDetail } =
+        await import("@/lib/booking-policies");
       // `tx`, never the module client — see the composition rule on
       // `validateMinimumStay`: this check runs inside the transaction that
       // already holds the global money lock and the per-lodge capacity lock.
@@ -592,10 +588,7 @@ export async function modifyBookingDates({
       if (error instanceof MembershipTypeBookingPolicyError) {
         throw error;
       }
-      throw new ApiError(
-        "No season rate found for the requested dates",
-        400,
-      );
+      throw new ApiError("No season rate found for the requested dates", 400);
     }
 
     // One-live-booking-per-member-per-night guard (#1157, #1127 F1). A date
@@ -620,7 +613,10 @@ export async function modifyBookingDates({
         memberId: g.memberId ?? null,
         stayStart: newCheckIn,
         stayEnd: newCheckOut,
-        nights: priceBreakdown.guests[index].nightDates ?? [],
+        // The person-night guard counts the nights this edit priced for the
+        // guest; a guest with no priced row has none to count, and inventing
+        // the booking envelope here would count nights nobody bought (#2800).
+        nights: priceBreakdown.guests[index]?.nightDates ?? [],
       })),
       { skipAuthorization: actor.role === "ADMIN", bookingId },
     );
@@ -698,17 +694,28 @@ export async function modifyBookingDates({
     const newTotalPriceCents = parked
       ? booking.totalPriceCents
       : priceBreakdown.totalPriceCents;
-    const guestNightRates = guestsForPricing.map((guest, index) => ({
-      bookingGuestId: guest.bookingGuestId,
-      memberId: guest.memberId ?? null,
-      isMember: guest.isMember,
-      perNightRates: priceBreakdown.guests[index].perNightCents,
-      nightDates: priceBreakdown.guests[index].nightDates,
-      // Guests are priced over the full new range here, so the first rate
-      // is the new check-in night. Dates the rates so internal work-party
-      // promos restrict the discount to the event's night window.
-      firstNight: newCheckIn,
-    }));
+    // Each guest's own priced row, read once. The breakdown was built from
+    // `guestsForPricing`, so a guest with no row is a wiring defect and there
+    // is no amount to promo-allocate against — refused, not guessed (#2800).
+    const guestNightRates = guestsForPricing.map((guest, index) => {
+      const priced = priceBreakdown.guests[index];
+      if (priced === undefined) {
+        throw new Error(
+          `The date change has no priced guest at breakdown position ${index} of ${priceBreakdown.guests.length} (#3031).`,
+        );
+      }
+      return {
+        bookingGuestId: guest.bookingGuestId,
+        memberId: guest.memberId ?? null,
+        isMember: guest.isMember,
+        perNightRates: priced.perNightCents,
+        nightDates: priced.nightDates,
+        // Guests are priced over the full new range here, so the first rate
+        // is the new check-in night. Dates the rates so internal work-party
+        // promos restrict the discount to the event's night window.
+        firstNight: newCheckIn,
+      };
+    });
 
     let newDiscountCents = 0;
     let newPromoAdjustmentCents = 0;
@@ -731,11 +738,11 @@ export async function modifyBookingDates({
       // lodge -> promo row.
       const promo = await lockAndRefreshPromoCodeUsage(
         tx,
-        booking.promoRedemption.promoCode
+        booking.promoRedemption.promoCode,
       );
       const selectedGuestIndexes = selectedIndexesForStoredGuestTargets(
         booking.promoRedemption,
-        guestNightRates
+        guestNightRates,
       );
       const application = await validateAndCalculatePromoDiscount(
         promo,
@@ -783,7 +790,7 @@ export async function modifyBookingDates({
           promoResult.allocations,
           targetBookingGuestIdsForSelectedIndexes(
             guestNightRates,
-            application.selectedGuestIndexes
+            application.selectedGuestIndexes,
           ),
         );
       }
@@ -811,7 +818,11 @@ export async function modifyBookingDates({
     // settlement call the parked branch is skipping. The admin settles the
     // entire adjustment, fee included, when they resolve the task.
     if (!parked && checkInChanged) {
-      const policy = await loadCancellationPolicy(booking.checkIn, booking.lodgeId, tx);
+      const policy = await loadCancellationPolicy(
+        booking.checkIn,
+        booking.lodgeId,
+        tx,
+      );
       const feeResult = calculateChangeFee({
         // #3123 — one club day for both operands.
         daysUntilOriginalCheckIn: daysUntilDate(booking.checkIn, todayAtClub),
@@ -874,7 +885,11 @@ export async function modifyBookingDates({
     let newStatus = booking.status;
 
     if (hasNonMembers) {
-      const holdPolicy = await getNonMemberHoldPolicy(newCheckIn, booking.lodgeId, tx);
+      const holdPolicy = await getNonMemberHoldPolicy(
+        newCheckIn,
+        booking.lodgeId,
+        tx,
+      );
       const holdDecision = calculateBookingHoldDecision({
         hasNonMembers,
         checkIn: newCheckIn,
@@ -965,6 +980,16 @@ export async function modifyBookingDates({
     // longer covers instead of the range they now hold.
     await Promise.all(
       booking.guests.map(async (g, i) => {
+        // This guest's own priced row. A parked edit writes none of it, but the
+        // row still has to exist for the priced path below — a guest the engine
+        // produced nothing for has no total and no per-night vector, and #3031
+        // forbids inventing either (#2800).
+        const priced = priceBreakdown.guests[i];
+        if (!parked && priced === undefined) {
+          throw new Error(
+            `The date change has no priced guest at breakdown position ${i} for booking guest ${g.id} (#3031).`,
+          );
+        }
         await tx.bookingGuest.update({
           where: { id: g.id },
           data: {
@@ -973,9 +998,8 @@ export async function modifyBookingDates({
             // #3166: on a parked edit the strand keeps its STORED total. Not a
             // recomputed one, not a delta, not a zero — how much this date
             // change alters it is the question the OPEN task exists to answer.
-            priceCents: parked
-              ? g.priceCents
-              : priceBreakdown.guests[i].priceCents,
+            priceCents:
+              parked || priced === undefined ? g.priceCents : priced.priceCents,
             // A date change re-bases every guest at current rates (#1930, E4):
             // overwrite the rate-type snapshot with the newly priced total —
             // EXCEPT where the new range keeps nights the guest already bought,
@@ -989,18 +1013,19 @@ export async function modifyBookingDates({
             // edit charged nobody anything — `undefined` leaves the stored value
             // untouched, which is what keeps the rate snapshot frozen alongside
             // the money.
-            rateMembershipTypeId: parked
-              ? undefined
-              : rateSnapshotUpdateForRepricedGuest(
-                  priceBreakdown.guests[i],
-                  guestsForPricing[i]?.lockedNightPrices,
-                ),
+            rateMembershipTypeId:
+              parked || priced === undefined
+                ? undefined
+                : rateSnapshotUpdateForRepricedGuest(
+                    priced,
+                    guestsForPricing[i]?.lockedNightPrices,
+                  ),
           },
         });
         await tx.bookingGuestNight.deleteMany({
           where: { bookingGuestId: g.id },
         });
-        const nightDates = priceBreakdown.guests[i].nightDates ?? [];
+        const nightDates = priced?.nightDates ?? [];
         // #3166: THE PER-NIGHT VECTOR THIS EDIT WRITES. On a parked edit it is
         // built from what is STORED against each night and nothing else — the
         // integer where the row carried one, byte for byte, and `NULL` where it
@@ -1016,7 +1041,7 @@ export async function modifyBookingDates({
               dateEditEvidence.soldNightPriceByGuestId.get(g.id),
               nightDates,
             )
-          : priceBreakdown.guests[i].perNightCents;
+          : (priced?.perNightCents ?? []);
         if (nightDates.length > 0) {
           await tx.bookingGuestNight.createMany({
             data: nightDates.map((stayDate, k) => {
@@ -1167,7 +1192,9 @@ export async function modifyBookingDates({
           policyRetainedAmountCents: payments.policyRetainedAmountCents,
           // #2390: the same sentence the member was shown at the edit, kept on
           // the booking's own history so the split has an answer later.
-          ...(promoCoverage ? { promoCoverageNote: promoCoverage.message } : {}),
+          ...(promoCoverage
+            ? { promoCoverageNote: promoCoverage.message }
+            : {}),
           ...(adminOverride
             ? { pricingMode: "recalculate", capacityOverridden }
             : {}),
@@ -1237,7 +1264,9 @@ export async function modifyBookingDates({
         vacatedRange: { checkIn: oldCheckIn, checkOut: oldCheckOut },
         actorRole: actor.role,
         actorMemberId: actor.id,
-        ...(hostingCoverageOverride ? { override: hostingCoverageOverride } : {}),
+        ...(hostingCoverageOverride
+          ? { override: hostingCoverageOverride }
+          : {}),
         // #3232: a member who was offered the linked move and chose to move only
         // this booking is escalated rather than refused — the officer queue gets
         // the incident and they were shown the consequence first. The owner
@@ -1298,7 +1327,8 @@ export async function modifyBookingDates({
     result,
     metadataReason: "date_change_price_decrease",
     idempotencyKeyPrefix: `mod_dates_refund_${bookingId}`,
-    failureMessage: "Stripe refund failed after date change - enqueueing recovery",
+    failureMessage:
+      "Stripe refund failed after date change - enqueueing recovery",
     recoveryFailureMessage:
       "Failed to enqueue payment recovery for Stripe refund failure after date change",
   });
@@ -1309,7 +1339,8 @@ export async function modifyBookingDates({
       result,
       reason: "date_change_price_increase",
       idempotencyKey: `mod_dates_${bookingId}_${result.bookingModificationId}`,
-      failureMessage: "Failed to create additional PaymentIntent for modification",
+      failureMessage:
+        "Failed to create additional PaymentIntent for modification",
     });
 
   // Issue #1668: under an admin override, close the approve → apply trail by
@@ -1459,7 +1490,10 @@ async function dispatchDatePostTransactionSideEffects({
       result.xeroAdditionalAmountCents > 0 && result.hasSucceededPayment,
     additionalPaymentIntentId,
   }).catch((err) =>
-    logger.error({ err, bookingId }, "Failed to queue Xero settlement for date modification"),
+    logger.error(
+      { err, bookingId },
+      "Failed to queue Xero settlement for date modification",
+    ),
   );
 
   // Owner decision (#1668 review): an override admin may choose not to email
@@ -1509,7 +1543,8 @@ async function dispatchDatePostTransactionSideEffects({
       newCheckOut: result.booking.checkOut,
       oldGuestCount: result.booking.guests.length,
       newGuestCount: result.booking.guests.length,
-      oldFinalPriceCents: result.booking.finalPriceCents - result.priceDiffCents,
+      oldFinalPriceCents:
+        result.booking.finalPriceCents - result.priceDiffCents,
       newFinalPriceCents: result.booking.finalPriceCents,
       changeFeeCents: result.changeFeeCents,
       refundAmountCents: result.refundAmountCents,
@@ -1542,7 +1577,10 @@ async function dispatchDatePostTransactionSideEffects({
       checkOut: result.oldCheckOut,
       lodgeId: result.booking.lodgeId,
     }).catch((err) =>
-      logger.error({ err, bookingId }, "Failed to process waitlist after date modification"),
+      logger.error(
+        { err, bookingId },
+        "Failed to process waitlist after date modification",
+      ),
     );
   }
 }
@@ -1671,10 +1709,15 @@ export async function adminShiftBookingDates({
     // every translated guest row below all derive from these two.
     const oldCheckIn = storedDateOnly(booking.checkIn);
     const oldCheckOut = storedDateOnly(booking.checkOut);
-    const originalNightCount = eachDateOnlyInRange(oldCheckIn, oldCheckOut).length;
+    const originalNightCount = eachDateOnlyInRange(
+      oldCheckIn,
+      oldCheckOut,
+    ).length;
 
     const providedCheckIn = input.checkIn ? parseDateOnly(input.checkIn) : null;
-    const providedCheckOut = input.checkOut ? parseDateOnly(input.checkOut) : null;
+    const providedCheckOut = input.checkOut
+      ? parseDateOnly(input.checkOut)
+      : null;
     if (
       (providedCheckIn && Number.isNaN(providedCheckIn.getTime())) ||
       (providedCheckOut && Number.isNaN(providedCheckOut.getTime()))
@@ -1766,7 +1809,11 @@ export async function adminShiftBookingDates({
           bookingId,
           tx,
         )
-      : { available: true, minAvailable: Number.POSITIVE_INFINITY, nightDetails: [] };
+      : {
+          available: true,
+          minAvailable: Number.POSITIVE_INFINITY,
+          nightDetails: [],
+        };
     let capacityOverridden = false;
     if (!capacity.available) {
       if (!input.confirmOverCapacity) {
@@ -1835,7 +1882,11 @@ export async function adminShiftBookingDates({
     let newNonMemberHoldUntil = booking.nonMemberHoldUntil;
     let newStatus = booking.status;
     if (hasNonMembers) {
-      const holdPolicy = await getNonMemberHoldPolicy(newCheckIn, booking.lodgeId, tx);
+      const holdPolicy = await getNonMemberHoldPolicy(
+        newCheckIn,
+        booking.lodgeId,
+        tx,
+      );
       const holdDecision = calculateBookingHoldDecision({
         hasNonMembers,
         checkIn: newCheckIn,
@@ -1947,7 +1998,9 @@ export async function adminShiftBookingDates({
         vacatedRange: { checkIn: oldCheckIn, checkOut: oldCheckOut },
         actorRole: actor.role,
         actorMemberId: actor.id,
-        ...(hostingCoverageOverride ? { override: hostingCoverageOverride } : {}),
+        ...(hostingCoverageOverride
+          ? { override: hostingCoverageOverride }
+          : {}),
       }),
     });
 
@@ -1973,15 +2026,13 @@ export async function adminShiftBookingDates({
   });
 
   // Post-transaction (no Stripe/Xero/payment mutations at all).
-  const linkedChangeRequestId = await linkModificationToOutstandingChangeRequest(
-    prisma,
-    {
+  const linkedChangeRequestId =
+    await linkModificationToOutstandingChangeRequest(prisma, {
       bookingId,
       modificationId: result.bookingModificationId,
       appliedCheckIn: result.newCheckIn,
       appliedCheckOut: result.newCheckOut,
-    },
-  );
+    });
 
   const overrideAuditPayload = {
     pricingMode: "shift",
@@ -2050,7 +2101,10 @@ export async function adminShiftBookingDates({
       financialReviewPending,
       lodgeId: result.lodgeId,
     }).catch((err) =>
-      logger.error({ err, bookingId }, "Failed to send admin override date-shift email"),
+      logger.error(
+        { err, bookingId },
+        "Failed to send admin override date-shift email",
+      ),
     );
   }
 
@@ -2061,7 +2115,10 @@ export async function adminShiftBookingDates({
     checkOut: result.oldCheckOut,
     lodgeId: result.lodgeId,
   }).catch((err) =>
-    logger.error({ err, bookingId }, "Failed to process waitlist after admin date shift"),
+    logger.error(
+      { err, bookingId },
+      "Failed to process waitlist after admin date shift",
+    ),
   );
 
   // #2576 §7/§8. An officer's date shift is never refused, so this is the path on

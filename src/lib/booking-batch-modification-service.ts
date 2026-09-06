@@ -105,10 +105,7 @@ import {
 import type { MemberGuestAddActor } from "@/lib/member-guest-consent";
 import { resolveSubscriptionLockoutMode } from "@/lib/member-subscription-eligibility";
 import type { SubscriptionLockoutMode } from "@/lib/membership-lockout-settings";
-import {
-  dateOnlyInstantOf,
-  type CalendarDate,
-} from "@/lib/club-time";
+import { dateOnlyInstantOf, type CalendarDate } from "@/lib/club-time";
 import {
   lockRosterDateRangesAndDates,
   rosterOperationalDayRange,
@@ -136,90 +133,89 @@ type ModifiedBooking = Booking & {
 export const LINKED_MOVE_CHANGE_FEE_WAIVED_REASON =
   "LINKED_MOVE_SUPERVISION_RULE" as const;
 
-type BatchModificationTransactionResult =
-  BookingModificationPaymentContext & {
-    booking: ModifiedBooking;
-    /** #3232: the deferred hosting reconciliation, when the caller asked for it. */
-    pendingHostingReconcile?: () => Promise<void>;
-    priceDiffCents: number;
-    changeFeeCents: number;
-    /**
-     * #3232 D2: this booking's change fee was WAIVED, not absent.
-     *
-     * Without it a waived fee is an unmarked zero, and "no fee was due" and "we
-     * waived it because our own supervision rule compelled this move" are the
-     * same 0 in the modification row, the audit trail and the Xero leg. A
-     * treasurer reconciling change-fee income against the club setting has
-     * nothing to reconcile against, and the dependent's history reads as an
-     * ordinary member-initiated edit to a booking the member never asked to
-     * move.
-     */
-    changeFeeWaived: boolean;
-    /**
-     * #3232 (fix round): this edit's settlement genuinely needs a card-or-credit
-     * choice, whichever way it was priced.
-     *
-     * `calculateModificationSettlementOptions` answers this as
-     * `cardRefundAmountCents > 0 || creditRefundAmountCents > 0` — an OR over BOTH
-     * options — and the two are computed from separate policy tiers, so one can
-     * resolve to zero while the other does not. A caller that inferred the need
-     * from the RESOLVED amounts of a quote priced one way therefore disagreed with
-     * the write's own refusal, and the disagreement deadlocked the member: see
-     * `combineLinkedMoveQuote`.
-     */
-    requiresSettlementMethod: boolean;
-    refundAmountCents: number;
-    accountCreditAmountCents: number;
-    promoRemoved: boolean;
-    promoChanged: boolean;
-    // #2390: set only when a usage cap stopped the promotion reaching somebody
-    // on the repriced booking; null means everyone it applies to is covered.
-    promoCoverage: PromoCoverageNotice | null;
-    // #3179: set only when this edit carried a promo-code change it could not
-    // honour and dropped. Null means nothing the member asked for was left
-    // undone — never "there was no promo code".
-    promoChangeNotApplied: PromoChangeNotAppliedNotice | null;
-    choreWarnings: string[];
-    datesChanged: boolean;
-    adminOverride: boolean;
-    notifyMember: boolean;
-    capacityOverridden: boolean;
-    oldCheckIn: Date;
-    oldCheckOut: Date;
-    oldGuestCount: number;
-    hasIssuedXeroInvoice: boolean;
-    paymentStatus: PaymentStatus | null;
-    paymentSource: PaymentSource | null;
-    paymentReference: string | null;
-    xeroInvoiceNumber: string | null;
-    zeroDollarAutoPaid: boolean;
-    supersededPrimaryPaymentIntents: { length: number };
-    xeroAdditionalAmountCents: number;
-    xeroRefundAmountCents: number;
-    settlementMethod: BookingModificationSettlementMethod | null;
-    policyRetainedAmountCents: number;
-    guestNameUpdates: ResolvedGuestNameUpdate[];
-    guestIdentityChanged: boolean;
-    identityOnlyModification: boolean;
-    // #2266: this edit changed ONLY the stored credit election (#2265) — no
-    // member email, exactly like an identity-only edit.
-    creditElectionOnlyModification: boolean;
-    // #2266: the election as stored after this edit, and whether it moved.
-    creditElectionCents: number | null;
-    creditElectionChanged: boolean;
-    // #1372: this edit newly dropped a paid (capacity-holding) booking into the
-    // blocked minors-only review state, so the post-tx step alerts admins.
-    minorsOnlyReviewNewlyFlagged: boolean;
-    // MG2 #2307: cross-family member guests added by this edit, to be told after
-    // the commit. Empty on every family-scope modification.
-    memberGuestNotificationRows: MemberGuestAddNotificationRow[];
-    // MG4 #2309: cross-family member guests this edit took OFF the booking, to
-    // be told after the commit. Empty on every family-scope modification.
-    withdrawnMemberGuests: Array<{
-      targetMemberId: string;
-      context: "REQUEST_CANCELLED" | "TAKEN_OFF";
-    }>;
-  };
+type BatchModificationTransactionResult = BookingModificationPaymentContext & {
+  booking: ModifiedBooking;
+  /** #3232: the deferred hosting reconciliation, when the caller asked for it. */
+  pendingHostingReconcile?: () => Promise<void>;
+  priceDiffCents: number;
+  changeFeeCents: number;
+  /**
+   * #3232 D2: this booking's change fee was WAIVED, not absent.
+   *
+   * Without it a waived fee is an unmarked zero, and "no fee was due" and "we
+   * waived it because our own supervision rule compelled this move" are the
+   * same 0 in the modification row, the audit trail and the Xero leg. A
+   * treasurer reconciling change-fee income against the club setting has
+   * nothing to reconcile against, and the dependent's history reads as an
+   * ordinary member-initiated edit to a booking the member never asked to
+   * move.
+   */
+  changeFeeWaived: boolean;
+  /**
+   * #3232 (fix round): this edit's settlement genuinely needs a card-or-credit
+   * choice, whichever way it was priced.
+   *
+   * `calculateModificationSettlementOptions` answers this as
+   * `cardRefundAmountCents > 0 || creditRefundAmountCents > 0` — an OR over BOTH
+   * options — and the two are computed from separate policy tiers, so one can
+   * resolve to zero while the other does not. A caller that inferred the need
+   * from the RESOLVED amounts of a quote priced one way therefore disagreed with
+   * the write's own refusal, and the disagreement deadlocked the member: see
+   * `combineLinkedMoveQuote`.
+   */
+  requiresSettlementMethod: boolean;
+  refundAmountCents: number;
+  accountCreditAmountCents: number;
+  promoRemoved: boolean;
+  promoChanged: boolean;
+  // #2390: set only when a usage cap stopped the promotion reaching somebody
+  // on the repriced booking; null means everyone it applies to is covered.
+  promoCoverage: PromoCoverageNotice | null;
+  // #3179: set only when this edit carried a promo-code change it could not
+  // honour and dropped. Null means nothing the member asked for was left
+  // undone — never "there was no promo code".
+  promoChangeNotApplied: PromoChangeNotAppliedNotice | null;
+  choreWarnings: string[];
+  datesChanged: boolean;
+  adminOverride: boolean;
+  notifyMember: boolean;
+  capacityOverridden: boolean;
+  oldCheckIn: Date;
+  oldCheckOut: Date;
+  oldGuestCount: number;
+  hasIssuedXeroInvoice: boolean;
+  paymentStatus: PaymentStatus | null;
+  paymentSource: PaymentSource | null;
+  paymentReference: string | null;
+  xeroInvoiceNumber: string | null;
+  zeroDollarAutoPaid: boolean;
+  supersededPrimaryPaymentIntents: { length: number };
+  xeroAdditionalAmountCents: number;
+  xeroRefundAmountCents: number;
+  settlementMethod: BookingModificationSettlementMethod | null;
+  policyRetainedAmountCents: number;
+  guestNameUpdates: ResolvedGuestNameUpdate[];
+  guestIdentityChanged: boolean;
+  identityOnlyModification: boolean;
+  // #2266: this edit changed ONLY the stored credit election (#2265) — no
+  // member email, exactly like an identity-only edit.
+  creditElectionOnlyModification: boolean;
+  // #2266: the election as stored after this edit, and whether it moved.
+  creditElectionCents: number | null;
+  creditElectionChanged: boolean;
+  // #1372: this edit newly dropped a paid (capacity-holding) booking into the
+  // blocked minors-only review state, so the post-tx step alerts admins.
+  minorsOnlyReviewNewlyFlagged: boolean;
+  // MG2 #2307: cross-family member guests added by this edit, to be told after
+  // the commit. Empty on every family-scope modification.
+  memberGuestNotificationRows: MemberGuestAddNotificationRow[];
+  // MG4 #2309: cross-family member guests this edit took OFF the booking, to
+  // be told after the commit. Empty on every family-scope modification.
+  withdrawnMemberGuests: Array<{
+    targetMemberId: string;
+    context: "REQUEST_CANCELLED" | "TAKEN_OFF";
+  }>;
+};
 
 export type BatchModificationResponse = {
   booking: ModifiedBooking;
@@ -312,7 +308,9 @@ export type BatchModificationResponse = {
  * Guests without night rows (quoted or pre-#713 bookings) echo empty night
  * arrays, which the guest-sync step treats as "leave the rows alone".
  */
-function buildIdentityOnlyPricing(booking: LoadedBookingForModify): PricingResult {
+function buildIdentityOnlyPricing(
+  booking: LoadedBookingForModify,
+): PricingResult {
   // #3031: NO `?? 0`, ANYWHERE IN THIS ECHO. These amounts are written straight
   // back onto `BookingGuestNight.priceCents` by `syncGuestNights`, so a default
   // would replace a night's real sold price with a magic zero on an edit whose
@@ -340,8 +338,12 @@ function buildIdentityOnlyPricing(booking: LoadedBookingForModify): PricingResul
   // The two absences stay apart, exactly as they do at the write. `null` is the
   // row's own statement and is preserved; `undefined` is still a SELECT that
   // did not ask for the price — a caller wiring defect — and still throws.
-  const echoedNights = booking.guests.map((guest) =>
-    (guest.nights ?? []).map((night) => {
+  // Each guest carries its own echoed nights rather than a second array read
+  // back by position, so the rate vector and its dates cannot drift apart from
+  // the guest they describe (#2800).
+  const echoedGuests = booking.guests.map((guest) => ({
+    guest,
+    nights: (guest.nights ?? []).map((night) => {
       if (night.priceCents === undefined) {
         throw new Error(
           `Booking guest ${guest.id} night ${night.stayDate.toISOString()} was loaded without its stored sold price (#3031)`,
@@ -349,7 +351,7 @@ function buildIdentityOnlyPricing(booking: LoadedBookingForModify): PricingResul
       }
       return { stayDate: night.stayDate, priceCents: night.priceCents };
     }),
-  );
+  }));
   return {
     kind: "priced",
     inProgressPlan: null,
@@ -357,10 +359,10 @@ function buildIdentityOnlyPricing(booking: LoadedBookingForModify): PricingResul
     newTotalPriceCents: booking.totalPriceCents,
     priceBreakdown: {
       totalPriceCents: booking.totalPriceCents,
-      guests: booking.guests.map((guest, index) => ({
+      guests: echoedGuests.map(({ guest, nights }) => ({
         priceCents: guest.priceCents,
-        perNightCents: echoedNights[index].map((night) => night.priceCents),
-        nightDates: echoedNights[index].map((night) => night.stayDate),
+        perNightCents: nights.map((night) => night.priceCents),
+        nightDates: nights.map((night) => night.stayDate),
       })),
     },
     // #3170: RATES ONLY, and the pair stays aligned. A night whose stored price
@@ -370,8 +372,8 @@ function buildIdentityOnlyPricing(booking: LoadedBookingForModify): PricingResul
     // re-runs no promotion cap, which is the only reader — so dropping is safe
     // as well as honest; what would not be safe is a rate vector whose
     // positions no longer matched its dates.
-    guestNightRates: booking.guests.map((guest, index) => {
-      const rated = echoedNights[index].filter(
+    guestNightRates: echoedGuests.map(({ guest, nights }) => {
+      const rated = nights.filter(
         (night): night is { stayDate: Date; priceCents: number } =>
           night.priceCents !== null,
       );
@@ -411,7 +413,9 @@ function buildIdentityOnlyPricing(booking: LoadedBookingForModify): PricingResul
  * supplies `tx` MUST call this first: see the `preTransaction` field.
  */
 interface BatchModificationPreparation {
-  readonly memberGuestPolicy: Awaited<ReturnType<typeof loadMemberGuestAddPolicy>>;
+  readonly memberGuestPolicy: Awaited<
+    ReturnType<typeof loadMemberGuestAddPolicy>
+  >;
   readonly subscriptionLockoutMode: SubscriptionLockoutMode;
   readonly xeroLockDates: XeroLockDateFacts;
 }
@@ -441,8 +445,7 @@ const EVERY_BOOKING_LOCK_FACTS: unique symbol = Symbol(
   "batchModificationPreTransaction",
 );
 
-export interface BatchModificationPreTransaction
-  extends BatchModificationPreparation {
+export interface BatchModificationPreTransaction extends BatchModificationPreparation {
   readonly [EVERY_BOOKING_LOCK_FACTS]: true;
 }
 
@@ -758,7 +761,7 @@ export async function modifyBookingBatch({
   }
   if (hostingReconcile === "CALLER" && !callerTx) {
     throw new Error(
-      "hostingReconcile: \"CALLER\" is only meaningful inside a caller-supplied " +
+      'hostingReconcile: "CALLER" is only meaningful inside a caller-supplied ' +
         "transaction; without one the hosting rule would simply not be checked.",
     );
   }
@@ -955,15 +958,15 @@ export async function modifyBookingBatch({
     // engine entirely.
     const requestedStructuralChange = Boolean(
       input.checkIn ||
-        input.checkOut ||
-        input.addGuests?.length ||
-        input.removeGuestIds?.length ||
-        input.guestStayRanges?.length ||
-        // #2337: a link re-rates a guest, so it is structural — it must never take
-        // the identity-only price-preserving echo (that would skip the re-rate).
-        input.linkGuestToMember?.length ||
-        input.promoCode ||
-        input.removePromoCode,
+      input.checkOut ||
+      input.addGuests?.length ||
+      input.removeGuestIds?.length ||
+      input.guestStayRanges?.length ||
+      // #2337: a link re-rates a guest, so it is structural — it must never take
+      // the identity-only price-preserving echo (that would skip the re-rate).
+      input.linkGuestToMember?.length ||
+      input.promoCode ||
+      input.removePromoCode,
     );
     const requestIsIdentityOnly =
       !requestedStructuralChange && Boolean(input.guestUpdates?.length);
@@ -1097,9 +1100,8 @@ export async function modifyBookingBatch({
     // `targetDatesChanged`, computed the same way from the same envelope logic,
     // so preview and apply agree on EVERY request shape — keep the two in step.
     if (actor.role !== "ADMIN" && dates.datesChanged) {
-      const { validateMinimumStay, formatViolationsDetail } = await import(
-        "@/lib/booking-policies"
-      );
+      const { validateMinimumStay, formatViolationsDetail } =
+        await import("@/lib/booking-policies");
       // `tx`, never the module client: this runs under BOTH the global money
       // lock and the per-lodge capacity lock, so a read on a second pool
       // connection here is the pool-starvation shape `member-guest-add-policy.ts`
@@ -1457,13 +1459,13 @@ export async function modifyBookingBatch({
     const chargeableChangeFeeCents = parked
       ? 0
       : await calculateModificationChangeFee({
-      booking,
-      newCheckIn: dates.newCheckIn,
-      checkInChanged: dates.checkInChanged,
-      skipBookingLifecycleRules: dates.skipBookingLifecycleRules,
-      db: tx, // locked transaction; see `CancellationPolicyDb`
-      todayAtClub,
-    });
+          booking,
+          newCheckIn: dates.newCheckIn,
+          checkInChanged: dates.checkInChanged,
+          skipBookingLifecycleRules: dates.skipBookingLifecycleRules,
+          db: tx, // locked transaction; see `CancellationPolicyDb`
+          todayAtClub,
+        });
     // #3232 D2: `waiveChangeFee` takes the same zero branch a parked edit takes,
     // so the waived fee is genuinely absent from every downstream decision rather
     // than subtracted back out somewhere later.
@@ -1476,7 +1478,8 @@ export async function modifyBookingBatch({
     // over-counts precisely the number the field exists for — the one a treasurer
     // reconciles against the club setting — and puts a waiver in a dragged-along
     // booking's history that nobody granted.
-    const changeFeeWaived = waiveChangeFee === true && chargeableChangeFeeCents > 0;
+    const changeFeeWaived =
+      waiveChangeFee === true && chargeableChangeFeeCents > 0;
 
     // NULL ON A PARKED EDIT, which is what keeps `applyPaymentAdjustments`
     // inert below rather than a second zero literal beside it: with no options
@@ -1488,12 +1491,15 @@ export async function modifyBookingBatch({
     const settlementOptions = parked
       ? null
       : await calculateModificationSettlementOptions({
-      booking,
-      netChargeCents: priceDiffCents + changeFeeCents,
-      db: tx,
-      todayAtClub,
-    });
-    if (settlementOptions?.requiresSettlementMethod && !input.settlementMethod) {
+          booking,
+          netChargeCents: priceDiffCents + changeFeeCents,
+          db: tx,
+          todayAtClub,
+        });
+    if (
+      settlementOptions?.requiresSettlementMethod &&
+      !input.settlementMethod
+    ) {
       throw new BookingModificationSettlementMethodRequiredError();
     }
 
@@ -1611,7 +1617,8 @@ export async function modifyBookingBatch({
         ...(lifecycle.clearDraftExpiresAt ? { draftExpiresAt: null } : {}),
         requiresAdminReview: guestPlan.reviewUpdate.requiresAdminReview,
         adminReviewReason: guestPlan.reviewUpdate.adminReviewReason,
-        memberReviewJustification: guestPlan.reviewUpdate.memberReviewJustification,
+        memberReviewJustification:
+          guestPlan.reviewUpdate.memberReviewJustification,
         adminReviewStatus: guestPlan.reviewUpdate.adminReviewStatus,
         adminReviewNotes: guestPlan.reviewUpdate.adminReviewNotes,
         adminReviewedById: guestPlan.reviewUpdate.adminReviewedById,
@@ -1624,9 +1631,7 @@ export async function modifyBookingBatch({
         // back within capacity, so a stale flag can't suppress a legitimate
         // cancel on the new nights later.
         capacityOverriddenAt: capacityOverridden ? new Date() : null,
-        capacityOverriddenByMemberId: capacityOverridden
-          ? actor.id
-          : null,
+        capacityOverriddenByMemberId: capacityOverridden ? actor.id : null,
         // #2266: the stored credit election (#2265). A conditional spread so
         // an edit that carried no credit input leaves the column untouched.
         ...(creditElectionCentsUpdate !== undefined
@@ -1665,17 +1670,18 @@ export async function modifyBookingBatch({
         // detail lives in previousData/newData so the identity change is never
         // silent (modificationType is free text, not a Prisma enum — no schema
         // change).
-        modificationType: guestMemberLinks.length > 0
-          ? "GUEST_MEMBER_LINK"
-          : paidNameTypoFix
-            ? "GUEST_TYPO_FIX"
-            : identityOnlyModification
-              ? "GUEST_UPDATE"
-              : // #2266: a credit-election-only edit is queryably distinct from a
-                // structural modification (modificationType is free text).
-                requestIsCreditElectionOnly
-                ? "CREDIT_ELECTION"
-                : "BATCH_MODIFY",
+        modificationType:
+          guestMemberLinks.length > 0
+            ? "GUEST_MEMBER_LINK"
+            : paidNameTypoFix
+              ? "GUEST_TYPO_FIX"
+              : identityOnlyModification
+                ? "GUEST_UPDATE"
+                : // #2266: a credit-election-only edit is queryably distinct from a
+                  // structural modification (modificationType is free text).
+                  requestIsCreditElectionOnly
+                  ? "CREDIT_ELECTION"
+                  : "BATCH_MODIFY",
         previousData: {
           checkIn: formatDateOnly(new Date(booking.checkIn)),
           checkOut: formatDateOnly(new Date(booking.checkOut)),
@@ -1849,7 +1855,8 @@ export async function modifyBookingBatch({
     // ATTRIBUTION and not safety: the triggers are `DEFERRABLE INITIALLY
     // DEFERRED`, so a genuine violation still fails the COMMIT — just as an
     // anonymous transaction error rather than one carrying this service's stack.
-    if (hostingReconcile !== "CALLER") await assertBookingEnvelopeInvariants(tx);
+    if (hostingReconcile !== "CALLER")
+      await assertBookingEnvelopeInvariants(tx);
 
     // #2364. Re-derive the hosting hazard from the rows this edit just wrote:
     // guests added or removed, nights moved, and a lodge change all land here,
@@ -1875,34 +1882,39 @@ export async function modifyBookingBatch({
     // travels back to the caller as `pendingHostingReconcile`.
     const reconcileHosting = async () => {
       await reconcileAdultMemberHostingReviewWithSiblings(bookingId, tx, {
-      ...(approvedExceptionAdultMemberHostingDecision
-        ? { decision: approvedExceptionAdultMemberHostingDecision }
-        : {}),
-      ...hostingCoverageActorOptions({
-        actorRole: actor.role,
-        actorMemberId: actor.id,
-        // #3232: a batch edit CAN move the stay, and this seam runs after the
-        // write, so the dependent fan-out would otherwise be narrowed to the new
-        // nights and would miss a booking that was relying on the old ones.
-        // `booking` is the post-lock PRE-WRITE snapshot — the window the booking
-        // really held, never the window the caller asked for.
-        vacatedRange: { checkIn: booking.checkIn, checkOut: booking.checkOut },
-        ...(hostingCoverageOverride ? { override: hostingCoverageOverride } : {}),
-        // #3232: a member who was offered the linked move and declined it is
-        // escalated rather than refused — see `hostingCoverageActorOptions`. The
-        // owner travels WITH the answer, from the same pre-write snapshot, because
-        // the answer only means anything if the actor is the person whose two
-        // bookings these are; an officer answering here would otherwise skip §7's
-        // confirmation and its mandatory reason.
-        ...(hostingCoverageLinkedMove
-          ? {
-              linkedMove: {
-                answer: hostingCoverageLinkedMove,
-                bookingOwnerMemberId: booking.memberId,
-              },
-            }
+        ...(approvedExceptionAdultMemberHostingDecision
+          ? { decision: approvedExceptionAdultMemberHostingDecision }
           : {}),
-      }),
+        ...hostingCoverageActorOptions({
+          actorRole: actor.role,
+          actorMemberId: actor.id,
+          // #3232: a batch edit CAN move the stay, and this seam runs after the
+          // write, so the dependent fan-out would otherwise be narrowed to the new
+          // nights and would miss a booking that was relying on the old ones.
+          // `booking` is the post-lock PRE-WRITE snapshot — the window the booking
+          // really held, never the window the caller asked for.
+          vacatedRange: {
+            checkIn: booking.checkIn,
+            checkOut: booking.checkOut,
+          },
+          ...(hostingCoverageOverride
+            ? { override: hostingCoverageOverride }
+            : {}),
+          // #3232: a member who was offered the linked move and declined it is
+          // escalated rather than refused — see `hostingCoverageActorOptions`. The
+          // owner travels WITH the answer, from the same pre-write snapshot, because
+          // the answer only means anything if the actor is the person whose two
+          // bookings these are; an officer answering here would otherwise skip §7's
+          // confirmation and its mandatory reason.
+          ...(hostingCoverageLinkedMove
+            ? {
+                linkedMove: {
+                  answer: hostingCoverageLinkedMove,
+                  bookingOwnerMemberId: booking.memberId,
+                },
+              }
+            : {}),
+        }),
       });
     };
     if (hostingReconcile !== "CALLER") await reconcileHosting();
@@ -1942,7 +1954,8 @@ export async function modifyBookingBatch({
       paymentReference: booking.payment?.reference ?? null,
       xeroInvoiceNumber: booking.payment?.xeroInvoiceNumber ?? null,
       zeroDollarAutoPaid: lifecycle.zeroDollarAutoPaid,
-      supersededPrimaryPaymentIntents: lifecycle.supersededPrimaryPaymentIntents,
+      supersededPrimaryPaymentIntents:
+        lifecycle.supersededPrimaryPaymentIntents,
       xeroAdditionalAmountCents: payments.xeroAdditionalAmountCents,
       xeroRefundAmountCents: payments.xeroRefundAmountCents,
       settlementMethod: payments.settlementMethod,
@@ -2047,9 +2060,8 @@ export async function modifyBookingBatch({
       // graph, and only a booking that actually added a cross-family member guest
       // needs it. A club with the module off never loads the mailer through this
       // path at all.
-      const { sendMemberGuestAddNotifications } = await import(
-        "@/lib/member-guest-consent-notifications"
-      );
+      const { sendMemberGuestAddNotifications } =
+        await import("@/lib/member-guest-consent-notifications");
       // Belt and braces around a function that is documented never to reject: the
       // booking is ALREADY COMMITTED at this point, so an unexpected throw here
       // would hand the member an error for a booking that exists and was paid for.
@@ -2071,9 +2083,8 @@ export async function modifyBookingBatch({
     // MG4 (#2309): and the other direction, on the same rules — after the commit,
     // lazily imported, never allowed to fail an already-committed edit.
     if (result.withdrawnMemberGuests.length > 0) {
-      const { sendMemberGuestWithdrawnNotifications } = await import(
-        "@/lib/member-guest-consent-notifications"
-      );
+      const { sendMemberGuestWithdrawnNotifications } =
+        await import("@/lib/member-guest-consent-notifications");
       try {
         // Grouped by context so each reader gets the sentence that matches what
         // actually happened to them, rather than one message covering both.
@@ -2106,7 +2117,8 @@ export async function modifyBookingBatch({
       result,
       metadataReason: "batch_modification",
       idempotencyKeyPrefix: `mod_batch_refund_${bookingId}`,
-      failureMessage: "Stripe refund failed after batch modification - enqueueing recovery",
+      failureMessage:
+        "Stripe refund failed after batch modification - enqueueing recovery",
       recoveryFailureMessage:
         "Failed to enqueue payment recovery for Stripe refund failure after batch modification",
     });
@@ -2117,7 +2129,8 @@ export async function modifyBookingBatch({
         result,
         reason: "batch_modify_price_increase",
         idempotencyKey: `mod_batch_${bookingId}_${result.bookingModificationId}`,
-        failureMessage: "Failed to create additional PaymentIntent for batch modification",
+        failureMessage:
+          "Failed to create additional PaymentIntent for batch modification",
       });
 
     // Issue #1668: under an admin override, link this modification to the
@@ -2348,7 +2361,10 @@ async function dispatchBatchPostTransactionSideEffects({
 
   // #2266: a credit-election-only edit changes nothing about the stay, so no
   // change-notification email — same silence as an identity-only name fix.
-  if (result.identityOnlyModification || result.creditElectionOnlyModification) {
+  if (
+    result.identityOnlyModification ||
+    result.creditElectionOnlyModification
+  ) {
     return;
   }
 
@@ -2424,9 +2440,6 @@ async function dispatchBatchPostTransactionSideEffects({
     financialReviewPending,
     lodgeId: result.booking.lodgeId,
   }).catch((err) =>
-    logger.error(
-      { err, bookingId },
-      "Failed to send batch modification email",
-    ),
+    logger.error({ err, bookingId }, "Failed to send batch modification email"),
   );
 }

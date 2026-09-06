@@ -4,9 +4,7 @@ import {
   type AgeTier,
   type Prisma,
 } from "@prisma/client";
-import {
-  type SeasonRateData,
-} from "@/lib/pricing";
+import { type SeasonRateData } from "@/lib/pricing";
 import {
   assertMembershipTypeBookingAllowed,
   priceBookingGuestsWithMembershipTypePolicy,
@@ -89,14 +87,16 @@ import { SELF_REMOVABLE_GUEST_BOOKING_STATUSES } from "@/lib/booking-guest-self-
 export class BookingGuestRemovalError extends Error {
   constructor(
     message: string,
-    public readonly status: number
+    public readonly status: number,
   ) {
     super(message);
   }
 }
 
 export type RemoveBookingGuestResult = {
-  booking: Prisma.BookingGetPayload<{ include: { guests: true; payment: true } }>;
+  booking: Prisma.BookingGetPayload<{
+    include: { guests: true; payment: true };
+  }>;
   removedGuest: Prisma.BookingGuestGetPayload<Record<string, never>>;
   priceDiffCents: number;
   refundAmountCents: number;
@@ -363,17 +363,17 @@ export async function removeBookingGuestInTransaction({
       },
       payment: true,
       member: true,
-        promoRedemption: {
-          include: {
-            guestTargets: { select: { bookingGuestId: true } },
-            promoCode: {
-              include: {
-                assignments: { select: { memberId: true } },
-                lodges: { select: { lodgeId: true } },
-              },
+      promoRedemption: {
+        include: {
+          guestTargets: { select: { bookingGuestId: true } },
+          promoCode: {
+            include: {
+              assignments: { select: { memberId: true } },
+              lodges: { select: { lodgeId: true } },
             },
           },
         },
+      },
     },
   });
 
@@ -461,11 +461,13 @@ export async function removeBookingGuestInTransaction({
 
   if (
     !isSelfRemoval &&
-    !["PENDING", "PAYMENT_PENDING", "CONFIRMED", "PAID"].includes(booking.status)
+    !["PENDING", "PAYMENT_PENDING", "CONFIRMED", "PAID"].includes(
+      booking.status,
+    )
   ) {
     throw new BookingGuestRemovalError(
       "Only PENDING, PAYMENT_PENDING, CONFIRMED, or PAID bookings can be modified",
-      400
+      400,
     );
   }
   if (
@@ -501,7 +503,7 @@ export async function removeBookingGuestInTransaction({
   if (!isSelfRemoval && !editPolicy.canModify) {
     throw new BookingGuestRemovalError(
       editPolicy.reason ?? "This booking cannot be modified",
-      400
+      400,
     );
   }
   if (isSelfRemoval && !selfRemovalIsFuture) {
@@ -513,14 +515,14 @@ export async function removeBookingGuestInTransaction({
   if (!isSelfRemoval && editPolicy.mode !== "future") {
     throw new BookingGuestRemovalError(
       "Use the full booking edit flow for in-progress booking guest changes",
-      400
+      400,
     );
   }
 
   if (booking.guests.length <= 1) {
     throw new BookingGuestRemovalError(
       "Cannot remove the last guest. Cancel the booking instead.",
-      400
+      400,
     );
   }
 
@@ -654,7 +656,9 @@ export async function removeBookingGuestInTransaction({
 
   await tx.bookingGuest.delete({ where: { id: guestId } });
 
-  const remainingGuests = booking.guests.filter((guest) => guest.id !== guestId);
+  const remainingGuests = booking.guests.filter(
+    (guest) => guest.id !== guestId,
+  );
   const seasonRateData = await loadSeasonRateData(tx, bookingLodgeId);
 
   const guestsForPricing = remainingGuests.map((guest) => ({
@@ -813,17 +817,28 @@ export async function removeBookingGuestInTransaction({
       skipAuthorization: actorRole === "ADMIN",
     });
     const repriced = priceBreakdown;
-    const guestNightRates = guestsForPricing.map((guest, index) => ({
-      bookingGuestId: guest.bookingGuestId,
-      memberId: guest.memberId ?? null,
-      isMember: guest.isMember,
-      perNightRates: repriced.guests[index].perNightCents,
-      nightDates: repriced.guests[index].nightDates,
-      // nightDates carry each guest's actual priced nights (partial stays
-      // included); firstNight remains the booking's check-in so internal
-      // work-party promos date their window from the stay start.
-      firstNight: booking.checkIn,
-    }));
+    // Each guest's own priced row, read once. The breakdown was built from
+    // `guestsForPricing`, so a guest with no row is a wiring defect and there is
+    // no amount to promo-allocate against — refused, not guessed (#2800).
+    const guestNightRates = guestsForPricing.map((guest, index) => {
+      const priced = repriced.guests[index];
+      if (priced === undefined) {
+        throw new Error(
+          `Guest removal reprice has no priced guest at breakdown position ${index} of ${repriced.guests.length} (#3031).`,
+        );
+      }
+      return {
+        bookingGuestId: guest.bookingGuestId,
+        memberId: guest.memberId ?? null,
+        isMember: guest.isMember,
+        perNightRates: priced.perNightCents,
+        nightDates: priced.nightDates,
+        // nightDates carry each guest's actual priced nights (partial stays
+        // included); firstNight remains the booking's check-in so internal
+        // work-party promos date their window from the stay start.
+        firstNight: booking.checkIn,
+      };
+    });
 
     newTotalPriceCents = repriced.totalPriceCents;
     // #3031: THE CREDIT IS THE DEPARTING GUEST'S OWN STORED PRICE, and the gate
@@ -943,8 +958,14 @@ export async function removeBookingGuestInTransaction({
   const repricedGuests = priceBreakdown;
   if (repricedGuests) {
     await Promise.all(
-      remainingGuests.map((guest, index) =>
-        tx.bookingGuest.update({
+      remainingGuests.map((guest, index) => {
+        const priced = repricedGuests.guests[index];
+        if (priced === undefined) {
+          throw new Error(
+            `Guest removal reprice has no priced guest at breakdown position ${index} for booking guest ${guest.id} (#3031).`,
+          );
+        }
+        return tx.bookingGuest.update({
           where: { id: guest.id },
           // Overwrite the rate-type snapshot alongside the repriced total
           // (#1930, E4) — unless this guest kept a locked night, in which case
@@ -952,14 +973,14 @@ export async function removeBookingGuestInTransaction({
           // describe a stay that mixes locked member-rate nights with newly
           // priced ones (#2543). See `rateSnapshotUpdateForRepricedGuest`.
           data: {
-            priceCents: repricedGuests.guests[index].priceCents,
+            priceCents: priced.priceCents,
             rateMembershipTypeId: rateSnapshotUpdateForRepricedGuest(
-              repricedGuests.guests[index],
+              priced,
               guestsForPricing[index]?.lockedNightPrices,
             ),
           },
-        })
-      )
+        });
+      }),
     );
   }
 
@@ -1165,7 +1186,10 @@ export async function loadSeasonRateData(
   lodgeId?: string,
 ): Promise<SeasonRateData[]> {
   const seasons = await tx.season.findMany({
-    where: { active: true, ...(lodgeId ? lodgeNullTolerantScope(lodgeId) : {}) },
+    where: {
+      active: true,
+      ...(lodgeId ? lodgeNullTolerantScope(lodgeId) : {}),
+    },
     include: { membershipTypeRates: true },
   });
 
@@ -1178,7 +1202,7 @@ export async function loadSeasonRateData(
 
 async function removeGuestChoreAssignments(
   tx: Prisma.TransactionClient,
-  guestId: string
+  guestId: string,
 ) {
   const choreWarnings: string[] = [];
   const lockCandidates = await tx.choreAssignment.findMany({
@@ -1186,7 +1210,10 @@ async function removeGuestChoreAssignments(
     select: { date: true },
   });
 
-  await lockRosterDates(tx, lockCandidates.map((assignment) => assignment.date));
+  await lockRosterDates(
+    tx,
+    lockCandidates.map((assignment) => assignment.date),
+  );
 
   const guestAssignments = await tx.choreAssignment.findMany({
     where: { bookingGuestId: guestId },
@@ -1199,7 +1226,7 @@ async function removeGuestChoreAssignments(
       assignment.status === "COMPLETED"
     ) {
       choreWarnings.push(
-        `${assignment.choreTemplate.name} on ${formatDateOnly(assignment.date)} was ${assignment.status}`
+        `${assignment.choreTemplate.name} on ${formatDateOnly(assignment.date)} was ${assignment.status}`,
       );
     }
   }
@@ -1223,17 +1250,17 @@ export async function recalculateBookingPromo({
   bookingId: string;
   booking: Prisma.BookingGetPayload<{
     include: {
-          promoRedemption: {
+      promoRedemption: {
+        include: {
+          guestTargets: { select: { bookingGuestId: true } };
+          promoCode: {
             include: {
-              guestTargets: { select: { bookingGuestId: true } };
-              promoCode: {
-                include: {
-                  assignments: { select: { memberId: true } };
-                  lodges: { select: { lodgeId: true } };
-                };
-              };
+              assignments: { select: { memberId: true } };
+              lodges: { select: { lodgeId: true } };
             };
           };
+        };
+      };
     };
   }>;
   newTotalPriceCents: number;
@@ -1268,11 +1295,11 @@ export async function recalculateBookingPromo({
     // capacity lock is already held, so the order stays lodge -> promo row.
     const promo = await lockAndRefreshPromoCodeUsage(
       tx,
-      booking.promoRedemption.promoCode
+      booking.promoRedemption.promoCode,
     );
     const selectedGuestIndexes = selectedIndexesForStoredGuestTargets(
       booking.promoRedemption,
-      guestNightRates
+      guestNightRates,
     );
     const bookingLodgeId = booking.lodgeId ?? (await getDefaultLodgeId(tx));
     const application = await validateAndCalculatePromoDiscount(
@@ -1321,11 +1348,16 @@ export async function recalculateBookingPromo({
         discount.allocations,
         targetBookingGuestIdsForSelectedIndexes(
           guestNightRates,
-          application.selectedGuestIndexes
+          application.selectedGuestIndexes,
         ),
       );
     }
   }
 
-  return { newDiscountCents, newPromoAdjustmentCents, promoRemoved, promoCoverage };
+  return {
+    newDiscountCents,
+    newPromoAdjustmentCents,
+    promoRemoved,
+    promoCoverage,
+  };
 }

@@ -157,10 +157,22 @@ export function buildApprovalGuestNights(params: {
     engine.every((cents) => Number.isInteger(cents)) &&
     engine.reduce((sum, cents) => sum + cents, 0) === params.priceCents
   ) {
-    return nightDates.map((stayDate, index) => ({
+    // The engine vector was just checked to be the same length as the night
+    // list, so each night has its amount; reading it here is what says so, and
+    // a short vector falls through to the even split below exactly as a
+    // length mismatch already did (#2800).
+    const enginePriced = nightDates.map((stayDate, index) => ({
       stayDate,
       priceCents: engine[index],
     }));
+    if (
+      enginePriced.every(
+        (night): night is { stayDate: Date; priceCents: number } =>
+          night.priceCents !== undefined,
+      )
+    ) {
+      return enginePriced;
+    }
   }
   const base = Math.floor(params.priceCents / count);
   const remainder = params.priceCents - base * count;

@@ -86,10 +86,15 @@ function errorMessage(error: unknown) {
 }
 
 function nextRetryDate(attempts: number) {
+  // The attempt index is clamped into the schedule's own bounds, so it always
+  // lands on a step; the last step is the same list's longest wait and is the
+  // right one to fall back to rather than a delay invented here (#2800).
+  const step = Math.min(
+    Math.max(attempts - 1, 0),
+    RETRY_BACKOFF_MINUTES.length - 1
+  );
   const delayMinutes =
-    RETRY_BACKOFF_MINUTES[
-      Math.min(Math.max(attempts - 1, 0), RETRY_BACKOFF_MINUTES.length - 1)
-    ];
+    RETRY_BACKOFF_MINUTES[step] ?? RETRY_BACKOFF_MINUTES.at(-1) ?? 0;
   return new Date(Date.now() + delayMinutes * 60 * 1000);
 }
 

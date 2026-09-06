@@ -99,7 +99,13 @@ export function monthStartString(monthKey: string): string {
 }
 
 export function monthEndString(monthKey: string): string {
+  // A month key is `YYYY-MM`; both halves are read here so a key that is not
+  // one fails by name rather than by producing `NaN`, which `Date.UTC` would
+  // turn into an Invalid Date and this would render as "NaN" (#2800).
   const [year, month] = monthKey.split("-").map(Number);
+  if (year === undefined || month === undefined) {
+    throw new Error(`Month key must be YYYY-MM, got "${monthKey}"`);
+  }
   const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
 
   return `${monthKey}-${String(lastDay).padStart(2, "0")}`;

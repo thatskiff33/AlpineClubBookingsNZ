@@ -437,12 +437,21 @@ function buildMembershipTypeBookingPolicyMessage(
     return `Your ${formatSeasonDisplay(ownerBlock.seasonYear)} membership type (${ownerBlock.membershipTypeName}) does not allow lodge bookings.`;
   }
 
+  // Both sentences name a season, taken from the first block they describe.
+  // With no block there is nothing to refuse and no season to name, so the
+  // generic wording stands without one — this is refusal copy and must not
+  // throw (#2800).
   const guestBlocks = blocks.filter((block) => block.scope === "MEMBER_GUEST");
-  if (guestBlocks.length === blocks.length) {
-    return `The following member guests cannot be booked for the ${formatSeasonDisplay(guestBlocks[0].seasonYear)} season: ${guestBlocks.map((block) => block.name).join(", ")}.`;
+  const firstGuestBlock = guestBlocks[0];
+  if (firstGuestBlock !== undefined && guestBlocks.length === blocks.length) {
+    return `The following member guests cannot be booked for the ${formatSeasonDisplay(firstGuestBlock.seasonYear)} season: ${guestBlocks.map((block) => block.name).join(", ")}.`;
   }
 
-  return `One or more members cannot be booked for the ${formatSeasonDisplay(blocks[0].seasonYear)} season under their membership type policy.`;
+  const firstBlock = blocks[0];
+  if (firstBlock === undefined) {
+    return "One or more members cannot be booked under their membership type policy.";
+  }
+  return `One or more members cannot be booked for the ${formatSeasonDisplay(firstBlock.seasonYear)} season under their membership type policy.`;
 }
 
 /**

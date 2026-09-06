@@ -913,7 +913,19 @@ export async function buildSubscriptionBillingPreview(input: {
       // The chosen family then flows through the SAME downstream recipient checks
       // (MISSING_FAMILY_RECIPIENT / INVALID_FAMILY_RECIPIENT) as an unambiguous
       // family — no duplicated path.
+      // Reading the first membership is what says the member belongs to a
+      // family at all; the guard above has already excluded the no-family case,
+      // and a member with none has no family to bill (#2800, INV-LIFE).
       let membership = member.familyGroupMemberships[0];
+      if (membership === undefined) {
+        exceptions.push(exception({
+          code: "AMBIGUOUS_FAMILY", message: `${memberName} belongs to no family; choose one before billing.`,
+          seasonYear: input.seasonYear, memberId: member.id, familyGroupId: null,
+          membershipTypeId: membershipType.id,
+          context: { memberName, familyGroupIds: [] },
+        }));
+        continue;
+      }
       if (member.familyGroupMemberships.length > 1) {
         if (!member.billingFamilyGroupId) {
           exceptions.push(exception({
@@ -1089,9 +1101,14 @@ export async function buildSubscriptionBillingPreview(input: {
   if (invoiceEntries.length > 0) {
     const mapping = await getResolvedAccountMapping("subscriptionIncome", db);
     if (!mapping.code || !mapping.codeExplicitlyConfigured) {
-      for (let index = entries.length - 1; index >= 0; index -= 1) {
-        if (entries[index].billingBasis !== "NO_INVOICE") entries.splice(index, 1);
-      }
+      // Drop every invoiceable entry, keeping the NO_INVOICE ones. Filtering
+      // in place says that without reading the list back by a position it is
+      // simultaneously splicing out of (#2800).
+      const keptEntries = entries.filter(
+        (entry) => entry.billingBasis === "NO_INVOICE",
+      );
+      entries.length = 0;
+      entries.push(...keptEntries);
       exceptions.push(exception({
         code: "MISSING_XERO_ACCOUNT_MAPPING",
         message: "The subscriptionIncome Xero account mapping must be explicitly configured before membership invoices can be queued.",
