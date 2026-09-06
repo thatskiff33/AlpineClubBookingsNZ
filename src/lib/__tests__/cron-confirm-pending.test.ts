@@ -163,7 +163,7 @@ vi.mock("@/lib/payment-link", () => ({
 // flows through so the withheld-row assertion below compares against the
 // production constant rather than a second literal (INV-SSOT-002).
 vi.mock("@/lib/payment-link-split-guest", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/payment-link-split-guest")>()),
+  ...((await importOriginal()) as typeof import("@/lib/payment-link-split-guest")),
   mintSplitGuestPaymentLinkIfAbsent: (...args: unknown[]) =>
     mockMintSplitGuestPaymentLinkIfAbsent(...args),
 }));
