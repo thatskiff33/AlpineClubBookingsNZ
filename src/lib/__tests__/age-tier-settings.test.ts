@@ -637,6 +637,13 @@ describe("validateAgeTierPartition — subset validity rule (#2009)", () => {
       );
     });
 
+    it("rejects an empty list before any other rule runs (#2799)", () => {
+      // The emptiness check now reads the youngest row rather than the length;
+      // an empty list must still be refused with the same message, and must not
+      // fall through to a later rule (an empty list has no ADULT either).
+      expectRejected([], /at least one age tier is required/i);
+    });
+
     it("rejects a duplicate tier slot", () => {
       expectRejected(
         [row("ADULT", 0, null), row("ADULT", 0, null)],
