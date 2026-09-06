@@ -51,6 +51,7 @@ import {
   findOrCreateCustomer,
   getPaymentIntent,
 } from "@/lib/stripe";
+import { savedPaymentMethodForBooking } from "@/lib/saved-payment-method";
 import { queueXeroInvoiceForPaidBooking } from "@/lib/xero-booking-invoice-queue";
 
 /** A paid booking and a completed stay are both "already paid" for link purposes. */
@@ -1149,14 +1150,16 @@ export async function issueSplitGuestPaymentLink(
 
   // #1967 FIX-5: a saved card (its own, or inherited from the parent payment)
   // means the settlement cron will auto-charge this child — issuing a manual
-  // pay link alongside would create a second live settlement path.
-  const hasSavedCard = Boolean(
-    (booking.payment?.stripeCustomerId &&
-      booking.payment.stripePaymentMethodId) ||
-      (booking.parentBooking?.payment?.stripeCustomerId &&
-        booking.parentBooking.payment.stripePaymentMethodId)
-  );
-  if (hasSavedCard) {
+  // pay link alongside would create a second live settlement path. The SAME
+  // predicate the cron charges on (#3269, `INV-PAY-053`), so a card the cron
+  // would refuse to charge — the parent's one-off checkout card — does not
+  // block the link here either.
+  if (
+    savedPaymentMethodForBooking({
+      payment: booking.payment,
+      parentBooking: booking.parentBooking,
+    })
+  ) {
     return { outcome: "not_payable" };
   }
 
