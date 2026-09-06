@@ -3,6 +3,7 @@ import "server-only";
 import type { ManualRefundTaskKind, Prisma } from "@prisma/client";
 
 import { createAuditLog } from "@/lib/audit";
+import { manualRefundTaskKindAllowsSettlement } from "@/lib/manual-refund-task-settlement-rules";
 import type { EditReviewSettlementRoute } from "@/lib/edit-financial-review-settlement";
 import type { SettlementDirectionValue } from "@/lib/stored-night-price-repair";
 
@@ -69,10 +70,22 @@ export async function recordManualRefundTaskClosureAudit({
       category: "payment",
       severity: "important",
       outcome: "success",
+      // #3213: THE DISMISSAL ARM IS KIND-AWARE, and it is the durable half of
+      // the same correction the officer's toast gets (`dismissalMessage`). A
+      // withheld share is closed by DISMISSED - that is how one of these items
+      // is closed at all - but the officer who closes it has just checked Xero
+      // and billed a shortfall by hand, so "refund task dismissed" would write
+      // the wrong act, in the wrong direction, into the booking's permanent
+      // history. Asked of the shared settlement rule rather than of the label,
+      // because "cannot be settled" and "nothing here moves money" are one fact
+      // with one home (`INV-SSOT`); an unrecognised kind answers TRUE there and
+      // keeps the wording every row has always had.
       summary:
         resolution === "completed"
           ? "Manual booking refund paid back by hand"
-          : "Manual booking refund task dismissed",
+          : manualRefundTaskKindAllowsSettlement(task.kind)
+            ? "Manual booking refund task dismissed"
+            : "Uncollected booking amount closed as dealt with, no money moved",
       details: note,
       metadata: {
         taskId: task.id,

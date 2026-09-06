@@ -489,6 +489,17 @@ pricing** - nothing on this screen can ever price it, because the pass that
 raised it holds the change's combined total and cannot say which part the sent
 invoice carried.
 
+**And what it says once it is closed is the same correction one step later
+(#3213 fix round).** On every other kind, closing without settling means the club
+decided not to pay something back, and both the receipt on screen and the summary
+written into the booking's permanent history say so in those words. On this kind
+the officer has just done the opposite job - checked Xero and billed a shortfall
+by hand - so being told they dismissed a refund would name the wrong act in the
+wrong direction, and the audit half of it would say so forever. Closing one now
+reads as an uncollected amount dealt with, with no money moved and the officer's
+note as the only record of what the invoices showed and what was billed. Every
+other kind's wording is unchanged, word for word.
+
 **The settle box asks a second question when the booking has unpriced nights
 (#3191).** A financial-review row whose guest strand holds nights with no stored
 price carries a list of those nights inside the settle dialog, one money box each,

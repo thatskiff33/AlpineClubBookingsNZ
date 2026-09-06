@@ -27,6 +27,10 @@
  * same behaviour in two vocabularies.
  */
 
+import type { ManualRefundTaskKind } from "@prisma/client";
+
+import { manualRefundTaskKindAllowsSettlement } from "@/lib/manual-refund-task-settlement-rules";
+
 /**
  * A completion at zero stays refused, and the refusal names the way out.
  *
@@ -137,4 +141,36 @@ export function nightPricesRecordedMessage(count: number): string {
   return count === 1
     ? ` One night's price was recorded${tail}`
     : ` ${count} nights' prices were recorded${tail}`;
+}
+
+/**
+ * #3213: what an officer is told a DISMISSAL actually did.
+ *
+ * The counterpart to `completionMessage` above, and it lives here for the reason
+ * that one does: it is the sentence a closed task answers with, and until now it
+ * was a bare literal on the admin route with nothing beside it to say which kind
+ * of item it was describing.
+ *
+ * IT IS KIND-AWARE BECAUSE ONE KIND IS NOT A REFUND. On every kind older than
+ * `UNCOLLECTED_EDIT_REVIEW_SHARE`, "dismissed" means the club decided not to pay
+ * something back, and "Refund task dismissed." is the true sentence. On a
+ * withheld share the officer has just done the opposite job - checked Xero and
+ * billed a shortfall BY HAND - so telling them they dismissed a refund names the
+ * wrong direction and the wrong act at the moment they finish it. That is the
+ * `#3033` category confusion one kind further along, and it is the same reason
+ * the dialog above the button says "Close this item" rather than "Dismiss".
+ *
+ * ASKED OF THE SHARED RULE, not of the label. A kind that cannot be settled is
+ * exactly a kind where nothing moves money, which is the fact this sentence turns
+ * on - so the two questions have one answer and one home
+ * (`manual-refund-task-settlement-rules.ts`, `INV-SSOT`). An unrecognised kind
+ * answers TRUE there and lands on the legacy sentence, which is the safe way
+ * round: a stale client bundle gets the wording every row has always had rather
+ * than a claim about an item type it does not know.
+ */
+export function dismissalMessage(
+  kind: ManualRefundTaskKind | string | null | undefined,
+): string {
+  if (manualRefundTaskKindAllowsSettlement(kind)) return "Refund task dismissed.";
+  return "Item closed. It moved no money and raised no invoice — your note is the only record of what the booking's Xero invoices showed and what you billed by hand.";
 }
