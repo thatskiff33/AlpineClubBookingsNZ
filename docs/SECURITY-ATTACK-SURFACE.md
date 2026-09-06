@@ -936,9 +936,13 @@ Verified controls already present and intentionally preserved:
   lightweight unless explicitly approved.
 - Semgrep uses a pinned `semgrep/semgrep:1.161.0` image and runs this
   repository's own rules (`.semgrep/rules/`) alongside the four registry packs;
-  gitleaks uses the pinned `ghcr.io/gitleaks/gitleaks:v8.28.0` container for
-  the pull-request commit range, the history of `main` and the checked-out
-  tree, in one job; and the Dockerfile uses `node:24.15-alpine`.
+  gitleaks runs the container pinned in `scripts/ci/gitleaks-image.sh`, through
+  the one invocation in `scripts/ci/gitleaks-scan.sh`, over the pull-request
+  commit range, the history of `main` and the checked-out tree in the required
+  gate's single job, and over every branch's history in the advisory scheduled
+  sweep (#2852); and the Dockerfile uses `node:24.15-alpine`. The version
+  literal is deliberately not repeated here — a copy of it is a second home a
+  bump can miss.
 - Two CI security gates are **required** protected-branch checks today —
   `Static analysis gate` and `verify`. #2686 adds `Secret scan (gitleaks)` and
   `Image security gate (Trivy CRITICAL)` to that list, and #2946 adds

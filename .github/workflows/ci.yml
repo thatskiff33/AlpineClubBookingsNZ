@@ -258,10 +258,15 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
-    env:
-      # Pinned, and the same binary for all three scopes.
-      # `deployment-image-contracts` pins this string too.
-      GITLEAKS_IMAGE: ghcr.io/gitleaks/gitleaks:v8.28.0
+    # The pinned image used to be an `env:` here. It moved to
+    # `scripts/ci/gitleaks-image.sh` in #2852, because the scheduled sweep in
+    # `gitleaks-scheduled.yml` needs the SAME binary, and a second copy of a
+    # version string is how #2686's 8.24.3-versus-8.28.0 split happened in the
+    # first place. `scripts/ci/gitleaks-scan.sh` is the one invocation both
+    # workflows call, and it is what turns a scanner that FAILED into a
+    # distinguishable result rather than another non-zero exit. The config and
+    # allowlists are still `.gitleaks.toml` and `.gitleaksignore`, which
+    # gitleaks discovers from the scan root, so neither caller names them.
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -301,14 +306,10 @@ jobs:
         env:
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          GITLEAKS_SCAN_LABEL: this pull request's own commits
         run: |
-          docker run --rm \
-            -v "$PWD:/repo:ro" \
-            "${GITLEAKS_IMAGE}" \
-            git /repo \
-            --log-opts="--diff-merges=first-parent ${PR_BASE_SHA}..${PR_HEAD_SHA}" \
-            --exit-code=1 \
-            --redact
+          GITLEAKS_LOG_OPTS="--diff-merges=first-parent ${PR_BASE_SHA}..${PR_HEAD_SHA}" \
+            bash scripts/ci/gitleaks-scan.sh git
 
       # The history scan is scoped to `main`, and the scope is resolved here so
       # a missing ref fails loudly instead of silently scanning nothing.
@@ -363,14 +364,11 @@ jobs:
       # runner). It stays far inside the ~21m `Playwright E2E` gate, so it adds
       # nothing to time-to-merge.
       - name: Scan the history of main
+        env:
+          GITLEAKS_SCAN_LABEL: the history of main
         run: |
-          docker run --rm \
-            -v "$PWD:/repo:ro" \
-            "${GITLEAKS_IMAGE}" \
-            git /repo \
-            --log-opts="--diff-merges=first-parent ${HISTORY_SCAN_SCOPE}" \
-            --exit-code=1 \
-            --redact
+          GITLEAKS_LOG_OPTS="--diff-merges=first-parent ${HISTORY_SCAN_SCOPE}" \
+            bash scripts/ci/gitleaks-scan.sh git
 
       # Present-tense content, independent of commit topology. The two scans
       # above read PATCHES, so what they see depends on how history was shaped;
@@ -386,13 +384,9 @@ jobs:
       # It costs about 10 seconds. Nothing installs dependencies in this job, so
       # there is no `node_modules` for it to walk.
       - name: Scan the checked-out tree
-        run: |
-          docker run --rm \
-            -v "$PWD:/repo:ro" \
-            "${GITLEAKS_IMAGE}" \
-            dir /repo \
-            --exit-code=1 \
-            --redact
+        env:
+          GITLEAKS_SCAN_LABEL: the checked-out tree
+        run: bash scripts/ci/gitleaks-scan.sh dir
 
   verify:
     runs-on: ubuntu-latest

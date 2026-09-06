@@ -70,6 +70,10 @@ CI also runs independent static and container checks:
   `scripts/ci/gitleaks-selftest.sh`, which plants a credential and proves the
   scanner still reports it. `Secret scan (gitleaks)` (#2686; **pending** as a
   required check, see `AGENTS.md` for the rollout order)
+- the same pinned gitleaks over **every** branch's history, weekly and
+  non-blocking, as `Scheduled secret sweep` (#2852). It is advisory by
+  construction rather than by configuration — see "The repository-wide secret
+  sweep" below for which of the two is responsible for what
 - TypeScript, test, and Docker image build validation
 - Migration drift check (`migration-drift` job) running `db:check-drift` against
   a throwaway Postgres, so schema-vs-migration drift fails the PR rather than the
@@ -272,12 +276,68 @@ materialised, so one leak on anybody's abandoned branch would turn a REQUIRED
 check red on every open pull request, unfixable from the author's own branch.
 A wider sweep is still worth running — a secret on an unmerged branch is public
 on a public repository — but it belongs in a scheduled, non-blocking job where a
-finding is a task rather than a merge freeze. Until that job exists, run it by
-hand when a branch is abandoned:
+finding is a task rather than a merge freeze. That job is
+`Scheduled secret sweep` (#2852), in `.github/workflows/gitleaks-scheduled.yml`.
+
+**Which one is responsible for what.** The two are not alternatives and the
+difference is the scope, not the scanner:
+
+| | `Secret scan (gitleaks)` | `Scheduled secret sweep` |
+| --- | --- | --- |
+| Runs on | every pull request and push | weekly, plus `workflow_dispatch` |
+| Scope | this pull request's commits, the history of `main`, the checked-out tree | **every** branch's history (`--all`), plus the tree |
+| A finding | blocks the merge | opens a task; blocks nothing |
+| Branch protection | required context | no context at all — it has no `pull_request` or `push` trigger |
+
+What they share is deliberate and enforced. The pinned scanner version lives in
+`scripts/ci/gitleaks-image.sh` and nowhere else; the invocation lives in
+`scripts/ci/gitleaks-scan.sh`, which both workflows call; the rule set and the
+allowlists are `.gitleaks.toml` and `.gitleaksignore`, which gitleaks discovers
+from the scan root. `deployment-image-contracts.test.ts` fails if either
+workflow names a gitleaks container of its own. #2686 is why: the two jobs that
+used to sit in `ci.yml` ran 8.24.3 and 8.28.0 over the same commits for months,
+and nothing said so.
+
+**A scanner that failed is not a clean scan.** gitleaks exits 1 both when it
+finds a leak and when it cannot run at all, so `gitleaks-scan.sh` asks for
+`--exit-code=2` and treats every other non-zero as a scanner failure, saying so
+in the log. Both still fail the job — the discrimination is about the message,
+not about what blocks a merge.
+
+**And a successful exit is not a clean scan either, on its own.** When the git
+source itself fails — an unresolvable commit range, or a repository-ownership
+refusal — gitleaks logs the git error, concludes it finished, and exits **0**
+with `0 commits scanned … no leaks found`. `--exit-code` never applies, because
+from the scanner's point of view there was nothing to find. Measured on
+v8.28.0, and it lands on the REQUIRED gate rather than only on the sweep: the
+pull-request scope resolves `<base>..<head>`, which is unresolvable whenever
+the base commit is missing from the checkout. So a `git`-mode scan that walked
+zero commits is treated as the scanner failure it is. Zero commits is never a
+legitimate answer for any scope this repository scans.
+
+The same failure has a second, quieter shape: the git error need not happen at
+the START of the walk. gitleaks streams commits to its detector, and any
+unrecognised line on git's stderr both stops that stream and gets logged with a
+`[git] ` tag — so a bad object twenty percent into an `--all` sweep prints
+`1500 commits scanned … no leaks found` and exits 0, having silently skipped the
+other eighty percent. A tagged line therefore fails the scan on its own,
+whatever it says. Benign git messages are not tagged: gitleaks allowlists five
+of them and emits those as untagged `WRN` lines, which is what makes the tag a
+usable signal rather than noise.
+
+**Triaging a sweep finding.** The run summary lists the rule, the file, the line
+and the commit for each finding, and the run keeps a `gitleaks-sweep-reports`
+artifact for fourteen days with the same detail plus the fingerprint. Every
+value is `--redact`ed, so neither republishes the secret. A finding on a branch
+that was never merged is still a disclosure on a public repository: rotate the
+credential first, and only then decide what to do with the branch.
+
+Run the sweep yourself, exactly as the scheduled job does:
 
 ```bash
-docker run --rm -v "$PWD:/repo:ro" ghcr.io/gitleaks/gitleaks:v8.28.0 \
-  git /repo --log-opts="--diff-merges=first-parent --all" --exit-code=1 --redact
+GITLEAKS_SCAN_LABEL="every branch's history" \
+GITLEAKS_LOG_OPTS="--diff-merges=first-parent --all" \
+  bash scripts/ci/gitleaks-scan.sh git
 ```
 
 Accepted residual risk:
