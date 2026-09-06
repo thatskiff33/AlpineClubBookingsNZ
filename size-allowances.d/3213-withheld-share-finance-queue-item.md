@@ -23,12 +23,23 @@ reason: this is where the whole officer-facing half of #3213 lands, and it is
   exists at all, was deliberately NOT written here: it is asked of the shared
   settlement rule the server refuses on, so the screen and the door cannot drift.
   The obvious split is still to lift the evidence renderer out, and #3033's
-  allowance already rejected that on evidence rather than effort: FIVE suites now
-  scan this file BY PATH — `view-only-banner-contract`,
-  `late-capture-decision-provenance`, `unverified-write-copy-contract`,
-  `stored-night-price-repair-census` (which pins it as its `SCOPED_FILE`), and
-  this issue’s own `uncollected-edit-review-share-expand` — and moving code out of a
-  path a disk-scanning guard hardcodes is this repository's known silent
-  false-green — the guard keeps passing over the half that stayed. Re-pointing
-  and mutation-proving four guards is an issue of its own, not a line-count tidy
-  ridden in on a money-copy change.
+  allowance already rejected that on evidence rather than effort. That evidence
+  is re-measured here, because the count this allowance first published was
+  wrong in the direction that flatters it. FIVE suites reach this file; only
+  TWO of them are the hazard being argued from. A guard that hardcodes this
+  path and asserts an ABSENCE is the one a move disarms silently — it keeps
+  passing over the half that stayed, which is this repository's known
+  false-green — and there are two: `stored-night-price-repair-census` (it pins
+  the file as its `SCOPED_FILE` and scans the whole of it for an undeclared
+  money display) and `unverified-write-copy-contract` (a by-path row whose
+  `bannedPhrase` half is exactly such an absence). The other three reach the
+  file and would fail LOUDLY rather than quietly, so they are not part of this
+  argument: `view-only-banner-contract` walks `src/` and never names this path
+  at all; `late-capture-decision-provenance` lists the path, but its fourth
+  half re-derives the list from a tree walk, so a moved citation fails by name;
+  and this issue's own `uncollected-edit-review-share-expand` walks every file
+  under `src/` and allows only two to name the label, so code moved out of here
+  fails the moment it arrives somewhere new. Re-pointing and mutation-proving
+  the two real ones is still an issue of its own rather than a line-count tidy
+  ridden in on a money-copy change — but it is two, and saying five was an
+  argument this file could not cash.
