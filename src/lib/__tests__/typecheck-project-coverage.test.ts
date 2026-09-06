@@ -57,6 +57,7 @@ const JAVASCRIPT_VITEST_TESTS = [
   "scripts/ci/check-pr-changelog-fragment.test.mjs",
   "scripts/ci/check-pr-concurrency-declaration.test.mjs",
   "scripts/ci/check-prerendered-script-nonces.test.mjs",
+  "scripts/ci/check-semgrep-coverage.test.mjs",
   "scripts/ci/check-website-prerender-manifest.test.mjs",
   "scripts/ci/check-website-render-modes.test.mjs",
   "scripts/ci/check-workflow-suite-checkout-depth.test.mjs",
