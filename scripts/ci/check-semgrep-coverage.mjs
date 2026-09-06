@@ -199,13 +199,18 @@ export function readAllowlistFiles(allowlist) {
  *    hitting the gate on the idiomatic `vi.importActual` spelling greps for
  *    `importOriginal`, finds none, decides the gate is confused, and takes the
  *    allowlist escape instead of the one-line fix;
+ *  - and it is the EMPTY argument list that breaks it, measured with a minimal
+ *    repro: `f<typeof import("x")>()` fails and `f<typeof import("x")>("x")`
+ *    parses. Ten files here carry the same generic WITH an argument and are
+ *    correctly not allowlisted, so a rule stated without that qualifier sends
+ *    somebody to rewrite code that was never broken;
  *  - the `&amp;` remedy is only correct in JSX TEXT. Three allowlisted files
  *    carry the `&` inside a STRING - `href="/admin/bookings?sortBy=member&sortDir=asc"`,
  *    one of them asserted with `toHaveAttribute` - where rewriting it changes
  *    the value the test asserts.
  */
 const KNOWN_CONSTRUCTS =
-  'Two shapes defeat the parser, and both are valid TypeScript the build accepts. (1) A GENERIC CALL WHOSE TYPE ARGUMENT CONTAINS AN `import()` TYPE - `f<typeof import("...")>()` for any `f`; the spellings measured here are `importOriginal`, `vi.importActual` and `importActual`, and an inline `import("...").Type<...>` does it too. A plain generic call parses and a plain `import()` type parses; it is the combination. Move the type out of the call: `(await f()) as typeof import("...")`. (2) A BARE `&` IN JSX TEXT - `<h1>Rooms & Beds</h1>` - which becomes `&amp;`. That remedy applies to JSX TEXT ONLY: the same parser fault fires on a `&` inside a string literal, such as a URL query, and rewriting it there would change the value, so those belong on the allowlist instead.'
+  'Two shapes defeat the parser, and both are valid TypeScript the build accepts. (1) A GENERIC CALL WITH AN EMPTY ARGUMENT LIST whose type argument contains an `import()` type - `f<typeof import("...")>()`, for any `f`; the spellings measured here are `importOriginal`, `vi.importActual` and `importActual`. The EMPTY parens are the fault: `f<typeof import("...")>("...")` parses clean, which is why many files use the same generic and are correctly absent from the allowlist. Move the type out of the call: `(await f()) as typeof import("...")`. (2) A BARE `&` IN JSX TEXT - `<h1>Rooms & Beds</h1>` - which becomes `&amp;`. That remedy applies to JSX TEXT ONLY: the same parser fault fires on a `&` inside a string literal, such as a URL query, and rewriting it there would change the value, so those belong on the allowlist instead.'
 
 
 /**

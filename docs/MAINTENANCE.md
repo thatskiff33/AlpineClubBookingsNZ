@@ -309,7 +309,11 @@ Two traps worth knowing before you reach for a remedy, both measured:
 - the generic-call fault is about the SHAPE, not the name. 143 of the
   allowlisted files spell it `importOriginal`, but 22 spell it
   `vi.importActual` or `importActual`, and grepping for the first name finds
-  nothing in those;
+  nothing in those. It is also specifically the EMPTY argument list — measured
+  with a minimal repro, `f<typeof import("x")>()` fails and
+  `f<typeof import("x")>("x")` parses — so ten files here carry the same
+  generic with an argument and are correctly *not* allowlisted. A rule stated
+  without that qualifier sends somebody to rewrite code that was never broken;
 - the `&amp;` remedy is for JSX **text** only. The same fault fires on a `&`
   inside a string literal — a URL query such as
   `href="/admin/bookings?sortBy=member&sortDir=asc"` — where rewriting it
