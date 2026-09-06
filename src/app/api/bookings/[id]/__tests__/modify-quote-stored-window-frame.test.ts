@@ -266,8 +266,8 @@ function futureBooking() {
         stayEnd: D(STORED_CHECK_OUT),
         priceCents: STORED_TOTAL_CENTS,
         nights: [
-          { stayDate: D("2026-09-01"), priceCents: PEAK_NIGHT_CENTS },
-          { stayDate: D("2026-09-02"), priceCents: PEAK_NIGHT_CENTS },
+          { stayDate: D("2026-09-01"), priceCents: PEAK_NIGHT_CENTS, priceSource: "SOLD" },
+          { stayDate: D("2026-09-02"), priceCents: PEAK_NIGHT_CENTS, priceSource: "SOLD" },
         ],
       },
     ],

@@ -237,8 +237,8 @@ function memberDraft() {
         stayEnd: D("2026-08-16"),
         priceCents: 20_000,
         nights: [
-          { stayDate: D("2026-08-14"), priceCents: 10_000 },
-          { stayDate: D("2026-08-15"), priceCents: 10_000 },
+          { stayDate: D("2026-08-14"), priceCents: 10_000, priceSource: "SOLD" },
+          { stayDate: D("2026-08-15"), priceCents: 10_000, priceSource: "SOLD" },
         ],
       },
     ],

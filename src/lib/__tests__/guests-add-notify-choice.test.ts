@@ -147,7 +147,11 @@ const CHECK_OUT = new Date("2026-08-05T00:00:00.000Z"); // 4 nights: Aug 1-4
 const FIXED_NOW = new Date("2026-07-15T00:00:00.000Z"); // NZ 2026-07-15 12:00
 
 function night(day: string, priceCents: number) {
-  return { stayDate: new Date(`2026-08-0${day}T00:00:00.000Z`), priceCents };
+  return {
+    stayDate: new Date(`2026-08-0${day}T00:00:00.000Z`),
+    priceCents,
+    priceSource: "SOLD" as const,
+  };
 }
 
 function makeBooking(overrides: Record<string, unknown> = {}) {
@@ -546,7 +550,11 @@ describe("#3166 adding a guest to a booking whose history cannot be read", () =>
     (booking.guests as Array<Record<string, unknown>>)[0].nights = [
       night("1", 5000),
       night("2", 5000),
-      { stayDate: new Date("2026-08-03T00:00:00.000Z"), priceCents: null },
+      {
+        stayDate: new Date("2026-08-03T00:00:00.000Z"),
+        priceCents: null,
+        priceSource: "UNKNOWN" as const,
+      },
       night("4", 5000),
     ];
     return booking;
