@@ -26,12 +26,14 @@ import {
 } from "@/lib/payment-transactions";
 import {
   attachPaymentIntentToWaitingSupplementaryInvoiceOperations,
+  findWaitingSupplementaryInvoiceOperationForPaymentIntent,
   // Type-only, so it adds nothing to this module's runtime import graph.
   type XeroSupplementaryInvoiceEnqueueOutcome,
 } from "@/lib/xero-operation-outbox";
 import { sendAdminPaymentFailureAlert } from "@/lib/email";
 import { recordDuplicateCaptureRefundEvent } from "@/lib/booking-events";
 import logger from "@/lib/logger";
+import { createAuditLog } from "@/lib/audit";
 import { MAX_PAYMENT_RECOVERY_ATTEMPTS } from "@/lib/payment-recovery-constants";
 import { stripeReferenceId } from "@/lib/stripe-references";
 import { claimAlertCooldown } from "@/lib/alert-cooldown";
@@ -39,6 +41,14 @@ import { claimAlertCooldown } from "@/lib/alert-cooldown";
 type PaymentRecoveryStore = Prisma.TransactionClient | typeof prisma;
 
 const STALE_PROCESSING_MINUTES = 30;
+/**
+ * How many stale `PROCESSING` rows one sweep hands back (#3220 fix round). See
+ * `resetStaleProcessingOperations`: each row now costs an alert and possibly a
+ * Stripe round trip, and the sweep runs in front of the main queue. Generous
+ * against any real backlog - a sweep this size means thirty minutes of workers
+ * died - and the remainder is taken by the next run.
+ */
+const STALE_PROCESSING_SWEEP_LIMIT = 50;
 // One entry per attempt: nextRetryDate(attempts) reads RETRY_BACKOFF_MINUTES[attempts - 1].
 const RETRY_BACKOFF_MINUTES: readonly number[] = [5, 15, 60, 240, 720];
 if (RETRY_BACKOFF_MINUTES.length !== MAX_PAYMENT_RECOVERY_ATTEMPTS) {
@@ -52,6 +62,52 @@ const CAPTURED_TRANSACTION_STATUSES = new Set<PaymentStatus>([
   PaymentStatus.PARTIALLY_REFUNDED,
   PaymentStatus.REFUNDED,
 ]);
+
+/**
+ * THE THREE STATUS SETS THIS MODULE READS, EACH SPELLED ONCE (#3220,
+ * `INV-SSOT`).
+ *
+ * `FAILED` is not one state here, it is two readings of one column, and the
+ * distinction is the whole reason #3220 exists. A `FAILED` row with attempts
+ * left is a RETRY waiting its turn; a `FAILED` row with none is DEAD. The
+ * `attempts < MAX` filter beside each use of
+ * `CLAIMABLE_PAYMENT_RECOVERY_STATUSES` is what separates them, so it belongs to
+ * the query rather than to the constant.
+ *
+ * BEWARE: THAT IS THIS MODULE'S DISTINCTION, AND ONLY THIS MODULE'S. The
+ * booking-vs-Xero repair tool defers on `OPEN_PAYMENT_RECOVERY_STATUSES`
+ * (`xero-booking-repair-load.ts`), which is `[PENDING, PROCESSING]` and carries
+ * no `attempts` filter at all - so it stops deferring at the FIRST failure, not
+ * at death. Do not read the two-readings rule into that query: a retry waiting
+ * its turn already looks dead to it. The consequence is bounded and is stated
+ * with `INV-PAY-057` rather than papered over - a retry that later succeeds
+ * raises the ask and its invoice together, and a retry that runs out reaches the
+ * terminal branch below, which withdraws the ask.
+ *
+ * They were three inline `in: [...]` literals, and the pre-decision review on
+ * #3220 counted them among the module's six mentions of
+ * `PaymentRecoveryOperationStatus.FAILED`. They are reads, so they can never be
+ * the transition anything hangs off - but a reader looking for "where does this
+ * module decide a recovery is dead" had six candidates to eliminate, and
+ * `payment-recovery-terminal-failure-census.test.ts` now pins that there are
+ * exactly these two plus the one write.
+ */
+const CLAIMABLE_PAYMENT_RECOVERY_STATUSES = [
+  PaymentRecoveryOperationStatus.PENDING,
+  PaymentRecoveryOperationStatus.FAILED,
+] as const;
+
+/** Everything a live operation can be. Excludes only the terminal SUCCEEDED. */
+const NON_TERMINAL_PAYMENT_RECOVERY_STATUSES = [
+  PaymentRecoveryOperationStatus.PENDING,
+  PaymentRecoveryOperationStatus.PROCESSING,
+  PaymentRecoveryOperationStatus.FAILED,
+] as const;
+
+/** What the stale-worker reaper is allowed to move a row out of. */
+const STALE_PROCESSING_RECOVERY_STATUSES = [
+  PaymentRecoveryOperationStatus.PROCESSING,
+] as const;
 
 export interface PaymentRecoveryProcessResult {
   found: number;
@@ -1051,6 +1107,373 @@ async function alertPaymentRecoveryFailure(
   });
 }
 
+/**
+ * THE ONE PLACE A `PaymentRecoveryOperation` BECOMES `FAILED` (#3220,
+ * `INV-PAY-056`, `INV-SSOT`).
+ *
+ * Before this function there were three of them - the worker's own catch, and
+ * the stale-`PROCESSING` reaper's two arms - each spelling out its own status
+ * write, its own `nextRetryAt` policy and its own idea of whether the row was
+ * finished. The pre-decision review on #3220 counted the module's references to
+ * `PaymentRecoveryOperationStatus.FAILED` and found six, which is why the issue
+ * says six; three of those are `where` filters that READ the status and cannot
+ * be a transition (they are named constants now, immediately below). What
+ * mattered is the same either way: "this recovery is dead" was expressed in more
+ * than one place, so anything that has to happen when a recovery dies had to be
+ * bolted onto each of them and would silently miss the ones nobody remembered.
+ *
+ * TERMINAL IS AN ARGUMENT, NOT A DERIVATION. The two callers know different
+ * things - the worker knows it has just burnt an attempt, the reaper knows the
+ * row never came back - and a shared re-derivation from `attempts` would be a
+ * fourth opinion. `nextRetryAt` is forced to `null` when terminal rather than
+ * trusted from the caller, because a terminal row that keeps a retry time is
+ * re-claimable and is therefore not terminal at all.
+ *
+ * STATUS-FENCED, like `completePaymentRecoveryOperation` and for the same
+ * reason. The worker's arm used `update` by id, which throws `P2025` when a
+ * manual mark-paid reversal has DELETED the row mid-flight - and it is called
+ * from inside the loop's `catch`, so that throw escaped the loop and abandoned
+ * every remaining operation in the batch. `updateMany` matches nothing instead,
+ * and the fence also stops a `SUCCEEDED` row being dragged back to `FAILED` by a
+ * worker holding a stale in-memory copy.
+ */
+type PaymentRecoveryFailureOutcome = "failed" | "retry" | "gone";
+
+async function markPaymentRecoveryOperationFailed({
+  operation,
+  message,
+  terminal,
+  nextRetryAt,
+  fromStatuses,
+  fromProcessingStartedAt,
+}: {
+  operation: PaymentRecoveryOperation;
+  /** Recorded verbatim on `lastError`, and quoted in the exhaustion alert. */
+  message: string;
+  /** Whether this failure ENDS the operation: nothing will replay it again. */
+  terminal: boolean;
+  /** When the next attempt is due. Ignored - and forced `null` - when terminal. */
+  nextRetryAt: Date;
+  /** The statuses this transition may move FROM. Anything else is left alone. */
+  fromStatuses: readonly PaymentRecoveryOperationStatus[];
+  /**
+   * When supplied, the transition ALSO requires `processingStartedAt` to be
+   * unchanged - "still the exact attempt I read".
+   *
+   * #3220 fix round. The stale-worker reaper reads its rows and writes them one
+   * by one, and status alone does not fence that gap. A row it read as stale can
+   * legitimately be marked failed by a CONCURRENT reaper, re-armed with
+   * `nextRetryAt` of now, and re-claimed straight back into `PROCESSING` before
+   * this loop reaches it - whereupon a `status: PROCESSING` fence matches, and
+   * the reaper kills a LIVE attempt that a worker is in the middle of, on the
+   * strength of a timestamp that is no longer there. The bulk `updateMany` this
+   * replaced could not do that: its own `where` carried
+   * `processingStartedAt < staleBefore`, so a freshly re-claimed row fell out of
+   * it. Pinning the exact value restores that and is stricter than restating the
+   * threshold, because it also fences `attempts` - the only writer that
+   * increments `attempts` is the claim, and the claim is what rewrites
+   * `processingStartedAt`.
+   */
+  fromProcessingStartedAt?: Date | null;
+}): Promise<PaymentRecoveryFailureOutcome> {
+  const marked = await prisma.paymentRecoveryOperation.updateMany({
+    where: {
+      id: operation.id,
+      status: { in: [...fromStatuses] },
+      ...(fromProcessingStartedAt === undefined
+        ? {}
+        : { processingStartedAt: fromProcessingStartedAt }),
+    },
+    data: {
+      status: PaymentRecoveryOperationStatus.FAILED,
+      lastError: message,
+      processingStartedAt: null,
+      nextRetryAt: terminal ? null : nextRetryAt,
+    },
+  });
+
+  if (marked.count === 0) {
+    logger.warn(
+      { operationId: operation.id, terminal },
+      "Payment recovery failure matched no live operation (already succeeded, or deleted by a manual mark-paid reversal); nothing was marked failed"
+    );
+    return "gone";
+  }
+
+  if (!terminal) {
+    return "retry";
+  }
+
+  await alertPaymentRecoveryFailure(operation, message).catch((alertError) =>
+    logger.error(
+      { err: alertError, operationId: operation.id },
+      "Failed to send payment recovery failure alert"
+    )
+  );
+
+  // AFTER the status write, and unable to prevent it. See this function's own
+  // docblock and `cancelStrandedAdditionalIntentForDeadRecovery`.
+  await cancelStrandedAdditionalIntentForDeadRecovery(operation);
+
+  return "failed";
+}
+
+/**
+ * THE ASK DIES WITH THE RECOVERY THAT OWED IT (#3220, `INV-PAY-057`).
+ *
+ * A `CREATE_ADDITIONAL_PAYMENT_INTENT` recovery exists because a booking edit
+ * raised money the member has not been asked for yet. While it is PENDING or
+ * PROCESSING the booking-vs-Xero repair tool DEFERS - it must not raise the
+ * edit's supplementary invoice, because the replay is going to raise the ask and
+ * the invoice belongs to that ask. Once the row leaves those two statuses that
+ * deferral stops (`OPEN_PAYMENT_RECOVERY_STATUSES`, the #3202 control), and the
+ * repair tool raises the invoice UNPAID.
+ *
+ * NOTE THE ASYMMETRY, because it decides what this function can and cannot fix.
+ * The repair tool stops deferring at the FIRST failure; this withdrawal fires
+ * only at the LAST one. Between them a retrying row can meet an unpaid invoice
+ * while its ask is still live - the same two-instrument shape, but transient and
+ * self-healing, because the retry either raises ask and invoice together or runs
+ * out and lands here. Cancelling on a non-terminal failure would be wrong: the
+ * replay still intends to collect against that very ask.
+ *
+ * So if an ask DOES exist at that moment, the club now has two live instruments
+ * for one debt: an unpaid Xero invoice, and a Stripe PaymentIntent the member
+ * can still pay. Pay the intent and the two records describe the same money
+ * differently, and an officer has to work out which is right - #3187 accepted
+ * that as visible-but-unfixed, and #3220 is the decision to fix it.
+ *
+ * HOW AN ASK CAN EXIST ON A PATH THAT FAILED TO MAKE ONE. The replay's later
+ * steps can fail after the mint succeeded - the intent is written to the ledger
+ * by the minter, and raising the deferred supplementary invoice afterwards can
+ * throw. The next attempt then finds the existing ask and returns `raised`, so
+ * the intent survives every remaining attempt and is still standing when the
+ * last one is spent.
+ *
+ * THIS REMOVES THE DUPLICATE INSTRUMENT. IT DOES NOT WRITE OFF THE DEBT. The
+ * unpaid invoice still stands and is collected the ordinary way; what goes away
+ * is the second way to pay it.
+ *
+ * AND IT ONLY REMOVES A DUPLICATE WHEN THERE IS ONE (#3220 fix round). The same
+ * replay path that leaves an ask standing can also have ATTACHED this change's
+ * supplementary invoice operation to it, parked `WAITING_PAYMENT`. That row
+ * blocks the repair pass from raising the invoice at all, so nothing is
+ * duplicated - and cancelling the intent underneath it would take away the only
+ * live route to the money and strand the row until the fourteen-day reaper. So
+ * the withdrawal steps around that one case, in the branch below.
+ *
+ * IDEMPOTENT BY CONSTRUCTION, NOT BY CARE. `cancelPaymentIntentIfCancellable-
+ * WithResult` reads the intent first and returns `canceled: false` WITHOUT
+ * calling Stripe unless the status is one it can cancel. A replay therefore sees
+ * `canceled` (not a cancellable status) and makes no provider call at all, and
+ * an intent the member paid in the meantime sees `succeeded` and is left
+ * strictly alone - which is also why a paid ask can never be cancelled by this.
+ *
+ * A REFUSAL LEAVES THE RECOVERY EXACTLY AS NOT TRYING WOULD. Everything here is
+ * best-effort and after the fact:
+ *
+ *   * it runs AFTER the status write, so a Stripe outage cannot stop a recovery
+ *     being marked dead - which would re-block the repair tool for ever and
+ *     break the #3202 control this issue is required to keep;
+ *   * it NEVER throws. `failPaymentRecoveryOperation` is called from inside the
+ *     worker loop's own `catch`, and a throw there abandons every remaining
+ *     operation in the batch - the exact bug the chokepoint fixed. A rejection
+ *     is logged and recorded, never propagated;
+ *   * `processing` is in Stripe's cancellable set and Stripe routinely REFUSES
+ *     to cancel a processing intent, so the refusal branch is a live path rather
+ *     than a theoretical one. It leaves today's state - a live intent against an
+ *     invoice raised unpaid - which is what #3187 already makes visible.
+ *
+ * A refusal is written to the audit log rather than only logged, because a
+ * `logger.error` is not a record an officer can find, and this one asks them to
+ * do something: check the ask by hand before the member pays it.
+ */
+async function cancelStrandedAdditionalIntentForDeadRecovery(
+  operation: PaymentRecoveryOperation
+) {
+  if (
+    operation.type !==
+    PaymentRecoveryOperationType.CREATE_ADDITIONAL_PAYMENT_INTENT
+  ) {
+    return;
+  }
+
+  /**
+   * Scoped to the completed-financial-review shape, which is the one the repair
+   * tool's deferral covers (`xero-booking-repair-load.ts` queries exactly these
+   * rows) and therefore the only shape that can reach the two-instrument state
+   * this function exists to prevent. Fail-closed on an unrecognised key, like
+   * every other reader of it.
+   */
+  const bookingModificationId =
+    bookingModificationIdForAdditionalIntentRecoveryKey(
+      operation.idempotencyKey
+    );
+  if (
+    !bookingModificationId ||
+    !isEditFinancialReviewAdditionalIntentRecoveryKey(operation.idempotencyKey)
+  ) {
+    return;
+  }
+
+  try {
+    // Dynamic import for the reason every other cross-import in this module is
+    // dynamic: `edit-financial-review-charge` imports this module.
+    const { findEditReviewChargeRequest } = await import(
+      "@/lib/edit-financial-review-charge-request"
+    );
+    const request = await findEditReviewChargeRequest({
+      paymentId: operation.paymentId,
+      bookingModificationId,
+    });
+
+    // THE ORDINARY ENDING. The mint never produced anything, which is why the
+    // recovery existed at all, so there is no second instrument and nothing to
+    // do. No provider call is made on this path.
+    if (!request?.stripePaymentIntentId) {
+      return;
+    }
+
+    /**
+     * A captured ask is money the member has already paid. The Stripe helper
+     * would leave it alone anyway (`succeeded` is not a cancellable status), so
+     * this is a second lock on the same door rather than the only one - but it
+     * also saves a provider round trip on the one case where getting it wrong
+     * would take money back off a member who paid.
+     */
+    if (CAPTURED_TRANSACTION_STATUSES.has(request.status)) {
+      logger.info(
+        {
+          operationId: operation.id,
+          bookingModificationId,
+          paymentIntentId: request.stripePaymentIntentId,
+        },
+        "Dead additional-payment recovery left its ask alone: the member has already paid it"
+      );
+      return;
+    }
+
+    /**
+     * THE ONE ASK THIS WITHDRAWAL LEAVES ALONE (#3220 fix round).
+     *
+     * A supplementary invoice parked `WAITING_PAYMENT` on this very intent is
+     * released by a CONFIRMED payment on it and by nothing else. While it sits
+     * there the repair pass reports the change as `BLOCKED_BY_XERO_OPERATION`
+     * and does NOT raise the invoice - so the premise of this whole function is
+     * absent: there is no unpaid invoice, and therefore no second instrument to
+     * remove. Cancelling anyway would destroy the only live route to collecting
+     * the debt AND strand the outbox row, leaving the change with no invoice at
+     * all until the fourteen-day reaper retires it, while the operator's signal
+     * says the club is waiting for a payment that can never arrive. That is
+     * verbatim the harm the already-paid branch of the review-charge replay
+     * refuses to create, and this is the same rule read from the other end.
+     *
+     * The window is real rather than theoretical: the replay attaches the
+     * waiting operation to the intent it just minted and can then throw while
+     * raising the deferred invoice, so every remaining attempt finds the ask
+     * standing and the last one arrives here.
+     */
+    const blockingWaitingOperation =
+      await findWaitingSupplementaryInvoiceOperationForPaymentIntent({
+        bookingModificationId,
+        paymentIntentId: request.stripePaymentIntentId,
+      });
+    if (blockingWaitingOperation) {
+      logger.info(
+        {
+          operationId: operation.id,
+          bookingId: operation.bookingId,
+          bookingModificationId,
+          paymentIntentId: request.stripePaymentIntentId,
+          xeroOperationId: blockingWaitingOperation.id,
+        },
+        "Dead additional-payment recovery left its ask alone: this booking change's supplementary invoice is still waiting on that very payment, so no invoice has been raised against it"
+      );
+      return;
+    }
+
+    const result = await cancelPaymentIntentIfCancellableWithResult(
+      request.stripePaymentIntentId,
+      // NOT `requested_by_customer`. The member never declined this; the club
+      // ran out of attempts to raise it.
+      { cancellationReason: "abandoned" }
+    );
+
+    logger.info(
+      {
+        operationId: operation.id,
+        bookingId: operation.bookingId,
+        bookingModificationId,
+        paymentIntentId: request.stripePaymentIntentId,
+        canceled: result.canceled,
+        intentStatus: result.paymentIntent.status,
+      },
+      result.canceled
+        ? "Cancelled the stranded additional PaymentIntent of a dead payment recovery"
+        : "Dead additional-payment recovery left its ask alone: it is no longer in a cancellable state"
+    );
+  } catch (err) {
+    logger.error(
+      { err, operationId: operation.id, bookingModificationId },
+      "Failed to cancel the stranded additional PaymentIntent of a dead payment recovery"
+    );
+    await recordRefusedStrandedIntentCancellation({
+      operation,
+      bookingModificationId,
+      err,
+    }).catch((auditError) =>
+      logger.error(
+        { err: auditError, operationId: operation.id },
+        "Failed to record the audit trace for a refused stranded-intent cancellation"
+      )
+    );
+  }
+}
+
+/**
+ * The durable, officer-findable record that a dead recovery's ask could NOT be
+ * withdrawn (#3220). Written on the refusal path only - a successful cancel
+ * needs no officer.
+ *
+ * `payment` category: this is a fact about a money instrument on a booking, and
+ * it asks an officer to act before the member pays something the club has
+ * already invoiced.
+ */
+async function recordRefusedStrandedIntentCancellation({
+  operation,
+  bookingModificationId,
+  err,
+}: {
+  operation: PaymentRecoveryOperation;
+  bookingModificationId: string;
+  err: unknown;
+}) {
+  await createAuditLog({
+    action: "payment.recovery.strandedIntentCancellationRefused",
+    targetId: operation.bookingId,
+    entityType: "Booking",
+    entityId: operation.bookingId,
+    category: "payment",
+    // `important`, not `critical`: nothing is lost or mis-stated yet, and the
+    // remedy is a reconciliation an officer does by hand. It matches the
+    // severity `recordUncollectedEditReviewChargeShare` writes for the sibling
+    // "a settled share met an ask it could not join" record. `critical` is also
+    // the tier `audit-retention.ts` keeps for ever, which this does not need.
+    severity: "important",
+    outcome: "failure",
+    summary:
+      "A card request for a booking change could not be withdrawn after its retries ran out",
+    details:
+      "A booking change raised money the member owed, and the card request for it could not be set up at the time, so the system kept retrying in the background. Those retries have now run out. Because they have, the invoice for this change will be raised in Xero as unpaid and collected the ordinary way - but the card request that was already sitting against this change could NOT be withdrawn from the card provider, so the member may still be able to pay it. If they do, the club will hold a payment and an unpaid invoice for the same money. Check this booking change against Xero and against the card provider, and withdraw the card request by hand if it is still live. Nothing has been written off: the money is still owed and the invoice still stands.",
+    metadata: {
+      operationId: operation.id,
+      bookingModificationId,
+      idempotencyKey: operation.idempotencyKey,
+      reason: errorMessage(err),
+    },
+  });
+}
+
 async function failPaymentRecoveryOperation(
   operation: PaymentRecoveryOperation,
   error: unknown
@@ -1058,26 +1481,33 @@ async function failPaymentRecoveryOperation(
   const message = errorMessage(error);
   const exhausted = operation.attempts >= MAX_PAYMENT_RECOVERY_ATTEMPTS;
 
-  await prisma.paymentRecoveryOperation.update({
-    where: { id: operation.id },
-    data: {
-      status: PaymentRecoveryOperationStatus.FAILED,
-      lastError: message,
-      processingStartedAt: null,
-      nextRetryAt: exhausted ? null : nextRetryDate(operation.attempts),
-    },
+  const outcome = await markPaymentRecoveryOperationFailed({
+    operation,
+    message,
+    terminal: exhausted,
+    nextRetryAt: nextRetryDate(operation.attempts),
+    // Everything but SUCCEEDED, matching `completePaymentRecoveryOperation`'s
+    // fence: the row was PROCESSING when this worker claimed it, but the
+    // webhook-side closers can move it underneath us and a finished operation
+    // must never be reopened as a failure.
+    fromStatuses: NON_TERMINAL_PAYMENT_RECOVERY_STATUSES,
   });
 
-  if (exhausted) {
-    await alertPaymentRecoveryFailure(operation, message).catch((alertError) =>
-      logger.error(
-        { err: alertError, operationId: operation.id },
-        "Failed to send payment recovery failure alert"
-      )
-    );
-  }
-
-  return exhausted ? "failed" : "retry";
+  /**
+   * A row that matched nothing was deleted by a manual mark-paid reversal or
+   * had already finished, so there is no state left for this attempt to change.
+   * It is still tallied as the outcome this attempt WOULD have had, and that is
+   * a deliberate choice rather than parity with the old code: the worker's
+   * `update` by id used to THROW `P2025` on the deleted row, from inside the
+   * loop's own `catch`, abandoning every remaining operation in the batch - and
+   * on the stale-copy path it counted a failure only after wrongly dragging a
+   * `SUCCEEDED` row back to `FAILED`. So a row that turns out to have succeeded
+   * now lands in `result.failed`. That number is a count of what this pass
+   * attempted, not a claim about the row, and nothing downstream branches on
+   * it; a fourth outcome for the caller to sum would buy a more precise figure
+   * that no reader has asked for.
+   */
+  return outcome === "gone" ? (exhausted ? "failed" : "retry") : outcome;
 }
 
 async function claimPaymentRecoveryOperation(operationId: string) {
@@ -1085,12 +1515,7 @@ async function claimPaymentRecoveryOperation(operationId: string) {
   const claim = await prisma.paymentRecoveryOperation.updateMany({
     where: {
       id: operationId,
-      status: {
-        in: [
-          PaymentRecoveryOperationStatus.PENDING,
-          PaymentRecoveryOperationStatus.FAILED,
-        ],
-      },
+      status: { in: [...CLAIMABLE_PAYMENT_RECOVERY_STATUSES] },
       attempts: { lt: MAX_PAYMENT_RECOVERY_ATTEMPTS },
       nextRetryAt: { lte: now },
     },
@@ -1111,63 +1536,69 @@ async function claimPaymentRecoveryOperation(operationId: string) {
   });
 }
 
+/**
+ * A worker that died mid-attempt leaves its row `PROCESSING` for ever, because
+ * nothing else moves it and no exception fires from this process. This reaper
+ * hands those rows back.
+ *
+ * ONE READ, TWO ENDINGS (#3220). It used to be a bulk `updateMany` for the rows
+ * with attempts left plus a separate `findMany`/loop for the exhausted ones, and
+ * the two spelled the same transition differently: only the second was fenced,
+ * only the second alerted, and each carried its own copy of the status write.
+ * Both endings now go through `markPaymentRecoveryOperationFailed`, which is
+ * what decides what "dead" costs.
+ *
+ * THE READ AND THE WRITE ARE FENCED TOGETHER (#3220 fix round). Splitting the
+ * old bulk `updateMany` into read-then-write opened a gap the bulk form did not
+ * have: its `where` carried `processingStartedAt < staleBefore`, so a row that
+ * had been re-claimed since could not match, while a fence of `status:
+ * PROCESSING` alone matches a row that left `PROCESSING` and came straight back.
+ * That path is real - a concurrent reaper marks the row failed with a
+ * `nextRetryAt` of NOW, and the very next queue read claims it - and taking it
+ * would kill a live attempt and leave the terminality this loop read one attempt
+ * out of date. `fromProcessingStartedAt` pins the exact attempt, which fences
+ * `attempts` too: the claim is the only writer that increments `attempts`, and
+ * it is the same write that replaces `processingStartedAt`.
+ */
 async function resetStaleProcessingOperations() {
   const staleBefore = new Date(
     Date.now() - STALE_PROCESSING_MINUTES * 60 * 1000
   );
 
-  await prisma.paymentRecoveryOperation.updateMany({
+  const stale = await prisma.paymentRecoveryOperation.findMany({
     where: {
       status: PaymentRecoveryOperationStatus.PROCESSING,
       processingStartedAt: { lt: staleBefore },
-      attempts: { lt: MAX_PAYMENT_RECOVERY_ATTEMPTS },
     },
-    data: {
-      status: PaymentRecoveryOperationStatus.FAILED,
-      nextRetryAt: new Date(),
-      processingStartedAt: null,
-      lastError: "Payment recovery worker timed out before completion.",
-    },
+    // OLDEST FIRST, AND BOUNDED (#3220 fix round). This sweep runs BEFORE the
+    // main queue and each row it takes now costs an alert and, on a dead
+    // additional-payment recovery, a Stripe read and possibly a cancel - where
+    // the bulk `updateMany` it replaced made no provider call at all. A backlog
+    // is self-draining, because every row it touches leaves `PROCESSING` for
+    // good, so an unbounded read could only ever stall ONE run - but that run is
+    // every queued recovery waiting behind a provider that has gone slow, and
+    // there is no reason to accept that when the leftovers are handled by the
+    // next sweep a minute later. Oldest first so the cap cannot starve a row.
+    orderBy: { processingStartedAt: "asc" },
+    take: STALE_PROCESSING_SWEEP_LIMIT,
   });
 
-  // If a worker died mid-processing on the final attempt the row never
-  // moves out of PROCESSING because the `< MAX` guard above excludes it
-  // and no exception fires from this process to drive the alert path.
-  // Mark these terminally failed and alert.
-  const exhaustedStale = await prisma.paymentRecoveryOperation.findMany({
-    where: {
-      status: PaymentRecoveryOperationStatus.PROCESSING,
-      processingStartedAt: { lt: staleBefore },
-      attempts: { gte: MAX_PAYMENT_RECOVERY_ATTEMPTS },
-    },
-  });
+  for (const operation of stale) {
+    const terminal = operation.attempts >= MAX_PAYMENT_RECOVERY_ATTEMPTS;
 
-  for (const operation of exhaustedStale) {
-    const claimed = await prisma.paymentRecoveryOperation.updateMany({
-      where: {
-        id: operation.id,
-        status: PaymentRecoveryOperationStatus.PROCESSING,
-      },
-      data: {
-        status: PaymentRecoveryOperationStatus.FAILED,
-        nextRetryAt: null,
-        processingStartedAt: null,
-        lastError:
-          "Payment recovery worker timed out on the final attempt before completion.",
-      },
-    });
-
-    if (claimed.count !== 1) continue;
-
-    await alertPaymentRecoveryFailure(
+    await markPaymentRecoveryOperationFailed({
       operation,
-      "Payment recovery worker timed out on the final attempt before completion.",
-    ).catch((alertError) =>
-      logger.error(
-        { err: alertError, operationId: operation.id },
-        "Failed to send stale payment recovery failure alert",
-      ),
-    );
+      message: terminal
+        ? "Payment recovery worker timed out on the final attempt before completion."
+        : "Payment recovery worker timed out before completion.",
+      terminal,
+      nextRetryAt: new Date(),
+      fromStatuses: STALE_PROCESSING_RECOVERY_STATUSES,
+      // The exact attempt this loop read. See the parameter's docblock: without
+      // it, a row re-claimed between the read and this write is killed mid-flight
+      // by a fence that only looks at status.
+      fromProcessingStartedAt: operation.processingStartedAt,
+    });
   }
 }
 
@@ -1249,13 +1680,7 @@ async function handoffSucceededSupersededIntentToRefund({
   const claimed = await prisma.paymentRecoveryOperation.updateMany({
     where: {
       id: operation.id,
-      status: {
-        in: [
-          PaymentRecoveryOperationStatus.PENDING,
-          PaymentRecoveryOperationStatus.PROCESSING,
-          PaymentRecoveryOperationStatus.FAILED,
-        ],
-      },
+      status: { in: [...NON_TERMINAL_PAYMENT_RECOVERY_STATUSES] },
     },
     data: {
       status: PaymentRecoveryOperationStatus.PROCESSING,
@@ -2389,12 +2814,7 @@ export async function processPaymentRecoveryOperations(options?: {
   const limit = Math.min(Math.max(options?.limit ?? 10, 1), 50);
   const queuedOperations = await prisma.paymentRecoveryOperation.findMany({
     where: {
-      status: {
-        in: [
-          PaymentRecoveryOperationStatus.PENDING,
-          PaymentRecoveryOperationStatus.FAILED,
-        ],
-      },
+      status: { in: [...CLAIMABLE_PAYMENT_RECOVERY_STATUSES] },
       attempts: { lt: MAX_PAYMENT_RECOVERY_ATTEMPTS },
       nextRetryAt: { lte: new Date() },
     },
