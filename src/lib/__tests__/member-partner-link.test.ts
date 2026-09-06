@@ -378,6 +378,25 @@ describe("requestPartnerLink", () => {
     expect(prisma.memberPartnerLink.create).not.toHaveBeenCalled();
   });
 
+  it("keeps the requester confirmed-partner response when the email target is also a direct parent", async () => {
+    mockMemberLookup([adultA, { ...adultB, secondaryParentId: adultA.id }]);
+    vi.mocked(prisma.memberPartnerLink.findFirst).mockResolvedValueOnce({
+      id: "existing-confirmed",
+    } as never);
+
+    const result = await requestPartnerLink({
+      initiatorMemberId: adultA.id,
+      targetEmail: adultB.email,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: 409,
+      error:
+        "You already have a confirmed partner. Remove that partnership first.",
+    });
+  });
+
   it("suppresses a by-email request to an already-partnered target into the generic reply (D9)", async () => {
     mockMemberLookup([adultA, adultB]);
     // findFirst order: initiator confirmed → outstanding outgoing → target confirmed.
@@ -562,6 +581,25 @@ describe("requestPartnerLink", () => {
     });
 
     expect(result).toMatchObject({ ok: false, status: 422 });
+  });
+
+  it("keeps the requester outgoing-conflict response when the email target is also a direct parent", async () => {
+    mockMemberLookup([{ ...adultA, parentMemberId: adultB.id }, adultB]);
+    vi.mocked(prisma.memberPartnerLink.findFirst)
+      .mockResolvedValueOnce(null as never)
+      .mockResolvedValueOnce({ id: "other-outgoing" } as never);
+
+    const result = await requestPartnerLink({
+      initiatorMemberId: adultA.id,
+      targetEmail: adultB.email,
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      status: 422,
+      error:
+        "You already have a pending partner request. Withdraw it before sending another.",
+    });
   });
 
   it.each(directParentCases(adultA, adultB))(

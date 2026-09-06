@@ -40,6 +40,7 @@ import {
 import { sendAdminPartnerShareSweptAlert } from "@/lib/email";
 import logger from "@/lib/logger";
 import { acquireMemberPartnerLinkLocks } from "@/lib/member-partner-lock";
+import { canonicalPartnerPair } from "@/lib/member-partner-link-shared";
 import { acquireMemberLifecycleLocks } from "@/lib/member-lifecycle-lock";
 import {
   MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
@@ -299,10 +300,6 @@ export type PartnerLinkPlan = {
   warnings: string[];
 };
 
-function canonicalPair(a: string, b: string): [string, string] {
-  return a < b ? [a, b] : [b, a];
-}
-
 /**
  * Re-point the loser's partner links onto the master, honouring the
  * `memberAId < memberBId` CHECK, deleting self-pairs and duplicates, and
@@ -362,8 +359,8 @@ export function planPartnerLinkMerge(
       continue;
     }
 
-    const [a, b] = canonicalPair(masterId, other);
-    updates.push({ id: link.id, memberAId: a, memberBId: b });
+    const pair = canonicalPartnerPair(masterId, other);
+    updates.push({ id: link.id, ...pair });
     masterPartners.add(other);
     if (link.status === "CONFIRMED") masterHasConfirmed = true;
   }
@@ -640,7 +637,7 @@ export async function evaluateMemberMergeGuards(params: {
   }
 
   blockers.push(...(await evaluateFamilyLinkGraphBlockers(db, masterId, loserId)));
-  const exclusivityTopology = await loadMemberMergeExclusivityTopology(
+  const exclusivityTopology = await loadPlannedMemberMergeExclusivityTopology(
     db,
     masterId,
     loserId,
@@ -1151,6 +1148,52 @@ async function loadPartnerLinkPlan(
   return planPartnerLinkMerge(loserLinks, masterLinks, masterId, loserId);
 }
 
+/**
+ * Read all incident links once, then project the exact link set that the
+ * existing PartnerLinkPlan will leave behind. The unprojected set still feeds
+ * the participant locks; only the projected set feeds the overlap check.
+ */
+async function loadPlannedMemberMergeExclusivityTopology(
+  db: MergeDbClient,
+  masterId: string,
+  loserId: string,
+) {
+  const currentLinks = await db.memberPartnerLink.findMany({
+    where: {
+      OR: [
+        { memberAId: { in: [masterId, loserId] } },
+        { memberBId: { in: [masterId, loserId] } },
+      ],
+    },
+    select: { id: true, memberAId: true, memberBId: true, status: true },
+  });
+  const plan = planPartnerLinkMerge(
+    currentLinks.filter(
+      (link) => link.memberAId === loserId || link.memberBId === loserId,
+    ),
+    currentLinks.filter(
+      (link) => link.memberAId === masterId || link.memberBId === masterId,
+    ),
+    masterId,
+    loserId,
+  );
+  const deletedIds = new Set(plan.deleteIds);
+  const updatesById = new Map(
+    plan.updates.map((update) => [update.id, update]),
+  );
+  const projectedLinks = currentLinks
+    .filter((link) => !deletedIds.has(link.id))
+    .map((link) => updatesById.get(link.id) ?? link);
+
+  return loadMemberMergeExclusivityTopology(
+    db,
+    masterId,
+    loserId,
+    currentLinks,
+    projectedLinks,
+  );
+}
+
 async function summariseResolveCollisions(
   db: MergeDbClient,
   masterId: string,
@@ -1470,7 +1513,11 @@ export async function executeMemberMerge(params: {
     await acquireMemberLifecycleLocks(tx, [masterId, loserId]);
 
     const exclusivityTopologyBeforeLocks =
-      await loadMemberMergeExclusivityTopology(tx, masterId, loserId);
+          await loadPlannedMemberMergeExclusivityTopology(
+            tx,
+            masterId,
+            loserId,
+          );
 
     // #2595 — merge is a partner-link WRITER (step 2 re-points the duplicate's
     // links onto the master) and, since this change, a partner-link READER whose
@@ -1502,7 +1549,11 @@ export async function executeMemberMerge(params: {
       exclusivityTopologyBeforeLocks.participantIds,
     );
     const exclusivityTopologyUnderLocks =
-      await loadMemberMergeExclusivityTopology(tx, masterId, loserId);
+          await loadPlannedMemberMergeExclusivityTopology(
+            tx,
+            masterId,
+            loserId,
+          );
     if (
       exclusivityTopologyUnderLocks.participantIds.join("\u0000") !==
       exclusivityTopologyBeforeLocks.participantIds.join("\u0000")

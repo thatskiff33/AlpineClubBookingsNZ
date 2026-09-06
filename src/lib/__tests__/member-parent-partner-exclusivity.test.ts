@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   DIRECT_PARENT_MEMBER_SELECT,
+  MEMBER_PARTNER_RELATIONSHIP_SELECT,
   MEMBER_PARENT_PARTNER_EXCLUSION_CONSTRAINT,
   MEMBER_PARENT_PARTNER_EXCLUSION_DATABASE_MESSAGE,
   directParentPairWhere,
@@ -9,6 +10,7 @@ import {
   hasDirectParentRelationship,
   isMemberParentPartnerExclusionViolation,
   loadMemberMergeExclusivityTopology,
+  memberHasPartnerRelationshipWith,
   membersAreDirectParentPair,
   notDirectParentWithMemberWhere,
   notPartnerWithMemberWhere,
@@ -97,6 +99,31 @@ describe("direct parent/partner exclusivity predicates", () => {
       select: { id: true },
     });
     expect(JSON.stringify(findUnique.mock.calls[0]?.[0])).not.toContain("status");
+  });
+
+  it("pins both loaded-row partner orientations to one select and predicate", () => {
+    expect(MEMBER_PARTNER_RELATIONSHIP_SELECT).toEqual({
+      partnerLinksAsMemberA: { select: { memberBId: true } },
+      partnerLinksAsMemberB: { select: { memberAId: true } },
+    });
+    expect(
+      memberHasPartnerRelationshipWith(
+        {
+          partnerLinksAsMemberA: [{ memberBId: "member-b" }],
+          partnerLinksAsMemberB: [],
+        },
+        "member-b",
+      ),
+    ).toBe(true);
+    expect(
+      memberHasPartnerRelationshipWith(
+        {
+          partnerLinksAsMemberA: [],
+          partnerLinksAsMemberB: [{ memberAId: "member-b" }],
+        },
+        "member-b",
+      ),
+    ).toBe(true);
   });
 
   it("derives direct-parent and any-status-partner selector exclusions", () => {
@@ -189,15 +216,17 @@ describe("member merge topology projection", () => {
           },
         ]),
       },
-      memberPartnerLink: {
-        findMany: vi.fn().mockResolvedValue([
-          { memberAId: "child-z", memberBId: "master" },
-        ]),
-      },
     };
+    const links = [{ memberAId: "child-z", memberBId: "master" }];
 
     await expect(
-      loadMemberMergeExclusivityTopology(db as never, "master", "duplicate"),
+      loadMemberMergeExclusivityTopology(
+        db as never,
+        "master",
+        "duplicate",
+        links,
+        links,
+      ),
     ).resolves.toEqual({
       participantIds: [
         "child-z",

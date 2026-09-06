@@ -12,8 +12,8 @@ reason: the eight lines acquire the two existing-member lock tiers at the route'
   transaction boundary; extracting them would hide the order from the writer.
 
 file: src/lib/admin-family-group-requests-service.ts
-lines: 1675
-reason: the family-request transaction must re-read its selected child after its
+lines: 1699
+reason: the family-request transaction must re-read its requester and selected child after its
   lifecycle and partner locks; moving that state machine branch would separate
   the approval decision from the write and its rollback boundary.
 
@@ -24,19 +24,19 @@ reason: six selector lines consume the shared parent and partner predicates in
   composable Prisma conditions.
 
 file: src/lib/member-application-mapping.ts
-lines: 1183
+lines: 1178
 reason: the mapping preview already owns every blocker attached to a selected
   existing record; the added shared partner fact belongs beside those outcomes
   so preview-token hashing and operator feedback cannot drift.
 
 file: src/lib/member-merge.ts
-lines: 2823
+lines: 2874
 reason: merge alone owns its ordered multi-tier transaction and refusal audit;
-  the final-topology participant lock and under-lock recheck must remain visible
-  beside the relation moves they fence.
+  the authoritative surviving-link projection, final-topology participant lock,
+  and under-lock recheck must remain visible beside the relation moves they fence.
 
 file: src/lib/member-partner-link.ts
-lines: 1552
+lines: 1565
 reason: all partner lifecycle writers stay in this one service and now wrap their
   existing transactions with the shared direct-parent check and decoded race;
   splitting individual outcomes would fragment one public lifecycle contract.

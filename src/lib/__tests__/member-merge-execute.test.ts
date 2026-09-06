@@ -1170,6 +1170,115 @@ describe("partner-link warnings reach the audit metadata (M3)", () => {
     expect(serialized).toContain("resolutionWarnings");
     expect(serialized).toContain("confirmed partner link dropped");
   });
+
+  it("executes when the only projected overlap belongs to a discarded confirmed link", async () => {
+    const childRow = {
+      id: "former-partner-child",
+      parentMemberId: LOSER_ID,
+      secondaryParentId: null,
+    };
+    const member = {
+      ...defaultDelegate(),
+      findUnique: vi.fn(({ where }: { where: { id: string } }) =>
+        Promise.resolve(
+          where.id === MASTER_ID
+            ? master
+            : where.id === LOSER_ID
+              ? loser
+              : null,
+        ),
+      ),
+      count: vi.fn(({ where }: { where: { id?: string } }) =>
+        Promise.resolve(where?.id === ACTOR_ID ? 1 : 0),
+      ),
+      findMany: vi.fn(
+        (args: { where?: { OR?: Array<Record<string, unknown>> } }) =>
+          args.where?.OR?.some(
+            (clause) =>
+              typeof (clause.id as { in?: unknown } | undefined)?.in !==
+              "undefined",
+          )
+            ? Promise.resolve([childRow])
+            : Promise.resolve([]),
+      ),
+      update: vi.fn().mockResolvedValue({}),
+      delete: vi.fn().mockResolvedValue({}),
+    };
+    const loserLink = {
+      id: "L1",
+      memberAId: LOSER_ID,
+      memberBId: childRow.id,
+      status: "CONFIRMED",
+    };
+    const masterLink = {
+      id: "M1",
+      memberAId: MASTER_ID,
+      memberBId: "retained-partner",
+      status: "CONFIRMED",
+    };
+    const memberPartnerLink = {
+      ...defaultDelegate(),
+      findMany: vi.fn(
+        ({ where }: { where?: { OR?: Array<Record<string, unknown>> } }) => {
+          const clauses = where?.OR ?? [];
+          if (
+            clauses.some(
+              (clause) =>
+                typeof (clause.memberAId as { in?: unknown } | undefined)
+                  ?.in !== "undefined" ||
+                typeof (clause.memberBId as { in?: unknown } | undefined)
+                  ?.in !== "undefined",
+            )
+          ) {
+            return Promise.resolve([masterLink, loserLink]);
+          }
+          return Promise.resolve(
+            clauses[0]?.memberAId === LOSER_ID ? [loserLink] : [masterLink],
+          );
+        },
+      ),
+      deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
+      update: vi.fn().mockResolvedValue({}),
+    };
+    const core: MemberMergePreviewCore = {
+      fieldMerge: mergeMemberFields(
+        master as unknown as Record<string, unknown>,
+        loser as unknown as Record<string, unknown>,
+      ).diff,
+      relationMoves: [],
+      collisions: [
+        {
+          model: "MemberPartnerLink.memberA/memberB",
+          resolution: "re-point 0, drop 1 (self-pair/duplicate/confirmed)",
+          count: 1,
+        },
+      ],
+      blockers: [],
+      warnings: [],
+    };
+    const token = buildMemberMergePreviewToken(
+      MASTER_ID,
+      LOSER_ID,
+      master.updatedAt,
+      loser.updatedAt,
+      core,
+    );
+    const { client } = makeClient({ member, memberPartnerLink });
+
+    await expect(
+      executeMemberMerge({
+        masterId: MASTER_ID,
+        loserId: LOSER_ID,
+        actorMemberId: ACTOR_ID,
+        previewToken: token,
+        confirmationText: "MERGE Dup Person",
+        db: client as never,
+      }),
+    ).resolves.toMatchObject({ masterId: MASTER_ID, loserId: LOSER_ID });
+    expect(memberPartnerLink.deleteMany).toHaveBeenCalledWith({
+      where: { id: { in: [loserLink.id] } },
+    });
+  });
 });
 
 describe("member-photo reconciliation at execute time (MP1, #189)", () => {

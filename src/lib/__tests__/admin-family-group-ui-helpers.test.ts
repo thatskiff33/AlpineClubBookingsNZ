@@ -82,6 +82,11 @@ describe("admin-family-group-ui-helpers", () => {
 
     expect(buildInitialRequestSelections([request], {})).toEqual({});
     expect(
+      buildInitialRequestSelections([request], {
+        [request.id]: request.matchingMembers[0].id,
+      }),
+    ).toEqual({});
+    expect(
       mapFamilyGroupRequestSearchResults(request, [
         {
           id: "child-2",

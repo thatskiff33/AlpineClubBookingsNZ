@@ -35,7 +35,10 @@ import {
   unreadableDateOfBirthRefusal,
 } from "@/lib/member-application-date-of-birth";
 import {
+  MEMBER_PARTNER_RELATIONSHIP_SELECT,
   MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+  memberHasPartnerRelationshipWith,
+  type MemberPartnerRelationshipFacts,
 } from "@/lib/member-parent-partner-exclusivity";
 import { formatDateOnly } from "@/lib/date-only";
 import { dateOnlyInstantOf } from "@/lib/club-time";
@@ -187,7 +190,7 @@ export type MappingApplicationInput = {
 
 type MappingReadClient = typeof prisma | Prisma.TransactionClient;
 
-export type MappingTargetRecord = {
+export type MappingTargetRecord = MemberPartnerRelationshipFacts & {
   id: string;
   email: string;
   firstName: string;
@@ -234,8 +237,6 @@ export type MappingTargetRecord = {
   // #1026 privileged-email gate via hasPrivilegedAccess (canLogin-aware) and
   // the #1604 promotion gate via memberHoldsPrivilegedRole (canLogin-blind).
   accessRoles: Array<{ role: string | null; roleDefinitionId: string | null }>;
-  partnerLinksAsMemberA?: Array<{ memberBId: string }>;
-  partnerLinksAsMemberB?: Array<{ memberAId: string }>;
 };
 
 export async function loadApprovalMappingTargets(
@@ -288,8 +289,7 @@ export async function loadApprovalMappingTargets(
       updatedAt: true,
       financeAccessLevel: true,
       accessRoles: { select: { role: true, roleDefinitionId: true } },
-      partnerLinksAsMemberA: { select: { memberBId: true } },
-      partnerLinksAsMemberB: { select: { memberAId: true } },
+      ...MEMBER_PARTNER_RELATIONSHIP_SELECT,
       familyGroupMemberships: { select: { familyGroupId: true } },
       subscriptions: { where: { seasonYear }, select: { id: true }, take: 1 },
       seasonalMembershipAssignments: {
@@ -564,14 +564,9 @@ export async function computeApprovalMappingOutcomes(params: {
       const target = person.targetMemberId
         ? targetsById.get(person.targetMemberId)
         : undefined;
-      const isPartner = Boolean(
-        target?.partnerLinksAsMemberA?.some(
-          (link) => link.memberBId === applicantTargetId,
-        ) ||
-          target?.partnerLinksAsMemberB?.some(
-            (link) => link.memberAId === applicantTargetId,
-          ),
-      );
+      const isPartner = target
+        ? memberHasPartnerRelationshipWith(target, applicantTargetId)
+        : false;
       if (isPartner) {
         person.errors.push(MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE);
       }

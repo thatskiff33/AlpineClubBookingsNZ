@@ -1,7 +1,10 @@
 import type { Prisma } from "@prisma/client";
 import {
+  MEMBER_PARTNER_RELATIONSHIP_SELECT,
   MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+  memberHasPartnerRelationshipWith,
   notPartnerWithMemberWhere,
+  type MemberPartnerRelationshipFacts,
 } from "@/lib/member-parent-partner-exclusivity";
 import { MEMBER_ACCESS_ROLE_SELECT } from "@/lib/access-role-definitions";
 import {
@@ -355,17 +358,14 @@ export const DEPENDENT_LINK_CANDIDATE_SELECT = {
   archivedAt: true,
   parentMemberId: true,
   secondaryParentId: true,
-  partnerLinksAsMemberA: { select: { memberBId: true } },
-  partnerLinksAsMemberB: { select: { memberAId: true } },
+  ...MEMBER_PARTNER_RELATIONSHIP_SELECT,
 } satisfies Prisma.MemberSelect;
 
-export type DependentLinkCandidate = {
+export type DependentLinkCandidate = MemberPartnerRelationshipFacts & {
   id: string;
   archivedAt: Date | null;
   parentMemberId: string | null;
   secondaryParentId: string | null;
-  partnerLinksAsMemberA?: ReadonlyArray<{ memberBId: string }>;
-  partnerLinksAsMemberB?: ReadonlyArray<{ memberAId: string }>;
 };
 
 /**
@@ -414,14 +414,7 @@ export function dependentLinkBlockers(
   ) {
     blockers.push("ALREADY_LINKED_TO_PARENT");
   }
-  if (
-    candidate.partnerLinksAsMemberA?.some(
-      (link) => link.memberBId === parentMemberId,
-    ) ||
-    candidate.partnerLinksAsMemberB?.some(
-      (link) => link.memberAId === parentMemberId,
-    )
-  ) {
+  if (memberHasPartnerRelationshipWith(candidate, parentMemberId)) {
     blockers.push("DIRECT_PARTNER");
   }
   if (candidate.parentMemberId && candidate.secondaryParentId) {

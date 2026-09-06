@@ -102,9 +102,40 @@ function memberWriteDataExpressions(
 }
 
 function fixturePersistence(file: string): MemberParentWriterPersistence {
-  return file === "prisma/demo-seed.ts" || file.startsWith("prisma/migration-verification/")
+  return file === "prisma/demo-seed.ts" ||
+    file.startsWith("prisma/migration-verification/") ||
+    file === "scripts/audit-access-role-membership-cleanup.ts"
     ? "demo-test-fixture"
     : "member-persistence";
+}
+
+function unwrapExpression(expression: ts.Expression): ts.Expression {
+  let current = expression;
+  while (
+    ts.isParenthesizedExpression(current) ||
+    ts.isAsExpression(current) ||
+    ts.isTypeAssertionExpression(current) ||
+    ts.isSatisfiesExpression(current) ||
+    ts.isNonNullExpression(current)
+  ) {
+    current = current.expression;
+  }
+  return current;
+}
+
+function resolveObjectLiterals(
+  sourceFile: ts.SourceFile,
+  expression: ts.Expression,
+  seen = new Set<number>(),
+): ts.ObjectLiteralExpression[] {
+  const current = unwrapExpression(expression);
+  if (seen.has(current.pos)) return [];
+  seen.add(current.pos);
+  if (ts.isObjectLiteralExpression(current)) return [current];
+  if (!ts.isIdentifier(current)) return [];
+  return identifierWrites(sourceFile, current.text).flatMap((written) =>
+    resolveObjectLiterals(sourceFile, written, seen),
+  );
 }
 
 function collectParentShapes(
@@ -215,22 +246,110 @@ function collectIdentifierPropertyAssignments(
   visit(sourceFile);
 }
 
+function collectResolvedParentShapes(
+  sourceFile: ts.SourceFile,
+  expression: ts.Expression,
+  context: {
+    file: string;
+    method: string;
+    persistence: MemberParentWriterPersistence;
+  },
+  found: RawSite[],
+): void {
+  const current = unwrapExpression(expression);
+  if (ts.isIdentifier(current)) {
+    collectIdentifierPropertyAssignments(
+      sourceFile,
+      context.file,
+      current.text,
+      context.method,
+      context.persistence,
+      found,
+    );
+    for (const written of identifierWrites(sourceFile, current.text)) {
+      collectResolvedParentShapes(sourceFile, written, context, found);
+    }
+    return;
+  }
+  collectParentShapes(current, context, found);
+  if (ts.isObjectLiteralExpression(current)) {
+    for (const property of current.properties) {
+      if (!ts.isSpreadAssignment(property)) continue;
+      if (!ts.isIdentifier(unwrapExpression(property.expression))) continue;
+      collectResolvedParentShapes(
+        sourceFile,
+        property.expression,
+        context,
+        found,
+      );
+    }
+  }
+}
+
 function hasComputedMergeMove(sourceFile: ts.SourceFile): boolean {
   let found = false;
   const visit = (node: ts.Node): void => {
     if (
-      ts.isPropertyAssignment(node) &&
-      ts.isComputedPropertyName(node.name) &&
-      ts.isPropertyAccessExpression(node.name.expression) &&
-      node.name.expression.name.text === "column" &&
-      !isNullishLiteral(node.initializer)
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      node.expression.name.text === "updateMany" &&
+      node.arguments[0]
     ) {
-      found = true;
+      for (const args of resolveObjectLiterals(sourceFile, node.arguments[0])) {
+        const data = propertyAssignment(args, "data");
+        if (!data) continue;
+        for (const object of resolveObjectLiterals(
+          sourceFile,
+          data.initializer,
+        )) {
+          found = object.properties.some(
+            (property) =>
+              ts.isPropertyAssignment(property) &&
+              ts.isComputedPropertyName(property.name) &&
+              ts.isPropertyAccessExpression(property.name.expression) &&
+              property.name.expression.name.text === "column" &&
+              !isNullishLiteral(property.initializer),
+          );
+          if (found) return;
+        }
+      }
     }
     if (!found) ts.forEachChild(node, visit);
   };
   visit(sourceFile);
   return found;
+}
+
+function collectRawSqlParentWrites(
+  sourceFile: ts.SourceFile,
+  file: string,
+  persistence: MemberParentWriterPersistence,
+  found: RawSite[],
+): void {
+  const visit = (node: ts.Node): void => {
+    if (ts.isStringLiteralLike(node)) {
+      const updatePattern =
+        /UPDATE\s+"Member"\s+SET([\s\S]*?)(?:\bWHERE\b|\bRETURNING\b|;)/gi;
+      for (const update of node.text.matchAll(updatePattern)) {
+        const assignments = update[1] ?? "";
+        const columnPattern =
+          /"(parentMemberId|secondaryParentId)"\s*=\s*([^,;\r\n]+)/gi;
+        for (const assignment of assignments.matchAll(columnPattern)) {
+          const value = (assignment[2] ?? "").trim();
+          if (/^NULL(?:\b|::)/i.test(value)) continue;
+          found.push({
+            file,
+            baseSite: `${scopeName(node)}/raw-sql-update:${assignment[1]}`,
+            persistence,
+            position:
+              node.getStart() + (update.index ?? 0) + (assignment.index ?? 0),
+          });
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
 }
 
 function collectMergeSpecs(
@@ -320,11 +439,13 @@ function collectXeroResultRepresentation(
 }
 
 /**
- * Measure every syntactic route by which this tree can persist a non-null
- * direct-parent column. Comments are removed by the repository's canonical
- * scanner before parsing; string literals remain AST literals and cannot pose
- * as code. Merge is table-driven, so its two relation specs are counted only
- * while the computed-column mover is present in the paired source.
+ * Measure the repository's supported direct Prisma, raw-SQL, and table-driven
+ * routes for persisting a non-null direct-parent column. Comments are removed
+ * before parsing. The explicit synthetic cases below pin aliases and spreads;
+ * genuinely opaque dynamically constructed calls remain review failures when
+ * their parent-column token is introduced because they cannot be proven safe by
+ * this deterministic census. Merge specs count only while the paired DATA-side
+ * computed-column mover remains present.
  */
 export function scanMemberParentWriterSources(
   sources: ReadonlyMap<string, string>,
@@ -349,23 +470,19 @@ export function scanMemberParentWriterSources(
     const visit = (node: ts.Node): void => {
       if (ts.isCallExpression(node)) {
         const method = memberWriteMethod(node);
-        if (method && node.arguments[0] && ts.isObjectLiteralExpression(node.arguments[0])) {
-          const dataExpressions = memberWriteDataExpressions(node.arguments[0], method);
-          for (const data of dataExpressions) {
-            if (ts.isIdentifier(data)) {
-              for (const expression of identifierWrites(sourceFile, data.text)) {
-                collectParentShapes(expression, { file, method, persistence }, found);
-              }
-              collectIdentifierPropertyAssignments(
+        if (method && node.arguments[0]) {
+          for (const args of resolveObjectLiterals(
+            sourceFile,
+            node.arguments[0],
+          )) {
+            const dataExpressions = memberWriteDataExpressions(args, method);
+            for (const data of dataExpressions) {
+              collectResolvedParentShapes(
                 sourceFile,
-                file,
-                data.text,
-                method,
-                persistence,
+                data,
+                { file, method, persistence },
                 found,
               );
-            } else {
-              collectParentShapes(data, { file, method, persistence }, found);
             }
           }
         }
@@ -373,6 +490,7 @@ export function scanMemberParentWriterSources(
       ts.forEachChild(node, visit);
     };
     visit(sourceFile);
+    collectRawSqlParentWrites(sourceFile, file, persistence, found);
 
     if (file.startsWith("prisma/migration-verification/")) {
       collectMigrationFixtureCalls(sourceFile, file, found);

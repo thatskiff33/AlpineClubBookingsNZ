@@ -53,6 +53,13 @@ const REVIEWED_PARENT_WRITER_MANIFEST: readonly ReviewedSite[] = [
     note: "Sanitized migration-verification fixture, not an application writer.",
   })),
   {
+    file: "scripts/audit-access-role-membership-cleanup.ts",
+    site: "buildRepresentativeSeedSql/raw-sql-update:parentMemberId",
+    persistence: "demo-test-fixture",
+    classification: "demo-test-only",
+    note: "Retired cleanup-audit command emits a sanitized disposable-database fixture; it is not an application or deployment writer.",
+  },
+  {
     file: "src/app/api/admin/members/[id]/dependents/[dependentId]/route.ts",
     site: "DELETE/member.update/relation:parent.connect:parentMemberId",
     persistence: "member-persistence",
@@ -244,10 +251,27 @@ describe("member parent writer closed-world census", () => {
            }`,
         ],
         [
+          "src/indirect.ts",
+          `async function indirect(tx: any, parentMemberId: string) {
+             const base = { parentMemberId };
+             const data = { ...base };
+             const args = { data };
+             await tx.member.update(args);
+           }`,
+        ],
+        [
           "src/nested.ts",
           `async function nested(tx: any) {
              const data = { secondaryParent: { connect: { id: parent.id } } };
              await tx.member.update({ data });
+           }`,
+        ],
+        [
+          "src/raw.ts",
+          `function rawSql() {
+             return String.raw\`UPDATE "Member"
+               SET "secondaryParentId" = 'parent', "updatedAt" = CURRENT_TIMESTAMP
+               WHERE "id" = 'child';\`;
            }`,
         ],
         [
@@ -299,6 +323,11 @@ describe("member parent writer closed-world census", () => {
         persistence: "member-persistence",
       },
       {
+        file: "src/indirect.ts",
+        site: "indirect/member.update/scalar-shorthand:parentMemberId",
+        persistence: "member-persistence",
+      },
+      {
         file: "src/lib/member-merge-relations.ts",
         site: "MEMBER_MERGE_RELATION_SPECS/dynamic-move:parent.parentMemberId",
         persistence: "member-persistence",
@@ -318,6 +347,11 @@ describe("member parent writer closed-world census", () => {
       {
         file: "src/nested.ts",
         site: "nested/member.update/relation:secondaryParent.connect:secondaryParentId",
+        persistence: "member-persistence",
+      },
+      {
+        file: "src/raw.ts",
+        site: "rawSql/raw-sql-update:secondaryParentId",
         persistence: "member-persistence",
       },
       {
@@ -358,6 +392,31 @@ describe("member parent writer closed-world census", () => {
         ],
       ]),
     );
+    expect(measured).toEqual([]);
+  });
+
+  it("does not treat a computed merge WHERE as proof of the DATA-side move", () => {
+    const measured = scanMemberParentWriterSources(
+      new Map([
+        [
+          "src/lib/member-merge-relations.ts",
+          `const rows = [
+             spec("Member", "parent", "parentMemberId", "move"),
+             spec("Member", "secondaryParent", "secondaryParentId", "move"),
+           ];`,
+        ],
+        [
+          "src/lib/member-merge.ts",
+          `async function applyMoves(delegate: any, s: any) {
+             await delegate.updateMany({
+               where: { [s.column]: loserId },
+               data: { updatedAt: now },
+             });
+           }`,
+        ],
+      ]),
+    );
+
     expect(measured).toEqual([]);
   });
 });

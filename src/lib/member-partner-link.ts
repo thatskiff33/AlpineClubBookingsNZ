@@ -559,7 +559,12 @@ export async function requestPartnerLink(params: {
     result = await prisma.$transaction(async (tx): Promise<RequestOutcome> => {
       await lockPartnerMembers(tx, [initiator.id, target.id]);
 
-      if (await hasDirectParentRelationship(tx, initiator.id, target.id)) {
+      const directParent = await hasDirectParentRelationship(
+        tx,
+        initiator.id,
+        target.id,
+      );
+      if (directParent && !params.targetEmail) {
         return { outcome: "direct_parent" };
       }
 
@@ -587,6 +592,14 @@ export async function requestPartnerLink(params: {
     if (outstandingOutgoing) {
       return { outcome: "outgoing_exists" };
     }
+
+      // For by-email requests, requester-side confirmed/pair/outgoing conflicts
+      // must answer before target-specific suppression. Otherwise a caller can
+      // distinguish a direct parent target from an unrelated target by combining
+      // the lookup with a conflict already known about themselves (D9).
+      if (directParent) {
+        return { outcome: "direct_parent" };
+      }
 
     // The target's confirmed-partner state is checked only after every
     // requester-side conflict has answered: were it checked earlier, a

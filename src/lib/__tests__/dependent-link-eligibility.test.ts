@@ -152,6 +152,11 @@ type Fixture = DependentLinkCandidate & {
   firstName: string;
   active: boolean;
 };
+type FixtureInput = Omit<
+  Fixture,
+  "partnerLinksAsMemberA" | "partnerLinksAsMemberB"
+> &
+  Partial<Pick<Fixture, "partnerLinksAsMemberA" | "partnerLinksAsMemberB">>;
 
 /**
  * A single family graph, expressed ONLY through the two parent columns.
@@ -164,7 +169,7 @@ type Fixture = DependentLinkCandidate & {
  * the row-level predicate, the SQL predicate, and the SQLite rows are all
  * reading one graph.
  */
-const FIXTURES: Array<{ member: Fixture; why: string }> = [
+const FIXTURE_INPUTS: Array<{ member: FixtureInput; why: string }> = [
   {
     why: "the parent themself — cannot be their own dependant",
     member: {
@@ -375,6 +380,17 @@ const FIXTURES: Array<{ member: Fixture; why: string }> = [
     },
   },
 ];
+
+const FIXTURES: Array<{ member: Fixture; why: string }> = FIXTURE_INPUTS.map(
+  ({ member, why }) => ({
+    why,
+    member: {
+      partnerLinksAsMemberA: [],
+      partnerLinksAsMemberB: [],
+      ...member,
+    },
+  }),
+);
 
 /**
  * Fixtures are addressed by id, never by index: this table grows, and a
@@ -597,6 +613,7 @@ describe("dependentLinkBlockers", () => {
         parentMemberId: PARENT_ID,
         secondaryParentId: "other",
         partnerLinksAsMemberA: [{ memberBId: PARENT_ID }],
+        partnerLinksAsMemberB: [],
       },
       {
         parentAncestorIds: [PARENT_ID],

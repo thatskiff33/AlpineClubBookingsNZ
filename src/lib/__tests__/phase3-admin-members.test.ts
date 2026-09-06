@@ -1086,6 +1086,12 @@ describe("Phase 3: Admin Member Management", () => {
       descendantsOf?: Record<string, string[]>;
     }) {
       const searchCalls: Array<Record<string, any>> = [];
+      const withPartnerFacts = (rows: unknown[]) =>
+        rows.map((row) => ({
+          partnerLinksAsMemberA: [],
+          partnerLinksAsMemberB: [],
+          ...(row as Record<string, unknown>),
+        }));
       vi.mocked(prisma.member.findMany).mockImplementation((async (
         args: any,
       ) => {
@@ -1105,7 +1111,9 @@ describe("Phase 3: Admin Member Management", () => {
         searchCalls.push(args);
         // First non-graph query is the candidate search; the second is the
         // diagnostic re-run with the eligibility filter lifted.
-        return (searchCalls.length === 1 ? candidates : textMatches) as never;
+        return withPartnerFacts(
+          searchCalls.length === 1 ? candidates : textMatches,
+        ) as never;
       }) as never);
       return { searchCalls };
     }

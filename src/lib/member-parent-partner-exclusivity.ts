@@ -31,6 +31,35 @@ export const DIRECT_PARENT_MEMBER_SELECT = {
   secondaryParentId: true,
 } as const;
 
+/**
+ * Loaded-row partner facts used by selectors and previews. The select, required
+ * result shape, and orientation-independent predicate stay together so omitting
+ * either canonical side is a compile-time error (INV-SSOT-001).
+ */
+export const MEMBER_PARTNER_RELATIONSHIP_SELECT = {
+  partnerLinksAsMemberA: { select: { memberBId: true } },
+  partnerLinksAsMemberB: { select: { memberAId: true } },
+} satisfies Prisma.MemberSelect;
+
+export type MemberPartnerRelationshipFacts = {
+  partnerLinksAsMemberA: ReadonlyArray<{ memberBId: string }>;
+  partnerLinksAsMemberB: ReadonlyArray<{ memberAId: string }>;
+};
+
+export function memberHasPartnerRelationshipWith(
+  member: MemberPartnerRelationshipFacts,
+  otherMemberId: string,
+) {
+  return (
+    member.partnerLinksAsMemberA.some(
+      (link) => link.memberBId === otherMemberId,
+    ) ||
+    member.partnerLinksAsMemberB.some(
+      (link) => link.memberAId === otherMemberId,
+    )
+  );
+}
+
 /** Pure, orientation-independent direct-parent test for rows already read under lock. */
 export function membersAreDirectParentPair(
   memberOne: DirectParentMember,
@@ -141,10 +170,12 @@ export function isMemberParentPartnerExclusionViolation(error: unknown) {
   );
 }
 
-type MergeTopologyReader = Pick<
-  Prisma.TransactionClient,
-  "member" | "memberPartnerLink"
->;
+type MergeTopologyReader = Pick<Prisma.TransactionClient, "member">;
+
+export type MemberMergePartnerTopologyLink = {
+  memberAId: string;
+  memberBId: string;
+};
 
 export type MemberMergeExclusivityTopology = {
   participantIds: string[];
@@ -167,28 +198,19 @@ export async function loadMemberMergeExclusivityTopology(
   db: MergeTopologyReader,
   masterId: string,
   duplicateId: string,
+  currentPartnerLinks: readonly MemberMergePartnerTopologyLink[],
+  projectedPartnerLinks: readonly MemberMergePartnerTopologyLink[],
 ): Promise<MemberMergeExclusivityTopology> {
-  const [members, links] = await Promise.all([
-    db.member.findMany({
-      where: {
-        OR: [
-          { id: { in: [masterId, duplicateId] } },
-          { parentMemberId: { in: [masterId, duplicateId] } },
-          { secondaryParentId: { in: [masterId, duplicateId] } },
-        ],
-      },
-      select: DIRECT_PARENT_MEMBER_SELECT,
-    }),
-    db.memberPartnerLink.findMany({
-      where: {
-        OR: [
-          { memberAId: { in: [masterId, duplicateId] } },
-          { memberBId: { in: [masterId, duplicateId] } },
-        ],
-      },
-      select: { memberAId: true, memberBId: true },
-    }),
-  ]);
+  const members = await db.member.findMany({
+    where: {
+      OR: [
+        { id: { in: [masterId, duplicateId] } },
+        { parentMemberId: { in: [masterId, duplicateId] } },
+        { secondaryParentId: { in: [masterId, duplicateId] } },
+      ],
+    },
+    select: DIRECT_PARENT_MEMBER_SELECT,
+  });
 
   const participants = new Set<string>([masterId, duplicateId]);
   const finalId = (memberId: string) =>
@@ -212,15 +234,18 @@ export async function loadMemberMergeExclusivityTopology(
     }
   }
 
-  const partnerPairs = new Set<string>();
-  for (const link of links) {
+  // Every current endpoint participates in the lock set even when the merge
+  // planner will discard its link. That prevents a discarded row from hiding
+  // a participant-set drift while ensuring only links that survive the same
+  // authoritative PartnerLinkPlan can conflict with the projected parentage.
+  for (const link of currentPartnerLinks) {
     participants.add(link.memberAId);
     participants.add(link.memberBId);
-    const memberAId = finalId(link.memberAId);
-    const memberBId = finalId(link.memberBId);
-    if (memberAId !== memberBId) {
-      partnerPairs.add(pairKey(memberAId, memberBId));
-    }
+  }
+
+  const partnerPairs = new Set<string>();
+  for (const link of projectedPartnerLinks) {
+    partnerPairs.add(pairKey(link.memberAId, link.memberBId));
   }
 
   let conflictingPairCount = 0;

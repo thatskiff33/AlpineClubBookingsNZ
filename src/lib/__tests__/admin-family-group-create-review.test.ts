@@ -764,6 +764,7 @@ describe("reviewAdminFamilyGroupRequest — CHILD_REQUEST memberless-group guard
                 }
               : {
                   id: "member-1",
+                  active: true,
                   ageTier: "ADULT",
                   email: "member-1@test.com",
                   archivedAt: null,
@@ -869,18 +870,28 @@ describe("reviewAdminFamilyGroupRequest — CHILD_REQUEST memberless-group guard
         fn({
           $executeRaw: vi.fn().mockResolvedValue(undefined),
           member: {
-            findUnique: vi.fn().mockResolvedValue({
-              id: childId,
-              active: true,
-              archivedAt: null,
-              ageTier: "CHILD",
-              canLogin: false,
-              parentMemberId: null,
-              secondaryParentId: null,
-              inheritEmailFromId: null,
-              parent: null,
-              secondaryParent: null,
-            }),
+            findUnique: vi.fn(async ({ where }: { where: { id: string } }) =>
+              where.id === "member-1"
+                ? {
+                    id: "member-1",
+                    active: true,
+                    archivedAt: null,
+                    ageTier: "ADULT",
+                    inheritEmailFromId: null,
+                  }
+                : {
+                    id: childId,
+                    active: true,
+                    archivedAt: null,
+                    ageTier: "CHILD",
+                    canLogin: false,
+                    parentMemberId: null,
+                    secondaryParentId: null,
+                    inheritEmailFromId: null,
+                    parent: null,
+                    secondaryParent: null,
+                  },
+            ),
             update: txMemberUpdate,
           },
           memberPartnerLink: { findUnique: txPartnerFind },
@@ -928,8 +939,9 @@ describe("reviewAdminFamilyGroupRequest — CHILD_REQUEST memberless-group guard
    * `request.requester.ageTier !== "ADULT"` checks with `false` passed 448 tests
    * across 28 files, so the safeguarding claim rested on nothing here.
    *
-   * Two checks, two paths, two tests: the pre-transaction one guards
-   * `createNewMember`, the in-transaction one guards linking an existing child.
+   * Two checks, two paths: the pre-transaction one guards `createNewMember`;
+   * the existing-child path must re-read after its lifecycle lock so requester
+   * eligibility cannot drift between preflight and commit.
    */
   it("422s approval of a child request raised by a NON-ADULT requester (create path)", async () => {
     const request = childRequest();
@@ -951,67 +963,106 @@ describe("reviewAdminFamilyGroupRequest — CHILD_REQUEST memberless-group guard
     expect(mockedPrisma.$transaction).not.toHaveBeenCalled();
   });
 
-  it("422s approval of a child request raised by a NON-ADULT requester (link path)", async () => {
-    const request = childRequest();
-    request.requester.ageTier = "YOUTH";
-    mockedPrisma.familyGroupJoinRequest.findUnique.mockResolvedValue(
-      request as any
-    );
-    mockedPrisma.familyGroupMember.count.mockResolvedValue(1);
-    mockedPrisma.member.findUnique.mockResolvedValue({
-      id: "child-1",
-      active: true,
-      archivedAt: null,
-      ageTier: "CHILD",
-      canLogin: false,
-      parentMemberId: null,
-      secondaryParentId: null,
-      inheritEmailFromId: null,
-      parent: null,
-      secondaryParent: null,
-      dependents: [],
-      secondaryDependents: [],
-    } as any);
+  it.each([
+    {
+      drift: "inactive",
+      requester: { active: false, archivedAt: null, ageTier: "ADULT" },
+    },
+    {
+      drift: "archived",
+      requester: {
+        active: true,
+        archivedAt: new Date("2026-06-01T00:00:00.000Z"),
+        ageTier: "ADULT",
+      },
+    },
+    {
+      drift: "non-adult",
+      requester: { active: true, archivedAt: null, ageTier: "YOUTH" },
+    },
+  ])(
+    "422s existing-child approval when the locked requester has become $drift",
+    async ({ requester: lockedRequester }) => {
+      const request = childRequest();
+      mockedPrisma.familyGroupJoinRequest.findUnique.mockResolvedValue(
+        request as any
+      );
+      mockedPrisma.familyGroupMember.count.mockResolvedValue(1);
+      mockedPrisma.member.findUnique.mockResolvedValue({
+        id: "child-1",
+        active: true,
+        archivedAt: null,
+        ageTier: "CHILD",
+        canLogin: false,
+        parentMemberId: null,
+        secondaryParentId: null,
+        inheritEmailFromId: null,
+        parent: null,
+        secondaryParent: null,
+        dependents: [],
+        secondaryDependents: [],
+      } as any);
 
-    const txUpsert = vi.fn();
-    mockedPrisma.$transaction.mockImplementation(async (fn: any) =>
-      fn({
-        $executeRaw: vi.fn().mockResolvedValue(undefined),
-        member: {
-          findUnique: vi.fn().mockResolvedValue({
-            id: "child-1",
-            active: true,
-            canLogin: false,
-            ageTier: "CHILD",
-            email: null,
-            archivedAt: null,
-            parentMemberId: null,
-            secondaryParentId: null,
-            inheritEmailFromId: null,
-            inheritEmailChoiceId: null,
-            parent: null,
-            secondaryParent: null,
-          }),
-          findMany: vi.fn().mockResolvedValue([]),
-          update: vi.fn(),
+      const txMemberUpdate = vi.fn();
+      const txUpsert = vi.fn();
+      const txRequestUpdate = vi.fn();
+      const txPartnerFind = vi.fn();
+      mockedPrisma.$transaction.mockImplementation(async (fn: any) =>
+        fn({
+          $executeRaw: vi.fn().mockResolvedValue(undefined),
+          member: {
+            findUnique: vi.fn(async ({ where }: { where: { id: string } }) =>
+              where.id === "member-1"
+                ? {
+                    id: "member-1",
+                    ...lockedRequester,
+                    inheritEmailFromId: null,
+                  }
+                : {
+                    id: "child-1",
+                    active: true,
+                    canLogin: false,
+                    ageTier: "CHILD",
+                    email: null,
+                    archivedAt: null,
+                    parentMemberId: null,
+                    secondaryParentId: null,
+                    inheritEmailFromId: null,
+                    inheritEmailChoiceId: null,
+                    parent: null,
+                    secondaryParent: null,
+                  }
+            ),
+            findMany: vi.fn().mockResolvedValue([]),
+            update: txMemberUpdate,
+          },
+          memberPartnerLink: { findUnique: txPartnerFind },
+          familyGroupMember: { upsert: txUpsert },
+          familyGroupJoinRequest: { update: txRequestUpdate },
+        })
+      );
+
+      const result = await reviewAdminFamilyGroupRequest({
+        adminMemberId: ADMIN_ID,
+        data: {
+          requestId: "req-child",
+          action: "approve",
+          linkedMemberId: "child-1",
         },
-        memberPartnerLink: { findUnique: vi.fn().mockResolvedValue(null) },
-        familyGroupMember: { upsert: txUpsert },
-        familyGroupJoinRequest: { update: vi.fn() },
-      })
-    );
+      });
 
-    const result = await reviewAdminFamilyGroupRequest({
-      adminMemberId: ADMIN_ID,
-      data: { requestId: "req-child", action: "approve", linkedMemberId: "child-1" },
-    });
-
-    expect(result.init?.status).toBe(422);
-    expect((result.body as { error: string }).error).toBe(
-      "Child requests can only be approved for active adult requesters."
-    );
-    expect(txUpsert).not.toHaveBeenCalled();
-  });
+      expect(result.init?.status).toBe(422);
+      expect((result.body as { error: string }).error).toBe(
+        "Child requests can only be approved for active adult requesters."
+      );
+      expect(txPartnerFind).not.toHaveBeenCalled();
+      expect(txMemberUpdate).not.toHaveBeenCalled();
+      expect(txUpsert).not.toHaveBeenCalled();
+      expect(txRequestUpdate).not.toHaveBeenCalled();
+      expect(logAudit).not.toHaveBeenCalled();
+      expect(sendChildRequestApprovedEmail).not.toHaveBeenCalled();
+    }
+  );
 });
 
 describe("reviewAdminFamilyGroupRequest — ADULT_INVITE stays self-service", () => {

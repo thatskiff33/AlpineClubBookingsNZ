@@ -5,7 +5,11 @@ import { ageTierEnum } from "@/lib/age-tier-schema";
 import { formatMemberIdentityAge } from "@/lib/member-age";
 import { clubTime } from "@/lib/club-time/server";
 import { buildParentLinks, type ParentLinkSummary } from "@/lib/member-parent-links";
-import { MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE } from "@/lib/member-parent-partner-exclusivity";
+import {
+  MEMBER_PARTNER_RELATIONSHIP_SELECT,
+  MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+  memberHasPartnerRelationshipWith,
+} from "@/lib/member-parent-partner-exclusivity";
 
 /**
  * Member lookup for the identity-sensitive Family Group admin workflows (#2568).
@@ -149,8 +153,7 @@ export async function searchFamilyGroupCandidateMembers(
             inheritEmailFromId: true,
           },
         },
-        partnerLinksAsMemberA: { select: { memberBId: true } },
-        partnerLinksAsMemberB: { select: { memberAId: true } },
+        ...MEMBER_PARTNER_RELATIONSHIP_SELECT,
       },
       orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
       take: MAX_RESULTS,
@@ -180,12 +183,10 @@ export async function searchFamilyGroupCandidateMembers(
       parentLinks: buildParentLinks(member),
       ineligibleReason:
         query.prospectiveParentMemberId &&
-        (member.partnerLinksAsMemberA.some(
-          (link) => link.memberBId === query.prospectiveParentMemberId,
-        ) ||
-          member.partnerLinksAsMemberB.some(
-            (link) => link.memberAId === query.prospectiveParentMemberId,
-          ))
+        memberHasPartnerRelationshipWith(
+          member,
+          query.prospectiveParentMemberId,
+        )
           ? MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE
           : undefined,
     })),

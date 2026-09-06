@@ -378,8 +378,18 @@ export function buildInitialRequestSelections(
 
   for (const request of requests) {
     if (current[request.id]) {
-      nextSelections[request.id] = current[request.id];
-      continue;
+      const currentId = current[request.id];
+      const refreshedMatch = request.matchingMembers.find(
+        (candidate) => candidate.id === currentId,
+      );
+      const currentStillAllowed =
+        currentId === "__create__"
+          ? request.canCreateMemberFromRequest === true
+          : !refreshedMatch?.ineligibleReason;
+      if (currentStillAllowed) {
+        nextSelections[request.id] = currentId;
+        continue;
+      }
     }
     const eligibleMatches = request.matchingMembers.filter(
       (candidate) => !candidate.ineligibleReason,

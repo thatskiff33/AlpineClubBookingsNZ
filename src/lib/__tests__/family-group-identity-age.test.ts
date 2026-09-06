@@ -478,6 +478,8 @@ describe("listAdminFamilyGroupRequests — the review queue payload (#2568)", ()
         secondaryParent: null,
         dateOfBirth: new Date("2022-10-20T00:00:00.000Z"),
         familyGroupMemberships: [],
+        partnerLinksAsMemberA: [],
+        partnerLinksAsMemberB: [],
       },
     ] as never);
 

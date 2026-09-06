@@ -488,4 +488,78 @@ describe("family-link graph blockers on merge (#2255)", () => {
       )?.label,
     ).toMatch(/cannot be both direct parent\/dependant and partners/i);
   });
+
+  it("does not block on a confirmed loser link the authoritative merge plan discards", async () => {
+    const familyMember = familyGraphMemberDelegate({
+      [MASTER_ID]: null,
+      [LOSER_ID]: null,
+      "former-partner-child": LOSER_ID,
+    });
+    const member = {
+      ...familyMember,
+      findMany: vi.fn(
+        (args: { where: { OR?: Array<Record<string, unknown>> } }) =>
+          args.where?.OR?.some(
+            (clause) =>
+              typeof (clause.id as { in?: unknown } | undefined)?.in !==
+              "undefined",
+          )
+            ? Promise.resolve([
+                {
+                  id: "former-partner-child",
+                  parentMemberId: LOSER_ID,
+                  secondaryParentId: null,
+                },
+              ])
+            : familyMember.findMany(args),
+      ),
+    };
+    const links = [
+      {
+        id: "master-link",
+        memberAId: MASTER_ID,
+        memberBId: "retained-partner",
+        status: "CONFIRMED",
+      },
+      {
+        id: "loser-link",
+        memberAId: LOSER_ID,
+        memberBId: "former-partner-child",
+        status: "CONFIRMED",
+      },
+    ];
+    const memberPartnerLink = {
+      ...defaultDelegate(),
+      findMany: vi.fn(
+        ({ where }: { where?: { OR?: Array<Record<string, unknown>> } }) => {
+          const clauses = where?.OR ?? [];
+          if (
+            clauses.some(
+              (clause) =>
+                typeof (clause.memberAId as { in?: unknown } | undefined)
+                  ?.in !== "undefined" ||
+                typeof (clause.memberBId as { in?: unknown } | undefined)
+                  ?.in !== "undefined",
+            )
+          ) {
+            return Promise.resolve(links);
+          }
+          const endpoint = clauses[0]?.memberAId;
+          return Promise.resolve(
+            endpoint === LOSER_ID ? [links[1]] : [links[0]],
+          );
+        },
+      ),
+    };
+
+    const result = await preview({ overrides: { member, memberPartnerLink } });
+
+    expect(blockerCodes(result)).not.toContain("parent_partner_overlap");
+    expect(result.collisions).toContainEqual(
+      expect.objectContaining({
+        model: "MemberPartnerLink.memberA/memberB",
+        count: 1,
+      }),
+    );
+  });
 });
