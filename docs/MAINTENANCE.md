@@ -315,6 +315,16 @@ the base commit is missing from the checkout. So a `git`-mode scan that walked
 zero commits is treated as the scanner failure it is. Zero commits is never a
 legitimate answer for any scope this repository scans.
 
+The same failure has a second, quieter shape: the git error need not happen at
+the START of the walk. gitleaks streams commits to its detector, and any
+unrecognised line on git's stderr both stops that stream and gets logged with a
+`[git] ` tag — so a bad object twenty percent into an `--all` sweep prints
+`1500 commits scanned … no leaks found` and exits 0, having silently skipped the
+other eighty percent. A tagged line therefore fails the scan on its own,
+whatever it says. Benign git messages are not tagged: gitleaks allowlists five
+of them and emits those as untagged `WRN` lines, which is what makes the tag a
+usable signal rather than noise.
+
 **Triaging a sweep finding.** The run summary lists the rule, the file, the line
 and the commit for each finding, and the run keeps a `gitleaks-sweep-reports`
 artifact for fourteen days with the same detail plus the fingerprint. Every

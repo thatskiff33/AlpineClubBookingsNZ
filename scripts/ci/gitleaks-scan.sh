@@ -102,13 +102,19 @@ mounts=(-v "${host_repo}:/repo:ro")
 # nothing, so the check has to happen HOST-side, before the container runs.
 #
 # Two things are asserted, and both are about the path rather than the scan:
-# that the mount source really is this repository (its `.gitleaks.toml` is
-# there, which also means the rule set the scan depends on exists), and that
-# under Git Bash the path has been converted to the drive-lettered spelling
-# the daemon can resolve. A `/c/Users/...` path is the exact input that gets
-# auto-created as an empty directory.
-if [ ! -f "${REPO_ROOT}/.gitleaks.toml" ]; then
-  echo "::error::${REPO_ROOT}/.gitleaks.toml is missing, so the scan would run against no rule set and mount a directory that is not this repository. SCANNER FAILURE, not a clean scan." >&2
+# that the rule set exists at the MOUNTED source, and that under Git Bash the
+# path has been converted to the drive-lettered spelling the daemon can
+# resolve. A `/c/Users/...` path is the exact input that gets auto-created as
+# an empty directory.
+#
+# `${host_repo}`, not `${REPO_ROOT}`. Testing `${REPO_ROOT}` proves something
+# that is true by construction — it is this checkout, so its `.gitleaks.toml`
+# is there — while the thing actually being mounted is the converted path.
+# The two are the same string on Linux, and on Git Bash `C:/Users/...` is
+# equally usable as a path from the shell, so one test covers both hosts and
+# is the only one of the two that can fail for the reason that matters.
+if [ ! -f "${host_repo}/.gitleaks.toml" ]; then
+  echo "::error::no .gitleaks.toml at the mount source '${host_repo}', so the scan would run against no rule set. SCANNER FAILURE, not a clean scan." >&2
   exit 1
 fi
 if command -v cygpath >/dev/null 2>&1; then
@@ -156,9 +162,16 @@ echo "gitleaks ${GITLEAKS_IMAGE} scanning ${LABEL}"
 
 # The output is captured rather than streamed because exit status alone cannot
 # answer the questions below, and then printed in full so a reader loses
-# nothing. `NO_COLOR=1` is belt-and-braces: zerolog's console writer colours
-# the LEVEL token and may ignore the variable, but the message body — which is
-# what the greps below read — is uncoloured either way.
+# nothing.
+#
+# `NO_COLOR=1` does take effect — zerolog reads the variable rather than
+# ignoring it — and with colour ON the LEVEL token arrives wrapped in ANSI as
+# `\x1b[31mERR\x1b[0m`. An earlier version of the truncation grep anchored on
+# a bare `ERR ` and would therefore have matched nothing at all the moment
+# anything set the colour back on. The greps below now anchor ONLY on message
+# body, which zerolog never colours, so they no longer depend on this variable
+# at all; it stays because a log with escape codes in it is worse to read in
+# CI, not because a check hangs off it.
 log="$(mktemp)"
 trap 'rm -f "${log}"' EXIT
 
@@ -210,15 +223,36 @@ fi
 #   INF 1500 commits scanned.
 #   INF no leaks found
 #
+# Measured on this repository at v8.28.0 for the zero-commit case, where the
+# same shape appears with `0 commits scanned` and an `error="stderr is not
+# empty"` line beside it.
+#
 # which passes the zero-commit check and reads as a clean sweep of the whole
 # repository. A TRUNCATED scan reported as complete is the same defect class as
 # a zero-commit one, only harder to notice.
 #
-# Matched on git's own two truncating prefixes and NOT on every `[git]` line:
-# gitleaks surfaces ordinary `warning:` chatter from git through the same ERR
-# channel — a line-ending warning is the common one on this repository — and
-# failing on those would redden the required gate for nothing.
-if [ "${MODE}" = "git" ] && grep -Eq 'ERR .*\[git\] (fatal|error):' "${log}"; then
+# MATCHED ON THE `[git] ` TAG ITSELF, because in v8.28.0 the tag IS the abort
+# marker. `sources/git.go` -> `listenForStdErr` allowlists five benign git
+# messages and emits those as `WRN <text>` with NO tag; every other stderr
+# line goes out as `logging.Error().Msgf("[git] %s", …)` and sets
+# `errEncountered`, which stops the walk. So a tagged line — whatever its
+# prefix — means the scan was cut short.
+#
+# An earlier version of this check matched only `(fatal|error):` on the
+# theory that gitleaks surfaced ordinary git `warning:` chatter through the
+# same channel. That was wrong twice over: the benign messages are the
+# untagged `WRN` ones, and a line like
+# `[git] warning: unable to access '/root/.gitconfig'` — or git's `hint:`
+# lines — is NOT allowlisted, aborts the walk, and slipped straight through
+# the narrower pattern. Narrowing here trades a false red for a false GREEN
+# on a required secret gate, which is the wrong direction.
+#
+# `stderr is not empty` is the one-to-one abort event `detect.go` logs when it
+# sees `errEncountered`, and is matched too so the check does not rest on a
+# single log format.
+#
+# Neither pattern anchors on the level token; see the `NO_COLOR` note above.
+if [ "${MODE}" = "git" ] && grep -Eq '\[git\] |stderr is not empty' "${log}"; then
   echo "::error::gitleaks logged a git error over ${LABEL}; the commit walk stopped there, so the scan is TRUNCATED even though gitleaks exited 0. This is a SCANNER FAILURE, not a clean scan." >&2
   exit 1
 fi

@@ -122,7 +122,9 @@ describe("deployment image contracts", () => {
     // directory rather than refused, so `dir /repo` scans nothing and exits 0.
     // `git` mode has the zero-commit check; `dir` mode has nothing, so the
     // preflight is host-side and covers both.
-    expect(scanScript).toContain('if [ ! -f "${REPO_ROOT}/.gitleaks.toml" ]; then');
+    // `${host_repo}`, the path actually mounted — `${REPO_ROOT}` is this
+    // checkout by construction and cannot fail for the reason that matters.
+    expect(scanScript).toContain('if [ ! -f "${host_repo}/.gitleaks.toml" ]; then');
     expect(scanScript).toContain("[A-Za-z]:/*)");
     expect(workflow).toContain("${{ runner.temp }}/semgrep-output/semgrep-results.sarif");
   });
@@ -275,16 +277,25 @@ describe("deployment image contracts", () => {
       // 0 — `1500 commits scanned … no leaks found` for a `--all` sweep that
       // hit a bad object at twenty percent. That passes the zero-commit
       // check and reads as a clean sweep of the whole repository.
-      expect(scan).toContain("ERR .*\\[git\\] (fatal|error):");
+      // The `[git] ` TAG is the marker, not the prefix after it. In v8.28.0
+      // `listenForStdErr` emits five allowlisted benign messages as untagged
+      // `WRN`, and routes every other stderr line through
+      // `Error().Msgf("[git] %s", …)` while setting `errEncountered`, which
+      // aborts the walk. A narrower `(fatal|error):` match therefore let
+      // `[git] warning: unable to access '/root/.gitconfig'` and git's
+      // `hint:` lines through — each of which truncates the scan.
+      expect(scan).toContain("\\[git\\] |stderr is not empty");
       expect(scan).toContain("the scan is TRUNCATED even though gitleaks exited 0");
-      // Matched on git's two TRUNCATING prefixes only. gitleaks surfaces
-      // ordinary git `warning:` chatter through the same ERR channel, and
-      // failing on every `[git]` line would redden the required gate for a
-      // line-ending warning.
-      // Asserted positively rather than by trying to forbid the looser
-      // pattern: what matters is that the alternation is there, immediately
-      // after the bracket, so the grep cannot match a bare `[git] warning:`.
-      expect(scan).toContain("\\] (fatal|error):");
+      // The narrowed pattern must not come back. On a required secret gate
+      // it trades a false red for a false GREEN, which is the wrong way
+      // round. Against the DIRECTIVES, because the block's own comment
+      // quotes the narrowed pattern while explaining why it went — the
+      // recurring defect in this file, now five times over.
+      expect(directivesOnly(scan)).not.toContain("(fatal|error):");
+      // No check may anchor on the level token: with colour on, zerolog
+      // emits `\x1b[31mERR\x1b[0m` and an `ERR `-anchored regex matches
+      // nothing. The greps read message body only.
+      expect(scan).not.toMatch(/grep -Eq '(\^\|)?ERR /);
       expect(scan).toContain('-e NO_COLOR=1');
       expect(scan).toContain("LEAK_EXIT=2");
       expect(scan).toContain('args=(--exit-code="${LEAK_EXIT}" --redact)');
