@@ -1980,6 +1980,28 @@ one, check the other.
     Payment aggregate is not re-derived on a definite failure — before #3267 a
     thrown charge left no row and the Payment stayed at the claim's PENDING,
     which is what a pending booking whose charge failed should read as.
+  - **A charge minted under the old shared key is recognised by its reason and
+    taken over, so nothing charges beside a live legacy intent.** This is the
+    deploy cutover, and it is the one place a row that is NOT an attempt row is
+    ended. A PENDING/PROCESSING PRIMARY Stripe row with no `reference`, naming an
+    intent and carrying one of the `SAVED_CARD_CHARGE_REASON` values, was minted
+    by a saved-card charge path before #3267 under the shared key
+    `pending_charge_<bookingId>`; on the card about to be charged it is replayed
+    by retrieve like any other in-flight row, and **on any other card it is
+    ended and its intent cancelled or waited on**, exactly as a superseded
+    attempt row is. Before #3267 the shared key itself stopped a second charge
+    beside such a row and the cron's #1992 sweep excluded it by those same two
+    `reason` literals; the sweep now excludes attempt rows by the key prefix,
+    which a reference-less row does not carry, so without this the first
+    post-deploy run would sweep a legacy `processing` intent with the cancel-only
+    call, find it uncancellable, log "likely already succeeded" and charge the
+    new card beside live money — with only `INV-PAY-043` between that and the
+    member on the cron, and nothing at all on the two routes, which run no sweep.
+    Recognising the row in the claim fixes all three paths at once and needs no
+    new lock. It requires an intent id, so a legacy row can never be replayed by
+    re-sending a key nothing ever sent; every pre-#3267 PRIMARY Stripe row was
+    written from a Stripe answer, so that shape does not arise. The rule
+    self-expires: nothing mints a reference-less saved-card row any more.
   - **An unresolved attempt on a card that has since been replaced is ended and
     its intent cancelled.** A PENDING/PROCESSING attempt row on a DIFFERENT card
     (`INV-PAY-052`'s replacement, `INV-PAY-054`'s retirement), or whose card was
@@ -2026,9 +2048,9 @@ one, check the other.
     the refusal (`INV-PAY-054`'s retire nulls the card by pm id across rows),
     which would restart the cadence at window 1.
     Every PRIMARY Stripe row
-    counts here, attempt row or not; rows that are not attempt rows (an in-flight
-    /pay link intent, a legacy row minted under the shared key before #3267) are
-    otherwise left to the mechanisms that own them.
+    counts here, attempt row or not; the rows that are neither attempt rows nor
+    legacy shared-key rows (an in-flight /pay link intent on another card, or on
+    no card yet) are otherwise left to the mechanisms that own them.
   - **Stripe's answer is recorded on the attempt row, forward only.**
     `settleSavedCardChargeAttempt` stamps the intent id, the mapped status
     (`succeeded` -> SUCCEEDED; `canceled` and `requires_payment_method` -> FAILED,
@@ -2104,7 +2126,10 @@ one, check the other.
     flight on this card, so the claim replays it by retrieve rather than charging
     beside it. Without that, at the deploy a legacy `processing` intent would be
     swept, found uncancellable, and charged beside — the very double charge this
-    invariant exists to prevent.
+    invariant exists to prevent. A legacy row on ANOTHER card needs no exclusion
+    clause of its own: the claim has already ended it, so it is FAILED before the
+    sweep's query runs and the status filter drops it, and its intent belongs to
+    `chargeSavedCardAttempt`, which retrieves rather than cancels blind.
   - **Ordering with `INV-PAY-054`, load-bearing and invisible from either side
     alone.** The retire path nulls `PaymentTransaction.paymentMethodId` on every
     row carrying the retired card, attempt rows included. That is safe ONLY

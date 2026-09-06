@@ -99,13 +99,17 @@
  * #3267, or a /pay link intent the member is paying with that very card — is
  * replayed by retrieve exactly like an attempt row: whoever minted it, it is
  * this booking's money in flight on this card, and charging beside it is the
- * double charge this module exists to prevent. Everything else (a link intent
- * on another card, a legacy row on a since-replaced card) is left to the
- * mechanisms that already own it: the cron's #1992 pre-charge sweep (which
- * excludes attempt rows by the key prefix and the row this run is replaying by
- * id) and the `payment_intent.*` webhooks. This module only ever counts those
- * for one thing — captured money — because money is money whoever minted the
- * row.
+ * double charge this module exists to prevent. A LEGACY saved-card row on
+ * ANOTHER card is taken over too, and that is the deploy cutover
+ * (`isLegacySharedKeyChargeRow`): before #3267 the shared key stopped a second
+ * charge beside it, and nothing else does, so it is ended here and its intent
+ * cancelled — or, when that intent is still `processing`, waited on. What is
+ * left after that (a /pay link intent on another card, or on no card yet) is
+ * left to the mechanisms that already own it: the cron's #1992 pre-charge sweep
+ * (which excludes attempt rows by the key prefix and the row this run is
+ * replaying by id) and the `payment_intent.*` webhooks. This module only ever
+ * counts those for one thing — captured money — because money is money whoever
+ * minted the row.
  *
  * Ordering with #3268 (INV-PAY-054), written here because it is load-bearing and
  * invisible from either side alone: `retireUnusableSavedCard` nulls
@@ -176,6 +180,18 @@ export const SAVED_CARD_CHARGE_REASON = {
 
 export type SavedCardChargeReason =
   (typeof SAVED_CARD_CHARGE_REASON)[keyof typeof SAVED_CARD_CHARGE_REASON];
+
+/**
+ * The same reasons as a set, for reading the ledger rather than writing it:
+ * it is how a row minted by a saved-card charge path BEFORE #3267 — which
+ * carries no `reference`, because the shared key was never stored — is
+ * recognised at the deploy (`isLegacySharedKeyChargeRow`). Derived from the
+ * one constant above, so a fourth path added there is recognised here too
+ * (`INV-SSOT-002`).
+ */
+const SAVED_CARD_CHARGE_REASONS: ReadonlySet<string> = new Set(
+  Object.values(SAVED_CARD_CHARGE_REASON)
+);
 
 /**
  * The Stripe `metadata` every saved-card charge sends — the cron, the admin
@@ -374,6 +390,54 @@ function isChargeInFlightOnThisCard(
   );
 }
 
+/**
+ * A PRIMARY Stripe row that a saved-card charge path minted BEFORE #3267, under
+ * the one shared key `pending_charge_<bookingId>`: it carries one of the charge
+ * reasons, names the intent that key produced, and has NO `reference`, because
+ * the shared key was never stored on the row. Such a row is this booking's
+ * saved-card money in flight whatever card it names, so it is taken over by this
+ * attempt — replayed when it is on the same card, ENDED with its intent
+ * cancelled (and, when that intent is still `processing`, WAITED on) when it is
+ * not.
+ *
+ * This is the deploy cutover, and it is why the predicate is not keyed on the
+ * card. Before #3267 the cron's #1992 sweep excluded these rows by those same
+ * two `reason` literals, and the shared key was what stopped a second charge
+ * beside them; #3267 replaced the exclusion with the attempt-key prefix, which a
+ * reference-less legacy row does not match, and retired the shared key. A legacy
+ * PROCESSING row on a card the member has since replaced would then be swept by
+ * the cron's cancel-only sweep, found uncancellable (Stripe refuses to cancel a
+ * `processing` card payment), logged as "likely already succeeded", and the new
+ * card charged beside a live intent — with only the #1992 duplicate-capture
+ * refund between that and the member, and on the two routes, which run no sweep,
+ * nothing at all. Recognising the row here routes it into the ended-and-cancelled
+ * branch, which retrieves the intent and waits on a live one, and it does so for
+ * all three paths.
+ *
+ * It requires an intent id, so a legacy row can never be REPLAYED by re-sending
+ * a key: the key on such a row would be one built from its own id that nothing
+ * ever sent to Stripe, and sending it would be a brand-new charge. Every
+ * pre-#3267 PRIMARY Stripe row was written from a Stripe answer
+ * (`upsertPaymentIntentTransaction`, keyed by intent id), so a reference-less
+ * saved-card row with no intent does not exist; requiring one makes that
+ * explicit rather than assumed.
+ *
+ * Self-expiring: nothing mints a reference-less saved-card row any more, so once
+ * the rows open at the deploy have resolved this predicate matches nothing.
+ *
+ * It is asked only after `isAttemptRow` has said no, so it does not re-test
+ * that; an attempt row also carries a charge reason, and it is recognised by
+ * its key, which is the stronger fact.
+ */
+function isLegacySharedKeyChargeRow(row: AttemptLedgerRow): boolean {
+  return (
+    row.reference === null &&
+    row.stripePaymentIntentId !== null &&
+    row.reason !== null &&
+    SAVED_CARD_CHARGE_REASONS.has(row.reason)
+  );
+}
+
 /** `<reason>:<suffix>`, applied once — a row ended twice reads the same. */
 function supersededReason(reason: string | null, suffix: string): string {
   const base = reason ?? "saved_card_charge";
@@ -415,7 +479,9 @@ function supersededReason(reason: string | null, suffix: string): string {
  *      docblock for why re-sending is a new charge.
  *   d. An unresolved ATTEMPT row on a DIFFERENT card (the previous card was
  *      retired by #3268 or replaced via #3266), or whose card was nulled but
- *      whose intent still exists, is ENDED: marked FAILED with its `reason`
+ *      whose intent still exists — and equally a LEGACY shared-key saved-card
+ *      row on a different card, which is the deploy cutover
+ *      (`isLegacySharedKeyChargeRow`) — is ENDED: marked FAILED with its `reason`
  *      suffixed `:superseded_by_new_card`, and its intent id, if any, is
  *      returned for `chargeSavedCardAttempt` to cancel best-effort AFTER commit
  *      (a provider call kept out of the transaction — `INV-INT-003`). Marking it
@@ -434,9 +500,9 @@ function supersededReason(reason: string | null, suffix: string): string {
  *      and stamp its `reference` with the key built from ITS OWN id — two
  *      statements, one transaction.
  *
- * Rows that are neither attempt rows nor in flight on this card (a link intent
- * on another card, a legacy row on a since-replaced card) are read for (b) and
- * otherwise left alone — see the module docblock.
+ * Rows that are none of those three things — a /pay link intent on another card,
+ * or on no card yet — are read for (b) and otherwise left alone, to the cron's
+ * #1992 sweep and the webhooks; see the module docblock.
  *
  * The Payment aggregate is deliberately NOT re-derived here: the claim's own
  * upsert has just set it, and `settleSavedCardChargeAttempt` reconciles once
@@ -499,7 +565,9 @@ export async function beginSavedCardChargeAttempt(
   const unresolvedAttempts = rows.filter(
     (row) =>
       isUnresolved(row.status) &&
-      (isAttemptRow(row, bookingId) || isChargeInFlightOnThisCard(row, card))
+      (isAttemptRow(row, bookingId) ||
+        isChargeInFlightOnThisCard(row, card) ||
+        isLegacySharedKeyChargeRow(row))
   );
   const replayable = unresolvedAttempts.filter(
     (row) =>

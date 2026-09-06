@@ -1046,6 +1046,11 @@ async function releaseChargeClaim(
  *     claim replays it by retrieve. Sweeping it would cancel the intent this
  *     run is waiting on, and at the deploy a legacy `processing` intent would
  *     be swept, found uncancellable, and charged beside.
+ *   - A legacy shared-key row on ANOTHER card needs no exclusion clause: the
+ *     claim has already ENDED it (`isLegacySharedKeyChargeRow`), so it is
+ *     FAILED before this query runs and the status filter drops it. Its intent
+ *     belongs to `chargeSavedCardAttempt`, which retrieves it and waits on a
+ *     live one rather than cancelling blind.
  *
  * Deliberately Stripe-side only and best-effort (no durable
  * CANCEL_PAYMENT_INTENT recovery operation): the durable cancel path's

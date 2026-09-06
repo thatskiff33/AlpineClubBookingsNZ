@@ -573,7 +573,7 @@ describe("beginSavedCardChargeAttempt", () => {
       expect(await begin()).toMatchObject({ kind: "replay", attemptRowId: link.id, paymentIntentId: "pi_link_same_card" });
     });
 
-    it("leaves alone a link intent with no card yet and a legacy row on ANOTHER card: neither replayed nor ended — the cron's sweep owns them", async () => {
+    it("leaves alone a link intent with no card yet: neither replayed nor ended — the cron's sweep owns it", async () => {
       const link = ledger.seed({
         paymentId: PAYMENT,
         status: PaymentStatus.PROCESSING,
@@ -581,12 +581,129 @@ describe("beginSavedCardChargeAttempt", () => {
         reference: null,
         reason: null,
       });
-      const legacyOtherCard = ledger.seed({
+
+      const attempt = await begin();
+
+      expect(attempt.kind).toBe("fresh");
+      expect(attempt.staleIntentIdsToCancel).toEqual([]);
+      expect(row(link.id).status).toBe(PaymentStatus.PROCESSING);
+    });
+
+    // The deploy cutover. Before #3267 the shared key stopped a second charge
+    // beside one of these rows; after it, nothing does — the #1992 sweep
+    // excludes attempt rows by the key prefix, which a reference-less legacy
+    // row does not carry, and the sweep is cron-only. So the claim takes the
+    // row over on whatever card it names.
+    it.each([
+      ["the cron's", SAVED_CARD_CHARGE_REASON.cron],
+      ["charge-saved-method's", SAVED_CARD_CHARGE_REASON.chargeSavedMethodRoute],
+    ])(
+      "a legacy shared-key row (%s reason, no reference) on ANOTHER card is ENDED and its intent named for cancellation, not left for the cron's cancel-only sweep",
+      async (_label, reason) => {
+        const legacyOtherCard = ledger.seed({
+          paymentId: PAYMENT,
+          status: PaymentStatus.PROCESSING,
+          stripePaymentIntentId: "pi_legacy_other_card",
+          reference: null,
+          reason,
+          paymentMethodId: "pm_retired",
+        });
+
+        const attempt = await begin();
+
+        expect(attempt.kind).toBe("fresh");
+        expect(attempt.staleIntentIdsToCancel).toEqual(["pi_legacy_other_card"]);
+        expect(row(legacyOtherCard.id)).toMatchObject({
+          status: PaymentStatus.FAILED,
+          reason: `${reason}:superseded_by_new_card`,
+        });
+      }
+    );
+
+    it("a legacy row on another card whose intent is still PROCESSING is WAITED on, not charged beside: the intent is the answer, its row is revived and the fresh attempt row is dropped", async () => {
+      const legacy = ledger.seed({
         paymentId: PAYMENT,
         status: PaymentStatus.PROCESSING,
-        stripePaymentIntentId: "pi_legacy_other_card",
+        stripePaymentIntentId: "pi_legacy_live",
         reference: null,
-        reason: "pending_hold_auto_charge",
+        reason: SAVED_CARD_CHARGE_REASON.cron,
+        paymentMethodId: "pm_retired",
+      });
+      const attempt = await begin(NEW_CARD);
+      const live = { id: "pi_legacy_live", status: "processing" as const, amount: 10000, payment_method: "pm_retired" };
+      // Stripe refuses to cancel a `processing` card payment.
+      mocks.cancelPaymentIntentIfCancellableWithResult.mockRejectedValue(
+        stripeSdkError({ type: "invalid_request_error", code: "payment_intent_unexpected_state" })
+      );
+      mocks.getPaymentIntent.mockResolvedValue(live);
+
+      const intent = await charge(attempt, NEW_CARD);
+
+      expect(intent).toBe(live);
+      expect(mocks.chargePaymentMethod).not.toHaveBeenCalled();
+      expect(row(legacy.id).status).toBe(PaymentStatus.PROCESSING);
+
+      const settled = await settle(attempt.attemptRowId, live);
+      expect(settled).toMatchObject({ transactionId: legacy.id, ledgerStatus: PaymentStatus.PROCESSING, keptExistingRow: true });
+      expect(ledger.rows.find((r) => r.id === attempt.attemptRowId)).toBeUndefined();
+    });
+
+    it("a legacy row on the SAME card still replays by retrieve rather than being ended", async () => {
+      const legacy = ledger.seed({
+        paymentId: PAYMENT,
+        status: PaymentStatus.PROCESSING,
+        stripePaymentIntentId: "pi_legacy_same_card",
+        reference: null,
+        reason: SAVED_CARD_CHARGE_REASON.cron,
+        paymentMethodId: CARD.stripePaymentMethodId,
+      });
+
+      const attempt = await begin();
+
+      expect(attempt).toMatchObject({
+        kind: "replay",
+        attemptRowId: legacy.id,
+        paymentIntentId: "pi_legacy_same_card",
+        staleIntentIdsToCancel: [],
+      });
+      expect(row(legacy.id).status).toBe(PaymentStatus.PROCESSING);
+      expect(ledger.paymentTransaction.create).not.toHaveBeenCalled();
+    });
+
+    // The reason is what separates a legacy saved-card charge from a /pay link
+    // intent, and only the former was ever guarded by the shared key. A link
+    // intent on another card stays the #1992 sweep's to cancel.
+    it.each([
+      ["no reason at all", null],
+      // What `create-payment-intent` stamps on a /pay link's PRIMARY row.
+      ["a reason outside the charge set", "primary_booking_payment"],
+    ])(
+      "a reference-less row with %s is a link intent, not a legacy attempt: on another card it is still left to the sweep",
+      async (_label, reason) => {
+        const link = ledger.seed({
+          paymentId: PAYMENT,
+          status: PaymentStatus.PROCESSING,
+          stripePaymentIntentId: "pi_link_other_card",
+          reference: null,
+          reason,
+          paymentMethodId: "pm_someone_elses",
+        });
+
+        const attempt = await begin();
+
+        expect(attempt.kind).toBe("fresh");
+        expect(attempt.staleIntentIdsToCancel).toEqual([]);
+        expect(row(link.id).status).toBe(PaymentStatus.PROCESSING);
+      }
+    );
+
+    it("a legacy row with a charge reason but NO intent is never replayed: its key was never sent, so re-sending one built from its id would be a brand-new charge", async () => {
+      const orphan = ledger.seed({
+        paymentId: PAYMENT,
+        status: PaymentStatus.PENDING,
+        stripePaymentIntentId: null,
+        reference: null,
+        reason: SAVED_CARD_CHARGE_REASON.cron,
         paymentMethodId: "pm_retired",
       });
 
@@ -594,21 +711,25 @@ describe("beginSavedCardChargeAttempt", () => {
 
       expect(attempt.kind).toBe("fresh");
       expect(attempt.staleIntentIdsToCancel).toEqual([]);
-      expect(row(link.id).status).toBe(PaymentStatus.PROCESSING);
-      expect(row(legacyOtherCard.id).status).toBe(PaymentStatus.PROCESSING);
+      expect(row(orphan.id).status).toBe(PaymentStatus.PENDING);
     });
 
-    it("a row carrying another row's key is not an attempt row (the key must be built from the row's OWN id) — but on the same card with an intent it is still in flight and replayed", async () => {
-      ledger.seed({
+    it("a row carrying another row's key is neither an attempt row (the key must be built from the row's OWN id) nor a legacy shared-key row (which carries NO key at all), so on another card it is left alone", async () => {
+      const foreignKey = ledger.seed({
         paymentId: PAYMENT,
         id: "txn_a",
         status: PaymentStatus.PROCESSING,
         stripePaymentIntentId: "pi_a",
         reference: savedCardChargeIdempotencyKey(BOOKING, "txn_somebody_else"),
+        reason: SAVED_CARD_CHARGE_REASON.cron,
         paymentMethodId: "pm_other",
       });
 
-      expect((await begin()).kind).toBe("fresh");
+      const attempt = await begin();
+
+      expect(attempt.kind).toBe("fresh");
+      expect(attempt.staleIntentIdsToCancel).toEqual([]);
+      expect(row(foreignKey.id).status).toBe(PaymentStatus.PROCESSING);
     });
   });
 });
