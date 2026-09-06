@@ -417,10 +417,13 @@ export async function getXeroContactGroupMemberships(
   });
 
   for (const row of rows) {
-    memberships[row.contactId].push({
-      id: row.group.contactGroupId,
-      name: row.group.name,
-    });
+    // The record was seeded with an empty list for every id this query asked
+    // for, so a row for some other contact is a query the code did not write.
+    // Dropping it silently would under-report a membership, so it is created
+    // rather than lost (#2800).
+    const groups = memberships[row.contactId] ?? [];
+    groups.push({ id: row.group.contactGroupId, name: row.group.name });
+    memberships[row.contactId] = groups;
   }
 
   for (const groups of Object.values(memberships)) {

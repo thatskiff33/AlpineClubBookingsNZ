@@ -516,7 +516,10 @@ export async function scanBookingInvoiceRoundingDrift(
       ...(cursorId ? { skip: 1, cursor: { id: cursorId } } : {}),
     });
 
-    if (batch.length === 0) break;
+    // Reading the last row is what says the batch has any, and it is the same
+    // row the cursor advances to below (#2800).
+    const lastInBatch = batch.at(-1);
+    if (lastInBatch === undefined) break;
 
     for (const booking of batch) {
       if (!booking.payment?.xeroInvoiceId) continue;
@@ -537,7 +540,7 @@ export async function scanBookingInvoiceRoundingDrift(
     }
     if (options.limit && affected.length >= options.limit) break;
 
-    cursorId = batch[batch.length - 1].id;
+    cursorId = lastInBatch.id;
     if (batch.length < batchSize) break;
   }
 
@@ -594,7 +597,10 @@ export async function scanGroupSettlementRoundingDrift(
       ...(cursorId ? { skip: 1, cursor: { id: cursorId } } : {}),
     });
 
-    if (batch.length === 0) break;
+    // Reading the last row is what says the batch has any, and it is the same
+    // row the cursor advances to below (#2800).
+    const lastInBatch = batch.at(-1);
+    if (lastInBatch === undefined) break;
 
     for (const settlement of batch) {
       if (!settlement.xeroInvoiceId) continue;
@@ -631,7 +637,7 @@ export async function scanGroupSettlementRoundingDrift(
     }
     if (options.limit && affected.length >= options.limit) break;
 
-    cursorId = batch[batch.length - 1].id;
+    cursorId = lastInBatch.id;
     if (batch.length < batchSize) break;
   }
 

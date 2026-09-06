@@ -791,13 +791,15 @@ export async function findOrCreateXeroContact(
         context: `findOrCreateXeroContact searchByEmail(${member.email})`,
       }
     );
-    const contacts = contactsResponse.body.contacts;
-    if (contacts && contacts.length > 0) {
+    // Reading the first contact is what says the search matched one; an empty
+    // response leaves `resolved` alone, as the length check did (#2800).
+    const matchedContact = contactsResponse.body.contacts?.[0];
+    if (matchedContact) {
       resolved = {
         kind: "matched",
-        contactId: contacts[0].contactID!,
+        contactId: matchedContact.contactID!,
         linkedVia: options?.repairExistingLink ? "email_match_repair" : "email_match",
-        contactName: buildXeroContactDisplayName(contacts[0]),
+        contactName: buildXeroContactDisplayName(matchedContact),
         operationId: null,
         completionInput: null,
       };
