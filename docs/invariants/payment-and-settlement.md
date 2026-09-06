@@ -1687,7 +1687,12 @@ one, check the other.
   `markPaymentRecoveryOperationFailed` in `payment-recovery.ts` is now the only
   one, and `payment-recovery-terminal-failure-census.test.ts` fails when a
   second appears anywhere under `src/` or when the single write leaves that
-  function. **Terminality is an argument, not a re-derivation**: the worker
+  function. **The census counts the raw spelling too**, because Prisma types
+  this enum as a string-literal union and `status: "FAILED"` is how nearly every
+  other status writer in the tree is written: a `"FAILED"` literal in the
+  arguments of any `paymentRecoveryOperation` write, or anywhere in
+  `payment-recovery.ts`, fails it. Raw-string READS stay legal — three modules
+  outside this one filter on the status and have to. **Terminality is an argument, not a re-derivation**: the worker
   knows it has just burnt an attempt and the stale-worker reaper knows the row
   never came back, and a shared re-derivation from `attempts` would be a third
   opinion on a fact its callers already hold. `nextRetryAt` is forced to `null`

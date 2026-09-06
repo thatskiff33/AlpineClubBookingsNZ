@@ -26,8 +26,9 @@ import { stripComments } from "@/lib/__tests__/support/strip-comments";
  * They are named constants now.
  *
  * This census is the ratchet. It fails when a seventh mention appears anywhere
- * under `src/`, and it fails when the single WRITE moves out of the chokepoint -
- * either of which would put a route to terminal failure outside the one place
+ * under `src/`, it fails when the single WRITE moves out of the chokepoint, and
+ * it fails on the RAW spelling of the same write (see `RAW_STATUS` below) -
+ * any of which would put a route to terminal failure outside the one place
  * that knows what terminal failure costs.
  *
  * BY WALK, NOT BY NAME (`INV-SSOT-004`): a population measured by naming the
@@ -40,6 +41,36 @@ const CHOKEPOINT = "markPaymentRecoveryOperationFailed";
 const RECOVERY_MODULE = "src/lib/payment-recovery.ts";
 const STATUS_MENTION = "PaymentRecoveryOperationStatus.FAILED";
 const STATUS_WRITE = `status: ${STATUS_MENTION}`;
+
+/**
+ * THE SPELLING THE COUNT ABOVE CANNOT SEE (#3220 fix round).
+ *
+ * Prisma generates `PaymentRecoveryOperationStatus` as a string-literal union,
+ * so `status: "FAILED"` type-checks identically to the enum member - and a raw
+ * string is how nearly every other status writer in this tree is written
+ * (`xero-operation-outbox.ts`, `cron-email-retry.ts`,
+ * `xero-contact-create-recovery.ts`, and about twenty more). An author adding a
+ * second terminal transition in the style of the file next door would therefore
+ * leave BOTH assertions above green while skipping the exhaustion alert and the
+ * stranded-intent withdrawal, which is #3220 silently reopened.
+ *
+ * Raw-string READS of the status are ordinary and stay legal: three modules
+ * outside this one filter on `"FAILED"` today, and they have to - the count
+ * above is what keeps the enum member itself inside `payment-recovery.ts`. So
+ * the rule is scoped to WRITES: no `"FAILED"` literal anywhere in the arguments
+ * of a `paymentRecoveryOperation` write, in any module, and none anywhere at all
+ * in the recovery module - which also catches a `data` object built into a
+ * variable before the call.
+ */
+const RECOVERY_DELEGATE = "paymentRecoveryOperation";
+const WRITE_METHODS = [
+  "create",
+  "createMany",
+  "update",
+  "updateMany",
+  "upsert",
+] as const;
+const RAW_STATUS = /["']FAILED["']/;
 
 /** The body of `markPaymentRecoveryOperationFailed`, opening brace included. */
 const CHOKEPOINT_BODY_OPENS =
@@ -86,6 +117,24 @@ function occurrences(haystack: string, needle: string): number[] {
     found.push(at);
     from = at + needle.length;
   }
+}
+
+/**
+ * The balanced `(...)` of the call whose opening parenthesis is at `open`,
+ * parentheses included. Quotes inside are literal `"` characters rather than
+ * delimiters here, which is safe: nothing in this tree writes an unbalanced
+ * parenthesis inside a Prisma argument string.
+ */
+function callArguments(source: string, open: number): string {
+  let depth = 0;
+  for (let at = open; at < source.length; at += 1) {
+    if (source[at] === "(") depth += 1;
+    else if (source[at] === ")") {
+      depth -= 1;
+      if (depth === 0) return source.slice(open, at + 1);
+    }
+  }
+  throw new Error(`Unbalanced call arguments at offset ${open}`);
 }
 
 /** `[start, end)` of the chokepoint's body, by brace balance from its opener. */
@@ -145,6 +194,34 @@ describe("INV-PAY-052: one terminal-failure transition, census", () => {
       writes[0] >= body.start && writes[0] < body.end,
       `The one ${STATUS_MENTION} write sits OUTSIDE ${CHOKEPOINT}. Everything a dead recovery has to do - the exhaustion alert today, and whatever is hung off it next - lives in that function, so a write outside it is a route that silently skips all of it.`,
     ).toBe(true);
+  });
+
+  it("cannot be bypassed by a raw-string write, which is the house spelling", () => {
+    const offenders: string[] = [];
+    for (const relative of sourceFiles()) {
+      const source = code(relative);
+
+      // Anywhere in the recovery module. A `data` object assembled into a
+      // variable and passed by name would never appear inside a call below.
+      if (relative === RECOVERY_MODULE && RAW_STATUS.test(source)) {
+        offenders.push(`${relative} (anywhere in the module)`);
+      }
+
+      for (const method of WRITE_METHODS) {
+        const call = `${RECOVERY_DELEGATE}.${method}(`;
+        for (const at of occurrences(source, call)) {
+          const open = at + call.length - 1;
+          if (RAW_STATUS.test(callArguments(source, open))) {
+            offenders.push(`${relative} (${RECOVERY_DELEGATE}.${method})`);
+          }
+        }
+      }
+    }
+
+    expect(
+      offenders,
+      `A PaymentRecoveryOperation status is being written as the raw string "FAILED". Prisma types that identically to ${STATUS_MENTION}, so the count above cannot see it - and a terminal transition written this way skips the exhaustion alert and the stranded-intent withdrawal that ${CHOKEPOINT} owes a dead recovery. Call ${CHOKEPOINT} instead. If this is a READ inside a write's fence rather than a transition, name it through one of the module's status-set constants.`,
+    ).toEqual([]);
   });
 
   it("keeps the reader-side sets named rather than re-spelled", () => {
