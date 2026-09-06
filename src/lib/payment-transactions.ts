@@ -7,11 +7,10 @@ import {
 import { APP_STRIPE_CURRENCY } from "@/config/operational";
 import { prisma } from "@/lib/prisma";
 import { processRefund } from "@/lib/stripe";
+import { stripeReferenceId, type StripeReference } from "@/lib/stripe-references";
 import Stripe from "stripe";
 
-type PaymentStore = Prisma.TransactionClient | typeof prisma;
-
-type StripeReference = string | { id?: string | null } | null | undefined;
+export type PaymentStore = Prisma.TransactionClient | typeof prisma;
 
 type StripeRefundLedgerInput = {
   id: string;
@@ -32,17 +31,6 @@ const CAPTURED_TRANSACTION_STATUSES = new Set<PaymentStatus>([
 
 const EXCLUDED_LEDGER_REFUND_STATUSES = ["failed", "canceled"];
 
-function stripeReferenceId(reference: StripeReference) {
-  if (!reference) {
-    return null;
-  }
-
-  if (typeof reference === "string") {
-    return reference;
-  }
-
-  return reference.id ?? null;
-}
 
 function stripeCreatedAtToDate(created: number | null | undefined) {
   if (!created) {
@@ -342,13 +330,35 @@ export async function reconcilePaymentAggregates({
         refundedAmountCents,
         latestPrimary?.status ?? null
       );
+  // #3267 (INV-PAY-055): a saved-card charge ATTEMPT row is a Stripe PRIMARY
+  // row born without an intent id, and it stays so after a definite failure.
+  // While it is the latest PRIMARY, a reconcile (the #1992 sweep's
+  // `payment_intent.canceled` webhook, a failed webhook, …) must not null the
+  // Payment's intent pointer: `/pay` and `create-payment-intent` read that
+  // pointer to decide whether to mint, and a nulled pointer sends them back to
+  // the `_initial` key, which Stripe answers with the CANCELLED first intent —
+  // a dead client secret. So a Stripe latest PRIMARY without an intent keeps
+  // the pointer the Payment already holds (`??`), the same rule #3268 applies
+  // to the card column below. A non-Stripe (IB) latest PRIMARY still yields
+  // null, as before.
   const latestPrimaryStripeIntentId =
-    latestPrimary && isStripeTransaction(latestPrimary)
-      ? latestPrimary.stripePaymentIntentId
+    latestPrimary && latestPrimary.source === PaymentSource.STRIPE
+      ? latestPrimary.stripePaymentIntentId ?? payment.stripePaymentIntentId
       : null;
+  // #3268 (INV-PAY-054, "the ledger never moves a saved card"): a Payment with
+  // a `stripeSetupIntentId` owns its card column through the SetupIntent
+  // writers and the cron's retire path, so the ledger leaves it alone — a late
+  // `payment_intent.canceled` for an old intent must not null a card the member
+  // has just re-saved. Without one the ledger is followed, but a Stripe row
+  // that recorded no pm never nulls a card that is set (`??`). No intent-id
+  // gate here, deliberately (a pre-charge attempt row has none). A non-Stripe
+  // (IB) latest PRIMARY still yields null — #1967 depends on the IB switch
+  // dropping the card.
   const latestPrimaryStripePaymentMethodId =
-    latestPrimaryStripeIntentId && latestPrimary
-      ? latestPrimary.paymentMethodId ?? null
+    latestPrimary && latestPrimary.source === PaymentSource.STRIPE
+      ? payment.stripeSetupIntentId != null
+        ? payment.stripePaymentMethodId
+        : latestPrimary.paymentMethodId ?? payment.stripePaymentMethodId
       : null;
   const latestAdditionalStripeIntentId =
     latestAdditional && isStripeTransaction(latestAdditional)
