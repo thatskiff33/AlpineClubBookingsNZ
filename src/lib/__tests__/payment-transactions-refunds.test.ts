@@ -950,11 +950,27 @@ describe("#3267 - reconcilePaymentAggregates and the Payment's intent pointer (I
   });
 
   it("an Internet Banking latest PRIMARY still nulls it (unchanged)", async () => {
-    const { store, payment, transaction } = createRefundStore();
+    const { store, payment, transaction, transactions } = createRefundStore();
     payment.source = PaymentSource.INTERNET_BANKING;
     payment.stripePaymentIntentId = "pi_stale";
-    transaction.source = PaymentSource.INTERNET_BANKING;
-    transaction.stripePaymentIntentId = null;
+    // The abandoned Stripe attempt keeps its own row, so the legacy backfill
+    // has nothing to invent — a Payment naming an intent no ledger row knows
+    // is what that backfill is FOR, and it would mint a Stripe PRIMARY newer
+    // than the IB row and make this test assert the opposite of its name.
+    transaction.stripePaymentIntentId = "pi_stale";
+    transaction.status = "FAILED";
+    transaction.amountCents = 0;
+    transactions.push({
+      ...transaction,
+      id: "txn_ib",
+      source: PaymentSource.INTERNET_BANKING,
+      stripePaymentIntentId: null,
+      paymentMethodId: null,
+      status: "SUCCEEDED",
+      amountCents: 5000,
+      createdAt: new Date("2026-01-03T00:00:00.000Z"),
+      updatedAt: new Date("2026-01-03T00:00:00.000Z"),
+    });
 
     await reconcilePaymentAggregates({ paymentId: payment.id, store: store as any });
 

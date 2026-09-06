@@ -82,7 +82,7 @@ export function isDefiniteSavedCardChargeFailure(err: unknown): boolean {
  * pending booking whose charge failed should read as; the next claim's upsert
  * writes PENDING again anyway.
  */
-export async function failSavedCardChargeAttempt(
+async function failSavedCardChargeAttempt(
   attemptRowId: string,
   store: PaymentStore = prisma
 ): Promise<{ ended: boolean }> {

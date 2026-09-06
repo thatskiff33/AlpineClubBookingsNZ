@@ -3517,6 +3517,17 @@ describe("Cron: Confirm Pending Bookings", () => {
         stripeError({ type: "invalid_request_error", message: "You cannot cancel this PaymentIntent because it has a status of processing." })
       );
       mockGetPaymentIntent.mockResolvedValue({ id: "pi_old_card", status: "processing", amount: 10000, payment_method: "pm_retired" });
+      // The live intent's row is committed, so settle's pre-check on the unique
+      // intent id finds it: without this the fake would answer "no row for this
+      // intent" for a row the same fake has just returned from findMany, and
+      // the real write would hit the unique constraint instead of the keep
+      // branch (`stripePaymentIntentId` is unique).
+      mockPaymentTransactionFindUnique.mockImplementation(
+        async ({ where }: { where: { id?: string; stripePaymentIntentId?: string } }) =>
+          where.stripePaymentIntentId === "pi_old_card"
+            ? { id: "txn_old_card", paymentId: "pay_b1" }
+            : null
+      );
 
       const result = await confirmPendingBookings();
 
