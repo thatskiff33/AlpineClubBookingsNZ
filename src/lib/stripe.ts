@@ -258,8 +258,28 @@ const CANCELLABLE_PAYMENT_INTENT_STATUSES = new Set<Stripe.PaymentIntent.Status>
   "processing",
 ]);
 
+/**
+ * WHY THE REASON IS A PARAMETER (#3220).
+ *
+ * Stripe stores `cancellation_reason` on the intent for good, and it is what the
+ * club's own Stripe record says about why an ask died. Every caller before #3220
+ * was cancelling because the member's booking went away, so
+ * `requested_by_customer` was true for all of them and hard-coding it cost
+ * nothing. #3220 added a caller for which it is simply UNTRUE: a payment
+ * recovery that has run out of attempts is the club abandoning an ask the member
+ * never declined, and recording that as the customer's request would misstate a
+ * money decision in the provider's own ledger.
+ *
+ * A parameter rather than a second function, because the decision this helper
+ * makes - IS this intent still cancellable at all - is the part that must not be
+ * copied. `abandoned` is Stripe's own value for exactly this case.
+ */
+export type PaymentIntentCancellationReason =
+  Stripe.PaymentIntentCancelParams.CancellationReason;
+
 export async function cancelPaymentIntentIfCancellableWithResult(
-  paymentIntentId: string
+  paymentIntentId: string,
+  options?: { cancellationReason?: PaymentIntentCancellationReason }
 ): Promise<{ paymentIntent: Stripe.PaymentIntent; canceled: boolean }> {
   const paymentIntent = await getPaymentIntent(paymentIntentId);
 
@@ -270,7 +290,8 @@ export async function cancelPaymentIntentIfCancellableWithResult(
   const stripe = await getStripe();
   return {
     paymentIntent: await stripe.paymentIntents.cancel(paymentIntentId, {
-      cancellation_reason: "requested_by_customer",
+      // The pre-#3220 callers all pass nothing and keep the reason they had.
+      cancellation_reason: options?.cancellationReason ?? "requested_by_customer",
     }),
     canceled: true,
   };

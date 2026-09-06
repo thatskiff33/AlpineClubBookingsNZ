@@ -2159,3 +2159,125 @@ one, check the other.
     must not null), `stripe-webhook-alerts.test.ts` (adoption by the event's
     idempotency key) and `advisory-lock-guard.test.ts` (the two new
     `charge-saved-method` sites).
+
+## INV-PAY-056
+
+- **A payment recovery becomes terminally failed in exactly one place, and that
+  place owns what a dead recovery costs** (#3220). A
+  `PaymentRecoveryOperation` reaching `FAILED` with no attempts left is not a
+  local bookkeeping detail: it is the moment the rest of the system is told to
+  stop waiting for that debt. The booking-vs-Xero repair tool stops deferring
+  and raises the edit's supplementary invoice UNPAID once the row is no longer
+  `PENDING` or `PROCESSING` (`OPEN_PAYMENT_RECOVERY_STATUSES` in
+  `xero-booking-repair-load.ts`, the control #3202 pins). So anything that must
+  happen when a recovery dies has to happen on every route to that status —
+  and there were three, each with its own status write, its own `nextRetryAt`
+  policy and only one of the three alerting anybody.
+  `markPaymentRecoveryOperationFailed` in `payment-recovery.ts` is now the only
+  one, and `payment-recovery-terminal-failure-census.test.ts` fails when a
+  second appears anywhere under `src/` or when the single write leaves that
+  function. **The census counts the raw spelling too**, because Prisma types
+  this enum as a string-literal union and `status: "FAILED"` is how nearly every
+  other status writer in the tree is written: a `"FAILED"` literal in the
+  arguments of any `paymentRecoveryOperation` write, or anywhere in
+  `payment-recovery.ts`, fails it. Raw-string READS stay legal — three modules
+  outside this one filter on the status and have to. **Terminality is an argument, not a re-derivation**: the worker
+  knows it has just burnt an attempt and the stale-worker reaper knows the row
+  never came back, and a shared re-derivation from `attempts` would be a third
+  opinion on a fact its callers already hold. `nextRetryAt` is forced to `null`
+  when terminal rather than trusted from the caller, because a terminal row
+  that keeps a retry time is re-claimable and is therefore not terminal.
+  **The write is status-fenced**, like `completePaymentRecoveryOperation` and
+  for the same reason: the worker's arm used `update` by id, which throws
+  `P2025` on a row a manual mark-paid reversal deleted mid-flight — from inside
+  the worker loop's own `catch`, so the throw escaped the loop and abandoned
+  every remaining operation in the batch. A fenced `updateMany` matches
+  nothing instead, and the fence also stops a `SUCCEEDED` row being dragged
+  back to `FAILED` by a worker holding a stale in-memory copy. **A row that
+  matched nothing is still tallied as this attempt's outcome**, so a row that
+  turns out to have succeeded is counted in `failed` — a count of what the pass
+  attempted, which nothing downstream branches on, rather than a claim about the
+  row.
+- **The stale-worker sweep is bounded and oldest-first.** It runs in front of
+  the main queue, and centralising the transition means each row it takes now
+  costs an alert and can cost a Stripe read and cancel, where the bulk
+  `updateMany` it replaced made no provider call at all. A backlog drains on its
+  own — every row the sweep touches leaves `PROCESSING` for good — so the cap
+  only defers work to the next run, and reading oldest-first is what stops it
+  deferring the same rows for ever.
+- **`FAILED` is two readings of one column, and the reader has to say which.** A
+  `FAILED` row with attempts left is a retry waiting its turn; a `FAILED` row
+  with none is dead. What separates them is the `attempts < MAX` filter beside
+  the query, never the status alone — so that filter belongs to each query and
+  the status sets themselves are named once
+  (`CLAIMABLE_PAYMENT_RECOVERY_STATUSES`,
+  `NON_TERMINAL_PAYMENT_RECOVERY_STATUSES`) rather than spelled inline at each
+  reader. **That distinction is `payment-recovery.ts`'s own, and no other
+  module's.** `OPEN_PAYMENT_RECOVERY_STATUSES` carries no `attempts` filter, so
+  the repair tool stops deferring at the first failure rather than at death.
+  Anyone reading the two-readings rule into that query will predict a deferral
+  that is not there; `INV-PAY-057` states what follows from the gap.
+
+## INV-PAY-057
+
+- **A dead additional-payment recovery withdraws the ask it left standing**
+  (#3220). A `CREATE_ADDITIONAL_PAYMENT_INTENT` recovery exists because a
+  booking edit raised money the member has not been asked for yet. While it is
+  `PENDING` or `PROCESSING` the booking-vs-Xero repair tool DEFERS the edit's
+  supplementary invoice; once it leaves those statuses that deferral stops and
+  the repair raises the invoice
+  **unpaid** (`INV-PAY-056`, and the control #3202 pins). So a live
+  PaymentIntent still standing at that transition is a **second instrument for
+  one debt** — pay it and the club holds a payment and an unpaid invoice for the
+  same money, which #3187 accepted as *visible but not fixed*. The terminal
+  transition now cancels it, in `cancelStrandedAdditionalIntentForDeadRecovery`.
+- **The withdrawal fires at the LAST failure; the deferral stops at the FIRST.**
+  A retrying `FAILED` row is already outside `OPEN_PAYMENT_RECOVERY_STATUSES`, so
+  it can meet an unpaid invoice while its ask is still live — the same
+  two-instrument shape, but transient and self-healing: the retry either raises
+  ask and invoice together or runs out and reaches this withdrawal. Cancelling on
+  a non-terminal failure would be wrong, because the replay still intends to
+  collect against that very ask. **This is a stated limit, not an oversight** —
+  closing it means widening the repair tool's deferral to non-terminal `FAILED`
+  rows, which is a change to #3202's counterpart and needs its own decision.
+- **This removes the duplicate instrument. It does not write off the debt.** The
+  unpaid invoice still stands and is collected the ordinary way; what goes away
+  is the second way to pay it. Nobody may read the cancel as a forgiveness.
+- **It withdraws the ask only when there IS a duplicate, and one shape means
+  there is not.** The replay attaches this change's supplementary invoice
+  operation to the intent it mints, parked `WAITING_PAYMENT`, and can then throw
+  while raising the deferred invoice — so a dead recovery can arrive here with a
+  live ask AND a live outbox row pointing at it. That row is released by a
+  confirmed payment on that intent and by nothing else, and while it stands the
+  repair pass reports `BLOCKED_BY_XERO_OPERATION` and raises **no** invoice. So
+  there is no second instrument to remove, and cancelling would take away the
+  only live route to the money while stranding the row until the fourteen-day
+  reaper retires it — the same harm the review-charge replay refuses to create on
+  its already-paid branch, read from the other end. The withdrawal therefore
+  checks for a `WAITING_PAYMENT` supplementary operation **on that exact intent**
+  first and leaves the ask alone when it finds one, logging why. **What is left
+  standing in that case is stated, not guaranteed away**: the member may still
+  pay the ask, which is the clean ending; if they never do, the fourteen-day
+  reaper retires the outbox row and the repair pass then raises the invoice the
+  ordinary way.
+- **Idempotent by construction, not by care.**
+  `cancelPaymentIntentIfCancellableWithResult` reads the intent before it acts
+  and makes **no provider call at all** unless the status is one it can cancel,
+  so a replay finds `canceled` and does nothing, and an intent the member paid
+  in the meantime is left strictly alone. The ledger's own captured-status check
+  is a second lock on that same door rather than the only one.
+- **A refusal leaves the recovery exactly as not trying would.** The cancel runs
+  **after** the status write and **never throws**: a provider outage must not be
+  able to hold a recovery out of `FAILED`, which would re-block the repair tool
+  for ever and break the #3202 control, and a throw from inside the worker
+  loop's own `catch` abandons every remaining operation in the batch. Stripe
+  routinely refuses to cancel a `processing` intent, so the refusal branch is
+  live rather than theoretical; it is written to the **audit log**, because it
+  asks an officer to reconcile by hand and a `logger.error` is not a record
+  anybody can find.
+- **The cancellation reason states the real cause.**
+  `cancelPaymentIntentIfCancellableWithResult` takes it as a parameter rather
+  than having gained a twin, and this path passes `abandoned`. The member never
+  declined the ask; the club ran out of attempts to raise it, and
+  `requested_by_customer` in the club's own Stripe record would misstate a money
+  decision.
