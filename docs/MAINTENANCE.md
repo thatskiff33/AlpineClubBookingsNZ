@@ -302,8 +302,18 @@ and nothing said so.
 finds a leak and when it cannot run at all, so `gitleaks-scan.sh` asks for
 `--exit-code=2` and treats every other non-zero as a scanner failure, saying so
 in the log. Both still fail the job — the discrimination is about the message,
-not about what blocks a merge, and exit 0 is reachable only from gitleaks
-exiting 0.
+not about what blocks a merge.
+
+**And a successful exit is not a clean scan either, on its own.** When the git
+source itself fails — an unresolvable commit range, or a repository-ownership
+refusal — gitleaks logs the git error, concludes it finished, and exits **0**
+with `0 commits scanned … no leaks found`. `--exit-code` never applies, because
+from the scanner's point of view there was nothing to find. Measured on
+v8.28.0, and it lands on the REQUIRED gate rather than only on the sweep: the
+pull-request scope resolves `<base>..<head>`, which is unresolvable whenever
+the base commit is missing from the checkout. So a `git`-mode scan that walked
+zero commits is treated as the scanner failure it is. Zero commits is never a
+legitimate answer for any scope this repository scans.
 
 **Triaging a sweep finding.** The run summary lists the rule, the file, the line
 and the commit for each finding, and the run keeps a `gitleaks-sweep-reports`
