@@ -284,8 +284,14 @@ describe("deployment image contracts", () => {
       // aborts the walk. A narrower `(fatal|error):` match therefore let
       // `[git] warning: unable to access '/root/.gitconfig'` and git's
       // `hint:` lines through — each of which truncates the scan.
-      expect(scan).toContain("\\[git\\] |stderr is not empty");
-      expect(scan).toContain("the scan is TRUNCATED even though gitleaks exited 0");
+      // Against the DIRECTIVES on both sides. A positive assertion that reads
+      // raw text is satisfied by a COMMENT quoting the pattern, so commenting
+      // the guard out left this census green — measured, and the sixth
+      // instance of this file's recurring defect.
+      expect(directivesOnly(scan)).toContain("\\[git\\] |stderr is not empty");
+      expect(directivesOnly(scan)).toContain(
+        "the scan is TRUNCATED even though gitleaks exited 0",
+      );
       // The narrowed pattern must not come back. On a required secret gate
       // it trades a false red for a false GREEN, which is the wrong way
       // round. Against the DIRECTIVES, because the block's own comment
