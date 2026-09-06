@@ -541,7 +541,6 @@ src/lib/cancellation-rules.ts:TS2532:Object is possibly 'undefined'.
 src/lib/cancellation-rules.ts:TS2532:Object is possibly 'undefined'.
 src/lib/cancellation-rules.ts:TS2532:Object is possibly 'undefined'.
 src/lib/cancellation-rules.ts:TS2532:Object is possibly 'undefined'.
-src/lib/capacity.ts:TS2532:Object is possibly 'undefined'.
 src/lib/chore-allocator.ts:TS2345:Argument of type 'GuestInput | undefined' is not assignable to parameter of type 'GuestInput'. Type 'undefined' is not assignable to type 'GuestInput'.
 src/lib/chore-allocator.ts:TS2345:Argument of type 'GuestInput | undefined' is not assignable to parameter of type 'GuestInput'. Type 'undefined' is not assignable to type 'GuestInput'.
 src/lib/chore-allocator.ts:TS2345:Argument of type 'GuestInput | undefined' is not assignable to parameter of type 'GuestInput'. Type 'undefined' is not assignable to type 'GuestInput'.
@@ -825,18 +824,6 @@ src/lib/page-content-embeds.ts:TS2322:Type 'string | undefined' is not assignabl
 src/lib/page-content-embeds.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
 src/lib/page-content-embeds.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
 src/lib/payment-recovery.ts:TS18048:'delayMinutes' is possibly 'undefined'.
-src/lib/policies/adult-member-hosting.ts:TS2322:Type 'string | undefined' is not assignable to type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/policies/age-tier.ts:TS18048:'current' is possibly 'undefined'.
-src/lib/policies/age-tier.ts:TS18048:'current' is possibly 'undefined'.
-src/lib/policies/age-tier.ts:TS18048:'current' is possibly 'undefined'.
-src/lib/policies/age-tier.ts:TS18048:'highest' is possibly 'undefined'.
-src/lib/policies/age-tier.ts:TS18048:'highest' is possibly 'undefined'.
-src/lib/policies/age-tier.ts:TS18048:'next' is possibly 'undefined'.
-src/lib/policies/age-tier.ts:TS18048:'next' is possibly 'undefined'.
-src/lib/policies/age-tier.ts:TS2532:Object is possibly 'undefined'.
-src/lib/policies/age-tier.ts:TS2532:Object is possibly 'undefined'.
-src/lib/policies/pricing.ts:TS2339:Property 'memberId' does not exist on type '{ rate: number; memberId: string | null; } | undefined'.
-src/lib/policies/pricing.ts:TS2339:Property 'rate' does not exist on type '{ rate: number; memberId: string | null; } | undefined'.
 src/lib/promo-cap-coverage.ts:TS2322:Type 'string | undefined' is not assignable to type 'string'. Type 'undefined' is not assignable to type 'string'.
 src/lib/promo.ts:TS2345:Argument of type '(PromoDiscountGuest | undefined)[]' is not assignable to parameter of type 'PromoDiscountGuest[]'. Type 'PromoDiscountGuest | undefined' is not assignable to type 'PromoDiscountGuest'. Type 'undefined' is not assignable to type 'PromoDiscountGuest'.
 src/lib/promo.ts:TS2345:Argument of type '(PromoDiscountGuest | undefined)[]' is not assignable to parameter of type 'PromoDiscountGuest[]'. Type 'PromoDiscountGuest | undefined' is not assignable to type 'PromoDiscountGuest'. Type 'undefined' is not assignable to type 'PromoDiscountGuest'.
