@@ -3092,7 +3092,11 @@ a PAID booking whose ledger shows no captured money. And the booking's status is
 re-read UNDER THE SAME LOCKS after the record: a booking no longer CONFIRMED is
 not released at all — the status-guarded `updateMany` would have matched zero
 rows and thrown nothing, so the path says so in the log instead of releasing
-into the dark. A definite refusal's FAILED mark is a single-row status-guarded
+into the dark. What it says depends on WHICH status it finds. PAID is the
+expected loser of that race and is a warning; any other status means a
+different actor took the claim mid-charge, which is what the pre-#3267 throw
+surfaced, so it is logged at error level and the cron counts the booking
+failed. A definite refusal's FAILED mark is a single-row status-guarded
 `updateMany` on the base client, holding no lock, because it races nothing (the
 intent, if any, is already terminal).
 
