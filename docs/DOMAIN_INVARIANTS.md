@@ -210,25 +210,25 @@ Prefix `INV-PAY`.
 | `INV-PAY-044` | Manually settled cancellation yields a durable `ManualRefundTask`, never a card refund |
 | `INV-PAY-045` | Reversal is permitted only while nothing has happened it could not undo |
 | `INV-PAY-046` | An outstanding upward-modification delta is asked about, never silently absorbed or dropped |
-| `INV-PAY-056` | Not-covered settle spares one intent; captured payments refused at read |
+| `INV-PAY-058` | Not-covered settle spares one intent; captured payments refused at read |
 | `INV-PAY-047` | The ledger mirror: every cent collected, paid with credit, or owed |
 | `INV-PAY-048` | A stored unconsumed credit election is cleared, recorded and reported, never stranded |
 | `INV-PAY-049` | Both directions are audited with the acting admin and the previous status |
 | `INV-PAY-050` | Xero Stripe refund notes cover provider-backed cash evidence, never the refunded-amount mirror |
 | `INV-PAY-051` | An unpriceable edit holds the money as one typed review task |
-| `INV-PAY-065` | One review task per parked strand; departing strand always recorded |
-| `INV-PAY-058` | Settled occurrences never suppress the next; stored prices are not proof |
-| `INV-PAY-066` | Zero completion refused, naming the way out; credit-only records no refund |
-| `INV-PAY-059` | Confirmed amounts settle through an existing path, chosen at completion |
-| `INV-PAY-067` | Completions record their direction; charging re-enters the additional-payment path |
-| `INV-PAY-060` | One booking edit raises one charge request, derived from settled shares |
-| `INV-PAY-068` | Xero leg bills the total on one invoice per edit, anchor-locked |
-| `INV-PAY-061` | Recorded shortfalls are billed on a second invoice; sent invoices only |
-| `INV-PAY-069` | Both shortfall endings audited with opposite instructions; repair reads settled shares |
-| `INV-PAY-062` | Recovery replays close debt only when the ask exists; edit-time answer |
-| `INV-PAY-070` | Repair pass dates the primary invoice from operation history; unrequested shares traced |
-| `INV-PAY-063` | Card refunds cap before claiming, task-keyed; anchor is the original edit |
-| `INV-PAY-064` | Open review fences four money doors; three DB constraints; #3030 versus #3032 |
+| `INV-PAY-067` | One review task per parked strand; departing strand always recorded |
+| `INV-PAY-060` | Settled occurrences never suppress the next; stored prices are not proof |
+| `INV-PAY-068` | Zero completion refused, naming the way out; credit-only records no refund |
+| `INV-PAY-061` | Confirmed amounts settle through an existing path, chosen at completion |
+| `INV-PAY-069` | Completions record their direction; charging re-enters the additional-payment path |
+| `INV-PAY-062` | One booking edit raises one charge request, derived from settled shares |
+| `INV-PAY-070` | Xero leg bills the total on one invoice per edit, anchor-locked |
+| `INV-PAY-063` | Recorded shortfalls are billed on a second invoice; sent invoices only |
+| `INV-PAY-071` | Both shortfall endings audited with opposite instructions; repair reads settled shares |
+| `INV-PAY-064` | Recovery replays close debt only when the ask exists; edit-time answer |
+| `INV-PAY-072` | Repair pass dates the primary invoice from operation history; unrequested shares traced |
+| `INV-PAY-065` | Card refunds cap before claiming, task-keyed; anchor is the original edit |
+| `INV-PAY-066` | Open review fences four money doors; three DB constraints; #3030 versus #3032 |
 | `INV-PAY-002` | Account credit is consumed only at `PAYMENT_PENDING`; a draft election spends nothing |
 | `INV-PAY-003` | The edit path writes an election only onto DRAFT, AWAITING_REVIEW and PAYMENT_PENDING |
 | `INV-PAY-004` | Members edit own drafts; draft edits move no money or capacity |
@@ -250,7 +250,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-020` | A confirmation reconciles against the member's statement: total minus credit equals settled |
 | `INV-PAY-021` | An unpaid confirmation defers to the invoice and promises nothing about it |
 | `INV-PAY-022` | Unpaid confirmation with applied credit states the netting, from the ledger |
-| `INV-PAY-057` | Netted figure is not the allocation gate; pay the smaller |
+| `INV-PAY-059` | Netted figure is not the allocation gate; pay the smaller |
 | `INV-PAY-023` | Applied credit reduces Internet Banking invoices by allocating existing floating credit notes |
 | `INV-PAY-024` | Applied credit also reduces the card charge; intent mints effective amount |
 | `INV-PAY-025` | Payment on a cancelled booking's stale invoice needs cash evidence before crediting |
