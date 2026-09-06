@@ -704,17 +704,22 @@ describe("beginSavedCardChargeAttempt", () => {
       expect(row(orphan.id).status).toBe(PaymentStatus.PENDING);
     });
 
-    it("a row carrying another row's key is not an attempt row (the key must be built from the row's OWN id) — but on the same card with an intent it is still in flight and replayed", async () => {
-      ledger.seed({
+    it("a row carrying another row's key is neither an attempt row (the key must be built from the row's OWN id) nor a legacy shared-key row (which carries NO key at all), so on another card it is left alone", async () => {
+      const foreignKey = ledger.seed({
         paymentId: PAYMENT,
         id: "txn_a",
         status: PaymentStatus.PROCESSING,
         stripePaymentIntentId: "pi_a",
         reference: savedCardChargeIdempotencyKey(BOOKING, "txn_somebody_else"),
+        reason: SAVED_CARD_CHARGE_REASON.cron,
         paymentMethodId: "pm_other",
       });
 
-      expect((await begin()).kind).toBe("fresh");
+      const attempt = await begin();
+
+      expect(attempt.kind).toBe("fresh");
+      expect(attempt.staleIntentIdsToCancel).toEqual([]);
+      expect(row(foreignKey.id).status).toBe(PaymentStatus.PROCESSING);
     });
   });
 });

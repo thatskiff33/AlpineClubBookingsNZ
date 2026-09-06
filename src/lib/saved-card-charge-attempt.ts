@@ -424,13 +424,14 @@ function isChargeInFlightOnThisCard(
  *
  * Self-expiring: nothing mints a reference-less saved-card row any more, so once
  * the rows open at the deploy have resolved this predicate matches nothing.
+ *
+ * It is asked only after `isAttemptRow` has said no, so it does not re-test
+ * that; an attempt row also carries a charge reason, and it is recognised by
+ * its key, which is the stronger fact.
  */
-function isLegacySharedKeyChargeRow(
-  row: AttemptLedgerRow,
-  bookingId: string
-): boolean {
+function isLegacySharedKeyChargeRow(row: AttemptLedgerRow): boolean {
   return (
-    !isAttemptRow(row, bookingId) &&
+    row.reference === null &&
     row.stripePaymentIntentId !== null &&
     row.reason !== null &&
     SAVED_CARD_CHARGE_REASONS.has(row.reason)
@@ -566,7 +567,7 @@ export async function beginSavedCardChargeAttempt(
       isUnresolved(row.status) &&
       (isAttemptRow(row, bookingId) ||
         isChargeInFlightOnThisCard(row, card) ||
-        isLegacySharedKeyChargeRow(row, bookingId))
+        isLegacySharedKeyChargeRow(row))
   );
   const replayable = unresolvedAttempts.filter(
     (row) =>
