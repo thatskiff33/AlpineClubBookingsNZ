@@ -29,20 +29,48 @@ CREATE FUNCTION "applyBookingGuestNightOfficerPriceSourceFromAudit"(
 ) RETURNS VOID
 LANGUAGE plpgsql
 AS $$
+DECLARE
+  item JSONB;
+  item_date DATE;
+  item_price_cents INTEGER;
 BEGIN
-  IF jsonb_typeof(p_night_prices) <> 'array' THEN
+  IF jsonb_typeof(p_night_prices) IS DISTINCT FROM 'array' THEN
     RETURN;
   END IF;
 
-  UPDATE "BookingGuestNight" AS bgn
-  SET "priceSource" = 'OFFICER_PRICED'
-  FROM jsonb_array_elements(p_night_prices) AS item
-  WHERE bgn."bookingGuestId" = p_guest_id
-    AND bgn."createdAt" <= p_audit_created_at
-    AND item->>'date' ~ '^\d{4}-\d{2}-\d{2}$'
-    AND item->>'priceCents' ~ '^(0|[1-9][0-9]*)$'
-    AND bgn."stayDate" = (item->>'date')::date
-    AND bgn."priceCents" = (item->>'priceCents')::integer;
+  FOR item IN SELECT value FROM jsonb_array_elements(p_night_prices)
+  LOOP
+    IF jsonb_typeof(item->'priceCents') IS DISTINCT FROM 'number' THEN
+      CONTINUE;
+    END IF;
+    IF (item->>'date' ~ '^\d{4}-\d{2}-\d{2}$') IS DISTINCT FROM TRUE THEN
+      CONTINUE;
+    END IF;
+    IF (item->>'priceCents' ~ '^(0|[1-9][0-9]*)$') IS DISTINCT FROM TRUE THEN
+      CONTINUE;
+    END IF;
+
+    -- These casts sit behind shape checks, but still need a bounded exception:
+    -- a syntactically valid date can be impossible and an integer can overflow.
+    -- Keeping the casts in their own block means malformed audit metadata skips
+    -- that item instead of rolling back the officer's otherwise valid repair.
+    BEGIN
+      item_date := (item->>'date')::date;
+      item_price_cents := (item->>'priceCents')::integer;
+    EXCEPTION
+      WHEN invalid_text_representation
+        OR datetime_field_overflow
+        OR numeric_value_out_of_range
+      THEN CONTINUE;
+    END;
+
+    UPDATE "BookingGuestNight" AS bgn
+    SET "priceSource" = 'OFFICER_PRICED'
+    WHERE bgn."bookingGuestId" = p_guest_id
+      AND bgn."createdAt" <= p_audit_created_at
+      AND bgn."stayDate" = item_date
+      AND bgn."priceCents" = item_price_cents;
+  END LOOP;
 END;
 $$;
 

@@ -31,8 +31,14 @@ const verification: DataMigrationVerification = {
           'ps-trigger-action',
           'ps-trigger-amount',
           'ps-trigger-date',
+          'ps-trigger-date-impossible',
+          'ps-trigger-date-shape',
           'ps-trigger-entity',
           'ps-trigger-failed',
+          'ps-trigger-metadata',
+          'ps-trigger-negative',
+          'ps-trigger-overflow',
+          'ps-trigger-price-shape',
           'ps-trigger-record',
           'ps-trigger-reconcile',
           'ps-trigger-stale'
@@ -40,7 +46,8 @@ const verification: DataMigrationVerification = {
 
         INSERT INTO "BookingGuestNight"
           ("id", "bookingGuestId", "stayDate", "priceCents", "createdAt")
-        SELECT 'night-' || guest_id, guest_id, DATE '2026-08-01', 1000,
+        SELECT 'night-' || guest_id, guest_id, DATE '2026-08-01',
+               CASE WHEN guest_id = 'ps-trigger-negative' THEN -1000 ELSE 1000 END,
                CASE WHEN guest_id = 'ps-trigger-stale'
                  THEN TIMESTAMP '2026-03-01 00:00:00'
                  ELSE TIMESTAMP '2026-01-01 00:00:00'
@@ -49,8 +56,14 @@ const verification: DataMigrationVerification = {
           'ps-trigger-action',
           'ps-trigger-amount',
           'ps-trigger-date',
+          'ps-trigger-date-impossible',
+          'ps-trigger-date-shape',
           'ps-trigger-entity',
           'ps-trigger-failed',
+          'ps-trigger-metadata',
+          'ps-trigger-negative',
+          'ps-trigger-overflow',
+          'ps-trigger-price-shape',
           'ps-trigger-record',
           'ps-trigger-reconcile',
           'ps-trigger-stale'
@@ -72,6 +85,14 @@ const verification: DataMigrationVerification = {
            'ps-trigger-date', 'success',
            '{"nightPrices":[{"date":"2026-08-02","priceCents":1000}]}'::jsonb,
            TIMESTAMP '2026-02-01 00:00:00'),
+          ('audit-date-impossible', 'booking-payment.stored-night-price.record', 'BookingGuest',
+           'ps-trigger-date-impossible', 'success',
+           '{"nightPrices":[{"date":"2026-02-31","priceCents":1000}]}'::jsonb,
+           TIMESTAMP '2026-02-01 00:00:00'),
+          ('audit-date-shape', 'booking-payment.stored-night-price.record', 'BookingGuest',
+           'ps-trigger-date-shape', 'success',
+           '{"nightPrices":[{"date":"2026-8-01","priceCents":1000}]}'::jsonb,
+           TIMESTAMP '2026-02-01 00:00:00'),
           ('audit-entity', 'booking-payment.stored-night-price.record', 'Booking',
            'ps-trigger-entity', 'success',
            '{"nightPrices":[{"date":"2026-08-01","priceCents":1000}]}'::jsonb,
@@ -79,6 +100,22 @@ const verification: DataMigrationVerification = {
           ('audit-failed', 'booking-payment.stored-night-price.record', 'BookingGuest',
            'ps-trigger-failed', 'failure',
            '{"nightPrices":[{"date":"2026-08-01","priceCents":1000}]}'::jsonb,
+           TIMESTAMP '2026-02-01 00:00:00'),
+          ('audit-metadata', 'booking-payment.stored-night-price.record', 'BookingGuest',
+           'ps-trigger-metadata', 'success',
+           '{"nightPrices":{"date":"2026-08-01","priceCents":1000}}'::jsonb,
+           TIMESTAMP '2026-02-01 00:00:00'),
+          ('audit-negative', 'booking-payment.stored-night-price.record', 'BookingGuest',
+           'ps-trigger-negative', 'success',
+           '{"nightPrices":[{"date":"2026-08-01","priceCents":-1000}]}'::jsonb,
+           TIMESTAMP '2026-02-01 00:00:00'),
+          ('audit-overflow', 'booking-payment.stored-night-price.record', 'BookingGuest',
+           'ps-trigger-overflow', 'success',
+           '{"nightPrices":[{"date":"2026-08-01","priceCents":999999999999999999999}]}'::jsonb,
+           TIMESTAMP '2026-02-01 00:00:00'),
+          ('audit-price-shape', 'booking-payment.stored-night-price.record', 'BookingGuest',
+           'ps-trigger-price-shape', 'success',
+           '{"nightPrices":[{"date":"2026-08-01","priceCents":"1000"}]}'::jsonb,
            TIMESTAMP '2026-02-01 00:00:00'),
           ('audit-record', 'booking-payment.stored-night-price.record', 'BookingGuest',
            'ps-trigger-record', 'success',
@@ -96,7 +133,7 @@ const verification: DataMigrationVerification = {
       expectations: [
         {
           claim:
-            "both exact officer actions mark their matching rows, while wrong action, entity, outcome, date, amount, and stale evidence remain UNKNOWN",
+            "both exact officer actions mark their matching rows, while malformed metadata and wrong action, entity, outcome, guest, date, amount, and stale evidence remain UNKNOWN",
           sql: `
             SELECT "bookingGuestId" AS "guest",
                    "priceCents" AS "priceCents",
@@ -108,8 +145,14 @@ const verification: DataMigrationVerification = {
             { guest: "ps-trigger-action", priceCents: 1000, priceSource: "UNKNOWN" },
             { guest: "ps-trigger-amount", priceCents: 1000, priceSource: "UNKNOWN" },
             { guest: "ps-trigger-date", priceCents: 1000, priceSource: "UNKNOWN" },
+            { guest: "ps-trigger-date-impossible", priceCents: 1000, priceSource: "UNKNOWN" },
+            { guest: "ps-trigger-date-shape", priceCents: 1000, priceSource: "UNKNOWN" },
             { guest: "ps-trigger-entity", priceCents: 1000, priceSource: "UNKNOWN" },
             { guest: "ps-trigger-failed", priceCents: 1000, priceSource: "UNKNOWN" },
+            { guest: "ps-trigger-metadata", priceCents: 1000, priceSource: "UNKNOWN" },
+            { guest: "ps-trigger-negative", priceCents: -1000, priceSource: "UNKNOWN" },
+            { guest: "ps-trigger-overflow", priceCents: 1000, priceSource: "UNKNOWN" },
+            { guest: "ps-trigger-price-shape", priceCents: 1000, priceSource: "UNKNOWN" },
             { guest: "ps-trigger-record", priceCents: 1000, priceSource: "OFFICER_PRICED" },
             { guest: "ps-trigger-reconcile", priceCents: 1000, priceSource: "OFFICER_PRICED" },
             { guest: "ps-trigger-stale", priceCents: 1000, priceSource: "UNKNOWN" },
@@ -119,6 +162,13 @@ const verification: DataMigrationVerification = {
     },
   ],
   mutants: [
+    {
+      name: "accept non-array repair metadata",
+      harm:
+        "Malformed audit metadata reaches jsonb_array_elements and aborts the officer's otherwise valid transaction.",
+      find: `IF jsonb_typeof(p_night_prices) IS DISTINCT FROM 'array' THEN`,
+      replace: `IF FALSE THEN`,
+    },
     {
       name: "accept an unrelated audit action",
       harm:
@@ -144,6 +194,15 @@ const verification: DataMigrationVerification = {
       replace: `AND TRUE`,
     },
     {
+      name: "ignore the audited guest",
+      harm:
+        "An exact audit for one guest can relabel another guest's equal-priced night.",
+      find: `    WHERE bgn."bookingGuestId" = p_guest_id
+`,
+      replace: `    WHERE TRUE
+`,
+    },
+    {
       name: "let an old audit relabel a recreated night",
       harm:
         "Historical repair evidence is applied to a replacement row created after that officer action.",
@@ -152,10 +211,56 @@ const verification: DataMigrationVerification = {
       replace: "",
     },
     {
+      name: "accept a non-canonical audited date",
+      harm:
+        "A date that the writer could not have emitted is parsed leniently and used as officer provenance.",
+      find: `    IF (item->>'date' ~ '^\\d{4}-\\d{2}-\\d{2}$') IS DISTINCT FROM TRUE THEN
+      CONTINUE;
+    END IF;
+`,
+      replace: "",
+    },
+    {
+      name: "accept a string instead of the writer's numeric amount",
+      harm:
+        "Metadata with a source shape the officer writer did not emit can manufacture provenance.",
+      find: `    IF jsonb_typeof(item->'priceCents') IS DISTINCT FROM 'number' THEN
+      CONTINUE;
+    END IF;
+`,
+      replace: "",
+    },
+    {
+      name: "accept a negative audited amount",
+      harm:
+        "A value the officer writer refuses can nevertheless be recorded as officer provenance.",
+      find: `    IF (item->>'priceCents' ~ '^(0|[1-9][0-9]*)$') IS DISTINCT FROM TRUE THEN
+      CONTINUE;
+    END IF;
+`,
+      replace: "",
+    },
+    {
+      name: "stop containing an impossible calendar date",
+      harm:
+        "One malformed audit date aborts the entire officer repair transaction instead of being ignored.",
+      find: `        OR datetime_field_overflow
+`,
+      replace: "",
+    },
+    {
+      name: "stop containing an overflowing audited amount",
+      harm:
+        "One oversized audit amount aborts the entire officer repair transaction instead of being ignored.",
+      find: `        OR numeric_value_out_of_range
+`,
+      replace: "",
+    },
+    {
       name: "ignore the audited stay date",
       harm:
         "An officer amount for one date is attributed to a different night held by the same guest.",
-      find: `    AND bgn."stayDate" = (item->>'date')::date
+      find: `      AND bgn."stayDate" = item_date
 `,
       replace: "",
     },
@@ -163,7 +268,7 @@ const verification: DataMigrationVerification = {
       name: "ignore the audited amount",
       harm:
         "An officer audit for a different number is treated as provenance for the stored price.",
-      find: `    AND bgn."priceCents" = (item->>'priceCents')::integer;
+      find: `      AND bgn."priceCents" = item_price_cents;
 `,
       replace: `;\n`,
     },
