@@ -1836,9 +1836,26 @@ export async function reassignHeldBookingGuests(
     };
   }
 
-  for (let index = 0; index < planned.length; index += 1) {
-    const guest = planned[index];
+  /**
+   * Each planned guest paired with the stored row it rewrites. The branch above
+   * already returned unless the two lists are the same length, and the consent
+   * planner returns one guest per input — but the pairing is what the writes
+   * below depend on, and getting it wrong would put one person's identity,
+   * price and nights onto another person's row. That is the same hazard the
+   * `createMany` note above describes, so a mismatch refuses rather than
+   * writing (#2800, INV-REQ).
+   */
+  const rewrites = planned.map((guest, index) => {
     const previous = existing[index];
+    if (previous === undefined) {
+      throw new Error(
+        `Booking request approval planned ${planned.length} guest(s) for ${existing.length} held booking guest row(s).`,
+      );
+    }
+    return { guest, previous };
+  });
+
+  for (const { guest, previous } of rewrites) {
     /**
      * Is this row still the SAME person it was before the swap?
      *
@@ -1951,9 +1968,9 @@ export async function reassignHeldBookingGuests(
     await tx.bookingGuestNight.deleteMany({
       where: { bookingGuestId: { in: existing.map((row) => row.id) } },
     });
-    const replacementNights = planned.flatMap((guest, index) =>
+    const replacementNights = rewrites.flatMap(({ guest, previous }) =>
       guest.nights.map((night) => ({
-        bookingGuestId: existing[index].id,
+        bookingGuestId: previous.id,
         stayDate: night.stayDate,
         priceCents: night.priceCents,
       }))
@@ -1967,8 +1984,8 @@ export async function reassignHeldBookingGuests(
     preservedInPlace: true,
     memberGuestNotificationRows: owedNotifications(
       matchMemberGuestNotificationRows({
-        createdGuests: planned.map((guest, index) => ({
-          id: existing[index].id,
+        createdGuests: rewrites.map(({ guest, previous }) => ({
+          id: previous.id,
           memberId: guest.memberId ?? null,
         })),
         entriesByMemberId: consentPlan.entriesByMemberId,
