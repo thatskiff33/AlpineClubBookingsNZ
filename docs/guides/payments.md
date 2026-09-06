@@ -263,34 +263,71 @@ that turns out to owe nothing is one of the commonest ones to have this problem.
   not close the gap for you.
 - **$0.00 is a real answer for a night** that was genuinely free, and it is not
   the same as leaving the box empty.
-- **Leaving them all blank is fine.** The settle works exactly as it always did.
-  You would do that when the amount you are settling is not simply what the
-  nights were worth — a change fee, or a refund reduced by policy — because then
-  the figures cannot be made to add up honestly. The booking will come back to
-  this queue next time it changes, which is the cost of leaving them. The screen
-  says this too, in the sentence it shows when your figures do not add up: **do
-  not change a night's price to make the arithmetic work.** A figure typed to
-  close a gap is a price nobody decided, which is the one thing this whole
-  queue exists to prevent.
+- **You cannot leave them blank.** Where a row shows these boxes, the review
+  cannot be closed until they are filled in — whether you close it with **Record
+  the adjustment** or with **No adjustment**. That is because the booking's own
+  price is worked out again from its nights when the review closes, and a review
+  closed with the boxes blank leaves the booking's headline saying something its
+  guests no longer agree with — including, after a guest was taken off, still
+  counting that guest. Rows that show no boxes are unaffected and close exactly
+  as they always did.
+- **Do not change a night's price to make the arithmetic work.** The screen says
+  this in the sentence it shows when your figures do not add up. A figure typed
+  to close a gap is a price nobody decided, which is the one thing this whole
+  queue exists to prevent. If the amount you are settling is not simply what the
+  nights were worth — a change fee, or a refund reduced by policy — the figures
+  still have to be the honest night prices; the amount you are settling is
+  already accounted for separately.
 - **If a box will not take what you typed**, the sentence names the night. It
   wants plain dollars and cents — `45.00` — with no dollar sign, no comma and no
   minus.
 
-**Filling them in also brings the booking's own total back in line.** While a
-booking is waiting for review its headline total is deliberately frozen, because
-nobody yet knows what the change was worth — so the figure at the top of the
-booking and the figures on its nights can be saying different things while you
-are looking at it. Recording the night prices ends that: the booking's total is
-worked out again from its guests and written back, on **No adjustment** exactly
-as on **Record the adjustment**. It is worked out from the guests, not from the
-amount you settled, so it can move by more or less than you just settled — for
-example when the change that parked the booking also took a guest off it. If
-somebody edits the booking while your settle box is open the save is refused and
-nothing is written, and you can reload and try again.
+**Closing the review works the booking's own price out again.** While a booking
+is waiting for review its headline price is deliberately frozen, because nobody
+yet knows what the change was worth — so the figure at the top of the booking and
+the figures on its nights can be saying different things while you are looking at
+it. Closing the review ends that: the booking's price is worked out again from
+its guests and written back, on **No adjustment** exactly as on **Record the
+adjustment**. It is worked out from the guests, not from the amount you settled,
+so it can move by more or less than you just settled — for example when the
+change that parked the booking also took a guest off it. Any promotion on the
+booking is worked out again at the same time, against the new total, so a
+discount can never end up larger than the stay it is discounting. If somebody
+edits the booking while your settle box is open the save is refused and nothing
+is written, and you can reload and try again.
 
-Filling them in is a money-affecting act and is audited as one, in its own entry:
-what each night was set to, what the guest's stay was worth before and after, and
-what the booking's total and final price were before and after.
+**Three things follow from that, and you should know all three before you close
+a review.**
+
+- **The new price is the booking's price for everything afterwards** — including
+  what a later cancellation refunds. A member who paid $240, had a guest taken
+  off on a review you then closed with **No adjustment**, and who cancels later
+  under a full-refund policy, gets back $120 and not $240: the booking is worth
+  $120 now. The reason is written into the booking's own history as **Price
+  Recalculated**, with the figures before and after, so you can always show
+  somebody why.
+- **Closing with No adjustment does not change the club's invoice.** Nothing is
+  sent to Xero when you close a review that way, so if the booking had already
+  been invoiced, the invoice still says the old figure while the booking says the
+  new one. The booking's history says so in as many words, and the audit entry
+  for that closure is raised to **critical**. Check the invoice before you record
+  a bank payment against the new figure — otherwise you will mark the booking
+  paid for less than the club actually billed.
+- **Figures for months you have already reported can move.** Working the price
+  out again changes what the club counts as income for the nights involved, and
+  what the member's lifetime spend comes to. Where a stay crosses the end of a
+  month, a figure you have already reported for the earlier month may stop coming
+  out the same. This is deliberate — the new numbers are the truer ones — and it
+  is always traceable, because the audit entry keeps every figure from before.
+
+**If a guest's nights still cannot be read at all**, the booking's price is left
+exactly where the freeze put it rather than worked out from evidence the club
+does not have. That booking still has its other review waiting, and closing that
+one works the price out then.
+
+Closing the review is a money-affecting act and is audited as one, in its own
+entry: what each night was set to, what the guest's stay was worth before and
+after, and every one of the booking's money figures before and after.
 
 **It settles that guest, not the whole booking.** A change to a booking raises
 one review for each guest whose nights could not be read, so a booking with two

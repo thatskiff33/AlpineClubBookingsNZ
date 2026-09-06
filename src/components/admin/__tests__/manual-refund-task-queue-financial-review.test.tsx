@@ -837,9 +837,19 @@ describe("recording what the unpriced nights sold for (#3191)", () => {
     ]);
   });
 
-  it("posts no night prices at all when the boxes were left alone", async () => {
-    // THE CONTROL. Leaving them blank must send the body this screen sent before
-    // #3191, so an officer who cannot produce a breakdown is never held up.
+  it("#3219 D2: will not close a review whose boxes are offered and blank, and says why on the screen", async () => {
+    /*
+      THIS WAS THE CONTROL, AND D2 REVERSED IT (owner, 5 September 2026). Closing
+      with the boxes blank used to send the body this screen sent before #3191.
+      It cannot any more: the booking's own price is worked out again from these
+      nights when the review closes, so a review closed blank leaves a headline
+      its guests no longer agree with - after a parked removal, still counting a
+      guest who is gone (#3257).
+
+      The button is dead rather than the post being refused after a round trip,
+      and the reason is the paragraph the officer was already shown, in D2's own
+      words - not a second sentence saying the same thing.
+    */
     const fetchMock = stubLoad({
       tasks: [REVIEW_WITH_BLANKS],
       viewerCanViewBookings: true,
@@ -857,14 +867,18 @@ describe("recording what the unpriced nights sold for (#3191)", () => {
     fireEvent.change(screen.getByLabelText("Note (required)"), {
       target: { value: "Nothing owed either way." },
     });
-    fireEvent.click(
-      screen.getByRole("button", { name: "Close with no adjustment" }),
-    );
 
-    await waitFor(() =>
-      expect(fetchMock.mock.calls.length).toBeGreaterThan(1),
-    );
-    expect(postBody(fetchMock).recordedNightPrices).toBeUndefined();
+    const confirm = screen.getByRole("button", {
+      name: "Close with no adjustment",
+    });
+    expect(confirm).toBeDisabled();
+    expect(
+      screen.getByText(/this review cannot be closed/i),
+    ).toBeInTheDocument();
+
+    fireEvent.click(confirm);
+    // Nothing beyond the queue's own load was posted.
+    expect(fetchMock.mock.calls.length).toBe(1);
   });
 });
 

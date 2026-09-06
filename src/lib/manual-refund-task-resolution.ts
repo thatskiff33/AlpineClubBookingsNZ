@@ -223,12 +223,9 @@ export async function resolveManualRefundTask(
     );
   }
 
-  // #3219 (`INV-LOCK-004`, `INV-CONFIG-002`): the club's own calendar day, read
-  // BEFORE the transaction opens because the timezone read cannot take a
-  // transaction client. It decides the promotion's validity window when the
-  // booking is re-priced from its strands below.
+  // #3219 (`INV-LOCK-004`): outside the transaction, which a timezone read may
+  // not take. It dates the promotion's window in the re-price below.
   const todayAtClub = clubToday(await readClubTimeZoneOutsideRequest());
-
   const result = await prisma.$transaction(async (tx) => {
     const task = await tx.manualRefundTask.findUnique({
       where: { id: taskId },
@@ -425,18 +422,15 @@ export async function resolveManualRefundTask(
 
     // #3191: what the officer says the booking's unpriced nights sold for,
     // checked BEFORE the claim so a refusal leaves the task OPEN and its money
-    // question intact. `stored-night-price-repair-store.ts` owns the rules, the
-    // re-read of the blanks and the refusals; null in means null out, and the
-    // strand is not touched at all.
+    // question intact. The store owns the rules, the re-read of the blanks, and
+    // (since #3219 D2) the refusal to close a review whose boxes are blank.
+    const settledForRepair = settlement
+      ? { direction: settlementDirection, amountCents: settlement.amountCents }
+      : null;
     const nightPriceRepair = await planStoredNightPriceRepair({
       task,
       requested: input.recordedNightPrices,
-      settled: settlement
-        ? {
-            direction: settlementDirection,
-            amountCents: settlement.amountCents,
-          }
-        : null,
+      settled: settledForRepair,
       store: tx,
     });
 
@@ -574,13 +568,8 @@ export async function resolveManualRefundTask(
 
     // #3191: the blanks become numbers, after the claim and inside it, so a lost
     // claim writes no prices. It records its OWN audit entry rather than adding
-    // to the one below - see `recordStoredNightPriceRepair` for why that is not
-    // tidiness.
-    //
-    // #3219: and the booking's own `totalPriceCents` and `finalPriceCents` are
-    // re-based from the strands in the same call, so the headline can no longer
-    // disagree with the nights. It runs on a DISMISSAL as well, which is why the
-    // condition below is the repair and not the settlement.
+    // to the one below - see `recordStoredNightPriceRepair` for why.
+    // #3219: it also re-prices the BOOKING from its strands, on a dismissal too.
     if (nightPriceRepair) {
       await recordStoredNightPriceRepair({
         plan: nightPriceRepair,
@@ -590,14 +579,9 @@ export async function resolveManualRefundTask(
         note: trimmedNote,
         todayAtClub,
         hasIssuedXeroInvoice,
-        // #3219: does THIS closure send Xero a document that brings the invoice
-        // back into line with the re-priced booking? Only a completion that
-        // picked a settlement route does. A DISMISSAL picks none and issues
-        // nothing at all - the dispatch has no anchor and returns without doing
-        // anything - which is exactly the case where the club's invoice is left
-        // saying one figure while the booking says another.
-        settlementIssuesXeroDocument:
-          settlement !== null && settlementRoute !== null,
+        // #3219: a route is picked only on a completion, so a DISMISSAL issues
+        // no Xero document - exactly when the invoice keeps the old figure.
+        settlementIssuesXeroDocument: settlementRoute !== null,
         store: tx,
       });
     }

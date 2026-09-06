@@ -11,7 +11,7 @@ import {
   toAutoRefundedManualRefundTaskPayload,
   toOpenManualRefundTaskPayload,
 } from "@/lib/manual-refund-task-queue-payload";
-import { unpricedNightsSummariesForQueue } from "@/lib/stored-night-price-repair-store";
+import { unpricedNightsSummariesForQueue } from "@/lib/stored-night-price-repair-queue";
 
 /**
  * GET /api/admin/payments/manual-refund-tasks

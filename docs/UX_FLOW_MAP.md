@@ -484,8 +484,13 @@ chosen a direction and an amount it says instead that the target cannot be worke
 out yet. Filling some boxes and not others disables the confirm button with that
 sentence showing; a box holding something that is not an amount at all -
 `1,200.00`, `$45`, `45.` - is refused by name rather than reported as a missing
-one; filling none of them is a valid answer and posts exactly the body this
-screen posted before #3191. When the figures cannot be made to add up honestly,
+one; and since #3219 D2 filling NONE of them is no longer an answer either - the
+confirm control is dead until every box holds a figure that reconciles, on
+**No adjustment** as well as on the adjustment control, because the booking's own
+price is worked out again from these nights when the review closes. The reason is
+the paragraph already above the boxes, in the words that decision chose, rather
+than a second sentence saying the same thing. Rows that offer no boxes are
+untouched and close exactly as they always did. When the figures cannot be made to add up honestly,
 the refusal itself says so FIRST and names clearing every box as the third way
 out, before it offers to have either figure corrected - the officer facing
 exactly that case must not be steered into typing a price that reconciles and is
