@@ -2717,8 +2717,11 @@ describe("Cron: Confirm Pending Bookings", () => {
       // 3DS-pending attempt row (must be excluded — before #3267 this was
       // recognised by reason, which never covered the admin route's rows), an
       // in-flight link intent with a NULL reference (must stay in scope), and a
-      // LEGACY pre-#3267 saved-card row (reason set, no reference), which is
-      // now swept like a link intent because no shared key re-returns it.
+      // LEGACY pre-#3267 saved-card row (reason set, no reference) that the
+      // claim did NOT take over — here because this mock hands the claim's own
+      // read an empty ledger, and in production because it had already resolved.
+      // A legacy row the claim DOES see is ended before this query runs and its
+      // status drops it; that path is pinned in its own test below.
       const rows = [
         {
           id: "txn_admin_attempt_3ds",
@@ -3508,6 +3511,73 @@ describe("Cron: Confirm Pending Bookings", () => {
       expect(mockPaymentTransactionUpdateMany).toHaveBeenCalledWith(
         expect.objectContaining({ where: expect.objectContaining({ id: "txn_legacy" }), data: expect.objectContaining({ status: "PROCESSING" }) })
       );
+      expect(
+        mockBookingUpdateMany.mock.calls.find(
+          ([call]) => call?.where?.status === "CONFIRMED" && call?.data?.status === "PENDING"
+        )
+      ).toBeDefined();
+    });
+
+    it("a LEGACY shared-key row on ANOTHER card is ENDED by the claim and its live intent WAITED on — never left to the cancel-only #1992 sweep, which is the deploy-cutover double charge (#3267 fix round 3)", async () => {
+      mockPendingBookings([makePendingBooking("b1")]);
+      capacityAvailable();
+      // Pre-#3267 shape: minted under the shared key `pending_charge_b1`, so no
+      // `reference`; the member has since saved pm_b1, so the row's card is
+      // stale. Its intent is `processing` — Stripe will refuse to cancel it.
+      const legacy = {
+        id: "txn_legacy_other_card",
+        status: "PROCESSING",
+        amountCents: 10000,
+        refundedAmountCents: 0,
+        paymentMethodId: "pm_retired",
+        stripePaymentIntentId: "pi_legacy_other_card",
+        reference: null,
+        reason: "pending_hold_auto_charge",
+        createdAt: new Date("2026-07-08T21:00:00.000Z"),
+        updatedAt: new Date("2026-07-08T21:00:00.000Z"),
+      };
+      mockPaymentTransactionFindMany.mockImplementation(
+        async (args: { where: { OR?: unknown } }) =>
+          args.where.OR
+            ? // The sweep's read runs after the claim has committed the row as
+              // FAILED, and the sweep asks only for PENDING/PROCESSING rows.
+              []
+            : [legacy]
+      );
+      mockPaymentTransactionUpdateMany.mockResolvedValue({ count: 1 });
+      mockCancelPaymentIntentIfCancellableWithResult.mockRejectedValue(
+        stripeError({ type: "invalid_request_error", code: "payment_intent_unexpected_state" })
+      );
+      mockGetPaymentIntent.mockResolvedValue({
+        id: "pi_legacy_other_card",
+        status: "processing",
+        amount: 10000,
+        payment_method: "pm_retired",
+      });
+
+      const result = await confirmPendingBookings();
+
+      // Ended under the claim, with the intent handed to the charge step.
+      expect(mockPaymentTransactionUpdateMany).toHaveBeenCalledWith({
+        where: { id: "txn_legacy_other_card", status: { in: ["PENDING", "PROCESSING"] } },
+        data: {
+          status: "FAILED",
+          reason: "pending_hold_auto_charge:superseded_by_new_card",
+        },
+      });
+      expect(mockCancelPaymentIntentIfCancellableWithResult).toHaveBeenCalledWith(
+        "pi_legacy_other_card"
+      );
+      // The retrieve-and-consider path, never the cancel-only sweep whose
+      // "not cancellable, likely already succeeded" was the double charge.
+      expect(mockGetPaymentIntent).toHaveBeenCalledWith("pi_legacy_other_card");
+      expect(mockCancelPaymentIntentIfCancellable).not.toHaveBeenCalledWith(
+        "pi_legacy_other_card"
+      );
+      expect(mockChargePaymentMethod).not.toHaveBeenCalled();
+      expect(result.confirmedBookingIds).toEqual([]);
+      expect(result.failedBookingIds).toEqual([]);
+      // The claim is handed back, so the next run asks about the intent again.
       expect(
         mockBookingUpdateMany.mock.calls.find(
           ([call]) => call?.where?.status === "CONFIRMED" && call?.data?.status === "PENDING"
