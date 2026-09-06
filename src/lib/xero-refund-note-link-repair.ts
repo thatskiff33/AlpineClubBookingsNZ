@@ -123,6 +123,7 @@ import {
   recoverRefundCreditNoteLinkAmountCents,
   sumCoveredRefundCreditNoteCents,
 } from "@/lib/xero-sync";
+import { formatCents } from "@/lib/utils";
 
 export type StripeRefundNoteLinkPlannedAction =
   | "keep-active"
@@ -824,11 +825,20 @@ export async function applyStripeRefundNoteLinkRepairs(options?: {
   };
 }
 
-function formatCents(cents: number | null): string {
+/**
+ * The report already reads as a bare decimal delta ("refunded mirror 1.00,
+ * cash refund-note target 1.00"), pinned by
+ * `xero-refund-note-link-repair.test.ts` — no `$`, no thousands grouping — so
+ * this stays `formatCents`'s `{ style: "plain" }` (#3302) rather than the
+ * currency-formatted default every other caller uses. `null` (amount not yet
+ * known) renders as "unknown" rather than a formatted zero, which the same
+ * fixture also pins.
+ */
+function formatRefundLinkCents(cents: number | null): string {
   if (cents === null) {
     return "unknown";
   }
-  return `${(cents / 100).toFixed(2)}`;
+  return formatCents(cents, { style: "plain" });
 }
 
 /** Plain-text report for the operator script. */
@@ -846,13 +856,13 @@ export function formatStripeRefundNoteLinkRepairReport(
         : "REPAIRABLE"
       : `MANUAL REVIEW: ${plan.manualReviewReason ?? "see links"}`;
     lines.push(
-      `Payment ${plan.paymentId} (booking ${plan.bookingId}): refunded mirror ${formatCents(plan.refundedAmountCents)}, cash refund-note target ${formatCents(plan.coverageTargetCents)} (${plan.cashEvidenceSource}), active coverage ${formatCents(plan.activeCoveredCents)}, planned coverage ${formatCents(plan.plannedCoveredCents)} — ${status}`
+      `Payment ${plan.paymentId} (booking ${plan.bookingId}): refunded mirror ${formatRefundLinkCents(plan.refundedAmountCents)}, cash refund-note target ${formatRefundLinkCents(plan.coverageTargetCents)} (${plan.cashEvidenceSource}), active coverage ${formatRefundLinkCents(plan.activeCoveredCents)}, planned coverage ${formatRefundLinkCents(plan.plannedCoveredCents)} — ${status}`
     );
     for (const link of plan.links) {
       lines.push(
         `  [${link.plannedAction}] note ${link.xeroObjectNumber ?? link.xeroObjectId} (${
           link.active ? "active" : "inactive"
-        }, ${link.xeroStatus ?? "status unknown"}, ${formatCents(link.amountCents)}) — ${link.reason}`
+        }, ${link.xeroStatus ?? "status unknown"}, ${formatRefundLinkCents(link.amountCents)}) — ${link.reason}`
       );
     }
   }

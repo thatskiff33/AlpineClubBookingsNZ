@@ -4,6 +4,7 @@ import { requireClubTimeZone } from "@/lib/club-time";
 import {
   buildAuditDrilldownLinks,
   buildAuditMemberScopeWhere,
+  formatMetadataFragment,
   getAuditTimelinePage,
   inferAuditCategoryFromAction,
 } from "@/lib/audit-query";
@@ -239,5 +240,14 @@ describe("audit query helpers", () => {
     expect(oversizedPage.success).toBe(false);
     if (oversizedPage.success) return;
     expect(oversizedPage.details?.fieldErrors.pageSize).toBeDefined();
+  });
+
+  // #3302: this used to be a private, untested "$" + toFixed(2) copy — no
+  // thousands grouping, no configured-currency awareness. It now derives from
+  // the shared `formatCents`, so a metadata amount over $999 groups.
+  it("formats a *Cents metadata value through the shared, currency-aware formatter", () => {
+    expect(formatMetadataFragment("amountCents", 123456)).toBe(
+      "Amount $1,234.56",
+    );
   });
 });
