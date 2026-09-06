@@ -238,10 +238,12 @@ export type ParsedDiagnosticsPageSelector =
 
 /**
  * Keys that must never travel, in the selector or in `filters`. `__proto__` is
- * the load-bearing one: zod's `record` never surfaces it to the key schema, and
- * assigning it onto the fresh output object is a setter no-op, so it DISAPPEARS
- * instead of being refused — the one filter key a client could send to a route
- * that allowlists no filters at all and still be accepted. There is no
+ * the load-bearing one: zod's `record` never surfaces it to the key schema at
+ * all, so it DISAPPEARS instead of being refused — the one filter key a client
+ * could send to a route that allowlists no filters at all and still be accepted.
+ * (Measured: a key schema that records what it is asked to validate sees only
+ * the real keys, and the accepted object's prototype is untouched. The key is
+ * never assigned and then swallowed by a setter — it is never seen.) There is no
  * prototype pollution today (values are strings and nothing reads the
  * prototype), but "rejection is total, never partial" is the contract this
  * module exists to hold, so the key is refused explicitly rather than lost.

@@ -103,10 +103,12 @@ interface DiagnosticsToolSpecBase<TArgs> {
   requiredAreas: readonly AdminPermissionArea[];
   /**
    * `.strict()` so an unknown argument is a REJECTION, not something ignored —
-   * with `RESERVED_ARGUMENT_KEYS` scanned first, at EVERY depth, because `.strict()`
-   * alone lets a `JSON.parse`-created `__proto__` through by silently dropping it,
-   * and it does so one nested object down just as readily as at the top level. A
-   * nested or `z.record(...)` argument therefore needs no guard of its own.
+   * with `RESERVED_ARGUMENT_KEYS` scanned first, at EVERY depth, because zod is
+   * not total on its own: a `z.record(...)` still drops a `JSON.parse`-created
+   * `__proto__` silently, and so does any shape when the key is non-enumerable.
+   * A nested or record-shaped argument therefore needs no guard of its own. The
+   * shapes zod does and does not refuse are measured, not assumed — see
+   * `NESTED_RESERVED_KEY_CASES` in `__tests__/registry.test.ts`.
    */
   argsSchema: z.ZodType<TArgs>;
   inputSchema: DiagnosticsToolInputSchema;
@@ -433,11 +435,20 @@ export type DiagnosticsToolEntry =
  * (`z.record(z.string(), z.string())` on `{"__proto__":"s"}` yields `{}`), at any
  * depth and inside array elements, while KEEPING `constructor` and `prototype`.
  *
- * So the surviving hole is exactly the record shape — what a `filters` argument
- * takes, and what the next tool packs need. The guard stays TOTAL rather than
- * trimmed to match one version: what `.strict()` refuses today is not a contract
- * zod has made about tomorrow. The registry's test table is written as a
- * measurement for the same reason, and is what reported this change.
+ * TWO HOLES SURVIVE, not one. The record shape is the reachable one — what a
+ * `filters` argument takes, and what the next tool packs need. The second is
+ * that zod's new strict rejection is ENUMERABILITY-DEPENDENT: measured on 4.5.4,
+ * a reserved key defined with `enumerable: false` is accepted and dropped by
+ * `z.object({}).strict()` too. `JSON.parse` cannot produce one, so it is not
+ * reachable from the provider path — but it is why the scan below walks
+ * `Object.getOwnPropertyNames` rather than `Object.keys`, and anyone trimming
+ * this guard on the strength of "zod handles strict objects now" would reopen
+ * it. Both are pinned by tests; neither is inferred.
+ *
+ * So the guard stays TOTAL rather than trimmed to match one version: what
+ * `.strict()` refuses today is not a contract zod has made about tomorrow. The
+ * registry's test table is written as a measurement for the same reason, and is
+ * what reported this change.
  *
  * Silently repairing an argument is the contract breach, not the pollution: the
  * arguments reaching here are the model's `tool_use` input, and `argsHash` is

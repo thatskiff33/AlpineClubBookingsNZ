@@ -92,9 +92,15 @@ CI also runs independent static and container checks:
   longer needs it. `package.json` is strict JSON and cannot carry a comment, so
   the register below — not the manifest — is where an override records why it
   exists and when it retires. Adding an override means adding a row.
-- Pinning a **direct** dependency to an exact version to stop it moving is a
-  hold, not an override. It has its own register and its own rules; adding one
-  means adding a row there too.
+- Exact-pinning a **direct** dependency *below its newest release, because the
+  newer one is broken*, is a **hold**: it needs a row in the hold register below
+  and a written condition that lifts it. An exact pin at the version that is
+  already current is **not** a hold and needs no row — that covers the
+  version-coupling pins (`next` with `eslint-config-next`, `react` with
+  `react-dom`, `@prisma/client` with `@prisma/adapter-pg`) and every other exact
+  pin Dependabot steps forward each release. Thirteen direct dependencies are
+  exact-pinned today and only one of them is a hold; the difference is whether
+  anything is being held back, not whether the range has a caret.
 - Use test or demo credentials for Stripe, Xero, SES, and Sentry in local and
   CI environments.
 
@@ -137,13 +143,22 @@ not in the table above, because the removal-and-re-resolve check described below
 does not apply — nothing transitive is being forced, so an inert hold looks
 identical to a load-bearing one.
 
+The word also appears in the override register above, in the older and looser
+sense: the `eslint-plugin-react-hooks` row calls itself a "compatibility hold"
+because it is kept for a compatibility reason rather than an advisory. That entry
+is an **override** on a transitive package and it stays where it is. Only a
+direct dependency this project declares belongs in the table below.
+
 Two rules, both learned the expensive way:
 
 - **A hold must be an exact version, never a `^` floor.** The preference for a
   range stated above is about *overrides*, where the goal is to raise a floor. A
-  hold has the opposite goal, and `"^10.70.0"` does not hold anything back —
-  npm resolves it straight to the latest 10.x. Measured on #3313, where the
-  caret was tried first and the lockfile came back on the version being held.
+  hold has the opposite goal, and `"^10.70.0"` does not hold anything back: the
+  range admits the broken release, so any re-resolve lands on it again. Measured
+  on #3313, where the caret was tried first and the lockfile came back on
+  **10.72.0 — the release being held back from.** The exact pin is also what
+  makes a future move show up as a visible `package.json` diff rather than as a
+  lockfile line nobody reads.
 - **A hold needs a written retirement condition, or it becomes permanent.** The
   package stops being maintained by the system the moment it is pinned.
 
