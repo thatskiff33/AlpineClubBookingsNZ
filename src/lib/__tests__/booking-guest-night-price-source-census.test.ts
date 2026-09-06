@@ -26,6 +26,15 @@ const DIRECT_WRITER_METHODS = new Set([
   "updateMany",
   "upsert",
 ]);
+const RAW_SQL_WRITE =
+  /\b(?:INSERT\s+INTO|UPDATE|MERGE\s+INTO)\b[\s\S]{0,500}["'`]BookingGuestNight["'`]/i;
+
+type SourceScan = {
+  direct: number;
+  nested: number;
+  aliasedDelegates: number;
+  rawSqlWrites: number;
+};
 
 function sourceFiles(): string[] {
   const files: string[] = [];
@@ -125,65 +134,156 @@ const REQUIRED_WRITER_SITE_COUNTS = new Map<
   ["src/lib/waitlist.ts", { direct: 1, nested: 0 }],
 ]);
 
-function discoveredWriterSiteCounts(): Map<
-  string,
-  { direct: number; nested: number }
-> {
-  const sites = new Map<string, { direct: number; nested: number }>();
+function scanSource(file: string, code: string): SourceScan {
+  const source = ts.createSourceFile(
+    file,
+    code,
+    ts.ScriptTarget.Latest,
+    false,
+    /[jt]sx$/.test(file) ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+  );
+  let direct = 0;
+  let nested = 0;
+  let aliasedDelegates = 0;
+  const propertyName = (name: ts.PropertyName): string | undefined =>
+    ts.isIdentifier(name) || ts.isStringLiteral(name) ? name.text : undefined;
+  const isNightDelegate = (node: ts.Expression): boolean =>
+    (ts.isPropertyAccessExpression(node) &&
+      node.name.text === "bookingGuestNight") ||
+    (ts.isElementAccessExpression(node) &&
+      ts.isStringLiteral(node.argumentExpression) &&
+      node.argumentExpression.text === "bookingGuestNight");
+  const visit = (
+    node: ts.Node,
+    parent?: ts.Node,
+    grandparent?: ts.Node,
+  ) => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      DIRECT_WRITER_METHODS.has(node.expression.name.text) &&
+      isNightDelegate(node.expression.expression)
+    ) {
+      direct += 1;
+    }
+    if (
+      ts.isPropertyAssignment(node) &&
+      propertyName(node.name) === "nights" &&
+      ts.isObjectLiteralExpression(node.initializer) &&
+      node.initializer.properties.some(
+        (entry) =>
+          ts.isPropertyAssignment(entry) && propertyName(entry.name) === "create",
+      )
+    ) {
+      nested += 1;
+    }
+    if (
+      (ts.isPropertyAccessExpression(node) ||
+        ts.isElementAccessExpression(node)) &&
+      isNightDelegate(node)
+    ) {
+      const method = parent;
+      const call = grandparent;
+      const isDirectCalledMethod =
+        method !== undefined &&
+        call !== undefined &&
+        ts.isPropertyAccessExpression(method) &&
+        method.expression === node &&
+        ts.isCallExpression(call) &&
+        call.expression === method;
+      if (!isDirectCalledMethod) aliasedDelegates += 1;
+    }
+    if (
+      ts.isBindingElement(node) &&
+      ((node.propertyName !== undefined &&
+        propertyName(node.propertyName) === "bookingGuestNight") ||
+        (ts.isIdentifier(node.name) && node.name.text === "bookingGuestNight"))
+    ) {
+      aliasedDelegates += 1;
+    }
+    ts.forEachChild(node, (child) => visit(child, node, parent));
+  };
+  visit(source);
+  return {
+    direct,
+    nested,
+    aliasedDelegates,
+    rawSqlWrites: RAW_SQL_WRITE.test(stripComments(code)) ? 1 : 0,
+  };
+}
+
+function discoveredWriterSiteCounts(): Map<string, SourceScan> {
+  const sites = new Map<string, SourceScan>();
   for (const file of sourceFiles()) {
-    const source = ts.createSourceFile(
-      file,
-      readFileSync(file, "utf8"),
-      ts.ScriptTarget.Latest,
-      false,
-      /[jt]sx$/.test(file) ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
-    );
-    let direct = 0;
-    let nested = 0;
-    const propertyName = (name: ts.PropertyName): string | undefined =>
-      ts.isIdentifier(name) || ts.isStringLiteral(name) ? name.text : undefined;
-    const visit = (node: ts.Node) => {
-      if (
-        ts.isCallExpression(node) &&
-        ts.isPropertyAccessExpression(node.expression) &&
-        DIRECT_WRITER_METHODS.has(node.expression.name.text) &&
-        ts.isPropertyAccessExpression(node.expression.expression) &&
-        node.expression.expression.name.text === "bookingGuestNight"
-      ) {
-        direct += 1;
-      }
-      if (
-        ts.isPropertyAssignment(node) &&
-        propertyName(node.name) === "nights" &&
-        ts.isObjectLiteralExpression(node.initializer) &&
-        node.initializer.properties.some(
-          (entry) =>
-            ts.isPropertyAssignment(entry) && propertyName(entry.name) === "create",
-        )
-      ) {
-        nested += 1;
-      }
-      ts.forEachChild(node, visit);
-    };
-    visit(source);
-    if (direct > 0 || nested > 0) {
-      sites.set(relativeSource(file), { direct, nested });
+    const scan = scanSource(file, readFileSync(file, "utf8"));
+    if (
+      scan.direct > 0 ||
+      scan.nested > 0 ||
+      scan.aliasedDelegates > 0 ||
+      scan.rawSqlWrites > 0
+    ) {
+      sites.set(relativeSource(file), scan);
     }
   }
   return sites;
 }
 
+const DISCOVERED_WRITER_SITE_COUNTS = discoveredWriterSiteCounts();
+
 describe("INV-MONEY-028 BookingGuestNight writer census", () => {
   it("knows every direct and nested writer site, including repeats in one file", () => {
     expect(
-      [...discoveredWriterSiteCounts()].sort(([a], [b]) => a.localeCompare(b)),
+      [...DISCOVERED_WRITER_SITE_COUNTS]
+        .map(([file, { direct, nested }]) => [file, { direct, nested }] as const)
+        .sort(([a], [b]) => a.localeCompare(b)),
     ).toEqual(
       [...REQUIRED_WRITER_SITE_COUNTS].sort(([a], [b]) => a.localeCompare(b)),
     );
   });
 
+  it("rejects aliased delegates and runtime raw-SQL writes that evade the direct census", () => {
+    const unsupported = [...DISCOVERED_WRITER_SITE_COUNTS]
+      .filter(([, scan]) => scan.aliasedDelegates > 0 || scan.rawSqlWrites > 0)
+      .map(([file, { aliasedDelegates, rawSqlWrites }]) => ({
+        file,
+        aliasedDelegates,
+        rawSqlWrites,
+      }));
+    expect(
+      unsupported,
+      "INV-MONEY-028: BookingGuestNight writers must remain directly discoverable Prisma calls with reviewed provenance payloads.",
+    ).toEqual([]);
+  });
+
+  it("mutation-proves the alias and raw-SQL escape routes are rejected", () => {
+    expect(
+      scanSource(
+        "aliased-mutant.ts",
+        "const nights = tx.bookingGuestNight; await nights.create({ data: { priceCents: 1 } });",
+      ).aliasedDelegates,
+    ).toBe(1);
+    expect(
+      scanSource(
+        "forwarded-mutant.ts",
+        'await writeNights(tx["bookingGuestNight"]);',
+      ).aliasedDelegates,
+    ).toBe(1);
+    expect(
+      scanSource(
+        "destructured-mutant.ts",
+        "const { bookingGuestNight: nights } = tx; await nights.create({ data: { priceCents: 1 } });",
+      ).aliasedDelegates,
+    ).toBe(1);
+    expect(
+      scanSource(
+        "raw-sql-mutant.ts",
+        'await tx.$executeRawUnsafe(`INSERT INTO "BookingGuestNight" ("priceCents") VALUES (1)`);',
+      ).rawSqlWrites,
+    ).toBe(1);
+  });
+
   it("binds every discovered writer to its reviewed provenance payload", () => {
-    const discoveredWriters = new Set(discoveredWriterSiteCounts().keys());
+    const discoveredWriters = new Set(DISCOVERED_WRITER_SITE_COUNTS.keys());
     expect([...REQUIRED_WRITER_SHAPES.keys()].sort()).toEqual(
       [...discoveredWriters].sort(),
     );

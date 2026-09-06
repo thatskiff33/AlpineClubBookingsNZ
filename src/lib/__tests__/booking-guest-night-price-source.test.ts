@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import { requireCalendarDate } from "@/lib/club-time";
@@ -10,8 +13,23 @@ import {
 import { storedSoldPriceEvidenceForGuest } from "@/lib/stored-sold-price-evidence";
 
 const D = (value: string) => new Date(`${value}T00:00:00.000Z`);
+const provenanceMigrationSql = (migration: string) =>
+  readFileSync(join(process.cwd(), "prisma", "migrations", migration, "migration.sql"), "utf8");
 
 describe("BookingGuestNight price provenance", () => {
+  it("makes both provenance migrations atomic instead of relying on Prisma to wrap them", () => {
+    for (const migration of [
+      "20260911010000_add_booking_guest_night_price_source",
+      "20260911020000_backfill_booking_guest_night_price_source",
+    ]) {
+      const sql = provenanceMigrationSql(migration).trim();
+      expect(sql, migration).toMatch(/^BEGIN\s*;/);
+      expect(sql, migration).toMatch(/COMMIT\s*;$/);
+      expect(sql.match(/^BEGIN\s*;/g), migration).toHaveLength(1);
+      expect(sql.match(/COMMIT\s*;$/g), migration).toHaveLength(1);
+    }
+  });
+
   it("preserves the recorded source and marks a structurally new unknown night UNKNOWN", () => {
     const stored = new Map([
       [

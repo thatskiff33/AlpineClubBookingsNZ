@@ -1,3 +1,5 @@
+BEGIN;
+
 -- #3275 (stage 1 of programme #3272): classify only stored night prices
 -- whose provenance is proved by the writer that created or repaired them.
 -- This migration changes no priceCents value.
@@ -39,3 +41,5 @@ WHERE audit."action" IN (
   )
   AND audit."entityType" = 'BookingGuest'
   AND audit."outcome" = 'success';
+
+COMMIT;
