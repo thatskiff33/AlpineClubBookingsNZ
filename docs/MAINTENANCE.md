@@ -346,6 +346,32 @@ docker run --rm -v "$PWD:/src:ro" -v "$PWD/.semgrep-out:/out" -w /src \
 node scripts/ci/check-semgrep-coverage.mjs .semgrep-out/semgrep-results.json
 ```
 
+#### Both lists are living worklists, not a finished cleanup
+
+The unparsed allowlist and the suppression census are **populations that
+regrow**, and #2842 measured how fast. A single sync of `main` into the epic
+branch added **four** unparsed files and **one** dead `nosemgrep` annotation —
+in one merge, from one lane, written by people doing something else entirely.
+Nobody did anything wrong: `importOriginal<typeof import("...")>()` is the
+idiomatic partial mock and `path.resolve(process.cwd(), …)` in a test helper
+reads as exactly the thing that deserves an exemption comment.
+
+Two consequences worth holding on to.
+
+- **A one-time sweep cannot hold either population, so neither is "done".**
+  #2842 swept both, and both had regrown before the branch merged — the first
+  time with nobody noticing, which is why the count in this document was wrong
+  for a fortnight. The instruments are what hold the line now: the coverage
+  gate for the first list and `semgrep-suppression-census.test.ts` for the
+  second, and each caught its regrowth on the very first merge that produced
+  one, before any human read the diff.
+- **The recurrence is what [#3318](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3318)
+  is for.** An ESLint rule banning the unparseable shape at the source removes
+  the first list's growth entirely rather than catching it after the fact,
+  which is the structural fix `INV-SSOT-001` prefers over a policed one. Until
+  that lands, expect to rewrite a handful of files after each `main` sync, and
+  prefer the parsing form when you write a new partial mock.
+
 ### Break-glass: a new CRITICAL image finding with no code change
 
 Trivy scans the built image against a vulnerability database that moves on its
