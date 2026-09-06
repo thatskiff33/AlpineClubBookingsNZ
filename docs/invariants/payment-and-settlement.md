@@ -1743,6 +1743,23 @@ one, check the other.
 - **This removes the duplicate instrument. It does not write off the debt.** The
   unpaid invoice still stands and is collected the ordinary way; what goes away
   is the second way to pay it. Nobody may read the cancel as a forgiveness.
+- **It withdraws the ask only when there IS a duplicate, and one shape means
+  there is not.** The replay attaches this change's supplementary invoice
+  operation to the intent it mints, parked `WAITING_PAYMENT`, and can then throw
+  while raising the deferred invoice — so a dead recovery can arrive here with a
+  live ask AND a live outbox row pointing at it. That row is released by a
+  confirmed payment on that intent and by nothing else, and while it stands the
+  repair pass reports `BLOCKED_BY_XERO_OPERATION` and raises **no** invoice. So
+  there is no second instrument to remove, and cancelling would take away the
+  only live route to the money while stranding the row until the fourteen-day
+  reaper retires it — the same harm the review-charge replay refuses to create on
+  its already-paid branch, read from the other end. The withdrawal therefore
+  checks for a `WAITING_PAYMENT` supplementary operation **on that exact intent**
+  first and leaves the ask alone when it finds one, logging why. **What is left
+  standing in that case is stated, not guaranteed away**: the member may still
+  pay the ask, which is the clean ending; if they never do, the fourteen-day
+  reaper retires the outbox row and the repair pass then raises the invoice the
+  ordinary way.
 - **Idempotent by construction, not by care.**
   `cancelPaymentIntentIfCancellableWithResult` reads the intent before it acts
   and makes **no provider call at all** unless the status is one it can cancel,

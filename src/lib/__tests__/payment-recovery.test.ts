@@ -32,6 +32,7 @@ const {
   mockUpsertPaymentIntentTransaction,
   mockQueueSupersededAdditionalIntentCancellations,
   mockAttachIntentToWaitingOps,
+  mockFindWaitingSupplementaryOpForIntent,
   mockExecuteGroupSettlementRefundPlan,
   mockRecordDuplicateCaptureRefundEvent,
   mockSyncEditFinancialReviewChargeRequest,
@@ -75,6 +76,10 @@ const {
     .fn()
     .mockResolvedValue([]),
   mockAttachIntentToWaitingOps: vi.fn().mockResolvedValue({ attached: 0 }),
+  // #3220 fix round: the withdrawal's one exception. Null is "nothing is
+  // waiting on this ask", which is the shape every other test in this file
+  // exercises.
+  mockFindWaitingSupplementaryOpForIntent: vi.fn().mockResolvedValue(null),
   mockExecuteGroupSettlementRefundPlan: vi
     .fn()
     .mockResolvedValue({ outcome: "refunded", mirroredChildren: 1 }),
@@ -166,6 +171,9 @@ vi.mock("@/lib/xero-operation-outbox", () => ({
   attachPaymentIntentToWaitingSupplementaryInvoiceOperations: (
     ...args: unknown[]
   ) => mockAttachIntentToWaitingOps(...args),
+  findWaitingSupplementaryInvoiceOperationForPaymentIntent: (
+    ...args: unknown[]
+  ) => mockFindWaitingSupplementaryOpForIntent(...args),
 }));
 
 /**
@@ -3281,6 +3289,10 @@ describe("#3220 - the terminal transition withdraws a stranded ask", () => {
       new Error("Stripe is unavailable"),
     );
     mockFindEditReviewChargeRequest.mockResolvedValue(liveAsk());
+    // `clearAllMocks` clears calls, not implementations, so the one test that
+    // parks a waiting operation on the ask has to be undone here or every test
+    // after it silently exercises the exception instead of the rule.
+    mockFindWaitingSupplementaryOpForIntent.mockResolvedValue(null);
     mockCancelPaymentIntentIfCancellableWithResult.mockResolvedValue({
       canceled: true,
       paymentIntent: { id: "pi_stranded_ask", status: "canceled" },
@@ -3422,6 +3434,59 @@ describe("#3220 - the terminal transition withdraws a stranded ask", () => {
     expect(result.failed).toBe(2);
   });
 
+  /**
+   * #3220 fix round: THE ONE ASK THE WITHDRAWAL LEAVES STANDING.
+   *
+   * The replay attaches this change's supplementary invoice operation to the
+   * intent it mints, parked `WAITING_PAYMENT`, and can then throw while raising
+   * the deferred invoice - so a dead recovery can arrive at the withdrawal with
+   * a live ask AND a live outbox row pointing at it. That row is released by a
+   * confirmed payment on that very intent and by nothing else, and while it
+   * stands the repair pass raises NO invoice. There is therefore no second
+   * instrument, and cancelling would remove the only live route to the money
+   * while stranding the row until the fourteen-day reaper.
+   */
+  it("leaves the ask alone when this change's invoice is still waiting on it", async () => {
+    mockFindWaitingSupplementaryOpForIntent.mockResolvedValue({
+      id: "xero-op-waiting",
+    });
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    // The recovery still dies. The exception is about the ASK, never about the
+    // status write - holding a row out of FAILED would re-block the repair tool
+    // for ever, which is the #3202 control.
+    expect(result.failed).toBe(1);
+    expect(markedTerminallyFailed()).toBe(true);
+
+    expect(mockFindWaitingSupplementaryOpForIntent).toHaveBeenCalledWith({
+      bookingModificationId: MOD,
+      paymentIntentId: "pi_stranded_ask",
+    });
+    expect(
+      mockCancelPaymentIntentIfCancellableWithResult,
+    ).not.toHaveBeenCalled();
+    // Nothing went wrong, so no officer is asked to chase a non-problem.
+    expect(mockCreateAuditLog).not.toHaveBeenCalled();
+  });
+
+  it("still withdraws the ask when the waiting invoice is on a DIFFERENT intent", async () => {
+    // The exception is scoped to the ask being withdrawn, not to the booking
+    // change: an operation waiting on some other intent is not this ask's
+    // blocker, and reading it as one would leave a genuine duplicate standing.
+    // The read is what decides that, so this pins the caller passing the intent
+    // id at all rather than only the modification.
+    mockFindWaitingSupplementaryOpForIntent.mockResolvedValue(null);
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result.failed).toBe(1);
+    expect(mockCancelPaymentIntentIfCancellableWithResult).toHaveBeenCalledWith(
+      "pi_stranded_ask",
+      { cancellationReason: "abandoned" },
+    );
+  });
+
   it("is idempotent on replay: an already-cancelled ask makes no second cancel", async () => {
     /**
      * Idempotency here is STRUCTURAL rather than defensive.
@@ -3487,4 +3552,5 @@ describe("#3220 - the stale-worker reaper cannot kill a re-claimed attempt", () 
       }),
     );
   });
+
 });

@@ -41,6 +41,15 @@
   or refunded by this. Nothing is written off either: the money is still owed
   and the invoice still stands - what goes away is the second way to pay it.
 
+  There is one case where the request is deliberately left live: when the Xero
+  invoice for that same change is itself still queued and waiting for that exact
+  payment. Nothing has been invoiced in that situation, so there is no second
+  way to pay anything - and withdrawing the request would remove the only live
+  way to collect the money while leaving the queued invoice waiting for a
+  payment that can never come. The member can still pay it, which is the tidy
+  ending; if nobody does, the queued invoice is retired after fourteen days and
+  the booking-versus-Xero repair tool raises the invoice the ordinary way.
+
   If the card provider refuses to withdraw the request - it will not cancel one
   it is already processing - that is now recorded in the audit log against the
   booking, with what an officer needs to do about it, instead of being left for

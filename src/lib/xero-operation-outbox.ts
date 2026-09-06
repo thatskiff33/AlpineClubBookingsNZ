@@ -1827,6 +1827,68 @@ export async function restatePendingSupplementaryInvoiceAmount({
  * `bookingModificationId` in its payload, so it never matched this filter
  * anyway. `INV-SSOT` - unrepresentable beats policed.
  */
+function waitingSupplementaryInvoiceOperationsWhere(
+  bookingModificationId: string,
+): Prisma.XeroSyncOperationWhereInput {
+  return {
+    status: "WAITING_PAYMENT",
+    direction: "OUTBOUND",
+    entityType: "INVOICE",
+    operationType: "CREATE",
+    localModel: "BookingModification",
+    requestPayload: {
+      path: ["bookingModificationId"],
+      equals: bookingModificationId,
+    },
+  };
+}
+
+/** The operation's payload as an object, or `null` if it is not one. */
+function supplementaryInvoicePayload(
+  requestPayload: Prisma.JsonValue | null,
+): Record<string, unknown> | null {
+  return requestPayload &&
+    typeof requestPayload === "object" &&
+    !Array.isArray(requestPayload)
+    ? (requestPayload as Record<string, unknown>)
+    : null;
+}
+
+/**
+ * IS THIS BOOKING CHANGE'S INVOICE STILL WAITING ON THIS EXACT ASK? (#3220 fix
+ * round.)
+ *
+ * The read behind `INV-PAY-053`'s one exception. A supplementary invoice parked
+ * `WAITING_PAYMENT` on a PaymentIntent is released by a CONFIRMED payment on
+ * that intent and by nothing else, and while it sits there the booking-vs-Xero
+ * repair pass reports the change as `BLOCKED_BY_XERO_OPERATION` rather than
+ * raising the invoice - so cancelling the intent underneath it would strand the
+ * row and leave the change with no invoice at all until the fourteen-day reaper
+ * retires it. The intent id is matched too, not just the change: an operation
+ * waiting on a DIFFERENT intent is not this ask's blocker.
+ */
+export async function findWaitingSupplementaryInvoiceOperationForPaymentIntent({
+  bookingModificationId,
+  paymentIntentId,
+}: {
+  bookingModificationId: string;
+  paymentIntentId: string;
+}): Promise<{ id: string } | null> {
+  const waitingOperations = await prisma.xeroSyncOperation.findMany({
+    where: waitingSupplementaryInvoiceOperationsWhere(bookingModificationId),
+    select: { id: true, requestPayload: true },
+  });
+
+  for (const operation of waitingOperations) {
+    const payload = supplementaryInvoicePayload(operation.requestPayload);
+    if (payload?.paymentIntentId === paymentIntentId) {
+      return { id: operation.id };
+    }
+  }
+
+  return null;
+}
+
 export async function attachPaymentIntentToWaitingSupplementaryInvoiceOperations({
   bookingModificationId,
   paymentIntentId,
@@ -1835,28 +1897,13 @@ export async function attachPaymentIntentToWaitingSupplementaryInvoiceOperations
   paymentIntentId: string;
 }): Promise<{ attached: number }> {
   const waitingOperations = await prisma.xeroSyncOperation.findMany({
-    where: {
-      status: "WAITING_PAYMENT",
-      direction: "OUTBOUND",
-      entityType: "INVOICE",
-      operationType: "CREATE",
-      localModel: "BookingModification",
-      requestPayload: {
-        path: ["bookingModificationId"],
-        equals: bookingModificationId,
-      },
-    },
+    where: waitingSupplementaryInvoiceOperationsWhere(bookingModificationId),
     select: { id: true, requestPayload: true },
   });
 
   let attached = 0;
   for (const operation of waitingOperations) {
-    const payload =
-      operation.requestPayload &&
-      typeof operation.requestPayload === "object" &&
-      !Array.isArray(operation.requestPayload)
-        ? (operation.requestPayload as Record<string, unknown>)
-        : null;
+    const payload = supplementaryInvoicePayload(operation.requestPayload);
     if (!payload || payload.paymentIntentId) {
       continue;
     }

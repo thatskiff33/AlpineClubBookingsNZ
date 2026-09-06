@@ -26,6 +26,7 @@ import {
 } from "@/lib/payment-transactions";
 import {
   attachPaymentIntentToWaitingSupplementaryInvoiceOperations,
+  findWaitingSupplementaryInvoiceOperationForPaymentIntent,
   // Type-only, so it adds nothing to this module's runtime import graph.
   type XeroSupplementaryInvoiceEnqueueOutcome,
 } from "@/lib/xero-operation-outbox";
@@ -1244,6 +1245,14 @@ async function markPaymentRecoveryOperationFailed({
  * unpaid invoice still stands and is collected the ordinary way; what goes away
  * is the second way to pay it.
  *
+ * AND IT ONLY REMOVES A DUPLICATE WHEN THERE IS ONE (#3220 fix round). The same
+ * replay path that leaves an ask standing can also have ATTACHED this change's
+ * supplementary invoice operation to it, parked `WAITING_PAYMENT`. That row
+ * blocks the repair pass from raising the invoice at all, so nothing is
+ * duplicated - and cancelling the intent underneath it would take away the only
+ * live route to the money and strand the row until the fourteen-day reaper. So
+ * the withdrawal steps around that one case, in the branch below.
+ *
  * IDEMPOTENT BY CONSTRUCTION, NOT BY CARE. `cancelPaymentIntentIfCancellable-
  * WithResult` reads the intent first and returns `canceled: false` WITHOUT
  * calling Stripe unless the status is one it can cancel. A replay therefore sees
@@ -1331,6 +1340,45 @@ async function cancelStrandedAdditionalIntentForDeadRecovery(
           paymentIntentId: request.stripePaymentIntentId,
         },
         "Dead additional-payment recovery left its ask alone: the member has already paid it"
+      );
+      return;
+    }
+
+    /**
+     * THE ONE ASK THIS WITHDRAWAL LEAVES ALONE (#3220 fix round).
+     *
+     * A supplementary invoice parked `WAITING_PAYMENT` on this very intent is
+     * released by a CONFIRMED payment on it and by nothing else. While it sits
+     * there the repair pass reports the change as `BLOCKED_BY_XERO_OPERATION`
+     * and does NOT raise the invoice - so the premise of this whole function is
+     * absent: there is no unpaid invoice, and therefore no second instrument to
+     * remove. Cancelling anyway would destroy the only live route to collecting
+     * the debt AND strand the outbox row, leaving the change with no invoice at
+     * all until the fourteen-day reaper retires it, while the operator's signal
+     * says the club is waiting for a payment that can never arrive. That is
+     * verbatim the harm the already-paid branch of the review-charge replay
+     * refuses to create, and this is the same rule read from the other end.
+     *
+     * The window is real rather than theoretical: the replay attaches the
+     * waiting operation to the intent it just minted and can then throw while
+     * raising the deferred invoice, so every remaining attempt finds the ask
+     * standing and the last one arrives here.
+     */
+    const blockingWaitingOperation =
+      await findWaitingSupplementaryInvoiceOperationForPaymentIntent({
+        bookingModificationId,
+        paymentIntentId: request.stripePaymentIntentId,
+      });
+    if (blockingWaitingOperation) {
+      logger.info(
+        {
+          operationId: operation.id,
+          bookingId: operation.bookingId,
+          bookingModificationId,
+          paymentIntentId: request.stripePaymentIntentId,
+          xeroOperationId: blockingWaitingOperation.id,
+        },
+        "Dead additional-payment recovery left its ask alone: this booking change's supplementary invoice is still waiting on that very payment, so no invoice has been raised against it"
       );
       return;
     }
