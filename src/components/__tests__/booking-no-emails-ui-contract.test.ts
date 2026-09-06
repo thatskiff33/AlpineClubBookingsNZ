@@ -205,16 +205,53 @@ function sourceFiles(dir = SRC, out: string[] = []): string[] {
   return out;
 }
 
+
+/**
+ * The booking-detail route directory, parsed: the page shell plus every
+ * production `.ts`/`.tsx` under its `_lib/` and `_components/` (#2958).
+ */
+function routeAsts(): ts.SourceFile[] {
+  const dir = join(BOOKING_PAGE, "..");
+  const files: string[] = [];
+  const walk = (d: string) => {
+    for (const entry of readdirSync(d, { withFileTypes: true })) {
+      const full = join(d, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name !== "__tests__") walk(full);
+      } else if (/\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name)) {
+        files.push(full);
+      }
+    }
+  };
+  walk(dir);
+  return files.sort().map((file) => parse(file));
+}
+
 describe("No emails UI is admin-only (#2259)", () => {
-  const ast = parse(BOOKING_PAGE);
+  /*
+    #2958 split the page into a shell plus route-local `_lib/` (server reads and
+    projections) and `_components/` (render sections). The switch's state is
+    produced in `_lib/booking-detail-admin-tools.ts`, the banner and the tools
+    card render in `_components/booking-admin-tools-section.tsx`, and the
+    member-safe spreads sit on the cancel button and the edit-panel payload in
+    two more of them. The surface this suite polices is therefore the whole
+    route directory, parsed file by file; every assertion below runs over all
+    of them and names the file it found a node in.
+  */
+  const asts = routeAsts();
+  const where = (ast: ts.SourceFile, node: ts.Node) =>
+    `${ast.fileName.split(/[\\/]/).pop()}:${lineOf(ast, node)}`;
+  const gatedByAdmin = (ast: ts.SourceFile, node: ts.Node) =>
+    guardTexts(ast, node).some((guard) =>
+      ADMIN_GATES.some((gate) => gate.test(guard)),
+    );
 
   it("finds the surface it is meant to police", () => {
     // Guards against a tree move making every assertion below vacuous.
-    expect(
-      ast.getFullText().length,
-      "booking detail page not found or empty",
-    ).toBeGreaterThan(1000);
-    expect(ast.getFullText()).toContain("BookingWithheldEmailsBanner");
+    expect(asts.length, "route directory not found or empty").toBeGreaterThan(10);
+    const text = asts.map((ast) => ast.getFullText()).join("\n");
+    expect(text.length, "booking detail surface not found or empty").toBeGreaterThan(1000);
+    expect(text).toContain("BookingWithheldEmailsBanner");
   });
 
   it("proves the indirection it accepts as a gate", () => {
@@ -226,15 +263,18 @@ describe("No emails UI is admin-only (#2259)", () => {
       declaration is checked here, once, and the indirection is earned rather
       than assumed.
     */
-    const declarations: ts.VariableDeclaration[] = [];
-    eachNode(ast, (node) => {
-      if (!ts.isVariableDeclaration(node)) return;
-      if (node.name.getText(ast) !== "noEmailsState") return;
-      declarations.push(node);
-    });
+    const declarations: Array<{ ast: ts.SourceFile; node: ts.VariableDeclaration }> = [];
+    for (const ast of asts) {
+      eachNode(ast, (node) => {
+        if (!ts.isVariableDeclaration(node)) return;
+        if (node.name.getText(ast) !== "noEmailsState") return;
+        declarations.push({ ast, node });
+      });
+    }
     expect(declarations, "noEmailsState is not declared here").toHaveLength(1);
 
-    const initializer = declarations[0].initializer?.getText(ast) ?? "";
+    const { ast, node } = declarations[0];
+    const initializer = node.initializer?.getText(ast) ?? "";
     expect(
       /\bcanSeeAdminTools\b/.test(initializer),
       `noEmailsState is treated as an admin gate throughout this suite. Its ` +
@@ -246,17 +286,14 @@ describe("No emails UI is admin-only (#2259)", () => {
   });
 
   it("renders the withheld-emails banner only behind the admin gate", () => {
-    const sites = jsxTagsNamed(ast, "BookingWithheldEmailsBanner");
+    const sites = asts.flatMap((ast) =>
+      jsxTagsNamed(ast, "BookingWithheldEmailsBanner").map((site) => ({ ast, site })),
+    );
     expect(sites.length, "the banner is never rendered").toBeGreaterThan(0);
 
     const offenders = sites
-      .filter(
-        (site) =>
-          !guardTexts(ast, site).some((guard) =>
-            ADMIN_GATES.some((gate) => gate.test(guard)),
-          ),
-      )
-      .map((site) => `page.tsx:${lineOf(ast, site)}`);
+      .filter(({ ast, site }) => !gatedByAdmin(ast, site))
+      .map(({ ast, site }) => where(ast, site));
 
     expect(
       offenders,
@@ -270,16 +307,13 @@ describe("No emails UI is admin-only (#2259)", () => {
   it("renders the switch itself only behind the admin gate", () => {
     // The control lives inside AdminBookingToolsCard, which is itself gated;
     // the state it needs is produced here, so the production is what is checked.
-    const sites = jsxTagsNamed(ast, "AdminBookingToolsCard");
+    const sites = asts.flatMap((ast) =>
+      jsxTagsNamed(ast, "AdminBookingToolsCard").map((site) => ({ ast, site })),
+    );
     expect(sites.length).toBeGreaterThan(0);
     const offenders = sites
-      .filter(
-        (site) =>
-          !guardTexts(ast, site).some((guard) =>
-            ADMIN_GATES.some((gate) => gate.test(guard)),
-          ),
-      )
-      .map((site) => `page.tsx:${lineOf(ast, site)}`);
+      .filter(({ ast, site }) => !gatedByAdmin(ast, site))
+      .map(({ ast, site }) => where(ast, site));
     expect(offenders).toEqual([]);
   });
 
@@ -313,58 +347,57 @@ describe("No emails UI is admin-only (#2259)", () => {
       and the booking-editor data are rendered for EVERY viewer, so their keys
       shipped to members. Those must use the conditional spread.
     */
-    eachNode(ast, (node) => {
-      if (!isJsxTag(node)) return;
-      const renderGated = guardTexts(ast, node).some((guard) =>
-        ADMIN_GATES.some((gate) => gate.test(guard)),
-      );
-      if (renderGated) return;
-      for (const prop of node.attributes.properties) {
-        if (!ts.isJsxAttribute(prop)) continue;
-        if (prop.name.getText(ast) !== "noEmails") continue;
-        offenders.push(
-          `page.tsx:${lineOf(ast, prop)} <${node.tagName.getText(ast)} noEmails=…> ` +
-            `is rendered for members too — use a conditional spread so their ` +
-            `payload has no such key`,
-        );
-      }
-    });
+    for (const ast of asts) {
+      eachNode(ast, (node) => {
+        if (!isJsxTag(node)) return;
+        if (gatedByAdmin(ast, node)) return;
+        for (const prop of node.attributes.properties) {
+          if (!ts.isJsxAttribute(prop)) continue;
+          if (prop.name.getText(ast) !== "noEmails") continue;
+          offenders.push(
+            `${where(ast, prop)} <${node.tagName.getText(ast)} noEmails=…> ` +
+              `is rendered for members too — use a conditional spread so their ` +
+              `payload has no such key`,
+          );
+        }
+      });
+    }
 
     // The same rule for object literals: a bare `noEmails:` property is only
     // safe inside an object that does not exist for a member at all.
     let propertiesSeen = 0;
-    eachNode(ast, (node) => {
-      if (!ts.isPropertyAssignment(node)) return;
-      if (node.name.getText(ast) !== "noEmails") return;
-      propertiesSeen += 1;
-      // Inside an admin-gated conditional (e.g. the `noEmailsState` literal),
-      // the whole object is absent for a member, so the key cannot leak.
-      const inGatedObject = guardTexts(ast, node).some((guard) =>
-        ADMIN_GATES.some((gate) => gate.test(guard)),
-      );
-      // …or inside a conditional spread, whose parent is the `? :` that
-      // chooses between `{ noEmails: … }` and `{}`.
-      const inConditionalSpread = (() => {
-        let cur: ts.Node = node;
-        while (cur.parent) {
-          if (ts.isSpreadAssignment(cur.parent)) return true;
-          if (
-            ts.isConditionalExpression(cur.parent) &&
-            ts.isSpreadAssignment(cur.parent.parent ?? cur.parent)
-          ) {
-            return true;
+    for (const ast of asts) {
+      eachNode(ast, (node) => {
+        if (!ts.isPropertyAssignment(node)) return;
+        if (node.name.getText(ast) !== "noEmails") return;
+        propertiesSeen += 1;
+        // Inside an admin-gated conditional (e.g. the `noEmailsState` literal),
+        // the whole object is absent for a member, so the key cannot leak.
+        const inGatedObject = gatedByAdmin(ast, node);
+        // …or inside a conditional spread, whose parent is the `? :` that
+        // chooses between `{ noEmails: … }` and `{}`.
+        const inConditionalSpread = (() => {
+          let cur: ts.Node = node;
+          while (cur.parent) {
+            if (ts.isSpreadAssignment(cur.parent)) return true;
+            if (
+              ts.isConditionalExpression(cur.parent) &&
+              ts.isSpreadAssignment(cur.parent.parent ?? cur.parent)
+            ) {
+              return true;
+            }
+            cur = cur.parent;
           }
-          cur = cur.parent;
+          return false;
+        })();
+        if (!inGatedObject && !inConditionalSpread) {
+          offenders.push(
+            `${where(ast, node)} noEmails: ${node.initializer.getText(ast)} ` +
+              `— ships the key to a member; use a conditional spread`,
+          );
         }
-        return false;
-      })();
-      if (!inGatedObject && !inConditionalSpread) {
-        offenders.push(
-          `page.tsx:${lineOf(ast, node)} noEmails: ${node.initializer.getText(ast)} ` +
-            `— ships the key to a member; use a conditional spread`,
-        );
-      }
-    });
+      });
+    }
 
     expect(
       propertiesSeen,
@@ -381,44 +414,43 @@ describe("No emails UI is admin-only (#2259)", () => {
   it("proves the sanctioned spread form is actually in use", () => {
     // Guards the rule above against becoming vacuous by deletion: if the
     // spreads disappeared, the "no bare key" checks would pass trivially.
-    const spreads: ts.Node[] = [];
-    eachNode(ast, (node) => {
-      if (!ts.isSpreadAssignment(node) && !ts.isJsxSpreadAttribute(node)) return;
-      if (!/noEmails/.test(node.getText(ast))) return;
-      spreads.push(node);
-    });
+    const spreads: Array<{ ast: ts.SourceFile; node: ts.Node }> = [];
+    for (const ast of asts) {
+      eachNode(ast, (node) => {
+        if (!ts.isSpreadAssignment(node) && !ts.isJsxSpreadAttribute(node)) return;
+        if (!/noEmails/.test(node.getText(ast))) return;
+        spreads.push({ ast, node });
+      });
+    }
     expect(
       spreads.length,
       "the member-safe conditional-spread form is no longer used anywhere",
     ).toBeGreaterThanOrEqual(2);
-    for (const spread of spreads) {
+    for (const { ast, node } of spreads) {
       expect(
-        ADMIN_GATES.some((gate) => gate.test(spread.getText(ast))),
-        `page.tsx:${lineOf(ast, spread)} spreads noEmails without an admin gate`,
+        ADMIN_GATES.some((gate) => gate.test(node.getText(ast))),
+        `${where(ast, node)} spreads noEmails without an admin gate`,
       ).toBe(true);
     }
   });
 
   it("does not even query the withheld list for a member", () => {
-    const calls: ts.CallExpression[] = [];
-    eachNode(ast, (node) => {
-      if (
-        ts.isCallExpression(node) &&
-        node.expression.getText(ast) === "getWithheldBookingEmailSummary"
-      ) {
-        calls.push(node);
-      }
-    });
+    const calls: Array<{ ast: ts.SourceFile; node: ts.CallExpression }> = [];
+    for (const ast of asts) {
+      eachNode(ast, (node) => {
+        if (
+          ts.isCallExpression(node) &&
+          node.expression.getText(ast) === "getWithheldBookingEmailSummary"
+        ) {
+          calls.push({ ast, node });
+        }
+      });
+    }
     expect(calls.length, "the withheld list is never read").toBeGreaterThan(0);
 
     const offenders = calls
-      .filter(
-        (call) =>
-          !guardTexts(ast, call).some((guard) =>
-            ADMIN_GATES.some((gate) => gate.test(guard)),
-          ),
-      )
-      .map((call) => `page.tsx:${lineOf(ast, call)}`);
+      .filter(({ ast, node }) => !gatedByAdmin(ast, node))
+      .map(({ ast, node }) => where(ast, node));
 
     expect(
       offenders,
