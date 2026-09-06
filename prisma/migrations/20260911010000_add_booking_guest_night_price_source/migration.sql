@@ -1,3 +1,5 @@
+BEGIN;
+
 -- #3275 (stage 1 of programme #3272): record where each stored night price
 -- came from. This migration changes no priceCents value.
 --
@@ -101,3 +103,5 @@ CREATE TRIGGER "AuditLog_set_booking_guest_night_officer_price_source"
 AFTER INSERT ON "AuditLog"
 FOR EACH ROW
 EXECUTE FUNCTION "setBookingGuestNightOfficerPriceSourceFromAudit"();
+
+COMMIT;
