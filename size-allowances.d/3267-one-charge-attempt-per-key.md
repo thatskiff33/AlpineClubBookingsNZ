@@ -10,7 +10,7 @@ contract, and the calls have to sit inside the claim transaction, the release
 transaction or the reconcile those files already own.
 
 file: src/lib/cron-confirm-pending.ts
-lines: 1977
+lines: 1982
 reason: the one call inside the claim transaction that mints the attempt row
   under both locks, the SavedCardChargeRefusedError branch of the per-booking
   catch, the #1992 sweep exclusion moving from two reason literals to the shared
@@ -27,7 +27,11 @@ reason: the one call inside the claim transaction that mints the attempt row
   charge-due-date helper the refusal cadence and the soft-decline window count
   both anchor on, and splits the release fence's signal so a claim lost to
   anyone but the settling webhook is an error and a failed booking rather than
-  a warning.
+  a warning. The third fix round adds five comment lines to the #1992 sweep
+  saying why a legacy shared-key row on a card the member has since replaced
+  needs no exclusion clause of its own: the claim has already ended it, so the
+  sweep's status filter drops it, and its intent belongs to the charge step,
+  which retrieves rather than cancels blind.
 
 file: src/app/api/admin/bookings/[id]/confirm-pending-guests/route.ts
 lines: 910
