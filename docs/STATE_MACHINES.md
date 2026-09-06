@@ -2438,12 +2438,14 @@ links are hard-deleted (audit log keeps history), so the pair can re-form.
 
 ```text
 member requests partner by email (registered login adult) -> PENDING + email to target
+member requests direct parent/dependant as partner -> generic 201/no link for by-email; specific 422 for authorised member-id/admin paths
 target confirms from profile -> CONFIRMED (one-confirmed-partner invariant re-checked under advisory lock; other PENDING requests involving either member pruned)
+target confirms after direct parentage appeared -> 409, request remains PENDING, no success audit/email
 target declines -> row hard-deleted (no email), initiator may re-request
 initiator withdraws own PENDING -> row hard-deleted
 the adult recorded as having confirmed a NO-LOGIN adult co-member's details declares them -> CONFIRMED in one step (no consent round-trip; "one login manages the family"). Gated on Member.detailsConfirmedByMemberId naming the initiator AND the pair still sharing a family group (#2284 re-anchored this off the FamilyGroupMember.role ADMIN value, which #2520 then dropped from the database outright — there is no rank on a family membership to re-anchor onto); the voucher pointer is self-assignable by any adult login co-member, so this is an equal-adults gate, not a group-lead privilege
 admin assigns directly (admin member-detail card) -> CONFIRMED immediately, assignedByAdminId recorded; an existing PENDING for the pair is promoted; both members emailed unless the admin chose not to notify (#1769a)
-unregistered partner claims a createPartnerLink invite token -> CONFIRMED inside the claim transaction (claim = consent)
+unregistered partner claims a createPartnerLink invite token -> CONFIRMED inside the claim transaction (claim = consent); direct-parent conflict -> family join still succeeds, partnerLinkFormed false, direct_parent_relationship skip audited
 either CONFIRMED partner removes the link -> row hard-deleted, other partner emailed
 admin removes any link -> row hard-deleted, both partners emailed when it was CONFIRMED unless the admin chose not to notify (#1769a); a PENDING removal emails no one
 CONFIRMED link deleted (either dissolve path) -> pair's FUTURE shared double-bed second-occupant allocations swept back to the awaiting-allocation queue in the same transaction (#1756; both bookings audited, admins alerted post-commit)
@@ -2453,7 +2455,8 @@ CONFIRMED link DROPPED by a member merge (the master already had its one confirm
 
 To verify: canonical pair ordering (`memberAId < memberBId` CHECK), the
 one-CONFIRMED-partner-per-member invariant (advisory locks + partial unique
-indexes), ADULT-only + no-self-partner guards, pending pruning on confirm,
+indexes), ADULT-only + no-self-partner guards, direct-parent exclusion through
+both parent columns and both partner statuses in either write order, pending pruning on confirm,
 one outstanding outgoing request per member, the memberId-target
 shared-family-group guard on the member API, and the stale-share sweep
 invariant (#1756, extended to merge by #2595): no future `isSecondOccupant`
@@ -2783,7 +2786,7 @@ member creates group -> memberless FamilyGroup + PENDING GROUP_CREATE (+ bundled
 create-group names an unregistered partner email -> single-use PartnerInviteToken minted + emailed (see Partner Invite Token Lifecycle) instead of an invitedMemberId
 create-group marks the named partner as a declared partner (#1742) -> registered partner gets a PENDING MemberPartnerLink request; unregistered partner's token carries createPartnerLink (see Partner Link Lifecycle)
 dependent inherits email or has explicit email inheritance source
-parent link requested -> parent is active + not archived + not an organisation account (ANY age tier) -> ancestors(parent) + 1 + descendants(child) <= 3 links -> linked | 422 (parent inactive/archived/organisation) | 422 (four-generation cap) | 422 (would close a family loop)
+parent link requested -> parent is active + not archived + not an organisation account (ANY age tier) -> ancestors(parent) + 1 + descendants(child) <= 3 links -> linked | 422 (parent inactive/archived/organisation) | 422 (four-generation cap) | 422 (would close a family loop) | 422 (PENDING or CONFIRMED direct partner pair)
 dependent inherits email -> the chosen parent themselves, if adult + not archived + not cancelled + real address + not themselves inheriting -> record that parent as the CHOICE and derive the effective pointer from it | 422 (that parent cannot receive club mail). One hop only since #2716: no walk, and no fallback to a grandparent.
 family removal/cancellation/delete -> relationship cleanup while preserving history
 cancellation approved for a middle generation -> its dependants' links cleared, NOT re-parented -> detached members named in the response and the audit log
@@ -2812,8 +2815,10 @@ writers that enforce it, and the direct-parent-only email inheritance that goes
 with it (`INV-LIFE-047`).
 
 To verify: non-login adult confirmation, dependent age-up behavior, inherited
-email changes, the four-generation cap and its cycle guard at depth, and Xero
-contact synchronization.
+email changes, the four-generation cap and its cycle guard at depth, direct-
+partner exclusion through both parent columns and both partner statuses, blocked
+request/application recovery without partial membership or notification side
+effects, and Xero contact synchronization.
 
 ## Email Retry Lifecycle
 
