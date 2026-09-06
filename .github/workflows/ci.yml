@@ -594,6 +594,17 @@ jobs:
         env:
           NODE_OPTIONS: --max-old-space-size=8192
 
+      # #2799 (programme #2694): the noUncheckedIndexedAccess migration ratchet.
+      # Re-runs tsc over tsconfig.json with that one flag forced on and fails if
+      # a diagnostic appears that scripts/ci/noUncheckedIndexedAccess.baseline.txt
+      # does not hold — or if the baseline holds one the compiler no longer
+      # produces, so the file can only shrink. Sits directly after `Typecheck`
+      # because it attributes every diagnostic to the flag only while the plain
+      # project is green. The script sets tsc's heap itself. Stage #2802 turns
+      # the flag on in tsconfig.json and removes this step with the baseline.
+      - name: noUncheckedIndexedAccess ratchet
+        run: npm run typecheck:nuia
+
       # Blocking dead-code gate: fails the PR if any unused file, export, or
       # dependency is introduced. Config and carve-outs live in knip.jsonc.
       # Inherits the job-level DATABASE_URL so prisma.config.ts resolves.
