@@ -209,6 +209,12 @@ Prefix `INV-PAY`.
 | `INV-PAY-049` | Both directions are audited with the acting admin and the previous status |
 | `INV-PAY-050` | Xero Stripe refund notes cover provider-backed cash evidence, never the refunded-amount mirror |
 | `INV-PAY-051` | An unpriceable booking edit holds the money as one typed occurrence-keyed review task, never a guessed or zero amount |
+| `INV-PAY-052` | A replacement SetupIntent retires the previous card; a retired card is never re-adopted from a stale SetupIntent |
+| `INV-PAY-053` | A saved card is charged off-session only with SetupIntent provenance, decided in one place; no charge claim writes the card column, and the card a capture records never reads as reusable |
+| `INV-PAY-054` | An unusable saved card is terminal for the cron: retired everywhere, escalated once |
+| `INV-PAY-055` | A saved-card charge attempt is one durable ledger row with its own Stripe key; an unresolved attempt is replayed, a definite failure ends it, and the never-double-charge guard lives on the ledger under the claim's locks |
+| `INV-PAY-056` | A payment recovery becomes terminally failed in exactly one place, and that place owns what a dead recovery costs |
+| `INV-PAY-057` | A dead additional-payment recovery withdraws the ask it left standing, so nothing can be paid against an invoice raised unpaid |
 | `INV-PAY-002` | Account credit is consumed only at `PAYMENT_PENDING`; a draft stores an election and spends nothing |
 | `INV-PAY-003` | The edit path may write an election only onto DRAFT, AWAITING_REVIEW and PAYMENT_PENDING |
 | `INV-PAY-004` | Members may edit their own drafts; a draft edit moves no money and claims no capacity |
