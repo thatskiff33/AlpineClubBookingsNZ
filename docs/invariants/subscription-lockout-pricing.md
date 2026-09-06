@@ -221,12 +221,10 @@ gap (#2779, owner decision 11 Aug 2026).** Nothing under
 `src/app/api/payments/` or `src/app/api/webhooks/`, **and nothing in the modules
 those routes delegate settlement to**, may consult
 `resolveSubscriptionLockoutMode` or
-`requiresPaidSubscriptionForMemberForBooking` to refuse the booking's OWNER.
-The settlement modules are named because the routes are thin: the Stripe webhook
-route is signature verification that hands off to `stripe-webhook-service.ts`,
-and the pay route hands its PAID claim to `payment-reconciliation.ts` /
-`booking-credit-election.ts`. A gate one layer down strands the same member as a
-gate in the route, so the census covers `stripe-webhook-service.ts`,
+`requiresPaidSubscriptionForMemberForBooking` to refuse the booking's OWNER. The
+routes are thin — the Stripe webhook route hands off to
+`stripe-webhook-service.ts`, the pay route to `payment-reconciliation.ts` /
+`booking-credit-election.ts` — so the census covers `stripe-webhook-service.ts`,
 `payment-reconciliation.ts`, `booking-credit-election.ts`,
 `booking-payment-flow.ts`, `payment-transactions.ts` and the
 `payment-link*.ts` modules (#2956) by name. It does NOT cover the transitive
@@ -235,28 +233,23 @@ reaches pricing and booking-policy modules where the gate legitimately belongs.
 Together with the `!isAuthorizedOnBehalf` term on the create gate
 (`INV-LOCKOUT-003`), that is what makes one journey possible: an admin books on
 behalf of a member whose subscription is unpaid, and the member — still locked
-out — signs in, opens the booking and pays for it. Closing this "hole" would
-close that journey, and would also mean refusing a member who is trying to give
-the club money over a different debt entirely.
+out — signs in, opens the booking and pays for it.
 
 Two consequences follow and are load-bearing:
 
 - **`confirm-draft`'s subscription refusal only ever bites a ZERO-price draft.**
   The route returns 400 "Use the payment flow to complete non-zero bookings"
-  before it reaches the gate, so a priced draft is confirmed by paying for it,
-  never by that route. The refusal is therefore narrower than it looks, and
-  reading it as the general rule is what made this look like an enforcement gap
-  in the first place.
+  before it reaches the gate, so a priced draft is confirmed by paying for it.
 - **`HARD_BLOCK` is not weakened anywhere.** The same member's own
   `POST /api/bookings` is still refused 403 `SUBSCRIPTION_REQUIRED`, and their
-  own zero-price `confirm-draft` is still refused 403. Only what an admin
-  already created for them is payable.
+  own zero-price `confirm-draft` is still refused 403. Only what an admin already
+  created for them is payable.
 
 Enforced structurally by `src/lib/__tests__/subscription-lockout-call-sites.test.ts`,
 which fails if any non-test file under those two trees — or any of the named
-settlement modules — starts naming a lockout identifier, and names this ID in the
-failure message. The same census asserts each named module still exists, so a
-rename cannot quietly empty it.
+settlement modules — starts naming a lockout identifier, names this ID in the
+failure message, and asserts each named module still exists so a rename cannot
+quietly empty it.
 
 ### INV-LOCKOUT-070
 
@@ -265,38 +258,31 @@ and both must be stated wherever the journey is offered (#2779).**
 
 - **72 hours.** `createDraftBooking` sets `draftExpiresAt` to 72 hours out, and
   the nightly `draft-cleanup` job DELETES an expired DRAFT outright rather than
-  cancelling it — so a member who takes a week finds no booking at all, not a
-  lapsed one. The admin booking page states the window where the officer chooses
-  "Save as Draft"; the member sees the deadline on the dashboard card and on the
-  booking page that takes the money.
+  cancelling it. The admin booking page states the window where the officer
+  chooses "Save as Draft"; the member sees the deadline on the dashboard card and
+  on the booking page that takes the money.
 - **A $0 on-behalf draft has no pick-up-and-pay step, so the ADMIN confirms it.**
-  There is nothing to pay: the booking page gates the payment card on
-  `finalPriceCents > 0`, so the member is offered `ConfirmDraftButton` instead,
-  and `confirm-draft` refuses a locked-out non-admin. The admin confirms that one
-  — either straight from the admin booking page instead of saving it, or with the
-  confirm control on the booking, which takes the route's `isAdmin` bypass.
+  The booking page gates the payment card on `finalPriceCents > 0`, so the member
+  is offered `ConfirmDraftButton` instead, and `confirm-draft` refuses a
+  locked-out non-admin. The admin confirms it — from the admin booking page
+  instead of saving it, or with the confirm control on the booking, which takes
+  the route's `isAdmin` bypass.
 
-  **This is the absence of a CONTROL, not the presence of a gate, and the
-  distinction is load-bearing.** `POST /api/payments/create-payment-intent`
-  admits a `DRAFT` with no price check, and its transaction decides the zero case
-  inside itself: `settledEffectivePriceCents <= 0` calls
-  `settleFullyCreditCoveredBooking`, which claims `PAYMENT_PENDING -> PAID`
-  (`src/lib/booking-credit-election.ts`). So a member who calls that route
-  directly with their own booking id — no UI offers it — does settle a $0 draft,
-  locked out or not. That follows from `INV-LOCKOUT-069`, which forbids a
-  subscription gate anywhere on that route, and it is ACCEPTED rather than
-  absent: no money moves, and the same owner decision that keeps the priced door
-  open keeps this one open. Do not "close" it by adding a gate — that would
-  violate `INV-LOCKOUT-069`. Anyone who wants it closed needs a new owner
-  decision, because the owner's stated rationale (refusing a member trying to give
-  the club money) does not by itself reach a branch where no money changes hands.
-  That question is filed as #2792 and is open; until it is answered, the branch
-  stays as it is.
+  **This is the absence of a CONTROL, not the presence of a gate.**
+  `POST /api/payments/create-payment-intent` admits a `DRAFT` with no price
+  check, and its transaction decides the zero case inside itself:
+  `settledEffectivePriceCents <= 0` calls `settleFullyCreditCoveredBooking`,
+  which claims `PAYMENT_PENDING -> PAID` (`src/lib/booking-credit-election.ts`).
+  So a member who calls that route directly with their own booking id — no UI
+  offers it — does settle a $0 draft, locked out or not. That follows from
+  `INV-LOCKOUT-069` and is ACCEPTED rather than absent. Do not "close" it by
+  adding a gate — that would violate `INV-LOCKOUT-069`; anyone who wants it
+  closed needs a new owner decision, filed as #2792 and open.
 
 The member-facing surfaces are copy only: no gate, price, capacity or settlement
-behaviour is decided here. Where they say a free booking is confirmed by the club,
-they are describing the controls the member is offered, which is what a member can
-act on — not asserting that the pay route would refuse one.
+behaviour is decided here. Where they say a free booking is confirmed by the
+club, they describe the controls the member is offered, not what the pay route
+would refuse.
 
 ### INV-LOCKOUT-014
 
@@ -621,45 +607,43 @@ override requires an explicit `pricingMode` [INV-LOCKOUT-053]:
   move with the stay), and there is no change fee, settlement, Stripe, or Xero
   activity. The `BookingModification` row is `ADMIN_DATE_SHIFT` with
   `priceDiffCents`/`changeFeeCents` = 0. All date math is date-only
-  (`addDaysDateOnly` on date-only-normalised bounds, per the stay-boundary
-  invariant's storage-encoding note), so the delta is
-  DST-safe. The member-facing change-notification email is an explicit
-  per-action admin choice on **every** admin edit — not only overrides (#1696).
-  Whenever an admin / Booking Officer saves a booking edit (dates, guests, or
-  promo, override or plain), a dialog asks whether to email the member ("Save
-  and email member" / "Save without emailing"); the choice is recorded in the
-  audit metadata (`notifyMember`) and an admin/API caller that omits the flag
-  defaults to notifying. A member editing their own booking always sends the
-  change email, and a non-admin actor can never suppress it — the modify /
-  modify-dates routes 403 any `notifyMember` flag from a non-ADMIN caller
-  (pricing/capacity override flags still require `adminOverride`). A recalculate
-  override that moves money still respects the admin's choice — the amounts
-  remain visible on the booking and in Xero regardless. The same per-action
-  choice covers the two remaining admin-driven member-facing emails (#1705):
-  the standalone **guest-removal** route (`DELETE /api/bookings/[id]/guests/
-  [guestId]`) and **cancellation** (`POST /api/bookings/[id]/cancel`, "Cancel
-  and email member" / "Cancel without emailing" — the suppression also covers
-  the linked provisional split children cancelled with the parent). Both routes
-  403 the flag from any non-(booking-management)-ADMIN caller, force notify for
-  non-admin actors (cancellation at the service — `cancelBooking` — and guest
-  removal in the route handler itself), default to notify when the flag is
-  absent, and record a suppressed send as `notifyMember: false` in the audit
-  metadata;
-  refund/credit settlement, audit, booking events, waitlist processing, and the
-  admin-facing alerts are never affected by the choice. **The Xero invoice
-  email on the Internet Banking path is deliberately outside this choice and is
-  ALWAYS sent** (superseded for the per-booking "No emails" switch — see
-  that section below) — it is the member's payment instruction (invoice number + bank
-  details), so suppressing it could strand an unpaid invoice the member was
-  never told about (owner decision on #1705). Three further cancellation
-  emails are **deliberately always-notify** and outside the choice (owner
-  decision 2026-07-10, #1730): the joiner emails when a **group organiser
-  cancels** the group, the member email on an **admin review-rejection**
-  cancel, and the cancellation emails sent by **deletion-request cleanup** —
-  in each, the recipient is losing a booking they own, and a missed email
-  risks a member arriving for a stay that no longer exists. (All three are
-  nonetheless withheld by the per-booking "No emails" switch — see that section
-  below — which overrides every always-notify rule on this page.)
+  (`addDaysDateOnly` on date-only-normalised bounds), so the delta is DST-safe.
+
+Whether the member is emailed about an admin edit is a per-action choice:
+`INV-LOCKOUT-073`.
+
+### INV-LOCKOUT-073
+
+The member-facing change-notification email is an explicit per-action admin
+choice on **every** admin edit — not only overrides (#1696). Whenever an admin /
+Booking Officer saves a booking edit (dates, guests, or promo), a dialog asks
+whether to email the member ("Save and email member" / "Save without
+emailing"); the choice is recorded in the audit metadata (`notifyMember`) and an
+admin/API caller that omits the flag defaults to notifying. A member editing
+their own booking always sends the change email, and a non-admin actor can never
+suppress it — the modify / modify-dates routes 403 any `notifyMember` flag from
+a non-ADMIN caller. A recalculate override that moves money still respects the
+admin's choice. The same
+per-action choice covers the standalone **guest-removal** route
+(`DELETE /api/bookings/[id]/guests/[guestId]`) and **cancellation**
+(`POST /api/bookings/[id]/cancel`, "Cancel and email member" / "Cancel without
+emailing", the suppression also covering the linked provisional split children
+cancelled with the parent) (#1705). Both routes 403 the flag from any
+non-(booking-management)-ADMIN caller, force notify for non-admin actors,
+default to notify when the flag is absent, and record a suppressed
+send as `notifyMember: false` in the audit metadata. Refund/credit settlement,
+audit, booking events, waitlist processing, and the admin-facing alerts are
+never affected by the choice.
+
+**The Xero invoice email on the Internet Banking path is outside this choice and
+is ALWAYS sent** (owner decision on #1705) — it is the member's payment
+instruction. Three further
+cancellation emails are **deliberately always-notify** (owner decision
+2026-07-10, #1730): the joiner emails when a **group organiser cancels** the
+group, the member email on an **admin review-rejection** cancel, and the
+cancellation emails sent by **deletion-request cleanup**. All four are nonetheless withheld by the
+per-booking "No emails" switch (`INV-LOCKOUT-039`), which
+overrides every always-notify rule on this page.
 
 ### INV-LOCKOUT-044
 
@@ -766,42 +750,29 @@ and its notify choice.
 
 ### INV-LOCKOUT-049
 
-**A released request is marked, and rejecting one is gated and confirmed.**
-A release re-opens a decision that had been closed to rejection, so the
-re-opened state cannot look like an ordinary pending request. It is `PENDING`
-again in the full sense: an approve and a reject race the same guard, and a
-later approval **may** re-take the claim — it does so whenever the member has
-future bookings at that moment, which happens if the earlier attempt stopped
-part-way through cancelling them or the member has booked since (they are not
-anonymised and their login still works). A re-claim is strictly safer than not
-re-claiming, because it closes the request to rejection again before the next
-cancellation commits, and releasing that claim in turn writes the marker again.
-The fact therefore
-travels **in the row**: `PENDING` with a `reviewedAt` and no `reviewedBy` is a
-combination no other writer of the row can produce, so it is a marker and not a
-heuristic (`deletionApprovalWasReleased`, `src/lib/deletion-request-decision.ts`;
-it deliberately overloads `reviewedAt` instead of adding a column, and every
-reader must go through that predicate rather than reading the field). It is
-written by the same single guarded mutation as the transition, so it cannot lag,
-cannot be lost and cannot be forged in a free-text note. The admin queue shows
-it as "approval started and released back to pending" with the release reason,
-never as a completed review; the reject dialog repeats it; and the route refuses
-a rejection of a released request unless the actor **is a Full Admin** (403 —
-the same gate as the release that produced the state, now on the step that does
-the harm) **and** carries `confirmReleasedApproval: true` (409
+**A released request is marked, and rejecting one is gated and confirmed.** A
+release re-opens a decision that had been closed to rejection, so the re-opened
+state cannot look like an ordinary pending request. It is `PENDING` again in the
+full sense: an approve and a reject race the same guard, and a later approval
+**may** re-take the claim whenever the member has future bookings at that moment;
+releasing that claim in turn writes the marker again. The fact travels **in the
+row**: `PENDING` with a `reviewedAt` and no `reviewedBy` is a combination no
+other writer can produce, so it is a marker and not a heuristic
+(`deletionApprovalWasReleased` in `deletion-request-decision.ts`; every reader goes through that predicate). It is written by the same single guarded mutation
+as the transition, so it cannot lag, be lost or be forged in a note. The admin
+queue shows it as "approval started and released back to pending" with the
+release reason, never as a completed review; the reject dialog repeats it; and
+the route refuses a rejection of a released request unless the actor **is a Full
+Admin** (403 — the same gate as the release that produced the state) **and**
+carries `confirmReleasedApproval: true` (409
 `DELETION_REJECT_AFTER_RELEASE_CONFIRM_REQUIRED` with the disclosure, so a page
-loaded before the release cannot finalise one unwarned; the same warn-and-confirm
-shape as the over-capacity override) **and** gives the member something they are
-actually told. On this one path the note is **mandatory**, mirroring the release
-that produced the state, and `notifyMember: false` is **refused** (400
+loaded before the release cannot finalise one unwarned) **and** gives the member
+something they are actually told: on this path the note is **mandatory** and
+`notifyMember: false` is **refused** (400
 `DELETION_REJECT_AFTER_RELEASE_REASON_REQUIRED` /
-`DELETION_REJECT_AFTER_RELEASE_NOTICE_REQUIRED`). Everything else in this
-protection is admin-facing — the gate, the row warning, the dialog, the
-confirmation flag, the audit metadata — so without those two a Full Admin could
-confirm, leave the note empty, suppress the email, and decline the member over
-cancelled stays with nothing said at all. Ordinary rejections keep #1788's free,
-audited notify choice and their optional note: nothing has been destroyed there,
-so silence is a legitimate option. The applied rejection records
+`DELETION_REJECT_AFTER_RELEASE_NOTICE_REQUIRED`), because everything else in
+this protection is admin-facing. Ordinary rejections keep #1788's free, audited
+notify choice and optional note. The applied rejection records
 `approvalPreviouslyReleased` in its audit entry. Approving a released request is
 ungated: it completes the deletion the member asked for and destroys nothing the
 released approval had not already destroyed.
@@ -1041,49 +1012,28 @@ The rules are:
 - **The booking carries a persistent warning listing what was ACTUALLY withheld
   (#2259).** Read from the `SKIPPED_NO_EMAILS` audit rows, not a fixed sentence:
   the admin has to know WHICH messages the member never received in order to
-  relay them, and the list includes the Xero-sent invoice emails, which are
-  inside the same guarantee. Each row shows the template's registry display name
-  (`withheldEmailDisplayName`), its subject and its timestamp. The banner
-  **keeps warning after the switch is cleared** whenever withheld rows exist,
-  because clearing re-sends nothing — a member never told about a cancellation
-  is still never told.
+  relay them. Each row shows
+  the template's registry display name (`withheldEmailDisplayName`), its subject
+  and its timestamp. The banner **keeps warning after the switch is cleared**
+  whenever withheld rows exist, because clearing re-sends nothing.
 
   One documented exception (#2350): the additional-payment chase cron checks the
-  switch ITSELF and skips before it reaches the mailer, deliberately, so that no
-  stamp is burned and the reminder is still due once the switch comes off. Since
-  the mailer never runs, no `SKIPPED_NO_EMAILS` row is written and that skipped
-  chase does not appear in this list. It is the one booking message the banner
-  cannot name — and the only one that is not lost by being withheld, because it
-  will be sent for real later.
+  switch ITSELF and skips before it reaches the mailer, so no stamp is burned and
+  the reminder is still due once the switch comes off; no `SKIPPED_NO_EMAILS`
+  row is written and that chase does not appear in this list.
+
   Rows are **grouped per template with an exact count**, read with aggregates
-  (`getWithheldBookingEmailSummary`). That is a correctness property, not a
-  presentational one: a chore-roster send fans out to one row per guest per
-  date (~56 for a week for a party of eight), so a flat newest-first list both
-  buried the single cancellation that mattered and could hit the old
-  undisclosed `take: 100` cap. The groups come from a database-side `groupBy`,
-  which returns one row per distinct template; representative subjects are then
-  fetched by matching the per-template maxima under an explicit cap, and a
-  group is never dropped for want of a subject because the aggregate — not the
-  row read — produces the list. (An earlier attempt used
-  `findMany({ distinct })`; Prisma only pushes `distinct` into the query when it
-  LEADS the `orderBy`, so ordering by `createdAt` fetched every withheld row for
-  the booking and deduped in memory — the same unbounded read the `take: 100`
-  had been masking, under a comment claiming the registry bounded it.)
-  Each group carries a `remedy` saying what the officer must actually DO, and
-  the three values are not interchangeable:
-  - `relay` (the default) — the content is information the officer can simply
-    state. The Xero invoice is here: it still exists in Xero and can be sent by
-    hand from there.
+  (`getWithheldBookingEmailSummary`). The groups come from a database-side `groupBy`; a group is never dropped for want of a subject because the aggregate,
+  not the row read, produces the list. Each group carries a `remedy`, and the
+  three values are not interchangeable:
+  - `relay` (default) — information the officer can simply state. The Xero
+    invoice is here.
   - `auto-regenerates` — `split-guest-payment-link` only. The link is decided
     BEFORE it is minted, so none exists, and the settlement cron re-mints and
     re-sends once the switch is off. Clearing the switch is the whole remedy.
-  - `resend-roster` — `chore-roster`, which was briefly and wrongly treated as
-    the case above. `admin-roster-service.ts` DELETES the guest's existing chore
-    token, mints a fresh one, and only then sends: a live 48-hour link exists,
-    the guest's previous link was destroyed, and the guest currently holds
-    nothing that works. `sendChoreRosterEmail` has exactly one caller — the
-    admin roster action, with no cron behind it — so nothing regenerates it and
-    the officer must re-send the roster by hand.
+  - `resend-roster` — `chore-roster`. `admin-roster-service.ts` DELETES the
+    guest's existing chore token, mints a fresh one, and only then sends; `sendChoreRosterEmail` has exactly
+    one caller with no cron behind it, so the officer must re-send by hand.
   The banner also points at the email-failure queue, because three classes are
   structurally absent from it: a send that failed closed on an unreadable
   switch, a withheld send whose own `EmailLog` write failed, and rows queued
@@ -1155,87 +1105,90 @@ The rules are:
 ### INV-LOCKOUT-040
 
 Booking **creation** is normally today-or-future: `POST /api/bookings` and the
-create service both reject a past check-in ("Cannot book in the past"). Issue
-#1695 adds an **admin-only, on-behalf-only** exception — the same
+create service both reject a past check-in ("Cannot book in the past"). #1695
+adds an **admin-only, on-behalf-only** exception — the same
 `bookingManagementAuthorizationRole(session.user) === "ADMIN"` gate as #1668 —
 so a Full Admin or Booking Officer can record a stay that already happened. The
 opt-in `allowPastDates` flag (valid only with `forMemberId`, and only with a
-check-in strictly in the past — a today-or-future check-in carrying it is a
-400) permits a past check-in within a **365-day rolling lookback**
+check-in strictly in the past — a today-or-future check-in carrying it is a 400)
+permits a past check-in within a **365-day rolling lookback**
 (`RETROACTIVE_BOOKING_MAX_LOOKBACK_DAYS`); it is enforced at the route **and**
 re-checked in `createConfirmedBooking` against the **resolved stay envelope**
 (guest nights can expand the stay before the requested check-in, #713 — the
-route's lookback and lock-date guards also run on the envelope check-in).
-Two internal callers legitimately create a booking whose check-in is already
-past and carry the service-only `allowPastCheckIn` marker instead: group join
-(the child inherits the organiser's whole-stay dates, #1387) and cross-lodge
-waitlist confirm (a 48-hour offer accepted after NZ midnight) — the marker
-skips only the past-date rejection, never the retroactive semantics, and is
-not exposed via the API. Any of the three flags (`allowPastDates`,
-`confirmOverCapacity`, `notifyMember`) present without the ADMIN role is a
-403; the flag combination is validated (any flag without `forMemberId` → 400,
-`confirmOverCapacity` combined with `draft`/`waitlist` → 400, retroactive
-`draft`/`waitlist` → 400). Because a
-retroactive booking invoices at its check-in (the invoice **issue date stays =
-checkIn**, no clamp), a create-time **Xero lock-date guard** protects it: when
-Xero is connected the route reads the organisation's `periodLockDate` /
-`endOfYearLockDate` (`getXeroLockDates`) and rejects a check-in on or before the
-effective lock date (409 `XERO_PERIOD_LOCKED`, with unlock instructions). The
-guard is **skipped when Xero is not connected** and **fails closed** (retryable
-503 `XERO_LOCK_DATE_CHECK_FAILED`) when the lock dates cannot be read; the Xero
-call is made outside any DB transaction and its result is cached ~5 minutes.
-The guard still fails closed for every cause, but now **classifies that cause**
-(#2105): the `XeroLockDateCheckFailedError` carries a `reason` of
-`reconnect_required` (the Xero connection needs re-authorising — a revoked or
-missing token/tenant, surfaced by the taxonomy's `XeroReconnectRequiredError`),
-`rate_limited` (Xero's daily API budget is exhausted — `XeroDailyLimitError`),
-or `transient` (a temporary outage or unclassified failure). The `reason` and
-the cause-specific admin copy are emitted **only for the admin audience**
-(`getXeroLockGuardErrorResponse` omits it for members) — member-facing bodies
-stay the generic wording so they disclose no Xero connection state. The code
-(`XERO_LOCK_DATE_CHECK_FAILED`) and status (503) are unchanged for both.
+route's lookback and lock-date guards also run on the envelope check-in). Two
+internal callers legitimately create a booking whose check-in is already past
+and carry the service-only `allowPastCheckIn` marker instead: group join (the
+child inherits the organiser's whole-stay dates, #1387) and cross-lodge waitlist
+confirm (a 48-hour offer accepted after NZ midnight) — the marker skips only the
+past-date rejection, never the retroactive semantics, and is not exposed via the
+API. Any of the three flags (`allowPastDates`, `confirmOverCapacity`,
+`notifyMember`) present without the ADMIN role is a 403; the flag combination is
+validated (any flag without `forMemberId` → 400, `confirmOverCapacity` with
+`draft`/`waitlist` → 400, retroactive `draft`/`waitlist` → 400). A retroactive
+booking invoices at its check-in (the invoice **issue date stays = checkIn**, no
+clamp), so the create-time **Xero lock-date guard** (`INV-LOCKOUT-071`) protects
+it, and the same guard reaches the modify paths (`INV-LOCKOUT-072`).
+
+### INV-LOCKOUT-071
+
+When Xero is connected, the create route reads the organisation's
+`periodLockDate` / `endOfYearLockDate` (`getXeroLockDates`) and rejects a
+check-in on or before the effective lock date (409 `XERO_PERIOD_LOCKED`, with
+unlock instructions). The guard is **skipped when Xero is not connected** and
+**fails closed** (retryable 503 `XERO_LOCK_DATE_CHECK_FAILED`) when the lock
+dates cannot be read; the Xero call is made outside any DB transaction and its
+result is cached ~5 minutes. It fails closed for every cause but **classifies
+that cause** (#2105): `XeroLockDateCheckFailedError` carries a `reason` of
+`reconnect_required` (`XeroReconnectRequiredError` — a revoked or missing
+token/tenant), `rate_limited` (`XeroDailyLimitError`) or `transient`. The
+`reason` and the cause-specific copy are emitted **only for the admin audience**
+(`getXeroLockGuardErrorResponse` omits them for members), so member-facing bodies
+disclose no Xero connection state; the code and 503 status are unchanged for
+both.
+
 Independently, admins can run a **click-only connection-health probe**
 (`GET /api/admin/xero/status?probe=1`): it refreshes the token and reuses the
-cached lock-date/org read, returning `tokenHealth` of
+cached lock-date/org read, returns `tokenHealth` of
 `ok | reconnect_required | rate_limited | error`, and is cached server-side
-30–60s so repeated clicks make no extra Xero call. A daily-limit cooldown maps
-to `rate_limited` **without any API call** (the in-process gate throws before the
+30–60s so repeated clicks make no extra Xero call. A daily-limit cooldown maps to
+`rate_limited` **without any API call** (the in-process gate throws before the
 network request), so the probe can never burn the shared daily budget; it never
 runs on page mount or a poll. The most recent recorded usage `errorMessage`
 (redacted) is surfaced alongside the health chip.
-The same guard protects the **booking modify paths**
-(`xero-period-lock-guard`), with two deliberately asymmetric scopes:
+
+### INV-LOCKOUT-072
+
+The Xero lock-date guard (`INV-LOCKOUT-071`) protects the **booking modify
+paths** (`xero-period-lock-guard`) with two deliberately asymmetric scopes:
+
 - **Admin override** (#1697): a **recalculate** override can queue a
-  **check-in-dated primary-invoice write** — the invoice date/narration update
-  on a booking whose payment is not yet settled, or the invoice create a
-  zero-dollar recalculate performs — and is rejected (same 409/503 contract, at
-  the modify-quote preview and at apply in both modify services, before their
+  **check-in-dated primary-invoice write** — the invoice date/narration update on
+  a booking whose payment is not yet settled, or the invoice create a zero-dollar
+  recalculate performs — and is rejected (same 409/503 contract, at the
+  modify-quote preview and at apply in both modify services, before their
   transactions) when the check-in the booking would end up with lands on or
-  before the effective lock date; a check-out-only recalculate is guarded via
-  the unchanged past check-in. Supplementary invoices and modification credit
-  notes are dated at the day they are raised (not check-in), so on an
-  already-paid booking a recalculate writes no check-in-dated document — the
-  override guard **still fires there by design**: **deliberately conservative,
-  a settled owner decision** (#1697, re-affirmed and closed on #1718 —
-  workarounds for the over-block on paid bookings are shift mode or briefly
-  unlocking the period).
+  before the effective lock date; a check-out-only recalculate is guarded via the
+  unchanged past check-in. Supplementary invoices and modification credit notes
+  are dated the day they are raised, so on an already-paid booking a recalculate
+  writes no check-in-dated document — the override guard **still fires there by
+  design**: deliberately conservative, a settled owner decision (#1697,
+  re-affirmed on #1718; workarounds are shift mode or briefly unlocking the
+  period).
 - **Ordinary (non-override) date edits** (#1729) get a **NARROW guard** at the
-  same pre-transaction points (both modify services and the modify-quote
-  preview): it fires only when the edit would **actually queue the
-  check-in-dated invoice update** — issued Xero invoice, dates changing,
+  same pre-transaction points: it fires only when the edit would **actually queue
+  the check-in-dated invoice update** — issued Xero invoice, dates changing,
   payment not settled — via the settlement classifier's own predicate
   (`wouldQueueCheckInDatedInvoiceUpdate`, shared so guard and
   `queueXeroBookingEditSettlement` can never drift). Error text is
-  **actor-appropriate**: admins get the unlock instructions, members get a
-  "contact an administrator" 409 (and a softer fail-closed 503) — same codes
-  either way; a member's request against a booking they do not own skips the
-  guard silently (the transaction's 403 answers it — no lock-date disclosure
-  to non-owners). **Identity-only edits (guest name fixes) are never guarded**
-  (owner decision, #1729): the outbox backstop covers that rare strand rather
-  than blocking a typo fix. Also outbox-backstopped, not guarded: the
-  check-in-dated invoice CREATE a $0-collapsing ordinary edit can queue for a
-  never-invoiced booking, and guest-range edits that move the stay envelope
-  without date fields in the request.
+  **actor-appropriate**: admins get the unlock instructions, members a "contact
+  an administrator" 409 (and a softer fail-closed 503), same codes either way; a
+  member's request against a booking they do not own skips the guard silently
+  (the transaction's 403 answers it). **Identity-only edits are never guarded**
+  (owner decision, #1729): the outbox backstop covers that strand. Also
+  outbox-backstopped, not guarded: the check-in-dated invoice CREATE a
+  $0-collapsing ordinary edit can queue for a never-invoiced booking, and
+  guest-range edits that move the stay envelope without date fields in the
+  request.
 
 ### INV-LOCKOUT-041
 
@@ -1292,39 +1245,30 @@ A **finished stay's card obligation never lingers unseen** (#1709, #1723). Two
 **disjoint** admin queues surface every uncollected card obligation on a stay
 whose check-out is on or before NZ today, both driven by the shared
 predicate/href helpers in `src/lib/unpaid-finished-stays.ts` (the dashboard
-attention cards, the sidebar Needs Attention badges via
-`admin-pending-counts`, and the bookings-list deep links all consume the same
-helpers so the surfaces can never drift):
+attention cards, the sidebar Needs Attention badges via `admin-pending-counts`,
+and the bookings-list deep links all consume the same helpers):
 
 - **Unpaid finished stays** (#1709/#1731): `deletedAt` null +
   `status = PAYMENT_PENDING` + `checkOut ≤ today` — the whole booking price is
-  still owed (a retroactive card create qualifies from the moment of
-  creation). Deep link:
+  still owed (a retroactive card create qualifies from creation). Deep link:
   `/admin/bookings?status=PAYMENT_PENDING&checkOutTo=<today>`.
-- **Unsettled finished-stay additions** (#1723 path 2, owner decision B — the
-  card additional-payment flow stays): `deletedAt` null + `checkOut ≤ today` +
-  `status ∈ {CONFIRMED, PAID, COMPLETED}` + payment
-  `additionalAmountCents > 0` with `additionalPaymentStatus` null or not
-  `SUCCEEDED` — a settled stay whose upward modification delta (admin
-  recalculate, guest add, date change) was never collected. The payment
-  summary columns mirror the LATEST ADDITIONAL payment transaction. The
-  in-memory twin of this predicate is `isAdditionalPaymentOwed`
-  (`src/lib/additional-payment-chase.ts`), which takes the booking status as a
-  REQUIRED argument for exactly this reason: cancelling a booking leaves
-  `additionalAmountCents` and `additionalPaymentStatus` untouched, so an
-  amount-only test reads a cancelled booking as still owing. `PAYMENT_PENDING`
-  is deliberately excluded so the two queue counts can be summed without
-  double-counting a booking — a narrowing for counting, NOT a claim that such a
-  delta is uncollectable (see "Who may pay one" below [INV-ADDPAY-023]). Deep link:
+- **Unsettled finished-stay additions** (#1723 path 2, owner decision B):
+  `deletedAt` null + `checkOut ≤ today` + `status ∈ {CONFIRMED, PAID,
+  COMPLETED}` + payment `additionalAmountCents > 0` with
+  `additionalPaymentStatus` null or not `SUCCEEDED`. The payment summary columns
+  mirror the LATEST ADDITIONAL payment transaction. The in-memory twin is
+  `isAdditionalPaymentOwed` (`src/lib/additional-payment-chase.ts`), which takes
+  the booking status as a REQUIRED argument because cancelling leaves
+  `additionalAmountCents` and `additionalPaymentStatus` untouched.
+  `PAYMENT_PENDING` is deliberately excluded so the two queue counts sum without
+  double-counting — a narrowing for counting, NOT a claim that such a delta is
+  uncollectable [INV-ADDPAY-023]. Deep link:
   `/admin/bookings?additionalOwed=owed&checkOutTo=<today>` via the bookings
-  list's `additionalOwed` filter (AND-composed, so explicit status/date
-  filters in the same URL still narrow).
-- **Unsettled additions on a stay still ahead** (#2350): the same predicate
-  with `checkOut > today` instead of `checkOut <= today`, so the two halves are
-  disjoint by construction and their counts sum without double-counting. This
-  is the half that can still be chased while the member is paying attention;
-  the finished half is a follow-up conversation. The dashboard shows one card
-  with a split label ("N upcoming, M finished") and the sidebar badge shows the
-  sum, both deep-linking to `/admin/bookings?additionalOwed=owed` - the whole
-  queue, with no date bound, because the bookings list has no upcoming-only
-  filter to point at.
+  list's `additionalOwed` filter (AND-composed with explicit status/date
+  filters).
+- **Unsettled additions on a stay still ahead** (#2350): the same predicate with
+  `checkOut > today`, so the two halves are disjoint by construction and their
+  counts sum. The dashboard shows one card with a split label ("N upcoming, M
+  finished") and the sidebar badge shows the sum, both deep-linking to
+  `/admin/bookings?additionalOwed=owed` — the whole queue, because the bookings
+  list has no upcoming-only filter.

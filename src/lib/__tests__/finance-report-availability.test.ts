@@ -20,7 +20,8 @@ function xeroStatus(overrides: {
   };
 }
 
-vi.mock("@/lib/finance-auth", () => ({
+vi.mock("@/lib/admin-permissions", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/admin-permissions")>()),
   hasFinanceManagerAccess: (input: string | { financeAccessLevel?: string }) =>
     (typeof input === "string" ? input : input.financeAccessLevel) === "MANAGER",
 }));

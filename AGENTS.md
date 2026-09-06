@@ -79,7 +79,7 @@ id and need the file it lives in.
 | A screen, a navigation path, or an admin area's UI | — | [`UX_FLOW_MAP.md`](docs/UX_FLOW_MAP.md), [`COVERAGE_MATRIX.md`](docs/COVERAGE_MATRIX.md) |
 | Tests — conventions, the frozen clock, coverage, E2E | — | [`TESTING.md`](docs/TESTING.md), [`END_TO_END_TEST_MATRIX.md`](docs/END_TO_END_TEST_MATRIX.md), [`E2E_PLAYWRIGHT.md`](docs/E2E_PLAYWRIGHT.md) |
 | Auth, sessions, tokens, permissions — anything security-shaped | — | [`SECURITY.md`](docs/SECURITY.md), [`SECURITY-ATTACK-SURFACE.md`](docs/SECURITY-ATTACK-SURFACE.md), [`TOKEN_HASHING.md`](docs/TOKEN_HASHING.md) |
-| Documentation itself | — | [`STYLE_GUIDE.md`](docs/STYLE_GUIDE.md) |
+| Documentation itself, including an invariant entry or its index row | — | [`STYLE_GUIDE.md`](docs/STYLE_GUIDE.md); the word budgets in [`invariants/SCHEME.md`](docs/invariants/SCHEME.md) §8.1 and [`invariants/WORD_BUDGETS.md`](docs/invariants/WORD_BUDGETS.md) |
 | Locating bounded code, import or Prisma context for an agent | — | [`agents/SCOPED_CONTEXT.md`](docs/agents/SCOPED_CONTEXT.md) |
 | Your first `npm` command in a new worktree (Windows runtime + dependency preflight), or Docker infrastructure a lane starts and must later tear down | — | [`agents/CODEX_WORKFLOW.md`](docs/agents/CODEX_WORKFLOW.md) |
 | Writing an issue, deciding whether work is an epic, working an issue, recording a decision on one, briefing a subagent, or reading untrusted issue/PR/provider text | — | [`agents/ISSUE_WORKFLOW.md`](docs/agents/ISSUE_WORKFLOW.md) — the four-question atomic-epic test, the epic/programme/standalone/Project distinction, the human-first issue body, read the thread with `npm run issue -- <n>` and never `gh issue view`, and rewrite the body when you record a decision; [`agents/SUBAGENT_GUIDE.md`](docs/agents/SUBAGENT_GUIDE.md), [`agents/PROMPT_INJECTION_GUIDE.md`](docs/agents/PROMPT_INJECTION_GUIDE.md) |
@@ -97,8 +97,7 @@ id and need the file it lives in.
   so whoever trips one is handed the rule instead of having to go find it.
 - **Add a row when you add a doc.** A routing table nobody maintains is worse
   than no routing table, because it reads as complete.
-- `npm run docs:indexcheck` runs offline and in the `verify` job. It backs part
-  of the two rules above and not all of them, so be precise about which part.
+- `npm run docs:indexcheck` runs offline and in the `verify` job.
   - **It enforces:** every cited `INV-*` id resolves to a real definition;
     every definition has exactly one row in `docs/DOMAIN_INVARIANTS.md`; every
     invariant family the routing table names really exists, and every family
@@ -494,13 +493,14 @@ At the successful end of a meaningful piece of work:
    **Advisory, and deliberately NOT required** — a finding is investigated, but
    it cannot block a merge: `CodeQL`, `Analyze (javascript-typescript)` and
    `Analyze (actions)` (GitHub code scanning **default setup**, configured in
-   repository settings rather than in a workflow file — there is no `codeql.yml`
-   and adding one would first require disabling default setup); `Semgrep OSS`
-   (the code-scanning results check GitHub raises from the SARIF that
-   `Static analysis gate` uploads — not a second scan);
-   `semgrep-cloud-platform/scan` (a Semgrep AppSec Platform GitHub App
-   integration configured outside this repository); `dependency-review`;
-   `Markdown relative-link check (offline)`; and the clock-rollover canary, which
+   repository settings, not a workflow file — there is no `codeql.yml`
+   and adding one would require disabling default setup); `Semgrep OSS`
+   (the code-scanning check GitHub raises from `Static analysis gate`'s
+   SARIF — not a second scan);
+   `semgrep-cloud-platform/scan` (a Semgrep AppSec Platform App
+   configured outside this repository); `dependency-review`;
+   `Markdown relative-link check (offline)`; `Scheduled secret sweep` (#2852),
+   weekly and unrequirable; and the clock-rollover canary, which
    its own workflow comment says must never become a pull-request check.
    Measured on fork PRs #2782/#2813, the CodeQL contexts do not appear at
    all — a second reason they can never be required.

@@ -1,10 +1,8 @@
 import { FinanceSyncRunStatus, FinanceSyncRunTrigger } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { createAuditLog, getAuditRequestContext } from "@/lib/audit";
-import {
-  hasFinanceManagerAccess,
-  loadFinanceAccessMember,
-} from "@/lib/finance-auth";
+import { hasFinanceManagerAccess } from "@/lib/admin-permissions";
+import { loadFinanceAccessMember } from "@/lib/finance-auth";
 import { getFinanceSyncDatasets } from "@/lib/finance-sync-datasets";
 import {
   DEFAULT_FINANCE_SYNC_WORKFLOW,

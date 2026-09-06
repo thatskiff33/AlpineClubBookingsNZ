@@ -42,6 +42,7 @@ import {
   parseCalendarDate,
 } from "@/lib/club-time";
 
+import { formatCents, formatSignedCents } from "@/lib/utils";
 import { CreditCard, Landmark } from "lucide-react";
 
 type BookingPaymentMethod = "stripe" | "internet_banking";
@@ -689,15 +690,6 @@ export default function AdminBookPage() {
 
   // Whole date-only nights between the two lodge dates — see `countStayNights`.
   const nights = countStayNights(checkIn, checkOut);
-
-  function formatCents(cents: number) {
-    return `$${(cents / 100).toFixed(2)}`;
-  }
-
-  function formatSignedCents(cents: number) {
-    const prefix = cents > 0 ? "+" : "-";
-    return `${prefix}${formatCents(Math.abs(cents))}`;
-  }
 
   const availableCreditCents = priceQuote?.availableCreditCents ?? 0;
   const finalPriceBeforeCredit = priceQuote

@@ -581,8 +581,7 @@ the key across attempts). Every canonical-link maintainer is bound by the
 multi-note contract too: `cleanupStaleCanonicalXeroObjectLinks` and the
 reconciliation report's drift classifications never deactivate or flag a LIVE
 active Stripe per-delta refund-note link as stale, mismatched, or duplicate
-(#2901 — treating the scalar pointer as the sole note put cleanup and this
-self-heal into an unbounded duplicate-note loop). The exemption is
+(#2901). The exemption is
 status-aware in both directions: a note recorded VOIDED/DELETED in Xero
 counts as ZERO coverage everywhere (`xero-refund-note-status.ts` is the one
 home for that judgement), its still-active local mirror is stale drift that
@@ -695,7 +694,7 @@ of the four routes the census above found "consulting `deletedAt` directly".
 (`if (!booking || booking.deletedAt)`) **above** its 403, so a caller with no
 claim on the booking got `403` while it was live and `404` the moment an admin
 deleted it — a deleted-or-live oracle on any id whose existence they could
-otherwise establish (a booking they were a guest on, a shared URL). Consulting
+otherwise establish. Consulting
 `deletedAt` is therefore not sufficient evidence that a route follows this rule;
 the ordering has to be read. Reordered in #2674 and pinned by
 `src/app/api/bookings/[id]/send-guest-payment-link/__tests__/deleted-booking-ordering.test.ts`.
