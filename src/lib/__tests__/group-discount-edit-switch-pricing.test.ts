@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { AgeTier } from "@prisma/client";
+import type { AgeTier, BookingGuestNightPriceSource } from "@prisma/client";
 import type { SeasonRateData } from "@/lib/policies/pricing";
 
 /**
@@ -187,7 +187,11 @@ interface PartyGuest {
   stayStart: Date;
   stayEnd: Date;
   /** Stored per-night prices — the locks that make a bought night immovable. */
-  nights?: Array<{ stayDate: Date; priceCents: number }>;
+  nights?: Array<{
+    stayDate: Date;
+    priceCents: number;
+    priceSource: BookingGuestNightPriceSource;
+  }>;
 }
 
 /** What a guest's stored night rows say they have paid so far. */
@@ -292,6 +296,7 @@ const FIVE_NON_MEMBERS: PartyGuest[] = [1, 2, 3, 4, 5].map((n) => ({
   nights: [D("2026-09-10"), D("2026-09-11")].map((stayDate) => ({
     stayDate,
     priceCents: NON_MEMBER_RATE_CENTS,
+    priceSource: "SOLD" as const,
   })),
 }));
 
@@ -388,6 +393,7 @@ describe.each(SEASON_SHAPES)(
         nights: held.map((stayDate) => ({
           stayDate,
           priceCents: NON_MEMBER_RATE_CENTS,
+          priceSource: "SOLD" as const,
         })),
       }));
 
@@ -485,6 +491,7 @@ describe.each(SEASON_SHAPES)(
         nights: HELD_NIGHTS.map((stayDate) => ({
           stayDate,
           priceCents: NON_MEMBER_RATE_CENTS,
+          priceSource: "SOLD" as const,
         })),
       }));
       return pricedPricing(txFor(state, summerOnly), {

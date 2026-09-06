@@ -45,7 +45,9 @@ import {
 } from "@/lib/stored-sold-price-evidence";
 import {
   classifyNightPriceToWrite,
-  preservedNightPrices,
+  preservedNightPriceWrites,
+  repricedNightPriceSources,
+  requiredNightPriceSourceToWrite,
 } from "@/lib/stored-night-price-write";
 import { bookingHasOpenFinancialReview } from "@/lib/booking-financial-review-visibility";
 import {
@@ -332,7 +334,7 @@ export async function modifyBookingDates({
       include: {
         guests: {
           include: {
-            nights: { select: { stayDate: true, priceCents: true } },
+            nights: { select: { stayDate: true, priceCents: true, priceSource: true } },
           },
         },
         payment: true,
@@ -1011,12 +1013,19 @@ export async function modifyBookingDates({
         //
         // A BLANK IS NEVER REPAIRED BY A REPRICE, on this path or any other. It
         // is cleared only by a person supplying the amount.
-        const perNightCents = parked
-          ? preservedNightPrices(
-              dateEditEvidence.soldNightPriceByGuestId.get(g.id),
+        const repricedSources = repricedNightPriceSources(
+          guestsForPricing[i]?.lockedNightPrices,
+          nightDates,
+        );
+        const nightWrites = parked
+          ? preservedNightPriceWrites(
+              dateEditEvidence.storedNightPriceByGuestId.get(g.id),
               nightDates,
             )
-          : priceBreakdown.guests[i].perNightCents;
+          : priceBreakdown.guests[i].perNightCents.map((priceCents, index) => ({
+              priceCents,
+              priceSource: repricedSources[index],
+            }));
         if (nightDates.length > 0) {
           await tx.bookingGuestNight.createMany({
             data: nightDates.map((stayDate, k) => {
@@ -1057,7 +1066,9 @@ export async function modifyBookingDates({
               // change PARK instead of refuse edits the shared classifier, not
               // this arm — otherwise quote and apply disagree about one member's
               // edit, which is the parity this epic keeps re-fixing.
-              const decision = classifyNightPriceToWrite(perNightCents[k]);
+              const decision = classifyNightPriceToWrite(
+                nightWrites[k]?.priceCents,
+              );
               if (decision.kind === "unstated") {
                 throw new ApiError(
                   "The new dates could not be priced night by night",
@@ -1069,6 +1080,11 @@ export async function modifyBookingDates({
                 stayDate,
                 priceCents:
                   decision.kind === "not-known" ? null : decision.priceCents,
+                priceSource: requiredNightPriceSourceToWrite(
+                  nightWrites[k]?.priceSource,
+                  decision.kind === "not-known" ? null : decision.priceCents,
+                  `The booking date modification writer for ${stayDate.toISOString()}`,
+                ),
               };
             }),
           });
@@ -1627,7 +1643,9 @@ export async function adminShiftBookingDates({
       where: { id: bookingId },
       include: {
         guests: {
-          include: { nights: { select: { stayDate: true, priceCents: true } } },
+          include: {
+            nights: { select: { stayDate: true, priceCents: true, priceSource: true } },
+          },
         },
         payment: true,
         member: true,
@@ -1742,6 +1760,7 @@ export async function adminShiftBookingDates({
       nights: guest.nights.map((night) => ({
         stayDate: addDaysDateOnly(storedDateOnly(night.stayDate), deltaDays),
         priceCents: night.priceCents,
+        priceSource: night.priceSource,
       })),
     }));
 
@@ -1823,6 +1842,7 @@ export async function adminShiftBookingDates({
             bookingGuestId: entry.guest.id,
             stayDate: night.stayDate,
             priceCents: night.priceCents,
+            priceSource: night.priceSource,
           })),
         });
       }

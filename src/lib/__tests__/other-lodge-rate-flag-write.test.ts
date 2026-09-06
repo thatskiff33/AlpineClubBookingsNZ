@@ -94,7 +94,12 @@ async function writeWith(options: {
       normalizedAddGuests: undefined,
       priceBreakdown: {
         guests: [
-          { priceCents: 2000, perNightCents: [2000], nightDates: [CHECK_IN] },
+          {
+            priceCents: 2000,
+            perNightCents: [2000],
+            perNightPriceSources: ["SOLD"],
+            nightDates: [CHECK_IN],
+          },
         ],
       },
       inProgressPlan: null,
@@ -173,7 +178,12 @@ describe("#2978: the stored other-lodge flag follows the PRICED rate", () => {
         normalizedAddGuests: undefined,
         priceBreakdown: {
           guests: [
-            { priceCents: 2000, perNightCents: [2000], nightDates: [CHECK_IN] },
+            {
+              priceCents: 2000,
+              perNightCents: [2000],
+              perNightPriceSources: ["SOLD"],
+              nightDates: [CHECK_IN],
+            },
           ],
         },
         inProgressPlan: null,

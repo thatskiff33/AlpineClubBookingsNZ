@@ -2080,6 +2080,18 @@ enum MemberGuestConsentStatus {
   EXPIRED
 }
 
+// Where the amount on a BookingGuestNight came from (#3275, INV-MONEY-028).
+// UNKNOWN is the blue/green-safe default for an ordinary writer from the
+// draining colour and for history whose origin cannot be proved. The #3275
+// migration trigger recognises only its two transactional officer-repair audit
+// actions. Readers do not act on this value until stage 3 of programme #3272.
+enum BookingGuestNightPriceSource {
+  SOLD
+  OFFICER_PRICED
+  EVEN_SPLIT
+  UNKNOWN
+}
+
 // Per-night stay record for a booking guest (issue #713). One row per night
 // the guest is actually staying, with that night's price in integer cents.
 // Non-contiguous stays are represented as a sparse set of these rows; the
@@ -2097,6 +2109,7 @@ model BookingGuestNight {
   // already gives a missing row), and `?? 0` on this column is prohibited
   // outright: a comped night stores 0, and 0 is a real sold price.
   priceCents     Int?
+  priceSource    BookingGuestNightPriceSource @default(UNKNOWN)
   createdAt      DateTime @default(now())
 
   bookingGuest BookingGuest @relation(fields: [bookingGuestId], references: [id], onDelete: Cascade)

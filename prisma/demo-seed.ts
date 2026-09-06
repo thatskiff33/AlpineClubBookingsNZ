@@ -232,7 +232,12 @@ async function addGuest(
   });
   for (const night of nights) {
     await prisma.bookingGuestNight.create({
-      data: { bookingGuestId: guest.id, stayDate: d(night), priceCents: nightlyCents },
+      data: {
+        bookingGuestId: guest.id,
+        stayDate: d(night),
+        priceCents: nightlyCents,
+        priceSource: "SOLD",
+      },
     });
   }
   return guest;

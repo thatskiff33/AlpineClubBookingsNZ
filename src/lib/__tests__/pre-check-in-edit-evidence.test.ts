@@ -39,6 +39,7 @@ function exactStrand(
     nights: nightDates.map((stayDate) => ({
       stayDate: new Date(stayDate),
       priceCents: perNightCents,
+      priceSource: "SOLD",
     })),
     proposedNightDates: nightDates.map((stayDate) => new Date(stayDate)),
     ...overrides,
@@ -51,9 +52,9 @@ function unreadableStrand(bookingGuestId: string): PreCheckInEditStrand {
     bookingGuestId,
     guestTotalCents: 15000,
     nights: [
-      { stayDate: new Date("2026-08-01"), priceCents: 5000 },
-      { stayDate: new Date("2026-08-02"), priceCents: null },
-      { stayDate: new Date("2026-08-03"), priceCents: 5000 },
+      { stayDate: new Date("2026-08-01"), priceCents: 5000, priceSource: "SOLD" },
+      { stayDate: new Date("2026-08-02"), priceCents: null, priceSource: "UNKNOWN" },
+      { stayDate: new Date("2026-08-03"), priceCents: 5000, priceSource: "SOLD" },
     ],
     proposedNightDates: [
       new Date("2026-08-01"),

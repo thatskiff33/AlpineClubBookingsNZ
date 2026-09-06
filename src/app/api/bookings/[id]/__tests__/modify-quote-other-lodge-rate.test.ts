@@ -194,8 +194,8 @@ const params = Promise.resolve({ id: "b1" });
  */
 function booking(overrides: Record<string, unknown> = {}) {
   const nights = (priceCents: number) => [
-    { stayDate: D("2026-08-01"), priceCents },
-    { stayDate: D("2026-08-02"), priceCents },
+    { stayDate: D("2026-08-01"), priceCents, priceSource: "SOLD" as const },
+    { stayDate: D("2026-08-02"), priceCents, priceSource: "SOLD" as const },
   ];
   return {
     id: "b1",
@@ -363,8 +363,8 @@ describe("modify-quote — other-lodge member rate", () => {
                 otherLodgeMember: true,
                 priceCents: 2000,
                 nights: [
-                  { stayDate: D("2026-08-01"), priceCents: 1000 },
-                  { stayDate: D("2026-08-02"), priceCents: 1000 },
+                  { stayDate: D("2026-08-01"), priceCents: 1000, priceSource: "SOLD" },
+                  { stayDate: D("2026-08-02"), priceCents: 1000, priceSource: "SOLD" },
                 ],
               }
             : guest,

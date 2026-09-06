@@ -1,5 +1,21 @@
-import { getExplicitGuestBedNightKeys } from "@/lib/booking-guest-stay-ranges";
+import {
+  getExplicitGuestBedNightKeys,
+  type GuestNightInput,
+} from "@/lib/booking-guest-stay-ranges";
 import { requireCalendarDate, type CalendarDate } from "@/lib/club-time";
+import { isNonNegativeIntegerCents } from "@/lib/edit-financial-review-context";
+import type { BookingGuestNightPriceSource } from "@prisma/client";
+
+export type StoredNightPriceWithSource = {
+  priceCents: number | null;
+  priceSource: BookingGuestNightPriceSource;
+};
+
+export type StoredNightPriceInput = {
+  stayDate: Date | string;
+  priceCents?: number | null;
+  priceSource: BookingGuestNightPriceSource;
+};
 
 /**
  * #3166 (epic #2797): WHAT MAY BE WRITTEN INTO `BookingGuestNight.priceCents`.
@@ -9,9 +25,9 @@ import { requireCalendarDate, type CalendarDate } from "@/lib/club-time";
  * This file answers the three that follow from it, and every one of them exists
  * because a second copy of it caused a defect:
  *
- *  - `preservedNightPrices` — the per-night vector a parked edit writes, in
- *    which every night the booking can still account for keeps its stored
- *    integer byte for byte and every other night is `null`;
+ *  - `preservedNightPriceWrites` — the per-night amount and source a parked
+ *    edit writes, in which every night the booking can still account for keeps
+ *    its stored integer byte for byte and every other night is `null`;
  *  - `carriesUnvaluedStoredNight` — the predicate a WHOLESALE night-row
  *    rewriter asks before it overwrites a blank, because `INV-MOD-028` says a
  *    blank is cleared only by a person supplying the amount;
@@ -38,17 +54,153 @@ import { requireCalendarDate, type CalendarDate } from "@/lib/club-time";
  * price history it could have preserved — the failure would be invisible
  * (INV-DATE-020).
  */
-export function preservedNightPrices(
-  soldNightPrices: ReadonlyMap<CalendarDate, number> | undefined,
+export type StoredNightPriceWrite = {
+  priceCents: number | null;
+  priceSource: BookingGuestNightPriceSource;
+};
+
+/** The amount and its recorded origin, projected together so rewrites cannot drift. */
+export function storedNightPriceDetailsByKey(
+  nights: ReadonlyArray<StoredNightPriceInput> | null | undefined,
+): Map<string, StoredNightPriceWithSource> {
+  const byKey = new Map<string, StoredNightPriceWithSource>();
+  for (const entry of nights ?? []) {
+    if (entry.priceSource === undefined) {
+      throw new Error(
+        "A stored booking guest night was loaded without price provenance (#3275)",
+      );
+    }
+    const priceCents = entry.priceCents;
+    const [key] = getExplicitGuestBedNightKeys({ nights: [entry] }) ?? [];
+    if (key !== undefined) {
+      byKey.set(key, {
+        priceCents: isNonNegativeIntegerCents(priceCents) ? priceCents : null,
+        priceSource: entry.priceSource,
+      });
+    }
+  }
+  return byKey;
+}
+
+export function storedNightPricesByKey(
+  nights: ReadonlyArray<GuestNightInput> | null | undefined,
+): Map<string, number | null> {
+  const byKey = new Map<string, number | null>();
+  for (const entry of nights ?? []) {
+    const priceCents =
+      entry instanceof Date || typeof entry === "string"
+        ? undefined
+        : "priceCents" in entry
+          ? entry.priceCents
+          : undefined;
+    const [key] = getExplicitGuestBedNightKeys({ nights: [entry] }) ?? [];
+    if (key !== undefined) {
+      byKey.set(key, isNonNegativeIntegerCents(priceCents) ? priceCents : null);
+    }
+  }
+  return byKey;
+}
+
+export function preservedNightPriceWrites(
+  storedNightPrices:
+    | ReadonlyMap<
+        CalendarDate,
+        { priceCents: number; priceSource: BookingGuestNightPriceSource }
+      >
+    | undefined,
   nightDates: readonly Date[],
-): (number | null)[] {
+): StoredNightPriceWrite[] {
   return nightDates.map((night) => {
     const [key] = getExplicitGuestBedNightKeys({ nights: [night] }) ?? [];
-    const cents = key === undefined ? undefined : soldNightPrices?.get(
-      requireCalendarDate(key),
-    );
-    return cents === undefined ? null : cents;
+    const stored =
+      key === undefined
+        ? undefined
+        : storedNightPrices?.get(requireCalendarDate(key));
+    return stored ?? { priceCents: null, priceSource: "UNKNOWN" };
   });
+}
+
+/**
+ * Attribute a proposed night set from the writer's own retained/new decision.
+ * A retained row keeps its recorded source only while it carries usable money;
+ * a retained blank is UNKNOWN. An unretained night takes the caller's explicit
+ * source for the act that created it. Comparing amounts is forbidden: an
+ * equal-rate reprice is still a new sale.
+ */
+export function proposedNightPriceSources(params: {
+  proposedNightKeys: ReadonlyArray<string>;
+  retainedNightKeys: ReadonlySet<string>;
+  storedNightDetailsByKey: ReadonlyMap<string, StoredNightPriceWithSource>;
+  newNightSource: BookingGuestNightPriceSource;
+}): BookingGuestNightPriceSource[] {
+  return params.proposedNightKeys.map((key) => {
+    if (!params.retainedNightKeys.has(key)) return params.newNightSource;
+    const stored = params.storedNightDetailsByKey.get(key);
+    return isNonNegativeIntegerCents(stored?.priceCents)
+      ? stored.priceSource
+      : "UNKNOWN";
+  });
+}
+
+/**
+ * Sources for a pricing result that may mix stored locked nights with nights
+ * priced now. The lock vector is the pricing engine's own statement of which
+ * amounts it reused; comparing amounts would misclassify an equal-rate reprice.
+ */
+export function repricedNightPriceSources(
+  lockedNightPrices:
+    | ReadonlyArray<{
+        stayDate: Date | string;
+        priceCents: number;
+        priceSource: BookingGuestNightPriceSource;
+      }>
+    | null
+    | undefined,
+  nightDates: readonly Date[],
+): BookingGuestNightPriceSource[] {
+  const lockedDetails = new Map<CalendarDate, StoredNightPriceWithSource>();
+  const lockedKeys = new Set<CalendarDate>();
+  for (const locked of lockedNightPrices ?? []) {
+    const [key] = getExplicitGuestBedNightKeys({ nights: [locked] }) ?? [];
+    if (key !== undefined) {
+      const calendarKey = requireCalendarDate(key);
+      lockedKeys.add(calendarKey);
+      lockedDetails.set(calendarKey, {
+        priceCents: locked.priceCents,
+        priceSource: locked.priceSource,
+      });
+    }
+  }
+  const proposedNightKeys = nightDates.map((night) => {
+    const [key] = getExplicitGuestBedNightKeys({ nights: [night] }) ?? [];
+    if (key === undefined) {
+      throw new Error("A priced night has no calendar-date key (#3275)");
+    }
+    return requireCalendarDate(key);
+  });
+  return proposedNightPriceSources({
+    proposedNightKeys,
+    retainedNightKeys: lockedKeys,
+    storedNightDetailsByKey: lockedDetails,
+    newNightSource: "SOLD",
+  });
+}
+
+/** Required provenance/amount alignment at every BookingGuestNight writer. */
+export function requiredNightPriceSourceToWrite(
+  source: BookingGuestNightPriceSource | undefined,
+  priceCents: number | null | undefined,
+  writer: string,
+): BookingGuestNightPriceSource {
+  if (source === undefined) {
+    throw new Error(`${writer} received no price provenance (#3275)`);
+  }
+  if (priceCents === null && source !== "UNKNOWN") {
+    throw new Error(
+      `${writer} received a NULL price with non-UNKNOWN provenance (#3275)`,
+    );
+  }
+  return source;
 }
 
 /**

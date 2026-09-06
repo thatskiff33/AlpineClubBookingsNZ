@@ -570,7 +570,7 @@ const PRE_CHECK_IN_GATE_SITES = [
       },
       {
         label: "the parked rows carry PRESERVED stored prices, never repriced ones",
-        pattern: /preservedNightPrices\s*\(/,
+        pattern: /preservedNightPriceWrites\s*\(/,
       },
     ],
   },
@@ -608,7 +608,7 @@ const PRE_CHECK_IN_GATE_SITES = [
       },
       {
         label: "the night write uses PRESERVED stored prices when it parks",
-        pattern: /preservedNightPrices\s*\(/,
+        pattern: /preservedNightPriceWrites\s*\(/,
       },
       {
         label: "an unusable strand is PARKED, not merely noted",

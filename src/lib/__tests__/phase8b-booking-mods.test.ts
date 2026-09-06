@@ -272,7 +272,12 @@ afterEach(() => {
  * "shape production cannot emit" this whole helper exists to stop.
  */
 function completeHostingGuestRows<
-  T extends { memberId?: string | null; ageTier?: string; priceCents?: number },
+  T extends {
+    memberId?: string | null;
+    ageTier?: string;
+    priceCents?: number;
+    nights?: ReadonlyArray<Record<string, unknown>>;
+  },
 >(guests: readonly T[], checkIn: Date, checkOut: Date) {
   return guests.map((guest) => {
     const stayStart = (guest as { stayStart?: Date }).stayStart ?? checkIn;
@@ -290,11 +295,16 @@ function completeHostingGuestRows<
       // rows for every guest since the #2739 backfill, so filling them in makes
       // these fixtures MORE like a live booking, not less. A fixture that states
       // its own `nights` still wins, including one that deliberately states none.
-      nights: syntheticSoldNightRows(stayStart, stayEnd, guest.priceCents),
       // `null` = no consent was ever needed, which is operationally present (D-12)
       // and the right default for an ordinary guest row.
       consentStatus: null as string | null,
       ...guest,
+      nights: (
+        guest.nights ?? syntheticSoldNightRows(stayStart, stayEnd, guest.priceCents)
+      ).map((night) => ({
+        priceSource: "UNKNOWN" as const,
+        ...night,
+      })),
       member:
         typeof guest.memberId === "string"
           ? hostingMemberRow(
@@ -328,7 +338,11 @@ function syntheticSoldNightRows(
   stayStart: Date,
   stayEnd: Date,
   priceCents: number | undefined,
-): Array<{ stayDate: Date; priceCents: number }> {
+): Array<{
+  stayDate: Date;
+  priceCents: number;
+  priceSource: "EVEN_SPLIT";
+}> {
   if (typeof priceCents !== "number") return [];
   const nights: Date[] = [];
   for (
@@ -344,6 +358,7 @@ function syntheticSoldNightRows(
   return nights.map((stayDate, index) => ({
     stayDate,
     priceCents: base + (index === 0 ? remainder : 0),
+    priceSource: "EVEN_SPLIT",
   }));
 }
 
@@ -851,9 +866,9 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
     expect(res.status).toBe(200);
     expect(tx.bookingGuestNight.createMany).toHaveBeenCalledWith({
       data: [
-        { bookingGuestId: "g1", stayDate: movedNights[0], priceCents: 4000 },
-        { bookingGuestId: "g1", stayDate: movedNights[1], priceCents: 5000 },
-        { bookingGuestId: "g1", stayDate: movedNights[2], priceCents: 6000 },
+        { bookingGuestId: "g1", stayDate: movedNights[0], priceCents: 4000, priceSource: "SOLD" },
+        { bookingGuestId: "g1", stayDate: movedNights[1], priceCents: 5000, priceSource: "SOLD" },
+        { bookingGuestId: "g1", stayDate: movedNights[2], priceCents: 6000, priceSource: "SOLD" },
       ],
     });
   });

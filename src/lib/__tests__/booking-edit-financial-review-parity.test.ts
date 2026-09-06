@@ -96,7 +96,13 @@ const NO_DISCOUNT_TX = {
   groupDiscountSetting: { findUnique: async () => null },
 } as never;
 
-function guest(nights: Array<{ stayDate: Date; priceCents?: number }>) {
+function guest(
+  nights: Array<{
+    stayDate: Date;
+    priceCents?: number;
+    priceSource: "SOLD" | "UNKNOWN";
+  }>,
+) {
   return {
     id: "g1",
     firstName: "Alice",
@@ -115,7 +121,11 @@ function guest(nights: Array<{ stayDate: Date; priceCents?: number }>) {
 
 /** The booking as the QUOTE route hands it to the planner. */
 function planInput(
-  nights: Array<{ stayDate: Date; priceCents?: number }>,
+  nights: Array<{
+    stayDate: Date;
+    priceCents?: number;
+    priceSource: "SOLD" | "UNKNOWN";
+  }>,
 ): BuildInProgressGuestRangePlanInput {
   const guests = [guest(nights)];
   const totalPriceCents = guests.reduce((sum, g) => sum + g.priceCents, 0);
@@ -137,7 +147,13 @@ function planInput(
 }
 
 /** The same edit as the APPLY path hands it to `calculateModifiedPricing`. */
-function pricingArgs(nights: Array<{ stayDate: Date; priceCents?: number }>) {
+function pricingArgs(
+  nights: Array<{
+    stayDate: Date;
+    priceCents?: number;
+    priceSource: "SOLD" | "UNKNOWN";
+  }>,
+) {
   const input = planInput(nights);
   return {
     booking: {
@@ -171,9 +187,13 @@ function pricingArgs(nights: Array<{ stayDate: Date; priceCents?: number }>) {
 const PRICED_NIGHTS = HELD.map((night) => ({
   stayDate: D(night),
   priceCents: RATE,
+  priceSource: "SOLD" as const,
 }));
 /** The same stay with no per-night record of what it cost. */
-const UNPRICED_NIGHTS = HELD.map((night) => ({ stayDate: D(night) }));
+const UNPRICED_NIGHTS = HELD.map((night) => ({
+  stayDate: D(night),
+  priceSource: "UNKNOWN" as const,
+}));
 
 describe("#3031 quote and apply consume one discriminated result", () => {
   it("both price the same exact booking, and agree on the amount", async () => {
@@ -522,6 +542,7 @@ describe("#3031 no magic zero reaches a night row", () => {
               priceCents: 3 * RATE,
               // One amount short of the three nights below.
               perNightCents: [RATE, RATE],
+              perNightPriceSources: ["SOLD", "SOLD", "SOLD"],
               nightDates: HELD.map((night) => D(night)),
             },
           ],
@@ -567,6 +588,7 @@ describe("#3031 no magic zero reaches a night row", () => {
             // Same LENGTH as the night list — nothing is missing. The middle
             // night's price is stated to be unknown.
             perNightCents: [RATE, null, RATE],
+            perNightPriceSources: ["SOLD", "UNKNOWN", "SOLD"],
             nightDates: HELD.map((night) => D(night)),
           },
         ],
@@ -584,6 +606,41 @@ describe("#3031 no magic zero reaches a night row", () => {
     // night), so 0 can never stand in for "not known".
     expect(rows[1].priceCents).toBeNull();
     expect(rows[1].priceCents).not.toBe(0);
+  });
+
+  it("refuses a source vector shorter than the priced night vector (#3275)", async () => {
+    const { applyGuestChanges } = await import("@/lib/booking-modify-plan");
+    const { tx, created } = writeDouble();
+
+    await expect(
+      applyGuestChanges(tx, {
+        bookingId: "bk-parity",
+        newCheckIn: D(HELD[0]),
+        newCheckOut: D("2026-08-23"),
+        removedGuests: [],
+        remainingGuests: [],
+        proposedRemainingGuests: [],
+        normalizedAddGuests: undefined,
+        priceBreakdown: {
+          guests: [
+            {
+              priceCents: 3 * RATE,
+              perNightCents: [RATE, RATE, RATE],
+              // One provenance entry short: this is not permission to guess
+              // SOLD for the final night.
+              perNightPriceSources: ["SOLD", "SOLD"],
+              nightDates: HELD.map((night) => D(night)),
+            },
+          ],
+        },
+        inProgressPlan: {
+          proposedExistingGuests: [PLAN_ENTRY],
+          proposedAddedGuests: [],
+        } as never,
+      }),
+    ).rejects.toThrow(/received no price provenance/);
+
+    expect(created).toEqual([]);
   });
 
   it("writes the priced amounts when the breakdown is complete", async () => {
@@ -605,6 +662,7 @@ describe("#3031 no magic zero reaches a night row", () => {
           {
             priceCents: 3 * RATE,
             perNightCents: [RATE, RATE, RATE],
+            perNightPriceSources: ["SOLD", "SOLD", "SOLD"],
             nightDates: HELD.map((night) => D(night)),
           },
         ],
@@ -620,6 +678,7 @@ describe("#3031 no magic zero reaches a night row", () => {
         bookingGuestId: "g1",
         stayDate: D(night),
         priceCents: RATE,
+        priceSource: "SOLD",
       })),
     ]);
   });

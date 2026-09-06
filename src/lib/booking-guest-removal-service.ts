@@ -358,7 +358,7 @@ export async function removeBookingGuestInTransaction({
     include: {
       guests: {
         include: {
-          nights: { select: { stayDate: true, priceCents: true } },
+          nights: { select: { stayDate: true, priceCents: true, priceSource: true } },
         },
       },
       payment: true,

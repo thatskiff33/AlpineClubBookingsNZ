@@ -7,6 +7,7 @@ import {
   type AgeTier,
   type Booking,
   type BookingGuest,
+  type BookingGuestNightPriceSource,
   type Member,
   type Payment,
   type Prisma,
@@ -207,7 +208,11 @@ export type LoadedBookingForModify = Booking & {
       // `null` means the row says the price is NOT KNOWN (a night a parked edit
       // committed without valuing); a number is the stored sold price, and 0 is
       // a real one (a comped night). `?? 0` on this field is prohibited.
-      nights?: { stayDate: Date; priceCents?: number | null }[];
+      nights?: {
+        stayDate: Date;
+        priceCents?: number | null;
+        priceSource: BookingGuestNightPriceSource;
+      }[];
     }
   >;
   payment: Payment | null;
