@@ -10,7 +10,7 @@ contract, and the calls have to sit inside the claim transaction, the release
 transaction or the reconcile those files already own.
 
 file: src/lib/cron-confirm-pending.ts
-lines: 1910
+lines: 1917
 reason: the one call inside the claim transaction that mints the attempt row
   under both locks, the SavedCardChargeRefusedError branch of the per-booking
   catch, the #1992 sweep exclusion moving from two reason literals to the shared
