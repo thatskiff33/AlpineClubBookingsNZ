@@ -688,8 +688,8 @@ describe("#1992 duplicate-capture auto-refund", () => {
       "stripe-webhook payment_intent.succeeded redelivery (stripe-webhook-service)",
       "confirm-payment route racing the webhook (bookings/[id]/confirm-payment)",
       "payment-link reconcile of an existing succeeded intent (createPaymentIntentForPaymentLink)",
-      "charge-saved-method rerun replaying the pending_charge_ Stripe idempotency key",
-      "cron-confirm-pending rerun replaying the pending_charge_ Stripe idempotency key",
+      "charge-saved-method replaying its recorded attempt's own intent (#3267)",
+      "cron-confirm-pending replaying its recorded attempt's own intent (#3267)",
       "create-payment-intent route recovery reconcile of a succeeded intent",
       "admin confirm-pending-guests retry of its recorded charge",
     ];
