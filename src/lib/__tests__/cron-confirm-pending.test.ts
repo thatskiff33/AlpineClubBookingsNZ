@@ -3308,12 +3308,12 @@ describe("Cron: Confirm Pending Bookings", () => {
       // hold expires makes the first observation land mid-window, and that
       // window's one alert is skipped.
       it.each([
-        ["the first run after the hold expired, captured an hour before it (window 1, first run)", 1 * HOUR, 1 * HOUR, true],
-        ["observable for 24 hours already (window 1, a later run)", 24 * HOUR, 24 * HOUR, false],
-        ["window 2, first run", WINDOW + 2 * HOUR, WINDOW + 2 * HOUR, true],
-        ["window 4, first run (capped)", 3 * WINDOW + 1 * HOUR, 3 * WINDOW + 1 * HOUR, false],
-        ["window 7, first run", 6 * WINDOW + 1 * HOUR, 6 * WINDOW + 1 * HOUR, true],
-        ["window 7, a later run", 6 * WINDOW + 5 * HOUR, 6 * WINDOW + 5 * HOUR, false],
+        ["window 1, first run (the hold expired an hour ago, captured an hour before that) -> ALERTS", 1 * HOUR, 1 * HOUR, true],
+        ["window 1, a later run (observable for 24 hours already) -> silent", 24 * HOUR, 24 * HOUR, false],
+        ["window 2, first run -> ALERTS", WINDOW + 2 * HOUR, WINDOW + 2 * HOUR, true],
+        ["window 4, first run -> silent (the cadence caps windows 4-6)", 3 * WINDOW + 1 * HOUR, 3 * WINDOW + 1 * HOUR, false],
+        ["window 7, first run -> ALERTS", 6 * WINDOW + 1 * HOUR, 6 * WINDOW + 1 * HOUR, true],
+        ["window 7, a later run -> silent", 6 * WINDOW + 5 * HOUR, 6 * WINDOW + 5 * HOUR, false],
         // The traced worked example. The money was captured five days before
         // the hold expired, so `SavedCardChargeRefusedError.since` is already
         // 120 hours old at the very first run that can see it. Anchored on the
@@ -3321,13 +3321,13 @@ describe("Cron: Confirm Pending Bookings", () => {
         // the next residues fall in capped windows, so the first alert would
         // not arrive for twelve days while captured money sat on a booking
         // reading pending.
-        ["captured five days before the hold expired: the FIRST observation alerts", 120 * HOUR, 1 * HOUR, true],
+        ["captured five days before the hold expired: the FIRST observation -> ALERTS", 120 * HOUR, 1 * HOUR, true],
         // And the other way round, so the anchor cannot quietly become "the
         // hold expiry" instead of "the later of the two": a booking whose hold
         // expired five days ago but whose money was captured an hour ago is one
         // hour into ITS window 1.
-        ["the hold expired five days ago, captured an hour ago: the cadence starts at the capture", 1 * HOUR, 120 * HOUR, true],
-      ])("%s -> alert %s; the refusal is logged and the booking counted failed on every run regardless", async (_label, capturedAgoMs, dueAgoMs, alerts) => {
+        ["the hold expired five days ago, captured an hour ago: the cadence starts at the capture -> ALERTS", 1 * HOUR, 120 * HOUR, true],
+      ])("%s; the refusal is logged and the booking counted failed on every run regardless", async (_label, capturedAgoMs, dueAgoMs, alerts) => {
         mockPendingBookings([
           makePendingBooking("b1", {
             holdUntil: new Date(Date.now() - dueAgoMs).toISOString(),
