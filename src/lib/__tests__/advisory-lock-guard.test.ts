@@ -789,7 +789,11 @@ const SCOPED_ADVISORY_LOCK_INVENTORY: Record<string, number> = {
   // insert does not bump Member.updatedAt, so the preview token alone cannot
   // catch the race). Single-lock holders; composition and counterpart analysis
   // in docs/CONCURRENCY_AND_LOCKING.md.
-  "src/lib/admin-family-group-requests-service.ts": 2,
+  // #3291 moves existing-member parent approval onto the shared lifecycle
+  // helper and then the shared partner helper. The one remaining raw site is
+  // the requester's separate lifecycle transition; the shared mints below are
+  // each counted once at their authority module.
+  "src/lib/admin-family-group-requests-service.ts": 1,
   // #2586: every roster-date writer calls the shared helper; the key is minted
   // once here and writer participation is pinned by roster-lock-contract.test.
   "src/lib/roster-lock.ts": 1,
@@ -924,25 +928,25 @@ const SCOPED_ADVISORY_LOCK_INVENTORY: Record<string, number> = {
   // PostgreSQL reaches tuple locks. Config import orders its existing singleton
   // first, then this key; live CRUD takes only this key.
   "src/lib/minimum-stay-policy-set.ts": 1,
-  // #1937/#2596: executeMemberMerge first calls the shared hosting policy-set
+  // #1937/#2596/#3291: executeMemberMerge first calls the shared hosting policy-set
   // helper, then — since #2595 — the merge-only partner-share prefix helper
   // (`acquireMemberMergePartnerSharedLodgeLocks`: every affected lodge capacity
-  // key, sorted, and NO global cohort key), then takes the two raw
-  // member-lifecycle:{id} keys in sorted order, and finally the canonical
+  // key, sorted, and NO global cohort key), then takes the two
+  // member-lifecycle keys through their shared helper, and finally the canonical
   // member-partner-link keys through `member-partner-lock.ts` — because merge
   // re-points partner links AND reads them to decide which future shared
-  // doubles step 3b deletes. The count stays 2 because all three added tiers
-  // come from helpers that own their own raw sites
+  // doubles step 3b deletes. All three added tiers come from helpers that own
+  // their own raw sites
   // (adult-member-hosting-policy-set.ts, bed-allocation-lifecycle.ts +
   // lodge-capacity-lock.ts, member-partner-lock.ts) — merge mints no new key of
-  // its own. This order serialises policy enumeration before relation moves,
+  // its own. Merge therefore has no raw scoped site of its own. This order
+  // serialises policy enumeration before relation moves,
   // keeps the fixed lodge -> member order for the #2595 shared-double
   // reconciliation, matches the reviewed move's member-lifecycle ->
   // member-partner-link order so no new wait-graph edge appears, and
   // excludes every delete/archive/merge touching either member. Merge is
   // deliberately absent from GLOBAL_LOCK_SITE_REGISTRY above:
   // `member-merge-execute.test.ts` pins that it takes no `lock(1)` at all.
-  "src/lib/member-merge.ts": 2,
   // #2595: the partner-link service and reviewed move service share this one
   // canonical sorted member-partner-link lock mint.
   "src/lib/member-partner-lock.ts": 1,
@@ -952,12 +956,12 @@ const SCOPED_ADVISORY_LOCK_INVENTORY: Record<string, number> = {
   // and confirm serialise; counterpart analysis in
   // docs/CONCURRENCY_AND_LOCKING.md, compatibility evidence in PR #2158.
   "src/lib/membership-subscription-billing.ts": 2,
-  // #1936: 2 pre-existing membership-application locks (application id +
-  // applicant email) plus the approval-mapping transaction's sorted
-  // member-lifecycle:{targetId} loop — the approval composes
-  // member-application THEN member-lifecycle; ordering and counterpart
-  // analysis in docs/CONCURRENCY_AND_LOCKING.md.
-  "src/lib/nomination.ts": 3,
+  // #1936/#3291: the two pre-existing membership-application locks
+  // (application id + applicant email) remain local. Approval mapping now
+  // takes its complete sorted lifecycle set through member-lifecycle-lock.ts,
+  // followed by the complete partner set through member-partner-lock.ts.
+  // Those shared mints are counted at their authority modules.
+  "src/lib/nomination.ts": 2,
   "src/lib/xero-contacts.ts": 2,
   // #3170: `enqueueXeroSupplementaryInvoiceOperation` takes
   // `pg_advisory_xact_lock(hashtext('xero-supplementary-invoice'), hashtext(<anchor>))`

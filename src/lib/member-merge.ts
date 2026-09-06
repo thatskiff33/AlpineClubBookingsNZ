@@ -40,6 +40,11 @@ import {
 import { sendAdminPartnerShareSweptAlert } from "@/lib/email";
 import logger from "@/lib/logger";
 import { acquireMemberPartnerLinkLocks } from "@/lib/member-partner-lock";
+import { acquireMemberLifecycleLocks } from "@/lib/member-lifecycle-lock";
+import {
+  MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+  loadMemberMergeExclusivityTopology,
+} from "@/lib/member-parent-partner-exclusivity";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { MEMBER_MERGE_RELATION_SPECS } from "@/lib/member-merge-relations";
 import {
@@ -635,6 +640,18 @@ export async function evaluateMemberMergeGuards(params: {
   }
 
   blockers.push(...(await evaluateFamilyLinkGraphBlockers(db, masterId, loserId)));
+  const exclusivityTopology = await loadMemberMergeExclusivityTopology(
+    db,
+    masterId,
+    loserId,
+  );
+  if (exclusivityTopology.conflictingPairCount > 0) {
+    blockers.push({
+      code: "parent_partner_overlap",
+      label: MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+      count: exclusivityTopology.conflictingPairCount,
+    });
+  }
   blockers.push(
     ...(await evaluateContactCreateRecoveryBlockers(db, masterId, loserId)),
   );
@@ -1450,9 +1467,10 @@ export async function executeMemberMerge(params: {
     // Dual advisory lock in sorted id order (deadlock-free) on the shared
     // member-lifecycle key space, so a merge serialises with any concurrent
     // delete/archive/merge touching either member.
-    const [lockA, lockB] = [masterId, loserId].sort();
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`member-lifecycle:${lockA}`}))`;
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`member-lifecycle:${lockB}`}))`;
+    await acquireMemberLifecycleLocks(tx, [masterId, loserId]);
+
+    const exclusivityTopologyBeforeLocks =
+      await loadMemberMergeExclusivityTopology(tx, masterId, loserId);
 
     // #2595 — merge is a partner-link WRITER (step 2 re-points the duplicate's
     // links onto the master) and, since this change, a partner-link READER whose
@@ -1479,7 +1497,34 @@ export async function executeMemberMerge(params: {
     // graph — only a second holder of one that already exists. It cannot cycle:
     // the partner-link service takes this key and no other tier, so a holder of
     // it never waits on anything merge holds. Sorted inside the helper.
-    await acquireMemberPartnerLinkLocks(tx, [masterId, loserId]);
+    await acquireMemberPartnerLinkLocks(
+      tx,
+      exclusivityTopologyBeforeLocks.participantIds,
+    );
+    const exclusivityTopologyUnderLocks =
+      await loadMemberMergeExclusivityTopology(tx, masterId, loserId);
+    if (
+      exclusivityTopologyUnderLocks.participantIds.join("\u0000") !==
+      exclusivityTopologyBeforeLocks.participantIds.join("\u0000")
+    ) {
+      throw new MemberMergeError(
+        "Family relationship participants changed while the merge was running. Nothing was saved. Re-run the preview and try again.",
+        409,
+        "merge_drift_in_transaction",
+        { driftFields: ["parentPartnerParticipants"] },
+      );
+    }
+    if (exclusivityTopologyUnderLocks.conflictingPairCount > 0) {
+      throw new MemberMergeError(
+        MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+        409,
+        "parent_partner_overlap",
+        {
+          conflictingPairCount:
+            exclusivityTopologyUnderLocks.conflictingPairCount,
+        },
+      );
+    }
 
     const [masterFull, loserFull] = await Promise.all([
       tx.member.findUnique({ where: { id: masterId } }),

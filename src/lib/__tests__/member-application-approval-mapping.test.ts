@@ -125,6 +125,8 @@ function targetRow(overrides: Record<string, unknown> = {}) {
     seasonalMembershipAssignments: [],
     financeAccessLevel: null,
     accessRoles: [],
+    partnerLinksAsMemberA: [],
+    partnerLinksAsMemberB: [],
     ...overrides,
   };
 }
@@ -231,6 +233,7 @@ function makeTx(overrides: {
         create: vi.fn().mockResolvedValue({ id: "member-1", email: "jane@test.com", firstName: "Jane", lastName: "Doe" }),
         update,
       },
+      memberPartnerLink: { findUnique: vi.fn().mockResolvedValue(null) },
       familyGroup: { create: vi.fn().mockResolvedValue({ id: "fg-1" }) },
       familyGroupMember: { create: vi.fn(), upsert: vi.fn() },
       passwordResetToken: { deleteMany: vi.fn(), create: vi.fn() },
@@ -892,5 +895,75 @@ describe("family MAP", () => {
     expect(tx.familyGroupMember.upsert).toHaveBeenCalled();
     expect(result.createdMemberIds).toEqual(["member-1"]);
     expect(result.mappedMemberIds).toEqual(["child-x"]);
+  });
+
+  it("409s when a partner row appears after preview, with zero approval side effects", async () => {
+    const decisions = {
+      applicant: { mode: "MAP" as const, memberId: "applicant-x" },
+      family: [{ mode: "MAP" as const, memberId: "child-x" }],
+    };
+    const applicant = targetRow({
+      id: "applicant-x",
+      canLogin: true,
+      email: "jane@test.com",
+    });
+    const childAtPreview = targetRow({
+      id: "child-x",
+      canLogin: false,
+    });
+
+    prismaMock.memberApplication.findUnique.mockResolvedValue(familyApp() as never);
+    prismaMock.member.findMany.mockImplementation(
+      findManyFor([applicant, childAtPreview]),
+    );
+    prismaMock.member.findFirst.mockResolvedValue({ id: "applicant-x" } as never);
+    const preview = await buildApprovalMappingPreview({
+      applicationId: "app-1",
+      personDecisions: decisions,
+      seasonYear: 2026,
+      actor: { id: "admin-1", isFullAdmin: true },
+    });
+    const token = (preview.body as { preview: { previewToken: string } }).preview
+      .previewToken;
+
+    const childUnderLocks = targetRow({
+      id: "child-x",
+      canLogin: false,
+      partnerLinksAsMemberB: [{ memberAId: "applicant-x" }],
+    });
+    prismaMock.memberApplication.findUnique.mockResolvedValue(familyApp() as never);
+    const { tx, update } = makeTx({
+      targets: [applicant, childUnderLocks],
+      loginHolder: { id: "applicant-x" },
+    });
+    tx.memberApplication.findUnique.mockResolvedValue(familyApp());
+    prismaMock.$transaction.mockImplementation(async (cb: any) => cb(tx));
+
+    await expect(
+      approveMemberApplication(
+        "app-1",
+        "admin-1",
+        null,
+        null,
+        undefined,
+        decisions,
+        token,
+      ),
+    ).rejects.toMatchObject({
+      status: 409,
+      message: expect.stringContaining("changed since it was previewed"),
+    });
+
+    expect(update).not.toHaveBeenCalled();
+    expect(tx.member.create).not.toHaveBeenCalled();
+    expect(tx.familyGroup.create).not.toHaveBeenCalled();
+    expect(tx.familyGroupMember.create).not.toHaveBeenCalled();
+    expect(tx.familyGroupMember.upsert).not.toHaveBeenCalled();
+    expect(tx.passwordResetToken.create).not.toHaveBeenCalled();
+    expect(tx.memberApplication.update).not.toHaveBeenCalled();
+    expect(xeroOutboxMock.enqueueXeroEntranceFeeInvoiceOperation).not.toHaveBeenCalled();
+    expect(auditMock.logAudit).not.toHaveBeenCalled();
+    expect(billingMock.queueApprovedMembershipSubscriptionCharges).not.toHaveBeenCalled();
+    expect(emailMock.sendMembershipApplicationApprovedEmail).not.toHaveBeenCalled();
   });
 });

@@ -1,4 +1,5 @@
 import type { Prisma } from "@prisma/client";
+import { collectPrismaErrorText } from "@/lib/prisma-errors";
 
 // test seam
 /**
@@ -57,21 +58,6 @@ const BOOKING_ENVELOPE_TRIGGER_MESSAGES = [
   "Booking date range must contain all BookingGuest stay ranges",
 ] as const;
 
-function collectErrorText(value: unknown, depth = 0): string {
-  if (depth > 5 || value == null) return "";
-  if (typeof value === "string") return value;
-  if (typeof value !== "object") return "";
-  const record = value as Record<string, unknown>;
-  const parts: string[] = [];
-  for (const key of ["message", "detail", "constraint"]) {
-    if (typeof record[key] === "string") parts.push(record[key] as string);
-  }
-  for (const key of ["meta", "driverAdapterError", "cause"]) {
-    if (record[key]) parts.push(collectErrorText(record[key], depth + 1));
-  }
-  return parts.join("\n");
-}
-
 /**
  * True when an error originated from one of the envelope constraint
  * triggers, wherever it surfaced: a Prisma raw-query P2010 whose message
@@ -82,7 +68,7 @@ function collectErrorText(value: unknown, depth = 0): string {
  * client.
  */
 export function isBookingEnvelopeInvariantViolation(error: unknown): boolean {
-  const text = collectErrorText(error);
+  const text = collectPrismaErrorText(error);
   return (
     BOOKING_ENVELOPE_CONSTRAINTS.some((name) => text.includes(name)) ||
     BOOKING_ENVELOPE_TRIGGER_MESSAGES.some((message) => text.includes(message))

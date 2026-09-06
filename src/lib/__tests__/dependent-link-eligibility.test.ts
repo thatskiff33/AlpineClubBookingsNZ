@@ -22,6 +22,7 @@ import {
   MAX_FAMILY_LINK_GENERATIONS,
   MAX_PARENT_LINK_CHAIN_LENGTH,
 } from "@/lib/member-family-link-depth";
+import { notPartnerWithMemberWhere } from "@/lib/member-parent-partner-exclusivity";
 
 /**
  * #2254. The dependant-link candidate search returned "No eligible members
@@ -217,6 +218,18 @@ const FIXTURES: Array<{ member: Fixture; why: string }> = [
       archivedAt: null,
       parentMemberId: null,
       secondaryParentId: null,
+    },
+  },
+  {
+    why: "a pending or confirmed partner row reserves the incompatible pair",
+    member: {
+      id: "direct-partner",
+      firstName: "Partner",
+      active: true,
+      archivedAt: null,
+      parentMemberId: null,
+      secondaryParentId: null,
+      partnerLinksAsMemberB: [{ memberAId: PARENT_ID }],
     },
   },
   {
@@ -432,6 +445,16 @@ function expectedEligible(parentId: string, candidate: Fixture): boolean {
     return false;
   }
   if (candidate.parentMemberId && candidate.secondaryParentId) return false;
+  if (
+    candidate.partnerLinksAsMemberA?.some(
+      (link) => link.memberBId === parentId,
+    ) ||
+    candidate.partnerLinksAsMemberB?.some(
+      (link) => link.memberAId === parentId,
+    )
+  ) {
+    return false;
+  }
   const above = ancestorsOf(parentId);
   if (above.ids.includes(candidate.id)) return false;
   return (
@@ -452,6 +475,13 @@ function seedFixtureDatabase() {
       "secondaryParentId" TEXT
     )`,
   );
+  db.exec(
+    `CREATE TABLE "MemberPartnerLink" (
+      "id" TEXT PRIMARY KEY,
+      "memberAId" TEXT NOT NULL,
+      "memberBId" TEXT NOT NULL
+    )`,
+  );
   const insert = db.prepare(
     `INSERT INTO "Member" VALUES (?, ?, ?, ?, ?, ?)`,
   );
@@ -464,6 +494,24 @@ function seedFixtureDatabase() {
       member.parentMemberId,
       member.secondaryParentId,
     );
+  }
+  const insertPartner = db.prepare(
+    `INSERT INTO "MemberPartnerLink" VALUES (?, ?, ?)`,
+  );
+  const insertedPairs = new Set<string>();
+  for (const { member } of FIXTURES) {
+    for (const link of member.partnerLinksAsMemberA ?? []) {
+      const key = `${member.id}\u0000${link.memberBId}`;
+      if (insertedPairs.has(key)) continue;
+      insertPartner.run(`link-${insertedPairs.size}`, member.id, link.memberBId);
+      insertedPairs.add(key);
+    }
+    for (const link of member.partnerLinksAsMemberB ?? []) {
+      const key = `${link.memberAId}\u0000${member.id}`;
+      if (insertedPairs.has(key)) continue;
+      insertPartner.run(`link-${insertedPairs.size}`, link.memberAId, member.id);
+      insertedPairs.add(key);
+    }
   }
   return db;
 }
@@ -548,6 +596,7 @@ describe("dependentLinkBlockers", () => {
         archivedAt: new Date(),
         parentMemberId: PARENT_ID,
         secondaryParentId: "other",
+        partnerLinksAsMemberA: [{ memberBId: PARENT_ID }],
       },
       {
         parentAncestorIds: [PARENT_ID],
@@ -581,6 +630,7 @@ describe("dependentLinkCandidateWhere", () => {
     expect(candidateWhereFor(PARENT_ID)).toEqual([
       { id: { notIn: [PARENT_ID] } },
       { OR: [{ parentMemberId: null }, { parentMemberId: { not: PARENT_ID } }] },
+      ...notPartnerWithMemberWhere(PARENT_ID),
       {
         OR: [
           { secondaryParentId: null },
@@ -755,6 +805,7 @@ describe("parent-direction (Add Parent) search/write parity", () => {
     );
     return [
       { id: { notIn: [memberId, ...descendants] } },
+      ...notPartnerWithMemberWhere(memberId),
       ancestorDepthWithinWhere(MAX_PARENT_LINK_CHAIN_LENGTH - 1 - below),
     ];
   }
@@ -762,6 +813,17 @@ describe("parent-direction (Add Parent) search/write parity", () => {
   /** The row-level verdict for "may `candidate` become `member`'s parent?" */
   function parentLinkAllowed(memberId: string, candidateId: string): boolean {
     if (candidateId === memberId) return false;
+    const candidate = fixture(candidateId);
+    if (
+      candidate.partnerLinksAsMemberA?.some(
+        (link) => link.memberBId === memberId,
+      ) ||
+      candidate.partnerLinksAsMemberB?.some(
+        (link) => link.memberAId === memberId,
+      )
+    ) {
+      return false;
+    }
     // A descendant becoming a parent is a cycle.
     if (ancestorsOf(candidateId).ids.includes(memberId)) return false;
     return (

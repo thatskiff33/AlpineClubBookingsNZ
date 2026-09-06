@@ -34,6 +34,8 @@ import {
   resolveInheritedEmailSourceId,
 } from "@/lib/member-parent-links";
 import logger from "@/lib/logger";
+import { acquireMemberLifecycleLocks } from "@/lib/member-lifecycle-lock";
+import { acquireMemberPartnerLinkLocks } from "@/lib/member-partner-lock";
 
 const linkDependentSchema = z.object({
   memberId: z.string().min(1, "Member is required"),
@@ -120,6 +122,12 @@ export async function POST(
 
   try {
     const linkedMember = await prisma.$transaction(async (tx) => {
+      // INV-LOCK-002/003: existing-member parent writes compose the lifecycle
+      // tier followed by the complete sorted partner tier. The guarded rows are
+      // first read below only after both pairs of locks are held.
+      await acquireMemberLifecycleLocks(tx, [parentId, data.memberId]);
+      await acquireMemberPartnerLinkLocks(tx, [parentId, data.memberId]);
+
       const parent = await tx.member.findUnique({
         where: { id: parentId },
         select: {

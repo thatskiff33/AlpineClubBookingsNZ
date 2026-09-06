@@ -154,6 +154,10 @@ import { auth } from "@/lib/auth";
 import { createAuditLog, logAudit } from "@/lib/audit";
 import { dependentLinkCandidateWhere } from "@/lib/dependent-link-eligibility";
 import { ancestorDepthWithinWhere } from "@/lib/member-family-link-depth";
+import {
+  notDirectParentWithMemberWhere,
+  notPartnerWithMemberWhere,
+} from "@/lib/member-parent-partner-exclusivity";
 import { sendMemberSetupInviteEmail } from "@/lib/email";
 import { GET as getMembers, POST as createMember } from "@/app/api/admin/members/route";
 import { GET as exportMembers } from "@/app/api/admin/members/export/route";
@@ -1186,6 +1190,17 @@ describe("Phase 3: Admin Member Management", () => {
             parentMemberId: null,
             secondaryParentId: null,
           },
+          {
+            id: "m-partner",
+            firstName: "Pat",
+            lastName: "Smith",
+            email: "pat@example.com",
+            archivedAt: null,
+            parentMemberId: null,
+            secondaryParentId: null,
+            partnerLinksAsMemberA: [{ memberBId: "parent-1" }],
+            partnerLinksAsMemberB: [],
+          },
         ],
         // #2255: Bob heads three generations of his own, so linking him under
         // a root parent would make five. That is now the reason the dialog
@@ -1229,6 +1244,14 @@ describe("Phase 3: Admin Member Management", () => {
           email: "old@example.com",
           reason: "ARCHIVED",
           explanation: "is archived",
+        },
+        {
+          id: "m-partner",
+          firstName: "Pat",
+          lastName: "Smith",
+          email: "pat@example.com",
+          reason: "DIRECT_PARTNER",
+          explanation: "is already this member's partner",
         },
       ]);
       // Members DID match the text search, so the dialog must not claim
@@ -1321,6 +1344,50 @@ describe("Phase 3: Admin Member Management", () => {
 
       expect(body).not.toHaveProperty("dependentLinkIneligible");
       expect(vi.mocked(prisma.member.findMany)).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("partnerLinkEligibleFor - partner candidates", () => {
+    it("excludes direct parentage in both columns and orientations", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+      vi.mocked(prisma.member.findMany).mockResolvedValue([]);
+      mockSessionAndMemberListCounts(0);
+
+      await getMembers(
+        new NextRequest(
+          "http://localhost/api/admin/members?q=smith&partnerLinkEligibleFor=member-1",
+        ),
+      );
+
+      const call = vi.mocked(prisma.member.findMany).mock.calls[0][0] as {
+        where?: { AND?: unknown[] };
+      };
+      expect(call.where?.AND).toEqual(
+        expect.arrayContaining(notDirectParentWithMemberWhere("member-1")),
+      );
+    });
+
+    it("adds the same any-status partner exclusion to Add Parent candidates", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+      vi.mocked(prisma.member.findMany).mockImplementation((async (args: any) => {
+        if (args?.where?.id?.in || args?.where?.OR) return [];
+        return [];
+      }) as never);
+      mockSessionAndMemberListCounts(0);
+
+      await getMembers(
+        new NextRequest(
+          "http://localhost/api/admin/members?q=smith&parentLinkEligibleFor=member-1",
+        ),
+      );
+
+      const searchCall = vi
+        .mocked(prisma.member.findMany)
+        .mock.calls.map(([args]) => args as { where?: { AND?: unknown[] } })
+        .find((args) => Array.isArray(args.where?.AND));
+      expect(searchCall?.where?.AND).toEqual(
+        expect.arrayContaining(notPartnerWithMemberWhere("member-1")),
+      );
     });
   });
 

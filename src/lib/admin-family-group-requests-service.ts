@@ -36,6 +36,12 @@ import {
   sendGroupCreateApprovedEmail,
   sendGroupCreateRejectedEmail,
 } from "@/lib/email";
+import { acquireMemberLifecycleLocks } from "@/lib/member-lifecycle-lock";
+import { acquireMemberPartnerLinkLocks } from "@/lib/member-partner-lock";
+import {
+  MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+  hasAnyPartnerRelationship,
+} from "@/lib/member-parent-partner-exclusivity";
 
 export const REVIEWED_REQUEST_TYPES = [
   "JOIN_REQUEST",
@@ -157,6 +163,7 @@ async function findPotentialMemberMatches(
   request: {
     type: string;
     familyGroupId: string;
+    requesterId: string;
     childFirstName?: string | null;
     childLastName?: string | null;
     childDateOfBirth?: Date | null;
@@ -259,6 +266,8 @@ async function findPotentialMemberMatches(
         where: { familyGroupId: request.familyGroupId },
         select: { familyGroupId: true },
       },
+      partnerLinksAsMemberA: { select: { memberBId: true } },
+      partnerLinksAsMemberB: { select: { memberAId: true } },
     },
     orderBy: [{ active: "desc" }, { lastName: "asc" }, { firstName: "asc" }],
     take: 10,
@@ -279,6 +288,16 @@ async function findPotentialMemberMatches(
     ageLabel: formatMemberIdentityAge(member.dateOfBirth, clubDay),
     parentLinks: buildParentLinks(member),
     alreadyInGroup: member.familyGroupMemberships.length > 0,
+    ineligibleReason:
+      request.type === "CHILD_REQUEST" &&
+      (member.partnerLinksAsMemberA.some(
+        (link) => link.memberBId === request.requesterId,
+      ) ||
+        member.partnerLinksAsMemberB.some(
+          (link) => link.memberAId === request.requesterId,
+        ))
+        ? MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE
+        : undefined,
   }));
 }
 
@@ -832,10 +851,59 @@ export async function reviewAdminFamilyGroupRequest(params: {
         // created inside this transaction need no lock — their ids are not
         // visible to any concurrent mapping yet. Single key today; keep any
         // future multi-member variant in sorted key order.
-        for (const lockMemberId of [affectedMemberId]
-          .filter((value): value is string => Boolean(value))
-          .sort()) {
-          await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`member-lifecycle:${lockMemberId}`}))`;
+        const parentLinkMemberIds = childMemberForParentLink
+          ? [request.requesterId, childMemberForParentLink.id]
+          : [];
+        await acquireMemberLifecycleLocks(tx, [
+          affectedMemberId,
+          ...parentLinkMemberIds,
+        ]);
+        if (parentLinkMemberIds.length > 0) {
+          await acquireMemberPartnerLinkLocks(tx, parentLinkMemberIds);
+
+          // The preflight selected the candidate for user feedback, but the
+          // relationship decision is made again through this transaction only
+          // after lifecycle then partner locks (INV-LOCK-002/004).
+          const freshChild = await tx.member.findUnique({
+            where: { id: childMemberForParentLink!.id },
+            select: {
+              id: true,
+              ageTier: true,
+              active: true,
+              archivedAt: true,
+              canLogin: true,
+              parentMemberId: true,
+              secondaryParentId: true,
+              inheritEmailFromId: true,
+              parent: { select: { id: true, inheritEmailFromId: true } },
+              secondaryParent: {
+                select: { id: true, inheritEmailFromId: true },
+              },
+            },
+          });
+          if (
+            !freshChild ||
+            !freshChild.active ||
+            freshChild.archivedAt ||
+            !CHILD_REQUEST_AGE_TIERS.includes(freshChild.ageTier)
+          ) {
+            throw new ReviewRequestError(
+              "Selected member must be an active infant, child, or youth",
+            );
+          }
+          childMemberForParentLink = freshChild;
+
+          if (
+            await hasAnyPartnerRelationship(
+              tx,
+              request.requesterId,
+              freshChild.id,
+            )
+          ) {
+            throw new ReviewRequestError(
+              MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+            );
+          }
         }
 
         if (childMemberCreateData) {

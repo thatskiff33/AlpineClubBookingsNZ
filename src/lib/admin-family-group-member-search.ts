@@ -5,6 +5,7 @@ import { ageTierEnum } from "@/lib/age-tier-schema";
 import { formatMemberIdentityAge } from "@/lib/member-age";
 import { clubTime } from "@/lib/club-time/server";
 import { buildParentLinks, type ParentLinkSummary } from "@/lib/member-parent-links";
+import { MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE } from "@/lib/member-parent-partner-exclusivity";
 
 /**
  * Member lookup for the identity-sensitive Family Group admin workflows (#2568).
@@ -42,6 +43,7 @@ export const familyGroupMemberSearchQuerySchema = z.object({
     .optional()
     .transform((value) => (value ? value.split(",").map((part) => part.trim()) : undefined))
     .pipe(z.array(ageTierEnum).min(1).optional()),
+  prospectiveParentMemberId: z.string().trim().min(1).optional(),
 });
 
 export type FamilyGroupMemberSearchQuery = z.infer<
@@ -64,6 +66,7 @@ export interface FamilyGroupMemberSearchRow {
    * endpoint returned, and no parent's date of birth (it is not selected).
    */
   parentLinks: ParentLinkSummary[];
+  ineligibleReason?: string;
 }
 
 // Same name/email predicate the members admin search uses, so an admin who
@@ -146,6 +149,8 @@ export async function searchFamilyGroupCandidateMembers(
             inheritEmailFromId: true,
           },
         },
+        partnerLinksAsMemberA: { select: { memberBId: true } },
+        partnerLinksAsMemberB: { select: { memberAId: true } },
       },
       orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
       take: MAX_RESULTS,
@@ -173,6 +178,16 @@ export async function searchFamilyGroupCandidateMembers(
       canLogin: member.canLogin,
       ageLabel: formatMemberIdentityAge(member.dateOfBirth, clubToday),
       parentLinks: buildParentLinks(member),
+      ineligibleReason:
+        query.prospectiveParentMemberId &&
+        (member.partnerLinksAsMemberA.some(
+          (link) => link.memberBId === query.prospectiveParentMemberId,
+        ) ||
+          member.partnerLinksAsMemberB.some(
+            (link) => link.memberAId === query.prospectiveParentMemberId,
+          ))
+          ? MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE
+          : undefined,
     })),
     total,
   };

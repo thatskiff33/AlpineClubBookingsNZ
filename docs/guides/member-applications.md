@@ -63,6 +63,10 @@ or replace a nominator. Money is in integer cents (shown as dollars).
    (the default) or **Map to existing**. When mapping, pick the target with the
    candidate chips or the **Search name or email** box + **Search**, then
    **Use**. A green box confirms *Mapped to …*; **Change** re-picks.
+   Existing records stay visible in search even when the applicant and that
+   dependant are already partners, but the preview marks that choice as
+   unavailable. This prevents creating a duplicate merely because the real
+   record disappeared from search.
 3. If you mapped anyone, click **Preview mapping** and review the **Field /
    Current / Application** diff — mapping **overwrites** the member's details
    from the application. Approval is blocked until the preview is fresh and free
@@ -100,6 +104,13 @@ The approval mapping is bound to a signed preview token and re-validated under a
 per-member lock, so two admins mapping the same member cannot both win — the
 second is refused (409) and must re-preview.
 
+A pending or confirmed partner pair cannot also be recorded as direct
+parent/dependant. The preview checks both parent columns and both orientations;
+approval repeats that check after the sorted member relationship locks are held.
+If the relationship changed after preview, approval returns a conflict and
+leaves the application pending without changing members, fees, email, audit
+success rows, or Xero work.
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
@@ -109,6 +120,7 @@ second is refused (409) and must re-preview.
 | **Approve** stays disabled | A mapped person has no target, or the mapping preview is stale/has errors | Choose a target for every mapped person and click **Preview mapping** again |
 | "Enter a reason for not raising the joining fee invoice." | You chose **Do not raise invoice** without a reason | Enter a reason (3–500 characters) |
 | Approval fails with a conflict | Another admin edited the target member or a recomputed value (e.g. age tier) drifted | Re-open the panel and **Preview mapping** again, then approve |
+| A mapped family member says they cannot also be the applicant's dependant | Those two records already have a pending or confirmed partner link | Check both records and correct whichever relationship is wrong, then preview again; do not create a duplicate record |
 
 ## Related links
 

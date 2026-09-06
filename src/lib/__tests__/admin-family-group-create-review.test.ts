@@ -55,10 +55,12 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
 import {
+  sendChildRequestApprovedEmail,
   sendFamilyGroupInvitationEmail,
   sendGroupCreateApprovedEmail,
   sendGroupCreateRejectedEmail,
 } from "@/lib/email";
+import { MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE } from "@/lib/member-parent-partner-exclusivity";
 import {
   reviewAdminFamilyGroupRequest,
   REVIEWED_REQUEST_TYPES,
@@ -744,16 +746,33 @@ describe("reviewAdminFamilyGroupRequest — CHILD_REQUEST memberless-group guard
           // is in `EMAIL_SOURCE_SELECT`, so a real row always has it; a fixture
           // that omits it yields `undefined`, which is not `null`, and the
           // requester reads as an inheritor rather than a mailbox.
-          findUnique: vi.fn().mockResolvedValue({
-            id: "member-1",
-            ageTier: "ADULT",
-            email: "member-1@test.com",
-            archivedAt: null,
-            parentMemberId: null,
-            secondaryParentId: null,
-            inheritEmailFromId: null,
-            inheritEmailChoiceId: null,
-          }),
+          findUnique: vi.fn(async ({ where }: { where: { id: string } }) =>
+            where.id === "child-1"
+              ? {
+                  id: "child-1",
+                  active: true,
+                  ageTier: "CHILD",
+                  canLogin: false,
+                  email: null,
+                  archivedAt: null,
+                  parentMemberId: null,
+                  secondaryParentId: null,
+                  inheritEmailFromId: null,
+                  inheritEmailChoiceId: null,
+                  parent: null,
+                  secondaryParent: null,
+                }
+              : {
+                  id: "member-1",
+                  ageTier: "ADULT",
+                  email: "member-1@test.com",
+                  archivedAt: null,
+                  parentMemberId: null,
+                  secondaryParentId: null,
+                  inheritEmailFromId: null,
+                  inheritEmailChoiceId: null,
+                },
+          ),
           // #2255: the approval walks the family chain (four-generation LINK
           // cap + cycle guard) through `member.findMany`. That cap is unchanged
           // by #2716 — it governs the tree, never the address hop. Nobody here
@@ -773,6 +792,7 @@ describe("reviewAdminFamilyGroupRequest — CHILD_REQUEST memberless-group guard
           ),
           update: txMemberUpdate,
         },
+        memberPartnerLink: { findUnique: vi.fn().mockResolvedValue(null) },
         familyGroupMember: { upsert: txUpsert },
         familyGroupJoinRequest: { update: txUpdate },
       })
@@ -787,10 +807,16 @@ describe("reviewAdminFamilyGroupRequest — CHILD_REQUEST memberless-group guard
     expect(result.body).toEqual({ success: true, action: "approve" });
     // #1936: the linked member's member-lifecycle advisory lock is taken in-tx
     // so the group link serializes with application-approval mapping.
-    expect(txExecuteRaw).toHaveBeenCalledTimes(1);
-    expect(txExecuteRaw.mock.calls[0].flat().join(" ")).toContain(
-      "member-lifecycle:child-1"
+    expect(txExecuteRaw).toHaveBeenCalledTimes(4);
+    const lockTexts = txExecuteRaw.mock.calls.map((call) =>
+      call.flat().join(" "),
     );
+    expect(lockTexts.slice(0, 2).every((text) =>
+      text.includes("member-lifecycle:"),
+    )).toBe(true);
+    expect(lockTexts.slice(2).every((text) =>
+      text.includes("member-partner-link:"),
+    )).toBe(true);
     expect(txUpsert).toHaveBeenCalledWith(
       expect.objectContaining({
         // #2520: membership only — no `role` is written any more.
@@ -798,6 +824,97 @@ describe("reviewAdminFamilyGroupRequest — CHILD_REQUEST memberless-group guard
       })
     );
   });
+
+  it.each([
+    {
+      status: "PENDING",
+      orientation: "child is canonical member A",
+      childId: "a-child",
+      pair: { memberAId: "a-child", memberBId: "member-1" },
+    },
+    {
+      status: "CONFIRMED",
+      orientation: "child is canonical member B",
+      childId: "z-child",
+      pair: { memberAId: "member-1", memberBId: "z-child" },
+    },
+  ])(
+    "refuses an existing $status partner row in either orientation before all success effects ($orientation)",
+    async ({ status, childId, pair }) => {
+      mockedPrisma.familyGroupJoinRequest.findUnique.mockResolvedValue(
+        childRequest() as any,
+      );
+      mockedPrisma.familyGroupMember.count.mockResolvedValue(1);
+      mockedPrisma.member.findUnique.mockResolvedValue({
+        id: childId,
+        active: true,
+        archivedAt: null,
+        ageTier: "CHILD",
+        canLogin: false,
+        parentMemberId: null,
+        secondaryParentId: null,
+        inheritEmailFromId: null,
+        parent: null,
+        secondaryParent: null,
+      } as any);
+
+      const txMemberUpdate = vi.fn();
+      const txMembershipUpsert = vi.fn();
+      const txRequestUpdate = vi.fn();
+      const txPartnerFind = vi.fn().mockResolvedValue({
+        id: `link-${status.toLowerCase()}`,
+        status,
+      });
+      mockedPrisma.$transaction.mockImplementation(async (fn: any) =>
+        fn({
+          $executeRaw: vi.fn().mockResolvedValue(undefined),
+          member: {
+            findUnique: vi.fn().mockResolvedValue({
+              id: childId,
+              active: true,
+              archivedAt: null,
+              ageTier: "CHILD",
+              canLogin: false,
+              parentMemberId: null,
+              secondaryParentId: null,
+              inheritEmailFromId: null,
+              parent: null,
+              secondaryParent: null,
+            }),
+            update: txMemberUpdate,
+          },
+          memberPartnerLink: { findUnique: txPartnerFind },
+          familyGroupMember: { upsert: txMembershipUpsert },
+          familyGroupJoinRequest: { update: txRequestUpdate },
+        }),
+      );
+
+      const result = await reviewAdminFamilyGroupRequest({
+        adminMemberId: ADMIN_ID,
+        data: {
+          requestId: "req-child",
+          action: "approve",
+          linkedMemberId: childId,
+        },
+      });
+
+      expect(result.init?.status).toBe(422);
+      expect((result.body as { error: string }).error).toBe(
+        MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+      );
+      expect(txPartnerFind).toHaveBeenCalledWith({
+        where: {
+          memberAId_memberBId: pair,
+        },
+        select: { id: true },
+      });
+      expect(txMemberUpdate).not.toHaveBeenCalled();
+      expect(txMembershipUpsert).not.toHaveBeenCalled();
+      expect(txRequestUpdate).not.toHaveBeenCalled();
+      expect(logAudit).not.toHaveBeenCalled();
+      expect(sendChildRequestApprovedEmail).not.toHaveBeenCalled();
+    },
+  );
 
   /**
    * THE REQUESTER-ADULT GATE ON APPROVAL (#2282 review).
@@ -862,17 +979,23 @@ describe("reviewAdminFamilyGroupRequest — CHILD_REQUEST memberless-group guard
         $executeRaw: vi.fn().mockResolvedValue(undefined),
         member: {
           findUnique: vi.fn().mockResolvedValue({
-            id: "member-1",
-            ageTier: "YOUTH",
-            email: "member-1@test.com",
+            id: "child-1",
+            active: true,
+            canLogin: false,
+            ageTier: "CHILD",
+            email: null,
             archivedAt: null,
             parentMemberId: null,
             secondaryParentId: null,
             inheritEmailFromId: null,
+            inheritEmailChoiceId: null,
+            parent: null,
+            secondaryParent: null,
           }),
           findMany: vi.fn().mockResolvedValue([]),
           update: vi.fn(),
         },
+        memberPartnerLink: { findUnique: vi.fn().mockResolvedValue(null) },
         familyGroupMember: { upsert: txUpsert },
         familyGroupJoinRequest: { update: vi.fn() },
       })

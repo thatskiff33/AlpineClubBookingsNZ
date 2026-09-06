@@ -34,6 +34,9 @@ import {
   dependentSubject,
   unreadableDateOfBirthRefusal,
 } from "@/lib/member-application-date-of-birth";
+import {
+  MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+} from "@/lib/member-parent-partner-exclusivity";
 import { formatDateOnly } from "@/lib/date-only";
 import { dateOnlyInstantOf } from "@/lib/club-time";
 
@@ -231,6 +234,8 @@ export type MappingTargetRecord = {
   // #1026 privileged-email gate via hasPrivilegedAccess (canLogin-aware) and
   // the #1604 promotion gate via memberHoldsPrivilegedRole (canLogin-blind).
   accessRoles: Array<{ role: string | null; roleDefinitionId: string | null }>;
+  partnerLinksAsMemberA?: Array<{ memberBId: string }>;
+  partnerLinksAsMemberB?: Array<{ memberAId: string }>;
 };
 
 export async function loadApprovalMappingTargets(
@@ -283,6 +288,8 @@ export async function loadApprovalMappingTargets(
       updatedAt: true,
       financeAccessLevel: true,
       accessRoles: { select: { role: true, roleDefinitionId: true } },
+      partnerLinksAsMemberA: { select: { memberBId: true } },
+      partnerLinksAsMemberB: { select: { memberAId: true } },
       familyGroupMemberships: { select: { familyGroupId: true } },
       subscriptions: { where: { seasonYear }, select: { id: true }, take: 1 },
       seasonalMembershipAssignments: {
@@ -542,6 +549,33 @@ export async function computeApprovalMappingOutcomes(params: {
     blockingErrors.push(
       `The same existing member (${memberId}) cannot be mapped to more than one person on this application.`,
     );
+  }
+
+  // When both sides map to existing records, the prospective direct-parent
+  // pair is already knowable in preview. Refuse any PENDING or CONFIRMED
+  // partner row here so preview, tokenised recompute, and the guarded write all
+  // tell the admin the same stable reason (INV-LIFE-024/041).
+  const applicantTargetId = persons.find(
+    (person) => person.ref.kind === "applicant",
+  )?.targetMemberId;
+  if (applicantTargetId) {
+    for (const person of persons) {
+      if (person.ref.kind !== "family" || !person.setParentLink) continue;
+      const target = person.targetMemberId
+        ? targetsById.get(person.targetMemberId)
+        : undefined;
+      const isPartner = Boolean(
+        target?.partnerLinksAsMemberA?.some(
+          (link) => link.memberBId === applicantTargetId,
+        ) ||
+          target?.partnerLinksAsMemberB?.some(
+            (link) => link.memberAId === applicantTargetId,
+          ),
+      );
+      if (isPartner) {
+        person.errors.push(MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE);
+      }
+    }
   }
 
   return { persons, blockingErrors };
@@ -960,7 +994,11 @@ export function verifyApprovalMappingPreviewToken(
 
 async function suggestCandidates(
   db: MappingReadClient,
-  input: { email?: string | null; firstName: string; lastName: string },
+  input: {
+    email?: string | null;
+    firstName: string;
+    lastName: string;
+  },
 ): Promise<CandidateSuggestion[]> {
   const firstName = input.firstName.trim();
   const lastName = input.lastName.trim();
@@ -986,6 +1024,10 @@ async function suggestCandidates(
   }
 
   const rows = await db.member.findMany({
+    // Do not silently filter a direct partner here. Suggestions and live
+    // search must still show the existing record so the admin does not create
+    // a duplicate; selecting it recomputes the preview with the stable,
+    // blocking INV-LIFE-024 reason above.
     where: { archivedAt: null, OR: orClauses },
     select: {
       id: true,
