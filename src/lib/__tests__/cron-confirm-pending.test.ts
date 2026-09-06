@@ -3299,18 +3299,42 @@ describe("Cron: Confirm Pending Bookings", () => {
       );
     });
 
-    describe("the refusal alert follows the #1993 cadence, once per window, anchored on when the state began (#3267 fix round)", () => {
+    describe("the refusal alert follows the #1993 cadence, once per window, anchored on when the cron could FIRST have observed the refusal (#3267 fix round 2)", () => {
+      // Two clocks, deliberately separate: `capturedAgoMs` is when the ledger
+      // row that witnesses the refusal was last written, `dueAgoMs` is when the
+      // hold expired and this cron's charge arm could first reach the booking.
+      // The anchor is the LATER of the two. Anchoring on the row alone is the
+      // defect this table exists to pin: a capture recorded days before the
+      // hold expires makes the first observation land mid-window, and that
+      // window's one alert is skipped.
       it.each([
-        ["1 hour in (window 1, first run)", 1 * HOUR, true],
-        ["24 hours in (window 1, a later run)", 24 * HOUR, false],
-        ["window 2, first run", WINDOW + 2 * HOUR, true],
-        ["window 4, first run (capped)", 3 * WINDOW + 1 * HOUR, false],
-        ["window 7, first run", 6 * WINDOW + 1 * HOUR, true],
-        ["window 7, a later run", 6 * WINDOW + 5 * HOUR, false],
-      ])("captured %s -> alert %s; the refusal is logged and the booking counted failed on every run regardless", async (_label, agoMs, alerts) => {
-        mockPendingBookings([makePendingBooking("b1")]);
+        ["the first run after the hold expired, captured an hour before it (window 1, first run)", 1 * HOUR, 1 * HOUR, true],
+        ["observable for 24 hours already (window 1, a later run)", 24 * HOUR, 24 * HOUR, false],
+        ["window 2, first run", WINDOW + 2 * HOUR, WINDOW + 2 * HOUR, true],
+        ["window 4, first run (capped)", 3 * WINDOW + 1 * HOUR, 3 * WINDOW + 1 * HOUR, false],
+        ["window 7, first run", 6 * WINDOW + 1 * HOUR, 6 * WINDOW + 1 * HOUR, true],
+        ["window 7, a later run", 6 * WINDOW + 5 * HOUR, 6 * WINDOW + 5 * HOUR, false],
+        // The traced worked example. The money was captured five days before
+        // the hold expired, so `SavedCardChargeRefusedError.since` is already
+        // 120 hours old at the very first run that can see it. Anchored on the
+        // row alone that is 120 % 48 = 24 hours into window 3 — no alert — and
+        // the next residues fall in capped windows, so the first alert would
+        // not arrive for twelve days while captured money sat on a booking
+        // reading pending.
+        ["captured five days before the hold expired: the FIRST observation alerts", 120 * HOUR, 1 * HOUR, true],
+        // And the other way round, so the anchor cannot quietly become "the
+        // hold expiry" instead of "the later of the two": a booking whose hold
+        // expired five days ago but whose money was captured an hour ago is one
+        // hour into ITS window 1.
+        ["the hold expired five days ago, captured an hour ago: the cadence starts at the capture", 1 * HOUR, 120 * HOUR, true],
+      ])("%s -> alert %s; the refusal is logged and the booking counted failed on every run regardless", async (_label, capturedAgoMs, dueAgoMs, alerts) => {
+        mockPendingBookings([
+          makePendingBooking("b1", {
+            holdUntil: new Date(Date.now() - dueAgoMs).toISOString(),
+          }),
+        ]);
         capacityAvailable();
-        primeCapturedRow(agoMs);
+        primeCapturedRow(capturedAgoMs);
 
         const result = await confirmPendingBookings();
 
@@ -3584,6 +3608,48 @@ describe("Cron: Confirm Pending Bookings", () => {
         )
       ).toBeUndefined();
       expect(mockSendAdminPaymentFailureAlert).not.toHaveBeenCalled();
+    });
+
+    it("a claim lost to an actor OTHER than the settling webhook is an anomaly: the booking reads CANCELLED under the release's locks, so it is logged at error level and counted failed (#3267 fix round 2)", async () => {
+      // Before #3267 this arm threw "Pending-hold charge release lost its
+      // CONFIRMED claim", which put the booking in `failedBookingIds` and
+      // alerted. The fix round replaced the throw with a warn for EVERY
+      // non-CONFIRMED status, which accepted a mid-charge CANCELLED silently.
+      // PAID is the expected webhook-won case (the test above); anything else
+      // still has to reach a person.
+      const logger = (await import("@/lib/logger")).default;
+      const error = vi.spyOn(logger, "error").mockImplementation(() => undefined as never);
+      const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined as never);
+      try {
+        const booking = makePendingBooking("b1");
+        mockBookingFindMany.mockResolvedValue([booking]);
+        mockBookingFindUnique.mockImplementation(async ({ select }: { select?: { status?: boolean } }) =>
+          select?.status && Object.keys(select).length === 1 ? { status: "CANCELLED" } : booking
+        );
+        capacityAvailable();
+        mockChargePaymentMethod.mockResolvedValue({ id: "pi_race", status: "processing", amount: 10000, payment_method: "pm_b1" });
+        // The attempt row takes the `processing` answer normally; the anomaly
+        // is the booking's status, not the ledger's.
+        mockPaymentTransactionUpdateMany.mockResolvedValue({ count: 1 });
+
+        const result = await confirmPendingBookings();
+
+        expect(result.failedBookingIds).toEqual(["b1"]);
+        expect(result.confirmedBookingIds).toEqual([]);
+        const said = (spy: typeof error, needle: string) =>
+          spy.mock.calls.some(([, message]) => typeof message === "string" && message.includes(needle));
+        expect(said(error, "lost its CONFIRMED claim to another actor")).toBe(true);
+        expect(said(warn, "already PAID at release")).toBe(false);
+        // Still no release: the status-guarded update would match nothing.
+        expect(
+          mockBookingUpdateMany.mock.calls.find(
+            ([call]) => call?.where?.status === "CONFIRMED" && call?.data?.status === "PENDING"
+          )
+        ).toBeUndefined();
+      } finally {
+        error.mockRestore();
+        warn.mockRestore();
+      }
     });
 
     it("says what the LEDGER says, not what the intent said: a `canceled` answer the webhook has already overtaken with a capture is reported as captured, not as an ended attempt (#3267 fix round)", async () => {

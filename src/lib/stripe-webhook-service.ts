@@ -388,6 +388,12 @@ export async function processStripeWebhookEvent(
  * that follows finds the row by intent id like any other. The `event` is
  * threaded in for exactly this field; a handler that read only the intent could
  * never make the link.
+ *
+ * `event.request` is null whenever Stripe did not attribute the state change to
+ * an API request — an asynchronous capture, notably — so this recovers a lost
+ * response only while the intent's own answer was synchronous. The rest fall
+ * through to the 23-hour `attempt_key_expired` refusal rather than to a second
+ * charge; see `adoptSavedCardChargeAttemptForIntent`.
  */
 async function adoptUnknownIntentsAttemptRow(
   paymentIntent: Stripe.PaymentIntent,

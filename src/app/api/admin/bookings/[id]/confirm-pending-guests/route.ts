@@ -600,10 +600,26 @@ export async function POST(
           select: { status: true },
         });
         if (current?.status !== BookingStatus.CONFIRMED) {
-          logger.warn(
-            { bookingId, bookingStatus: current?.status ?? null },
-            "Admin confirm-pending-guests: the booking is no longer CONFIRMED at release; leaving it — the webhook has settled it, or another actor moved it (#3267)"
-          );
+          // PAID is the expected loser of the race with a settling webhook and
+          // is not an anomaly; any other status means another actor took the
+          // claim mid-charge, which is what the fence must still shout about
+          // (before #3267 that case threw). Same split in the cron and
+          // `charge-saved-method`.
+          const releaseLog = {
+            bookingId,
+            bookingStatus: current?.status ?? null,
+          };
+          if (current?.status === BookingStatus.PAID) {
+            logger.warn(
+              releaseLog,
+              "Admin confirm-pending-guests: the booking is already PAID at release; leaving it — the webhook settled it while the charge was in flight (#3267)"
+            );
+          } else {
+            logger.error(
+              releaseLog,
+              "Admin confirm-pending-guests: the booking lost its CONFIRMED claim to another actor before the release; leaving it as it is (#3267)"
+            );
+          }
           return { released: false };
         }
         const released = await tx.booking.updateMany({
@@ -655,11 +671,14 @@ export async function POST(
         )
       );
       const stripeFields = readStripeErrorFields(chargeErr);
+      // The claim's POST-LOCK amount — the one the charge asked Stripe for. A
+      // price that moved between the pre-lock read and the claim would
+      // otherwise make this alert name a figure nobody was ever charged.
       sendAdminPaymentFailureAlert({
         memberName: `${booking.member.firstName} ${booking.member.lastName}`,
         checkIn: booking.checkIn,
         checkOut: booking.checkOut,
-        amountCents: booking.finalPriceCents,
+        amountCents: claim.amountCents,
         errorMessage: stripeFields.message,
         paymentIntentId:
           (claim.attempt.kind === "replay" ? claim.attempt.paymentIntentId : null) ??

@@ -792,6 +792,29 @@ describe("POST /api/admin/bookings/[id]/confirm-pending-guests", () => {
     expect(mocks.upsertPaymentIntentTransaction).not.toHaveBeenCalled();
   });
 
+  it("alerts with the amount that was CHARGED, not the pre-lock snapshot's: a price that moved between the two reads (#3267 fix round 2)", async () => {
+    // The charge already used the claim's post-lock amount; the failure alert
+    // used the pre-lock one, so an operator could be told about a figure
+    // nobody was ever asked for.
+    mocks.bookingFindUnique.mockImplementation(
+      async ({ select, include }: { select?: { status?: boolean }; include?: Record<string, unknown> }) => {
+        if (select?.status && Object.keys(select).length === 1) return { status: "CONFIRMED" };
+        return include && !("member" in include)
+          ? makeBooking({ finalPriceCents: 19900 })
+          : makeBooking();
+      }
+    );
+    mocks.chargePaymentMethod.mockRejectedValue(new Error("card_declined"));
+
+    const res = await POST(makeRequest(), { params });
+
+    expect(res.status).toBe(502);
+    expect(mocks.chargePaymentMethod).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 19900 }));
+    expect(mocks.sendPaymentFailureAlert).toHaveBeenCalledWith(
+      expect.objectContaining({ amountCents: 19900, errorMessage: "card_declined" })
+    );
+  });
+
   it("releases the claim without alerting when the card needs further authorisation (#1418), recording the answer INSIDE the locked release, forward only, before the status re-read (#3267)", async () => {
     primeBooking(makeBooking());
     mocks.chargePaymentMethod.mockResolvedValue({
@@ -851,6 +874,25 @@ describe("POST /api/admin/bookings/[id]/confirm-pending-guests", () => {
     // Only the claim's bed reconcile ran; nothing was handed back.
     expect(mocks.reconcile).toHaveBeenCalledTimes(1);
     expect(mocks.markBookingPaymentSucceeded).not.toHaveBeenCalled();
+  });
+
+  it("a claim lost to an actor other than the settling webhook is an ANOMALY: a booking reading CANCELLED at the release is logged at error level, not warned about (#3267 fix round 2)", async () => {
+    // The fence itself is right — a status-guarded release would match nothing
+    // — but before this round every non-CONFIRMED status was warned about
+    // identically, so a booking cancelled by another admin mid-charge passed
+    // silently. PAID is expected; CANCELLED is not.
+    const logger = (await import("@/lib/logger")).default;
+    primeBooking(makeBooking(), "CANCELLED");
+    mocks.chargePaymentMethod.mockResolvedValue({ id: "pi_race", status: "processing", amount: 10000, payment_method: "pm_1" });
+
+    const res = await POST(makeRequest(), { params });
+
+    expect(res.status).toBe(409);
+    expect(releaseCall()).toBeUndefined();
+    const said = (calls: unknown[][], needle: string) =>
+      calls.some((call) => typeof call[1] === "string" && call[1].includes(needle));
+    expect(said(vi.mocked(logger.error).mock.calls, "lost its CONFIRMED claim to another actor")).toBe(true);
+    expect(said(vi.mocked(logger.warn).mock.calls, "already PAID at release")).toBe(false);
   });
 
   describe("the card is read under the locks (#3267 fix round)", () => {

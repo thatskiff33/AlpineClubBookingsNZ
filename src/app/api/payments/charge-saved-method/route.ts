@@ -333,10 +333,26 @@ export async function POST(request: NextRequest) {
           select: { status: true },
         });
         if (current?.status !== BookingStatus.CONFIRMED) {
-          logger.warn(
-            { bookingId, bookingStatus: current?.status ?? null },
-            "charge-saved-method: the booking is no longer CONFIRMED at release; leaving it — the webhook has settled it, or another actor moved it (#3267)"
-          );
+          // PAID is the expected loser of the race with a settling webhook and
+          // is not an anomaly; any other status means another actor took the
+          // claim mid-charge, which is what the fence must still shout about
+          // (before #3267 that case threw). Same split in the cron and the
+          // admin route.
+          const releaseLog = {
+            bookingId,
+            bookingStatus: current?.status ?? null,
+          };
+          if (current?.status === BookingStatus.PAID) {
+            logger.warn(
+              releaseLog,
+              "charge-saved-method: the booking is already PAID at release; leaving it — the webhook settled it while the charge was in flight (#3267)"
+            );
+          } else {
+            logger.error(
+              releaseLog,
+              "charge-saved-method: the booking lost its CONFIRMED claim to another actor before the release; leaving it as it is (#3267)"
+            );
+          }
           return { released: false };
         }
         const released = await tx.booking.updateMany({
@@ -358,11 +374,14 @@ export async function POST(request: NextRequest) {
     claimReleaser = async () => {
       await releaseChargeClaim();
     };
+    // The POST-LOCK amount, because that is the one being charged: a price that
+    // moved between the pre-lock read and the claim would otherwise make every
+    // operator alert on this path name a figure nobody was ever charged.
     attemptAlertContext = {
       memberName,
       checkIn: booking.checkIn,
       checkOut: booking.checkOut,
-      amountCents: booking.finalPriceCents,
+      amountCents,
       bookingId,
     };
 
@@ -444,7 +463,9 @@ export async function POST(request: NextRequest) {
         targetId: bookingId,
         details: JSON.stringify({
           paymentIntentId: paymentIntent.id,
-          amountCents: booking.finalPriceCents,
+          // What Stripe captured, not the pre-lock price snapshot: the same
+          // reason the alerts above moved off `booking.finalPriceCents`.
+          amountCents: paymentIntent.amount,
           source: isAuthorizedCron ? "cron" : "admin",
         }),
         ipAddress:
@@ -468,12 +489,14 @@ export async function POST(request: NextRequest) {
         { bookingId, piStatus: paymentIntent.status, memberId: booking.memberId },
         "Off-session charge did not capture — booking returned to PENDING (#3267)"
       );
-      // Alert admins so they can contact the member to complete payment manually
+      // Alert admins so they can contact the member to complete payment
+      // manually — with the amount that was actually asked for (the post-lock
+      // claim's), not the pre-lock snapshot's.
       sendAdminPaymentFailureAlert({
         memberName,
         checkIn: booking.checkIn,
         checkOut: booking.checkOut,
-        amountCents: booking.finalPriceCents,
+        amountCents,
         errorMessage: account,
         paymentIntentId: paymentIntent.id,
       }).catch(() => {});

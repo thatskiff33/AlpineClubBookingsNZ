@@ -714,6 +714,45 @@ describe("POST /api/payments/charge-saved-method", () => {
       expect(mockMarkBookingPaymentSucceeded).not.toHaveBeenCalled();
     });
 
+    it("a claim lost to an actor other than the settling webhook is an ANOMALY: a booking reading CANCELLED at the release is logged at error level, not warned about (#3267 fix round 2)", async () => {
+      // The fence is right either way — a status-guarded release would match
+      // nothing — but before this round every non-CONFIRMED status was warned
+      // about identically, so a booking cancelled mid-charge passed silently.
+      const logger = (await import("@/lib/logger")).default;
+      primeBooking(makeBooking(), "CANCELLED");
+      mockChargePaymentMethod.mockResolvedValue({ id: "pi_race", status: "processing", amount: 12500, payment_method: "pm_123" });
+
+      const response = await POST(makeRequest());
+
+      expect(response.status).toBe(409);
+      expect(releaseCall()).toBeUndefined();
+      const said = (calls: unknown[][], needle: string) =>
+        calls.some((call) => typeof call[1] === "string" && call[1].includes(needle));
+      expect(said(vi.mocked(logger.error).mock.calls, "lost its CONFIRMED claim to another actor")).toBe(true);
+      expect(said(vi.mocked(logger.warn).mock.calls, "already PAID at release")).toBe(false);
+    });
+
+    it("alerts with the amount that was CHARGED, not the pre-lock snapshot's: a price that moved between the two reads (#3267 fix round 2)", async () => {
+      // The charge already used the post-lock `finalPriceCents`; the operator
+      // alert used the pre-lock one, so an alert could name a figure nobody was
+      // ever asked for.
+      const preLock = makeBooking();
+      const locked = makeBooking({ finalPriceCents: 19900 });
+      mockBookingFindUnique.mockImplementation(async ({ select, include }: { select?: { status?: boolean }; include?: Record<string, unknown> }) => {
+        if (select?.status && Object.keys(select).length === 1) return { status: "CONFIRMED" };
+        return include && !("member" in include) ? locked : preLock;
+      });
+      mockChargePaymentMethod.mockResolvedValue({ id: "pi_3ds", status: "requires_action", amount: 19900, payment_method: "pm_123" });
+
+      const response = await POST(makeRequest());
+
+      expect(response.status).toBe(409);
+      expect(mockChargePaymentMethod).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 19900 }));
+      expect(mockSendAdminPaymentFailureAlert).toHaveBeenCalledWith(
+        expect.objectContaining({ paymentIntentId: "pi_3ds", amountCents: 19900 }),
+      );
+    });
+
     it("REPLAYS the cron's unresolved attempt on the same card: Stripe is asked about that intent, no second charge is made, and its outcome settles the same row", async () => {
       mockPaymentTransactionFindMany.mockResolvedValue([
         {

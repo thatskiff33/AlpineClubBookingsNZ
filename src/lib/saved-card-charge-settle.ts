@@ -122,6 +122,15 @@ export interface SettledSavedCardChargeAttempt {
  * capture is written over anything but refund history; a non-capture is written
  * only over an unresolved row, so a stale `processing` read can never undo a
  * webhook's SUCCEEDED (or a webhook's FAILED).
+ *
+ * What the guard admits is the status, the amount AND the card the intent
+ * names, when it names one — both arms write all three now, where before the
+ * #3267 fix round only the capture arm wrote the card. Writing it on a
+ * non-capture is safe rather than merely tolerated: `reusableSavedPaymentMethodOnRow`
+ * (`INV-PAY-053`) refuses a card on a `Payment` row with no `stripeSetupIntentId`,
+ * so a card mirrored onto a borrowed-card child by the reconcile cannot be
+ * charged, and a row that DOES carry a SetupIntent is one the reconcile leaves
+ * alone (`INV-PAY-054`).
  */
 function forwardOnlyStatusGuard(answer: PaymentStatus) {
   return answer === PaymentStatus.SUCCEEDED
@@ -314,6 +323,15 @@ async function keepExistingRow(
  * forward only, so a race with the charging code's own settle resolves the same
  * way from either side. Returns null when there is nothing to adopt — no key on
  * the event, not our prefix, no such row — and the handler proceeds as before.
+ *
+ * NOT a universal recovery, and the limit is Stripe's: `Event.request` is null
+ * for any state change Stripe did not attribute to an API request. So an intent
+ * whose lost-response POST answered `processing` and captured asynchronously
+ * later arrives as a `payment_intent.succeeded` carrying NO idempotency key, and
+ * nothing can link it to the row. That row stays PENDING with no intent id and
+ * ends at the 23-hour `attempt_key_expired` refusal, which is the fail-safe end
+ * of that road — no second charge, and the refusal message tells an operator to
+ * look in Stripe and resend the event.
  */
 export async function adoptSavedCardChargeAttemptForIntent(params: {
   paymentIntent: SavedCardChargeAnswer;

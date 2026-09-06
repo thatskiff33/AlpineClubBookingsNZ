@@ -2011,9 +2011,20 @@ one, check the other.
     back — nothing claimed, nothing charged — and the caller logs at error level
     on every attempt until a person, or a redelivered webhook that finds the row
     by intent id, settles it. The admin ALERT is capped: the cron sends it on the
-    #1993 extension cadence (windows 1, 2, 3, then every 7th, once each),
-    anchored on when the refused state began, rather than eight times a day for
-    ever; the two routes alert per click, which is a person's own action.
+    #1993 extension cadence (windows 1, 2, 3, then every 7th, once each), rather
+    than eight times a day for ever; the two routes alert once per request, which
+    is normally an admin's own click — `charge-saved-method` also accepts an
+    `x-cron-secret` caller, so "per request" rather than "per person" is the
+    honest description of the cap there. The cron's cadence is anchored on when
+    the refusal became OBSERVABLE to the cron — the later of the witnessing
+    ledger row's timestamp and the booking's charge due date — not on when the
+    refused state began. The charge arm does not reach a booking until its hold
+    expires, so a capture recorded days earlier would otherwise have its first
+    observation land mid-window and skip that window's only alert: the traced
+    case was a capture at T, a hold expiring at T+5 days, and no alert at all
+    until T+12 days. The row's own timestamp also moves for reasons unrelated to
+    the refusal (`INV-PAY-054`'s retire nulls the card by pm id across rows),
+    which would restart the cadence at window 1.
     Every PRIMARY Stripe row
     counts here, attempt row or not; rows that are not attempt rows (an in-flight
     /pay link intent, a legacy row minted under the shared key before #3267) are
@@ -2070,7 +2081,15 @@ one, check the other.
     thing both sides hold — and settles it, forward only, before the handler
     proceeds as usual (`adoptSavedCardChargeAttemptForIntent`). Without that
     adoption a captured charge whose response was lost was invisible even to
-    `INV-PAY-043`, and the re-send after 24 hours was a second charge.
+    `INV-PAY-043`, and the re-send after 24 hours was a second charge. **Adoption
+    is not a universal recovery, and the limit is Stripe's:** `Event.request` is
+    null for any state change Stripe did not attribute to an API request, so an
+    intent whose lost-response POST answered `processing` and captured
+    asynchronously later produces a `payment_intent.succeeded` with no
+    idempotency key at all. Nothing can adopt it; the row stays PENDING with no
+    intent id and falls through to the 23-hour `attempt_key_expired` refusal,
+    which is the fail-safe end of that road — no second charge, and a person is
+    told to look in Stripe.
   - **The #1992 pre-charge sweep excludes attempt rows by the key prefix, and
     the sweep and the mint share the constant** (`SAVED_CARD_CHARGE_KEY_PREFIX`,
     `INV-SSOT-002`). A still-unresolved attempt row on this card is this run's

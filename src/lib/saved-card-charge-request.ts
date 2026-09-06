@@ -248,10 +248,14 @@ export async function chargeSavedCardAttempt(params: {
   const answered = await cancelSupersededAttemptIntents(attempt, bookingId);
   if (answered) return answered;
 
-  const retrieving = attempt.kind === "replay" && attempt.paymentIntentId !== null;
+  // ONE expression decides both which call is made and which error partition
+  // classifies its throw; two spellings of the same question could disagree
+  // (an empty-string intent id took the POST while being classified as a GET).
+  const retrievingIntentId =
+    attempt.kind === "replay" ? attempt.paymentIntentId : null;
   try {
-    if (attempt.kind === "replay" && attempt.paymentIntentId) {
-      return await getPaymentIntent(attempt.paymentIntentId);
+    if (retrievingIntentId !== null) {
+      return await getPaymentIntent(retrievingIntentId);
     }
     return await chargePaymentMethod({
       amountCents,
@@ -262,6 +266,7 @@ export async function chargeSavedCardAttempt(params: {
     });
   } catch (err) {
     const fields = readStripeErrorFields(err);
+    const retrieving = retrievingIntentId !== null;
     const definite = retrieving
       ? isStripeResourceMissingError(err)
       : isDefiniteSavedCardChargeFailure(err);

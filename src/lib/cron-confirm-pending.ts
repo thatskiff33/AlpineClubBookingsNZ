@@ -145,10 +145,22 @@ export function isFirstRunInExtensionWindow(since: Date, now: Date): boolean {
  * #3267 — the admin-alert cadence for a saved-card charge REFUSAL (captured
  * money on a still-pending booking, or an unanswered attempt whose key has
  * expired): the #1993 windows (1, 2, 3, then every 7th), each alerted on at most
- * once. Anchored on `SavedCardChargeRefusedError.since` — when the refused
- * state began, read off the ledger row that witnesses it — so a state arising
- * between runs is alerted on at the very next run. The refusal itself is logged
- * at error level on every run regardless.
+ * once.
+ *
+ * `since` is when the refusal became OBSERVABLE to this cron, which is NOT the
+ * same instant as when the refused state began. The caller takes the later of
+ * `SavedCardChargeRefusedError.since` (the witnessing ledger row's `updatedAt`)
+ * and the booking's charge due-date (`savedCardChargeDueAtForBooking`), because
+ * this cron's charge arm does not reach a booking until its hold expires — the
+ * captured row can be days older than the first run that could see it, and any
+ * later unrelated write to that row (`INV-PAY-054`'s retire nulls the card by pm
+ * id across rows) moves its `updatedAt` too. Anchored on the row alone, a first
+ * observation landing mid-window skips that window's only alert: the traced
+ * case was a capture at T, a hold expiring at T+5 days, and the first alert not
+ * until T+12 days. Anchored on the later instant, "the first observation is
+ * within one run interval of the anchor" is true, which is exactly what
+ * `isFirstRunInExtensionWindow` needs. The refusal itself is logged at error
+ * level, and the booking counted failed, on every run regardless.
  */
 export function shouldAlertOnSavedCardChargeRefusal(
   since: Date,
@@ -328,26 +340,35 @@ async function resolveOriginalHoldExpiry(
 }
 
 /**
- * #3268 — when the saved-card charge first became due: the anchor for the
- * soft-decline window count in `classifySavedCardChargeFailure`. The claim's
- * own `previousHoldUntil` is the deadline this run actually acted on (a hold a
- * request-origin booking had extended while cardless counts from the extension,
- * not from a pre-card expiry), clamped to `createdAt` for the same last-minute
- * reason as `resolveOriginalHoldExpiry`, which is the fallback when the row
- * carries no hold. Every input is immutable across reruns — `releaseChargeClaim`
- * writes `previousHoldUntil` back unchanged — so the window index is stable
+ * #3268 — when the saved-card charge first became due, and therefore the
+ * EARLIEST run of this cron that could have acted on it. The hold deadline the
+ * run acted on is the anchor (a hold a request-origin booking had extended
+ * while cardless counts from the extension, not from a pre-card expiry),
+ * clamped to `createdAt` for the same last-minute reason as
+ * `resolveOriginalHoldExpiry`, which is the fallback when the row carries no
+ * hold at all. Every input is immutable across reruns — `releaseChargeClaim`
+ * writes `previousHoldUntil` back unchanged, and a refused claim rolls back
+ * without touching the hold — so anything derived from it is stable
  * (INV-INT-001).
+ *
+ * Two callers: `savedCardChargeDueAt` below, for the soft-decline window count
+ * in `classifySavedCardChargeFailure`; and the refusal handler, which needs the
+ * same "first run that could have seen this" instant to anchor its alert
+ * cadence (#3267 fix round 2 — see `shouldAlertOnSavedCardChargeRefusal`).
  */
+async function savedCardChargeDueAtForBooking(
+  booking: PendingBooking,
+  holdUntil: Date | null
+): Promise<Date> {
+  if (!holdUntil) return resolveOriginalHoldExpiry(booking);
+  return new Date(Math.max(holdUntil.getTime(), booking.createdAt.getTime()));
+}
+
+/** The claim's own view of the above: `previousHoldUntil` is the deadline it acted on. */
 async function savedCardChargeDueAt(
   claim: Extract<HoldResolution, { type: "claimed_for_charge" }>
 ): Promise<Date> {
-  if (!claim.previousHoldUntil) return resolveOriginalHoldExpiry(claim.booking);
-  return new Date(
-    Math.max(
-      claim.previousHoldUntil.getTime(),
-      claim.booking.createdAt.getTime()
-    )
-  );
+  return savedCardChargeDueAtForBooking(claim.booking, claim.previousHoldUntil);
 }
 
 async function queueXeroInvoice(bookingId: string, logMessage: string) {
@@ -1696,17 +1717,32 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
             select: { status: true },
           });
           if (lockedBooking?.status !== BookingStatus.CONFIRMED) {
-            logger.warn(
-              {
-                bookingId: resolution.booking.id,
-                paymentIntentId: paymentIntent.id,
-                bookingStatus: lockedBooking?.status ?? null,
-                ledgerStatus: recorded.ledgerStatus,
-                job: "confirmPendingBookings",
-              },
-              "Pending-hold charge release found the booking no longer CONFIRMED; leaving it as it is — the webhook has settled it, or another actor moved it (#3267)"
-            );
-            return { ...recorded, released: false };
+            // PAID is the expected loser of that race and is not an anomaly.
+            // Anything else — CANCELLED by another actor mid-charge, or a
+            // status nobody can account for — is the case the pre-#3267 throw
+            // used to surface: say so at error level and count the booking
+            // failed, so it reaches the run's alert instead of passing in a
+            // warning nobody reads.
+            const expected = lockedBooking?.status === BookingStatus.PAID;
+            const releaseLog = {
+              bookingId: resolution.booking.id,
+              paymentIntentId: paymentIntent.id,
+              bookingStatus: lockedBooking?.status ?? null,
+              ledgerStatus: recorded.ledgerStatus,
+              job: "confirmPendingBookings",
+            };
+            if (expected) {
+              logger.warn(
+                releaseLog,
+                "Pending-hold charge release found the booking already PAID; leaving it as it is — the webhook settled it while the charge was in flight (#3267)"
+              );
+            } else {
+              logger.error(
+                releaseLog,
+                "Pending-hold charge release lost its CONFIRMED claim to another actor; leaving the booking as it is (#3267)"
+              );
+            }
+            return { ...recorded, released: false, claimLost: !expected };
           }
 
           const released = await tx.booking.updateMany({
@@ -1732,8 +1768,15 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
               checkOut: resolution.booking.checkOut,
             },
           });
-          return { ...recorded, released: true };
+          return { ...recorded, released: true, claimLost: false };
         });
+
+        // A claim lost to an actor other than the settling webhook is an
+        // anomaly a person has to look at (the pre-#3267 code threw for it):
+        // count the booking failed so it reaches the run's alert.
+        if (settled.claimLost) {
+          result.failedBookingIds.push(candidate.id);
+        }
 
         // Branch on what the LEDGER now says, not on the intent's status: the
         // settle above may have refused a stale answer in favour of a webhook's
@@ -1777,14 +1820,31 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
         // (`err.why`). The claim transaction rolled back (nothing was claimed,
         // nothing charged); this is an anomaly a person must resolve, so it is
         // logged at error level on EVERY run — and alerted on the #1993 cadence
-        // (windows 1, 2, 3, then every 7th, once each), anchored on when the
-        // state began, rather than eight times a day until someone acts.
-        const alert = shouldAlertOnSavedCardChargeRefusal(err.since, now);
+        // (windows 1, 2, 3, then every 7th, once each), anchored on when this
+        // cron could FIRST have observed the refusal, rather than eight times a
+        // day until someone acts. That anchor is the later of the ledger row's
+        // own timestamp and the charge's due date, because the charge arm does
+        // not reach a booking until its hold expires; see
+        // `shouldAlertOnSavedCardChargeRefusal` for what anchoring on the row
+        // alone cost.
+        const observableSince = new Date(
+          Math.max(
+            err.since.getTime(),
+            (
+              await savedCardChargeDueAtForBooking(
+                candidate,
+                candidate.nonMemberHoldUntil
+              )
+            ).getTime()
+          )
+        );
+        const alert = shouldAlertOnSavedCardChargeRefusal(observableSince, now);
         logger.error(
           {
             bookingId: candidate.id,
             why: err.why,
             since: err.since,
+            observableSince,
             paymentIntentId: err.paymentIntentId,
             attemptRowId: err.attemptRowId,
             alert,
