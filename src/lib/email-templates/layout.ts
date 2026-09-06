@@ -19,7 +19,7 @@ import { getAppBaseUrl, sanitizeEmailHref } from "@/lib/app-url";
 import { EMAIL_DEFAULT_FROM_NAME } from "@/lib/email-message-settings";
 import { SUPPORT_EMAIL } from "@/lib/email-sender";
 import { emailPalette } from "@/lib/email-theme";
-import { formatCents as formatMoneyCents } from "@/lib/utils";
+export { formatCents } from "@/lib/utils";
 
 export const BASE_URL = getAppBaseUrl();
 
@@ -190,6 +190,3 @@ export function alertBox(
 </div>`;
 }
 
-export function formatCents(cents: number): string {
-  return formatMoneyCents(cents);
-}
