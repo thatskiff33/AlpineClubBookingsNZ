@@ -24,6 +24,7 @@ import {
 } from "@/lib/additional-payment-chase";
 import { ConfirmDraftButton } from "@/components/confirm-draft-button";
 import { AdminBookingToolsCard } from "@/components/admin/admin-booking-tools-card";
+import { strandNightPriceOffersForBooking } from "@/lib/stored-night-price-strand-reconcile";
 import { getBookingManualPaymentState } from "@/lib/manual-booking-payment-state";
 import { BookingBedAllocationPanel } from "@/components/admin/booking-bed-allocation-panel";
 import { BookingWithheldEmailsBanner } from "@/components/admin/booking-withheld-emails-banner";
@@ -1487,6 +1488,49 @@ export default async function BookingDetailPage({
       : null;
 
   /*
+    #3214 (epic #2797): strands whose stored night prices cannot be read back,
+    offered to an officer to record.
+
+    WITHHELD WHILE A REVIEW IS OPEN, and `financialReviewPending` — already read
+    above — is what says so rather than a second query, exactly as
+    `financialReviewWarnings` reuses it. While a review is open the settle screen
+    owns these figures, because its target also includes the amount being
+    settled; the route refuses on the same condition, re-read under its own
+    transaction, so this only decides what to OFFER.
+
+    Admin-gated like every other tools-card input: the list names guest strands,
+    which is a thing a member never receives.
+
+    ON `canSeeAdminTools` RATHER THAN ON FINANCE-VIEW, deliberately, and the
+    question was asked (#3214 review): a Booking Officer with no finance area
+    receives this payload read-only, and the route then refuses them at 403. Three
+    things settle it in favour of the wider gate.
+
+      1. `manualPaymentState` a few lines above does exactly this on the same
+         card, and carries MORE - what is owing, and the payment records behind
+         it. That is the governing precedent, so narrowing only the newer of the
+         two would leave the card inconsistent without closing anything.
+      2. The incremental disclosure is smaller than the precedent's, because the
+         guest-strand id and the strand's stored total are ALREADY in
+         `editorData` above, which every viewer of the booking receives -
+         including the member whose booking it is. What this adds is the
+         per-night split of a figure the viewer already holds, plus the
+         plain-English reason it cannot be read back.
+      3. Withholding it would break the sentence #3214 exists to make true. The
+         other-lodge refusal a Booking Officer meets on their OWN edit names this
+         control and sends them to Admin tools; an empty card there is precisely
+         the dead end that refusal was rewritten to remove. Seeing the work and
+         who can do it beats seeing nothing.
+
+    Editing stays finance-gated on both sides: the section's controls hang off
+    `useAdminAreaEditAccess("finance")` and the route requires `finance:edit`.
+  */
+  const storedNightPriceOffers =
+    canSeeAdminTools && !isDeleted && !financialReviewPending
+      ? await strandNightPriceOffersForBooking(booking.id, prisma)
+      : [];
+
+  /*
     #2649: the stranded zero-dollar waitlist confirm.
 
     The three cheap conditions — free, `PAYMENT_PENDING`, no payment record — are
@@ -1651,6 +1695,7 @@ export default async function BookingDetailPage({
           }}
           noEmails={isDeleted ? undefined : (noEmailsState ?? undefined)}
           manualPayment={manualPaymentState ?? undefined}
+          storedNightPriceOffers={storedNightPriceOffers}
           // #2649: the stranded zero-dollar waitlist confirm. Derived above,
           // where the provenance check that makes the banner's claim true can
           // be awaited; the route re-checks every condition under its locks.
