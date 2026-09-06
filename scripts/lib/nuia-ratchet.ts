@@ -48,6 +48,15 @@ export function diagnosticKey(d: NormalisedDiagnostic): string {
 
 // `path(line,col): error TS1234: message`. Anything else is a continuation
 // line (tsc indents elaboration under the diagnostic it belongs to) or noise.
+//
+// The lazy `(.+?)` is load-bearing and must stay lazy: a Next.js route group
+// puts parentheses in the PATH (`src/app/(admin)/admin/page.tsx`), so the path
+// itself contains something shaped like the `(line,col)` group. Backtracking
+// past `(admin)` to the real position group is the only reason those files
+// parse. Narrowing the group so it cannot cross a `(` silently reclassifies
+// every route-group diagnostic as a continuation line, which reads as a shorter
+// diagnostic list rather than as an error. `nuia-ratchet.test.ts` covers that
+// case explicitly (#2799).
 const DIAGNOSTIC_LINE = /^(.+?)\((\d+),(\d+)\): error (TS\d+): (.*)$/;
 
 /**
