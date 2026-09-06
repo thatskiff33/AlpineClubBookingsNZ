@@ -425,13 +425,19 @@ export type DiagnosticsToolEntry =
   | DiagnosticsServerOwnedToolEntry;
 
 /**
- * Keys that must be REFUSED before the schema runs, because `.strict()` is not
- * total on its own. Measured against this repo's zod 4.4.3:
- * `z.object({}).strict().safeParse(JSON.parse('{"__proto__":{"x":1}}'))` succeeds
- * with `data: {}` — the key is silently STRIPPED and no unrecognized-key issue is
- * reported. `constructor`, `prototype`, `toString` and friends are all correctly
- * rejected; only `__proto__` slips, because `JSON.parse` defines it as an ordinary
- * own property and zod's own key walk never surfaces it.
+ * Keys that must be REFUSED before the schema runs, because zod is not total on
+ * its own. Measured on zod 4.5.4 (#3313): `z.object({}).strict()` now REJECTS
+ * `{"__proto__":{"x":1}}` alongside `constructor`, `prototype` and `toString` —
+ * a change, since zod 4.4.3 SUCCEEDED with `data: {}` and reported no
+ * unrecognized key. But `z.record(...)` still accepts and drops it
+ * (`z.record(z.string(), z.string())` on `{"__proto__":"s"}` yields `{}`), at any
+ * depth and inside array elements, while KEEPING `constructor` and `prototype`.
+ *
+ * So the surviving hole is exactly the record shape — what a `filters` argument
+ * takes, and what the next tool packs need. The guard stays TOTAL rather than
+ * trimmed to match one version: what `.strict()` refuses today is not a contract
+ * zod has made about tomorrow. The registry's test table is written as a
+ * measurement for the same reason, and is what reported this change.
  *
  * Silently repairing an argument is the contract breach, not the pollution: the
  * arguments reaching here are the model's `tool_use` input, and `argsHash` is
@@ -462,16 +468,19 @@ const RESERVED_ARGUMENT_KEYS: readonly string[] = [
  * worth stating because each one was a way to get this wrong:
  *
  *  - EVERY DEPTH, arrays included. A top-level-only scan does not deliver the
- *    guarantee this file claims. Measured on zod 4.4.3:
- *    `z.object({ filters: z.object({ status: z.string().optional() }).strict() }).strict()`
- *    accepted `JSON.parse('{"filters":{"__proto__":{"polluted":"yes"},"status":"open"}}')`
- *    and returned `{"filters":{"status":"open"}}` — so the canonical hash of the
- *    ACCEPTED arguments was byte-identical to the same call without the key, which is
- *    exactly the audit-integrity defect this guard exists to remove, reproduced one
- *    level down. A `filters` object was the concrete nested shape considered for the
- *    AID-6B/6C packs. Scanning everything also means an author
- *    adding a nested or record-shaped argument inherits the guarantee without having
- *    to know it exists.
+ *    guarantee this file claims. Measured on zod 4.5.4:
+ *    `z.object({ a: z.object({ b: z.record(z.string(), z.string()) }).strict() }).strict()`
+ *    accepts `JSON.parse('{"a":{"b":{"__proto__":{"polluted":"yes"},"status":"open"}}}')`
+ *    and returns `{"a":{"b":{"status":"open"}}}` — so the canonical hash of the
+ *    ACCEPTED arguments is byte-identical to the same call without the key, which is
+ *    exactly the audit-integrity defect this guard exists to remove, reproduced three
+ *    levels down. The same holds for a record inside an array. A `filters` record was
+ *    the concrete nested shape considered for the AID-6B/6C packs. Scanning everything
+ *    also means an author adding a nested or record-shaped argument inherits the
+ *    guarantee without having to know it exists. The example is deliberately a
+ *    RECORD nested in `.strict()` objects rather than the nested `.strict()` object
+ *    it once was: zod 4.5 began rejecting that case itself, which left both this
+ *    example and the matching test rows unable to exercise the traversal (#3313).
  *  - `Object.getOwnPropertyNames`, not `for…in`: it sees a non-enumerable own
  *    property too, and it does not walk a prototype chain.
  *  - ITERATIVE, not recursive. The arguments are provider-deserialised JSON whose

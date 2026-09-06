@@ -13,11 +13,19 @@
  *     page that declares no tabs can never be sent one.
  *
  * THE SCHEMA IS MODULE-PRIVATE, and that is a security property rather than
- * tidiness. A strict object schema is not total on its own: zod accepts a
- * `JSON.parse`-created `__proto__` own property and silently strips it, reporting
- * no unknown key. Exporting the schema would therefore offer callers a second door
- * that repairs a selector this module is contractually required to refuse. Only
- * `parseDiagnosticsPageSelector` and the `DiagnosticsPageSelector` type leave here.
+ * tidiness. This schema is not total on its own, because `filters` is a
+ * `z.record(...)`: measured on zod 4.5.4, a record never surfaces a
+ * `JSON.parse`-created `__proto__` own property to its key schema, so the key is
+ * silently DROPPED and no unknown-key issue is reported. Exporting the schema
+ * would therefore offer callers a second door that repairs a selector this module
+ * is contractually required to refuse. Only `parseDiagnosticsPageSelector` and the
+ * `DiagnosticsPageSelector` type leave here.
+ *
+ * The top-level `.strict()` object no longer needs this help — zod 4.5 began
+ * refusing `__proto__` on a strict object shape, where zod 4.4.3 stripped it
+ * (#3313). Layer 0 still scans the top level anyway. What one version of a
+ * dependency happens to refuse is not a contract it has made, and this module's
+ * rule is that rejection is total rather than delegated.
  *
  * REJECTION HERE IS TOTAL, NEVER PARTIAL. A selector reaching this module with one
  * bad token does not quietly lose that token and proceed — it is refused, and the
