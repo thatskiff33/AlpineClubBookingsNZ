@@ -40,6 +40,14 @@ import { claimAlertCooldown } from "@/lib/alert-cooldown";
 type PaymentRecoveryStore = Prisma.TransactionClient | typeof prisma;
 
 const STALE_PROCESSING_MINUTES = 30;
+/**
+ * How many stale `PROCESSING` rows one sweep hands back (#3220 fix round). See
+ * `resetStaleProcessingOperations`: each row now costs an alert and possibly a
+ * Stripe round trip, and the sweep runs in front of the main queue. Generous
+ * against any real backlog - a sweep this size means thirty minutes of workers
+ * died - and the remainder is taken by the next run.
+ */
+const STALE_PROCESSING_SWEEP_LIMIT = 50;
 // One entry per attempt: nextRetryDate(attempts) reads RETRY_BACKOFF_MINUTES[attempts - 1].
 const RETRY_BACKOFF_MINUTES: readonly number[] = [5, 15, 60, 240, 720];
 if (RETRY_BACKOFF_MINUTES.length !== MAX_PAYMENT_RECOVERY_ATTEMPTS) {
@@ -1484,9 +1492,20 @@ async function failPaymentRecoveryOperation(
     fromStatuses: NON_TERMINAL_PAYMENT_RECOVERY_STATUSES,
   });
 
-  // A row that matched nothing is gone or already finished, so there is no
-  // failure to count differently: the caller's tallies stay exactly what they
-  // were before this transition was centralised.
+  /**
+   * A row that matched nothing was deleted by a manual mark-paid reversal or
+   * had already finished, so there is no state left for this attempt to change.
+   * It is still tallied as the outcome this attempt WOULD have had, and that is
+   * a deliberate choice rather than parity with the old code: the worker's
+   * `update` by id used to THROW `P2025` on the deleted row, from inside the
+   * loop's own `catch`, abandoning every remaining operation in the batch - and
+   * on the stale-copy path it counted a failure only after wrongly dragging a
+   * `SUCCEEDED` row back to `FAILED`. So a row that turns out to have succeeded
+   * now lands in `result.failed`. That number is a count of what this pass
+   * attempted, not a claim about the row, and nothing downstream branches on
+   * it; a fourth outcome for the caller to sum would buy a more precise figure
+   * that no reader has asked for.
+   */
   return outcome === "gone" ? (exhausted ? "failed" : "retry") : outcome;
 }
 
@@ -1550,6 +1569,17 @@ async function resetStaleProcessingOperations() {
       status: PaymentRecoveryOperationStatus.PROCESSING,
       processingStartedAt: { lt: staleBefore },
     },
+    // OLDEST FIRST, AND BOUNDED (#3220 fix round). This sweep runs BEFORE the
+    // main queue and each row it takes now costs an alert and, on a dead
+    // additional-payment recovery, a Stripe read and possibly a cancel - where
+    // the bulk `updateMany` it replaced made no provider call at all. A backlog
+    // is self-draining, because every row it touches leaves `PROCESSING` for
+    // good, so an unbounded read could only ever stall ONE run - but that run is
+    // every queued recovery waiting behind a provider that has gone slow, and
+    // there is no reason to accept that when the leftovers are handled by the
+    // next sweep a minute later. Oldest first so the cap cannot starve a row.
+    orderBy: { processingStartedAt: "asc" },
+    take: STALE_PROCESSING_SWEEP_LIMIT,
   });
 
   for (const operation of stale) {

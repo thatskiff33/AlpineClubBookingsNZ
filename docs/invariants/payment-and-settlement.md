@@ -1704,7 +1704,18 @@ one, check the other.
   the worker loop's own `catch`, so the throw escaped the loop and abandoned
   every remaining operation in the batch. A fenced `updateMany` matches
   nothing instead, and the fence also stops a `SUCCEEDED` row being dragged
-  back to `FAILED` by a worker holding a stale in-memory copy.
+  back to `FAILED` by a worker holding a stale in-memory copy. **A row that
+  matched nothing is still tallied as this attempt's outcome**, so a row that
+  turns out to have succeeded is counted in `failed` — a count of what the pass
+  attempted, which nothing downstream branches on, rather than a claim about the
+  row.
+- **The stale-worker sweep is bounded and oldest-first.** It runs in front of
+  the main queue, and centralising the transition means each row it takes now
+  costs an alert and can cost a Stripe read and cancel, where the bulk
+  `updateMany` it replaced made no provider call at all. A backlog drains on its
+  own — every row the sweep touches leaves `PROCESSING` for good — so the cap
+  only defers work to the next run, and reading oldest-first is what stops it
+  deferring the same rows for ever.
 - **`FAILED` is two readings of one column, and the reader has to say which.** A
   `FAILED` row with attempts left is a retry waiting its turn; a `FAILED` row
   with none is dead. What separates them is the `attempts < MAX` filter beside

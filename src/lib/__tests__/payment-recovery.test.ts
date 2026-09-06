@@ -3553,4 +3553,30 @@ describe("#3220 - the stale-worker reaper cannot kill a re-claimed attempt", () 
     );
   });
 
+  /**
+   * #3220 fix round: THE SWEEP IS BOUNDED, because it now costs provider calls.
+   *
+   * It runs BEFORE the main queue, and each row it takes can cost an alert plus
+   * a Stripe read and cancel where the bulk `updateMany` it replaced made no
+   * provider call at all. A backlog drains on its own - every row it touches
+   * leaves `PROCESSING` for good - so the cap only ever defers work to the next
+   * run, and oldest-first is what stops it deferring the same rows for ever.
+   */
+  it("reads the stale rows oldest-first and in a bounded batch", async () => {
+    vi.clearAllMocks();
+    mockPaymentRecoveryFindMany.mockImplementation((args?: unknown) =>
+      Promise.resolve(isStaleWorkerSweep(args) ? [] : []),
+    );
+
+    await processPaymentRecoveryOperations({ limit: 1 });
+
+    const sweep = mockPaymentRecoveryFindMany.mock.calls
+      .map((call) => call[0])
+      .find((args) => isStaleWorkerSweep(args)) as {
+      take?: number;
+      orderBy?: unknown;
+    };
+    expect(sweep?.take, "the stale sweep is unbounded again").toBeGreaterThan(0);
+    expect(sweep?.orderBy).toEqual({ processingStartedAt: "asc" });
+  });
 });
