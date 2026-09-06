@@ -1,3 +1,7 @@
+// Type-only imports from `components`: erased at compile time, so the view
+// model shares the renderer's unions without adding a runtime edge (#3264).
+import type { FinanceValueType } from "@/components/finance/charts/finance-chart-theme";
+import type { BadgeVariant } from "@/components/ui/badge";
 import type { FinanceDashboardSelection } from "@/lib/finance-dashboard-ranges";
 import type { FinanceRatioMatrix } from "@/lib/finance-ratio-shared";
 
@@ -29,7 +33,7 @@ export interface FinanceDashboardTrend {
     key: string;
     name: string;
     color: string;
-    valueType: "currency" | "count" | "percent" | "ratio";
+    valueType: FinanceValueType;
     stackId?: string;
   }>;
 }
@@ -37,7 +41,7 @@ export interface FinanceDashboardTrend {
 interface FinanceDashboardMix {
   title: string;
   description: string;
-  valueType: "currency" | "count" | "percent" | "ratio";
+  valueType: FinanceValueType;
   data: Array<{ name: string; value: number }>;
 }
 
@@ -45,7 +49,7 @@ export interface FinanceDashboardStatusPanel {
   title: string;
   description: string;
   badgeLabel?: string;
-  badgeTone?: "success" | "warning" | "destructive" | "secondary";
+  badgeTone?: BadgeVariant;
   items: Array<{
     label: string;
     value: string;
@@ -69,7 +73,7 @@ interface FinanceDashboardCostFilters {
 
 export interface FinanceDashboardSyncStatus {
   label: string;
-  tone: "success" | "warning" | "destructive" | "secondary";
+  tone: BadgeVariant;
   detail: string;
   lastSyncedAt: string | null;
 }

@@ -31,6 +31,7 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "next typegen && tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json && tsc --noEmit -p tsconfig.e2e.json",
+    "typecheck:nuia": "next typegen && tsx scripts/ci/check-nuia-ratchet.ts",
     "knip": "knip",
     "agent:context": "tsx scripts/agent-context.ts",
     "issue": "node scripts/issue-thread.mjs",

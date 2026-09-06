@@ -12,11 +12,11 @@ import { CSP_NONCE_HEADER } from "@/lib/csp";
 import { getDefaultLodgeCapacity } from "@/lib/lodge-capacity";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { getAiAssistantAvailability } from "@/lib/ai-assistant-config";
+import { requireFinanceViewer } from "@/lib/finance-auth";
 import {
+  hasAdminPortalAccess,
   hasFinanceManagerAccess,
-  requireFinanceViewer,
-} from "@/lib/finance-auth";
-import { hasAdminPortalAccess } from "@/lib/admin-permissions";
+} from "@/lib/admin-permissions";
 
 export default async function FinanceLayout({
   children,

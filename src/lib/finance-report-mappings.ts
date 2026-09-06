@@ -21,7 +21,7 @@ import {
   type PnlReportRow,
 } from "@/lib/finance-pnl-snapshot";
 import { prisma } from "@/lib/prisma";
-import { formatCents } from "@/lib/utils";
+import { formatCents, formatSignedCents } from "@/lib/utils";
 import {
   calendarDateOfDateOnlyInstant,
   formatClubDate,
@@ -254,14 +254,6 @@ function snapshotOverlapsRange(
   const toDate = parseDateOnlyString(to);
 
   return snapshotEnd(snapshot) >= fromDate && snapshotStart(snapshot) <= toDate;
-}
-
-function formatSignedCents(amountCents: number) {
-  if (amountCents === 0) {
-    return formatCents(0);
-  }
-
-  return `${amountCents > 0 ? "+" : "-"}${formatCents(Math.abs(amountCents))}`;
 }
 
 async function ensureDefaultFinanceReportCategories(

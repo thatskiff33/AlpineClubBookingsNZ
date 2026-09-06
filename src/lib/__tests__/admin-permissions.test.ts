@@ -1041,6 +1041,28 @@ describe("matrix-derived finance access", () => {
     );
   });
 
+  it("reads access role rows and ignores a stale legacy financeAccessLevel", () => {
+    // Moved from finance-auth.test.ts when the finance-auth wrappers were
+    // deleted (#3264): the legacy column is display/back-compat only.
+    expect(
+      hasFinanceManagerAccess({
+        role: "USER",
+        financeAccessLevel: "MANAGER",
+        accessRoles: [{ role: "FINANCE_USER" }],
+      }),
+    ).toBe(false);
+    expect(
+      hasFinanceManagerAccess({ financeAccessLevel: "MANAGER", accessRoles: [] }),
+    ).toBe(false);
+    expect(
+      hasFinanceViewerAccess({
+        role: "LODGE",
+        financeAccessLevel: "NONE",
+        accessRoles: [{ role: "LODGE" }, { role: "FINANCE_USER" }],
+      }),
+    ).toBe(true);
+  });
+
   it("derives finance access from custom definitions", () => {
     const financeViewRole = {
       accessRoles: [

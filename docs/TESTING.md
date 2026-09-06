@@ -221,6 +221,99 @@ they were before #2693. The tree has some eighty `Error` subclasses that
 declare fields and assign them after `super()`; flipping the pin is a runtime
 change to decide separately, not a tidy-up.
 
+## The noUncheckedIndexedAccess ratchet
+
+Plain English: TypeScript can be told that looking something up by index or by
+key — `rows[0]`, `byId[memberId]` — might find nothing. The repository wants
+that rule (`noUncheckedIndexedAccess`) on, because a lookup that quietly
+pretends to have found a value is how a missing tier becomes a silent zero.
+Turning it on today would raise about a thousand compile errors, so it is being
+adopted in stages (programme #2694): the errors are recorded, the record may
+only shrink, and each stage pays a slice of it down. This is stage 2 (#2799).
+
+Precisely: `npm run typecheck:nuia` runs the real `tsc` over `tsconfig.json`
+with `--noUncheckedIndexedAccess` forced on and compares what it reports against
+`scripts/ci/noUncheckedIndexedAccess.baseline.txt`. The `verify` job runs it
+directly after `Typecheck`, which is what lets it attribute every diagnostic to
+the flag: the plain project is green, so anything the flagged run adds is the
+flag's. It runs `next typegen` first so the project lists the same generated
+route types CI's does. It fails on either of two conditions:
+
+- **NEW** — the compiler reports a diagnostic the baseline does not hold. Fix
+  the site (below), never the list.
+- **STALE** — the baseline holds a diagnostic the compiler no longer produces.
+  That is debt paid, and the file must say so: re-record with
+  `npm run typecheck:nuia -- --record` (on PowerShell, which drops npm's `--`,
+  `npx tsx scripts/ci/check-nuia-ratchet.ts --record`) and commit the smaller
+  file. A stale line is failed rather than tolerated because it could otherwise
+  pay for a fresh diagnostic with the same text in the same file.
+
+Each baseline line is `file:TScode:message` with the line and column deliberately
+dropped — positions churn on every edit above a site, and a file every lane
+rewrote would conflict on every merge (the lesson of the retired file-size
+baseline, #2979). The same key can occur several times in a file, so the file is
+a multiset and both directions compare counts. The one thing the key cannot
+survive is a message change: a type renamed by an unrelated refactor reads as one
+stale line plus one new one, the run names both, and `--record` is the answer.
+The baseline is a snapshot, never a list lanes append to — nothing is ever
+added to it by hand. It is not, however, rewritten only by this programme: any
+lane that clears a diagnostic incidentally — deleting a listed file, removing
+dead code, renaming a type so the message text changes — trips STALE and
+re-records. That is expected and is the tool working, not a sign the lane broke
+something; commit the smaller file with the change that earned it. The decision
+logic is `scripts/lib/nuia-ratchet.ts`, unit-tested in
+`scripts/__tests__/nuia-ratchet.test.ts`; the compiler-facing half is
+`scripts/ci/check-nuia-ratchet.ts`.
+
+**What counts as a fix.** The owner's rule on #2694 is the whole point of the
+exercise: a batch with a meaningful count of new `!` non-null assertions is a
+failed batch, not a finding to negotiate. A lookup that cannot miss is
+restructured so the type says so — read the first element once and let its
+absence be the emptiness check, walk adjacent pairs instead of indexing `i + 1`,
+iterate `slice(0, n)` instead of counting to `n`, carry a value alongside the
+object it belongs to instead of in a parallel array read back by position (all
+four are how stage 2 cleared `src/lib/policies/**` and `src/lib/capacity.ts`,
+with zero assertions, casts or `any`). A lookup that can miss is handled the way
+the domain says: a missing tier is a policy error to surface, a missing capacity
+row means the lodge has no capacity. Where a newly explicit missing state is
+genuinely reachable, a test pins the chosen behaviour; where it is unreachable,
+a comment says why in terms a reviewer can check. Generated suppressions, broad
+`any`, mass casts and regex ignore lists are all refused for the same reason:
+they spend the effort and buy nothing.
+
+**Inventory for the next stage.** Measured on the epic head after #2693 and
+re-measured after stage 2, application project (`tsconfig.json`) only:
+
+| Area | At the start of #2799 | After #2799 | Owner |
+| --- | --- | --- | --- |
+| `src/lib` | 831 | 818 | #2800 |
+| `src/app` | 120 | 120 | #2801 |
+| `src/components` | 86 | 86 | #2802 |
+| `scripts` | 27 | 27 | #2802 |
+| `prisma` | 25 | 25 | #2802 |
+| **Total** | **1,089** | **1,076** | |
+
+The 13 cleared were the whole of `src/lib/policies/**` (`age-tier.ts` 9,
+`pricing.ts` 2, `adult-member-hosting.ts` 1) and `src/lib/capacity.ts` (1).
+`npm run typecheck:nuia -- --report` prints the current per-file inventory and
+then still performs the check, so on a tree with unrecorded debt it prints the
+report and exits 1; the baseline file *is* the per-file record, one line per
+diagnostic. The heaviest `src/lib` files #2800 inherits, in order:
+`bed-allocation.ts` (70), `booking-modify-plan.ts` (36),
+`theme/app-tokens.ts` (29), `xero-inbound/credit-note-repairs.ts` (26),
+`theme/kiosk-tokens.ts` (24), `member-merge.ts` (22),
+`theme/generate-radix-colors.ts` (21),
+`xero-applied-credit-allocation-repair.ts` (21), `image-metadata.ts` (20),
+`booking-edit-guest-ranges.ts` (19), `guest-name-similarity.ts` (19) — 146
+files in all. The test and E2E projects are outside the ratchet by decision
+("application code before tests"); their counts are recorded on the stage-2
+pull request as evidence only.
+
+The ratchet is temporary by design. Stage #2802 sets the flag in
+`tsconfig.json`, deletes the script, the baseline and the `verify` step
+together, and removes this section: a ratchet whose baseline is empty is a
+compiler option with extra steps.
+
 ## The frozen test clock
 
 Plain English: tests are not allowed to know what today's real date is. Every

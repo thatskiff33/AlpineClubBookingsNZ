@@ -15,6 +15,24 @@ export function formatCents(cents: number): string {
   return centsFormatter.format(cents / 100);
 }
 
+/**
+ * Exact-cent amount with an explicit sign, for a delta or an adjustment line:
+ * `+$25.00`, `-$1,234.56`, and `$0.00` for zero. Whole-dollar dashboard deltas
+ * use `formatSignedDollarsDisplay` in `@/lib/finance-format` instead.
+ *
+ * The one home (#3264, `INV-SSOT-001`). Seven copies existed, and they had
+ * already drifted: three rendered zero as `-$0.00`, and the promo-code input
+ * spelt the currency symbol by hand with `toFixed(2)`, so it dropped the
+ * locale's thousands separator and ignored `APP_CURRENCY`. Every caller now
+ * derives from `formatCents`, which is where the locale and currency live.
+ */
+export function formatSignedCents(cents: number): string {
+  if (cents === 0) {
+    return formatCents(0);
+  }
+  return `${cents > 0 ? "+" : "-"}${formatCents(Math.abs(cents))}`;
+}
+
 // `getSeasonYear(date = new Date())` USED TO LIVE HERE and is deliberately gone
 // (CT-4 group F1, #2870). It read its argument with `date.getMonth()` /
 // `date.getFullYear()` - the HOST's calendar components - so it answered from the

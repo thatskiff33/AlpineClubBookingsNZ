@@ -1,10 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { buildLoginPath } from "@/lib/auth-redirect";
 import { auth } from "@/lib/auth";
-import {
-  hasFinanceViewerAccess,
-  loadFinanceAccessMember,
-} from "@/lib/finance-auth";
+import { hasFinanceViewerAccess } from "@/lib/admin-permissions";
+import { loadFinanceAccessMember } from "@/lib/finance-auth";
 import { hasLodgeAccess } from "@/lib/access-roles";
 import {
   buildTwoFactorGatePath,

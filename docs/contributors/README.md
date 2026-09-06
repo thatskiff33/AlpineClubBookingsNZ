@@ -51,6 +51,9 @@ in. Cite rules by id, never by line number.
   [single source of truth](../invariants/single-source-of-truth.md).
 - [`../invariants/SCHEME.md`](../invariants/SCHEME.md) — how invariant ids are
   allocated and what an entry must contain.
+- [`../invariants/WORD_BUDGETS.md`](../invariants/WORD_BUDGETS.md) — the
+  register the word-budget gate reads: approved over-budget entries with their
+  ceilings, and the shrink-only migration ratchet.
 - [`../invariants/_FOLLOW_UPS.md`](../invariants/_FOLLOW_UPS.md) — invariant work
   that is known and not yet done.
 - [`../STATE_MACHINES.md`](../STATE_MACHINES.md) — every status lifecycle:
