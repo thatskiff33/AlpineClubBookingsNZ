@@ -61,7 +61,7 @@ import {
   getPaymentDisplayStatus,
 } from "@/lib/payment-status-display";
 import Link from "next/link";
-import { cn } from "@/lib/utils";
+import { cn, formatCents } from "@/lib/utils";
 import { AdminPageHeader } from "@/components/admin/admin-page-header";
 import { ManualRefundTaskQueue } from "@/components/admin/manual-refund-task-queue";
 import { AdminDataTable } from "@/components/admin/admin-data-table";
@@ -100,10 +100,6 @@ import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 
 // #2264 — the id of the single hint shared by the three amount filter boxes.
 const PAYMENT_AMOUNT_HINT_ID = "payment-amount-filter-hint";
-
-function formatCents(cents: number): string {
-  return "$" + (cents / 100).toFixed(2);
-}
 
 type PaymentSortBy =
   | "lastUpdated"

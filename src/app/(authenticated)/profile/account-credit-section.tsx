@@ -5,6 +5,7 @@ import Link from "next/link";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 import { useClubTime } from "@/components/club-time-provider";
 import { calendarDateOfSerialisedDbDate, formatClubDate } from "@/lib/club-time";
+import { formatCents } from "@/lib/utils";
 
 interface SourceBooking {
   id: string;
@@ -37,10 +38,6 @@ const TYPE_LABELS: Record<string, string> = {
   ADMIN_ADJUSTMENT: "Admin Adjustment",
   BOOKING_APPLIED: "Booking Applied",
 };
-
-function formatCents(cents: number): string {
-  return `$${(cents / 100).toFixed(2)}`;
-}
 
 /**
  * When the credit was recorded — a real INSTANT, so it has no civil date until a
