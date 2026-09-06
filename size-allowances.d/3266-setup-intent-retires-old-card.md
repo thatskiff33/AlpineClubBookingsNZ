@@ -43,7 +43,7 @@ reason: `getStripePaymentMethodId` is kept here under its own name as a one-line
   exactly that.
 
 file: src/lib/stripe-webhook-service.ts
-lines: 1740
+lines: 1746
 reason: the `setup_intent.succeeded` handler now reads the Payment row and
   refuses to stamp when the row no longer names the intent, then dispatches on
   the shared verdict from `setup-intent-card.ts`; `setup_intent.canceled` loses
@@ -59,4 +59,7 @@ reason: the `setup_intent.succeeded` handler now reads the Payment row and
   on the event, the only link that survives a lost response. The adoption itself
   lives in `saved-card-charge-settle.ts`; what grows here is the one shared
   fallback helper and the two call sites, which belong beside the lookups they
-  fall back from — declared here because one path gets one allowance.
+  fall back from — declared here because one path gets one allowance. #3267's
+  second fix round adds five comment lines to that helper, stating the limit of
+  the recovery: Stripe attributes no request to an asynchronous capture, so such
+  an event carries no key to match on.

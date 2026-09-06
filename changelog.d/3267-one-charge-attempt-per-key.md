@@ -39,3 +39,15 @@
   times a day. Finally, a charge that is still being attempted no longer
   clears the booking's payment link, which could leave a member with a payment
   page that would not go through.
+
+  Three smaller corrections went in with the review of that work. The
+  stuck-booking alert now starts counting from the moment the system can first
+  see the problem rather than from when the payment record was last written:
+  money captured against a booking days before its hold ran out used to slip
+  past the first alert entirely, and could go nearly a fortnight unreported. If
+  a booking is cancelled by somebody else while its card is being charged, that
+  now shows up as a failed booking on the run rather than passing quietly — a
+  booking already paid by then still does not, because that is the ordinary
+  case. And when a charge does not go through, the alert to administrators
+  quotes the amount that was actually asked for, which matters if the booking's
+  price changed between the moment it was read and the moment it was charged.
