@@ -776,8 +776,18 @@ describe("consent columns have exactly one writer", () => {
       "the delegate page's authorization-first state resolver",
     "src/lib/member-guest-consent-exceptions.ts":
       "the admin exception list and the two consent chip counts",
+    // #2958 split the booking page: the viewer's own row is read for the card
+    // in the consent module, every row for the badges in the editor-data module,
+    // the card renders the deadline column, and the page shell itself keeps the
+    // D-12 arrival-instructions gate on the viewer's row.
     "src/app/(authenticated)/bookings/[id]/page.tsx":
-      "the booking page reads the viewer's own consent row for the card, and every row for the badges",
+      "the booking page shell gates the arrival instructions on the viewer's own consent row",
+    "src/app/(authenticated)/bookings/[id]/_lib/booking-detail-consent.ts":
+      "the booking page reads the viewer's own consent row for the card, and the responders for the badges",
+    "src/app/(authenticated)/bookings/[id]/_lib/booking-detail-editor-data.ts":
+      "the booking page reads every row's consent for the edit panel's badges",
+    "src/app/(authenticated)/bookings/[id]/_components/booking-consent-cards.tsx":
+      "the consent card renders the viewer's own answer-by deadline",
     "src/app/(authenticated)/bookings/consent/[guestId]/page.tsx":
       "the delegate consent page",
     "src/lib/admin-bookings-service.ts":
@@ -1059,8 +1069,9 @@ describe("the two open-search privacy toggles are off by default, and have exact
       // MG4 (#2309). Decides which find box the EDIT panel draws, from the same
       // already-decided boolean — and for an ADMIN reader does not consult the
       // setting at all, because D-20 gates the officer's picker on
-      // `membership:view` instead. The routes still re-check.
-      "src/app/(authenticated)/bookings/[id]/page.tsx",
+      // `membership:view` instead. The routes still re-check. (#2958 moved
+      // the edit panel's payload, and this read, into the page's `_lib`.)
+      "src/app/(authenticated)/bookings/[id]/_lib/booking-detail-editor-data.ts",
       // MG4 (#2309). Obeys `loadMemberGuestFindGate`'s answer and names the
       // AUDIENCE it is serving; the minors decision stays in the find service.
       "src/app/api/admin/bookings/[id]/member-guest-candidates/route.ts",

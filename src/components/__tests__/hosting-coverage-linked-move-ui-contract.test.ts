@@ -377,8 +377,12 @@ describe("the linked-move offer's UI contract (#3232, INV-HOST-050)", () => {
     // while leaving the word `canSeeAdminTools` in the prose above it, left the
     // rows in every member's feed and the guard still green. Measured on this
     // branch before it was replaced.
+    // #2958: the audit read and the history builder live in the page's history
+    // module now; the gate is asserted where the query is.
     const page = stripComments(
-      source("src/app/(authenticated)/bookings/[id]/page.tsx"),
+      source(
+        "src/app/(authenticated)/bookings/[id]/_lib/booking-detail-history.ts",
+      ),
     );
     expect(page).toContain("booking.hostingCoverage.incidentOpened");
     const gate = page.slice(

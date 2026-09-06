@@ -416,11 +416,12 @@ describe("booking detail write-surface gates (issue #1313 + option A2)", () => {
 // it — and in particular the owner must keep seeing their own card and NOT this.
 // ---------------------------------------------------------------------------
 describe("outstanding additional payment panel visibility (#2350)", () => {
+  // #2958: both render sites live in the page's payment-cards section.
   const bookingPageSource = () =>
     fs.readFileSync(
       path.join(
         process.cwd(),
-        "src/app/(authenticated)/bookings/[id]/page.tsx",
+        "src/app/(authenticated)/bookings/[id]/_components/booking-payment-cards.tsx",
       ),
       "utf8",
     );
@@ -499,14 +500,37 @@ describe("outstanding additional payment panel visibility (#2350)", () => {
 });
 
 describe("in-booking bed allocation panel visibility (#2252)", () => {
-  const bookingPageSource = () =>
-    fs.readFileSync(
-      path.join(
-        process.cwd(),
-        "src/app/(authenticated)/bookings/[id]/page.tsx",
-      ),
-      "utf8",
+  const ROUTE_DIR = "src/app/(authenticated)/bookings/[id]";
+  const routeSource = (relative: string) =>
+    fs.readFileSync(path.join(process.cwd(), ROUTE_DIR, relative), "utf8");
+  const bookingPageSource = () => routeSource("page.tsx");
+  // #2958: the gate is defined in the edit-access module and rendered in the
+  // stay-preferences section.
+  const editAccessSource = () =>
+    routeSource("_lib/booking-detail-edit-access.ts");
+  const stayPreferencesSource = () =>
+    routeSource("_components/booking-stay-preferences.tsx");
+  /**
+   * The page's markup as the browser receives it: the page shell with each
+   * `<BookingXxx />` section it composes replaced by that section's source, in
+   * render order. Anchors declared on the page and anchors rendered inside a
+   * section therefore sit in DOM order in the returned text.
+   */
+  const composedBookingPageSource = () => {
+    const page = bookingPageSource();
+    const sections = new Map(
+      Array.from(
+        page.matchAll(
+          /import \{ (Booking\w+) \} from "\.\/_components\/([\w-]+)";/g,
+        ),
+      ).map((match) => [match[1], match[2]]),
     );
+    expect(sections.size).toBeGreaterThan(5);
+    return page.replace(/<(Booking\w+)\b/g, (tag, name: string) => {
+      const file = sections.get(name);
+      return file ? routeSource(`_components/${file}.tsx`) : tag;
+    });
+  };
 
   const canSeePanel = (accessRoles: AppAccessRole[]) => {
     const subject = { accessRoles };
@@ -538,11 +562,12 @@ describe("in-booking bed allocation panel visibility (#2252)", () => {
   });
 
   it("renders the panel only behind canSeeAdminTools AND the bedAllocation module flag", () => {
-    const source = bookingPageSource();
+    const gateSource = editAccessSource();
+    const source = stayPreferencesSource();
 
     // ONE named gate, defined as exactly that conjunction: the routes 404 when
     // the module is off, and the member-invisibility half is this gate.
-    expect(source).toMatch(
+    expect(gateSource).toMatch(
       /const showBedAllocationPanel =\s*canSeeAdminTools && modules\.bedAllocation;/,
     );
     // The render site is that gate and nothing looser…
@@ -576,7 +601,7 @@ describe("in-booking bed allocation panel visibility (#2252)", () => {
      * This pins the general rule, not just the one anchor: every id declared in
      * BOOKING_SECTIONS must appear in the page's markup in the declared order.
      */
-    const source = bookingPageSource();
+    const source = composedBookingPageSource();
 
     const declared = Array.from(
       source
