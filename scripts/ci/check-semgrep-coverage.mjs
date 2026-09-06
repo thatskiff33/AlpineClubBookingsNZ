@@ -30,6 +30,14 @@ import { pathToFileURL } from "node:url";
  * gets left out, and without it the list rots into a permanent exemption
  * roster nobody rechecks.
  *
+ * BE PRECISE ABOUT WHICH DIRECTION IS MECHANICAL. Deletion is forced by this
+ * gate. Addition is not: the list is a versioned file, so an entry added in
+ * the same commit passes, and what holds the line there is review. Saying the
+ * list "only shrinks" would be a claim the code does not back - and it cannot
+ * be made true by refusing additions outright, because 4 of the current
+ * entries are the string-literal ampersand, which has no safe rewrite. The
+ * honest guarantee is that it never grows SILENTLY.
+ *
  * FAIL-CLOSED ON ANYTHING UNRECOGNISED. An `errors` entry this script cannot
  * classify is reported and fails the build rather than being ignored. A
  * scanner that starts reporting a new kind of failure must not be able to
@@ -179,12 +187,26 @@ export function readAllowlistFiles(allowlist) {
 }
 
 /**
- * The two constructs measured behind every parse failure in this repository
- * (#2842). Both are valid TypeScript the build accepts; both have a
- * type-equivalent form Semgrep's parser reads.
+ * What Semgrep's TypeScript parser actually chokes on here (#2842), stated as
+ * the RULE rather than as a spelling.
+ *
+ * Saying "the two constructs are `importOriginal<...>()` and a bare `&`" was
+ * measurably wrong twice over, and this text is what a contributor is HANDED
+ * when the gate fires, so being wrong here sends them the wrong way:
+ *
+ *  - 22 of the allowlisted files use `vi.importActual<typeof import(...)>()`
+ *    or `importActual<typeof import(...)>()`, not `importOriginal`. Someone
+ *    hitting the gate on the idiomatic `vi.importActual` spelling greps for
+ *    `importOriginal`, finds none, decides the gate is confused, and takes the
+ *    allowlist escape instead of the one-line fix;
+ *  - the `&amp;` remedy is only correct in JSX TEXT. Three allowlisted files
+ *    carry the `&` inside a STRING - `href="/admin/bookings?sortBy=member&sortDir=asc"`,
+ *    one of them asserted with `toHaveAttribute` - where rewriting it changes
+ *    the value the test asserts.
  */
 const KNOWN_CONSTRUCTS =
-  'Rewrite the construct the parser rejects - the two known here are an `importOriginal<typeof import("...")>()` instantiation expression, which becomes `(await importOriginal()) as typeof import("...")`, and a bare `&` in JSX text, which becomes `&amp;`.';
+  'Two shapes defeat the parser, and both are valid TypeScript the build accepts. (1) A GENERIC CALL WHOSE TYPE ARGUMENT CONTAINS AN `import()` TYPE - `f<typeof import("...")>()` for any `f`; the spellings measured here are `importOriginal`, `vi.importActual` and `importActual`, and an inline `import("...").Type<...>` does it too. A plain generic call parses and a plain `import()` type parses; it is the combination. Move the type out of the call: `(await f()) as typeof import("...")`. (2) A BARE `&` IN JSX TEXT - `<h1>Rooms & Beds</h1>` - which becomes `&amp;`. That remedy applies to JSX TEXT ONLY: the same parser fault fires on a `&` inside a string literal, such as a URL query, and rewriting it there would change the value, so those belong on the allowlist instead.'
+
 
 /**
  * Decides the gate. Pure: takes the summarised report, the allowlisted paths
@@ -261,7 +283,7 @@ export function findCoverageFailures(
     failures.push({
       kind: "new unparsed region",
       path,
-      detail: `Semgrep skipped a region of this file, so part of it went unscanned. ${KNOWN_CONSTRUCTS} If you genuinely cannot, add this path to .semgrep/unparsed-allowlist.json in the same change and say why in the pull request.`,
+      detail: `Semgrep skipped a region of this file, so part of it went unscanned. ${KNOWN_CONSTRUCTS} Adding this path to .semgrep/unparsed-allowlist.json is the LAST resort, not the first: it signs part of this file off as unscanned. Do it only when there is genuinely no rewrite - the string-literal ampersand is the one known case - and say which case it is in the pull request, because the reviewer is what holds that direction of the list.`,
     });
   }
 
@@ -276,7 +298,7 @@ export function findCoverageFailures(
     // failure above already reports the real problem.
     if (abandoned.has(path)) continue;
     const detail = fileExists(path)
-      ? "This file is on the unparsed allowlist but Semgrep parsed all of it in this run. The allowlist only shrinks: delete this entry."
+      ? "This file is on the unparsed allowlist but Semgrep parsed all of it in this run, so the entry has outlived its evidence: delete it."
       : "This file is on the unparsed allowlist but no longer exists. Delete this entry.";
     failures.push({ kind: "stale allowlist entry", path, detail });
   }

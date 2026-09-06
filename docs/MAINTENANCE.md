@@ -291,17 +291,25 @@ read has looked exactly like a file the scanner read and cleared.
 
 Measured for #2842 on the same pinned image: 177 of 4,219 scanned files carried
 a parse error behind a green gate, and **three were whole-file failures where no
-rule ran at all**. Two constructs caused every one of them, and both are valid
-TypeScript that `tsc` and the build accept:
+rule ran at all**. Two parser faults caused every one of them, and both fire on
+valid TypeScript that `tsc` and the build accept.
 
-| Construct | Parses as |
-| --- | --- |
-| `await importOriginal<typeof import("@/x")>()` | `(await importOriginal()) as typeof import("@/x")` |
-| `<h1>Rooms & Beds</h1>` (bare `&` in JSX text) | `<h1>Rooms &amp; Beds</h1>` |
+Those two are stated once, as the rule rather than as a spelling, in
+`KNOWN_CONSTRUCTS` in `scripts/ci/check-semgrep-coverage.mjs` — which is also
+the text the gate hands you when it fires, so it is the copy that has to be
+right. They are deliberately not restated here.
 
-A plain generic call (`f<string>()`) parses, and a plain `import()` type parses;
-it is a type argument containing an `import()` type **at a call site** that
-defeats the parser. Prefer the parsing form in new code.
+Two traps worth knowing before you reach for a remedy, both measured:
+
+- the generic-call fault is about the SHAPE, not the name. 143 of the
+  allowlisted files spell it `importOriginal`, but 22 spell it
+  `vi.importActual` or `importActual`, and grepping for the first name finds
+  nothing in those;
+- the `&amp;` remedy is for JSX **text** only. The same fault fires on a `&`
+  inside a string literal — a URL query such as
+  `href="/admin/bookings?sortBy=member&sortDir=asc"` — where rewriting it
+  changes the value, and in one case the value a test asserts. Those four files
+  are on the allowlist precisely because they have no safe rewrite.
 
 #### The coverage gate
 
@@ -312,9 +320,12 @@ things:
   there is zero, and a file nothing scans must never be signed off as scanned;
 - a partially-unparsed file absent from `.semgrep/unparsed-allowlist.json`, so
   coverage cannot quietly shrink;
-- an allowlist entry whose file now parses, or no longer exists. **The list only
-  shrinks** — whoever fixes a file deletes its entry in the same change, so the
-  list cannot rot into an exemption roster nobody rechecks;
+- an allowlist entry whose file now parses, or no longer exists. **An entry
+  cannot outlive its evidence** — whoever fixes a file deletes its entry in
+  the same change, so the list cannot rot into an exemption roster nobody
+  rechecks. Note which direction is mechanical: deletion is forced by the
+  gate, while an addition only has to survive review, so the guarantee is
+  that the list never grows *silently*, not that it never grows;
 - an `errors[].type` it does not recognise. Fail-closed: a scanner that starts
   reporting a new kind of failure must not reduce coverage silently just because
   the gate predates the name.
