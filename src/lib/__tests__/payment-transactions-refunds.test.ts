@@ -888,3 +888,76 @@ describe("#3268 - reconcilePaymentAggregates and the saved-card column (INV-PAY-
     },
   );
 });
+
+describe("#3267 - reconcilePaymentAggregates and the Payment's intent pointer (INV-PAY-055)", () => {
+  /*
+    The failure this pins: a saved-card charge ATTEMPT row is a Stripe PRIMARY
+    row born without an intent id (and it stays so after a definite failure).
+    While it is the latest PRIMARY, any reconcile — the #1992 sweep's
+    `payment_intent.canceled` webhook for an older intent, a failed webhook —
+    used to derive `Payment.stripePaymentIntentId = null` from it. `/pay` and
+    `create-payment-intent` read that pointer to decide whether to mint, and a
+    nulled pointer sends them back to the `_initial` key, which Stripe answers
+    with the CANCELLED first intent: a dead client secret.
+
+    The rule mirrors #3268's for the card column: a Stripe latest PRIMARY
+    without an intent keeps the pointer the Payment already holds; an Internet
+    Banking latest PRIMARY still nulls it.
+  */
+  function stampedIntent(store: ReturnType<typeof createRefundStore>["store"]) {
+    const call = store.payment.update.mock.calls.at(-1) as [{ data: Record<string, unknown> }] | undefined;
+    expect(call).toBeDefined();
+    expect(call![0].data).toHaveProperty("stripePaymentIntentId");
+    return call![0].data.stripePaymentIntentId;
+  }
+
+  it("a Stripe latest PRIMARY with NO intent id (a pre-charge attempt row) keeps the pointer the Payment holds", async () => {
+    const { store, payment, transaction, transactions } = createRefundStore();
+    payment.stripePaymentIntentId = "pi_1";
+    // The captured row for pi_1 is older; the attempt row is the latest PRIMARY.
+    transactions.push({
+      ...transaction,
+      id: "txn_attempt",
+      stripePaymentIntentId: null,
+      reference: "pending_charge_booking_1_txn_attempt",
+      status: "PENDING",
+      paymentMethodId: "pm_1",
+      reason: "pending_hold_auto_charge",
+      createdAt: new Date("2026-01-03T00:00:00.000Z"),
+      updatedAt: new Date("2026-01-03T00:00:00.000Z"),
+    });
+
+    await reconcilePaymentAggregates({ paymentId: payment.id, store: store as any });
+
+    expect(stampedIntent(store)).toBe("pi_1");
+  });
+
+  it("a Stripe latest PRIMARY WITH an intent id still moves the pointer to it", async () => {
+    const { store, payment, transaction, transactions } = createRefundStore();
+    payment.stripePaymentIntentId = "pi_1";
+    transactions.push({
+      ...transaction,
+      id: "txn_attempt",
+      stripePaymentIntentId: "pi_2",
+      status: "PROCESSING",
+      createdAt: new Date("2026-01-03T00:00:00.000Z"),
+      updatedAt: new Date("2026-01-03T00:00:00.000Z"),
+    });
+
+    await reconcilePaymentAggregates({ paymentId: payment.id, store: store as any });
+
+    expect(stampedIntent(store)).toBe("pi_2");
+  });
+
+  it("an Internet Banking latest PRIMARY still nulls it (unchanged)", async () => {
+    const { store, payment, transaction } = createRefundStore();
+    payment.source = PaymentSource.INTERNET_BANKING;
+    payment.stripePaymentIntentId = "pi_stale";
+    transaction.source = PaymentSource.INTERNET_BANKING;
+    transaction.stripePaymentIntentId = null;
+
+    await reconcilePaymentAggregates({ paymentId: payment.id, store: store as any });
+
+    expect(stampedIntent(store)).toBeNull();
+  });
+});

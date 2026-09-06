@@ -321,6 +321,9 @@ const {
   confirmPendingBookings,
   splitSettlementExtensionNumber,
   shouldAlertOnSplitSettlementExtension,
+  CONFIRM_PENDING_RUN_INTERVAL_MS,
+  isFirstRunInExtensionWindow,
+  shouldAlertOnSavedCardChargeRefusal,
 } = await import("../cron-confirm-pending");
 
 /*
@@ -557,7 +560,14 @@ describe("Cron: Confirm Pending Bookings", () => {
     mockCancelPaymentIntentIfCancellable.mockResolvedValue(null);
     mockDetachPaymentMethod.mockResolvedValue({ id: "pm_detached" });
     mockPaymentUpdateMany.mockResolvedValue({ count: 1 });
-    mockPaymentTransactionUpdateMany.mockResolvedValue({ count: 0 });
+    // #3267: a status-guarded write on ONE row (the settle, the FAILED mark, a
+    // superseded row's end) matches it; the #3268 card clear (matched by pm id,
+    // no row id) matches nothing by default.
+    mockPaymentTransactionUpdateMany.mockImplementation(
+      async ({ where }: { where: { id?: string; stripePaymentIntentId?: string } }) => ({
+        count: where.id !== undefined || where.stripePaymentIntentId !== undefined ? 1 : 0,
+      })
+    );
     mockSendSavedCardChargeFailedEmail.mockResolvedValue(undefined);
     mockClubTimeSettingsFindUnique.mockResolvedValue(null);
     mockPromoRedemptionFindUnique.mockResolvedValue(null);
@@ -765,22 +775,23 @@ describe("Cron: Confirm Pending Bookings", () => {
     expect(mockPaymentTransactionCreate.mock.invocationCallOrder[0]!).toBeLessThan(
       mockChargePaymentMethod.mock.invocationCallOrder[0]!
     );
-    const settle = mockPaymentTransactionUpdate.mock.calls.find(
+    // Forward only (#3267 fix round): a capture is written over anything but
+    // refund history, through a status-guarded updateMany; a null card from
+    // Stripe never nulls the card the row carries.
+    const settle = mockPaymentTransactionUpdateMany.mock.calls.find(
       ([call]) => call?.data?.stripePaymentIntentId === "pi_auto_1"
     );
     expect(settle?.[0]).toEqual({
-      where: { id: ATTEMPT_ROW_ID },
+      where: { id: ATTEMPT_ROW_ID, status: { notIn: ["REFUNDED", "PARTIALLY_REFUNDED"] } },
       data: {
         stripePaymentIntentId: "pi_auto_1",
         status: "SUCCEEDED",
         amountCents: 10000,
-        paymentMethodId: null,
       },
-      select: { id: true, paymentId: true },
     });
     expect(
-      mockPaymentTransactionUpdate.mock.invocationCallOrder[
-        mockPaymentTransactionUpdate.mock.calls.indexOf(settle!)
+      mockPaymentTransactionUpdateMany.mock.invocationCallOrder[
+        mockPaymentTransactionUpdateMany.mock.calls.indexOf(settle!)
       ]!
     ).toBeLessThan(mockMarkBookingPaymentSucceeded.mock.invocationCallOrder[0]!);
     expect(mockUpsertPaymentIntentTransaction).not.toHaveBeenCalled();
@@ -1245,16 +1256,16 @@ describe("Cron: Confirm Pending Bookings", () => {
     expect(result.failedBookingIds).toHaveLength(0);
 
     // #3267: Stripe's answer is recorded on the attempt row (`requires_action`
-    // maps to PROCESSING), inside the locked release transaction.
-    expect(mockPaymentTransactionUpdate).toHaveBeenCalledWith({
-      where: { id: ATTEMPT_ROW_ID },
+    // maps to PROCESSING), inside the locked release transaction, forward only
+    // (a non-capture is written only over an unresolved row), and a null card
+    // from Stripe never nulls the card the row carries.
+    expect(mockPaymentTransactionUpdateMany).toHaveBeenCalledWith({
+      where: { id: ATTEMPT_ROW_ID, status: { in: ["PENDING", "PROCESSING"] } },
       data: {
         stripePaymentIntentId: "pi_auto_1",
         status: "PROCESSING",
         amountCents: 10000,
-        paymentMethodId: null,
       },
-      select: { id: true, paymentId: true },
     });
     expect(mockUpsertPaymentIntentTransaction).not.toHaveBeenCalled();
     expect(mockBookingUpdateMany).toHaveBeenCalledWith({
@@ -2680,6 +2691,10 @@ describe("Cron: Confirm Pending Bookings", () => {
           status: { in: ["PENDING", "PROCESSING"] },
           stripePaymentIntentId: { not: null },
           amountCents: { gt: 0 },
+          // Never the row this run is replaying (a legacy shared-key row or a
+          // same-card link intent the claim chose as the attempt): here a fresh
+          // attempt, so its id — which has no intent yet anyway.
+          id: { not: ATTEMPT_ROW_ID },
           // An attempt row — the cron's own, the admin route's or
           // charge-saved-method's — carries `pending_charge_…` on `reference`.
           // A still-unresolved one on this card IS this run's attempt (about to
@@ -3169,15 +3184,14 @@ describe("Cron: Confirm Pending Bookings", () => {
       expect(mockGetPaymentIntent).toHaveBeenCalledWith("pi_admin");
       expect(mockChargePaymentMethod).not.toHaveBeenCalled();
       expect(mockPaymentTransactionCreate).not.toHaveBeenCalled();
-      expect(mockPaymentTransactionUpdate).toHaveBeenCalledWith({
-        where: { id: "txn_admin" },
+      expect(mockPaymentTransactionUpdateMany).toHaveBeenCalledWith({
+        where: { id: "txn_admin", status: { notIn: ["REFUNDED", "PARTIALLY_REFUNDED"] } },
         data: {
           stripePaymentIntentId: "pi_admin",
           status: "SUCCEEDED",
           amountCents: 10000,
           paymentMethodId: "pm_b1",
         },
-        select: { id: true, paymentId: true },
       });
       expect(mockMarkBookingPaymentSucceeded).toHaveBeenCalledWith(
         expect.objectContaining({ paymentIntentId: "pi_admin" })
@@ -3231,9 +3245,9 @@ describe("Cron: Confirm Pending Bookings", () => {
       );
     });
 
-    it("REFUSES to charge when a captured PRIMARY row already sits on the still-pending booking: nothing claimed, nothing charged, loud alert, failed id", async () => {
-      mockPendingBookings([makePendingBooking("b1")]);
-      capacityAvailable();
+    /** A captured PRIMARY row on the still-pending booking, last written `capturedAgoMs` before now (2026-07-09T00:00Z). */
+    function primeCapturedRow(capturedAgoMs: number) {
+      const updatedAt = new Date(Date.now() - capturedAgoMs);
       mockPaymentTransactionFindMany.mockImplementation(
         async (args: { where: { OR?: unknown } }) =>
           args.where.OR
@@ -3248,9 +3262,20 @@ describe("Cron: Confirm Pending Bookings", () => {
                   stripePaymentIntentId: "pi_paid",
                   reference: null,
                   reason: null,
+                  createdAt: updatedAt,
+                  updatedAt,
                 },
               ]
       );
+    }
+    const HOUR = 60 * 60 * 1000;
+    const WINDOW = 2 * 24 * HOUR;
+
+    it("REFUSES to charge when a captured PRIMARY row already sits on the still-pending booking: nothing claimed, nothing charged, loud alert, failed id", async () => {
+      mockPendingBookings([makePendingBooking("b1")]);
+      capacityAvailable();
+      // Captured an hour ago: this is the first run since, so it alerts.
+      primeCapturedRow(1 * HOUR);
 
       const result = await confirmPendingBookings();
 
@@ -3271,6 +3296,83 @@ describe("Cron: Confirm Pending Bookings", () => {
           paymentIntentId: "pi_paid",
           errorMessage: expect.stringContaining("already recorded"),
         })
+      );
+    });
+
+    describe("the refusal alert follows the #1993 cadence, once per window, anchored on when the state began (#3267 fix round)", () => {
+      it.each([
+        ["1 hour in (window 1, first run)", 1 * HOUR, true],
+        ["24 hours in (window 1, a later run)", 24 * HOUR, false],
+        ["window 2, first run", WINDOW + 2 * HOUR, true],
+        ["window 4, first run (capped)", 3 * WINDOW + 1 * HOUR, false],
+        ["window 7, first run", 6 * WINDOW + 1 * HOUR, true],
+        ["window 7, a later run", 6 * WINDOW + 5 * HOUR, false],
+      ])("captured %s -> alert %s; the refusal is logged and the booking counted failed on every run regardless", async (_label, agoMs, alerts) => {
+        mockPendingBookings([makePendingBooking("b1")]);
+        capacityAvailable();
+        primeCapturedRow(agoMs);
+
+        const result = await confirmPendingBookings();
+
+        expect(result.failedBookingIds).toEqual(["b1"]);
+        expect(mockChargePaymentMethod).not.toHaveBeenCalled();
+        expect(mockSendAdminPaymentFailureAlert).toHaveBeenCalledTimes(alerts ? 1 : 0);
+      });
+
+      it("the helpers: a run is the first in its window only within one run-interval of the window boundary", () => {
+        const since = new Date("2026-07-01T00:00:00.000Z");
+        const at = (ms: number) => new Date(since.getTime() + ms);
+        expect(CONFIRM_PENDING_RUN_INTERVAL_MS).toBe(3 * HOUR);
+        expect(isFirstRunInExtensionWindow(since, since)).toBe(true);
+        expect(isFirstRunInExtensionWindow(since, at(3 * HOUR - 1))).toBe(true);
+        expect(isFirstRunInExtensionWindow(since, at(3 * HOUR))).toBe(false);
+        expect(isFirstRunInExtensionWindow(since, at(WINDOW))).toBe(true);
+        expect(isFirstRunInExtensionWindow(since, at(WINDOW + 3 * HOUR))).toBe(false);
+        // Cadence AND first run: window 4 is capped even on its first run;
+        // window 7 alerts on its first run only.
+        expect(shouldAlertOnSavedCardChargeRefusal(since, at(3 * WINDOW + HOUR))).toBe(false);
+        expect(shouldAlertOnSavedCardChargeRefusal(since, at(6 * WINDOW + HOUR))).toBe(true);
+        expect(shouldAlertOnSavedCardChargeRefusal(since, at(6 * WINDOW + 4 * HOUR))).toBe(false);
+      });
+    });
+
+    it("REFUSES to re-send an unanswered attempt's key once it is older than Stripe's replay window (attempt_key_expired): nothing charged, the row left for a person, alert on the same cadence", async () => {
+      mockPendingBookings([makePendingBooking("b1")]);
+      capacityAvailable();
+      // A PENDING attempt row with no intent, minted 23h + 1h ago: its key
+      // expired an hour ago, so this is the first run since — alert.
+      const createdAt = new Date(Date.now() - 24 * HOUR);
+      mockPaymentTransactionFindMany.mockImplementation(
+        async (args: { where: { OR?: unknown } }) =>
+          args.where.OR
+            ? []
+            : [
+                {
+                  id: "txn_unanswered",
+                  status: "PENDING",
+                  amountCents: 10000,
+                  refundedAmountCents: 0,
+                  paymentMethodId: "pm_b1",
+                  stripePaymentIntentId: null,
+                  reference: "pending_charge_b1_txn_unanswered",
+                  reason: "pending_hold_auto_charge",
+                  createdAt,
+                  updatedAt: createdAt,
+                },
+              ]
+      );
+
+      const result = await confirmPendingBookings();
+
+      expect(result.failedBookingIds).toEqual(["b1"]);
+      expect(mockChargePaymentMethod).not.toHaveBeenCalled();
+      expect(mockPaymentTransactionCreate).not.toHaveBeenCalled();
+      expect(
+        mockPaymentTransactionUpdateMany.mock.calls.find(([call]) => call?.where?.id === "txn_unanswered")
+      ).toBeUndefined();
+      expect(mockSendAdminPaymentFailureAlert).toHaveBeenCalledTimes(1);
+      expect(mockSendAdminPaymentFailureAlert).toHaveBeenCalledWith(
+        expect.objectContaining({ errorMessage: expect.stringContaining("more than 23 hours ago") })
       );
     });
 
@@ -3329,9 +3431,9 @@ describe("Cron: Confirm Pending Bookings", () => {
       expect(result.confirmedBookingIds).toEqual([]);
       expect(result.failedBookingIds).toEqual([]);
       expect(mockChargePaymentMethod).not.toHaveBeenCalled();
-      expect(mockPaymentTransactionUpdate).toHaveBeenCalledWith(
+      expect(mockPaymentTransactionUpdateMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: "txn_dead" },
+          where: { id: "txn_dead", status: { in: ["PENDING", "PROCESSING"] } },
           data: expect.objectContaining({ status: "FAILED" }),
         })
       );
@@ -3340,6 +3442,137 @@ describe("Cron: Confirm Pending Bookings", () => {
           ([call]) => call?.where?.status === "CONFIRMED" && call?.data?.status === "PENDING"
         )
       ).toBeDefined();
+    });
+
+    it("a LEGACY shared-key row (no reference) still PROCESSING on the SAME card is replayed by retrieve — waited on, never charged beside — and the #1992 sweep leaves it alone by id (#3267 fix round)", async () => {
+      mockPendingBookings([makePendingBooking("b1")]);
+      capacityAvailable();
+      const legacy = {
+        id: "txn_legacy",
+        status: "PROCESSING",
+        amountCents: 10000,
+        refundedAmountCents: 0,
+        paymentMethodId: "pm_b1",
+        stripePaymentIntentId: "pi_legacy",
+        reference: null,
+        reason: "pending_hold_auto_charge",
+        createdAt: new Date("2026-07-08T21:00:00.000Z"),
+        updatedAt: new Date("2026-07-08T21:00:00.000Z"),
+      };
+      mockPaymentTransactionFindMany.mockImplementation(
+        async (args: { where: { OR?: unknown; id?: { not: string } } }) =>
+          args.where.OR
+            ? // The sweep's read: honour its by-id exclusion the way Postgres would.
+              [legacy].filter((row) => row.id !== args.where.id?.not).map(({ id, stripePaymentIntentId }) => ({ id, stripePaymentIntentId }))
+            : [legacy]
+      );
+      mockGetPaymentIntent.mockResolvedValue({ id: "pi_legacy", status: "processing", amount: 10000, payment_method: "pm_b1" });
+
+      const result = await confirmPendingBookings();
+
+      expect(result.confirmedBookingIds).toEqual([]);
+      expect(result.failedBookingIds).toEqual([]);
+      expect(mockGetPaymentIntent).toHaveBeenCalledWith("pi_legacy");
+      expect(mockChargePaymentMethod).not.toHaveBeenCalled();
+      expect(mockPaymentTransactionCreate).not.toHaveBeenCalled();
+      // The sweep asked with the replayed row excluded, so it never cancelled it.
+      expect(mockPaymentTransactionFindMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ id: { not: "txn_legacy" } }) })
+      );
+      expect(mockCancelPaymentIntentIfCancellable).not.toHaveBeenCalled();
+      // Recorded PROCESSING on the legacy row, and the claim handed back.
+      expect(mockPaymentTransactionUpdateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ id: "txn_legacy" }), data: expect.objectContaining({ status: "PROCESSING" }) })
+      );
+      expect(
+        mockBookingUpdateMany.mock.calls.find(
+          ([call]) => call?.where?.status === "CONFIRMED" && call?.data?.status === "PENDING"
+        )
+      ).toBeDefined();
+    });
+
+    it("a superseded attempt whose intent is still PROCESSING (the member re-saved a card mid-flight) is waited on: Stripe refuses the cancel, the intent is read back, no charge is made on the new card, and its row is revived so the next run waits again (#3267 fix round)", async () => {
+      mockPendingBookings([makePendingBooking("b1")]);
+      capacityAvailable();
+      mockPaymentTransactionFindMany.mockImplementation(
+        async (args: { where: { OR?: unknown } }) =>
+          args.where.OR
+            ? []
+            : [
+                {
+                  id: "txn_old_card",
+                  status: "PROCESSING",
+                  amountCents: 10000,
+                  refundedAmountCents: 0,
+                  paymentMethodId: "pm_retired",
+                  stripePaymentIntentId: "pi_old_card",
+                  reference: "pending_charge_b1_txn_old_card",
+                  reason: "pending_hold_auto_charge",
+                  createdAt: new Date("2026-07-08T21:00:00.000Z"),
+                  updatedAt: new Date("2026-07-08T21:00:00.000Z"),
+                },
+              ]
+      );
+      mockCancelPaymentIntentIfCancellableWithResult.mockRejectedValue(
+        stripeError({ type: "invalid_request_error", message: "You cannot cancel this PaymentIntent because it has a status of processing." })
+      );
+      mockGetPaymentIntent.mockResolvedValue({ id: "pi_old_card", status: "processing", amount: 10000, payment_method: "pm_retired" });
+
+      const result = await confirmPendingBookings();
+
+      expect(result.confirmedBookingIds).toEqual([]);
+      expect(result.failedBookingIds).toEqual([]);
+      expect(mockChargePaymentMethod).not.toHaveBeenCalled();
+      expect(mockGetPaymentIntent).toHaveBeenCalledWith("pi_old_card");
+      // Ended under the claim, then revived once found live.
+      expect(mockPaymentTransactionUpdateMany).toHaveBeenCalledWith({
+        where: { id: "txn_old_card", status: { in: ["PENDING", "PROCESSING"] } },
+        data: { status: "FAILED", reason: "pending_hold_auto_charge:superseded_by_new_card" },
+      });
+      expect(mockPaymentTransactionUpdateMany).toHaveBeenCalledWith({
+        where: { stripePaymentIntentId: "pi_old_card", status: "FAILED" },
+        data: { status: "PROCESSING" },
+      });
+      // The fresh row minted for the new card is removed in favour of the live one.
+      expect(mockPaymentTransactionDeleteMany).toHaveBeenCalledWith({
+        where: { id: ATTEMPT_ROW_ID, stripePaymentIntentId: null },
+      });
+      expect(
+        mockBookingUpdateMany.mock.calls.find(
+          ([call]) => call?.where?.status === "CONFIRMED" && call?.data?.status === "PENDING"
+        )
+      ).toBeDefined();
+    });
+
+    it("does NOT release a claim the webhook has already settled: the retrieve said processing, the booking reads PAID under the release's locks — the stale answer is refused by the row's own guard, nothing is thrown, no alert (#3267 fix round)", async () => {
+      const booking = makePendingBooking("b1");
+      mockBookingFindMany.mockResolvedValue([booking]);
+      // The status-only re-read inside the release finds the webhook's PAID.
+      mockBookingFindUnique.mockImplementation(async ({ select }: { select?: { status?: boolean } }) =>
+        select?.status && Object.keys(select).length === 1 ? { status: "PAID" } : booking
+      );
+      capacityAvailable();
+      mockChargePaymentMethod.mockResolvedValue({ id: "pi_race", status: "processing", amount: 10000, payment_method: "pm_b1" });
+      // The forward-only guard refuses the stale write; the row reads SUCCEEDED.
+      mockPaymentTransactionUpdateMany.mockResolvedValue({ count: 0 });
+      mockPaymentTransactionFindUnique.mockImplementation(async ({ where }: { where: { id?: string } }) =>
+        where.id ? { status: "SUCCEEDED" } : null
+      );
+
+      const result = await confirmPendingBookings();
+
+      expect(result.failedBookingIds).toEqual([]);
+      expect(result.confirmedBookingIds).toEqual([]);
+      expect(mockPaymentTransactionUpdateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: ATTEMPT_ROW_ID, status: { in: ["PENDING", "PROCESSING"] } } })
+      );
+      expect(mockReconcilePaymentAggregates).not.toHaveBeenCalled();
+      expect(
+        mockBookingUpdateMany.mock.calls.find(
+          ([call]) => call?.where?.status === "CONFIRMED" && call?.data?.status === "PENDING"
+        )
+      ).toBeUndefined();
+      expect(mockSendAdminPaymentFailureAlert).not.toHaveBeenCalled();
     });
   });
 

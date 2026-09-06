@@ -30,6 +30,7 @@ type LedgerRow = {
   paymentMethodId: string | null;
   reason: string | null;
   createdAt: Date;
+  updatedAt: Date;
 };
 
 type StatusWhere =
@@ -52,6 +53,8 @@ function uniqueViolation(): Error & { code: string } {
   });
 }
 
+const HOUR_MS = 60 * 60 * 1000;
+
 const { ledger, mocks } = vi.hoisted(() => {
   const rows: LedgerRow[] = [];
   let seq = 0;
@@ -63,6 +66,11 @@ const { ledger, mocks } = vi.hoisted(() => {
     },
     seed(partial: Partial<LedgerRow> & { paymentId: string }): LedgerRow {
       seq += 1;
+      // Recent by default (the frozen clock is "now"): a seeded attempt whose
+      // first POST never answered must still be inside Stripe's replay window
+      // unless a test says otherwise. Ascending by seed order.
+      const createdAt =
+        partial.createdAt ?? new Date(Date.now() - 60 * 60 * 1000 + seq * 1000);
       const row: LedgerRow = {
         id: partial.id ?? `txn_${seq}`,
         paymentId: partial.paymentId,
@@ -75,7 +83,8 @@ const { ledger, mocks } = vi.hoisted(() => {
         status: partial.status ?? PaymentStatus.PENDING,
         paymentMethodId: partial.paymentMethodId ?? null,
         reason: partial.reason ?? null,
-        createdAt: partial.createdAt ?? new Date(2026, 5, 1, 0, 0, seq),
+        createdAt,
+        updatedAt: partial.updatedAt ?? createdAt,
       };
       rows.push(row);
       return row;
@@ -95,6 +104,28 @@ const { ledger, mocks } = vi.hoisted(() => {
             .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
             .map((r) => ({ ...r }))
       ),
+      // The adoption lookup (`adoptSavedCardChargeAttemptForIntent`).
+      findFirst: vi.fn(
+        async (args: {
+          where: {
+            reference: string;
+            kind: PaymentTransactionKind;
+            source: PaymentSource;
+            stripePaymentIntentId: null;
+            status: StatusWhere;
+          };
+        }) => {
+          const row = rows.find(
+            (r) =>
+              r.reference === args.where.reference &&
+              r.kind === args.where.kind &&
+              r.source === args.where.source &&
+              r.stripePaymentIntentId === null &&
+              statusMatches(r.status, args.where.status)
+          );
+          return row ? { id: row.id, paymentId: row.paymentId } : null;
+        }
+      ),
       create: vi.fn(async (args: { data: Omit<Partial<LedgerRow>, "id"> & { paymentId: string } }) => {
         const row = ledger.seed(args.data);
         return { id: row.id };
@@ -113,15 +144,34 @@ const { ledger, mocks } = vi.hoisted(() => {
         Object.assign(row, args.data);
         return { id: row.id, paymentId: row.paymentId };
       }),
+      // A faithful compare-and-set: matches on `id` OR on the unique intent id,
+      // applies the status guard, and refuses (P2002) to give two rows one
+      // intent id — the settle module's own-row write now goes through here, so
+      // a guard that stopped discriminating would show up as a wrong row state.
       updateMany: vi.fn(
         async (args: {
-          where: { id: string; status?: StatusWhere };
+          where: { id?: string; stripePaymentIntentId?: string; status?: StatusWhere };
           data: Partial<LedgerRow>;
         }) => {
           const hits = rows.filter(
-            (r) => r.id === args.where.id && statusMatches(r.status, args.where.status)
+            (r) =>
+              (args.where.id === undefined || r.id === args.where.id) &&
+              (args.where.stripePaymentIntentId === undefined ||
+                r.stripePaymentIntentId === args.where.stripePaymentIntentId) &&
+              statusMatches(r.status, args.where.status)
           );
-          for (const row of hits) Object.assign(row, args.data);
+          for (const row of hits) {
+            if (
+              args.data.stripePaymentIntentId &&
+              rows.some(
+                (r) =>
+                  r.id !== row.id && r.stripePaymentIntentId === args.data.stripePaymentIntentId
+              )
+            ) {
+              throw uniqueViolation();
+            }
+            Object.assign(row, args.data);
+          }
           return { count: hits.length };
         }
       ),
@@ -183,6 +233,7 @@ const {
   chargeSavedCardAttempt,
   isDefiniteSavedCardChargeFailure,
   SAVED_CARD_CHARGE_KEY_PREFIX,
+  SAVED_CARD_CHARGE_KEY_RESEND_WINDOW_MS,
   SAVED_CARD_CHARGE_REASON,
   savedCardChargeIdempotencyKey,
   SavedCardChargeRefusedError,
@@ -192,6 +243,7 @@ const {
 // exercised here beside `begin`/`charge` because the scenarios that matter run
 // across both.
 const {
+  adoptSavedCardChargeAttemptForIntent,
   describeUnsettledPaymentIntent,
   ledgerStatusForPaymentIntent,
   settleSavedCardChargeAttempt,
@@ -215,6 +267,18 @@ function begin(
     card,
     reason,
   });
+}
+
+function charge(attempt: Awaited<ReturnType<typeof begin>>, card = CARD) {
+  return chargeSavedCardAttempt({ attempt, bookingId: BOOKING, memberId: MEMBER, amountCents: 10000, card });
+}
+
+function settle(
+  attemptRowId: string,
+  paymentIntent: Parameters<typeof settleSavedCardChargeAttempt>[0]["paymentIntent"],
+  store?: Prisma.TransactionClient
+) {
+  return settleSavedCardChargeAttempt({ attemptRowId, paymentId: PAYMENT, paymentIntent, ...(store ? { store } : {}) });
 }
 
 /** Seed an attempt row exactly as `begin` would have left it. */
@@ -257,6 +321,10 @@ describe("the key and the metadata (INV-SSOT)", () => {
     expect(SAVED_CARD_CHARGE_REASON.cron).toBe("pending_hold_auto_charge");
     expect(SAVED_CARD_CHARGE_REASON.chargeSavedMethodRoute).toBe("pending_saved_method_charge");
     expect(new Set(Object.values(SAVED_CARD_CHARGE_REASON)).size).toBe(3);
+  });
+
+  it("re-sends a key only inside Stripe's 24-hour window, with an hour of margin", () => {
+    expect(SAVED_CARD_CHARGE_KEY_RESEND_WINDOW_MS).toBe(23 * HOUR_MS);
   });
 });
 
@@ -318,6 +386,60 @@ describe("beginSavedCardChargeAttempt", () => {
     expect(attempt).toMatchObject({ kind: "replay", attemptRowId: nulledCard.id, paymentIntentId: null });
   });
 
+  describe("a key is re-sent only inside Stripe's replay window (attempt_key_expired)", () => {
+    it("a PENDING no-intent attempt 22 hours old is replayed; one 23 hours and a second old REFUSES, naming the row and when its key expired", async () => {
+      const fresh = seedAttempt({
+        status: PaymentStatus.PENDING,
+        createdAt: new Date(Date.now() - 22 * HOUR_MS),
+      });
+      expect(await begin()).toMatchObject({ kind: "replay", attemptRowId: fresh.id });
+
+      ledger.reset();
+      const stale = seedAttempt({
+        status: PaymentStatus.PENDING,
+        createdAt: new Date(Date.now() - SAVED_CARD_CHARGE_KEY_RESEND_WINDOW_MS - 1000),
+      });
+
+      await expect(begin()).rejects.toMatchObject({
+        name: "SavedCardChargeRefusedError",
+        why: "attempt_key_expired",
+        bookingId: BOOKING,
+        attemptRowId: stale.id,
+        paymentIntentId: null,
+        since: new Date(stale.createdAt.getTime() + SAVED_CARD_CHARGE_KEY_RESEND_WINDOW_MS),
+      });
+      // Nothing minted, nothing ended: the claim rolls back around this throw.
+      expect(ledger.paymentTransaction.create).not.toHaveBeenCalled();
+      expect(row(stale.id).status).toBe(PaymentStatus.PENDING);
+    });
+
+    it("the window applies only to a row with NO intent: an old PROCESSING row that names its intent is retrieved, not re-sent, and has no deadline", async () => {
+      const old = seedAttempt({
+        status: PaymentStatus.PROCESSING,
+        stripePaymentIntentId: "pi_old_but_known",
+        createdAt: new Date(Date.now() - 3 * 24 * HOUR_MS),
+      });
+
+      await expect(begin()).resolves.toMatchObject({
+        kind: "replay",
+        attemptRowId: old.id,
+        paymentIntentId: "pi_old_but_known",
+      });
+    });
+
+    it("says, in the message, what an administrator does about it", async () => {
+      seedAttempt({
+        status: PaymentStatus.PENDING,
+        createdAt: new Date(Date.now() - 2 * SAVED_CARD_CHARGE_KEY_RESEND_WINDOW_MS),
+      });
+      const err = await begin().catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(SavedCardChargeRefusedError);
+      expect((err as Error).message).toContain("more than 23 hours ago");
+      expect((err as Error).message).toContain("payment_intent.succeeded");
+      expect((err as Error).message).toContain("save their card again");
+    });
+  });
+
   it("different card: the unresolved attempt on the OLD card is marked FAILED with its reason suffixed, its intent is queued for cancel, and a fresh row is minted under a NEW key", async () => {
     const old = seedAttempt({
       status: PaymentStatus.PROCESSING,
@@ -370,19 +492,23 @@ describe("beginSavedCardChargeAttempt", () => {
     expect(row(old.id).reason).toBe("pending_hold_auto_charge");
   });
 
-  it("refuse: a PRIMARY row still holding net captured cash THROWS SavedCardChargeRefusedError naming the intent — whoever minted the row", async () => {
+  it("refuse: a PRIMARY row still holding net captured cash THROWS SavedCardChargeRefusedError naming the intent and when the row was last written — whoever minted the row", async () => {
+    const capturedAt = new Date(Date.now() - 5 * HOUR_MS);
     ledger.seed({
       paymentId: PAYMENT,
       status: PaymentStatus.SUCCEEDED,
       stripePaymentIntentId: "pi_captured",
       // Not an attempt row: a legacy shared-key row or a link intent.
       reference: null,
+      updatedAt: capturedAt,
     });
 
     await expect(begin()).rejects.toMatchObject({
       name: "SavedCardChargeRefusedError",
+      why: "captured_primary_exists",
       bookingId: BOOKING,
       paymentIntentId: "pi_captured",
+      since: capturedAt,
     });
     expect(ledger.paymentTransaction.create).not.toHaveBeenCalled();
   });
@@ -408,42 +534,82 @@ describe("beginSavedCardChargeAttempt", () => {
     await expect(begin()).resolves.toMatchObject({ kind: "fresh" });
   });
 
-  it("leaves rows that are not attempt rows alone: an in-flight link intent (no reference) is neither replayed nor ended — the cron's sweep owns it", async () => {
-    const link = ledger.seed({
-      paymentId: PAYMENT,
-      status: PaymentStatus.PROCESSING,
-      stripePaymentIntentId: "pi_link",
-      reference: null,
-      reason: null,
-    });
-    const legacy = ledger.seed({
-      paymentId: PAYMENT,
-      status: PaymentStatus.PROCESSING,
-      stripePaymentIntentId: "pi_legacy_shared_key",
-      reference: null,
-      reason: "pending_hold_auto_charge",
-      paymentMethodId: "pm_1",
-    });
+  describe("rows that are not attempt rows", () => {
+    it("a legacy shared-key row (reason set, no reference) unresolved on the SAME card with an intent is REPLAYED by retrieve — deploy-transition safety, so a processing legacy intent is waited on rather than charged beside", async () => {
+      const legacy = ledger.seed({
+        paymentId: PAYMENT,
+        status: PaymentStatus.PROCESSING,
+        stripePaymentIntentId: "pi_legacy_shared_key",
+        reference: null,
+        reason: "pending_hold_auto_charge",
+        paymentMethodId: "pm_1",
+      });
 
-    const attempt = await begin();
+      const attempt = await begin();
 
-    expect(attempt.kind).toBe("fresh");
-    expect(attempt.staleIntentIdsToCancel).toEqual([]);
-    expect(row(link.id).status).toBe(PaymentStatus.PROCESSING);
-    expect(row(legacy.id).status).toBe(PaymentStatus.PROCESSING);
-  });
-
-  it("a row carrying another row's key is not an attempt row (the key must be built from the row's OWN id)", async () => {
-    ledger.seed({
-      paymentId: PAYMENT,
-      id: "txn_a",
-      status: PaymentStatus.PROCESSING,
-      stripePaymentIntentId: "pi_a",
-      reference: savedCardChargeIdempotencyKey(BOOKING, "txn_somebody_else"),
-      paymentMethodId: "pm_1",
+      expect(attempt).toMatchObject({
+        kind: "replay",
+        attemptRowId: legacy.id,
+        paymentIntentId: "pi_legacy_shared_key",
+        staleIntentIdsToCancel: [],
+      });
+      expect(ledger.paymentTransaction.create).not.toHaveBeenCalled();
+      mocks.getPaymentIntent.mockResolvedValue({ id: "pi_legacy_shared_key", status: "processing", amount: 10000, payment_method: "pm_1" });
+      await charge(attempt);
+      expect(mocks.getPaymentIntent).toHaveBeenCalledWith("pi_legacy_shared_key");
+      expect(mocks.chargePaymentMethod).not.toHaveBeenCalled();
     });
 
-    expect((await begin()).kind).toBe("fresh");
+    it("a same-card /pay link intent the member is mid-way through paying is likewise this booking's money in flight and is replayed, not charged beside", async () => {
+      const link = ledger.seed({
+        paymentId: PAYMENT,
+        status: PaymentStatus.PROCESSING,
+        stripePaymentIntentId: "pi_link_same_card",
+        reference: null,
+        reason: null,
+        paymentMethodId: "pm_1",
+      });
+
+      expect(await begin()).toMatchObject({ kind: "replay", attemptRowId: link.id, paymentIntentId: "pi_link_same_card" });
+    });
+
+    it("leaves alone a link intent with no card yet and a legacy row on ANOTHER card: neither replayed nor ended — the cron's sweep owns them", async () => {
+      const link = ledger.seed({
+        paymentId: PAYMENT,
+        status: PaymentStatus.PROCESSING,
+        stripePaymentIntentId: "pi_link",
+        reference: null,
+        reason: null,
+      });
+      const legacyOtherCard = ledger.seed({
+        paymentId: PAYMENT,
+        status: PaymentStatus.PROCESSING,
+        stripePaymentIntentId: "pi_legacy_other_card",
+        reference: null,
+        reason: "pending_hold_auto_charge",
+        paymentMethodId: "pm_retired",
+      });
+
+      const attempt = await begin();
+
+      expect(attempt.kind).toBe("fresh");
+      expect(attempt.staleIntentIdsToCancel).toEqual([]);
+      expect(row(link.id).status).toBe(PaymentStatus.PROCESSING);
+      expect(row(legacyOtherCard.id).status).toBe(PaymentStatus.PROCESSING);
+    });
+
+    it("a row carrying another row's key is not an attempt row (the key must be built from the row's OWN id) — but on the same card with an intent it is still in flight and replayed", async () => {
+      ledger.seed({
+        paymentId: PAYMENT,
+        id: "txn_a",
+        status: PaymentStatus.PROCESSING,
+        stripePaymentIntentId: "pi_a",
+        reference: savedCardChargeIdempotencyKey(BOOKING, "txn_somebody_else"),
+        paymentMethodId: "pm_other",
+      });
+
+      expect((await begin()).kind).toBe("fresh");
+    });
   });
 });
 
@@ -454,13 +620,7 @@ describe("chargeSavedCardAttempt", () => {
     const attempt = await begin();
     mocks.chargePaymentMethod.mockResolvedValue(succeeded);
 
-    const intent = await chargeSavedCardAttempt({
-      attempt,
-      bookingId: BOOKING,
-      memberId: MEMBER,
-      amountCents: 10000,
-      card: CARD,
-    });
+    const intent = await charge(attempt);
 
     expect(intent).toBe(succeeded);
     expect(mocks.chargePaymentMethod).toHaveBeenCalledWith({
@@ -479,13 +639,7 @@ describe("chargeSavedCardAttempt", () => {
     const attempt = await begin();
     mocks.getPaymentIntent.mockResolvedValue({ ...succeeded, id: "pi_earlier" });
 
-    const intent = await chargeSavedCardAttempt({
-      attempt,
-      bookingId: BOOKING,
-      memberId: MEMBER,
-      amountCents: 10000,
-      card: CARD,
-    });
+    const intent = await charge(attempt);
 
     expect(intent.id).toBe("pi_earlier");
     expect(mocks.getPaymentIntent).toHaveBeenCalledWith("pi_earlier");
@@ -497,13 +651,7 @@ describe("chargeSavedCardAttempt", () => {
     const attempt = await begin();
     mocks.chargePaymentMethod.mockResolvedValue(succeeded);
 
-    await chargeSavedCardAttempt({
-      attempt,
-      bookingId: BOOKING,
-      memberId: MEMBER,
-      amountCents: 10000,
-      card: CARD,
-    });
+    await charge(attempt);
 
     expect(mocks.chargePaymentMethod).toHaveBeenCalledWith(
       expect.objectContaining({ idempotencyKey: earlier.reference })
@@ -519,13 +667,7 @@ describe("chargeSavedCardAttempt", () => {
     });
     mocks.chargePaymentMethod.mockResolvedValue(succeeded);
 
-    await chargeSavedCardAttempt({
-      attempt,
-      bookingId: BOOKING,
-      memberId: MEMBER,
-      amountCents: 10000,
-      card: NEW_CARD,
-    });
+    await charge(attempt, NEW_CARD);
 
     expect(mocks.cancelPaymentIntentIfCancellableWithResult).toHaveBeenCalledWith("pi_old");
     expect(mocks.cancelPaymentIntentIfCancellableWithResult.mock.invocationCallOrder[0]).toBeLessThan(
@@ -546,28 +688,95 @@ describe("chargeSavedCardAttempt", () => {
       paymentIntent: capturedOld,
     });
 
-    const intent = await chargeSavedCardAttempt({
-      attempt,
-      bookingId: BOOKING,
-      memberId: MEMBER,
-      amountCents: 10000,
-      card: NEW_CARD,
-    });
+    const intent = await charge(attempt, NEW_CARD);
     expect(intent).toBe(capturedOld);
     expect(mocks.chargePaymentMethod).not.toHaveBeenCalled();
 
-    const settled = await settleSavedCardChargeAttempt({
-      attemptRowId: attempt.attemptRowId,
-      paymentIntent: capturedOld,
-    });
+    const settled = await settle(attempt.attemptRowId, capturedOld);
 
-    expect(settled).toEqual({ transactionId: old.id, ledgerStatus: PaymentStatus.SUCCEEDED, keptExistingRow: true });
+    expect(settled).toEqual({ transactionId: old.id, ledgerStatus: PaymentStatus.SUCCEEDED, keptExistingRow: true, moved: true });
     expect(row(old.id)).toMatchObject({ status: PaymentStatus.SUCCEEDED, stripePaymentIntentId: "pi_old" });
     expect(ledger.rows.find((r) => r.id === attempt.attemptRowId)).toBeUndefined();
     expect(mocks.reconcilePaymentAggregates).toHaveBeenCalledWith({ paymentId: PAYMENT, store: ledger });
   });
 
-  it("a cancel that errors, or finds the intent terminal without a capture, is logged and the charge proceeds", async () => {
+  describe("a superseded intent found still PROCESSING is live: wait on it, never compete (#3267 fix round)", () => {
+    const processingOld = { id: "pi_old", status: "processing" as const, amount: 10000, payment_method: "pm_1" };
+
+    it("when the SDK reports it not cancellable: it is the answer, no charge is made, and its row is put back to PROCESSING so the next run sees a live attempt", async () => {
+      const old = seedAttempt({ status: PaymentStatus.PROCESSING, stripePaymentIntentId: "pi_old" });
+      const attempt = await begin(NEW_CARD);
+      expect(row(old.id).status).toBe(PaymentStatus.FAILED);
+      mocks.cancelPaymentIntentIfCancellableWithResult.mockResolvedValue({
+        canceled: false,
+        paymentIntent: processingOld,
+      });
+
+      const intent = await charge(attempt, NEW_CARD);
+
+      expect(intent).toBe(processingOld);
+      expect(mocks.chargePaymentMethod).not.toHaveBeenCalled();
+      expect(row(old.id)).toMatchObject({
+        status: PaymentStatus.PROCESSING,
+        reason: "pending_hold_auto_charge:superseded_by_new_card",
+      });
+    });
+
+    it("when Stripe REFUSES the cancel (a processing card payment cannot be cancelled; the SDK throws): the intent is retrieved, found processing, and the same waiting happens", async () => {
+      seedAttempt({ status: PaymentStatus.PROCESSING, stripePaymentIntentId: "pi_old" });
+      const attempt = await begin(NEW_CARD);
+      mocks.cancelPaymentIntentIfCancellableWithResult.mockRejectedValue(
+        stripeSdkError({ type: "invalid_request_error", message: "You cannot cancel this PaymentIntent because it has a status of processing." })
+      );
+      mocks.getPaymentIntent.mockResolvedValue(processingOld);
+
+      const intent = await charge(attempt, NEW_CARD);
+
+      expect(intent).toBe(processingOld);
+      expect(mocks.getPaymentIntent).toHaveBeenCalledWith("pi_old");
+      expect(mocks.chargePaymentMethod).not.toHaveBeenCalled();
+    });
+
+    it("settle then keeps the live row (PROCESSING, its amount), removes the fresh attempt row, and the NEXT begin on the new card ends it again and queues its cancel again — the loop that waits until Stripe decides", async () => {
+      const old = seedAttempt({ status: PaymentStatus.PROCESSING, stripePaymentIntentId: "pi_old" });
+      const attempt = await begin(NEW_CARD);
+      mocks.cancelPaymentIntentIfCancellableWithResult.mockResolvedValue({ canceled: false, paymentIntent: processingOld });
+      const intent = await charge(attempt, NEW_CARD);
+
+      const settled = await settle(attempt.attemptRowId, intent);
+
+      expect(settled).toEqual({ transactionId: old.id, ledgerStatus: PaymentStatus.PROCESSING, keptExistingRow: true, moved: true });
+      expect(ledger.rows.map((r) => r.id)).toEqual([old.id]);
+      expect(row(old.id).status).toBe(PaymentStatus.PROCESSING);
+
+      const next = await begin(NEW_CARD);
+      expect(next).toMatchObject({ kind: "fresh", staleIntentIdsToCancel: ["pi_old"] });
+      // The suffix is applied once, however many runs end the same row.
+      expect(row(old.id).reason).toBe("pending_hold_auto_charge:superseded_by_new_card");
+    });
+
+    it("a capture outranks a live intent, and EVERY stale intent is visited before answering — a cancellable one is still cancelled after a capture has been found", async () => {
+      seedAttempt({ status: PaymentStatus.PROCESSING, stripePaymentIntentId: "pi_captured" });
+      seedAttempt({ status: PaymentStatus.PROCESSING, stripePaymentIntentId: "pi_processing" });
+      seedAttempt({ status: PaymentStatus.PROCESSING, stripePaymentIntentId: "pi_3ds" });
+      const attempt = await begin(NEW_CARD);
+      expect(attempt.staleIntentIdsToCancel).toEqual(["pi_captured", "pi_processing", "pi_3ds"]);
+      const capturedOld = { id: "pi_captured", status: "succeeded" as const, amount: 10000, payment_method: "pm_1" };
+      mocks.cancelPaymentIntentIfCancellableWithResult
+        .mockResolvedValueOnce({ canceled: false, paymentIntent: capturedOld })
+        .mockResolvedValueOnce({ canceled: false, paymentIntent: { ...processingOld, id: "pi_processing" } })
+        .mockResolvedValueOnce({ canceled: true, paymentIntent: { id: "pi_3ds", status: "canceled" } });
+
+      const intent = await charge(attempt, NEW_CARD);
+
+      expect(intent).toBe(capturedOld);
+      expect(mocks.cancelPaymentIntentIfCancellableWithResult).toHaveBeenCalledTimes(3);
+      expect(mocks.cancelPaymentIntentIfCancellableWithResult).toHaveBeenLastCalledWith("pi_3ds");
+      expect(mocks.chargePaymentMethod).not.toHaveBeenCalled();
+    });
+  });
+
+  it("a cancel that errors AND cannot be read back, or finds the intent terminal without a capture, is logged and the charge proceeds", async () => {
     seedAttempt({ status: PaymentStatus.PROCESSING, stripePaymentIntentId: "pi_a" });
     seedAttempt({ status: PaymentStatus.PROCESSING, stripePaymentIntentId: "pi_b" });
     const attempt = await begin(NEW_CARD);
@@ -575,11 +784,11 @@ describe("chargeSavedCardAttempt", () => {
     mocks.cancelPaymentIntentIfCancellableWithResult
       .mockRejectedValueOnce(new Error("Stripe cancel raced a parallel confirm"))
       .mockResolvedValueOnce({ canceled: false, paymentIntent: { id: "pi_b", status: "canceled" } });
+    mocks.getPaymentIntent.mockRejectedValueOnce(new Error("and the retrieve timed out"));
     mocks.chargePaymentMethod.mockResolvedValue(succeeded);
 
-    await expect(
-      chargeSavedCardAttempt({ attempt, bookingId: BOOKING, memberId: MEMBER, amountCents: 10000, card: NEW_CARD })
-    ).resolves.toBe(succeeded);
+    await expect(charge(attempt, NEW_CARD)).resolves.toBe(succeeded);
+    expect(mocks.getPaymentIntent).toHaveBeenCalledWith("pi_a");
     expect(mocks.chargePaymentMethod).toHaveBeenCalledTimes(1);
   });
 
@@ -595,12 +804,10 @@ describe("chargeSavedCardAttempt", () => {
       mocks.chargePaymentMethod.mockRejectedValue(err);
 
       await expect(
-        chargeSavedCardAttempt({ attempt, bookingId: BOOKING, memberId: MEMBER, amountCents: 10000, card: CARD }).catch(
-          (caught: unknown) => {
-            statusWhenCaught = row(attempt.attemptRowId).status;
-            throw caught;
-          }
-        )
+        charge(attempt).catch((caught: unknown) => {
+          statusWhenCaught = row(attempt.attemptRowId).status;
+          throw caught;
+        })
       ).rejects.toBe(err);
 
       expect(statusWhenCaught).toBe(PaymentStatus.FAILED);
@@ -622,9 +829,7 @@ describe("chargeSavedCardAttempt", () => {
       const attempt = await begin();
       mocks.chargePaymentMethod.mockRejectedValue(err);
 
-      await expect(
-        chargeSavedCardAttempt({ attempt, bookingId: BOOKING, memberId: MEMBER, amountCents: 10000, card: CARD })
-      ).rejects.toBe(err);
+      await expect(charge(attempt)).rejects.toBe(err);
 
       expect(row(attempt.attemptRowId).status).toBe(PaymentStatus.PENDING);
       expect(isDefiniteSavedCardChargeFailure(err)).toBe(false);
@@ -633,14 +838,44 @@ describe("chargeSavedCardAttempt", () => {
       expect(next).toMatchObject({ kind: "replay", attemptRowId: attempt.attemptRowId, idempotencyKey: attempt.idempotencyKey });
     });
 
+    describe("on a RETRIEVE (a replay that names its intent) the partition is different: only resource_missing is definite", () => {
+      it.each([
+        ["authentication_error", stripeSdkError({ type: "authentication_error" })],
+        ["invalid_request_error (not resource_missing)", stripeSdkError({ type: "invalid_request_error", message: "Rate-limited or malformed" })],
+        ["api_error", stripeSdkError({ type: "api_error" })],
+      ])("%s on a GET says nothing about an intent that may be processing: the row stays PROCESSING and is asked about again", async (_label, err) => {
+        const earlier = seedAttempt({ status: PaymentStatus.PROCESSING, stripePaymentIntentId: "pi_earlier" });
+        const attempt = await begin();
+        mocks.getPaymentIntent.mockRejectedValue(err);
+
+        await expect(charge(attempt)).rejects.toBe(err);
+
+        expect(row(earlier.id).status).toBe(PaymentStatus.PROCESSING);
+        // The same error on a POST would have been definite — the partition is the request's, not the error's.
+        expect(isDefiniteSavedCardChargeFailure(err)).toBe(_label === "api_error" ? false : true);
+        expect((await begin()).attemptRowId).toBe(earlier.id);
+      });
+
+      it("resource_missing on a GET means the intent is gone: the row is FAILED and the next attempt is fresh", async () => {
+        const earlier = seedAttempt({ status: PaymentStatus.PROCESSING, stripePaymentIntentId: "pi_gone" });
+        const attempt = await begin();
+        mocks.getPaymentIntent.mockRejectedValue(
+          stripeSdkError({ type: "invalid_request_error", code: "resource_missing", message: "No such payment_intent: 'pi_gone'" })
+        );
+
+        await expect(charge(attempt)).rejects.toBeDefined();
+
+        expect(row(earlier.id).status).toBe(PaymentStatus.FAILED);
+        expect((await begin()).kind).toBe("fresh");
+      });
+    });
+
     it("the FAILED mark is status-guarded: a row a webhook settled meanwhile is not regressed", async () => {
       const attempt = await begin();
       row(attempt.attemptRowId).status = PaymentStatus.SUCCEEDED;
       mocks.chargePaymentMethod.mockRejectedValue(stripeSdkError({ type: "card_error", code: "card_declined" }));
 
-      await expect(
-        chargeSavedCardAttempt({ attempt, bookingId: BOOKING, memberId: MEMBER, amountCents: 10000, card: CARD })
-      ).rejects.toBeDefined();
+      await expect(charge(attempt)).rejects.toBeDefined();
 
       expect(row(attempt.attemptRowId).status).toBe(PaymentStatus.SUCCEEDED);
     });
@@ -651,9 +886,7 @@ describe("chargeSavedCardAttempt", () => {
       mocks.chargePaymentMethod.mockRejectedValue(stripeErr);
       ledger.paymentTransaction.updateMany.mockRejectedValueOnce(new Error("db gone"));
 
-      await expect(
-        chargeSavedCardAttempt({ attempt, bookingId: BOOKING, memberId: MEMBER, amountCents: 10000, card: CARD })
-      ).rejects.toBe(stripeErr);
+      await expect(charge(attempt)).rejects.toBe(stripeErr);
     });
   });
 
@@ -662,9 +895,7 @@ describe("chargeSavedCardAttempt", () => {
     mocks.chargePaymentMethod.mockRejectedValue(
       stripeSdkError({ type: "invalid_request_error", message: "The provided PaymentMethod ... may not be used again." })
     );
-    await expect(
-      chargeSavedCardAttempt({ attempt, bookingId: BOOKING, memberId: MEMBER, amountCents: 10000, card: CARD })
-    ).rejects.toBeDefined();
+    await expect(charge(attempt)).rejects.toBeDefined();
     // What retireUnusableSavedCard does to every ledger row carrying the pm.
     for (const r of ledger.rows) if (r.paymentMethodId === "pm_1") r.paymentMethodId = null;
     expect(row(attempt.attemptRowId)).toMatchObject({ status: PaymentStatus.FAILED, paymentMethodId: null });
@@ -680,8 +911,8 @@ describe("cross-path scenarios (the property the owner chose)", () => {
   it("cron attempt left PROCESSING -> the admin click REPLAYS it: the key equals the row's reference, Stripe is asked about the same intent, no second charge", async () => {
     const cron = await begin(CARD, SAVED_CARD_CHARGE_REASON.cron);
     mocks.chargePaymentMethod.mockResolvedValue({ id: "pi_cron", status: "requires_action", amount: 10000, payment_method: "pm_1" });
-    const first = await chargeSavedCardAttempt({ attempt: cron, bookingId: BOOKING, memberId: MEMBER, amountCents: 10000, card: CARD });
-    await settleSavedCardChargeAttempt({ attemptRowId: cron.attemptRowId, paymentIntent: first });
+    const first = await charge(cron);
+    await settle(cron.attemptRowId, first);
     expect(row(cron.attemptRowId)).toMatchObject({ status: PaymentStatus.PROCESSING, stripePaymentIntentId: "pi_cron" });
 
     const admin = await begin(CARD, SAVED_CARD_CHARGE_REASON.adminConfirmPendingGuests);
@@ -689,11 +920,11 @@ describe("cross-path scenarios (the property the owner chose)", () => {
     expect(admin.idempotencyKey).toBe(row(cron.attemptRowId).reference);
     mocks.getPaymentIntent.mockResolvedValue({ id: "pi_cron", status: "succeeded", amount: 10000, payment_method: "pm_1" });
 
-    const second = await chargeSavedCardAttempt({ attempt: admin, bookingId: BOOKING, memberId: MEMBER, amountCents: 10000, card: CARD });
+    const second = await charge(admin);
 
     expect(second.id).toBe("pi_cron");
     expect(mocks.chargePaymentMethod).toHaveBeenCalledTimes(1);
-    await settleSavedCardChargeAttempt({ attemptRowId: admin.attemptRowId, paymentIntent: second });
+    await settle(admin.attemptRowId, second);
     expect(ledger.rows).toHaveLength(1);
     expect(row(cron.attemptRowId).status).toBe(PaymentStatus.SUCCEEDED);
   });
@@ -701,16 +932,14 @@ describe("cross-path scenarios (the property the owner chose)", () => {
   it("cron attempt definitely refused -> the admin click mints a NEW key and Stripe sees a fresh request (the admin button is no longer dead for 24h)", async () => {
     const cron = await begin(CARD, SAVED_CARD_CHARGE_REASON.cron);
     mocks.chargePaymentMethod.mockRejectedValueOnce(stripeSdkError({ type: "card_error", code: "card_declined" }));
-    await expect(
-      chargeSavedCardAttempt({ attempt: cron, bookingId: BOOKING, memberId: MEMBER, amountCents: 10000, card: CARD })
-    ).rejects.toBeDefined();
+    await expect(charge(cron)).rejects.toBeDefined();
 
     const admin = await begin(CARD, SAVED_CARD_CHARGE_REASON.adminConfirmPendingGuests);
     expect(admin.kind).toBe("fresh");
     expect(admin.idempotencyKey).not.toBe(cron.idempotencyKey);
     mocks.chargePaymentMethod.mockResolvedValueOnce({ id: "pi_admin", status: "succeeded", amount: 10000, payment_method: "pm_1" });
 
-    await chargeSavedCardAttempt({ attempt: admin, bookingId: BOOKING, memberId: MEMBER, amountCents: 10000, card: CARD });
+    await charge(admin);
 
     expect(mocks.chargePaymentMethod).toHaveBeenLastCalledWith(
       expect.objectContaining({ idempotencyKey: admin.idempotencyKey, metadata: { bookingId: BOOKING, memberId: MEMBER } })
@@ -721,15 +950,15 @@ describe("cross-path scenarios (the property the owner chose)", () => {
   it("the member re-saves a card while the cron's attempt on the old card is unresolved: the old attempt is ended and its intent cancelled, the new card is charged at once", async () => {
     const cron = await begin(CARD);
     mocks.chargePaymentMethod.mockResolvedValueOnce({ id: "pi_old", status: "requires_action", amount: 10000, payment_method: "pm_1" });
-    const first = await chargeSavedCardAttempt({ attempt: cron, bookingId: BOOKING, memberId: MEMBER, amountCents: 10000, card: CARD });
-    await settleSavedCardChargeAttempt({ attemptRowId: cron.attemptRowId, paymentIntent: first });
+    const first = await charge(cron);
+    await settle(cron.attemptRowId, first);
 
     const next = await begin(NEW_CARD);
     expect(next).toMatchObject({ kind: "fresh", staleIntentIdsToCancel: ["pi_old"] });
     mocks.cancelPaymentIntentIfCancellableWithResult.mockResolvedValue({ canceled: true, paymentIntent: { id: "pi_old", status: "canceled" } });
     mocks.chargePaymentMethod.mockResolvedValueOnce({ id: "pi_new", status: "succeeded", amount: 10000, payment_method: "pm_2" });
 
-    await chargeSavedCardAttempt({ attempt: next, bookingId: BOOKING, memberId: MEMBER, amountCents: 10000, card: NEW_CARD });
+    await charge(next, NEW_CARD);
 
     expect(mocks.cancelPaymentIntentIfCancellableWithResult).toHaveBeenCalledWith("pi_old");
     expect(mocks.chargePaymentMethod).toHaveBeenLastCalledWith(expect.objectContaining({ paymentMethodId: "pm_2" }));
@@ -737,42 +966,89 @@ describe("cross-path scenarios (the property the owner chose)", () => {
 });
 
 describe("settleSavedCardChargeAttempt", () => {
-  it("records the intent id, mapped status, amount and card on the attempt row, then re-derives the Payment aggregate", async () => {
+  it("records the intent id, mapped status, amount and card on the attempt row through a status-guarded updateMany, then re-derives the Payment aggregate", async () => {
     const attempt = await begin();
 
-    const settled = await settleSavedCardChargeAttempt({
-      attemptRowId: attempt.attemptRowId,
-      paymentIntent: {
-        id: "pi_x",
-        status: "succeeded",
-        amount: 9900,
-        // The expanded-object shape of a Stripe reference (#3266's fold).
-        payment_method: { id: "pm_expanded" } as unknown as Stripe.PaymentMethod,
-      },
+    const settled = await settle(attempt.attemptRowId, {
+      id: "pi_x",
+      status: "succeeded",
+      amount: 9900,
+      // The expanded-object shape of a Stripe reference (#3266's fold).
+      payment_method: { id: "pm_expanded" } as unknown as Stripe.PaymentMethod,
     });
 
-    expect(settled).toEqual({ transactionId: attempt.attemptRowId, ledgerStatus: PaymentStatus.SUCCEEDED, keptExistingRow: false });
+    expect(settled).toEqual({ transactionId: attempt.attemptRowId, ledgerStatus: PaymentStatus.SUCCEEDED, keptExistingRow: false, moved: true });
     expect(row(attempt.attemptRowId)).toMatchObject({
       stripePaymentIntentId: "pi_x",
       status: PaymentStatus.SUCCEEDED,
       amountCents: 9900,
       paymentMethodId: "pm_expanded",
     });
+    // Forward only: a capture is written over anything but refund history.
+    expect(ledger.paymentTransaction.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: attempt.attemptRowId,
+        status: { notIn: [PaymentStatus.REFUNDED, PaymentStatus.PARTIALLY_REFUNDED] },
+      },
+      data: { stripePaymentIntentId: "pi_x", status: PaymentStatus.SUCCEEDED, amountCents: 9900, paymentMethodId: "pm_expanded" },
+    });
     expect(mocks.reconcilePaymentAggregates).toHaveBeenCalledWith({ paymentId: PAYMENT, store: ledger });
+  });
+
+  it("a non-captured answer is written only over an unresolved row, and a null card from Stripe never nulls the card the row carries", async () => {
+    const attempt = await begin();
+
+    await settle(attempt.attemptRowId, { id: "pi_x", status: "requires_action", amount: 10000, payment_method: null });
+
+    expect(ledger.paymentTransaction.updateMany).toHaveBeenCalledWith({
+      where: { id: attempt.attemptRowId, status: { in: [PaymentStatus.PENDING, PaymentStatus.PROCESSING] } },
+      data: { stripePaymentIntentId: "pi_x", status: PaymentStatus.PROCESSING, amountCents: 10000 },
+    });
+    expect(row(attempt.attemptRowId).paymentMethodId).toBe("pm_1");
   });
 
   it("uses the caller's transaction client when given one (the locked release records inside its own tx)", async () => {
     const attempt = await begin();
     const store = ledger as unknown as Prisma.TransactionClient;
 
-    await settleSavedCardChargeAttempt({
-      attemptRowId: attempt.attemptRowId,
-      paymentIntent: { id: "pi_x", status: "processing", amount: 10000, payment_method: null },
-      store,
-    });
+    await settle(attempt.attemptRowId, { id: "pi_x", status: "processing", amount: 10000, payment_method: null }, store);
 
     expect(mocks.reconcilePaymentAggregates).toHaveBeenCalledWith({ paymentId: PAYMENT, store });
     expect(row(attempt.attemptRowId).status).toBe(PaymentStatus.PROCESSING);
+  });
+
+  describe("the attempt's OWN row is forward only (the webhook may have won between the retrieve and the release's locks)", () => {
+    it("a stale `processing` answer never regresses a row the webhook has moved to SUCCEEDED: nothing is written, no reconcile runs, and the row's real status is reported", async () => {
+      const attempt = await begin();
+      // The webhook adopted the row by key and settled it — booking PAID.
+      Object.assign(row(attempt.attemptRowId), { status: PaymentStatus.SUCCEEDED, stripePaymentIntentId: "pi_x" });
+
+      const settled = await settle(attempt.attemptRowId, { id: "pi_x", status: "processing", amount: 10000, payment_method: "pm_1" });
+
+      expect(settled).toEqual({ transactionId: attempt.attemptRowId, ledgerStatus: PaymentStatus.SUCCEEDED, keptExistingRow: false, moved: false });
+      expect(row(attempt.attemptRowId).status).toBe(PaymentStatus.SUCCEEDED);
+      expect(mocks.reconcilePaymentAggregates).not.toHaveBeenCalled();
+    });
+
+    it("a stale `processing` answer never revives a row the webhook has FAILED", async () => {
+      const attempt = await begin();
+      Object.assign(row(attempt.attemptRowId), { status: PaymentStatus.FAILED, stripePaymentIntentId: "pi_x" });
+
+      const settled = await settle(attempt.attemptRowId, { id: "pi_x", status: "requires_action", amount: 10000, payment_method: "pm_1" });
+
+      expect(settled).toMatchObject({ ledgerStatus: PaymentStatus.FAILED, moved: false });
+      expect(row(attempt.attemptRowId).status).toBe(PaymentStatus.FAILED);
+    });
+
+    it("a captured answer IS written over a row the webhook left FAILED or PROCESSING (money is money), but never over refund history", async () => {
+      const attempt = await begin();
+      Object.assign(row(attempt.attemptRowId), { status: PaymentStatus.FAILED, stripePaymentIntentId: "pi_x" });
+      expect(await settle(attempt.attemptRowId, { id: "pi_x", status: "succeeded", amount: 10000, payment_method: "pm_1" })).toMatchObject({ ledgerStatus: PaymentStatus.SUCCEEDED, moved: true });
+
+      Object.assign(row(attempt.attemptRowId), { status: PaymentStatus.REFUNDED, refundedAmountCents: 10000 });
+      expect(await settle(attempt.attemptRowId, { id: "pi_x", status: "succeeded", amount: 10000, payment_method: "pm_1" })).toMatchObject({ ledgerStatus: PaymentStatus.REFUNDED, moved: false });
+      expect(row(attempt.attemptRowId).status).toBe(PaymentStatus.REFUNDED);
+    });
   });
 
   it("a row for the intent already exists (webhook first): the attempt row is deleted, the existing row kept, and a captured status is never regressed by a stale non-captured answer", async () => {
@@ -784,12 +1060,9 @@ describe("settleSavedCardChargeAttempt", () => {
       amountCents: 10000,
     });
 
-    const settled = await settleSavedCardChargeAttempt({
-      attemptRowId: attempt.attemptRowId,
-      paymentIntent: { id: "pi_hook", status: "processing", amount: 10000, payment_method: null },
-    });
+    const settled = await settle(attempt.attemptRowId, { id: "pi_hook", status: "processing", amount: 10000, payment_method: null });
 
-    expect(settled).toMatchObject({ transactionId: webhookRow.id, keptExistingRow: true });
+    expect(settled).toEqual({ transactionId: webhookRow.id, ledgerStatus: PaymentStatus.SUCCEEDED, keptExistingRow: true, moved: false });
     expect(row(webhookRow.id).status).toBe(PaymentStatus.SUCCEEDED);
     expect(ledger.rows.find((r) => r.id === attempt.attemptRowId)).toBeUndefined();
     expect(mocks.reconcilePaymentAggregates).toHaveBeenCalledWith({ paymentId: PAYMENT, store: ledger });
@@ -797,17 +1070,14 @@ describe("settleSavedCardChargeAttempt", () => {
 
   it("P2002 race: the unique violation on the intent id takes the keep-existing branch instead of throwing on a path that has just captured money", async () => {
     const attempt = await begin();
-    // Not visible to the pre-check, present by the time the update runs.
+    // Not visible to the pre-check, present by the time the write runs.
     const winner = { id: "txn_hook", paymentId: PAYMENT } as unknown as LedgerRow;
     ledger.paymentTransaction.findUnique
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce(winner);
-    ledger.paymentTransaction.update.mockRejectedValueOnce(uniqueViolation());
+    ledger.paymentTransaction.updateMany.mockRejectedValueOnce(uniqueViolation());
 
-    const settled = await settleSavedCardChargeAttempt({
-      attemptRowId: attempt.attemptRowId,
-      paymentIntent: { id: "pi_hook", status: "succeeded", amount: 10000, payment_method: "pm_1" },
-    });
+    const settled = await settle(attempt.attemptRowId, { id: "pi_hook", status: "succeeded", amount: 10000, payment_method: "pm_1" });
 
     expect(settled).toMatchObject({ transactionId: "txn_hook", keptExistingRow: true });
     expect(ledger.paymentTransaction.deleteMany).toHaveBeenCalledWith({
@@ -817,14 +1087,63 @@ describe("settleSavedCardChargeAttempt", () => {
 
   it("any other error from the row write propagates untouched", async () => {
     const attempt = await begin();
-    ledger.paymentTransaction.update.mockRejectedValueOnce(new Error("db gone"));
+    ledger.paymentTransaction.updateMany.mockRejectedValueOnce(new Error("db gone"));
 
     await expect(
-      settleSavedCardChargeAttempt({
-        attemptRowId: attempt.attemptRowId,
-        paymentIntent: { id: "pi_x", status: "succeeded", amount: 10000, payment_method: "pm_1" },
-      })
+      settle(attempt.attemptRowId, { id: "pi_x", status: "succeeded", amount: 10000, payment_method: "pm_1" })
     ).rejects.toThrow("db gone");
+  });
+});
+
+describe("adoptSavedCardChargeAttemptForIntent (a webhook for an intent the ledger does not know — the lost-response recovery)", () => {
+  const capture = { id: "pi_lost", status: "succeeded" as const, amount: 10000, payment_method: "pm_1" };
+
+  it("adopts the PENDING no-intent attempt row whose key the event carries: stamps the intent and SUCCEEDED, reconciles, and reports the row", async () => {
+    const attempt = await begin();
+
+    const adopted = await adoptSavedCardChargeAttemptForIntent({
+      paymentIntent: capture,
+      bookingId: BOOKING,
+      idempotencyKey: attempt.idempotencyKey,
+    });
+
+    expect(adopted).toEqual({ transactionId: attempt.attemptRowId, ledgerStatus: PaymentStatus.SUCCEEDED, keptExistingRow: false, moved: true });
+    expect(row(attempt.attemptRowId)).toMatchObject({ stripePaymentIntentId: "pi_lost", status: PaymentStatus.SUCCEEDED });
+    expect(mocks.reconcilePaymentAggregates).toHaveBeenCalledWith({ paymentId: PAYMENT, store: ledger });
+    // And the next attempt refuses: the money is on the ledger now.
+    await expect(begin()).rejects.toMatchObject({ why: "captured_primary_exists", paymentIntentId: "pi_lost" });
+  });
+
+  it("adopts a FAILED answer too, so a lost-response decline ends the attempt instead of leaving it to expire", async () => {
+    const attempt = await begin();
+
+    const adopted = await adoptSavedCardChargeAttemptForIntent({
+      paymentIntent: { ...capture, status: "requires_payment_method" },
+      bookingId: BOOKING,
+      idempotencyKey: attempt.idempotencyKey,
+    });
+
+    expect(adopted).toMatchObject({ ledgerStatus: PaymentStatus.FAILED, moved: true });
+    expect((await begin()).kind).toBe("fresh");
+  });
+
+  it.each([
+    ["no key on the event", undefined],
+    ["a key that is not ours", "late_cancel_refund_bk_1_pi_x"],
+    ["a key built from ANOTHER row's id", savedCardChargeIdempotencyKey(BOOKING, "txn_somebody_else")],
+    ["a key for another booking", savedCardChargeIdempotencyKey("bk_other", "txn_seeded_1")],
+  ])("returns null and touches nothing for %s", async (_label, key) => {
+    const attempt = await begin();
+
+    expect(await adoptSavedCardChargeAttemptForIntent({ paymentIntent: capture, bookingId: BOOKING, idempotencyKey: key })).toBeNull();
+    expect(row(attempt.attemptRowId)).toMatchObject({ status: PaymentStatus.PENDING, stripePaymentIntentId: null });
+  });
+
+  it("adopts only a row that still has NO intent: a row already settled by the charging code is found by intent id, not by key", async () => {
+    const attempt = await begin();
+    await settle(attempt.attemptRowId, capture);
+
+    expect(await adoptSavedCardChargeAttemptForIntent({ paymentIntent: capture, bookingId: BOOKING, idempotencyKey: attempt.idempotencyKey })).toBeNull();
   });
 });
 

@@ -282,13 +282,40 @@ function claimCall() {
     ([call]) => call?.where?.status === "PENDING" && call?.data?.status === "CONFIRMED",
   );
 }
+/**
+ * The pre-lock and locked reads answer with `booking`; the release's
+ * status-only re-read (#3267: the release re-reads the claim under its locks
+ * and hands back only a booking still CONFIRMED) answers CONFIRMED once a claim
+ * has been made, because the mock store is not stateful. Pass `releaseStatus`
+ * to model a webhook that settled the booking in between.
+ */
+function primeBooking(
+  booking: ReturnType<typeof makeBooking>,
+  releaseStatus: string = "CONFIRMED",
+) {
+  mockBookingFindUnique.mockImplementation(
+    async ({ select }: { select?: { status?: boolean } }) =>
+      select?.status && Object.keys(select).length === 1 && claimCall()
+        ? { status: releaseStatus }
+        : booking,
+  );
+}
+/** The settle write for `paymentIntentId`, if the route made one (#3267: a status-guarded updateMany). */
+function settleCall(paymentIntentId: string) {
+  return mockPaymentTransactionUpdateMany.mock.calls.find(
+    ([call]) => call?.data?.stripePaymentIntentId === paymentIntentId,
+  );
+}
+function orderOf(mock: { mock: { calls: unknown[][]; invocationCallOrder: number[] } }, call: unknown[]) {
+  return mock.mock.invocationCallOrder[mock.mock.calls.indexOf(call)]!;
+}
 
 describe("POST /api/payments/charge-saved-method", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mockIsValidCronSecret.mockReturnValue(false);
-    mockBookingFindUnique.mockResolvedValue(makeBooking());
+    primeBooking(makeBooking());
     mockBookingUpdateMany.mockResolvedValue({ count: 1 });
     mockPaymentUpdate.mockResolvedValue({});
     mockCheckCapacityForGuestRanges.mockResolvedValue({
@@ -455,25 +482,69 @@ describe("POST /api/payments/charge-saved-method", () => {
         idempotencyKey: ATTEMPT_KEY,
       });
       expect(mockUpsertPaymentIntentTransaction).not.toHaveBeenCalled();
-      const settle = mockPaymentTransactionUpdate.mock.calls.find(
-        ([call]) => call?.data?.stripePaymentIntentId === "pi_1",
-      );
+      // Forward only: a capture is written over anything but refund history.
+      const settle = settleCall("pi_1");
       expect(settle?.[0]).toEqual({
-        where: { id: ATTEMPT_ROW_ID },
+        where: { id: ATTEMPT_ROW_ID, status: { notIn: ["REFUNDED", "PARTIALLY_REFUNDED"] } },
         data: {
           stripePaymentIntentId: "pi_1",
           status: "SUCCEEDED",
           amountCents: 12500,
           paymentMethodId: "pm_123",
         },
-        select: { id: true, paymentId: true },
       });
-      expect(
-        mockPaymentTransactionUpdate.mock.invocationCallOrder[
-          mockPaymentTransactionUpdate.mock.calls.indexOf(settle!)
-        ]!,
-      ).toBeLessThan(mockMarkBookingPaymentSucceeded.mock.invocationCallOrder[0]!);
+      expect(orderOf(mockPaymentTransactionUpdateMany, settle!)).toBeLessThan(
+        mockMarkBookingPaymentSucceeded.mock.invocationCallOrder[0]!,
+      );
       expect(mockReconcilePaymentAggregates).toHaveBeenCalledWith({ paymentId: "payment-1", store: expect.anything() });
+    });
+
+    it("charges the card on the row UNDER THE LOCKS, not the pre-lock snapshot: a card replaced between the two reads is the one charged and the one the attempt row records", async () => {
+      const preLock = makeBooking();
+      const locked = makeBooking({
+        payment: { id: "payment-1", stripePaymentMethodId: "pm_replaced", stripeCustomerId: "cus_123", stripeSetupIntentId: "seti_replaced" },
+      });
+      mockBookingFindUnique.mockImplementation(async ({ select, include }: { select?: { status?: boolean }; include?: Record<string, unknown> }) => {
+        if (select?.status && Object.keys(select).length === 1) return { status: "CONFIRMED" };
+        // The locked read is the one that asks for the payment row; the pre-lock
+        // read asks for member + payment + guests.
+        return include && !("member" in include) ? locked : preLock;
+      });
+      mockChargePaymentMethod.mockResolvedValue({ id: "pi_1", status: "succeeded", amount: 12500, payment_method: "pm_replaced" });
+
+      const response = await POST(makeRequest());
+
+      expect(response.status).toBe(200);
+      // The locked read carries the card columns.
+      expect(mockBookingFindUnique).toHaveBeenCalledWith({
+        where: { id: "booking-1" },
+        include: { guests: { include: { nights: true } }, payment: true },
+      });
+      expect(mockPaymentTransactionCreate).toHaveBeenCalledWith({
+        data: expect.objectContaining({ paymentMethodId: "pm_replaced" }),
+        select: { id: true },
+      });
+      expect(mockChargePaymentMethod).toHaveBeenCalledWith(
+        expect.objectContaining({ paymentMethodId: "pm_replaced" }),
+      );
+    });
+
+    it("answers 409 and charges nothing when the card is gone by the time the locks are held (retired or mid-replacement)", async () => {
+      const preLock = makeBooking();
+      const locked = makeBooking({
+        payment: { id: "payment-1", stripePaymentMethodId: null, stripeCustomerId: "cus_123", stripeSetupIntentId: "seti_replacing" },
+      });
+      mockBookingFindUnique.mockImplementation(async ({ include }: { include?: Record<string, unknown> }) =>
+        include && !("member" in include) ? locked : preLock,
+      );
+
+      const response = await POST(makeRequest());
+
+      expect(response.status).toBe(409);
+      expect(await response.json()).toEqual({ error: "No saved payment method found for this booking" });
+      expect(claimCall()).toBeUndefined();
+      expect(mockPaymentTransactionCreate).not.toHaveBeenCalled();
+      expect(mockChargePaymentMethod).not.toHaveBeenCalled();
     });
 
     it("returns 409 without claiming or charging when the post-lock capacity re-check fails", async () => {
@@ -588,15 +659,21 @@ describe("POST /api/payments/charge-saved-method", () => {
         where: { id: "booking-1", status: "CONFIRMED" },
         data: { status: "PENDING", nonMemberHoldUntil: HOLD_UNTIL },
       });
-      const settle = mockPaymentTransactionUpdate.mock.calls.find(
-        ([call]) => call?.data?.stripePaymentIntentId === "pi_3ds",
-      );
-      expect(settle?.[0].data).toMatchObject({ status: "PROCESSING" });
-      // Recorded inside the release transaction: after its locks, before the revert.
-      const settleOrder = mockPaymentTransactionUpdate.mock.invocationCallOrder[
-        mockPaymentTransactionUpdate.mock.calls.indexOf(settle!)
-      ]!;
+      const settle = settleCall("pi_3ds");
+      // Forward only: a non-capture is written only over an unresolved row.
+      expect(settle?.[0]).toEqual({
+        where: { id: ATTEMPT_ROW_ID, status: { in: ["PENDING", "PROCESSING"] } },
+        data: { stripePaymentIntentId: "pi_3ds", status: "PROCESSING", amountCents: 12500, paymentMethodId: "pm_123" },
+      });
+      // Recorded inside the release transaction: after its locks, before the
+      // status re-read that fences the release, before the revert.
+      const settleOrder = orderOf(mockPaymentTransactionUpdateMany, settle!);
       expect(settleOrder).toBeGreaterThan(mockAcquireLodgeCapacityLock.mock.invocationCallOrder[1]!);
+      const statusReRead = mockBookingFindUnique.mock.calls.findIndex(
+        ([call]) => call?.select?.status && Object.keys(call.select).length === 1,
+      );
+      expect(statusReRead).toBeGreaterThanOrEqual(0);
+      expect(settleOrder).toBeLessThan(mockBookingFindUnique.mock.invocationCallOrder[statusReRead]!);
       expect(settleOrder).toBeLessThan(
         mockBookingUpdateMany.mock.invocationCallOrder[mockBookingUpdateMany.mock.calls.indexOf(releaseCall()!)]!,
       );
@@ -608,6 +685,33 @@ describe("POST /api/payments/charge-saved-method", () => {
       expect(mockLogAudit).not.toHaveBeenCalledWith(
         expect.objectContaining({ action: "booking.payment.failed" }),
       );
+    });
+
+    it("does NOT release a claim the webhook has already settled: the retrieve said processing, the succeeded webhook moved the booking to PAID before the release took its locks — the answer is recorded forward-only and the booking is left alone", async () => {
+      // The booking reads PAID at the release's status re-read.
+      primeBooking(makeBooking(), "PAID");
+      mockChargePaymentMethod.mockResolvedValue({ id: "pi_race", status: "processing", amount: 12500, payment_method: "pm_123" });
+      // The webhook adopted the row and settled it: the forward-only guard
+      // refuses our stale PROCESSING write (count 0), and the row reads
+      // SUCCEEDED when re-read.
+      mockPaymentTransactionUpdateMany.mockResolvedValue({ count: 0 });
+      mockPaymentTransactionFindUnique.mockImplementation(async ({ where }: { where: { id?: string } }) =>
+        where.id ? { status: "SUCCEEDED" } : null,
+      );
+
+      const response = await POST(makeRequest());
+
+      expect(response.status).toBe(409);
+      // The settle was attempted under the release's locks, with the unresolved guard...
+      expect(settleCall("pi_race")?.[0].where).toEqual({ id: ATTEMPT_ROW_ID, status: { in: ["PENDING", "PROCESSING"] } });
+      // ...and refused, so no reconcile ran and the claim was NOT handed back
+      // (a CONFIRMED -> PENDING write here would have matched nothing anyway,
+      // but the point is that the route knows it and says so instead of
+      // pretending to release).
+      expect(mockReconcilePaymentAggregates).not.toHaveBeenCalled();
+      expect(releaseCall()).toBeUndefined();
+      expect(mockReconcileBeds).toHaveBeenCalledTimes(1);
+      expect(mockMarkBookingPaymentSucceeded).not.toHaveBeenCalled();
     });
 
     it("REPLAYS the cron's unresolved attempt on the same card: Stripe is asked about that intent, no second charge is made, and its outcome settles the same row", async () => {
@@ -637,8 +741,11 @@ describe("POST /api/payments/charge-saved-method", () => {
       expect(mockGetPaymentIntent).toHaveBeenCalledWith("pi_cron");
       expect(mockChargePaymentMethod).not.toHaveBeenCalled();
       expect(mockPaymentTransactionCreate).not.toHaveBeenCalled();
-      expect(mockPaymentTransactionUpdate).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { id: "txn_cron" }, data: expect.objectContaining({ status: "SUCCEEDED" }) }),
+      expect(mockPaymentTransactionUpdateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ id: "txn_cron" }),
+          data: expect.objectContaining({ status: "SUCCEEDED" }),
+        }),
       );
       expect(mockMarkBookingPaymentSucceeded).toHaveBeenCalledWith(
         expect.objectContaining({ paymentIntentId: "pi_cron" }),
@@ -794,9 +901,9 @@ describe("POST /api/payments/charge-saved-method", () => {
     });
     // The capture was recorded on the attempt row before reconciliation, so the
     // webhook can finish the promotion.
-    expect(mockPaymentTransactionUpdate).toHaveBeenCalledWith(
+    expect(mockPaymentTransactionUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: ATTEMPT_ROW_ID },
+        where: expect.objectContaining({ id: ATTEMPT_ROW_ID }),
         data: expect.objectContaining({ stripePaymentIntentId: "pi_hosting_retry", status: "SUCCEEDED" }),
       }),
     );
@@ -824,7 +931,7 @@ describe("POST /api/payments/charge-saved-method", () => {
     await expect(
       POST(makeRequest({ "x-cron-secret": "test" })),
     ).rejects.toMatchObject({ code: HOSTING_COVERAGE_RETRY_CODE });
-    expect(mockPaymentTransactionUpdate).toHaveBeenCalledWith(
+    expect(mockPaymentTransactionUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ stripePaymentIntentId: "pi_cron_hosting_retry", status: "SUCCEEDED" }),
       }),

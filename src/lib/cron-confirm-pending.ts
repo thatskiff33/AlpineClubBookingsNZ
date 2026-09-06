@@ -117,6 +117,50 @@ export function shouldAlertOnSplitSettlementExtension(
   return extensionNumber <= 3 || extensionNumber % 7 === 0;
 }
 
+/**
+ * How often this cron runs: the general cron cycle's `0 * /3 * * *` schedule
+ * (`instrumentation.node.ts`, mirrored by `admin-cron-health.ts`), as a
+ * duration. Spelled here because the cadence below needs a duration and the
+ * schedule is a crontab string; a scheduler that runs SLOWER than this can only
+ * skip an alert, one that runs FASTER can only repeat one within a window —
+ * neither can make the refusal alert fire on every run again.
+ */
+export const CONFIRM_PENDING_RUN_INTERVAL_MS = 3 * 60 * 60 * 1000;
+
+/**
+ * Whether `now` is the FIRST run inside its ~2-day extension window, measured
+ * from `since`. The #1993/#2012 alert streams get "once per window" for free
+ * from the hold-extension CAS upstream — exactly one run wins the extension —
+ * but a refusal (`SavedCardChargeRefusedError`) writes nothing, so there is no
+ * CAS to win. This is the equivalent: of the ~16 three-hourly runs in a window,
+ * only the one within the first run-interval of the window boundary alerts.
+ */
+export function isFirstRunInExtensionWindow(since: Date, now: Date): boolean {
+  const elapsed = now.getTime() - since.getTime();
+  if (elapsed <= 0) return true;
+  return elapsed % REQUEST_HOLD_EXTENSION_MS < CONFIRM_PENDING_RUN_INTERVAL_MS;
+}
+
+/**
+ * #3267 — the admin-alert cadence for a saved-card charge REFUSAL (captured
+ * money on a still-pending booking, or an unanswered attempt whose key has
+ * expired): the #1993 windows (1, 2, 3, then every 7th), each alerted on at most
+ * once. Anchored on `SavedCardChargeRefusedError.since` — when the refused
+ * state began, read off the ledger row that witnesses it — so a state arising
+ * between runs is alerted on at the very next run. The refusal itself is logged
+ * at error level on every run regardless.
+ */
+export function shouldAlertOnSavedCardChargeRefusal(
+  since: Date,
+  now: Date
+): boolean {
+  return (
+    shouldAlertOnSplitSettlementExtension(
+      splitSettlementExtensionNumber(since, now)
+    ) && isFirstRunInExtensionWindow(since, now)
+  );
+}
+
 // The saved-card charge itself — one attempt row per Stripe key, the metadata
 // every path sends, and the reasons each path stamps — lives in
 // `saved-card-charge-attempt.ts` (#3267, `INV-PAY-055`). This cron used to keep
@@ -996,6 +1040,12 @@ async function cancelSupersededLinkIntentsBestEffort(
         status: { in: [PaymentStatus.PENDING, PaymentStatus.PROCESSING] },
         stripePaymentIntentId: { not: null },
         amountCents: { gt: 0 },
+        // Never the row this run is REPLAYING (#3267): a legacy shared-key row
+        // or a same-card link intent carries no attempt key, but when the claim
+        // chose it as this run's attempt (`isChargeInFlightOnThisCard`) it is
+        // about to be retrieved, and cancelling it here would cancel the very
+        // intent this run is waiting on.
+        id: { not: claim.attempt.attemptRowId },
         // Never a saved-card charge attempt row (#3267) — this cron's own,
         // the admin route's or charge-saved-method's, recognised by the key
         // prefix on `reference` (see the ordering note above). A negated
@@ -1551,6 +1601,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
 
         await settleSavedCardChargeAttempt({
           attemptRowId: resolution.attempt.attemptRowId,
+          paymentId: resolution.paymentId,
           paymentIntent,
         });
 
@@ -1606,32 +1657,50 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
         await queueXeroInvoice(resolution.booking.id, "Xero invoice queued");
         await sendConfirmationEmail(resolution.booking);
       } else {
-        await prisma.$transaction(async (tx) => {
+        const settled = await prisma.$transaction(async (tx) => {
           await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
           const releaseLodgeId =
             resolution.booking.lodgeId ?? (await getDefaultLodgeId(tx));
           await acquireLodgeCapacityLock(tx, releaseLodgeId);
 
+          // #3267: record the intent Stripe answered with on the attempt row
+          // FIRST, in this locked release transaction, forward only: a
+          // `requires_action` or `processing` answer stays PROCESSING for the
+          // webhook — or the next attempt's retrieve — to resolve; a `canceled`
+          // or failed-confirm intent goes FAILED so the next attempt is fresh;
+          // and an answer a webhook has already overtaken (the intent captured
+          // between the retrieve and these locks) is refused by the row's own
+          // status guard and reported back as the row's status.
+          const recorded = await settleSavedCardChargeAttempt({
+            attemptRowId: resolution.attempt.attemptRowId,
+            paymentId: resolution.paymentId,
+            paymentIntent,
+            store: tx,
+          });
+
+          // Then re-read the claim under the locks. A booking no longer
+          // CONFIRMED is not ours to hand back: the `succeeded` webhook has
+          // settled it PAID in the meantime (the common case, and the reason the
+          // record above is forward only), or another actor moved it. Either
+          // way the status-guarded release below would match nothing, so say
+          // so instead of releasing into the dark.
           const lockedBooking = await tx.booking.findUnique({
             where: { id: resolution.booking.id },
             select: { status: true },
           });
           if (lockedBooking?.status !== BookingStatus.CONFIRMED) {
-            throw new Error(
-              "Pending-hold charge release lost its CONFIRMED claim",
+            logger.warn(
+              {
+                bookingId: resolution.booking.id,
+                paymentIntentId: paymentIntent.id,
+                bookingStatus: lockedBooking?.status ?? null,
+                ledgerStatus: recorded.ledgerStatus,
+                job: "confirmPendingBookings",
+              },
+              "Pending-hold charge release found the booking no longer CONFIRMED; leaving it as it is — the webhook has settled it, or another actor moved it (#3267)"
             );
+            return { ...recorded, released: false };
           }
-
-          // #3267: record the intent Stripe answered with on the attempt row,
-          // in the same locked release transaction as before. `requires_action`
-          // and `processing` stay PROCESSING for the webhook — or the next
-          // attempt's retrieve — to resolve; a `canceled` or failed-confirm
-          // intent goes FAILED so the next attempt is fresh.
-          await settleSavedCardChargeAttempt({
-            attemptRowId: resolution.attempt.attemptRowId,
-            paymentIntent,
-            store: tx,
-          });
 
           const released = await tx.booking.updateMany({
             where: {
@@ -1656,12 +1725,13 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
               checkOut: resolution.booking.checkOut,
             },
           });
+          return { ...recorded, released: true };
         });
 
-        if (
-          paymentIntent.status === "canceled" ||
-          paymentIntent.status === "requires_payment_method"
-        ) {
+        // Branch on what the LEDGER now says, not on the intent's status: the
+        // settle above may have refused a stale answer in favour of a webhook's
+        // later one, and the ledger's status is the one that is true.
+        if (settled.ledgerStatus === PaymentStatus.FAILED) {
           logger.warn(
             {
               bookingId: resolution.booking.id,
@@ -1670,6 +1740,16 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
               job: "confirmPendingBookings",
             },
             "Saved-card charge attempt ended without a capture; the attempt is closed and the next run starts a fresh one (#3267)"
+          );
+        } else if (settled.ledgerStatus === PaymentStatus.SUCCEEDED) {
+          logger.info(
+            {
+              bookingId: resolution.booking.id,
+              paymentIntentId: paymentIntent.id,
+              released: settled.released,
+              job: "confirmPendingBookings",
+            },
+            "Saved-card charge attempt captured after the retrieve; the webhook settled it (#3267)"
           );
         } else {
           logger.info(
@@ -1684,32 +1764,43 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
       }
     } catch (err) {
       if (err instanceof SavedCardChargeRefusedError) {
-        // #3267: a captured PRIMARY row already holds this booking's money
-        // while the booking is still PENDING. The claim transaction rolled
-        // back (nothing was claimed, nothing charged); this is an anomaly a
-        // person must resolve, so it is loud on every run until they do.
+        // #3267: charging would be wrong — a captured PRIMARY row already
+        // holds this booking's money while the booking is still PENDING, or an
+        // unanswered attempt's key has outlived Stripe's replay window
+        // (`err.why`). The claim transaction rolled back (nothing was claimed,
+        // nothing charged); this is an anomaly a person must resolve, so it is
+        // logged at error level on EVERY run — and alerted on the #1993 cadence
+        // (windows 1, 2, 3, then every 7th, once each), anchored on when the
+        // state began, rather than eight times a day until someone acts.
+        const alert = shouldAlertOnSavedCardChargeRefusal(err.since, now);
         logger.error(
           {
             bookingId: candidate.id,
+            why: err.why,
+            since: err.since,
             paymentIntentId: err.paymentIntentId,
+            attemptRowId: err.attemptRowId,
+            alert,
             job: "confirmPendingBookings",
           },
-          "Refused to charge a saved card: a captured charge is already recorded on a still-pending booking (#3267)"
+          "Refused to charge a saved card (#3267)"
         );
         result.failedBookingIds.push(candidate.id);
-        sendAdminPaymentFailureAlert({
-          memberName: `${candidate.member.firstName} ${candidate.member.lastName}`,
-          checkIn: candidate.checkIn,
-          checkOut: candidate.checkOut,
-          amountCents: candidate.finalPriceCents,
-          errorMessage: err.message,
-          paymentIntentId: err.paymentIntentId ?? paymentIntentId,
-        }).catch((alertErr) =>
-          logger.error(
-            { err: alertErr, bookingId: candidate.id },
-            "Failed to send admin payment failure alert"
-          )
-        );
+        if (alert) {
+          sendAdminPaymentFailureAlert({
+            memberName: `${candidate.member.firstName} ${candidate.member.lastName}`,
+            checkIn: candidate.checkIn,
+            checkOut: candidate.checkOut,
+            amountCents: candidate.finalPriceCents,
+            errorMessage: err.message,
+            paymentIntentId: err.paymentIntentId ?? paymentIntentId,
+          }).catch((alertErr) =>
+            logger.error(
+              { err: alertErr, bookingId: candidate.id },
+              "Failed to send admin payment failure alert"
+            )
+          );
+        }
         continue;
       }
 

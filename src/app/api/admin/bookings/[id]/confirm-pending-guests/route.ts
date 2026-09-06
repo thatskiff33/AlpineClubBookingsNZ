@@ -17,6 +17,7 @@ import {
 import {
   describeUnsettledPaymentIntent,
   settleSavedCardChargeAttempt,
+  type SavedCardChargeAnswer,
 } from "@/lib/saved-card-charge-settle";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { enqueueOwnHostingCoverageReevaluation } from "@/lib/adult-member-hosting-review";
@@ -378,13 +379,34 @@ export async function POST(
       await acquireLodgeCapacityLock(tx, booking.lodgeId);
       // Re-read this booking's own capacity inputs INSIDE the lock (see the
       // zero-dollar branch) so a concurrent guest-count change can't gate the
-      // charge on a stale, smaller party.
+      // charge on a stale, smaller party — and (#3267) its card columns, own
+      // row and split parent's, so the card CHARGED is the one on the rows
+      // under the locks rather than the pre-lock snapshot: a replacement mint
+      // (#3266) or a retire (#3268) between the two reads must change what is
+      // charged and what the attempt row records, as the cron's own post-lock
+      // re-read already does.
       const locked = await tx.booking.findUnique({
         where: { id: bookingId },
-        include: { guests: { include: { nights: true } } },
+        include: {
+          guests: { include: { nights: true } },
+          payment: true,
+          parentBooking: { include: { payment: true } },
+        },
       });
       if (!locked || locked.status !== BookingStatus.PENDING) {
         return { error: "Booking is no longer pending" as const, status: 409 };
+      }
+      const lockedCard = savedPaymentMethodForBooking({
+        payment: locked.payment,
+        parentBooking: locked.parentBooking,
+      });
+      if (!lockedCard) {
+        // The card the pre-lock read saw is gone (replaced mid-flight, or
+        // retired). Nothing is claimed; a retry takes the payment-owed branch.
+        return {
+          error: "The saved card is no longer available for this booking" as const,
+          status: 409,
+        };
       }
       const { available, nightDetails } = await checkCapacityForGuestRanges(
         locked.lodgeId,
@@ -453,21 +475,21 @@ export async function POST(
         cause: "SYSTEM_CHANGE",
         actorMemberId: session.user.id,
       });
-      // #3269: the card is charged from `savedPayment`; the claim writes only
+      // #3269: the card is charged from `lockedCard`; the claim writes only
       // the customer onto this row (`savedPaymentMethodRowStamp`), so it can
       // neither launder a parent's pm nor resurrect one a concurrent
       // replacement mint just cleared.
-      const rowStamp = savedPaymentMethodRowStamp(savedPayment);
+      const rowStamp = savedPaymentMethodRowStamp(lockedCard);
       const payment = await tx.payment.upsert({
         where: { bookingId },
         create: {
           bookingId,
-          amountCents: booking.finalPriceCents,
+          amountCents: locked.finalPriceCents,
           status: PaymentStatus.PENDING,
           ...rowStamp,
         },
         update: {
-          amountCents: booking.finalPriceCents,
+          amountCents: locked.finalPriceCents,
           status: PaymentStatus.PENDING,
           ...rowStamp,
         },
@@ -475,41 +497,57 @@ export async function POST(
       const attempt = await beginSavedCardChargeAttempt(tx, {
         paymentId: payment.id,
         bookingId,
-        amountCents: booking.finalPriceCents,
-        card: savedPayment,
+        amountCents: locked.finalPriceCents,
+        card: lockedCard,
         reason: SAVED_CARD_CHARGE_REASON.adminConfirmPendingGuests,
       });
-      return { ok: true as const, paymentId: payment.id, attempt };
+      return {
+        ok: true as const,
+        paymentId: payment.id,
+        attempt,
+        card: lockedCard,
+        amountCents: locked.finalPriceCents,
+      };
     });
 
     let claim: Awaited<ReturnType<typeof runClaim>>;
     try {
       claim = await runClaim();
     } catch (claimErr) {
-      if (!(claimErr instanceof SavedCardChargeRefusedError)) throw claimErr;
-      // Nothing was claimed and nothing charged; a person has to look.
-      logger.error(
-        { bookingId, paymentIntentId: claimErr.paymentIntentId },
-        "Admin confirm-pending-guests: refused to charge, a captured charge is already recorded on this pending booking (#3267)"
-      );
-      sendAdminPaymentFailureAlert({
-        memberName: `${booking.member.firstName} ${booking.member.lastName}`,
-        checkIn: booking.checkIn,
-        checkOut: booking.checkOut,
-        amountCents: booking.finalPriceCents,
-        errorMessage: claimErr.message,
-        paymentIntentId: claimErr.paymentIntentId ?? "N/A",
-      }).catch((alertErr) =>
+      if (claimErr instanceof SavedCardChargeRefusedError) {
+        // Nothing was claimed and nothing charged; a person has to look. The
+        // message is the typed domain error's own plain English, written for
+        // this response (#1888 F31 permits a typed error's message; never a
+        // bare `Error`'s).
         logger.error(
-          { err: alertErr, bookingId },
-          "Failed to send admin payment failure alert"
-        )
-      );
-      await audit("charge_refused_captured_exists", false);
-      return NextResponse.json(
-        { error: claimErr.message, paymentIntentId: claimErr.paymentIntentId },
-        { status: 409 }
-      );
+          {
+            bookingId,
+            why: claimErr.why,
+            paymentIntentId: claimErr.paymentIntentId,
+            attemptRowId: claimErr.attemptRowId,
+          },
+          "Admin confirm-pending-guests: refused to charge (#3267)"
+        );
+        sendAdminPaymentFailureAlert({
+          memberName: `${booking.member.firstName} ${booking.member.lastName}`,
+          checkIn: booking.checkIn,
+          checkOut: booking.checkOut,
+          amountCents: booking.finalPriceCents,
+          errorMessage: claimErr.message,
+          paymentIntentId: claimErr.paymentIntentId ?? "N/A",
+        }).catch((alertErr) =>
+          logger.error(
+            { err: alertErr, bookingId },
+            "Failed to send admin payment failure alert"
+          )
+        );
+        await audit(`charge_refused_${claimErr.why}`, false);
+        return NextResponse.json(
+          { error: claimErr.message, paymentIntentId: claimErr.paymentIntentId },
+          { status: 409 }
+        );
+      }
+      throw claimErr;
     }
 
     if ("error" in claim) {
@@ -531,13 +569,43 @@ export async function POST(
     // #2576 §9: drain what the claim recorded, now that it has committed.
     await settleHostingCoverageAfterCommit({ bookingId });
 
-    // Mirror of the cron's releaseChargeClaim: only touched while Stripe has
-    // NOT captured money. Once a charge succeeds the claim is never released —
-    // CONFIRMED keeps holding the beds the member just paid for.
-    const releaseChargeClaim = async () => {
-      await prisma.$transaction(async (tx) => {
+    // Mirror of the cron's release: only touched while Stripe has NOT captured
+    // money. Once a charge succeeds the claim is never released — CONFIRMED
+    // keeps holding the beds the member just paid for. `answer` is the intent a
+    // non-captured branch records on the attempt row inside this same locked
+    // transaction, forward only, BEFORE the booking's status is re-read: a
+    // `succeeded` webhook that has settled the booking between the retrieve and
+    // these locks leaves it PAID, in which case there is nothing to hand back
+    // and the release is skipped rather than aimed at a status that is gone.
+    // Data, not a callback, so the helper is a plain function of its argument
+    // (the transaction-wrapper population in
+    // `lock-bound-club-zone-outside-transaction.test.ts` is derived from
+    // callback parameters).
+    const releaseChargeClaim = async (answer?: {
+      attemptRowId: string;
+      paymentIntent: SavedCardChargeAnswer;
+    }) =>
+      prisma.$transaction(async (tx) => {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
         await acquireLodgeCapacityLock(tx, booking.lodgeId);
+        if (answer) {
+          await settleSavedCardChargeAttempt({
+            ...answer,
+            paymentId: claim.paymentId,
+            store: tx,
+          });
+        }
+        const current = await tx.booking.findUnique({
+          where: { id: bookingId },
+          select: { status: true },
+        });
+        if (current?.status !== BookingStatus.CONFIRMED) {
+          logger.warn(
+            { bookingId, bookingStatus: current?.status ?? null },
+            "Admin confirm-pending-guests: the booking is no longer CONFIRMED at release; leaving it — the webhook has settled it, or another actor moved it (#3267)"
+          );
+          return { released: false };
+        }
         const released = await tx.booking.updateMany({
           where: { id: bookingId, status: BookingStatus.CONFIRMED },
           data: {
@@ -552,8 +620,8 @@ export async function POST(
             previousRange,
           });
         }
+        return { released: released.count > 0 };
       });
-    };
 
     // Charge the saved payment method through the one attempt contract every
     // path uses (#3267, `INV-PAY-055`): earlier attempts the claim ended (a
@@ -564,15 +632,16 @@ export async function POST(
     // shared `pending_charge_<bookingId>` key used to provide is now enforced by
     // the ledger inside the claim transaction above, so this route no longer
     // meets Stripe's idempotency parameter-mismatch error — what comes back is
-    // the attempt's true outcome.
+    // the attempt's true outcome. The card and amount are the claim's
+    // post-lock reads.
     let paymentIntent;
     try {
       paymentIntent = await chargeSavedCardAttempt({
         attempt: claim.attempt,
         bookingId,
         memberId: booking.memberId,
-        amountCents: booking.finalPriceCents,
-        card: savedPayment,
+        amountCents: claim.amountCents,
+        card: claim.card,
       });
     } catch (chargeErr) {
       // Charge attempt failed with nothing captured: release the claim and
@@ -624,16 +693,16 @@ export async function POST(
     if (paymentIntent.status !== "succeeded") {
       // The intent exists but did not capture (3DS challenge outstanding, still
       // processing, or — on a replay — an earlier attempt that has since died).
-      // Record what Stripe answered on the attempt row FIRST, so the next click
-      // or cron run asks about this intent rather than minting a second one
-      // (or, for a dead intent, starts fresh), then release the claim and leave
-      // the booking pending for the Stripe webhook to resolve rather than
+      // Record what Stripe answered on the attempt row inside the locked
+      // release, forward only, so the next click or cron run asks about this
+      // intent rather than minting a second one (or, for a dead intent, starts
+      // fresh), then release the claim if it is still ours and leave the
+      // booking pending for the Stripe webhook to resolve rather than
       // confirming optimistically.
-      await settleSavedCardChargeAttempt({
+      await releaseChargeClaim({
         attemptRowId: claim.attempt.attemptRowId,
         paymentIntent,
-      });
-      await releaseChargeClaim().catch((revertErr) =>
+      }).catch((revertErr) =>
         logger.error(
           { err: revertErr, bookingId },
           "Failed to release confirm-pending-guests charge claim"
@@ -662,6 +731,7 @@ export async function POST(
     try {
       await settleSavedCardChargeAttempt({
         attemptRowId: claim.attempt.attemptRowId,
+        paymentId: claim.paymentId,
         paymentIntent,
       });
     } catch (recordErr) {

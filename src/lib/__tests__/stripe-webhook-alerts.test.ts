@@ -45,6 +45,11 @@ const {
   mockFindCompletedHandBackForLateCapture,
   mockSendAdminLateCaptureAutoRefundAlert,
   mockSendAdminLateCaptureHandBackConflictAlert,
+  mockPaymentTransactionFindFirst,
+  mockPaymentTransactionFindUnique,
+  mockPaymentTransactionUpdateMany,
+  mockPaymentTransactionDeleteMany,
+  mockReconcilePaymentAggregates,
 } = vi.hoisted(() => ({
   mockConstructWebhookEvent: vi.fn(),
   mockProcessedWebhookCreate: vi.fn(),
@@ -56,6 +61,14 @@ const {
   mockBookingFindUnique: vi.fn(),
   mockBookingUpdateMany: vi.fn(),
   mockTransaction: vi.fn(),
+  // #3267: the lost-response adoption reads the attempt row by the event's
+  // idempotency key and settles it through the attempt-settle module, which is
+  // left REAL here so the guarded write it makes is the one asserted.
+  mockPaymentTransactionFindFirst: vi.fn().mockResolvedValue(null),
+  mockPaymentTransactionFindUnique: vi.fn().mockResolvedValue(null),
+  mockPaymentTransactionUpdateMany: vi.fn().mockResolvedValue({ count: 1 }),
+  mockPaymentTransactionDeleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+  mockReconcilePaymentAggregates: vi.fn().mockResolvedValue(null),
   mockRecordWebhookLog: vi.fn().mockResolvedValue(undefined),
   mockIsXeroConnected: vi.fn().mockResolvedValue(false),
   mockEnqueueXeroBookingInvoiceOperation: vi.fn().mockResolvedValue({
@@ -194,6 +207,8 @@ vi.mock("@/lib/payment-transactions", () => ({
     mockSyncRefundsFromStripeCharge(...args),
   upsertPaymentIntentTransaction: (...args: unknown[]) =>
     mockUpsertPaymentIntentTransaction(...args),
+  reconcilePaymentAggregates: (...args: unknown[]) =>
+    mockReconcilePaymentAggregates(...args),
 }));
 vi.mock("@/lib/payment-recovery", () => ({
   enqueueAdditionalPaymentIntentRecovery: vi.fn().mockResolvedValue({ id: "recovery_additional" }),
@@ -232,6 +247,13 @@ vi.mock("@/lib/prisma", () => ({
     },
     groupBooking: {
       findUnique: (...args: unknown[]) => mockGroupBookingFindUnique(...args),
+    },
+    // #3267: the attempt-row adoption for an intent the ledger does not know.
+    paymentTransaction: {
+      findFirst: (...args: unknown[]) => mockPaymentTransactionFindFirst(...args),
+      findUnique: (...args: unknown[]) => mockPaymentTransactionFindUnique(...args),
+      updateMany: (...args: unknown[]) => mockPaymentTransactionUpdateMany(...args),
+      deleteMany: (...args: unknown[]) => mockPaymentTransactionDeleteMany(...args),
     },
     $transaction: (...args: unknown[]) => mockTransaction(...args),
   },
@@ -775,6 +797,145 @@ describe("Stripe webhook Xero alerting", () => {
     expect(mockMarkPaymentIntentTransactionFailed).not.toHaveBeenCalled();
     expect(mockLogAudit).not.toHaveBeenCalled();
     expect(mockSendAdminPaymentFailureAlert).not.toHaveBeenCalled();
+  });
+
+  describe("a saved-card charge attempt whose POST answer was lost is adopted by the event's idempotency key (#3267, INV-PAY-055)", () => {
+    const ATTEMPT_KEY = "pending_charge_booking-1_txn_attempt_1";
+    const paidBooking = {
+      id: "booking-1",
+      status: "CONFIRMED",
+      checkIn: new Date("2026-07-01"),
+      checkOut: new Date("2026-07-03"),
+      finalPriceCents: 5000,
+      discountCents: 0,
+      guests: [{ id: "g1" }],
+      member: { firstName: "Alice", lastName: "Example", email: "alice@example.com" },
+      promoRedemption: null,
+    };
+
+    it("payment_intent.succeeded for an unknown intent: the PENDING no-intent attempt row carrying the event's key is stamped SUCCEEDED (forward only), reconciled, and the booking is settled with it", async () => {
+      mockConstructWebhookEvent.mockReturnValue({
+        id: "evt_lost_response",
+        type: "payment_intent.succeeded",
+        // Stripe stamps the originating request's idempotency key on the event.
+        request: { id: "req_1", idempotency_key: ATTEMPT_KEY },
+        data: {
+          object: {
+            id: "pi_lost",
+            status: "succeeded",
+            amount: 5000,
+            metadata: { bookingId: "booking-1" },
+            payment_method: "pm_123",
+          },
+        },
+      } as any);
+      mockPaymentTransactionFindFirst.mockResolvedValue({ id: "txn_attempt_1", paymentId: "payment-1" });
+      // Unknown by intent id before adoption, found by it after.
+      mockFindPaymentTransactionByIntentId
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({
+          id: "txn_attempt_1",
+          paymentId: "payment-1",
+          kind: "PRIMARY",
+          amountCents: 5000,
+          status: "SUCCEEDED",
+        });
+      mockBookingFindUnique.mockResolvedValue(paidBooking);
+
+      const response = await POST(makeRequest());
+
+      expect(response.status).toBe(200);
+      expect(mockPaymentTransactionFindFirst).toHaveBeenCalledWith({
+        where: {
+          reference: ATTEMPT_KEY,
+          kind: "PRIMARY",
+          source: "STRIPE",
+          stripePaymentIntentId: null,
+          status: { in: ["PENDING", "PROCESSING"] },
+        },
+        select: { id: true, paymentId: true },
+      });
+      expect(mockPaymentTransactionUpdateMany).toHaveBeenCalledWith({
+        where: { id: "txn_attempt_1", status: { notIn: ["REFUNDED", "PARTIALLY_REFUNDED"] } },
+        data: { stripePaymentIntentId: "pi_lost", status: "SUCCEEDED", amountCents: 5000, paymentMethodId: "pm_123" },
+      });
+      expect(mockReconcilePaymentAggregates).toHaveBeenCalledWith({ paymentId: "payment-1", store: expect.anything() });
+      expect(mockMarkBookingPaymentSucceeded).toHaveBeenCalledWith({
+        bookingId: "booking-1",
+        paymentIntentId: "pi_lost",
+        amountCents: 5000,
+        paymentMethodId: "pm_123",
+      });
+    });
+
+    it("payment_intent.payment_failed for an unknown intent: the attempt row is adopted and ends FAILED now, rather than sitting PENDING until its key expires", async () => {
+      mockConstructWebhookEvent.mockReturnValue({
+        id: "evt_lost_decline",
+        type: "payment_intent.payment_failed",
+        request: { id: "req_2", idempotency_key: ATTEMPT_KEY },
+        data: {
+          object: {
+            id: "pi_lost_declined",
+            status: "requires_payment_method",
+            amount: 5000,
+            metadata: { bookingId: "booking-1" },
+            payment_method: "pm_123",
+            last_payment_error: { message: "Card declined" },
+          },
+        },
+      } as any);
+      mockPaymentTransactionFindFirst.mockResolvedValue({ id: "txn_attempt_1", paymentId: "payment-1" });
+      mockFindPaymentTransactionByIntentId
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ id: "txn_attempt_1", paymentId: "payment-1", kind: "PRIMARY", amountCents: 5000, status: "FAILED" });
+      mockBookingFindUnique.mockResolvedValue(paidBooking);
+
+      const response = await POST(makeRequest());
+
+      expect(response.status).toBe(200);
+      expect(mockPaymentTransactionUpdateMany).toHaveBeenCalledWith({
+        where: { id: "txn_attempt_1", status: { in: ["PENDING", "PROCESSING"] } },
+        data: { stripePaymentIntentId: "pi_lost_declined", status: "FAILED", amountCents: 5000, paymentMethodId: "pm_123" },
+      });
+      expect(mockMarkPaymentIntentTransactionFailed).toHaveBeenCalledWith({ paymentIntentId: "pi_lost_declined" });
+      expect(mockSendAdminPaymentFailureAlert).toHaveBeenCalledTimes(1);
+    });
+
+    it("an unknown intent whose event carries no idempotency key, or a key that is not an attempt's, is still ignored as before", async () => {
+      mockConstructWebhookEvent.mockReturnValue({
+        id: "evt_unknown_no_key",
+        type: "payment_intent.succeeded",
+        request: { id: "req_3", idempotency_key: "late_cancel_refund_booking-1_pi_x" },
+        data: {
+          object: { id: "pi_unknown", status: "succeeded", amount: 5000, metadata: { bookingId: "booking-1" }, payment_method: "pm_123" },
+        },
+      } as any);
+
+      const response = await POST(makeRequest());
+
+      expect(response.status).toBe(200);
+      expect(mockPaymentTransactionFindFirst).not.toHaveBeenCalled();
+      expect(mockPaymentTransactionUpdateMany).not.toHaveBeenCalled();
+      expect(mockMarkBookingPaymentSucceeded).not.toHaveBeenCalled();
+    });
+
+    it("adopts only a row whose key was built from ITS OWN id for THIS booking: a matching reference on a row whose id disagrees is left alone", async () => {
+      mockConstructWebhookEvent.mockReturnValue({
+        id: "evt_wrong_row",
+        type: "payment_intent.succeeded",
+        request: { id: "req_4", idempotency_key: ATTEMPT_KEY },
+        data: {
+          object: { id: "pi_lost", status: "succeeded", amount: 5000, metadata: { bookingId: "booking-1" }, payment_method: "pm_123" },
+        },
+      } as any);
+      mockPaymentTransactionFindFirst.mockResolvedValue({ id: "txn_somebody_else", paymentId: "payment-9" });
+
+      const response = await POST(makeRequest());
+
+      expect(response.status).toBe(200);
+      expect(mockPaymentTransactionUpdateMany).not.toHaveBeenCalled();
+      expect(mockMarkBookingPaymentSucceeded).not.toHaveBeenCalled();
+    });
   });
 
   it("ignores stale canceled intents when no current payment transaction matches the webhook intent", async () => {

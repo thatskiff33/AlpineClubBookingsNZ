@@ -330,9 +330,20 @@ export async function reconcilePaymentAggregates({
         refundedAmountCents,
         latestPrimary?.status ?? null
       );
+  // #3267 (INV-PAY-055): a saved-card charge ATTEMPT row is a Stripe PRIMARY
+  // row born without an intent id, and it stays so after a definite failure.
+  // While it is the latest PRIMARY, a reconcile (the #1992 sweep's
+  // `payment_intent.canceled` webhook, a failed webhook, …) must not null the
+  // Payment's intent pointer: `/pay` and `create-payment-intent` read that
+  // pointer to decide whether to mint, and a nulled pointer sends them back to
+  // the `_initial` key, which Stripe answers with the CANCELLED first intent —
+  // a dead client secret. So a Stripe latest PRIMARY without an intent keeps
+  // the pointer the Payment already holds (`??`), the same rule #3268 applies
+  // to the card column below. A non-Stripe (IB) latest PRIMARY still yields
+  // null, as before.
   const latestPrimaryStripeIntentId =
-    latestPrimary && isStripeTransaction(latestPrimary)
-      ? latestPrimary.stripePaymentIntentId
+    latestPrimary && latestPrimary.source === PaymentSource.STRIPE
+      ? latestPrimary.stripePaymentIntentId ?? payment.stripePaymentIntentId
       : null;
   // #3268 (INV-PAY-054, "the ledger never moves a saved card"): a Payment with
   // a `stripeSetupIntentId` owns its card column through the SetupIntent
