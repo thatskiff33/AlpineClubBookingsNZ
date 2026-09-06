@@ -15,21 +15,10 @@ lane's reason too: the admin "Confirm pending guests" button's will-charge
 wording now derives from the shared predicate over the split parent's three
 card columns, selected in the page query.
 
-file: src/app/api/admin/bookings/[id]/confirm-pending-guests/route.ts
-lines: 756
-reason: the route loads the parent's payment row (three lines), derives the
-  card through the shared predicate, and spreads `savedPaymentMethodRowStamp`
-  into its claim upsert so the claim writes only the customer onto the child's
-  row. The code is net shorter; the growth is the two comments naming
-  the invariant at the read and at the write, which is where the next person
-  would otherwise put the populated-fields check back.
-
-file: src/app/api/payments/charge-saved-method/route.ts
-lines: 355
-reason: one guard becomes one call to the shared predicate plus the eight-line
-  comment explaining why THIS route deliberately has no split-parent fallback:
-  it records the capture on the row it read and creates none. Without that
-  comment the omission reads as an oversight the next lane would "fix".
+The admin route's and the member charge route's growth are declared in
+`size-allowances.d/3267-one-charge-attempt-per-key.md` (one allowance per path
+across the epic; #3267 rebuilds both charge calls and carries this lane's reason
+too: each reads the card through the shared predicate and loads the parent row).
 
 file: src/lib/payment-link.ts
 lines: 1352

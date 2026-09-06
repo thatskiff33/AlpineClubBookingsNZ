@@ -1332,12 +1332,66 @@ itself still transitions exactly as before — this changes
 which bookings enter `PENDING -> PROCESSING` off-session, not what happens once
 they do.
 
+Saved-card charge attempt (#3267, `INV-PAY-055`). Every off-session charge of a
+saved card — the settlement cron, admin confirm-pending-guests and
+`charge-saved-method` — is one PRIMARY Stripe `PaymentTransaction` created
+inside the caller's claim transaction (under `lock(1)` and the lodge lock,
+after the PENDING -> CONFIRMED claim) BEFORE Stripe is asked, with its own
+Stripe idempotency key `pending_charge_<bookingId>_<rowId>` stored on
+`reference`:
+
+```text
+attempt row: PENDING (no intent id)  -- Stripe asked, intent returned -->
+  SUCCEEDED (captured)                            [booking -> PAID]
+  PROCESSING (requires_action / processing / …)   [claim released, webhook or next attempt resolves]
+  FAILED (canceled / requires_payment_method)     [claim released, next attempt is fresh]
+attempt row: PENDING  -- Stripe THREW -->
+  definite (card_error, invalid_request_error, idempotency_error, authentication_error)
+      -> FAILED, then the error is rethrown        [next attempt mints a fresh key]
+  ambiguous (api_error, rate limit, connection, unknown)
+      -> stays PENDING, error rethrown             [next attempt replays THIS row]
+next attempt finds an unresolved (PENDING/PROCESSING) attempt row:
+  same card, intent known      -> replay: RETRIEVE that intent (no new charge)
+  same card, no intent yet     -> replay: re-send its key (Stripe answers or executes once)
+                                  ... unless the row is older than 23h -> REFUSED
+                                      (`attempt_key_expired`: Stripe's key window is
+                                       24h, so a re-send after it is a NEW charge)
+  different card               -> FAILED (reason suffixed `:superseded_by_new_card`),
+                                  its intent cancelled best-effort after commit;
+                                  one found already `succeeded` IS the capture;
+                                  one found still `processing` is put BACK to
+                                  PROCESSING and IS the answer (never charged beside)
+next attempt finds a PRIMARY row still holding captured cash -> REFUSED
+  (`SavedCardChargeRefusedError`: claim rolls back, admins alerted, no charge)
+`payment_intent.succeeded` / `.payment_failed` for an intent the ledger does not know
+  -> adopt the PENDING no-intent attempt row whose `reference` equals the event's
+     `request.idempotency_key`, settle it, then handle as usual (lost-response recovery)
+```
+
+Every write onto an attempt row is FORWARD ONLY. A capture is written over
+anything but refund history; a non-capture only over an unresolved row. So a
+`processing` answer a path retrieved cannot undo a `succeeded` the webhook has
+already recorded, and each path's locked release re-reads the booking under its
+locks and hands the claim back only while it is still CONFIRMED — a booking the
+webhook has since settled PAID is left alone.
+
+Before #3267 all three paths shared one key, `pending_charge_<bookingId>`, so
+the admin route's different metadata could only ever answer an idempotency
+parameter-mismatch error, and a re-saved card was refused for 24 hours. The
+double-charge guard that key stood in for now lives on the ledger under the
+claim's locks — which is why `charge-saved-method`, which used to charge with
+no claim at all, now takes the same PENDING -> CONFIRMED claim as the other
+two paths and releases it (CONFIRMED -> PENDING, hold restored) when nothing
+is captured.
+
 Duplicate capture on an already-PAID booking (#1992): when a success arrives
 carrying the SAME intent the booking settled with, every reconciliation path
 returns `already_paid` unchanged (webhook redelivery, confirm-payment racing
-the webhook, payment-link reconcile, charge-saved-method / cron reruns
-replaying their `pending_charge_` Stripe idempotency key,
-confirm-pending-guests retries). A success carrying a DIFFERENT intent while
+the webhook, payment-link reconcile, a saved-card charge attempt replayed by
+the cron, charge-saved-method or confirm-pending-guests — since #3267 a replay
+retrieves the recorded attempt's own intent rather than re-sending a shared
+`pending_charge_` key, see "Saved-card charge attempt" above). A success
+carrying a DIFFERENT intent while
 another captured PRIMARY transaction still holds net cash is double money (the
 residual #1967 split-child link-vs-auto-charge window) and is auto-refunded:
 the duplicate's transaction goes `SUCCEEDED -> REFUNDED` via a durable
@@ -2847,6 +2901,31 @@ The full decision table and the row-clearing contract are in "Payment
 Lifecycle" above and `INV-PAY-054`. To verify: the classifier table
 (`saved-card-charge-failure.test.ts`) and the cron's terminal branch
 (`cron-confirm-pending.test.ts`, "#3268").
+
+### Confirm-pending charge attempt is one ledger row with its own key (#3267)
+
+The charge itself is one attempt row per Stripe key, minted inside the claim
+transaction right after the Payment upsert (`beginSavedCardChargeAttempt`), so
+a run that finds an earlier attempt still unresolved asks Stripe about THAT
+attempt instead of charging again, and a run after a definite refusal starts a
+fresh one:
+
+```text
+claim (lock(1) + lodge lock, PENDING -> CONFIRMED, Payment upsert)
+  -> begin attempt: fresh row + key | replay unresolved row | end superseded row | REFUSE on captured cash
+  -> commit
+  -> #1992 sweep (link intents; attempt rows excluded by key prefix)
+  -> chargeSavedCardAttempt: cancel superseded intents (best-effort) -> charge | retrieve
+       succeeded  -> settle row SUCCEEDED -> markBookingPaymentSucceeded (as before)
+       other      -> settle row (PROCESSING | FAILED) inside the locked release -> PENDING
+       throws     -> definite: row FAILED first; ambiguous: row left PENDING
+                     -> release claim -> #3268 classify (terminal retire / retry alert)
+  REFUSED (captured row on a pending booking) -> claim rolled back, error alert, failed id
+```
+
+The states and the definite/ambiguous partition are in "Payment Lifecycle"
+above and `INV-PAY-055`. To verify: `saved-card-charge-attempt.test.ts` and
+`cron-confirm-pending.test.ts` ("#3267").
 
 ## Two-Factor Login Lifecycle
 

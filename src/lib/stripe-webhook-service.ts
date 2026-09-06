@@ -48,6 +48,7 @@ import {
   markGroupSettlementIntentFailed,
   markGroupSettlementIntentRefunded,
 } from "@/lib/group-settlement";
+import { adoptSavedCardChargeAttemptForIntent } from "@/lib/saved-card-charge-settle";
 import { PaymentStatus, PaymentTransactionKind } from "@prisma/client";
 
 type JsonRouteResult = {
@@ -233,13 +234,15 @@ export async function processStripeWebhookEvent(
     switch (event.type) {
       case "payment_intent.succeeded":
         await handlePaymentIntentSucceeded(
-          event.data.object as Stripe.PaymentIntent
+          event.data.object as Stripe.PaymentIntent,
+          event
         );
         break;
 
       case "payment_intent.payment_failed":
         await handlePaymentIntentFailed(
-          event.data.object as Stripe.PaymentIntent
+          event.data.object as Stripe.PaymentIntent,
+          event
         );
         break;
 
@@ -377,10 +380,41 @@ export async function processStripeWebhookEvent(
 }
 
 /**
+ * #3267 (`INV-PAY-055`): an intent the ledger does not know may be a saved-card
+ * charge attempt whose POST executed but whose response was lost — the row is
+ * PENDING with no intent id, and the only link between it and this event is the
+ * idempotency key Stripe stamps on the event (`event.request.idempotency_key`),
+ * which the row stores on `reference`. Adopt it, forward only, so the handler
+ * that follows finds the row by intent id like any other. The `event` is
+ * threaded in for exactly this field; a handler that read only the intent could
+ * never make the link.
+ *
+ * `event.request` is null whenever Stripe did not attribute the state change to
+ * an API request — an asynchronous capture, notably — so this recovers a lost
+ * response only while the intent's own answer was synchronous. The rest fall
+ * through to the 23-hour `attempt_key_expired` refusal rather than to a second
+ * charge; see `adoptSavedCardChargeAttemptForIntent`.
+ */
+async function adoptUnknownIntentsAttemptRow(
+  paymentIntent: Stripe.PaymentIntent,
+  event: Stripe.Event,
+  bookingId: string
+) {
+  const adopted = await adoptSavedCardChargeAttemptForIntent({
+    paymentIntent,
+    bookingId,
+    idempotencyKey: event.request?.idempotency_key,
+  });
+  if (!adopted) return null;
+  return findPaymentTransactionByIntentId({ paymentIntentId: paymentIntent.id });
+}
+
+/**
  * Handle successful payment - confirm the booking or record additional modification payment.
  */
 async function handlePaymentIntentSucceeded(
-  paymentIntent: Stripe.PaymentIntent
+  paymentIntent: Stripe.PaymentIntent,
+  event: Stripe.Event
 ) {
   // Group ORGANISER_PAYS settlement: one combined intent settles many child
   // bookings, so it carries groupBookingId (not bookingId) and is reconciled by
@@ -426,9 +460,10 @@ async function handlePaymentIntentSucceeded(
     return;
   }
 
-  const paymentTransaction = await findPaymentTransactionByIntentId({
-    paymentIntentId: paymentIntent.id,
-  });
+  const paymentTransaction =
+    (await findPaymentTransactionByIntentId({
+      paymentIntentId: paymentIntent.id,
+    })) ?? (await adoptUnknownIntentsAttemptRow(paymentIntent, event, bookingId));
 
   if (!paymentTransaction || paymentTransaction.kind !== PaymentTransactionKind.PRIMARY) {
     logger.warn(
@@ -590,7 +625,8 @@ async function handlePaymentIntentSucceeded(
  * Handle failed payment - mark payment as failed.
  */
 async function handlePaymentIntentFailed(
-  paymentIntent: Stripe.PaymentIntent
+  paymentIntent: Stripe.PaymentIntent,
+  event: Stripe.Event
 ) {
   // Group settlement intents have no per-booking payment transaction; the
   // children stay CONFIRMED (beds held) so the organiser can retry.
@@ -604,9 +640,15 @@ async function handlePaymentIntentFailed(
   }
 
   const bookingId = paymentIntent.metadata?.bookingId;
-  const paymentTransaction = await findPaymentTransactionByIntentId({
-    paymentIntentId: paymentIntent.id,
-  });
+  // #3267: a lost-response attempt whose intent FAILED is adopted too, so its
+  // row ends now rather than sitting PENDING until its key expires.
+  const paymentTransaction =
+    (await findPaymentTransactionByIntentId({
+      paymentIntentId: paymentIntent.id,
+    })) ??
+    (bookingId
+      ? await adoptUnknownIntentsAttemptRow(paymentIntent, event, bookingId)
+      : null);
   if (!paymentTransaction) {
     logger.warn(
       { paymentIntentId: paymentIntent.id, bookingId },
