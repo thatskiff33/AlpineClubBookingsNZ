@@ -847,9 +847,19 @@ function allocateGuestsToBeds(
   beds: BedAllocationBed[],
   stayDate: string,
 ) {
-  for (let index = 0; index < guests.length; index += 1) {
+  // Every caller has proven it holds at least one bed per guest: two `splice`
+  // the same count off both lists, the third checks `availableBeds.length >=
+  // guests.length`. A short list would mean writing a guest-night whose bed
+  // the planner cannot name, so it stops rather than allocating (#2800).
+  for (const [index, guest] of guests.entries()) {
+    const bed = beds[index];
+    if (bed === undefined) {
+      throw new Error(
+        `Bed allocation planner had ${beds.length} bed(s) for ${guests.length} guest(s) on ${stayDate}.`,
+      );
+    }
     state.allocations.push(
-      createAllocation(state, bookingId, guests[index], beds[index], stayDate),
+      createAllocation(state, bookingId, guest, bed, stayDate),
     );
   }
 }
@@ -1303,10 +1313,13 @@ function candidateRoomPriorityVector(
           bedByNight.set(row.stayDate, row.bedId);
         }
         for (const night of guest.nights) roomByNight.set(night, room.id);
-        const actualNights = [...roomByNight.keys()].sort();
-        for (let index = 1; index < actualNights.length; index += 1) {
-          const previous = actualNights[index - 1];
-          const current = actualNights[index];
+        // Walk the sorted nights as adjacent (previous, current) pairs. A
+        // guest with no nights at all contributes no link and no switch,
+        // which is what the index-based loop did by never entering (#2800).
+        const [firstNight, ...laterNights] = [...roomByNight.keys()].sort();
+        if (firstNight === undefined) continue;
+        let previous = firstNight;
+        for (const current of laterNights) {
           const sameRoom = roomByNight.get(previous) === roomByNight.get(current);
           if (sameRoom) sameRoomLinks += 1;
           else roomSwitches += 1;
@@ -1316,6 +1329,7 @@ function candidateRoomPriorityVector(
           ) {
             sameBedLinks += 1;
           }
+          previous = current;
         }
       }
       vector.push(-sameBedLinks, -sameRoomLinks, roomSwitches);
@@ -1616,8 +1630,37 @@ function uniqueGuestOrders(orders: StayGuest[][]): StayGuest[][] {
   });
 }
 
-/** Deterministic Edmonds matching for one direct-family component. */
-function maximumCardinalityFamilyPairs(component: StayGuest[]): number[] {
+/**
+ * Reads one slot of a dense vertex-indexed vector in the blossom search below.
+ * Those vectors are all created at length `size` and only ever read at a
+ * vertex the search itself produced, so a miss is a bug in the search, not a
+ * domain state. Reading through this makes the value a `number` in the type
+ * instead of an assertion, and names the impossible read instead of letting
+ * `undefined` flow on as the *next* vector's index — which is how this class
+ * of bug becomes a silent wrong pairing or a spin (#2800).
+ */
+function vertexSlot(
+  vector: readonly number[],
+  index: number,
+  label: string,
+): number {
+  const value = vector[index];
+  if (value === undefined) {
+    throw new Error(
+      `Bed allocation family matching read ${label}[${index}], outside 0..${vector.length - 1}.`,
+    );
+  }
+  return value;
+}
+
+/**
+ * Deterministic Edmonds matching for one direct-family component. Each guest
+ * comes back joined to the guest it was matched with, or with no partner when
+ * the matching left it unpaired.
+ */
+function maximumCardinalityFamilyPairs(
+  component: StayGuest[],
+): Array<{ guest: StayGuest; partner: StayGuest | undefined }> {
   const size = component.length;
   const adjacency = component.map((guest, index) =>
     component
@@ -1634,20 +1677,34 @@ function maximumCardinalityFamilyPairs(component: StayGuest[]): number[] {
   const used = Array<boolean>(size).fill(false);
   const blossom = Array<boolean>(size).fill(false);
 
+  const neighboursOf = (vertex: number): readonly number[] => {
+    const list = adjacency[vertex];
+    if (list === undefined) {
+      throw new Error(
+        `Bed allocation family matching read adjacency[${vertex}], outside 0..${size - 1}.`,
+      );
+    }
+    return list;
+  };
+
   const lowestCommonAncestor = (leftStart: number, rightStart: number) => {
     const path = Array<boolean>(size).fill(false);
     let left = leftStart;
     while (true) {
-      left = base[left];
+      left = vertexSlot(base, left, "base");
       path[left] = true;
-      if (match[left] === -1) break;
-      left = parent[match[left]];
+      const matched = vertexSlot(match, left, "match");
+      if (matched === -1) break;
+      left = vertexSlot(parent, matched, "parent");
     }
     let right = rightStart;
     while (true) {
-      right = base[right];
+      right = vertexSlot(base, right, "base");
       if (path[right]) return right;
-      right = parent[match[right]];
+      // The left walk marked every vertex up to the unmatched root, so the
+      // right walk returns at or before that root and never reads the root's
+      // absent match. Reaching `parent[-1]` would be that guarantee broken.
+      right = vertexSlot(parent, vertexSlot(match, right, "match"), "parent");
     }
   };
 
@@ -1658,12 +1715,13 @@ function maximumCardinalityFamilyPairs(component: StayGuest[]): number[] {
   ) => {
     let vertex = start;
     let child = childStart;
-    while (base[vertex] !== commonBase) {
-      blossom[base[vertex]] = true;
-      blossom[base[match[vertex]]] = true;
+    while (vertexSlot(base, vertex, "base") !== commonBase) {
+      const matched = vertexSlot(match, vertex, "match");
+      blossom[vertexSlot(base, vertex, "base")] = true;
+      blossom[vertexSlot(base, matched, "base")] = true;
       parent[vertex] = child;
-      child = match[vertex];
-      vertex = parent[match[vertex]];
+      child = matched;
+      vertex = vertexSlot(parent, matched, "parent");
     }
   };
 
@@ -1673,25 +1731,32 @@ function maximumCardinalityFamilyPairs(component: StayGuest[]): number[] {
     for (let index = 0; index < size; index += 1) base[index] = index;
     const queue = [root];
     used[root] = true;
-    for (let head = 0; head < queue.length; head += 1) {
-      const vertex = queue[head];
-      for (const candidate of adjacency[vertex]) {
+    // The queue grows while it is walked; an array iterator re-reads `length`
+    // each step, so this visits everything the head-index loop it replaces did
+    // and hands out a proven vertex rather than a possibly-absent slot.
+    for (const vertex of queue) {
+      for (const candidate of neighboursOf(vertex)) {
         if (
-          base[vertex] === base[candidate] ||
-          match[vertex] === candidate
+          vertexSlot(base, vertex, "base") ===
+            vertexSlot(base, candidate, "base") ||
+          vertexSlot(match, vertex, "match") === candidate
         ) {
           continue;
         }
+        // `match` is not written between here and the reads below: the blossom
+        // branch leaves it alone, and the augmenting branch returns.
+        const candidateMatch = vertexSlot(match, candidate, "match");
         if (
           candidate === root ||
-          (match[candidate] !== -1 && parent[match[candidate]] !== -1)
+          (candidateMatch !== -1 &&
+            vertexSlot(parent, candidateMatch, "parent") !== -1)
         ) {
           const commonBase = lowestCommonAncestor(vertex, candidate);
           blossom.fill(false);
           markBlossomPath(vertex, commonBase, candidate);
           markBlossomPath(candidate, commonBase, vertex);
           for (let index = 0; index < size; index += 1) {
-            if (!blossom[base[index]]) continue;
+            if (!blossom[vertexSlot(base, index, "base")]) continue;
             base[index] = commonBase;
             if (used[index]) continue;
             used[index] = true;
@@ -1699,22 +1764,22 @@ function maximumCardinalityFamilyPairs(component: StayGuest[]): number[] {
           }
           continue;
         }
-        if (parent[candidate] !== -1) continue;
+        if (vertexSlot(parent, candidate, "parent") !== -1) continue;
         parent[candidate] = vertex;
-        if (match[candidate] === -1) {
+        if (candidateMatch === -1) {
           let current = candidate;
           while (current !== -1) {
-            const previous = parent[current];
-            const next = previous === -1 ? -1 : match[previous];
+            const previous = vertexSlot(parent, current, "parent");
+            const next =
+              previous === -1 ? -1 : vertexSlot(match, previous, "match");
             match[current] = previous;
             if (previous !== -1) match[previous] = current;
             current = next;
           }
           return true;
         }
-        const matched = match[candidate];
-        used[matched] = true;
-        queue.push(matched);
+        used[candidateMatch] = true;
+        queue.push(candidateMatch);
       }
     }
     return false;
@@ -1723,25 +1788,38 @@ function maximumCardinalityFamilyPairs(component: StayGuest[]): number[] {
   for (let vertex = 0; vertex < size; vertex += 1) {
     if (match[vertex] === -1) augmentFrom(vertex);
   }
-  return match;
+  // Hand back each guest already joined to the guest it was matched to, rather
+  // than a vertex-number array the caller has to read back against the same
+  // component by position. The pairing is then a fact of the value (#2800).
+  return component.map((guest, index) => {
+    const partnerIndex = vertexSlot(match, index, "match");
+    if (partnerIndex === -1) return { guest, partner: undefined };
+    const partner = component[partnerIndex];
+    if (partner === undefined) {
+      throw new Error(
+        `Bed allocation family matching paired vertex ${index} with ${partnerIndex}, outside 0..${size - 1}.`,
+      );
+    }
+    return { guest, partner };
+  });
 }
 
 function matchedFamilyComponentOrder(components: StayGuest[][]): StayGuest[] {
   const paired: StayGuest[] = [];
   const unmatched: StayGuest[] = [];
   for (const component of components) {
-    const match = maximumCardinalityFamilyPairs(component);
-    const emitted = new Set<number>();
-    for (let index = 0; index < component.length; index += 1) {
-      if (emitted.has(index)) continue;
-      const partner = match[index];
-      if (partner === -1) {
-        unmatched.push(component[index]);
-        emitted.add(index);
+    // A component holds each guest once (the walk that builds it dedupes by
+    // id), so guest identity is the same dedup key the vertex index was.
+    const emitted = new Set<StayGuest>();
+    for (const { guest, partner } of maximumCardinalityFamilyPairs(component)) {
+      if (emitted.has(guest)) continue;
+      if (partner === undefined) {
+        unmatched.push(guest);
+        emitted.add(guest);
         continue;
       }
-      paired.push(component[index], component[partner]);
-      emitted.add(index);
+      paired.push(guest, partner);
+      emitted.add(guest);
       emitted.add(partner);
     }
   }
@@ -1756,10 +1834,14 @@ function overlappingNightCount(left: StayGuest, right: StayGuest): number {
   let leftIndex = 0;
   let rightIndex = 0;
   let count = 0;
-  while (leftIndex < left.nights.length && rightIndex < right.nights.length) {
-    const comparison = left.nights[leftIndex].localeCompare(
-      right.nights[rightIndex],
-    );
+  // The merge runs while both lists still have a night, and the two reads are
+  // what say so — the same condition the two length comparisons expressed,
+  // stated where the values are actually taken (#2800).
+  while (true) {
+    const leftNight = left.nights[leftIndex];
+    const rightNight = right.nights[rightIndex];
+    if (leftNight === undefined || rightNight === undefined) break;
+    const comparison = leftNight.localeCompare(rightNight);
     if (comparison === 0) {
       count += 1;
       leftIndex += 1;
@@ -1775,16 +1857,19 @@ function overlappingNightCount(left: StayGuest, right: StayGuest): number {
 
 function sampledFamilyBlockSeeds(guests: StayGuest[]): StayGuest[] {
   if (guests.length <= BED_ALLOCATION_MAX_FAMILY_BLOCK_SEEDS) return guests;
-  return Array.from(
-    { length: BED_ALLOCATION_MAX_FAMILY_BLOCK_SEEDS },
-    (_, index) =>
-      guests[
-        Math.floor(
-          (index * (guests.length - 1)) /
-            (BED_ALLOCATION_MAX_FAMILY_BLOCK_SEEDS - 1),
-        )
-      ],
+  // Even sample across the list including both endpoints. Past the seed budget
+  // the step exceeds one, so the sampled positions are strictly increasing and
+  // distinct; selecting by position therefore yields the same seeds in the
+  // same order, and reads nothing the list might not hold (#2800).
+  const sampledPositions = new Set(
+    Array.from({ length: BED_ALLOCATION_MAX_FAMILY_BLOCK_SEEDS }, (_, index) =>
+      Math.floor(
+        (index * (guests.length - 1)) /
+          (BED_ALLOCATION_MAX_FAMILY_BLOCK_SEEDS - 1),
+      ),
+    ),
   );
+  return guests.filter((_, index) => sampledPositions.has(index));
 }
 
 /**
@@ -1814,7 +1899,7 @@ function capacityAwareFamilyBlockOrder(
     let bestScore = -1;
     for (const seed of sampledFamilyBlockSeeds(remaining)) {
       const block = [seed];
-      const available = remaining.filter((guest) => guest !== seed);
+      let available = remaining.filter((guest) => guest !== seed);
       const marginalEdges = new Map(
         available.map((guest) => [
           guest.id,
@@ -1824,17 +1909,23 @@ function capacityAwareFamilyBlockOrder(
       let score = 0;
 
       while (block.length < blockSize) {
-        let selectedIndex = 0;
-        for (let index = 1; index < available.length; index += 1) {
-          if (
-            (marginalEdges.get(available[index].id) ?? 0) >
-            (marginalEdges.get(available[selectedIndex].id) ?? 0)
-          ) {
-            selectedIndex = index;
+        // Carry the best guest itself rather than its position, so removing it
+        // needs no index. First maximum still wins, keeping canonical input
+        // order as the tie-break (#2800).
+        let selected: StayGuest | undefined;
+        let gain = 0;
+        for (const candidate of available) {
+          const candidateGain = marginalEdges.get(candidate.id) ?? 0;
+          if (selected === undefined || candidateGain > gain) {
+            selected = candidate;
+            gain = candidateGain;
           }
         }
-        const [selected] = available.splice(selectedIndex, 1);
-        const gain = marginalEdges.get(selected.id) ?? 0;
+        // `available` holds every guest not yet in the block and the block is
+        // still short of the room, so one is always left; an empty list means
+        // the block cannot be filled, and a short block is the safe answer.
+        if (selected === undefined) break;
+        available = available.filter((guest) => guest !== selected);
         score += gain;
         block.push(selected);
         for (const candidate of available) {
@@ -1904,10 +1995,11 @@ function splitGuestOrderVariants(
   const directFamilyWeights = new Map(
     canonical.map((guest) => [guest.id, new Map<string, number>()]),
   );
-  for (let left = 0; left < canonical.length; left += 1) {
-    for (let right = left + 1; right < canonical.length; right += 1) {
-      const a = canonical[left];
-      const b = canonical[right];
+  // Every unordered pair once, in canonical order: the outer entry hands over
+  // the guest with its position and the inner walks the tail after it, so
+  // neither side is read back out of the list by a computed index (#2800).
+  for (const [left, a] of canonical.entries()) {
+    for (const b of canonical.slice(left + 1)) {
       if (!shareDirectFamilyGroup(a, b)) continue;
       neighbours.get(a.id)?.add(b.id);
       neighbours.get(b.id)?.add(a.id);
@@ -1970,10 +2062,8 @@ function splitGuestOrderVariants(
   // Retain direct-pair-front candidates for overlapping or impossible chains:
   // a connected component may not have any linear order that makes every
   // directly related pair share a capacity-constrained room.
-  for (let left = 0; left < canonical.length; left += 1) {
-    for (let right = left + 1; right < canonical.length; right += 1) {
-      const a = canonical[left];
-      const b = canonical[right];
+  for (const [left, a] of canonical.entries()) {
+    for (const b of canonical.slice(left + 1)) {
       if (!shareDirectFamilyGroup(a, b)) continue;
       const others = canonical.filter((guest) => guest !== a && guest !== b);
       familyVariants.push([a, b, ...others], [b, a, ...others]);
@@ -2039,15 +2129,22 @@ function splitGuestOrderVariants(
   // Sample the full deterministic family candidate set evenly and include both
   // endpoints. In particular, the final high-sorted group candidate must not
   // disappear merely because the total matching budget is bounded.
-  const spreadFamilyVariants = Array.from({ length: remaining }, (_, index) => {
-    const sampledIndex =
+  // This branch runs only when there are strictly more candidates than the
+  // budget, so the step exceeds one and the sampled positions are distinct and
+  // increasing: selecting by position keeps the same candidates in the same
+  // order, and reads nothing the list might not hold (#2800).
+  const sampledPositions = new Set(
+    Array.from({ length: remaining }, (_, index) =>
       remaining === 1
         ? distinctFamilyVariants.length - 1
         : Math.floor(
             (index * (distinctFamilyVariants.length - 1)) / (remaining - 1),
-          );
-    return distinctFamilyVariants[sampledIndex];
-  });
+          ),
+    ),
+  );
+  const spreadFamilyVariants = distinctFamilyVariants.filter((_, index) =>
+    sampledPositions.has(index),
+  );
   return [
     ...foundational,
     ...requiredFamilyVariants,
@@ -2301,15 +2398,19 @@ function freeSpaceStrategyScore(
       let sameRoomLinks = 0;
       let roomSwitches = 0;
       for (const rowsForGuest of rowsByGuest.values()) {
-        const guestRows = [...rowsForGuest].sort((a, b) =>
+        // Adjacent (previous, current) pairs down the guest's sorted nights.
+        // One night, or none, contributes no link and no switch — which is
+        // what the index-based loop did by never entering (#2800).
+        const [firstRow, ...laterRows] = [...rowsForGuest].sort((a, b) =>
           a.stayDate.localeCompare(b.stayDate),
         );
-        for (let index = 1; index < guestRows.length; index += 1) {
-          const previous = guestRows[index - 1];
-          const current = guestRows[index];
+        if (firstRow === undefined) continue;
+        let previous = firstRow;
+        for (const current of laterRows) {
           if (previous.roomId === current.roomId) sameRoomLinks += 1;
           else roomSwitches += 1;
           if (previous.bedId === current.bedId) sameBedLinks += 1;
+          previous = current;
         }
       }
       score.push(-sameBedLinks, -sameRoomLinks, roomSwitches);
@@ -2326,16 +2427,11 @@ function freeSpaceStrategyScore(
 
     let splitFamilyPairs = 0;
     for (const nightRows of rowsByNight.values()) {
-      for (let left = 0; left < nightRows.length; left += 1) {
-        for (let right = left + 1; right < nightRows.length; right += 1) {
-          const a = nightRows[left];
-          const b = nightRows[right];
-        if (
-          a.roomId !== b.roomId &&
-          shareDirectFamilyGroup(a, b)
-        ) {
-          splitFamilyPairs += 1;
-        }
+      for (const [left, a] of nightRows.entries()) {
+        for (const b of nightRows.slice(left + 1)) {
+          if (a.roomId !== b.roomId && shareDirectFamilyGroup(a, b)) {
+            splitFamilyPairs += 1;
+          }
         }
       }
     }
@@ -2470,8 +2566,13 @@ function chooseFreeSpaceStrategy(
     const guestOrder = guestOrders[layoutIndex % guestOrders.length];
     const firstIndex =
       Math.floor(layoutIndex / guestOrders.length) % rooms.length;
+    const firstRoom = rooms[firstIndex];
+    // The budget is capped at rooms x orders, so both rotations land inside
+    // non-empty lists; an empty one is no layout to try, not a layout with a
+    // missing room, so the search moves on rather than inventing one (#2800).
+    if (guestOrder === undefined || firstRoom === undefined) continue;
     const orderedRooms = [
-      rooms[firstIndex],
+      firstRoom,
       ...rooms.filter((_, index) => index !== firstIndex),
     ];
     const orderByGuestId = new Map(
@@ -2667,15 +2768,23 @@ function relocateOrUnallocateBooking(
     lodgeId,
     requestedRoomId: rows[0]?.bookingRequestedRoomId ?? null,
     isSchoolGroup: rows[0]?.bookingIsSchoolGroup === true,
-    guests: demand.guests.map((guest) => ({
-      ...guest,
-      bookingId,
-      stayStart: parseDateOnly(guest.nights[0]),
-      stayEnd: addDaysDateOnly(
-        parseDateOnly(guest.nights[guest.nights.length - 1]),
-        1,
-      ),
-    })),
+    // `buildStayDemand` keeps only guests holding at least one night, so both
+    // ends of the stay are present. A guest with none has no stay range to
+    // state and nothing to relocate, so it contributes no synthetic guest
+    // rather than a fabricated range (#2800).
+    guests: demand.guests.flatMap((guest) => {
+      const firstNight = guest.nights[0];
+      const lastNight = guest.nights.at(-1);
+      if (firstNight === undefined || lastNight === undefined) return [];
+      return [
+        {
+          ...guest,
+          bookingId,
+          stayStart: parseDateOnly(firstNight),
+          stayEnd: addDaysDateOnly(parseDateOnly(lastNight), 1),
+        },
+      ];
+    }),
   };
   const ordered = orderedCandidateRooms(
     state,
@@ -3146,9 +3255,11 @@ function tryDisplaceForHeldGuestNight(
       // across two bookings is never a displacement target: evicting one of
       // them frees no bed, and taking it anyway is exactly how a stranger ends
       // up written in beside someone else's second occupant.
+      // An empty bed-night is not a displacement target; reading the first
+      // occupant is what says the bed-night has one at all (#2800).
       const occupants = occupantsOnBedNight(state, key);
-      if (occupants.length === 0) continue;
       const occupant = occupants[0];
+      if (occupant === undefined) continue;
       if (occupants.some((row) => row.bookingId !== occupant.bookingId)) {
         continue;
       }
