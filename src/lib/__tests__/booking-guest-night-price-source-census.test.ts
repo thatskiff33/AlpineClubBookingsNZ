@@ -1,12 +1,10 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join, relative } from "node:path";
+import ts from "typescript";
 
 import { describe, expect, it } from "vitest";
 
-import {
-  stripComments,
-  stripCommentsAndStrings,
-} from "@/lib/__tests__/support/strip-comments";
+import { stripComments } from "@/lib/__tests__/support/strip-comments";
 
 const REPO = process.cwd();
 const SKIPPED_DIRECTORIES = new Set([
@@ -21,6 +19,13 @@ const SKIPPED_DIRECTORIES = new Set([
 ]);
 const EXECUTABLE_EXTENSION = /\.(?:[cm]?[jt]sx?)$/;
 const TEST_FILE = /(?:^|\.)(?:test|spec)\.[cm]?[jt]sx?$/;
+const DIRECT_WRITER_METHODS = new Set([
+  "create",
+  "createMany",
+  "update",
+  "updateMany",
+  "upsert",
+]);
 
 function sourceFiles(): string[] {
   const files: string[] = [];
@@ -104,53 +109,81 @@ const REQUIRED_WRITER_SHAPES = new Map<string, RegExp[]>([
   ],
 ]);
 
-describe("INV-MONEY-028 BookingGuestNight writer census", () => {
-  it("knows every direct model writer and every nested night-create builder", () => {
-    const directWriters: string[] = [];
-    const nestedWriters: string[] = [];
-    for (const file of sourceFiles()) {
-      const code = stripCommentsAndStrings(readFileSync(file, "utf8"));
-      if (/bookingGuestNight\s*\.\s*(create|createMany|update|updateMany|upsert)\b/.test(code)) {
-        directWriters.push(relativeSource(file));
-      }
-      if (/\bnights\s*:\s*\{\s*create\s*:/.test(code)) {
-        nestedWriters.push(relativeSource(file));
-      }
-    }
+const REQUIRED_WRITER_SITE_COUNTS = new Map<
+  string,
+  { direct: number; nested: number }
+>([
+  ["e2e/setup/seed-second-lodge.ts", { direct: 1, nested: 0 }],
+  ["prisma/demo-seed.ts", { direct: 1, nested: 0 }],
+  ["src/app/api/bookings/[id]/guests/route.ts", { direct: 0, nested: 1 }],
+  ["src/lib/booking-create-guests.ts", { direct: 0, nested: 1 }],
+  ["src/lib/booking-date-modification-service.ts", { direct: 2, nested: 0 }],
+  ["src/lib/booking-modify-plan.ts", { direct: 1, nested: 0 }],
+  ["src/lib/booking-request.ts", { direct: 2, nested: 0 }],
+  ["src/lib/booking-request-shared.ts", { direct: 0, nested: 1 }],
+  ["src/lib/stored-night-price-repair-store.ts", { direct: 2, nested: 0 }],
+  ["src/lib/waitlist.ts", { direct: 1, nested: 0 }],
+]);
 
-    expect(directWriters.sort()).toEqual(
-      [
-        "prisma/demo-seed.ts",
-        "e2e/setup/seed-second-lodge.ts",
-        "src/lib/booking-date-modification-service.ts",
-        "src/lib/booking-modify-plan.ts",
-        "src/lib/booking-request.ts",
-        "src/lib/stored-night-price-repair-store.ts",
-        "src/lib/waitlist.ts",
-      ].sort(),
+function discoveredWriterSiteCounts(): Map<
+  string,
+  { direct: number; nested: number }
+> {
+  const sites = new Map<string, { direct: number; nested: number }>();
+  for (const file of sourceFiles()) {
+    const source = ts.createSourceFile(
+      file,
+      readFileSync(file, "utf8"),
+      ts.ScriptTarget.Latest,
+      false,
+      /[jt]sx$/.test(file) ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
     );
-    expect(nestedWriters.sort()).toEqual(
-      [
-        "src/app/api/bookings/[id]/guests/route.ts",
-        "src/lib/booking-create-guests.ts",
-        "src/lib/booking-request-shared.ts",
-      ].sort(),
+    let direct = 0;
+    let nested = 0;
+    const propertyName = (name: ts.PropertyName): string | undefined =>
+      ts.isIdentifier(name) || ts.isStringLiteral(name) ? name.text : undefined;
+    const visit = (node: ts.Node) => {
+      if (
+        ts.isCallExpression(node) &&
+        ts.isPropertyAccessExpression(node.expression) &&
+        DIRECT_WRITER_METHODS.has(node.expression.name.text) &&
+        ts.isPropertyAccessExpression(node.expression.expression) &&
+        node.expression.expression.name.text === "bookingGuestNight"
+      ) {
+        direct += 1;
+      }
+      if (
+        ts.isPropertyAssignment(node) &&
+        propertyName(node.name) === "nights" &&
+        ts.isObjectLiteralExpression(node.initializer) &&
+        node.initializer.properties.some(
+          (entry) =>
+            ts.isPropertyAssignment(entry) && propertyName(entry.name) === "create",
+        )
+      ) {
+        nested += 1;
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(source);
+    if (direct > 0 || nested > 0) {
+      sites.set(relativeSource(file), { direct, nested });
+    }
+  }
+  return sites;
+}
+
+describe("INV-MONEY-028 BookingGuestNight writer census", () => {
+  it("knows every direct and nested writer site, including repeats in one file", () => {
+    expect(
+      [...discoveredWriterSiteCounts()].sort(([a], [b]) => a.localeCompare(b)),
+    ).toEqual(
+      [...REQUIRED_WRITER_SITE_COUNTS].sort(([a], [b]) => a.localeCompare(b)),
     );
   });
 
   it("binds every discovered writer to its reviewed provenance payload", () => {
-    const discoveredWriters = new Set<string>();
-    for (const file of sourceFiles()) {
-      const code = stripCommentsAndStrings(readFileSync(file, "utf8"));
-      if (
-        /bookingGuestNight\s*\.\s*(create|createMany|update|updateMany|upsert)\b/.test(
-          code,
-        ) ||
-        /\bnights\s*:\s*\{\s*create\s*:/.test(code)
-      ) {
-        discoveredWriters.add(relativeSource(file));
-      }
-    }
+    const discoveredWriters = new Set(discoveredWriterSiteCounts().keys());
     expect([...REQUIRED_WRITER_SHAPES.keys()].sort()).toEqual(
       [...discoveredWriters].sort(),
     );
