@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   classifyErrorType,
   findCoverageFailures,
+  normalisePath,
   readAllowlistFiles,
   summariseCoverage,
 } from "./check-semgrep-coverage.mjs";
@@ -189,5 +190,40 @@ describe("findCoverageFailures", () => {
       kind: "unrecognised scan error",
       path: "src/x.ts",
     });
+  });
+});
+
+describe("normalisePath", () => {
+  it("compares Windows and POSIX spellings of the same file as one path", () => {
+    // Semgrep reports paths in the HOST separator. CI runs it in a Linux
+    // container and gets `src/lib/x.ts`; a Semgrep installed on Windows
+    // reports `src\\lib\\x.ts` for that same file, while the allowlist is
+    // committed with forward slashes. Without normalising, the documented
+    // local command on Windows reported every allowlisted file as BOTH newly
+    // unparsed and stale - 338 failures over an allowlist of 169.
+    expect(normalisePath("src\\lib\\x.ts")).toBe("src/lib/x.ts");
+    expect(normalisePath("src/lib/x.ts")).toBe("src/lib/x.ts");
+  });
+
+  it("matches a backslash report against a forward-slash allowlist", () => {
+    const coverage = {
+      wholeFile: [],
+      partial: [],
+      unknown: [],
+      scannedCount: 0,
+    };
+    const summary = summariseCoverage({
+      errors: [
+        {
+          type: ["PartialParsing", []],
+          path: "src\\lib\\known.tsx",
+        },
+      ],
+    });
+    void coverage;
+    expect(summary.partial).toEqual(["src/lib/known.tsx"]);
+    expect(
+      findCoverageFailures(summary, readAllowlistFiles({ files: ["src/lib/known.tsx"] }), () => true),
+    ).toEqual([]);
   });
 });

@@ -73,6 +73,22 @@ export function classifyErrorType(type) {
 }
 
 /**
+ * Puts a path into the one spelling this gate compares in.
+ *
+ * Semgrep reports paths in the host's own separator, so the SAME file is
+ * `src/lib/x.ts` from the Linux container CI runs and `src\\lib\\x.ts` from a
+ * Semgrep installed on Windows. The allowlist is committed with forward
+ * slashes. Without this, running the documented local command on Windows
+ * reports every allowlisted file as BOTH newly-unparsed and stale - 338
+ * failures over an allowlist of 169, which is how this was found.
+ *
+ * @param {string} path
+ */
+export function normalisePath(path) {
+  return path.replace(/\\/g, "/");
+}
+
+/**
  * Reduces a Semgrep JSON report to the coverage facts this gate decides on.
  *
  * @param {{ errors?: ReadonlyArray<Record<string, unknown>>, paths?: { scanned?: ReadonlyArray<string> } }} report
@@ -84,7 +100,10 @@ export function summariseCoverage(report) {
   const unknown = [];
 
   for (const error of report.errors ?? []) {
-    const path = typeof error.path === "string" ? error.path : "<unknown path>";
+    const path =
+      typeof error.path === "string"
+        ? normalisePath(error.path)
+        : "<unknown path>";
     switch (classifyErrorType(error.type)) {
       case "whole-file":
         wholeFile.add(path);
@@ -129,7 +148,7 @@ export function readAllowlistFiles(allowlist) {
       );
     }
   }
-  return [...allowlist.files];
+  return allowlist.files.map(normalisePath);
 }
 
 /**
