@@ -811,7 +811,25 @@ derivation).
   (`mintSplitGuestPaymentLinkIfAbsent`) — and fires an admin alert on **every**
   hold-extension run until the child settles. If the parent itself is unpaid (abandoned card), no link is minted or emailed (the guest portion never settles ahead of the member's own place) and the alert fires with parent-unpaid wording instead. Only genuine
   split children qualify: a #796 group joiner always has a `GroupBookingJoin`
-  row. At most one live token exists per booking
+  row. No beds are held for the child until it is paid. The same machinery
+  backs `POST /api/bookings/[id]/send-guest-payment-link`. A child can end PAID
+  while its parent is unpaid or later cancelled — the parent-cancel sweep only
+  cancels still-PENDING children — and there is deliberately no auto-cancel past
+  check-in (owner policy decision).
+  The single live token, and why the link and the auto-charge never both
+  settle, is `INV-CAP-037`.
+  - **"Inherited from the parent payment" means a card the parent SAVED, not
+    merely one it paid with** (#3269, `INV-PAY-053`). The fallback reads the
+    parent's `Payment` row through `savedPaymentMethodForBooking`, which counts a
+    card only when the row also carries the `stripeSetupIntentId` that saved it.
+    A parent that paid its own place by one-off card checkout leaves a payment
+    method Stripe refuses to charge again, so its child has no card and takes
+    this same payment-link path — the parent is `PAID`, which is the settled
+    state this rule already accepts.
+
+### INV-CAP-037
+
+- At most one live token exists per booking
   (every mint revokes-then-creates under the per-lodge advisory lock;
   undelivered emails revoke their link), and the link
   and the saved-card auto-charge never both settle durably: the charge claim
@@ -822,11 +840,7 @@ derivation).
   second on the already-PAID booking — durably (enqueue-then-execute, exactly the duplicate's captured amount, pinned to the duplicate's own transaction) with a loud admin alert — while a SAME-intent replay keeps its byte-identical `already_paid` outcome and at most one side of the pair can ever be refunded (adjudication under `lock(1)`). A capture already
   owned by the superseded-intent recovery machinery (`CANCEL_PAYMENT_INTENT` /
   `REFUND_SUPERSEDED_PAYMENT`) is never mistaken for the settlement side of such
-  a pair. No beds are held for the child until it is paid. The same machinery
-  backs `POST /api/bookings/[id]/send-guest-payment-link`. A child can end PAID
-  while its parent is unpaid or later cancelled — the parent-cancel sweep only
-  cancels still-PENDING children — and there is deliberately no auto-cancel past
-  check-in (owner policy decision).
+  a pair.
 
 ### INV-CAP-006
 

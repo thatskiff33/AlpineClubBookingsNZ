@@ -168,6 +168,7 @@ number and prefix, and it is listed at the end of the table below.
 | `INV-CAP-030` | Member merge sweeps only future shared bed-nights its validity re-check refuses |
 | `INV-CAP-031` | Shared doubles: placement rule, planner keys, DB caps, partner-shared headroom |
 | `INV-CAP-036` | A shared double losing its primary auto-promotes the survivor, audited |
+| `INV-CAP-037` | At most one live payment link per booking; never both settle |
 | `INV-CAP-011` | Waitlisted and offered bookings hold no capacity until confirmed |
 | `INV-CAP-012` | A waitlist offer reprices at current rates and states what is payable |
 | `INV-CAP-013` | A member is present on only one live booking per lodge night |
@@ -216,6 +217,12 @@ Prefix `INV-PAY`.
 | `INV-PAY-049` | Both directions are audited with the acting admin and the previous status |
 | `INV-PAY-050` | Xero Stripe refund notes cover provider-backed cash evidence, never the refunded-amount mirror |
 | `INV-PAY-051` | An unpriceable edit holds the money as one typed review task |
+| `INV-PAY-052` | A replacement SetupIntent retires the previous card; a retired card stays retired |
+| `INV-PAY-053` | Off-session charging needs SetupIntent provenance, decided in one place |
+| `INV-PAY-054` | An unusable saved card is terminal for the cron; escalated once |
+| `INV-PAY-055` | One charge attempt is one durable ledger row with its own key |
+| `INV-PAY-056` | A payment recovery becomes terminally failed in exactly one place |
+| `INV-PAY-057` | A dead additional-payment recovery withdraws the ask it left standing |
 | `INV-PAY-067` | One review task per parked strand; departing strand always recorded |
 | `INV-PAY-060` | Settled occurrences never suppress the next; stored prices are not proof |
 | `INV-PAY-068` | Zero completion refused, naming the way out; credit-only records no refund |

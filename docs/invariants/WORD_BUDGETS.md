@@ -49,6 +49,7 @@ file; the checker treats an absent register as "no exceptions, no debt".
 | ID | Words |
 | --- | ---: |
 | `INV-MOD-025` | 4650 |
+| `INV-PAY-055` | 2858 |
 | `INV-ADDPAY-037` | 2769 |
 | `INV-SSOT-004` | 2658 |
 | `INV-HOST-050` | 2220 |
@@ -71,6 +72,8 @@ file; the checker treats an absent register as "no exceptions, no debt".
 | `INV-HOST-043` | 1003 |
 | `INV-CONFIG-002` | 909 |
 | `INV-MONEY-003` | 869 |
+| `INV-PAY-054` | 848 |
+| `INV-PAY-052` | 846 |
 | `INV-ADDPAY-034` | 828 |
 | `INV-MOD-026` | 828 |
 | `INV-PRIV-011` | 814 |
@@ -78,13 +81,16 @@ file; the checker treats an absent register as "no exceptions, no debt".
 | `INV-DATE-013` | 781 |
 | `INV-GUEST-016` | 781 |
 | `INV-INT-016` | 762 |
+| `INV-PAY-053` | 738 |
 | `INV-HOST-049` | 715 |
 | `INV-HOST-029` | 707 |
+| `INV-PAY-057` | 696 |
 | `INV-MOD-021` | 672 |
 | `INV-LIFE-062` | 645 |
 | `INV-ADDPAY-017` | 637 |
 | `INV-PRIV-013` | 627 |
 | `INV-MOD-006` | 623 |
+| `INV-PAY-056` | 620 |
 | `INV-HOST-042` | 607 |
 | `INV-LOCK-002` | 589 |
 | `INV-CONFIG-003` | 578 |
@@ -109,7 +115,6 @@ file; the checker treats an absent register as "no exceptions, no debt".
 | `INV-ADDPAY-011` | 395 |
 | `INV-REQ-007` | 391 |
 | `INV-LIFE-078` | 387 |
-| `INV-CAP-005` | 368 |
 | `INV-CAP-023` | 365 |
 | `INV-PAY-058` | 363 |
 | `INV-LIFE-050` | 359 |
@@ -133,5 +138,5 @@ file; the checker treats an absent register as "no exceptions, no debt".
 | `INV-PAY-066` | 316 |
 | `INV-HOST-004` | 310 |
 | `INV-PAY-046` | 308 |
-| `INV-CAP-036` | 303 |
 | `INV-CAP-027` | 303 |
+| `INV-CAP-036` | 303 |
