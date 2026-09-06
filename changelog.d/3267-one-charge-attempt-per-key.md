@@ -51,14 +51,3 @@
   case. And when a charge does not go through, the alert to administrators
   quotes the amount that was actually asked for, which matters if the booking's
   price changed between the moment it was read and the moment it was charged.
-
-  One more correction covers the changeover itself. A charge that was already
-  under way when this release goes out was recorded in the old style, without
-  the new per-attempt reference. If the member had since saved a different
-  card, the system would not have recognised that older charge as this
-  booking's money and could have charged the new card beside it. Such a charge
-  is now recognised by what it was for, whichever card it names: it is closed
-  and cancelled if it can be, and waited for if it is still going through at
-  the card network. This applies to all three ways a saved card is charged, and
-  it stops mattering once the charges that were open at the changeover have
-  finished.
