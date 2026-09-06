@@ -24,6 +24,7 @@ import {
   type SettlementDirectionValue,
   type UnpricedNightsSummary,
 } from "@/lib/stored-night-price-repair";
+import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 
 /**
  * #3191 (epic #2797): the READS and the WRITES behind recording what an unpriced
@@ -696,8 +697,10 @@ export async function rebaseBookingTotalsFromStrands({
     (sum, guest) => sum + guest.priceCents,
     0,
   );
-  const newFinalPriceCents =
-    newTotalPriceCents + booking.promoAdjustmentCents;
+  const newFinalPriceCents = bookingFinalPriceCents({
+    totalPriceCents: newTotalPriceCents,
+    promoAdjustmentCents: booking.promoAdjustmentCents,
+  });
 
   const rebased = await store.booking.updateMany({
     where: {

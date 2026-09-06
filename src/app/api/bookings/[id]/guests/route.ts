@@ -130,6 +130,7 @@ import {
   BookingMemberNightConflictError,
   getBookingMemberNightConflictResponse,
 } from "@/lib/booking-member-night-conflicts";
+import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 
 const addGuestsSchema = z.object({
   guests: z
@@ -843,7 +844,10 @@ export async function POST(
       // booking did not move, not because two expressions happened to cancel.
       const newFinalPriceCents = parked
         ? booking.finalPriceCents
-        : newTotalPriceCents + newPromoAdjustmentCents;
+        : bookingFinalPriceCents({
+            totalPriceCents: newTotalPriceCents,
+            promoAdjustmentCents: newPromoAdjustmentCents,
+          });
       const priceDiffCents = newFinalPriceCents - booking.finalPriceCents;
 
       // Update hasNonMembers
