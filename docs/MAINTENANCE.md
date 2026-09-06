@@ -257,8 +257,8 @@ annotation not naming an `acb-` rule served the cloud scan. It does not:
 gate **does** run. One of the six annotations naming that rule was live; the
 other five sat on call sites the rule never flags.
 
-So the tree carried 116 id-bearing `nosemgrep` annotations and exactly 3 of them
-suppressed anything the blocking gate can emit. #2842 deleted the other 113
+So the tree carried 120 id-bearing `nosemgrep` annotations and exactly 3 of them
+suppressed anything the blocking gate can emit. #2842 deleted the other 117
 — the evidence being that `--disable-nosem` reports no finding at any of those
 sites — and the scan is still findings-free with them gone. Each of the three
 retained annotations names its rule and carries the reason at the call site.
@@ -319,8 +319,10 @@ things:
   reporting a new kind of failure must not reduce coverage silently just because
   the gate predates the name.
 
-The allowlist ships 169 entries, **every one a test file** — the five production
-files and all three whole-file failures were fixed rather than listed. Run it
+Every entry in the allowlist is a **test file**: the production files and all
+three whole-file failures the measurement found were fixed rather than listed.
+The file itself is the count — it is not restated here, because the gate exists
+to drive it down and a copied number would be wrong on the first success. Run it
 locally against a scan you produced yourself:
 
 ```bash

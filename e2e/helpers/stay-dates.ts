@@ -285,6 +285,5 @@ export function calendarDayLabel(dateOnly: string): RegExp {
   const weekday = date.toLocaleDateString("en-NZ", { weekday: "long" });
   const month = date.toLocaleDateString("en-NZ", { month: "long" });
   // Test helper: pattern is built from a formatted test date (weekday/day/month/year), not user input; no ReDoS.
-  // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp
   return new RegExp(`^${weekday}, ${d} ${month} ${y},`);
 }

@@ -8,9 +8,10 @@ import { pathToFileURL } from "node:url";
  * when it could not parse some of that code. Parse failures are reported at
  * `warn` level in the `errors` array and nowhere in the exit status, so a file
  * Semgrep cannot read looks exactly like a file Semgrep read and cleared.
- * Measured on the epic base with the pinned CI image: 177 of 4,219 scanned
- * files carried a parse error behind a green gate, and three of those were
- * whole-file failures where no rule ran at all.
+ * The measurement that produced this gate, and the counts, live in
+ * `docs/MAINTENANCE.md` -> "Semgrep parse coverage". They are not restated
+ * here: they are a dated fact about one tree, and a copy of a number nothing
+ * compares is a number that drifts.
  *
  * THE TWO CLASSES ARE NOT THE SAME RISK, so this treats them differently.
  *

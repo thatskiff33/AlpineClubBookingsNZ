@@ -121,7 +121,6 @@ test("the same member cannot hold the same lodge night twice", async ({
     page
       .getByText(
         // Test helper: built from formatted dates, not user input; no ReDoS.
-        // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp
         new RegExp(
           `you are already on another booking for ${firstNight} and ${secondNight}`,
           "i",

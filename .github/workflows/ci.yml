@@ -204,11 +204,10 @@ jobs:
 
       # #2842. The scan above exits 0 on findings-free code even when it could
       # not PARSE some of that code: parse failures are reported at `warn` level
-      # in the JSON `errors` array and nowhere in the exit status. Measured on
-      # the epic base, 177 of 4,219 scanned files carried a parse error behind a
-      # green gate, three of them whole-file failures where no rule ran at all.
-      # A file the scanner cannot read must not be indistinguishable from a file
-      # the scanner read and cleared.
+      # in the JSON `errors` array and nowhere in the exit status. A file the
+      # scanner cannot read must not be indistinguishable from a file the
+      # scanner read and cleared. The measurement behind this, and the counts,
+      # are in `docs/MAINTENANCE.md` -> "Semgrep parse coverage".
       #
       # `if: always()` because a findings failure above must not hide a coverage
       # regression here - they are independent facts and both need reporting.
