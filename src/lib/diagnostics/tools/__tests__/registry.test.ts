@@ -926,23 +926,54 @@ function nestedArgumentFixture<TArgs>(argsSchema: z.ZodType<TArgs>) {
 }
 
 /**
- * The nesting shapes a reserved key can hide in, each with a schema that ACCEPTS the
- * polluted input so the assertion is not satisfied by the schema instead of the
- * guard.
+ * What zod ITSELF does with a polluted input, recorded per case because the
+ * answers are different defects — and recorded as a MEASUREMENT rather than a
+ * claim, because it has already changed underneath this file once.
  *
- * `hashesAsIfAbsent` records what zod 4.4.3 actually does with the key, because the
- * two answers are different defects. For `__proto__` it STRIPS: the parse succeeds and
- * the accepted arguments are byte-identical to a call that never sent the key, so
- * ADR-004's durable `argsHash` cannot tell the two apart — the audit-integrity defect.
- * For `constructor` inside a `z.record(...)` it KEEPS the key (measured: the canonical
- * hashes differ), so the record would at least be faithful — but it is still an
- * argument the registry documents as a REJECTION, and the guard refuses it.
+ * `ZOD_REJECTS` — zod refuses the input outright, so no repaired call exists to
+ * hash. zod 4.5 moved every `.strict()` object shape here, at any depth and
+ * inside array elements. Three rows below turned over when the dependency went
+ * from 4.4.3 to 4.5.4, and it was this table that reported it (#3313).
+ *
+ * `ZOD_STRIPS` — zod accepts and silently DELETES the key, so the accepted
+ * arguments are byte-identical to a call that never sent it and ADR-004's
+ * durable `argsHash` cannot tell the two apart. That is the audit-integrity
+ * defect this guard exists to remove. On zod 4.5.4 `z.record(...)` is the ONE
+ * surviving shape — which is exactly the shape the next tool packs need, so the
+ * guard is more load-bearing after the upgrade, not less.
+ *
+ * `ZOD_KEEPS` — zod accepts and keeps the key (measured: the canonical hashes
+ * differ), so the record would at least be faithful. It is still an argument the
+ * registry documents as a REJECTION, and the guard refuses it.
+ */
+type ZodReservedKeyVerdict =
+  | { readonly accepted: false }
+  | { readonly accepted: true; readonly hashesAsIfAbsent: boolean };
+
+const ZOD_REJECTS: ZodReservedKeyVerdict = { accepted: false };
+const ZOD_STRIPS: ZodReservedKeyVerdict = {
+  accepted: true,
+  hashesAsIfAbsent: true,
+};
+const ZOD_KEEPS: ZodReservedKeyVerdict = {
+  accepted: true,
+  hashesAsIfAbsent: false,
+};
+
+/**
+ * The nesting shapes a reserved key can hide in, each with a schema that would
+ * ACCEPT the polluted input on its own where zod still does — so the guard
+ * assertion is never satisfied by the schema instead of the guard. Where zod now
+ * rejects the shape itself, the guard assertion still runs and still has to pass,
+ * because the guard runs BEFORE the schema and must not have quietly become a
+ * pass-through.
  */
 interface NestedReservedKeyCase {
   label: string;
   polluted: string;
   clean: string;
-  hashesAsIfAbsent: boolean;
+  /** Measured on the resolved zod, not assumed. See `ZodReservedKeyVerdict`. */
+  zod: ZodReservedKeyVerdict;
   /** The schema ALONE, to measure what zod does when nothing guards it. */
   parseWithSchemaOnly: (raw: unknown) => { success: boolean; data: unknown };
   /** The same schema behind `defineDiagnosticsTool`, which must refuse. */
@@ -959,13 +990,13 @@ function nestedReservedKeyCase<TArgs>(
   argsSchema: z.ZodType<TArgs>,
   polluted: string,
   clean: string,
-  hashesAsIfAbsent: boolean,
+  zod: ZodReservedKeyVerdict,
 ): NestedReservedKeyCase {
   return {
     label,
     polluted,
     clean,
-    hashesAsIfAbsent,
+    zod,
     parseWithSchemaOnly: (raw) => {
       const result = argsSchema.safeParse(raw);
       return {
@@ -985,14 +1016,14 @@ const NESTED_RESERVED_KEY_CASES: readonly NestedReservedKeyCase[] = [
       .strict(),
     '{"filters":{"__proto__":{"polluted":"yes"},"status":"open"}}',
     '{"filters":{"status":"open"}}',
-    true,
+    ZOD_REJECTS,
   ),
   nestedReservedKeyCase(
     "in a `z.record(...)`, the shape the first tool pack needs",
     z.object({ filters: z.record(z.string(), z.string()) }).strict(),
     '{"filters":{"__proto__":{"polluted":"yes"},"status":"open"}}',
     '{"filters":{"status":"open"}}',
-    true,
+    ZOD_STRIPS,
   ),
   nestedReservedKeyCase(
     "inside an ARRAY element",
@@ -1001,7 +1032,7 @@ const NESTED_RESERVED_KEY_CASES: readonly NestedReservedKeyCase[] = [
       .strict(),
     '{"filters":[{"__proto__":{"polluted":"yes"},"status":"open"}]}',
     '{"filters":[{"status":"open"}]}',
-    true,
+    ZOD_REJECTS,
   ),
   nestedReservedKeyCase(
     "four levels down",
@@ -1016,14 +1047,39 @@ const NESTED_RESERVED_KEY_CASES: readonly NestedReservedKeyCase[] = [
       .strict(),
     '{"a":{"b":{"c":{"__proto__":{"polluted":"yes"},"d":"x"}}}}',
     '{"a":{"b":{"c":{"d":"x"}}}}',
-    true,
+    ZOD_REJECTS,
   ),
   nestedReservedKeyCase(
     "as `constructor`, which zod KEEPS rather than strips",
     z.object({ filters: z.record(z.string(), z.string()) }).strict(),
     '{"filters":{"constructor":"x","status":"open"}}',
     '{"filters":{"status":"open"}}',
-    false,
+    ZOD_KEEPS,
+  ),
+  // The two rows below exist because zod 4.5 REMOVED coverage from this table
+  // without removing any risk (#3313). Once zod began rejecting `.strict()`
+  // object shapes itself, the "one object down", "ARRAY element" and "four levels
+  // down" rows stopped discriminating: their schema refuses the input, so they
+  // would still pass with the guard's depth traversal deleted. Re-nesting the one
+  // shape zod still accepts — `z.record(...)` — puts DEPTH and ARRAY traversal
+  // back under a schema that accepts the polluted input, so the guard is once
+  // again the only thing that can reject it. Both are measured, not assumed:
+  // zod 4.5.4 accepts each and hashes it byte-identically to the clean call.
+  nestedReservedKeyCase(
+    "in a `z.record(...)` THREE levels down, where only the guard can refuse it",
+    z
+      .object({ a: z.object({ b: z.record(z.string(), z.string()) }).strict() })
+      .strict(),
+    '{"a":{"b":{"__proto__":{"polluted":"yes"},"status":"open"}}}',
+    '{"a":{"b":{"status":"open"}}}',
+    ZOD_STRIPS,
+  ),
+  nestedReservedKeyCase(
+    "in a `z.record(...)` inside an ARRAY, where only the guard can refuse it",
+    z.object({ filters: z.array(z.record(z.string(), z.string())) }).strict(),
+    '{"filters":[{"__proto__":{"polluted":"yes"},"status":"open"}]}',
+    '{"filters":[{"status":"open"}]}',
+    ZOD_STRIPS,
   ),
 ];
 
@@ -1452,35 +1508,53 @@ describe("diagnostics tool registry contract (#2374)", () => {
   );
 
   it.each(NESTED_RESERVED_KEY_CASES.map((entry) => [entry.label, entry] as const))(
-    "refuses a reserved key %s — which zod accepts, and then cannot hash apart",
+    "refuses a reserved key %s, whatever zod itself does with it",
     (_label, testCase) => {
       const polluted: unknown = JSON.parse(testCase.polluted);
       const clean: unknown = JSON.parse(testCase.clean);
 
-      // 1. Zod ACCEPTS the polluted input. This is the measurement, not a claim: if
-      //    a future zod fixes the strip, this assertion is what tells us.
+      // 1. What zod does with the polluted input UNGUARDED. This is the
+      //    measurement, not a claim, and it is asserted in both directions so a
+      //    zod that changes its mind in EITHER direction reports it here rather
+      //    than passing silently. That is not hypothetical: zod 4.5 began
+      //    rejecting every `.strict()` object shape, at any depth and inside an
+      //    array element, and these three assertions are what caught it (#3313).
       const pollutedParse = testCase.parseWithSchemaOnly(polluted);
       const cleanParse = testCase.parseWithSchemaOnly(clean);
-      expect(pollutedParse.success).toBe(true);
+      expect(pollutedParse.success).toBe(testCase.zod.accepted);
+      // The clean input must parse in every case. If it ever stops, the polluted
+      // assertion above is passing for the wrong reason — the schema rejecting
+      // the SHAPE rather than zod rejecting the KEY.
       expect(cleanParse.success).toBe(true);
-      if (!pollutedParse.success || !cleanParse.success) return;
 
-      // 2. And where it STRIPS the key it repairs the arguments silently, so the
+      // 2. Where zod ACCEPTS the key it repairs the arguments silently, so the
       //    durable `argsHash` — which `invoke.ts` computes as
-      //    `sha256Hex(canonicalStringify(binding.args))` — is BYTE-IDENTICAL for a call
-      //    that sent the reserved key and one that did not. That is the audit-integrity
-      //    defect, reproduced at depth. Asserted in BOTH directions so this stays a
-      //    measurement of zod rather than a belief about it.
-      const pollutedHash = sha256Hex(canonicalStringify(pollutedParse.data));
-      const cleanHash = sha256Hex(canonicalStringify(cleanParse.data));
-      if (testCase.hashesAsIfAbsent) {
-        expect(pollutedHash).toBe(cleanHash);
-      } else {
-        expect(pollutedHash).not.toBe(cleanHash);
+      //    `sha256Hex(canonicalStringify(binding.args))` — is BYTE-IDENTICAL for a
+      //    call that sent the reserved key and one that did not. That is the
+      //    audit-integrity defect this guard exists to remove. On zod 4.5.4 the
+      //    only shape where it still bites is `z.record(...)`, and a record-shaped
+      //    `filters` argument is precisely what the next tool packs need.
+      if (testCase.zod.accepted && pollutedParse.success && cleanParse.success) {
+        const pollutedHash = sha256Hex(canonicalStringify(pollutedParse.data));
+        const cleanHash = sha256Hex(canonicalStringify(cleanParse.data));
+        if (testCase.zod.hashesAsIfAbsent) {
+          expect(pollutedHash).toBe(cleanHash);
+        } else {
+          expect(pollutedHash).not.toBe(cleanHash);
+        }
       }
 
-      // 3. `parseArgs` is what makes the rejection total: the reserved key never
-      //    reaches the schema, so there is no repaired call to hash.
+      // 3. `parseArgs` is what makes the rejection total, and it must hold whether
+      //    or not zod would have caught the key on its own.
+      //
+      //    BE HONEST ABOUT WHICH ROWS PROVE WHAT. This assertion discriminates
+      //    only where `zod.accepted` is true: there the schema would have taken
+      //    the input, so the guard is the sole thing that can refuse it. On a row
+      //    zod now rejects, the schema alone would fail the parse and this line
+      //    passes whatever the guard does — it is a regression tripwire for zod,
+      //    not evidence about the scan. The depth-total and array traversal are
+      //    proven by the `z.record(...)` rows above, which is exactly why the
+      //    nested and in-array record rows were added when zod 4.5 landed.
       expect(testCase.entry.parseArgs(polluted).ok).toBe(false);
       expect(testCase.entry.parseArgs(clean).ok).toBe(true);
       expect(({} as Record<string, unknown>).polluted).toBeUndefined();
