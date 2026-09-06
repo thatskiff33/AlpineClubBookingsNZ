@@ -34,6 +34,13 @@ reason: `markBookingSetupIntentSucceeded` already lives here beside the
   key", which no path does any more, and the correction has to sit beside the
   predicate it describes — declared here because one path gets one allowance.
 
+file: src/lib/payment-recovery.ts
+lines: 2507
+reason: `getStripePaymentMethodId` is kept here under its own name as a one-line
+  derivation of `stripeReferenceId` (`stripe-references.ts`, the new one home),
+  so its charge-site callers did not all have to move in this lane; #3267
+  routes them when it edits those sites. The five lines are the docblock saying
+  exactly that.
 
 file: src/lib/stripe-webhook-service.ts
 lines: 1746
