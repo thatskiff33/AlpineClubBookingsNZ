@@ -831,7 +831,6 @@ export function calculatePromoDiscount(
       // anyway, so iterating the prefix says in the type what the counter
       // loop this replaces only knew by arithmetic (#2799).
       for (const { rate, memberId } of candidates.slice(0, usedCount)) {
-
         if (remainingFreeNightsByMemberId) {
           if (!memberId) continue;
           const memberCap = Math.max(

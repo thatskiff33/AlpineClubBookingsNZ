@@ -24,7 +24,7 @@ reason: `parts.at(-1)` can be undefined when no hosting scope is enabled, and
   case. Three lines, inside the policy the rule belongs to.
 
 file: src/lib/policies/pricing.ts
-lines: 924
+lines: 923
 reason: the free-nights allocation iterates a bounded slice instead of indexing
   by a counter, which is two lines and removes the assumption rather than
   asserting it. The money rule and its bound stay in one place.
