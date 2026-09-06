@@ -358,11 +358,19 @@ node scripts/ci/check-semgrep-coverage.mjs .semgrep-out/semgrep-results.json
 #### Both lists are living worklists, not a finished cleanup
 
 The unparsed allowlist and the suppression census are **populations that
-regrow**, and #2842 measured how fast. A single sync of `main` into the epic
-branch added **four** unparsed files and **one** dead `nosemgrep` annotation —
-in one merge, from one lane, written by people doing something else entirely.
-Nobody did anything wrong: `importOriginal<typeof import("...")>()` is the
-idiomatic partial mock and `path.resolve(process.cwd(), …)` in a test helper
+regrow**, and #2842 measured how fast — over three separate batches during one
+issue's delivery:
+
+| Merge | New unparsed files | New dead suppressions |
+| --- | --- | --- |
+| `main` sync into the epic | 4 | 1 |
+| one child merge (#3214) | — | 1 |
+| four children at once (#3307 et al) | 2 | — |
+
+**So it is not only a `main` sync that regrows these lists — it is anything
+landing at all**, including a sibling child on the same epic. Nobody did
+anything wrong in any of those: `importOriginal<typeof import("...")>()` is the
+idiomatic partial mock, and `path.resolve(process.cwd(), …)` in a test helper
 reads as exactly the thing that deserves an exemption comment.
 
 Two consequences worth holding on to.
