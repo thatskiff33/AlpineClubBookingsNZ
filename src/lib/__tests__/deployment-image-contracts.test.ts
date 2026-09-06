@@ -115,9 +115,15 @@ describe("deployment image contracts", () => {
     // gitleaks mounts from the shared script now (#2852). `:ro` is the load-
     // bearing half: a scanner has no business writing to the tree it reads,
     // and the report path is a separate mount for exactly that reason.
-    expect(readRepoFile("scripts/ci/gitleaks-scan.sh")).toContain(
-      '-v "$(host_path "${REPO_ROOT}"):/repo:ro"',
-    );
+    const scanScript = readRepoFile("scripts/ci/gitleaks-scan.sh");
+    expect(scanScript).toContain('host_repo="$(host_path "${REPO_ROOT}")"');
+    expect(scanScript).toContain('-v "${host_repo}:/repo:ro"');
+    // A mount source Docker Desktop cannot resolve is CREATED as an empty
+    // directory rather than refused, so `dir /repo` scans nothing and exits 0.
+    // `git` mode has the zero-commit check; `dir` mode has nothing, so the
+    // preflight is host-side and covers both.
+    expect(scanScript).toContain('if [ ! -f "${REPO_ROOT}/.gitleaks.toml" ]; then');
+    expect(scanScript).toContain("[A-Za-z]:/*)");
     expect(workflow).toContain("${{ runner.temp }}/semgrep-output/semgrep-results.sarif");
   });
 
@@ -260,6 +266,25 @@ describe("deployment image contracts", () => {
       // legitimate result for any caller here, so the script refuses it.
       expect(scan).toContain("[1-9][0-9]* commits scanned");
       expect(scan).toContain("walked ZERO commits");
+      // ...and the message must not blame the range's SHAPE, because a
+      // legitimately empty valid range prints the same line. Either way
+      // nothing was scanned, which is the part that matters.
+      expect(scan).toContain("the range is empty or git rejected it");
+      // THE OTHER HALF. A git error part way through the walk stops the
+      // commit stream; gitleaks reports the commits it already had and exits
+      // 0 — `1500 commits scanned … no leaks found` for a `--all` sweep that
+      // hit a bad object at twenty percent. That passes the zero-commit
+      // check and reads as a clean sweep of the whole repository.
+      expect(scan).toContain("ERR .*\\[git\\] (fatal|error):");
+      expect(scan).toContain("the scan is TRUNCATED even though gitleaks exited 0");
+      // Matched on git's two TRUNCATING prefixes only. gitleaks surfaces
+      // ordinary git `warning:` chatter through the same ERR channel, and
+      // failing on every `[git]` line would redden the required gate for a
+      // line-ending warning.
+      // Asserted positively rather than by trying to forbid the looser
+      // pattern: what matters is that the alternation is there, immediately
+      // after the bracket, so the grep cannot match a bare `[git] warning:`.
+      expect(scan).toContain("\\] (fatal|error):");
       expect(scan).toContain('-e NO_COLOR=1');
       expect(scan).toContain("LEAK_EXIT=2");
       expect(scan).toContain('args=(--exit-code="${LEAK_EXIT}" --redact)');

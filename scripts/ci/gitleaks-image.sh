@@ -15,18 +15,23 @@
 #
 # A bump is an edit HERE and in the pin the census asserts — the literal in
 # `deployment-image-contracts.test.ts`, which is a guard rather than a second
-# home, and which is what makes an unnoticed bump fail. Nowhere else: no
-# workflow, no script and no document may restate the version, and the census
-# below enforces that across the workflows, `scripts/ci/`, `SECURITY.md`,
-# `docs/MAINTENANCE.md` and `docs/SECURITY-ATTACK-SURFACE.md`.
+# home, and which is what makes an unnoticed bump fail.
+#
+# What that census actually walks, stated exactly rather than as "nowhere
+# else": every `.yml`/`.yaml` under `.github/workflows/` and `.github/actions/`,
+# every `.sh`/`.mjs`/`.ts`/`.js` under `scripts/`, and the three documents that
+# discuss the scanner — `SECURITY.md`, `docs/MAINTENANCE.md` and
+# `docs/SECURITY-ATTACK-SURFACE.md`. A file outside those paths is not checked,
+# so a version literal written into, say, a `docs/guides/` page would not be
+# caught; the rule is still that nothing but this file names the container.
 #
 # Source it; do not execute it:
 #
 #   . "$(dirname "${BASH_SOURCE[0]}")/gitleaks-image.sh"
 #
-# `deployment-image-contracts.test.ts` asserts this is the only tracked file
+# `deployment-image-contracts.test.ts` asserts this is the only file it walks
 # that names a `ghcr.io/gitleaks/gitleaks:` tag, apart from its own pinned
-# literal.
+# literal. The walk's exact scope is above.
 # Pinned by DIGEST as well as tag. A tag is a pointer the publisher can move,
 # so a file whose whole job is to be the one immutable home should not rely on
 # one; the tag stays in the name so a human can read which release this is, and

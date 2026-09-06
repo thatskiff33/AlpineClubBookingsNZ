@@ -111,6 +111,9 @@ GITLEAKS_LOG_OPTS="--diff-merges=first-parent origin/main" \
   bash scripts/ci/gitleaks-scan.sh git
 
 # 2. Your own branch's commits, the way the pull-request step scans them.
+#    On `main` itself this range is EMPTY, and an empty range is reported as a
+#    scanner failure by design — a scan of nothing must never read as clean,
+#    and no scope CI runs is ever legitimately empty. Run it from a branch.
 GITLEAKS_SCAN_LABEL="this branch's own commits" \
 GITLEAKS_LOG_OPTS="--diff-merges=first-parent origin/main..HEAD" \
   bash scripts/ci/gitleaks-scan.sh git

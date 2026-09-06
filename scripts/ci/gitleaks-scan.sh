@@ -36,11 +36,14 @@
 #   unparseable .gitleaks.toml  1
 #   unknown flag              126
 #   image cannot be resolved  125   (docker, not gitleaks)
-#   THE GIT SOURCE FAILED       0   <- see the zero-commit check at the bottom
+#   THE GIT SOURCE FAILED       0   <- see the two checks at the bottom
 #
-# That last row is why exit 0 is not sufficient on its own: the only path to
-# exit 0 here is gitleaks exiting 0 AND, in `git` mode, having scanned at least
-# one commit.
+# That last row is why exit 0 is not sufficient on its own, and it has two
+# shapes: the walk produced NOTHING (`0 commits scanned`), or it stopped
+# PART WAY and reported the commits it had already seen. Both exit 0 and both
+# read as clean. So the path to exit 0 here is gitleaks exiting 0 AND, in
+# `git` mode, at least one commit scanned AND no git `fatal:`/`error:` in the
+# log — plus, in both modes, a mount that passed the preflight below.
 #
 # Usage — every knob is an environment variable, never an argument spliced into a
 # shell program, because these workflows interpolate `${{ }}` values and the
@@ -87,7 +90,36 @@ export MSYS_NO_PATHCONV=1
 LEAK_EXIT=2
 
 args=(--exit-code="${LEAK_EXIT}" --redact)
-mounts=(-v "$(host_path "${REPO_ROOT}"):/repo:ro")
+host_repo="$(host_path "${REPO_ROOT}")"
+mounts=(-v "${host_repo}:/repo:ro")
+
+# PREFLIGHT, and it exists because a bad mount is silent. Docker Desktop
+# CREATES a bind-mount source that does not exist, as an empty directory — so
+# `dir /repo` walks an empty tree, gitleaks reports no leaks, and exits 0.
+# There is no output to catch it with either: gitleaks logs a byte count but
+# never a file count, and an empty directory scans in the same shape as a
+# clean one. `git` mode has the zero-commit check below; `dir` mode has
+# nothing, so the check has to happen HOST-side, before the container runs.
+#
+# Two things are asserted, and both are about the path rather than the scan:
+# that the mount source really is this repository (its `.gitleaks.toml` is
+# there, which also means the rule set the scan depends on exists), and that
+# under Git Bash the path has been converted to the drive-lettered spelling
+# the daemon can resolve. A `/c/Users/...` path is the exact input that gets
+# auto-created as an empty directory.
+if [ ! -f "${REPO_ROOT}/.gitleaks.toml" ]; then
+  echo "::error::${REPO_ROOT}/.gitleaks.toml is missing, so the scan would run against no rule set and mount a directory that is not this repository. SCANNER FAILURE, not a clean scan." >&2
+  exit 1
+fi
+if command -v cygpath >/dev/null 2>&1; then
+  case "${host_repo}" in
+    [A-Za-z]:/*) ;;
+    *)
+      echo "::error::the mount source resolved to '${host_repo}', which the Docker daemon cannot resolve on this host — it would be auto-created as an EMPTY directory and scan clean. SCANNER FAILURE, not a clean scan." >&2
+      exit 1
+      ;;
+  esac
+fi
 
 if [ -n "${GITLEAKS_REPORT_PATH:-}" ]; then
   report_dir="$(cd "$(dirname "${GITLEAKS_REPORT_PATH}")" && pwd)"
@@ -123,8 +155,10 @@ esac
 echo "gitleaks ${GITLEAKS_IMAGE} scanning ${LABEL}"
 
 # The output is captured rather than streamed because exit status alone cannot
-# answer the question below, and then printed in full so a reader loses nothing.
-# `NO_COLOR=1` keeps the ANSI escapes out of what gets grepped.
+# answer the questions below, and then printed in full so a reader loses
+# nothing. `NO_COLOR=1` is belt-and-braces: zerolog's console writer colours
+# the LEVEL token and may ignore the variable, but the message body — which is
+# what the greps below read — is uncoloured either way.
 log="$(mktemp)"
 trap 'rm -f "${log}"' EXIT
 
@@ -162,7 +196,30 @@ fi
 # this repository scans contains at least one commit — so it is treated as the
 # scanner failure it is.
 if [ "${MODE}" = "git" ] && ! grep -Eq '(^|[^0-9])[1-9][0-9]* commits scanned' "${log}"; then
-  echo "::error::gitleaks completed but walked ZERO commits over ${LABEL} — git rejected the range, so nothing was scanned. This is a SCANNER FAILURE, not a clean scan." >&2
+  echo "::error::gitleaks completed but walked ZERO commits over ${LABEL} — the range is empty or git rejected it; either way nothing was scanned. This is a SCANNER FAILURE, not a clean scan." >&2
+  exit 1
+fi
+
+# THE OTHER HALF, and the zero-commit check does not cover it. A git error
+# does not have to happen at the START of the walk. In v8.28.0 the git source
+# streams commits to the detector and a failure mid-stream simply stops
+# producing them; gitleaks then reports however many it had already seen and
+# exits 0. A bad object twenty percent into `--all` therefore prints
+#
+#   ERR [git] fatal: bad object <sha>
+#   INF 1500 commits scanned.
+#   INF no leaks found
+#
+# which passes the zero-commit check and reads as a clean sweep of the whole
+# repository. A TRUNCATED scan reported as complete is the same defect class as
+# a zero-commit one, only harder to notice.
+#
+# Matched on git's own two truncating prefixes and NOT on every `[git]` line:
+# gitleaks surfaces ordinary `warning:` chatter from git through the same ERR
+# channel — a line-ending warning is the common one on this repository — and
+# failing on those would redden the required gate for nothing.
+if [ "${MODE}" = "git" ] && grep -Eq 'ERR .*\[git\] (fatal|error):' "${log}"; then
+  echo "::error::gitleaks logged a git error over ${LABEL}; the commit walk stopped there, so the scan is TRUNCATED even though gitleaks exited 0. This is a SCANNER FAILURE, not a clean scan." >&2
   exit 1
 fi
 
