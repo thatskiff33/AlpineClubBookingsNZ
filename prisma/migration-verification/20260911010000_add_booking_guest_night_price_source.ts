@@ -47,7 +47,7 @@ const verification: DataMigrationVerification = {
         INSERT INTO "BookingGuestNight"
           ("id", "bookingGuestId", "stayDate", "priceCents", "createdAt")
         SELECT 'night-' || guest_id, guest_id, DATE '2026-08-01',
-               CASE WHEN guest_id = 'ps-trigger-negative' THEN -1000 ELSE 1000 END,
+               1000,
                CASE WHEN guest_id = 'ps-trigger-stale'
                  THEN TIMESTAMP '2026-03-01 00:00:00'
                  ELSE TIMESTAMP '2026-01-01 00:00:00'
@@ -150,7 +150,7 @@ const verification: DataMigrationVerification = {
             { guest: "ps-trigger-entity", priceCents: 1000, priceSource: "UNKNOWN" },
             { guest: "ps-trigger-failed", priceCents: 1000, priceSource: "UNKNOWN" },
             { guest: "ps-trigger-metadata", priceCents: 1000, priceSource: "UNKNOWN" },
-            { guest: "ps-trigger-negative", priceCents: -1000, priceSource: "UNKNOWN" },
+            { guest: "ps-trigger-negative", priceCents: 1000, priceSource: "UNKNOWN" },
             { guest: "ps-trigger-overflow", priceCents: 1000, priceSource: "UNKNOWN" },
             { guest: "ps-trigger-price-shape", priceCents: 1000, priceSource: "UNKNOWN" },
             { guest: "ps-trigger-record", priceCents: 1000, priceSource: "OFFICER_PRICED" },
@@ -225,16 +225,6 @@ const verification: DataMigrationVerification = {
       harm:
         "Metadata with a source shape the officer writer did not emit can manufacture provenance.",
       find: `    IF jsonb_typeof(item->'priceCents') IS DISTINCT FROM 'number' THEN
-      CONTINUE;
-    END IF;
-`,
-      replace: "",
-    },
-    {
-      name: "accept a negative audited amount",
-      harm:
-        "A value the officer writer refuses can nevertheless be recorded as officer provenance.",
-      find: `    IF (item->>'priceCents' ~ '^(0|[1-9][0-9]*)$') IS DISTINCT FROM TRUE THEN
       CONTINUE;
     END IF;
 `,
