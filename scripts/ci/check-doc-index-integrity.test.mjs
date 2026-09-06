@@ -3501,6 +3501,32 @@ describe("word budgets — gate-bypass review", () => {
         expect(entries.get("INV-MONEY-002").words).toBe(5);
       });
 
+      it("a same-level narrative heading stays inside even when a nested group follows later in the file", () => {
+        // The probe: a `## Rationale` inserted into a `##` entry that precedes
+        // the file's nested-group block. Only a section heading IMMEDIATELY
+        // followed by a deeper definition is structure.
+        const files = repoWithEntry(0, {
+          "docs/invariants/money.md": bodyOf(0, () => [
+            "## INV-MONEY-001",
+            "",
+            prose(10),
+            "",
+            "## Rationale",
+            "",
+            prose(50),
+            "",
+            "## Section",
+            "",
+            "### INV-MONEY-002",
+            "",
+            prose(5),
+          ]),
+        });
+        const entries = measureInvariantEntryWords(files);
+        expect(entries.get("INV-MONEY-001").words).toBe(61);
+        expect(entries.get("INV-MONEY-002").words).toBe(5);
+      });
+
       it("a same-level narrative heading directly followed by another same-level definition stays inside", () => {
         const files = repoWithEntry(0, {
           "docs/invariants/money.md": bodyOf(0, () => [

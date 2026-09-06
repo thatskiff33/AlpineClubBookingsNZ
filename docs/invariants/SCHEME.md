@@ -824,9 +824,10 @@ and the same script enforces both:
 - An invariant entry is at most **300 words** by default. An entry runs from its
   canonical definition heading to the next canonical definition, or to the next
   heading ABOVE its own level that carries no invariant-shaped token — the
-  file's section headings — or to a same-level heading that introduces a
-  nested group (the next definition after it is deeper, as a `##` section
-  between `##` definitions whose rules are `###`). Everything between counts, fenced code and
+  file's section headings — or to a same-level heading that carries no
+  invariant-shaped token and introduces a nested group (it is immediately
+  followed by a deeper definition, as a `##` section between `##` definitions
+  whose rules are `###`). Everything between counts, fenced code and
   same-level or deeper sub-headings included: `### Background` inside an entry
   is part of it, never a way to split it. A heading that only *looks* like a
   definition — a lookalike, a homoglyph, a Setext underline — never ends an

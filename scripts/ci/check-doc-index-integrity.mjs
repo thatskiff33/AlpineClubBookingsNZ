@@ -1663,7 +1663,8 @@ function readsAsInvariantHeading(heading) {
  * ABOVE the definition's own level and does not read as an invariant id — the
  * file's section headings (`##` in a file whose definitions are `###`, the
  * title in a file whose definitions are `##`) — or at a SAME-level heading
- * that introduces a nested group, i.e. the next definition after it is deeper
+ * that introduces a nested group, i.e. it is immediately followed by a deeper
+ * definition
  * (a `##` section between `##` definitions whose own rules are `###`). Any
  * other heading at the same level or deeper — `### Background`, `### Worked
  * example`, a Setext underline, a closed `### Background ###` — stays INSIDE
@@ -1702,15 +1703,18 @@ export function measureInvariantEntryWords(files) {
         }
         if (next.readsAsInvariant) continue;
         // A heading above the entry's level is a section heading. A heading AT
-        // the entry's level is one too when it introduces a nested group — the
-        // next definition after it sits deeper (a `##` section between `##`
-        // definitions whose rules are `###`). Otherwise it is narrative and
-        // stays inside the entry.
-        const nextDefinition = later.slice(offset + 1).find((h) => h.isDefinition);
+        // the entry's level is one too when it introduces a nested group — it
+        // is IMMEDIATELY followed by a definition at a deeper level (a `##`
+        // section between `##` definitions whose rules are `###`). Looking any
+        // further ahead would let a same-level narrative heading anywhere
+        // before the file's nested block end the entry it sits in. Otherwise
+        // it is narrative and stays inside the entry.
+        const following = later[offset + 1];
         const introducesNestedGroup =
           next.level === heading.level &&
-          nextDefinition !== undefined &&
-          nextDefinition.level > next.level;
+          following !== undefined &&
+          following.isDefinition &&
+          following.level > next.level;
         if (next.level < heading.level || introducesNestedGroup) {
           end = next.startLine;
           break;

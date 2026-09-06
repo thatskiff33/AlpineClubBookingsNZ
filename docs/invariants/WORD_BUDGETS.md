@@ -39,7 +39,10 @@ migration debt below.
 Temporary. Each row is the exact word count an oversize entry had when it was
 last measured, and the gate holds the entry to that number: it may only shrink
 (record the new count when it does) and it leaves this table the moment it is
-within budget. A compliant entry can never join it. When the last row goes,
+within budget. A compliant entry can never join it. One row is a restore rather than a
+regression: `INV-CAP-027` measured 317 words on the epic base (82f820dfb), was
+briefly 298 after a lossy rewrite, and stands at 303 with its original wording
+put back — a shrink against the base. When the last row goes,
 delete this section — and when the exceptions table is also empty, delete this
 file; the checker treats an absent register as "no exceptions, no debt".
 
