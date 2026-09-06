@@ -3102,6 +3102,7 @@ transaction, its own audit and alert obligations and its own response, and the
 only common part is the two lock acquisitions, which are already one helper
 apiece; extracting a shared claim helper is a refactor of its own, not part of
 #3267 (`INV-PAY-055`).
+
 The same cron's terminal branch for a permanently unusable saved card (#3268,
 `INV-PAY-054`) runs AFTER `releaseChargeClaim` has committed and holds no lock
 at all: the Stripe detach is a plain provider call outside any transaction that
