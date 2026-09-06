@@ -670,22 +670,32 @@ describe("beginSavedCardChargeAttempt", () => {
       expect(ledger.paymentTransaction.create).not.toHaveBeenCalled();
     });
 
-    it("a reference-less row with no charge reason is a link intent, not a legacy attempt: on another card it is still left to the sweep", async () => {
-      const link = ledger.seed({
-        paymentId: PAYMENT,
-        status: PaymentStatus.PROCESSING,
-        stripePaymentIntentId: "pi_link_other_card",
-        reference: null,
-        reason: null,
-        paymentMethodId: "pm_someone_elses",
-      });
+    // The reason is what separates a legacy saved-card charge from a /pay link
+    // intent, and only the former was ever guarded by the shared key. A link
+    // intent on another card stays the #1992 sweep's to cancel.
+    it.each([
+      ["no reason at all", null],
+      // What `create-payment-intent` stamps on a /pay link's PRIMARY row.
+      ["a reason outside the charge set", "primary_booking_payment"],
+    ])(
+      "a reference-less row with %s is a link intent, not a legacy attempt: on another card it is still left to the sweep",
+      async (_label, reason) => {
+        const link = ledger.seed({
+          paymentId: PAYMENT,
+          status: PaymentStatus.PROCESSING,
+          stripePaymentIntentId: "pi_link_other_card",
+          reference: null,
+          reason,
+          paymentMethodId: "pm_someone_elses",
+        });
 
-      const attempt = await begin();
+        const attempt = await begin();
 
-      expect(attempt.kind).toBe("fresh");
-      expect(attempt.staleIntentIdsToCancel).toEqual([]);
-      expect(row(link.id).status).toBe(PaymentStatus.PROCESSING);
-    });
+        expect(attempt.kind).toBe("fresh");
+        expect(attempt.staleIntentIdsToCancel).toEqual([]);
+        expect(row(link.id).status).toBe(PaymentStatus.PROCESSING);
+      }
+    );
 
     it("a legacy row with a charge reason but NO intent is never replayed: its key was never sent, so re-sending one built from its id would be a brand-new charge", async () => {
       const orphan = ledger.seed({
