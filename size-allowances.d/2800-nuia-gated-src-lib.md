@@ -128,16 +128,16 @@ lines: 1754
 reason: three lines. Each delete-blocker spec carries its own count.
 
 file: src/lib/membership-subscription-billing.ts
-lines: 1534
-reason: seventeen lines. A member with no family surfaces as a billing exception
-  instead of reading past the list, and the invoiceable-entry drop is a filter
-  rather than a splice over a list it is indexing.
+lines: 1526
+reason: nine lines. The per-family branch reads the member's first family where
+  the MISSING_FAMILY exception is already raised, and the invoiceable-entry drop
+  is a filter rather than a splice over a list it is simultaneously indexing.
 
 file: src/lib/membership-type-policy.ts
-lines: 1353
-reason: nine lines. Both refusal sentences read the block they name their season
-  from; with no block the generic wording stands without a season rather than
-  throwing inside display copy.
+lines: 1349
+reason: five lines. The refusal message reads its first block where the no-block
+  sentence is already returned, so the season the closing sentence names comes
+  from a value the function holds.
 
 file: src/lib/waitlist.ts
 lines: 1436
