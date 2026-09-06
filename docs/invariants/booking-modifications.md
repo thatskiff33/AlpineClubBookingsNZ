@@ -1359,8 +1359,9 @@ class and are untouched — they cap a refund against money actually taken.
 
 ### Where it holds, and the two places it deliberately does not reach
 
-**It holds on EVERY edit path** (#3166, epic #2797). A documented claim is a contract in this repository,
-so if a sixth edit door is added it is gated or this heading changes.
+**It holds on EVERY edit path** (#3166, epic #2797). A documented claim is a
+contract in this repository, so if a sixth edit door is added it is gated or
+this heading changes.
 
 **All five PARK on the FIRST such edit. None of them refuses for want of
 evidence.** #3170 made "not known" storable and deleted the member-facing
@@ -1455,8 +1456,8 @@ branch and left that one silent.
   expressible with no valuation at all, and no remaining strand's price or rate
   snapshot is rewritten;
 - **the ordinary PRE-CHECK-IN edit**, `calculateModifiedPricing`
-  (`src/lib/booking-modify-plan.ts`) (#3166). There is no carve-out for a strand the
-  edit deliberately reprices in full: a parked edit charges nobody, so a
+  (`src/lib/booking-modify-plan.ts`) (#3166). There is no carve-out for a strand
+  the edit deliberately reprices in full: a parked edit charges nobody, so a
   placeholder→member link's flag recording what was charged is written as
   un-honoured, which is what `otherLodgeRatedGuestIds` already promises. **An
   other-club rate election is the ONE thing a parking edit may not carry: it is
@@ -1468,9 +1469,9 @@ branch and left that one silent.
   save will not move;
 - **the date change**, `modifyBookingDates`
   (`src/lib/booking-date-modification-service.ts`) (#3166);
-- **the guest-add route**, `POST /api/bookings/[id]/guests` (#3166). The guests it adds are still
-  created and still priced at what they are genuinely being sold for; that money
-  is known.
+- **the guest-add route**, `POST /api/bookings/[id]/guests` (#3166). The guests
+  it adds are still created and still priced at what they are genuinely being
+  sold for; that money is known.
 
 ## INV-MOD-045
 
