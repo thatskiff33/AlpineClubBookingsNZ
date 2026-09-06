@@ -326,6 +326,21 @@ describe("formatRoundingAuditReport", () => {
     expect(report).toContain("[GROUP SETTLEMENT]");
     expect(report).toContain("Settlement: s9 (group g9)");
   });
+
+  // #3302: this report deliberately shows the dollar amount AND the raw
+  // signed cent delta in parens — useful for a rounding audit where the exact
+  // cent matters. Nothing previously pinned the compound string; this locks
+  // it so the shared `formatCents` composition can never silently drop the
+  // "(+/-Nc)" suffix or the sign.
+  it("shows the net drift as both a dollar amount and the raw signed cent delta", () => {
+    const report = formatRoundingAuditReport({
+      ...emptyResult,
+      affected: [],
+      affectedCount: 0,
+      totalDriftCents: 1,
+    });
+    expect(report).toContain("Net drift across candidates: $0.01 (+1c)");
+  });
 });
 
 // Nights that drift under the old builder: [2500,2500,3000] total 8000 / 3 =>
