@@ -57,7 +57,7 @@ vi.mock("../payment-reconciliation", () => ({
 // the one export replaced — the real one needs a Payment row to read.
 const mockReconcilePaymentAggregates = vi.fn();
 vi.mock("../payment-transactions", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../payment-transactions")>()),
+  ...((await importOriginal()) as typeof import("../payment-transactions")),
   upsertPaymentIntentTransaction: (...args: unknown[]) =>
     mockUpsertPaymentIntentTransaction(...args),
   reconcilePaymentAggregates: (...args: unknown[]) =>
