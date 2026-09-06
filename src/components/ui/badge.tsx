@@ -31,6 +31,13 @@ export interface BadgeProps
   extends React.HTMLAttributes<HTMLDivElement>,
     VariantProps<typeof badgeVariants> {}
 
+/**
+ * The badge's variant keys, derived from the `cva` map above so a view model
+ * that names a tone cannot drift from what `<Badge>` accepts (#3264). Import
+ * it type-only from `src/lib` — the type is erased, so it adds no runtime edge.
+ */
+export type BadgeVariant = NonNullable<VariantProps<typeof badgeVariants>["variant"]>
+
 function Badge({ className, variant, ...props }: BadgeProps) {
   return (
     <div className={cn(badgeVariants({ variant }), className)} {...props} />

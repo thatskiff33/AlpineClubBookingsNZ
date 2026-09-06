@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import {
-  hasFinanceViewerAccess,
   hasFinanceManagerAccess,
+  hasFinanceViewerAccess,
+} from "@/lib/admin-permissions";
+import {
   loadFinanceAccessMember,
   type FinanceAccessMember,
 } from "@/lib/finance-auth";

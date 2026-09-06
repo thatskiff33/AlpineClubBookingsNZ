@@ -118,13 +118,6 @@ function downloadCsv(model: FinanceDashboardPageModel, today: string) {
   URL.revokeObjectURL(url);
 }
 
-function toneVariant(tone: FinanceDashboardPageModel["syncStatus"]["tone"]) {
-  if (tone === "success") return "success";
-  if (tone === "warning") return "warning";
-  if (tone === "destructive") return "destructive";
-  return "secondary";
-}
-
 export function FinanceDashboardClient({
   model,
   currentSearch,
@@ -179,7 +172,7 @@ export function FinanceDashboardClient({
             <div className="space-y-2">
               <div className="flex flex-wrap items-center gap-2">
                 <Badge variant="outline">Finance dashboard</Badge>
-                <Badge variant={toneVariant(model.syncStatus.tone)}>
+                <Badge variant={model.syncStatus.tone}>
                   {model.syncStatus.label}
                 </Badge>
               </div>
