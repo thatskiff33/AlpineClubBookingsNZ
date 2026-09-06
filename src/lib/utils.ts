@@ -11,7 +11,27 @@ const centsFormatter = new Intl.NumberFormat(APP_LOCALE, {
   currency: APP_CURRENCY,
 });
 
-export function formatCents(cents: number): string {
+/**
+ * The one home (#3302, `INV-SSOT-001`) for turning an integer-cent amount into
+ * a string. Eight copies existed beneath `formatSignedCents` (#3264), and four
+ * had drifted in the same way #3264 already found: a hard-coded `$`, no
+ * thousands grouping, `APP_CURRENCY` ignored. Every caller now derives from
+ * here.
+ *
+ * `{ style: "plain" }` is the one genuine second rendering: a bare two-decimal
+ * string with no currency symbol or grouping, for an editable dollars input
+ * (the AI assistant and diagnostics spend-cap boxes) and a report line that
+ * already reads as a delta without one (the Xero refund-note repair report).
+ * Both are pinned by existing fixtures. It is still ONE formatter — the option
+ * is the difference, not a second copy of the cents-to-string arithmetic.
+ */
+export function formatCents(
+  cents: number,
+  options?: { style?: "plain" }
+): string {
+  if (options?.style === "plain") {
+    return (cents / 100).toFixed(2);
+  }
   return centsFormatter.format(cents / 100);
 }
 
