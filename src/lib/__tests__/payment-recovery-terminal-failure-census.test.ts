@@ -163,7 +163,7 @@ function chokepointBody(source: string): { start: number; end: number } {
   throw new Error(`${CHOKEPOINT} has no balanced body in ${RECOVERY_MODULE}`);
 }
 
-describe("INV-PAY-052: one terminal-failure transition, census", () => {
+describe("INV-PAY-056: one terminal-failure transition, census", () => {
   it("names the status in exactly one module, exactly three times", () => {
     const mentions = new Map<string, number>();
     for (const relative of sourceFiles()) {

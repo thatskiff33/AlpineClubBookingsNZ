@@ -1858,7 +1858,7 @@ function supplementaryInvoicePayload(
  * IS THIS BOOKING CHANGE'S INVOICE STILL WAITING ON THIS EXACT ASK? (#3220 fix
  * round.)
  *
- * The read behind `INV-PAY-053`'s one exception. A supplementary invoice parked
+ * The read behind `INV-PAY-057`'s one exception. A supplementary invoice parked
  * `WAITING_PAYMENT` on a PaymentIntent is released by a CONFIRMED payment on
  * that intent and by nothing else, and while it sits there the booking-vs-Xero
  * repair pass reports the change as `BLOCKED_BY_XERO_OPERATION` rather than

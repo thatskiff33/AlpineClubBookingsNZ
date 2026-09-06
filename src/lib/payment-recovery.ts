@@ -35,6 +35,7 @@ import { recordDuplicateCaptureRefundEvent } from "@/lib/booking-events";
 import logger from "@/lib/logger";
 import { createAuditLog } from "@/lib/audit";
 import { MAX_PAYMENT_RECOVERY_ATTEMPTS } from "@/lib/payment-recovery-constants";
+import { stripeReferenceId } from "@/lib/stripe-references";
 import { claimAlertCooldown } from "@/lib/alert-cooldown";
 
 type PaymentRecoveryStore = Prisma.TransactionClient | typeof prisma;
@@ -79,7 +80,7 @@ const CAPTURED_TRANSACTION_STATUSES = new Set<PaymentStatus>([
  * no `attempts` filter at all - so it stops deferring at the FIRST failure, not
  * at death. Do not read the two-readings rule into that query: a retry waiting
  * its turn already looks dead to it. The consequence is bounded and is stated
- * with `INV-PAY-053` rather than papered over - a retry that later succeeds
+ * with `INV-PAY-057` rather than papered over - a retry that later succeeds
  * raises the ask and its invoice together, and a retry that runs out reaches the
  * terminal branch below, which withdraws the ask.
  *
@@ -1108,7 +1109,7 @@ async function alertPaymentRecoveryFailure(
 
 /**
  * THE ONE PLACE A `PaymentRecoveryOperation` BECOMES `FAILED` (#3220,
- * `INV-PAY-052`, `INV-SSOT`).
+ * `INV-PAY-056`, `INV-SSOT`).
  *
  * Before this function there were three of them - the worker's own catch, and
  * the stale-`PROCESSING` reaper's two arms - each spelling out its own status
@@ -1218,7 +1219,7 @@ async function markPaymentRecoveryOperationFailed({
 }
 
 /**
- * THE ASK DIES WITH THE RECOVERY THAT OWED IT (#3220, `INV-PAY-053`).
+ * THE ASK DIES WITH THE RECOVERY THAT OWED IT (#3220, `INV-PAY-057`).
  *
  * A `CREATE_ADDITIONAL_PAYMENT_INTENT` recovery exists because a booking edit
  * raised money the member has not been asked for yet. While it is PENDING or
@@ -2913,10 +2914,14 @@ export async function queueSupersededPaymentIntentRefundRecovery({
   return true;
 }
 
+/**
+ * A named derivation of `stripeReferenceId` (`stripe-references.ts`, the one
+ * home for "the id behind a Stripe expandable reference" — #3266). Kept under
+ * its own name so the charge call sites that read it did not all have to move
+ * in the same lane; #3267 routes their inline copies when it edits them.
+ */
 export function getStripePaymentMethodId(
   paymentIntent: Pick<Stripe.PaymentIntent, "payment_method">
 ) {
-  return typeof paymentIntent.payment_method === "string"
-    ? paymentIntent.payment_method
-    : paymentIntent.payment_method?.id ?? null;
+  return stripeReferenceId(paymentIntent.payment_method);
 }

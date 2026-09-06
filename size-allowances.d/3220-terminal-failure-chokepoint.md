@@ -1,8 +1,15 @@
 # File-size allowances for #3220
 
 file: src/lib/payment-recovery.ts
-lines: 2922
-reason: This change makes the module SHORTER in machinery and longer in prose.
+lines: 2927
+reason: SUPERSEDES the entry #3266 declared for this same file (2507). Two
+  allowances cannot describe one file's length, and this change is the one
+  currently growing it, so the number and the reasoning live here. #3266's
+  reason still holds and is carried forward: `getStripePaymentMethodId` stays
+  in this module under its own name as a one-line derivation of
+  `stripeReferenceId`, so its charge-site callers did not all have to move in
+  that lane. This lane's own growth is below.
+reason-3220: This change makes the module SHORTER in machinery and longer in prose.
   The three terminal-failure transitions became one function, and the
   stale-worker reaper lost a whole bulk-update arm and a second query - but the
   chokepoint has to argue why terminality is an argument rather than a
