@@ -258,8 +258,28 @@ const CANCELLABLE_PAYMENT_INTENT_STATUSES = new Set<Stripe.PaymentIntent.Status>
   "processing",
 ]);
 
+/**
+ * WHY THE REASON IS A PARAMETER (#3220).
+ *
+ * Stripe stores `cancellation_reason` on the intent for good, and it is what the
+ * club's own Stripe record says about why an ask died. Every caller before #3220
+ * was cancelling because the member's booking went away, so
+ * `requested_by_customer` was true for all of them and hard-coding it cost
+ * nothing. #3220 added a caller for which it is simply UNTRUE: a payment
+ * recovery that has run out of attempts is the club abandoning an ask the member
+ * never declined, and recording that as the customer's request would misstate a
+ * money decision in the provider's own ledger.
+ *
+ * A parameter rather than a second function, because the decision this helper
+ * makes - IS this intent still cancellable at all - is the part that must not be
+ * copied. `abandoned` is Stripe's own value for exactly this case.
+ */
+export type PaymentIntentCancellationReason =
+  Stripe.PaymentIntentCancelParams.CancellationReason;
+
 export async function cancelPaymentIntentIfCancellableWithResult(
-  paymentIntentId: string
+  paymentIntentId: string,
+  options?: { cancellationReason?: PaymentIntentCancellationReason }
 ): Promise<{ paymentIntent: Stripe.PaymentIntent; canceled: boolean }> {
   const paymentIntent = await getPaymentIntent(paymentIntentId);
 
@@ -270,7 +290,8 @@ export async function cancelPaymentIntentIfCancellableWithResult(
   const stripe = await getStripe();
   return {
     paymentIntent: await stripe.paymentIntents.cancel(paymentIntentId, {
-      cancellation_reason: "requested_by_customer",
+      // The pre-#3220 callers all pass nothing and keep the reason they had.
+      cancellation_reason: options?.cancellationReason ?? "requested_by_customer",
     }),
     canceled: true,
   };
@@ -295,6 +316,44 @@ export async function getSetupIntent(
 ): Promise<Stripe.SetupIntent> {
   const stripe = await getStripe();
   return stripe.setupIntents.retrieve(setupIntentId);
+}
+
+/**
+ * Retrieve a PaymentMethod by ID (#3266).
+ *
+ * Thin wrapper, and deliberately so: it throws the SDK error unchanged. The
+ * caller decides what a failure means, because the two failures matter
+ * differently — `resource_missing` (see `isStripeResourceMissingError` in
+ * `stripe-errors.ts`) says Stripe no longer holds the card, while anything else
+ * says nothing about the card at all. `create-setup-intent` uses it to ask the
+ * PROVIDER whether a succeeded SetupIntent's card is still attached to the
+ * customer before re-adopting it onto a Payment row that carries no card.
+ */
+export async function getPaymentMethod(
+  paymentMethodId: string
+): Promise<Stripe.PaymentMethod> {
+  const stripe = await getStripe();
+  return stripe.paymentMethods.retrieve(paymentMethodId);
+}
+
+/**
+ * Detach a saved PaymentMethod from its Customer (#3268). Used when the
+ * auto-charge cron has classified the card as permanently unusable: detaching
+ * it at the provider is what makes "this card may not be re-adopted anywhere"
+ * true — the setup-intent route (#3266) asks Stripe whether a candidate pm is
+ * still attached before re-adopting it, and a detached pm answers no. Plain
+ * call, no idempotency key: detaching an already-detached or never-attached pm
+ * fails with `invalid_request_error`, and ONLY that failure does the caller
+ * (`retireUnusableSavedCard`) treat as success — the pm is unusable either way.
+ * Any other failure (an `api_error`, a rate limit, a connection error) is
+ * rethrown there so no row is cleared while the card may still be attached
+ * (INV-PAY-054).
+ */
+export async function detachPaymentMethod(
+  paymentMethodId: string
+): Promise<Stripe.PaymentMethod> {
+  const stripe = await getStripe();
+  return stripe.paymentMethods.detach(paymentMethodId);
 }
 
 /**
