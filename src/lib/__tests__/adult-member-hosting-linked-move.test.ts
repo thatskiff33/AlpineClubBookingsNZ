@@ -523,10 +523,12 @@ describe("the offer's 409 body (#3232)", () => {
     // changed".
     expect(LINKED_MOVE_DECLINED_INCIDENT_REASON).toMatch(/was asked whether to move/);
     expect(LINKED_MOVE_DECLINED_INCIDENT_REASON).toMatch(/chose to move only/);
-    // FOR ONE RELEASE THIS SENTENCE IS ALL AN OFFICER GETS, because the stored
-    // cause is still the shared `SYSTEM_CHANGE`. So it carries no issue reference
-    // — no other stored human-read string in this repository does — and no name
-    // out of this codebase that an officer has never met.
+    // IT STILL STANDS ALONE NOW THE CAUSE NAMES THE DECISION (#3241). The label
+    // says a member declined; only this sentence says which booking they were
+    // editing when they were asked, and it is read on its own in the booking's
+    // history. So it carries no issue reference — no other stored human-read
+    // string in this repository does — and no name out of this codebase that an
+    // officer has never met.
     expect(LINKED_MOVE_DECLINED_INCIDENT_REASON).not.toMatch(/#\d/);
     expect(LINKED_MOVE_DECLINED_INCIDENT_REASON).not.toMatch(/linked move/i);
   });

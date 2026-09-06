@@ -18,6 +18,10 @@ import {
   renewHostingCoverageReevaluationClaim,
   type HostingCoverageReevaluationItem,
 } from "@/lib/adult-member-hosting-coverage-queue";
+import {
+  expandWithSplitHalves,
+  resolveRowRemit,
+} from "@/lib/adult-member-hosting-coverage-remit";
 import { tryLockAdultMemberHostingPolicySet } from "@/lib/adult-member-hosting-policy-set";
 import {
   isHostingCoverageSourceBookingTerminal,
@@ -442,41 +446,11 @@ export async function drainHostingCoverageReevaluations(
 
 /**
  * Settle one queued item: every active booking of that owner, at that lodge, over
- * those nights.
- *
- * Bounded by the item itself (§10) — see `loadSameOwnerCoverageDependentIds`, which
- * turns the owner/lodge/night triple into a booking-id list and cannot be widened
- * into a lodge-wide sweep.
- *
- * §14's EXISTENTIAL RULE IS WHAT THIS LOOP IMPLEMENTS. It does not ask "did the
- * source that used to cover this booking go away"; it asks "is this booking covered
- * NOW, by anything". So a booking with a second eligible same-owner source stays
- * compliant, an incident opened earlier is resolved rather than left standing, and
- * no misleading loss-of-cover message is sent.
- */
-/**
- * The given bookings plus their #738 split halves, de-duplicated.
- *
- * One place rather than two arms of a conditional, so the two cannot disagree about
- * whether the half carrying the non-member guests is reconciled (`INV-SSOT-001`). A
- * split child has neither canonical group relation, so a Group Trip fan-out names its
- * PARENT and only its parent, leaving the half that carries the non-member guests as
- * the one half nobody re-evaluated; the unconditional `SAME_BOOKING` borrow relation
- * is how the child is reached. `loadHostingCoverageSplitSiblingIds` already excludes
- * ids in its input and caps itself, so this is a concatenation and never a widening,
- * and every id it adds costs one idempotent existential re-read.
- */
-async function expandWithSplitHalves(
-  bookingIds: readonly string[],
-  db: Prisma.TransactionClient,
-): Promise<string[]> {
-  if (bookingIds.length === 0) return [];
-  return [
-    ...bookingIds,
-    ...(await loadHostingCoverageSplitSiblingIds(bookingIds, db)),
-  ];
-}
-
+ * those nights, bounded by the item itself (§10). §14's EXISTENTIAL RULE IS WHAT
+ * THE LOOP BELOW IMPLEMENTS: not "did the source that used to cover this booking
+ * go away" but "is this booking covered NOW, by anything" — which is why THE
+ * ROW'S STORY STOPS AT ITS OWN BOOKING (#3241, `INV-HOST-053`): it also reaches
+ * bookings uncovered for their own reasons, whose story this is not. */
 async function processHostingCoverageReevaluation(
   item: HostingCoverageReevaluationItem,
   db: Prisma.TransactionClient,
@@ -584,13 +558,22 @@ async function processHostingCoverageReevaluation(
     db,
   );
 
+  // Whose story this row tells, and which bookings it must stay quiet about
+  // until their own row speaks (`INV-HOST-053`).
+  const { rowIsAbout, yieldTo } = await resolveRowRemit(
+    refreshedItem,
+    dependentIds,
+    db,
+  );
   for (const bookingId of dependentIds) {
+    if (yieldTo.has(bookingId)) continue;
+    const rowIsAboutThisBooking = rowIsAbout.has(bookingId);
     const outcome = await reconcileSameOwnerCoverageIncident(
       {
         bookingId,
-        cause: refreshedItem.cause,
+        cause: rowIsAboutThisBooking ? refreshedItem.cause : "SYSTEM_CHANGE",
         actorMemberId: refreshedItem.actorMemberId,
-        reason: refreshedItem.reason,
+        reason: rowIsAboutThisBooking ? refreshedItem.reason : null,
       },
       db,
     );
