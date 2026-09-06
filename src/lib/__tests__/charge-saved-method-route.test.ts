@@ -753,6 +753,25 @@ describe("POST /api/payments/charge-saved-method", () => {
       );
     });
 
+    it("the thrown-charge alert also names the CHARGED amount, not the pre-lock snapshot's (#3267 fix round 2)", async () => {
+      // The outer catch's alert reads its own context, captured next to the
+      // claim; it has to carry the same post-lock figure as the branch above.
+      const preLock = makeBooking();
+      const locked = makeBooking({ finalPriceCents: 19900 });
+      mockBookingFindUnique.mockImplementation(async ({ select, include }: { select?: { status?: boolean }; include?: Record<string, unknown> }) => {
+        if (select?.status && Object.keys(select).length === 1) return { status: "CONFIRMED" };
+        return include && !("member" in include) ? locked : preLock;
+      });
+      mockChargePaymentMethod.mockRejectedValue(stripeSdkError({ type: "api_error", message: "Stripe is having a moment" }));
+
+      const response = await POST(makeRequest());
+
+      expect(response.status).toBe(500);
+      expect(mockSendAdminPaymentFailureAlert).toHaveBeenCalledWith(
+        expect.objectContaining({ amountCents: 19900, errorMessage: "Stripe is having a moment" }),
+      );
+    });
+
     it("REPLAYS the cron's unresolved attempt on the same card: Stripe is asked about that intent, no second charge is made, and its outcome settles the same row", async () => {
       mockPaymentTransactionFindMany.mockResolvedValue([
         {
