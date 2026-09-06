@@ -1797,9 +1797,11 @@ policy-set key, then the merge-only partner-share **lodge** prefix (#2595 — ev
 affected lodge capacity key in sorted order, and deliberately no global cohort
 key), then holds **two**
 `member-lifecycle:<memberId>` advisory locks at once — one for the master, one
-for the loser — and finally the two `member-partner-link:<memberId>` keys. All
-are acquired at the top of the single merge transaction, before any read that
-decides a write, and the two member keys in **sorted id order**
+for the loser. It next pre-derives every member who participates in the merge's
+prospective parent or surviving-partner topology and acquires that complete,
+sorted set of `member-partner-link:<memberId>` keys. All are acquired at the top
+of the single merge transaction, before any read that decides a write, and each
+lock family is acquired in **sorted id order**
 (`[masterId, loserId].sort()`, smaller id first) so a
 merge and its mirror (a merge started from the other direction, or a concurrent
 archive/delete of either member) can never deadlock. Because the keys share the
@@ -2077,10 +2079,13 @@ lockAdultMemberHostingPolicySet(tx)                              policy config
            row on — no date filter, no status filter, #2672)
         = NO pg_advisory_xact_lock(1)                             deliberately
   → member-lifecycle:<master> / member-lifecycle:<loser>, sorted  member
-  → member-partner-link:<master> / member-partner-link:<loser>,   member links
-        sorted (#2595 — the sweep READS confirmed links to decide
-        which shared doubles it deletes; same relative position as
-        the reviewed move's own lifecycle→partner-link pair)
+  → pre-derive every prospective parent/partner participant
+  → member-partner-link:<each participant>, sorted               member links
+        (#2595 — the sweep READS confirmed links to decide which
+        shared doubles it deletes; #3271 — the merge re-reads the
+        complete participant/topology set under these locks; same
+        relative position as the reviewed move's own
+        lifecycle→partner-link pair)
   → steps 1-3: null self-cycles, resolve collisions, applyMoves
   → one sorted master/loser/ancillary `Member … FOR UPDATE`        member rows
   → under-lock hosting re-plan + sorted hosting-coverage-owner     last

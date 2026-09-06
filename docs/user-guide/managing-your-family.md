@@ -99,8 +99,13 @@ one who can make that declaration. The partner rules are in
 | Remove a confirmed partner | The other person is emailed; shared double-bed placements are released |
 
 Both people in a partnership must be **adults**, and each member can have at most
-**one** confirmed partner. Family billing (who pays for the household) is set by
-the club; see the operator [Family Groups](../guides/family-groups.md) guide.
+**one** confirmed partner. The same two people cannot also be recorded as direct
+parent and dependant: this applies while a partner request is pending as well as
+after it is confirmed, and it applies to either recorded parent. If the club's
+records disagree, the relationship request is left unchanged while the club
+checks which record needs correcting. Family billing (who pays for the
+household) is set by the club; see the operator
+[Family Groups](../guides/family-groups.md) guide.
 
 ## Troubleshooting
 

@@ -36,6 +36,14 @@ import {
   sendGroupCreateApprovedEmail,
   sendGroupCreateRejectedEmail,
 } from "@/lib/email";
+import { acquireMemberLifecycleLocks } from "@/lib/member-lifecycle-lock";
+import { acquireMemberPartnerLinkLocks } from "@/lib/member-partner-lock";
+import {
+  MEMBER_PARTNER_RELATIONSHIP_SELECT,
+  MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+  hasAnyPartnerRelationship,
+  memberHasPartnerRelationshipWith,
+} from "@/lib/member-parent-partner-exclusivity";
 
 export const REVIEWED_REQUEST_TYPES = [
   "JOIN_REQUEST",
@@ -157,6 +165,7 @@ async function findPotentialMemberMatches(
   request: {
     type: string;
     familyGroupId: string;
+    requesterId: string;
     childFirstName?: string | null;
     childLastName?: string | null;
     childDateOfBirth?: Date | null;
@@ -259,6 +268,7 @@ async function findPotentialMemberMatches(
         where: { familyGroupId: request.familyGroupId },
         select: { familyGroupId: true },
       },
+      ...MEMBER_PARTNER_RELATIONSHIP_SELECT,
     },
     orderBy: [{ active: "desc" }, { lastName: "asc" }, { firstName: "asc" }],
     take: 10,
@@ -279,6 +289,11 @@ async function findPotentialMemberMatches(
     ageLabel: formatMemberIdentityAge(member.dateOfBirth, clubDay),
     parentLinks: buildParentLinks(member),
     alreadyInGroup: member.familyGroupMemberships.length > 0,
+    ineligibleReason:
+      request.type === "CHILD_REQUEST" &&
+      memberHasPartnerRelationshipWith(member, request.requesterId)
+        ? MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE
+        : undefined,
   }));
 }
 
@@ -589,6 +604,12 @@ export async function reviewAdminFamilyGroupRequest(params: {
       parent: { id: string; inheritEmailFromId: string | null } | null;
       secondaryParent: { id: string; inheritEmailFromId: string | null } | null;
     } | null = null;
+    let requesterForParentLink = {
+      active: request.requester.active,
+      archivedAt: request.requester.archivedAt,
+      ageTier: request.requester.ageTier,
+      inheritEmailFromId: request.requester.inheritEmailFromId,
+    };
 
     if (request.type === "CHILD_REQUEST") {
       // A CHILD_REQUEST bundled with a GROUP_CREATE targets a group that has
@@ -832,10 +853,81 @@ export async function reviewAdminFamilyGroupRequest(params: {
         // created inside this transaction need no lock — their ids are not
         // visible to any concurrent mapping yet. Single key today; keep any
         // future multi-member variant in sorted key order.
-        for (const lockMemberId of [affectedMemberId]
-          .filter((value): value is string => Boolean(value))
-          .sort()) {
-          await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`member-lifecycle:${lockMemberId}`}))`;
+        const parentLinkMemberIds = childMemberForParentLink
+          ? [request.requesterId, childMemberForParentLink.id]
+          : [];
+        await acquireMemberLifecycleLocks(tx, [
+          affectedMemberId,
+          ...parentLinkMemberIds,
+        ]);
+        if (parentLinkMemberIds.length > 0) {
+          await acquireMemberPartnerLinkLocks(tx, parentLinkMemberIds);
+
+          // The preflight selected the candidate for user feedback, but the
+          // relationship decision is made again through this transaction only
+          // after lifecycle then partner locks (INV-LOCK-002/004).
+          const [freshRequester, freshChild] = await Promise.all([
+            tx.member.findUnique({
+              where: { id: request.requesterId },
+              select: {
+                active: true,
+                archivedAt: true,
+                ageTier: true,
+                inheritEmailFromId: true,
+              },
+            }),
+            tx.member.findUnique({
+              where: { id: childMemberForParentLink!.id },
+              select: {
+                id: true,
+                ageTier: true,
+                active: true,
+                archivedAt: true,
+                canLogin: true,
+                parentMemberId: true,
+                secondaryParentId: true,
+                inheritEmailFromId: true,
+                parent: { select: { id: true, inheritEmailFromId: true } },
+                secondaryParent: {
+                  select: { id: true, inheritEmailFromId: true },
+                },
+              },
+            }),
+          ]);
+          if (
+            !freshRequester ||
+            !freshRequester.active ||
+            freshRequester.archivedAt ||
+            freshRequester.ageTier !== "ADULT"
+          ) {
+            throw new ReviewRequestError(
+              "Child requests can only be approved for active adult requesters.",
+            );
+          }
+          if (
+            !freshChild ||
+            !freshChild.active ||
+            freshChild.archivedAt ||
+            !CHILD_REQUEST_AGE_TIERS.includes(freshChild.ageTier)
+          ) {
+            throw new ReviewRequestError(
+              "Selected member must be an active infant, child, or youth",
+            );
+          }
+          requesterForParentLink = freshRequester;
+          childMemberForParentLink = freshChild;
+
+          if (
+            await hasAnyPartnerRelationship(
+              tx,
+              request.requesterId,
+              freshChild.id,
+            )
+          ) {
+            throw new ReviewRequestError(
+              MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+            );
+          }
         }
 
         if (childMemberCreateData) {
@@ -873,9 +965,9 @@ export async function reviewAdminFamilyGroupRequest(params: {
 
         if (request.type === "CHILD_REQUEST" && childMemberForParentLink) {
           if (
-            request.requester.active === false ||
-            request.requester.archivedAt ||
-            (request.requester.ageTier && request.requester.ageTier !== "ADULT")
+            requesterForParentLink.active === false ||
+            requesterForParentLink.archivedAt ||
+            requesterForParentLink.ageTier !== "ADULT"
           ) {
             throw new ReviewRequestError("Child requests can only be approved for active adult requesters.");
           }
@@ -921,7 +1013,7 @@ export async function reviewAdminFamilyGroupRequest(params: {
               : []),
             {
               id: request.requesterId,
-              inheritEmailFromId: request.requester.inheritEmailFromId,
+              inheritEmailFromId: requesterForParentLink.inheritEmailFromId,
             },
           ];
           const explicitInheritEmailFromId =

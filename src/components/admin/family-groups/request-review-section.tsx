@@ -150,12 +150,16 @@ export function FamilyGroupRequestReviewSection({
     try {
       const ageTierSearchFilter =
         request.type === "CHILD_REQUEST" ? "&ageTierIn=INFANT,CHILD,YOUTH" : "";
+      const prospectiveParentFilter =
+        request.type === "CHILD_REQUEST"
+          ? `&prospectiveParentMemberId=${encodeURIComponent(request.requester.id)}`
+          : "";
       // #2568: the family-group lookup, not the members admin search. It answers
       // with each candidate's CALCULATED AGE and no date of birth, and restricts
       // itself to active, non-archived members capped at ten rows — the filters
       // the members endpoint had to be told about in the query string.
       const res = await fetch(
-        `/api/admin/family-groups/member-search?q=${encodeURIComponent(query)}${ageTierSearchFilter}`
+        `/api/admin/family-groups/member-search?q=${encodeURIComponent(query)}${ageTierSearchFilter}${prospectiveParentFilter}`
       );
       const data = await res.json().catch(() => ({}));
 
@@ -177,21 +181,35 @@ export function FamilyGroupRequestReviewSection({
         [request.id]: foundMembers,
       }));
 
-      if (foundMembers.length === 1) {
-        setRequestSelections((current) => ({
-          ...current,
-          [request.id]: foundMembers[0].id,
-        }));
-      }
+      const eligibleFoundMembers = foundMembers.filter(
+        (member) => !member.ineligibleReason,
+      );
+      setRequestSelections((current) => {
+        const selectedResult = foundMembers.find(
+          (member) => member.id === current[request.id],
+        );
+        if (selectedResult?.ineligibleReason) {
+          const next = { ...current };
+          delete next[request.id];
+          return next;
+        }
+        return eligibleFoundMembers.length === 1
+          ? { ...current, [request.id]: eligibleFoundMembers[0].id }
+          : current;
+      });
 
       setRequestSearchFeedback((current) => ({
         ...current,
         [request.id]:
           foundMembers.length === 0
             ? `No eligible member records found for "${query}".`
-            : foundMembers.length === 1
-              ? `Found and selected ${foundMembers[0].firstName} ${foundMembers[0].lastName}.`
-              : `Found ${foundMembers.length} member records.`,
+            : eligibleFoundMembers.length === 0
+              ? foundMembers.length === 1
+                ? `Found ${foundMembers[0].firstName} ${foundMembers[0].lastName}, but this member is unavailable. ${foundMembers[0].ineligibleReason ?? "They are not eligible for this relationship."}`
+                : `Found ${foundMembers.length} member records, but none are eligible for this relationship.`
+              : eligibleFoundMembers.length === 1
+                ? `Found and selected ${eligibleFoundMembers[0].firstName} ${eligibleFoundMembers[0].lastName}.`
+                : `Found ${foundMembers.length} member records.`,
       }));
     } finally {
       setRequestSearchingId((current) => (current === request.id ? null : current));
@@ -207,11 +225,31 @@ export function FamilyGroupRequestReviewSection({
     const linkedMemberId = requestSelections[request.id];
     const needsMemberSelection =
       request.type === "CHILD_REQUEST" || request.type === "ADULT_REQUEST";
+    const knownCandidates = [
+      ...request.matchingMembers,
+      ...(requestSearchResults[request.id] ?? []),
+    ];
+    const selectedCandidate = knownCandidates.find(
+      (candidate) => candidate.id === linkedMemberId,
+    );
+    const unavailableReason = knownCandidates.find(
+      (candidate) => candidate.ineligibleReason,
+    )?.ineligibleReason;
+
+    if (action === "approve" && selectedCandidate?.ineligibleReason) {
+      setRequestErrors((current) => ({
+        ...current,
+        [request.id]: selectedCandidate.ineligibleReason!,
+      }));
+      return;
+    }
 
     if (action === "approve" && needsMemberSelection && !linkedMemberId) {
       setRequestErrors((current) => ({
         ...current,
-        [request.id]: `Choose the member record to link, or create a new non-login ${createMemberNoun} where available.`,
+        [request.id]:
+          unavailableReason ??
+          `Choose the member record to link, or create a new non-login ${createMemberNoun} where available.`,
       }));
       return;
     }
@@ -242,6 +280,18 @@ export function FamilyGroupRequestReviewSection({
     const linkedMemberId = requestSelections[request.id];
     const needsMemberSelection =
       request.type === "CHILD_REQUEST" || request.type === "ADULT_REQUEST";
+    const selectedCandidate = [
+      ...request.matchingMembers,
+      ...(requestSearchResults[request.id] ?? []),
+    ].find((candidate) => candidate.id === linkedMemberId);
+
+    if (action === "approve" && selectedCandidate?.ineligibleReason) {
+      setRequestErrors((current) => ({
+        ...current,
+        [request.id]: selectedCandidate.ineligibleReason!,
+      }));
+      return;
+    }
 
     setRequestSubmittingId(request.id);
 

@@ -32,6 +32,7 @@ import {
   dependentLinkBlockers,
 } from "@/lib/dependent-link-eligibility";
 import { NO_INHERITABLE_EMAIL_SOURCE_MESSAGE } from "@/lib/member-parent-links";
+import { MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE } from "@/lib/member-parent-partner-exclusivity";
 
 type MockAccessRole = { role: string | null; roleDefinitionId?: string | null; roleDefinition?: unknown };
 
@@ -55,6 +56,8 @@ type MockMember = {
   financeAccessLevel: string;
   accessRoles: MockAccessRole[];
   familyGroupMemberships: Array<{ familyGroupId: string }>;
+  partnerLinksAsMemberA: Array<{ memberBId: string }>;
+  partnerLinksAsMemberB: Array<{ memberAId: string }>;
 };
 
 /**
@@ -96,6 +99,8 @@ function makeParent(overrides: Partial<MockMember> = {}): MockMember {
     financeAccessLevel: "NONE",
     accessRoles: [],
     familyGroupMemberships: [{ familyGroupId: "fg-1" }, { familyGroupId: "fg-2" }],
+    partnerLinksAsMemberA: [],
+    partnerLinksAsMemberB: [],
     ...overrides,
   };
 }
@@ -118,6 +123,8 @@ function makeMember(overrides: Partial<MockMember> = {}): MockMember {
     financeAccessLevel: "NONE",
     accessRoles: [],
     familyGroupMemberships: [],
+    partnerLinksAsMemberA: [],
+    partnerLinksAsMemberB: [],
     ...overrides,
   };
 }
@@ -126,6 +133,7 @@ function setupTransaction(members: MockMember[]) {
   const membersById = new Map(members.map((member) => [member.id, member]));
 
   const tx = {
+    $executeRaw: vi.fn().mockResolvedValue(undefined),
     member: {
       findUnique: vi.fn(async ({ where }: { where: { id: string } }) => {
         return membersById.get(where.id) ?? null;
@@ -197,6 +205,9 @@ function setupTransaction(members: MockMember[]) {
           canLogin: data.canLogin ?? member.canLogin,
         };
       }),
+    },
+    memberPartnerLink: {
+      findUnique: vi.fn().mockResolvedValue(null),
     },
     familyGroupMember: {
       upsert: vi.fn(async () => ({})),
@@ -694,6 +705,55 @@ describe("POST /api/admin/members/[id]/dependents/link", () => {
       expect((await res.json()).error).toMatch(/already linked to that parent/i);
       expect(tx.member.update).not.toHaveBeenCalled();
     });
+
+    it.each([
+      {
+        orientation: "candidate is member A",
+        partnerShape: {
+          partnerLinksAsMemberA: [{ memberBId: "parent-1" }],
+        },
+      },
+      {
+        orientation: "candidate is member B",
+        partnerShape: {
+          partnerLinksAsMemberB: [{ memberAId: "parent-1" }],
+        },
+      },
+    ])(
+      "rejects an existing partner before every parent/email/family side effect ($orientation)",
+      async ({ partnerShape }) => {
+        const tx = setupTransaction([
+          makeParent(),
+          makeMember(partnerShape),
+        ]);
+
+        const res = await linkDependent({
+          memberId: "target-1",
+          inheritEmail: true,
+          disableLogin: true,
+          addToFamilyGroupIds: ["fg-1"],
+        });
+
+        expect(res.status).toBe(422);
+        expect((await res.json()).error).toBe(
+          MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+        );
+        expect(tx.member.update).not.toHaveBeenCalled();
+        expect(tx.familyGroupMember.upsert).not.toHaveBeenCalled();
+        expect(tx.auditLog.create).not.toHaveBeenCalled();
+
+        const lockTexts = tx.$executeRaw.mock.calls.map((call) =>
+          call.flat().join(" "),
+        );
+        expect(lockTexts).toHaveLength(4);
+        expect(lockTexts.slice(0, 2).every((text) =>
+          text.includes("member-lifecycle:"),
+        )).toBe(true);
+        expect(lockTexts.slice(2).every((text) =>
+          text.includes("member-partner-link:"),
+        )).toBe(true);
+      },
+    );
 
     it("rejects the parent as their own dependant", async () => {
       const tx = setupTransaction([makeParent()]);

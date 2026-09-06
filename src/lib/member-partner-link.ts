@@ -19,6 +19,12 @@ import {
 } from "@/lib/bed-allocation-lifecycle";
 import { acquireMemberPartnerLinkLocks } from "@/lib/member-partner-lock";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
+import {
+  MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+  hasDirectParentRelationship,
+  isMemberParentPartnerExclusionViolation,
+  notDirectParentWithMemberWhere,
+} from "@/lib/member-parent-partner-exclusivity";
 
 // Declared Partner/Husband/Wife relationship between two ADULT members
 // (#1742). The row is a canonical ordered pair (memberAId < memberBId; DB
@@ -63,6 +69,8 @@ const PARTNER_MEMBER_SELECT = {
   // are equal" boundary. The gate is real (voucher + shared group); it is only
   // the *framing* of a lone "responsible adult" that would be false.
   detailsConfirmedByMemberId: true,
+  parentMemberId: true,
+  secondaryParentId: true,
 } as const;
 
 type PartnerMemberRecord = Prisma.MemberGetPayload<{
@@ -341,6 +349,7 @@ export async function listOneStepPartnerCandidates(
       detailsConfirmedByMemberId: memberId,
       id: { not: memberId },
       familyGroupMemberships: { some: { familyGroupId: { in: groupIds } } },
+      AND: notDirectParentWithMemberWhere(memberId),
     },
     select: PARTNER_MEMBER_SELECT,
   });
@@ -541,10 +550,23 @@ export async function requestPartnerLink(params: {
     | { outcome: "ok"; linkId: string; prunedCount: number }
     | { outcome: "confirmed_exists"; mine: boolean }
     | { outcome: "pair_exists"; theirs: boolean }
-    | { outcome: "outgoing_exists" };
+    | { outcome: "outgoing_exists" }
+    | { outcome: "direct_parent" }
+    | { outcome: "database_conflict" };
 
-  const result = await prisma.$transaction(async (tx): Promise<RequestOutcome> => {
-    await lockPartnerMembers(tx, [initiator.id, target.id]);
+  let result: RequestOutcome;
+  try {
+    result = await prisma.$transaction(async (tx): Promise<RequestOutcome> => {
+      await lockPartnerMembers(tx, [initiator.id, target.id]);
+
+      const directParent = await hasDirectParentRelationship(
+        tx,
+        initiator.id,
+        target.id,
+      );
+      if (directParent && !params.targetEmail) {
+        return { outcome: "direct_parent" };
+      }
 
     if (await memberHasConfirmedPartner(tx, initiator.id)) {
       return { outcome: "confirmed_exists", mine: true };
@@ -571,6 +593,14 @@ export async function requestPartnerLink(params: {
       return { outcome: "outgoing_exists" };
     }
 
+      // For by-email requests, requester-side confirmed/pair/outgoing conflicts
+      // must answer before target-specific suppression. Otherwise a caller can
+      // distinguish a direct parent target from an unrelated target by combining
+      // the lookup with a conflict already known about themselves (D9).
+      if (directParent) {
+        return { outcome: "direct_parent" };
+      }
+
     // The target's confirmed-partner state is checked only after every
     // requester-side conflict has answered: were it checked earlier, a
     // requester with, say, an outstanding outgoing request would get the
@@ -593,8 +623,35 @@ export async function requestPartnerLink(params: {
       ? await pruneOtherPendingLinks(tx, [initiator.id, target.id], link.id)
       : 0;
 
-    return { outcome: "ok", linkId: link.id, prunedCount };
-  });
+      return { outcome: "ok", linkId: link.id, prunedCount };
+    });
+  } catch (error) {
+    if (isMemberParentPartnerExclusionViolation(error)) {
+      result = { outcome: "database_conflict" };
+    } else {
+      throw error;
+    }
+  }
+
+  if (
+    result.outcome === "direct_parent" ||
+    result.outcome === "database_conflict"
+  ) {
+    if (params.targetEmail) {
+      return {
+        ok: true,
+        linkId: null,
+        status: PARTNER_LINK_PENDING,
+        suppressed: true,
+        message: PARTNER_REQUEST_SENT_GENERIC_MESSAGE,
+      };
+    }
+    return {
+      ok: false,
+      status: result.outcome === "database_conflict" ? 409 : 422,
+      error: MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+    };
+  }
 
   if (result.outcome === "confirmed_exists") {
     if (!result.mine && params.targetEmail) {
@@ -806,10 +863,19 @@ export async function respondToPartnerLink(params: {
   type ConfirmOutcome =
     | { outcome: "ok"; prunedCount: number }
     | { outcome: "confirmed_exists"; mine: boolean }
-    | { outcome: "race_lost" };
+    | { outcome: "race_lost" }
+    | { outcome: "direct_parent" };
 
-  const result = await prisma.$transaction(async (tx): Promise<ConfirmOutcome> => {
-    await lockPartnerMembers(tx, [link.memberAId, link.memberBId]);
+  let result: ConfirmOutcome;
+  try {
+    result = await prisma.$transaction(async (tx): Promise<ConfirmOutcome> => {
+      await lockPartnerMembers(tx, [link.memberAId, link.memberBId]);
+
+      if (
+        await hasDirectParentRelationship(tx, link.memberAId, link.memberBId)
+      ) {
+        return { outcome: "direct_parent" };
+      }
 
     const partnered = await membersWithConfirmedPartner(
       tx,
@@ -838,8 +904,23 @@ export async function respondToPartnerLink(params: {
       [link.memberAId, link.memberBId],
       link.id
     );
-    return { outcome: "ok", prunedCount };
-  });
+      return { outcome: "ok", prunedCount };
+    });
+  } catch (error) {
+    if (isMemberParentPartnerExclusionViolation(error)) {
+      result = { outcome: "direct_parent" };
+    } else {
+      throw error;
+    }
+  }
+
+  if (result.outcome === "direct_parent") {
+    return {
+      ok: false,
+      status: 409,
+      error: MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+    };
+  }
 
   if (result.outcome === "confirmed_exists") {
     return {
@@ -1064,10 +1145,18 @@ export async function adminAssignPartnerLink(params: {
   type AssignOutcome =
     | { outcome: "ok"; linkId: string; promoted: boolean; prunedCount: number }
     | { outcome: "confirmed_exists"; member: PartnerMemberRecord }
-    | { outcome: "already_partners" };
+    | { outcome: "already_partners" }
+    | { outcome: "direct_parent" }
+    | { outcome: "database_conflict" };
 
-  const result = await prisma.$transaction(async (tx): Promise<AssignOutcome> => {
-    await lockPartnerMembers(tx, [memberOne.id, memberTwo.id]);
+  let result: AssignOutcome;
+  try {
+    result = await prisma.$transaction(async (tx): Promise<AssignOutcome> => {
+      await lockPartnerMembers(tx, [memberOne.id, memberTwo.id]);
+
+      if (await hasDirectParentRelationship(tx, memberOne.id, memberTwo.id)) {
+        return { outcome: "direct_parent" };
+      }
 
     const existingPair = await tx.memberPartnerLink.findUnique({
       where: { memberAId_memberBId: pair },
@@ -1117,8 +1206,31 @@ export async function adminAssignPartnerLink(params: {
       [memberOne.id, memberTwo.id],
       linkId
     );
-    return { outcome: "ok", linkId, promoted: Boolean(existingPair), prunedCount };
-  });
+      return {
+        outcome: "ok",
+        linkId,
+        promoted: Boolean(existingPair),
+        prunedCount,
+      };
+    });
+  } catch (error) {
+    if (isMemberParentPartnerExclusionViolation(error)) {
+      result = { outcome: "database_conflict" };
+    } else {
+      throw error;
+    }
+  }
+
+  if (
+    result.outcome === "direct_parent" ||
+    result.outcome === "database_conflict"
+  ) {
+    return {
+      ok: false,
+      status: result.outcome === "database_conflict" ? 409 : 422,
+      error: MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+    };
+  }
 
   if (result.outcome === "already_partners") {
     return {
@@ -1332,7 +1444,8 @@ export type ClaimPartnerLinkOutcome =
         | "inviter_ineligible"
         | "claimer_ineligible"
         | "existing_confirmed_partner"
-        | "already_partners";
+        | "already_partners"
+        | "direct_parent_relationship";
     };
 
 /**
@@ -1371,6 +1484,12 @@ export async function formPartnerLinkOnClaim(params: {
     return { formed: false, reason: "claimer_ineligible" };
   }
 
+  if (
+    await hasDirectParentRelationship(tx, inviterMemberId, claimerMemberId)
+  ) {
+    return { formed: false, reason: "direct_parent_relationship" };
+  }
+
   const pair = canonicalPartnerPair(inviterMemberId, claimerMemberId);
   const existingPair = await tx.memberPartnerLink.findUnique({
     where: { memberAId_memberBId: pair },
@@ -1389,28 +1508,56 @@ export async function formPartnerLinkOnClaim(params: {
     return { formed: false, reason: "existing_confirmed_partner" };
   }
 
+  // The partner edge is optional to the token claim: the family-group join
+  // must still commit when Child B's database backstop wins a mixed-runtime
+  // race. A savepoint recovers the transaction before returning the stable
+  // refusal reason; without it PostgreSQL would leave the whole claim aborted.
+  // nosemgrep: acb-unsafe-raw-sql — fixed identifier, no arguments or request-reachable input
+  await tx.$executeRawUnsafe(
+    "SAVEPOINT member_partner_token_claim_optional_write",
+  );
+
   let linkId: string;
-  if (existingPair) {
-    await tx.memberPartnerLink.update({
-      where: { id: existingPair.id },
-      data: {
-        status: PARTNER_LINK_CONFIRMED,
-        confirmedByMemberId: claimerMemberId,
-        confirmedAt: now,
-      },
-    });
-    linkId = existingPair.id;
-  } else {
-    const link = await tx.memberPartnerLink.create({
-      data: {
-        ...pair,
-        status: PARTNER_LINK_CONFIRMED,
-        initiatedByMemberId: inviterMemberId,
-        confirmedByMemberId: claimerMemberId,
-        confirmedAt: now,
-      },
-    });
-    linkId = link.id;
+  try {
+    if (existingPair) {
+      await tx.memberPartnerLink.update({
+        where: { id: existingPair.id },
+        data: {
+          status: PARTNER_LINK_CONFIRMED,
+          confirmedByMemberId: claimerMemberId,
+          confirmedAt: now,
+        },
+      });
+      linkId = existingPair.id;
+    } else {
+      const link = await tx.memberPartnerLink.create({
+        data: {
+          ...pair,
+          status: PARTNER_LINK_CONFIRMED,
+          initiatedByMemberId: inviterMemberId,
+          confirmedByMemberId: claimerMemberId,
+          confirmedAt: now,
+        },
+      });
+      linkId = link.id;
+    }
+    // nosemgrep: acb-unsafe-raw-sql — fixed identifier, no arguments or request-reachable input
+    await tx.$executeRawUnsafe(
+      "RELEASE SAVEPOINT member_partner_token_claim_optional_write",
+    );
+  } catch (error) {
+    // nosemgrep: acb-unsafe-raw-sql — fixed identifier, no arguments or request-reachable input
+    await tx.$executeRawUnsafe(
+      "ROLLBACK TO SAVEPOINT member_partner_token_claim_optional_write",
+    );
+    // nosemgrep: acb-unsafe-raw-sql — fixed identifier, no arguments or request-reachable input
+    await tx.$executeRawUnsafe(
+      "RELEASE SAVEPOINT member_partner_token_claim_optional_write",
+    );
+    if (isMemberParentPartnerExclusionViolation(error)) {
+      return { formed: false, reason: "direct_parent_relationship" };
+    }
+    throw error;
   }
 
   await pruneOtherPendingLinks(tx, [inviterMemberId, claimerMemberId], linkId);
