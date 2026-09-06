@@ -3585,6 +3585,45 @@ describe("Cron: Confirm Pending Bookings", () => {
       ).toBeUndefined();
       expect(mockSendAdminPaymentFailureAlert).not.toHaveBeenCalled();
     });
+
+    it("says what the LEDGER says, not what the intent said: a `canceled` answer the webhook has already overtaken with a capture is reported as captured, not as an ended attempt (#3267 fix round)", async () => {
+      // Why this is not cosmetic: the terminal intent statuses used to be
+      // re-listed here as well as in `ledgerStatusForPaymentIntent`, so the two
+      // could disagree — and when the forward-only guard refuses a stale answer
+      // the intent's status is the WRONG one to believe. `canceled` arriving
+      // after a capture is exactly that shape (the #1992 sweep cancels an
+      // intent whose sibling has already settled the booking).
+      const logger = (await import("@/lib/logger")).default;
+      const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined as never);
+      const info = vi.spyOn(logger, "info").mockImplementation(() => undefined as never);
+      try {
+        const booking = makePendingBooking("b1");
+        mockBookingFindMany.mockResolvedValue([booking]);
+        mockBookingFindUnique.mockImplementation(
+          async ({ select }: { select?: { status?: boolean } }) =>
+            select?.status && Object.keys(select).length === 1
+              ? { status: "PAID" }
+              : booking
+        );
+        capacityAvailable();
+        mockChargePaymentMethod.mockResolvedValue({ id: "pi_race", status: "canceled", amount: 10000, payment_method: "pm_b1" });
+        mockPaymentTransactionUpdateMany.mockResolvedValue({ count: 0 });
+        mockPaymentTransactionFindUnique.mockImplementation(
+          async ({ where }: { where: { id?: string } }) =>
+            where.id ? { status: "SUCCEEDED" } : null
+        );
+
+        await confirmPendingBookings();
+
+        const said = (spy: typeof warn, needle: string) =>
+          spy.mock.calls.some(([, message]) => typeof message === "string" && message.includes(needle));
+        expect(said(info, "captured after the retrieve")).toBe(true);
+        expect(said(warn, "ended without a capture")).toBe(false);
+      } finally {
+        warn.mockRestore();
+        info.mockRestore();
+      }
+    });
   });
 
   describe("#3268 an unusable saved card is terminal for the cron, never retried forever", () => {
