@@ -866,6 +866,23 @@ CI-green → evidence**.
   `npm run test:named` — never bare `vitest run` on several paths, which
   silently drops one that matches nothing (#3120).
 
+  **Selecting that set by grepping for the path you changed under-selects, and
+  #2958 measured how** (#3323). Three greps were used to pick the suites a route
+  change could reach: tests naming the route path, tests rooted at `src`, and
+  tests walking a directory. All three missed
+  `additional-payment-card-gate.test.ts`, which CI then failed. The path never
+  appears in it as text — the census composes it segment by segment,
+  `join(process.cwd(), "src", "app", "(authenticated)", "bookings", "[id]",
+  "page.tsx")`, across seven lines — so a line-oriented grep for the path cannot
+  match, and it reads one named file rather than walking anything. Two arms that
+  DO catch it, and are worth adding to any such derivation: read each candidate
+  **whole-file** rather than line by line, so a path split across lines still
+  matches; and select every disk-reading test that names any **component the
+  changed surface renders**, because a census is usually named after the rule it
+  polices rather than after the file that rule currently lives in. A census that
+  names one file is also the one a split silently disarms, so widen it to the
+  directory when you move its target.
+
   Running all 186 locally instead was measured and **rejected on evidence**:
   ~3 minutes natively on Windows, with false failures.
   `public-page-content-published-contract.test.ts` and
