@@ -139,7 +139,7 @@ const verification: DataMigrationVerification = {
                    "priceCents" AS "priceCents",
                    "priceSource"::text AS "priceSource"
               FROM "BookingGuestNight"
-             ORDER BY "bookingGuestId"
+             ORDER BY "bookingGuestId" COLLATE "C"
           `,
           rows: [
             { guest: "ps-trigger-action", priceCents: 1000, priceSource: "UNKNOWN" },
@@ -153,8 +153,8 @@ const verification: DataMigrationVerification = {
             { guest: "ps-trigger-negative", priceCents: 1000, priceSource: "UNKNOWN" },
             { guest: "ps-trigger-overflow", priceCents: 1000, priceSource: "UNKNOWN" },
             { guest: "ps-trigger-price-shape", priceCents: 1000, priceSource: "UNKNOWN" },
-            { guest: "ps-trigger-record", priceCents: 1000, priceSource: "OFFICER_PRICED" },
             { guest: "ps-trigger-reconcile", priceCents: 1000, priceSource: "OFFICER_PRICED" },
+            { guest: "ps-trigger-record", priceCents: 1000, priceSource: "OFFICER_PRICED" },
             { guest: "ps-trigger-stale", priceCents: 1000, priceSource: "UNKNOWN" },
           ],
         },
