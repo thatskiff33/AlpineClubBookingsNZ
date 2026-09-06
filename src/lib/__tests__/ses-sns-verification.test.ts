@@ -61,7 +61,6 @@ function signedEnvelopeV1(topicArn = TOPIC_ARN) {
   };
 
   // Test fixture: deliberately signs a legacy SignatureVersion-1 SNS payload to exercise the SHA1 legacy path.
-  // nosemgrep: javascript.node-stdlib.cryptography.crypto-weak-algorithm.crypto-weak-algorithm
   const signer = createSign("RSA-SHA1");
   signer.update(buildSnsSigningString(envelope), "utf8");
   envelope.Signature = signer.sign(privateKey, "base64");

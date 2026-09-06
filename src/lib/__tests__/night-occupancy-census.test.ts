@@ -240,7 +240,6 @@ function listSourceFiles(dir: string): string[] {
 
 function mentions(source: string, symbol: string): boolean {
   // Test helper: `symbol` comes from the closed literal lists above, not input.
-  // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp
   return new RegExp(`\\b${symbol}\\b`).test(source);
 }
 

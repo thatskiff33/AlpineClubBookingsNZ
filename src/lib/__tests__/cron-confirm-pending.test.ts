@@ -57,7 +57,7 @@ vi.mock("../payment-reconciliation", () => ({
 // the one export replaced — the real one needs a Payment row to read.
 const mockReconcilePaymentAggregates = vi.fn();
 vi.mock("../payment-transactions", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../payment-transactions")>()),
+  ...((await importOriginal()) as typeof import("../payment-transactions")),
   upsertPaymentIntentTransaction: (...args: unknown[]) =>
     mockUpsertPaymentIntentTransaction(...args),
   reconcilePaymentAggregates: (...args: unknown[]) =>
@@ -189,7 +189,7 @@ vi.mock("@/lib/payment-link", () => ({
 // flows through so the withheld-row assertion below compares against the
 // production constant rather than a second literal (INV-SSOT-002).
 vi.mock("@/lib/payment-link-split-guest", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/payment-link-split-guest")>()),
+  ...((await importOriginal()) as typeof import("@/lib/payment-link-split-guest")),
   mintSplitGuestPaymentLinkIfAbsent: (...args: unknown[]) =>
     mockMintSplitGuestPaymentLinkIfAbsent(...args),
 }));

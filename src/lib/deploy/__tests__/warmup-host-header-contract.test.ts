@@ -29,7 +29,6 @@ const REPO = process.cwd();
 
 function readRepoFile(relativePath: string): string {
   // Test helper: reads a fixed repo file under process.cwd(); relativePath is test-controlled, not user input.
-  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
   return fs.readFileSync(path.resolve(REPO, relativePath), "utf8");
 }
 

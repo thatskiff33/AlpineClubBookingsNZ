@@ -210,32 +210,184 @@ rather than inferred:
 
 - **`Static analysis gate`** (`ci.yml` → `static-analysis`) is the blocking one.
   It runs `p/nextjs`, `p/typescript`, `p/javascript`, `p/react` and
-  `.semgrep/rules/`, and nothing else.
+  `.semgrep/rules/`, and nothing else. **This is the policy**: the ruleset is
+  versioned in this repository and changes only through a reviewed diff.
 - **`semgrep-cloud-platform/scan`** is a Semgrep AppSec Platform GitHub App
-  check. Its ruleset is configured at semgrep.dev, not in this repository, it
-  costs no GitHub Actions time, and it is advisory.
+  check. It costs no GitHub Actions time and it is advisory. Its ruleset is
+  configured at semgrep.dev, so it is an **execution and reporting surface, not
+  a second policy** — the owner's decision on #2842.
 
-Measured at 527eb74fc by re-running the exact blocking invocation with
-`--disable-nosem`: **the blocking rule set produces exactly ONE finding in the
-whole repository**, `acb-unsafe-raw-sql` at `src/lib/audit-retention.ts`. So
-exactly one of this repository's `nosemgrep` annotations is live against the
-gate that can stop a merge. The other 87 name ids from `p/default` /
-`p/security-audit` — packs the blocking scan does not run — and serve the cloud
-scan.
+#### Keeping Semgrep Cloud aligned to this repository (owner UI checklist)
 
-They are deliberately **not** pruned. Their effect is only observable in a scan
-whose ruleset this repository does not control, so "these suppress nothing"
-cannot be verified from here, and deleting 87 annotations on that assumption
-would be a blind change to a security surface. Two things follow for anyone
-adding or reading one:
+Nothing in this repository can read what semgrep.dev is configured to run, so
+this alignment cannot be enforced by a check — it is a documented control, and
+saying so plainly is the honest version. Whenever `.semgrep/rules/` changes, or
+after any Semgrep Cloud policy edit, the owner re-walks this list at
+[semgrep.dev](https://semgrep.dev) → the `AlpineClubBookingsNZ` project:
 
-- say which scan an annotation is for. If it names a `javascript.…` /
-  `generic.…` registry id, it is for the cloud scan and the blocking gate will
-  never emit it;
+1. **Rules → Policies.** Turn OFF every managed policy the repository does not
+   run — in particular `p/default` and `p/security-audit`, which are the two
+   that produced the split-brain #2842 measured.
+2. **Turn ON exactly the four packs the blocking gate runs**: `p/nextjs`,
+   `p/typescript`, `p/javascript`, `p/react`.
+3. **Enable scanning of the repository's own rules** so `.semgrep/rules/` is
+   picked up from the checkout rather than from a Cloud-side copy.
+4. **Settings → confirm the scan excludes** `node_modules`, `.next` and
+   `.semgrep/tests`, matching the blocking invocation. Every file in
+   `.semgrep/tests` is a deliberate violation and will otherwise be reported.
+5. **Re-read the two counts below.** If Cloud reports findings the blocking gate
+   does not, the two have drifted again and step 1 is the usual cause.
+
+If the club ever decides the Cloud scan is not worth this recurring step, the
+supported answer is to remove the GitHub App outright rather than to let it
+drift — an advisory scanner running an unknown ruleset is worse than none,
+because its green is read as evidence.
+
+#### What the suppressions actually suppress (re-measured for #2842)
+
+Measured on the pinned CI image `semgrep/semgrep:1.161.0` by re-running the
+exact blocking invocation with `--disable-nosem`, **three** findings exist in
+the whole repository:
+
+| Rule | Site |
+| --- | --- |
+| `semgrep.rules.acb-unsafe-raw-sql` | `src/lib/audit-retention.ts` |
+| `semgrep.rules.acb-unsafe-raw-sql` | `src/lib/booking-envelope-invariants.ts` |
+| `typescript.react.security.audit.react-dangerouslysetinnerhtml` | `src/components/club-post-editor.tsx` |
+
+**This corrected the count #2686 recorded, and corrected it in a way that
+mattered.** That measurement found one finding and concluded that every
+annotation not naming an `acb-` rule served the cloud scan. It does not:
+`react-dangerouslysetinnerhtml` comes from `p/typescript`, which the blocking
+gate **does** run. One of the six annotations naming that rule was live; the
+other five sat on call sites the rule never flags.
+
+So the tree carried 120 id-bearing `nosemgrep` annotations and exactly 3 of them
+suppressed anything the blocking gate can emit. #2842 deleted the other 117
+— the evidence being that `--disable-nosem` reports no finding at any of those
+sites — and the scan is still findings-free with them gone. Each of the three
+retained annotations names its rule and carries the reason at the call site.
+
+Two things follow for anyone adding one:
+
+- **Measure before you write one.** Run the invocation below; if it reports
+  nothing at your line, a `nosemgrep` there suppresses nothing and is noise that
+  the next census has to re-disprove.
 - Semgrep matches `nosemgrep: <id>` by **exact suffix**, so a rule-id variant is
-  a different id. The 41 `path-traversal.path-join-resolve-traversal`
-  annotations do not suppress an `express-path-join-resolve-traversal` finding,
-  and a rename upstream silently un-suppresses every one of them.
+  a different id. A `path-traversal.path-join-resolve-traversal` annotation does
+  not suppress an `express-path-join-resolve-traversal` finding, and a rename
+  upstream silently un-suppresses every annotation naming the old id.
+
+```bash
+# What the blocking gate would report with every suppression ignored.
+docker run --rm -v "$PWD:/src:ro" -w /src semgrep/semgrep:1.161.0 \
+  semgrep scan --config .semgrep/rules \
+    --config p/nextjs --config p/typescript --config p/javascript --config p/react \
+    --disable-nosem --metrics=off \
+    --exclude node_modules --exclude .next --exclude .semgrep/tests
+```
+
+### Semgrep parse coverage
+
+`semgrep scan --error` exits 0 on findings-free code **even when it could not
+parse some of that code**. Parse failures are reported at `warn` level in the
+JSON `errors` array and nowhere in the exit status, so a file the scanner cannot
+read has looked exactly like a file the scanner read and cleared.
+
+Measured for #2842 on the same pinned image: 177 of 4,219 scanned files carried
+a parse error behind a green gate, and **three were whole-file failures where no
+rule ran at all**. Two parser faults caused every one of them, and both fire on
+valid TypeScript that `tsc` and the build accept.
+
+Those two are stated once, as the rule rather than as a spelling, in
+`KNOWN_CONSTRUCTS` in `scripts/ci/check-semgrep-coverage.mjs` — which is also
+the text the gate hands you when it fires, so it is the copy that has to be
+right. They are deliberately not restated here.
+
+Two traps worth knowing before you reach for a remedy, both measured:
+
+- the generic-call fault is about the SHAPE, not the name. 143 of the
+  allowlisted files spell it `importOriginal`, but 22 spell it
+  `vi.importActual` or `importActual`, and grepping for the first name finds
+  nothing in those. It is also specifically the EMPTY argument list — measured
+  with a minimal repro, `f<typeof import("x")>()` fails and
+  `f<typeof import("x")>("x")` parses — so ten files here carry the same
+  generic with an argument and are correctly *not* allowlisted. A rule stated
+  without that qualifier sends somebody to rewrite code that was never broken;
+- the `&amp;` remedy is for JSX **text** only. The same fault fires on a `&`
+  inside a string literal — a URL query such as
+  `href="/admin/bookings?sortBy=member&sortDir=asc"` — where rewriting it
+  changes the value, and in one case the value a test asserts. Those four files
+  are on the allowlist precisely because they have no safe rewrite.
+
+#### The coverage gate
+
+`scripts/ci/check-semgrep-coverage.mjs` runs in the same job and fails on four
+things:
+
+- a **whole-file** parse failure, always, with no way to allowlist it. Coverage
+  there is zero, and a file nothing scans must never be signed off as scanned;
+- a partially-unparsed file absent from `.semgrep/unparsed-allowlist.json`, so
+  coverage cannot quietly shrink;
+- an allowlist entry whose file now parses, or no longer exists. **An entry
+  cannot outlive its evidence** — whoever fixes a file deletes its entry in
+  the same change, so the list cannot rot into an exemption roster nobody
+  rechecks. Note which direction is mechanical: deletion is forced by the
+  gate, while an addition only has to survive review, so the guarantee is
+  that the list never grows *silently*, not that it never grows;
+- an `errors[].type` it does not recognise. Fail-closed: a scanner that starts
+  reporting a new kind of failure must not reduce coverage silently just because
+  the gate predates the name.
+
+Every entry in the allowlist is a **test file**: the production files and all
+three whole-file failures the measurement found were fixed rather than listed.
+The file itself is the count — it is not restated here, because the gate exists
+to drive it down and a copied number would be wrong on the first success. Run it
+locally against a scan you produced yourself:
+
+```bash
+docker run --rm -v "$PWD:/src:ro" -v "$PWD/.semgrep-out:/out" -w /src \
+  semgrep/semgrep:1.161.0 \
+  semgrep scan --config .semgrep/rules \
+    --config p/nextjs --config p/typescript --config p/javascript --config p/react \
+    --metrics=off --exclude node_modules --exclude .next --exclude .semgrep/tests \
+    --json-output /out/semgrep-results.json
+node scripts/ci/check-semgrep-coverage.mjs .semgrep-out/semgrep-results.json
+```
+
+#### Both lists are living worklists, not a finished cleanup
+
+The unparsed allowlist and the suppression census are **populations that
+regrow**, and #2842 measured how fast — over three separate batches during one
+issue's delivery:
+
+| Merge | New unparsed files | New dead suppressions |
+| --- | --- | --- |
+| `main` sync into the epic | 4 | 1 |
+| one child merge (#3214) | — | 1 |
+| four children at once (#3307 et al) | 2 | — |
+
+**So it is not only a `main` sync that regrows these lists — it is anything
+landing at all**, including a sibling child on the same epic. Nobody did
+anything wrong in any of those: `importOriginal<typeof import("...")>()` is the
+idiomatic partial mock, and `path.resolve(process.cwd(), …)` in a test helper
+reads as exactly the thing that deserves an exemption comment.
+
+Two consequences worth holding on to.
+
+- **A one-time sweep cannot hold either population, so neither is "done".**
+  #2842 swept both, and both had regrown before the branch merged — the first
+  time with nobody noticing, which is why the count in this document was wrong
+  for a fortnight. The instruments are what hold the line now: the coverage
+  gate for the first list and `semgrep-suppression-census.test.ts` for the
+  second, and each caught its regrowth on the very first merge that produced
+  one, before any human read the diff.
+- **The recurrence is what [#3318](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3318)
+  is for.** An ESLint rule banning the unparseable shape at the source removes
+  the first list's growth entirely rather than catching it after the fact,
+  which is the structural fix `INV-SSOT-001` prefers over a policed one. Until
+  that lands, expect to rewrite a handful of files after each `main` sync, and
+  prefer the parsing form when you write a new partial mock.
 
 ### Break-glass: a new CRITICAL image finding with no code change
 

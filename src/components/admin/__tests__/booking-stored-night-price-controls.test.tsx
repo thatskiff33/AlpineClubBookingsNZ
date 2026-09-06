@@ -16,9 +16,9 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 
 const access = vi.hoisted(() => ({ canEdit: true as boolean | undefined }));
 vi.mock("@/hooks/use-admin-area-edit-access", async (importOriginal) => ({
-  ...(await importOriginal<
-    typeof import("@/hooks/use-admin-area-edit-access")
-  >()),
+  ...((await importOriginal()) as typeof import(
+    "@/hooks/use-admin-area-edit-access"
+  )),
   useAdminAreaEditAccess: () => access.canEdit,
 }));
 

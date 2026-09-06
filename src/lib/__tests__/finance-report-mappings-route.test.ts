@@ -26,7 +26,7 @@ vi.mock("@/lib/session-guards", () => ({
 }));
 
 vi.mock("@/lib/admin-permissions", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/admin-permissions")>()),
+  ...((await importOriginal()) as typeof import("@/lib/admin-permissions")),
   hasFinanceManagerAccess: (input: string | { financeAccessLevel?: string }) =>
     (typeof input === "string" ? input : input.financeAccessLevel) === "MANAGER",
 }));

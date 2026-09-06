@@ -219,7 +219,7 @@ vi.mock("../stripe", () => ({
     mocks.cancelPaymentIntentIfCancellableWithResult(...args),
 }));
 vi.mock("../payment-transactions", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../payment-transactions")>()),
+  ...((await importOriginal()) as typeof import("../payment-transactions")),
   reconcilePaymentAggregates: (...args: unknown[]) =>
     mocks.reconcilePaymentAggregates(...args),
 }));

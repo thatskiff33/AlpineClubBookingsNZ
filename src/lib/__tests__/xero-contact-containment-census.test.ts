@@ -86,7 +86,6 @@ function walk(dir: string, out: string[] = []): string[] {
   for (const entry of entries) {
     if (entry === "node_modules" || entry === ".next") continue;
     // Test helper: walks fixed repository roots; `entry` comes from readdir.
-    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
     const full = path.join(dir, entry);
     if (statSync(full).isDirectory()) walk(full, out);
     else if (EXTENSIONS.has(path.extname(full))) out.push(full);

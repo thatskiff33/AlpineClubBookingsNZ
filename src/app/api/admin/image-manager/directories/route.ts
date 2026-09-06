@@ -45,7 +45,6 @@ async function collectDirs(absDir: string, relBase: string): Promise<string[]> {
       // absDir is contained under IMAGES_ROOT; entry.name comes from readdir of
       // that directory, not from request input. #2841 triage:
       // docs/SECURITY-ATTACK-SURFACE.md -> "Image Manager path containment".
-      // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
       const children = await collectDirs(path.join(absDir, entry.name), rel);
       result.push(...children);
     }
@@ -98,7 +97,6 @@ export async function POST(request: NextRequest) {
   // isSafeDirectoryName above; the check below re-confirms containment before
   // mkdir. Why that is enough, and the whole #2841 triage behind it:
   // docs/SECURITY-ATTACK-SURFACE.md -> "Image Manager path containment".
-  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
   const newAbs = path.join(parentAbs, name);
   // Strict: a directory being CREATED is always a child, never the root itself.
   // A `newAbs !== IMAGES_ROOT &&` escape hatch here is what let `name: ".."`
@@ -190,7 +188,6 @@ export async function PATCH(request: NextRequest) {
   // isSafeDirectoryName above; the check below re-confirms containment before
   // rename. #2841 triage: docs/SECURITY-ATTACK-SURFACE.md -> "Image Manager
   // path containment".
-  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
   const newAbs = path.join(path.dirname(oldAbs), newName);
   if (!newAbs.startsWith(IMAGES_ROOT + path.sep)) {
     return NextResponse.json(

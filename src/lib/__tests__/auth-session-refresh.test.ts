@@ -666,7 +666,6 @@ describe("auth session refresh", () => {
       active: true,
       canLogin: true,
       // Test fixture: a static bcrypt hash used as mock member data; not a real credential.
-      // nosemgrep: generic.secrets.security.detected-bcrypt-hash.detected-bcrypt-hash
       passwordHash: "$2b$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy",
       forcePasswordChange: false,
       emailVerified: true,

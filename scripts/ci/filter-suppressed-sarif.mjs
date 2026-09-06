@@ -16,6 +16,16 @@ import { pathToFileURL } from "node:url";
  * GitHub's SARIF ingest does not act on the `suppressions` field, so it files
  * them as open alerts that can never be closed. Re-scanning re-opens them.
  *
+ * SINCE #2842 A THIRD RESULT IS WITHHELD, and it is not a raw-SQL one, so say
+ * it plainly: `react-dangerouslysetinnerhtml` at
+ * `src/components/club-post-editor.tsx`. That is #2842's own headline
+ * correction — the measurement proved the blocking gate DOES emit that rule,
+ * where the earlier note had it down as cloud-only. It is suppressed for the
+ * reason given at the call site (the seed is sanitised through the board
+ * allowlist), so it is filtered here like the other two. A reader of this
+ * docblock should not have to discover from a diff that a
+ * `dangerouslySetInnerHTML` alert is being kept off the Security tab.
+ *
  * Why that is worth a build step rather than two dismissals. `INV-OPS-014`'s own
  * failure message INSTRUCTS a contributor to add a `nosemgrep` comment when the
  * exemption is justified. So every justified exemption mints an un-closable

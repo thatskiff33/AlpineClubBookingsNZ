@@ -13,7 +13,7 @@ vi.mock("@/lib/xero-api-usage", () => ({
 // DB-only Xero resolution (#2079): stub the token-encryption key so the token
 // crypto round-trip below needs no integration-credential DB rows.
 vi.mock("@/lib/xero-config", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/xero-config")>()
+  const actual = (await importOriginal()) as typeof import("@/lib/xero-config")
   return {
     ...actual,
     getOperationalXeroEncryptionKey: vi

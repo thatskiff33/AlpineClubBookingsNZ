@@ -755,7 +755,6 @@ export function neutraliseSensitiveSubjectContent(
   const sensitiveSubjectTokenSet = getSensitiveEmailSubjectTokens(templateName);
   // The alternation is built from a fixed internal token set, not user input; the
   // tokens are simple {{name}} identifiers with no ReDoS structure.
-  // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp
   const sensitiveSubjectTokenPattern = new RegExp(
     `\\{\\{\\s*(?:${Array.from(sensitiveSubjectTokenSet).join("|")})\\s*\\}\\}`,
     "g",
