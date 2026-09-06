@@ -13,9 +13,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * landed in the booking's permanent history rather than in a toast that goes
  * away. Pinning them together is what stops one being fixed and the other not.
  *
- * THE LEGACY WORDING IS PINNED BYTE FOR BYTE, in both places. This change is a
- * new arm, not a rewrite: every kind that really is a refund must read exactly as
- * it always has, or #3213 has quietly restated four years of audit rows.
+ * THE LEGACY WORDING IS PINNED BYTE FOR BYTE wherever it is still true. The
+ * DISMISSAL half is a new arm and not a rewrite: every kind that really is a
+ * refund must read exactly as it always has, or #3213 has quietly restated four
+ * years of audit rows.
+ *
+ * THE COMPLETION HALF IS A CORRECTION, and the last block below is where that is
+ * pinned. Its single sentence asserted a hand-back over routes that were a card
+ * refund, an account credit, or - since #3170 - the member being asked to pay the
+ * CLUB. Only the hand-back wording survives byte-identical, because only the
+ * hand-back was true.
  */
 
 const mocks = vi.hoisted(() => ({ createAuditLog: vi.fn() }));
@@ -24,7 +31,7 @@ vi.mock("@/lib/audit", () => ({
 }));
 
 import { recordManualRefundTaskClosureAudit } from "@/lib/manual-refund-task-audit";
-import { dismissalMessage } from "@/lib/manual-refund-task-copy";
+import { completionMessage, dismissalMessage } from "@/lib/manual-refund-task-copy";
 
 const WITHHELD_SHARE = "UNCOLLECTED_EDIT_REVIEW_SHARE";
 
@@ -38,6 +45,7 @@ beforeEach(() => {
 async function summaryFor(
   kind: string | null,
   resolution: "completed" | "dismissed",
+  settlementRoute: { kind: string; collectVia?: "stripe" | "invoice" } | null = null,
 ): Promise<string> {
   await recordManualRefundTaskClosureAudit({
     task: {
@@ -53,8 +61,10 @@ async function summaryFor(
     actingMemberId: "admin-1",
     note: "Checked Xero, billed the shortfall.",
     settlement: resolution === "completed" ? { amountCents: 4_500, amended: false } : null,
-    settlementRoute: null,
-    settlementDirection: null as never,
+    settlementRoute: settlementRoute as never,
+    settlementDirection: (settlementRoute?.kind === "additional-charge"
+      ? "CHARGE_TO_MEMBER"
+      : null) as never,
     store: {} as never,
   });
   const [entry] = mocks.createAuditLog.mock.calls[0] as [{ summary: string }];
@@ -104,10 +114,12 @@ describe("#3213: every other kind reads exactly as it always has", () => {
     );
   });
 
-  it("leaves the completion arm alone on every kind, withheld share included", async () => {
+  it("leaves a hand-back completion alone on every kind, withheld share included", async () => {
     // A withheld share can never REACH this arm - the completion door refuses it
     // (`INV-PAY-051`) - so the assertion is that #3213 did not reword the arm it
-    // was not about, rather than that the combination is reachable.
+    // was not about, rather than that the combination is reachable. With no
+    // settlement route this is the legacy hand-back, which is the one completion
+    // wording the fix round below leaves byte-identical.
     expect(await summaryFor("CANCELLED_BOOKING_HAND_BACK", "completed")).toBe(
       "Manual booking refund paid back by hand",
     );
@@ -132,5 +144,91 @@ describe("#3213: a kind this build does not recognise reads as it always has", (
     expect(dismissalMessage(undefined)).toBe(LEGACY_TOAST);
     expect(dismissalMessage("SOME_FUTURE_KIND")).toBe(LEGACY_TOAST);
     expect(await summaryFor(null, "dismissed")).toBe(LEGACY_SUMMARY);
+  });
+});
+
+describe("#3213 fix round: the durable summary names the money's direction", () => {
+  /*
+    THE RECORD WAS LESS TRUTHFUL THAN THE TOAST, which is the wrong way round.
+    Since #3170 an EDIT_FINANCIAL_REVIEW completion can go down the
+    additional-charge route - the member is asked to pay the CLUB - and the audit
+    summary still wrote "Manual booking refund paid back by hand" over it. The
+    toast has distinguished all four routes since #3170; the permanent,
+    member-adjacent row did not.
+
+    The route is classified in ONE place and both sentences read it, so the pair
+    can no longer drift. These cases assert the pairing directly rather than the
+    strings alone: whatever each says, they must agree about which way the money
+    went.
+  */
+  const CARD = { kind: "stripe-refund" };
+  const CREDIT = { kind: "account-credit" };
+  const CHARGE_CARD = { kind: "additional-charge", collectVia: "stripe" as const };
+  const CHARGE_INVOICE = { kind: "additional-charge", collectVia: "invoice" as const };
+
+  it("never says the club paid a member back when the member was asked to pay", async () => {
+    for (const route of [CHARGE_CARD, CHARGE_INVOICE]) {
+      vi.clearAllMocks();
+      const summary = await summaryFor("EDIT_FINANCIAL_REVIEW", "completed", route);
+      expect(summary.toLowerCase()).not.toContain("refund");
+      expect(summary.toLowerCase()).not.toContain("paid back");
+      expect(summary).toContain("owed by the member");
+    }
+  });
+
+  it("writes one summary per settlement route", async () => {
+    const cases: [
+      { kind: string; collectVia?: "stripe" | "invoice" } | null,
+      string,
+    ][] = [
+      [CARD, "Manual booking refund settled as a card refund"],
+      [CREDIT, "Manual booking refund settled as account credit"],
+      [
+        CHARGE_INVOICE,
+        "Booking amount owed by the member added to the booking invoice",
+      ],
+      [
+        CHARGE_CARD,
+        "Booking amount owed by the member requested as an additional payment",
+      ],
+      [{ kind: "local-allocation" }, "Manual booking refund paid back by hand"],
+      [null, "Manual booking refund paid back by hand"],
+    ];
+    for (const [route, expected] of cases) {
+      vi.clearAllMocks();
+      expect(await summaryFor("EDIT_FINANCIAL_REVIEW", "completed", route)).toBe(
+        expected,
+      );
+    }
+  });
+
+  it("agrees with the toast about the direction, route by route", async () => {
+    for (const route of [CARD, CREDIT, CHARGE_CARD, CHARGE_INVOICE, null]) {
+      vi.clearAllMocks();
+      const summary = await summaryFor("EDIT_FINANCIAL_REVIEW", "completed", route);
+      const toast = completionMessage({
+        amountAmended: false,
+        settlementRoute: route,
+        stripeRefundId: "re_1",
+        additionalPaymentIntentId: "pi_1",
+      });
+      const asksTheMember = (sentence: string) =>
+        /asked to pay|to pay|owed by the member/i.test(sentence) &&
+        !/refund|paid back|credit issued/i.test(sentence);
+      expect(asksTheMember(summary)).toBe(asksTheMember(toast));
+    }
+  });
+
+  it("makes no claim the provider call succeeded, because it is written before it", async () => {
+    // The audit entry is composed INSIDE the completion transaction; the Stripe
+    // refund and the payment request happen after the commit. "sent" or
+    // "received" here would be a durable claim the row cannot back when the call
+    // then fails and the recovery operation retries it.
+    for (const route of [CARD, CHARGE_CARD]) {
+      vi.clearAllMocks();
+      const summary = await summaryFor("EDIT_FINANCIAL_REVIEW", "completed", route);
+      expect(summary.toLowerCase()).not.toContain("sent");
+      expect(summary.toLowerCase()).not.toContain("received");
+    }
   });
 });

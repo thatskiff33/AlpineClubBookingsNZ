@@ -3,6 +3,10 @@ import "server-only";
 import type { ManualRefundTaskKind, Prisma } from "@prisma/client";
 
 import { createAuditLog } from "@/lib/audit";
+import {
+  completionSettlementShape,
+  completionSummary,
+} from "@/lib/manual-refund-task-copy";
 import { manualRefundTaskKindAllowsSettlement } from "@/lib/manual-refund-task-settlement-rules";
 import type { EditReviewSettlementRoute } from "@/lib/edit-financial-review-settlement";
 import type { SettlementDirectionValue } from "@/lib/stored-night-price-repair";
@@ -80,9 +84,19 @@ export async function recordManualRefundTaskClosureAudit({
       // because "cannot be settled" and "nothing here moves money" are one fact
       // with one home (`INV-SSOT`); an unrecognised kind answers TRUE there and
       // keeps the wording every row has always had.
+      // #3213 (fix round): THE COMPLETION ARM IS ROUTE-AWARE, for the same
+      // reason the dismissal arm is kind-aware. Since #3170 a completion can go
+      // down the additional-charge route, where the member was asked to PAY THE
+      // CLUB - and a flat "refund paid back by hand" wrote the opposite money
+      // direction into a durable, member-adjacent record while the officer's
+      // toast, which goes away, said it correctly. The route is classified in
+      // ONE place and both sentences read it (`completionSettlementShape`), so
+      // the transient message and the permanent record cannot say different
+      // things about which way the money went (`INV-SSOT`). A hand-back still
+      // reads exactly as it always has.
       summary:
         resolution === "completed"
-          ? "Manual booking refund paid back by hand"
+          ? completionSummary(completionSettlementShape(settlementRoute))
           : manualRefundTaskKindAllowsSettlement(task.kind)
             ? "Manual booking refund task dismissed"
             : "Uncollected booking amount closed as dealt with, no money moved",

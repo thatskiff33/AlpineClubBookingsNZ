@@ -33,3 +33,18 @@
 
   Operators need do nothing. There is no setting to choose and no data to
   migrate.
+
+- **A booking's history now says which way the money went when a refund task was
+  closed (#3213).** Closing one of these tasks has always written a line into the
+  booking's permanent history, and that line said "manual booking refund paid
+  back by hand" whatever actually happened — including on the settlements where
+  the club had asked the MEMBER to pay, either on their card or on the booking's
+  invoice. The message the officer saw on screen at the time already got this
+  right; it was only the lasting record that did not, which is the wrong way
+  round. The line now names what was settled: a card refund, an account credit,
+  money paid back by hand, or an amount owed by the member added to the invoice
+  or requested as an additional payment.
+
+  **Lines already written are untouched** — they keep the words they were saved
+  with. This changes what the next closure records, so a history read after this
+  release will show the two wordings side by side.
