@@ -8,6 +8,7 @@ import {
   hasCapturedPayment,
 } from "@/lib/booking-payment-state";
 import { isPaymentOwedBookingStatus } from "@/lib/booking-status";
+import { savedPaymentMethodForBooking } from "@/lib/saved-payment-method";
 import type { BookingDetailRecord } from "./load-booking-detail";
 import type { BookingDetailViewer } from "./booking-detail-viewer";
 import type { BookingDetailEditAccess } from "./booking-detail-edit-access";
@@ -97,12 +98,28 @@ export function resolveBookingDetailPayment({
   // the booking owner so a non-owner admin never sees it. An admin entering
   // their own card on a member's booking is a footgun with no legitimate use,
   // and the owner-positive gate is robust to read-only admin viewers (#1289).
+  // Shown exactly when the auto-charge cron would find nothing to charge
+  // (#3266, #3269, epic #3270): `savedPaymentMethodForBooking` is the ONE answer
+  // to "may this booking be charged off-session?" — the booking's own row first,
+  // then its split parent's, each needing customer, card AND SetupIntent
+  // (`INV-PAY-053`). Keyed on that rather than on "no SetupIntent yet" or on the
+  // card column alone: an abandoned replacement or a card retired after a
+  // Stripe refusal (#3268) leaves an intent id behind with nothing chargeable,
+  // and a legacy split child can carry a copied card that was never saved
+  // through a SetupIntent — both must show the form. The same const is returned
+  // for the admin "Confirm pending guests" button's will-charge wording
+  // (rendered by `_components/booking-admin-tools-section.tsx`), so the page can
+  // never promise a charge while asking for a card, or the reverse.
+  const savedCard = savedPaymentMethodForBooking({
+    payment: booking.payment,
+    parentBooking: booking.parentBooking,
+  });
   const showSavePaymentMethodCard =
     isBookingOwner &&
     !isDeleted &&
     !internetBankingPayment &&
     booking.status === "PENDING" &&
-    (!booking.payment || !booking.payment.stripeSetupIntentId);
+    savedCard === null;
   // Suppress when a more specific provisional banner already explains the
   // on-hold/no-charge state (the split-booking child and the bumped-guest
   // flagged-provisional notices both render near the top of the page). Also
@@ -152,6 +169,7 @@ export function resolveBookingDetailPayment({
     latestRefundAppeal,
     maxRefundableCents,
     showGuestPaymentLinkStandalone,
+    savedCard,
     showSavePaymentMethodCard,
     showPaymentOnHoldNotice,
     showCompletePaymentCard,

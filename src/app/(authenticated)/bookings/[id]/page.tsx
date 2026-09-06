@@ -296,6 +296,7 @@ export default async function BookingDetailPage({
         viewer={viewer}
         access={access}
         adminTools={adminTools}
+        payment={payment}
       />
 
       <BookingStatusBanners

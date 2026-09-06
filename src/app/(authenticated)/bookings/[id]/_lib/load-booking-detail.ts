@@ -109,7 +109,21 @@ export async function loadBookingDetail(id: string) {
       // Split-booking group (#738): the member booking links to its provisional
       // non-member child(ren); the child links back to its member booking.
       parentBooking: {
-        select: { id: true, status: true, finalPriceCents: true },
+        select: {
+          id: true,
+          status: true,
+          finalPriceCents: true,
+          // #3269: the admin confirm-pending-guests button's "will charge"
+          // wording must agree with the route, which may charge a split child
+          // on its parent's SetupIntent-saved card.
+          payment: {
+            select: {
+              stripeCustomerId: true,
+              stripePaymentMethodId: true,
+              stripeSetupIntentId: true,
+            },
+          },
+        },
       },
       linkedBookings: {
         select: {

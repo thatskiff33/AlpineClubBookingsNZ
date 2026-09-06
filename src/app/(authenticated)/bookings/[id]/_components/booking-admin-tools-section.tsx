@@ -7,6 +7,7 @@ import type { FeatureFlags } from "@/config/schema";
 import type { BookingDetailViewer } from "../_lib/booking-detail-viewer";
 import type { BookingDetailEditAccess } from "../_lib/booking-detail-edit-access";
 import type { BookingDetailAdminTools } from "../_lib/booking-detail-admin-tools";
+import type { BookingDetailPayment } from "../_lib/booking-detail-payment";
 
 /**
  * THE OFFICER'S TOOLS (#2958): the admin booking-tools card and the #2259
@@ -22,6 +23,7 @@ export function BookingAdminToolsSection({
   viewer,
   access,
   adminTools,
+  payment,
 }: {
   booking: BookingDetailRecord;
   editorData: BookingEditorData;
@@ -29,9 +31,11 @@ export function BookingAdminToolsSection({
   viewer: BookingDetailViewer;
   access: BookingDetailEditAccess;
   adminTools: BookingDetailAdminTools;
+  payment: BookingDetailPayment;
 }) {
   const { canSeeAdminTools } = viewer;
   const { isDeleted } = access;
+  const { savedCard } = payment;
   const {
     providerMismatches,
     financialReviewWarnings,
@@ -66,10 +70,13 @@ export function BookingAdminToolsSection({
               booking.hasNonMembers &&
               booking.nonMemberHoldUntil,
           )}
-          hasSavedPaymentMethod={Boolean(
-            booking.payment?.stripePaymentMethodId &&
-              booking.payment?.stripeCustomerId,
-          )}
+          // `savedCard` is the answer the confirm-pending-guests route charges
+          // on (#3269, `INV-PAY-053`) and the one the "Save Payment Method" card
+          // in `_components/booking-payment-cards.tsx` keys on — the same const
+          // out of `_lib/booking-detail-payment.ts` — so the button never
+          // promises a charge the route will not make, and never promises one
+          // while the page asks for a card.
+          hasSavedPaymentMethod={savedCard !== null}
           finalPriceCents={booking.finalPriceCents}
           providerMismatches={providerMismatches}
           financialReviewWarnings={financialReviewWarnings}
