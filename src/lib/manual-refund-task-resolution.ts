@@ -27,6 +27,8 @@ import {
   RefundAllocationRacedError,
 } from "@/lib/payment-transactions";
 import { prisma } from "@/lib/prisma";
+import { clubToday } from "@/lib/club-time";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 // #3195: the $0 refusal is said by the settle SCREEN as well as thrown here, and
 // this module is `server-only` - so the sentence lives in a client-safe home and
 // both read it (`INV-SSOT`).
@@ -220,6 +222,12 @@ export async function resolveManualRefundTask(
       400
     );
   }
+
+  // #3219 (`INV-LOCK-004`, `INV-CONFIG-002`): the club's own calendar day, read
+  // BEFORE the transaction opens because the timezone read cannot take a
+  // transaction client. It decides the promotion's validity window when the
+  // booking is re-priced from its strands below.
+  const todayAtClub = clubToday(await readClubTimeZoneOutsideRequest());
 
   const result = await prisma.$transaction(async (tx) => {
     const task = await tx.manualRefundTask.findUnique({
@@ -580,6 +588,16 @@ export async function resolveManualRefundTask(
         actingMemberId,
         resolution,
         note: trimmedNote,
+        todayAtClub,
+        hasIssuedXeroInvoice,
+        // #3219: does THIS closure send Xero a document that brings the invoice
+        // back into line with the re-priced booking? Only a completion that
+        // picked a settlement route does. A DISMISSAL picks none and issues
+        // nothing at all - the dispatch has no anchor and returns without doing
+        // anything - which is exactly the case where the club's invoice is left
+        // saying one figure while the booking says another.
+        settlementIssuesXeroDocument:
+          settlement !== null && settlementRoute !== null,
         store: tx,
       });
     }

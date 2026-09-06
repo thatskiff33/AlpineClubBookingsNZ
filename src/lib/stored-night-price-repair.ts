@@ -511,11 +511,26 @@ export function checkStoredNightPriceRepair({
  * it again the next morning - and a promise this epic exists to keep is the
  * worst one to overstate.
  */
+/**
+ * #3219 D2 (owner, 5 September 2026): THIS SENTENCE IS ALSO THE REFUSAL.
+ *
+ * The night prices are MANDATORY wherever these boxes are offered - on a
+ * dismissal as well as a completion - so `planStoredNightPriceRepair` throws
+ * this exact string when a review whose boxes are offered is closed with them
+ * blank. One wording, said once (`INV-SSOT`): the officer was already warned in
+ * these words at the moment of decision, and a second sentence at the point of
+ * refusal would be the same rule stated twice with nothing comparing them.
+ *
+ * The earlier version of this paragraph ended "leave them blank and it is sent
+ * for review again the next time anybody changes it". That was true before D2
+ * and is false after it - the review cannot be closed blank at all - so it moved
+ * rather than gaining a second clause beside it.
+ */
 export function unpricedNightsExplanation(
   summary: UnpricedNightsSummary,
 ): string {
   const count = summary.dates.length;
-  return `${count === 1 ? "One night" : `${count} nights`} on this guest's stay ${count === 1 ? "has" : "have"} no stored price, which is why this change could not be worked out automatically. Say what each one sold for and this guest's nights stop sending the booking back here; leave them blank and it is sent for review again the next time anybody changes it. If another guest on the same booking also has unpriced nights, they are asked about separately, on their own review. Nothing is filled in for you - an amount nobody decided is exactly what this review exists to avoid.`;
+  return `${count === 1 ? "One night" : `${count} nights`} on this guest's stay ${count === 1 ? "has" : "have"} no stored price, which is why this change could not be worked out automatically. Say what each one sold for: this review cannot be closed - settled or dismissed - until they are recorded, because without them this booking's own price cannot be brought back into line with its nights. If another guest on the same booking also has unpriced nights, they are asked about separately, on their own review. Nothing is filled in for you - an amount nobody decided is exactly what this review exists to avoid.`;
 }
 
 /**
