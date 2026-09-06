@@ -539,8 +539,24 @@ const CENSUS_CEILING = {
    * for a new file outright — and the shift rule it took with it needs the same
    * three zone-free exports. Both modules now import them; neither resolves a
    * timezone. Re-measured, not incremented.
+   *
+   * 221 -> 224 (#2958): the same benign split shape as #3128 and #3232, at the
+   * largest scale yet. `bookings/[id]/page.tsx` was 2,761 lines and carried the
+   * page's single `date-only` import; the behaviour-preserving decomposition
+   * moved its sections and projections verbatim into route-local modules, and
+   * four of them took the zone-free helper they were already calling with them:
+   * `_lib/booking-detail-consent.ts` (`eachDateOnlyInRange`, feeding
+   * `formatConsentNightsLabel`), `_lib/booking-detail-editor-data.ts`,
+   * `_lib/booking-detail-linked-party.ts` and
+   * `_components/booking-stay-preferences.tsx` (`formatDateOnly`). The page
+   * itself no longer imports the adapter, so one importer became four: -1 +4.
+   * No call was added, removed or changed, none of the four resolves a
+   * timezone, and every club-facing instant on the page still comes from the
+   * one `clubTime()` the shell resolves (CT-4, #2870; INV-CONFIG-002).
+   * Re-measured against the branch base, and re-measured again after the merge
+   * of the epic branch, per the warning above.
    */
-  dateOnlyImporters: 221,
+  dateOnlyImporters: 224,
   /**
    * `new Date(y, m, d)` — local midnight in the HOST's zone.
    *
