@@ -4,6 +4,7 @@ import {
   deriveCardAppliedCreditDoublePayFinding,
   deriveIbAppliedCreditStrandFinding,
   deriveIbHoldClearingFinding,
+  formatIbHoldClearingAuditReport,
   type CardAppliedCreditDoublePayRow,
   type IbAppliedCreditStrandRow,
   type IbHoldClearingRow,
@@ -313,5 +314,26 @@ describe("auditCardAppliedCreditDoublePays (#1641 card scan)", () => {
     expect(result.doublePays).toHaveLength(1);
     expect(result.doublePays[0].bookingId).toBe("booking_bad");
     expect(result.doublePaidCents).toBe(3000);
+  });
+});
+
+describe("formatIbHoldClearingAuditReport (#3302)", () => {
+  // This report's cents formatter is deliberately kept as its own hard-coded
+  // "NZ$" + toFixed(2) helper rather than the shared, currency-aware
+  // `formatCents` (see the PR description) — Internet Banking is NZ-specific
+  // regardless of a deployment's configured display currency. Nothing
+  // previously pinned that choice; this locks it so a future edit here is a
+  // deliberate decision rather than an accidental drift.
+  it("renders the total open delta with the fixed NZ$ prefix, not the club's configured currency", () => {
+    const report = formatIbHoldClearingAuditReport({
+      scannedReleasedHolds: 0,
+      invoiceBearingHolds: 0,
+      noInvoiceReleasedHolds: 0,
+      underCleared: [],
+      totalDeltaCents: 0,
+    });
+
+    expect(report).toContain("Total open delta:              NZ$0.00");
+    expect(report).toContain("No under-cleared invoices. Nothing to repair.");
   });
 });

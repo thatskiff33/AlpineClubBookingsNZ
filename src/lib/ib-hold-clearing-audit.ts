@@ -189,7 +189,21 @@ export async function auditIbHoldClearingUnderclears(options?: {
   return result;
 }
 
-function formatCents(cents: number): string {
+/**
+ * Deliberately NOT `formatCents` from `@/lib/utils` (#3302 escalation, kept
+ * as-is pending owner confirmation — see the PR description). Internet
+ * Banking is NZ-specific regardless of a deployment's configured display
+ * currency, and this codebase already has a tested, hard-coded "NZ$" +
+ * `toFixed(2)` convention for IB-specific messages elsewhere (e.g.
+ * `booking-cancel.ts`, `internet-banking-payment-cron.ts`, pinned by
+ * `"NZ$20.00 of applied account credit was returned."` in their tests) — so
+ * this is the same family, not an isolated copy-paste bug. No test pins this
+ * report's exact string, so nothing here forces either choice; unifying it
+ * with the club's configured-currency `formatCents` would also drop the
+ * grouping-free rendering these audit lines use elsewhere in the file for
+ * fixed-width columns. Left unchanged rather than guessed.
+ */
+function formatIbAuditCents(cents: number): string {
   const sign = cents < 0 ? "-" : "";
   return `${sign}NZ$${(Math.abs(cents) / 100).toFixed(2)}`;
 }
@@ -205,7 +219,7 @@ export function formatIbHoldClearingAuditReport(
   lines.push(`  with an issued invoice:      ${result.invoiceBearingHolds}`);
   lines.push(`  with no invoice (skipped):   ${result.noInvoiceReleasedHolds}`);
   lines.push(`Under-cleared invoices found:  ${result.underCleared.length}`);
-  lines.push(`Total open delta:              ${formatCents(result.totalDeltaCents)}`);
+  lines.push(`Total open delta:              ${formatIbAuditCents(result.totalDeltaCents)}`);
   lines.push("");
 
   if (result.underCleared.length === 0) {
@@ -232,14 +246,14 @@ export function formatIbHoldClearingAuditReport(
     lines.push(`    booking status:   ${finding.bookingStatus}`);
     lines.push(`    invoice:          ${finding.invoiceRef}`);
     lines.push(`    refund note issued: ${finding.refundNoteIssued ? "yes" : "no"}`);
-    lines.push(`    final price:      ${formatCents(finding.finalPriceCents)}`);
-    lines.push(`    change fee:       ${formatCents(finding.changeFeeCents)}`);
+    lines.push(`    final price:      ${formatIbAuditCents(finding.finalPriceCents)}`);
+    lines.push(`    change fee:       ${formatIbAuditCents(finding.changeFeeCents)}`);
     lines.push(
-      `    Xero-allocated credit: ${formatCents(finding.xeroAllocatedAppliedCreditCents)}`,
+      `    Xero-allocated credit: ${formatIbAuditCents(finding.xeroAllocatedAppliedCreditCents)}`,
     );
-    lines.push(`    expected clearing: ${formatCents(finding.expectedClearingCents)}`);
-    lines.push(`    actual clearing:   ${formatCents(finding.enqueuedClearingCents)}`);
-    lines.push(`    OPEN DELTA:        ${formatCents(finding.deltaCents)}`);
+    lines.push(`    expected clearing: ${formatIbAuditCents(finding.expectedClearingCents)}`);
+    lines.push(`    actual clearing:   ${formatIbAuditCents(finding.enqueuedClearingCents)}`);
+    lines.push(`    OPEN DELTA:        ${formatIbAuditCents(finding.deltaCents)}`);
   }
 
   return lines.join("\n");
@@ -486,19 +500,19 @@ function formatIbAppliedCreditStrandRow(
   lines.push(`- booking ${finding.bookingId} (payment ${finding.paymentId})`);
   lines.push(`    booking status:    ${finding.bookingStatus}`);
   lines.push(`    payment status:    ${finding.paymentStatus}`);
-  lines.push(`    final price:       ${formatCents(finding.finalPriceCents)}`);
-  lines.push(`    amountCents:       ${formatCents(finding.amountCents)}`);
-  lines.push(`    creditApplied (mirror): ${formatCents(finding.creditAppliedCents)}`);
-  lines.push(`    applied (ledger):  ${formatCents(finding.ledgerAppliedCents)}`);
-  lines.push(`    mirror vs ledger:  ${formatCents(finding.mirrorLedgerMismatchCents)}`);
-  lines.push(`    mirror invariant delta: ${formatCents(finding.mirrorInvariantDeltaCents)}`);
+  lines.push(`    final price:       ${formatIbAuditCents(finding.finalPriceCents)}`);
+  lines.push(`    amountCents:       ${formatIbAuditCents(finding.amountCents)}`);
+  lines.push(`    creditApplied (mirror): ${formatIbAuditCents(finding.creditAppliedCents)}`);
+  lines.push(`    applied (ledger):  ${formatIbAuditCents(finding.ledgerAppliedCents)}`);
+  lines.push(`    mirror vs ledger:  ${formatIbAuditCents(finding.mirrorLedgerMismatchCents)}`);
+  lines.push(`    mirror invariant delta: ${formatIbAuditCents(finding.mirrorInvariantDeltaCents)}`);
   // #2397: name the legitimate cause of a negative residual on the same row,
   // so an operator never has to guess whether it is drift. When the two are
   // equal and opposite the generalised mirror holds and there is nothing to
   // repair here.
   if (finding.uncollectedAdditionalCents > 0) {
     lines.push(
-      `    uncollected addition: ${formatCents(finding.uncollectedAdditionalCents)}` +
+      `    uncollected addition: ${formatIbAuditCents(finding.uncollectedAdditionalCents)}` +
         (finding.mirrorInvariantDeltaCents +
           finding.uncollectedAdditionalCents ===
         0
@@ -506,7 +520,7 @@ function formatIbAppliedCreditStrandRow(
           : "  (does NOT fully account for the delta above)"),
     );
   }
-  lines.push(`    STRAND EXPOSURE:   ${formatCents(finding.strandExposureCents)}`);
+  lines.push(`    STRAND EXPOSURE:   ${formatIbAuditCents(finding.strandExposureCents)}`);
   return lines;
 }
 
@@ -525,13 +539,13 @@ export function formatIbAppliedCreditStrandReport(
     `REALIZED strands (member double-paid): ${result.realized.length}`,
   );
   lines.push(
-    `  credit already lost:                 ${formatCents(result.realizedStrandedCents)}`,
+    `  credit already lost:                 ${formatIbAuditCents(result.realizedStrandedCents)}`,
   );
   lines.push(
     `PENDING strands (not yet paid):        ${result.pending.length}`,
   );
   lines.push(
-    `  credit at risk:                      ${formatCents(result.pendingExposureCents)}`,
+    `  credit at risk:                      ${formatIbAuditCents(result.pendingExposureCents)}`,
   );
   lines.push("");
 
@@ -749,11 +763,11 @@ function formatCardAppliedCreditDoublePayRow(
   lines.push(`    booking status:    ${finding.bookingStatus}`);
   lines.push(`    payment source:    ${finding.paymentSource}`);
   lines.push(`    payment status:    ${finding.paymentStatus}`);
-  lines.push(`    final price:       ${formatCents(finding.finalPriceCents)}`);
-  lines.push(`    charged (card):    ${formatCents(finding.amountCents)}`);
-  lines.push(`    creditApplied (mirror): ${formatCents(finding.creditAppliedCents)}`);
-  lines.push(`    applied (ledger):  ${formatCents(finding.ledgerAppliedCents)}`);
-  lines.push(`    DOUBLE-PAID (local restore): ${formatCents(finding.strandExposureCents)}`);
+  lines.push(`    final price:       ${formatIbAuditCents(finding.finalPriceCents)}`);
+  lines.push(`    charged (card):    ${formatIbAuditCents(finding.amountCents)}`);
+  lines.push(`    creditApplied (mirror): ${formatIbAuditCents(finding.creditAppliedCents)}`);
+  lines.push(`    applied (ledger):  ${formatIbAuditCents(finding.ledgerAppliedCents)}`);
+  lines.push(`    DOUBLE-PAID (local restore): ${formatIbAuditCents(finding.strandExposureCents)}`);
   return lines;
 }
 
@@ -772,7 +786,7 @@ export function formatCardAppliedCreditDoublePayReport(
     `REALIZED double-pays (member overcharged):       ${result.doublePays.length}`,
   );
   lines.push(
-    `  credit already lost:                           ${formatCents(result.doublePaidCents)}`,
+    `  credit already lost:                           ${formatIbAuditCents(result.doublePaidCents)}`,
   );
   lines.push("");
 
