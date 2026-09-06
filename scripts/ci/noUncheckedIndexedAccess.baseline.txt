@@ -555,21 +555,6 @@ src/lib/chore-allocator.ts:TS2532:Object is possibly 'undefined'.
 src/lib/club-post-html.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
 src/lib/club-post-html.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
 src/lib/club-post-mirror.ts:TS2322:Type 'string | undefined' is not assignable to type 'string | null'. Type 'undefined' is not assignable to type 'string | null'.
-src/lib/club-theme-schema.ts:TS18048:'base64' is possibly 'undefined'.
-src/lib/club-theme-schema.ts:TS18048:'base64' is possibly 'undefined'.
-src/lib/club-theme-schema.ts:TS18048:'base64' is possibly 'undefined'.
-src/lib/club-theme-schema.ts:TS18048:'base64' is possibly 'undefined'.
-src/lib/club-theme-schema.ts:TS18048:'lightnessToken' is possibly 'undefined'.
-src/lib/club-theme-schema.ts:TS2322:Type 'string | undefined' is not assignable to type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/club-theme-schema.ts:TS2322:Type 'string | undefined' is not assignable to type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/club-theme-schema.ts:TS2322:Type 'string | undefined' is not assignable to type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/club-theme-schema.ts:TS2322:Type 'string | undefined' is not assignable to type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/club-theme-schema.ts:TS2322:Type 'string | undefined' is not assignable to type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/club-theme-schema.ts:TS2322:Type 'string | undefined' is not assignable to type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/club-theme-schema.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/club-theme-schema.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/club-theme-schema.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/club-theme-schema.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
 src/lib/config-transfer/bundle.ts:TS18048:'prefix' is possibly 'undefined'.
 src/lib/config-transfer/bundle.ts:TS2345:Argument of type 'Uint8Array<ArrayBufferLike> | undefined' is not assignable to parameter of type 'Uint8Array<ArrayBufferLike>'. Type 'undefined' is not assignable to type 'Uint8Array<ArrayBufferLike>'.
 src/lib/config-transfer/bundle.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
@@ -857,109 +842,6 @@ src/lib/text-diff.ts:TS2532:Object is possibly 'undefined'.
 src/lib/text-diff.ts:TS2532:Object is possibly 'undefined'.
 src/lib/text-diff.ts:TS2532:Object is possibly 'undefined'.
 src/lib/text-diff.ts:TS2532:Object is possibly 'undefined'.
-src/lib/theme/aliases.ts:TS18048:'b' is possibly 'undefined'.
-src/lib/theme/aliases.ts:TS18048:'g' is possibly 'undefined'.
-src/lib/theme/aliases.ts:TS18048:'r' is possibly 'undefined'.
-src/lib/theme/aliases.ts:TS18048:'s' is possibly 'undefined'.
-src/lib/theme/aliases.ts:TS18048:'s' is possibly 'undefined'.
-src/lib/theme/aliases.ts:TS2322:Type 'string | undefined' is not assignable to type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/theme/aliases.ts:TS2322:Type 'string | undefined' is not assignable to type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/theme/aliases.ts:TS2322:Type 'string | undefined' is not assignable to type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/theme/aliases.ts:TS2322:Type 'string | undefined' is not assignable to type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/theme/aliases.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/theme/aliases.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/theme/app-tokens.ts:TS18048:'d' is possibly 'undefined'.
-src/lib/theme/app-tokens.ts:TS18048:'l' is possibly 'undefined'.
-src/lib/theme/app-tokens.ts:TS2322:Type 'AliasEntry | undefined' is not assignable to type 'AliasEntry'. Type 'undefined' is not assignable to type 'AliasEntry'.
-src/lib/theme/app-tokens.ts:TS2322:Type 'AliasEntry | undefined' is not assignable to type 'AliasEntry'. Type 'undefined' is not assignable to type 'AliasEntry'.
-src/lib/theme/app-tokens.ts:TS2322:Type 'AliasEntry | undefined' is not assignable to type 'AliasEntry'. Type 'undefined' is not assignable to type 'AliasEntry'.
-src/lib/theme/app-tokens.ts:TS2322:Type 'AliasEntry | undefined' is not assignable to type 'AliasEntry'. Type 'undefined' is not assignable to type 'AliasEntry'.
-src/lib/theme/app-tokens.ts:TS2322:Type 'AliasEntry | undefined' is not assignable to type 'AliasEntry'. Type 'undefined' is not assignable to type 'AliasEntry'.
-src/lib/theme/app-tokens.ts:TS2322:Type 'AliasEntry | undefined' is not assignable to type 'AliasEntry'. Type 'undefined' is not assignable to type 'AliasEntry'.
-src/lib/theme/app-tokens.ts:TS2322:Type 'AliasEntry | undefined' is not assignable to type 'AliasEntry'. Type 'undefined' is not assignable to type 'AliasEntry'.
-src/lib/theme/app-tokens.ts:TS2322:Type 'AliasEntry | undefined' is not assignable to type 'AliasEntry'. Type 'undefined' is not assignable to type 'AliasEntry'.
-src/lib/theme/app-tokens.ts:TS2322:Type 'AliasEntry | undefined' is not assignable to type 'AliasEntry'. Type 'undefined' is not assignable to type 'AliasEntry'.
-src/lib/theme/app-tokens.ts:TS2322:Type 'AliasEntry | undefined' is not assignable to type 'AliasEntry'. Type 'undefined' is not assignable to type 'AliasEntry'.
-src/lib/theme/app-tokens.ts:TS2322:Type 'AliasEntry | undefined' is not assignable to type 'AliasEntry'. Type 'undefined' is not assignable to type 'AliasEntry'.
-src/lib/theme/app-tokens.ts:TS2322:Type 'AliasEntry | undefined' is not assignable to type 'AliasEntry'. Type 'undefined' is not assignable to type 'AliasEntry'.
-src/lib/theme/app-tokens.ts:TS2322:Type 'AliasEntry | undefined' is not assignable to type 'AliasEntry'. Type 'undefined' is not assignable to type 'AliasEntry'.
-src/lib/theme/app-tokens.ts:TS2322:Type 'AliasEntry | undefined' is not assignable to type 'AliasEntry'. Type 'undefined' is not assignable to type 'AliasEntry'.
-src/lib/theme/app-tokens.ts:TS2322:Type 'AliasEntry | undefined' is not assignable to type 'AliasEntry'. Type 'undefined' is not assignable to type 'AliasEntry'.
-src/lib/theme/app-tokens.ts:TS2322:Type 'AliasEntry | undefined' is not assignable to type 'AliasEntry'. Type 'undefined' is not assignable to type 'AliasEntry'.
-src/lib/theme/app-tokens.ts:TS2322:Type 'AliasEntry | undefined' is not assignable to type 'AliasEntry'. Type 'undefined' is not assignable to type 'AliasEntry'.
-src/lib/theme/app-tokens.ts:TS2322:Type 'AliasEntry | undefined' is not assignable to type 'AliasEntry'. Type 'undefined' is not assignable to type 'AliasEntry'.
-src/lib/theme/app-tokens.ts:TS2322:Type 'string | undefined' is not assignable to type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/theme/app-tokens.ts:TS2322:Type 'string | undefined' is not assignable to type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/theme/app-tokens.ts:TS2322:Type 'string | undefined' is not assignable to type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/theme/app-tokens.ts:TS2322:Type 'string | undefined' is not assignable to type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/theme/app-tokens.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/theme/app-tokens.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/theme/app-tokens.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/theme/app-tokens.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/theme/app-tokens.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/theme/generate-radix-colors.ts:TS18048:'baseColor' is possibly 'undefined'.
-src/lib/theme/generate-radix-colors.ts:TS18048:'colorA' is possibly 'undefined'.
-src/lib/theme/generate-radix-colors.ts:TS18048:'colorA' is possibly 'undefined'.
-src/lib/theme/generate-radix-colors.ts:TS18048:'colorA' is possibly 'undefined'.
-src/lib/theme/generate-radix-colors.ts:TS18048:'colorB' is possibly 'undefined'.
-src/lib/theme/generate-radix-colors.ts:TS18048:'colorB' is possibly 'undefined'.
-src/lib/theme/generate-radix-colors.ts:TS18048:'colorB' is possibly 'undefined'.
-src/lib/theme/generate-radix-colors.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/theme/generate-radix-colors.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/theme/generate-radix-colors.ts:TS2532:Object is possibly 'undefined'.
-src/lib/theme/generate-radix-colors.ts:TS2532:Object is possibly 'undefined'.
-src/lib/theme/generate-radix-colors.ts:TS2532:Object is possibly 'undefined'.
-src/lib/theme/generate-radix-colors.ts:TS2532:Object is possibly 'undefined'.
-src/lib/theme/generate-radix-colors.ts:TS2532:Object is possibly 'undefined'.
-src/lib/theme/generate-radix-colors.ts:TS2532:Object is possibly 'undefined'.
-src/lib/theme/generate-radix-colors.ts:TS2532:Object is possibly 'undefined'.
-src/lib/theme/generate-radix-colors.ts:TS2532:Object is possibly 'undefined'.
-src/lib/theme/generate-radix-colors.ts:TS2769:No overload matches this call. Overload 1 of 2, '(o: ArrayLike<string> | { [s: string]: string; }): string[]', gave the following error. Argument of type 'Record<string, string> | undefined' is not assignable to parameter of type 'ArrayLike<string> | { [s: string]: string; }'. Type 'undefined' is not assignable to type 'ArrayLike<string> | { [s: string]: string; }'. Overload 2 of 2, '(o: {}): any[]', gave the following error. Argument of type 'Record<string, string> | undefined' is not assignable to parameter of type '{}'. Type 'undefined' is not assignable to type '{}'.
-src/lib/theme/generate-radix-colors.ts:TS2769:No overload matches this call. Overload 1 of 2, '(o: ArrayLike<string> | { [s: string]: string; }): string[]', gave the following error. Argument of type 'Record<string, string> | undefined' is not assignable to parameter of type 'ArrayLike<string> | { [s: string]: string; }'. Type 'undefined' is not assignable to type 'ArrayLike<string> | { [s: string]: string; }'. Overload 2 of 2, '(o: {}): any[]', gave the following error. Argument of type 'Record<string, string> | undefined' is not assignable to parameter of type '{}'. Type 'undefined' is not assignable to type '{}'.
-src/lib/theme/generate-radix-colors.ts:TS2769:No overload matches this call. Overload 1 of 2, '(o: ArrayLike<string> | { [s: string]: string; }): string[]', gave the following error. Argument of type 'Record<string, string> | undefined' is not assignable to parameter of type 'ArrayLike<string> | { [s: string]: string; }'. Type 'undefined' is not assignable to type 'ArrayLike<string> | { [s: string]: string; }'. Overload 2 of 2, '(o: {}): any[]', gave the following error. Argument of type 'Record<string, string> | undefined' is not assignable to parameter of type '{}'. Type 'undefined' is not assignable to type '{}'.
-src/lib/theme/generate-radix-colors.ts:TS2769:No overload matches this call. Overload 1 of 2, '(o: ArrayLike<string> | { [s: string]: string; }): string[]', gave the following error. Argument of type 'Record<string, string> | undefined' is not assignable to parameter of type 'ArrayLike<string> | { [s: string]: string; }'. Type 'undefined' is not assignable to type 'ArrayLike<string> | { [s: string]: string; }'. Overload 2 of 2, '(o: {}): any[]', gave the following error. Argument of type 'Record<string, string> | undefined' is not assignable to parameter of type '{}'. Type 'undefined' is not assignable to type '{}'.
-src/lib/theme/guarantees.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/theme/guarantees.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/theme/guarantees.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/theme/guarantees.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/theme/guarantees.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/theme/guarantees.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/theme/guarantees.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/theme/guarantees.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/theme/guarantees.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/theme/guarantees.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/theme/kiosk-tokens.ts:TS18048:'theme.scales.accent' is possibly 'undefined'.
-src/lib/theme/kiosk-tokens.ts:TS18048:'theme.scales.accent' is possibly 'undefined'.
-src/lib/theme/kiosk-tokens.ts:TS2322:Type 'string | undefined' is not assignable to type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/theme/kiosk-tokens.ts:TS2322:Type 'string | undefined' is not assignable to type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/theme/kiosk-tokens.ts:TS2322:Type 'string | undefined' is not assignable to type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/theme/kiosk-tokens.ts:TS2322:Type 'string | undefined' is not assignable to type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/theme/kiosk-tokens.ts:TS2322:Type 'string | undefined' is not assignable to type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/theme/kiosk-tokens.ts:TS2322:Type 'string | undefined' is not assignable to type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/theme/kiosk-tokens.ts:TS2322:Type 'string | undefined' is not assignable to type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/theme/kiosk-tokens.ts:TS2322:Type 'string | undefined' is not assignable to type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/theme/kiosk-tokens.ts:TS2322:Type 'string | undefined' is not assignable to type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/theme/kiosk-tokens.ts:TS2322:Type 'string | undefined' is not assignable to type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/theme/kiosk-tokens.ts:TS2322:Type 'string | undefined' is not assignable to type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/theme/kiosk-tokens.ts:TS2322:Type 'string | undefined' is not assignable to type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/theme/kiosk-tokens.ts:TS2322:Type 'string | undefined' is not assignable to type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/theme/kiosk-tokens.ts:TS2322:Type 'string | undefined' is not assignable to type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/theme/kiosk-tokens.ts:TS2345:Argument of type 'number | undefined' is not assignable to parameter of type 'number'. Type 'undefined' is not assignable to type 'number'.
-src/lib/theme/kiosk-tokens.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/theme/kiosk-tokens.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/theme/kiosk-tokens.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/theme/kiosk-tokens.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/theme/kiosk-tokens.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/theme/kiosk-tokens.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/theme/kiosk-tokens.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/theme/theme-substrate.ts:TS18048:'b' is possibly 'undefined'.
-src/lib/theme/theme-substrate.ts:TS18048:'g' is possibly 'undefined'.
-src/lib/theme/theme-substrate.ts:TS18048:'r' is possibly 'undefined'.
-src/lib/theme/theme-substrate.ts:TS2322:Type 'string | undefined' is not assignable to type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/theme/theme-substrate.ts:TS2322:Type 'string | undefined' is not assignable to type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/theme/theme-substrate.ts:TS2345:Argument of type 'number | undefined' is not assignable to parameter of type 'number'. Type 'undefined' is not assignable to type 'number'.
-src/lib/theme/theme-substrate.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/theme/theme-substrate.ts:TS2532:Object is possibly 'undefined'.
 src/lib/waitlist-offer-email-visibility.ts:TS2345:Argument of type 'WaitlistOfferBooking | undefined' is not assignable to parameter of type 'WaitlistOfferBooking'. Type 'undefined' is not assignable to type 'WaitlistOfferBooking'.
 src/lib/waitlist.ts:TS2322:Type '{ bookingGuestId: string; stayDate: Date; priceCents: number; }[] | undefined' is not assignable to type 'BookingGuestNightCreateManyInput | BookingGuestNightCreateManyInput[]'. Type 'undefined' is not assignable to type 'BookingGuestNightCreateManyInput | BookingGuestNightCreateManyInput[]'.
 src/lib/waitlist.ts:TS2532:Object is possibly 'undefined'.
