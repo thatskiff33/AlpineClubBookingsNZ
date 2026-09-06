@@ -1872,9 +1872,13 @@ describe("re-basing the booking's headline totals while settling (#3219)", () =>
         data: expect.objectContaining({
           bookingId: "booking-1",
           modificationType: "PRICE_REBASE",
-          priceDiffCents: 13_500 - 23_000,
+          // No money moved by this row, so no money component on it - the Xero
+          // repair tool reads those to decide a second invoice is owed.
+          priceDiffCents: 0,
+          changeFeeCents: 0,
           newData: expect.objectContaining({
             finalPriceCents: 13_500,
+            rebasedPriceMovementCents: 13_500 - 23_000,
             financialReviewResolution: "completed",
           }),
         }),

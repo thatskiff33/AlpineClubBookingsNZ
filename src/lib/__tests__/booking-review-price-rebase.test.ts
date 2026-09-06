@@ -295,8 +295,9 @@ describe("what the re-price will not price from (#3219, INV-MOD-028)", () => {
       figures are left exactly where the park set them. Re-basing anyway would
       assert a booking total built from strands the system has already said it
       cannot value - which is a worse lie than the stale one, and harder to
-      notice. Such a booking still carries an open review over that strand, and
-      settling it re-bases then.
+      notice. Whether it ever re-bases depends on that strand still having an
+      open review whose price boxes are offered - two shapes of a parked removal
+      have none, and stay with #3257.
     */
     mocks.bookingFindUnique.mockResolvedValue(
       bookingWithStrands([SURVIVING_STRAND, badStrand]),
@@ -452,11 +453,10 @@ describe("D1's two consequences, surfaced rather than shipped blind (#3219)", ()
         bookingId: "booking-1",
         memberId: "admin-1",
         modificationType: "PRICE_REBASE",
-        priceDiffCents: -12_000,
-        changeFeeCents: 0,
         previousData: expect.objectContaining({ finalPriceCents: 24_000 }),
         newData: expect.objectContaining({
           finalPriceCents: 12_000,
+          rebasedPriceMovementCents: -12_000,
           xeroInvoiceDiverged: true,
           financialReviewTaskId: "task-1",
           financialReviewResolution: "dismissed",
@@ -464,4 +464,44 @@ describe("D1's two consequences, surfaced rather than shipped blind (#3219)", ()
       }),
     });
   });
+
+  /**
+   * The row must carry NO money components. `priceDiffCents + changeFeeCents`
+   * is this tree's one statement that money moved, and every generic reader of
+   * it applies to every modification row with no `modificationType` filter -
+   * `getModificationNetAmountCents` feeding the Xero repair classifier's
+   * `critical`, `safeToAutoApply` supplementary-invoice arm and its credit-note
+   * arm, `getKnownModificationRefundTotalCents` counting negatives as refunds
+   * already known, and `booking-delete`'s hard-delete blocker. A re-base runs
+   * after the primary invoice was raised, so a signed component here reads to
+   * all of them as a second, unbilled ask: one click from issuing a duplicate
+   * invoice for money already billed. The movement belongs in `newData`, which
+   * no money reader consumes.
+   */
+  it.each([
+    ["a reduction", { newFinalPriceCents: 12_000 }, -12_000],
+    ["an increase", { newFinalPriceCents: 29_000 }, 5_000],
+  ])(
+    "%s moves no money on the row itself: both money components are 0, and the signed movement rides newData",
+    async (_name, overrides, expectedMovementCents) => {
+      await recordBookingPriceRebaseHistory({
+        bookingId: "booking-1",
+        actingMemberId: "admin-1",
+        taskId: "task-1",
+        resolution: "completed",
+        rebase: { ...rebase, ...overrides },
+        xeroInvoiceDiverged: false,
+        store,
+      });
+
+      const [{ data }] = mocks.bookingModificationCreate.mock.calls.at(-1) as [
+        { data: Record<string, unknown> },
+      ];
+      expect(data.priceDiffCents).toBe(0);
+      expect(data.changeFeeCents).toBe(0);
+      expect(
+        (data.newData as Record<string, unknown>).rebasedPriceMovementCents,
+      ).toBe(expectedMovementCents);
+    },
+  );
 });

@@ -61,8 +61,10 @@ import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
  * sum to its stored total. Anything less would assert a booking total built from
  * strands the system has said it cannot value, which is a worse lie than the
  * stale one. Where the evidence is not there the totals stay exactly as the park
- * left them, and the still-open review over the other strand re-bases when it is
- * settled in turn.
+ * left them. That is a DECLINE and not a deferral: it re-bases later only if the
+ * unreadable strand still has an open review whose price boxes are offered, and
+ * two shapes of a parked removal have none (#3257, named in
+ * `docs/invariants/booking-modifications.md`).
  *
  * D2 - the officer must record the night prices before a review whose price
  * boxes are offered may be closed - is what stops that being the common case. It
@@ -105,9 +107,11 @@ import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
  * It does take one lock the settle path did not take before: the PROMO ROW,
  * inside `recalculateBookingPromo`, which row-locks the promo code and re-reads
  * its usage counter because a re-base can release a redemption slot. That is the
- * same key that function's two other callers take, it is the only tier this
- * transaction holds so it can close no cycle, and it is registered in
- * `docs/CONCURRENCY_AND_LOCKING.md` under this issue.
+ * same key that function's two other callers take, it is the only ADVISORY tier
+ * this transaction holds so it can close no cycle against a lodge, member or
+ * global key, and it is registered in `docs/CONCURRENCY_AND_LOCKING.md` under
+ * this issue - along with the ordinary row locks the repair write takes before
+ * it, and the deadlock shape their ordering leaves against a waitlist confirm.
  */
 
 /**
@@ -407,13 +411,28 @@ export function rebaseDivergesFromIssuedInvoice({
  * from a back-office action they never saw, so the reason has to be READABLE
  * from the booking rather than reconstructable from an audit trail somebody has
  * to know exists. `BookingModification` is the booking's history, it already
- * carries a signed `priceDiffCents` and before/after money snapshots, and
- * `modificationType` is free text - so this needs no schema change and lands on
- * the screen every other price movement lands on.
+ * carries before/after money snapshots, and `modificationType` is free text -
+ * so this needs no schema change and lands on the screen every other price
+ * movement lands on.
  *
  * It is NOT an edit and does not pretend to be one: nothing about the stay
  * changed, and `describeModification` says in as many words that the price was
  * recalculated from what the nights sold for.
+ *
+ * BOTH MONEY COMPONENTS ARE 0, AND THAT IS THE POINT. `priceDiffCents +
+ * changeFeeCents` is how this tree says money MOVED, and every generic reader
+ * of it applies to every row with no `modificationType` filter:
+ * `getModificationNetAmountCents` feeds the Xero repair classifier, which
+ * raises a `critical` MISSING_SUPPLEMENTARY_INVOICE finding marked
+ * `safeToAutoApply` on any positive net with no supplementary invoice of its
+ * own, a credit note on any negative one; `getKnownModificationRefundTotalCents`
+ * sums the negatives as refunds already known; and `booking-delete` counts a
+ * non-zero net as a hard-delete blocker. A re-base runs AFTER the primary
+ * invoice was raised and after the review's own settlement was billed, so a
+ * signed component here reads to all of them as a second, unbilled ask - one
+ * click from issuing a duplicate invoice for money already taken. The signed
+ * movement therefore lives in `newData`, which only the booking's own history
+ * narrative reads.
  */
 export async function recordBookingPriceRebaseHistory({
   bookingId,
@@ -452,12 +471,16 @@ export async function recordBookingPriceRebaseHistory({
         xeroInvoiceDiverged,
         financialReviewTaskId: taskId,
         financialReviewResolution: resolution,
+        // The signed movement of the booking's final price, kept HERE rather
+        // than on `priceDiffCents` - see the docblock. Nothing that decides
+        // whether money is owed reads `newData`.
+        rebasedPriceMovementCents:
+          rebase.newFinalPriceCents - rebase.previousFinalPriceCents,
       },
-      // The signed movement of the figure every money reader follows. NOT a
-      // settlement: no money is moved by this row, and the review's own task
-      // carries what was settled.
-      priceDiffCents:
-        rebase.newFinalPriceCents - rebase.previousFinalPriceCents,
+      // NOT a settlement: no money is moved by this row, and the review's own
+      // task carries what was settled. Both components stay 0 so no money
+      // reader can mistake the re-base for an unbilled ask (docblock above).
+      priceDiffCents: 0,
       changeFeeCents: 0,
     },
   });
