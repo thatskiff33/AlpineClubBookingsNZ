@@ -21,6 +21,10 @@ export const BOOKING_URL_TEMPLATE_NAMES: ReadonlySet<string> = new Set([
   "additional-payment-reminder",
   "booking-modified",
   "setup-intent-failed",
+  // #3268: the auto-charge cron's "your saved card was unusable" notice.
+  // Booking-scoped and registered like setup-intent-failed, so the same optional
+  // canonical booking link carries the member to the booking that needs a card.
+  "saved-card-charge-failed",
   "waitlist-confirmation",
   "waitlist-offer",
   "waitlist-offer-expired",

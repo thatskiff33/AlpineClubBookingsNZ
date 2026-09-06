@@ -194,6 +194,7 @@ export const REGISTRY_KEY_RENDERERS: Record<string, string> = {
   "policy-exception-request-expired": "policyExceptionRequestExpiredTemplate",
   "pre-arrival-reminder": "preArrivalReminderTemplate",
   "setup-intent-failed": "setupIntentFailedTemplate",
+  "saved-card-charge-failed": "savedCardChargeFailedTemplate",
   "split-guest-portion-cancelled": "splitGuestPortionCancelledTemplate",
   "whole-lodge-guest-names-reminder": "wholeLodgeGuestNamesReminderTemplate",
   // booking-requests
