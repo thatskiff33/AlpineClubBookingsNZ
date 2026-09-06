@@ -321,7 +321,12 @@ export type AgeTierPartitionResult<T extends AgeTierPartitionRow> =
 export function validateAgeTierPartition<T extends AgeTierPartitionRow>(
   settings: T[]
 ): AgeTierPartitionResult<T> {
-  if (settings.length === 0) {
+  // Sorted by age up front, and the emptiness check reads its first element:
+  // `youngest` is then a proven row for the rest of the function, so the
+  // boundary walk below never indexes into the array (#2799).
+  const sorted = [...settings].sort((a, b) => a.minAge - b.minAge);
+  const youngest = sorted[0];
+  if (youngest === undefined) {
     return { ok: false, error: "At least one age tier is required." };
   }
 
@@ -367,16 +372,18 @@ export function validateAgeTierPartition<T extends AgeTierPartitionRow>(
     };
   }
 
-  const sorted = [...settings].sort((a, b) => a.minAge - b.minAge);
-  if (sorted[0].minAge !== 0) {
+  if (youngest.minAge !== 0) {
     return {
       ok: false,
-      error: `The youngest age tier must start at age 0 (got minAge ${sorted[0].minAge}); otherwise the ages below it would be unclassified.`,
+      error: `The youngest age tier must start at age 0 (got minAge ${youngest.minAge}); otherwise the ages below it would be unclassified.`,
     };
   }
-  for (let i = 0; i < sorted.length - 1; i++) {
-    const current = sorted[i];
-    const next = sorted[i + 1];
+  // Walk each adjacent pair as (current, next); after the walk `current` is
+  // the last row, i.e. the highest tier. Same pairs, same order, same checks as
+  // the index-based loop this replaces — without the two lookups that could
+  // not be proven in range.
+  let current = youngest;
+  for (const next of sorted.slice(1)) {
     if (current.maxAge === null) {
       return {
         ok: false,
@@ -389,9 +396,10 @@ export function validateAgeTierPartition<T extends AgeTierPartitionRow>(
         error: `Age boundaries must be contiguous: gap or overlap between maxAge ${current.maxAge} and minAge ${next.minAge}`,
       };
     }
+    current = next;
   }
 
-  const highest = sorted[sorted.length - 1];
+  const highest = current;
   if (highest.tier !== "ADULT" || highest.maxAge !== null) {
     return {
       ok: false,

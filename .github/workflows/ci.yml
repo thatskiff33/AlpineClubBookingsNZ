@@ -582,11 +582,29 @@ jobs:
       # test suite and next build steps. tsc's heap crossed the Node default
       # (~4 GB) when the AID-6B pack landed (#2679) — the same run needs 8 GB
       # locally — so the ceiling is raised here rather than letting the gate
-      # die of OOM (exit 134) instead of reporting type errors.
+      # die of OOM (exit 134) instead of reporting type errors. The
+      # noUncheckedIndexedAccess ratchet below re-runs the same compiler and
+      # needs the same ceiling; it sets it on its own child process as
+      # `TSC_HEAP_MB` in scripts/ci/check-nuia-ratchet.ts, so the day this
+      # project outgrows 8 GB that constant moves with the number here.
       - name: Typecheck
         run: npm run typecheck
         env:
           NODE_OPTIONS: --max-old-space-size=8192
+
+      # #2799 (programme #2694): the noUncheckedIndexedAccess migration ratchet.
+      # Re-runs tsc over tsconfig.json with that one flag forced on and fails if
+      # a diagnostic appears that scripts/ci/noUncheckedIndexedAccess.baseline.txt
+      # does not hold — or if the baseline holds one the compiler no longer
+      # produces, so the file can only shrink. Sits directly after `Typecheck`
+      # because it attributes every diagnostic to the flag only while the plain
+      # project is green — an ordering pinned by review-findings-contracts.test.ts,
+      # since above `Typecheck` this gate would report pre-existing type errors as
+      # new flag debt. The script sets tsc's heap itself (see the note above).
+      # Stage #2802 turns the flag on in tsconfig.json and removes this step with
+      # the baseline.
+      - name: noUncheckedIndexedAccess ratchet
+        run: npm run typecheck:nuia
 
       # Blocking dead-code gate: fails the PR if any unused file, export, or
       # dependency is introduced. Config and carve-outs live in knip.jsonc.
