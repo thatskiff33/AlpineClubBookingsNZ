@@ -163,9 +163,9 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   row sits beside it. A "not covered" answer whose extra IS the whole amount
   owing is refused: a $0 settlement must never flip a booking to PAID. What each
   answer does to the addition's Stripe intent, and what the admin and the member
-  are each told, is `INV-PAY-052`.
+  are each told, is `INV-PAY-056`.
 
-## INV-PAY-052
+## INV-PAY-056
 
 - **A "not covered" settle leaves a WAY TO COLLECT the extra** (#2397). The
   settlement's blanket Stripe-intent cancellation SPARES exactly one intent — the
@@ -662,9 +662,9 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   reference is quoted, the member is asked to wait, and the sender logs it. A
   failed ledger read fails open to the #2444 paragraph. How that figure relates
   to the allocation gate, which way the closing instruction leans, and the
-  admin's whole-lodge invoice email are `INV-PAY-053`.
+  admin's whole-lodge invoice email are `INV-PAY-057`.
 
-## INV-PAY-053
+## INV-PAY-057
 
 - **The netted figure is NOT the predicate the allocation gate reads** (#2483
   review, 2 Aug 2026). `enqueueXeroAppliedCreditAllocationOperation` aggregates
@@ -970,13 +970,13 @@ one, check the other.
   its REQUIRED note says whether nothing was owed or the club settled it outside
   the task. Nothing moves at Stripe, in the ledger, in Xero or as account credit
   until an admin confirms. The rest of the state machine: strands
-  `INV-PAY-061`; occurrence lifecycle `INV-PAY-054` and `INV-PAY-062`;
-  settlement routing `INV-PAY-055` and `INV-PAY-063`; the charging direction
-  `INV-PAY-056`, `INV-PAY-064`, `INV-PAY-057`, `INV-PAY-065`, `INV-PAY-058` and
-  `INV-PAY-066`; the refund legs and the anchor `INV-PAY-059`; the fence and
-  the constraints `INV-PAY-060`.
+  `INV-PAY-065`; occurrence lifecycle `INV-PAY-058` and `INV-PAY-066`;
+  settlement routing `INV-PAY-059` and `INV-PAY-067`; the charging direction
+  `INV-PAY-060`, `INV-PAY-068`, `INV-PAY-061`, `INV-PAY-069`, `INV-PAY-062` and
+  `INV-PAY-070`; the refund legs and the anchor `INV-PAY-063`; the fence and
+  the constraints `INV-PAY-064`.
 
-## INV-PAY-061
+## INV-PAY-065
 
 - **One task per parked STRAND, and the DEPARTING strand is always one of them**
   (#3032). The occurrence key is minted per strand, so a replay of the same edit
@@ -991,7 +991,7 @@ one, check the other.
   recalculation a parked removal skips. **A parked edit never destroys a number
   the system could have known.**
 
-## INV-PAY-054
+## INV-PAY-058
 
 - **A SETTLED occurrence does not suppress the next one of the same identity**
   (#3166). A replay collapses into an OPEN task and only an OPEN task; a
@@ -1015,7 +1015,7 @@ one, check the other.
   could prove a figure and a human has not yet confirmed it*. Money moves only on
   a COMPLETED transition, whatever the row already holds.
 
-## INV-PAY-062
+## INV-PAY-066
 
 - **A completion at zero is refused, and the refusal names the way out.** `0`
   means the club handed nothing back, so COMPLETED at `0` would assert a refund
@@ -1035,7 +1035,7 @@ one, check the other.
   since #3194 that branch is reached by asking the BOOKING at completion rather
   than reading the frozen `ManualRefundTask.paymentId`.
 
-## INV-PAY-055
+## INV-PAY-059
 
 - **A confirmed amount is settled through the settlement path that already
   exists, never a fourth one** (#3032). The booking's payment decides which: a
@@ -1059,7 +1059,7 @@ one, check the other.
   completion holds no advisory lock (`docs/CONCURRENCY_AND_LOCKING.md`), so the
   status claim is the whole single-flight guarantee.
 
-## INV-PAY-063
+## INV-PAY-067
 
 - **A completion states WHICH WAY the money goes, and the row records it**
   (#3170, owner decision 30 Aug 2026). `ManualRefundTaskDirection` is written
@@ -1081,7 +1081,7 @@ one, check the other.
   is the same choke point with a POSITIVE `priceDiffCents`, the only place the
   direction becomes a sign.
 
-## INV-PAY-056
+## INV-PAY-060
 
 - **ONE BOOKING EDIT RAISES ONE CHARGE REQUEST, for the total of its shares**
   (#3170, owner decision 30 Aug 2026). One edit raises one review task per guest
@@ -1106,9 +1106,9 @@ one, check the other.
     compare-and-set on the request, which is why it needs no advisory lock.
   - **A share may not be added to a request the member has already paid, or to
     one whose supplementary invoice has already been issued.** Both are REFUSED
-    before the claim with the task left OPEN. The Xero leg is `INV-PAY-064`.
+    before the claim with the task left OPEN. The Xero leg is `INV-PAY-068`.
 
-## INV-PAY-064
+## INV-PAY-068
 
 - **The Xero leg bills the TOTAL, on ONE invoice per edit, enforced rather than
   assumed** (#3170). A share arriving while this edit's supplementary invoice
@@ -1130,14 +1130,14 @@ one, check the other.
   an active `SUPPLEMENTARY_INVOICE` link. The enqueue then refuses a second
   invoice behind the first and RECORDS the shortfall:
   `outcome: "short-sent"` when the invoice exists, `"short-in-flight"` when the
-  worker has merely claimed the row. What happens next is `INV-PAY-057`.
+  worker has merely claimed the row. What happens next is `INV-PAY-061`.
 
-## INV-PAY-057
+## INV-PAY-061
 
 - **A recorded shortfall is BILLED, ON A SECOND SEPARATE INVOICE — not collected
   by hand** (#3193, owner decision 31 Aug 2026). **No invoice already in a
   member's hands is altered or voided.** This NARROWS "one booking edit, one ask"
-  (`INV-PAY-056`) without overturning it: while the change's invoice is still in
+  (`INV-PAY-060`) without overturning it: while the change's invoice is still in
   the queue a later share RAISES it and the member is asked once; only once the
   invoice has been SENT does the difference become its own ask. The cost — two
   requests for one change in that narrow window — was accepted knowingly.
@@ -1159,9 +1159,9 @@ one, check the other.
   twice, and invisible to every read that decides whether the booking change
   already has an invoice going out. It attaches to no PaymentIntent and is
   queued PENDING rather than WAITING_PAYMENT. Both endings are recorded:
-  `INV-PAY-065`.
+  `INV-PAY-069`.
 
-## INV-PAY-065
+## INV-PAY-069
 
 - **Both endings of a shortfall are recorded, with opposite instructions**
   (#3193). A raised second ask writes
@@ -1183,7 +1183,7 @@ one, check the other.
   the instrument for the `withheld` case that #3193 deliberately does NOT bill:
   a share withheld while the change's invoice was in flight.
 
-## INV-PAY-058
+## INV-PAY-062
 
 - **A durable retry closes the debt only when the ask EXISTS afterwards.** The
   recovery replay re-derives the total through the same sync the inline
@@ -1212,9 +1212,9 @@ one, check the other.
   (`PaymentRecoveryOperation.hadIssuedXeroInvoice`) and read back; NULL means
   "not recorded" and raises nothing, because a missing invoice is surfaced by the
   repair pass and a duplicate one by nobody. The repair pass's own answer, and
-  the records a replay leaves, are `INV-PAY-066`.
+  the records a replay leaves, are `INV-PAY-070`.
 
-## INV-PAY-066
+## INV-PAY-070
 
 - **The booking-vs-Xero repair pass asks the same question from the operation
   history** (#3199), for historical bookings with no `hadIssuedXeroInvoice`: the
@@ -1239,7 +1239,7 @@ one, check the other.
   only when the second invoice could not be raised; when it was raised the trace
   is `chargeShareReinvoiced`, so "no row" never has to be read as "probably fine".
 
-## INV-PAY-059
+## INV-PAY-063
 
 - **The card route is capped before it claims, and keyed to the TASK.** The cap
   is measured off the booking's captured `PaymentTransaction` rows, not off
@@ -1271,7 +1271,7 @@ one, check the other.
   operator to settle the amount another way and dismiss with a note, an honest
   terminal state under the DISMISSED definition.
 
-## INV-PAY-060
+## INV-PAY-064
 
 - **While a review is OPEN, a second money-affecting edit to that booking is
   refused** (#3032, `assertNoPendingEditFinancialReview`), because pricing one
