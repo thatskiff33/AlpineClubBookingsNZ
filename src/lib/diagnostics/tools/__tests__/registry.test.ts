@@ -931,9 +931,13 @@ function nestedArgumentFixture<TArgs>(argsSchema: z.ZodType<TArgs>) {
  * claim, because it has already changed underneath this file once.
  *
  * `ZOD_REJECTS` — zod refuses the input outright, so no repaired call exists to
- * hash. zod 4.5 moved every `.strict()` object shape here, at any depth and
- * inside array elements. Three rows below turned over when the dependency went
- * from 4.4.3 to 4.5.4, and it was this table that reported it (#3313).
+ * hash. zod 4.5 moved the `.strict()` object shapes here — at any depth and
+ * inside array elements — but only for an ENUMERABLE own property. A
+ * non-enumerable one is still accepted and dropped, on a strict object as much
+ * as on a record; that case is pinned separately below, because it is what makes
+ * `Object.getOwnPropertyNames` in the guard load-bearing rather than incidental.
+ * Three rows below turned over when the dependency went from 4.4.3 to 4.5.4, and
+ * it was this table that reported it (#3313).
  *
  * `ZOD_STRIPS` — zod accepts and silently DELETES the key, so the accepted
  * arguments are byte-identical to a call that never sent it and ADR-004's
@@ -1463,16 +1467,23 @@ describe("diagnostics tool registry contract (#2374)", () => {
   );
 
   it.each(DIAGNOSTICS_TOOLS.map((tool) => [tool.id, tool] as const))(
-    "%s REJECTS a reserved key that `.strict()` alone would silently strip",
+    "%s REJECTS a reserved key, whether or not its own schema would",
     (_id, tool) => {
-      // `.strict()` is not total. Measured on zod 4.4.3:
-      // `z.object({}).strict().safeParse(JSON.parse('{"__proto__":{}}'))` SUCCEEDS
-      // with `data: {}` and reports no unrecognized key. The arguments reaching
-      // `parseArgs` are the model's `tool_use` input deserialised from provider
-      // JSON, so `__proto__` arrives as an ordinary own property exactly like this.
-      // Accepting it makes the audit `argsHash` identical to a call that sent `{}`,
-      // so ADR-004's durable record cannot tell the two apart — and the first entry
-      // with a `z.record(...)` field would silently drop a filter key.
+      // THIS ASSERTION NO LONGER DISCRIMINATES THE GUARD, and saying so is the
+      // point. On zod 4.4.3 it did: `z.object({}).strict()` — which is `NO_ARGS`,
+      // the schema four registered entries use — ACCEPTED
+      // `JSON.parse('{"__proto__":{}}')` with `data: {}` and reported no
+      // unrecognized key, so for those entries the guard was the only refuser.
+      // zod 4.5 rejects an ENUMERABLE reserved key on a strict object, so every
+      // entry's schema now refuses these three inputs on its own and this test
+      // passes with `hasReservedArgumentKey` deleted (#3313).
+      //
+      // It is kept as a tripwire on zod rather than as evidence about the scan:
+      // if a future zod stops refusing them, this goes back to being the guard's
+      // proof for the `NO_ARGS` entries without anyone having to notice. The
+      // proof that the guard is real lives in `NESTED_RESERVED_KEY_CASES` below
+      // and in the non-enumerable case beneath it, both of which use shapes zod
+      // still accepts.
       expect(tool.parseArgs(JSON.parse('{"__proto__":{"polluted":"yes"}}')).ok).toBe(
         false,
       );
@@ -1486,14 +1497,17 @@ describe("diagnostics tool registry contract (#2374)", () => {
   it.each(DIAGNOSTICS_TOOLS.map((tool) => [tool.id, tool] as const))(
     "%s REJECTS a reserved key at ANY depth, in an object or an array",
     (_id, tool) => {
-      // A top-level-only scan is not the guarantee the registry documents. Zod strips
-      // a NESTED `__proto__` exactly as readily as a top-level one, so a guard that
-      // stopped at depth 1 would reproduce the same audit-hash defect one level down —
-      // measured by the `NESTED_RESERVED_KEY_CASES` table below, which uses a fixture
-      // entry because no entry shipped today takes a nested argument. These inputs
-      // therefore fail on this entry's schema as well; the assertions exist so the
-      // first tool pack with a `filters` object inherits a scan that already looks
-      // everywhere, and they will bite the moment such an entry is registered.
+      // A top-level-only scan is not the guarantee the registry documents, and a
+      // guard that stopped at depth 1 would reproduce the audit-hash defect one
+      // level down. These inputs do not prove that, and never did: every entry
+      // shipped today takes `z.object({}).strict()`, so its schema rejects a
+      // nested argument on shape alone. Since zod 4.5 the schema also rejects the
+      // reserved key itself, so this block is doubly unable to discriminate.
+      //
+      // The traversal is proven in `NESTED_RESERVED_KEY_CASES` below, against a
+      // fixture entry whose schema ACCEPTS the polluted input. These assertions
+      // stay so that the first pack registering a nested or record-shaped
+      // argument inherits a scan that already looks everywhere.
       for (const raw of [
         '{"filters":{"__proto__":{"polluted":"yes"},"status":"open"}}',
         '{"filters":[{"__proto__":{"polluted":"yes"}}]}',
@@ -1560,6 +1574,50 @@ describe("diagnostics tool registry contract (#2374)", () => {
       expect(({} as Record<string, unknown>).polluted).toBeUndefined();
     },
   );
+
+  it("refuses a NON-ENUMERABLE reserved key, which zod accepts on every shape", () => {
+    // The one measurement that keeps `Object.getOwnPropertyNames` honest. zod
+    // 4.5's new strict rejection is enumerability-dependent: measured on 4.5.4, a
+    // reserved key defined with `enumerable: false` is ACCEPTED and silently
+    // dropped by `z.object({...}).strict()` — exactly as a record drops an
+    // enumerable one. So "zod now refuses reserved keys on strict objects" is
+    // true only of the enumerable case, and the surviving hole is wider than the
+    // record shape alone.
+    //
+    // A `for…in` walk, or `Object.keys`, would miss this and the guard would
+    // inherit zod's blind spot. `JSON.parse` cannot produce a non-enumerable
+    // property, so this is not reachable from the provider path — but `parseArgs`
+    // takes `unknown`, and the sibling cyclic-object test reasons about exactly
+    // that gap between the type and the JSON caller.
+    const nonEnumerable = (key: string): Record<string, unknown> => {
+      const object: Record<string, unknown> = {};
+      Object.defineProperty(object, key, {
+        value: { polluted: "yes" },
+        enumerable: false,
+        writable: true,
+        configurable: true,
+      });
+      return object;
+    };
+
+    for (const key of ["__proto__", "constructor", "prototype"]) {
+      const polluted = nonEnumerable(key);
+
+      // 1. The schema alone ACCEPTS it and drops it, so this is not the schema.
+      const schemaOnly = z.object({}).strict().safeParse(polluted);
+      expect(schemaOnly.success, key).toBe(true);
+      if (schemaOnly.success) {
+        expect(Object.keys(schemaOnly.data as object), key).toEqual([]);
+      }
+
+      // 2. The guard refuses it, on every registered entry.
+      for (const tool of DIAGNOSTICS_TOOLS) {
+        expect(tool.parseArgs(polluted).ok, `${tool.id} / ${key}`).toBe(false);
+      }
+    }
+
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
 
   it("terminates on a cyclic object rather than spinning in the reserved-key scan", () => {
     // `parseArgs` takes `unknown`. JSON cannot carry a cycle, but the type says
