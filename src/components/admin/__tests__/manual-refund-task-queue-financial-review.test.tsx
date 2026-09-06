@@ -837,7 +837,7 @@ describe("recording what the unpriced nights sold for (#3191)", () => {
     ]);
   });
 
-  it("#3219 D2: will not close a review whose boxes are offered and blank, and says why on the screen", async () => {
+  it("#3219 D2: will not close a review whose boxes are offered and blank, and the boxes are what unblock it", async () => {
     /*
       THIS WAS THE CONTROL, AND D2 REVERSED IT (owner, 5 September 2026). Closing
       with the boxes blank used to send the body this screen sent before #3191.
@@ -872,6 +872,9 @@ describe("recording what the unpriced nights sold for (#3191)", () => {
       name: "Close with no adjustment",
     });
     expect(confirm).toBeDisabled();
+    // The sentence the officer is shown. It rides the summary the boxes are
+    // introduced by, so it is asserted for its WORDING rather than as evidence
+    // of the block - the two assertions below are what carry that weight.
     expect(
       screen.getByText(/this review cannot be closed/i),
     ).toBeInTheDocument();
@@ -879,6 +882,18 @@ describe("recording what the unpriced nights sold for (#3191)", () => {
     fireEvent.click(confirm);
     // Nothing beyond the queue's own load was posted.
     expect(fetchMock.mock.calls.length).toBe(1);
+
+    /*
+      THE DISCRIMINATING HALF. Without it this test cannot tell "blank boxes
+      disable the button" from "this button is disabled": every assertion above
+      also passes for a screen that never enables it at all, and for a paragraph
+      that renders whether or not anything is blocked. Filling the boxes with
+      figures that reconcile is the ONLY thing that changes here, so the button
+      coming alive is what pins the blanks as the cause.
+    */
+    fireEvent.change(nightBox("2026-08-11"), { target: { value: "30.00" } });
+    fireEvent.change(nightBox("2026-08-12"), { target: { value: "30.00" } });
+    await waitFor(() => expect(confirm).toBeEnabled());
   });
 });
 

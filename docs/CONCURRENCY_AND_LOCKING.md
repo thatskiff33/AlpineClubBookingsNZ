@@ -2947,10 +2947,18 @@ re-price re-enters `recalculateBookingPromo` - the tree's one recompute - which
 counter, because a re-price can RELEASE a total-redemptions slot. Three things
 make that safe to add here:
 
-- **it is the only tier this transaction takes**, so it can close no cycle. The
-  guide's order for the promo row is lodge -> promo row, and the settle path
-  holds no lodge key; a concurrent booking edit that holds both acquires them in
-  that order and this one waits behind it or is refused by the fences above.
+- **it is the only ADVISORY tier this transaction takes**, so it can close no
+  cycle against a lodge, member or global key. The guide's order for the promo
+  row is lodge -> promo row, and the settle path holds no lodge key; a
+  concurrent booking edit that holds both acquires them in that order and this
+  one waits behind it or is refused by the fences above. The transaction does
+  hold ORDINARY ROW LOCKS besides - on the strand's guest and night rows, taken
+  by the repair write BEFORE the promo row, where `waitlist.ts`'s confirm takes
+  the promo row first. Two transactions on the same booking could therefore
+  deadlock on that pair; Postgres aborts one, which rolls the whole completion
+  back and leaves the task `OPEN` - the same outcome as the compare-and-set
+  fences above, and the shape needs a waitlist confirm and a review settle on
+  one booking at the same instant to arise at all;
 - **it is the SAME key the recompute's two other callers take** (the guest
   removal and the waitlist confirm), rather than a new key registered for one
   writer;
