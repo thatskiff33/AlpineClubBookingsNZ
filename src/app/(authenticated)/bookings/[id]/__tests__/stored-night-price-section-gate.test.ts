@@ -26,22 +26,45 @@
 //
 // Comments are stripped before matching, so the paragraph explaining a guard can
 // never stand in for the guard.
-import { readFileSync } from "fs";
+import { readFileSync, readdirSync, statSync } from "fs";
 import path from "path";
 import { describe, expect, it } from "vitest";
 
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
 
-const PAGE = "src/app/(authenticated)/bookings/[id]/page.tsx";
+// #2958 split the page: the admin-gated reads live in `_lib`, the tools card's
+// render site in `_components`, and the one financial-review read in the
+// history module. The gate is asserted where it now lives; the ONE-read rule is
+// asserted over the whole route directory, because that is the unit the page
+// load spans.
+const ROUTE_DIR = "src/app/(authenticated)/bookings/[id]";
+const ADMIN_TOOLS = `${ROUTE_DIR}/_lib/booking-detail-admin-tools.ts`;
+const ADMIN_TOOLS_SECTION = `${ROUTE_DIR}/_components/booking-admin-tools-section.tsx`;
 
-function readPageSource(): string {
+function readSource(relative: string): string {
   // Test helper: a fixed repo file under process.cwd(), not user input.
   // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
-  return readFileSync(path.resolve(process.cwd(), PAGE), "utf8");
+  return readFileSync(path.resolve(process.cwd(), relative), "utf8");
+}
+
+/** Every production source file the booking page load spans, comments stripped. */
+function readRouteSources(): string {
+  const files: string[] = [];
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir)) {
+      if (entry === "__tests__") continue;
+      const full = path.join(dir, entry);
+      if (statSync(full).isDirectory()) walk(full);
+      else if (/\.tsx?$/.test(entry)) files.push(full);
+    }
+  };
+  walk(path.resolve(process.cwd(), ROUTE_DIR));
+  expect(files.length).toBeGreaterThan(10);
+  return files.map((file) => stripComments(readFileSync(file, "utf8"))).join("\n");
 }
 
 describe("#3214 stored-night-price section gate", () => {
-  const source = stripComments(readPageSource());
+  const source = stripComments(readSource(ADMIN_TOOLS));
 
   it("is admin-only, live-booking-only and withheld while a review is open", () => {
     expect(source).toContain(
@@ -55,11 +78,15 @@ describe("#3214 stored-night-price section gate", () => {
   it("reuses the flag the page already read rather than querying again", () => {
     // ONE read of "is a review open on this booking", so the member's banner and
     // this section cannot disagree about the same booking on the same page load.
-    const reads = source.match(/bookingHasOpenFinancialReview\(/g) ?? [];
+    const reads = readRouteSources().match(/bookingHasOpenFinancialReview\(/g) ?? [];
     expect(reads).toHaveLength(1);
+    // …and this module does not read it at all: it is handed the flag.
+    expect(source).not.toContain("bookingHasOpenFinancialReview");
   });
 
   it("hands the offers to the admin tools card", () => {
-    expect(source).toContain("storedNightPriceOffers={storedNightPriceOffers}");
+    expect(stripComments(readSource(ADMIN_TOOLS_SECTION))).toContain(
+      "storedNightPriceOffers={storedNightPriceOffers}",
+    );
   });
 });

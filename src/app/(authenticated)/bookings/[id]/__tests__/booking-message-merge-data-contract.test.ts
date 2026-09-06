@@ -27,11 +27,20 @@ import {
 } from "@/lib/booking-message-definitions";
 
 const PAGE = "src/app/(authenticated)/bookings/[id]/page.tsx";
+// #2958: the merge data is built in the page's message-rendering module; the
+// lodge settings it reads are still loaded once, on the page, and handed in.
+const MESSAGES =
+  "src/app/(authenticated)/bookings/[id]/_lib/booking-detail-messages.ts";
 
 function readPageSource(): string {
   // Test helper: a fixed repo file under process.cwd(), not user input.
   // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
   return readFileSync(path.resolve(process.cwd(), PAGE), "utf8");
+}
+
+function readMessagesSource(): string {
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
+  return readFileSync(path.resolve(process.cwd(), MESSAGES), "utf8");
 }
 
 /** The executable text of the `const bookingMessageData = { ... }` literal. */
@@ -79,7 +88,7 @@ const DECLARED_TOKENS = Array.from(
 describe("the member booking page's booking-message merge data (#2919)", () => {
   it("supplies every token a booking message is allowed to insert", () => {
     const supplied = new Set(
-      topLevelKeys(bookingMessageDataLiteral(readPageSource())),
+      topLevelKeys(bookingMessageDataLiteral(readMessagesSource())),
     );
     const missing = DECLARED_TOKENS.filter((token) => !supplied.has(token));
 
@@ -90,7 +99,7 @@ describe("the member booking page's booking-message merge data (#2919)", () => {
 
   it("resolves the lodge name from THIS booking's lodge, not the club default", () => {
     const code = stripComments(readPageSource());
-    const literal = bookingMessageDataLiteral(code);
+    const literal = bookingMessageDataLiteral(stripComments(readMessagesSource()));
 
     expect(literal).toContain("CLUB_LODGE_NAME: bookingLodgeEmailSettings.lodgeName");
     // And that settings object is the BOOKING's lodge identity — the club-level

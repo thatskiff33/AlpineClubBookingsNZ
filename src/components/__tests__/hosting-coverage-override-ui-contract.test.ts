@@ -73,7 +73,10 @@ describe("officer hosting-coverage override UI authority (#2576 §7, §11)", () 
   });
 
   it("passes cancellation authority from the exact booking-management role", () => {
-    const page = source("src/app/(authenticated)/bookings/[id]/page.tsx");
+    // #2958: the cancel button renders in the page's lifecycle-actions section.
+    const page = source(
+      "src/app/(authenticated)/bookings/[id]/_components/booking-lifecycle-actions.tsx",
+    );
     expect(page).toContain(
       'canOverrideHostingCoverage={viewerAuthorizationRole === "ADMIN"}',
     );

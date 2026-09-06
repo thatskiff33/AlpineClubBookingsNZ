@@ -534,8 +534,9 @@ describe("POST /api/admin/bookings/[id]/return-to-waitlist (#2649)", () => {
     // three cheap conditions would still be "safe" and still be wrong, so it is
     // pinned here rather than left to review.
     const { readFileSync } = await import("node:fs");
+    // #2958: the admin-gated reads the tools card is fed live in this module.
     const page = readFileSync(
-      "src/app/(authenticated)/bookings/[id]/page.tsx",
+      "src/app/(authenticated)/bookings/[id]/_lib/booking-detail-admin-tools.ts",
       "utf8",
     );
 

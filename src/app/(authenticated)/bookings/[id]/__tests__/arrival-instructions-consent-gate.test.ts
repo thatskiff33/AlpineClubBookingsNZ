@@ -26,11 +26,21 @@ import { describe, expect, it } from "vitest";
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
 
 const PAGE = "src/app/(authenticated)/bookings/[id]/page.tsx";
+// #2958: the block the gate protects now renders in this section component; the
+// page hands it `memberArrivalInstructions`, already null whenever the gate
+// says no, so the door code still never leaves the page's decision.
+const STAY_PREFERENCES =
+  "src/app/(authenticated)/bookings/[id]/_components/booking-stay-preferences.tsx";
 
 function readPageSource(): string {
   // Test helper: a fixed repo file under process.cwd(), not user input.
   // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
   return readFileSync(path.resolve(process.cwd(), PAGE), "utf8");
+}
+
+function readStayPreferencesSource(): string {
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
+  return readFileSync(path.resolve(process.cwd(), STAY_PREFERENCES), "utf8");
 }
 
 /** The `const showMemberArrivalInstructions = ...;` assignment, executable only. */
@@ -67,7 +77,10 @@ describe("the member booking page's arrival instructions (D-12)", () => {
     // If the door code ever moves out from under `memberArrivalInstructions`,
     // this contract stops covering it and must be rewritten rather than
     // quietly passing.
-    const code = stripComments(readPageSource());
+    const code = stripComments(readStayPreferencesSource());
     expect(code).toContain("memberArrivalInstructions.doorCode");
+    // And the component reads it from the prop the page's gate decided, never
+    // from the lodge settings directly.
+    expect(code).not.toContain("loadEmailMessageSettingsForLodge");
   });
 });

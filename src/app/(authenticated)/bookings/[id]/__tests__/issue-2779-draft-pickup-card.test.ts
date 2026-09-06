@@ -31,6 +31,10 @@ import { describe, expect, it } from "vitest";
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
 
 const PAGE = "src/app/(authenticated)/bookings/[id]/page.tsx";
+// #2958: the pay doors render in this section component; the page keeps the
+// single <h1> the heading level below sits under.
+const PAYMENT_CARDS =
+  "src/app/(authenticated)/bookings/[id]/_components/booking-payment-cards.tsx";
 
 function readPageSource(): string {
   // Test helper: a fixed repo file under process.cwd(), not user input.
@@ -38,8 +42,13 @@ function readPageSource(): string {
   return readFileSync(path.resolve(process.cwd(), PAGE), "utf8");
 }
 
+function readPaymentCardsSource(): string {
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
+  return readFileSync(path.resolve(process.cwd(), PAYMENT_CARDS), "utf8");
+}
+
 describe("#2779 draft pick-up-and-pay card (INV-LOCKOUT-069/070)", () => {
-  const source = stripComments(readPageSource());
+  const source = stripComments(readPaymentCardsSource());
 
   it("stays owner-only, DRAFT-only and priced-only", () => {
     // A $0 draft deliberately gets the ConfirmDraftButton branch instead — there
@@ -87,7 +96,9 @@ describe("#2779 draft pick-up-and-pay card (INV-LOCKOUT-069/070)", () => {
     expect(source).toMatch(
       /<CardTitle headingLevel=\{2\}>\s*Complete Payment\s*<\/CardTitle>/,
     );
-    expect(source).toContain('<h1 className="text-3xl font-bold">Booking Details</h1>');
+    expect(stripComments(readPageSource())).toContain(
+      '<h1 className="text-3xl font-bold">Booking Details</h1>',
+    );
   });
 
   it("states the deletion deadline on the page that takes the money", () => {
