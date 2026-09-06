@@ -1283,7 +1283,7 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // in none of the four per-site maps, so it lands unpinned. 464 sites measured
     // minus 127 pinned; `pinned` is unchanged, so no existing classification
     // moved.
-    ).toEqual({ pinned: 127, unpinned: 339 });
+    ).toEqual({ pinned: 127, unpinned: 340 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {

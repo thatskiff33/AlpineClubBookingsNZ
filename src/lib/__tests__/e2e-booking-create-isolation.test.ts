@@ -1917,7 +1917,18 @@ describe("E2E booking-create retry isolation (#2599)", () => {
       );
     }
 
-    const usesByKey = Map.groupBy(uses, (use) => use.key);
+    // Plain grouping rather than `Map.groupBy`: that is an ES2024 API and every
+    // project here shares the app's ES2022 `lib` (#2693) — one lib, not a
+    // per-project override for one call site.
+    const usesByKey = new Map<
+      BookingCreateAllocationUse["key"],
+      BookingCreateAllocationUse[]
+    >();
+    for (const use of uses) {
+      const group = usesByKey.get(use.key);
+      if (group) group.push(use);
+      else usesByKey.set(use.key, [use]);
+    }
     expect([...usesByKey.keys()].every((key) => key !== null)).toBe(true);
     expect(
       [...usesByKey.keys()].filter((key): key is string => key !== null).sort(),

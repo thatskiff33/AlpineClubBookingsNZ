@@ -1,9 +1,9 @@
 import { clubConfig } from "@/config/club";
 import {
-  CLUB_MODULE_SETTINGS_COLUMN_SELECT,
   DEFAULT_MODULE_SETTINGS,
   MODULE_KEYS,
   getEffectiveModuleFlags,
+  readClubModuleSettingsRecord,
   type ModuleSettingsValues,
 } from "@/config/modules";
 import type { FeatureFlags } from "@/config/schema";
@@ -105,9 +105,8 @@ async function loadCapacityModuleState(
   }
 
   try {
-    const record = await db.clubModuleSettings.findUnique({
-      where: { id: "default" },
-      select: CLUB_MODULE_SETTINGS_COLUMN_SELECT,
+    const record = await readClubModuleSettingsRecord({
+      clubModuleSettings: db.clubModuleSettings,
     });
     return getEffectiveModuleFlags(normalizeModuleSettings(record));
   } catch {

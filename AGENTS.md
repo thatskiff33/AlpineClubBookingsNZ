@@ -881,7 +881,7 @@ CI-green → evidence**.
     "typecheck exit 0" in good faith; regenerating surfaced a real blocker.
   - **`npm test` does not typecheck, and `tsc --noEmit` without
     `-p tsconfig.test.json` skips every test file.** Run `npm run typecheck`,
-    which covers both configs — that is what CI runs.
+    which covers every config — that is what CI runs.
   - **Known-environmental failure**, for targeted diagnosis when CI fails:
     `page-content-starter-backfill.test.ts` (seed-copy drift). Prove non-involvement
     cheaply and strongly by checking `git diff main --name-only` against those

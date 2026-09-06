@@ -226,8 +226,9 @@ routes are thin — the Stripe webhook route hands off to
 `stripe-webhook-service.ts`, the pay route to `payment-reconciliation.ts` /
 `booking-credit-election.ts` — so the census covers `stripe-webhook-service.ts`,
 `payment-reconciliation.ts`, `booking-credit-election.ts`,
-`booking-payment-flow.ts`, `payment-transactions.ts` and `payment-link.ts` by
-name. It does NOT cover the transitive import closure of those routes, which
+`booking-payment-flow.ts`, `payment-transactions.ts` and the
+`payment-link*.ts` modules (#2956) by name. It does NOT cover the transitive
+import closure of those routes, which
 reaches pricing and booking-policy modules where the gate legitimately belongs.
 Together with the `!isAuthorizedOnBehalf` term on the create gate
 (`INV-LOCKOUT-003`), that is what makes one journey possible: an admin books on

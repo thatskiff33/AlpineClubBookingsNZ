@@ -318,7 +318,7 @@ Prefix `INV-MOD`.
 | `INV-MOD-005` | Nightly prices lock at booking time; only changed guests and nights reprice |
 | `INV-MOD-006` | Every edit path passes the default group discount; locked nights win |
 | `INV-MOD-026` | One club switch, one chokepoint: whether later-added nights earn group discount |
-| `INV-MOD-027` | Officers may rate a non-member-rate guest as a partner-lodge member |
+| `INV-MOD-027` | Officers may member-rate a non-member-rate guest; refused on mid-stay or parking edits |
 | `INV-MOD-007` | Hut nightly rates key on membership type and optional age tier |
 | `INV-MOD-008` | An unpaid member repriced under `NON_MEMBER_PRICING` is `NON_MEMBER_DEFAULT`, not forced |
 | `INV-MOD-009` | Membership, not the subscription, gates member-only promotions; a repriced member stays eligible |
@@ -338,7 +338,7 @@ Prefix `INV-MOD`.
 | `INV-MOD-022` | The admin exemption is not one predicate, and is stated per path |
 | `INV-MOD-023` | Advisory surfaces report the same facts and gate nothing; nothing persisted |
 | `INV-MOD-024` | Minimum-stay policy administration is versioned; a stale version is refused, not overwritten |
-| `INV-MOD-028` | Historical nights value only from sold-price rows; else `NULL` plus review |
+| `INV-MOD-028` | Historical nights value only from sold-price rows; else `NULL` and parked review |
 
 ### Adult-member hosting
 

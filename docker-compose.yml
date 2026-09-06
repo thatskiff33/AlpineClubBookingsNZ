@@ -1,5 +1,21 @@
 x-app-environment: &app-environment
   TZ: Pacific/Auckland
+  # How long the Next.js server holds an idle keep-alive connection open, in ms
+  # (#3293). It MUST outlive Caddy's upstream connection pool, which
+  # `deploy/caddy/tacbookings-active.caddy` and `Caddyfile.staging` set to 30s.
+  #
+  # Left unset, Node's default is ~5s while Caddy's undeclared pool default is
+  # 2 MINUTES, so Caddy reused connections the app had already closed. A reuse
+  # landing on the close boundary is reset, and Caddy's transport cannot replay
+  # a POST/PUT with a streamed body — so the browser got a bare 502 with no JSON
+  # body and every admin form fell back to its generic "could not save" message,
+  # while the app logged nothing and the database saw no statement. GETs never
+  # showed it: those ARE replayable, so they were retried invisibly.
+  #
+  # This applies to the cron leader as well as the two web colours, which is
+  # intended: the cron leader is the second upstream in the active-upstream file
+  # and serves public traffic whenever the active colour fails its probe.
+  KEEP_ALIVE_TIMEOUT: "65000"
   # Is this installation the club's LIVE site, or a copy of it (ENV-SAFETY 1
   # #3034, epic #2986)? Exactly `production` or `non-production`, and there is
   # DELIBERATELY NO `:-` DEFAULT: a default here would be the silent inference

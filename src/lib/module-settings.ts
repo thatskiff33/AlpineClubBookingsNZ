@@ -1,10 +1,12 @@
-import type { ClubModuleSettings, PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import {
-  CLUB_MODULE_SETTINGS_COLUMN_SELECT,
+  CLUB_MODULE_SETTINGS_ID,
   DEFAULT_MODULE_SETTINGS,
   MODULE_DEFINITIONS,
   MODULE_KEYS,
   getEffectiveModuleFlags,
+  readClubModuleSettingsRecord,
+  type ClubModuleSettingsRecord,
   type ModuleKey,
   type ModuleSettingsValues,
 } from "@/config/modules";
@@ -12,7 +14,9 @@ import type { FeatureFlags } from "@/config/schema";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 
-export const CLUB_MODULE_SETTINGS_ID = "default";
+// Re-exported from its home beside the canonical select (#2996); the importers
+// that reached it here keep working.
+export { CLUB_MODULE_SETTINGS_ID };
 
 type ModuleReadinessStatus =
   | "ready"
@@ -42,11 +46,6 @@ export interface ClubModuleSettingsPayload {
   updatedAt: string | null;
   updatedByMemberId: string | null;
 }
-
-type ClubModuleSettingsRecord = Pick<
-  ClubModuleSettings,
-  ModuleKey | "updatedAt" | "updatedByMemberId"
->;
 
 export function normalizeClubModuleSettings(
   record?: Partial<ClubModuleSettingsRecord> | null,
@@ -203,10 +202,7 @@ export async function loadClubModuleSettings(): Promise<ClubModuleSettingsPayloa
   );
   const [record, analyticsConfigured, alpineServerConfigured] =
     await Promise.all([
-      prisma.clubModuleSettings.findUnique({
-        where: { id: CLUB_MODULE_SETTINGS_ID },
-        select: CLUB_MODULE_SETTINGS_COLUMN_SELECT,
-      }),
+      readClubModuleSettingsRecord(prisma),
       // Never throws: a read failure reports "not configured", which shows the
       // "complete the setup" readiness message rather than failing the whole page.
       analyticsConfiguredPromise,
@@ -255,10 +251,7 @@ const DISABLED_MODULE_FLAGS: FeatureFlags = Object.fromEntries(
 export async function loadEffectiveModuleFlagsStrict(
   db: Pick<PrismaClient, "clubModuleSettings"> = prisma,
 ): Promise<FeatureFlags> {
-  const record = await db.clubModuleSettings.findUnique({
-    where: { id: CLUB_MODULE_SETTINGS_ID },
-    select: CLUB_MODULE_SETTINGS_COLUMN_SELECT,
-  });
+  const record = await readClubModuleSettingsRecord(db);
   return getEffectiveModuleFlags(normalizeClubModuleSettings(record));
 }
 
@@ -269,10 +262,7 @@ export async function loadEffectiveModuleFlagsStrict(
  */
 export async function loadEffectiveModuleFlags(): Promise<FeatureFlags> {
   try {
-    const record = await prisma.clubModuleSettings.findUnique({
-      where: { id: CLUB_MODULE_SETTINGS_ID },
-      select: CLUB_MODULE_SETTINGS_COLUMN_SELECT,
-    });
+    const record = await readClubModuleSettingsRecord(prisma);
 
     return getEffectiveModuleFlags(normalizeClubModuleSettings(record));
   } catch (err) {
