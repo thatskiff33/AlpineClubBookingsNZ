@@ -662,16 +662,18 @@ tree rather than by adding one branch's delta to the other's total. The category
 values sum to 463 rather than 464 because one site forwards its category rather
 than naming one.
 
-Since then #3220 added the refused stranded-intent record (`payment` 40 -> 41,
-466 -> 467): when a booking change's card request could not be set up and the
-background retries have run out, the system now withdraws the card request that
-was left standing, so the member cannot pay an ask the club has already invoiced
-in Xero. This row is written only when that withdrawal is REFUSED - the card
-provider will not cancel an intent it is already processing - because a
-withdrawal that worked needs no officer, and one that did not leaves a live card
-request against an unpaid invoice for the same money. `important` rather than
-`critical`: nothing is mis-stated yet and the remedy is a reconciliation by hand,
-which is the same severity the sibling `chargeShareUncollected` record carries.
+Since then #3220 added the refused stranded-intent record (`payment` 41 -> 42,
+467 -> 468 - taken from `npm run audit:census` on the merged tree, not from this
+branch's own pre-merge delta): when a booking change's card request could not be
+set up and the background retries have run out, the system now withdraws the
+card request that was left standing, so the member cannot pay an ask the club
+has already invoiced in Xero. This row is written only when that withdrawal is
+REFUSED - the card provider will not cancel an intent it is already processing -
+because a withdrawal that worked needs no officer, and one that did not leaves a
+live card request against an unpaid invoice for the same money. `important`
+rather than `critical`: nothing is mis-stated yet and the remedy is a
+reconciliation by hand, which is the same severity the sibling
+`chargeShareUncollected` record carries.
 
 The 22 moves are pinned **per site**, not only by that
 distribution: `REVIEWED_ADMIN_CATEGORIES_2730` in
