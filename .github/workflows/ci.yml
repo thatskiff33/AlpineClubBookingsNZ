@@ -223,7 +223,11 @@ jobs:
 
       # #2841. Semgrep honours a `nosemgrep` comment and marks the result
       # `"suppressions": [{"kind": "inSource"}]`, which is why the blocking scan
-      # above passes with two justified raw-SQL exemptions in the tree. GitHub's
+      # above passes with the justified exemptions in the tree — two raw-SQL
+      # ones and, since #2842, a `react-dangerouslysetinnerhtml` at
+      # `src/components/club-post-editor.tsx`, which is an XSS-class alert this
+      # step keeps off the Security tab and so is named rather than left to a
+      # diff. GitHub's
       # SARIF ingest does not act on that field, so those two were filed as
       # code-scanning alerts that can never be closed and reappear on every scan.
       # `INV-OPS-014`'s own failure message tells contributors to add such a
