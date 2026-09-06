@@ -27,6 +27,8 @@ import {
   RefundAllocationRacedError,
 } from "@/lib/payment-transactions";
 import { prisma } from "@/lib/prisma";
+import { clubToday } from "@/lib/club-time";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 // #3195: the $0 refusal is said by the settle SCREEN as well as thrown here, and
 // this module is `server-only` - so the sentence lives in a client-safe home and
 // both read it (`INV-SSOT`).
@@ -221,6 +223,9 @@ export async function resolveManualRefundTask(
     );
   }
 
+  // #3219 (`INV-LOCK-004`): outside the transaction, which a timezone read may
+  // not take. It dates the promotion's window in the re-price below.
+  const todayAtClub = clubToday(await readClubTimeZoneOutsideRequest());
   const result = await prisma.$transaction(async (tx) => {
     const task = await tx.manualRefundTask.findUnique({
       where: { id: taskId },
@@ -417,18 +422,15 @@ export async function resolveManualRefundTask(
 
     // #3191: what the officer says the booking's unpriced nights sold for,
     // checked BEFORE the claim so a refusal leaves the task OPEN and its money
-    // question intact. `stored-night-price-repair-store.ts` owns the rules, the
-    // re-read of the blanks and the refusals; null in means null out, and the
-    // strand is not touched at all.
+    // question intact. The store owns the rules, the re-read of the blanks, and
+    // (since #3219 D2) the refusal to close a review whose boxes are blank.
+    const settledForRepair = settlement
+      ? { direction: settlementDirection, amountCents: settlement.amountCents }
+      : null;
     const nightPriceRepair = await planStoredNightPriceRepair({
       task,
       requested: input.recordedNightPrices,
-      settled: settlement
-        ? {
-            direction: settlementDirection,
-            amountCents: settlement.amountCents,
-          }
-        : null,
+      settled: settledForRepair,
       store: tx,
     });
 
@@ -566,8 +568,8 @@ export async function resolveManualRefundTask(
 
     // #3191: the blanks become numbers, after the claim and inside it, so a lost
     // claim writes no prices. It records its OWN audit entry rather than adding
-    // to the one below - see `recordStoredNightPriceRepair` for why that is not
-    // tidiness.
+    // to the one below - see `recordStoredNightPriceRepair` for why.
+    // #3219: it also re-prices the BOOKING from its strands, on a dismissal too.
     if (nightPriceRepair) {
       await recordStoredNightPriceRepair({
         plan: nightPriceRepair,
@@ -575,6 +577,11 @@ export async function resolveManualRefundTask(
         actingMemberId,
         resolution,
         note: trimmedNote,
+        todayAtClub,
+        hasIssuedXeroInvoice,
+        // #3219: the store asks the Xero leg whether a document is issued.
+        settlementRoute,
+        settlementAmountCents: settlement?.amountCents ?? null,
         store: tx,
       });
     }

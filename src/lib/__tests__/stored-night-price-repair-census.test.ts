@@ -121,11 +121,26 @@ const REPAIR_WRITER = "lib/stored-night-price-repair-store.ts";
  *    because the route touches no `bookingGuestNight` model call and names no
  *    target figure. It costs one line and the route has to be arithmetic-free
  *    anyway, so the guarantee is extended rather than left to review.
+ *
+ * #3219 ADDED TWO, and one of them is why a path-hardcoded list is dangerous:
+ *
+ *  - the QUEUE module is the summary loader that #3219 SPLIT OUT of the repair
+ *    store. Those lines were scanned before the split and would have stopped
+ *    being scanned after it, with nothing recording the change - which is the
+ *    whole failure mode of naming files by path. A move must bring its entry
+ *    with it;
+ *  - the RE-BASE module writes the booking's four money columns from the
+ *    strands. It runs no derivation - all five patterns below were measured
+ *    over it at zero hits, and it needs no exemption - and it is the most
+ *    natural place in the feature for somebody to "work the rest out" from a
+ *    total, so the guarantee is extended over it rather than left to review.
  */
 const FEATURE_FILES = [
   "lib/stored-night-price-repair.ts",
   "lib/stored-night-price-repair-store.ts",
+  "lib/stored-night-price-repair-queue.ts",
   "lib/stored-night-price-strand-reconcile.ts",
+  "lib/booking-review-price-rebase.ts",
   "components/admin/unpriced-night-price-fields.tsx",
   "components/admin/booking-stored-night-price-controls.tsx",
   "app/api/admin/bookings/[id]/stored-night-prices/route.ts",

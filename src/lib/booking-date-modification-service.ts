@@ -137,6 +137,7 @@ import {
 } from "@/lib/xero-period-lock-guard";
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
+import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 
 export type ModifyBookingDatesInput = {
   checkIn?: string;
@@ -798,7 +799,10 @@ export async function modifyBookingDates({
     // the removal path state the same reasoning at the same place.)
     const newFinalPriceCents = parked
       ? booking.finalPriceCents
-      : newTotalPriceCents + newPromoAdjustmentCents;
+      : bookingFinalPriceCents({
+          totalPriceCents: newTotalPriceCents,
+          promoAdjustmentCents: newPromoAdjustmentCents,
+        });
     const priceDiffCents = newFinalPriceCents - booking.finalPriceCents;
 
     let changeFeeCents = 0;

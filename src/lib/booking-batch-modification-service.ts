@@ -114,6 +114,7 @@ import {
   rosterOperationalDayRange,
 } from "@/lib/roster-lock";
 import { formatDateOnly } from "@/lib/date-only";
+import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 
 type ModifiedBooking = Booking & {
   guests: BookingGuest[];
@@ -1447,7 +1448,10 @@ export async function modifyBookingBatch({
         : booking.totalPriceCents;
     const newFinalPriceCents =
       pricingResult.kind === "priced"
-        ? pricingResult.newTotalPriceCents + promo.newPromoAdjustmentCents
+        ? bookingFinalPriceCents({
+            totalPriceCents: pricingResult.newTotalPriceCents,
+            promoAdjustmentCents: promo.newPromoAdjustmentCents,
+          })
         : booking.finalPriceCents;
     const priceDiffCents = newFinalPriceCents - booking.finalPriceCents;
 

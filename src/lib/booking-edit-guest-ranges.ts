@@ -34,6 +34,7 @@ import {
   unusableStoredSoldPriceEvidence,
   type HeldNightPrice,
 } from "@/lib/stored-sold-price-evidence";
+import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 
 interface ExistingBookingEditGuest {
   id: string;
@@ -1876,7 +1877,10 @@ export function buildInProgressGuestRangePlan(
     proposedAddedGuests.reduce((sum, entry) => sum + entry.priceCents, 0);
   const newDiscountCents = input.booking.discountCents;
   const newPromoAdjustmentCents = input.booking.promoAdjustmentCents;
-  const newFinalPriceCents = newTotalPriceCents + newPromoAdjustmentCents;
+  const newFinalPriceCents = bookingFinalPriceCents({
+    totalPriceCents: newTotalPriceCents,
+    promoAdjustmentCents: newPromoAdjustmentCents,
+  });
   const priceDiffCents = newFinalPriceCents - input.booking.finalPriceCents;
   const futureExistingDeltaCents = proposedExistingGuests.reduce(
     (sum, entry) => sum + entry.futureDeltaCents,

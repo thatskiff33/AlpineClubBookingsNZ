@@ -41,6 +41,7 @@ import {
 } from "@/lib/booking-guest-stay-range-input";
 import { isDateOnlyString, parseDateOnly } from "@/lib/date-only";
 import { workPartyWindowOverlapsStay } from "@/lib/work-party";
+import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 
 const dateOnlyString = z.string().refine(isDateOnlyString, {
   message: "Date must be YYYY-MM-DD",
@@ -342,7 +343,10 @@ export async function POST(req: NextRequest) {
       remainingFreeNights: application.remainingFreeNights,
       selectedGuestIndexes: application.selectedGuestIndexes,
       totalPriceCents: price.totalPriceCents,
-      finalPriceCents: price.totalPriceCents + promoResult.priceAdjustmentCents,
+      finalPriceCents: bookingFinalPriceCents({
+        totalPriceCents: price.totalPriceCents,
+        promoAdjustmentCents: promoResult.priceAdjustmentCents,
+      }),
     });
   } catch (err) {
     if (err instanceof MembershipTypeBookingPolicyError) {

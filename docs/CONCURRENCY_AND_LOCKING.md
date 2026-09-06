@@ -2918,6 +2918,68 @@ and the edit then reads exact evidence and prices normally. It also refuses
 outright while an `EDIT_FINANCIAL_REVIEW` is open on the booking, so the two
 callers cannot be writing the same strand against two different targets.
 
+**#3219 ADDS THE BOOKING ITSELF TO THAT SAME LOCKLESS TRANSACTION, PLUS ONE ROW
+LOCK, AND STILL NO ADVISORY TIER.** Once the strand write above has landed, the
+booking's four money columns - `totalPriceCents`, `discountCents`,
+`promoAdjustmentCents` and `finalPriceCents` - are re-priced from its strands, so
+the booking can no longer disagree with its own nights. Same reasoning a third
+time for the advisory tier: it rides inside the completion's transaction, whose
+single-flight guarantee is the status claim, and a key here would sit over the
+Stripe round trip that follows the commit. Safety against a concurrent booking
+edit - which writes those very columns, in its own transaction, under its own
+locks - is again a compare-and-set rather than a lock:
+
+- the `updateMany` is fenced on ALL FOUR stored figures as they were read inside
+  this transaction, so an edit that moved any of them underneath us matches
+  nothing;
+- a `count` of anything but 1 raises the same 409 and rolls the whole completion
+  back, so the task is still `OPEN` and its money question survives;
+- and the strand this settle just repaired must be one of the booking's own,
+  carrying the value just written to it. Nothing cross-checks the guest id an
+  `EDIT_FINANCIAL_REVIEW` context holds against its task's `bookingId`, so
+  without that check a mismatched context would re-price one booking from another
+  booking's strands - and an empty guest list would zero it.
+
+**THE ONE NEW LOCK PARTICIPANT IS THE PROMO ROW, AND IT IS A TIER THIS
+TRANSACTION DID NOT HOLD BEFORE.** The promotion follows the strands, so the
+re-price re-enters `recalculateBookingPromo` - the tree's one recompute - which
+`lockAndRefreshPromoCodeUsage` row-locks the promo code and re-reads its usage
+counter, because a re-price can RELEASE a total-redemptions slot. Three things
+make that safe to add here:
+
+- **it is the only ADVISORY tier this transaction takes**, so it can close no
+  cycle against a lodge, member or global key. The guide's order for the promo
+  row is lodge -> promo row, and the settle path holds no lodge key; a
+  concurrent booking edit that holds both acquires them in that order and this
+  one waits behind it or is refused by the fences above. The transaction does
+  hold ORDINARY ROW LOCKS besides - on the strand's guest and night rows, taken
+  by the repair write BEFORE the promo row, where `waitlist.ts`'s confirm takes
+  the promo row first. Two transactions on the same booking could therefore
+  deadlock on that pair; Postgres aborts one, which rolls the whole completion
+  back and leaves the task `OPEN` - the same outcome as the compare-and-set
+  fences above, and the shape needs a waitlist confirm and a review settle on
+  one booking at the same instant to arise at all;
+- **it is the SAME key the recompute's two other callers take** (the guest
+  removal and the waitlist confirm), rather than a new key registered for one
+  writer;
+- **it is a row lock, not `pg_advisory_xact_lock(1)`**, and it is released at
+  commit, which happens before the Stripe round trip - so the bounded-exception
+  rule about provider calls inside long transactions is not engaged.
+
+The new figures are RECOMPUTED from the strands rather than derived by applying
+the settled amount, which matters here as well as in `INV-MOD-028`: the writer is
+handed no settlement amount at all, so a reader does not have to check whether it
+is the right one. And where any surviving strand's nights cannot be read back as
+exact, reconciling money the re-price DECLINES - no promo recompute, no booking
+write, no row lock taken at all - so a booking with a second unreadable strand
+leaves this transaction exactly as narrow as it was before #3219.
+
+One more write joins the same transaction: a `BookingModification` row of type
+`PRICE_REBASE`, the booking's own history record of the re-price. It is an insert
+against the booking, takes no lock, and is only reached after the fenced
+`updateMany` has claimed the change - so it cannot exist for a re-price that did
+not commit.
+
 **#3194 ADDS A READ TO THAT SAME LOCKLESS TRANSACTION AND STILL NO KEY.** Where
 the task carries no `paymentId` of its own — a review parked before the member
 paid — the route decision re-reads the BOOKING's payment on the caller's

@@ -146,6 +146,7 @@ import {
 } from "@/lib/booking-member-night-conflicts";
 import { getMemberCreditBalance } from "@/lib/member-credit";
 import logger from "@/lib/logger";
+import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 
 /*
   #2563: this preview holds NO stay-range arithmetic of its own.
@@ -2252,7 +2253,10 @@ export async function POST(
 
   const newFinalPriceCents = inProgressPlan
     ? inProgressPlan.newFinalPriceCents
-    : newTotalPriceCents + newPromoAdjustmentCents;
+    : bookingFinalPriceCents({
+        totalPriceCents: newTotalPriceCents,
+        promoAdjustmentCents: newPromoAdjustmentCents,
+      });
   const priceDiffCents = inProgressPlan
     ? inProgressPlan.priceDiffCents
     : newFinalPriceCents - booking.finalPriceCents;

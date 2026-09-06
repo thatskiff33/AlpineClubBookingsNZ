@@ -51,6 +51,7 @@ import { formatMissingPaidUpAdultWaitlistRefusal } from "@/lib/policies/subscrip
 import { formatAdultMemberHostingWaitlistRefusal } from "@/lib/policies/adult-member-hosting";
 import { requiredNightPriceCents } from "@/lib/required-price-cents";
 import { carriesUnvaluedStoredNight } from "@/lib/stored-night-price-write";
+import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 
 export const WAITLIST_OFFER_HOURS =
   Number(process.env.WAITLIST_OFFER_HOURS) || 48;
@@ -235,7 +236,10 @@ async function repriceWaitlistCandidate(
       todayAtClub,
     });
     const newFinalPriceCents =
-      newTotalPriceCents + promoResult.newPromoAdjustmentCents;
+      bookingFinalPriceCents({
+        totalPriceCents: newTotalPriceCents,
+        promoAdjustmentCents: promoResult.newPromoAdjustmentCents,
+      });
 
     // #3031 (epic #2797): THE NIGHT ROWS THIS REPRICE PRICED, built and checked
     // BEFORE anything is written.

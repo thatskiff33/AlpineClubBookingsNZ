@@ -12,11 +12,13 @@ import {
   isNonNegativeIntegerCents,
   parseEditFinancialReviewContext,
 } from "@/lib/edit-financial-review-context";
-import logger from "@/lib/logger";
 import { getExplicitGuestBedNightKeys } from "@/lib/booking-guest-stay-ranges";
+import type { EditReviewSettlementRoute } from "@/lib/edit-financial-review-settlement";
+import { editReviewSettlementIssuesXeroDocument } from "@/lib/edit-financial-review-xero-leg";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
 import {
   checkStoredNightPriceRepair,
+  unpricedNightsExplanation,
   settlementDeltaCents,
   NIGHT_PRICE_REPAIR_NOTHING_TO_FILL_MESSAGE,
   NIGHT_PRICE_REPAIR_NO_STRAND_MESSAGE,
@@ -24,6 +26,11 @@ import {
   type SettlementDirectionValue,
   type UnpricedNightsSummary,
 } from "@/lib/stored-night-price-repair";
+import {
+  rebaseBookingPriceFromStrands,
+  rebaseDivergesFromIssuedInvoice,
+  recordBookingPriceRebaseHistory,
+} from "@/lib/booking-review-price-rebase";
 
 /**
  * #3191 (epic #2797): the READS and the WRITES behind recording what an unpriced
@@ -46,7 +53,11 @@ import {
  *    `where` clause, and a race that filled the row first turns into a refusal
  *    rather than a silent overwrite;
  *  - the strand's stored total is fenced on its previous value in the same way,
- *    so two officers settling at once cannot both move it.
+ *    so two officers settling at once cannot both move it;
+ *  - and since #3219 the BOOKING's own two headline totals move with it, in the
+ *    same transaction and fenced the same way. Nothing here derives them from an
+ *    amount: they are RECOMPUTED from what the strands now say, read back after
+ *    the two writes above.
  *
  * `stored-night-price-repair-census.test.ts` pins that this is the only module in
  * the tree that updates an existing `BookingGuestNight` row's price in place, and
@@ -62,9 +73,8 @@ import {
  *
  * NO ADVISORY LOCK IS TAKEN, matching the completion path this rides on, which
  * `docs/CONCURRENCY_AND_LOCKING.md` records as deliberately holding none. The
- * single-flight guarantee is the task's own status claim; the two fences above
- * are what make a concurrent booking edit a loud refusal instead of a lost
- * update.
+ * single-flight guarantee is the task's own status claim; the fences above are
+ * what make a concurrent booking edit a loud refusal instead of a lost update.
  */
 
 /** The night rows and the total this module reads off a guest strand. */
@@ -74,7 +84,7 @@ type RepairableGuest = {
   nights: ReadonlyArray<{ stayDate: Date; priceCents: number | null }>;
 };
 
-const GUEST_SELECT = {
+export const GUEST_SELECT = {
   id: true,
   priceCents: true,
   nights: { select: { stayDate: true, priceCents: true } },
@@ -178,78 +188,6 @@ export async function loadUnpricedNightsSummary({
 }
 
 /**
- * The summaries for a whole queue load, keyed by TASK id.
- *
- * Keyed by task rather than by guest so the queue payload never has to hold a
- * guest-strand id in order to look one up - the redaction
- * `toEditFinancialReviewEvidence` performs would be worth nothing if the field
- * came back on a neighbouring map. One query for every strand on the page rather
- * than one per row.
- */
-export async function unpricedNightsSummariesByTaskId({
-  tasks,
-  store,
-}: {
-  tasks: ReadonlyArray<{
-    id: string;
-    kind: ManualRefundTaskKind | string | null;
-    reviewContext: unknown;
-  }>;
-  store: Prisma.TransactionClient;
-}): Promise<Map<string, UnpricedNightsSummary>> {
-  const guestIdByTaskId = new Map<string, string>();
-  for (const task of tasks) {
-    const guestId = reviewTaskGuestId(task);
-    if (guestId !== null) guestIdByTaskId.set(task.id, guestId);
-  }
-  const summaries = new Map<string, UnpricedNightsSummary>();
-  if (guestIdByTaskId.size === 0) return summaries;
-
-  const guests = await store.bookingGuest.findMany({
-    where: { id: { in: [...new Set(guestIdByTaskId.values())] } },
-    select: GUEST_SELECT,
-  });
-  const byGuestId = new Map(guests.map((guest) => [guest.id, guest]));
-  for (const [taskId, guestId] of guestIdByTaskId) {
-    const guest = byGuestId.get(guestId);
-    if (!guest) continue;
-    const summary = unpricedNightsSummaryForGuest(guest);
-    if (summary) summaries.set(taskId, summary);
-  }
-  return summaries;
-}
-
-/**
- * The same summaries for a screen that must render whether or not they can be
- * read.
- *
- * FAIL-CLOSED AND ON ITS OWN. An empty map means no row offers the repair, which
- * is exactly what the finance queue did before #3191 - the money work on that
- * card is unaffected by a repair it cannot offer this minute, and blanking the
- * queue over a secondary read would take a list of money the club owes members
- * off the screen. The strict function above stays available for a caller that
- * must not silently degrade.
- */
-export async function unpricedNightsSummariesForQueue(args: {
-  tasks: ReadonlyArray<{
-    id: string;
-    kind: ManualRefundTaskKind | string | null;
-    reviewContext: unknown;
-  }>;
-  store: Prisma.TransactionClient;
-}): Promise<Map<string, UnpricedNightsSummary>> {
-  try {
-    return await unpricedNightsSummariesByTaskId(args);
-  } catch (err) {
-    logger.error(
-      { err },
-      "Failed to read unpriced night summaries for the finance queue; its rows are answered without them",
-    );
-    return new Map<string, UnpricedNightsSummary>();
-  }
-}
-
-/**
  * The race refusal. It is a 409 rather than a 400 because nothing the officer
  * typed is wrong - the booking moved underneath them - and because the caller's
  * transaction rolls back with it, so the task is still OPEN when they retry.
@@ -293,7 +231,37 @@ export async function planStoredNightPriceRepair({
   settled: { direction: SettlementDirectionValue; amountCents: number } | null;
   store: Prisma.TransactionClient;
 }): Promise<StoredNightPriceRepairPlan | null> {
-  if (requested === null) return null;
+  if (requested === null) {
+    // #3219 D2 (owner, 5 September 2026): the night prices are MANDATORY where
+    // the price boxes are ALREADY OFFERED - on a dismissal as well as on a
+    // completion - because the booking's own price is re-based from the strands
+    // when the review closes, and a review closed blank leaves a headline that
+    // still counts a guest the edit has already deleted (#3257).
+    //
+    // "WHERE THE BOXES ARE OFFERED" IS STRUCTURAL, NOT A CARVE-OUT LIST, and
+    // that is what keeps the rule narrow. The boxes appear only for a review
+    // that names a guest strand whose blanks can be filled in against usable
+    // money. Everything else answers `null` from one of the two reads below and
+    // closes exactly as it did before: a legacy hand-back task, a total mismatch
+    // with no blanks, damaged rows, a removed guest whose rows the edit deleted,
+    // the "a different guest is the problem" item, and #3213's withheld-share
+    // notice, which reviews no stay and has no nights.
+    //
+    // The refusal is `unpricedNightsExplanation` verbatim - the same sentence
+    // the officer was already shown at the moment of decision - rather than a
+    // second wording of the same rule (`INV-SSOT`).
+    const offeredGuestId = reviewTaskGuestId(task);
+    if (offeredGuestId === null) return null;
+    const offered = await loadUnpricedNightsSummary({
+      bookingGuestId: offeredGuestId,
+      store,
+    });
+    if (offered === null) return null;
+    throw new ManualBookingPaymentError(
+      unpricedNightsExplanation(offered),
+      400,
+    );
+  }
 
   const bookingGuestId = reviewTaskGuestId(task);
   if (bookingGuestId === null) {
@@ -327,6 +295,20 @@ export async function planStoredNightPriceRepair({
  * a stay is recorded as having sold for - and the second can happen on a
  * DISMISSAL, whose entry says in as many words that nothing moved. Folding it in
  * would put a price change inside a row whose summary denies one.
+ *
+ * #3219: it also RE-PRICES THE BOOKING from its strands - all four money
+ * columns, with the promotion recomputed and re-capped - which belongs in this
+ * entry rather than in one of its own: it is the same act, and separating them
+ * would leave a reader holding two rows and no statement that one caused the
+ * other. The re-price itself lives in `booking-review-price-rebase.ts`, which is
+ * where its rules, its refusals and its lock declaration are stated.
+ *
+ * WHERE THE RE-PRICE DECLINES - a surviving strand whose nights cannot be read
+ * back as exact, reconciling evidence - the audit entry says so rather than
+ * staying silent, and the booking's totals are left exactly as the park set
+ * them. It re-prices later only if that strand still has an open review whose
+ * price boxes are offered; two shapes of a parked removal have none, and stay
+ * with #3257 (`docs/invariants/booking-modifications.md`).
  */
 export async function recordStoredNightPriceRepair({
   plan,
@@ -334,6 +316,10 @@ export async function recordStoredNightPriceRepair({
   actingMemberId,
   resolution,
   note,
+  todayAtClub,
+  hasIssuedXeroInvoice,
+  settlementRoute,
+  settlementAmountCents,
   store,
 }: {
   plan: StoredNightPriceRepairPlan;
@@ -341,6 +327,28 @@ export async function recordStoredNightPriceRepair({
   actingMemberId: string;
   resolution: "completed" | "dismissed";
   note: string | null;
+  /**
+   * #3219: the club's own calendar day, resolved by the caller BEFORE it opened
+   * this transaction (`INV-LOCK-004`). The re-price needs it to decide the
+   * promotion's validity window.
+   */
+  todayAtClub: CalendarDate;
+  /** #3219: whether the club has already invoiced this booking through Xero. */
+  hasIssuedXeroInvoice: boolean;
+  /**
+   * #3219: what THIS closure would send Xero, so this module can ask the Xero
+   * leg's own predicate whether a document is actually issued.
+   *
+   * A dismissal picks no route and issues none at all - and that is the case
+   * where a re-price leaves the club's external record saying one figure and
+   * its internal record another. A ROUTE ALONE IS NOT ENOUGH either:
+   * `local-allocation` carries a nullable anchor, and the Xero leg sends
+   * nothing without one, so `route !== null` would report an invoice brought
+   * back into line that nothing corrected.
+   */
+  settlementRoute: Pick<EditReviewSettlementRoute, "bookingModificationId"> | null;
+  /** This task's own settled share, or null where nothing was settled. */
+  settlementAmountCents: number | null;
   store: Prisma.TransactionClient;
 }): Promise<void> {
   const { newGuestTotalCents } = await applyStoredNightPriceRepair({
@@ -349,6 +357,41 @@ export async function recordStoredNightPriceRepair({
     entries: plan.entries,
     store,
   });
+  // #3219: and the booking itself comes back into agreement with its strands, in
+  // this same transaction, on a dismissal exactly as on a completion - the park
+  // froze it and nothing else thaws it.
+  const outcome = await rebaseBookingPriceFromStrands({
+    bookingId: task.bookingId,
+    repairedGuestId: plan.bookingGuestId,
+    repairedGuestTotalCents: newGuestTotalCents,
+    todayAtClub,
+    store,
+  });
+  const rebase = outcome.rebased ? outcome.rebase : null;
+  const xeroInvoiceDiverged =
+    rebase !== null &&
+    rebaseDivergesFromIssuedInvoice({
+      rebase,
+      hasIssuedXeroInvoice,
+      settlementIssuesXeroDocument: editReviewSettlementIssuesXeroDocument({
+        route: settlementRoute,
+        xeroAmountCents: settlementAmountCents,
+      }),
+    });
+  if (rebase !== null) {
+    // D1's second consequence: a member can now be refunded less than they paid
+    // from an action they never saw, so the reason goes in the BOOKING'S OWN
+    // HISTORY and not only in the audit entry below.
+    await recordBookingPriceRebaseHistory({
+      bookingId: task.bookingId,
+      actingMemberId,
+      taskId: task.id,
+      resolution,
+      rebase,
+      xeroInvoiceDiverged,
+      store,
+    });
+  }
   await createAuditLog(
     {
       action: "booking-payment.stored-night-price.record",
@@ -359,10 +402,15 @@ export async function recordStoredNightPriceRepair({
       entityType: "BookingGuest",
       entityId: plan.bookingGuestId,
       category: "payment",
-      severity: "important",
+      // #3219: CRITICAL exactly when the club's invoice no longer agrees with
+      // the booking and nothing in this closure will correct it. That is the one
+      // state where a later Internet-Banking settle would mark the booking PAID
+      // on less than was invoiced, so it is the one that has to stand out.
+      severity: xeroInvoiceDiverged ? "critical" : "important",
       outcome: "success",
-      summary:
-        "Recorded what a booking's unpriced nights sold for while settling a financial review",
+      summary: xeroInvoiceDiverged
+        ? "Re-priced a booking while settling a financial review; its issued Xero invoice no longer matches"
+        : "Recorded what a booking's unpriced nights sold for while settling a financial review",
       details: note,
       metadata: {
         taskId: task.id,
@@ -378,6 +426,28 @@ export async function recordStoredNightPriceRepair({
         previousGuestTotalCents: plan.summary.storedGuestTotalCents,
         newGuestTotalCents,
         knownNightTotalCents: plan.summary.knownNightTotalCents,
+        // #3219: the booking was re-priced with the strand, so the entry that
+        // records the act records what it did to it - every money column, before
+        // and after, because a reader asking "why does this booking cost what it
+        // does?" months later has nowhere else to look. `bookingRebased: false`
+        // says the re-price DECLINED because a surviving strand's nights cannot
+        // be read back as exact, reconciling evidence; the booking's own figures
+        // are then untouched and its other review is still open.
+        bookingRebased: rebase !== null,
+        bookingRebaseDeclinedReason: outcome.rebased ? null : outcome.reason,
+        previousBookingTotalPriceCents: rebase?.previousTotalPriceCents ?? null,
+        newBookingTotalPriceCents: rebase?.newTotalPriceCents ?? null,
+        previousBookingDiscountCents: rebase?.previousDiscountCents ?? null,
+        newBookingDiscountCents: rebase?.newDiscountCents ?? null,
+        previousBookingPromoAdjustmentCents:
+          rebase?.previousPromoAdjustmentCents ?? null,
+        newBookingPromoAdjustmentCents: rebase?.newPromoAdjustmentCents ?? null,
+        previousBookingFinalPriceCents: rebase?.previousFinalPriceCents ?? null,
+        newBookingFinalPriceCents: rebase?.newFinalPriceCents ?? null,
+        promoRemoved: rebase?.promoRemoved ?? null,
+        // D1's first consequence, on the record: this closure issued no Xero
+        // document, so the club's invoice still says the old figure.
+        xeroInvoiceDiverged,
       },
     },
     store,

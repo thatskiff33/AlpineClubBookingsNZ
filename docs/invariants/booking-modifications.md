@@ -1297,14 +1297,105 @@ reason from the other two: it has no blanks, so the summary is `null` and the
 screen stays silent. That strand parks on every edit for as long as it exists,
 exactly as it did before #3191, because what it needs is a decision about which
 of two stored numbers is wrong rather than a number nobody has.
-`Booking.totalPriceCents` is likewise untouched: the park froze it and the
-settlement moves the money through the club's own instruments, so re-basing the
-booking's headline total is a separate question from recording what a stay sold
-for. A parked edit already leaves the booking's headline total and its guest rows
-disagreeing by design, and nothing in the tree asserts that they agree.
 
-**What the re-based `BookingGuest.priceCents` is read by, since "only the
-booking's headline total is frozen" would leave that unsaid.** The strand total
+**The BOOKING ITSELF is re-priced from its strands when the review is settled or
+dismissed, and afterwards it is required to agree with them** (#3219, epic
+#2797; owner decisions 2 and 5 September 2026). A parked edit freezes the
+booking's four money columns, correctly: a parked edit is precisely one whose
+money nobody may compute. Nothing thawed them when the review settled, so the
+headline and the nights were left disagreeing permanently, with nothing
+reconciling them.
+
+Five things about that re-price are load-bearing:
+
+- **all four columns, or none.** `Booking.totalPriceCents` is the sum of its
+  strands' `BookingGuest.priceCents`; `discountCents` and the signed
+  `promoAdjustmentCents` are what the promotion now comes to; and
+  `finalPriceCents` is the total plus the adjustment, through the tree's one home
+  for that relation (`bookingFinalPriceCents`, `INV-SSOT-001`, #3260). Moving one
+  without the others trades one disagreement for another — `priceDiffCents`, the
+  number every settlement decision reads, is built from `finalPriceCents`;
+- **recomputed from the strands, never derived by applying the settled amount.**
+  The repair also runs on a **dismissal**, whose audit entry says in as many
+  words that nothing moved: there is no delta to apply there and the figures must
+  still come back into agreement. A delta is also wrong wherever the park left
+  the headline out of step by more than this settlement moves — a parked guest
+  REMOVAL, whose structural half commits and takes the strand away while the
+  frozen headline still counts it (#3257);
+- **the promotion FOLLOWS THE STRANDS** (owner, 5 September 2026), through
+  `recalculateBookingPromo` — the same recompute every other writer of these
+  columns uses. Carrying the frozen adjustment through is not merely stale, it is
+  unsound: two guests at $100 with a valid 75%-off code carry a $150 discount
+  against a $200 total, so removing one and recording the other at $100 would
+  store MINUS $50 — a shape no other writer in this tree can produce and one the
+  money invariants have no form for. Re-applying the code to the new total gives
+  $75 off $100 and a stored price of $25. A non-negative stored price is
+  therefore structural rather than policed, and the assertion beside the write
+  exists only because this is the one column shown able to go negative;
+- **the recomputed price GOVERNS EVERYWHERE** (owner decision D1, 5 September
+  2026), including the cancellation refund cap, Internet-Banking reconciliation's
+  amount law, the unpaid-invoice clearing credit note, per-night revenue
+  allocation and member lifetime spend. One rule; no reader gets its own. This
+  accepts, deliberately, that a member who paid $240 and had a guest removed on a
+  DISMISSED review is refunded $120 on a later full-refund cancellation — and it
+  requires that consequence to be VISIBLE rather than silent, which is why the
+  re-price writes a `PRICE_REBASE` row into the booking's own history with the
+  figures before and after, and why a closure that issues no Xero document
+  records the resulting invoice divergence on that row and raises its audit entry
+  to `critical`;
+- **in the same transaction as the strand write**, under the claim that write
+  already holds, fenced on all four columns. This path takes no advisory lock, so
+  a concurrent edit that moved any of them is a 409 that rolls the whole
+  completion back rather than a lost update, and the repaired strand must be one
+  of the booking's own at the value just written to it — nothing else
+  cross-checks a review context's strand id against its task's booking.
+
+**The night prices are MANDATORY where the price boxes are offered** (owner
+decision D2, 5 September 2026), on a dismissal as well as a completion: a review
+whose boxes are shown cannot be closed while they are blank. "Where the boxes are
+offered" is structural rather than a carve-out list — they appear only for a
+review naming a guest strand with genuine blank nights whose other nights are
+readable and whose stored total is usable money — so a total mismatch with no
+blanks, damaged rows, a removed guest whose rows the edit deleted, the "a
+different guest is the problem" item and #3213's withheld-share notice are all
+exempt by construction and close exactly as they did before. The refusal is the
+sentence the officer was already shown at the moment of decision, said once
+(`INV-SSOT`).
+
+**Where the evidence is not there, the re-price DECLINES rather than
+approximating.** Every surviving strand must have night rows, all carrying usable
+money, summing to that strand's stored total — this invariant applied to the
+whole booking rather than to one strand. Where one does not, the booking's four
+columns are left exactly as the park set them. Asserting a booking total built
+from strands the system has said it cannot value would be a worse lie than the
+stale one, and harder to notice.
+
+Nothing else about the park changes: what a parked edit itself writes is still no
+amount at all.
+
+**Where the re-price does NOT yet reach — stated rather than left to be found,
+and #3257 is NOT closed by it.** The re-price rides on the night-price repair,
+so it runs only where the price boxes were OFFERED. Two reachable shapes of a
+parked guest REMOVAL offer none, and a removal is exactly the case whose
+structural half commits and takes a strand away while the frozen headline still
+counts it:
+
+- **the departing strand is the unreadable one and every remaining strand is
+  exact.** The park raises its review over the departing guest, and the same
+  transaction deletes that guest and its night rows. The task names a strand
+  that no longer exists, so no boxes are offered and no re-price runs — even
+  though every surviving strand would now reconcile;
+- **a remaining strand holds no night rows at all** while carrying money. Its
+  review is raised, but boxes appear only for a strand with genuine BLANK nights
+  among readable ones, so this one closes with none.
+
+In both, the headline keeps counting a strand the booking no longer has: #3257
+verbatim. Bringing them into line is a change to WHERE the re-price is invoked
+from rather than to what it computes, and it is not what the #3219 decision
+settled — so it stays with #3257.
+
+**What the re-based `BookingGuest.priceCents` is read by, since the booking's
+headline totals alone would leave that unsaid.** The strand total
 this repair moves is a Xero input, and the repair also flips a strand out of the
 whole-stay fallback into per-night runs (`buildInvoiceLineItems` sends a guest
 holding any unknown night down the legacy branch, #3170). Three consumers, and

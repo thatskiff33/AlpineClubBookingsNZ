@@ -41,6 +41,7 @@ const mocks = vi.hoisted(() => ({
   paymentTransactionFindFirst: vi.fn(),
   paymentFindUnique: vi.fn(),
   xeroObjectLinkFindFirst: vi.fn(),
+  bookingGuestFindUnique: vi.fn(),
   memberCreditFindUnique: vi.fn(),
   applyLocalRefundAllocation: vi.fn(),
   planStripeRefundAllocation: vi.fn(),
@@ -203,6 +204,14 @@ const tx = {
   },
   xeroObjectLink: {
     findFirst: (...a: unknown[]) => mocks.xeroObjectLinkFindFirst(...a),
+  },
+  // #3219 D2: closing a review whose price boxes are OFFERED is refused while
+  // they are blank, so every edit-review closure now asks whether this strand
+  // has any. These fixtures send no figures and are not about that question, so
+  // the strand comes back with none - the boxes are not offered and the close is
+  // exactly the one this suite was written against.
+  bookingGuest: {
+    findUnique: (...a: unknown[]) => mocks.bookingGuestFindUnique(...a),
   },
 };
 

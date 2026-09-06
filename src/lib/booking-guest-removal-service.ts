@@ -85,6 +85,7 @@ import {
 // the booking page's affordance and the night-conflict card cannot drift from
 // this authoritative gate. The gate itself is unchanged.
 import { SELF_REMOVABLE_GUEST_BOOKING_STATUSES } from "@/lib/booking-guest-self-removal";
+import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 
 export class BookingGuestRemovalError extends Error {
   constructor(
@@ -861,7 +862,10 @@ export async function removeBookingGuestInTransaction({
   // two expressions happened to cancel.
   const newFinalPriceCents = parkedFinancialReview
     ? booking.finalPriceCents
-    : newTotalPriceCents + promoResult.newPromoAdjustmentCents;
+    : bookingFinalPriceCents({
+        totalPriceCents: newTotalPriceCents,
+        promoAdjustmentCents: promoResult.newPromoAdjustmentCents,
+      });
   const priceDiffCents = newFinalPriceCents - booking.finalPriceCents;
   // Owner rule (#1100): a booking left with only non-adults must go through
   // admin approval, even if it was previously paid and approved for a
