@@ -1366,13 +1366,33 @@ sentence the officer was already shown at the moment of decision, said once
 approximating.** Every surviving strand must have night rows, all carrying usable
 money, summing to that strand's stored total — this invariant applied to the
 whole booking rather than to one strand. Where one does not, the booking's four
-columns are left exactly as the park set them; that booking still carries an open
-review over the unreadable strand, and settling it re-prices then. Asserting a
-booking total built from strands the system has said it cannot value would be a
-worse lie than the stale one, and harder to notice.
+columns are left exactly as the park set them. Asserting a booking total built
+from strands the system has said it cannot value would be a worse lie than the
+stale one, and harder to notice.
 
 Nothing else about the park changes: what a parked edit itself writes is still no
 amount at all.
+
+**Where the re-price does NOT yet reach — stated rather than left to be found,
+and #3257 is NOT closed by it.** The re-price rides on the night-price repair,
+so it runs only where the price boxes were OFFERED. Two reachable shapes of a
+parked guest REMOVAL offer none, and a removal is exactly the case whose
+structural half commits and takes a strand away while the frozen headline still
+counts it:
+
+- **the departing strand is the unreadable one and every remaining strand is
+  exact.** The park raises its review over the departing guest, and the same
+  transaction deletes that guest and its night rows. The task names a strand
+  that no longer exists, so no boxes are offered and no re-price runs — even
+  though every surviving strand would now reconcile;
+- **a remaining strand holds no night rows at all** while carrying money. Its
+  review is raised, but boxes appear only for a strand with genuine BLANK nights
+  among readable ones, so this one closes with none.
+
+In both, the headline keeps counting a strand the booking no longer has: #3257
+verbatim. Bringing them into line is a change to WHERE the re-price is invoked
+from rather than to what it computes, and it is not what the #3219 decision
+settled — so it stays with #3257.
 
 **What the re-based `BookingGuest.priceCents` is read by, since the booking's
 headline totals alone would leave that unsaid.** The strand total

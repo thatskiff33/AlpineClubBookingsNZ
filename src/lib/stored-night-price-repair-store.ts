@@ -13,6 +13,8 @@ import {
   parseEditFinancialReviewContext,
 } from "@/lib/edit-financial-review-context";
 import { getExplicitGuestBedNightKeys } from "@/lib/booking-guest-stay-ranges";
+import type { EditReviewSettlementRoute } from "@/lib/edit-financial-review-settlement";
+import { editReviewSettlementIssuesXeroDocument } from "@/lib/edit-financial-review-xero-leg";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
 import {
   checkStoredNightPriceRepair,
@@ -304,7 +306,9 @@ export async function planStoredNightPriceRepair({
  * WHERE THE RE-PRICE DECLINES - a surviving strand whose nights cannot be read
  * back as exact, reconciling evidence - the audit entry says so rather than
  * staying silent, and the booking's totals are left exactly as the park set
- * them. That booking still carries an open review over the unreadable strand.
+ * them. It re-prices later only if that strand still has an open review whose
+ * price boxes are offered; two shapes of a parked removal have none, and stay
+ * with #3257 (`docs/invariants/booking-modifications.md`).
  */
 export async function recordStoredNightPriceRepair({
   plan,
@@ -314,7 +318,8 @@ export async function recordStoredNightPriceRepair({
   note,
   todayAtClub,
   hasIssuedXeroInvoice,
-  settlementIssuesXeroDocument,
+  settlementRoute,
+  settlementAmountCents,
   store,
 }: {
   plan: StoredNightPriceRepairPlan;
@@ -331,12 +336,19 @@ export async function recordStoredNightPriceRepair({
   /** #3219: whether the club has already invoiced this booking through Xero. */
   hasIssuedXeroInvoice: boolean;
   /**
-   * #3219: whether THIS closure sends Xero a document that brings the invoice
-   * back into line. False on every dismissal, which issues none at all - and
-   * that is the case where a re-price leaves the club's external record saying
-   * one figure and its internal record another.
+   * #3219: what THIS closure would send Xero, so this module can ask the Xero
+   * leg's own predicate whether a document is actually issued.
+   *
+   * A dismissal picks no route and issues none at all - and that is the case
+   * where a re-price leaves the club's external record saying one figure and
+   * its internal record another. A ROUTE ALONE IS NOT ENOUGH either:
+   * `local-allocation` carries a nullable anchor, and the Xero leg sends
+   * nothing without one, so `route !== null` would report an invoice brought
+   * back into line that nothing corrected.
    */
-  settlementIssuesXeroDocument: boolean;
+  settlementRoute: Pick<EditReviewSettlementRoute, "bookingModificationId"> | null;
+  /** This task's own settled share, or null where nothing was settled. */
+  settlementAmountCents: number | null;
   store: Prisma.TransactionClient;
 }): Promise<void> {
   const { newGuestTotalCents } = await applyStoredNightPriceRepair({
@@ -361,7 +373,10 @@ export async function recordStoredNightPriceRepair({
     rebaseDivergesFromIssuedInvoice({
       rebase,
       hasIssuedXeroInvoice,
-      settlementIssuesXeroDocument,
+      settlementIssuesXeroDocument: editReviewSettlementIssuesXeroDocument({
+        route: settlementRoute,
+        xeroAmountCents: settlementAmountCents,
+      }),
     });
   if (rebase !== null) {
     // D1's second consequence: a member can now be refunded less than they paid

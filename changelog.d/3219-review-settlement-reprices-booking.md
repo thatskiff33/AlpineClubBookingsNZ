@@ -45,8 +45,12 @@
 
 - **Where a guest's nights still cannot be read at all, nothing is recalculated
   (#3219).** The booking's price is left exactly where the freeze put it rather
-  than worked out from evidence the club does not have. Such a booking still has
-  its other review waiting, and closing that one works the price out then.
+  than worked out from evidence the club does not have. Whether it is ever worked
+  out later depends on that guest still having a job open with price boxes on it,
+  and two situations after a guest is taken off a booking have none — the job
+  names the guest who left, or names a guest whose nights carry no prices to
+  correct. Those bookings keep the stale headline, and closing that remains
+  #3257's job rather than this change's.
 
 - **A review naming a guest who is not on the booking is refused (#3219).**
   Nothing previously checked that, so a mismatched record could have recalculated
