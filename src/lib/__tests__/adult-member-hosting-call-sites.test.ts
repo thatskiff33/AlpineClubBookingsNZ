@@ -1296,6 +1296,10 @@ describe("the same-owner refusal and the escalation seam (#2576 §6, §8, §9)",
       "src/app/api/admin/bookings/[id]/confirm-pending-guests/route.ts",
       "src/app/api/admin/bookings/[id]/force-confirm/route.ts",
       "src/app/api/bookings/[id]/waitlist-confirm/route.ts",
+      // #3267: charge-saved-method gained the same PENDING -> CONFIRMED claim
+      // the cron and confirm-pending-guests take, so it records the seam with
+      // that claim like they do.
+      "src/app/api/payments/charge-saved-method/route.ts",
       "src/app/api/payments/switch-to-internet-banking/route.ts",
       "src/lib/adult-member-hosting-review.ts",
       "src/lib/booking-credit-election.ts",
@@ -1323,6 +1327,7 @@ describe("the same-owner refusal and the escalation seam (#2576 §6, §8, §9)",
       "src/app/api/admin/bookings/[id]/force-confirm/route.ts",
       "src/app/api/bookings/[id]/confirm-draft/route.ts",
       "src/app/api/bookings/[id]/waitlist-confirm/route.ts",
+      "src/app/api/payments/charge-saved-method/route.ts",
       "src/app/api/payments/switch-to-internet-banking/route.ts",
       "src/lib/booking-credit-election.ts",
       "src/lib/cron-confirm-pending.ts",
@@ -1687,8 +1692,11 @@ describe("the same-owner refusal and the escalation seam (#2576 §6, §8, §9)",
     );
     expect(cronZero).toContain("enqueueOwnHostingCoverageReevaluation(");
 
+    // #3267: the non-captured branch no longer spells `status:
+    // PaymentStatus.PROCESSING` itself (the attempt module maps the intent's
+    // status), so the release transaction is anchored on the guard it throws.
     const processingMarker = cron.indexOf(
-      "status: PaymentStatus.PROCESSING,",
+      "Pending-hold charge release lost its CONFIRMED claim",
       cron.indexOf("export async function confirmPendingBookings"),
     );
     const processingRelease = cron.slice(
