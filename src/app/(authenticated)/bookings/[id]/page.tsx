@@ -24,6 +24,7 @@ import {
 } from "@/lib/additional-payment-chase";
 import { ConfirmDraftButton } from "@/components/confirm-draft-button";
 import { AdminBookingToolsCard } from "@/components/admin/admin-booking-tools-card";
+import { strandNightPriceOffersForBooking } from "@/lib/stored-night-price-strand-reconcile";
 import { getBookingManualPaymentState } from "@/lib/manual-booking-payment-state";
 import { BookingBedAllocationPanel } from "@/components/admin/booking-bed-allocation-panel";
 import { BookingWithheldEmailsBanner } from "@/components/admin/booking-withheld-emails-banner";
@@ -141,6 +142,7 @@ import { getPublicOtherLodges } from "@/lib/booking-request";
 // `formatConsentNightsLabel`, which takes `Date[]`. Neither reads a timezone, so
 // neither is a second temporal authority; CT-6 (#2991) retires the module.
 import { eachDateOnlyInRange } from "@/lib/date-only";
+import { savedPaymentMethodForBooking } from "@/lib/saved-payment-method";
 import {
   bookingManagementAuthorizationRole,
   hasAdminAreaAccess,
@@ -352,7 +354,21 @@ export default async function BookingDetailPage({
       // Split-booking group (#738): the member booking links to its provisional
       // non-member child(ren); the child links back to its member booking.
       parentBooking: {
-        select: { id: true, status: true, finalPriceCents: true },
+        select: {
+          id: true,
+          status: true,
+          finalPriceCents: true,
+          // #3269: the admin confirm-pending-guests button's "will charge"
+          // wording must agree with the route, which may charge a split child
+          // on its parent's SetupIntent-saved card.
+          payment: {
+            select: {
+              stripeCustomerId: true,
+              stripePaymentMethodId: true,
+              stripeSetupIntentId: true,
+            },
+          },
+        },
       },
       linkedBookings: {
         select: {
@@ -1244,12 +1260,27 @@ export default async function BookingDetailPage({
   // the booking owner so a non-owner admin never sees it. An admin entering
   // their own card on a member's booking is a footgun with no legitimate use,
   // and the owner-positive gate is robust to read-only admin viewers (#1289).
+  // Shown exactly when the auto-charge cron would find nothing to charge
+  // (#3266, #3269, epic #3270): `savedPaymentMethodForBooking` is the ONE answer
+  // to "may this booking be charged off-session?" — the booking's own row first,
+  // then its split parent's, each needing customer, card AND SetupIntent
+  // (`INV-PAY-053`). Keyed on that rather than on "no SetupIntent yet" or on the
+  // card column alone: an abandoned replacement or a card retired after a
+  // Stripe refusal (#3268) leaves an intent id behind with nothing chargeable,
+  // and a legacy split child can carry a copied card that was never saved
+  // through a SetupIntent — both must show the form. The same const drives the
+  // admin "Confirm pending guests" button's will-charge wording below, so the
+  // page can never promise a charge while asking for a card, or the reverse.
+  const savedCard = savedPaymentMethodForBooking({
+    payment: booking.payment,
+    parentBooking: booking.parentBooking,
+  });
   const showSavePaymentMethodCard =
     isBookingOwner &&
     !isDeleted &&
     !internetBankingPayment &&
     booking.status === "PENDING" &&
-    (!booking.payment || !booking.payment.stripeSetupIntentId);
+    savedCard === null;
   // Suppress when a more specific provisional banner already explains the
   // on-hold/no-charge state (the split-booking child and the bumped-guest
   // flagged-provisional notices both render near the top of the page). Also
@@ -1487,6 +1518,49 @@ export default async function BookingDetailPage({
       : null;
 
   /*
+    #3214 (epic #2797): strands whose stored night prices cannot be read back,
+    offered to an officer to record.
+
+    WITHHELD WHILE A REVIEW IS OPEN, and `financialReviewPending` — already read
+    above — is what says so rather than a second query, exactly as
+    `financialReviewWarnings` reuses it. While a review is open the settle screen
+    owns these figures, because its target also includes the amount being
+    settled; the route refuses on the same condition, re-read under its own
+    transaction, so this only decides what to OFFER.
+
+    Admin-gated like every other tools-card input: the list names guest strands,
+    which is a thing a member never receives.
+
+    ON `canSeeAdminTools` RATHER THAN ON FINANCE-VIEW, deliberately, and the
+    question was asked (#3214 review): a Booking Officer with no finance area
+    receives this payload read-only, and the route then refuses them at 403. Three
+    things settle it in favour of the wider gate.
+
+      1. `manualPaymentState` a few lines above does exactly this on the same
+         card, and carries MORE - what is owing, and the payment records behind
+         it. That is the governing precedent, so narrowing only the newer of the
+         two would leave the card inconsistent without closing anything.
+      2. The incremental disclosure is smaller than the precedent's, because the
+         guest-strand id and the strand's stored total are ALREADY in
+         `editorData` above, which every viewer of the booking receives -
+         including the member whose booking it is. What this adds is the
+         per-night split of a figure the viewer already holds, plus the
+         plain-English reason it cannot be read back.
+      3. Withholding it would break the sentence #3214 exists to make true. The
+         other-lodge refusal a Booking Officer meets on their OWN edit names this
+         control and sends them to Admin tools; an empty card there is precisely
+         the dead end that refusal was rewritten to remove. Seeing the work and
+         who can do it beats seeing nothing.
+
+    Editing stays finance-gated on both sides: the section's controls hang off
+    `useAdminAreaEditAccess("finance")` and the route requires `finance:edit`.
+  */
+  const storedNightPriceOffers =
+    canSeeAdminTools && !isDeleted && !financialReviewPending
+      ? await strandNightPriceOffersForBooking(booking.id, prisma)
+      : [];
+
+  /*
     #2649: the stranded zero-dollar waitlist confirm.
 
     The three cheap conditions — free, `PAYMENT_PENDING`, no payment record — are
@@ -1609,10 +1683,11 @@ export default async function BookingDetailPage({
               booking.hasNonMembers &&
               booking.nonMemberHoldUntil,
           )}
-          hasSavedPaymentMethod={Boolean(
-            booking.payment?.stripePaymentMethodId &&
-              booking.payment?.stripeCustomerId,
-          )}
+          // `savedCard` is the answer the confirm-pending-guests route charges
+          // on (#3269, `INV-PAY-053`) and the one the "Save Payment Method" card
+          // above keys on, so the button never promises a charge the route will
+          // not make — and never promises one while the page asks for a card.
+          hasSavedPaymentMethod={savedCard !== null}
           finalPriceCents={booking.finalPriceCents}
           providerMismatches={providerMismatches}
           financialReviewWarnings={financialReviewWarnings}
@@ -1651,6 +1726,7 @@ export default async function BookingDetailPage({
           }}
           noEmails={isDeleted ? undefined : (noEmailsState ?? undefined)}
           manualPayment={manualPaymentState ?? undefined}
+          storedNightPriceOffers={storedNightPriceOffers}
           // #2649: the stranded zero-dollar waitlist confirm. Derived above,
           // where the provenance check that makes the banner's claim true can
           // be awaited; the route re-checks every condition under its locks.

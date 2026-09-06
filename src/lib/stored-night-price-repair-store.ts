@@ -1,6 +1,6 @@
 import "server-only";
 
-import { ManualRefundTaskKind, type Prisma } from "@prisma/client";
+import { ManualRefundTaskKind, Prisma } from "@prisma/client";
 
 import {
   dateOnlyInstantOf,
@@ -424,13 +424,148 @@ export async function recordStoredNightPriceRepair({
 }
 
 /**
- * Write the officer's per-night amounts and re-base what the strand is worth.
+ * One night this writer is about to set, with the value it must still hold.
  *
- * MUST run after the status claim and on the same transaction. Both writes are
- * fenced compare-and-sets: a night that stopped being blank, or a total that
- * moved, refuses instead of overwriting. `updateMany` is used rather than
- * `update` precisely so the fence can be part of the `where` - `update` on a
- * unique key would find the row and write over whatever it now holds.
+ * THE EXPECTATION IS DERIVED SERVER-SIDE, on the caller's own transaction, and
+ * never sent by a browser: `RecordedNightPrice` - the wire shape - carries a
+ * date and an amount and nothing else, so a request cannot nominate what the
+ * compare-and-set compares against. That is what keeps the fence a fence
+ * (`INV-SSOT`: prefer unrepresentable over policed).
+ *
+ * `expectedPriceCents: null` with `rowExists: true` is the settle path's ONLY
+ * shape and is byte-identical to the `priceCents: null` `where` this writer
+ * carried before #3214, because `unpricedNightsSummaryForGuest` builds its dates
+ * from existing rows whose price is exactly `NULL`.
+ */
+export type FencedNightWrite = {
+  date: CalendarDate;
+  /** What the officer typed. */
+  priceCents: number;
+  /**
+   * What the row must still hold for the write to land - the RAW stored value,
+   * so a row carrying an unusable price is fenced on that unusable price rather
+   * than on a projection of it. `null` means the row is blank.
+   */
+  expectedPriceCents: number | null;
+  /** False only where the strand holds this night through its stay envelope. */
+  rowExists: boolean;
+};
+
+/** Is this the `(bookingGuestId, stayDate)` unique constraint refusing a create? */
+function isNightRowAlreadyPresent(err: unknown): boolean {
+  return (
+    err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002"
+  );
+}
+
+/**
+ * THE ONE WRITER (`INV-SSOT`). Set every night the caller checked, then re-base
+ * what the strand is worth, all on the caller's transaction.
+ *
+ * `stored-night-price-repair-census.test.ts` pins that this module is the only
+ * one in the tree that updates a `BookingGuestNight` price in place, so a second
+ * caller shares this function rather than growing a second writer. Two do:
+ * {@link applyStoredNightPriceRepair}, which fills a review's blanks while it is
+ * being settled (#3191), and {@link applyStrandNightPriceReconcile}, the strand
+ * reconcile a booking's own admin tools offer (#3214). They differ only in what
+ * they hand over.
+ *
+ * EVERY ARM IS A COMPARE-AND-SET, and that is the whole of this path's
+ * single-flight guarantee - there is no advisory lock here (see the module
+ * docblock, and `docs/CONCURRENCY_AND_LOCKING.md`):
+ *
+ *  - an existing row is matched on the value it was read holding, so a night
+ *    somebody else has since changed matches nothing and raises the race
+ *    refusal instead of being overwritten. `updateMany` rather than `update`
+ *    precisely so the fence can live in the `where`;
+ *  - a row that does not exist is CREATED, and the `(bookingGuestId, stayDate)`
+ *    unique constraint is the fence on that arm: a row that appeared underneath
+ *    us raises `P2002`, which becomes the same race refusal rather than a 500;
+ *  - the strand's total is fenced on its previous value, so two officers cannot
+ *    both move it.
+ *
+ * A refusal rolls the caller's transaction back, so a partial write is not a
+ * reachable state.
+ *
+ * Returns what the strand is now worth, and how many rows had to be created,
+ * for the audit entry.
+ */
+async function applyFencedStrandNightPrices({
+  bookingGuestId,
+  summary,
+  writes,
+  store,
+}: {
+  bookingGuestId: string;
+  summary: UnpricedNightsSummary;
+  writes: readonly FencedNightWrite[];
+  store: Prisma.TransactionClient;
+}): Promise<{ newGuestTotalCents: number; rowsCreated: number }> {
+  let rowsCreated = 0;
+  for (const write of writes) {
+    if (!write.rowExists) {
+      try {
+        await store.bookingGuestNight.create({
+          data: {
+            bookingGuestId,
+            stayDate: dateOnlyInstantOf(write.date),
+            priceCents: write.priceCents,
+          },
+        });
+      } catch (err) {
+        if (isNightRowAlreadyPresent(err)) {
+          throw new ManualBookingPaymentError(
+            NIGHT_PRICE_REPAIR_RACED_MESSAGE,
+            409,
+          );
+        }
+        throw err;
+      }
+      rowsCreated += 1;
+      continue;
+    }
+    const written = await store.bookingGuestNight.updateMany({
+      where: {
+        bookingGuestId,
+        stayDate: dateOnlyInstantOf(write.date),
+        // The fence. On the settle path this is `null`, so a night that already
+        // carries a price is not matched and cannot be rewritten there at all.
+        priceCents: write.expectedPriceCents,
+      },
+      data: { priceCents: write.priceCents },
+    });
+    if (written.count !== 1) {
+      throw new ManualBookingPaymentError(NIGHT_PRICE_REPAIR_RACED_MESSAGE, 409);
+    }
+  }
+
+  const newGuestTotalCents =
+    summary.knownNightTotalCents +
+    writes.reduce((sum, write) => sum + write.priceCents, 0);
+  const rebased = await store.bookingGuest.updateMany({
+    where: { id: bookingGuestId, priceCents: summary.storedGuestTotalCents },
+    data: { priceCents: newGuestTotalCents },
+  });
+  if (rebased.count !== 1) {
+    throw new ManualBookingPaymentError(NIGHT_PRICE_REPAIR_RACED_MESSAGE, 409);
+  }
+
+  return { newGuestTotalCents, rowsCreated };
+}
+
+/**
+ * Write the officer's per-night amounts and re-base what the strand is worth,
+ * while an `EDIT_FINANCIAL_REVIEW` is being settled (#3191).
+ *
+ * MUST run after the status claim and on the same transaction.
+ *
+ * EVERY ENTRY IS A BLANK ROW, and that is a property of the plan rather than an
+ * assumption: `unpricedNightsSummaryForGuest` builds `summary.dates` only from
+ * rows this strand already has whose `priceCents` is exactly `NULL`, so
+ * `rowExists: true, expectedPriceCents: null` is the only shape this path can
+ * produce. The `where` it reaches the database with is therefore byte-identical
+ * to the one this function carried before #3214 generalised the writer, which
+ * `stored-night-price-repair.test.ts` pins argument for argument.
  *
  * Returns what the strand is now worth, for the audit entry.
  */
@@ -445,33 +580,17 @@ export async function applyStoredNightPriceRepair({
   entries: readonly RecordedNightPrice[];
   store: Prisma.TransactionClient;
 }): Promise<{ newGuestTotalCents: number }> {
-  for (const entry of entries) {
-    const written = await store.bookingGuestNight.updateMany({
-      where: {
-        bookingGuestId,
-        stayDate: dateOnlyInstantOf(entry.date),
-        // The fence, and the whole of this path's safety: a night that already
-        // carries a price is not matched, so it cannot be rewritten here.
-        priceCents: null,
-      },
-      data: { priceCents: entry.priceCents },
-    });
-    if (written.count !== 1) {
-      throw new ManualBookingPaymentError(NIGHT_PRICE_REPAIR_RACED_MESSAGE, 409);
-    }
-  }
-
-  const newGuestTotalCents =
-    summary.knownNightTotalCents +
-    entries.reduce((sum, entry) => sum + entry.priceCents, 0);
-  const rebased = await store.bookingGuest.updateMany({
-    where: { id: bookingGuestId, priceCents: summary.storedGuestTotalCents },
-    data: { priceCents: newGuestTotalCents },
+  const { newGuestTotalCents } = await applyFencedStrandNightPrices({
+    bookingGuestId,
+    summary,
+    writes: entries.map((entry) => ({
+      date: entry.date,
+      priceCents: entry.priceCents,
+      expectedPriceCents: null,
+      rowExists: true,
+    })),
+    store,
   });
-  if (rebased.count !== 1) {
-    throw new ManualBookingPaymentError(NIGHT_PRICE_REPAIR_RACED_MESSAGE, 409);
-  }
-
   return { newGuestTotalCents };
 }
 
@@ -601,4 +720,56 @@ export async function rebaseBookingTotalsFromStrands({
     newTotalPriceCents,
     newFinalPriceCents,
   };
+}
+
+/**
+ * The #3214 arm: set every night a non-reconciling strand holds, creating the
+ * rows it does not have.
+ *
+ * A SEPARATE ENTRY POINT RATHER THAN A FLAG ON THE ONE ABOVE, because the two
+ * acts have different preconditions and different callers, and because the
+ * settle path has to keep a signature a reviewer can see is unchanged. Both
+ * reach the same fenced writer, so there is still exactly one place a night
+ * price is written (`INV-SSOT`).
+ *
+ * THE MONEY-NEUTRALITY GUARANTEE IS ENFORCED HERE, by the function that makes
+ * the write, rather than a module away by the one caller that happens to have
+ * it. The caller supplies the arithmetic - with `summary.knownNightTotalCents`
+ * at 0 and every held night in `writes`, the re-based total is `sum(writes)`,
+ * which `checkStoredNightPriceRepair` has already forced to equal
+ * `summary.storedGuestTotalCents` - but an exported function taking an arbitrary
+ * `summary` and `writes` will re-base the strand's total to whatever those two
+ * add up to, and its NAME promises otherwise. A second caller would inherit the
+ * promise and none of the check. So the check sits on this side of the call: it
+ * throws inside the caller's transaction, so every row goes back with it.
+ *
+ * WHAT IT DOES AND DOES NOT GUARANTEE. It guarantees that the MEMBER'S TOTAL is
+ * unchanged - `BookingGuest.priceCents` holds the number it already held, so
+ * nothing anybody owes moves. It does NOT guarantee that nothing else moves: see
+ * `stored-night-price-strand-reconcile.ts`'s module docblock for the two
+ * consequences that follow from the night rows themselves changing.
+ */
+export async function applyStrandNightPriceReconcile({
+  bookingGuestId,
+  summary,
+  writes,
+  store,
+}: {
+  bookingGuestId: string;
+  summary: UnpricedNightsSummary;
+  writes: readonly FencedNightWrite[];
+  store: Prisma.TransactionClient;
+}): Promise<{ newGuestTotalCents: number; rowsCreated: number }> {
+  const result = await applyFencedStrandNightPrices({
+    bookingGuestId,
+    summary,
+    writes,
+    store,
+  });
+  if (result.newGuestTotalCents !== summary.storedGuestTotalCents) {
+    throw new Error(
+      "Recording night prices moved what the stay is stored as being worth, which this act may never do.",
+    );
+  }
+  return result;
 }

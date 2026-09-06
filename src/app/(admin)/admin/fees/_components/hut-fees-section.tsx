@@ -25,6 +25,7 @@ import {
   useLodgeOptions,
 } from "@/components/lodge-select";
 import { LodgeScopeStatusNotice } from "@/components/admin/lodge-options-status";
+import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
 import { deriveSettledLodgeOptionScope } from "@/lib/lodge-option-scope";
 import {
   calendarDayFromPayload,
@@ -189,6 +190,8 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
   const [forbidden, setForbidden] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const sectionRef = useRef<HTMLDivElement>(null);
+  const { scrollToTop } = useScrollToFeedback();
   const {
     lodges,
     loading: lodgesLoading,
@@ -372,6 +375,10 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
     clearAmountDrafts();
     setFlatWholeLodgeCents(season.flatWholeLodgeNightCents);
     setShowForm(true);
+    // The Edit buttons sit at the bottom of the seasons table, but the form
+    // they open renders at the top of this section — without a scroll the page
+    // does not visibly change and the form opens off the top of the screen.
+    scrollToTop(sectionRef);
   }
 
   function startCreate() {
@@ -571,7 +578,7 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
   );
 
   return (
-    <Card>
+    <Card ref={sectionRef}>
       <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div className="space-y-1">
           <CardTitle>Hut fees</CardTitle>
