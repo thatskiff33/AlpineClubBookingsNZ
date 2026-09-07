@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { stripComments } from "./support/strip-comments";
 import {
   bookingManagementAuthorizationRole,
   ANY_ADMIN_ADMISSION_PATHS,
@@ -501,8 +502,17 @@ describe("outstanding additional payment panel visibility (#2350)", () => {
 
 describe("in-booking bed allocation panel visibility (#2252)", () => {
   const ROUTE_DIR = "src/app/(authenticated)/bookings/[id]";
+  /*
+    CODE ONLY, through the canonical stripper. The anchor-order assertion below
+    finds each id by `indexOf`, so an id merely MENTIONED in a comment — the
+    docblock of a future section explaining which anchor it owns, say — would
+    win that lookup ahead of the real render site and the ordering check would
+    be reading prose. Every assertion in this describe matches code.
+  */
   const routeSource = (relative: string) =>
-    fs.readFileSync(path.join(process.cwd(), ROUTE_DIR, relative), "utf8");
+    stripComments(
+      fs.readFileSync(path.join(process.cwd(), ROUTE_DIR, relative), "utf8"),
+    );
   const bookingPageSource = () => routeSource("page.tsx");
   // #2958: the gate is defined in the edit-access module and rendered in the
   // stay-preferences section.
@@ -511,25 +521,46 @@ describe("in-booking bed allocation panel visibility (#2252)", () => {
   const stayPreferencesSource = () =>
     routeSource("_components/booking-stay-preferences.tsx");
   /**
+   * Every section component in `_components/`, mapped from its exported name to
+   * its file, read FROM THE DIRECTORY rather than from the page's import text.
+   *
+   * The import-text version of this worked and was fragile in two ways a future
+   * edit would not notice: it matched a single-line `import { X } from "./_components/y";`,
+   * so reformatting one import across lines dropped that section from the
+   * composition silently, and it keyed on a `Booking` name prefix, so renaming a
+   * section did the same. Reading the directory keys on what is actually there.
+   */
+  const sectionSources = () => {
+    const dir = path.join(process.cwd(), ROUTE_DIR, "_components");
+    const map = new Map<string, string>();
+    for (const entry of fs.readdirSync(dir)) {
+      if (!entry.endsWith(".tsx") || entry.endsWith(".test.tsx")) continue;
+      const source = routeSource(`_components/${entry}`);
+      for (const match of source.matchAll(/export function (\w+)/g)) {
+        map.set(match[1]!, source);
+      }
+    }
+    return map;
+  };
+  /**
    * The page's markup as the browser receives it: the page shell with each
-   * `<BookingXxx />` section it composes replaced by that section's source, in
-   * render order. Anchors declared on the page and anchors rendered inside a
-   * section therefore sit in DOM order in the returned text.
+   * section it composes replaced by that section's source, in render order.
+   * Anchors declared on the page and anchors rendered inside a section therefore
+   * sit in DOM order in the returned text.
    */
   const composedBookingPageSource = () => {
     const page = bookingPageSource();
-    const sections = new Map(
-      Array.from(
-        page.matchAll(
-          /import \{ (Booking\w+) \} from "\.\/_components\/([\w-]+)";/g,
-        ),
-      ).map((match) => [match[1], match[2]]),
+    const sections = sectionSources();
+    // Vacuity guard: an empty or halved map would compose the shell alone, and
+    // every anchor rendered inside a section would read as simply absent.
+    expect(sections.size, "no section components found").toBeGreaterThan(5);
+    const composed = page.replace(
+      /<([A-Z]\w+)\b/g,
+      (tag, name: string) => sections.get(name) ?? tag,
     );
-    expect(sections.size).toBeGreaterThan(5);
-    return page.replace(/<(Booking\w+)\b/g, (tag, name: string) => {
-      const file = sections.get(name);
-      return file ? routeSource(`_components/${file}.tsx`) : tag;
-    });
+    // …and the composition really happened: the shell alone is shorter.
+    expect(composed.length).toBeGreaterThan(page.length);
+    return composed;
   };
 
   const canSeePanel = (accessRoles: AppAccessRole[]) => {
