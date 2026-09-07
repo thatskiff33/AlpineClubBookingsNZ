@@ -97,13 +97,17 @@ function formatNight(night: string): string {
 }
 
 function joinWithAnd(items: string[]): string {
-  // One item reads as itself; the last is spliced off the tail. Both are read
-  // rather than indexed on the strength of a length, and an empty list joins to
-  // nothing — this is display copy on a 409, so it must not throw (#2800).
-  const [onlyItem, ...extraItems] = items;
-  if (onlyItem !== undefined && extraItems.length === 0) return onlyItem;
-  const lastItem = items.at(-1) ?? "";
-  return `${items.slice(0, -1).join(", ")} and ${lastItem}`;
+  // One item reads as itself, an empty list joins to nothing, and the last item
+  // comes off the tail rather than out of the list by a computed position. Each
+  // is a value this holds rather than a length it trusts — and none of them
+  // throws, because this is display copy on a 409 and an exception here would
+  // replace a refusal the member can act on with a 500 (#2800).
+  const [firstItem, ...laterItems] = items;
+  if (firstItem === undefined) return "";
+  const lastItem = laterItems.at(-1);
+  if (lastItem === undefined) return firstItem;
+  const leading = [firstItem, ...laterItems.slice(0, -1)];
+  return `${leading.join(", ")} and ${lastItem}`;
 }
 
 function capitaliseFirst(sentence: string): string {

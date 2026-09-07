@@ -847,10 +847,13 @@ function allocateGuestsToBeds(
   beds: BedAllocationBed[],
   stayDate: string,
 ) {
-  // Every caller has proven it holds at least one bed per guest: two `splice`
-  // the same count off both lists, the third checks `availableBeds.length >=
-  // guests.length`. A short list would mean writing a guest-night whose bed
-  // the planner cannot name, so it stops rather than allocating (#2800).
+  // All FIVE callers have proven they hold at least one bed per guest. Four
+  // take an equal-length `splice` off both lists — `fillRoomsWithGuests`, the
+  // minors-into-adult-rooms pass, the one-adult-per-room pass and the
+  // whole-party adult room; the fifth checks `availableBeds.length >=
+  // guests.length` before calling. A short list would mean writing a
+  // guest-night whose bed the planner cannot name, so it stops rather than
+  // allocating (#2800).
   for (const [index, guest] of guests.entries()) {
     const bed = beds[index];
     if (bed === undefined) {
@@ -1638,6 +1641,16 @@ function uniqueGuestOrders(orders: StayGuest[][]): StayGuest[][] {
  * instead of an assertion, and names the impossible read instead of letting
  * `undefined` flow on as the *next* vector's index — which is how this class
  * of bug becomes a silent wrong pairing or a spin (#2800).
+ *
+ * DELIBERATELY NOT `onInvariantViolation` (#2656). That channel is for a
+ * detected BOOKKEEPING DIVERGENCE — two derivations of the same committed
+ * state disagreeing — and it reports without throwing precisely because the
+ * plan is still usable and worth surfacing. This is the other class: the
+ * search reading outside its own working memory, where there is no coherent
+ * plan to continue with and reporting-and-continuing would hand the next
+ * vector an `undefined` index. The three refusals this file adds all sit in
+ * that class, they replace a TypeError or a spin rather than a working plan,
+ * and a throw is reported by whatever wraps the planner call.
  */
 function vertexSlot(
   vector: readonly number[],

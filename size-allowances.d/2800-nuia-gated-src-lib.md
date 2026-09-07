@@ -3,7 +3,7 @@
 Twenty-eight already-oversized modules gain a few lines each because
 `noUncheckedIndexedAccess` made an indexed lookup's missing case explicit and
 the code now handles it rather than assuming it away. Across the whole tranche
-that is 1,201 added lines against 551 removed, and 336 of the added lines are
+that is 1,344 added lines against 549 removed, and 394 of the added lines are
 comments — the reasoning for why a lookup cannot miss, or what the code does
 when it does, which is the part a reviewer and the next reader actually need.
 
@@ -26,7 +26,7 @@ guard plus the sentence that says why it is there:
   built, keeping the same answer when there is no night (INV-DATE, half-open).
 
 file: src/lib/bed-allocation.ts
-lines: 3789
+lines: 3802
 reason: the largest single entry, and the only one over a hundred lines. The
   blossom matching in the family-cohesion planner reads five dense
   vertex-indexed vectors; they are read through one accessor that names an
@@ -36,6 +36,9 @@ reason: the largest single entry, and the only one over a hundred lines. The
   docblock, plus the reasoning at each of the other twelve sites, is the bulk of
   the addition. Splitting the planner is #2958-shaped work on the module the
   whole capacity story runs through, and it does not belong in a compiler stage.
+  The accessor's docblock also records why these three refusals do NOT go
+  through the planner's `onInvariantViolation` channel (#2656), because a
+  reviewer asked and the next reader will too.
 
 file: src/lib/booking-edit-guest-ranges.ts
 lines: 1951
@@ -71,9 +74,11 @@ reason: the proposal envelope reads both ends of its night list and each added
   freezing a party the officer would approve blind.
 
 file: src/lib/payment-recovery.ts
-lines: 2507
-reason: five lines. The retry schedule's clamped step now falls back to that
-  same schedule's longest wait rather than to a delay invented at the call site.
+lines: 2514
+reason: twelve lines. The retry schedule's clamped step carries NO numeric
+  fallback: a zero would be an immediate retry, the worst wait this function
+  could invent, and any other number would be a backoff nobody configured. The
+  schedule's length is asserted at module load, so an empty one cannot ship.
 
 file: src/lib/booking-batch-modification-service.ts
 lines: 2437
@@ -81,10 +86,16 @@ reason: five lines. Each guest carries its own echoed nights, so the rate vector
   and its dates cannot drift from the guest they describe.
 
 file: src/lib/booking-date-modification-service.ts
-lines: 2115
+lines: 2128
 reason: the guest's priced row is read once at the top of the write loop and
-  reused by the four places that had each indexed the breakdown again. The
-  parked branch, which writes none of it, keeps the stored values it kept.
+  reused by the four places that had each indexed the breakdown again, and the
+  refusal sits ABOVE the parked condition rather than inside it. The parked
+  path is the reason: it takes its amounts from the stored rows, but the night
+  SET it writes still comes from the breakdown, and the `deleteMany` above has
+  already removed the strand's history by then — so tolerating a missing row
+  there would delete the sold-price evidence the park exists to preserve. The
+  person-night guard refuses the same condition for the same reason: a guest
+  counted on fewer nights than they hold is a clash it cannot see.
 
 file: src/lib/adult-member-hosting-review.ts
 lines: 4508
@@ -128,7 +139,7 @@ lines: 1754
 reason: three lines. Each delete-blocker spec carries its own count.
 
 file: src/lib/membership-subscription-billing.ts
-lines: 1526
+lines: 1529
 reason: nine lines. The per-family branch reads the member's first family where
   the MISSING_FAMILY exception is already raised, and the invoiceable-entry drop
   is a filter rather than a splice over a list it is simultaneously indexing.
@@ -181,5 +192,9 @@ reason: three lines. A membership row for an unexpected contact id creates its
   list rather than being dropped, which would under-report a membership.
 
 file: src/lib/xero-contacts.ts
-lines: 1907
-reason: two lines. The matched contact from an email search is read once.
+lines: 1917
+reason: twelve lines. The email search still tests the RESPONSE for a contact
+  rather than testing that contact for truthiness, because the two differ in
+  the direction that matters: falling through on a non-empty response would
+  reach the create path and mint a second Xero contact for a member who already
+  has one.

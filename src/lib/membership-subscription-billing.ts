@@ -1093,9 +1093,12 @@ export async function buildSubscriptionBillingPreview(input: {
   if (invoiceEntries.length > 0) {
     const mapping = await getResolvedAccountMapping("subscriptionIncome", db);
     if (!mapping.code || !mapping.codeExplicitlyConfigured) {
-      // Drop every invoiceable entry, keeping the NO_INVOICE ones. Filtering
-      // in place says that without reading the list back by a position it is
-      // simultaneously splicing out of (#2800).
+      // Drop every invoiceable entry, keeping the NO_INVOICE ones. The
+      // descending splice loop this replaces was CORRECT — descending is the
+      // safe direction for splicing — and this is an equivalent rewrite, not a
+      // bug fix: it says the same thing as a filter, which needs no indexed
+      // read at all. `entries` is reused rather than rebound because callers
+      // above hold the same array (#2800).
       const keptEntries = entries.filter(
         (entry) => entry.billingBasis === "NO_INVOICE",
       );

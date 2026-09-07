@@ -140,11 +140,12 @@ describe("buildApprovalGuestNights — a hole in the engine vector (#2800)", () 
     // function's existing tests, because `every` and `reduce` both skip holes:
     // the length matches, no non-integer is seen, and the sum of what is there
     // equals the guest's price. Before this the hole was copied straight
-    // through and a night reached Prisma with no `priceCents` at all, inside
-    // the approval transaction. The reconciled even split is the answer this
-    // function already gives every other unusable vector (#2800).
+    // through, and a night WOULD HAVE reached Prisma with no `priceCents` at
+    // all, inside the approval transaction. No production caller can build such
+    // a vector today — both build theirs densely — so this pins the guard
+    // rather than reporting a live defect. The reconciled even split is the
+    // answer this function already gives every other unusable vector (#2800).
     const sparse: number[] = [6000, 6000, 6000];
-    // eslint-disable-next-line @typescript-eslint/no-array-delete
     delete sparse[1];
 
     const nights = buildApprovalGuestNights({
