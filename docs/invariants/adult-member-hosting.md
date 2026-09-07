@@ -554,8 +554,7 @@ compliant indefinitely.
   share one key. The direct guest-add route now composes global → lodge, but the
   booking-request capacity hold remains a lodge-only active linked-guest writer; the
   shared subject/linked-member row protocol above closes every standing-change edge.
-  The invariant itself is per-owner, so the key is the owner (the
-  same reasoning behind `lockBookingMemberNights`); it is taken by the evaluator, the
+  The invariant itself is per-owner, so the key is the owner; it is taken by the evaluator, the
   settle step, the enqueue-only seam and the member fan-out, always LAST after the
   existing global → sorted lodge → roster-date → applicable member tiers and the
   queue-participant Member rows, and only where the scope is enabled. Ordinary seams

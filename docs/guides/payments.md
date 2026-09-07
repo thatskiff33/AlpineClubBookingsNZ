@@ -189,10 +189,11 @@ member is told the club will arrange their refund.
 3. If the member declined the refund, or it was settled another way, click
    **Dismiss** and say which. A note is required.
 
-The card holds two kinds of row and says which is which. The paragraph about
+The card holds three kinds of row and says which is which. The paragraph about
 cash and bank transfers only appears when there is a cash hand-back waiting; the
-one below only appears when there is a booking change to price. Neither speaks
-for the other.
+one below only appears when there is a booking change to price; and the third,
+described under "Check an amount the club may not have asked for", only appears
+when there is one of those. None of them speaks for the others.
 
 ### Decide a booking change the system would not price
 
@@ -352,6 +353,47 @@ credit, blocks nothing: there is no settlement for it to sit in front of. So do
 not treat an open review as a guarantee that the booking's money is frozen.
 Check the booking's own payment history before reversing anything on a booking
 that has a review waiting.
+
+### Check an amount the club may not have asked for
+
+*Coming in the release after this one. The item type is registered now so that
+release turns a writer on rather than rebuilding this screen; until then a
+withheld share is recorded in the booking's audit history exactly as it has
+been, naming the change and the total in plain words.*
+
+When a booking change is settled as money the member owes, the club raises a
+Xero invoice for it. Once in a while the settlement lands in the seconds while
+that invoice is already being sent — and an invoice in that state cannot be
+changed. It has not necessarily *gone*: a job that has been picked up can come
+back and go out later at the full amount.
+
+So the club does not invoice the extra automatically, and that is deliberate
+rather than an oversight. If it did, and the first invoice then went out at the
+full figure after all, the member would be billed twice for the same change.
+Instead the amount becomes a row in the **Money to settle by hand** card for
+somebody to check.
+
+1. Open the booking's invoices in Xero.
+2. Compare them against the amount on the row. If they already include it,
+   nothing is owed.
+3. If they fall short, raise a supplementary invoice **for that amount only** —
+   never for the change's full total, which the member has already been asked
+   for. Billing the total is the mistake this row exists to prevent.
+4. Click **Close this item** and say what Xero showed and what you billed. A
+   note is required, and it is the only record of how the amount was settled.
+
+**A row that says "Amount not known" is not waiting to be priced.** Most of
+these rows name the exact amount. One kind cannot: when the row is raised by the
+payment-recovery pass, that pass knows the change's combined total but not which
+part of it the invoice that went out already carried. There is no figure for the
+screen to show and nothing here can work one out — compare the booking against
+Xero and bill the difference, if any, by hand.
+
+**Closing it moves no money, and there is no control that does.** Unlike every
+other row in this card, this one has no "mark paid back" or "record the
+adjustment" button, because there is nothing here for the club to pay or to
+take. The only action is to close it, and the system refuses a settlement
+against one of these rows however it is asked.
 
 ### A refund that happened without you — "Refunded automatically"
 

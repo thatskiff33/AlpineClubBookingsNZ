@@ -14,6 +14,7 @@ filename-only selection misses; add focused tests for the contracts you changed.
 npm run db:generate
 npm run lint
 DATABASE_URL=postgresql://user:pass@localhost:5432/tacbookings npm run typecheck
+npm run typecheck:nuia       # when TypeScript under src/, scripts/ or prisma/ changes
 npm run test:related -- $(git diff --name-only main...HEAD)
 npm test -- path/to/focused.test.ts
 npm run knip                 # when files or exports change
@@ -70,6 +71,10 @@ CI also runs independent static and container checks:
   `scripts/ci/gitleaks-selftest.sh`, which plants a credential and proves the
   scanner still reports it. `Secret scan (gitleaks)` (#2686; **pending** as a
   required check, see `AGENTS.md` for the rollout order)
+- the same pinned gitleaks over **every** branch's history, weekly and
+  non-blocking, as `Scheduled secret sweep` (#2852). It is advisory by
+  construction rather than by configuration — see "The repository-wide secret
+  sweep" below for which of the two is responsible for what
 - TypeScript, test, and Docker image build validation
 - Migration drift check (`migration-drift` job) running `db:check-drift` against
   a throwaway Postgres, so schema-vs-migration drift fails the PR rather than the
@@ -92,6 +97,15 @@ CI also runs independent static and container checks:
   longer needs it. `package.json` is strict JSON and cannot carry a comment, so
   the register below — not the manifest — is where an override records why it
   exists and when it retires. Adding an override means adding a row.
+- Exact-pinning a **direct** dependency *below its newest release, because the
+  newer one is broken*, is a **hold**: it needs a row in the hold register below
+  and a written condition that lifts it. An exact pin at the version that is
+  already current is **not** a hold and needs no row — that covers the
+  version-coupling pins (`next` with `eslint-config-next`, `react` with
+  `react-dom`, `@prisma/client` with `@prisma/adapter-pg`) and every other exact
+  pin Dependabot steps forward each release. Thirteen direct dependencies are
+  exact-pinned today and only one of them is a hold; the difference is whether
+  anything is being held back, not whether the range has a caret.
 - Use test or demo credentials for Stripe, Xero, SES, and Sentry in local and
   CI environments.
 
@@ -124,6 +138,38 @@ four are load-bearing; none is inert.
 | `eslint-plugin-react-hooks` | **Compatibility hold**, not security — `b1989558f` introduced it as "hold eslint-plugin-react-hooks at 7.0.1", and it has since been stepped forward to 7.1.1. Currently non-binding: natural resolution lands on 7.1.1 with or without it. | The hold is reviewed and lifted on purpose. |
 | `browserslist` (`^4.28.7`) | **Security.** Two high advisories against `browserslist <= 4.28.6` — unbounded memory growth with no cache eviction (GHSA-c83g-rgw3-j3cx), and an uncaught crash / prototype write via untrusted `browserslist-stats.json` (GHSA-73wf-gq98-2v4g). Transitive only; nothing declares it directly. A **range**, not a pin, so it keeps floating with future patches. | the deepest parent requiring it admits 4.28.7 or later, which `npm audit` will show by this entry becoming inert. |
 | `mysql2` (`^3.22.0`) | **Security, on a driver this application never loads.** `mysql2 < 3.22.0` carries an auth-plugin downgrade to `mysql_clear_password` that leaks plaintext credentials (GHSA-3f6p-5ww8-9rcr). It arrives transitively through `prisma`, and this product's datasource is `provider = "postgresql"` — nothing in `src/` imports it, so the advisory is not reachable here. It is overridden rather than accepted because `npm audit --audit-level=high` is a required check and cannot express "unreachable", and because the only remedy npm offers is `--force`, which **downgrades Prisma** and is a far larger change than the one it avoids. A **range**, not a pin. | `prisma` requires mysql2 3.22.0 or later. |
+
+### The direct-dependency hold register
+
+An override constrains what a *parent* is allowed to resolve. A hold is the other
+thing: a package this project declares itself, deliberately pinned to an exact
+version so a Dependabot group PR cannot carry it forward. It is recorded here and
+not in the table above, because the removal-and-re-resolve check described below
+does not apply — nothing transitive is being forced, so an inert hold looks
+identical to a load-bearing one.
+
+The word also appears in the override register above, in the older and looser
+sense: the `eslint-plugin-react-hooks` row calls itself a "compatibility hold"
+because it is kept for a compatibility reason rather than an advisory. That entry
+is an **override** on a transitive package and it stays where it is. Only a
+direct dependency this project declares belongs in the table below.
+
+Two rules, both learned the expensive way:
+
+- **A hold must be an exact version, never a `^` floor.** The preference for a
+  range stated above is about *overrides*, where the goal is to raise a floor. A
+  hold has the opposite goal, and `"^10.70.0"` does not hold anything back: the
+  range admits the broken release, so any re-resolve lands on it again. Measured
+  on #3313, where the caret was tried first and the lockfile came back on
+  **10.72.0 — the release being held back from.** The exact pin is also what
+  makes a future move show up as a visible `package.json` diff rather than as a
+  lockfile line nobody reads.
+- **A hold needs a written retirement condition, or it becomes permanent.** The
+  package stops being maintained by the system the moment it is pinned.
+
+| hold | why it exists | retires when |
+| --- | --- | --- |
+| `@sentry/nextjs` (`10.70.0`, exact) | **Compatibility**, not security. `@sentry/server-utils@10.72.0` removed `@apm-js-collab/code-transformer-bundler-plugins`, `@apm-js-collab/tracing-hooks` and `meriyah` from its dependencies, but the code it ships still loads the first of those. Importing it throws `TypeError: The URL must be of scheme file` from `orchestrion/bundler/webpack.js`, which kills six test files at import time and fails a seventh. Nothing in this repository is at fault and there is no local workaround worth carrying, so the version is held instead (#3313, #3304). | Sentry ships a release whose `@sentry/server-utils` loads only what it declares. Verify by pinning that version in a scratch copy and running the suites named in #3313, not by reading the changelog. |
 
 ### Checking whether an override still earns its place
 
@@ -272,12 +318,68 @@ materialised, so one leak on anybody's abandoned branch would turn a REQUIRED
 check red on every open pull request, unfixable from the author's own branch.
 A wider sweep is still worth running — a secret on an unmerged branch is public
 on a public repository — but it belongs in a scheduled, non-blocking job where a
-finding is a task rather than a merge freeze. Until that job exists, run it by
-hand when a branch is abandoned:
+finding is a task rather than a merge freeze. That job is
+`Scheduled secret sweep` (#2852), in `.github/workflows/gitleaks-scheduled.yml`.
+
+**Which one is responsible for what.** The two are not alternatives and the
+difference is the scope, not the scanner:
+
+| | `Secret scan (gitleaks)` | `Scheduled secret sweep` |
+| --- | --- | --- |
+| Runs on | every pull request and push | weekly, plus `workflow_dispatch` |
+| Scope | this pull request's commits, the history of `main`, the checked-out tree | **every** branch's history (`--all`), plus the tree |
+| A finding | blocks the merge | opens a task; blocks nothing |
+| Branch protection | required context | no context at all — it has no `pull_request` or `push` trigger |
+
+What they share is deliberate and enforced. The pinned scanner version lives in
+`scripts/ci/gitleaks-image.sh` and nowhere else; the invocation lives in
+`scripts/ci/gitleaks-scan.sh`, which both workflows call; the rule set and the
+allowlists are `.gitleaks.toml` and `.gitleaksignore`, which gitleaks discovers
+from the scan root. `deployment-image-contracts.test.ts` fails if either
+workflow names a gitleaks container of its own. #2686 is why: the two jobs that
+used to sit in `ci.yml` ran 8.24.3 and 8.28.0 over the same commits for months,
+and nothing said so.
+
+**A scanner that failed is not a clean scan.** gitleaks exits 1 both when it
+finds a leak and when it cannot run at all, so `gitleaks-scan.sh` asks for
+`--exit-code=2` and treats every other non-zero as a scanner failure, saying so
+in the log. Both still fail the job — the discrimination is about the message,
+not about what blocks a merge.
+
+**And a successful exit is not a clean scan either, on its own.** When the git
+source itself fails — an unresolvable commit range, or a repository-ownership
+refusal — gitleaks logs the git error, concludes it finished, and exits **0**
+with `0 commits scanned … no leaks found`. `--exit-code` never applies, because
+from the scanner's point of view there was nothing to find. Measured on
+v8.28.0, and it lands on the REQUIRED gate rather than only on the sweep: the
+pull-request scope resolves `<base>..<head>`, which is unresolvable whenever
+the base commit is missing from the checkout. So a `git`-mode scan that walked
+zero commits is treated as the scanner failure it is. Zero commits is never a
+legitimate answer for any scope this repository scans.
+
+The same failure has a second, quieter shape: the git error need not happen at
+the START of the walk. gitleaks streams commits to its detector, and any
+unrecognised line on git's stderr both stops that stream and gets logged with a
+`[git] ` tag — so a bad object twenty percent into an `--all` sweep prints
+`1500 commits scanned … no leaks found` and exits 0, having silently skipped the
+other eighty percent. A tagged line therefore fails the scan on its own,
+whatever it says. Benign git messages are not tagged: gitleaks allowlists five
+of them and emits those as untagged `WRN` lines, which is what makes the tag a
+usable signal rather than noise.
+
+**Triaging a sweep finding.** The run summary lists the rule, the file, the line
+and the commit for each finding, and the run keeps a `gitleaks-sweep-reports`
+artifact for fourteen days with the same detail plus the fingerprint. Every
+value is `--redact`ed, so neither republishes the secret. A finding on a branch
+that was never merged is still a disclosure on a public repository: rotate the
+credential first, and only then decide what to do with the branch.
+
+Run the sweep yourself, exactly as the scheduled job does:
 
 ```bash
-docker run --rm -v "$PWD:/repo:ro" ghcr.io/gitleaks/gitleaks:v8.28.0 \
-  git /repo --log-opts="--diff-merges=first-parent --all" --exit-code=1 --redact
+GITLEAKS_SCAN_LABEL="every branch's history" \
+GITLEAKS_LOG_OPTS="--diff-merges=first-parent --all" \
+  bash scripts/ci/gitleaks-scan.sh git
 ```
 
 Accepted residual risk:
