@@ -97,18 +97,18 @@ describe("#3170 the lenient lock reader: an unknown night carries no lock", () =
   it("drops an unknown night rather than locking it at zero", () => {
     const locks = lockedNightPricesForGuest({
       nights: [
-        { stayDate: D("2026-08-20"), priceCents: RATE },
-        { stayDate: D("2026-08-21"), priceCents: null },
+        { stayDate: D("2026-08-20"), priceCents: RATE, priceSource: "SOLD" },
+        { stayDate: D("2026-08-21"), priceCents: null, priceSource: "UNKNOWN" },
         // A stored zero IS a price — a comped night — and must keep its lock.
         // This is the assertion that stops "null" and "0" being conflated in the
         // direction that costs the member money.
-        { stayDate: D("2026-08-22"), priceCents: 0 },
+        { stayDate: D("2026-08-22"), priceCents: 0, priceSource: "SOLD" },
       ],
     });
 
     expect(locks).toEqual([
-      { stayDate: D("2026-08-20"), priceCents: RATE },
-      { stayDate: D("2026-08-22"), priceCents: 0 },
+      { stayDate: D("2026-08-20"), priceCents: RATE, priceSource: "SOLD" },
+      { stayDate: D("2026-08-22"), priceCents: 0, priceSource: "SOLD" },
     ]);
   });
 });

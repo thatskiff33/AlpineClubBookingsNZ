@@ -1794,6 +1794,7 @@ export async function reassignHeldBookingGuests(
       bookingGuestId: string;
       stayDate: Date;
       priceCents: number;
+      priceSource: "SOLD" | "EVEN_SPLIT";
     }> = [];
     for (const guest of planned) {
       const row = await tx.bookingGuest.create({
@@ -1818,6 +1819,7 @@ export async function reassignHeldBookingGuests(
           bookingGuestId: row.id,
           stayDate: night.stayDate,
           priceCents: night.priceCents,
+          priceSource: night.priceSource,
         });
       }
     }
@@ -1956,6 +1958,7 @@ export async function reassignHeldBookingGuests(
         bookingGuestId: existing[index].id,
         stayDate: night.stayDate,
         priceCents: night.priceCents,
+        priceSource: night.priceSource,
       }))
     );
     if (replacementNights.length > 0) {
