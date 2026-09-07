@@ -332,6 +332,135 @@ export const MONEY_GUARD_EXEMPTIONS = [
 
 const MONEY_HELPER_MODULES = MONEY_GUARD_EXEMPTIONS.map((entry) => entry.file);
 
+// ---------------------------------------------------------------------------
+// #3302 — the MIRROR of INV-MONEY-003 above. That guard catches BUILDING
+// cents inline (dollars typed or provided, scaled up). Nothing caught the
+// reverse: hand-rolling `(cents / 100).toFixed(n)` to RENDER cents instead of
+// importing the shared `formatCents` / `formatCentsPlain` from `@/lib/utils`.
+// That exact shape was independently written nine times under the name
+// `formatCents`, and a TENTH (`formatOfferCents`) escaped #3302's own census
+// because it kept its own name — proof the census alone cannot hold this
+// still; only a structural check can.
+//
+// WHAT THIS DELIBERATELY DOES NOT DISTINGUISH. The AST node this matches is
+// identical whether the result becomes a currency-labelled display string or
+// a bare numeric export cell — that distinction lives in what happens to the
+// call's RESULT, which this selector does not follow. `CENTS_DISPLAY_EXEMPTIONS`
+// below is where that judgement is made, once, in writing, per file — exactly
+// the shape `MONEY_GUARD_EXEMPTIONS` above already uses for the same reason.
+const CENTS_DISPLAY_MESSAGE =
+  "INV-SSOT-001 / #3302: do not hand-roll `(cents / 100).toFixed(n)` to render an amount. Use the shared formatCents (a currency-formatted string) or formatCentsPlain (a bare two-decimal string with no symbol or grouping — for an editable dollars input, or a report line that already reads as a delta), both from @/lib/utils. Seeding an EDITABLE input's plain value, or a raw numeric export cell (CSV, a JSON report row) that must carry no currency symbol, is a different, legitimate concept — add the file to CENTS_DISPLAY_EXEMPTIONS in eslint.config.mjs with a written reason; that list is read by money-cents-guard.test.ts, so adding to it passes CI. Never an eslint-disable comment.";
+
+const CENTS_DISPLAY_RESTRICTIONS = [
+  {
+    selector:
+      'CallExpression[callee.type="MemberExpression"][callee.property.name="toFixed"][callee.object.type="BinaryExpression"][callee.object.operator="/"][callee.object.right.value=100]',
+    message: CENTS_DISPLAY_MESSAGE,
+  },
+];
+
+/**
+ * The one arm as a bare selector array, for `money-cents-guard.test.ts` —
+ * same reason `MONEY_GUARD_ARMS` is exported above: the suite resolves the
+ * REAL config and checks the resolved rule still carries every selector this
+ * array declares, so a copy nobody kept in sync cannot pass while the config
+ * that ships has dropped the rule.
+ */
+export const CENTS_DISPLAY_GUARD_ARM = CENTS_DISPLAY_RESTRICTIONS.map(
+  (entry) => entry.selector,
+);
+
+/**
+ * THE ESCAPE HATCH for `CENTS_DISPLAY_RESTRICTIONS`, same rule as
+ * `MONEY_GUARD_EXEMPTIONS`: every entry names the file(s) and states in
+ * writing why hand-rolled `(cents / 100).toFixed(n)` is allowed there.
+ * `money-cents-guard.test.ts` reads THIS array and fails an entry with no
+ * reason, and separately fails if a listed file no longer contains the
+ * pattern — an exemption is deleted when its cause is, never left "for now".
+ */
+export const CENTS_DISPLAY_EXEMPTIONS = [
+  {
+    files: ["src/lib/utils.ts"],
+    reason:
+      "The canonical definition. `formatCentsPlain`'s own body IS this arithmetic — every other file is sent here to call it rather than write it again.",
+  },
+  {
+    files: [
+      "src/app/(admin)/admin/fees/_components/finance-fees-sections.tsx",
+      "src/app/(admin)/admin/fees/_components/hut-fees-section.tsx",
+      "src/app/(admin)/admin/promo-codes/promo-codes-page-client.tsx",
+      "src/app/(admin)/admin/refund-requests/page.tsx",
+      "src/components/admin/booking-policies/cancellation-rules-editor.tsx",
+      "src/components/admin/booking-requests/public-booking-requests-panel.tsx",
+      "src/components/admin/joining-fee-preview.tsx",
+      "src/components/admin/manual-refund-task-queue.tsx",
+    ],
+    reason:
+      'Seeds an EDITABLE dollars input\'s plain string value — a form field default, an `<input max>` attribute, a redraft-on-open value — never a currency symbol, because nobody types "$10.00" into an amount box. #3302 names this as a legitimately different concept from rendering an amount for reading, and excludes it on that basis rather than fixing or flagging it.',
+  },
+  {
+    files: [
+      "src/app/(admin)/admin/reports/page.tsx",
+      "src/lib/finance-legacy-dashboard-export.ts",
+      "src/lib/promo-redemptions-csv.ts",
+    ],
+    reason:
+      "A raw numeric export cell (a CSV row, a JSON report row) that must carry no currency symbol — the export-format counterpart of the editable-input exclusion above, same reasoning.",
+  },
+  {
+    files: [
+      "src/lib/booking-cancel.ts",
+      "src/lib/internet-banking-payment-cron.ts",
+      "src/lib/ib-hold-clearing-audit.ts",
+    ],
+    reason:
+      "Hard-codes an NZ$ prefix rather than the club's configured currency, matching this codebase's other Internet-Banking-specific messages. Whether that should change is open on #3325, not a decision this rule makes — see each file's own docblock. Delete the file from this list the moment #3325 resolves and its arithmetic is folded into formatCents/formatCentsPlain; this exemption is the worklist for that day, not a permanent grant.",
+  },
+  {
+    files: ["src/lib/membership-cancellation-blocker-messages.ts"],
+    reason:
+      "Formats an amount in a Xero invoice's OWN currency, which the club's configured formatCents structurally cannot do — the currency varies per call and is deliberately not APP_CURRENCY (see formatBlockerAmount's own docblock).",
+  },
+];
+
+/**
+ * Which `CENTS_DISPLAY_EXEMPTIONS` files are ALSO `MONEY_DOMAIN_MODULES`
+ * members (declared below) — `finance-legacy-dashboard-export.ts`
+ * (`finance-*`), `promo-redemptions-csv.ts` (`*promo*`),
+ * `membership-cancellation-blocker-messages.ts`
+ * (`membership-cancellation-*`), and `internet-banking-payment-cron.ts`
+ * (`*payment*`). Those four already take the broader
+ * `MONEY_MODULE_RESTRICTIONS` arm instead of the narrow one, so the block that
+ * lifts `CENTS_DISPLAY_RESTRICTIONS` for them has to replicate that swap
+ * rather than the ordinary exemption block's plain
+ * `srcRestrictedSyntaxWithout(CENTS_DISPLAY_RESTRICTIONS, ...)`. Matching a
+ * glob family against a literal path is a real pattern match, not a Set
+ * lookup, so this list is hand-verified against `MONEY_DOMAIN_MODULES` rather
+ * than computed; `cents-display-guard.test.ts` checks the resolved config at
+ * each of these four paths carries the money-MODULE arm, not the narrow one,
+ * precisely so a hand-verified list cannot go stale silently.
+ */
+const CENTS_DISPLAY_MONEY_DOMAIN_OVERLAP = [
+  "src/lib/finance-legacy-dashboard-export.ts",
+  "src/lib/promo-redemptions-csv.ts",
+  "src/lib/membership-cancellation-blocker-messages.ts",
+  "src/lib/internet-banking-payment-cron.ts",
+];
+
+/**
+ * The one `CENTS_DISPLAY_EXEMPTIONS` file that is ALSO a `DATE_FNS_ADAPTER_FILES`
+ * member: it already drops `DATE_FNS_RESTRICTIONS` (CT-6, #2991) via its own
+ * block, so the block that additionally drops `CENTS_DISPLAY_RESTRICTIONS` for
+ * it has to replicate THAT swap too, for the same flat-config-replaces-not-merges
+ * reason as `CENTS_DISPLAY_MONEY_DOMAIN_OVERLAP` above. Found by `npm run lint`
+ * actually going red the first time this file's exemption was wired as an
+ * ordinary one — proof this kind of overlap is exactly the failure mode that
+ * reading glob text instead of asking ESLint misses.
+ */
+const CENTS_DISPLAY_DATE_FNS_OVERLAP = [
+  "src/app/(admin)/admin/reports/page.tsx",
+];
+
 // Where a bare `x * 100` is money by construction.
 //
 // The families are matched by PREFIX so the guard follows the code through an
@@ -1878,6 +2007,7 @@ const ALWAYS_RESTRICTED_IN_SRC = [
   ...ENVIRONMENT_ZONE_RESTRICTIONS,
   ...DATE_FNS_RESTRICTIONS,
   ...MONEY_CENTS_RESTRICTIONS,
+  ...CENTS_DISPLAY_RESTRICTIONS,
   ...AUTHORITY_DEFAULT_RESTRICTIONS,
 ];
 
@@ -2345,6 +2475,57 @@ const eslintConfig = defineConfig([
       "no-restricted-syntax": srcRestrictedSyntaxWithout(
         MONEY_CENTS_RESTRICTIONS,
         ...DATE_RENDERING_RESTRICTIONS,
+      ),
+    },
+  },
+  {
+    // #3302 — CENTS_DISPLAY_EXEMPTIONS, ordinary case: every exempted file
+    // EXCEPT the ones on `CENTS_DISPLAY_MONEY_DOMAIN_OVERLAP` and
+    // `CENTS_DISPLAY_DATE_FNS_OVERLAP` below. Drops only the new group by
+    // name, plus re-states `DATE_RENDERING_RESTRICTIONS` (the generic
+    // `src/**` block's own addition, not part of the mandatory set), so
+    // nothing else these files were guarded against is lifted with it.
+    files: CENTS_DISPLAY_EXEMPTIONS.flatMap((entry) => entry.files).filter(
+      (file) =>
+        !CENTS_DISPLAY_MONEY_DOMAIN_OVERLAP.includes(file) &&
+        !CENTS_DISPLAY_DATE_FNS_OVERLAP.includes(file),
+    ),
+    rules: {
+      "no-restricted-syntax": srcRestrictedSyntaxWithout(
+        CENTS_DISPLAY_RESTRICTIONS,
+        ...DATE_RENDERING_RESTRICTIONS,
+      ),
+    },
+  },
+  {
+    // #3302 — `CENTS_DISPLAY_DATE_FNS_OVERLAP`: the one exempted file that is
+    // ALSO a `DATE_FNS_ADAPTER_FILES` member, so it already drops
+    // `DATE_FNS_RESTRICTIONS` via its own block. Replicated here for the same
+    // flat-config-replaces reason as the money-domain overlap below — `npm run
+    // lint` caught this one going red before this block existed.
+    files: CENTS_DISPLAY_DATE_FNS_OVERLAP,
+    rules: {
+      "no-restricted-syntax": srcRestrictedSyntaxWithout(
+        [...DATE_FNS_RESTRICTIONS, ...CENTS_DISPLAY_RESTRICTIONS],
+        ...DATE_RENDERING_RESTRICTIONS,
+      ),
+    },
+  },
+  {
+    // #3302 — `CENTS_DISPLAY_MONEY_DOMAIN_OVERLAP`: the four exempted files
+    // that are ALSO `MONEY_DOMAIN_MODULES` members (`finance-*`, `*promo*`,
+    // `membership-cancellation-*`, `*payment*` respectively), so they already
+    // take the broader `MONEY_MODULE_RESTRICTIONS` arm instead of the narrow
+    // one. Replicated here rather than re-derived, because flat config
+    // replaces a matching block's rule wholesale and this block must win for
+    // these four paths without silently reverting them to the narrow money
+    // arm the block above would otherwise leave them with.
+    files: CENTS_DISPLAY_MONEY_DOMAIN_OVERLAP,
+    rules: {
+      "no-restricted-syntax": srcRestrictedSyntaxWithout(
+        [...MONEY_CENTS_RESTRICTIONS, ...CENTS_DISPLAY_RESTRICTIONS],
+        ...DATE_RENDERING_RESTRICTIONS,
+        ...MONEY_MODULE_RESTRICTIONS,
       ),
     },
   },

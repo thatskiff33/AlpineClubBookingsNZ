@@ -117,7 +117,7 @@ export async function PUT(
     if (approvedAmountCents > maxRefundable) {
       return NextResponse.json(
         {
-          error: `Amount exceeds maximum refundable of $${(maxRefundable / 100).toFixed(2)}`,
+          error: `Amount exceeds maximum refundable of ${formatCents(maxRefundable)}`,
         },
         { status: 400 }
       );
@@ -297,7 +297,7 @@ export async function PUT(
       category: "payment",
       outcome: "success",
       summary: "Refund appeal approved",
-      details: `Approved refund appeal for $${(approvedAmountCents / 100).toFixed(2)} on booking ${booking.id}`,
+      details: `Approved refund appeal for ${formatCents(approvedAmountCents)} on booking ${booking.id}`,
       metadata: {
         bookingId: booking.id,
         approvedAmountCents,
