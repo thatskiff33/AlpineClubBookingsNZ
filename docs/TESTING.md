@@ -1125,7 +1125,7 @@ says the class stays CI-caught by design. A lane that wants to catch one *before
 CI has to pick the set by grep, and **grepping for the paths your diff changed
 under-selects**. #2958 measured how (#3323).
 
-That lane split a 2,761-line route page into twenty modules and derived its set
+That lane split an oversized route page into twenty modules and derived its set
 three ways: tests naming the route path, tests rooted at `src`, and tests walking
 a directory. All three missed
 [`additional-payment-card-gate.test.ts`](../src/components/__tests__/additional-payment-card-gate.test.ts),

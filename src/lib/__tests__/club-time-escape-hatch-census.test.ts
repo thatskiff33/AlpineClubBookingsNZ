@@ -541,8 +541,8 @@ const CENSUS_CEILING = {
    * timezone. Re-measured, not incremented.
    *
    * 221 -> 224 (#2958): the same benign split shape as #3128 and #3232, at the
-   * largest scale yet. `bookings/[id]/page.tsx` was 2,761 lines and carried the
-   * page's single `date-only` import; the behaviour-preserving decomposition
+   * largest scale yet. `bookings/[id]/page.tsx` carried the whole surface's
+   * single `date-only` import; the behaviour-preserving decomposition
    * moved its sections and projections verbatim into route-local modules, and
    * four of them took the zone-free helper they were already calling with them:
    * `_lib/booking-detail-consent.ts` (`eachDateOnlyInRange`, feeding
