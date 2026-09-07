@@ -243,6 +243,9 @@ Prefix `INV-PAY`.
 | `INV-PAY-091` | Terminality is an argument, not a re-derivation; the write is fenced |
 | `INV-PAY-092` | FAILED is two readings of one column; the reader says which |
 | `INV-PAY-057` | A dead additional-payment recovery withdraws the ask it left standing |
+| `INV-PAY-093` | Withdrawal fires at the last failure; it never writes off the debt |
+| `INV-PAY-094` | It withdraws the ask only when a duplicate genuinely exists |
+| `INV-PAY-095` | The cancel is idempotent and never throws; its reason states abandonment |
 | `INV-PAY-067` | One review task per parked strand; departing strand always recorded |
 | `INV-PAY-060` | Settled occurrences never suppress the next; stored prices are not proof |
 | `INV-PAY-068` | Zero completion refused, naming the way out; credit-only records no refund |

@@ -2002,6 +2002,13 @@ _Split from `INV-PAY-056` (#3220)._
   one debt** — pay it and the club holds a payment and an unpaid invoice for the
   same money, which #3187 accepted as *visible but not fixed*. The terminal
   transition now cancels it, in `cancelStrandedAdditionalIntentForDeadRecovery`.
+
+- The rest of this rule, in order: timing and what the withdrawal is not `INV-PAY-093`; when a duplicate genuinely exists `INV-PAY-094`; the cancel's safety and its stated reason `INV-PAY-095`.
+
+## INV-PAY-093
+
+_Split from `INV-PAY-057` (#3220)._
+
 - **The withdrawal fires at the LAST failure; the deferral stops at the FIRST.**
   A retrying `FAILED` row is already outside `OPEN_PAYMENT_RECOVERY_STATUSES`, so
   it can meet an unpaid invoice while its ask is still live — the same
@@ -2011,9 +2018,15 @@ _Split from `INV-PAY-056` (#3220)._
   collect against that very ask. **This is a stated limit, not an oversight** —
   closing it means widening the repair tool's deferral to non-terminal `FAILED`
   rows, which is a change to #3202's counterpart and needs its own decision.
+
 - **This removes the duplicate instrument. It does not write off the debt.** The
   unpaid invoice still stands and is collected the ordinary way; what goes away
   is the second way to pay it. Nobody may read the cancel as a forgiveness.
+
+## INV-PAY-094
+
+_Split from `INV-PAY-057` (#3220)._
+
 - **It withdraws the ask only when there IS a duplicate, and one shape means
   there is not.** The replay attaches this change's supplementary invoice
   operation to the intent it mints, parked `WAITING_PAYMENT`, and can then throw
@@ -2031,12 +2044,18 @@ _Split from `INV-PAY-056` (#3220)._
   pay the ask, which is the clean ending; if they never do, the fourteen-day
   reaper retires the outbox row and the repair pass then raises the invoice the
   ordinary way.
+
 - **Idempotent by construction, not by care.**
   `cancelPaymentIntentIfCancellableWithResult` reads the intent before it acts
   and makes **no provider call at all** unless the status is one it can cancel,
   so a replay finds `canceled` and does nothing, and an intent the member paid
   in the meantime is left strictly alone. The ledger's own captured-status check
   is a second lock on that same door rather than the only one.
+
+## INV-PAY-095
+
+_Split from `INV-PAY-057` (#3220)._
+
 - **A refusal leaves the recovery exactly as not trying would.** The cancel runs
   **after** the status write and **never throws**: a provider outage must not be
   able to hold a recovery out of `FAILED`, which would re-block the repair tool
@@ -2046,6 +2065,7 @@ _Split from `INV-PAY-056` (#3220)._
   live rather than theoretical; it is written to the **audit log**, because it
   asks an officer to reconcile by hand and a `logger.error` is not a record
   anybody can find.
+
 - **The cancellation reason states the real cause.**
   `cancelPaymentIntentIfCancellableWithResult` takes it as a parameter rather
   than having gained a twin, and this path passes `abandoned`. The member never
