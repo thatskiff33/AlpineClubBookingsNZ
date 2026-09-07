@@ -219,14 +219,39 @@ Prefix `INV-PAY`.
 | `INV-PAY-050` | Xero Stripe refund notes cover provider-backed cash evidence, never the refunded-amount mirror |
 | `INV-PAY-051` | An unpriceable edit holds the money as one typed review task |
 | `INV-PAY-052` | A replacement SetupIntent retires the previous card; a retired card stays retired |
+| `INV-PAY-073` | Minting a replacement clears the card; a succeeded intent is not proof |
+| `INV-PAY-074` | The card stamp is row-guarded; a cancelled SetupIntent leaves the row alone |
+| `INV-PAY-075` | The form still shows when the cron would find nothing to charge |
 | `INV-PAY-053` | Off-session charging needs SetupIntent provenance, decided in one place |
+| `INV-PAY-076` | No charge claim writes the card column; a captured charge does |
+| `INV-PAY-077` | A SetupIntent id on a legacy row does not prove its card |
 | `INV-PAY-054` | An unusable saved card is terminal for the cron; escalated once |
+| `INV-PAY-078` | A terminal card is detached at Stripe, then cleared from every row |
+| `INV-PAY-079` | The ledger derivation never restores a retired card or its pointer |
+| `INV-PAY-080` | A terminal card is escalated exactly once, by construction |
 | `INV-PAY-055` | One charge attempt is one durable ledger row with its own key |
+| `INV-PAY-081` | One attempt is one PRIMARY row; metadata converges on one builder |
+| `INV-PAY-082` | An unresolved attempt is replayed; its row never nulls the intent pointer |
+| `INV-PAY-083` | A definite Stripe failure ends the attempt; an ambiguous one keeps it |
+| `INV-PAY-084` | A pre-cutover shared-key charge is recognised by reason and taken over |
+| `INV-PAY-085` | An attempt on a replaced card is ended; its intent is cancelled |
+| `INV-PAY-086` | Captured money on any PRIMARY row refuses a new attempt; INV-PAY-054 ordering |
+| `INV-PAY-087` | The refusal alert is capped and anchored; an expected INV-PAY-053 card copy |
+| `INV-PAY-088` | Stripe's answer is recorded on the attempt row, forward only |
+| `INV-PAY-089` | A key is only re-sent inside Stripe's window, or recovered by it |
+| `INV-PAY-090` | The pre-charge sweep excludes attempt rows by the key prefix |
 | `INV-PAY-056` | A payment recovery becomes terminally failed in exactly one place |
+| `INV-PAY-091` | Terminality is an argument, not a re-derivation; the write is fenced |
+| `INV-PAY-092` | FAILED is two readings of one column; the reader says which |
 | `INV-PAY-057` | A dead additional-payment recovery withdraws the ask it left standing |
+| `INV-PAY-093` | Withdrawal fires at the last failure; it never writes off the debt |
+| `INV-PAY-094` | It withdraws the ask only when a duplicate genuinely exists |
+| `INV-PAY-095` | The cancel is idempotent and never throws; its reason states abandonment |
 | `INV-PAY-067` | One review task per parked strand; departing strand always recorded |
 | `INV-PAY-060` | Settled occurrences never suppress the next; stored prices are not proof |
-| `INV-PAY-068` | Zero completion refused, naming the way out; credit-only records no refund |
+| `INV-PAY-068` | A completion at zero is refused; the refusal names the way out |
+| `INV-PAY-096` | A share mid-send for its invoice becomes a dismiss-only queue item |
+| `INV-PAY-097` | One withheld share is one item; a credit-only completion records no refund |
 | `INV-PAY-061` | Confirmed amounts settle through an existing path, chosen at completion |
 | `INV-PAY-069` | Completions record their direction; charging re-enters the additional-payment path |
 | `INV-PAY-062` | One booking edit raises one charge request, derived from settled shares |
