@@ -6319,6 +6319,21 @@ model MemberPartnerLink {
   @@index([assignedByAdminId])
 }
 
+// Internal, trigger-maintained state for INV-LIFE-024. Each row represents one
+// canonical unordered member pair. It is deliberately FK-less: Member deletes
+// and their cascading relationship cleanup must be able to net both source
+// tables through one stable serialization row before the deferred zero-row
+// cleanup removes it. The named CHECK constraints and all trigger machinery
+// live in migration SQL because Prisma cannot express them.
+model MemberParentPartnerExclusion {
+  memberAId       String
+  memberBId       String
+  parentLinkCount Int    @default(0)
+  partnerLinkCount Int   @default(0)
+
+  @@id([memberAId, memberBId], map: "MemberParentPartnerExclusion_pkey")
+}
+
 // ---------------------------------------------------------------------------
 // Notification Preferences (N-08)
 // ---------------------------------------------------------------------------

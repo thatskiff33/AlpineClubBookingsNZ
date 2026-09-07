@@ -44,6 +44,8 @@ import { canonicalPartnerPair } from "@/lib/member-partner-link-shared";
 import { acquireMemberLifecycleLocks } from "@/lib/member-lifecycle-lock";
 import {
   MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+  acquireMemberParentPartnerPairLocks,
+  isMemberParentPartnerExclusionViolation,
   loadMemberMergeExclusivityTopology,
 } from "@/lib/member-parent-partner-exclusivity";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
@@ -1548,21 +1550,31 @@ export async function executeMemberMerge(params: {
       tx,
       exclusivityTopologyBeforeLocks.participantIds,
     );
+    await acquireMemberParentPartnerPairLocks(
+      tx,
+      exclusivityTopologyBeforeLocks.prospectivePairs,
+    );
     const exclusivityTopologyUnderLocks =
-          await loadPlannedMemberMergeExclusivityTopology(
-            tx,
-            masterId,
-            loserId,
-          );
+      await loadPlannedMemberMergeExclusivityTopology(
+        tx,
+        masterId,
+        loserId,
+      );
     if (
       exclusivityTopologyUnderLocks.participantIds.join("\u0000") !==
-      exclusivityTopologyBeforeLocks.participantIds.join("\u0000")
+        exclusivityTopologyBeforeLocks.participantIds.join("\u0000") ||
+      exclusivityTopologyUnderLocks.prospectivePairs
+        .map((pair) => pair.join("\u0000"))
+        .join("\u0001") !==
+        exclusivityTopologyBeforeLocks.prospectivePairs
+          .map((pair) => pair.join("\u0000"))
+          .join("\u0001")
     ) {
       throw new MemberMergeError(
         "Family relationship participants changed while the merge was running. Nothing was saved. Re-run the preview and try again.",
         409,
         "merge_drift_in_transaction",
-        { driftFields: ["parentPartnerParticipants"] },
+        { driftFields: ["parentPartnerParticipants", "parentPartnerPairs"] },
       );
     }
     if (exclusivityTopologyUnderLocks.conflictingPairCount > 0) {
@@ -2185,7 +2197,19 @@ export async function executeMemberMerge(params: {
     // stale values and the #2243 fix would silently stop working (#2243).
     timeout: 120_000,
     maxWait: 10_000,
-  }).catch((error) => refuseMergeOrRethrow(client, refusalContext, error));
+  }).catch((error) =>
+    refuseMergeOrRethrow(
+      client,
+      refusalContext,
+      isMemberParentPartnerExclusionViolation(error)
+        ? new MemberMergeError(
+            MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+            409,
+            "parent_partner_overlap",
+          )
+        : error,
+    ),
+  );
   await settleHostingCoverageAfterCommit({ limit: 50 }, client);
 
   if (sweptShares.length > 0) {
