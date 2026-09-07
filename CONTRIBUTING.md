@@ -150,7 +150,7 @@ node scripts/release/compile-changelog.mjs 0.14.0             # write it
 Run the relevant focused tests first, then the full gate before opening a PR:
 
 ```bash
-npm audit --audit-level=high
+npm run audit:deps            # the same gate CI runs, with the same threshold
 npm run lint
 DATABASE_URL=postgresql://user:pass@localhost:5432/tacbookings npx prisma validate
 DATABASE_URL=postgresql://user:pass@localhost:5432/tacbookings npm run knip

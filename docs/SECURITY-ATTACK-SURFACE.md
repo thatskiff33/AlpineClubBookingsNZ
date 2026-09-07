@@ -955,6 +955,18 @@ Verified controls already present and intentionally preserved:
   still-blocking `Dependency audit` job (#2946), and it carries no job-level
   `if:` and no `needs:` — a skipped required check SATISFIES branch protection,
   so either one would make the gate vacuously green.
+- That job no longer runs the bare `npm audit --audit-level=high`. The command
+  asks npmjs.org for advisories over the network, so a timeout or a 503 failed
+  the required check in exactly the way a real vulnerability does - measured
+  three times across two pull requests inside an hour on 4 September 2026, none
+  of them a finding. `scripts/ci/audit-dependencies.mjs` now retries an
+  unreachable advisory service four times with 5s/15s/45s backoff and then FAILS
+  anyway, naming the case on the first line of its output so an outage cannot be
+  mistaken for a finding or the reverse (#3254). Green still means the audit ran;
+  the accepted cost is that a sustained npm outage blocks merges. A vulnerability
+  is never retried, and there is exactly one code path that can exit 0 - the one
+  holding parsed severity counts - so an unparseable or missing report fails
+  closed.
 - The secret scan reads merge commits. `git log -p` emits no patch for a merge
   commit, and roughly a third of this repository's 7,510 commits are merges, so
   a scan without `--diff-merges=first-parent` never looked at them — and a
