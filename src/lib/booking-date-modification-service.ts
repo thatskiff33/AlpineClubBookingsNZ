@@ -8,6 +8,7 @@ import {
   type Role,
 } from "@prisma/client";
 
+import type { BookingGuestNightPriceSource } from "@prisma/client";
 import { ApiError } from "@/lib/api-error";
 import { MinimumStayPolicyViolationError } from "@/lib/booking-policy-exceptions";
 import { logAudit } from "@/lib/audit";
@@ -1073,10 +1074,24 @@ export async function modifyBookingDates({
             // and it added a SECOND answer to a condition this file already
             // answers one screen below, where `classifyNightPriceToWrite`
             // raises the member-visible 400. One condition, one answer (#3031).
-            nightDates.map((_stayDate, index) => ({
-              priceCents: priced.perNightCents[index],
-              priceSource: repricedSources[index],
-            }));
+            // The element type says `number | undefined` OUT LOUD. Without the
+            // flag on for this file an indexed read types as `number`, which is
+            // a lie on exactly the short-vector case this arm exists to hand
+            // downstream — and a later reader who trusts it and drops the `?.`
+            // below gets a NaN into a money path instead of the refusal. Making
+            // the absence representable beats policing it (`INV-SSOT-001`).
+            nightDates.map(
+              (
+                _stayDate,
+                index,
+              ): {
+                priceCents: number | undefined;
+                priceSource: BookingGuestNightPriceSource | undefined;
+              } => ({
+                priceCents: priced.perNightCents[index],
+                priceSource: repricedSources[index],
+              }),
+            );
         if (nightDates.length > 0) {
           await tx.bookingGuestNight.createMany({
             data: nightDates.map((stayDate, k) => {

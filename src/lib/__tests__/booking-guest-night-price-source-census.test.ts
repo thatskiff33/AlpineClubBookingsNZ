@@ -118,8 +118,17 @@ const REQUIRED_WRITER_SHAPES = new Map<string, RegExp[]>([
       // position, it builds one array of `{ guest, priced, nightRows }` and
       // destructures each member. The pattern follows, and is no weaker for it
       // — it still requires the paired array, the SOLD literal and a write that
-      // consumes the paired member, and it can no longer be satisfied by an
-      // index read at all, because `nightRows` only exists via the destructure.
+      // consumes the paired member.
+      //
+      // What it does NOT enforce, stated because an earlier version of this
+      // comment overclaimed it: a bare `data: nightRows` cannot distinguish the
+      // destructured member from `const nightRows = someArray[index]`, so the
+      // pattern no longer pins the BUILT-FIRST ordering the way naming the
+      // outer array did. That ordering is held behaviourally instead, by
+      // `waitlist.test.ts`'s refusal case, which asserts that a reprice with no
+      // amount for a night calls neither `createMany` nor `deleteMany` nor the
+      // guest update — so rebuilding the rows inside the write loop reddens it
+      // whichever way the rebuild goes.
       /repricedGuests[\s\S]*?priceSource:\s*"SOLD"[\s\S]*?bookingGuestNight\.createMany\(\{\s*data:\s*nightRows\s*\}\)/,
     ],
   ],

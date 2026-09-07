@@ -86,7 +86,7 @@ reason: five lines. Each guest carries its own echoed nights, so the rate vector
   and its dates cannot drift from the guest they describe.
 
 file: src/lib/booking-date-modification-service.ts
-lines: 2161
+lines: 2176
 reason: the guest's priced row is read once at the top of the write loop and
   reused by the four places that had each indexed the breakdown again, and the
   refusal sits ABOVE the parked condition rather than inside it. The parked
