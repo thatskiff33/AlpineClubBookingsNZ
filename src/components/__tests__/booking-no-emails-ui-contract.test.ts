@@ -263,15 +263,41 @@ describe("No emails UI is admin-only (#2259)", () => {
       declaration is checked here, once, and the indirection is earned rather
       than assumed.
     */
+    /*
+      PRODUCERS ONLY, and after #2958 that distinction is load-bearing rather
+      than pedantic. The value is produced once, in
+      `_lib/booking-detail-admin-tools.ts`, and `_components/booking-admin-tools-section.tsx`
+      now RE-BINDS the same name out of the projection it is handed
+      (`const { noEmailsState } = adminTools;`). That second binding is
+      legitimate — it reads the one answer rather than computing a second one —
+      so it must not count against the "exactly one" below.
+
+      It did not count before this comment either, but only by accident:
+      `node.name.getText()` on a destructure returns the whole pattern text,
+      `{ noEmailsState }`, which simply failed the name comparison. Relying on
+      that would have failed the NEXT reader for the wrong reason — a plain
+      `const noEmailsState = something` written in a component is a real second
+      producer and must fail, and it would have failed here with a length
+      mismatch and no explanation. So the filter now names what it means: a
+      declaration whose name is the bare identifier.
+    */
     const declarations: Array<{ ast: ts.SourceFile; node: ts.VariableDeclaration }> = [];
     for (const ast of asts) {
       eachNode(ast, (node) => {
         if (!ts.isVariableDeclaration(node)) return;
-        if (node.name.getText(ast) !== "noEmailsState") return;
+        if (!ts.isIdentifier(node.name)) return; // a destructured re-bind reads it
+        if (node.name.text !== "noEmailsState") return;
         declarations.push({ ast, node });
       });
     }
-    expect(declarations, "noEmailsState is not declared here").toHaveLength(1);
+    expect(
+      declarations.map(({ ast, node }) => where(ast, node)),
+      `Exactly one module may PRODUCE noEmailsState — every render site in this ` +
+        `suite treats it as an admin gate, and two producers is two answers. ` +
+        `Reading it back out of the projection with ` +
+        `\`const { noEmailsState } = ...\` is fine and is not counted; a plain ` +
+        `\`const noEmailsState = ...\` in a second module is what this refuses.`,
+    ).toHaveLength(1);
 
     const { ast, node } = declarations[0];
     const initializer = node.initializer?.getText(ast) ?? "";
