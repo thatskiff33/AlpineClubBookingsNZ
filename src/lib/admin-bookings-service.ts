@@ -178,9 +178,13 @@ export type AdminBookingRow = BookingCandidate & {
 async function annotateExclusiveHoldOverlaps(
   rows: AdminBookingRow[]
 ): Promise<void> {
-  if (rows.length === 0) return;
-  let minCheckIn = rows[0].checkIn;
-  let maxCheckOut = rows[0].checkOut;
+  // The first row's own absence is the emptiness check, so its presence
+  // carries through to the initial min/max below with no assumption left
+  // for the type to miss.
+  const [firstRow] = rows;
+  if (!firstRow) return;
+  let minCheckIn = firstRow.checkIn;
+  let maxCheckOut = firstRow.checkOut;
   for (const row of rows) {
     if (row.checkIn < minCheckIn) minCheckIn = row.checkIn;
     if (row.checkOut > maxCheckOut) maxCheckOut = row.checkOut;
@@ -465,8 +469,9 @@ export function appliedBookingViewFilters(
   };
 
   let singleStatus: string | undefined;
-  if (statuses.length === 1) {
-    singleStatus = diagnosticsStatusToken(statuses[0]);
+  const [onlyStatus] = statuses;
+  if (statuses.length === 1 && onlyStatus) {
+    singleStatus = diagnosticsStatusToken(onlyStatus);
   } else if (statuses.length > 1) {
     publish("status", statuses.map(diagnosticsStatusToken).join(","));
   } else if (query.status && query.status !== "all") {
@@ -505,9 +510,15 @@ export function appliedBookingViewFilters(
     checkInTo = formatDateOnly(addDaysDateOnly(today, upcomingDays));
   }
   if (query.month && /^\d{4}-\d{2}$/.test(query.month)) {
-    const [year, month] = query.month.split("-").map(Number);
-    checkInFrom = `${year}-${String(month).padStart(2, "0")}-01`;
-    checkInTo = monthEndDateOnly(year, month);
+    // The regex above guarantees exactly two non-empty numeric segments; the
+    // guard names that rather than assuming it past the array's type.
+    const [yearPart, monthPart] = query.month.split("-");
+    if (yearPart && monthPart) {
+      const year = Number(yearPart);
+      const month = Number(monthPart);
+      checkInFrom = `${year}-${String(month).padStart(2, "0")}-01`;
+      checkInTo = monthEndDateOnly(year, month);
+    }
   }
   // `checkInFrom ?? from`: the legacy alias only ever feeds the check-in lower
   // bound, and loses to the explicit one.
@@ -574,9 +585,14 @@ function buildBookingWhere(
   }
 
   if (query.month && /^\d{4}-\d{2}$/.test(query.month)) {
-    const [year, month] = query.month.split("-").map(Number);
-    checkInFilter.gte = parseDateOnly(`${year}-${String(month).padStart(2, "0")}-01`);
-    checkInFilter.lte = parseDateOnly(monthEndDateOnly(year, month));
+    // Same guarantee, and the same explicit guard, as `appliedBookingViewFilters`.
+    const [yearPart, monthPart] = query.month.split("-");
+    if (yearPart && monthPart) {
+      const year = Number(yearPart);
+      const month = Number(monthPart);
+      checkInFilter.gte = parseDateOnly(`${year}-${String(month).padStart(2, "0")}-01`);
+      checkInFilter.lte = parseDateOnly(monthEndDateOnly(year, month));
+    }
   }
 
   if (checkInFrom) checkInFilter.gte = parseDateOnlyFilter(checkInFrom);
@@ -899,8 +915,11 @@ function buildBedWarnings(
 
   for (const group of allocationsByNight.values()) {
     const roomIds = new Set(group.map((allocation) => allocation.roomId));
-    if (roomIds.size > 1) {
-      warnings.push({ stayDate: formatDateOnly(group[0].stayDate) });
+    // `roomIds.size > 1` already means `group` holds at least two
+    // allocations; the type can't carry that, so read the first one once.
+    const [firstAllocation] = group;
+    if (roomIds.size > 1 && firstAllocation) {
+      warnings.push({ stayDate: formatDateOnly(firstAllocation.stayDate) });
     }
 
     for (const allocation of group) {
@@ -1318,7 +1337,11 @@ export async function listAdminBookings(
     }
 
     if (chunk.length < ADMIN_BOOKINGS_DERIVED_SCAN_CHUNK_SIZE) break;
-    cursorId = chunk[chunk.length - 1].id;
+    // `chunk.length === 0` already broke the loop above, so there is always a
+    // last element here; the type can't carry that loop invariant.
+    const lastCandidate = chunk[chunk.length - 1];
+    if (!lastCandidate) break;
+    cursorId = lastCandidate.id;
   }
 
   const direction = sortDir === "asc" ? 1 : -1;

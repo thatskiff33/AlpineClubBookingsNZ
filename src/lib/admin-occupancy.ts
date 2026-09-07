@@ -46,7 +46,11 @@ export function parseOccupancyMonth(month: string | null):
     return { ok: false, error: "Invalid month" };
   }
 
+  // The `^\d{4}-\d{2}$` check above guarantees exactly two numeric segments.
   const [yearPart, monthPart] = month.split("-").map(Number);
+  if (yearPart === undefined || monthPart === undefined) {
+    return { ok: false, error: "Invalid month" };
+  }
   const nextYear = monthPart === 12 ? yearPart + 1 : yearPart;
   const nextMonth = monthPart === 12 ? 1 : monthPart + 1;
   const endDateString = `${nextYear}-${String(nextMonth).padStart(2, "0")}-01`;

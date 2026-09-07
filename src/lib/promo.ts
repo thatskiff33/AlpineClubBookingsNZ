@@ -1057,8 +1057,14 @@ export async function validateAndCalculatePromoDiscount(
       };
     }
   }
+  // `filterGuestsByIndexes` maps selected indexes back through `detailGuests`
+  // and drops any that came up empty (out of range); `PromoDiscountGuest` is
+  // always an object (never falsy), so this type predicate proves the same
+  // thing its `.filter(Boolean)` already guarantees at runtime.
   const guestsForPromo = requiresGuestSelection
-    ? filterGuestsByIndexes(detailGuests, selectedGuestIndexes.indexes)
+    ? filterGuestsByIndexes(detailGuests, selectedGuestIndexes.indexes).filter(
+        (guest): guest is PromoDiscountGuest => guest !== undefined
+      )
     : detailGuests;
   const assignedGuestScopeMemberIds = scopedAssignmentMemberIds(
     promoCode,

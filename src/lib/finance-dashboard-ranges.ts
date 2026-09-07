@@ -10,6 +10,7 @@ import {
 } from "@/lib/finance-dashboard-labels";
 import { getFinancialYearEndMonth } from "@/lib/financial-year";
 import { isMonthKey, shiftMonthKey } from "@/lib/finance-monthly-facts";
+import { must } from "@/lib/indexed-access";
 
 // #3123 FINISHED THE FILE. The three `getTodayDateOnly()` reads that chose the
 // reporting month became one required `today` parameter. Nothing in this module
@@ -228,8 +229,22 @@ function monthKeyFromDate(date: Date): string {
   return formatDateOnly(date).slice(0, 7);
 }
 
+/**
+ * Split a "YYYY-MM" month key into its numeric year and month. Every caller
+ * here already holds a value in that shape (produced by `monthKeyFromDate`,
+ * `shiftMonthKey`, or validated by `isMonthKey`), so the split always yields
+ * both parts.
+ */
+function parseMonthKeyParts(monthKey: string, context: string): { year: number; month: number } {
+  const parts = monthKey.split("-");
+  return {
+    year: Number(must(parts[0], `${context}: malformed month key "${monthKey}"`)),
+    month: Number(must(parts[1], `${context}: malformed month key "${monthKey}"`)),
+  };
+}
+
 function monthEndString(monthKey: string): string {
-  const [year, month] = monthKey.split("-").map(Number);
+  const { year, month } = parseMonthKeyParts(monthKey, "monthEndString");
   const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
   return `${monthKey}-${String(lastDay).padStart(2, "0")}`;
 }
@@ -258,8 +273,8 @@ export function financeDashboardMonthCount(window: {
   fromMonth: string;
   toMonth: string;
 }): number {
-  const [fromYear, fromMonth] = window.fromMonth.split("-").map(Number);
-  const [toYear, toMonth] = window.toMonth.split("-").map(Number);
+  const { year: fromYear, month: fromMonth } = parseMonthKeyParts(window.fromMonth, "financeDashboardMonthCount");
+  const { year: toYear, month: toMonth } = parseMonthKeyParts(window.toMonth, "financeDashboardMonthCount");
   return (toYear - fromYear) * 12 + (toMonth - fromMonth) + 1;
 }
 
@@ -268,7 +283,7 @@ export function financeDashboardMonthCount(window: {
  * year ending in `yearEndMonth` (1-12; March = NZ convention).
  */
 function financialYearStartMonth(monthKey: string, yearEndMonth: number): string {
-  const [year, month] = monthKey.split("-").map(Number);
+  const { year, month } = parseMonthKeyParts(monthKey, "financialYearStartMonth");
   const startMonth = (yearEndMonth % 12) + 1;
   const startYear = month >= startMonth ? year : year - 1;
   return `${startYear}-${String(startMonth).padStart(2, "0")}`;
@@ -462,7 +477,7 @@ function resolveForwardFinanceWindow(input: {
   }
 
   if (input.option === "next-quarter") {
-    const [year, month] = currentMonth.split("-").map(Number);
+    const { year, month } = parseMonthKeyParts(currentMonth, "resolveComparisonFinanceRange next-quarter");
     let quarter = Math.floor((month - 1) / 3) + 1;
     let quarterYear = year;
     if (quarter > 3) {

@@ -45,6 +45,8 @@
 // per-token and distance bounds above already removes the wider swaps
 // (Ng->Wu, Ho->Lo, Bob->Amy); the single-edit case is the remaining exposure.
 
+import { must } from "@/lib/indexed-access";
+
 function normalizeNamePart(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
 }
@@ -66,8 +68,10 @@ function hasReplacedToken(prev: string, next: string): boolean {
   const prevTokens = prev.split(" ");
   const nextTokens = next.split(" ");
   for (let i = 0; i < prevTokens.length; i++) {
-    const prevToken = prevTokens[i];
-    const nextToken = nextTokens[i];
+    // The caller guarantees `prev` and `next` have the same token count, so
+    // `nextTokens` always has an element at every `prevTokens` index too.
+    const prevToken = must(prevTokens[i], `hasReplacedToken: no prev token at index ${i}`);
+    const nextToken = must(nextTokens[i], `hasReplacedToken: no next token at index ${i} - prev/next token counts differ`);
     const maxLen = Math.max(prevToken.length, nextToken.length);
     if (maxLen === 0) continue;
     if (2 * damerauLevenshtein(prevToken, nextToken) >= maxLen) {
@@ -82,6 +86,20 @@ function hasReplacedToken(prev: string, next: string): boolean {
  * insertions, deletions, substitutions, and adjacent transpositions each as a
  * single edit. Pure and deterministic.
  */
+/**
+ * Read/write one cell of the (al+1) x (bl+1) DP table below. Every `i`/`j`
+ * this module passes is in `0..al`/`0..bl` by the loop bounds around each
+ * call site (an adjacent-transposition read additionally guarded by `i > 1`/
+ * `j > 1`), so the row and the cell always exist.
+ */
+function dpCell(table: number[][], i: number, j: number): number {
+  const row = must(table[i], `damerauLevenshtein: no row ${i}`);
+  return must(row[j], `damerauLevenshtein: no cell [${i}][${j}]`);
+}
+function setDpCell(table: number[][], i: number, j: number, value: number): void {
+  must(table[i], `damerauLevenshtein: no row ${i}`)[j] = value;
+}
+
 export function damerauLevenshtein(a: string, b: string): number {
   const al = a.length;
   const bl = b.length;
@@ -91,16 +109,21 @@ export function damerauLevenshtein(a: string, b: string): number {
   const d: number[][] = Array.from({ length: al + 1 }, () =>
     new Array<number>(bl + 1).fill(0),
   );
-  for (let i = 0; i <= al; i++) d[i][0] = i;
-  for (let j = 0; j <= bl; j++) d[0][j] = j;
+  for (let i = 0; i <= al; i++) setDpCell(d, i, 0, i);
+  for (let j = 0; j <= bl; j++) setDpCell(d, 0, j, j);
 
   for (let i = 1; i <= al; i++) {
     for (let j = 1; j <= bl; j++) {
       const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      d[i][j] = Math.min(
-        d[i - 1][j] + 1, // deletion
-        d[i][j - 1] + 1, // insertion
-        d[i - 1][j - 1] + cost, // substitution
+      setDpCell(
+        d,
+        i,
+        j,
+        Math.min(
+          dpCell(d, i - 1, j) + 1, // deletion
+          dpCell(d, i, j - 1) + 1, // insertion
+          dpCell(d, i - 1, j - 1) + cost, // substitution
+        ),
       );
       if (
         i > 1 &&
@@ -108,12 +131,13 @@ export function damerauLevenshtein(a: string, b: string): number {
         a[i - 1] === b[j - 2] &&
         a[i - 2] === b[j - 1]
       ) {
-        d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + 1); // adjacent transposition
+        // adjacent transposition
+        setDpCell(d, i, j, Math.min(dpCell(d, i, j), dpCell(d, i - 2, j - 2) + 1));
       }
     }
   }
 
-  return d[al][bl];
+  return dpCell(d, al, bl);
 }
 
 /**

@@ -19,6 +19,8 @@
  * matter of configuration.
  */
 
+import { must } from "@/lib/indexed-access";
+
 /** Overlay a deployment MAY supply to widen (or further restrict) the allowlist. */
 export interface KnowledgeAllowlistOverlay {
   /** Extra include globs (e.g. a fork opting its own `src/**` in). */
@@ -121,7 +123,7 @@ const TEXT_EXTENSIONS = new Set([
 export function globToRegExp(glob: string): RegExp {
   let re = "";
   for (let i = 0; i < glob.length; i += 1) {
-    const c = glob[i];
+    const c = must(glob[i], `globToRegExp: no character at index ${i} within glob.length`);
     if (c === "*") {
       if (glob[i + 1] === "*") {
         i += 1;
