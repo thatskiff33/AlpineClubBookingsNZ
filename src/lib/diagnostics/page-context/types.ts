@@ -3,9 +3,10 @@
  * epic #2369, issue #2373).
  *
  * The UNTRUSTED client selector's zod schema deliberately does NOT live here. It
- * is module-private to `parse.ts`, because a strict object schema is not total on
- * its own — zod silently strips `__proto__` rather than refusing it — so exporting
- * it would offer a second, non-total door around the reserved-key refusal that
+ * is module-private to `parse.ts`, because that schema is not total on its own —
+ * its `filters` field is a `z.record(...)`, and a record silently drops
+ * `__proto__` rather than refusing it (measured on zod 4.5.4) — so exporting it
+ * would offer a second, non-total door around the reserved-key refusal that
  * `parseDiagnosticsPageSelector` performs on the raw input. One door, and the type
  * of what comes through it (`DiagnosticsPageSelector`) is exported from there.
  *

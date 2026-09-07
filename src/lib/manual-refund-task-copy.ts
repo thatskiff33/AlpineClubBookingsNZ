@@ -27,6 +27,10 @@
  * same behaviour in two vocabularies.
  */
 
+import type { ManualRefundTaskKind } from "@prisma/client";
+
+import { manualRefundTaskKindAllowsSettlement } from "@/lib/manual-refund-task-settlement-rules";
+
 /**
  * A completion at zero stays refused, and the refusal names the way out.
  *
@@ -62,6 +66,55 @@ export function zeroCompletionRefusal(isEditReview: boolean): string {
 }
 
 /**
+ * WHICH WAY A COMPLETION'S MONEY WENT, AND HOW - asked once, answered once.
+ *
+ * The settle route already carries both facts: `additional-charge` is the only
+ * one where the member pays the club, and the other three are three different
+ * ways of the club handing money back. Two sentences have to turn that into
+ * words - the officer's toast below, and the durable audit summary in
+ * `manual-refund-task-audit.ts` - and before #3213's fix round only the toast
+ * asked. The summary asserted a hand-back over every completion, so an
+ * `EDIT_FINANCIAL_REVIEW` settled down the charge route wrote "refund paid back
+ * by hand" into the booking's permanent history for money the member had just
+ * been ASKED FOR. The transient message was more truthful than the permanent
+ * record.
+ *
+ * So the classification is a function rather than a branch in each of them
+ * (`INV-SSOT`). A second site deciding "was this a refund?" is exactly how the
+ * two drifted in the first place, and the audit half is the half nobody sees go
+ * wrong until they are reading a row months later.
+ *
+ * THE ROUTE IS ASKED, NOT `settlementDirection`. They cannot disagree - a charge
+ * route is reachable only from `CHARGE_TO_MEMBER`, and that direction reaches no
+ * other route (`chooseEditReviewSettlementRoute` refuses it on every other kind)
+ * - and the route is the narrower fact, because it says how as well as which
+ * way. Asking the coarser one would need a second branch to recover the how.
+ *
+ * AN UNRECOGNISED ROUTE READS AS A HAND-BACK, which is the wording every row
+ * written before #3032 has: `local-allocation` and a null route are both the
+ * ledger recording money an officer moved outside the system.
+ */
+export type CompletionSettlementShape =
+  | "card-refund"
+  | "account-credit"
+  | "charge-on-invoice"
+  | "charge-as-payment-request"
+  | "hand-back";
+
+export function completionSettlementShape(
+  settlementRoute: { kind: string; collectVia?: "stripe" | "invoice" } | null,
+): CompletionSettlementShape {
+  if (settlementRoute?.kind === "stripe-refund") return "card-refund";
+  if (settlementRoute?.kind === "account-credit") return "account-credit";
+  if (settlementRoute?.kind === "additional-charge") {
+    return settlementRoute.collectVia === "invoice"
+      ? "charge-on-invoice"
+      : "charge-as-payment-request";
+  }
+  return "hand-back";
+}
+
+/**
  * What the operator is told a completion actually did.
  *
  * One sentence per route, because the four outcomes are materially different
@@ -69,6 +122,12 @@ export function zeroCompletionRefusal(isEditReview: boolean): string {
  * failed-card case is the one that matters most: the refund did not go, the
  * durable recovery operation will retry it, and saying so is the difference
  * between an operator who checks back and one who does not.
+ *
+ * IT SAYS MORE THAN THE SUMMARY BELOW CAN, and the extra is deliberate rather
+ * than drift. This runs after the commit, holding the provider's answer, so it
+ * can say whether the refund or the request actually went; the summary is
+ * written inside the transaction, before either is attempted, so it says which
+ * way the closure settled and stops there.
  */
 export function completionMessage(result: {
   amountAmended: boolean;
@@ -77,27 +136,63 @@ export function completionMessage(result: {
   additionalPaymentIntentId: string | null;
 }) {
   const amended = result.amountAmended ? " at the confirmed amount" : "";
-  if (result.settlementRoute?.kind === "stripe-refund") {
-    return result.stripeRefundId
-      ? `Refund sent back to the card${amended}.`
-      : "The card refund could not be sent just now. It has been recorded and will be retried automatically — check this booking's payment history before handing the money back another way.";
-  }
-  if (result.settlementRoute?.kind === "account-credit") {
-    return `Account credit issued to the member${amended}.`;
-  }
-  // #3170: the direction that asks for money rather than returning it. Its two
-  // sentences say what the member will actually receive, because "adjustment
-  // recorded" over a request that was never sent is the same false receipt the
-  // failed-card case above exists to avoid - in the opposite direction.
-  if (result.settlementRoute?.kind === "additional-charge") {
-    if (result.settlementRoute.collectVia === "invoice") {
+  switch (completionSettlementShape(result.settlementRoute)) {
+    case "card-refund":
+      return result.stripeRefundId
+        ? `Refund sent back to the card${amended}.`
+        : "The card refund could not be sent just now. It has been recorded and will be retried automatically — check this booking's payment history before handing the money back another way.";
+    case "account-credit":
+      return `Account credit issued to the member${amended}.`;
+    // #3170: the direction that asks for money rather than returning it. Its two
+    // sentences say what the member will actually receive, because "adjustment
+    // recorded" over a request that was never sent is the same false receipt the
+    // failed-card case above exists to avoid - in the opposite direction.
+    case "charge-on-invoice":
       return `Added to this booking's invoice for the member to pay${amended}.`;
-    }
-    return result.additionalPaymentIntentId
-      ? `The member has been asked to pay this${amended}. It is on the booking as an additional payment and they will be reminded until it is paid.`
-      : "The request for payment could not be raised just now. It has been recorded and will be retried automatically — check this booking's payment history before asking the member another way.";
+    case "charge-as-payment-request":
+      return result.additionalPaymentIntentId
+        ? `The member has been asked to pay this${amended}. It is on the booking as an additional payment and they will be reminded until it is paid.`
+        : "The request for payment could not be raised just now. It has been recorded and will be retried automatically — check this booking's payment history before asking the member another way.";
+    case "hand-back":
+      return `Refund recorded as paid back by hand${amended}.`;
   }
-  return `Refund recorded as paid back by hand${amended}.`;
+}
+
+/**
+ * What the BOOKING'S PERMANENT HISTORY records a completion as.
+ *
+ * The audit half of the same fact, in the register an audit row is read in -
+ * past tense, no operator instruction, no promise about what happens next.
+ *
+ * ONLY THE HAND-BACK SENTENCE IS THE OLD ONE, and it is byte-identical on
+ * purpose: `local-allocation` and a null route are the ledger recording money an
+ * officer moved by hand, which is exactly what it always said. The other three
+ * were saying it too, and on the charge routes that was a claim in the wrong
+ * DIRECTION - the club had not paid anybody back, it had asked to be paid. Rows
+ * already written keep the words they were written with; this changes what the
+ * next one says.
+ *
+ * NONE OF THEM ASSERTS THE PROVIDER SUCCEEDED. This is composed inside the
+ * completion transaction, before the Stripe refund or the payment request is
+ * attempted, so "settled as a card refund" is what is true at the moment it is
+ * written - where "refund sent back to the card" would be a durable claim the
+ * row cannot back if the call then fails. What actually happened out there is
+ * the recovery operation's record and the payment history's, and the operator's
+ * toast says it because the toast runs late enough to know.
+ */
+export function completionSummary(shape: CompletionSettlementShape): string {
+  switch (shape) {
+    case "card-refund":
+      return "Manual booking refund settled as a card refund";
+    case "account-credit":
+      return "Manual booking refund settled as account credit";
+    case "charge-on-invoice":
+      return "Booking amount owed by the member added to the booking invoice";
+    case "charge-as-payment-request":
+      return "Booking amount owed by the member requested as an additional payment";
+    case "hand-back":
+      return "Manual booking refund paid back by hand";
+  }
 }
 
 /**
@@ -137,4 +232,36 @@ export function nightPricesRecordedMessage(count: number): string {
   return count === 1
     ? ` One night's price was recorded${tail}`
     : ` ${count} nights' prices were recorded${tail}`;
+}
+
+/**
+ * #3213: what an officer is told a DISMISSAL actually did.
+ *
+ * The counterpart to `completionMessage` above, and it lives here for the reason
+ * that one does: it is the sentence a closed task answers with, and until now it
+ * was a bare literal on the admin route with nothing beside it to say which kind
+ * of item it was describing.
+ *
+ * IT IS KIND-AWARE BECAUSE ONE KIND IS NOT A REFUND. On every kind older than
+ * `UNCOLLECTED_EDIT_REVIEW_SHARE`, "dismissed" means the club decided not to pay
+ * something back, and "Refund task dismissed." is the true sentence. On a
+ * withheld share the officer has just done the opposite job - checked Xero and
+ * billed a shortfall BY HAND - so telling them they dismissed a refund names the
+ * wrong direction and the wrong act at the moment they finish it. That is the
+ * `#3033` category confusion one kind further along, and it is the same reason
+ * the dialog above the button says "Close this item" rather than "Dismiss".
+ *
+ * ASKED OF THE SHARED RULE, not of the label. A kind that cannot be settled is
+ * exactly a kind where nothing moves money, which is the fact this sentence turns
+ * on - so the two questions have one answer and one home
+ * (`manual-refund-task-settlement-rules.ts`, `INV-SSOT`). An unrecognised kind
+ * answers TRUE there and lands on the legacy sentence, which is the safe way
+ * round: a stale client bundle gets the wording every row has always had rather
+ * than a claim about an item type it does not know.
+ */
+export function dismissalMessage(
+  kind: ManualRefundTaskKind | string | null | undefined,
+): string {
+  if (manualRefundTaskKindAllowsSettlement(kind)) return "Refund task dismissed.";
+  return "Item closed. It moved no money and raised no invoice — your note is the only record of what the booking's Xero invoices showed and what you billed by hand.";
 }

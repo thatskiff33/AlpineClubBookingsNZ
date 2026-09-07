@@ -33,21 +33,27 @@ admin-permission requirement. The model may only:
 Accepted arguments become **positional query parameters** and nothing else. There
 is no code path in the substrate that concatenates caller text into SQL.
 
-`.strict()` is not quite total on its own, so the substrate does not rely on it
-alone: `__proto__`, `constructor` and `prototype` are refused by an own-property
-scan **before** the schema runs. Zod accepts a `JSON.parse`-created `__proto__` and
-silently *strips* it, which would make a call that sent one hash identically to a
-call that sent nothing — and rejection has to be total, exactly as it is for
+Zod is not total on its own, so the substrate does not rely on it alone:
+`__proto__`, `constructor` and `prototype` are refused by an own-property scan
+**before** the schema runs. Where zod accepts such a key it *strips* it silently,
+which would make a call that sent one hash identically to a call that sent
+nothing — and rejection has to be total, exactly as it is for
 [page context](page-context.md).
 
-The scan walks **every depth**, arrays included, and not only the top level. Zod
-strips a nested `__proto__` just as readily: measured on zod 4.4.3, a schema of
-`{ filters: { status? } }` with both objects `.strict()` accepted
-`{"filters":{"__proto__":{…},"status":"open"}}` and returned
-`{"filters":{"status":"open"}}`, whose canonical hash is byte-identical to the same
-call without the key. A `filters` object is the natural shape for the first tool pack,
-so an author adding a nested or record-shaped argument inherits the refusal rather
-than having to remember it.
+Two shapes still slip past zod itself, which is why the scan is kept rather than
+retired: a `z.record(...)` drops the key at any depth, and **any** shape drops it
+when the key is non-enumerable. What zod does and does not refuse is *measured*
+rather than asserted, and the measurements live in one place — the
+`NESTED_RESERVED_KEY_CASES` table in
+`src/lib/diagnostics/tools/__tests__/registry.test.ts`, which fails loudly when a
+dependency upgrade changes an answer. It did exactly that on the zod 4.4.3 → 4.5.4
+upgrade (#3313), which is why this page no longer restates a version-stamped
+example of its own.
+
+The scan walks **every depth**, arrays included, and not only the top level. A
+`filters` record is the natural shape for the first tool pack, so an author adding
+a nested or record-shaped argument inherits the refusal rather than having to
+remember it.
 
 ## What is registered, and what is deliberately not
 
