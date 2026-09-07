@@ -84,9 +84,19 @@ function isTagNameChar(char: string | undefined) {
   return Boolean(char && /[A-Za-z0-9:-]/.test(char));
 }
 
+/**
+ * `pattern.test(char)` for a char read at a cursor that may already be past
+ * the end of the string — the same "possibly out of bounds" position every
+ * caller here already reasons about, made explicit instead of handed to
+ * `RegExp.prototype.test` as a stringified `undefined`.
+ */
+function matchesChar(pattern: RegExp, char: string | undefined): boolean {
+  return char !== undefined && pattern.test(char);
+}
+
 function skipWhitespace(source: string, index: number) {
   let cursor = index;
-  while (cursor < source.length && /\s/.test(source[cursor])) {
+  while (matchesChar(/\s/, source[cursor])) {
     cursor += 1;
   }
   return cursor;
@@ -149,7 +159,7 @@ function readAttribute(attrs: string, targetName: string): string | null {
     const nameStart = cursor;
     while (
       cursor < attrs.length &&
-      !/\s|=|\/|>/.test(attrs[cursor])
+      !matchesChar(/\s|=|\/|>/, attrs[cursor])
     ) {
       cursor += 1;
     }
@@ -177,7 +187,7 @@ function readAttribute(attrs: string, targetName: string): string | null {
       }
     } else {
       const valueStart = cursor;
-      while (cursor < attrs.length && !/\s|>/.test(attrs[cursor])) {
+      while (cursor < attrs.length && !matchesChar(/\s|>/, attrs[cursor])) {
         cursor += 1;
       }
       value = attrs.slice(valueStart, cursor);

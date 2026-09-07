@@ -350,12 +350,15 @@ function extractInlinePhotoGalleryImages(contentHtml: string): {
       // the empty string with a positional accessible name. The two layers are
       // reconciled on purpose: the data layer stays faithful to author intent;
       // the render layer enforces the stricter linked-image accessible-name rule.
-      const alt = altMatch ? altMatch[1] : deriveAltFromImageSrc(src);
+      // Both capture groups above are mandatory (no `?` quantifier), so a
+      // present match always carries one; `?.[1] ?? …` / `?.[1] ? … : null`
+      // preserve the exact truthy/empty-string behaviour these already had.
+      const alt = altMatch?.[1] ?? deriveAltFromImageSrc(src);
       images.push({
         src,
         alt,
-        width: widthMatch ? Number.parseInt(widthMatch[1], 10) : null,
-        height: heightMatch ? Number.parseInt(heightMatch[1], 10) : null,
+        width: widthMatch?.[1] ? Number.parseInt(widthMatch[1], 10) : null,
+        height: heightMatch?.[1] ? Number.parseInt(heightMatch[1], 10) : null,
       });
       return "";
     },
