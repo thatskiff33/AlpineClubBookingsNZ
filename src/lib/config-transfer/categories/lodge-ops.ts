@@ -160,9 +160,13 @@ function parseInstructionRow(
   errors: string[],
 ): { key: string } | null {
   const v = new RowValidator(file, index, errors);
-  v.enum("key", "LodgeInstructionKey", raw.key);
+  // `v.enum` already returns the trimmed, validated value -- the same
+  // `raw.key.trim()` this used to re-read separately (`raw` is a
+  // Record<string, string>, so a second read is exactly as unproven to the
+  // type as the first).
+  const key = v.enum("key", "LodgeInstructionKey", raw.key);
   if (!v.ok) return null;
-  return { key: raw.key.trim() };
+  return { key };
 }
 
 /** Validate + build a chore row (mode-aware blanks). */
@@ -317,7 +321,12 @@ async function planLodgeOps(ctx: PlanContext): Promise<CategoryPlanResult> {
 
     const bundleChoreNames = new Set<string>();
     const choreRows = readCsvRows(ctx.files, paths.choreTemplates);
-    for (const raw of choreRows) if (nz(raw.name)) bundleChoreNames.add(raw.name.trim());
+    // `nz` already trims and returns the value itself, so this reads it once
+    // rather than re-reading and re-trimming the same Record property.
+    for (const raw of choreRows) {
+      const name = nz(raw.name);
+      if (name) bundleChoreNames.add(name);
+    }
     choreRows.forEach((raw, i) => {
       const key = `${slug}/${raw.name?.trim() ?? ""}`;
       const resolvedId = ctx.resolutions.get(resolutionKey("chore-template", key));

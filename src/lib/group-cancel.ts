@@ -344,11 +344,18 @@ export async function settleGroupBookingOnOrganiserCancel(
       totalRefundCents += cents;
     }
   } else if (settled && children.length > 0) {
-    const checkIn = children[0].checkIn;
+    // `children.length > 0` is checked in this same condition; a missing
+    // first child here would be a real bug in that count, so this fails
+    // loudly rather than silently computing zero refunds for paid children.
+    const [firstChild] = children;
+    if (!firstChild) {
+      throw new Error("Group booking settlement has children but the first child could not be read");
+    }
+    const checkIn = firstChild.checkIn;
     const days = daysUntilDate(checkIn, todayAtClub);
     // All children of a group booking share the organiser's lodge (one
     // booking = one lodge, ADR-001), so the first child's lodge is the group's.
-    const policy = await loadCancellationPolicy(checkIn, children[0].lodgeId);
+    const policy = await loadCancellationPolicy(checkIn, firstChild.lodgeId);
     for (const child of children) {
       const isPaid =
         child.status === BookingStatus.PAID &&
