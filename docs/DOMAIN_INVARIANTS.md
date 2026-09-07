@@ -225,6 +225,9 @@ Prefix `INV-PAY`.
 | `INV-PAY-076` | No charge claim writes the card column; a captured charge does |
 | `INV-PAY-077` | A SetupIntent id on a legacy row does not prove its card |
 | `INV-PAY-054` | An unusable saved card is terminal for the cron; escalated once |
+| `INV-PAY-078` | A terminal card is detached at Stripe, then cleared from every row |
+| `INV-PAY-079` | The ledger derivation never restores a retired card or its pointer |
+| `INV-PAY-080` | A terminal card is escalated exactly once, by construction |
 | `INV-PAY-055` | One charge attempt is one durable ledger row with its own key |
 | `INV-PAY-056` | A payment recovery becomes terminally failed in exactly one place |
 | `INV-PAY-057` | A dead additional-payment recovery withdraws the ask it left standing |
