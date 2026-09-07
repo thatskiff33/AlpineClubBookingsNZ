@@ -38,11 +38,6 @@ reason: one guarded read of a Promise.all-built, 1:1-with-textMatches
   depth array inside a display-only ineligibility explanation, plus the
   comment explaining why the gap is unreachable.
 
-file: src/lib/audit-query.ts
-lines: 1171
-reason: one guarded read of the first drilldown link before mutating it,
-  replacing a length-guarded index write.
-
 file: src/lib/backup.ts
 lines: 727
 reason: an explicit undefined check on three parsed smoke-test counts
@@ -67,7 +62,7 @@ reason: two guarded reads (a mandatory regex capture group in the CSP
   loop bound), each with the invariant that makes it unreachable.
 
 file: src/lib/email-message-renderer.ts
-lines: 951
+lines: 950
 reason: two regex-token extractors switched from `.filter(Boolean)` (which
   drops undefined at runtime but not in the type) to an explicit
   `token is string` predicate, plus the comment explaining why.
@@ -97,7 +92,7 @@ reason: the person/suggestion pairing is now built as one array of
   the index correlation entirely.
 
 file: src/lib/member-csv-import.ts
-lines: 1079
+lines: 1078
 reason: four guarded reads across the hand-rolled CSV parser and date
   parser (the character-loop's own bound, the header record's absence as
   its own emptiness check, two named month capture groups), each beside

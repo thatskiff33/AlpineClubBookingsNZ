@@ -16,3 +16,12 @@
   stricter `noUncheckedIndexedAccess` check would complain drops from 1,076 to
   673 with this stage of programme #2694, and the build still fails if it ever
   grows.
+
+Behind the scenes, the shared library layer no longer assumes that looking
+something up will always find it. Where an amount, a night or a record might
+genuinely be missing, the code now says so and handles it; where it cannot be
+missing, the structure proves that instead of trusting it. Two real faults were
+found and fixed on the way, one of which could have written a booking night with
+no price recorded against it.
+
+Members and administrators see no change.

@@ -41,7 +41,7 @@ reason: the largest single entry, and the only one over a hundred lines. The
   reviewer asked and the next reader will too.
 
 file: src/lib/booking-edit-guest-ranges.ts
-lines: 1951
+lines: 1978
 reason: each existing strand now carries its own sold-price map instead of a
   parallel array read by position, and four party-pricing slices are read once
   and refused when absent. The money rule they are refusing under is #3031's,
@@ -55,14 +55,14 @@ reason: ten inline `as unknown as Record<string, …>` delegate lookups collapse
   the ten deleted inline casts this is a small addition for a real consolidation.
 
 file: src/lib/booking-modify-plan.ts
-lines: 2918
+lines: 2988
 reason: three write loops iterate `entries()`, and the two places a position
   then indexes the price breakdown refuse rather than default. The refusal
   belongs beside the #3031 comment block that already states the rule for the
   per-night vector one level down.
 
 file: src/lib/booking-request.ts
-lines: 2918
+lines: 2921
 reason: the approval pairs each planned guest with the held row it rewrites
   before writing any of them, with the note saying why the pairing is
   load-bearing — the same hazard the `createMany` comment above it describes.
@@ -74,19 +74,19 @@ reason: the proposal envelope reads both ends of its night list and each added
   freezing a party the officer would approve blind.
 
 file: src/lib/payment-recovery.ts
-lines: 2514
+lines: 2939
 reason: twelve lines. The retry schedule's clamped step carries NO numeric
   fallback: a zero would be an immediate retry, the worst wait this function
   could invent, and any other number would be a backoff nobody configured. The
   schedule's length is asserted at module load, so an empty one cannot ship.
 
 file: src/lib/booking-batch-modification-service.ts
-lines: 2437
+lines: 2447
 reason: five lines. Each guest carries its own echoed nights, so the rate vector
   and its dates cannot drift from the guest they describe.
 
 file: src/lib/booking-date-modification-service.ts
-lines: 2128
+lines: 2162
 reason: the guest's priced row is read once at the top of the write loop and
   reused by the four places that had each indexed the breakdown again, and the
   refusal sits ABOVE the parked condition rather than inside it. The parked
@@ -151,7 +151,7 @@ reason: five lines. The refusal message reads its first block where the no-block
   from a value the function holds.
 
 file: src/lib/waitlist.ts
-lines: 1436
+lines: 1437
 reason: eighteen lines. The offer reprice pairs each booking guest with its
   priced row and its night rows in one pass, keeping the "built first, before
   any write" ordering this function's own comment says is load-bearing.
@@ -170,11 +170,6 @@ file: src/lib/xero-hardening-report.ts
 lines: 1093
 reason: seven lines. A duplicate canonical-link group carries the representative
   link it was filtered on.
-
-file: src/lib/xero-invoice-rounding-audit.ts
-lines: 793
-reason: six lines. Both batch loops read the last row where they test the batch
-  is non-empty, which is the same row the cursor advances to.
 
 file: src/lib/xero-applied-credit-deallocation.ts
 lines: 997
