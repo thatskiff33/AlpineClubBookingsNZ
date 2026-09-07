@@ -327,9 +327,12 @@ booking's price is left exactly where the freeze put it rather than worked out
 from evidence the club does not have. That is on purpose — a total built from
 guests the system has just said it cannot value would look freshly calculated and
 be wrong, which is worse than a figure that is merely stale. The audit entry for
-the closure says the price was not worked out, and why. It is worked out the next
-time somebody can say what those nights sold for, either by pricing them on a
-review of that guest or by recording them from the booking itself.
+the closure says the price was not worked out, and why. Nothing then puts the
+booking's own price right on its own: recording those nights from the booking
+afterwards makes the guest's stay readable again, but it does not move the
+booking's stored price. That happens the next time the whole booking is priced
+again — another review on the same booking being closed once its nights can be
+read, or a later change to the booking.
 
 Closing the review is a money-affecting act and is audited as one, in its own
 entry: what each night was set to, what the guest's stay was worth before and

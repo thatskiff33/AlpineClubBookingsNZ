@@ -55,14 +55,19 @@
   rather than worked out from evidence the club does not have — a total built
   from guests the club has just said it cannot value would look freshly
   calculated and be wrong, which is worse than a figure that is merely stale. The
-  closure's audit entry says the price was not worked out, and why. It is worked
-  out the next time somebody can say what those nights sold for.
+  closure's audit entry says the price was not worked out, and why. Recording
+  those nights from the booking afterwards makes the guest's stay readable again
+  but does not by itself move the booking's price — that happens the next time
+  the whole booking is priced again, on another review closing or a later change
+  to the booking.
 
 - **A closure that lands on the price already stored records nothing (#3257).**
   Most reviews close on a booking whose price never drifted, so working it out
   again gives the same figures; the booking's history gets a **Price
-  Recalculated** entry only when something actually moved. The audit entry
-  records the closure either way.
+  Recalculated** entry only when something actually changed. A promotion that
+  stops applying and is taken off counts as a change even when every figure comes
+  out the same, so the entry saying the promotion was removed is never lost. The
+  audit entry records the closure either way.
 
 - **A review naming a guest who is not on the booking is refused (#3219).**
   Nothing previously checked that, so a mismatched record could have recalculated
