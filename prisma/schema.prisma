@@ -2759,6 +2759,32 @@ enum ManualRefundTaskKind {
   /// An admin prices it from the booking's own payment and rate history and
   /// confirms the amount, and only then does any money move.
   EDIT_FINANCIAL_REVIEW
+  /// #3213 (epic #2797): a settled review share that could NOT be added to the
+  /// edit's Xero invoice, because that invoice had been picked up for sending
+  /// and could no longer be raised. Nothing is billed automatically - a
+  /// mid-send job can still come back to the queue and be raised to the full
+  /// amount, so a second invoice raised now could bill the same money twice.
+  /// The share becomes an item an officer checks against Xero and closes
+  /// deliberately.
+  ///
+  /// ONE ITEM PER WITHHELD SHARE: this kind mints an `occurrenceKey`, and
+  /// `ManualRefundTask_edit_review_occurrence_key_present` refuses a row of this
+  /// kind without one (migration 20260910010000). The unique index exempts NULL,
+  /// so without that CHECK a writer could raise a fresh item on every replay.
+  ///
+  /// DISMISS-ONLY, and that is the whole safety argument. COMPLETED on a kind
+  /// whose `settlementDirection` is null asserts REFUND_TO_MEMBER and reaches
+  /// the refund-allocation path, so `resolveManualRefundTask` refuses a
+  /// COMPLETED close for this kind outright: no money path is reachable from
+  /// one of these rows under any input. `INV-PAY-051`.
+  ///
+  /// REGISTERED THIS RELEASE, WRITTEN THE NEXT (migration 20260910010000).
+  /// The previous colour's Prisma client cannot deserialize a label it does not
+  /// know, and the finance queue's own read selects this column - so a row
+  /// carrying this value while that colour still serves would take the whole
+  /// hand-back queue down with it. `uncollected-edit-review-share-expand.test.ts`
+  /// fails the build if any writer starts producing it early.
+  UNCOLLECTED_EDIT_REVIEW_SHARE
 }
 
 /// #3170 (epic #2797): WHICH WAY a completed task's money went.

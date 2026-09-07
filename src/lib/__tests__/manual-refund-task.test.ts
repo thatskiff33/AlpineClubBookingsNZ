@@ -1910,3 +1910,132 @@ describe("#3194 - a review raised before the member paid still refunds to their 
     expect(mocks.createBookingModificationCredit).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * #3213 (epic #2797): the DISMISS-ONLY door for a withheld review share.
+ *
+ * `UNCOLLECTED_EDIT_REVIEW_SHARE` is a notice that the club may not have asked
+ * for money, raised when a settled share could not be added to an edit's Xero
+ * invoice because that invoice was mid-send. Nothing about it may move money.
+ *
+ * The hazard it is guarded against is specific rather than theoretical. A
+ * COMPLETED close with no direction reads as `REFUND_TO_MEMBER` on every kind
+ * older than `EDIT_FINANCIAL_REVIEW` - so without this refusal the completion
+ * would assert a refund the club never made and reach the allocation path with
+ * an amount that is not a refund at all. The screen offers only the dismiss
+ * control; this is what makes that a guarantee rather than a UI convention.
+ */
+describe("#3213 - a withheld review share is dismiss-only", () => {
+  function withheldShareTask(overrides: Record<string, unknown> = {}) {
+    mocks.manualRefundTaskFindUnique.mockResolvedValue({
+      id: "task-withheld",
+      bookingId: "booking-1",
+      // No captured payment behind it: nothing is owed back, so there is
+      // nothing for a refund to be allocated against.
+      paymentId: null,
+      amountCents: 4500,
+      raisedAmountCents: 4500,
+      kind: ManualRefundTaskKind.UNCOLLECTED_EDIT_REVIEW_SHARE,
+      status: ManualRefundTaskStatus.OPEN,
+      booking: { memberId: "member-1", status: "CONFIRMED", payment: null },
+      ...overrides,
+    });
+  }
+
+  it("refuses a COMPLETED close, whatever direction and amount are posted", async () => {
+    withheldShareTask();
+
+    await expect(
+      resolveManualRefundTask({
+        taskId: "task-withheld",
+        resolution: "completed",
+        note: "billed it in Xero",
+        actingMemberId: "admin-1",
+        confirmedAmountCents: 4500,
+        direction: "CHARGE_TO_MEMBER",
+        recordedNightPrices: null,
+      })
+    ).rejects.toThrow(/cannot be closed as an amount settled here/i);
+
+    // The refusal is BEFORE the claim, so the row is untouched and no money
+    // path ran. Asserted rather than assumed: a guard placed after the claim
+    // would still throw and would still leave a closed row behind it.
+    expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
+    expect(mocks.planStripeRefundAllocation).not.toHaveBeenCalled();
+    expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
+    expect(mocks.createBookingModificationCredit).not.toHaveBeenCalled();
+    expect(mocks.recordBookingEvent).not.toHaveBeenCalled();
+  });
+
+  it("refuses the direction-less COMPLETED too, which is the shape that would have read as a refund", async () => {
+    withheldShareTask();
+
+    await expect(
+      resolveManualRefundTask({
+        taskId: "task-withheld",
+        resolution: "completed",
+        note: "checked Xero",
+        actingMemberId: "admin-1",
+        confirmedAmountCents: null,
+        direction: null,
+        recordedNightPrices: null,
+      })
+    ).rejects.toThrow(/cannot be closed as an amount settled here/i);
+    expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
+  });
+
+  it("still lets an officer DISMISS it with a note, which is how the item is closed", async () => {
+    withheldShareTask();
+
+    await resolveManualRefundTask({
+      taskId: "task-withheld",
+      resolution: "dismissed",
+      note: "Xero already showed $45.00 on invoice INV-0142 - nothing to bill",
+      actingMemberId: "admin-1",
+      recordedNightPrices: null,
+    });
+
+    expect(mocks.manualRefundTaskUpdateMany).toHaveBeenCalledTimes(1);
+    const claim = mocks.manualRefundTaskUpdateMany.mock.calls[0][0] as {
+      data: { status: string };
+    };
+    expect(claim.data.status).toBe(ManualRefundTaskStatus.DISMISSED);
+    // Closing it moves nothing, which is the entire point of the kind.
+    expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
+    expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
+    expect(mocks.createBookingModificationCredit).not.toHaveBeenCalled();
+    expect(mocks.recordBookingEvent).not.toHaveBeenCalled();
+  });
+
+  it("still requires a note on the dismissal, so the record says what Xero showed", async () => {
+    withheldShareTask();
+
+    await expect(
+      resolveManualRefundTask({
+        taskId: "task-withheld",
+        resolution: "dismissed",
+        note: "   ",
+        actingMemberId: "admin-1",
+        recordedNightPrices: null,
+      })
+    ).rejects.toThrow(/note is required/i);
+    expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("leaves every other kind completable, so the guard cannot have closed the door on the queue's real work", async () => {
+    // The mutation this pins: a guard written without the kind check would
+    // refuse every completion in the system.
+    await resolveManualRefundTask({
+      taskId: "task-1",
+      resolution: "completed",
+      note: "cash handed back",
+      actingMemberId: "admin-1",
+      confirmedAmountCents: null,
+      direction: "REFUND_TO_MEMBER",
+      recordedNightPrices: null,
+    });
+    expect(mocks.manualRefundTaskUpdateMany).toHaveBeenCalledTimes(1);
+  });
+});

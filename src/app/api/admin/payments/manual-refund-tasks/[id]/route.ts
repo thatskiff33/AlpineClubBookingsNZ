@@ -9,6 +9,7 @@ import { nonNegativeCentsSchema } from "@/lib/edit-financial-review-context";
 import { recordedNightPricesSchema } from "@/lib/stored-night-price-repair";
 import {
   completionMessage,
+  dismissalMessage,
   nightPricesRecordedMessage,
 } from "@/lib/manual-refund-task-copy";
 import {
@@ -184,7 +185,7 @@ export async function POST(
       message: `${
         parsed.data.resolution === "completed"
           ? completionMessage(result)
-          : "Refund task dismissed."
+          : dismissalMessage(result.kind)
       }${nightPricesRecordedMessage(result.recordedNightPriceCount)}`,
     });
   } catch (error) {

@@ -18,12 +18,19 @@ import { DIAGNOSTICS_PAGE_CONTEXT_BOUNDS } from "../types";
 const VALID = { routeKey: "admin.bookings" } as const;
 
 describe("there is exactly one door", () => {
-  // A strict zod object is NOT total on its own: a `JSON.parse`-created
-  // `__proto__` own property is accepted and silently stripped, reported as no
-  // unknown key at all. So the selector schema must not be reachable beside
+  // This schema is NOT total on its own, because `filters` is a `z.record(...)`:
+  // measured on zod 4.5.4, a record never surfaces a `JSON.parse`-created
+  // `__proto__` to its key schema, so the key is silently dropped and no unknown
+  // key is reported. So the selector schema must not be reachable beside
   // `parseDiagnosticsPageSelector`, whose layer-0 scan refuses reserved keys on the
   // RAW input — an exported schema is a second door that repairs what this module
   // is contractually required to refuse.
+  //
+  // The top-level `.strict()` object no longer needs that help: zod 4.5 refuses an
+  // enumerable reserved key there, where 4.4.3 stripped it (#3313). The scan still
+  // covers it, because what one version of a dependency happens to refuse is not a
+  // contract it has made — and because zod's new refusal does not extend to a
+  // non-enumerable key on any shape.
   it("exports no selector schema a caller could use instead of the parser", () => {
     for (const surface of [parseModule, typesModule]) {
       for (const [name, value] of Object.entries(surface)) {
@@ -355,11 +362,12 @@ describe("filters", () => {
 });
 
 describe("reserved keys are refused, never dropped", () => {
-  // Regression: zod's `record` never surfaces `__proto__` to the key schema and
-  // assigning it onto the output object is a no-op, so the key USED TO vanish and
-  // the selector was then accepted — even on `admin.health`, which allowlists no
-  // filters at all. A silently dropped key is exactly the partial rejection this
-  // module's contract forbids.
+  // Regression: zod's `record` never surfaces `__proto__` to the key schema at
+  // all, so the key USED TO vanish and the selector was then accepted — even on
+  // `admin.health`, which allowlists no filters at all. A silently dropped key is
+  // exactly the partial rejection this module's contract forbids. Still true on
+  // zod 4.5.4: the record behaviour is unchanged, and it is what keeps the
+  // layer-0 scan load-bearing now that strict objects refuse the key themselves.
   it("refuses a __proto__ filter key on a route that allows no filters", () => {
     const input = JSON.parse(
       '{"routeKey":"admin.health","filters":{"__proto__":"x"}}',
@@ -379,6 +387,13 @@ describe("reserved keys are refused, never dropped", () => {
   });
 
   it("refuses a reserved key at the top level of the selector", () => {
+    // Only the third input still discriminates the layer-0 scan. Since zod 4.5 the
+    // strict selector object refuses the first two on its own, so they hold
+    // whatever the scan does (#3313). The third survives as real coverage because
+    // `prototype` matches `FILTER_KEY_PATTERN` and a record KEEPS it, so without
+    // the scan it would parse structurally and come back `filter_not_allowed`
+    // rather than the `malformed` asserted here — a partial rejection, which is
+    // exactly what this module's contract forbids.
     for (const raw of [
       '{"routeKey":"admin.bookings","__proto__":{"routeKey":"admin.health"}}',
       '{"routeKey":"admin.bookings","constructor":"x"}',
