@@ -263,4 +263,36 @@ describe("what the operator is told afterwards", () => {
     const body = (await response.json()) as { message: string };
     expect(body.message).toBe("Refund task dismissed.");
   });
+
+  /*
+    #3213: the same route, the same resolution, a different item type - and the
+    officer must not be told they dismissed a refund when what they did was
+    check Xero and bill a shortfall by hand. The route reads the kind off the
+    resolved task rather than off the request, so a client that lied about the
+    kind cannot change the sentence. Wording itself is pinned in
+    `manual-refund-task-closure-wording.test.ts`; what this pins is that the
+    route asks at all.
+  */
+  it("says what a withheld share close actually did, not that a refund was dismissed", async () => {
+    mocks.resolveManualRefundTask.mockResolvedValue({
+      amountAmended: false,
+      settlementRoute: null,
+      stripeRefundId: null,
+      additionalPaymentIntentId: null,
+      recordedNightPriceCount: 0,
+      kind: "UNCOLLECTED_EDIT_REVIEW_SHARE",
+    });
+    const response = await POST(
+      request({
+        resolution: "dismissed",
+        confirmed: true,
+        note: "Xero already showed the full amount.",
+      }),
+      { params },
+    );
+    const body = (await response.json()) as { message: string };
+    expect(body.message).not.toBe("Refund task dismissed.");
+    expect(body.message.toLowerCase()).not.toContain("refund");
+    expect(body.message).toContain("It moved no money and raised no invoice");
+  });
 });
