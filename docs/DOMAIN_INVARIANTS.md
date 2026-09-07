@@ -234,8 +234,8 @@ Prefix `INV-PAY`.
 | `INV-PAY-083` | A definite Stripe failure ends the attempt; an ambiguous one keeps it |
 | `INV-PAY-084` | A pre-cutover shared-key charge is recognised by reason and taken over |
 | `INV-PAY-085` | An attempt on a replaced card is ended; its intent is cancelled |
-| `INV-PAY-086` | Captured money refuses a new attempt; ordering with INV-PAY-054 and INV-PAY-053 |
-| `INV-PAY-087` | The captured-money refusal alert is capped and anchored on observation |
+| `INV-PAY-086` | Captured money refuses every PRIMARY row; ordering with INV-PAY-054 |
+| `INV-PAY-087` | The refusal alert is capped and anchored; a harmless INV-PAY-053 consequence |
 | `INV-PAY-088` | Stripe's answer is recorded on the attempt row, forward only |
 | `INV-PAY-089` | A key is only re-sent inside Stripe's window, or recovered by it |
 | `INV-PAY-090` | The pre-charge sweep excludes attempt rows by the key prefix |
@@ -250,7 +250,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-060` | Settled occurrences never suppress the next; stored prices are not proof |
 | `INV-PAY-068` | A completion at zero is refused; the refusal names the way out |
 | `INV-PAY-096` | A share mid-send for its invoice becomes a dismiss-only queue item |
-| `INV-PAY-097` | One withheld share is one item, registered before it ever writes |
+| `INV-PAY-097` | One withheld share is one item; a credit-only completion records no refund |
 | `INV-PAY-061` | Confirmed amounts settle through an existing path, chosen at completion |
 | `INV-PAY-069` | Completions record their direction; charging re-enters the additional-payment path |
 | `INV-PAY-062` | One booking edit raises one charge request, derived from settled shares |

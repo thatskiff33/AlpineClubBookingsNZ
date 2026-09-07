@@ -1054,7 +1054,8 @@ _Split from `INV-PAY-068` (#3213, PR #3309)._
 
 ## INV-PAY-097
 
-_Split from `INV-PAY-068` (#3213, PR #3309)._
+_Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
+`UNCOLLECTED_EDIT_REVIEW_SHARE`, defined in `INV-PAY-096`._
 
 - **One withheld share
   is one item**: the kind mints an `occurrenceKey` and
@@ -1546,7 +1547,8 @@ _Split from `INV-PAY-053` (#3269, epic #3270)._
 
 ## INV-PAY-078
 
-_Split from `INV-PAY-054` (#3268, epic #3270)._
+_Split from `INV-PAY-054` (#3268, epic #3270); its lead bullet continues in
+`INV-PAY-079`._
 
 - **Terminal means the card leaves every row, not just this booking's.** The
   capacity claim is released first, exactly as before. Then the pm is detached
@@ -1573,7 +1575,8 @@ _Split from `INV-PAY-054` (#3268, epic #3270)._
 
 ## INV-PAY-079
 
-_Split from `INV-PAY-054` (#3268, epic #3270)._
+_Split from `INV-PAY-054` (#3268, epic #3270); continuing `INV-PAY-078`'s
+"Terminal means the card leaves every row" bullet._
 
 - The ledger rows are nulled anyway so that no row
   anywhere names a retired card — a `paymentMethodId` on a captured row is
@@ -1679,7 +1682,8 @@ _Split from `INV-PAY-055` (#3267, epic #3270)._
 
 ## INV-PAY-082
 
-_Split from `INV-PAY-055` (#3267, epic #3270)._
+_Split from `INV-PAY-055` (#3267). "A definite failure" is defined in
+`INV-PAY-083`._
 
 - **An unresolved attempt on the same card is REPLAYED, and a replay asks
   about THAT attempt.** A PENDING/PROCESSING attempt row whose
@@ -1802,6 +1806,10 @@ _Split from `INV-PAY-055` (#3267, epic #3270)._
   back — nothing claimed, nothing charged — and the caller logs at error level
   on every attempt until a person, or a redelivered webhook that finds the row
   by intent id, settles it.
+  Every PRIMARY Stripe row
+  counts here, attempt row or not; the rows that are neither attempt rows nor
+  legacy shared-key rows (an in-flight /pay link intent on another card, or on
+  no card yet) are otherwise left to the mechanisms that own them.
 
 - **Ordering with `INV-PAY-054`, load-bearing and invisible from either side
   alone.** The retire path nulls `PaymentTransaction.paymentMethodId` on every
@@ -1816,14 +1824,6 @@ _Split from `INV-PAY-055` (#3267, epic #3270)._
   (Stripe executes the replay once, or answers `idempotency_error`, which is
   definite), and is a duplicate only if the first POST also captured under a
   lost webhook, where `INV-PAY-043` is the backstop.
-
-- **A consequence of `INV-PAY-053` to expect, not to fix.** The attempt row
-  carries the borrowed card on a split child's payment, and no claim writes the
-  card column; but a reconcile of that PENDING child — a `Payment` row with no
-  `stripeSetupIntentId` — mirrors the latest PRIMARY row's card onto it. The
-  copy is expected and harmless because `reusableSavedPaymentMethodOnRow`
-  refuses a card on a row without a SetupIntent; the predicate is what makes
-  the copy harmless, not the absence of the copy.
 
 ## INV-PAY-087
 
@@ -1844,10 +1844,14 @@ _Split from `INV-PAY-055` (#3267, epic #3270)._
   until T+12 days. The row's own timestamp also moves for reasons unrelated to
   the refusal (`INV-PAY-054`'s retire nulls the card by pm id across rows),
   which would restart the cadence at window 1.
-  Every PRIMARY Stripe row
-  counts here, attempt row or not; the rows that are neither attempt rows nor
-  legacy shared-key rows (an in-flight /pay link intent on another card, or on
-  no card yet) are otherwise left to the mechanisms that own them.
+
+- **A consequence of `INV-PAY-053` to expect, not to fix.** The attempt row
+  carries the borrowed card on a split child's payment, and no claim writes the
+  card column; but a reconcile of that PENDING child — a `Payment` row with no
+  `stripeSetupIntentId` — mirrors the latest PRIMARY row's card onto it. The
+  copy is expected and harmless because `reusableSavedPaymentMethodOnRow`
+  refuses a card on a row without a SetupIntent; the predicate is what makes
+  the copy harmless, not the absence of the copy.
 
 ## INV-PAY-088
 
