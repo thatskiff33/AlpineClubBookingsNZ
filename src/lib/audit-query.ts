@@ -451,7 +451,15 @@ export function formatMetadataFragment(key: string, value: Prisma.JsonValue): st
     return null;
   }
   if (typeof value === "number" && /cents$/i.test(key)) {
-    return `${humanizeKey(key)} ${formatCents(value)}`;
+    // #3302 review (equivalence lens F8): this reads a JSON number straight
+    // from stored audit metadata with no writer-side guarantee it is an
+    // integer. `Math.round` before `formatCents` (matching
+    // `xero-operation-summaries.ts`'s own guard on the same shared helper)
+    // keeps money integer cents at this call site regardless of what a
+    // caller stored, and removes a rounding-MODE difference the review
+    // measured between the old `.toFixed(2)` body and `Intl.NumberFormat`
+    // at exactly a half-cent (1.5 rounded to 2c one way and 1c the other).
+    return `${humanizeKey(key)} ${formatCents(Math.round(value))}`;
   }
   if (typeof value === "boolean") {
     return `${humanizeKey(key)} ${value ? "yes" : "no"}`;

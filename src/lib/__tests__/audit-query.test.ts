@@ -250,4 +250,15 @@ describe("audit query helpers", () => {
       "Amount $1,234.56",
     );
   });
+
+  // #3302 review (equivalence lens F8): stored audit metadata is untyed JSON,
+  // with no writer-side guarantee a `*Cents` value is an integer. Rounds
+  // before formatting so money stays integer cents at this call site, and so
+  // this cannot render two different amounts for the same stored value
+  // depending on which formatter happens to read it (measured: 1.5 rounded to
+  // two cents one way and one cent the other before this guard).
+  it("rounds a non-integer *Cents metadata value before formatting", () => {
+    expect(formatMetadataFragment("amountCents", 1.5)).toBe("Amount $0.02");
+    expect(formatMetadataFragment("amountCents", 1.4)).toBe("Amount $0.01");
+  });
 });
