@@ -1,5 +1,5 @@
 import { parseDecimalDollarsToCents } from "@/lib/money-input";
-import { formatCents } from "@/lib/utils";
+import { formatCentsPlain } from "@/lib/utils";
 
 // Money helpers for the AI assistant monthly spend cap. All money is NZD integer
 // cents; the editor shows dollars-and-cents. Bounds mirror the settings route's
@@ -11,12 +11,15 @@ export const MAX_BUDGET_CENTS = 100_000;
 /**
  * Integer cents → a fixed 2dp dollars string for the editor input (e.g. 1000 →
  * "10.00"). Kept as its own name (#3302) because callers reach for
- * "centsToDollars" for an editable input value, not a displayed amount — but
- * the arithmetic itself is `formatCents`'s `{ style: "plain" }`, not a second
- * copy of it.
+ * "centsToDollars" for an editable input value, not a displayed amount, but it
+ * is `formatCentsPlain` underneath, not a second copy of it.
+ *
+ * The ONE definition (#3302 SSOT review): the AI Diagnostics spend-cap card
+ * imports this one rather than keeping its own copy, so there is exactly one
+ * `centsToDollars` in `src/`, not two with the same name and body.
  */
 export function centsToDollars(cents: number): string {
-  return formatCents(cents, { style: "plain" });
+  return formatCentsPlain(cents);
 }
 
 export type ParseBudgetResult =

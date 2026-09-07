@@ -123,7 +123,7 @@ import {
   recoverRefundCreditNoteLinkAmountCents,
   sumCoveredRefundCreditNoteCents,
 } from "@/lib/xero-sync";
-import { formatCents } from "@/lib/utils";
+import { formatCentsPlain } from "@/lib/utils";
 
 export type StripeRefundNoteLinkPlannedAction =
   | "keep-active"
@@ -829,16 +829,16 @@ export async function applyStripeRefundNoteLinkRepairs(options?: {
  * The report already reads as a bare decimal delta ("refunded mirror 1.00,
  * cash refund-note target 1.00"), pinned by
  * `xero-refund-note-link-repair.test.ts` — no `$`, no thousands grouping — so
- * this stays `formatCents`'s `{ style: "plain" }` (#3302) rather than the
- * currency-formatted default every other caller uses. `null` (amount not yet
- * known) renders as "unknown" rather than a formatted zero, which the same
- * fixture also pins.
+ * this stays `formatCentsPlain` (#3302) rather than the currency-formatted
+ * `formatCents` every other caller uses. `null` (amount not yet known)
+ * renders as "unknown" rather than a formatted zero, which the same fixture
+ * also pins.
  */
 function formatRefundLinkCents(cents: number | null): string {
   if (cents === null) {
     return "unknown";
   }
-  return formatCents(cents, { style: "plain" });
+  return formatCentsPlain(cents);
 }
 
 /** Plain-text report for the operator script. */

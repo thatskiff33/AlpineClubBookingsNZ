@@ -13,26 +13,55 @@ const centsFormatter = new Intl.NumberFormat(APP_LOCALE, {
 
 /**
  * The one home (#3302, `INV-SSOT-001`) for turning an integer-cent amount into
- * a string. Eight copies existed beneath `formatSignedCents` (#3264), and four
- * had drifted in the same way #3264 already found: a hard-coded `$`, no
- * thousands grouping, `APP_CURRENCY` ignored. Every caller now derives from
- * here.
+ * a currency-formatted string in the club's configured locale and currency.
+ * Every former stand-alone copy of this — a hand-rolled hard-coded `$`, no
+ * thousands grouping, `APP_CURRENCY` ignored — now derives from here, and the
+ * exact count is recorded once, in the pull request, not restated here where
+ * it would only go stale again.
  *
- * `{ style: "plain" }` is the one genuine second rendering: a bare two-decimal
- * string with no currency symbol or grouping, for an editable dollars input
- * (the AI assistant and diagnostics spend-cap boxes) and a report line that
- * already reads as a delta without one (the Xero refund-note repair report).
- * Both are pinned by existing fixtures. It is still ONE formatter — the option
- * is the difference, not a second copy of the cents-to-string arithmetic.
+ * The Internet Banking hold-clearing report (`ib-hold-clearing-audit.ts`) is
+ * a named, docblocked exception: it hard-codes `NZ$` rather than the club's
+ * configured currency, deliberately unchanged pending #3325. Do not read the
+ * sentence above as covering it, or the roughly thirty other inline
+ * `(cents / 100).toFixed(...)` expressions across the tree that this issue's
+ * comparison did not touch because none of them share a definition with this
+ * one — `formatCents` is the concept "one home for THIS helper's copies", not
+ * a claim that no other file ever divides cents by 100. #3302's own review
+ * found and fixed several more of the same class; whatever the count is by
+ * the time you read this, it is stated in the pull request, once.
+ *
+ * Guards negative zero (`-0`): a caller that rounds a small negative to zero
+ * (`Math.round(-0.4)` is `-0`) must not see `-$0.00` — `formatSignedCents`
+ * below already guarded this for its own zero case, and widening this
+ * function's callers is the reason to close it here too.
+ *
+ * For the one genuine second rendering — a bare two-decimal string with no
+ * currency symbol or grouping, for an editable dollars input or a report line
+ * that already reads as a delta — use `formatCentsPlain`, a separate named
+ * function rather than an option on this one, so calling the wrong rendering
+ * is a different import, not a different argument silently defaulting to the
+ * wrong shape.
  */
-export function formatCents(
-  cents: number,
-  options?: { style?: "plain" }
-): string {
-  if (options?.style === "plain") {
-    return (cents / 100).toFixed(2);
-  }
-  return centsFormatter.format(cents / 100);
+export function formatCents(cents: number): string {
+  return centsFormatter.format((cents === 0 ? 0 : cents) / 100);
+}
+
+/**
+ * The bare two-decimal rendering `formatCents` deliberately does not do: no
+ * currency symbol, no thousands grouping. For an editable dollars input (the
+ * AI assistant and AI Diagnostics spend-cap boxes, which show `"10.00"` not
+ * `"$10.00"`) and for a report line that already reads as a delta (the Xero
+ * refund-note repair report, and the Internet Banking backfill audit line,
+ * which prepends its own `NZ$` — see #3325). Pinned by each caller's own
+ * fixture.
+ *
+ * A separate named function rather than an option on `formatCents` (#3302
+ * review): the wrong rendering is then a different import a reviewer sees at
+ * the top of the file, not a different argument a reviewer has to notice was
+ * left off.
+ */
+export function formatCentsPlain(cents: number): string {
+  return (cents / 100).toFixed(2);
 }
 
 /**

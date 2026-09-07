@@ -8,7 +8,7 @@ import {
   useAdminAreaEditAccess,
 } from "@/hooks/use-admin-area-edit-access";
 import { parseDecimalDollarsToCents } from "@/lib/money-input";
-import { formatCents } from "@/lib/utils";
+import { centsToDollars } from "@/app/(admin)/admin/ai-assistant/budget";
 
 /**
  * THE MONTHLY DIAGNOSTICS BUDGET, shown and edited (AID-7, #2378, owner decision 3).
@@ -62,15 +62,6 @@ type BudgetState =
       activeReservedCents: number;
       requestCount: number;
     };
-
-/**
- * Cents to the dollar string the input shows. Money stays in integer cents.
- * `formatCents`'s `{ style: "plain" }` (#3302) — same arithmetic as the AI
- * assistant budget box's `centsToDollars`, one definition for both.
- */
-function centsToDollars(cents: number): string {
-  return formatCents(cents, { style: "plain" });
-}
 
 /**
  * Dollars typed by a human to integer cents, or null when it is not an amount.
