@@ -1028,6 +1028,32 @@ one, check the other.
   home for both sentences; the admin route's schema no longer rejects a zero
   because it cannot know which control to name, and the settle screen reads the
   same refusal.
+- **A share the edit's invoice was mid-send for becomes a DISMISS-ONLY queue
+  item, and nothing bills it** (#3213, owner decision 4 Sep 2026). When a
+  settled share cannot be added to its edit's Xero invoice because that invoice
+  has been picked up for sending, no second invoice is raised: a claimed job
+  can still return to the queue and go out at the full amount, so raising one
+  now could bill the member twice. The share becomes a
+  `UNCOLLECTED_EDIT_REVIEW_SHARE` task an officer closes deliberately, and
+  closing it is DISMISSED - the completion door refuses `COMPLETED` on this
+  kind outright, because `settlementDirection` NULL reads as `REFUND_TO_MEMBER`
+  on every kind older than `EDIT_FINANCIAL_REVIEW` and a completion would
+  therefore assert a refund the club never made and reach the allocation path.
+  `amountCents` NULL is legal here and means the missing amount is genuinely
+  unknowable - the payment-recovery replay holds the edit's combined total and
+  cannot say which part the sent invoice carried - so `0` may no more be used
+  for it than on a review, and the settled TOTAL may not be substituted, which
+  would tell an officer to bill money already asked for. **One withheld share
+  is one item**: the kind mints an `occurrenceKey` and
+  `ManualRefundTask_edit_review_occurrence_key_present` refuses a row of this
+  kind without one, because the unique index exempts NULL and a writer that
+  omitted the key would raise a fresh item on every replay - the officer would
+  be told twice to check one booking and could bill it twice. The accepted
+  trade is that the item is *visible and actionable*, never self-resolving:
+  closing it is a person's act. **Registered in one release and written in the next**
+  (migration `20260910010000`), because the previously deployed colour cannot
+  deserialize the label and the finance queue selects `kind` over every OPEN
+  row; `uncollected-edit-review-share-expand.test.ts` holds that line.
 - **A credit-only completion records no refund.** Where the booking has no
   captured money, `Payment.refundedAmountCents` is untouched and no `REFUNDED`
   booking event is written — that log is member-facing. Since #3032 such a

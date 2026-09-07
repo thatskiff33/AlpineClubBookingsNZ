@@ -98,6 +98,7 @@ file; the checker treats an absent register as "no exceptions, no debt".
 | `INV-LOCK-004` | 512 |
 | `INV-HOST-044` | 506 |
 | `INV-EXCEPT-009` | 505 |
+| `INV-PAY-068` | 492 |
 | `INV-INT-017` | 489 |
 | `INV-PRIV-015` | 458 |
 | `INV-LIFE-054` | 449 |
