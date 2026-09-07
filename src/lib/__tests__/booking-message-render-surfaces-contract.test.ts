@@ -45,8 +45,8 @@ const RENDER_SURFACES: Array<{
   readsMessageMap: boolean;
 }> = [
   {
-    file: "src/app/(authenticated)/bookings/[id]/page.tsx",
-    what: "the member booking detail page",
+    file: "src/app/(authenticated)/bookings/[id]/_lib/booking-detail-messages.ts",
+    what: "the member booking detail page's message rendering (#2958)",
     // A server component: it builds the merge data itself rather than taking
     // club tokens off the wire, and its own contract test
     // (booking-message-merge-data-contract.test.ts) pins the lodge it uses.
@@ -136,6 +136,10 @@ const NON_RENDERING_REFERENCES = [
   "src/app/api/booking-messages/route.ts",
   "src/app/api/admin/booking-messages/route.ts",
   "src/lib/api-route-security.ts",
+  // #2958: the page shell loads the map once and hands it to
+  // `_lib/booking-detail-messages.ts` (registered above), which is the surface
+  // that renders; the shell itself indexes nothing.
+  "src/app/(authenticated)/bookings/[id]/page.tsx",
 ];
 
 const SOURCE_EXTENSIONS = new Set([".ts", ".tsx"]);

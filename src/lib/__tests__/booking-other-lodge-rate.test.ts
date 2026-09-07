@@ -470,8 +470,9 @@ describe("resolveGuestRateMembershipTypes — other-lodge members", () => {
  * two awaits. Both carry a claim in a comment, and a comment is not a guard.
  */
 describe("who the booking page tells about eligibility, and in which season", () => {
+  // #2958: the edit panel's payload is built in this module of the page.
   const bookingPage = readFileSync(
-    "src/app/(authenticated)/bookings/[id]/page.tsx",
+    "src/app/(authenticated)/bookings/[id]/_lib/booking-detail-editor-data.ts",
     "utf8",
   );
 
