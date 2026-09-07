@@ -36,7 +36,7 @@ import { zeroCompletionRefusal } from "@/lib/manual-refund-task-copy";
 import type { RecordedNightPrice } from "@/lib/stored-night-price-repair";
 import {
   planStoredNightPriceRepair,
-  recordStoredNightPriceRepair,
+  recordReviewClosurePricing,
 } from "@/lib/stored-night-price-repair-store";
 
 /**
@@ -567,11 +567,12 @@ export async function resolveManualRefundTask(
     }
 
     // #3191: the blanks become numbers, after the claim and inside it, so a lost
-    // claim writes no prices. It records its OWN audit entry rather than adding
-    // to the one below - see `recordStoredNightPriceRepair` for why.
-    // #3219: it also re-prices the BOOKING from its strands, on a dismissal too.
-    if (nightPriceRepair) {
-      await recordStoredNightPriceRepair({
+    // claim writes no prices; #3219: the BOOKING is re-priced from its strands
+    // in the same breath, on a dismissal too; #3257: on EVERY parked review
+    // closing, so the plan is the OPTIONAL half and the KIND is the condition -
+    // the two shapes that offer no price boxes used to re-price nothing at all.
+    if (task.kind === ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW) {
+      await recordReviewClosurePricing({
         plan: nightPriceRepair,
         task,
         actingMemberId,
@@ -579,7 +580,6 @@ export async function resolveManualRefundTask(
         note: trimmedNote,
         todayAtClub,
         hasIssuedXeroInvoice,
-        // #3219: the store asks the Xero leg whether a document is issued.
         settlementRoute,
         settlementAmountCents: settlement?.amountCents ?? null,
         store: tx,

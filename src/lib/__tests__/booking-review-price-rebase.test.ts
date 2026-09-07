@@ -25,6 +25,7 @@ import {
   REBASE_STRAND_NOT_ON_BOOKING_MESSAGE,
   rebaseBookingPriceFromStrands,
   rebaseDivergesFromIssuedInvoice,
+  rebaseMovedStoredMoney,
   recordBookingPriceRebaseHistory,
   type BookingPriceRebase,
 } from "@/lib/booking-review-price-rebase";
@@ -106,8 +107,7 @@ describe("re-pricing a booking from its strands (#3219)", () => {
   it("sums the surviving strands and writes all four money columns, fenced on all four", async () => {
     const outcome = await rebaseBookingPriceFromStrands({
       bookingId: "booking-1",
-      repairedGuestId: "guest-1",
-      repairedGuestTotalCents: 10_000,
+      repairedStrand: { bookingGuestId: "guest-1", totalCents: 10_000 },
       todayAtClub: TODAY,
       store,
     });
@@ -153,8 +153,7 @@ describe("re-pricing a booking from its strands (#3219)", () => {
     */
     await rebaseBookingPriceFromStrands({
       bookingId: "booking-1",
-      repairedGuestId: "guest-1",
-      repairedGuestTotalCents: 10_000,
+      repairedStrand: { bookingGuestId: "guest-1", totalCents: 10_000 },
       todayAtClub: TODAY,
       store,
     });
@@ -188,8 +187,7 @@ describe("re-pricing a booking from its strands (#3219)", () => {
 
     const outcome = await rebaseBookingPriceFromStrands({
       bookingId: "booking-1",
-      repairedGuestId: "guest-1",
-      repairedGuestTotalCents: 10_000,
+      repairedStrand: { bookingGuestId: "guest-1", totalCents: 10_000 },
       todayAtClub: TODAY,
       store,
     });
@@ -218,8 +216,7 @@ describe("re-pricing a booking from its strands (#3219)", () => {
     await expect(
       rebaseBookingPriceFromStrands({
         bookingId: "booking-1",
-        repairedGuestId: "guest-1",
-        repairedGuestTotalCents: 10_000,
+        repairedStrand: { bookingGuestId: "guest-1", totalCents: 10_000 },
         todayAtClub: TODAY,
         store,
       }),
@@ -237,8 +234,7 @@ describe("re-pricing a booking from its strands (#3219)", () => {
 
     const outcome = await rebaseBookingPriceFromStrands({
       bookingId: "booking-1",
-      repairedGuestId: "guest-1",
-      repairedGuestTotalCents: 10_000,
+      repairedStrand: { bookingGuestId: "guest-1", totalCents: 10_000 },
       todayAtClub: TODAY,
       store,
     });
@@ -295,28 +291,111 @@ describe("what the re-price will not price from (#3219, INV-MOD-028)", () => {
       figures are left exactly where the park set them. Re-basing anyway would
       assert a booking total built from strands the system has already said it
       cannot value - which is a worse lie than the stale one, and harder to
-      notice. Whether it ever re-bases depends on that strand still having an
-      open review whose price boxes are offered - two shapes of a parked removal
-      have none, and stay with #3257.
+      notice.
+
+      #3257 MADE THIS THE LOAD-BEARING HALF OF THE FEATURE. The trigger is now
+      any parked review closing, so a closure that offers no price boxes reaches
+      this writer instead of skipping it - and "a strand with a stay envelope and
+      no night rows behind it" IS one of the two shapes that used to escape. Get
+      this decline wrong and re-pricing on every close stops closing a gap and
+      starts creating a worse one, so each case is asserted on BOTH triggers.
     */
     mocks.bookingFindUnique.mockResolvedValue(
       bookingWithStrands([SURVIVING_STRAND, badStrand]),
     );
 
+    for (const repairedStrand of [
+      { bookingGuestId: "guest-1", totalCents: 10_000 },
+      null,
+    ]) {
+      vi.clearAllMocks();
+      mocks.bookingFindUnique.mockResolvedValue(
+        bookingWithStrands([SURVIVING_STRAND, badStrand]),
+      );
+
+      const outcome = await rebaseBookingPriceFromStrands({
+        bookingId: "booking-1",
+        repairedStrand,
+        todayAtClub: TODAY,
+        store,
+      });
+
+      expect(outcome).toEqual({
+        rebased: false,
+        reason: "strand-evidence-unreadable",
+      });
+      expect(mocks.recalculateBookingPromo).not.toHaveBeenCalled();
+      expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
+    }
+  });
+});
+
+describe("re-pricing a closure that repaired NOTHING (#3257)", () => {
+  it("sums the surviving strands with no repaired strand at all, and writes all four columns", async () => {
+    /*
+      The trigger moved (owner, 7 September 2026): a parked review closing, not a
+      strand being repaired. Two shapes of a parked guest REMOVAL offer no price
+      boxes - the review names the guest the same transaction deleted, or names a
+      strand with no night rows - so under the old trigger neither re-priced and
+      the headline kept counting a strand the booking no longer had.
+    */
     const outcome = await rebaseBookingPriceFromStrands({
       bookingId: "booking-1",
-      repairedGuestId: "guest-1",
-      repairedGuestTotalCents: 10_000,
+      repairedStrand: null,
       todayAtClub: TODAY,
       store,
     });
 
-    expect(outcome).toEqual({
-      rebased: false,
-      reason: "strand-evidence-unreadable",
+    expect(outcome).toMatchObject({
+      rebased: true,
+      rebase: { newTotalPriceCents: 10_000, newFinalPriceCents: 2_500 },
     });
-    expect(mocks.recalculateBookingPromo).not.toHaveBeenCalled();
-    expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
+    // The promotion is re-capped on this path too - it is the same writer, not a
+    // lighter one for the closures that typed nothing.
+    expect(mocks.recalculateBookingPromo).toHaveBeenCalledWith(
+      expect.objectContaining({ newTotalPriceCents: 10_000 }),
+    );
+    expect(mocks.bookingUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: {
+          totalPriceCents: 10_000,
+          discountCents: 7_500,
+          promoAdjustmentCents: -7_500,
+          finalPriceCents: 2_500,
+        },
+      }),
+    );
+  });
+
+  it("rebaseMovedStoredMoney separates a real movement from a recomputation that landed on the stored figures", () => {
+    // The gate on the history row. Every parked review closing now re-prices, so
+    // most closures recompute what the booking already held; a "Price
+    // Recalculated" row recording no change would be noise.
+    const still: BookingPriceRebase = {
+      previousTotalPriceCents: 10_000,
+      previousDiscountCents: 0,
+      previousPromoAdjustmentCents: 0,
+      previousFinalPriceCents: 10_000,
+      newTotalPriceCents: 10_000,
+      newDiscountCents: 0,
+      newPromoAdjustmentCents: 0,
+      newFinalPriceCents: 10_000,
+      promoRemoved: false,
+    };
+
+    expect(rebaseMovedStoredMoney(still)).toBe(false);
+    // Each column on its own is enough - a promotion that moved while the total
+    // did not is a real movement, and the four are written together.
+    expect(
+      rebaseMovedStoredMoney({ ...still, newTotalPriceCents: 9_000 }),
+    ).toBe(true);
+    expect(rebaseMovedStoredMoney({ ...still, newDiscountCents: 1 })).toBe(true);
+    expect(
+      rebaseMovedStoredMoney({ ...still, newPromoAdjustmentCents: -1 }),
+    ).toBe(true);
+    expect(rebaseMovedStoredMoney({ ...still, newFinalPriceCents: 1 })).toBe(
+      true,
+    );
   });
 });
 
@@ -331,8 +410,7 @@ describe("the strand-on-this-booking guard (#3219)", () => {
     await expect(
       rebaseBookingPriceFromStrands({
         bookingId: "booking-1",
-        repairedGuestId: "guest-on-some-other-booking",
-        repairedGuestTotalCents: 10_000,
+        repairedStrand: { bookingGuestId: "guest-on-some-other-booking", totalCents: 10_000 },
         todayAtClub: TODAY,
         store,
       }),
@@ -349,12 +427,32 @@ describe("the strand-on-this-booking guard (#3219)", () => {
     await expect(
       rebaseBookingPriceFromStrands({
         bookingId: "booking-1",
-        repairedGuestId: "guest-1",
-        repairedGuestTotalCents: 10_000,
+        repairedStrand: { bookingGuestId: "guest-1", totalCents: 10_000 },
         todayAtClub: TODAY,
         store,
       }),
     ).rejects.toMatchObject({ status: 409 });
+    expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("declines rather than ZEROING a headline when there is no repaired strand to prove the list is not empty", async () => {
+    /*
+      #3257: with no repaired strand, the id-and-value check above has nothing to
+      check, so the empty-list half of the hole it closes needs its own answer.
+      Summing an empty guest list would write a $0.00 headline - the exact shape
+      that guard exists to keep unreachable.
+    */
+    mocks.bookingFindUnique.mockResolvedValue(bookingWithStrands([]));
+
+    const outcome = await rebaseBookingPriceFromStrands({
+      bookingId: "booking-1",
+      repairedStrand: null,
+      todayAtClub: TODAY,
+      store,
+    });
+
+    expect(outcome).toEqual({ rebased: false, reason: "no-surviving-strands" });
+    expect(mocks.recalculateBookingPromo).not.toHaveBeenCalled();
     expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
   });
 
@@ -364,8 +462,7 @@ describe("the strand-on-this-booking guard (#3219)", () => {
     await expect(
       rebaseBookingPriceFromStrands({
         bookingId: "booking-1",
-        repairedGuestId: "guest-1",
-        repairedGuestTotalCents: 9_999,
+        repairedStrand: { bookingGuestId: "guest-1", totalCents: 9_999 },
         todayAtClub: TODAY,
         store,
       }),
@@ -379,8 +476,7 @@ describe("the strand-on-this-booking guard (#3219)", () => {
     await expect(
       rebaseBookingPriceFromStrands({
         bookingId: "booking-1",
-        repairedGuestId: "guest-1",
-        repairedGuestTotalCents: 10_000,
+        repairedStrand: { bookingGuestId: "guest-1", totalCents: 10_000 },
         todayAtClub: TODAY,
         store,
       }),

@@ -27,8 +27,10 @@ import {
   type UnpricedNightsSummary,
 } from "@/lib/stored-night-price-repair";
 import {
+  bookingRebaseAuditMetadata,
   rebaseBookingPriceFromStrands,
   rebaseDivergesFromIssuedInvoice,
+  rebaseMovedStoredMoney,
   recordBookingPriceRebaseHistory,
 } from "@/lib/booking-review-price-rebase";
 
@@ -287,7 +289,9 @@ export async function planStoredNightPriceRepair({
 }
 
 /**
- * Write the plan and audit it, AFTER the caller's claim and inside it.
+ * Close a parked review's PRICING half, AFTER the caller's claim and inside it:
+ * write whatever night prices the officer recorded, then re-price the booking
+ * from its strands - and audit both as one act.
  *
  * AUDITED AS A MONEY-AFFECTING ACT IN ITS OWN RIGHT, which #3191 requires, and
  * as a SECOND entry rather than as metadata on the settlement beside it. The two
@@ -303,14 +307,20 @@ export async function planStoredNightPriceRepair({
  * other. The re-price itself lives in `booking-review-price-rebase.ts`, which is
  * where its rules, its refusals and its lock declaration are stated.
  *
+ * `plan` IS NULLABLE, AND THAT IS WHAT CLOSES #3257 (owner, 7 September 2026).
+ * The re-price used to ride on the repair, so a review offering no price boxes
+ * re-priced nothing - and two reachable shapes of a parked guest REMOVAL offer
+ * none. This now runs on EVERY parked-review closure, with the repair as its
+ * optional half: a `null` plan never reaches `applyStoredNightPriceRepair`, so
+ * nothing here can derive a night price nobody stated (`INV-MOD-028`).
+ *
  * WHERE THE RE-PRICE DECLINES - a surviving strand whose nights cannot be read
- * back as exact, reconciling evidence - the audit entry says so rather than
- * staying silent, and the booking's totals are left exactly as the park set
- * them. It re-prices later only if that strand still has an open review whose
- * price boxes are offered; two shapes of a parked removal have none, and stay
- * with #3257 (`docs/invariants/booking-modifications.md`).
+ * back as exact, reconciling evidence, or a booking with no strands left - the
+ * audit entry says so rather than staying silent, and the booking's totals are
+ * left exactly as the park set them. That decline is what makes re-pricing on
+ * ANY close safe rather than reckless.
  */
-export async function recordStoredNightPriceRepair({
+export async function recordReviewClosurePricing({
   plan,
   task,
   actingMemberId,
@@ -322,7 +332,8 @@ export async function recordStoredNightPriceRepair({
   settlementAmountCents,
   store,
 }: {
-  plan: StoredNightPriceRepairPlan;
+  /** What the officer recorded, or null where the review offered no boxes. */
+  plan: StoredNightPriceRepairPlan | null;
   task: { id: string; bookingId: string; booking: { memberId: string } };
   actingMemberId: string;
   resolution: "completed" | "dismissed";
@@ -351,19 +362,28 @@ export async function recordStoredNightPriceRepair({
   settlementAmountCents: number | null;
   store: Prisma.TransactionClient;
 }): Promise<void> {
-  const { newGuestTotalCents } = await applyStoredNightPriceRepair({
-    bookingGuestId: plan.bookingGuestId,
-    summary: plan.summary,
-    entries: plan.entries,
-    store,
-  });
+  const repaired = plan
+    ? await applyStoredNightPriceRepair({
+        bookingGuestId: plan.bookingGuestId,
+        summary: plan.summary,
+        entries: plan.entries,
+        store,
+      })
+    : null;
   // #3219: and the booking itself comes back into agreement with its strands, in
   // this same transaction, on a dismissal exactly as on a completion - the park
   // froze it and nothing else thaws it.
+  // #3257: on a closure that repaired NOTHING too, which is where the two shapes
+  // of a parked removal that offer no price boxes used to escape it entirely.
   const outcome = await rebaseBookingPriceFromStrands({
     bookingId: task.bookingId,
-    repairedGuestId: plan.bookingGuestId,
-    repairedGuestTotalCents: newGuestTotalCents,
+    repairedStrand:
+      plan && repaired
+        ? {
+            bookingGuestId: plan.bookingGuestId,
+            totalCents: repaired.newGuestTotalCents,
+          }
+        : null,
     todayAtClub,
     store,
   });
@@ -378,10 +398,16 @@ export async function recordStoredNightPriceRepair({
         xeroAmountCents: settlementAmountCents,
       }),
     });
-  if (rebase !== null) {
+  if (rebase !== null && rebaseMovedStoredMoney(rebase)) {
     // D1's second consequence: a member can now be refunded less than they paid
     // from an action they never saw, so the reason goes in the BOOKING'S OWN
     // HISTORY and not only in the audit entry below.
+    //
+    // #3257: ONLY WHERE THE FIGURES ACTUALLY MOVED. Now that every parked-review
+    // closure re-prices, most of them recompute what the booking already held -
+    // a correct no-op - and a "Price Recalculated" row recording no change is
+    // noise on the page a member and an operator both read. The audit entry
+    // below still records the closure either way.
     await recordBookingPriceRebaseHistory({
       bookingId: task.bookingId,
       actingMemberId,
@@ -394,13 +420,20 @@ export async function recordStoredNightPriceRepair({
   }
   await createAuditLog(
     {
-      action: "booking-payment.stored-night-price.record",
+      // #3257: two actions from one write site, because the two closures are
+      // genuinely different acts and a reader filtering for "what did an officer
+      // price?" must not be handed closures that priced nothing. The category,
+      // the severity rule and every re-price field below are shared, which is
+      // why they are not two writers (`INV-SSOT`).
+      action: plan
+        ? "booking-payment.stored-night-price.record"
+        : "booking-payment.review-closure.reprice",
       memberId: actingMemberId,
       actorMemberId: actingMemberId,
       subjectMemberId: task.booking.memberId,
       targetId: task.bookingId,
-      entityType: "BookingGuest",
-      entityId: plan.bookingGuestId,
+      entityType: plan ? "BookingGuest" : "Booking",
+      entityId: plan ? plan.bookingGuestId : task.bookingId,
       category: "payment",
       // #3219: CRITICAL exactly when the club's invoice no longer agrees with
       // the booking and nothing in this closure will correct it. That is the one
@@ -410,7 +443,9 @@ export async function recordStoredNightPriceRepair({
       outcome: "success",
       summary: xeroInvoiceDiverged
         ? "Re-priced a booking while settling a financial review; its issued Xero invoice no longer matches"
-        : "Recorded what a booking's unpriced nights sold for while settling a financial review",
+        : plan
+          ? "Recorded what a booking's unpriced nights sold for while settling a financial review"
+          : "Re-priced a booking from its guests while closing a financial review",
       details: note,
       metadata: {
         taskId: task.id,
@@ -419,35 +454,21 @@ export async function recordStoredNightPriceRepair({
         // The figures themselves, night by night, because "an admin priced
         // these" is not auditable unless the entry says what they priced them
         // at - the same reason the completion entry carries three amounts.
-        nightPrices: plan.entries.map((entry) => ({
-          date: entry.date,
-          priceCents: entry.priceCents,
-        })),
-        previousGuestTotalCents: plan.summary.storedGuestTotalCents,
-        newGuestTotalCents,
-        knownNightTotalCents: plan.summary.knownNightTotalCents,
-        // #3219: the booking was re-priced with the strand, so the entry that
-        // records the act records what it did to it - every money column, before
-        // and after, because a reader asking "why does this booking cost what it
-        // does?" months later has nowhere else to look. `bookingRebased: false`
-        // says the re-price DECLINED because a surviving strand's nights cannot
-        // be read back as exact, reconciling evidence; the booking's own figures
-        // are then untouched and its other review is still open.
-        bookingRebased: rebase !== null,
-        bookingRebaseDeclinedReason: outcome.rebased ? null : outcome.reason,
-        previousBookingTotalPriceCents: rebase?.previousTotalPriceCents ?? null,
-        newBookingTotalPriceCents: rebase?.newTotalPriceCents ?? null,
-        previousBookingDiscountCents: rebase?.previousDiscountCents ?? null,
-        newBookingDiscountCents: rebase?.newDiscountCents ?? null,
-        previousBookingPromoAdjustmentCents:
-          rebase?.previousPromoAdjustmentCents ?? null,
-        newBookingPromoAdjustmentCents: rebase?.newPromoAdjustmentCents ?? null,
-        previousBookingFinalPriceCents: rebase?.previousFinalPriceCents ?? null,
-        newBookingFinalPriceCents: rebase?.newFinalPriceCents ?? null,
-        promoRemoved: rebase?.promoRemoved ?? null,
-        // D1's first consequence, on the record: this closure issued no Xero
-        // document, so the club's invoice still says the old figure.
-        xeroInvoiceDiverged,
+        //
+        // #3257: null throughout on a closure that recorded none, which is what
+        // distinguishes "the officer priced nothing" from "the officer priced
+        // these at zero" - the distinction this whole epic exists to keep.
+        nightPrices:
+          plan?.entries.map((entry) => ({
+            date: entry.date,
+            priceCents: entry.priceCents,
+          })) ?? null,
+        previousGuestTotalCents: plan?.summary.storedGuestTotalCents ?? null,
+        newGuestTotalCents: repaired?.newGuestTotalCents ?? null,
+        knownNightTotalCents: plan?.summary.knownNightTotalCents ?? null,
+        // #3219/#3257: what the re-price did to every money column, before and
+        // after, or why it declined - shaped beside the writer that produced it.
+        ...bookingRebaseAuditMetadata({ outcome, xeroInvoiceDiverged }),
       },
     },
     store,

@@ -52,7 +52,32 @@ import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
  * So the new total is the sum of what the strands say once this transaction's
  * writes have landed. There is no second derivation to keep in step.
  *
- * ## D2 is what makes that sum trustworthy
+ * ## THE TRIGGER IS A PARKED REVIEW CLOSING, NOT A STRAND BEING REPAIRED (#3257)
+ *
+ * Owner decision, 7 September 2026. This writer used to run only off a repaired
+ * strand - it was invoked from `recordStoredNightPriceRepair`, so it happened
+ * only where the officer was offered price boxes and typed into them. Two
+ * reachable shapes of a parked guest REMOVAL offer no boxes at all, so neither
+ * produced a repair and neither re-priced:
+ *
+ * 1. THE REMOVED GUEST IS THE UNREADABLE ONE. The park raises its review over
+ *    the departing strand and the same transaction deletes that strand, so the
+ *    only review names a guest who no longer exists: no rows, no summary, no
+ *    boxes.
+ * 2. A SURVIVING STRAND HOLDS NO EXPLICIT NIGHT ROWS AT ALL. It classifies
+ *    unusable and raises a review, but boxes appear only for a strand with
+ *    genuine BLANK nights among readable ones, so it closes blank.
+ *
+ * In both, a booking stored at $240.00 whose only remaining guest sums $120.00
+ * kept the $240.00 headline PERMANENTLY - reconciliation refusing a correct
+ * $120.00 payment, revenue and lifetime spend overstating, and no open review
+ * left to correct it.
+ *
+ * So the trigger is now "a parked review closed and this booking's strands can
+ * be reconciled", and `repairedStrand` is OPTIONAL: null says this closure
+ * repaired nothing, which is an ordinary answer rather than a missing input.
+ *
+ * ## THE DECLINE IS WHAT MAKES RE-PRICING ON ANY CLOSE SAFE
  *
  * A sum of strands is only as good as the strands. `INV-MOD-028` requires every
  * night to be valued from exact, reconciling stored evidence, so this writer
@@ -61,14 +86,17 @@ import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
  * sum to its stored total. Anything less would assert a booking total built from
  * strands the system has said it cannot value, which is a worse lie than the
  * stale one. Where the evidence is not there the totals stay exactly as the park
- * left them. That is a DECLINE and not a deferral: it re-bases later only if the
- * unreadable strand still has an open review whose price boxes are offered, and
- * two shapes of a parked removal have none (#3257, named in
- * `docs/invariants/booking-modifications.md`).
+ * left them.
+ *
+ * THAT IS THE HALF THE TRIGGER MOVE DEPENDS ON, and shape 2 above is exactly
+ * why: a strand with no night rows is unreadable, so the closure that used to
+ * offer it no boxes now reaches this writer and DECLINES rather than inventing a
+ * figure from a strand carrying money and no evidence. Shape 1 re-prices,
+ * because every strand that survives it does reconcile.
  *
  * D2 - the officer must record the night prices before a review whose price
- * boxes are offered may be closed - is what stops that being the common case. It
- * is enforced where the boxes are decided, in
+ * boxes ARE offered may be closed - is what stops the decline being the common
+ * case. It is enforced where the boxes are decided, in
  * `stored-night-price-repair-store.ts`, not here.
  *
  * ## The promotion FOLLOWS THE STRANDS, and that is a correctness rule
@@ -112,6 +140,12 @@ import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
  * global key, and it is registered in `docs/CONCURRENCY_AND_LOCKING.md` under
  * this issue - along with the ordinary row locks the repair write takes before
  * it, and the deadlock shape their ordering leaves against a waitlist confirm.
+ *
+ * MOVING THE TRIGGER (#3257) WIDENED WHEN THAT KEY IS TAKEN AND NOT WHICH KEY:
+ * every closure of a parked review on a promoted booking now takes it, where
+ * before only a closure that repaired a strand did. Same key, same single
+ * advisory tier, same ordering; more closures reach it, and one of them is a
+ * DISMISSAL, which took none of it before.
  */
 
 /**
@@ -152,15 +186,43 @@ export type BookingPriceRebase = {
   promoRemoved: boolean;
 };
 
+/**
+ * Why a re-base wrote nothing, where that is an answer rather than a failure.
+ *
+ * `strand-evidence-unreadable`: at least one surviving strand cannot be read
+ * back as exact, reconciling stored evidence, so there is nothing sound to
+ * re-base from and the totals are left exactly as the park set them.
+ *
+ * `no-surviving-strands`: the booking came back with no guests at all. Summing
+ * them would ZERO the headline outright, which is the shape the strand guard
+ * below exists to keep unreachable - and with no repaired strand to check
+ * against, this is the check that keeps it so.
+ */
+export type BookingPriceRebaseDeclineReason =
+  | "strand-evidence-unreadable"
+  | "no-surviving-strands";
+
 export type BookingPriceRebaseOutcome =
   | { rebased: true; rebase: BookingPriceRebase }
-  /**
-   * At least one surviving strand cannot be read back as exact, reconciling
-   * stored evidence, so there is nothing sound to re-base from and the totals
-   * are left exactly as the park set them. NOT a failure: such a booking still
-   * carries an open review over that strand, and settling it re-bases then.
-   */
-  | { rebased: false; reason: "strand-evidence-unreadable" };
+  | { rebased: false; reason: BookingPriceRebaseDeclineReason };
+
+/**
+ * Did the re-base actually move any of the booking's four money columns?
+ *
+ * Since the trigger became ANY parked review closing (#3257), most closures on a
+ * booking whose park never froze it out of step recompute the figures it already
+ * held. That is a correct no-op and it must not read as an event: the caller
+ * writes the `PRICE_REBASE` history row only when this is true, so the booking's
+ * own page does not collect a "Price Recalculated" entry recording no change.
+ */
+export function rebaseMovedStoredMoney(rebase: BookingPriceRebase): boolean {
+  return (
+    rebase.newTotalPriceCents !== rebase.previousTotalPriceCents ||
+    rebase.newDiscountCents !== rebase.previousDiscountCents ||
+    rebase.newPromoAdjustmentCents !== rebase.previousPromoAdjustmentCents ||
+    rebase.newFinalPriceCents !== rebase.previousFinalPriceCents
+  );
+}
 
 const REBASE_BOOKING_INCLUDE = {
   promoRedemption: {
@@ -257,15 +319,21 @@ function readStrandNightPrices(
  */
 export async function rebaseBookingPriceFromStrands({
   bookingId,
-  repairedGuestId,
-  repairedGuestTotalCents,
+  repairedStrand,
   todayAtClub,
   store,
 }: {
   bookingId: string;
-  repairedGuestId: string;
-  /** What the night-price repair has just written to that strand. */
-  repairedGuestTotalCents: number;
+  /**
+   * The strand this closure just repaired and what the repair wrote to it, or
+   * NULL where the review offered no price boxes and nothing was repaired -
+   * which since #3257 is a closure this writer still runs on.
+   *
+   * The id and the value travel together because neither is a guard on its own:
+   * checking the id alone would sum a pre-repair figure, and checking the value
+   * alone would check somebody else's strand.
+   */
+  repairedStrand: { bookingGuestId: string; totalCents: number } | null;
   /**
    * The club's own calendar day (`INV-CONFIG-002`, `INV-LOCK-004`), resolved by
    * the caller BEFORE it opened this transaction. Required: it decides the
@@ -284,17 +352,22 @@ export async function rebaseBookingPriceFromStrands({
 
   // The strand this settle just repaired has to be one of THESE strands, at the
   // value it was just written to. That is what makes the sum below the sum of
-  // the booking's own nights rather than of somebody else's, and what makes an
-  // empty guest list unreachable rather than a zeroed headline.
-  const repaired = booking.guests.find((guest) => guest.id === repairedGuestId);
-  if (
-    repaired === undefined ||
-    repaired.priceCents !== repairedGuestTotalCents
-  ) {
-    throw new ManualBookingPaymentError(
-      REBASE_STRAND_NOT_ON_BOOKING_MESSAGE,
-      409,
+  // the booking's own nights rather than of somebody else's.
+  if (repairedStrand !== null) {
+    const repaired = booking.guests.find(
+      (guest) => guest.id === repairedStrand.bookingGuestId,
     );
+    if (repaired === undefined || repaired.priceCents !== repairedStrand.totalCents) {
+      throw new ManualBookingPaymentError(
+        REBASE_STRAND_NOT_ON_BOOKING_MESSAGE,
+        409,
+      );
+    }
+  } else if (booking.guests.length === 0) {
+    // A repaired strand PROVED the list was not empty. With none there is
+    // nothing to prove it, and summing an empty list would zero the headline
+    // outright - the second half of the hole the guard above closes.
+    return { rebased: false, reason: "no-surviving-strands" };
   }
 
   const strandNights = readStrandNightPrices(booking.guests);
@@ -371,6 +444,53 @@ export async function rebaseBookingPriceFromStrands({
       newFinalPriceCents,
       promoRemoved: promo.promoRemoved,
     },
+  };
+}
+
+/**
+ * What the re-price did, shaped for the audit entry its caller writes.
+ *
+ * It lives HERE rather than inline at the audit call because it is a statement
+ * about the re-base, and a reader asking "why does this booking cost what it
+ * does?" months later is reading these fields (`INV-SSOT-001`). Every money
+ * column, before and after, because there is nowhere else to look.
+ *
+ * `bookingRebased: false` says the re-price DECLINED -
+ * `bookingRebaseDeclinedReason` says which of the two reasons - and the
+ * booking's own figures are then untouched.
+ *
+ * `bookingPriceMoved` is the SEPARATE question of whether the recomputed
+ * figures differed from the stored ones. Since #3257 every parked-review
+ * closure re-prices, so most recompute what the booking already held; this is
+ * the audit's record of those, and they write no history row.
+ */
+export function bookingRebaseAuditMetadata({
+  outcome,
+  xeroInvoiceDiverged,
+}: {
+  outcome: BookingPriceRebaseOutcome;
+  /**
+   * D1's first consequence, on the record: this closure issued no Xero
+   * document, so the club's invoice still says the old figure.
+   */
+  xeroInvoiceDiverged: boolean;
+}): Record<string, unknown> {
+  const rebase = outcome.rebased ? outcome.rebase : null;
+  return {
+    bookingRebased: rebase !== null,
+    bookingPriceMoved: rebase !== null && rebaseMovedStoredMoney(rebase),
+    bookingRebaseDeclinedReason: outcome.rebased ? null : outcome.reason,
+    previousBookingTotalPriceCents: rebase?.previousTotalPriceCents ?? null,
+    newBookingTotalPriceCents: rebase?.newTotalPriceCents ?? null,
+    previousBookingDiscountCents: rebase?.previousDiscountCents ?? null,
+    newBookingDiscountCents: rebase?.newDiscountCents ?? null,
+    previousBookingPromoAdjustmentCents:
+      rebase?.previousPromoAdjustmentCents ?? null,
+    newBookingPromoAdjustmentCents: rebase?.newPromoAdjustmentCents ?? null,
+    previousBookingFinalPriceCents: rebase?.previousFinalPriceCents ?? null,
+    newBookingFinalPriceCents: rebase?.newFinalPriceCents ?? null,
+    promoRemoved: rebase?.promoRemoved ?? null,
+    xeroInvoiceDiverged,
   };
 }
 
