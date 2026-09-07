@@ -3855,8 +3855,16 @@ describe("review finding source/schema contracts", () => {
         if (!/\.tsx?$/.test(entry.name) || /\.test\.tsx?$/.test(entry.name)) {
           return [];
         }
+        /*
+          CODE ONLY. The three pins below are `toContain` over a concatenation
+          of 23 files, and the neighbouring `booking-no-emails-ui-contract.test.ts`
+          carries the postmortem for reading that raw: a gate was deleted while
+          the paragraph naming it stayed in the prose above, and the guard went
+          on passing. The canonical stripper is already imported at the top of
+          this file — use it.
+        */
         // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
-        return [readFileSync(full, "utf8")];
+        return [stripComments(readFileSync(full, "utf8"))];
       });
     })(routeDir).join("\n");
     // Guards against a directory move making the three assertions below vacuous.
