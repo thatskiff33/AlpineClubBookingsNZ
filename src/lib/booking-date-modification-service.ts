@@ -613,6 +613,20 @@ export async function modifyBookingDates({
     // otherwise answer a stranger's occupancy in full on every date change. Mark
     // the party from the live family boundary first — see
     // `markCrossFamilyGuestsOnBooking`.
+    // The person-night guard (INV-CAP-013, INV-CAP-017) is only as good as the
+    // night set it is handed: a guest counted on fewer nights than they will
+    // hold is a clash the guard cannot see. So a guest with no priced row
+    // refuses here rather than being counted on none — the same answer the
+    // write loop below gives the same condition (#2800).
+    const nightDatesForMemberNightGuard = (index: number, guestId: string) => {
+      const priced = priceBreakdown.guests[index];
+      if (priced === undefined) {
+        throw new Error(
+          `The date change has no priced guest at breakdown position ${index} for booking guest ${guestId} (#3031).`,
+        );
+      }
+      return priced.nightDates ?? [];
+    };
     const guestsForMemberNightGuard = await markCrossFamilyGuestsOnBooking(
       tx,
       booking.memberId,
@@ -620,10 +634,7 @@ export async function modifyBookingDates({
         memberId: g.memberId ?? null,
         stayStart: newCheckIn,
         stayEnd: newCheckOut,
-        // The person-night guard counts the nights this edit priced for the
-        // guest; one with no priced row has none to count, and substituting
-        // the booking envelope would count nights nobody bought (#2800).
-        nights: priceBreakdown.guests[index]?.nightDates ?? [],
+        nights: nightDatesForMemberNightGuard(index, g.id),
       })),
       { skipAuthorization: actor.role === "ADMIN", bookingId },
     );
@@ -979,11 +990,17 @@ export async function modifyBookingDates({
     // longer covers instead of the range they now hold.
     await Promise.all(
       booking.guests.map(async (g, i) => {
-        // This guest's own priced row. A parked edit writes none of it, but the
-        // priced path below has no total and no per-night vector without it,
-        // and #3031 forbids inventing either (#2800).
+        // This guest's own priced row, required on BOTH paths — and the PARKED
+        // path is why the refusal sits above the parked condition rather than
+        // inside it. A parked edit takes its amounts from the stored rows, but
+        // the night SET it writes still comes from `nightDates`, and the
+        // `deleteMany` below has already removed the strand's history by the
+        // time that is read. Tolerating an absent row there would delete the
+        // sold-price evidence the park exists to preserve and write nothing
+        // back — the one outcome #3166 is against. So the file answers this one
+        // condition one way, the way its siblings do (#2800, #3031).
         const priced = priceBreakdown.guests[i];
-        if (!parked && priced === undefined) {
+        if (priced === undefined) {
           throw new Error(
             `The date change has no priced guest at breakdown position ${i} for booking guest ${g.id} (#3031).`,
           );
@@ -996,10 +1013,7 @@ export async function modifyBookingDates({
             // #3166: on a parked edit the strand keeps its STORED total. Not a
             // recomputed one, not a delta, not a zero — how much this date
             // change alters it is the question the OPEN task exists to answer.
-            priceCents:
-              parked || priced === undefined
-                ? g.priceCents
-                : priced.priceCents,
+            priceCents: parked ? g.priceCents : priced.priceCents,
             // A date change re-bases every guest at current rates (#1930, E4):
             // overwrite the rate-type snapshot with the newly priced total —
             // EXCEPT where the new range keeps nights the guest already bought,
@@ -1013,19 +1027,18 @@ export async function modifyBookingDates({
             // edit charged nobody anything — `undefined` leaves the stored value
             // untouched, which is what keeps the rate snapshot frozen alongside
             // the money.
-            rateMembershipTypeId:
-              parked || priced === undefined
-                ? undefined
-                : rateSnapshotUpdateForRepricedGuest(
-                    priced,
-                    guestsForPricing[i]?.lockedNightPrices,
-                  ),
+            rateMembershipTypeId: parked
+              ? undefined
+              : rateSnapshotUpdateForRepricedGuest(
+                  priced,
+                  guestsForPricing[i]?.lockedNightPrices,
+                ),
           },
         });
         await tx.bookingGuestNight.deleteMany({
           where: { bookingGuestId: g.id },
         });
-        const nightDates = priced?.nightDates ?? [];
+        const nightDates = priced.nightDates ?? [];
         // #3166: THE PER-NIGHT VECTOR THIS EDIT WRITES. On a parked edit it is
         // built from what is STORED against each night and nothing else — the
         // integer where the row carried one, byte for byte, and `NULL` where it
@@ -1041,7 +1054,7 @@ export async function modifyBookingDates({
               dateEditEvidence.soldNightPriceByGuestId.get(g.id),
               nightDates,
             )
-          : (priced?.perNightCents ?? []);
+          : priced.perNightCents;
         if (nightDates.length > 0) {
           await tx.bookingGuestNight.createMany({
             data: nightDates.map((stayDate, k) => {
