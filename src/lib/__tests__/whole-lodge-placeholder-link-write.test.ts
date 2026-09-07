@@ -101,6 +101,7 @@ describe("#2337: the recalculate write stamps the member's name onto the linked 
             {
               priceCents: 3000,
               perNightCents: [3000],
+              perNightPriceSources: ["SOLD"],
               nightDates: [CHECK_IN],
             },
           ],
@@ -165,7 +166,12 @@ describe("#2337: the recalculate write stamps the member's name onto the linked 
         ]),
         priceBreakdown: {
           guests: [
-            { priceCents: 3000, perNightCents: [3000], nightDates: [CHECK_IN] },
+            {
+              priceCents: 3000,
+              perNightCents: [3000],
+              perNightPriceSources: ["SOLD"],
+              nightDates: [CHECK_IN],
+            },
           ],
         },
         inProgressPlan: null,
