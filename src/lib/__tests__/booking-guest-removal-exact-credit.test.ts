@@ -77,6 +77,10 @@ function remainingGuest(
   nights: Array<{ stayDate: Date; priceCents?: number }>,
   priceCents: number,
 ) {
+  const storedNights = nights.map((night) => ({
+    ...night,
+    priceSource: night.priceCents === undefined ? ("UNKNOWN" as const) : ("SOLD" as const),
+  }));
   const guest = {
     id: "g-stays",
     ageTier: "ADULT" as const,
@@ -86,7 +90,7 @@ function remainingGuest(
     rateSource: "OWN_TYPE" as const,
     stayStart: D(NIGHTS[0]),
     stayEnd: D("2026-08-23"),
-    nights,
+    nights: storedNights,
     priceCents,
   };
   return {
