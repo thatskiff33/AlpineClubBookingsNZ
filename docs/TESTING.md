@@ -1117,6 +1117,41 @@ So:
    raises a conflict and a human classifies both — which is exactly the review a
    bare integer skipped.
 
+### Selecting the censuses a change can reach
+
+A census reads source from disk, so it has no import edge to what it scans and
+`npm run test:related` can never select it from a diff — `AGENTS.md` says so, and
+says the class stays CI-caught by design. A lane that wants to catch one *before*
+CI has to pick the set by grep, and **grepping for the paths your diff changed
+under-selects**. #2958 measured how (#3323).
+
+That lane split a 2,761-line route page into twenty modules and derived its set
+three ways: tests naming the route path, tests rooted at `src`, and tests walking
+a directory. All three missed
+[`additional-payment-card-gate.test.ts`](../src/components/__tests__/additional-payment-card-gate.test.ts),
+and CI failed on it. Two reasons, both general:
+
+- **The path can be in the file without being on any line of it.** That census
+  composed its target segment by segment — `join(process.cwd(), "src", "app",
+  "(authenticated)", "bookings", "[id]", "page.tsx")` — across seven lines, so a
+  line-oriented grep for `(authenticated)/bookings/[id]` matched nothing. Read
+  each candidate **whole-file** instead; the same fix finds a `join(` whose
+  `process.cwd()` sits on the next line, which a one-line
+  `join(process.cwd(), "src")` pattern skips.
+- **A census is named after the rule it polices, not after the file that rule
+  currently lives in.** This one is named for `AdditionalPaymentCard`, a
+  component that predates the change entirely, so no grep for the new modules or
+  their exports would have found it either. Add an arm that selects every
+  disk-reading test naming **any component the changed surface renders**.
+
+And when you move a census's target, **widen the census to the directory rather
+than re-pointing it at the new file**. The one that failed here named a single
+file and checked only the *first* render site — while the surface was one file
+those were the same sentence, and after a split they are not. It now walks the
+route directory and asserts the guard on every site it finds, with a vacuity
+check so an empty scan fails rather than passes. A count is not the only thing a
+merge or a move can quietly disarm; a hard-coded path is the other.
+
 ## Mocking `requireAdmin`: reference the helper, never wrap it
 
 A fourth convention in the same family — written the obvious way, a suite that
