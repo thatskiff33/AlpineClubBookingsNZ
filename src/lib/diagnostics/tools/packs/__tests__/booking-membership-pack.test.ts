@@ -663,10 +663,17 @@ describe("AID-6B booking/membership pack: nothing lists (#2376)", () => {
   });
 
   it("refuses a reserved key before the schema runs", () => {
-    // `.strict()` is not total on its own: zod STRIPS a `JSON.parse`-created
-    // `__proto__` and reports no issue, which would make a polluted call hash
-    // byte-identically to a clean one. `define.ts` scans for it first; this pins
-    // that the pack's own entries inherit the guard.
+    // `define.ts` scans for reserved keys before the schema runs; this pins that
+    // the pack's own entries inherit that guard.
+    //
+    // WHAT THIS ASSERTION PROVES CHANGED UNDER US, and the honest version is
+    // written here rather than left implied. On zod 4.4.3 the search schema —
+    // `.strict()` — ACCEPTED this input and silently dropped the key, so the
+    // guard was the only thing that could refuse it and this line was its proof.
+    // zod 4.5 refuses an enumerable reserved key itself, so the schema alone now
+    // rejects and the line holds whatever the guard does (#3313). It is kept as a
+    // tripwire on zod; the guard's own proof lives in
+    // `tools/__tests__/registry.test.ts`, against shapes zod still accepts.
     const polluted = JSON.parse(
       `{"kind":"booking_id","recordId":"${RECORD}","__proto__":{"x":1}}`,
     ) as unknown;

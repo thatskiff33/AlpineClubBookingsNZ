@@ -31,6 +31,7 @@ import { prisma } from "@/lib/prisma";
 // this module is `server-only` - so the sentence lives in a client-safe home and
 // both read it (`INV-SSOT`).
 import { zeroCompletionRefusal } from "@/lib/manual-refund-task-copy";
+import { manualRefundTaskSettlementRefusal } from "@/lib/manual-refund-task-settlement-rules";
 import type { RecordedNightPrice } from "@/lib/stored-night-price-repair";
 import {
   planStoredNightPriceRepair,
@@ -293,6 +294,12 @@ export async function resolveManualRefundTask(
         409
       );
     }
+    // #3213 (`INV-PAY-051`): the DISMISS-ONLY door. Refused before the claim and
+    // before any write, so no input reaches a money path - and asked of
+    // `manual-refund-task-settlement-rules.ts`, the one client-safe home the
+    // settle screen reads to decide whether that control exists at all.
+    const refusal = manualRefundTaskSettlementRefusal(task.kind, resolution);
+    if (refusal) throw new ManualBookingPaymentError(refusal, 400);
 
     const isEditReview = task.kind === ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW;
 
