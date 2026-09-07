@@ -30,7 +30,7 @@ import {
   bookingRebaseAuditMetadata,
   rebaseBookingPriceFromStrands,
   rebaseDivergesFromIssuedInvoice,
-  rebaseMovedStoredMoney,
+  rebaseChangedTheBooking,
   recordBookingPriceRebaseHistory,
 } from "@/lib/booking-review-price-rebase";
 
@@ -398,16 +398,16 @@ export async function recordReviewClosurePricing({
         xeroAmountCents: settlementAmountCents,
       }),
     });
-  if (rebase !== null && rebaseMovedStoredMoney(rebase)) {
+  if (rebase !== null && rebaseChangedTheBooking(rebase)) {
     // D1's second consequence: a member can now be refunded less than they paid
     // from an action they never saw, so the reason goes in the BOOKING'S OWN
     // HISTORY and not only in the audit entry below.
     //
-    // #3257: ONLY WHERE THE FIGURES ACTUALLY MOVED. Now that every parked-review
-    // closure re-prices, most of them recompute what the booking already held -
-    // a correct no-op - and a "Price Recalculated" row recording no change is
-    // noise on the page a member and an operator both read. The audit entry
-    // below still records the closure either way.
+    // #3257: ONLY WHERE SOMETHING ACTUALLY CHANGED. Most closures now recompute
+    // what the booking already held - a correct no-op whose "Price Recalculated"
+    // row would be noise. A promotion REMOVED with the four columns unmoved IS a
+    // change, and this row carries the only sentence saying so. The audit entry
+    // below records the closure either way.
     await recordBookingPriceRebaseHistory({
       bookingId: task.bookingId,
       actingMemberId,

@@ -211,9 +211,13 @@ export type BookingPriceRebaseOutcome =
  *
  * Since the trigger became ANY parked review closing (#3257), most closures on a
  * booking whose park never froze it out of step recompute the figures it already
- * held. That is a correct no-op and it must not read as an event: the caller
- * writes the `PRICE_REBASE` history row only when this is true, so the booking's
- * own page does not collect a "Price Recalculated" entry recording no change.
+ * held. That is a correct no-op and it must not read as an event, which is why
+ * the booking's own page does not collect a "Price Recalculated" entry recording
+ * no change.
+ *
+ * THIS IS A CLAIM ABOUT THE FOUR COLUMNS AND NOTHING ELSE - it is what the audit
+ * entry's `bookingPriceMoved` reports. Whether the history row is written is the
+ * WIDER question below, because money is not the only thing a re-base can change.
  */
 export function rebaseMovedStoredMoney(rebase: BookingPriceRebase): boolean {
   return (
@@ -222,6 +226,30 @@ export function rebaseMovedStoredMoney(rebase: BookingPriceRebase): boolean {
     rebase.newPromoAdjustmentCents !== rebase.previousPromoAdjustmentCents ||
     rebase.newFinalPriceCents !== rebase.previousFinalPriceCents
   );
+}
+
+/**
+ * Does this re-base leave the booking's own history anything to say?
+ *
+ * The money question above is not the whole one. `promoRemoved` is a FIFTH,
+ * independent outcome of the same recompute: `recalculateBookingPromo` deletes
+ * the `PromoRedemption` row outright and hands its usage slot back, and outside
+ * the audit log the ONLY place that fact reaches a person is the `PRICE_REBASE`
+ * narrative, which renders "The promotion no longer applies and was removed."
+ *
+ * IT HAPPENS WITH ALL FOUR COLUMNS UNMOVED, because a redemption that delivered
+ * no benefit is deliberately representable: `shouldPersistPromoRedemption` is
+ * explicitly wider than the benefit test, so a promo that had eligible guests
+ * and delivered nothing still records its redemption (owner decision, #2299).
+ * A booking carrying such a redemption for a code that has since expired
+ * recomputes to exactly the figures it already held while the redemption is
+ * deleted - so a money-only gate would delete a promotion the member can see on
+ * their booking and say nothing anywhere they can read.
+ *
+ * Composed from the money predicate rather than restating it (`INV-SSOT-001`).
+ */
+export function rebaseChangedTheBooking(rebase: BookingPriceRebase): boolean {
+  return rebaseMovedStoredMoney(rebase) || rebase.promoRemoved;
 }
 
 const REBASE_BOOKING_INCLUDE = {
@@ -278,6 +306,18 @@ type StrandNightPrices = {
  * The rows are sorted by date so `perNightRates` and `nightDates` are parallel
  * and in stay order, which is what an internal work-party promo's night window
  * is applied against.
+ *
+ * A STATED LIMIT, pre-existing and deliberately not closed here: the three
+ * conditions require the rows to EXIST, to be usable money and to SUM to the
+ * strand's stored total - never that they span the strand's stay envelope. A
+ * strand whose stored total is covered by fewer rows than it has nights reads
+ * back as exact, and the booking's total is unaffected either way because that
+ * sums `BookingGuest.priceCents`. What can be short is the per-night VECTOR
+ * handed to the promotion, so a free-nights or night-windowed code re-caps
+ * against a shorter stay than the guest actually has. Moving the trigger (#3257)
+ * builds that vector on more closures without changing when it can be short.
+ * Closing it needs a stay envelope this writer is not given, and belongs with
+ * the writers that create the night rows.
  */
 function readStrandNightPrices(
   guests: readonly RebaseStrand[],

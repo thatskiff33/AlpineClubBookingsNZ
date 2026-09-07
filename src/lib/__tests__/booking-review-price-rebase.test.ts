@@ -24,6 +24,7 @@ import {
   REBASE_RACED_MESSAGE,
   REBASE_STRAND_NOT_ON_BOOKING_MESSAGE,
   rebaseBookingPriceFromStrands,
+  rebaseChangedTheBooking,
   rebaseDivergesFromIssuedInvoice,
   rebaseMovedStoredMoney,
   recordBookingPriceRebaseHistory,
@@ -405,6 +406,43 @@ describe("re-pricing a closure that repaired NOTHING (#3257)", () => {
     expect(rebaseMovedStoredMoney({ ...still, newFinalPriceCents: 1 })).toBe(
       true,
     );
+  });
+
+  it("a PROMOTION REMOVED with all four columns unmoved still has to reach the booking's history", () => {
+    // The disclosure regression the history-row gate can introduce. A promo
+    // redemption that delivered no benefit is deliberately representable
+    // (`shouldPersistPromoRedemption`, owner decision #2299), so removing an
+    // expired one of those recomputes to exactly the stored figures while the
+    // `PromoRedemption` row is deleted and its usage slot handed back. The
+    // narrative's "The promotion no longer applies and was removed." is the only
+    // place outside the audit log that says so, and it renders only on a
+    // PRICE_REBASE row - so this is what decides whether the row is written.
+    const still: BookingPriceRebase = {
+      previousTotalPriceCents: 10_000,
+      previousDiscountCents: 0,
+      previousPromoAdjustmentCents: 0,
+      previousFinalPriceCents: 10_000,
+      newTotalPriceCents: 10_000,
+      newDiscountCents: 0,
+      newPromoAdjustmentCents: 0,
+      newFinalPriceCents: 10_000,
+      promoRemoved: false,
+    };
+
+    // Nothing changed at all: no row, which is the #3257 no-op.
+    expect(rebaseMovedStoredMoney(still)).toBe(false);
+    expect(rebaseChangedTheBooking(still)).toBe(false);
+
+    // Money unmoved, promotion gone: NOT a no-op, and the money predicate on its
+    // own cannot see it.
+    const promoGone: BookingPriceRebase = { ...still, promoRemoved: true };
+    expect(rebaseMovedStoredMoney(promoGone)).toBe(false);
+    expect(rebaseChangedTheBooking(promoGone)).toBe(true);
+
+    // And it stays wider than the money question, never narrower.
+    expect(
+      rebaseChangedTheBooking({ ...still, newFinalPriceCents: 9_000 }),
+    ).toBe(true);
   });
 });
 
