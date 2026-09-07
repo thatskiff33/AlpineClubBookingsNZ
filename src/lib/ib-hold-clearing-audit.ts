@@ -191,7 +191,7 @@ export async function auditIbHoldClearingUnderclears(options?: {
 
 /**
  * Deliberately NOT `formatCents` from `@/lib/utils` (#3302 escalation, kept
- * as-is pending owner confirmation — see the PR description). Internet
+ * as-is pending the owner decision on #3325). Internet
  * Banking is NZ-specific regardless of a deployment's configured display
  * currency, and this codebase already has a tested, hard-coded "NZ$" +
  * `toFixed(2)` convention for IB-specific messages elsewhere (e.g.
