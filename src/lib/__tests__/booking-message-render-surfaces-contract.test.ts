@@ -143,10 +143,8 @@ const SOURCE_EXTENSIONS = new Set([".ts", ".tsx"]);
 function listSourceFiles(dir: string): string[] {
   const out: string[] = [];
   // Test helper: walks the repository's own src/ tree, not user input.
-  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
   for (const entry of readdirSync(path.resolve(process.cwd(), dir))) {
     const relative = `${dir}/${entry}`;
-    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
     const absolute = path.resolve(process.cwd(), relative);
     if (statSync(absolute).isDirectory()) {
       if (entry === "__tests__" || entry === "node_modules") continue;
@@ -162,7 +160,6 @@ function listSourceFiles(dir: string): string[] {
 
 function read(file: string): string {
   // Test helper: a fixed repository path under process.cwd().
-  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
   return readFileSync(path.resolve(process.cwd(), file), "utf8");
 }
 

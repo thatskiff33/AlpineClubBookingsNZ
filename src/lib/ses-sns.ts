@@ -177,7 +177,6 @@ export async function verifySnsWebhookMessage(
     // RSA-SHA1 is only reachable for SNS SignatureVersion 1, which AWS itself
     // defines with SHA1 and which we reject by default; it is used solely for an
     // explicit, operator-gated legacy-migration override (see issue #815 above).
-    // nosemgrep: javascript.node-stdlib.cryptography.crypto-weak-algorithm.crypto-weak-algorithm
     const verifier = createVerify(algorithm);
     verifier.update(buildSnsSigningString(envelope), "utf8");
 

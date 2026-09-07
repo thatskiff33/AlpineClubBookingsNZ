@@ -534,7 +534,7 @@ describe("the settle path's write is UNCHANGED by #3214's generalised writer", (
         stayDate: new Date("2026-08-02T00:00:00.000Z"),
         priceCents: null,
       },
-      data: { priceCents: 8_000 },
+      data: { priceCents: 8_000, priceSource: "OFFICER_PRICED" },
     });
     expect(nightCreate).not.toHaveBeenCalled();
     expect(guestUpdateMany).toHaveBeenCalledWith({

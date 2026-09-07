@@ -252,7 +252,7 @@ export function EmailBodyRichEditor({
         // The seed is ALWAYS the output of sanitiseEmailBodyHtml (mount and
         // every reseed above), the same policy the server enforces on save
         // and render — the club-post-editor precedent (#2992).
-        dangerouslySetInnerHTML={{ __html: seed }} /* nosemgrep: typescript.react.security.audit.react-dangerouslysetinnerhtml.react-dangerouslysetinnerhtml */
+        dangerouslySetInnerHTML={{ __html: seed }}
       />
     </div>
   );

@@ -10,7 +10,7 @@
  *
  * Claiming it covered them all would be worse than claiming nothing, because a
  * reader who trusts the claim edits one file and believes the whole system
- * changed. As of 31 Aug 2026 there are SEVEN write points of a price column
+ * changed. As of 5 Sep 2026 there are SEVEN write points of a price column
  * from a priced breakdown — the five call sites listed below, plus these two.
  *
  * **Recount them with this criterion or you will get a different number.** What
@@ -148,7 +148,11 @@
  *
  * That list is a convenience, not the gate: `git grep` for the two exported
  * names is the authority, and a stale count here discredits the paragraph it
- * sits in. It was last recounted against the tree on 31 Aug 2026.
+ * sits in. It was last recounted against the tree on 5 Sep 2026. The separate
+ * `booking-guest-night-price-source-census.test.ts` pins the wider set of direct
+ * and nested runtime `BookingGuestNight` writers, including the executable demo
+ * and E2E seeds outside `src`, and the explicit provenance each now carries
+ * (INV-MONEY-028); this module still owns amount completeness only.
  */
 
 /**

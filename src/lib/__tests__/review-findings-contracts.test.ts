@@ -40,7 +40,6 @@ import {
 
 function readRepoFile(relativePath: string) {
   // Test helper: reads a fixed repo file under process.cwd(); relativePath is test-controlled, not user input.
-  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
   return readFileSync(path.resolve(process.cwd(), relativePath), "utf8");
 }
 
@@ -116,10 +115,8 @@ function createTempMigration(
 ) {
   const tempDir = mkdtempSync(path.join(tmpdir(), "tac-migration-safety-"));
   // Test fixture: joins a freshly created temp dir with a test-controlled migration name; no user input.
-  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
   const migrationDir = path.join(tempDir, migrationName);
   // Test fixture: appends the hardcoded "migration.sql" filename to the temp migration dir.
-  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
   const migrationPath = path.join(migrationDir, "migration.sql");
   const ledgerPath = path.join(tempDir, "safety.tsv");
 
@@ -260,11 +257,9 @@ function createTempMigrationsTree(
 
   for (const migration of migrations) {
     // Test fixture: joins the temp migrations dir with a test-controlled migration name; no user input.
-    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
     const dir = path.join(migrationsDir, migration.name);
     mkdirSync(dir, { recursive: true });
     // Test fixture: appends the hardcoded "migration.sql" filename to the temp migration dir.
-    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
     writeFileSync(path.join(dir, "migration.sql"), migration.sql);
   }
   writeFileSync(ledgerPath, ledger);
@@ -301,7 +296,6 @@ function personNightGuardCallers(): string[] {
     const dir = roots.pop()!;
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       // Test helper: walks the repo's own src tree; no user input.
-      // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) {
         if (entry.name === "__tests__" || entry.name === "node_modules") continue;
@@ -311,7 +305,6 @@ function personNightGuardCallers(): string[] {
       if (!/\.tsx?$/.test(entry.name)) continue;
       if (/\.test\.tsx?$/.test(entry.name)) continue;
       // Test helper: reads a file discovered by walking the repo's src tree.
-      // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
       const source = readFileSync(full, "utf8");
       if (
         source.includes("findBookingMemberNightConflicts(") ||
