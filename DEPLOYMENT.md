@@ -611,6 +611,50 @@ Do not expose app containers directly to the Internet or through another proxy
 that preserves attacker-supplied `X-Forwarded-For` values without appending its
 own trusted peer address.
 
+### Keep-alive windows must stay ordered (#3293)
+
+**The app must hold an idle connection open for longer than Caddy will keep one
+pooled.** Two settings say so, and they are set in opposite files:
+
+| Where | Setting | Value |
+| --- | --- | --- |
+| App | `KEEP_ALIVE_TIMEOUT` (ms) in `docker-compose.yml` | `65000` |
+| Caddy | `transport http { keepalive }` in `deploy/caddy/tacbookings-active.caddy` and `Caddyfile.staging` | `30s` |
+
+Left to their defaults these are the wrong way round — Node closes an idle
+connection at about 5 seconds while Caddy pools one for 2 minutes — so Caddy
+reuses connections the app has already closed. A reuse that lands on the close
+boundary is reset by the kernel, and Caddy's transport **cannot replay a request
+with a streamed body**: a `POST`, `PUT` or `PATCH` therefore reaches the browser
+as a bare `502` with no JSON body, and every admin form falls back to its generic
+"could not save" message while the app logs nothing and the database sees no
+statement. `GET`s never show it, because those *are* replayable and Caddy retries
+them on a fresh connection invisibly.
+
+If you change either value, keep the app's comfortably above Caddy's. Lowering
+`KEEP_ALIVE_TIMEOUT` below the Caddy value reintroduces the fault exactly.
+
+Fronting the app with something other than Caddy? Set that proxy's idle-connection
+timeout below `KEEP_ALIVE_TIMEOUT` (nginx: `keepalive_timeout` on the upstream;
+HAProxy: `timeout http-keep-alive`).
+
+### Access logs
+
+Every Caddyfile in this repository enables an access log on the application site
+and attaches a redaction filter to Caddy's **default** logger, so both access
+entries and `http.log.error` entries are covered. The rules live in one place,
+`deploy/caddy/log-redaction.caddy`, and strip the same two families of secret the
+application's own logger strips (`src/lib/redact-sensitive-json.ts`): bearer
+tokens carried as a path segment, and secrets carried as a query parameter. Add a
+new token-bearing path prefix to both files in the same change.
+
+Logs go to the container's stderr, which Compose caps at `max-size: 10m` /
+`max-file: 5`. Read them with:
+
+```bash
+docker compose logs --since 1h caddy | grep '"uri"'
+```
+
 ## Migration Safety
 
 Read `docs/BLUE_GREEN_MIGRATION_POLICY.md` before deploying schema changes.

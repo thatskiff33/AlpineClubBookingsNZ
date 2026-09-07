@@ -2759,6 +2759,32 @@ enum ManualRefundTaskKind {
   /// An admin prices it from the booking's own payment and rate history and
   /// confirms the amount, and only then does any money move.
   EDIT_FINANCIAL_REVIEW
+  /// #3213 (epic #2797): a settled review share that could NOT be added to the
+  /// edit's Xero invoice, because that invoice had been picked up for sending
+  /// and could no longer be raised. Nothing is billed automatically - a
+  /// mid-send job can still come back to the queue and be raised to the full
+  /// amount, so a second invoice raised now could bill the same money twice.
+  /// The share becomes an item an officer checks against Xero and closes
+  /// deliberately.
+  ///
+  /// ONE ITEM PER WITHHELD SHARE: this kind mints an `occurrenceKey`, and
+  /// `ManualRefundTask_edit_review_occurrence_key_present` refuses a row of this
+  /// kind without one (migration 20260910010000). The unique index exempts NULL,
+  /// so without that CHECK a writer could raise a fresh item on every replay.
+  ///
+  /// DISMISS-ONLY, and that is the whole safety argument. COMPLETED on a kind
+  /// whose `settlementDirection` is null asserts REFUND_TO_MEMBER and reaches
+  /// the refund-allocation path, so `resolveManualRefundTask` refuses a
+  /// COMPLETED close for this kind outright: no money path is reachable from
+  /// one of these rows under any input. `INV-PAY-051`.
+  ///
+  /// REGISTERED THIS RELEASE, WRITTEN THE NEXT (migration 20260910010000).
+  /// The previous colour's Prisma client cannot deserialize a label it does not
+  /// know, and the finance queue's own read selects this column - so a row
+  /// carrying this value while that colour still serves would take the whole
+  /// hand-back queue down with it. `uncollected-edit-review-share-expand.test.ts`
+  /// fails the build if any writer starts producing it early.
+  UNCOLLECTED_EDIT_REVIEW_SHARE
 }
 
 /// #3170 (epic #2797): WHICH WAY a completed task's money went.
@@ -3584,18 +3610,21 @@ enum HostingCoverageIncidentCause {
   /// and chose to move only the booking they were editing (#3232 D1, D3;
   /// `INV-HOST-050`, `INV-HOST-052`).
   ///
-  /// NOTHING WRITES THIS VALUE YET, and that is deliberate rather than unfinished.
+  /// WRITTEN BY EXACTLY ONE ARM: the owner-declined branch of
+  /// `hostingCoverageActorOptions` (#3241). A census in
+  /// `hosting-coverage-incident-cause-expand.test.ts` fails the build on a second
+  /// producer, because a member's prompted decision and an automatic change are
+  /// the two things this label exists to keep apart in a club's own count.
+  ///
+  /// IT ARRIVED OVER TWO RELEASES, AND A FOURTH VALUE HERE OWES THE SAME ORDER.
   /// `docs/BLUE_GREEN_MIGRATION_POLICY.md` binds every migration to stay readable
-  /// by the colour that is still draining, and that colour's generated client has
+  /// by the colour that is still draining, and that colour's generated client had
   /// never heard of a third label — the incident writer's own fold read selects
-  /// `cause`, so a row carrying this value would fail to deserialise there. So
-  /// migration `20260909010000_add_owner_declined_linked_move_incident_cause`
-  /// REGISTERS the label (expand) and the release AFTER it starts writing it
-  /// (runtime). Until then a declined offer is still recorded as `SYSTEM_CHANGE`,
-  /// with the member's decision written in words into the incident's audit
-  /// history. `INV-HOST-052` is the rule, and a census fails the build if any
-  /// writer starts producing this value while the expand is still in its first
-  /// release.
+  /// `cause`, so a row carrying the value would have failed to deserialise there.
+  /// So migration `20260909010000_add_owner_declined_linked_move_incident_cause`
+  /// REGISTERED the label with nothing writing it (expand, #3232), a declined
+  /// offer was recorded as `SYSTEM_CHANGE` for that release, and the release
+  /// after it added the writer (runtime, #3241). `INV-HOST-052` is the rule.
   OWNER_DECLINED_LINKED_MOVE
 }
 

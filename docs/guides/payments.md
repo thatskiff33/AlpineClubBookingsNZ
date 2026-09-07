@@ -189,10 +189,11 @@ member is told the club will arrange their refund.
 3. If the member declined the refund, or it was settled another way, click
    **Dismiss** and say which. A note is required.
 
-The card holds two kinds of row and says which is which. The paragraph about
+The card holds three kinds of row and says which is which. The paragraph about
 cash and bank transfers only appears when there is a cash hand-back waiting; the
-one below only appears when there is a booking change to price. Neither speaks
-for the other.
+one below only appears when there is a booking change to price; and the third,
+described under "Check an amount the club may not have asked for", only appears
+when there is one of those. None of them speaks for the others.
 
 ### Decide a booking change the system would not price
 
@@ -286,13 +287,60 @@ guest* sending the booking back; the other row is still waiting, and until it is
 dealt with the booking will keep returning. The message you get after settling
 says so.
 
-**Some rows will never show the boxes**, and that is deliberate. A guest whose
-nights all carry a price, but whose prices do not add up to what their stay is
-recorded as being worth, has nothing blank to fill in — what that needs is a
-decision about which of two stored figures is wrong, which is not something this
-screen can ask for. So is a guest with a negative or otherwise unusable stored
-price. Those bookings keep coming back to this queue, and pricing each change by
-hand is the current answer for them.
+**Some rows will never show the boxes here**, and that is deliberate: these
+boxes fill in *blanks*, and some guests have no blanks to fill. A guest whose
+nights all carry a price but whose prices do not add up to what their stay is
+recorded as being worth has nothing blank; neither does a guest with no stored
+night prices at all, whose nights the system works out from their arrival and
+departure dates.
+
+**Those are recorded from the booking's own page instead** — see
+"[Recording what a guest's nights sold for](#recording-what-a-guests-nights-sold-for)"
+below. A guest with a negative or otherwise unusable stored figure for the stay
+as a whole is the one case neither surface can take: there is nothing sound for
+the night figures to add up to, and what should happen to those bookings has not
+been decided.
+
+### Recording what a guest's nights sold for
+
+Open the booking, find **Admin tools**, and look for **Nights whose sold price
+the records cannot tell us**. It lists each guest the club cannot price, says
+why, and shows what is on file for each of their nights.
+
+- **You give a figure for every night of that guest's stay** — all of them,
+  including any that already show an amount — and they have to come to what
+  that guest's stay is already stored as being worth. The total is shown, and the
+  running total under the boxes says what you have typed and what it needs to be.
+- **It cannot change what anybody owes.** Because the figures have to come to
+  the figure already on file, what the guest owes is exactly the same
+  afterwards. What changes is how that figure is made up, night by night — which
+  matters, because a later part-refund is worked out from those nights.
+- **One thing that does move: which month the income lands in.** If the stay
+  crosses the end of a month and you move an amount from a night in one month to
+  a night in the next, the club's income for those two months changes to match —
+  so a revenue figure you have already reported for the earlier month will no
+  longer come out the same. The booking's own total is untouched, and the audit
+  entry keeps what each night held before, so the change can always be traced.
+  Where it matters, say so in the note.
+- **Nothing is filled in for you**, here or anywhere in this feature. If the
+  figures will not add up honestly, do not adjust one to close the gap; a figure
+  typed to close a gap is a price nobody decided.
+- **One guest at a time.** A booking with two such guests needs both recorded
+  before it stops coming back.
+- **It is not offered while the booking has a review waiting** on this queue.
+  Settle that first — its boxes ask for the same figures, against a total that
+  also includes the amount being settled — and record anything still missing
+  afterwards.
+- **It is audited**, with the figures you gave, what each night held before, and
+  what the stay was worth before and after, which are the same number.
+
+You need **Finance — Edit** to use it; a finance viewer sees the section and
+every control disabled.
+
+**Why this exists.** Until an officer records them, every change to such a
+booking has to be priced by hand, and an other-club member rate cannot be set on
+it at all — the edit that would set one is refused, and its message points
+here.
 
 A booking with a review waiting also shows a **Money waiting for review** warning
 on its own page, under **Admin tools**, with a link back to this page.
@@ -305,6 +353,47 @@ credit, blocks nothing: there is no settlement for it to sit in front of. So do
 not treat an open review as a guarantee that the booking's money is frozen.
 Check the booking's own payment history before reversing anything on a booking
 that has a review waiting.
+
+### Check an amount the club may not have asked for
+
+*Coming in the release after this one. The item type is registered now so that
+release turns a writer on rather than rebuilding this screen; until then a
+withheld share is recorded in the booking's audit history exactly as it has
+been, naming the change and the total in plain words.*
+
+When a booking change is settled as money the member owes, the club raises a
+Xero invoice for it. Once in a while the settlement lands in the seconds while
+that invoice is already being sent — and an invoice in that state cannot be
+changed. It has not necessarily *gone*: a job that has been picked up can come
+back and go out later at the full amount.
+
+So the club does not invoice the extra automatically, and that is deliberate
+rather than an oversight. If it did, and the first invoice then went out at the
+full figure after all, the member would be billed twice for the same change.
+Instead the amount becomes a row in the **Money to settle by hand** card for
+somebody to check.
+
+1. Open the booking's invoices in Xero.
+2. Compare them against the amount on the row. If they already include it,
+   nothing is owed.
+3. If they fall short, raise a supplementary invoice **for that amount only** —
+   never for the change's full total, which the member has already been asked
+   for. Billing the total is the mistake this row exists to prevent.
+4. Click **Close this item** and say what Xero showed and what you billed. A
+   note is required, and it is the only record of how the amount was settled.
+
+**A row that says "Amount not known" is not waiting to be priced.** Most of
+these rows name the exact amount. One kind cannot: when the row is raised by the
+payment-recovery pass, that pass knows the change's combined total but not which
+part of it the invoice that went out already carried. There is no figure for the
+screen to show and nothing here can work one out — compare the booking against
+Xero and bill the difference, if any, by hand.
+
+**Closing it moves no money, and there is no control that does.** Unlike every
+other row in this card, this one has no "mark paid back" or "record the
+adjustment" button, because there is nothing here for the club to pay or to
+take. The only action is to close it, and the system refuses a settlement
+against one of these rows however it is asked.
 
 ### A refund that happened without you — "Refunded automatically"
 

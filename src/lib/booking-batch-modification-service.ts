@@ -36,6 +36,7 @@ import {
   QUOTE_PRICED_EDIT_BLOCK_MESSAGE,
 } from "@/lib/booking-modify";
 import {
+  OtherLodgeRateAmountUnderReviewError,
   requestCarriesOtherLodgeElection,
   requestIsOtherLodgeRateElectionOnly,
 } from "@/lib/booking-other-lodge-rate";
@@ -1291,6 +1292,35 @@ export async function modifyBookingBatch({
      */
     const parked =
       pricingResult.kind === "financial_review_required" ? pricingResult : null;
+
+    /**
+     * #3214 (epic #2797): AN OTHER-LODGE ELECTION IS REFUSED ON THE EDIT THAT
+     * PARKS THE MONEY, and the whole request is refused with it. Why refusal
+     * rather than disclosure, and what each direction used to do, are in
+     * `OTHER_LODGE_RATE_AMOUNT_UNDER_REVIEW_MESSAGE`, which
+     * `OtherLodgeRateAmountUnderReviewError` carries together with the status
+     * that docblock argues for (`INV-MOD-028`).
+     *
+     * HERE and not one line earlier because the pricing pass is the only thing
+     * that knows this edit parks — and not one line later because everything
+     * below either composes what will be written or writes it. Nothing above
+     * this point in the transaction has written anything: the advisory locks,
+     * the post-lock re-read, the roster row lock, `prepareGuestPlan` and
+     * `calculateModifiedPricing` are all locks and reads. So a refused edit
+     * changes nothing at all, INCLUDING the lodge — which is exactly what it
+     * used to save while dropping the ticks that came with it.
+     *
+     * READ OFF THE RESOLVED ELECTION, not off a second predicate that agrees
+     * with it: `guestPlan.otherLodgeElection` is the object `applyGuestChanges`
+     * is handed below, so the guard fences precisely the value that would be
+     * written, and `resolveOtherLodgeRateElection` sets `requested` from the
+     * same `requestCarriesOtherLodgeElection` that `pricePreservingModification`
+     * above uses (`INV-SSOT`). The modify-quote preview refuses on the identical
+     * field, so preview and save cannot disagree.
+     */
+    if (parked && guestPlan.otherLodgeElection.requested) {
+      throw new OtherLodgeRateAmountUnderReviewError();
+    }
     // Whether an admin confirmed an overbooking to make this edit fit. Read off
     // the union rather than off one branch, because #3170 puts the PARKED plan
     // through the same capacity check as the priced one — parking withholds the

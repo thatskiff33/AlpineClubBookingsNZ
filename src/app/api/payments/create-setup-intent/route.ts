@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { createSetupIntent, findOrCreateCustomer, getSetupIntent } from "@/lib/stripe";
+import { classifySucceededSetupIntentCard } from "@/lib/setup-intent-card";
 import { markBookingSetupIntentSucceeded } from "@/lib/payment-reconciliation";
 import { CreateSetupIntentSchema } from "@/types/payments";
 import { auth } from "@/lib/auth";
@@ -69,26 +70,59 @@ export async function POST(request: NextRequest) {
       const existingIntent = await getSetupIntent(booking.payment.stripeSetupIntentId);
 
       if (existingIntent.status === "succeeded") {
-        const paymentMethodId =
-          typeof existingIntent.payment_method === "string"
-            ? existingIntent.payment_method
-            : existingIntent.payment_method?.id ?? null;
+        // #3266 — a succeeded intent is not, by itself, proof of a chargeable
+        // card (`INV-PAY-052`). The one rule shared with the webhook decides:
+        // a row already carrying this intent's own card skips Stripe; a row
+        // with no card, or a different card, is answered by the PROVIDER —
+        // the card may be seconds old with the webhook still in flight, or
+        // retired after a terminal refusal (#3268) — and never re-adopted
+        // once Stripe no longer holds it for this customer.
+        const verdict = await classifySucceededSetupIntentCard({
+          bookingId: booking.id,
+          setupIntent: existingIntent,
+          row: booking.payment,
+        });
 
-        if (paymentMethodId) {
+        if (verdict.outcome === "already_on_row" || verdict.outcome === "attached") {
+          // The stamp is guarded on the row still naming this intent, and it
+          // writes this intent's own card, so it can never be the write that
+          // re-adopts a retired one.
           await markBookingSetupIntentSucceeded({
             bookingId: booking.id,
             setupIntentId: existingIntent.id,
-            paymentMethodId,
+            paymentMethodId: verdict.paymentMethodId,
+          });
+          if (verdict.outcome === "attached") {
+            logger.info(
+              {
+                bookingId: booking.id,
+                setupIntentId: existingIntent.id,
+                paymentMethodId: verdict.paymentMethodId,
+              },
+              "Re-adopted a succeeded SetupIntent's card that the webhook had not yet stamped",
+            );
+          }
+
+          return NextResponse.json({
+            alreadySaved: true,
+            setupIntentId: existingIntent.id,
           });
         }
 
-        return NextResponse.json({
-          alreadySaved: true,
-          setupIntentId: existingIntent.id,
-        });
-      }
-
-      if (existingIntent.client_secret && existingIntent.status !== "canceled") {
+        logger.info(
+          {
+            bookingId: booking.id,
+            setupIntentId: existingIntent.id,
+            outcome: verdict.outcome,
+          },
+          "Succeeded SetupIntent's card cannot be re-adopted; minting a replacement",
+        );
+        // Fall through and mint. The idempotency key below chains from this
+        // intent's id, so the replacement is a distinct Stripe object.
+      } else if (
+        existingIntent.client_secret &&
+        existingIntent.status !== "canceled"
+      ) {
         return NextResponse.json({
           clientSecret: existingIntent.client_secret,
           setupIntentId: existingIntent.id,
@@ -113,7 +147,22 @@ export async function POST(request: NextRequest) {
       idempotencyKey: `seti_${booking.id}_${booking.payment?.stripeSetupIntentId ?? "initial"}`,
     });
 
-    // Create or update Payment record
+    // Create or update Payment record. #3266 — minting a replacement RETIRES
+    // the previous card (`INV-PAY-052`): `stripePaymentMethodId` is cleared
+    // here, and only `markBookingSetupIntentSucceeded` (the webhook, or the
+    // re-adopt arm above) puts one back. Left in place, the old — possibly
+    // dead — card stayed chargeable by the cron and both admin charge routes
+    // for as long as the member took to finish re-saving (in production:
+    // never, and 24 consecutive cron failures). Same convention as
+    // `booking-modify-settlement.ts`; the one deliberate exception
+    // (`booking-credit-election.ts`, a settled split parent's card kept for
+    // the child's deferred charge) is a settled row this route never reaches.
+    //
+    // Stated limit, accepted: a duplicate of this request that stalls in
+    // flight until AFTER the member has confirmed the replacement card and the
+    // webhook has stamped it would clear that just-saved card here. It needs
+    // tens of seconds of delay on one request and the member then re-opens
+    // the form, which shows the card is gone; nothing is charged in between.
     await prisma.payment.upsert({
       where: { bookingId: booking.id },
       create: {
@@ -121,11 +170,13 @@ export async function POST(request: NextRequest) {
         amountCents: booking.finalPriceCents,
         stripeSetupIntentId: setupIntent.id,
         stripeCustomerId: customer.id,
+        stripePaymentMethodId: null,
         status: "PENDING",
       },
       update: {
         stripeSetupIntentId: setupIntent.id,
         stripeCustomerId: customer.id,
+        stripePaymentMethodId: null,
       },
     });
 

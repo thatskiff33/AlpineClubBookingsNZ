@@ -7,6 +7,13 @@ import type { AdultMemberHostingPolicyExceptionViolation } from "@/lib/booking-p
 import { formatBookingReference } from "@/lib/booking-reference";
 import { adultMemberHostingStateKey } from "@/lib/policies/adult-member-hosting";
 
+import {
+  describeHostingCoverageIncidentCause,
+  HOSTING_COVERAGE_INCIDENT_CAUSES,
+  hostingCoverageCauseAttributionRank,
+  type HostingCoverageIncidentCause,
+} from "./adult-member-hosting-incident-causes";
+
 /**
  * The durable, officer-facing record of a CONFIRMED booking that has lost its
  * required adult-member coverage (#2576 §7, §8, §16).
@@ -39,78 +46,15 @@ export type HostingCoverageIncidentDb = Pick<
   "hostingCoverageIncident" | "auditLog"
 >;
 
-/**
- * Why the cover went away. Mirrors the Prisma enum without importing it.
- *
- * `OWNER_DECLINED_LINKED_MOVE` is REGISTERED AND NOT YET WRITTEN (#3232 D3,
- * `INV-HOST-052`). Migration
- * `20260909010000_add_owner_declined_linked_move_incident_cause` is the expand
- * half; the release after it is the runtime half that starts writing the value.
- * It is named here so the reader below can already put the right words in front
- * of an officer, and so the follow-up release changes a writer rather than a
- * writer plus two screens. Nothing under `src/` may produce it until then, which
- * `hosting-coverage-incident-cause-expand.test.ts` enforces.
- */
-export type HostingCoverageIncidentCause =
-  | "OFFICER_OVERRIDE"
-  | "SYSTEM_CHANGE"
-  | "OWNER_DECLINED_LINKED_MOVE";
-
-/**
- * The stored reason on the incident a declined offer opens (#3232).
- *
- * IT HAS TO STAND ALONE, because for one release it is what an officer reads
- * INSTEAD of a cause label of its own: until `INV-HOST-052`'s runtime half lands
- * the stored cause is the shared `SYSTEM_CHANGE`, whose officer-facing phrase is
- * true of a cancellation and a data correction too. So no issue reference (no
- * other stored human-read string in this repository carries one — compare
- * `ADULT_SUPERVISION_REVIEW_REASON`), and no product jargon: "the linked move" is
- * a name from this codebase that no officer has ever met. What it says instead is
- * what happened.
- */
-export const LINKED_MOVE_DECLINED_INCIDENT_REASON =
-  "The member was asked whether to move this booking to the same new nights as " +
-  "the booking they were editing, and chose to move only that one — leaving " +
-  "this booking without adult member coverage.";
-
-/**
- * The one officer-facing phrase for a recorded cause (#3232 D3).
- *
- * ONE HOME, because there are two officer surfaces and they had drifted into two
- * different answers for the same stored value: the bookings queue said
- * "qualification changed" and the stuck-state dashboard said "system change"
- * (`INV-SSOT-001`). Both are now this function, so a third surface cannot invent
- * a third wording and the follow-up release's new cause needs no screen change.
- *
- * `SYSTEM_CHANGE` deliberately no longer says "qualification changed", which
- * claimed one specific story for a value that holds many. Nor does it say "cover
- * REMOVED by a later change", which was the same mistake in a new direction: the
- * phrase has to be true of every writer, and two of them remove nothing. A club
- * TIGHTENING ITS OWN POLICY (`adult-member-hosting-policy-reconciliation.ts`)
- * narrowed who counts or switched the rule on, so the rule moved rather than the
- * cover; an officer CONFIRMING PENDING GUESTS or force-confirming ADDED people,
- * so existing cover simply no longer stretches. "No longer covered after a later
- * change" is true of those, of an administrative cancellation, of a lifecycle
- * transition, of a data correction, and — until the runtime half of
- * `INV-HOST-052` lands — of a member who was asked about their other booking and
- * chose not to move it. What distinguishes that last one in the meantime is the
- * incident's audit history, which records the decision in words.
- *
- * An unrecognised value is described rather than crashing an officer's queue: a
- * screen is a bad place to discover a schema addition.
- */
-export function describeHostingCoverageIncidentCause(cause: string): string {
-  switch (cause) {
-    case "OFFICER_OVERRIDE":
-      return "officer override";
-    case "SYSTEM_CHANGE":
-      return "no longer covered after a later change";
-    case "OWNER_DECLINED_LINKED_MOVE":
-      return "member chose not to move this booking too";
-    default:
-      return "cause not recognised";
-  }
-}
+// The cause vocabulary moved to its own module (#3241); these three are
+// re-exported because callers of this one already import them from here, and a
+// pointer is not a second definition. The ranks and the label list are read by
+// the fold below and by nothing outside, so they are not re-exported.
+export {
+  describeHostingCoverageIncidentCause,
+  LINKED_MOVE_DECLINED_INCIDENT_REASON,
+  type HostingCoverageIncidentCause,
+} from "./adult-member-hosting-incident-causes";
 
 /** How an incident stopped being live. Mirrors the Prisma enum. */
 export type HostingCoverageIncidentResolution =
@@ -186,21 +130,18 @@ export interface OpenHostingCoverageIncidentParams {
    * The explanation for a change where NO authority was exercised, recorded in
    * the incident's audit history (#3232 D3, `INV-HOST-052`).
    *
-   * WHY NOT `override`, and why it is history rather than a column. The one case
-   * that supplies this today is a booking owner who was offered the linked move
-   * on their own other booking and declined it. That is not an override: nobody
-   * exercised authority over a booking that was not theirs, so §7's mandatory
-   * reason and its attribution would both be inventions, and writing them onto
-   * `overriddenByMemberId`/`overrideReason` would report an officer decision that
-   * never happened.
+   * WHY NOT `override`. The one case that supplies this is a booking owner who
+   * declined the linked move on their own other booking. Nobody exercised
+   * authority over a booking that was not theirs, so §7's mandatory reason and
+   * its attribution would both be inventions on
+   * `overriddenByMemberId`/`overrideReason` — an officer decision that never was.
    *
-   * The audit row is the right home for it for a second reason too: an audit row
-   * describes ONE event, so it cannot go stale. A column recording "why" would be
-   * left describing the decline after a later automatic change moved the same
-   * incident's uncovered state - and the existing fold deliberately preserves an
-   * officer's reason across such a move, so there is no fold rule that is right
-   * for both. Until the runtime half of `INV-HOST-052` lands and `cause` itself
-   * carries the fact, this is where an officer reads it.
+   * The audit row is the right home for a second reason: it describes ONE event,
+   * so it cannot go stale, where a "why" column would be left describing the
+   * decline after a later automatic change moved the same uncovered state — and
+   * the fold deliberately preserves an officer's reason across such a move, so no
+   * one fold rule is right for both. `cause` names the decision too since #3241;
+   * this is still where an officer reads WHICH booking they were asked about.
    */
   recordedReason?: string | null;
 }
@@ -256,19 +197,23 @@ export async function openOrUpdateHostingCoverageIncident(
     );
   }
 
-  const updateData = {
-    stateKey,
-    evidence: params.violation as unknown as Prisma.InputJsonValue,
+  // What a promotion writes: the story, and nothing about the hazard (#3241).
+  const promotionData = {
     cause: params.cause,
-    ownerNotificationClaimStateKey: null,
-    ownerNotificationClaimedAt: null,
-    ownerNotificationClaimToken: null,
     ...(override
       ? {
           overriddenByMemberId: override.byMemberId,
           overrideReason: override.reason.trim().slice(0, 500),
         }
       : {}),
+  };
+  const updateData = {
+    ...promotionData,
+    stateKey,
+    evidence: params.violation as unknown as Prisma.InputJsonValue,
+    ownerNotificationClaimStateKey: null,
+    ownerNotificationClaimedAt: null,
+    ownerNotificationClaimToken: null,
   };
 
   // OFFICER_OVERRIDE dominates SYSTEM_CHANGE for an identical material state.
@@ -283,10 +228,14 @@ export async function openOrUpdateHostingCoverageIncident(
 
     if (existing) {
       if (existing.stateKey === stateKey) {
-        if (
-          params.cause !== "OFFICER_OVERRIDE" ||
-          existing.cause === "OFFICER_OVERRIDE"
-        ) {
+        // THE EXPLAINED WRITE WINS; THE UNEXPLAINED ONE LEAVES IT ALONE (#3241).
+        // Officer-only promotion was right while an override was the only
+        // explanation. It is not now: a stranded booking can be opened by a sweep
+        // that knows nothing and reached afterwards by its own row carrying the
+        // member's decision (`INV-HOST-053`).
+        const incoming = hostingCoverageCauseAttributionRank(params.cause);
+        const held = hostingCoverageCauseAttributionRank(existing.cause);
+        if (incoming <= held) {
           return { action: "unchanged", incidentId: existing.id, stateKey };
         }
         const promoted = await db.hostingCoverageIncident.updateMany({
@@ -294,19 +243,25 @@ export async function openOrUpdateHostingCoverageIncident(
             id: existing.id,
             resolvedAt: null,
             stateKey,
-            // NOT `cause: "SYSTEM_CHANGE"`. This branch runs only when the row
-            // just read was NOT an override, so the guard's job is to re-assert
-            // that under concurrency - and naming one specific non-override
-            // label makes an officer's promotion silently impossible for every
-            // OTHER non-override cause. With the third label registered by
-            // #3232 D3 that is no longer hypothetical: a declined linked move
-            // could never be promoted to `OFFICER_OVERRIDE`, the update would
-            // match nothing, and the loop would exhaust into the retry error
-            // rather than record the officer. Identical behaviour today, since
-            // there are exactly two labels in use.
-            cause: { not: "OFFICER_OVERRIDE" },
+            // RE-ASSERT WHAT WAS JUST READ, as `notIn` rather than by naming a
+            // label. Naming one made promotion impossible for every other
+            // lower-ranked cause and the retry loop exhausted into its error; an
+            // allow-list does the same to a label this build has never heard of,
+            // which is precisely what an older colour meets mid-deploy. A
+            // concurrent writer holding something STRONGER still wins.
+            cause: {
+              notIn: HOSTING_COVERAGE_INCIDENT_CAUSES.filter(
+                (candidate) =>
+                  hostingCoverageCauseAttributionRank(candidate) >= incoming,
+              ),
+            },
           },
-          data: updateData,
+          // THE STORY, NOT THE STATE (#3241). `updateData` also nulls the owner
+          // notification claim, which is right when the uncovered state moved and
+          // wrong here: nothing about the hazard changed, and clearing a claim
+          // held by a delivery in flight loses its completion stamp and sends the
+          // owner a second email.
+          data: promotionData,
         });
         if (promoted.count === 0) continue;
       } else {
@@ -668,10 +623,14 @@ async function recordIncidentAudit(
       // something an officer has to look at.
       severity: "important",
       outcome: "success",
+      // THE PHRASE, NOT THE STORED LABEL (#3241). This read "after a SYSTEM_CHANGE
+      // change" on the audit-log page: a schema token in a sentence an officer
+      // reads. The raw value is in `metadata.cause`, where a machine wants it.
       summary:
         `Booking ${formatBookingReference(params.bookingId)} has ` +
         `${params.violation.requirements.uncoveredNonMemberGuestNights} ` +
-        `uncovered non-member guest-night(s) after a ${params.cause} change`,
+        `uncovered non-member guest-night(s) — ` +
+        describeHostingCoverageIncidentCause(params.cause),
       // The explanation, whoever gave it - an officer's mandatory override reason
       // or a booking owner's recorded decision (#3232 D3). This is where an
       // officer reads WHY, and it is per-event so it never goes stale.

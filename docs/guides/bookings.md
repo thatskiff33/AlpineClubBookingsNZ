@@ -206,6 +206,20 @@ Things worth knowing:
   in-progress booking prices its remaining nights through a different path and
   the change would silently settle nothing. Contact the office for a stay
   already under way.
+- **Not on a change whose amount the office has to work out by hand.** Some
+  bookings hold nights whose original price the club's records cannot tell us —
+  usually older ones, or ones created by approving a public request. A change to
+  one of those is saved but its money is parked for someone to price, and while
+  those nights carry no price nothing on the booking can be re-rated. So an edit
+  carrying this tick is refused, and refused whole: the lodge is not saved
+  either, and you are told why. To clear it, open the booking, find **Admin
+  tools** and use **Record what these nights sold for** — you give a figure for
+  every night of that guest's stay, they have to come to what the stay is already
+  stored as being worth, and nothing anybody owes changes. Set the tick once that
+  is done. (If the booking is waiting on a review in **Refunds & Adjustments**,
+  settle that first: it asks for the same figures. A booking already waiting on
+  such a review refuses the tick for the same reason.) Full steps:
+  [Payments & Refunds — Recording what a guest's nights sold for](payments.md#recording-what-a-guests-nights-sold-for).
 - **It is an officer decision, and it is audited.** Members never see the
   control on their own booking.
 

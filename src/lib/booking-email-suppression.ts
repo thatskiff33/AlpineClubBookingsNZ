@@ -99,6 +99,10 @@ export const ALWAYS_BOOKING_SCOPED_TEMPLATE_NAMES: ReadonlySet<string> =
     "additional-payment-reminder",
     "booking-modified",
     "setup-intent-failed",
+    // #3268: sibling of setup-intent-failed, sent by the auto-charge cron once
+    // it has retired an unusable saved card. Same sender module, same
+    // `{ bookingId, recipientMemberId }` context.
+    "saved-card-charge-failed",
     // src/lib/email/waitlist.ts — a waitlist entry IS a booking row
     "waitlist-confirmation",
     "waitlist-offer",

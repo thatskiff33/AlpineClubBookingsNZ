@@ -1074,6 +1074,14 @@ derivation).
   affordance. A child can end PAID while its parent is unpaid or later
   cancelled — the parent-cancel sweep only cancels still-PENDING children — and
   there is deliberately no auto-cancel past check-in (owner policy decision).
+  - **"Inherited from the parent payment" means a card the parent SAVED, not
+    merely one it paid with** (#3269, `INV-PAY-053`). The fallback reads the
+    parent's `Payment` row through `savedPaymentMethodForBooking`, which counts a
+    card only when the row also carries the `stripeSetupIntentId` that saved it.
+    A parent that paid its own place by one-off card checkout leaves a payment
+    method Stripe refuses to charge again, so its child has no card and takes
+    this same payment-link path — the parent is `PAID`, which is the settled
+    state this rule already accepts.
 
 ### INV-CAP-006
 

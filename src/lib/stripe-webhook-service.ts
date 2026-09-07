@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { listRefundsForCharge, processRefund } from "@/lib/stripe";
 import { markBookingPaymentSucceeded, markBookingSetupIntentSucceeded } from "@/lib/payment-reconciliation";
+import { classifySucceededSetupIntentCard } from "@/lib/setup-intent-card";
 import { isXeroConnected } from "@/lib/xero";
 import {
   enqueueXeroRefundCreditNoteOperation,
@@ -47,6 +48,7 @@ import {
   markGroupSettlementIntentFailed,
   markGroupSettlementIntentRefunded,
 } from "@/lib/group-settlement";
+import { adoptSavedCardChargeAttemptForIntent } from "@/lib/saved-card-charge-settle";
 import { PaymentStatus, PaymentTransactionKind } from "@prisma/client";
 
 type JsonRouteResult = {
@@ -232,13 +234,15 @@ export async function processStripeWebhookEvent(
     switch (event.type) {
       case "payment_intent.succeeded":
         await handlePaymentIntentSucceeded(
-          event.data.object as Stripe.PaymentIntent
+          event.data.object as Stripe.PaymentIntent,
+          event
         );
         break;
 
       case "payment_intent.payment_failed":
         await handlePaymentIntentFailed(
-          event.data.object as Stripe.PaymentIntent
+          event.data.object as Stripe.PaymentIntent,
+          event
         );
         break;
 
@@ -376,10 +380,41 @@ export async function processStripeWebhookEvent(
 }
 
 /**
+ * #3267 (`INV-PAY-055`): an intent the ledger does not know may be a saved-card
+ * charge attempt whose POST executed but whose response was lost — the row is
+ * PENDING with no intent id, and the only link between it and this event is the
+ * idempotency key Stripe stamps on the event (`event.request.idempotency_key`),
+ * which the row stores on `reference`. Adopt it, forward only, so the handler
+ * that follows finds the row by intent id like any other. The `event` is
+ * threaded in for exactly this field; a handler that read only the intent could
+ * never make the link.
+ *
+ * `event.request` is null whenever Stripe did not attribute the state change to
+ * an API request — an asynchronous capture, notably — so this recovers a lost
+ * response only while the intent's own answer was synchronous. The rest fall
+ * through to the 23-hour `attempt_key_expired` refusal rather than to a second
+ * charge; see `adoptSavedCardChargeAttemptForIntent`.
+ */
+async function adoptUnknownIntentsAttemptRow(
+  paymentIntent: Stripe.PaymentIntent,
+  event: Stripe.Event,
+  bookingId: string
+) {
+  const adopted = await adoptSavedCardChargeAttemptForIntent({
+    paymentIntent,
+    bookingId,
+    idempotencyKey: event.request?.idempotency_key,
+  });
+  if (!adopted) return null;
+  return findPaymentTransactionByIntentId({ paymentIntentId: paymentIntent.id });
+}
+
+/**
  * Handle successful payment - confirm the booking or record additional modification payment.
  */
 async function handlePaymentIntentSucceeded(
-  paymentIntent: Stripe.PaymentIntent
+  paymentIntent: Stripe.PaymentIntent,
+  event: Stripe.Event
 ) {
   // Group ORGANISER_PAYS settlement: one combined intent settles many child
   // bookings, so it carries groupBookingId (not bookingId) and is reconciled by
@@ -425,9 +460,10 @@ async function handlePaymentIntentSucceeded(
     return;
   }
 
-  const paymentTransaction = await findPaymentTransactionByIntentId({
-    paymentIntentId: paymentIntent.id,
-  });
+  const paymentTransaction =
+    (await findPaymentTransactionByIntentId({
+      paymentIntentId: paymentIntent.id,
+    })) ?? (await adoptUnknownIntentsAttemptRow(paymentIntent, event, bookingId));
 
   if (!paymentTransaction || paymentTransaction.kind !== PaymentTransactionKind.PRIMARY) {
     logger.warn(
@@ -589,7 +625,8 @@ async function handlePaymentIntentSucceeded(
  * Handle failed payment - mark payment as failed.
  */
 async function handlePaymentIntentFailed(
-  paymentIntent: Stripe.PaymentIntent
+  paymentIntent: Stripe.PaymentIntent,
+  event: Stripe.Event
 ) {
   // Group settlement intents have no per-booking payment transaction; the
   // children stay CONFIRMED (beds held) so the organiser can retry.
@@ -603,9 +640,15 @@ async function handlePaymentIntentFailed(
   }
 
   const bookingId = paymentIntent.metadata?.bookingId;
-  const paymentTransaction = await findPaymentTransactionByIntentId({
-    paymentIntentId: paymentIntent.id,
-  });
+  // #3267: a lost-response attempt whose intent FAILED is adopted too, so its
+  // row ends now rather than sitting PENDING until its key expires.
+  const paymentTransaction =
+    (await findPaymentTransactionByIntentId({
+      paymentIntentId: paymentIntent.id,
+    })) ??
+    (bookingId
+      ? await adoptUnknownIntentsAttemptRow(paymentIntent, event, bookingId)
+      : null);
   if (!paymentTransaction) {
     logger.warn(
       { paymentIntentId: paymentIntent.id, bookingId },
@@ -879,6 +922,15 @@ async function handleAdditionalModificationPaymentSucceeded(
 /**
  * Handle successful SetupIntent - save the payment method for later charging.
  * This is for pending bookings with non-member guests.
+ *
+ * #3266 (`INV-PAY-052`): Stripe redelivers a failed delivery for up to three
+ * days and the processed-event dedupe covers only events already handled, so
+ * this may be the FIRST time an old event arrives, long after the row moved on
+ * — the member re-saved and a replacement intent is on the row, or a charge
+ * path retired this very card (#3268) while the intent id stayed. So the card
+ * is stamped only when the row still names this intent AND the one shared rule
+ * (`classifySucceededSetupIntentCard`) says the card may be adopted: already on
+ * the row, or confirmed by Stripe as still attached to the row's customer.
  */
 async function handleSetupIntentSucceeded(
   setupIntent: Stripe.SetupIntent
@@ -889,23 +941,59 @@ async function handleSetupIntentSucceeded(
     return;
   }
 
-  const paymentMethodId =
-    typeof setupIntent.payment_method === "string"
-      ? setupIntent.payment_method
-      : setupIntent.payment_method?.id ?? null;
-
-  if (!paymentMethodId) {
-    logger.warn({ setupIntentId: setupIntent.id, bookingId }, "SetupIntent succeeded but no payment_method");
+  const payment = await prisma.payment.findUnique({
+    where: { bookingId },
+    select: {
+      stripeSetupIntentId: true,
+      stripePaymentMethodId: true,
+      stripeCustomerId: true,
+    },
+  });
+  if (!payment || payment.stripeSetupIntentId !== setupIntent.id) {
+    logger.info(
+      {
+        bookingId,
+        setupIntentId: setupIntent.id,
+        currentSetupIntentId: payment?.stripeSetupIntentId ?? null,
+      },
+      "SetupIntent succeeded but the booking's payment row no longer names it; card not stamped",
+    );
     return;
   }
 
-  await markBookingSetupIntentSucceeded({
+  const verdict = await classifySucceededSetupIntentCard({
     bookingId,
-    setupIntentId: setupIntent.id,
-    paymentMethodId,
+    setupIntent,
+    row: payment,
   });
-
-  logger.info({ bookingId, setupIntentId: setupIntent.id }, "Payment method saved for booking via SetupIntent");
+  switch (verdict.outcome) {
+    case "no_payment_method":
+      logger.warn({ setupIntentId: setupIntent.id, bookingId }, "SetupIntent succeeded but no payment_method");
+      return;
+    case "already_on_row":
+      logger.info(
+        { bookingId, setupIntentId: setupIntent.id, paymentMethodId: verdict.paymentMethodId },
+        "SetupIntent's card is already on the booking's payment row; nothing to stamp",
+      );
+      return;
+    case "detached":
+      logger.info(
+        { bookingId, setupIntentId: setupIntent.id, paymentMethodId: verdict.paymentMethodId },
+        "SetupIntent's card is no longer attached to the booking's customer; not re-adopted from the webhook",
+      );
+      return;
+    case "attached": {
+      const { stamped } = await markBookingSetupIntentSucceeded({
+        bookingId,
+        setupIntentId: setupIntent.id,
+        paymentMethodId: verdict.paymentMethodId,
+      });
+      if (stamped) {
+        logger.info({ bookingId, setupIntentId: setupIntent.id }, "Payment method saved for booking via SetupIntent");
+      }
+      return;
+    }
+  }
 }
 
 /**
@@ -940,6 +1028,22 @@ async function handleSetupIntentFailed(
   }
 }
 
+/**
+ * Handle a canceled SetupIntent — deliberately writes nothing (#3266).
+ *
+ * This used to null `stripeSetupIntentId` on the row that named the intent.
+ * That broke the mint's idempotency chain: `create-setup-intent` keys a
+ * replacement as `seti_<bookingId>_<previousIntentId>` and, with the id gone,
+ * fell back to `seti_<bookingId>_initial` — the ORIGINAL intent's key — which
+ * inside Stripe's 24-hour idempotency window replays the original creation
+ * response, handing the member the canceled intent as if it were new. The row
+ * keeps the canceled id: the route reads the intent's live status and mints
+ * afresh when it is canceled, chaining the key from this id, and the booking
+ * page keys the "Save Payment Method" card on the card column, not the intent.
+ * The card column is untouched too — a cancel says nothing about the card on
+ * file. A cancelled BOOKING clears the id itself inside its own locked claim
+ * (`booking-cancel.ts`), so nothing relied on this handler to do it.
+ */
 async function handleSetupIntentCanceled(
   setupIntent: Stripe.SetupIntent
 ) {
@@ -948,19 +1052,9 @@ async function handleSetupIntentCanceled(
     return;
   }
 
-  await prisma.payment.updateMany({
-    where: {
-      bookingId,
-      stripeSetupIntentId: setupIntent.id,
-    },
-    data: {
-      stripeSetupIntentId: null,
-    },
-  });
-
   logger.info(
     { bookingId, setupIntentId: setupIntent.id },
-    "SetupIntent canceled for booking"
+    "SetupIntent canceled for booking; row keeps the id so the next mint chains its idempotency key from it"
   );
 }
 

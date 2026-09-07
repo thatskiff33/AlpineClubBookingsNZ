@@ -121,6 +121,7 @@ import {
   bookingModifiedTemplate,
   bookingPendingTemplate,
   setupIntentFailedTemplate,
+  savedCardChargeFailedTemplate,
   splitGuestPortionCancelledTemplate,
 } from "@/lib/email-templates/booking";
 import {
@@ -855,6 +856,8 @@ const GENERATED_CASES: EmailRenderCase[] = [
     adminWaitlistOfferTemplate({ memberName: "memberName-1", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), guestCount: 104, position: 105 }) },
   { id: "setupIntentFailedTemplate:minimal", fn: "setupIntentFailedTemplate", render: () =>
     setupIntentFailedTemplate({ firstName: "firstName-1", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z") }) },
+  { id: "savedCardChargeFailedTemplate:minimal", fn: "savedCardChargeFailedTemplate", render: () =>
+    savedCardChargeFailedTemplate({ bookingId: "bookingId-1", firstName: "firstName-2", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z") }) },
   { id: "adminRefundRequestTemplate:minimal", fn: "adminRefundRequestTemplate", render: () =>
     adminRefundRequestTemplate({ memberName: "memberName-1", bookingId: "bookingId-2", checkIn: new Date("2026-03-04T00:00:00.000Z"), checkOut: new Date("2026-03-05T00:00:00.000Z"), reason: "reason-5", requestedAmountCents: 106, paidAmountCents: 107, refundedAmountCents: 108 }) },
   { id: "adminBookingChangeRequestTemplate:minimal", fn: "adminBookingChangeRequestTemplate", render: () =>

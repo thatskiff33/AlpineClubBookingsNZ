@@ -1,3 +1,26 @@
+{
+	# Access logging, with URL tokens and query secrets redacted (#3293).
+	#
+	# Before this, only Caddy's error log existed, so a request that SUCCEEDED
+	# left no trace at all — which is why the connection-reuse race this issue
+	# fixes could not be measured after the fact: two logged 502s, and no way to
+	# tell whether that was two attempts out of two or two out of fifty.
+	#
+	# The filter is attached to the DEFAULT logger rather than to the access log,
+	# because Caddy's `http.log.error` entries carry the full request too and were
+	# already printing URLs in full. `deploy/caddy/log-redaction.caddy` carries the
+	# rules and the reasoning; each site opts in with a bare `log`.
+	#
+	# `wrap json` matches what this logger already emits when it is not attached to
+	# a terminal, so nothing about the existing lines changes shape.
+	log default {
+		format filter {
+			wrap json
+			import /etc/caddy/deploy/log-redaction.caddy
+		}
+	}
+}
+
 {$STAGING_CADDY_SITE:http://localhost} {
 	# Guaranteed request-body backstop (#2235); mirrors the production
 	# Caddyfile. See docs/SECURITY-ATTACK-SURFACE.md.
@@ -50,12 +73,26 @@
 		?Content-Security-Policy "default-src 'self'"
 	}
 
+	# Send this site's access entries to the redacting default logger (#3293).
+	log
+
 	# Rewrite legacy /images/* requests to the runtime-serving API route.
 	handle /images/* {
 		uri strip_prefix /images
 		rewrite * /api/images/uploaded{path}
-		reverse_proxy app:3000
+		reverse_proxy app:3000 {
+			# See deploy/caddy/tacbookings-active.caddy (#3293).
+			transport http {
+				keepalive 30s
+			}
+		}
 	}
 
-	reverse_proxy app:3000
+	reverse_proxy app:3000 {
+		# Caddy must release a pooled connection BEFORE the app closes it
+		# (#3293). Mirrors deploy/caddy/tacbookings-active.caddy.
+		transport http {
+			keepalive 30s
+		}
+	}
 }

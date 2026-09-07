@@ -529,10 +529,12 @@ export async function settleFullyCreditCoveredBooking(
       // `stripePaymentMethodId` is DELIBERATELY kept (unlike the
       // booking-modify-settlement sibling): a split parent's saved card is the
       // fallback the deferred non-member guest charge uses
-      // (cron-confirm-pending.ts, payment-link.ts both read
-      // `parentBooking.payment.stripePaymentMethodId`), so clearing it here
-      // would strip the card the child booking is charged on later. Nothing
-      // about this booking's own settlement needs it gone.
+      // (`savedPaymentMethodForBooking` in saved-payment-method.ts, which the
+      // cron, the admin confirm route, the member page and payment-link.ts all
+      // read — and which since #3269 counts the card only with its
+      // `stripeSetupIntentId` beside it), so clearing it here would strip the
+      // card the child booking is charged on later. Nothing about this
+      // booking's own settlement needs it gone.
       stripePaymentIntentId: null,
       additionalPaymentIntentId: null,
       additionalAmountCents: 0,

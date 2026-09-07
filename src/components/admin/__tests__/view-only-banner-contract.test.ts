@@ -282,15 +282,20 @@ const FIGURES = {
    * cleanup now. Cancel is a plain Button — it reverts local state and writes
    * nothing, so gating it would refuse a view-only admin the way OUT of a form
    * they could not have changed.
+   *
+   * 345 -> 346 (#3214): the booking page's "Record what these nights sold for"
+   * control. One per unreadable guest strand at RUN time, but one render site in
+   * the source, which is what this census counts. MEASURED by re-running it.
    */
-  callSites: 345,
+  callSites: 346,
   /**
    * Those that hand their explanation to a banner, by either rule.
    *
    * 285 -> 289 (#2998): all four of the moderation queue's controls opt out.
    * 289 -> 292 (#2999): so do the Retention section's three.
+   * 292 -> 293 (#3214): so does the night-price control.
    */
-  optOuts: 292,
+  optOuts: 293,
   /**
    * `describeReason={false}` — needs a banner in the SAME file.
    *
@@ -298,8 +303,11 @@ const FIGURES = {
    * file, so they are static rather than vouched.
    * 255 -> 258 (#2999): the Retention section likewise heads its own file with
    * its own banner, so its three are static too.
+   * 258 -> 259 (#3214): the night-price section's banner and its button are in
+   * one file, so it is static rather than vouched — the button sits in a child
+   * COMPONENT, but the static rule is about the FILE.
    */
-  staticOptOuts: 258,
+  staticOptOuts: 259,
   /**
    * `describeReason={!ancestorRendersViewOnlyBanner}` — needs a vouch.
    *
@@ -334,8 +342,13 @@ const FIGURES = {
    * 90 -> 91 (#2999): the Retention section is a SECOND section on that same
    * page and heads itself with its own banner — one per section, not one per
    * page.
+   *
+   * 91 -> 92 (#3214): the booking page's night-price section heads itself with
+   * one, for every strand it lists rather than one per strand — the permission
+   * is the same for all of them, so saying it per guest would say it three times
+   * on a three-guest booking.
    */
-  bannerComponents: 91,
+  bannerComponents: 92,
   /**
    * Admin files that render an `AdminViewOnlyNotice` and NO
    * `ViewOnlyActionButton` — the first of the three cases in which the older

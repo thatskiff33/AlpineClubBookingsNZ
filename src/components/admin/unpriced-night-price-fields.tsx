@@ -51,6 +51,8 @@ export function UnpricedNightPriceFields({
   onChange,
   targetKnown,
   check,
+  explanation,
+  legend = "What did these nights sell for?",
   disabled,
 }: {
   summary: UnpricedNightsSummary;
@@ -66,6 +68,25 @@ export function UnpricedNightPriceFields({
   targetKnown: boolean;
   /** The shared verdict, or null while nothing has been typed. */
   check: StoredNightPriceRepairCheck | null;
+  /**
+   * The paragraph above the boxes, when this fieldset is asked for by an act
+   * other than settling a review (#3214).
+   *
+   * A STRING RATHER THAN A FLAG, and the copy itself still lives in the rule
+   * module beside the refusals it belongs with (`INV-SSOT`): this component is
+   * the one thing on the screen that knows nothing about which act it serves,
+   * and a caller passing a mode name would put that knowledge back in.
+   *
+   * Defaults to the settle screen's own paragraph, so #3191's call site is
+   * unchanged byte for byte.
+   */
+  explanation?: string;
+  /**
+   * The fieldset's heading. The default is the settle screen's, whose "these
+   * nights" means the review's blanks; the reconcile path asks about every night
+   * a guest holds and says so.
+   */
+  legend?: string;
   disabled: boolean;
 }) {
   /*
@@ -115,11 +136,9 @@ export function UnpricedNightPriceFields({
 
   return (
     <fieldset className="space-y-3" data-testid="unpriced-night-price-fields">
-      <legend className="text-sm font-medium">
-        What did these nights sell for?
-      </legend>
+      <legend className="text-sm font-medium">{legend}</legend>
       <p className="text-xs text-muted-foreground">
-        {unpricedNightsExplanation(summary)}
+        {explanation ?? unpricedNightsExplanation(summary)}
       </p>
       <div className="space-y-2">
         {summary.dates.map((date) => (

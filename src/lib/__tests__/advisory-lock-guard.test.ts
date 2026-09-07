@@ -213,6 +213,20 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     invariant: "INV-LOCK-002",
   },
   {
+    site: "POST /api/payments/charge-saved-method#1",
+    tier: "GLOBAL",
+    reason:
+      "#3267: the saved-card charge claim (PENDING -> CONFIRMED) joins the cancel/settlement cohort before taking the lodge tier, exactly as the cron's resolveHoldWindowUnderLock and the admin confirm-pending-guests charge branch do — and now also writes the charge ATTEMPT row under both, which is the double-charge guard the shared Stripe key used to stand in for (INV-PAY-055). Until #3267 this route charged with no claim at all.",
+    invariant: "INV-LOCK-002",
+  },
+  {
+    site: "POST /api/payments/charge-saved-method#2",
+    tier: "GLOBAL",
+    reason:
+      "#3267: releasing that claim when the charge did not capture (CONFIRMED -> PENDING, hold restored, beds reconciled; the non-captured branch also records Stripe's answer on the attempt row in the same transaction) serialises with the same cohort the claim did before re-taking the lodge key — the cron's releaseChargeClaim shape.",
+    invariant: "INV-LOCK-002",
+  },
+  {
     site: "POST /api/payments/create-payment-intent#1",
     tier: "GLOBAL",
     reason:

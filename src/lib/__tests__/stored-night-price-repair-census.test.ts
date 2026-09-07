@@ -103,11 +103,32 @@ const SRC = resolve(process.cwd(), "src");
 /** The one module allowed to update an existing night row's price in place. */
 const REPAIR_WRITER = "lib/stored-night-price-repair-store.ts";
 
-/** The whole of this feature, as files. */
+/**
+ * The whole of this feature, as files.
+ *
+ * #3214 ADDED THREE, and the reason each is here rather than merely nearby is
+ * worth stating, because an entry nobody can justify is how this list turns into
+ * habit:
+ *
+ *  - the strand-reconcile module is the second caller of the one writer and the
+ *    home of the eligibility fence, so it is where a "work the rest out" helper
+ *    would be most natural to write;
+ *  - the booking-page controls MUST be here. They mirror the settle screen's
+ *    unreadable-box branch, which names `unpricedNightTargetCents`, so without
+ *    an entry that reference fails the last test in this file by name - and,
+ *    more to the point, a "split it evenly" button would sit in this component;
+ *  - the route is here by choice rather than by need. Nothing fails without it,
+ *    because the route touches no `bookingGuestNight` model call and names no
+ *    target figure. It costs one line and the route has to be arithmetic-free
+ *    anyway, so the guarantee is extended rather than left to review.
+ */
 const FEATURE_FILES = [
   "lib/stored-night-price-repair.ts",
   "lib/stored-night-price-repair-store.ts",
+  "lib/stored-night-price-strand-reconcile.ts",
   "components/admin/unpriced-night-price-fields.tsx",
+  "components/admin/booking-stored-night-price-controls.tsx",
+  "app/api/admin/bookings/[id]/stored-night-prices/route.ts",
 ];
 
 /**
@@ -253,10 +274,27 @@ describe("only one module may fill in a blank night price", () => {
     for (const file of sourceFiles()) {
       const code = stripCommentsAndStrings(readFileSync(file, "utf8"));
       // `bookingGuestNight.update`, `.updateMany` and `.upsert` - every way an
-      // EXISTING row's price can be rewritten. `createMany` is not one of them:
-      // those writers compose a whole night set from a priced breakdown and are
-      // governed by `nightPriceCentsToWrite` and `required-price-cents.ts`.
-      if (!/bookingGuestNight\s*\.\s*(update|updateMany|upsert)\b/.test(code)) {
+      // EXISTING row's price can be rewritten - and the SINGULAR `.create`,
+      // which #3214 made a first-class way to put a number on a night: the
+      // strand reconcile creates the row for a night the strand holds only
+      // through its stay envelope. Until that arm existed every create in the
+      // tree was a `createMany`, so excluding creates wholesale was sound. It is
+      // not any more, and a scan that cannot see the new shape stays green while
+      // the rule is broken - a new module could write
+      // `bookingGuestNight.create({ data: { priceCents: <derived> } })` in a
+      // file that is not in `FEATURE_FILES`, so neither census would see it.
+      //
+      // `createMany` is still excluded, and the trailing `\b` is what keeps the
+      // two apart: those writers compose a whole night set from a priced
+      // breakdown and are governed by `nightPriceCentsToWrite` and
+      // `required-price-cents.ts`. Singular `bookingGuestNight.create` appears
+      // in exactly one non-test file today - the repair writer - so widening
+      // this needs no exemption.
+      if (
+        !/bookingGuestNight\s*\.\s*(update|updateMany|upsert|create)\b/.test(
+          code,
+        )
+      ) {
         continue;
       }
       const rel = relative(SRC, file).split("\\").join("/");
@@ -265,7 +303,7 @@ describe("only one module may fill in a blank night price", () => {
     }
     expect(
       offenders,
-      `INV-MOD-028: a NULL BookingGuestNight.priceCents may only be filled in by a person supplying the amount, and ${REPAIR_WRITER} is the only writer that does. These modules also rewrite an existing night row's price in place: ${offenders.join(", ")}`,
+      `INV-MOD-028: a NULL BookingGuestNight.priceCents may only be filled in by a person supplying the amount, and ${REPAIR_WRITER} is the only writer that does. These modules also put a price on a night row one at a time - rewriting an existing row, or creating one: ${offenders.join(", ")}`,
     ).toEqual([]);
   });
 
@@ -282,6 +320,11 @@ describe("only one module may fill in a blank night price", () => {
       readFileSync(join(SRC, REPAIR_WRITER), "utf8"),
     );
     expect(code).toMatch(/bookingGuestNight\s*\.\s*updateMany\b/);
+    // The create arm as well, so a census widened to see singular creates
+    // cannot be left pointing at a writer that no longer has one - which would
+    // make the widening pass by having nothing to find, exactly as a stale
+    // allowlist entry would.
+    expect(code).toMatch(/bookingGuestNight\s*\.\s*create\b/);
   });
 });
 

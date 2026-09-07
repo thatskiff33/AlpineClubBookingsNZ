@@ -12,6 +12,18 @@ const mocks = vi.hoisted(() => ({
   acquireLodgeCapacityLock: vi.fn(),
   checkCapacity: vi.fn(),
   chargePaymentMethod: vi.fn(),
+  // #3267: the attempt contract retrieves a replayed intent and cancels a
+  // superseded attempt's intent through the with-result variant.
+  getPaymentIntent: vi.fn(),
+  cancelPaymentIntentIfCancellableWithResult: vi.fn(),
+  // #3267: the attempt row is minted inside the claim tx and settled after.
+  paymentTransactionFindMany: vi.fn(),
+  paymentTransactionCreate: vi.fn(),
+  paymentTransactionUpdate: vi.fn(),
+  paymentTransactionUpdateMany: vi.fn(),
+  paymentTransactionFindUnique: vi.fn(),
+  paymentTransactionDeleteMany: vi.fn(),
+  reconcilePaymentAggregates: vi.fn(),
   markBookingPaymentSucceeded: vi.fn(),
   reconcile: vi.fn(),
   enqueueHosting: vi.fn(),
@@ -40,6 +52,15 @@ vi.mock("@/lib/prisma", () => ({
       updateMany: mocks.bookingUpdateMany,
     },
     payment: { upsert: mocks.paymentUpsert },
+    // #3267: settle and a definite-failure FAILED mark run on the base client.
+    paymentTransaction: {
+      findMany: mocks.paymentTransactionFindMany,
+      create: mocks.paymentTransactionCreate,
+      update: mocks.paymentTransactionUpdate,
+      updateMany: mocks.paymentTransactionUpdateMany,
+      findUnique: mocks.paymentTransactionFindUnique,
+      deleteMany: mocks.paymentTransactionDeleteMany,
+    },
     // #2576 §8: the post-commit drain reads this and finds nothing.
     hostingCoverageReevaluation: {
       findMany: mocks.hostingCoverageReevaluationFindMany,
@@ -54,7 +75,12 @@ vi.mock("@/lib/capacity", () => ({
   acquireLodgeCapacityLock: mocks.acquireLodgeCapacityLock,
   checkCapacityForGuestRanges: mocks.checkCapacity,
 }));
-vi.mock("@/lib/stripe", () => ({ chargePaymentMethod: mocks.chargePaymentMethod }));
+vi.mock("@/lib/stripe", () => ({
+  chargePaymentMethod: mocks.chargePaymentMethod,
+  getPaymentIntent: mocks.getPaymentIntent,
+  cancelPaymentIntentIfCancellableWithResult:
+    mocks.cancelPaymentIntentIfCancellableWithResult,
+}));
 vi.mock("@/lib/payment-reconciliation", () => ({
   markBookingPaymentSucceeded: mocks.markBookingPaymentSucceeded,
 }));
@@ -77,8 +103,14 @@ vi.mock("@/lib/email", () => ({
   sendBookingConfirmedEmail: mocks.sendConfirmedEmail,
   sendAdminPaymentFailureAlert: mocks.sendPaymentFailureAlert,
 }));
-vi.mock("@/lib/payment-transactions", () => ({
+// #3267: the route records its charge through the attempt module, exercised for
+// real here; that module reads `isCapturedTransactionStatus` from this module
+// and re-derives the aggregate through `reconcilePaymentAggregates`, the one
+// export replaced (the real one needs a Payment row to read).
+vi.mock("@/lib/payment-transactions", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/payment-transactions")>()),
   upsertPaymentIntentTransaction: mocks.upsertPaymentIntentTransaction,
+  reconcilePaymentAggregates: mocks.reconcilePaymentAggregates,
 }));
 vi.mock("@/lib/audit", () => ({
   createStructuredAuditLog: mocks.createStructuredAuditLog,
@@ -96,6 +128,9 @@ import {
 } from "@/lib/adult-member-hosting-queue-participants";
 
 const params = Promise.resolve({ id: "b1" });
+/** #3267: the id the attempt row is minted with; the Stripe key is built from it. */
+const ATTEMPT_ROW_ID = "txn_attempt_1";
+const ATTEMPT_KEY = `pending_charge_b1_${ATTEMPT_ROW_ID}`;
 
 // Transaction client the route receives inside prisma.$transaction. Reuses the
 // same underlying mocks so assertions on booking.updateMany / payment.upsert
@@ -108,6 +143,16 @@ const txClient = {
     updateMany: mocks.bookingUpdateMany,
   },
   payment: { upsert: mocks.paymentUpsert },
+  // #3267: the claim mints the attempt row inside this transaction, after the
+  // CONFIRMED claim and the Payment upsert.
+  paymentTransaction: {
+    findMany: mocks.paymentTransactionFindMany,
+    create: mocks.paymentTransactionCreate,
+    update: mocks.paymentTransactionUpdate,
+    updateMany: mocks.paymentTransactionUpdateMany,
+    findUnique: mocks.paymentTransactionFindUnique,
+    deleteMany: mocks.paymentTransactionDeleteMany,
+  },
   // #2576 §9: the officer's confirmation records the bounded same-owner hosting
   // re-evaluation inside this transaction. No policy row, so the rule resolves off
   // and the enqueue is a no-op — which is what every expectation here assumes.
@@ -147,10 +192,53 @@ function makeBooking(overrides: Record<string, unknown> = {}) {
     promoAdjustmentCents: 0,
     member: { email: "m@example.com", firstName: "Pat", lastName: "Lee" },
     guests: [{ id: "g1" }, { id: "g2" }],
-    payment: { stripePaymentMethodId: "pm_1", stripeCustomerId: "cus_1" },
+    // #3269: a saved card is customer + pm + the SetupIntent that saved it.
+    payment: {
+      stripePaymentMethodId: "pm_1",
+      stripeCustomerId: "cus_1",
+      stripeSetupIntentId: "seti_1",
+    },
+    parentBooking: null,
     promoRedemption: null,
     ...overrides,
   };
+}
+
+/**
+ * The pre-lock and locked reads answer with `booking`; the release's
+ * status-only re-read (#3267: the release re-reads the claim under its locks
+ * and hands back only a booking still CONFIRMED) answers `releaseStatus` once
+ * a claim has been made, because the mock store is not stateful.
+ */
+function primeBooking(
+  booking: ReturnType<typeof makeBooking>,
+  releaseStatus: string = "CONFIRMED"
+) {
+  mocks.bookingFindUnique.mockImplementation(
+    async ({ select }: { select?: { status?: boolean } }) =>
+      select?.status &&
+      Object.keys(select).length === 1 &&
+      mocks.bookingUpdateMany.mock.calls.some(
+        ([call]) => call?.where?.status === "PENDING" && call?.data?.status === "CONFIRMED"
+      )
+        ? { status: releaseStatus }
+        : booking
+  );
+}
+/** The settle write for `paymentIntentId`, if the route made one (#3267: a status-guarded updateMany). */
+function settleCall(paymentIntentId: string) {
+  return mocks.paymentTransactionUpdateMany.mock.calls.find(
+    ([call]) => call?.data?.stripePaymentIntentId === paymentIntentId
+  );
+}
+/** The CONFIRMED -> PENDING revert, if the route made one. */
+function releaseCall() {
+  return mocks.bookingUpdateMany.mock.calls.find(
+    ([call]) => call?.where?.status === "CONFIRMED" && call?.data?.status === "PENDING"
+  );
+}
+function orderOf(mock: { mock: { calls: unknown[][]; invocationCallOrder: number[] } }, call: unknown[]) {
+  return mock.mock.invocationCallOrder[mock.mock.calls.indexOf(call)]!;
 }
 
 const AVAILABLE = { available: true, minAvailable: 5, nightDetails: [] };
@@ -182,6 +270,22 @@ beforeEach(() => {
   mocks.paymentUpsert.mockResolvedValue({ id: "pay1" });
   mocks.sendPaymentFailureAlert.mockResolvedValue(undefined);
   mocks.upsertPaymentIntentTransaction.mockResolvedValue(undefined);
+  // #3267: no earlier attempt on the ledger; a fresh row is minted and settled
+  // in place.
+  mocks.paymentTransactionFindMany.mockResolvedValue([]);
+  mocks.paymentTransactionCreate.mockResolvedValue({ id: ATTEMPT_ROW_ID });
+  mocks.paymentTransactionUpdate.mockImplementation(
+    async ({ where }: { where: { id: string } }) => ({ id: where.id, paymentId: "pay1" })
+  );
+  mocks.paymentTransactionUpdateMany.mockResolvedValue({ count: 1 });
+  mocks.paymentTransactionFindUnique.mockResolvedValue(null);
+  mocks.paymentTransactionDeleteMany.mockResolvedValue({ count: 0 });
+  mocks.reconcilePaymentAggregates.mockResolvedValue(null);
+  mocks.getPaymentIntent.mockResolvedValue(null);
+  mocks.cancelPaymentIntentIfCancellableWithResult.mockResolvedValue({
+    canceled: true,
+    paymentIntent: { status: "canceled" },
+  });
   mocks.executeRaw.mockResolvedValue(1);
   mocks.acquireLodgeCapacityLock.mockResolvedValue(undefined);
   // Default: capacity is available. Each test that needs a full lodge overrides.
@@ -254,9 +358,16 @@ describe("POST /api/admin/bookings/[id]/confirm-pending-guests", () => {
       "b1",
       txClient
     );
-    expect(mocks.chargePaymentMethod).toHaveBeenCalledWith(
-      expect.objectContaining({ amountCents: 10000, idempotencyKey: "pending_charge_b1" })
-    );
+    // #3267 (INV-PAY-055): the charge is keyed by the attempt row minted inside
+    // the claim, and carries the same metadata as every other path — no
+    // `source`, which is what made Stripe refuse the shared key.
+    expect(mocks.chargePaymentMethod).toHaveBeenCalledWith({
+      amountCents: 10000,
+      customerId: "cus_1",
+      paymentMethodId: "pm_1",
+      metadata: { bookingId: "b1", memberId: "m1" },
+      idempotencyKey: ATTEMPT_KEY,
+    });
     // Claim-first (#1418): capacity is claimed as CONFIRMED (hold cleared)
     // BEFORE Stripe is touched, mirroring the cron.
     expect(mocks.bookingUpdateMany).toHaveBeenCalledWith({
@@ -266,19 +377,189 @@ describe("POST /api/admin/bookings/[id]/confirm-pending-guests", () => {
     expect(
       mocks.bookingUpdateMany.mock.invocationCallOrder[0]
     ).toBeLessThan(mocks.chargePaymentMethod.mock.invocationCallOrder[0]);
-    // The captured charge is durably recorded before reconciliation.
-    expect(mocks.upsertPaymentIntentTransaction).toHaveBeenCalledWith(
-      expect.objectContaining({
+    // The attempt row is minted inside the claim transaction — after the
+    // CONFIRMED claim and the Payment upsert, before Stripe — on the tx client.
+    expect(mocks.paymentTransactionCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
         paymentId: "pay1",
-        paymentIntentId: "pi_1",
+        kind: "PRIMARY",
+        source: "STRIPE",
         amountCents: 10000,
-        status: "SUCCEEDED",
-      })
+        status: "PENDING",
+        paymentMethodId: "pm_1",
+        reason: "admin_confirm_pending_guests_charge",
+      }),
+      select: { id: true },
+    });
+    expect(mocks.paymentTransactionCreate.mock.invocationCallOrder[0]).toBeGreaterThan(
+      mocks.paymentUpsert.mock.invocationCallOrder[0]
     );
-    expect(
-      mocks.upsertPaymentIntentTransaction.mock.invocationCallOrder[0]
-    ).toBeLessThan(mocks.markBookingPaymentSucceeded.mock.invocationCallOrder[0]);
+    expect(mocks.paymentTransactionCreate.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.chargePaymentMethod.mock.invocationCallOrder[0]
+    );
+    // The captured charge is durably recorded on that row before reconciliation,
+    // forward only (a capture is written over anything but refund history).
+    const settle = settleCall("pi_1");
+    expect(settle?.[0]).toEqual({
+      where: { id: ATTEMPT_ROW_ID, status: { notIn: ["REFUNDED", "PARTIALLY_REFUNDED"] } },
+      data: {
+        stripePaymentIntentId: "pi_1",
+        status: "SUCCEEDED",
+        amountCents: 10000,
+        paymentMethodId: "pm_1",
+      },
+    });
+    expect(orderOf(mocks.paymentTransactionUpdateMany, settle!)).toBeLessThan(
+      mocks.markBookingPaymentSucceeded.mock.invocationCallOrder[0]
+    );
+    expect(mocks.upsertPaymentIntentTransaction).not.toHaveBeenCalled();
     expect(mocks.createStructuredAuditLog).toHaveBeenCalled();
+    // The booking's OWN saved card is charged; the claim writes only the
+    // customer onto its row (#3269 — a pm write-back would race the
+    // setup-intent route's replacement mint and resurrect a cleared card).
+    expect(mocks.chargePaymentMethod).toHaveBeenCalledWith(
+      expect.objectContaining({ customerId: "cus_1", paymentMethodId: "pm_1" })
+    );
+    const ownUpsertArgs = mocks.paymentUpsert.mock.calls[0][0] as {
+      create: Record<string, unknown>;
+      update: Record<string, unknown>;
+    };
+    expect(ownUpsertArgs.create).toMatchObject({ stripeCustomerId: "cus_1" });
+    expect(ownUpsertArgs.update).toMatchObject({ stripeCustomerId: "cus_1" });
+    expect(Object.keys(ownUpsertArgs.create)).not.toContain("stripePaymentMethodId");
+    expect(Object.keys(ownUpsertArgs.update)).not.toContain("stripePaymentMethodId");
+  });
+
+  // #3269 / INV-PAY-053: the route asks the same question the cron asks — "may
+  // this card be charged off-session?" — and answers it by SetupIntent
+  // provenance, on the child's own row first and then the split parent's.
+  describe("saved-card provenance (#3269)", () => {
+    const ONE_OFF_CHECKOUT_CARD = {
+      stripeCustomerId: "cus_oneoff",
+      stripePaymentMethodId: "pm_oneoff",
+      stripeSetupIntentId: null,
+    };
+    const PARENT_SETUP_INTENT_CARD = {
+      stripeCustomerId: "cus_parent",
+      stripePaymentMethodId: "pm_parent",
+      stripeSetupIntentId: "seti_parent",
+    };
+
+    it("moves a booking whose only card came from a one-off checkout to payment-owed instead of charging it", async () => {
+      mocks.bookingFindUnique.mockResolvedValue(
+        makeBooking({ payment: ONE_OFF_CHECKOUT_CARD })
+      );
+
+      const res = await POST(makeRequest(), { params });
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(body).toMatchObject({ status: "PAYMENT_PENDING", charged: false });
+      expect(mocks.chargePaymentMethod).not.toHaveBeenCalled();
+      expect(mocks.paymentUpsert).not.toHaveBeenCalled();
+    });
+
+    it("charges a split child on its parent's SetupIntent-saved card without copying that card onto the child's row", async () => {
+      mocks.bookingFindUnique.mockResolvedValue(
+        makeBooking({
+          payment: null,
+          parentBooking: { id: "parent-1", payment: PARENT_SETUP_INTENT_CARD },
+        })
+      );
+      mocks.chargePaymentMethod.mockResolvedValue({
+        id: "pi_parent_card",
+        status: "succeeded",
+        amount: 10000,
+        payment_method: "pm_parent",
+      });
+      mocks.markBookingPaymentSucceeded.mockResolvedValue({ outcome: "paid" });
+
+      const res = await POST(makeRequest(), { params });
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(body).toMatchObject({ success: true, status: "PAID", charged: true });
+      // The route can only answer for a split child if it LOADS the parent's
+      // payment row — the mock above returns it regardless, so pin the query.
+      expect(mocks.bookingFindUnique).toHaveBeenCalledWith(
+        expect.objectContaining({
+          include: expect.objectContaining({
+            payment: true,
+            parentBooking: { include: { payment: true } },
+          }),
+        })
+      );
+      expect(mocks.chargePaymentMethod).toHaveBeenCalledWith(
+        expect.objectContaining({
+          customerId: "cus_parent",
+          paymentMethodId: "pm_parent",
+          idempotencyKey: ATTEMPT_KEY,
+        })
+      );
+      // The claim writes the customer the child is charged under, and NOT the
+      // parent's pm: the key is absent from both arms of the upsert.
+      const upsertArgs = mocks.paymentUpsert.mock.calls[0][0] as {
+        create: Record<string, unknown>;
+        update: Record<string, unknown>;
+      };
+      expect(upsertArgs.create).toMatchObject({ stripeCustomerId: "cus_parent" });
+      expect(upsertArgs.update).toMatchObject({ stripeCustomerId: "cus_parent" });
+      expect(Object.keys(upsertArgs.create)).not.toContain("stripePaymentMethodId");
+      expect(Object.keys(upsertArgs.update)).not.toContain("stripePaymentMethodId");
+      // #3267: the attempt row minted inside the claim carries the card that is
+      // about to be charged — the parent's — on the CHILD's payment. A later
+      // reconcile may mirror it onto the child's row, which INV-PAY-055 states
+      // is expected and harmless: the row has no SetupIntent beside it, so the
+      // provenance predicate never offers the copy for reuse (INV-PAY-053).
+      expect(mocks.paymentTransactionCreate).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          paymentId: "pay1",
+          paymentMethodId: "pm_parent",
+          reason: "admin_confirm_pending_guests_charge",
+        }),
+        select: { id: true },
+      });
+      expect(mocks.upsertPaymentIntentTransaction).not.toHaveBeenCalled();
+    });
+
+    it("does not borrow a parent's one-off checkout card: payment-owed, never a charge Stripe would refuse", async () => {
+      mocks.bookingFindUnique.mockResolvedValue(
+        makeBooking({
+          payment: null,
+          parentBooking: { id: "parent-1", payment: ONE_OFF_CHECKOUT_CARD },
+        })
+      );
+
+      const res = await POST(makeRequest(), { params });
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(body).toMatchObject({ status: "PAYMENT_PENDING", charged: false });
+      expect(mocks.chargePaymentMethod).not.toHaveBeenCalled();
+      expect(mocks.paymentUpsert).not.toHaveBeenCalled();
+    });
+
+    it("prefers the child's own SetupIntent card over the parent's", async () => {
+      mocks.bookingFindUnique.mockResolvedValue(
+        makeBooking({
+          parentBooking: { id: "parent-1", payment: PARENT_SETUP_INTENT_CARD },
+        })
+      );
+      mocks.chargePaymentMethod.mockResolvedValue({
+        id: "pi_own",
+        status: "succeeded",
+        amount: 10000,
+        payment_method: "pm_1",
+      });
+      mocks.markBookingPaymentSucceeded.mockResolvedValue({ outcome: "paid" });
+
+      const res = await POST(makeRequest(), { params });
+
+      expect(res.status).toBe(200);
+      expect(mocks.chargePaymentMethod).toHaveBeenCalledWith(
+        expect.objectContaining({ customerId: "cus_1", paymentMethodId: "pm_1" })
+      );
+    });
   });
 
   it("does not charge when capacity is full, returning 409 CAPACITY_EXCEEDED", async () => {
@@ -400,9 +681,13 @@ describe("POST /api/admin/bookings/[id]/confirm-pending-guests", () => {
     });
     expect(body).not.toHaveProperty("paymentIntentId");
     expect(body.error).toContain("charge succeeded");
-    // The captured charge was durably recorded BEFORE reconciliation ran.
-    expect(mocks.upsertPaymentIntentTransaction).toHaveBeenCalledWith(
-      expect.objectContaining({ paymentIntentId: "pi_1", status: "SUCCEEDED" })
+    // The captured charge was durably recorded on the attempt row BEFORE
+    // reconciliation ran (#3267).
+    expect(mocks.paymentTransactionUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: ATTEMPT_ROW_ID }),
+        data: expect.objectContaining({ stripePaymentIntentId: "pi_1", status: "SUCCEEDED" }),
+      })
     );
     // Admins are alerted with the intent id.
     expect(mocks.sendPaymentFailureAlert).toHaveBeenCalledWith(
@@ -443,10 +728,13 @@ describe("POST /api/admin/bookings/[id]/confirm-pending-guests", () => {
       paymentReceived: true,
       finalisationPending: true,
     });
-    expect(mocks.upsertPaymentIntentTransaction).toHaveBeenCalledWith(
+    expect(mocks.paymentTransactionUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        paymentIntentId: "pi_hosting_retry",
-        status: "SUCCEEDED",
+        where: expect.objectContaining({ id: ATTEMPT_ROW_ID }),
+        data: expect.objectContaining({
+          stripePaymentIntentId: "pi_hosting_retry",
+          status: "SUCCEEDED",
+        }),
       }),
     );
     expect(mocks.sendPaymentFailureAlert).toHaveBeenCalledWith(
@@ -463,7 +751,7 @@ describe("POST /api/admin/bookings/[id]/confirm-pending-guests", () => {
   });
 
   it("releases the claim and alerts when the Stripe charge itself fails (#1418)", async () => {
-    mocks.bookingFindUnique.mockResolvedValue(makeBooking());
+    primeBooking(makeBooking());
     mocks.chargePaymentMethod.mockRejectedValue(new Error("card_declined"));
 
     const res = await POST(makeRequest(), { params });
@@ -504,8 +792,31 @@ describe("POST /api/admin/bookings/[id]/confirm-pending-guests", () => {
     expect(mocks.upsertPaymentIntentTransaction).not.toHaveBeenCalled();
   });
 
-  it("releases the claim without alerting when the card needs further authorisation (#1418)", async () => {
-    mocks.bookingFindUnique.mockResolvedValue(makeBooking());
+  it("alerts with the amount that was CHARGED, not the pre-lock snapshot's: a price that moved between the two reads (#3267 fix round 2)", async () => {
+    // The charge already used the claim's post-lock amount; the failure alert
+    // used the pre-lock one, so an operator could be told about a figure
+    // nobody was ever asked for.
+    mocks.bookingFindUnique.mockImplementation(
+      async ({ select, include }: { select?: { status?: boolean }; include?: Record<string, unknown> }) => {
+        if (select?.status && Object.keys(select).length === 1) return { status: "CONFIRMED" };
+        return include && !("member" in include)
+          ? makeBooking({ finalPriceCents: 19900 })
+          : makeBooking();
+      }
+    );
+    mocks.chargePaymentMethod.mockRejectedValue(new Error("card_declined"));
+
+    const res = await POST(makeRequest(), { params });
+
+    expect(res.status).toBe(502);
+    expect(mocks.chargePaymentMethod).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 19900 }));
+    expect(mocks.sendPaymentFailureAlert).toHaveBeenCalledWith(
+      expect.objectContaining({ amountCents: 19900, errorMessage: "card_declined" })
+    );
+  });
+
+  it("releases the claim without alerting when the card needs further authorisation (#1418), recording the answer INSIDE the locked release, forward only, before the status re-read (#3267)", async () => {
+    primeBooking(makeBooking());
     mocks.chargePaymentMethod.mockResolvedValue({
       id: "pi_1",
       status: "requires_action",
@@ -525,8 +836,122 @@ describe("POST /api/admin/bookings/[id]/confirm-pending-guests", () => {
         nonMemberHoldUntil: new Date("2026-07-08"),
       },
     });
+    // The answer is recorded on the attempt row through the transaction
+    // client, after the release's locks, before the fence re-read and the
+    // revert — the same shape as the cron and charge-saved-method.
+    const settle = settleCall("pi_1");
+    expect(settle?.[0]).toEqual({
+      where: { id: ATTEMPT_ROW_ID, status: { in: ["PENDING", "PROCESSING"] } },
+      data: { stripePaymentIntentId: "pi_1", status: "PROCESSING", amountCents: 10000, paymentMethodId: "pm_1" },
+    });
+    const settleOrder = orderOf(mocks.paymentTransactionUpdateMany, settle!);
+    expect(settleOrder).toBeGreaterThan(mocks.acquireLodgeCapacityLock.mock.invocationCallOrder[1]!);
+    const statusReRead = mocks.bookingFindUnique.mock.calls.findIndex(
+      ([call]) => call?.select?.status && Object.keys(call.select).length === 1
+    );
+    expect(statusReRead).toBeGreaterThanOrEqual(0);
+    expect(settleOrder).toBeLessThan(mocks.bookingFindUnique.mock.invocationCallOrder[statusReRead]!);
+    expect(settleOrder).toBeLessThan(orderOf(mocks.bookingUpdateMany, releaseCall()!));
+    expect(mocks.reconcilePaymentAggregates).toHaveBeenCalledWith({ paymentId: "pay1", store: txClient });
     expect(mocks.markBookingPaymentSucceeded).not.toHaveBeenCalled();
     expect(mocks.sendPaymentFailureAlert).not.toHaveBeenCalled();
+  });
+
+  it("does NOT release a claim the webhook has already settled: the retrieve said processing, the booking reads PAID under the release's locks — the stale answer is refused by the row's own guard and the booking is left alone (#3267)", async () => {
+    primeBooking(makeBooking(), "PAID");
+    mocks.chargePaymentMethod.mockResolvedValue({ id: "pi_race", status: "processing", amount: 10000, payment_method: "pm_1" });
+    mocks.paymentTransactionUpdateMany.mockResolvedValue({ count: 0 });
+    mocks.paymentTransactionFindUnique.mockImplementation(async ({ where }: { where: { id?: string } }) =>
+      where.id ? { status: "SUCCEEDED" } : null
+    );
+
+    const res = await POST(makeRequest(), { params });
+
+    expect(res.status).toBe(409);
+    expect(settleCall("pi_race")?.[0].where).toEqual({ id: ATTEMPT_ROW_ID, status: { in: ["PENDING", "PROCESSING"] } });
+    expect(mocks.reconcilePaymentAggregates).not.toHaveBeenCalled();
+    expect(releaseCall()).toBeUndefined();
+    // Only the claim's bed reconcile ran; nothing was handed back.
+    expect(mocks.reconcile).toHaveBeenCalledTimes(1);
+    expect(mocks.markBookingPaymentSucceeded).not.toHaveBeenCalled();
+  });
+
+  it("a claim lost to an actor other than the settling webhook is an ANOMALY: a booking reading CANCELLED at the release is logged at error level, not warned about (#3267 fix round 2)", async () => {
+    // The fence itself is right — a status-guarded release would match nothing
+    // — but before this round every non-CONFIRMED status was warned about
+    // identically, so a booking cancelled by another admin mid-charge passed
+    // silently. PAID is expected; CANCELLED is not.
+    const logger = (await import("@/lib/logger")).default;
+    primeBooking(makeBooking(), "CANCELLED");
+    mocks.chargePaymentMethod.mockResolvedValue({ id: "pi_race", status: "processing", amount: 10000, payment_method: "pm_1" });
+
+    const res = await POST(makeRequest(), { params });
+
+    expect(res.status).toBe(409);
+    expect(releaseCall()).toBeUndefined();
+    const said = (calls: unknown[][], needle: string) =>
+      calls.some((call) => typeof call[1] === "string" && call[1].includes(needle));
+    expect(said(vi.mocked(logger.error).mock.calls, "lost its CONFIRMED claim to another actor")).toBe(true);
+    expect(said(vi.mocked(logger.warn).mock.calls, "already PAID at release")).toBe(false);
+  });
+
+  describe("the card is read under the locks (#3267 fix round)", () => {
+    const PARENT_ORIGINAL = { stripeCustomerId: "cus_parent", stripePaymentMethodId: "pm_parent_old", stripeSetupIntentId: "seti_parent_old" };
+    const PARENT_REPLACED = { stripeCustomerId: "cus_parent", stripePaymentMethodId: "pm_parent_new", stripeSetupIntentId: "seti_parent_new" };
+
+    /** Pre-lock read answers `preLock`; the locked read (it includes the parent's payment) answers `locked`. */
+    function primeTwoReads(preLock: ReturnType<typeof makeBooking>, locked: ReturnType<typeof makeBooking>) {
+      mocks.bookingFindUnique.mockImplementation(
+        async ({ select, include }: { select?: { status?: boolean }; include?: Record<string, unknown> }) => {
+          if (select?.status && Object.keys(select).length === 1) return { status: "CONFIRMED" };
+          return include && !("member" in include) ? locked : preLock;
+        }
+      );
+    }
+
+    it("a split child's borrowed parent card replaced between the pre-lock read and the locks is charged as the LOCKED card, and the attempt row records that card", async () => {
+      primeTwoReads(
+        makeBooking({ payment: null, parentBooking: { id: "parent-1", payment: PARENT_ORIGINAL } }),
+        makeBooking({ payment: null, parentBooking: { id: "parent-1", payment: PARENT_REPLACED } })
+      );
+      mocks.chargePaymentMethod.mockResolvedValue({ id: "pi_1", status: "succeeded", amount: 10000, payment_method: "pm_parent_new" });
+      mocks.markBookingPaymentSucceeded.mockResolvedValue({ outcome: "paid" });
+
+      const res = await POST(makeRequest(), { params });
+
+      expect(res.status).toBe(200);
+      // The locked read carries the card columns, own row and parent's.
+      expect(mocks.bookingFindUnique).toHaveBeenCalledWith({
+        where: { id: "b1" },
+        include: {
+          guests: { include: { nights: true } },
+          payment: true,
+          parentBooking: { include: { payment: true } },
+        },
+      });
+      expect(mocks.paymentTransactionCreate).toHaveBeenCalledWith({
+        data: expect.objectContaining({ paymentMethodId: "pm_parent_new" }),
+        select: { id: true },
+      });
+      expect(mocks.chargePaymentMethod).toHaveBeenCalledWith(
+        expect.objectContaining({ customerId: "cus_parent", paymentMethodId: "pm_parent_new" })
+      );
+    });
+
+    it("answers 409 and claims nothing when the card is gone by the time the locks are held", async () => {
+      primeTwoReads(
+        makeBooking(),
+        makeBooking({ payment: { stripeCustomerId: "cus_1", stripePaymentMethodId: null, stripeSetupIntentId: "seti_replacing" } })
+      );
+
+      const res = await POST(makeRequest(), { params });
+
+      expect(res.status).toBe(409);
+      expect(await res.json()).toEqual({ error: "The saved card is no longer available for this booking" });
+      expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
+      expect(mocks.paymentUpsert).not.toHaveBeenCalled();
+      expect(mocks.chargePaymentMethod).not.toHaveBeenCalled();
+    });
   });
 
   it("reports the auto-refund accurately when the final capacity claim fails (#1418)", async () => {

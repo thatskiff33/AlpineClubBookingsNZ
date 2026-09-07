@@ -613,6 +613,32 @@ export function setupIntentFailedTemplate(data: {
 }
 
 /**
+ * #3268 — the auto-charge cron found the saved card permanently unusable and
+ * has retired it (INV-PAY-054). Sent ONCE, because after this run the card is
+ * gone from every row that carried it and the next run never reaches the charge
+ * arm for it. Names no card detail and no Stripe wording: the member's remedy
+ * is the same whatever the provider said, and the operator alert carries the
+ * detail. "Still held for now" is the same reassurance `setupIntentFailedTemplate`
+ * gives — the booking has not been cancelled by this.
+ */
+export function savedCardChargeFailedTemplate(data: {
+  bookingId: string;
+  firstName: string;
+  checkIn: Date;
+  checkOut: Date;
+}): string {
+  const dates = `${emailCalendarDay(data.checkIn)} – ${emailCalendarDay(data.checkOut)}`;
+  return layout(`
+    ${heading("We Couldn't Charge Your Saved Card")}
+    ${paragraph("Hi " + escapeHtml(data.firstName) + ",")}
+    ${alertBox("We couldn't charge the card saved for your booking (" + dates + "). It has been removed from the booking; please log in and save a new card so we can confirm your booking.", "warning")}
+    ${paragraph("Your booking is still held for now.")}
+    ${button("Save a New Card", BASE_URL + "/bookings/" + data.bookingId)}
+    ${supportContactSentence("If you need help, contact the club at ")}
+  `);
+}
+
+/**
  * #1993 Part A — member-facing notice that the provisional non-member guest
  * portion of their stay was auto-cancelled because it stayed unpaid up to the
  * check-in day. Reassures that nothing was ever charged for the guest portion

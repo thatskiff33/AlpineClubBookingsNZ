@@ -19,6 +19,14 @@ type StayNightsClient = Pick<typeof prisma, "bookingGuestNight">;
  * Counts distinct stay dates across the member's own member-guest rows
  * (BookingGuest.isMember = true, memberId = member) in committed, non-deleted
  * bookings. Used by the nomination eligibility gate.
+ *
+ * IT COUNTS ROWS, so a strand that holds its nights only through its stay
+ * envelope contributes NOTHING here until those rows exist. #3214's strand
+ * reconcile creates them, and a member can therefore cross `minimumNights` from
+ * an officer recording what their nights sold for. That is a correction —
+ * `INV-CAP-032` is that a guest with no night rows is one the system believes is
+ * nowhere — and it is analysed where it is caused, in
+ * `stored-night-price-strand-reconcile.ts`'s module docblock.
  */
 export async function countMemberStayNights(
   memberId: string,

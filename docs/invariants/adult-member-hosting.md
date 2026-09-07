@@ -1797,8 +1797,9 @@ compliant indefinitely.
 ### INV-HOST-052
 
 - **A booking left uncovered because its owner declined the linked move has its
-  own recorded cause, and that cause is registered one release before anything
-  writes it** (#3232 D3, `docs/BLUE_GREEN_MIGRATION_POLICY.md`).
+  own recorded cause, written by exactly one arm, and that cause was registered
+  one release before anything wrote it** (#3232 D3, #3241,
+  `docs/BLUE_GREEN_MIGRATION_POLICY.md`).
 
   **WHY ITS OWN CAUSE.** `HostingCoverageIncidentCause` had exactly two values,
   and a member's deliberate, prompted decision was filed as `SYSTEM_CHANGE` —
@@ -1819,35 +1820,39 @@ compliant indefinitely.
   still serving against the same database. That colour's generated Prisma client
   knows this type with two labels and cannot deserialize a third. So:
 
-  1. **Expand (this release).**
-     `20260909010000_add_owner_declined_linked_move_incident_cause` registers
-     `OWNER_DECLINED_LINKED_MOVE` and **nothing writes it**. A declined offer is
+  1. **Expand (#3232, shipped first).**
+     `20260909010000_add_owner_declined_linked_move_incident_cause` registered
+     `OWNER_DECLINED_LINKED_MOVE` and **nothing wrote it**. A declined offer was
      still stored as `SYSTEM_CHANGE`.
-  2. **Runtime (the following release).** The declined arm starts writing the new
-     value.
+  2. **Runtime (#3241, the following release).** The declined arm — the
+     owner-declined branch of `hostingCoverageActorOptions` in
+     `src/lib/adult-member-hosting-review.ts` — writes the new value. **Both
+     halves have now landed**, and the sequence stands here because the next
+     value added to this enum owes the same one.
 
-  Writing it early is not a cosmetic risk. `cause` is selected by the incident
-  writer's OWN fold read in
+  Writing it early would not have been a cosmetic risk. `cause` is selected by
+  the incident writer's OWN fold read in
   `src/lib/adult-member-hosting-coverage-incidents.ts` — the read every
   re-evaluation drain performs before it opens or folds an incident — as well as
-  by the two officer surfaces. A row carrying the value during the drain
-  therefore breaks the reconciliation engine, not merely a screen. Registering
-  the label breaks nothing: a client that never meets a value of a type is
-  unaffected by that value existing.
+  by the two officer surfaces. A row carrying the value during the drain would
+  therefore have broken the reconciliation engine, not merely a screen.
+  Registering the label breaks nothing: a client that never meets a value of a
+  type is unaffected by that value existing.
 
   **That claim was measured, not reasoned about.** Every migration on the branch
   was applied to a throwaway PostgreSQL 16, a Prisma client was generated from
   `origin/main`'s own `prisma/schema.prisma`, and that client ran the fold read
   three times: after the expand with no row carrying the new label, **OK**; with
-  a row carrying `SYSTEM_CHANGE`, which is what this release writes for a
+  a row carrying `SYSTEM_CHANGE`, which is what the expand release wrote for a
   declined offer, **OK**; and with that row's cause changed to
   `OWNER_DECLINED_LINKED_MOVE`, **failed** with
   `Value 'OWNER_DECLINED_LINKED_MOVE' not found in enum
   'HostingCoverageIncidentCause'`. The migration header records the same
   transcript.
 
-  **THE WORDING DOES NOT WAIT, AND NEITHER DOES THE TRUTH.** Two things land in
-  the expand release, so an officer is not misinformed for a release.
+  **THE WORDING DID NOT WAIT, AND NEITHER DID THE TRUTH.** Two things landed in
+  the expand release, so an officer was not misinformed for a release — and the
+  runtime half was then a writer rather than a writer plus two screens.
 
   - The officer-facing phrase for every cause has ONE home,
     `describeHostingCoverageIncidentCause`, and it already names the new value.
@@ -1858,8 +1863,8 @@ compliant indefinitely.
     value holds: an administrative cancellation, a lifecycle transition, a data
     correction, a club that tightened its own policy or switched the rule on, an
     officer who confirmed pending guests or force-confirmed and so ADDED people
-    the existing cover no longer stretches to, and — until the runtime half
-    lands — a declined linked move. "Qualification changed" was true of none of
+    the existing cover no longer stretches to, and — while the halves were
+    apart — a declined linked move. "Qualification changed" was true of none of
     those, and the interim phrase "cover removed by a later change" was untrue of
     the last three: nothing was removed in any of them.
   - The member's decision is **recorded in words** in the incident's audit
@@ -1876,10 +1881,159 @@ compliant indefinitely.
   reason and its attribution would both be inventions, and an officer would be
   shown a decision they never made.
 
+  **ONE WRITER, AND THAT IS THE PART STILL BEING ENFORCED.** The writer-ban
+  census is gone, deleted by #3241 in the same change that started writing the
+  value — leaving it would have made that change unmergeable, and deleting it
+  separately would have dropped the guard while the wait was still real. What
+  replaced it is an exact-list census: `OWNER_DECLINED_LINKED_MOVE` is produced
+  by the declined arm and by nothing else, and named outside a test only by the
+  module that declares the union and owns the officer-facing phrase. An empty
+  list means the writer was renamed or removed and a declined offer is quietly
+  back to `SYSTEM_CHANGE`; a second entry means some automatic change now files
+  itself as a member's decision, which is the count this value exists to keep
+  clean. Widening either list is a change to this invariant, not a test fix.
+
   Enforced by
   `src/lib/__tests__/hosting-coverage-incident-cause-expand.test.ts`, whose
   failure messages carry this id: it pins the appended-never-reordered enum, the
-  additive DML-free migration, the ledger row's declared deploy order, the ready
-  wording in its one home on both surfaces, and — the gate — that no non-test
-  file under `src/` produces the value while the expand is in its first release.
-  Delete that last assertion in the same change that starts writing it.
+  additive DML-free migration, the ledger row's declared deploy order, the
+  wording in its one home on both surfaces, and the one-writer census above.
+  `adult-member-hosting-same-owner.test.ts` pins the arm itself — the queue item
+  the declined offer enqueues, and the cause and reason the drain then stores.
+
+### INV-HOST-053
+
+- **A re-evaluation row's explanation belongs to the booking that row is about,
+  and an explained cause is never overwritten by an unexplained one** (#3241).
+
+  **THE SHAPE OF THE DEFECT.** One `HostingCoverageReevaluation` row names an
+  owner, a lodge and a night list, and the drain turns that triple back into
+  every one of that owner's active bookings over those nights. §14 then asks of
+  each "is this booking covered NOW", deliberately, rather than "did this change
+  uncover it" — so the sweep also reaches bookings that were already uncovered
+  for reasons of their own. Each of them used to be handed the row's `cause` and
+  `reason`. An officer's private override reason therefore landed on a booking
+  they had never considered, and a member's decision landed on a booking nobody
+  had mentioned to them. It also inflated the count `INV-HOST-052` exists to keep
+  honest: a club counting declined moves counted bookings nobody declined.
+
+  **WHERE THE VOCABULARY LIVES.** The labels, their ranks, the one officer-facing
+  phrase for each and the one stored sentence a declined move records are
+  `src/lib/adult-member-hosting-incident-causes.ts`, split out of the incident
+  writer by #3241 when the writer had grown to two jobs. Two officer surfaces and
+  an audit line want the words and nothing else; the fold wants the ranks
+  (`INV-SSOT-001`). The writer re-exports the words for callers that already
+  imported them from it — a pointer, not a second definition.
+
+  **THE ACTOR IS NOT THE STORY.** `actorMemberId` still reaches every booking in
+  the sweep, because "who did the thing that revealed this" is true of all of
+  them and is what an audit trail is for. What stops at the row's own booking is
+  the `cause` and the `reason` — the claim about WHY, and about whom.
+
+  **THREE PARTS, BECAUSE THE OBVIOUS ONE ALONE LOSES THE STORY.** Confining
+  attribution is not sufficient by itself, and shipping only that would have
+  silently dropped the decision from the very bookings it describes.
+
+  1. **The drain** gives `cause` and `reason` only to the booking the row names —
+     **and, for an officer override, to that booking's #738 split half**, because
+     a split pair is one booking and the officer acted on the pair. The sibling
+     query excludes its own input, so a half can never equal `sourceBookingId`;
+     and §7's mandatory reason is stored nowhere but the incident, so where the
+     uncovered half is the split child and its parent has no violation of its
+     own, confining attribution to the id alone would leave that reason nowhere
+     at all.
+
+     **THE EXPANSION IS FOR AN OVERRIDE AND NOT FOR A DECLINE**, and that is not
+     an oversight. A decline is an answer about an EXACT set of bookings, each of
+     which gets a row of its own under part 2 — so a half that was not in that set
+     would inherit a decision nobody was asked for, which is this invariant's own
+     defect wearing a different hat. An override names no set: the officer
+     confirmed a change to one booking, and its two halves are that booking. The
+     extra read is therefore taken only for an override, and the ordinary sweep
+     pays nothing (`adult-member-hosting-coverage-drain.ts`).
+  2. **The enqueue** writes a row per **acknowledged** dependent — the member's
+     declined set, or the exact set an officer was shown and confirmed under §7,
+     both fingerprinted by the same stranded state key — even where the changed
+     booking's own night window already reaches it.
+     A dependent that PARTIALLY overlaps the new dates — the adult's booking
+     still covers one of the kid's nights and leaves the other short — is an
+     ordinary family shape, and it is reached only by the sweep. Without a row of
+     its own it would lose the decision entirely.
+
+     **AN OFFICER'S OVERRIDE IS AN ACKNOWLEDGEMENT TOO**, and the same rule
+     carries it: the officer is shown the exact bookings their change would
+     strand and confirms that set with a mandatory reason, so the incident opened
+     on each of them is the record of who authorised it — and there is no other
+     durable home for that reason. A dependent reached only by the changed
+     booking's sweep, and so filed as a plain automatic change, would lose it.
+     The end-to-end contract from #2576/#2597 asserts exactly this, and caught it
+     when #3241's first attempt confined attribution without carrying it.
+
+     **STRANDED, NOT EVERY DEPENDENT, AND THE DIFFERENCE IS THE WHOLE POINT.**
+     `inspectSameOwnerDependents` drops from `stranded` any dependent whose
+     uncovered state is already recorded — a stored review or an open incident at
+     the same state key — and those are precisely the bookings uncovered for
+     reasons of their own. They stay in the dependent set. Giving each of them a
+     row of its own would hand them the story under their own name, where the
+     drain's filter cannot help. A change that explains nothing about who — a
+     plain `SYSTEM_CHANGE` with no reason — has nothing to carry, so it keeps the
+     existing overlap rule and the ordinary edit still writes exactly one row.
+     The changed booking's own row does not carry the decision either: "asked whether to move this booking as well" is
+     self-contradictory on the booking they were editing.
+  3. **A sweep yields the OPENING to the row that owns the story.** Before a
+     story-carrying row opens an incident for a booking that is not its own, it
+     asks whether that booking already has an unprocessed row of its own carrying
+     a story, and if so leaves it alone entirely — that row will reconcile it
+     moments later, with the explanation.
+
+     This is about the AUDIT HISTORY, not the stored cause. Without it the sweep
+     can open the incident unexplained and the explained row can then only
+     promote it, which puts §7's mandatory reason on an *update* rather than on
+     the opening — and an officer filtering the audit log for "incident opened",
+     which is what the admin screen offers, would never see why. Ordering cannot
+     fix it: both rows are written in one transaction, PostgreSQL gives every row
+     in a transaction the same `now()`, and the claim orders by `enqueuedAt`.
+
+     It yields only to a row that can still run. A row at or past `maxAttempts`
+     is retired, so deferring to it would hold the incident closed for good — an
+     unnoticed hazard is worse than an unexplained opening. `resolveRowRemit` in
+     `adult-member-hosting-coverage-remit.ts` is the one home for both halves of
+     a row's remit, split out of the drain when that file reached its size budget
+     with a second job in it.
+  4. **The fold promotes by rank**: `OFFICER_OVERRIDE` outranks
+     `OWNER_DECLINED_LINKED_MOVE`, which outranks `SYSTEM_CHANGE`. For an
+     identical uncovered state a more explained cause overwrites a less explained
+     one, and never the reverse. That is what makes drain order stop mattering: a
+     stranded booking can be opened by a sweep that knows nothing and reached
+     afterwards by its own row carrying the member's decision. The guarded
+     `updateMany` re-asserts the ranks under concurrency **as `notIn` the causes
+     this write does not outrank** — an allow-list would exclude a label the
+     running build has never heard of, which is exactly what an older colour
+     meets mid-deploy under `INV-HOST-052`'s own two-release order, and the
+     promotion would then match nothing, spin the retry loop and throw. A
+     concurrent writer holding something stronger still wins rather than being
+     erased. A promotion writes the story and NOTHING ELSE: the full update
+     payload also clears the owner-notification claim, which is right when the
+     state moved and wrong here — clearing a claim held by a delivery in flight
+     loses its completion stamp and emails the owner twice about one unchanged
+     condition (§16). The rank is a map checked with `satisfies`, so a fourth
+     cause nobody ranks is a compile error rather than a silent 0.
+
+  **WHAT THIS DOES NOT CHANGE.** A materially different uncovered state is still
+  a new state: when the state key moves, the incoming cause is written whatever
+  its rank, because the situation being described is no longer the same one. The
+  pre-existing preservation of an officer's stored `overrideReason` across such a
+  move is untouched.
+
+  Enforced by
+  `src/lib/__tests__/adult-member-hosting-coverage-drain-claims.test.ts` (the
+  story reaches the row's own booking and no other, in both the declined and the
+  officer-override directions, and a split half keeps the officer's reason),
+  `src/lib/__tests__/adult-member-hosting-coverage-incidents.test.ts` (the
+  decision is recorded whichever drain arrives first, an override promotes a
+  decision and is never demoted by one, and a notification claim in flight
+  survives a promotion) and
+  `src/lib/__tests__/adult-member-hosting-same-owner.test.ts` (an overlapping
+  stranded booking gets a row of its own, while a booking uncovered for its own
+  reason and the booking being edited do not carry the decision), whose failure
+  messages carry this id.

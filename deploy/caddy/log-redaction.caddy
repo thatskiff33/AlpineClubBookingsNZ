@@ -1,0 +1,51 @@
+# Secret-redaction rules for Caddy's default logger (#3293).
+#
+# A bare `fields` block, imported INSIDE a `format filter { }` in each
+# Caddyfile's global options. It is not a site directive and not a named
+# snippet — importing it anywhere else will not adapt.
+#
+# WHY IT IS ONE FILE. Three Caddyfiles front this application (production,
+# staging, and a fork's own variant) and each configures its own logger. A
+# redaction list copied three times is a list that diverges, and the copy that
+# falls behind is the one that writes a live credential to disk. One file, three
+# imports (`INV-SSOT`).
+#
+# WHY IT IS ON THE **DEFAULT** LOGGER RATHER THAN THE ACCESS LOG. Caddy writes
+# access entries and `http.log.error` entries through different loggers, and BOTH
+# carry the full request — URI and headers. Filtering only the access log leaves
+# every 502, 413 and 5xx printing the URL in full, which is precisely the class of
+# request most likely to be retried and logged repeatedly. Attaching the filter to
+# the default logger and giving each site a bare `log` covers both with one rule.
+# Measured: a request to `/pay/<token>` against a dead upstream produced an
+# `http.log.error` line and an `http.log.access` line, and both were redacted.
+#
+# WHAT IS REDACTED, AND WHY IT IS THE SAME LIST THE APPLICATION USES.
+# `src/lib/redact-sensitive-json.ts` already strips two families of secret from
+# every application log line and Sentry event; a proxy log recording them would
+# reopen exactly what that module closes:
+#
+#   1. Bearer tokens carried as a PATH SEGMENT — `/pay/<token>`,
+#      `/lodge-maintenance/<token>` and the rest. Holding one IS holding the
+#      credential.
+#   2. Secrets carried as a QUERY PARAMETER — an OAuth `code`/`state`, a Stripe
+#      client secret, an access or refresh token.
+#
+# The expression below is that module's two expressions combined into the one
+# expression Caddy allows per field; each alternative captures its own prefix, so
+# `${1}${2}` re-emits whichever matched and the other expands to nothing. KEEP THE
+# TWO IN STEP: a new token-bearing prefix added there is added here in the same
+# change. A divergence is how a path ends up redacted in one log and printed in
+# the other.
+#
+# `Referer` gets the same treatment as the URI, and that is not belt and braces:
+# every request a browser makes from a `/pay/<token>` page carries that token in
+# its `Referer`, so redacting only the URI would leave the credential in the log
+# one line further down. Measured on the same run.
+#
+# `Cookie`, `Set-Cookie` and `Authorization` need no rule: Caddy withholds
+# credential headers from logs unless the global `log_credentials` is set, and it
+# is not set anywhere in this repository.
+fields {
+	request>uri regexp "(/(?:membership-cancellation|chores|nominations|pay|lodge-maintenance)/|/booking-requests/(?:verify|respond)/|/group-bookings/join/verify/)[A-Za-z0-9_-]+|((?i)[?&](?:access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|payment[_-]?intent[_-]?client[_-]?secret|setup[_-]?intent[_-]?client[_-]?secret|oauth[_-]?state|token|state|code)=)[^&#]+" "${1}${2}REDACTED"
+	request>headers>Referer regexp "(/(?:membership-cancellation|chores|nominations|pay|lodge-maintenance)/|/booking-requests/(?:verify|respond)/|/group-bookings/join/verify/)[A-Za-z0-9_-]+|((?i)[?&](?:access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|payment[_-]?intent[_-]?client[_-]?secret|setup[_-]?intent[_-]?client[_-]?secret|oauth[_-]?state|token|state|code)=)[^&#]+" "${1}${2}REDACTED"
+}

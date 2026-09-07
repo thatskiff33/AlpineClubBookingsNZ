@@ -1,3 +1,26 @@
+{
+	# Access logging, with URL tokens and query secrets redacted (#3293).
+	#
+	# Before this, only Caddy's error log existed, so a request that SUCCEEDED
+	# left no trace at all — which is why the connection-reuse race this issue
+	# fixes could not be measured after the fact: two logged 502s, and no way to
+	# tell whether that was two attempts out of two or two out of fifty.
+	#
+	# The filter is attached to the DEFAULT logger rather than to the access log,
+	# because Caddy's `http.log.error` entries carry the full request too and were
+	# already printing URLs in full. `deploy/caddy/log-redaction.caddy` carries the
+	# rules and the reasoning; each site opts in with a bare `log`.
+	#
+	# `wrap json` matches what this logger already emits when it is not attached to
+	# a terminal, so nothing about the existing lines changes shape.
+	log default {
+		format filter {
+			wrap json
+			import /etc/caddy/deploy/log-redaction.caddy
+		}
+	}
+}
+
 {$DOMAIN} {
 	# X-Frame-Options is PATH-SCOPED so the edge states the same intent the app
 	# does (#2246). /display is deliberately framed by the admin's own sandboxed
@@ -98,6 +121,9 @@
 		# supplies a CSP" as "a page without its own is safe".
 		?Content-Security-Policy "default-src 'self'"
 	}
+	# Send this site's access entries to the redacting default logger (#3293).
+	log
+
 	# Guaranteed request-body backstop (#2235): drop oversize bodies at the
 	# edge before they reach the app. Set comfortably above the largest
 	# legitimate in-app cap (80MB image-manager batch, ~52MB config bundle);
