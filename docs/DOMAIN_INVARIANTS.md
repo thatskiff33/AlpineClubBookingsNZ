@@ -218,6 +218,9 @@ Prefix `INV-PAY`.
 | `INV-PAY-050` | Xero Stripe refund notes cover provider-backed cash evidence, never the refunded-amount mirror |
 | `INV-PAY-051` | An unpriceable edit holds the money as one typed review task |
 | `INV-PAY-052` | A replacement SetupIntent retires the previous card; a retired card stays retired |
+| `INV-PAY-073` | Minting a replacement clears the card column; the stamp is row-guarded |
+| `INV-PAY-074` | A succeeded SetupIntent is not, alone, proof of a chargeable card |
+| `INV-PAY-075` | A cancelled SetupIntent leaves the row alone; the form still shows |
 | `INV-PAY-053` | Off-session charging needs SetupIntent provenance, decided in one place |
 | `INV-PAY-054` | An unusable saved card is terminal for the cron; escalated once |
 | `INV-PAY-055` | One charge attempt is one durable ledger row with its own key |
