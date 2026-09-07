@@ -357,7 +357,10 @@ export async function rebaseBookingPriceFromStrands({
     const repaired = booking.guests.find(
       (guest) => guest.id === repairedStrand.bookingGuestId,
     );
-    if (repaired === undefined || repaired.priceCents !== repairedStrand.totalCents) {
+    if (
+      repaired === undefined ||
+      repaired.priceCents !== repairedStrand.totalCents
+    ) {
       throw new ManualBookingPaymentError(
         REBASE_STRAND_NOT_ON_BOOKING_MESSAGE,
         409,
