@@ -3823,15 +3823,50 @@ describe("review finding source/schema contracts", () => {
       "No payment has been received for this booking, so no refund",
     );
 
+    // The page RENDERS the render-null leaf, and that is a fact about the page
+    // shell rather than about the surface: #2958 left the section rail and the
+    // help leaf on the shell deliberately, so this one stays pinned to the file.
     const bookingDetail = readRepoFile(
       "src/app/(authenticated)/bookings/[id]/page.tsx",
     );
     expect(bookingDetail).toContain("<BookingHelpExtras");
-    expect(bookingDetail).toContain("describeCancellationSchedule");
+
+    /*
+      The other three are facts about the booking-detail SURFACE, not about one
+      file in it, so they are checked over the whole route directory (#2958,
+      #3323). They all still sit on the shell today, which is why this contract
+      survived the split — but only because the cancellation-schedule read was
+      left beside the section rail. Had it gone into a `_components/` module
+      instead, a perfectly reasonable placement, two of these would have moved
+      and this suite would have reddened exactly as
+      `additional-payment-card-gate.test.ts` did. Reading the directory removes
+      that dependence on where a later change happens to put them.
+    */
+    const routeDir = path.resolve(
+      process.cwd(),
+      "src/app/(authenticated)/bookings/[id]",
+    );
+    const routeSurface = (function readRouteSurface(dir: string): string[] {
+      return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          return entry.name === "__tests__" ? [] : readRouteSurface(full);
+        }
+        if (!/\.tsx?$/.test(entry.name) || /\.test\.tsx?$/.test(entry.name)) {
+          return [];
+        }
+        // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
+        return [readFileSync(full, "utf8")];
+      });
+    })(routeDir).join("\n");
+    // Guards against a directory move making the three assertions below vacuous.
+    expect(routeSurface.length).toBeGreaterThan(1000);
+
+    expect(routeSurface).toContain("describeCancellationSchedule");
     // The refund schedule is gated on a captured payment; unpaid bookings get the
     // no-refund message instead.
-    expect(bookingDetail).toContain("originalPaymentCaptured");
-    expect(bookingDetail).toContain("cancellationHasNoPayment");
+    expect(routeSurface).toContain("originalPaymentCaptured");
+    expect(routeSurface).toContain("cancellationHasNoPayment");
   });
 
   it("removes the E2E ride-through allowances for the two fixed races (F28)", () => {
