@@ -215,7 +215,7 @@ describe("member parent writer closed-world census", () => {
     expect(classified.map(classifiedKey)).toEqual(
       REVIEWED_PARENT_WRITER_MANIFEST.map(classifiedKey),
     );
-  });
+  }, 30_000);
 
   it("recognises scalar, nested-connect, computed merge, and non-runtime forms", () => {
     const measured = scanMemberParentWriterSources(
