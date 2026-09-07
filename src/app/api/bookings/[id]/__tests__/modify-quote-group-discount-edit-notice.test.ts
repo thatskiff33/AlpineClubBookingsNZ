@@ -209,9 +209,9 @@ function booking() {
       stayEnd: D("2026-12-13"),
       priceCents: 30000,
       nights: [
-        { stayDate: D("2026-12-10"), priceCents: 10000 },
-        { stayDate: D("2026-12-11"), priceCents: 10000 },
-        { stayDate: D("2026-12-12"), priceCents: 10000 },
+        { stayDate: D("2026-12-10"), priceCents: 10000, priceSource: "SOLD" },
+        { stayDate: D("2026-12-11"), priceCents: 10000, priceSource: "SOLD" },
+        { stayDate: D("2026-12-12"), priceCents: 10000, priceSource: "SOLD" },
       ],
     })),
   };

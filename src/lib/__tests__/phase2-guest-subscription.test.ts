@@ -731,10 +731,11 @@ describe("P2.3: Guest subscription check", () => {
           // is the gate working, not the range or refund question these cases
           // are about.
           nights: [
-            { stayDate: checkIn, priceCents: 2500 },
+            { stayDate: checkIn, priceCents: 2500, priceSource: "SOLD" },
             {
               stayDate: new Date("2026-12-02T00:00:00.000Z"),
               priceCents: 2500,
+              priceSource: "SOLD",
             },
           ],
         },
@@ -755,10 +756,11 @@ describe("P2.3: Guest subscription check", () => {
           // is the gate working, not the range or refund question these cases
           // are about.
           nights: [
-            { stayDate: checkIn, priceCents: 2500 },
+            { stayDate: checkIn, priceCents: 2500, priceSource: "SOLD" },
             {
               stayDate: new Date("2026-12-02T00:00:00.000Z"),
               priceCents: 2500,
+              priceSource: "SOLD",
             },
           ],
         },
@@ -861,10 +863,11 @@ describe("P2.3: Guest subscription check", () => {
           // is the gate working, not the range or refund question these cases
           // are about.
           nights: [
-            { stayDate: checkIn, priceCents: 2500 },
+            { stayDate: checkIn, priceCents: 2500, priceSource: "SOLD" },
             {
               stayDate: new Date("2026-12-02T00:00:00.000Z"),
               priceCents: 2500,
+              priceSource: "SOLD",
             },
           ],
         },
@@ -885,10 +888,11 @@ describe("P2.3: Guest subscription check", () => {
           // is the gate working, not the range or refund question these cases
           // are about.
           nights: [
-            { stayDate: checkIn, priceCents: 2500 },
+            { stayDate: checkIn, priceCents: 2500, priceSource: "SOLD" },
             {
               stayDate: new Date("2026-12-02T00:00:00.000Z"),
               priceCents: 2500,
+              priceSource: "SOLD",
             },
           ],
         },
