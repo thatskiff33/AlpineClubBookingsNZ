@@ -235,8 +235,8 @@ Prefix `INV-PAY`.
 | `INV-PAY-083` | A definite Stripe failure ends the attempt; an ambiguous one keeps it |
 | `INV-PAY-084` | A pre-cutover shared-key charge is recognised by reason and taken over |
 | `INV-PAY-085` | An attempt on a replaced card is ended; its intent is cancelled |
-| `INV-PAY-086` | Captured money refuses every PRIMARY row; ordering with INV-PAY-054 |
-| `INV-PAY-087` | The refusal alert is capped and anchored; a harmless INV-PAY-053 consequence |
+| `INV-PAY-086` | Captured money on any PRIMARY row refuses a new attempt; INV-PAY-054 ordering |
+| `INV-PAY-087` | The refusal alert is capped and anchored; an expected INV-PAY-053 card copy |
 | `INV-PAY-088` | Stripe's answer is recorded on the attempt row, forward only |
 | `INV-PAY-089` | A key is only re-sent inside Stripe's window, or recovered by it |
 | `INV-PAY-090` | The pre-charge sweep excludes attempt rows by the key prefix |

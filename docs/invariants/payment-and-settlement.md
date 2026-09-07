@@ -1682,7 +1682,7 @@ _Split from `INV-PAY-055` (#3267, epic #3270)._
 
 ## INV-PAY-082
 
-_Split from `INV-PAY-055` (#3267). "A definite failure" is defined in
+_Split from `INV-PAY-055` (#3267, epic #3270); "definite failure" defined in
 `INV-PAY-083`._
 
 - **An unresolved attempt on the same card is REPLAYED, and a replay asks
@@ -1827,7 +1827,8 @@ _Split from `INV-PAY-055` (#3267, epic #3270)._
 
 ## INV-PAY-087
 
-_Split from `INV-PAY-055` (#3267, epic #3270)._
+_Split from `INV-PAY-055` (#3267, epic #3270); continuing `INV-PAY-086`'s
+refusal bullet — "the admin ALERT" and "the refusal" are defined there._
 
 - The admin ALERT is capped: the cron sends it on the
   #1993 extension cadence (windows 1, 2, 3, then every 7th, once each), rather
