@@ -1028,6 +1028,17 @@ one, check the other.
   home for both sentences; the admin route's schema no longer rejects a zero
   because it cannot know which control to name, and the settle screen reads the
   same refusal.
+- **A share the edit's invoice was mid-send for becomes a DISMISS-ONLY queue
+  item, and nothing bills it** (#3213, 4 Sep 2026). A claimed
+  send job can still go out at the full amount, so a second invoice could bill
+  the member twice. The share becomes an `UNCOLLECTED_EDIT_REVIEW_SHARE` task:
+  the completion door refuses `COMPLETED` on this kind; `amountCents` NULL means
+  unknowable, and neither `0` nor the settled total may stand in for it; and one
+  withheld share is one item — the kind mints an `occurrenceKey`, and
+  `ManualRefundTask_edit_review_occurrence_key_present` refuses a row without
+  one. Registered in one release and written in the next (migration
+  `20260910010000`); `uncollected-edit-review-share-expand.test.ts` holds that
+  line.
 - **A credit-only completion records no refund.** Where the booking has no
   captured money, `Payment.refundedAmountCents` is untouched and no `REFUNDED`
   booking event is written — that log is member-facing. Since #3032 such a
