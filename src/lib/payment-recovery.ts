@@ -87,14 +87,21 @@ function errorMessage(error: unknown) {
 
 function nextRetryDate(attempts: number) {
   // The attempt index is clamped into the schedule's own bounds, so it always
-  // lands on a step; the last step is the same list's longest wait and is the
-  // right one to fall back to rather than a delay invented here (#2800).
+  // lands on a step. There is deliberately NO numeric fallback: a zero would be
+  // an immediate retry, which is the worst wait this function could invent, and
+  // any other number would be a backoff nobody configured. The schedule's
+  // length is asserted at module load, so an empty one cannot ship — and if it
+  // ever did, refusing to schedule is the safe answer (#2800).
   const step = Math.min(
     Math.max(attempts - 1, 0),
     RETRY_BACKOFF_MINUTES.length - 1
   );
-  const delayMinutes =
-    RETRY_BACKOFF_MINUTES[step] ?? RETRY_BACKOFF_MINUTES.at(-1) ?? 0;
+  const delayMinutes = RETRY_BACKOFF_MINUTES[step];
+  if (delayMinutes === undefined) {
+    throw new Error(
+      `The payment retry backoff schedule has no step ${step} of ${RETRY_BACKOFF_MINUTES.length}.`,
+    );
+  }
   return new Date(Date.now() + delayMinutes * 60 * 1000);
 }
 

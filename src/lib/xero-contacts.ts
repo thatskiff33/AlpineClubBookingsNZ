@@ -791,10 +791,20 @@ export async function findOrCreateXeroContact(
         context: `findOrCreateXeroContact searchByEmail(${member.email})`,
       }
     );
-    // Reading the first contact is what says the search matched one; an empty
-    // response leaves `resolved` alone, as the length check did (#2800).
-    const matchedContact = contactsResponse.body.contacts?.[0];
-    if (matchedContact) {
+    // The condition is the RESPONSE carrying a contact, not that contact being
+    // truthy — deliberately, because the two differ in the direction that
+    // matters. Falling through on a non-empty response would reach the create
+    // path and mint a SECOND Xero contact for a member who already has one, so
+    // an entry the response says is there but does not carry refuses instead.
+    // An empty response leaves `resolved` alone, exactly as before (#2800).
+    const contacts = contactsResponse.body.contacts;
+    if (contacts && contacts.length > 0) {
+      const matchedContact = contacts[0];
+      if (matchedContact === undefined) {
+        throw new Error(
+          `Xero returned ${contacts.length} contact(s) for this email but no first entry; refusing to create a second contact for a member who may already have one.`,
+        );
+      }
       resolved = {
         kind: "matched",
         contactId: matchedContact.contactID!,
