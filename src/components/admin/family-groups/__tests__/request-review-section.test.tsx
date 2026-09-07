@@ -192,7 +192,7 @@ describe("FamilyGroupRequestReviewSection - searchRequestMembers", () => {
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     expect(fetchMock.mock.calls[0][0]).toBe(
-      "/api/admin/family-groups/member-search?q=Bea&ageTierIn=INFANT,CHILD,YOUTH"
+      "/api/admin/family-groups/member-search?q=Bea&ageTierIn=INFANT,CHILD,YOUTH&prospectiveParentMemberId=parent-1"
     );
   });
 
@@ -294,6 +294,75 @@ describe("FamilyGroupRequestReviewSection - searchRequestMembers", () => {
         'No eligible member records found for "Zzz".'
       )
     );
+  });
+
+  it("reports a sole direct-partner match as unavailable without selecting it", async () => {
+    stubFetch({
+      ok: true,
+      body: {
+        members: [
+          buildSearchRow({
+            ineligibleReason:
+              "Partners cannot also have a direct parent/dependent relationship.",
+          }),
+        ],
+      },
+    });
+    render(
+      <FamilyGroupRequestReviewSection
+        requests={[buildChildRequest()]}
+        onReviewed={vi.fn()}
+        canEdit={true}
+      />,
+    );
+
+    fireEvent.change(screen.getByTestId("term-req-child"), {
+      target: { value: "Bea" },
+    });
+    fireEvent.click(screen.getByTestId("search-req-child"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("feedback-req-child").textContent).toBe(
+        "Found Bea Child, but this member is unavailable. Partners cannot also have a direct parent/dependent relationship.",
+      ),
+    );
+    expect(screen.getByTestId("selection-req-child").textContent).toBe("");
+    expect(screen.getByTestId("results-req-child").textContent).toBe("1");
+  });
+
+  it("clears a selected candidate that becomes unavailable on re-search and blocks approval with its reason", async () => {
+    const conflict =
+      "Partners cannot also have a direct parent/dependent relationship.";
+    const fetchMock = stubFetch({
+      ok: true,
+      body: {
+        members: [
+          buildSearchRow({ id: "child-1", ineligibleReason: conflict }),
+        ],
+      },
+    });
+    render(
+      <FamilyGroupRequestReviewSection
+        requests={[buildChildRequest({ matchingMembers: [buildMatch()] })]}
+        onReviewed={vi.fn()}
+        canEdit={true}
+      />,
+    );
+    expect(screen.getByTestId("selection-req-child").textContent).toBe(
+      "child-1",
+    );
+
+    fireEvent.change(screen.getByTestId("term-req-child"), {
+      target: { value: "Bea" },
+    });
+    fireEvent.click(screen.getByTestId("search-req-child"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("selection-req-child").textContent).toBe(""),
+    );
+    fireEvent.click(screen.getByTestId("approve-req-child"));
+    expect(screen.getByTestId("error-req-child").textContent).toBe(conflict);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("surfaces the API error on a failed search", async () => {

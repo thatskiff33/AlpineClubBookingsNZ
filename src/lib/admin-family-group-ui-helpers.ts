@@ -73,6 +73,8 @@ export interface RequestMemberMatch extends MemberOption, WithMemberAgeLabel {
   canLogin?: boolean;
   alreadyInGroup: boolean;
   parentLinks?: ParentLinkSummary[];
+  /** Present when the row must stay visible but cannot be selected. */
+  ineligibleReason?: string;
 }
 
 export interface FamilyGroupRequest {
@@ -154,6 +156,7 @@ export interface FamilyGroupRequestSearchResult
   active: boolean;
   canLogin?: boolean;
   parentLinks?: ParentLinkSummary[];
+  ineligibleReason?: string;
 }
 
 export const AGE_TIER_COLORS: Record<string, string> = {
@@ -363,6 +366,7 @@ export function mapFamilyGroupRequestSearchResults(
       alreadyInGroup: request.familyGroup.members.some(
         (groupMember) => groupMember.id === member.id
       ),
+      ineligibleReason: member.ineligibleReason,
     }));
 }
 
@@ -374,11 +378,24 @@ export function buildInitialRequestSelections(
 
   for (const request of requests) {
     if (current[request.id]) {
-      nextSelections[request.id] = current[request.id];
-      continue;
+      const currentId = current[request.id];
+      const refreshedMatch = request.matchingMembers.find(
+        (candidate) => candidate.id === currentId,
+      );
+      const currentStillAllowed =
+        currentId === "__create__"
+          ? request.canCreateMemberFromRequest === true
+          : !refreshedMatch?.ineligibleReason;
+      if (currentStillAllowed) {
+        nextSelections[request.id] = currentId;
+        continue;
+      }
     }
-    if (request.type === "CHILD_REQUEST" && request.matchingMembers.length === 1) {
-      nextSelections[request.id] = request.matchingMembers[0].id;
+    const eligibleMatches = request.matchingMembers.filter(
+      (candidate) => !candidate.ineligibleReason,
+    );
+    if (request.type === "CHILD_REQUEST" && eligibleMatches.length === 1) {
+      nextSelections[request.id] = eligibleMatches[0].id;
     }
     if (
       request.type === "CHILD_REQUEST" &&

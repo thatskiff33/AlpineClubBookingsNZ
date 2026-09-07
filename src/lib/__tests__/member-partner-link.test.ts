@@ -25,6 +25,7 @@ vi.mock("@/lib/prisma", () => ({
     partnerInviteToken: { findUnique: vi.fn(), updateMany: vi.fn() },
     $transaction: vi.fn(),
     $executeRaw: vi.fn(),
+    $executeRawUnsafe: vi.fn(),
   },
 }));
 vi.mock("@/lib/logger", () => ({
@@ -59,6 +60,8 @@ import {
   sendPartnerLinkRequestEmail,
   sendPartnerLinkConfirmedEmail,
   sendPartnerLinkRemovedEmail,
+  sendFamilyGroupInviteAcceptedEmail,
+  sendPartnerInviteClaimedEmail,
   sendAdminPartnerShareSweptAlert,
 } from "@/lib/email";
 import { sweepFuturePartnerSharedAllocationsWithLocksHeld } from "@/lib/bed-allocation-lifecycle";
@@ -76,6 +79,10 @@ import {
 } from "@/lib/member-partner-link";
 import { claimPartnerInviteToken } from "@/lib/partner-invite-token";
 import { issueActionToken } from "@/lib/action-tokens";
+import {
+  MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+  MEMBER_PARENT_PARTNER_EXCLUSION_DATABASE_MESSAGE,
+} from "@/lib/member-parent-partner-exclusivity";
 
 const adultA = {
   id: "member-a",
@@ -115,10 +122,76 @@ const nonLoginAdultC = {
   detailsConfirmedByMemberId: "member-a" as string | null,
 };
 
-function mockMemberLookup(members: Array<typeof adultA>) {
+type TestMember = typeof adultA & {
+  parentMemberId?: string | null;
+  secondaryParentId?: string | null;
+};
+
+function mockMemberLookup(members: TestMember[]) {
   vi.mocked(prisma.member.findUnique).mockImplementation((async (args: {
     where: { id?: string };
   }) => members.find((member) => member.id === args.where.id) ?? null) as never);
+  vi.mocked(prisma.member.findFirst).mockImplementation((async (args: {
+    where: {
+      email?: string;
+      OR?: Array<{
+        id?: string;
+        OR?: Array<{
+          parentMemberId?: string;
+          secondaryParentId?: string;
+        }>;
+      }>;
+    };
+  }) => {
+    if (args.where.email) {
+      return (
+        members.find(
+          (member) => member.email.toLowerCase() === args.where.email,
+        ) ?? null
+      );
+    }
+
+    for (const branch of args.where.OR ?? []) {
+      const member = members.find((candidate) => candidate.id === branch.id);
+      if (!member) continue;
+      if (
+        (branch.OR ?? []).some(
+          (predicate) =>
+            (predicate.parentMemberId !== undefined &&
+              member.parentMemberId === predicate.parentMemberId) ||
+            (predicate.secondaryParentId !== undefined &&
+              member.secondaryParentId === predicate.secondaryParentId),
+        )
+      ) {
+        return member;
+      }
+    }
+    return null;
+  }) as never);
+}
+
+function directParentCases(
+  memberOne: TestMember,
+  memberTwo: TestMember,
+): Array<[string, TestMember[]]> {
+  return [
+    [
+      "first member primary parent",
+      [{ ...memberOne, parentMemberId: memberTwo.id }, memberTwo],
+    ],
+    [
+      "first member secondary parent",
+      [{ ...memberOne, secondaryParentId: memberTwo.id }, memberTwo],
+    ],
+    [
+      "second member primary parent",
+      [memberOne, { ...memberTwo, parentMemberId: memberOne.id }],
+    ],
+    [
+      "second member secondary parent",
+      [memberOne, { ...memberTwo, secondaryParentId: memberOne.id }],
+    ],
+  ];
 }
 
 beforeEach(() => {
@@ -126,6 +199,7 @@ beforeEach(() => {
   vi.mocked(prisma.$transaction).mockImplementation((async (fn: unknown) =>
     (fn as (tx: typeof prisma) => Promise<unknown>)(prisma)) as never);
   vi.mocked(prisma.$executeRaw).mockResolvedValue(0 as never);
+  vi.mocked(prisma.$executeRawUnsafe).mockResolvedValue(0 as never);
   vi.mocked(prisma.memberPartnerLink.findFirst).mockResolvedValue(null as never);
   vi.mocked(prisma.memberPartnerLink.findMany).mockResolvedValue([] as never);
   vi.mocked(prisma.memberPartnerLink.findUnique).mockResolvedValue(null as never);
@@ -178,6 +252,22 @@ describe("listOneStepPartnerCandidates (#2284 S4)", () => {
       ageTier: "ADULT",
       detailsConfirmedByMemberId: "member-a",
       familyGroupMemberships: { some: { familyGroupId: { in: ["g1", "g2"] } } },
+      AND: [
+        {
+          OR: [
+            { parentMemberId: null },
+            { parentMemberId: { not: "member-a" } },
+          ],
+        },
+        {
+          OR: [
+            { secondaryParentId: null },
+            { secondaryParentId: { not: "member-a" } },
+          ],
+        },
+        { dependents: { none: { id: "member-a" } } },
+        { secondaryDependents: { none: { id: "member-a" } } },
+      ],
     });
     expect(JSON.stringify(memberFindManyArgs.where)).not.toContain("ADMIN");
   });
@@ -210,8 +300,7 @@ describe("listOneStepPartnerCandidates (#2284 S4)", () => {
 
 describe("requestPartnerLink", () => {
   it("creates a PENDING link and emails the target (request→confirm path)", async () => {
-    mockMemberLookup([adultA]);
-    vi.mocked(prisma.member.findFirst).mockResolvedValue(adultB as never);
+    mockMemberLookup([adultA, adultB]);
     vi.mocked(prisma.memberPartnerLink.create).mockResolvedValue({
       id: "link-1",
     } as never);
@@ -242,7 +331,6 @@ describe("requestPartnerLink", () => {
 
   it("rejects partnering yourself", async () => {
     mockMemberLookup([adultA]);
-    vi.mocked(prisma.member.findFirst).mockResolvedValue(adultA as never);
 
     const result = await requestPartnerLink({
       initiatorMemberId: adultA.id,
@@ -253,11 +341,7 @@ describe("requestPartnerLink", () => {
   });
 
   it("rejects a non-adult target", async () => {
-    mockMemberLookup([adultA]);
-    vi.mocked(prisma.member.findFirst).mockResolvedValue({
-      ...adultB,
-      ageTier: "YOUTH",
-    } as never);
+    mockMemberLookup([adultA, { ...adultB, ageTier: "YOUTH" }]);
 
     const result = await requestPartnerLink({
       initiatorMemberId: adultA.id,
@@ -280,8 +364,7 @@ describe("requestPartnerLink", () => {
   });
 
   it("fails fast when the initiator already has a confirmed partner", async () => {
-    mockMemberLookup([adultA]);
-    vi.mocked(prisma.member.findFirst).mockResolvedValue(adultB as never);
+    mockMemberLookup([adultA, adultB]);
     vi.mocked(prisma.memberPartnerLink.findFirst).mockResolvedValueOnce({
       id: "existing-confirmed",
     } as never);
@@ -295,9 +378,27 @@ describe("requestPartnerLink", () => {
     expect(prisma.memberPartnerLink.create).not.toHaveBeenCalled();
   });
 
+  it("keeps the requester confirmed-partner response when the email target is also a direct parent", async () => {
+    mockMemberLookup([adultA, { ...adultB, secondaryParentId: adultA.id }]);
+    vi.mocked(prisma.memberPartnerLink.findFirst).mockResolvedValueOnce({
+      id: "existing-confirmed",
+    } as never);
+
+    const result = await requestPartnerLink({
+      initiatorMemberId: adultA.id,
+      targetEmail: adultB.email,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: 409,
+      error:
+        "You already have a confirmed partner. Remove that partnership first.",
+    });
+  });
+
   it("suppresses a by-email request to an already-partnered target into the generic reply (D9)", async () => {
-    mockMemberLookup([adultA]);
-    vi.mocked(prisma.member.findFirst).mockResolvedValue(adultB as never);
+    mockMemberLookup([adultA, adultB]);
     // findFirst order: initiator confirmed → outstanding outgoing → target confirmed.
     vi.mocked(prisma.memberPartnerLink.findFirst)
       .mockResolvedValueOnce(null as never)
@@ -323,8 +424,7 @@ describe("requestPartnerLink", () => {
   });
 
   it("returns the same generic message for a real by-email request as for a suppressed one (D9)", async () => {
-    mockMemberLookup([adultA]);
-    vi.mocked(prisma.member.findFirst).mockResolvedValue(adultB as never);
+    mockMemberLookup([adultA, adultB]);
     vi.mocked(prisma.memberPartnerLink.create).mockResolvedValue({
       id: "link-1",
     } as never);
@@ -359,8 +459,7 @@ describe("requestPartnerLink", () => {
   });
 
   it("points at the counter-request when the target already asked", async () => {
-    mockMemberLookup([adultA]);
-    vi.mocked(prisma.member.findFirst).mockResolvedValue(adultB as never);
+    mockMemberLookup([adultA, adultB]);
     vi.mocked(prisma.memberPartnerLink.findUnique).mockResolvedValue({
       id: "their-request",
       initiatedByMemberId: adultB.id,
@@ -469,8 +568,7 @@ describe("requestPartnerLink", () => {
   });
 
   it("allows only one outstanding outgoing request", async () => {
-    mockMemberLookup([adultA]);
-    vi.mocked(prisma.member.findFirst).mockResolvedValue(adultB as never);
+    mockMemberLookup([adultA, adultB]);
     // initiator-confirmed check passes, then the outstanding-outgoing probe
     // hits (it runs before the target-confirmed check — see D9 ordering)
     vi.mocked(prisma.memberPartnerLink.findFirst)
@@ -483,6 +581,143 @@ describe("requestPartnerLink", () => {
     });
 
     expect(result).toMatchObject({ ok: false, status: 422 });
+  });
+
+  it("keeps the requester outgoing-conflict response when the email target is also a direct parent", async () => {
+    mockMemberLookup([{ ...adultA, parentMemberId: adultB.id }, adultB]);
+    vi.mocked(prisma.memberPartnerLink.findFirst)
+      .mockResolvedValueOnce(null as never)
+      .mockResolvedValueOnce({ id: "other-outgoing" } as never);
+
+    const result = await requestPartnerLink({
+      initiatorMemberId: adultA.id,
+      targetEmail: adultB.email,
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      status: 422,
+      error:
+        "You already have a pending partner request. Withdraw it before sending another.",
+    });
+  });
+
+  it.each(directParentCases(adultA, adultB))(
+    "rejects a member-id request for %s without partner success effects",
+    async (_label, members) => {
+      mockMemberLookup(members);
+
+      const result = await requestPartnerLink({
+        initiatorMemberId: adultA.id,
+        targetMemberId: adultB.id,
+      });
+
+      expect(result).toEqual({
+        ok: false,
+        status: 422,
+        error: MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+      });
+      expect(prisma.memberPartnerLink.create).not.toHaveBeenCalled();
+      expect(sendPartnerLinkRequestEmail).not.toHaveBeenCalled();
+      expect(sendPartnerLinkConfirmedEmail).not.toHaveBeenCalled();
+      expect(logAudit).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(directParentCases(adultA, adultB))(
+    "privacy-suppresses a by-email request for %s",
+    async (_label, members) => {
+      mockMemberLookup(members);
+
+      const result = await requestPartnerLink({
+        initiatorMemberId: adultA.id,
+        targetEmail: adultB.email,
+      });
+
+      expect(result).toEqual({
+        ok: true,
+        linkId: null,
+        status: "PENDING",
+        suppressed: true,
+        message: PARTNER_REQUEST_SENT_GENERIC_MESSAGE,
+      });
+      expect(prisma.memberPartnerLink.create).not.toHaveBeenCalled();
+      expect(sendPartnerLinkRequestEmail).not.toHaveBeenCalled();
+      expect(sendPartnerLinkConfirmedEmail).not.toHaveBeenCalled();
+      expect(logAudit).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(directParentCases(adultA, nonLoginAdultC))(
+    "rejects one-step declaration for %s before writing or notifying",
+    async (_label, members) => {
+      mockMemberLookup(members);
+      vi.mocked(prisma.familyGroupMember.findFirst).mockResolvedValue({
+        familyGroupId: "group-1",
+      } as never);
+
+      const result = await requestPartnerLink({
+        initiatorMemberId: adultA.id,
+        targetMemberId: nonLoginAdultC.id,
+      });
+
+      expect(result).toEqual({
+        ok: false,
+        status: 422,
+        error: MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+      });
+      expect(prisma.memberPartnerLink.create).not.toHaveBeenCalled();
+      expect(sendPartnerLinkConfirmedEmail).not.toHaveBeenCalled();
+      expect(logAudit).not.toHaveBeenCalled();
+    },
+  );
+
+  it("maps a decoded database race to 409 for member-id requests", async () => {
+    mockMemberLookup([adultA, adultB]);
+    vi.mocked(prisma.$transaction).mockRejectedValueOnce({
+      cause: {
+        originalMessage: MEMBER_PARENT_PARTNER_EXCLUSION_DATABASE_MESSAGE,
+      },
+    });
+
+    const result = await requestPartnerLink({
+      initiatorMemberId: adultA.id,
+      targetMemberId: adultB.id,
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      status: 409,
+      error: MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+    });
+    expect(sendPartnerLinkRequestEmail).not.toHaveBeenCalled();
+    expect(sendPartnerLinkConfirmedEmail).not.toHaveBeenCalled();
+    expect(logAudit).not.toHaveBeenCalled();
+  });
+
+  it("keeps a decoded database race private for by-email requests", async () => {
+    mockMemberLookup([adultA, adultB]);
+    vi.mocked(prisma.$transaction).mockRejectedValueOnce({
+      cause: {
+        originalMessage: MEMBER_PARENT_PARTNER_EXCLUSION_DATABASE_MESSAGE,
+      },
+    });
+
+    const result = await requestPartnerLink({
+      initiatorMemberId: adultA.id,
+      targetEmail: adultB.email,
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      linkId: null,
+      status: "PENDING",
+      suppressed: true,
+      message: PARTNER_REQUEST_SENT_GENERIC_MESSAGE,
+    });
+    expect(sendPartnerLinkRequestEmail).not.toHaveBeenCalled();
+    expect(sendPartnerLinkConfirmedEmail).not.toHaveBeenCalled();
+    expect(logAudit).not.toHaveBeenCalled();
   });
 });
 
@@ -638,6 +873,56 @@ describe("respondToPartnerLink", () => {
     });
 
     expect(result).toMatchObject({ ok: false, status: 409 });
+  });
+
+  it.each(directParentCases(adultA, adultB))(
+    "refuses confirmation drift for %s without success effects",
+    async (_label, members) => {
+      mockMemberLookup(members);
+      vi.mocked(prisma.memberPartnerLink.findFirst).mockResolvedValueOnce(
+        pendingLink as never,
+      );
+
+      const result = await respondToPartnerLink({
+        memberId: adultB.id,
+        linkId: pendingLink.id,
+        action: "accept",
+      });
+
+      expect(result).toEqual({
+        ok: false,
+        status: 409,
+        error: MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+      });
+      expect(prisma.memberPartnerLink.updateMany).not.toHaveBeenCalled();
+      expect(sendPartnerLinkConfirmedEmail).not.toHaveBeenCalled();
+      expect(logAudit).not.toHaveBeenCalled();
+    },
+  );
+
+  it("maps a decoded database conflict during confirmation to a clean 409", async () => {
+    vi.mocked(prisma.memberPartnerLink.findFirst).mockResolvedValueOnce(
+      pendingLink as never,
+    );
+    vi.mocked(prisma.$transaction).mockRejectedValueOnce({
+      cause: {
+        originalMessage: MEMBER_PARENT_PARTNER_EXCLUSION_DATABASE_MESSAGE,
+      },
+    });
+
+    const result = await respondToPartnerLink({
+      memberId: adultB.id,
+      linkId: pendingLink.id,
+      action: "accept",
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      status: 409,
+      error: MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+    });
+    expect(sendPartnerLinkConfirmedEmail).not.toHaveBeenCalled();
+    expect(logAudit).not.toHaveBeenCalled();
   });
 });
 
@@ -956,6 +1241,52 @@ describe("adminAssignPartnerLink", () => {
       memberTwoId: adultB.id,
     });
     expect(childResult).toMatchObject({ ok: false, status: 422 });
+  });
+
+  it.each(directParentCases(adultA, adultB))(
+    "rejects admin assignment for %s without success effects",
+    async (_label, members) => {
+      mockMemberLookup(members);
+
+      const result = await adminAssignPartnerLink({
+        adminMemberId: "admin-1",
+        memberOneId: adultA.id,
+        memberTwoId: adultB.id,
+      });
+
+      expect(result).toEqual({
+        ok: false,
+        status: 422,
+        error: MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+      });
+      expect(prisma.memberPartnerLink.create).not.toHaveBeenCalled();
+      expect(prisma.memberPartnerLink.update).not.toHaveBeenCalled();
+      expect(sendPartnerLinkConfirmedEmail).not.toHaveBeenCalled();
+      expect(logAudit).not.toHaveBeenCalled();
+    },
+  );
+
+  it("maps a decoded database race during admin assignment to 409", async () => {
+    mockMemberLookup([adultA, adultB]);
+    vi.mocked(prisma.$transaction).mockRejectedValueOnce({
+      cause: {
+        originalMessage: MEMBER_PARENT_PARTNER_EXCLUSION_DATABASE_MESSAGE,
+      },
+    });
+
+    const result = await adminAssignPartnerLink({
+      adminMemberId: "admin-1",
+      memberOneId: adultA.id,
+      memberTwoId: adultB.id,
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      status: 409,
+      error: MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+    });
+    expect(sendPartnerLinkConfirmedEmail).not.toHaveBeenCalled();
+    expect(logAudit).not.toHaveBeenCalled();
   });
 });
 
@@ -1281,6 +1612,53 @@ describe("formPartnerLinkOnClaim", () => {
     expect(outcome).toEqual({ formed: false, reason: "claimer_ineligible" });
     expect(prisma.memberPartnerLink.create).not.toHaveBeenCalled();
   });
+
+  it.each(directParentCases(adultA, adultB))(
+    "skips the optional partner write for %s",
+    async (_label, members) => {
+      mockMemberLookup(members);
+
+      const outcome = await formPartnerLinkOnClaim({
+        tx: prisma as never,
+        inviterMemberId: adultA.id,
+        claimerMemberId: adultB.id,
+        now: new Date(),
+      });
+
+      expect(outcome).toEqual({
+        formed: false,
+        reason: "direct_parent_relationship",
+      });
+      expect(prisma.memberPartnerLink.create).not.toHaveBeenCalled();
+      expect(prisma.$executeRawUnsafe).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rolls back only the optional write when the database backstop wins", async () => {
+    mockMemberLookup([adultA, adultB]);
+    vi.mocked(prisma.memberPartnerLink.create).mockRejectedValueOnce({
+      cause: {
+        originalMessage: MEMBER_PARENT_PARTNER_EXCLUSION_DATABASE_MESSAGE,
+      },
+    });
+
+    const outcome = await formPartnerLinkOnClaim({
+      tx: prisma as never,
+      inviterMemberId: adultA.id,
+      claimerMemberId: adultB.id,
+      now: new Date(),
+    });
+
+    expect(outcome).toEqual({
+      formed: false,
+      reason: "direct_parent_relationship",
+    });
+    expect(vi.mocked(prisma.$executeRawUnsafe).mock.calls).toEqual([
+      ["SAVEPOINT member_partner_token_claim_optional_write"],
+      ["ROLLBACK TO SAVEPOINT member_partner_token_claim_optional_write"],
+      ["RELEASE SAVEPOINT member_partner_token_claim_optional_write"],
+    ]);
+  });
 });
 
 describe("claimPartnerInviteToken with createPartnerLink (#1742)", () => {
@@ -1366,6 +1744,127 @@ describe("claimPartnerInviteToken with createPartnerLink (#1742)", () => {
     expect(sendPartnerLinkConfirmedEmail).not.toHaveBeenCalled();
     expect(logAudit).toHaveBeenCalledWith(
       expect.objectContaining({ action: "MEMBER_PARTNER_LINK_CLAIM_SKIPPED" })
+    );
+  });
+
+  it.each(directParentCases(adultA, adultB))(
+    "joins the family but skips partner formation for %s",
+    async (_label, members) => {
+      const { token } = issueActionToken();
+      vi.mocked(prisma.partnerInviteToken.findUnique).mockResolvedValue(
+        tokenRow() as never,
+      );
+      mockMemberLookup(members);
+      vi.mocked(prisma.familyGroupMember.count).mockResolvedValue(1 as never);
+      vi.mocked(prisma.partnerInviteToken.updateMany).mockResolvedValue({
+        count: 1,
+      } as never);
+      vi.mocked(prisma.familyGroupMember.findUnique).mockResolvedValue(
+        null as never,
+      );
+      vi.mocked(prisma.familyGroupMember.upsert).mockResolvedValue({} as never);
+      vi.mocked(prisma.familyGroupJoinRequest.create).mockResolvedValue(
+        {} as never,
+      );
+
+      const result = await claimPartnerInviteToken({
+        rawToken: token,
+        memberId: adultB.id,
+      });
+
+      expect(result).toMatchObject({
+        ok: true,
+        alreadyMember: false,
+        partnerLinkFormed: false,
+      });
+      expect(prisma.partnerInviteToken.updateMany).toHaveBeenCalledTimes(1);
+      expect(prisma.familyGroupMember.upsert).toHaveBeenCalledTimes(1);
+      expect(prisma.familyGroupJoinRequest.create).toHaveBeenCalledTimes(1);
+      expect(prisma.memberPartnerLink.create).not.toHaveBeenCalled();
+      expect(sendFamilyGroupInviteAcceptedEmail).toHaveBeenCalledTimes(1);
+      expect(sendPartnerInviteClaimedEmail).toHaveBeenCalledTimes(1);
+      expect(sendPartnerLinkConfirmedEmail).not.toHaveBeenCalled();
+      const auditActions = vi.mocked(logAudit).mock.calls.map((call) => call[0]);
+      expect(auditActions).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            action: "FAMILY_GROUP_PARTNER_INVITE_CLAIMED",
+            outcome: "success",
+          }),
+          expect.objectContaining({
+            action: "MEMBER_PARTNER_LINK_CLAIM_SKIPPED",
+            metadata: { reason: "direct_parent_relationship" },
+          }),
+        ]),
+      );
+      expect(auditActions).not.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ action: "MEMBER_PARTNER_LINK_CONFIRMED" }),
+        ]),
+      );
+    },
+  );
+
+  it("preserves the family join when the database trigger wins the optional-write race", async () => {
+    const { token } = issueActionToken();
+    vi.mocked(prisma.partnerInviteToken.findUnique).mockResolvedValue(
+      tokenRow() as never,
+    );
+    mockMemberLookup([adultA, adultB]);
+    vi.mocked(prisma.familyGroupMember.count).mockResolvedValue(1 as never);
+    vi.mocked(prisma.partnerInviteToken.updateMany).mockResolvedValue({
+      count: 1,
+    } as never);
+    vi.mocked(prisma.familyGroupMember.findUnique).mockResolvedValue(null as never);
+    vi.mocked(prisma.familyGroupMember.upsert).mockResolvedValue({} as never);
+    vi.mocked(prisma.familyGroupJoinRequest.create).mockResolvedValue({} as never);
+    vi.mocked(prisma.memberPartnerLink.create).mockRejectedValueOnce({
+      meta: {
+        driverAdapterError: {
+          cause: {
+            originalMessage: MEMBER_PARENT_PARTNER_EXCLUSION_DATABASE_MESSAGE,
+          },
+        },
+      },
+    });
+
+    const result = await claimPartnerInviteToken({
+      rawToken: token,
+      memberId: adultB.id,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      alreadyMember: false,
+      partnerLinkFormed: false,
+    });
+    expect(prisma.familyGroupMember.upsert).toHaveBeenCalledTimes(1);
+    expect(prisma.familyGroupJoinRequest.create).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(prisma.$executeRawUnsafe).mock.calls).toEqual([
+      ["SAVEPOINT member_partner_token_claim_optional_write"],
+      ["ROLLBACK TO SAVEPOINT member_partner_token_claim_optional_write"],
+      ["RELEASE SAVEPOINT member_partner_token_claim_optional_write"],
+    ]);
+    expect(sendFamilyGroupInviteAcceptedEmail).toHaveBeenCalledTimes(1);
+    expect(sendPartnerInviteClaimedEmail).toHaveBeenCalledTimes(1);
+    expect(sendPartnerLinkConfirmedEmail).not.toHaveBeenCalled();
+    const auditActions = vi.mocked(logAudit).mock.calls.map((call) => call[0]);
+    expect(auditActions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action: "FAMILY_GROUP_PARTNER_INVITE_CLAIMED",
+          outcome: "success",
+        }),
+        expect.objectContaining({
+          action: "MEMBER_PARTNER_LINK_CLAIM_SKIPPED",
+          metadata: { reason: "direct_parent_relationship" },
+        }),
+      ]),
+    );
+    expect(auditActions).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ action: "MEMBER_PARTNER_LINK_CONFIRMED" }),
+      ]),
     );
   });
 
