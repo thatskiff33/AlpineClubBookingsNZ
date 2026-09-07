@@ -47,7 +47,6 @@ const ADMIN_TOOLS_SECTION = "_components/booking-admin-tools-section.tsx";
 
 function readRouteFile(relative: string): string {
   // Test helper: a fixed repo file under process.cwd(), not user input.
-  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
   return stripComments(
     readFileSync(path.resolve(process.cwd(), ROUTE_DIR, relative), "utf8"),
   );
@@ -66,8 +65,7 @@ function routeSources(): Array<{ file: string; source: string }> {
         /\.tsx?$/.test(entry.name) &&
         !/\.test\.tsx?$/.test(entry.name)
       ) {
-        // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
-        out.push({
+              out.push({
           file: path.relative(root, full),
           source: stripComments(readFileSync(full, "utf8")),
         });

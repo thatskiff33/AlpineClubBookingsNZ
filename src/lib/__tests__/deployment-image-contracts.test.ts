@@ -33,7 +33,6 @@ function filesUnder(dir: string, exts: readonly string[]): string[] {
 
 function readRepoFile(relativePath: string) {
   // Test helper: reads a fixed repo file under process.cwd(); relativePath is test-controlled, not user input.
-  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
   return readFileSync(path.resolve(process.cwd(), relativePath), "utf8");
 }
 
@@ -150,6 +149,21 @@ describe("deployment image contracts", () => {
       expect(workflow).toContain("--config p/typescript");
       expect(workflow).toContain("--config p/javascript");
       expect(workflow).toContain("--config p/react");
+      // #2842's coverage gate is a STEP, and a step is the one thing in this
+      // job nothing pinned. A later reshape that drops it leaves every check
+      // green, the required context passing, and the whole of that issue's
+      // gate gone — the same silent removal the `--config .semgrep/rules`
+      // assertion above exists to prevent for a flag.
+      //
+      // The step's PRESENCE is the unpinned half and the half that matters:
+      // dropping the `--json-output` flag it consumes is already fail-loud,
+      // because the gate exits non-zero on the report it cannot find. Pinned
+      // as the run line rather than the step name, so renaming the step for
+      // readability does not fail while deleting the gate does.
+      expect(workflow).toMatch(
+        /^ +node scripts\/ci\/check-semgrep-coverage\.mjs \\$/m,
+      );
+      expect(workflow).toContain("--json-output /out/semgrep-results.json");
       // The fixtures must run. A custom rule that has stopped matching anything
       // scans clean, which is indistinguishable from a rule that found nothing.
       expect(workflow).toContain(

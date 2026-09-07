@@ -43,7 +43,6 @@ const ADMIN_TOOLS_SECTION = `${ROUTE_DIR}/_components/booking-admin-tools-sectio
 
 function readSource(relative: string): string {
   // Test helper: a fixed repo file under process.cwd(), not user input.
-  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
   return readFileSync(path.resolve(process.cwd(), relative), "utf8");
 }
 

@@ -185,7 +185,6 @@ async function withMigrationSchema(
     await client.query(`CREATE SCHEMA ${schema}`);
     await client.query(`SET search_path TO ${schema}`);
     // Test fixture: hardcoded DDL/seed in a disposable per-test schema; no user input.
-    // nosemgrep: javascript.express.db.pg-express.pg-express
     await client.query(PRE_EXISTING_SCHEMA_SQL);
     await run(client);
   } finally {
@@ -200,11 +199,9 @@ describeWithDatabase(
     it("backfills tier-only rules, deactivates legacy rules, dedupes, and seeds the mode", async () => {
       await withMigrationSchema(async (client) => {
         // Test fixture: hardcoded seed in a disposable per-test schema; no user input.
-        // nosemgrep: javascript.express.db.pg-express.pg-express
         await client.query(SEED_SQL);
 
         // Test fixture: runs the migration's own SQL against a disposable per-test schema; no user input.
-        // nosemgrep: javascript.express.db.pg-express.pg-express
         await client.query(migrationSql);
 
         const rules = await readRules(client);
@@ -242,9 +239,7 @@ describeWithDatabase(
     it("re-running is a no-op and never deactivates post-cutover admin rules", async () => {
       await withMigrationSchema(async (client) => {
         // Test fixture: hardcoded seed in a disposable per-test schema; no user input.
-        // nosemgrep: javascript.express.db.pg-express.pg-express
         await client.query(SEED_SQL);
-        // nosemgrep: javascript.express.db.pg-express.pg-express
         await client.query(migrationSql);
 
         // Simulate post-cutover admin actions via the new UI: a new active
@@ -259,7 +254,6 @@ describeWithDatabase(
         const before = await readRules(client);
 
         // Test fixture: re-runs the migration's own SQL to assert idempotency; no user input.
-        // nosemgrep: javascript.express.db.pg-express.pg-express
         await client.query(migrationSql);
 
         expect(await readRules(client)).toEqual(before);
@@ -277,7 +271,6 @@ describeWithDatabase(
     it("seeds NONE and no rules for an install without age-tier group config", async () => {
       await withMigrationSchema(async (client) => {
         // Test fixture: runs the migration's own SQL against a disposable per-test schema; no user input.
-        // nosemgrep: javascript.express.db.pg-express.pg-express
         await client.query(migrationSql);
 
         expect(await readRules(client)).toEqual([]);
