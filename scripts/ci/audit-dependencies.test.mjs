@@ -6,6 +6,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  ATTEMPT_TIMEOUT_MS,
   AUDIT_COMMAND,
   AUDIT_LEVEL,
   auditWithRetries,
@@ -16,6 +17,8 @@ import {
   main,
   MAX_ATTEMPTS,
   RETRY_DELAYS_MS,
+  runNpmAudit,
+  SEVERITY_ORDER,
 } from "./audit-dependencies.mjs";
 
 /*
@@ -201,6 +204,94 @@ describe("classifyAuditRun", () => {
     expect(result.outcome).not.toBe("clean");
   });
 
+  /*
+    The counts are VALIDATED, not coerced. `Number(counts[severity] ?? 0)` read a
+    missing key as 0 and a non-numeric one as NaN, and `NaN > 0` is false — so
+    each of these shapes took the clean arm and exited 0. A report-shape change
+    at npm (a new `auditReportVersion`, renamed or nested severity keys, an empty
+    counts map from a degraded registry response) would therefore have turned
+    this required security gate green on every branch, permanently and silently,
+    with the log reading `Dependency audit: CLEAN`.
+  */
+  describe("a counts object it cannot read is never clean", () => {
+    const UNREADABLE_COUNTS = {
+      "an empty counts object — every severity missing": {},
+      "an array where an object belongs": [],
+      "a non-numeric count — a renamed or degraded field": {
+        info: 0,
+        low: 0,
+        moderate: 0,
+        high: "unknown",
+        critical: 0,
+      },
+      "one severity missing, the rest present": { info: 0, low: 0, moderate: 0, critical: 0 },
+      // JSON has no NaN: npm serialising one emits `null`, which coerced to 0.
+      "a count serialised as null": { info: 0, low: 0, moderate: 0, high: null, critical: 0 },
+    };
+
+    it.each(Object.entries(UNREADABLE_COUNTS))(
+      "refuses to exit 0 for %s",
+      (_label, vulnerabilities) => {
+        const stdout = JSON.stringify({ auditReportVersion: 2, metadata: { vulnerabilities } });
+        const result = classifyAuditRun({ exitCode: 0, stdout });
+        expect(result.outcome).toBe("inconclusive");
+        expect(formatReport(result).exitCode).toBe(1);
+      },
+    );
+
+    it("names the severities it could not read, so the drift is diagnosable", () => {
+      const result = classifyAuditRun({
+        exitCode: 0,
+        stdout: JSON.stringify({
+          metadata: { vulnerabilities: { info: 0, low: 0, moderate: 0, high: "unknown" } },
+        }),
+      });
+      expect(result.reason).toContain("high");
+      expect(result.reason).toContain("critical");
+    });
+
+    it("still accepts a complete counts object with every severity a real number", () => {
+      const stdout = JSON.stringify({
+        metadata: { vulnerabilities: Object.fromEntries(SEVERITY_ORDER.map((s) => [s, 0])) },
+      });
+      expect(classifyAuditRun({ exitCode: 0, stdout }).outcome).toBe("clean");
+    });
+  });
+
+  /*
+    npm's own exit code is the one signal no report-shape drift can fake, and the
+    command this script replaced — `npm audit --audit-level=high` — was
+    structurally immune because it read nothing else. Carrying `exitCode` in the
+    result object and never consulting it gave that immunity away.
+  */
+  it("never calls a report clean when npm itself exited non-zero", () => {
+    const result = classifyAuditRun({ exitCode: 1, stdout: CLEAN_REPORT, stderr: "" });
+    expect(result.outcome).toBe("inconclusive");
+    expect(result.reason).toContain("disagree");
+    expect(formatReport(result).exitCode).toBe(1);
+  });
+
+  it("never calls a report clean when npm died on a signal", () => {
+    expect(classifyAuditRun({ exitCode: null, stdout: CLEAN_REPORT }).outcome).toBe("inconclusive");
+  });
+
+  it("still exits 0 when the counts are clean and npm agrees", () => {
+    expect(classifyAuditRun({ exitCode: 0, stdout: CLEAN_REPORT }).outcome).toBe("clean");
+  });
+
+  // #3254 review: `Last error: npm audit produced no parseable JSON report.` is
+  // accurate about the parser and useless about the outage.
+  it("carries npm's own message into the reason when the body is unparseable", () => {
+    const result = classifyAuditRun(
+      OUTAGE_FIXTURES["audit endpoint returned an error, after a re-run (#3247)"],
+    );
+    expect(result.outcome).toBe("unreachable");
+    expect(result.reason).toContain("npm error audit endpoint returned an error");
+    expect(formatReport({ ...result, attempt: MAX_ATTEMPTS }).lines.join("\n")).toContain(
+      "Last error: npm error audit endpoint returned an error",
+    );
+  });
+
   it("reads a report that npm prefixed with a warning line", () => {
     const result = classifyAuditRun({ exitCode: 0, stdout: `npm warn config foo\n${CLEAN_REPORT}` });
     expect(result.outcome).toBe("clean");
@@ -281,6 +372,21 @@ describe("auditWithRetries", () => {
     expect(total).toBeGreaterThanOrEqual(30_000); // worth having
     expect(total).toBeLessThanOrEqual(120_000); // the job's own timeout is 10 minutes
   });
+
+  /*
+    The backoff is bounded; each ATTEMPT has to be too, or the worst case is
+    unbounded and the job hits its own `timeout-minutes: 10`, gets cancelled
+    mid-attempt, and reports failure with NO verdict line — the exact
+    unexplained red this script exists to abolish. Two minutes of headroom for
+    checkout and setup-node.
+  */
+  it("bounds the whole job's worst case under the ten-minute ceiling", () => {
+    const backoff = RETRY_DELAYS_MS.reduce((sum, ms) => sum + ms, 0);
+    const worstCase = MAX_ATTEMPTS * ATTEMPT_TIMEOUT_MS + backoff;
+    expect(worstCase).toBeLessThanOrEqual(600_000 - 120_000);
+    // And generous enough that a slow-but-working registry is not called dead.
+    expect(ATTEMPT_TIMEOUT_MS).toBeGreaterThanOrEqual(60_000);
+  });
 });
 
 /* ------------------------------------------------------------------------- *
@@ -320,6 +426,23 @@ describe("formatReport", () => {
     // The recorded decision travels with the failure, so the next reader does
     // not have to re-derive why an outage is allowed to block them (#3254).
     expect(text).toContain("#3254");
+  });
+
+  /*
+    The delays are stored in milliseconds. Printing them with an `s` after them
+    said the job had waited eighteen hours, in the one message whose whole
+    purpose is to be believed at a glance — and no assertion covered the line, so
+    the mutation was invisible to this suite.
+  */
+  it("prints the backoff in seconds, not in milliseconds", () => {
+    const report = formatReport({
+      ...classifyAuditRun(OUTAGE_FIXTURES["503 from the bulk advisories endpoint (#3247)"]),
+      attempt: MAX_ATTEMPTS,
+    });
+    expect(report.lines[1]).toBe(
+      "  npmjs.org did not answer after 4 attempts with 5s, 15s and 45s of backoff between them.",
+    );
+    expect(report.lines.join("\n")).not.toContain("5000s");
   });
 
   // The two failures must be distinguishable from the FIRST line, because that
@@ -445,6 +568,33 @@ describe("the CLI as the workflow invokes it", () => {
       env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}`, GITHUB_STEP_SUMMARY: "" },
     });
   }
+
+  /*
+    An `npm` that never answers — the black-holed endpoint that npm's own
+    300s `fetch-timeout` would sit through. The stub hangs WITHOUT a grandchild
+    process on either platform, so the kill is observable as a `close` with a
+    signal rather than being held open by a surviving descendant's pipe.
+  */
+  it("kills an attempt that never answers, and calls it an outage", async () => {
+    const root = tempRoot("audit-hang-");
+    const bin = path.join(root, "bin");
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(path.join(bin, "npm"), "#!/bin/sh\nexec sleep 60\n", "utf8");
+    chmodSync(path.join(bin, "npm"), 0o755);
+    writeFileSync(path.join(bin, "npm.cmd"), "@echo off\r\n:loop\r\ngoto loop\r\n", "utf8");
+
+    vi.stubEnv("PATH", `${bin}${path.delimiter}${process.env.PATH}`);
+    try {
+      const captured = await runNpmAudit({ timeoutMs: 750 });
+      expect(captured.timedOut).toBe(true);
+      const classified = classifyAuditRun(captured);
+      expect(classified.outcome).toBe("unreachable");
+      expect(classified.reason).toContain("was killed with");
+      expect(formatReport({ ...classified, attempt: MAX_ATTEMPTS }).exitCode).toBe(1);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
 
   it("exits 0 when the stubbed advisory service reports a clean tree", () => {
     const result = runCli({ stdout: CLEAN_REPORT, exitCode: 0 });

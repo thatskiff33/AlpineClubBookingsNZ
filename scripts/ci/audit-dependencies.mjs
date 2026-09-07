@@ -49,12 +49,36 @@ import { pathToFileURL } from "node:url";
  *
  * ## How a verdict is reached, and why it fails closed
  *
- * `CLEAN` is only ever reported when a real audit report was parsed AND its
- * severity counts are present AND nothing at or above the threshold is in them.
- * Every other shape — an unparseable body, an npm error object, a report with no
- * `metadata.vulnerabilities` — is inconclusive, and inconclusive is never
- * success. That is structural rather than a rule to remember: there is exactly
- * one branch that can exit 0, and it needs the counts in its hand.
+ * `CLEAN` is only ever reported when a real audit report was parsed AND every
+ * severity count in it is a finite number AND nothing at or above the threshold
+ * is in them AND npm itself exited 0. Every other shape — an unparseable body,
+ * an npm error object, a report with no `metadata.vulnerabilities`, a counts
+ * object missing a severity or carrying a non-numeric one — is inconclusive, and
+ * inconclusive is never success. That is structural rather than a rule to
+ * remember: there is exactly one branch that can exit 0, and it needs the
+ * complete counts in its hand.
+ *
+ * The counts are **validated, never coerced**. `Number(counts.high ?? 0)` would
+ * turn a missing key into `0` and a renamed or nested one into `NaN`, and
+ * `NaN > 0` is `false` — so a future report-shape change would take the clean
+ * arm on every branch, permanently and silently, with no test failing. Requiring
+ * each severity to be present and finite is what stops that.
+ *
+ * npm's own exit code is consulted for the same reason. `--audit-level=high` is
+ * on the command, so npm exits 0 exactly when it found nothing at or above the
+ * threshold: a non-zero exit sitting beside counts we read as clean means npm
+ * and this script disagree, and a disagreement is not a pass. That is the one
+ * signal in the whole pipeline that no report-shape drift can fake, and the
+ * command this script replaced was structurally immune because it read nothing
+ * else.
+ *
+ * `inconclusive` is deliberately **not** retried: a usage error, a broken
+ * lockfile or a report shape this gate cannot read will not fix itself, and
+ * burning the retry budget on it only delays the report its reader needs. The
+ * cost is that an outage arriving in a shape matching neither the npm error
+ * codes nor the phrase list — an HTML proxy error page, say — gets a one-shot
+ * red rather than a retried one. Widen the lists rather than retrying
+ * everything.
  *
  * ## What it deliberately does not do
  *
@@ -104,6 +128,28 @@ export const RETRY_DELAYS_MS = [5_000, 15_000, 45_000];
 
 /** Total attempts: the first try plus one per backoff delay. */
 export const MAX_ATTEMPTS = RETRY_DELAYS_MS.length + 1;
+
+/**
+ * How long ONE attempt may run before it is killed and counted as unreachable.
+ *
+ * Without this the "at most 65 seconds of waiting" above is an assumption rather
+ * than a bound: the backoff is bounded, but each attempt was not. There is no
+ * `.npmrc` here, so npm's defaults apply — `fetch-timeout` 300000ms and
+ * `fetch-retries` 2 — and a request to an endpoint that black-holes packets
+ * (no answer and no reset, a different failure from the measured timeout and
+ * 503, both of which answered fast) can sit for minutes. Four of those would
+ * blow the job's own `timeout-minutes: 10`, GitHub would cancel the runner
+ * mid-attempt, and the check would report failure with NO verdict line at
+ * all — precisely the unexplained red this script exists to abolish, made up to
+ * four times more likely by the retry loop than the single-shot command was.
+ *
+ * 90 seconds is the budget. The arithmetic against the ten-minute ceiling:
+ * 4 x 90s of attempts + 65s of backoff = 425s worst case, leaving over two and a
+ * half minutes for checkout and `setup-node` (which take well under one). It is
+ * also roughly nine times the longest a healthy `npm audit` takes on this
+ * lockfile, so a slow-but-working registry is never mistaken for a dead one.
+ */
+export const ATTEMPT_TIMEOUT_MS = 90_000;
 
 /**
  * npm error codes that mean "the request did not get an answer", not "your tree
@@ -165,6 +211,41 @@ export function extractJson(stdout) {
   }
 }
 
+/**
+ * npm's own last word, for the `Last error:` line. When the report is
+ * unparseable the parser's reason ("no parseable JSON report") is accurate about
+ * the parser and useless about the outage, so the line npm actually printed is
+ * carried through in front of it where there is one.
+ */
+function npmSaid(stderr) {
+  const lines = String(stderr ?? "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  return lines.find((line) => /^npm\s+(error|err!|warn)\b/i.test(line)) ?? lines[0];
+}
+
+/**
+ * True only when `counts` carries a finite number for EVERY severity. A missing
+ * key, a renamed one, a nested one, a string, `null`, an array — all false. See
+ * "How a verdict is reached" above for why this is validated rather than
+ * coerced.
+ */
+function hasCompleteCounts(counts) {
+  if (!counts || typeof counts !== "object" || Array.isArray(counts)) return false;
+  return SEVERITY_ORDER.every(
+    (severity) => typeof counts[severity] === "number" && Number.isFinite(counts[severity]),
+  );
+}
+
+/** The severities a counts object failed to supply as a finite number. */
+function unreadableSeverities(counts) {
+  if (!counts || typeof counts !== "object") return [...SEVERITY_ORDER];
+  return SEVERITY_ORDER.filter(
+    (severity) => !(typeof counts[severity] === "number" && Number.isFinite(counts[severity])),
+  );
+}
+
 function looksLikeNetworkFailure({ code, text }) {
   if (code && NETWORK_ERROR_CODES.has(String(code).toUpperCase())) return true;
   const haystack = String(text ?? "").toLowerCase();
@@ -182,9 +263,25 @@ function looksLikeNetworkFailure({ code, text }) {
  * - `"inconclusive"` — npm failed for some other reason, or answered with
  *   something that is not an audit report. Not retried, and never success.
  */
-export function classifyAuditRun({ exitCode, stdout = "", stderr = "" }) {
+export function classifyAuditRun({ exitCode, stdout = "", stderr = "", timedOut = false }) {
   const parsed = extractJson(stdout);
   const combined = `${stdout}\n${stderr}`;
+
+  // A killed attempt did not answer, whatever reached stdout before the signal.
+  // Treated as the outage it is — retryable, never clean, even if a complete
+  // report happens to have arrived first.
+  if (timedOut) {
+    const killed = String(stderr ?? "")
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find((line) => line.includes("was killed with"));
+    return {
+      outcome: "unreachable",
+      reason:
+        killed ?? `npm audit was killed after ${ATTEMPT_TIMEOUT_MS} ms without answering.`,
+      exitCode,
+    };
+  }
 
   const npmError = parsed && typeof parsed.error === "object" ? parsed.error : undefined;
   if (npmError) {
@@ -200,24 +297,35 @@ export function classifyAuditRun({ exitCode, stdout = "", stderr = "" }) {
   }
 
   const counts = parsed?.metadata?.vulnerabilities;
-  if (!parsed || !counts || typeof counts !== "object") {
-    // No report at all. If the noise npm made looks like the network, say so —
-    // that is the case this whole script exists to name — otherwise be honest
-    // that we do not know, and fail either way.
+  if (!parsed || !hasCompleteCounts(counts)) {
+    // No report, or a report whose severity counts this gate cannot read. If the
+    // noise npm made looks like the network, say so — that is the case this
+    // whole script exists to name — otherwise be honest that we do not know, and
+    // fail either way.
     const outcome = looksLikeNetworkFailure({ text: combined })
       ? "unreachable"
       : "inconclusive";
+    let reason;
+    if (!parsed) {
+      reason = "npm audit produced no parseable JSON report.";
+    } else if (!counts || typeof counts !== "object") {
+      reason = "npm audit returned JSON with no `metadata.vulnerabilities` counts.";
+    } else {
+      reason =
+        "npm audit returned severity counts this gate could not read: expected a " +
+        `number for each of ${SEVERITY_ORDER.join(", ")}, and did not get one for ` +
+        `${unreadableSeverities(counts).join(", ")}.`;
+    }
+    const npmLine = npmSaid(stderr);
     return {
       outcome,
-      reason: parsed
-        ? "npm audit returned JSON with no `metadata.vulnerabilities` counts."
-        : "npm audit produced no parseable JSON report.",
+      reason: npmLine ? `${npmLine} — ${reason}` : reason,
       exitCode,
     };
   }
 
   const severityCounts = Object.fromEntries(
-    SEVERITY_ORDER.map((severity) => [severity, Number(counts[severity] ?? 0)]),
+    SEVERITY_ORDER.map((severity) => [severity, counts[severity]]),
   );
   const failing = FAILING_SEVERITIES.reduce(
     (total, severity) => total + severityCounts[severity],
@@ -234,13 +342,34 @@ export function classifyAuditRun({ exitCode, stdout = "", stderr = "" }) {
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
 
-  return failing > 0
-    ? { outcome: "vulnerable", severityCounts, advisories, exitCode }
-    : { outcome: "clean", severityCounts, exitCode };
+  if (failing > 0) return { outcome: "vulnerable", severityCounts, advisories, exitCode };
+
+  // The counts say clean. npm was asked with `--audit-level=high`, so it exits 0
+  // exactly when it agrees — and a disagreement means one of the two is reading
+  // a shape the other is not. Never resolve that in favour of green.
+  if (exitCode !== 0) {
+    return {
+      outcome: "inconclusive",
+      severityCounts,
+      exitCode,
+      reason:
+        `npm audit exited ${exitCode === null ? "on a signal" : exitCode} while its own ` +
+        `severity counts report nothing at ${AUDIT_LEVEL} or above. npm and this gate ` +
+        "disagree, so nothing has been cleared.",
+    };
+  }
+
+  return { outcome: "clean", severityCounts, exitCode };
 }
 
-/** Spawns the real `npm audit`, capturing both streams. */
-export function runNpmAudit({ cwd = process.cwd() } = {}) {
+/**
+ * Spawns the real `npm audit`, capturing both streams, and kills an attempt that
+ * exceeds {@link ATTEMPT_TIMEOUT_MS}. A killed attempt resolves with
+ * `timedOut: true`, which {@link classifyAuditRun} reads as unreachable — so an
+ * endpoint that never answers is retried and then named as an outage, instead of
+ * running the job into its own ceiling with no verdict printed.
+ */
+export function runNpmAudit({ cwd = process.cwd(), timeoutMs = ATTEMPT_TIMEOUT_MS } = {}) {
   return new Promise((resolve) => {
     // `shell: true` on Windows only, because `npm` there is `npm.cmd` and Node
     // refuses to spawn a batch file without a shell. It prints a DEP0190
@@ -252,6 +381,11 @@ export function runNpmAudit({ cwd = process.cwd() } = {}) {
       cwd,
       shell: process.platform === "win32",
       stdio: ["ignore", "pipe", "pipe"],
+      // Node kills the child itself once the budget is up. On Linux — which is
+      // where CI runs, and the only place this bound has to hold — the signal
+      // reaches `npm` directly, because no shell is interposed.
+      timeout: timeoutMs,
+      killSignal: "SIGKILL",
     });
     let stdout = "";
     let stderr = "";
@@ -264,7 +398,20 @@ export function runNpmAudit({ cwd = process.cwd() } = {}) {
     child.on("error", (error) => {
       resolve({ exitCode: null, stdout, stderr: `${stderr}\n${error.message}` });
     });
-    child.on("close", (exitCode) => resolve({ exitCode, stdout, stderr }));
+    child.on("close", (exitCode, signal) => {
+      if (signal) {
+        resolve({
+          exitCode,
+          stdout,
+          stderr:
+            `${stderr}\nnpm audit did not answer within ${timeoutMs} ms and was killed ` +
+            `with ${signal}.`,
+          timedOut: true,
+        });
+        return;
+      }
+      resolve({ exitCode, stdout, stderr });
+    });
   });
 }
 
@@ -298,6 +445,18 @@ export async function auditWithRetries({
   }
 
   return { ...attempts.at(-1), attempt: maxAttempts, attempts };
+}
+
+/**
+ * `[5000, 15000, 45000]` -> `"5s, 15s and 45s"`. The delays are stored in
+ * milliseconds and read by a person, and printing the stored numbers with an `s`
+ * after them claimed the job had waited eighteen hours — in the one message
+ * whose whole purpose is to be believed at a glance.
+ */
+function formatBackoff(delaysMs) {
+  const seconds = delaysMs.map((ms) => `${ms / 1000}s`);
+  if (seconds.length < 2) return seconds.join("");
+  return `${seconds.slice(0, -1).join(", ")} and ${seconds.at(-1)}`;
 }
 
 /**
@@ -350,9 +509,9 @@ export function formatReport(result) {
       exitCode: 1,
       lines: [
         "Dependency audit: FAILED — ADVISORY SERVICE UNREACHABLE. This is NOT a vulnerability.",
-        `  npmjs.org did not answer after ${MAX_ATTEMPTS} attempts with ${RETRY_DELAYS_MS.join(
-          "s, ",
-        )}s of backoff between them.`,
+        `  npmjs.org did not answer after ${MAX_ATTEMPTS} attempts with ${formatBackoff(
+          RETRY_DELAYS_MS,
+        )} of backoff between them.`,
         `  Last error: ${reason}`,
         "",
         "  Nothing is known to be wrong with this branch — the audit did not run, so",
