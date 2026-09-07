@@ -248,7 +248,9 @@ Prefix `INV-PAY`.
 | `INV-PAY-095` | The cancel is idempotent and never throws; its reason states abandonment |
 | `INV-PAY-067` | One review task per parked strand; departing strand always recorded |
 | `INV-PAY-060` | Settled occurrences never suppress the next; stored prices are not proof |
-| `INV-PAY-068` | Zero completion refused, naming the way out; credit-only records no refund |
+| `INV-PAY-068` | A completion at zero is refused; the refusal names the way out |
+| `INV-PAY-096` | A share mid-send for its invoice becomes a dismiss-only queue item |
+| `INV-PAY-097` | One withheld share is one item, registered before it ever writes |
 | `INV-PAY-061` | Confirmed amounts settle through an existing path, chosen at completion |
 | `INV-PAY-069` | Completions record their direction; charging re-enters the additional-payment path |
 | `INV-PAY-062` | One booking edit raises one charge request, derived from settled shares |
