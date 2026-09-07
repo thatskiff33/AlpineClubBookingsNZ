@@ -218,9 +218,9 @@ Prefix `INV-PAY`.
 | `INV-PAY-050` | Xero Stripe refund notes cover provider-backed cash evidence, never the refunded-amount mirror |
 | `INV-PAY-051` | An unpriceable edit holds the money as one typed review task |
 | `INV-PAY-052` | A replacement SetupIntent retires the previous card; a retired card stays retired |
-| `INV-PAY-073` | Minting a replacement clears the card column; the stamp is row-guarded |
-| `INV-PAY-074` | A succeeded SetupIntent is not, alone, proof of a chargeable card |
-| `INV-PAY-075` | A cancelled SetupIntent leaves the row alone; the form still shows |
+| `INV-PAY-073` | Minting a replacement clears the card; a succeeded intent is not proof |
+| `INV-PAY-074` | The card stamp is row-guarded; a cancelled SetupIntent leaves the row alone |
+| `INV-PAY-075` | The form still shows when the cron would find nothing to charge |
 | `INV-PAY-053` | Off-session charging needs SetupIntent provenance, decided in one place |
 | `INV-PAY-076` | No charge claim writes the card column; a captured charge does |
 | `INV-PAY-077` | A SetupIntent id on a legacy row does not prove its card |
@@ -240,6 +240,8 @@ Prefix `INV-PAY`.
 | `INV-PAY-089` | A key is only re-sent inside Stripe's window, or recovered by it |
 | `INV-PAY-090` | The pre-charge sweep excludes attempt rows by the key prefix |
 | `INV-PAY-056` | A payment recovery becomes terminally failed in exactly one place |
+| `INV-PAY-091` | Terminality is an argument, not a re-derivation; the write is fenced |
+| `INV-PAY-092` | FAILED is two readings of one column; the reader says which |
 | `INV-PAY-057` | A dead additional-payment recovery withdraws the ask it left standing |
 | `INV-PAY-067` | One review task per parked strand; departing strand always recorded |
 | `INV-PAY-060` | Settled occurrences never suppress the next; stored prices are not proof |

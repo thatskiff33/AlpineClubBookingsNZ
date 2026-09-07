@@ -86,7 +86,6 @@ file; the checker treats an absent register as "no exceptions, no debt".
 | `INV-ADDPAY-017` | 637 |
 | `INV-PRIV-013` | 627 |
 | `INV-MOD-006` | 623 |
-| `INV-PAY-056` | 620 |
 | `INV-HOST-042` | 607 |
 | `INV-LOCK-002` | 589 |
 | `INV-CONFIG-003` | 578 |

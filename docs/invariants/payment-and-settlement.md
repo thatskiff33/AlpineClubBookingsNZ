@@ -1339,12 +1339,9 @@ one, check the other.
   routes, and none of them asks Stripe first. So the row's card column must
   mean "a card that may be charged", and these rules keep it meaning that:
 
-- The rest of this rule: the card-column writers `INV-PAY-073`; the succeeded-SetupIntent proxy `INV-PAY-074`; the cancel and re-save path `INV-PAY-075`.
-
-- Pinned by `payment-intent-routes.test.ts` (cases (a)-(g) and (b2)),
-  `setup-intent-card.test.ts`, `payment-reconciliation.test.ts`
-  (`markBookingSetupIntentSucceeded`), `stripe-webhook-alerts.test.ts`
-  ("SetupIntent webhooks") and `saved-card-provenance-contract.test.ts`.
+- The rest of this rule, in order: minting and the succeeded-SetupIntent proxy
+  `INV-PAY-073`; the card-stamp guard and the cancel path `INV-PAY-074`; the
+  member-facing form and this rule's own test pins `INV-PAY-075`.
 
 ## INV-PAY-073
 
@@ -1355,13 +1352,32 @@ _Split from `INV-PAY-052` (#3266, epic #3270)._
   `stripePaymentMethodId` to NULL alongside the new intent id. Only
   `markBookingSetupIntentSucceeded` — the `setup_intent.succeeded` webhook, or
   the route's own re-adopt arm — puts a card back, and it puts back the card
-  that intent saved. Before this the old, possibly dead, card stayed on the row
-  for as long as the member took to finish re-saving; in production that was
-  never, and the cron failed against it 24 times in a row. This is the same
-  convention `booking-modify-settlement.ts` follows when it invalidates a card;
-  the one deliberate exception (`booking-credit-election.ts` keeping a settled
-  split parent's card for the child's deferred charge) is a settled row this
-  route never reaches.
+  that intent saved. This is the same convention `booking-modify-settlement.ts`
+  follows when it invalidates a card; the one deliberate exception
+  (`booking-credit-election.ts` keeping a settled split parent's card for the
+  child's deferred charge) is a settled row this route never reaches.
+
+- **A succeeded SetupIntent is not, by itself, proof of a chargeable card, and
+  the route and the webhook apply ONE rule.** `classifySucceededSetupIntentCard`
+  (`setup-intent-card.ts`) is the single verdict that both
+  `create-setup-intent`'s `alreadySaved` arm and the `setup_intent.succeeded`
+  handler call, so the two cannot drift (`INV-SSOT-001`). Its only fast path
+  is a row that ALREADY carries this intent's own card. A row carrying no card,
+  or a different card, is answered by the PROVIDER (`setupIntentCardStillAttached`):
+  the intent's payment method is adopted only if Stripe still reports it
+  attached to the customer the row charges with. A row
+  carrying a DIFFERENT card is not evidence about this one either: the intent's
+  card may be exactly the one a charge path retired. Detached, attached to
+  someone else, or `resource_missing` means the card is gone: the route mints
+  a fresh SetupIntent under the chained idempotency key, and the webhook writes
+  nothing. Any OTHER Stripe failure is not a verdict — the route fails (500)
+  rather than guess, and the webhook rethrows so its processed-event claim is
+  released and Stripe retries — because re-adopting risks charging a dead card
+  and minting afresh would strip a live one.
+
+## INV-PAY-074
+
+_Split from `INV-PAY-052` (#3266, epic #3270)._
 
 - **The card stamp is guarded on the row still naming the intent.** Stripe
   redelivers a failed `setup_intent.succeeded` for up to three days, and the
@@ -1377,36 +1393,6 @@ _Split from `INV-PAY-052` (#3266, epic #3270)._
   construction, because it stamps the intent's own card onto the row that
   named that intent.
 
-## INV-PAY-074
-
-_Split from `INV-PAY-052` (#3266, epic #3270)._
-
-- **A succeeded SetupIntent is not, by itself, proof of a chargeable card, and
-  the route and the webhook apply ONE rule.** `classifySucceededSetupIntentCard`
-  (`setup-intent-card.ts`) is the single verdict that both
-  `create-setup-intent`'s `alreadySaved` arm and the `setup_intent.succeeded`
-  handler call, so the two cannot drift (`INV-SSOT-001`). Its only fast path
-  is a row that ALREADY carries this intent's own card. A row carrying no card,
-  or a different card, is answered by the PROVIDER (`setupIntentCardStillAttached`):
-  the intent's payment method is adopted only if Stripe still reports it
-  attached to the customer the row charges with. Two histories leave a row
-  with a succeeded intent and no card, and nothing local tells them apart —
-  the member confirmed a card seconds ago and the webhook has not landed, or a
-  charge path met a terminal Stripe refusal and retired the card (#3268
-  detaches it at Stripe and clears the column, leaving the intent id). A row
-  carrying a DIFFERENT card is not evidence about this one either: the intent's
-  card may be exactly the one a charge path retired. Detached, attached to
-  someone else, or `resource_missing` means the card is gone: the route mints
-  a fresh SetupIntent under the chained idempotency key, and the webhook writes
-  nothing. Any OTHER Stripe failure is not a verdict — the route fails (500)
-  rather than guess, and the webhook rethrows so its processed-event claim is
-  released and Stripe retries — because re-adopting risks charging a dead card
-  and minting afresh would strip a live one.
-
-## INV-PAY-075
-
-_Split from `INV-PAY-052` (#3266, epic #3270)._
-
 - **`setup_intent.canceled` leaves the row alone.** The handler used to null
   `stripeSetupIntentId`. The next mint then fell back to
   `seti_<bookingId>_initial` — the ORIGINAL intent's idempotency key — which
@@ -1417,6 +1403,10 @@ _Split from `INV-PAY-052` (#3266, epic #3270)._
   cancel says nothing about the card on file. A cancelled BOOKING clears its own
   intent id inside its locked claim (`booking-cancel.ts`), so nothing relied on
   the webhook to do it.
+
+## INV-PAY-075
+
+_Split from `INV-PAY-052` (#3266, epic #3270)._
 
 - **The member can always get back to the form, and the form shows exactly
   when the cron would find nothing to charge.** The booking page's "Save
@@ -1429,6 +1419,11 @@ _Split from `INV-PAY-052` (#3266, epic #3270)._
   the form again rather than a dead end, while a child whose parent holds a
   reusable card is not asked for one the cron will not need. Pinned by
   `saved-card-provenance-contract.test.ts`.
+
+- Pinned by `payment-intent-routes.test.ts` (cases (a)-(g) and (b2)),
+  `setup-intent-card.test.ts`, `payment-reconciliation.test.ts`
+  (`markBookingSetupIntentSucceeded`), `stripe-webhook-alerts.test.ts`
+  ("SetupIntent webhooks") and `saved-card-provenance-contract.test.ts`.
 
 ## INV-PAY-053
 
@@ -1625,13 +1620,7 @@ _Split from `INV-PAY-054` (#3268, epic #3270)._
   off-session — the settlement cron, the admin confirm-pending-guests route and
   `charge-saved-method` — and until #3267 all three sent one Stripe idempotency
   key, `pending_charge_<bookingId>`, relying on it as the guard against two
-  paths charging one booking twice. Stripe fingerprints the whole request body
-  under a key, the admin route's metadata differed, and so whichever path
-  charged first locked the key with its own shape: the admin button could only
-  ever answer "Keys for idempotent requests can only be used with the same
-  parameters", five times over 21 hours in production, each hiding the real
-  refusal; a re-saved card changed the fingerprint the same way and was refused
-  for up to 24 hours. The contract now lives in two modules split at the
+  paths charging one booking twice. The contract now lives in two modules split at the
   provider call — `src/lib/saved-card-charge-attempt.ts` (what an attempt is,
   beginning one, asking Stripe) and `src/lib/saved-card-charge-settle.ts`
   (recording the answer) — and every path uses all of it:
@@ -1791,11 +1780,10 @@ _Split from `INV-PAY-055` (#3267, epic #3270)._
 
 ## INV-PAY-086
 
-_Split from `INV-PAY-055` (#3267)._
+_Split from `INV-PAY-055` (#3267, epic #3270)._
 
 - **Captured money refuses a new attempt.** A PRIMARY Stripe row still holding
-  net captured cash (`isCapturedTransactionStatus`, minus a fully refunded row,
-  which is #1765 history) on a still-PENDING booking THROWS
+  net captured cash (`isCapturedTransactionStatus`, minus a fully refunded row) on a still-PENDING booking THROWS
   `SavedCardChargeRefusedError` from inside the claim, so the whole claim rolls
   back — nothing claimed, nothing charged — and the caller logs at error level
   on every attempt until a person, or a redelivered webhook that finds the row
@@ -1950,7 +1938,15 @@ _Split from `INV-PAY-055` (#3267, epic #3270)._
   other status writer in the tree is written: a `"FAILED"` literal in the
   arguments of any `paymentRecoveryOperation` write, or anywhere in
   `payment-recovery.ts`, fails it. Raw-string READS stay legal — three modules
-  outside this one filter on the status and have to. **Terminality is an argument, not a re-derivation**: the worker
+  outside this one filter on the status and have to.
+
+- The rest of this rule: terminality and the fenced write `INV-PAY-091`; what FAILED means to two different readers `INV-PAY-092`.
+
+## INV-PAY-091
+
+_Split from `INV-PAY-056` (#3220)._
+
+- **Terminality is an argument, not a re-derivation**: the worker
   knows it has just burnt an attempt and the stale-worker reaper knows the row
   never came back, and a shared re-derivation from `attempts` would be a third
   opinion on a fact its callers already hold. `nextRetryAt` is forced to `null`
@@ -1967,6 +1963,7 @@ _Split from `INV-PAY-055` (#3267, epic #3270)._
   turns out to have succeeded is counted in `failed` — a count of what the pass
   attempted, which nothing downstream branches on, rather than a claim about the
   row.
+
 - **The stale-worker sweep is bounded and oldest-first.** It runs in front of
   the main queue, and centralising the transition means each row it takes now
   costs an alert and can cost a Stripe read and cancel, where the bulk
@@ -1974,6 +1971,11 @@ _Split from `INV-PAY-055` (#3267, epic #3270)._
   own — every row the sweep touches leaves `PROCESSING` for good — so the cap
   only defers work to the next run, and reading oldest-first is what stops it
   deferring the same rows for ever.
+
+## INV-PAY-092
+
+_Split from `INV-PAY-056` (#3220)._
+
 - **`FAILED` is two readings of one column, and the reader has to say which.** A
   `FAILED` row with attempts left is a retry waiting its turn; a `FAILED` row
   with none is dead. What separates them is the `attempts < MAX` filter beside
