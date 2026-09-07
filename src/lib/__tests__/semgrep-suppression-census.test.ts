@@ -35,6 +35,13 @@ import { describe, expect, it } from "vitest";
 
 const REPO_ROOT = path.resolve(__dirname, "../../..");
 
+/**
+ * Returns its argument. Fixtures are assembled through it so that no literal
+ * annotation ever appears in this file, which scans the tree it lives in — a
+ * literal would make the census count its own fixtures.
+ */
+const chr = (text: string): string => text;
+
 /** Extensions Semgrep's four registry packs plus `.semgrep/rules` actually read. */
 const SCANNED_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"]);
 
@@ -54,12 +61,56 @@ const UNSCANNED_DIRECTORIES = new Set([
 ]);
 
 /**
- * An annotation naming a rule id, which is the only kind that suppresses
- * anything. This deliberately does NOT match the bare word in a docblock:
- * `filter-suppressed-sarif.mjs` and two test files discuss `nosemgrep` at
- * length and must not read as annotations.
+ * Every spelling Semgrep actually honours — measured, not assumed.
+ *
+ * The first version of this census matched the literal id-bearing form only,
+ * and that was a HOLE, not a simplification. Probed against this repository's
+ * own rules over one raw-SQL violation (the examples below are written without
+ * their comment openers on purpose, because this suite scans the file it lives
+ * in and a literal one would make it count its own documentation):
+ *
+ *   bare `nosemgrep`                        SUPPRESSED — every rule on the line
+ *   bare `nosem`                            SUPPRESSED
+ *   `nosem: acb-unsafe-raw-sql`             SUPPRESSED
+ *   `nosemgrep: other.rule,acb-…-raw-sql`   SUPPRESSED — BOTH ids
+ *   `nosemgrep:ACB-UNSAFE-RAW-SQL`          not suppressed; it is case-sensitive
+ *
+ * So the short bare spelling — three characters shorter than the documented
+ * one — used to defeat all three instruments at once: the scan reports nothing
+ * because the result is suppressed, the census never opened the file because it
+ * prefiltered on the longer word, and the SARIF filter withheld the result from
+ * code scanning. Upstream Semgrep's own documentation teaches the bare form, so
+ * this is reachable by copying from the vendor rather than by doing anything
+ * odd. The comma variant is worse in one specific way: appending an id to an
+ * already-justified annotation leaves the census row identical while a second
+ * rule goes silent, which is why a list is split into every id it names.
+ *
+ * WHY THE ANCHOR IS SAFE AND NOT A SECOND HOLE. Semgrep honours the directive
+ * only at the START of a comment's content, which the same probe established:
+ * the same token mid-sentence, or at the END of a comment, is NOT honoured.
+ * Anchoring on the comment opener therefore matches exactly what the scanner
+ * matches — it is not a heuristic to dodge prose. It also means the five
+ * `reason. <directive>` annotations #2842 stripped were never honoured at all,
+ * the id sitting at the end of the comment, which independently corroborates
+ * the measurement that they suppressed nothing.
  */
-const ID_BEARING_ANNOTATION = /nosemgrep: *([a-z][A-Za-z0-9_.-]+)/g;
+const HONOURED_ANNOTATION =
+  // `{0,}` rather than `*`: a literal `*` immediately before the token
+  // would make this very pattern read its own source as an annotation.
+  /(?:\/\/|\/\*|\*)[ \t]{0,}nosem(?:grep)?(?![A-Za-z])[ \t]{0,}(:[ \t]{0,}([^\r\n*]{0,}))?/g;
+
+/** A rule id as Semgrep tokenises one, taken from the head of a list segment. */
+const RULE_ID_HEAD = /^[A-Za-z0-9_.-]+/;
+
+/**
+ * The marker for an annotation that names NO id.
+ *
+ * A bare `nosemgrep` suppresses every rule on its line, so it can never be
+ * justified per-rule and there is nothing to measure it against. It is its own
+ * class, and the census refuses it outright rather than pinning it.
+ */
+const BARE_ANNOTATION = "(bare — suppresses every rule)";
+
 
 /**
  * THE JUSTIFIED SURVIVORS, and the whole content of this contract.
@@ -104,12 +155,30 @@ function censusOfAnnotations(): { file: string; rule: string }[] {
   const found: { file: string; rule: string }[] = [];
   for (const absolute of scannedFiles(REPO_ROOT)) {
     const source = readFileSync(absolute, "utf8");
-    if (!source.includes("nosemgrep")) continue;
-    for (const match of source.matchAll(ID_BEARING_ANNOTATION)) {
-      found.push({
-        file: path.relative(REPO_ROOT, absolute).split(path.sep).join("/"),
-        rule: match[1],
-      });
+    // Prefilter on the SHORTEST honoured spelling. Prefiltering on the longer
+    // one is what let the SHORT bare spelling through without the file ever
+    // being opened at all.
+    if (!source.includes("nosem")) continue;
+    const file = path.relative(REPO_ROOT, absolute).split(path.sep).join("/");
+
+    for (const match of source.matchAll(HONOURED_ANNOTATION)) {
+      const idList = match[2];
+      if (idList === undefined) {
+        found.push({ file, rule: BARE_ANNOTATION });
+        continue;
+      }
+      // Semgrep honours a comma-separated list and suppresses EVERY id in it,
+      // so capturing only the first would let a second rule be silenced while
+      // the census row stayed identical.
+      const ids = idList
+        .split(",")
+        .map((segment) => segment.trim().match(RULE_ID_HEAD)?.[0])
+        .filter((id): id is string => Boolean(id));
+      if (ids.length === 0) {
+        found.push({ file, rule: BARE_ANNOTATION });
+        continue;
+      }
+      for (const rule of ids) found.push({ file, rule });
     }
   }
   return found.sort(
@@ -154,16 +223,49 @@ describe("Semgrep suppression census (#2842)", () => {
     expect(covered.some((file) => file.startsWith("scripts/"))).toBe(true);
   });
 
-  it("reads a rule id but not the word in prose", () => {
-    // Assembled rather than written out, because this suite scans the tree it
-    // is part of: a literal annotation here would make the census match its
-    // own fixture and report a suppression that does not exist.
-    const annotation = `// nose${"mgrep"}: acb-unsafe-raw-sql — why`;
-    const prose = "Semgrep honours a `nose" + "mgrep` comment and marks it";
+  it("sees every spelling Semgrep honours, and no prose", () => {
+    // The four spellings the first version of this census missed, each probed
+    // against the repository's own rules and each measured as SUPPRESSING.
+    const read = (text: string) =>
+      [...text.matchAll(HONOURED_ANNOTATION)].map((m) => m[2]);
 
-    expect([...annotation.matchAll(ID_BEARING_ANNOTATION)].map((m) => m[1])).toEqual([
-      "acb-unsafe-raw-sql",
+    const bare = chr("//") + " nose" + "mgrep";
+    const bareShort = chr("//") + " nose" + "m";
+    const shortWithId = chr("//") + " nose" + "m: acb-unsafe-raw-sql";
+    const commaList =
+      chr("//") + " nose" + "mgrep: other.rule,acb-unsafe-raw-sql";
+
+    expect(read(bare), "a bare annotation names no id").toEqual([undefined]);
+    expect(read(bareShort), "the short spelling is honoured too").toEqual([
+      undefined,
     ]);
-    expect([...prose.matchAll(ID_BEARING_ANNOTATION)]).toEqual([]);
+    expect(read(shortWithId)[0]).toContain("acb-unsafe-raw-sql");
+    expect(read(commaList)[0]).toContain("other.rule,acb-unsafe-raw-sql");
+
+    // Prose is NOT matched, and that is not a heuristic: Semgrep honours the
+    // annotation only at the start of a comment's content, measured, so the
+    // anchor is where the scanner's own is.
+    expect(read(chr("//") + " Semgrep honours a nose" + "mgrep comment")).toEqual(
+      [],
+    );
+    expect(read(chr("//") + " explain why this is safe nose" + "mgrep")).toEqual(
+      [],
+    );
+    expect(read("const nose" + "mgrep = 1;")).toEqual([]);
+  });
+
+  it("splits a comma list into every id it names", () => {
+    // Appending an id to an existing justified annotation would otherwise
+    // leave the census row identical while a second rule went silent.
+    const source =
+      chr("//") + " nose" + "mgrep: other.rule,acb-unsafe-raw-sql\n";
+    const ids = [...source.matchAll(HONOURED_ANNOTATION)].flatMap((m) =>
+      (m[2] ?? "")
+        .split(",")
+        .map((segment) => segment.trim().match(RULE_ID_HEAD)?.[0])
+        .filter(Boolean),
+    );
+
+    expect(ids).toEqual(["other.rule", "acb-unsafe-raw-sql"]);
   });
 });
