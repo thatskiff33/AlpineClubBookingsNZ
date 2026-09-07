@@ -227,6 +227,9 @@ function unnoncedInlineScripts(html: string): string[] {
 
   for (const match of html.matchAll(/<script\b([^>]*)>/gi)) {
     const attributes = match[1];
+    // Unreachable: capture group 1 has no `?` quantifier, so it is always
+    // present (possibly empty) whenever the whole pattern matches.
+    if (attributes === undefined) continue;
     if (/\bsrc\s*=/i.test(attributes)) continue;
     if (/\btype\s*=\s*["']?application\/(?:ld\+)?json/i.test(attributes))
       continue;
@@ -844,6 +847,10 @@ export async function runWarmup(
       }
 
       const route = routes[index];
+      if (!route) {
+        // Unreachable: `index >= routes.length` already returned above.
+        return;
+      }
 
       if (now() >= deadline) {
         deadlineExpired = true;
