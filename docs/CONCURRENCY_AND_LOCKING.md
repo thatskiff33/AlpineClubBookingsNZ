@@ -2978,7 +2978,19 @@ One more write joins the same transaction: a `BookingModification` row of type
 `PRICE_REBASE`, the booking's own history record of the re-price. It is an insert
 against the booking, takes no lock, and is only reached after the fenced
 `updateMany` has claimed the change - so it cannot exist for a re-price that did
-not commit.
+not commit. Since #3257 it is also skipped where the recomputed figures matched
+the stored ones, which removes a write rather than adding one.
+
+**#3257 WIDENS WHEN THAT PROMO ROW LOCK IS TAKEN, AND CHANGES NOTHING ELSE ABOUT
+IT.** The re-price used to be invoked only from the night-price repair, so only a
+closure that repaired a strand reached `recalculateBookingPromo`. The trigger is
+now the review CLOSING, so EVERY closure of an `EDIT_FINANCIAL_REVIEW` task on a
+booking carrying a promotion takes that row lock - including a DISMISSAL, which
+took none of it before. Same key, same single advisory tier, same lodge -> promo
+row order, same deadlock shape against a waitlist confirm; more closures reach
+it. The decline above is what keeps the widening bounded: a closure whose strands
+cannot be reconciled still takes no promo row lock at all, because the recompute
+is never called.
 
 **#3194 ADDS A READ TO THAT SAME LOCKLESS TRANSACTION AND STILL NO KEY.** Where
 the task carries no `paymentId` of its own — a review parked before the member

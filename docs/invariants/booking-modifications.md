@@ -1373,26 +1373,40 @@ stale one, and harder to notice.
 Nothing else about the park changes: what a parked edit itself writes is still no
 amount at all.
 
-**Where the re-price does NOT yet reach — stated rather than left to be found,
-and #3257 is NOT closed by it.** The re-price rides on the night-price repair,
-so it runs only where the price boxes were OFFERED. Two reachable shapes of a
-parked guest REMOVAL offer none, and a removal is exactly the case whose
-structural half commits and takes a strand away while the frozen headline still
-counts it:
+**The trigger is a parked review CLOSING, not a strand being repaired** (owner
+decision, 7 September 2026; #3257). The re-price used to be invoked from the
+night-price repair, so it ran only where the price boxes were OFFERED — and two
+reachable shapes of a parked guest REMOVAL offer none, which is exactly the case
+whose structural half commits and takes a strand away while the frozen headline
+still counts it:
 
 - **the departing strand is the unreadable one and every remaining strand is
   exact.** The park raises its review over the departing guest, and the same
   transaction deletes that guest and its night rows. The task names a strand
-  that no longer exists, so no boxes are offered and no re-price runs — even
-  though every surviving strand would now reconcile;
+  that no longer exists, so no boxes are offered and no repair happens — and
+  every surviving strand reconciles, so this one now RE-PRICES;
 - **a remaining strand holds no night rows at all** while carrying money. Its
   review is raised, but boxes appear only for a strand with genuine BLANK nights
-  among readable ones, so this one closes with none.
+  among readable ones, so this one closes with none — and it DECLINES, by the
+  rule above, because a strand with money and no evidence is not something to
+  sum.
 
-In both, the headline keeps counting a strand the booking no longer has: #3257
-verbatim. Bringing them into line is a change to WHERE the re-price is invoked
-from rather than to what it computes, and it is not what the #3219 decision
-settled — so it stays with #3257.
+Both used to leave the headline counting a strand the booking no longer has. The
+condition is now the task's KIND: every `EDIT_FINANCIAL_REVIEW` closure re-prices
+or declines, and the night-price repair is the optional half of it. Two
+consequences follow and are load-bearing:
+
+- **the decline is what makes re-pricing on any close safe**, rather than a
+  defensive extra. Under the old trigger a strand the system could not value
+  simply never reached the writer; under this one it does, and the rule above is
+  the whole of what stops a booking being re-priced from evidence it does not
+  have;
+- **a closure that recomputes the figures already stored writes no
+  `PRICE_REBASE` history row.** That is now the ordinary outcome — most parked
+  reviews close on a booking whose park never left it out of step — and a "Price
+  Recalculated" entry recording no change would be noise on a page a member and
+  an operator both read. The audit entry records the closure either way, and
+  says which of the two happened.
 
 **What the re-based `BookingGuest.priceCents` is read by, since the booking's
 headline totals alone would leave that unsaid.** The strand total

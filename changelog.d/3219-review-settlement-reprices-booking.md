@@ -43,14 +43,26 @@
   stop coming out the same. The new numbers are the truer ones, and every figure
   from before is kept in the audit entry.
 
+- **Closing any review works the price out again, not only one you typed figures
+  into (#3219, #3257).** Two situations after a guest is taken off a booking show
+  no price boxes at all — the job names the guest who left, or names a guest whose
+  nights carry no prices to correct — and those used to work nothing out, so the
+  booking went on counting a guest who was gone with no job left to correct it.
+  Closing the job now works the price out whatever kind of job it was.
+
 - **Where a guest's nights still cannot be read at all, nothing is recalculated
-  (#3219).** The booking's price is left exactly where the freeze put it rather
-  than worked out from evidence the club does not have. Whether it is ever worked
-  out later depends on that guest still having a job open with price boxes on it,
-  and two situations after a guest is taken off a booking have none — the job
-  names the guest who left, or names a guest whose nights carry no prices to
-  correct. Those bookings keep the stale headline, and closing that remains
-  #3257's job rather than this change's.
+  (#3219, #3257).** The booking's price is left exactly where the freeze put it
+  rather than worked out from evidence the club does not have — a total built
+  from guests the club has just said it cannot value would look freshly
+  calculated and be wrong, which is worse than a figure that is merely stale. The
+  closure's audit entry says the price was not worked out, and why. It is worked
+  out the next time somebody can say what those nights sold for.
+
+- **A closure that lands on the price already stored records nothing (#3257).**
+  Most reviews close on a booking whose price never drifted, so working it out
+  again gives the same figures; the booking's history gets a **Price
+  Recalculated** entry only when something actually moved. The audit entry
+  records the closure either way.
 
 - **A review naming a guest who is not on the booking is refused (#3219).**
   Nothing previously checked that, so a mismatched record could have recalculated

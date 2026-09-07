@@ -269,8 +269,9 @@ that turns out to owe nothing is one of the commonest ones to have this problem.
   price is worked out again from its nights when the review closes, and a review
   closed with the boxes blank leaves the booking's headline saying something its
   guests no longer agree with — including, after a guest was taken off, still
-  counting that guest. Rows that show no boxes are unaffected and close exactly
-  as they always did.
+  counting that guest. Rows that show no boxes never ask you for figures and
+  close exactly as they always did — the booking's own price is still worked out
+  again when they close, from whatever its guests can be read as being worth.
 - **Do not change a night's price to make the arithmetic work.** The screen says
   this in the sentence it shows when your figures do not add up. A figure typed
   to close a gap is a price nobody decided, which is the one thing this whole
@@ -320,10 +321,14 @@ a review.**
   out the same. This is deliberate — the new numbers are the truer ones — and it
   is always traceable, because the audit entry keeps every figure from before.
 
-**If a guest's nights still cannot be read at all**, the booking's price is left
-exactly where the freeze put it rather than worked out from evidence the club
-does not have. That booking still has its other review waiting, and closing that
-one works the price out then.
+**If a guest's nights still cannot be read at all**, nothing is written: the
+booking's price is left exactly where the freeze put it rather than worked out
+from evidence the club does not have. That is on purpose — a total built from
+guests the system has just said it cannot value would look freshly calculated and
+be wrong, which is worse than a figure that is merely stale. The audit entry for
+the closure says the price was not worked out, and why. It is worked out the next
+time somebody can say what those nights sold for, either by pricing them on a
+review of that guest or by recording them from the booking itself.
 
 Closing the review is a money-affecting act and is audited as one, in its own
 entry: what each night was set to, what the guest's stay was worth before and
