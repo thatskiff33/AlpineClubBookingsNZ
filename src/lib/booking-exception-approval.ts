@@ -179,10 +179,15 @@ function partyCapacityWindow(party: ProposalParty): {
 } {
   const envelope = partyEnvelope(party);
   const nights = party.guests.flatMap((guest) => guest.nights);
-  if (nights.length === 0) return envelope;
+  // Both ends of the party's night set. With no night there is no window
+  // beyond the stated envelope, which is what the length check said (#2800,
+  // INV-DATE: half-open, so the window ends the morning after the last night).
   const sorted = [...new Set(nights)].sort();
-  const firstNight = parseDateOnly(sorted[0]);
-  const afterLastNight = addDaysDateOnly(parseDateOnly(sorted[sorted.length - 1]), 1);
+  const firstNightKey = sorted[0];
+  const lastNightKey = sorted.at(-1);
+  if (firstNightKey === undefined || lastNightKey === undefined) return envelope;
+  const firstNight = parseDateOnly(firstNightKey);
+  const afterLastNight = addDaysDateOnly(parseDateOnly(lastNightKey), 1);
   return {
     checkIn: firstNight < envelope.checkIn ? firstNight : envelope.checkIn,
     checkOut: afterLastNight > envelope.checkOut ? afterLastNight : envelope.checkOut,
@@ -338,11 +343,14 @@ export function proposalGuestToCreateInput(guest: ProposalGuest) {
     );
   }
   const nights = [...new Set(guest.nights)].sort();
-  if (nights.length === 0) {
+  const firstNightKey = nights[0];
+  const lastNightKey = nights.at(-1);
+  // Reading both ends is what says the guest occupies any night at all (#2800).
+  if (firstNightKey === undefined || lastNightKey === undefined) {
     throw new Error("Frozen proposal guest occupies no nights");
   }
-  const stayStart = parseDateOnly(nights[0]);
-  const stayEnd = parseDateOnly(nights[nights.length - 1]);
+  const stayStart = parseDateOnly(firstNightKey);
+  const stayEnd = parseDateOnly(lastNightKey);
   stayEnd.setUTCDate(stayEnd.getUTCDate() + 1);
   return {
     firstName: guest.firstName,
@@ -889,7 +897,15 @@ async function executeApprovedNewBooking(args: {
   // are legal there), so spreading their output back would widen `stayStart` /
   // `nights` out of the create contract.
   const guests = frozenGuests.map((guest, index) => {
+    // `normalizeBookingGuestInputs` returns one entry per frozen guest, so a
+    // missing one would mean rebuilding a guest from another guest's identity.
+    // There is nothing safe to substitute, so it refuses (#2800, INV-EXCEPT).
     const normalized = normalizedGuests[index];
+    if (normalized === undefined) {
+      throw new Error(
+        `Frozen proposal guest ${index + 1} of ${frozenGuests.length} has no normalized counterpart`,
+      );
+    }
     const planned = consentPlan.guests[index];
     return {
       ...guest,

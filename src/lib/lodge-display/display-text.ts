@@ -170,7 +170,13 @@ function neutraliseUrlScheme(value: string): string {
   const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(trimmed);
   // No scheme → a relative path or `#anchor`/`?query`: always safe.
   if (!scheme) return value;
-  return ALLOWED_URL_SCHEME.test(scheme[1]) ? value : "#";
+  // The capture group has no `?` quantifier, so a match always carries it;
+  // fail CLOSED (neutralise) on the unreachable gap, matching every other
+  // scheme this function does not recognise.
+  const schemeName = scheme[1];
+  return schemeName !== undefined && ALLOWED_URL_SCHEME.test(schemeName)
+    ? value
+    : "#";
 }
 
 // Phase 2 — composition-closing attribute scheme pass (issue #186). Matches a

@@ -683,13 +683,20 @@ export async function buildXeroReconciliationReport(options?: {
   // group is keyed on localModel:localId:role only, so a malformed (wrong
   // xeroObjectType) sibling can share a group with legitimate per-delta links
   // and must still count as a duplicate, exactly as the cleanup treats it.
+  // A duplicate group is a first link plus at least one more; carrying the
+  // pair means the item builder below reads the representative it was filtered
+  // on rather than re-indexing the group (#2800).
   const duplicateCanonicalLinkGroups = Array.from(activeLinksByScope.values())
     .map((scopedLinks) =>
       scopedLinks.filter(
         (link) => !isStripePerDeltaRefundCreditNoteLink(link, stripePaymentIds)
       )
     )
-    .filter((nonExemptLinks) => nonExemptLinks.length > 1);
+    .flatMap((nonExemptLinks) => {
+      const [firstLink, ...extraLinks] = nonExemptLinks;
+      if (firstLink === undefined || extraLinks.length === 0) return [];
+      return [{ firstLink, count: nonExemptLinks.length }];
+    });
   const duplicateActiveCanonicalLinks = duplicateCanonicalLinkGroups.length;
 
   // #2901 fix round: OVER-coverage needs its own drift class. The health
@@ -831,13 +838,13 @@ export async function buildXeroReconciliationReport(options?: {
 
     return buildCanonicalLinkIssueItem(link, detail);
   });
-  const duplicateCanonicalItems = duplicateCanonicalLinkGroups.map((scopedLinks) => {
-    const firstLink = scopedLinks[0];
-    return buildCanonicalLinkIssueItem(
-      firstLink,
-      `${scopedLinks.length} active ${firstLink.role} links exist for this record. Only one active canonical link should remain.`
-    );
-  });
+  const duplicateCanonicalItems = duplicateCanonicalLinkGroups.map(
+    ({ firstLink, count }) =>
+      buildCanonicalLinkIssueItem(
+        firstLink,
+        `${count} active ${firstLink.role} links exist for this record. Only one active canonical link should remain.`
+      )
+  );
   const canonicalDriftItems = [
     ...mismatchedCanonicalItems,
     ...duplicateCanonicalItems,

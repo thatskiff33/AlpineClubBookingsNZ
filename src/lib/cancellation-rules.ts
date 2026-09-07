@@ -68,14 +68,21 @@ export function cancellationRuleSetsEqual(
       .sort((x, y) => y.daysBeforeStay - x.daysBeforeStay)
   const left = sort(a)
   const right = sort(b)
-  return left.every(
-    (rule, i) =>
-      rule.daysBeforeStay === right[i].daysBeforeStay &&
-      rule.refundPercentage === right[i].refundPercentage &&
-      rule.creditRefundPercentage === right[i].creditRefundPercentage &&
-      rule.fixedFeeCents === right[i].fixedFeeCents &&
-      rule.creditFixedFeeCents === right[i].creditFixedFeeCents,
-  )
+  // `left.length === right.length` follows from the `a.length !== b.length`
+  // guard above (sort/map preserve length), so `right[i]` always has a
+  // counterpart here — but if that guarantee were ever violated, "not equal"
+  // is the safe answer for a dirty-form check, not a guessed match.
+  return left.every((rule, i) => {
+    const other = right[i]
+    return (
+      other !== undefined &&
+      rule.daysBeforeStay === other.daysBeforeStay &&
+      rule.refundPercentage === other.refundPercentage &&
+      rule.creditRefundPercentage === other.creditRefundPercentage &&
+      rule.fixedFeeCents === other.fixedFeeCents &&
+      rule.creditFixedFeeCents === other.creditFixedFeeCents
+    )
+  })
 }
 
 export function normalizeStoredCancellationRules(

@@ -232,8 +232,8 @@ export const EMPTYABLE_OVERRIDE_TOKENS: Record<string, readonly string[]> = {
 
 export function extractTokens(value: string): string[] {
   return Array.from(value.matchAll(TOKEN_PATTERN), (match) =>
-    match[1].trim(),
-  ).filter(Boolean);
+    match[1]?.trim(),
+  ).filter((token): token is string => Boolean(token));
 }
 
 /**

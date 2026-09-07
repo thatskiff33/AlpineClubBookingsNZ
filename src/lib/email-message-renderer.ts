@@ -193,15 +193,21 @@ function normaliseSubjectProse(value: string): string {
 }
 
 function findSignPrefixedTokens(value: string): string[] {
+  // The pattern's one capture group has no `?` quantifier, so it is always
+  // present; the predicate proves that to the type instead of asserting it.
   return Array.from(
-    new Set(Array.from(value.matchAll(SIGN_CARRYING_TOKEN_PATTERN), (m) => m[1])),
+    new Set(
+      Array.from(value.matchAll(SIGN_CARRYING_TOKEN_PATTERN), (m) => m[1]).filter(
+        (token): token is string => token !== undefined,
+      ),
+    ),
   );
 }
 
 function extractTemplateTokens(value: string): string[] {
   return Array.from(value.matchAll(/\{\{([^{}]+)\}\}/g))
-    .map((match) => match[1].trim())
-    .filter(Boolean);
+    .map((match) => match[1]?.trim())
+    .filter((token): token is string => Boolean(token));
 }
 
 // test seam

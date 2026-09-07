@@ -75,7 +75,8 @@ function rewriteMirrorImageSources(
 /** The server-side image id inside one of its image URLs, or null. */
 function serverImageId(url: string): string | null {
   const match = url.match(/\/api\/images\/posts\/([0-9a-f]{32})(?:\.webp)?/);
-  return match ? match[1] : null;
+  // The capture group has no `?` quantifier, so a match always carries it.
+  return match?.[1] ?? null;
 }
 
 /**

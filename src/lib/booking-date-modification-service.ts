@@ -8,6 +8,7 @@ import {
   type Role,
 } from "@prisma/client";
 
+import type { BookingGuestNightPriceSource } from "@prisma/client";
 import { ApiError } from "@/lib/api-error";
 import { MinimumStayPolicyViolationError } from "@/lib/booking-policy-exceptions";
 import { logAudit } from "@/lib/audit";
@@ -615,6 +616,20 @@ export async function modifyBookingDates({
     // otherwise answer a stranger's occupancy in full on every date change. Mark
     // the party from the live family boundary first — see
     // `markCrossFamilyGuestsOnBooking`.
+    // The person-night guard (INV-CAP-013, INV-CAP-017) is only as good as the
+    // night set it is handed: a guest counted on fewer nights than they will
+    // hold is a clash the guard cannot see. So a guest with no priced row
+    // refuses here rather than being counted on none — the same answer the
+    // write loop below gives the same condition (#2800).
+    const nightDatesForMemberNightGuard = (index: number, guestId: string) => {
+      const priced = priceBreakdown.guests[index];
+      if (priced === undefined) {
+        throw new Error(
+          `The date change has no priced guest at breakdown position ${index} for booking guest ${guestId} (#3031).`,
+        );
+      }
+      return priced.nightDates ?? [];
+    };
     const guestsForMemberNightGuard = await markCrossFamilyGuestsOnBooking(
       tx,
       booking.memberId,
@@ -622,7 +637,7 @@ export async function modifyBookingDates({
         memberId: g.memberId ?? null,
         stayStart: newCheckIn,
         stayEnd: newCheckOut,
-        nights: priceBreakdown.guests[index].nightDates ?? [],
+        nights: nightDatesForMemberNightGuard(index, g.id),
       })),
       { skipAuthorization: actor.role === "ADMIN", bookingId },
     );
@@ -700,17 +715,28 @@ export async function modifyBookingDates({
     const newTotalPriceCents = parked
       ? booking.totalPriceCents
       : priceBreakdown.totalPriceCents;
-    const guestNightRates = guestsForPricing.map((guest, index) => ({
-      bookingGuestId: guest.bookingGuestId,
-      memberId: guest.memberId ?? null,
-      isMember: guest.isMember,
-      perNightRates: priceBreakdown.guests[index].perNightCents,
-      nightDates: priceBreakdown.guests[index].nightDates,
-      // Guests are priced over the full new range here, so the first rate
-      // is the new check-in night. Dates the rates so internal work-party
-      // promos restrict the discount to the event's night window.
-      firstNight: newCheckIn,
-    }));
+    // Each guest's own priced row, read once. The breakdown was built from
+    // `guestsForPricing`, so a guest with no row is a wiring defect and there
+    // is no amount to promo-allocate against — refused, not guessed (#2800).
+    const guestNightRates = guestsForPricing.map((guest, index) => {
+      const priced = priceBreakdown.guests[index];
+      if (priced === undefined) {
+        throw new Error(
+          `The date change has no priced guest at breakdown position ${index} of ${priceBreakdown.guests.length} (#3031).`,
+        );
+      }
+      return {
+        bookingGuestId: guest.bookingGuestId,
+        memberId: guest.memberId ?? null,
+        isMember: guest.isMember,
+        perNightRates: priced.perNightCents,
+        nightDates: priced.nightDates,
+        // Guests are priced over the full new range here, so the first rate
+        // is the new check-in night. Dates the rates so internal work-party
+        // promos restrict the discount to the event's night window.
+        firstNight: newCheckIn,
+      };
+    });
 
     let newDiscountCents = 0;
     let newPromoAdjustmentCents = 0;
@@ -967,6 +993,21 @@ export async function modifyBookingDates({
     // longer covers instead of the range they now hold.
     await Promise.all(
       booking.guests.map(async (g, i) => {
+        // This guest's own priced row, required on BOTH paths — and the PARKED
+        // path is why the refusal sits above the parked condition rather than
+        // inside it. A parked edit takes its amounts from the stored rows, but
+        // the night SET it writes still comes from `nightDates`, and the
+        // `deleteMany` below has already removed the strand's history by the
+        // time that is read. Tolerating an absent row there would delete the
+        // sold-price evidence the park exists to preserve and write nothing
+        // back — the one outcome #3166 is against. So the file answers this one
+        // condition one way, the way its siblings do (#2800, #3031).
+        const priced = priceBreakdown.guests[i];
+        if (priced === undefined) {
+          throw new Error(
+            `The date change has no priced guest at breakdown position ${i} for booking guest ${g.id} (#3031).`,
+          );
+        }
         await tx.bookingGuest.update({
           where: { id: g.id },
           data: {
@@ -975,9 +1016,7 @@ export async function modifyBookingDates({
             // #3166: on a parked edit the strand keeps its STORED total. Not a
             // recomputed one, not a delta, not a zero — how much this date
             // change alters it is the question the OPEN task exists to answer.
-            priceCents: parked
-              ? g.priceCents
-              : priceBreakdown.guests[i].priceCents,
+            priceCents: parked ? g.priceCents : priced.priceCents,
             // A date change re-bases every guest at current rates (#1930, E4):
             // overwrite the rate-type snapshot with the newly priced total —
             // EXCEPT where the new range keeps nights the guest already bought,
@@ -994,7 +1033,7 @@ export async function modifyBookingDates({
             rateMembershipTypeId: parked
               ? undefined
               : rateSnapshotUpdateForRepricedGuest(
-                  priceBreakdown.guests[i],
+                  priced,
                   guestsForPricing[i]?.lockedNightPrices,
                 ),
           },
@@ -1002,7 +1041,7 @@ export async function modifyBookingDates({
         await tx.bookingGuestNight.deleteMany({
           where: { bookingGuestId: g.id },
         });
-        const nightDates = priceBreakdown.guests[i].nightDates ?? [];
+        const nightDates = priced.nightDates ?? [];
         // #3166: THE PER-NIGHT VECTOR THIS EDIT WRITES. On a parked edit it is
         // built from what is STORED against each night and nothing else — the
         // integer where the row carried one, byte for byte, and `NULL` where it
@@ -1022,10 +1061,37 @@ export async function modifyBookingDates({
               dateEditEvidence.storedNightPriceByGuestId.get(g.id),
               nightDates,
             )
-          : priceBreakdown.guests[i].perNightCents.map((priceCents, index) => ({
-              priceCents,
-              priceSource: repricedSources[index],
-            }));
+          : // #3275 gave every written night a provenance, and this arm is the
+            // reprice one. It is built over `nightDates` — the set actually
+            // written — rather than over the price vector, because the two are
+            // NOT the same length: a breakdown can carry per-night amounts with
+            // no night list, in which case nothing is written at all and the
+            // `createMany` below is skipped entirely.
+            //
+            // NO REFUSAL HERE, deliberately. An earlier revision of this port
+            // refused a short source vector by name and that was wrong twice
+            // over: it fired on the empty-night case where nothing is written,
+            // and it added a SECOND answer to a condition this file already
+            // answers one screen below, where `classifyNightPriceToWrite`
+            // raises the member-visible 400. One condition, one answer (#3031).
+            // The element type says `number | undefined` OUT LOUD. Without the
+            // flag on for this file an indexed read types as `number`, which is
+            // a lie on exactly the short-vector case this arm exists to hand
+            // downstream — and a later reader who trusts it and drops the `?.`
+            // below gets a NaN into a money path instead of the refusal. Making
+            // the absence representable beats policing it (`INV-SSOT-001`).
+            nightDates.map(
+              (
+                _stayDate,
+                index,
+              ): {
+                priceCents: number | undefined;
+                priceSource: BookingGuestNightPriceSource | undefined;
+              } => ({
+                priceCents: priced.perNightCents[index],
+                priceSource: repricedSources[index],
+              }),
+            );
         if (nightDates.length > 0) {
           await tx.bookingGuestNight.createMany({
             data: nightDates.map((stayDate, k) => {

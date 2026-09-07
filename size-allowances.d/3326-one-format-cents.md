@@ -27,7 +27,7 @@ reason: the local copy was renamed to `formatIbAuditCents` and its rendering
   answers it does not have to rediscover it. Fourteen lines, all comment.
 
 file: src/lib/xero-invoice-rounding-audit.ts
-lines: 793
+lines: 799
 reason: this report deliberately shows the dollar amount and the raw signed
   cent delta together, as in `$1.50 (+150c)`, because the exact cent is the
   subject of a rounding-drift audit. The dollar half is now the canonical
@@ -68,7 +68,7 @@ reason: three hard-coded "$"+toFixed(2) cancellation messages, unnamed by
   already-tracked `NZ$` line (#3325). +1 line (the import).
 
 file: src/lib/audit-query.ts
-lines: 1178
+lines: 1179
 reason: two separate fixes landed here. `formatMetadataFragment` was exported
   as a test seam (#3302's own review, matching this file's existing
   `inferAuditCategoryFromAction` convention) so the switch to the shared
@@ -79,3 +79,22 @@ reason: two separate fixes landed here. `formatMetadataFragment` was exported
   body and `Intl.NumberFormat`; a `Math.round` guard and its docblock close
   it, matching the guard `xero-operation-summaries.ts` already carries on the
   same shared helper. +8 lines, mostly comment.
+
+
+## Re-measured by #3338, and why this file rather than a second one
+
+`INV-PAY`-adjacent bookkeeping aside, the rule the checker enforces is **one
+file, one allowance**. #3338 (type-safety stage 3) also grew two of the files
+declared here, so it could not add its own entries for them — the checker
+refuses a second allowance on the same file, correctly, because two entries
+would each describe half a change and neither would describe the file.
+
+So the two lengths above were re-measured on the composed tree instead:
+`xero-invoice-rounding-audit.ts` 793 to 799 and `audit-query.ts` 1178 to 1179.
+The reasons already written for each still hold — stage 3's additions are the
+same kind of change, an absent case handled rather than asserted away — and
+nothing else in this file moved.
+
+Recorded here rather than silently, because a merged allowance whose number a
+later branch invalidates is exactly the sort of thing that gets adjusted without
+being measured.

@@ -3,6 +3,7 @@ import {
   DEFAULT_CLUB_THEME_VALUES,
   themeSeedsFromValues,
 } from "@/lib/club-theme-schema";
+import { must } from "@/lib/indexed-access";
 
 // #2190 P4 (D15/J7): the trend/bar series colours are DERIVED from the generated
 // substrate rather than hand-picked hex (the old set led with a fork's brand gold
@@ -16,14 +17,17 @@ import {
 // (zero references) were removed.
 function buildFinanceSeriesColors() {
   const light = buildThemeSubstrate(themeSeedsFromValues(DEFAULT_CLUB_THEME_VALUES), "light");
-  const step9 = (scale: string) => light.scales[scale].hex[8];
+  const step9 = (scale: string) => {
+    const s = must(light.scales[scale], `buildFinanceSeriesColors: no "${scale}" scale`);
+    return must(s.hex[8], `buildFinanceSeriesColors: scale "${scale}" has no step 9`);
+  };
   return {
     revenue: step9("cat1"), // headline revenue — categorical chart-1 tone
     costs: step9("cat4"), // orange, reads as outflow; distinct from revenue
     bookings: step9("cat3"), // magenta, distinct from revenue and costs
     cash: step9("info"), // semantic info blue
     positive: step9("success"), // semantic success green
-    comparison: light.neutralHex[8], // neutral-9: a muted grey reference line
+    comparison: must(light.neutralHex[8], "buildFinanceSeriesColors: neutral ramp has no step 9"),
   } as const;
 }
 

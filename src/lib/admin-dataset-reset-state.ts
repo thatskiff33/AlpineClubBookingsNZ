@@ -77,6 +77,9 @@ export function withoutDatasetQueryKeys(
 
 export function getPaymentsDatasetDefaults(clubToday: string) {
   const [year, month, day] = clubToday.split("-").map(Number)
+  if (year === undefined || month === undefined || day === undefined) {
+    throw new Error(`clubToday must be a YYYY-MM-DD date, got: ${clubToday}`)
+  }
   return {
     lastUpdatedFrom: format(
       subMonths(new Date(year, month - 1, day), 3),
@@ -192,6 +195,9 @@ export function buildBookingRequestDatasetPath({
 
 export function getReportsDatasetDefaults(clubToday: string) {
   const [year, month, day] = clubToday.split("-").map(Number)
+  if (year === undefined || month === undefined || day === undefined) {
+    throw new Error(`clubToday must be a YYYY-MM-DD date, got: ${clubToday}`)
+  }
   const today = new Date(year, month - 1, day)
   return {
     from: format(startOfMonth(subMonths(today, 3)), "yyyy-MM-dd"),

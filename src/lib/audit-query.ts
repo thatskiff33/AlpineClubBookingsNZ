@@ -911,8 +911,9 @@ export function buildAuditDrilldownLinks(params: {
     actionFallbackDrilldownLink(params.action, params.targetId)
   );
 
-  if (links.length > 1 && !links.some((link) => link.primary)) {
-    links[0].primary = true;
+  const [firstLink] = links;
+  if (links.length > 1 && firstLink && !links.some((link) => link.primary)) {
+    firstLink.primary = true;
   }
 
   return links;

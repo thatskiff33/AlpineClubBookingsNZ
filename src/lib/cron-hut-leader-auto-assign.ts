@@ -162,7 +162,10 @@ export async function autoAssignHutLeaders(): Promise<{
       // Only auto-assign if exactly 1 adult member is at THIS lodge that night.
       if (adultMembers.size !== 1) continue;
 
-      const [, member] = [...adultMembers.entries()][0];
+      const [onlyEntry] = adultMembers.entries();
+      // Unreachable: `adultMembers.size === 1` is checked just above.
+      if (!onlyEntry) continue;
+      const [, member] = onlyEntry;
 
       // Overlap validation, per lodge for the same reason the admin route is:
       // an assignment at another lodge is not a conflict here. Asked through

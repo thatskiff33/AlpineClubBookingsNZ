@@ -147,12 +147,15 @@ async function findUniqueFundingLot(params: {
     select: { id: true, amountCents: true },
     take: 2,
   });
-  if (lots.length !== 1) {
+  // "Exactly one positive funding lot" said as a first with no rest, so the
+  // lot this returns is a value the check already holds (#2800).
+  const [lot, ...extraLots] = lots;
+  if (lot === undefined || extraLots.length > 0) {
     throw new Error(
       `Cannot repair applied credit note ${params.xeroCreditNoteId}: expected one positive funding lot, found ${lots.length}`,
     );
   }
-  return lots[0];
+  return lot;
 }
 
 async function assertSliceFitsFundingLot(params: {
@@ -257,13 +260,16 @@ export async function repairLegacyAppliedCreditNoteAllocationsForBooking(
     const noteSlices = slices.filter(
       (slice) => slice.xeroCreditNoteId === providerTarget.xeroCreditNoteId,
     );
-    if (noteSlices.length > 1) {
+    // At most one local slice may carry this credit note; reading it is what
+    // says which of the three cases this is — none, one, or ambiguous (#2800).
+    const [current, ...extraNoteSlices] = noteSlices;
+    if (extraNoteSlices.length > 0) {
       throw new Error(
         `Cannot reconcile provider target for ${providerTarget.xeroCreditNoteId}: ${noteSlices.length} local slices are ambiguous`,
       );
     }
 
-    if (noteSlices.length === 0 && providerTarget.amountCents > 0) {
+    if (current === undefined && providerTarget.amountCents > 0) {
       const memberId = memberIds[0];
       if (!memberId) {
         throw new Error(
@@ -308,8 +314,7 @@ export async function repairLegacyAppliedCreditNoteAllocationsForBooking(
         allowMissing: true,
       });
       created += 1;
-    } else if (noteSlices.length === 1) {
-      const current = noteSlices[0];
+    } else if (current !== undefined) {
       const lot = await db.memberCredit.findUnique({
         where: { id: current.memberCreditId },
         select: { amountCents: true, memberId: true, xeroCreditNoteId: true },
@@ -398,12 +403,16 @@ export async function repairLegacyAppliedCreditNoteAllocationsForBooking(
   // clamp offset, and inactive link/checkpoint history. Net zero is definitive:
   // recreating a working slice here would resurrect provider-released credit.
   if (desiredAppliedCents === 0) return 0;
-  if (negativeByNote.size !== 1 || !memberIds[0]) {
+  // One note, and one member that owns it: both are read here, so the
+  // reconstruction below works from values rather than from counts (#2800).
+  const [soleNote, ...extraNotes] = negativeByNote.entries();
+  const owningMemberId = memberIds[0];
+  if (soleNote === undefined || extraNotes.length > 0 || !owningMemberId) {
     throw new Error(
       `Cannot repair applied credit for booking ${bookingId}: precise note provenance is ambiguous`,
     );
   }
-  const [xeroCreditNoteId, amountCents] = [...negativeByNote.entries()][0];
+  const [xeroCreditNoteId, amountCents] = soleNote;
   const historicalLinks = await db.xeroObjectLink.findMany({
     where: {
       xeroObjectType: "ALLOCATION",
@@ -428,7 +437,7 @@ export async function repairLegacyAppliedCreditNoteAllocationsForBooking(
   }
   const lot = await findUniqueFundingLot({
     db,
-    memberId: memberIds[0],
+    memberId: owningMemberId,
     xeroCreditNoteId,
   });
   await assertSliceFitsFundingLot({

@@ -51,15 +51,15 @@ export async function validateMinimumStay(
   lodgeId?: string | null,
   db: MinimumStayPolicyDb = prisma
 ): Promise<{ valid: boolean; violations: MinimumStayViolation[] }> {
+  // Both ends of the stay, read where the policy window is compared against
+  // them: a stay with no night breaks no minimum (#2800, INV-DATE).
   const nights = getStayNights(checkIn, checkOut);
-  const nightCount = nights.length;
+  const firstNight = nights[0];
+  const lastNight = nights.at(-1);
 
-  if (nightCount === 0) {
+  if (firstNight === undefined || lastNight === undefined) {
     return { valid: true, violations: [] };
   }
-
-  const firstNight = nights[0];
-  const lastNight = nights[nights.length - 1];
 
   const effectiveLodgeId = lodgeId ?? (await getDefaultLodgeId(db));
 
