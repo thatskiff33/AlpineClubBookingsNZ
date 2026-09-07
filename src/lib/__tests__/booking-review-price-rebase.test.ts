@@ -275,6 +275,15 @@ describe("what the re-price will not price from (#3219, INV-MOD-028)", () => {
       { id: "guest-2", priceCents: 8_000, nights: [] },
     ],
     [
+      // The same absence at a total the sum check CANNOT catch: no rows sum to
+      // zero, and zero is what the strand says it is worth. Only "a strand with
+      // no night rows has a stay envelope and no evidence" refuses this one, so
+      // without it the case is a false green - which a mutation probe of the
+      // row-count check found it to be.
+      "a strand with no night rows and nothing stored against it either",
+      { id: "guest-2", priceCents: 0, nights: [] },
+    ],
+    [
       "a strand carrying a night price that is not usable money",
       {
         id: "guest-2",

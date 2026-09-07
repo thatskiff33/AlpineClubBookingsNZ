@@ -55,7 +55,7 @@ import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
  * ## THE TRIGGER IS A PARKED REVIEW CLOSING, NOT A STRAND BEING REPAIRED (#3257)
  *
  * Owner decision, 7 September 2026. This writer used to run only off a repaired
- * strand - it was invoked from `recordStoredNightPriceRepair`, so it happened
+ * strand - it was invoked from the night-price repair writer, so it happened
  * only where the officer was offered price boxes and typed into them. Two
  * reachable shapes of a parked guest REMOVAL offer no boxes at all, so neither
  * produced a repair and neither re-priced:
