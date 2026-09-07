@@ -17,6 +17,14 @@ reason: the same named-refusal migration (a shared `must()` guard from an
   mandatory regex capture groups and a fixed-length neutral-ramp read, each
   guarded beside the read it protects rather than asserted away.
 
+file: src/lib/group-booking.ts
+lines: 1883
+reason: the non-member join's nested guest-create payload is now validated
+  at this call site (stayStart/stayEnd proven non-undefined, throwing on a
+  gap) because the type actually originates in buildGuestCreateData
+  (booking-create-guests.ts), which is outside this tranche -- fixing it
+  here is the only option that isn't a cast.
+
 file: src/lib/admin-bookings-service.ts
 lines: 1373
 reason: four guarded reads (the first/last row of a non-empty page batch,
