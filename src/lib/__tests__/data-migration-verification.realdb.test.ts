@@ -75,8 +75,18 @@ function migrationNames(): string[] {
 function migrationSql(name: string): string {
   // Test helper: joins the repo's own migrations directory with a name read
   // from that same directory listing; no user input.
-  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
   return readFileSync(path.join(MIGRATIONS_DIR, name, "migration.sql"), "utf8");
+}
+
+/**
+ * A verification case already owns a rollback transaction. Remove only a
+ * migration's complete outer transaction envelope before running it there;
+ * replaying the committed migration chain still executes the real envelope.
+ */
+function sqlInsideVerificationTransaction(sql: string): string {
+  const match = sql.match(/^\s*BEGIN\s*;([\s\S]*)COMMIT\s*;\s*$/i);
+  if (!match) return sql;
+  return match[1];
 }
 
 // ---------------------------------------------------------------------------
@@ -311,7 +321,6 @@ describeWithDatabase("data migrations against a real PostgreSQL (#2418)", () => 
       try {
         // Test fixture: this repository's own committed migration SQL, against a
         // disposable database; no user input.
-        // nosemgrep: javascript.express.db.pg-express.pg-express
         await db().query(statement);
       } catch (error) {
         throw new Error(
@@ -363,12 +372,22 @@ describeWithDatabase("data migrations against a real PostgreSQL (#2418)", () => 
       }
       for (const version of versions) {
         // The migration under test, or a deliberately mutated copy of it,
-        // inside a transaction this case will roll back.
-        await runScript(version, `applying the migration for "${testCase.name}"`);
+        // inside a transaction this case will roll back. A migration may carry
+        // its own production BEGIN/COMMIT envelope; do not let that commit the
+        // fixture's enclosing transaction.
+        await runScript(
+          sqlInsideVerificationTransaction(version),
+          `applying the migration for "${testCase.name}"`,
+        );
+      }
+      if (testCase.afterMigration?.trim()) {
+        await runScript(
+          testCase.afterMigration,
+          `exercising the migrated shape for "${testCase.name}"`,
+        );
       }
       for (const expectation of testCase.expectations) {
         // Test fixture: the fixture's own read-only assertion query.
-        // nosemgrep: javascript.express.db.pg-express.pg-express
         const result = await db().query(expectation.sql);
         readings.push({
           claim: expectation.claim,
@@ -392,7 +411,6 @@ describeWithDatabase("data migrations against a real PostgreSQL (#2418)", () => 
     await adminClient.connect();
     scratchDatabase = `dmv_${randomUUID().replaceAll("-", "")}`;
     // Test fixture: a generated UUID-derived database name; no user input.
-    // nosemgrep: javascript.express.db.pg-express.pg-express
     await adminClient.query(`CREATE DATABASE "${scratchDatabase}"`);
 
 
@@ -450,7 +468,6 @@ describeWithDatabase("data migrations against a real PostgreSQL (#2418)", () => 
     await client?.end().catch(() => {});
     if (adminClient && scratchDatabase) {
       // Test fixture: drops the disposable database created above.
-      // nosemgrep: javascript.express.db.pg-express.pg-express
       await adminClient
         .query(`DROP DATABASE IF EXISTS "${scratchDatabase}" WITH (FORCE)`)
         .catch(() => {});

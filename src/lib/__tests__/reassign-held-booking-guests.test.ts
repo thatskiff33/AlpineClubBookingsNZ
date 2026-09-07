@@ -46,8 +46,16 @@ function makeTx() {
 
 /** The two nights of the default envelope, priced 2500 each of the 5000 total. */
 const defaultNights = (priceCents = 5000) => [
-  { stayDate: new Date("2026-08-01T00:00:00.000Z"), priceCents: Math.ceil(priceCents / 2) },
-  { stayDate: new Date("2026-08-02T00:00:00.000Z"), priceCents: Math.floor(priceCents / 2) },
+  {
+    stayDate: new Date("2026-08-01T00:00:00.000Z"),
+    priceCents: Math.ceil(priceCents / 2),
+    priceSource: "EVEN_SPLIT" as const,
+  },
+  {
+    stayDate: new Date("2026-08-02T00:00:00.000Z"),
+    priceCents: Math.floor(priceCents / 2),
+    priceSource: "EVEN_SPLIT" as const,
+  },
 ];
 
 const guest = (overrides: Record<string, unknown> = {}) => ({

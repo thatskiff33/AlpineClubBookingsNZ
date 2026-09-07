@@ -41,7 +41,6 @@ export async function GET(request: NextRequest) {
       // absDir is contained under IMAGES_ROOT; e.name comes from readdir of that
       // directory, not from request input. Justification and the #2841 triage:
       // docs/SECURITY-ATTACK-SURFACE.md -> "Image Manager path containment".
-      // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
       const filePath = path.join(absDir, e.name);
       const stat = await fs.stat(filePath);
       return {
@@ -106,7 +105,6 @@ export async function DELETE(request: NextRequest) {
   // contains a separator; the startsWith check below re-confirms containment.
   // Justification and the #2841 triage:
   // docs/SECURITY-ATTACK-SURFACE.md -> "Image Manager path containment".
-  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
   const filePath = path.join(absDir, filename);
   // Strict: the file being deleted is always a child of absDir, never absDir
   // itself. The dropped `filePath !== absDir &&` escape hatch was the same shape

@@ -97,9 +97,9 @@ function baseArgs() {
     // financial review instead — which is the new rule working, not a bed
     // question. The reconciling shape is the one the suite means to describe.
     nights: [
-      { stayDate: D("2026-09-10"), priceCents: 10000 },
-      { stayDate: D("2026-09-11"), priceCents: 10000 },
-      { stayDate: D("2026-09-12"), priceCents: 10000 },
+      { stayDate: D("2026-09-10"), priceCents: 10000, priceSource: "SOLD" },
+      { stayDate: D("2026-09-11"), priceCents: 10000, priceSource: "SOLD" },
+      { stayDate: D("2026-09-12"), priceCents: 10000, priceSource: "SOLD" },
     ],
   };
   const booking = {
@@ -351,6 +351,7 @@ describe("calculateModifiedPricing in-progress check-out-day capacity (#2029)", 
         return dates.map((stayDate, index) => ({
           stayDate,
           priceCents: index === 0 ? base + remainder : base,
+          priceSource: "SOLD" as const,
         }));
       })(),
       priceCents,
@@ -540,8 +541,8 @@ describe("calculateModifiedPricing in-progress per-night breakdown (#2736)", () 
       // total, because a total that does not reconcile with the rows is the
       // unpriceable case and no longer a fixture that prices.
       nights: [
-        { stayDate: D("2026-08-20"), priceCents: perNightCents },
-        { stayDate: D("2026-08-22"), priceCents: perNightCents },
+        { stayDate: D("2026-08-20"), priceCents: perNightCents, priceSource: "SOLD" },
+        { stayDate: D("2026-08-22"), priceCents: perNightCents, priceSource: "SOLD" },
       ],
       priceCents: 2 * perNightCents,
     };
@@ -782,6 +783,7 @@ describe("calculateModifiedPricing in-progress departed guest (#2743)", () => {
       nights: sorted.map((stayDate) => ({
         stayDate: D(stayDate),
         priceCents: RATE,
+        priceSource: "SOLD" as const,
       })),
       priceCents: sorted.length * RATE,
     };
@@ -931,8 +933,8 @@ describe("calculateModifiedPricing in-progress per-night prices (#2744)", () => 
       stayStart: D("2026-08-20"),
       stayEnd: D("2026-08-23"),
       nights: [
-        { stayDate: D("2026-08-20"), priceCents: LOW },
-        { stayDate: D("2026-08-22"), priceCents: LOW },
+        { stayDate: D("2026-08-20"), priceCents: LOW, priceSource: "SOLD" },
+        { stayDate: D("2026-08-22"), priceCents: LOW, priceSource: "SOLD" },
       ],
       priceCents: 2 * LOW,
     };
@@ -943,9 +945,9 @@ describe("calculateModifiedPricing in-progress per-night prices (#2744)", () => 
       id: "g2",
       memberId: "m2",
       nights: [
-        { stayDate: D("2026-08-20"), priceCents: LOW },
-        { stayDate: D("2026-08-21"), priceCents: LOW },
-        { stayDate: D("2026-08-22"), priceCents: LOW },
+        { stayDate: D("2026-08-20"), priceCents: LOW, priceSource: "SOLD" },
+        { stayDate: D("2026-08-21"), priceCents: LOW, priceSource: "SOLD" },
+        { stayDate: D("2026-08-22"), priceCents: LOW, priceSource: "SOLD" },
       ],
       priceCents: 3 * LOW,
     };
@@ -1039,8 +1041,8 @@ describe("calculateModifiedPricing in-progress per-night prices (#2744)", () => 
       stayEnd: D("2026-08-25"),
       nights: withNightRows
         ? [
-            { stayDate: D("2026-08-23"), priceCents: LOW },
-            { stayDate: D("2026-08-24"), priceCents: LOW },
+            { stayDate: D("2026-08-23"), priceCents: LOW, priceSource: "SOLD" },
+            { stayDate: D("2026-08-24"), priceCents: LOW, priceSource: "SOLD" },
           ]
         : [],
       priceCents: 2 * LOW,
@@ -1053,8 +1055,8 @@ describe("calculateModifiedPricing in-progress per-night prices (#2744)", () => 
       id: "g2",
       memberId: "m2",
       nights: [
-        { stayDate: D("2026-08-23"), priceCents: LOW },
-        { stayDate: D("2026-08-24"), priceCents: LOW },
+        { stayDate: D("2026-08-23"), priceCents: LOW, priceSource: "SOLD" },
+        { stayDate: D("2026-08-24"), priceCents: LOW, priceSource: "SOLD" },
       ],
     };
     const totalPriceCents = 4 * LOW;
