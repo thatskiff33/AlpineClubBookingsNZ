@@ -229,6 +229,16 @@ Prefix `INV-PAY`.
 | `INV-PAY-079` | The ledger derivation never restores a retired card or its pointer |
 | `INV-PAY-080` | A terminal card is escalated exactly once, by construction |
 | `INV-PAY-055` | One charge attempt is one durable ledger row with its own key |
+| `INV-PAY-081` | One attempt is one PRIMARY row; metadata converges on one builder |
+| `INV-PAY-082` | An unresolved attempt is replayed; its row never nulls the intent pointer |
+| `INV-PAY-083` | A definite Stripe failure ends the attempt; an ambiguous one keeps it |
+| `INV-PAY-084` | A pre-cutover shared-key charge is recognised by reason and taken over |
+| `INV-PAY-085` | An attempt on a replaced card is ended; its intent is cancelled |
+| `INV-PAY-086` | Captured money refuses a new attempt; ordering with INV-PAY-054 and INV-PAY-053 |
+| `INV-PAY-087` | The captured-money refusal alert is capped and anchored on observation |
+| `INV-PAY-088` | Stripe's answer is recorded on the attempt row, forward only |
+| `INV-PAY-089` | A key is only re-sent inside Stripe's window, or recovered by it |
+| `INV-PAY-090` | The pre-charge sweep excludes attempt rows by the key prefix |
 | `INV-PAY-056` | A payment recovery becomes terminally failed in exactly one place |
 | `INV-PAY-057` | A dead additional-payment recovery withdraws the ask it left standing |
 | `INV-PAY-067` | One review task per parked strand; departing strand always recorded |
