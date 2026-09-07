@@ -337,7 +337,21 @@ things:
   that the list never grows *silently*, not that it never grows;
 - an `errors[].type` it does not recognise. Fail-closed: a scanner that starts
   reporting a new kind of failure must not reduce coverage silently just because
-  the gate predates the name.
+  the gate predates the name;
+- a scan that read nothing, or fewer files than `minimumScannedFiles`.
+
+**The allowlist doubles as the canary.** A report only passes if it names
+exactly those files as partially parsed *and* clears the file floor, and a
+broken, truncated or forged scan cannot satisfy both — too few files fails the
+floor, a missing entry reads as stale, an extra one as newly unparsed. #2842's
+security review attacked precisely this, forging reports that clear the floor
+with no failures, and could not construct one.
+
+The floor is a **tripwire, not a ratchet**, and worth stating as the limit it
+is: it sits at 4,000 against roughly 4,250 targets, so a change that excludes a
+directory *and* lowers the floor in the same commit passes everything. Review
+holds that direction, exactly as it holds an addition to the allowlist. The
+floor catches the accident, not the intent.
 
 Every entry in the allowlist is a **test file**: the production files and all
 three whole-file failures the measurement found were fixed rather than listed.

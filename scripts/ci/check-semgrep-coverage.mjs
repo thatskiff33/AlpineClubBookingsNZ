@@ -38,6 +38,22 @@ import { pathToFileURL } from "node:url";
  * entries are the string-literal ampersand, which has no safe rewrite. The
  * honest guarantee is that it never grows SILENTLY.
  *
+ * THE ALLOWLIST IS ALSO THE CANARY, and this is the property that makes the
+ * gate hard to fool rather than merely strict. A report only passes if it names
+ * EXACTLY those files as partially parsed and clears the scanned-file floor.
+ * A broken, truncated or forged scan cannot satisfy both: too few files fails
+ * the floor, and any report that does not reproduce the precise 169-file set
+ * fails from one side or the other — a missing entry reads as stale, an extra
+ * one as newly unparsed. #2842's security review attacked exactly this, forging
+ * reports that clear the floor with no failures, and could not construct one.
+ *
+ * THE FLOOR ITSELF IS NOT RATCHETED, and that is a stated limit rather than a
+ * guarantee. It sits at 4,000 against roughly 4,250 targets — about five per
+ * cent of slack — so a change that excludes a directory AND lowers the floor in
+ * the same commit passes everything here. Review holds that direction, exactly
+ * as it holds an addition to the allowlist; the floor catches the accident, not
+ * the intent.
+ *
  * FAIL-CLOSED ON ANYTHING UNRECOGNISED. An `errors` entry this script cannot
  * classify is reported and fails the build rather than being ignored. A
  * scanner that starts reporting a new kind of failure must not be able to

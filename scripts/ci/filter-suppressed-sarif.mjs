@@ -50,8 +50,15 @@ import { pathToFileURL } from "node:url";
  * absent status defaults to `accepted`. Semgrep emits no `status` at all today,
  * so this branch is about not being wrong if that changes rather than about
  * current output.
+ *
+ * `underReview` is listed for exactly that reason. It means the suppression has
+ * NOT been accepted — the decision is still open — so honouring it would
+ * withhold a result nobody has yet agreed to suppress, which is the only path
+ * #2842's security review could find by which this filter withholds something
+ * that is not actually suppressed. Unreachable today; the docblock's whole
+ * argument is about not being wrong when it stops being unreachable.
  */
-const INACTIVE_SUPPRESSION_STATUSES = new Set(["rejected"]);
+const INACTIVE_SUPPRESSION_STATUSES = new Set(["rejected", "underReview"]);
 
 /**
  * `suppressions[].kind` values this filter acts on. `inSource` means the
