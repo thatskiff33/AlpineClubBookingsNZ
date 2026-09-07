@@ -347,8 +347,8 @@ function makeBooking(overrides: Record<string, unknown> = {}) {
           this deliberately below.
         */
         nights: [
-          { stayDate: new Date("2026-08-01"), priceCents: 2500 },
-          { stayDate: new Date("2026-08-02"), priceCents: 2500 },
+          { stayDate: new Date("2026-08-01"), priceCents: 2500, priceSource: "SOLD" },
+          { stayDate: new Date("2026-08-02"), priceCents: 2500, priceSource: "SOLD" },
         ],
         // No consent was ever needed for an ordinary guest, and `null` is one of
         // the two values `isOperationallyPresentConsent` treats as present (D-12).
@@ -1734,8 +1734,8 @@ describe("#3166 modify-dates parks rather than repricing an unreadable night", (
   function bookingWithABlankNight() {
     const booking = makeBooking();
     (booking.guests as Array<Record<string, unknown>>)[0].nights = [
-      { stayDate: new Date("2026-08-01"), priceCents: 2500 },
-      { stayDate: new Date("2026-08-02"), priceCents: null },
+      { stayDate: new Date("2026-08-01"), priceCents: 2500, priceSource: "SOLD" },
+      { stayDate: new Date("2026-08-02"), priceCents: null, priceSource: "UNKNOWN" },
     ];
     return booking;
   }

@@ -201,6 +201,7 @@ vi.mock("@/lib/membership-cancellation-xero", () => ({
 
 import {
   attachPaymentIntentToWaitingSupplementaryInvoiceOperations,
+  findWaitingSupplementaryInvoiceOperationForPaymentIntent,
   enqueueXeroAccountCreditNoteOperation,
   enqueueXeroSecondSupplementaryInvoiceOperation,
   enqueueXeroBookingInvoiceOperation,
@@ -3456,6 +3457,78 @@ describe("enqueueXeroSecondSupplementaryInvoiceOperation: the second ask (#3193)
       operations.find((operation) => operation.id === "op_second_ask")!
         .requestPayload.paymentIntentId,
     ).toBeUndefined();
+  });
+
+  /**
+   * THE SAME READ, ASKED THE OTHER WAY (#3220 fix round).
+   *
+   * `findWaitingSupplementaryInvoiceOperationForPaymentIntent` is what lets a
+   * dead payment recovery tell "this ask is a duplicate of an invoice already
+   * raised" from "this ask is what an invoice is still waiting for". Only the
+   * second kind may be left standing, and only the first may be withdrawn - so
+   * the intent id has to be part of the match, not just the change.
+   */
+  it("finds the waiting invoice operation parked on that exact PaymentIntent", async () => {
+    operations.push({
+      id: "op_change",
+      localModel: "BookingModification",
+      localId: "mod_1",
+      status: "WAITING_PAYMENT",
+      queueType: "SUPPLEMENTARY_INVOICE",
+      correlationKey: "booking-mod:mod_1:20000:0",
+      requestPayload: {
+        queueType: "SUPPLEMENTARY_INVOICE",
+        bookingId: "booking_1",
+        bookingModificationId: "mod_1",
+        paymentIntentId: "pi_1",
+        priceDiffCents: 20000,
+        changeFeeCents: 0,
+      },
+    });
+
+    await expect(
+      findWaitingSupplementaryInvoiceOperationForPaymentIntent({
+        bookingModificationId: "mod_1",
+        paymentIntentId: "pi_1",
+      }),
+    ).resolves.toEqual({ id: "op_change" });
+
+    // A row waiting on some OTHER intent is not this ask's blocker. Reading it
+    // as one would leave a genuine duplicate instrument standing against an
+    // invoice the repair pass has already raised unpaid.
+    await expect(
+      findWaitingSupplementaryInvoiceOperationForPaymentIntent({
+        bookingModificationId: "mod_1",
+        paymentIntentId: "pi_other",
+      }),
+    ).resolves.toBeNull();
+  });
+
+  it("finds nothing for a change whose invoice is waiting on no intent at all", async () => {
+    // The ordinary shape: enqueued but not yet attached. Nothing is waiting on
+    // this ask, so a dead recovery withdraws it.
+    operations.push({
+      id: "op_change",
+      localModel: "BookingModification",
+      localId: "mod_1",
+      status: "WAITING_PAYMENT",
+      queueType: "SUPPLEMENTARY_INVOICE",
+      correlationKey: "booking-mod:mod_1:20000:0",
+      requestPayload: {
+        queueType: "SUPPLEMENTARY_INVOICE",
+        bookingId: "booking_1",
+        bookingModificationId: "mod_1",
+        priceDiffCents: 20000,
+        changeFeeCents: 0,
+      },
+    });
+
+    await expect(
+      findWaitingSupplementaryInvoiceOperationForPaymentIntent({
+        bookingModificationId: "mod_1",
+        paymentIntentId: "pi_1",
+      }),
+    ).resolves.toBeNull();
   });
 
   /**

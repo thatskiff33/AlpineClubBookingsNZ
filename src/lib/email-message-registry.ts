@@ -733,6 +733,14 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
     triggerSummary: "Exhausted retry alert",
     frequency: "When a retryable email permanently fails",
   },
+  // #3268: the auto-charge cron found the saved card permanently unusable,
+  // retired it, and is asking the member for a new one.
+  "saved-card-charge-failed": {
+    triggerSummary:
+      "The saved card could not be charged for the booking's hold and has been removed; the member is asked to save a new card",
+    frequency:
+      "Once per booking, when the confirm-pending cron gives up on that card",
+  },
   "admin-booking-change-request": {
     triggerSummary: "Locked booking change request submitted",
     frequency: "Per member/admin request submission",

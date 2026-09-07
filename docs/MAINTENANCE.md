@@ -14,6 +14,7 @@ filename-only selection misses; add focused tests for the contracts you changed.
 npm run db:generate
 npm run lint
 DATABASE_URL=postgresql://user:pass@localhost:5432/tacbookings npm run typecheck
+npm run typecheck:nuia       # when TypeScript under src/, scripts/ or prisma/ changes
 npm run test:related -- $(git diff --name-only main...HEAD)
 npm test -- path/to/focused.test.ts
 npm run knip                 # when files or exports change
@@ -70,6 +71,10 @@ CI also runs independent static and container checks:
   `scripts/ci/gitleaks-selftest.sh`, which plants a credential and proves the
   scanner still reports it. `Secret scan (gitleaks)` (#2686; **pending** as a
   required check, see `AGENTS.md` for the rollout order)
+- the same pinned gitleaks over **every** branch's history, weekly and
+  non-blocking, as `Scheduled secret sweep` (#2852). It is advisory by
+  construction rather than by configuration — see "The repository-wide secret
+  sweep" below for which of the two is responsible for what
 - TypeScript, test, and Docker image build validation
 - Migration drift check (`migration-drift` job) running `db:check-drift` against
   a throwaway Postgres, so schema-vs-migration drift fails the PR rather than the
@@ -92,6 +97,15 @@ CI also runs independent static and container checks:
   longer needs it. `package.json` is strict JSON and cannot carry a comment, so
   the register below — not the manifest — is where an override records why it
   exists and when it retires. Adding an override means adding a row.
+- Exact-pinning a **direct** dependency *below its newest release, because the
+  newer one is broken*, is a **hold**: it needs a row in the hold register below
+  and a written condition that lifts it. An exact pin at the version that is
+  already current is **not** a hold and needs no row — that covers the
+  version-coupling pins (`next` with `eslint-config-next`, `react` with
+  `react-dom`, `@prisma/client` with `@prisma/adapter-pg`) and every other exact
+  pin Dependabot steps forward each release. Thirteen direct dependencies are
+  exact-pinned today and only one of them is a hold; the difference is whether
+  anything is being held back, not whether the range has a caret.
 - Use test or demo credentials for Stripe, Xero, SES, and Sentry in local and
   CI environments.
 
@@ -124,6 +138,38 @@ four are load-bearing; none is inert.
 | `eslint-plugin-react-hooks` | **Compatibility hold**, not security — `b1989558f` introduced it as "hold eslint-plugin-react-hooks at 7.0.1", and it has since been stepped forward to 7.1.1. Currently non-binding: natural resolution lands on 7.1.1 with or without it. | The hold is reviewed and lifted on purpose. |
 | `browserslist` (`^4.28.7`) | **Security.** Two high advisories against `browserslist <= 4.28.6` — unbounded memory growth with no cache eviction (GHSA-c83g-rgw3-j3cx), and an uncaught crash / prototype write via untrusted `browserslist-stats.json` (GHSA-73wf-gq98-2v4g). Transitive only; nothing declares it directly. A **range**, not a pin, so it keeps floating with future patches. | the deepest parent requiring it admits 4.28.7 or later, which `npm audit` will show by this entry becoming inert. |
 | `mysql2` (`^3.22.0`) | **Security, on a driver this application never loads.** `mysql2 < 3.22.0` carries an auth-plugin downgrade to `mysql_clear_password` that leaks plaintext credentials (GHSA-3f6p-5ww8-9rcr). It arrives transitively through `prisma`, and this product's datasource is `provider = "postgresql"` — nothing in `src/` imports it, so the advisory is not reachable here. It is overridden rather than accepted because `npm audit --audit-level=high` is a required check and cannot express "unreachable", and because the only remedy npm offers is `--force`, which **downgrades Prisma** and is a far larger change than the one it avoids. A **range**, not a pin. | `prisma` requires mysql2 3.22.0 or later. |
+
+### The direct-dependency hold register
+
+An override constrains what a *parent* is allowed to resolve. A hold is the other
+thing: a package this project declares itself, deliberately pinned to an exact
+version so a Dependabot group PR cannot carry it forward. It is recorded here and
+not in the table above, because the removal-and-re-resolve check described below
+does not apply — nothing transitive is being forced, so an inert hold looks
+identical to a load-bearing one.
+
+The word also appears in the override register above, in the older and looser
+sense: the `eslint-plugin-react-hooks` row calls itself a "compatibility hold"
+because it is kept for a compatibility reason rather than an advisory. That entry
+is an **override** on a transitive package and it stays where it is. Only a
+direct dependency this project declares belongs in the table below.
+
+Two rules, both learned the expensive way:
+
+- **A hold must be an exact version, never a `^` floor.** The preference for a
+  range stated above is about *overrides*, where the goal is to raise a floor. A
+  hold has the opposite goal, and `"^10.70.0"` does not hold anything back: the
+  range admits the broken release, so any re-resolve lands on it again. Measured
+  on #3313, where the caret was tried first and the lockfile came back on
+  **10.72.0 — the release being held back from.** The exact pin is also what
+  makes a future move show up as a visible `package.json` diff rather than as a
+  lockfile line nobody reads.
+- **A hold needs a written retirement condition, or it becomes permanent.** The
+  package stops being maintained by the system the moment it is pinned.
+
+| hold | why it exists | retires when |
+| --- | --- | --- |
+| `@sentry/nextjs` (`10.70.0`, exact) | **Compatibility**, not security. `@sentry/server-utils@10.72.0` removed `@apm-js-collab/code-transformer-bundler-plugins`, `@apm-js-collab/tracing-hooks` and `meriyah` from its dependencies, but the code it ships still loads the first of those. Importing it throws `TypeError: The URL must be of scheme file` from `orchestrion/bundler/webpack.js`, which kills six test files at import time and fails a seventh. Nothing in this repository is at fault and there is no local workaround worth carrying, so the version is held instead (#3313, #3304). | Sentry ships a release whose `@sentry/server-utils` loads only what it declares. Verify by pinning that version in a scratch copy and running the suites named in #3313, not by reading the changelog. |
 
 ### Checking whether an override still earns its place
 
@@ -205,32 +251,198 @@ rather than inferred:
 
 - **`Static analysis gate`** (`ci.yml` → `static-analysis`) is the blocking one.
   It runs `p/nextjs`, `p/typescript`, `p/javascript`, `p/react` and
-  `.semgrep/rules/`, and nothing else.
+  `.semgrep/rules/`, and nothing else. **This is the policy**: the ruleset is
+  versioned in this repository and changes only through a reviewed diff.
 - **`semgrep-cloud-platform/scan`** is a Semgrep AppSec Platform GitHub App
-  check. Its ruleset is configured at semgrep.dev, not in this repository, it
-  costs no GitHub Actions time, and it is advisory.
+  check. It costs no GitHub Actions time and it is advisory. Its ruleset is
+  configured at semgrep.dev, so it is an **execution and reporting surface, not
+  a second policy** — the owner's decision on #2842.
 
-Measured at 527eb74fc by re-running the exact blocking invocation with
-`--disable-nosem`: **the blocking rule set produces exactly ONE finding in the
-whole repository**, `acb-unsafe-raw-sql` at `src/lib/audit-retention.ts`. So
-exactly one of this repository's `nosemgrep` annotations is live against the
-gate that can stop a merge. The other 87 name ids from `p/default` /
-`p/security-audit` — packs the blocking scan does not run — and serve the cloud
-scan.
+#### Keeping Semgrep Cloud aligned to this repository (owner UI checklist)
 
-They are deliberately **not** pruned. Their effect is only observable in a scan
-whose ruleset this repository does not control, so "these suppress nothing"
-cannot be verified from here, and deleting 87 annotations on that assumption
-would be a blind change to a security surface. Two things follow for anyone
-adding or reading one:
+Nothing in this repository can read what semgrep.dev is configured to run, so
+this alignment cannot be enforced by a check — it is a documented control, and
+saying so plainly is the honest version. Whenever `.semgrep/rules/` changes, or
+after any Semgrep Cloud policy edit, the owner re-walks this list at
+[semgrep.dev](https://semgrep.dev) → the `AlpineClubBookingsNZ` project:
 
-- say which scan an annotation is for. If it names a `javascript.…` /
-  `generic.…` registry id, it is for the cloud scan and the blocking gate will
-  never emit it;
+1. **Rules → Policies.** Turn OFF every managed policy the repository does not
+   run — in particular `p/default` and `p/security-audit`, which are the two
+   that produced the split-brain #2842 measured.
+2. **Turn ON exactly the four packs the blocking gate runs**: `p/nextjs`,
+   `p/typescript`, `p/javascript`, `p/react`.
+3. **Enable scanning of the repository's own rules** so `.semgrep/rules/` is
+   picked up from the checkout rather than from a Cloud-side copy.
+4. **Settings → confirm the scan excludes** `node_modules`, `.next` and
+   `.semgrep/tests`, matching the blocking invocation. Every file in
+   `.semgrep/tests` is a deliberate violation and will otherwise be reported.
+5. **Re-read the two counts below.** If Cloud reports findings the blocking gate
+   does not, the two have drifted again and step 1 is the usual cause.
+
+If the club ever decides the Cloud scan is not worth this recurring step, the
+supported answer is to remove the GitHub App outright rather than to let it
+drift — an advisory scanner running an unknown ruleset is worse than none,
+because its green is read as evidence.
+
+#### What the suppressions actually suppress (re-measured for #2842)
+
+Measured on the pinned CI image `semgrep/semgrep:1.161.0` by re-running the
+exact blocking invocation with `--disable-nosem`, **three** findings exist in
+the whole repository:
+
+| Rule | Site |
+| --- | --- |
+| `semgrep.rules.acb-unsafe-raw-sql` | `src/lib/audit-retention.ts` |
+| `semgrep.rules.acb-unsafe-raw-sql` | `src/lib/booking-envelope-invariants.ts` |
+| `typescript.react.security.audit.react-dangerouslysetinnerhtml` | `src/components/club-post-editor.tsx` |
+
+**This corrected the count #2686 recorded, and corrected it in a way that
+mattered.** That measurement found one finding and concluded that every
+annotation not naming an `acb-` rule served the cloud scan. It does not:
+`react-dangerouslysetinnerhtml` comes from `p/typescript`, which the blocking
+gate **does** run. One of the six annotations naming that rule was live; the
+other five sat on call sites the rule never flags.
+
+So the tree carried 120 id-bearing `nosemgrep` annotations and exactly 3 of them
+suppressed anything the blocking gate can emit. #2842 deleted the other 117
+— the evidence being that `--disable-nosem` reports no finding at any of those
+sites — and the scan is still findings-free with them gone. Each of the three
+retained annotations names its rule and carries the reason at the call site.
+
+Two things follow for anyone adding one:
+
+- **Measure before you write one.** Run the invocation below; if it reports
+  nothing at your line, a `nosemgrep` there suppresses nothing and is noise that
+  the next census has to re-disprove.
 - Semgrep matches `nosemgrep: <id>` by **exact suffix**, so a rule-id variant is
-  a different id. The 41 `path-traversal.path-join-resolve-traversal`
-  annotations do not suppress an `express-path-join-resolve-traversal` finding,
-  and a rename upstream silently un-suppresses every one of them.
+  a different id. A `path-traversal.path-join-resolve-traversal` annotation does
+  not suppress an `express-path-join-resolve-traversal` finding, and a rename
+  upstream silently un-suppresses every annotation naming the old id.
+
+```bash
+# What the blocking gate would report with every suppression ignored.
+docker run --rm -v "$PWD:/src:ro" -w /src semgrep/semgrep:1.161.0 \
+  semgrep scan --config .semgrep/rules \
+    --config p/nextjs --config p/typescript --config p/javascript --config p/react \
+    --disable-nosem --metrics=off \
+    --exclude node_modules --exclude .next --exclude .semgrep/tests
+```
+
+### Semgrep parse coverage
+
+`semgrep scan --error` exits 0 on findings-free code **even when it could not
+parse some of that code**. Parse failures are reported at `warn` level in the
+JSON `errors` array and nowhere in the exit status, so a file the scanner cannot
+read has looked exactly like a file the scanner read and cleared.
+
+Measured for #2842 on the same pinned image: 177 of 4,219 scanned files carried
+a parse error behind a green gate, and **three were whole-file failures where no
+rule ran at all**. Two parser faults caused every one of them, and both fire on
+valid TypeScript that `tsc` and the build accept.
+
+Those two are stated once, as the rule rather than as a spelling, in
+`KNOWN_CONSTRUCTS` in `scripts/ci/check-semgrep-coverage.mjs` — which is also
+the text the gate hands you when it fires, so it is the copy that has to be
+right. They are deliberately not restated here.
+
+Two traps worth knowing before you reach for a remedy, both measured:
+
+- the generic-call fault is about the SHAPE, not the name. 143 of the
+  allowlisted files spell it `importOriginal`, but 22 spell it
+  `vi.importActual` or `importActual`, and grepping for the first name finds
+  nothing in those. It is also specifically the EMPTY argument list — measured
+  with a minimal repro, `f<typeof import("x")>()` fails and
+  `f<typeof import("x")>("x")` parses — so ten files here carry the same
+  generic with an argument and are correctly *not* allowlisted. A rule stated
+  without that qualifier sends somebody to rewrite code that was never broken;
+- the `&amp;` remedy is for JSX **text** only. The same fault fires on a `&`
+  inside a string literal — a URL query such as
+  `href="/admin/bookings?sortBy=member&sortDir=asc"` — where rewriting it
+  changes the value, and in one case the value a test asserts. Those four files
+  are on the allowlist precisely because they have no safe rewrite.
+
+#### The coverage gate
+
+`scripts/ci/check-semgrep-coverage.mjs` runs in the same job and fails on four
+things:
+
+- a **whole-file** parse failure, always, with no way to allowlist it. Coverage
+  there is zero, and a file nothing scans must never be signed off as scanned;
+- a partially-unparsed file absent from `.semgrep/unparsed-allowlist.json`, so
+  coverage cannot quietly shrink;
+- an allowlist entry whose file now parses, or no longer exists. **An entry
+  cannot outlive its evidence** — whoever fixes a file deletes its entry in
+  the same change, so the list cannot rot into an exemption roster nobody
+  rechecks. Note which direction is mechanical: deletion is forced by the
+  gate, while an addition only has to survive review, so the guarantee is
+  that the list never grows *silently*, not that it never grows;
+- an `errors[].type` it does not recognise. Fail-closed: a scanner that starts
+  reporting a new kind of failure must not reduce coverage silently just because
+  the gate predates the name;
+- a scan that read nothing, or fewer files than `minimumScannedFiles`.
+
+**The allowlist doubles as the canary.** A report only passes if it names
+exactly those files as partially parsed *and* clears the file floor, and a
+broken, truncated or forged scan cannot satisfy both — too few files fails the
+floor, a missing entry reads as stale, an extra one as newly unparsed. #2842's
+security review attacked precisely this, forging reports that clear the floor
+with no failures, and could not construct one.
+
+The floor is a **tripwire, not a ratchet**, and worth stating as the limit it
+is: it sits at 4,000 against roughly 4,250 targets, so a change that excludes a
+directory *and* lowers the floor in the same commit passes everything. Review
+holds that direction, exactly as it holds an addition to the allowlist. The
+floor catches the accident, not the intent.
+
+Every entry in the allowlist is a **test file**: the production files and all
+three whole-file failures the measurement found were fixed rather than listed.
+The file itself is the count — it is not restated here, because the gate exists
+to drive it down and a copied number would be wrong on the first success. Run it
+locally against a scan you produced yourself:
+
+```bash
+docker run --rm -v "$PWD:/src:ro" -v "$PWD/.semgrep-out:/out" -w /src \
+  semgrep/semgrep:1.161.0 \
+  semgrep scan --config .semgrep/rules \
+    --config p/nextjs --config p/typescript --config p/javascript --config p/react \
+    --metrics=off --exclude node_modules --exclude .next --exclude .semgrep/tests \
+    --json-output /out/semgrep-results.json
+node scripts/ci/check-semgrep-coverage.mjs .semgrep-out/semgrep-results.json
+```
+
+#### Both lists are living worklists, not a finished cleanup
+
+The unparsed allowlist and the suppression census are **populations that
+regrow**, and #2842 measured how fast — over three separate batches during one
+issue's delivery:
+
+| Merge | New unparsed files | New dead suppressions |
+| --- | --- | --- |
+| `main` sync into the epic | 4 | 1 |
+| one child merge (#3214) | — | 1 |
+| four children at once (#3307 et al) | 2 | — |
+
+**So it is not only a `main` sync that regrows these lists — it is anything
+landing at all**, including a sibling child on the same epic. Nobody did
+anything wrong in any of those: `importOriginal<typeof import("...")>()` is the
+idiomatic partial mock, and `path.resolve(process.cwd(), …)` in a test helper
+reads as exactly the thing that deserves an exemption comment.
+
+Two consequences worth holding on to.
+
+- **A one-time sweep cannot hold either population, so neither is "done".**
+  #2842 swept both, and both had regrown before the branch merged — the first
+  time with nobody noticing, which is why the count in this document was wrong
+  for a fortnight. The instruments are what hold the line now: the coverage
+  gate for the first list and `semgrep-suppression-census.test.ts` for the
+  second, and each caught its regrowth on the very first merge that produced
+  one, before any human read the diff.
+- **The recurrence is what [#3318](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3318)
+  is for.** An ESLint rule banning the unparseable shape at the source removes
+  the first list's growth entirely rather than catching it after the fact,
+  which is the structural fix `INV-SSOT-001` prefers over a policed one. Until
+  that lands, expect to rewrite a handful of files after each `main` sync, and
+  prefer the parsing form when you write a new partial mock.
 
 ### Break-glass: a new CRITICAL image finding with no code change
 
@@ -272,12 +484,68 @@ materialised, so one leak on anybody's abandoned branch would turn a REQUIRED
 check red on every open pull request, unfixable from the author's own branch.
 A wider sweep is still worth running — a secret on an unmerged branch is public
 on a public repository — but it belongs in a scheduled, non-blocking job where a
-finding is a task rather than a merge freeze. Until that job exists, run it by
-hand when a branch is abandoned:
+finding is a task rather than a merge freeze. That job is
+`Scheduled secret sweep` (#2852), in `.github/workflows/gitleaks-scheduled.yml`.
+
+**Which one is responsible for what.** The two are not alternatives and the
+difference is the scope, not the scanner:
+
+| | `Secret scan (gitleaks)` | `Scheduled secret sweep` |
+| --- | --- | --- |
+| Runs on | every pull request and push | weekly, plus `workflow_dispatch` |
+| Scope | this pull request's commits, the history of `main`, the checked-out tree | **every** branch's history (`--all`), plus the tree |
+| A finding | blocks the merge | opens a task; blocks nothing |
+| Branch protection | required context | no context at all — it has no `pull_request` or `push` trigger |
+
+What they share is deliberate and enforced. The pinned scanner version lives in
+`scripts/ci/gitleaks-image.sh` and nowhere else; the invocation lives in
+`scripts/ci/gitleaks-scan.sh`, which both workflows call; the rule set and the
+allowlists are `.gitleaks.toml` and `.gitleaksignore`, which gitleaks discovers
+from the scan root. `deployment-image-contracts.test.ts` fails if either
+workflow names a gitleaks container of its own. #2686 is why: the two jobs that
+used to sit in `ci.yml` ran 8.24.3 and 8.28.0 over the same commits for months,
+and nothing said so.
+
+**A scanner that failed is not a clean scan.** gitleaks exits 1 both when it
+finds a leak and when it cannot run at all, so `gitleaks-scan.sh` asks for
+`--exit-code=2` and treats every other non-zero as a scanner failure, saying so
+in the log. Both still fail the job — the discrimination is about the message,
+not about what blocks a merge.
+
+**And a successful exit is not a clean scan either, on its own.** When the git
+source itself fails — an unresolvable commit range, or a repository-ownership
+refusal — gitleaks logs the git error, concludes it finished, and exits **0**
+with `0 commits scanned … no leaks found`. `--exit-code` never applies, because
+from the scanner's point of view there was nothing to find. Measured on
+v8.28.0, and it lands on the REQUIRED gate rather than only on the sweep: the
+pull-request scope resolves `<base>..<head>`, which is unresolvable whenever
+the base commit is missing from the checkout. So a `git`-mode scan that walked
+zero commits is treated as the scanner failure it is. Zero commits is never a
+legitimate answer for any scope this repository scans.
+
+The same failure has a second, quieter shape: the git error need not happen at
+the START of the walk. gitleaks streams commits to its detector, and any
+unrecognised line on git's stderr both stops that stream and gets logged with a
+`[git] ` tag — so a bad object twenty percent into an `--all` sweep prints
+`1500 commits scanned … no leaks found` and exits 0, having silently skipped the
+other eighty percent. A tagged line therefore fails the scan on its own,
+whatever it says. Benign git messages are not tagged: gitleaks allowlists five
+of them and emits those as untagged `WRN` lines, which is what makes the tag a
+usable signal rather than noise.
+
+**Triaging a sweep finding.** The run summary lists the rule, the file, the line
+and the commit for each finding, and the run keeps a `gitleaks-sweep-reports`
+artifact for fourteen days with the same detail plus the fingerprint. Every
+value is `--redact`ed, so neither republishes the secret. A finding on a branch
+that was never merged is still a disclosure on a public repository: rotate the
+credential first, and only then decide what to do with the branch.
+
+Run the sweep yourself, exactly as the scheduled job does:
 
 ```bash
-docker run --rm -v "$PWD:/repo:ro" ghcr.io/gitleaks/gitleaks:v8.28.0 \
-  git /repo --log-opts="--diff-merges=first-parent --all" --exit-code=1 --redact
+GITLEAKS_SCAN_LABEL="every branch's history" \
+GITLEAKS_LOG_OPTS="--diff-merges=first-parent --all" \
+  bash scripts/ci/gitleaks-scan.sh git
 ```
 
 Accepted residual risk:

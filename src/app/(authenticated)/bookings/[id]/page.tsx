@@ -142,6 +142,7 @@ import { getPublicOtherLodges } from "@/lib/booking-request";
 // `formatConsentNightsLabel`, which takes `Date[]`. Neither reads a timezone, so
 // neither is a second temporal authority; CT-6 (#2991) retires the module.
 import { eachDateOnlyInRange } from "@/lib/date-only";
+import { savedPaymentMethodForBooking } from "@/lib/saved-payment-method";
 import {
   bookingManagementAuthorizationRole,
   hasAdminAreaAccess,
@@ -353,7 +354,21 @@ export default async function BookingDetailPage({
       // Split-booking group (#738): the member booking links to its provisional
       // non-member child(ren); the child links back to its member booking.
       parentBooking: {
-        select: { id: true, status: true, finalPriceCents: true },
+        select: {
+          id: true,
+          status: true,
+          finalPriceCents: true,
+          // #3269: the admin confirm-pending-guests button's "will charge"
+          // wording must agree with the route, which may charge a split child
+          // on its parent's SetupIntent-saved card.
+          payment: {
+            select: {
+              stripeCustomerId: true,
+              stripePaymentMethodId: true,
+              stripeSetupIntentId: true,
+            },
+          },
+        },
       },
       linkedBookings: {
         select: {
@@ -1245,12 +1260,27 @@ export default async function BookingDetailPage({
   // the booking owner so a non-owner admin never sees it. An admin entering
   // their own card on a member's booking is a footgun with no legitimate use,
   // and the owner-positive gate is robust to read-only admin viewers (#1289).
+  // Shown exactly when the auto-charge cron would find nothing to charge
+  // (#3266, #3269, epic #3270): `savedPaymentMethodForBooking` is the ONE answer
+  // to "may this booking be charged off-session?" — the booking's own row first,
+  // then its split parent's, each needing customer, card AND SetupIntent
+  // (`INV-PAY-053`). Keyed on that rather than on "no SetupIntent yet" or on the
+  // card column alone: an abandoned replacement or a card retired after a
+  // Stripe refusal (#3268) leaves an intent id behind with nothing chargeable,
+  // and a legacy split child can carry a copied card that was never saved
+  // through a SetupIntent — both must show the form. The same const drives the
+  // admin "Confirm pending guests" button's will-charge wording below, so the
+  // page can never promise a charge while asking for a card, or the reverse.
+  const savedCard = savedPaymentMethodForBooking({
+    payment: booking.payment,
+    parentBooking: booking.parentBooking,
+  });
   const showSavePaymentMethodCard =
     isBookingOwner &&
     !isDeleted &&
     !internetBankingPayment &&
     booking.status === "PENDING" &&
-    (!booking.payment || !booking.payment.stripeSetupIntentId);
+    savedCard === null;
   // Suppress when a more specific provisional banner already explains the
   // on-hold/no-charge state (the split-booking child and the bumped-guest
   // flagged-provisional notices both render near the top of the page). Also
@@ -1653,10 +1683,11 @@ export default async function BookingDetailPage({
               booking.hasNonMembers &&
               booking.nonMemberHoldUntil,
           )}
-          hasSavedPaymentMethod={Boolean(
-            booking.payment?.stripePaymentMethodId &&
-              booking.payment?.stripeCustomerId,
-          )}
+          // `savedCard` is the answer the confirm-pending-guests route charges
+          // on (#3269, `INV-PAY-053`) and the one the "Save Payment Method" card
+          // above keys on, so the button never promises a charge the route will
+          // not make — and never promises one while the page asks for a card.
+          hasSavedPaymentMethod={savedCard !== null}
           finalPriceCents={booking.finalPriceCents}
           providerMismatches={providerMismatches}
           financialReviewWarnings={financialReviewWarnings}

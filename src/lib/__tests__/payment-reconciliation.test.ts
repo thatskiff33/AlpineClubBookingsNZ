@@ -34,6 +34,8 @@ const mocks = vi.hoisted(() => ({
   bookingUpdate: vi.fn(),
   bookingUpdateMany: vi.fn(),
   paymentUpsert: vi.fn(),
+  // #3266 — markBookingSetupIntentSucceeded's status-guarded stamp.
+  paymentUpdateMany: vi.fn(),
   upsertPaymentIntentTransaction: vi.fn(),
   findPaymentTransactionByIntentId: vi.fn(),
   refundPaymentTransactions: vi.fn(),
@@ -60,6 +62,10 @@ vi.mock("@/lib/audit", () => ({
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     $transaction: (...args: unknown[]) => mocks.transaction(...args),
+    // #3266 — markBookingSetupIntentSucceeded's status-guarded stamp.
+    payment: {
+      updateMany: (...args: unknown[]) => mocks.paymentUpdateMany(...args),
+    },
   },
 }));
 
@@ -136,7 +142,10 @@ vi.mock("@/lib/logger", () => ({
 }));
 
 import { FALLBACK_LODGE_CAPACITY as LODGE_CAPACITY } from "@/lib/lodge-capacity";
-import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
+import {
+  markBookingPaymentSucceeded,
+  markBookingSetupIntentSucceeded,
+} from "@/lib/payment-reconciliation";
 import logger from "@/lib/logger";
 
 const tx = {
@@ -926,6 +935,45 @@ describe("markBookingPaymentSucceeded", () => {
     expect(logger.info).toHaveBeenCalledWith(
       { bookingId: "booking-1" },
       expect.stringContaining("persisted capacity override (#1771)")
+    );
+  });
+});
+
+// #3266 / INV-PAY-052 — the card stamp is guarded on the row still naming the
+// SetupIntent whose card it writes, and it never writes the intent id itself.
+describe("markBookingSetupIntentSucceeded", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const stamp = () =>
+    markBookingSetupIntentSucceeded({
+      bookingId: "booking-1",
+      setupIntentId: "seti_1",
+      paymentMethodId: "pm_1",
+    });
+
+  it("stamps the card only onto a row that still names this intent, and writes nothing else", async () => {
+    mocks.paymentUpdateMany.mockResolvedValue({ count: 1 });
+
+    await expect(stamp()).resolves.toEqual({ stamped: true });
+
+    expect(mocks.paymentUpdateMany).toHaveBeenCalledTimes(1);
+    expect(mocks.paymentUpdateMany).toHaveBeenCalledWith({
+      where: { bookingId: "booking-1", stripeSetupIntentId: "seti_1" },
+      data: { stripePaymentMethodId: "pm_1" },
+    });
+    expect(logger.info).not.toHaveBeenCalled();
+  });
+
+  it("is a logged no-op when the row has moved on to another intent (a redelivered webhook)", async () => {
+    mocks.paymentUpdateMany.mockResolvedValue({ count: 0 });
+
+    await expect(stamp()).resolves.toEqual({ stamped: false });
+
+    expect(logger.info).toHaveBeenCalledWith(
+      { bookingId: "booking-1", setupIntentId: "seti_1", paymentMethodId: "pm_1" },
+      expect.stringContaining("no longer the one the booking's payment row names"),
     );
   });
 });

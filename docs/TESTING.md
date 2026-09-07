@@ -255,8 +255,13 @@ baseline, #2979). The same key can occur several times in a file, so the file is
 a multiset and both directions compare counts. The one thing the key cannot
 survive is a message change: a type renamed by an unrelated refactor reads as one
 stale line plus one new one, the run names both, and `--record` is the answer.
-The baseline is a snapshot only this programme rewrites, never a list lanes
-append to. The decision logic is `scripts/lib/nuia-ratchet.ts`, unit-tested in
+The baseline is a snapshot, never a list lanes append to — nothing is ever
+added to it by hand. It is not, however, rewritten only by this programme: any
+lane that clears a diagnostic incidentally — deleting a listed file, removing
+dead code, renaming a type so the message text changes — trips STALE and
+re-records. That is expected and is the tool working, not a sign the lane broke
+something; commit the smaller file with the change that earned it. The decision
+logic is `scripts/lib/nuia-ratchet.ts`, unit-tested in
 `scripts/__tests__/nuia-ratchet.test.ts`; the compiler-facing half is
 `scripts/ci/check-nuia-ratchet.ts`.
 
@@ -290,17 +295,19 @@ re-measured after stage 2, application project (`tsconfig.json`) only:
 
 The 13 cleared were the whole of `src/lib/policies/**` (`age-tier.ts` 9,
 `pricing.ts` 2, `adult-member-hosting.ts` 1) and `src/lib/capacity.ts` (1).
-`npm run typecheck:nuia -- --report` prints the current per-file inventory;
-the baseline file *is* the per-file record, one line per diagnostic. The
-heaviest `src/lib` files #2800 inherits, in order: `bed-allocation.ts` (70),
-`booking-modify-plan.ts` (36), `theme/app-tokens.ts` (29),
-`xero-inbound/credit-note-repairs.ts` (26), `theme/kiosk-tokens.ts` (24),
-`member-merge.ts` (22), `theme/generate-radix-colors.ts` (21),
+`npm run typecheck:nuia -- --report` prints the current per-file inventory and
+then still performs the check, so on a tree with unrecorded debt it prints the
+report and exits 1; the baseline file *is* the per-file record, one line per
+diagnostic. The heaviest `src/lib` files #2800 inherits, in order:
+`bed-allocation.ts` (70), `booking-modify-plan.ts` (36),
+`theme/app-tokens.ts` (29), `xero-inbound/credit-note-repairs.ts` (26),
+`theme/kiosk-tokens.ts` (24), `member-merge.ts` (22),
+`theme/generate-radix-colors.ts` (21),
 `xero-applied-credit-allocation-repair.ts` (21), `image-metadata.ts` (20),
 `booking-edit-guest-ranges.ts` (19), `guest-name-similarity.ts` (19) — 146
-files in all, 89 of them with three or fewer. The test and E2E projects are
-outside the ratchet by decision ("application code before tests"); their counts
-are recorded on the stage-2 pull request as evidence only.
+files in all. The test and E2E projects are outside the ratchet by decision
+("application code before tests"); their counts are recorded on the stage-2
+pull request as evidence only.
 
 The ratchet is temporary by design. Stage #2802 sets the flag in
 `tsconfig.json`, deletes the script, the baseline and the `verify` step

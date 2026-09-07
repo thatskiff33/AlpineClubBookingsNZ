@@ -1283,7 +1283,12 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // in none of the four per-site maps, so it lands unpinned. 464 sites measured
     // minus 127 pinned; `pinned` is unchanged, so no existing classification
     // moved.
-    ).toEqual({ pinned: 127, unpinned: 340 });
+    // 340 -> 341 (#3220 merged with main): #3214's strand night-price reconcile
+    // and this issue's refused-stranded-intent record both land here. Categorised
+    // at the site and named in none of the four per-site maps, so both land
+    // unpinned. 468 sites MEASURED on the merged tree with `npm run audit:census`
+    // minus 127 pinned; `pinned` is unchanged, so no existing classification moved.
+    ).toEqual({ pinned: 127, unpinned: 341 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {

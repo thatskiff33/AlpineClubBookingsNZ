@@ -4,7 +4,8 @@
  *
  * `npm run typecheck:nuia`                 fail on new debt, and on stale baseline lines
  * `npm run typecheck:nuia -- --record`     rewrite the baseline from the current tree
- * `npm run typecheck:nuia -- --report`     print the remaining debt by area and by file
+ * `npm run typecheck:nuia -- --report`     print the remaining debt by area and by file,
+ *                                          then still check — so it can exit 1
  *
  * (PowerShell drops npm's `--` separator; there, run
  * `npx tsx scripts/ci/check-nuia-ratchet.ts --record` directly.)

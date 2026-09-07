@@ -615,7 +615,6 @@ describe("hard cutover: no runtime read of the environment variable", () => {
   it.each(RUNTIME_FILES)("%s never reads it", (relativePath) => {
     // Test helper: reads a fixed repo file under process.cwd(); relativePath is a
     // literal in this file, not user input.
-    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
     const source = readFileSync(
       path.resolve(process.cwd(), relativePath),
       "utf8",
@@ -625,7 +624,6 @@ describe("hard cutover: no runtime read of the environment variable", () => {
   });
 
   it("does not read process.env for analytics configuration at all", () => {
-    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
     const source = readFileSync(
       path.resolve(process.cwd(), "src/lib/analytics-settings.ts"),
       "utf8",

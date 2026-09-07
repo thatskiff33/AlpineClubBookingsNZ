@@ -1,0 +1,161 @@
+name: Scheduled secret sweep
+
+# The wider half of this repository's secret scanning (#2852), and deliberately
+# NOT a required check.
+#
+# `Secret scan (gitleaks)` in `ci.yml` is the blocking gate, and it is scoped to
+# `main` on purpose: `git log --all` walks every `refs/remotes/origin/*` that
+# `fetch-depth: 0` materialised, so one leak on anybody's abandoned branch would
+# turn a REQUIRED check red on every open pull request, unfixable from the
+# author's own branch (#2686). That scope is right for a gate and wrong for a
+# repository: a secret on an unmerged branch of a public repository is public.
+#
+# So the sweep lives here instead, where a finding is a task rather than a merge
+# freeze. It walks EVERY ref's history plus the checked-out tree, with the same
+# pinned scanner, the same `.gitleaks.toml` rule set and the same
+# `.gitleaksignore` policy as the gate — shared, not copied, through
+# `scripts/ci/gitleaks-scan.sh`, because #2686 measured what two independently
+# maintained gitleaks invocations drift into (8.24.3 and 8.28.0 over the same
+# commits, for months).
+#
+# Adding this workflow adds no status context to any pull request: it has no
+# `pull_request` or `push` trigger, so branch protection is untouched. Making it
+# required later would be the three-step sequence in `AGENTS.md` ->
+# "Completion and Merge", and #2852 explicitly does not do that.
+
+on:
+  schedule:
+    # Weekly, Monday 17:23 UTC — Tuesday morning in New Zealand, so a finding is
+    # waiting at the start of a working week rather than over a weekend. The
+    # off-the-hour minute is the usual advice for GitHub's scheduler, which
+    # delays jobs queued on the hour.
+    - cron: "23 17 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # Never cancel a sweep in progress: a cancelled security scan reports neither
+  # clean nor dirty, and the next run is a week away.
+  group: gitleaks-scheduled
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    name: Full-history secret sweep (gitleaks)
+    runs-on: ubuntu-latest
+    # The gate's history scan of `main` alone measured ~140s on a runner with
+    # `--diff-merges=first-parent`; every branch is a multiple of that, and this
+    # job is not on anybody's time-to-merge.
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          # Every branch's history is the point of this job. Depth 1 would give
+          # it one commit and report a clean repository.
+          fetch-depth: 0
+
+      # The same failure injection the required gate runs first, and for the same
+      # reason: a scanner that cannot fail looks exactly like a repository with
+      # nothing to find, and this job's green is read once a week by nobody in
+      # particular. It builds throwaway samples at run time and commits nothing.
+      - name: Prove the secret scanner still fails on a planted secret
+        run: bash scripts/ci/gitleaks-selftest.sh
+
+      - name: Prepare the report directory
+        run: mkdir -p "${RUNNER_TEMP}/gitleaks-sweep"
+
+      # `--all`, which is exactly what the required gate must not do and what
+      # nothing has done since #2686 removed it.
+      - name: Sweep every branch's history
+        id: history
+        env:
+          GITLEAKS_SCAN_LABEL: every branch's history
+          GITLEAKS_LOG_OPTS: --diff-merges=first-parent --all
+          GITLEAKS_REPORT_PATH: ${{ runner.temp }}/gitleaks-sweep/history.json
+        run: bash scripts/ci/gitleaks-scan.sh git
+
+      # `if: always()` so a finding in history does not hide a different finding
+      # in the tree — one sweep, one complete answer. The job is still red if
+      # either scan is.
+      - name: Sweep the checked-out tree
+        id: tree
+        if: always()
+        env:
+          GITLEAKS_SCAN_LABEL: the checked-out tree
+          GITLEAKS_REPORT_PATH: ${{ runner.temp }}/gitleaks-sweep/tree.json
+        run: bash scripts/ci/gitleaks-scan.sh dir
+
+      # What makes a finding actionable a week later: the rule, the file, the
+      # line and the commit, in the run's own summary. `--redact` means the
+      # matched value is the literal string REDACTED in these reports, so none of
+      # this republishes the secret it is reporting.
+      # The summary reads the step's OUTCOME, not just its report, and that is
+      # load-bearing rather than tidy. A scan that failed at the git source still
+      # writes a well-formed report containing `[]`, so a summary that trusted
+      # the file alone would print "No findings." for a scope it never walked —
+      # the same false green `gitleaks-scan.sh` refuses to return, arriving by a
+      # different door. "No findings." is printed only when the step succeeded.
+      - name: Summarise the findings
+        if: always()
+        env:
+          REPORT_DIR: ${{ runner.temp }}/gitleaks-sweep
+          HISTORY_OUTCOME: ${{ steps.history.outcome }}
+          TREE_OUTCOME: ${{ steps.tree.outcome }}
+        run: |
+          # A missing `jq` would make every branch below read as "no findings",
+          # which is the failure mode this whole job exists to refuse. Fail
+          # instead; the job is advisory, so a red here costs a task, not a merge.
+          command -v jq >/dev/null || {
+            echo "::error::jq is not on PATH, so the sweep summary cannot be rendered. Read the scan steps' logs." >&2
+            exit 1
+          }
+          {
+            echo "## Scheduled secret sweep"
+            echo
+            for scope in history tree; do
+              report="${REPORT_DIR}/${scope}.json"
+              case "$scope" in
+                history) outcome="${HISTORY_OUTCOME}" ;;
+                tree) outcome="${TREE_OUTCOME}" ;;
+              esac
+              # Empty means "could not be counted" — an absent report, or one
+              # `jq` could not parse. That is never the same as zero.
+              findings=""
+              if [ -s "$report" ]; then
+                findings="$(jq 'length' "$report")" || findings=""
+              fi
+              echo "### ${scope}"
+              echo
+              if [ -n "$findings" ] && [ "$findings" -gt 0 ]; then
+                echo "| Rule | File | Line | Commit |"
+                echo "| --- | --- | --- | --- |"
+                # `File` is container-absolute for a `dir` scan and repository-
+                # relative for a `git` one; the prefix is noise either way.
+                # Only File and Commit are ever printed — `Match` and `Secret`
+                # are `REDACTED` in the report and are not republished here
+                # regardless.
+                jq -r '.[] | "| \(.RuleID) | `\(.File | sub("^/repo/"; ""))` | \(.StartLine) | \(.Commit[0:12]) |"' "$report"
+              elif [ "$outcome" != "success" ] || [ -z "$findings" ]; then
+                echo "The scan did not complete (step outcome: \`${outcome}\`, report readable: $([ -n "$findings" ] && echo yes || echo no)) — nothing here can be read as clean. See the step log above."
+              else
+                echo "No findings."
+              fi
+              echo
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # The redacted JSON, kept long enough to triage and no longer. It carries
+      # fingerprints, which is what an allowlist decision needs.
+      - name: Upload the redacted reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: gitleaks-sweep-reports
+          path: ${{ runner.temp }}/gitleaks-sweep/*.json
+          if-no-files-found: ignore
+          retention-days: 14

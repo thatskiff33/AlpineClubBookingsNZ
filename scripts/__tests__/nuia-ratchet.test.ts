@@ -27,6 +27,15 @@ const SAMPLE = [
   "src/lib/capacity.ts(300,3): error TS2345: Argument of type 'Row | undefined' is not assignable to parameter of type 'Row'.",
   "  Type 'undefined' is not assignable to type 'Row'.",
   "src\\app\\admin\\page.tsx(7,1): error TS18048: 'first' is possibly 'undefined'.",
+  // A Next.js route group. The parentheses in the PATH are the parser's one hard
+  // case: `(admin)` looks exactly like the `(line,col)` group the regex is hunting
+  // for, and only the lazy quantifier backtracking past it finds the real one.
+  // 52 of the recorded baseline lines live under `src/app/(admin)/**` and
+  // `src/app/(website)/**`, and the whole of stage #2801 is that tree, so a
+  // "tidy-up" narrowing `(.+?)` to something that cannot cross a `(` would take
+  // every one of them out of the gate. Without this line the suite stays green
+  // while it does (#2799).
+  "src/app/(admin)/admin/committee/page.tsx(12,3): error TS18048: 'row' is possibly 'undefined'.",
 ].join("\n");
 
 describe("parseTscOutput", () => {
@@ -37,6 +46,7 @@ describe("parseTscOutput", () => {
       "src/lib/policies/pricing.ts:TS2532:Object is possibly 'undefined'.",
       "src/lib/capacity.ts:TS2345:Argument of type 'Row | undefined' is not assignable to parameter of type 'Row'. Type 'undefined' is not assignable to type 'Row'.",
       "src/app/admin/page.tsx:TS18048:'first' is possibly 'undefined'.",
+      "src/app/(admin)/admin/committee/page.tsx:TS18048:'row' is possibly 'undefined'.",
     ]);
   });
 
@@ -96,10 +106,10 @@ describe("inventory", () => {
   it("groups by programme area (two segments under src/, one elsewhere) and by file", () => {
     const parsed = parseTscOutput(SAMPLE);
     const inv = inventory(parsed);
-    expect(inv.total).toBe(4);
+    expect(inv.total).toBe(5);
     expect(inv.byArea).toEqual([
       { area: "src/lib", count: 3 },
-      { area: "src/app", count: 1 },
+      { area: "src/app", count: 2 },
     ]);
     expect(inv.byFile[0]).toEqual({ file: "src/lib/policies/pricing.ts", count: 2 });
     expect(areaOf("prisma/seed.ts")).toBe("prisma");

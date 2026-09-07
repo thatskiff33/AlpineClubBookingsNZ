@@ -14,7 +14,7 @@ import { financeFinancialYearBuckets } from "@/lib/finance-ratio-shared";
 import type { FinanceMappedPnlCategorySummary } from "@/lib/finance-report-mappings";
 import { buildFinanceRevenueReconciliation } from "@/lib/finance-revenue-reconciliation";
 import { xeroReportsSourceLink } from "@/lib/finance-dashboard-page/xero-reports-source-note";
-import { formatCents } from "@/lib/utils";
+import { formatCents, formatSignedCents } from "@/lib/utils";
 import {
   cardRows,
   monthPointLabel,
@@ -24,14 +24,6 @@ import {
   type FinanceDashboardTrend,
 } from "@/lib/finance-dashboard-page/model";
 import { SERIES_COLORS } from "@/lib/finance-dashboard-page/series-colors";
-
-// Exact cents (reconciliation and export rows only; displays use whole dollars).
-function formatSignedCents(value: number) {
-  if (value === 0) {
-    return formatCents(0);
-  }
-  return `${value > 0 ? "+" : "-"}${formatCents(Math.abs(value))}`;
-}
 
 // Group the mapped P&L categories under their subtype sub-headings, inserting an
 // emphasised sub-total row before each subtype's member groups. Groups without a

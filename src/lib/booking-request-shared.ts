@@ -59,6 +59,7 @@ export type OwnerSubstitution = {
 export type ApprovalGuestNight = {
   stayDate: Date;
   priceCents: number;
+  priceSource: "SOLD" | "EVEN_SPLIT";
 };
 
 /**
@@ -164,10 +165,17 @@ export function buildApprovalGuestNights(params: {
     const enginePriced = nightDates.map((stayDate, index) => ({
       stayDate,
       priceCents: engine[index],
+      // `as const` because this local has no contextual type to pin the literal
+      // against, unlike the even-split return below; without it the source
+      // widens to `string` and no longer satisfies the provenance union (#3275).
+      priceSource: "SOLD" as const,
     }));
     if (
       enginePriced.every(
-        (night): night is { stayDate: Date; priceCents: number } =>
+        // The predicate keeps the whole element type rather than restating a
+        // shape: restating one silently drops `priceSource` and the narrowed
+        // array stops satisfying `ApprovalGuestNight[]` (#3275 + #2800).
+        (night): night is typeof night & { priceCents: number } =>
           night.priceCents !== undefined,
       )
     ) {
@@ -179,6 +187,9 @@ export function buildApprovalGuestNights(params: {
   return nightDates.map((stayDate, index) => ({
     stayDate,
     priceCents: base + (index < remainder ? 1 : 0),
+    // The writer knows exactly what it did: this is a mechanical allocation
+    // of a guest total, not a per-night amount the pricing engine quoted.
+    priceSource: "EVEN_SPLIT",
   }));
 }
 

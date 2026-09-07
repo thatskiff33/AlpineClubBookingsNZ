@@ -32,6 +32,7 @@ const {
   mockUpsertPaymentIntentTransaction,
   mockQueueSupersededAdditionalIntentCancellations,
   mockAttachIntentToWaitingOps,
+  mockFindWaitingSupplementaryOpForIntent,
   mockExecuteGroupSettlementRefundPlan,
   mockRecordDuplicateCaptureRefundEvent,
   mockSyncEditFinancialReviewChargeRequest,
@@ -39,6 +40,8 @@ const {
   mockCompleteDeferredSupplementaryInvoice,
   mockRecordShortEditReviewChargeInvoice,
   mockRecordUncollectedEditReviewChargeShare,
+  mockFindEditReviewChargeRequest,
+  mockCreateAuditLog,
   settlementModuleLoadFailure,
 } = vi.hoisted(() => ({
   mockPaymentRecoveryFindMany: vi.fn(),
@@ -55,6 +58,8 @@ const {
   mockPaymentFindUnique: vi.fn(),
   mockBookingFindUnique: vi.fn(),
   mockCancelPaymentIntentIfCancellableWithResult: vi.fn(),
+  mockFindEditReviewChargeRequest: vi.fn(),
+  mockCreateAuditLog: vi.fn().mockResolvedValue(undefined),
   mockProcessRefund: vi.fn(),
   mockReconcilePaymentAggregates: vi.fn().mockResolvedValue(undefined),
   mockRecordStripeRefundLedgerEntry: vi.fn().mockResolvedValue({
@@ -71,6 +76,10 @@ const {
     .fn()
     .mockResolvedValue([]),
   mockAttachIntentToWaitingOps: vi.fn().mockResolvedValue({ attached: 0 }),
+  // #3220 fix round: the withdrawal's one exception. Null is "nothing is
+  // waiting on this ask", which is the shape every other test in this file
+  // exercises.
+  mockFindWaitingSupplementaryOpForIntent: vi.fn().mockResolvedValue(null),
   mockExecuteGroupSettlementRefundPlan: vi
     .fn()
     .mockResolvedValue({ outcome: "refunded", mirroredChildren: 1 }),
@@ -162,6 +171,9 @@ vi.mock("@/lib/xero-operation-outbox", () => ({
   attachPaymentIntentToWaitingSupplementaryInvoiceOperations: (
     ...args: unknown[]
   ) => mockAttachIntentToWaitingOps(...args),
+  findWaitingSupplementaryInvoiceOperationForPaymentIntent: (
+    ...args: unknown[]
+  ) => mockFindWaitingSupplementaryOpForIntent(...args),
 }));
 
 /**
@@ -190,6 +202,15 @@ vi.mock("@/lib/edit-financial-review-charge-request", () => ({
     mockRecordShortEditReviewChargeInvoice(...args),
   recordUncollectedEditReviewChargeShare: (...args: unknown[]) =>
     mockRecordUncollectedEditReviewChargeShare(...args),
+  // #3220: the dead-recovery cancel reads this module for the edit's ask. The
+  // factory replaces the whole module, so an export it omits throws at IMPORT
+  // and kills the file before a test runs.
+  findEditReviewChargeRequest: (...args: unknown[]) =>
+    mockFindEditReviewChargeRequest(...args),
+}));
+
+vi.mock("@/lib/audit", () => ({
+  createAuditLog: (...args: unknown[]) => mockCreateAuditLog(...args),
 }));
 
 vi.mock("@/lib/payment-transactions", () => ({
@@ -238,6 +259,7 @@ import {
   processPaymentRecoveryOperations,
   queueSupersededPaymentIntentRefundRecovery,
 } from "@/lib/payment-recovery";
+import { MAX_PAYMENT_RECOVERY_ATTEMPTS } from "@/lib/payment-recovery-constants";
 import {
   bookingModificationIdForAdditionalIntentRecoveryKey,
   buildAdditionalIntentRecoveryIdempotencyKey,
@@ -272,6 +294,27 @@ function makeOperation(overrides: Record<string, unknown> = {}) {
   };
 }
 
+/**
+ * `resetStaleProcessingOperations`'s own read, told apart from the worker's
+ * queue read (#3220).
+ *
+ * It used to be told apart by `attempts: { gte: MAX }` - the filter the reaper's
+ * SECOND arm used - and that predicate was copied into 24 `findMany` mocks in
+ * this file. When the reaper's two arms became one read through the terminal
+ * chokepoint, that filter stopped existing, every copy answered "this is the
+ * queue read", and the sweep was handed the operation under test and failed it.
+ * `processingStartedAt` is the filter only the sweep uses, and it lives here
+ * once so the next change to that query has one place to correct.
+ */
+function isStaleWorkerSweep(args?: unknown) {
+  // `unknown` rather than a shape, because the 24 mocks that ask this each
+  // declare their own idea of the `where` they receive and none of them is the
+  // real Prisma argument type.
+  const where = (args as { where?: { processingStartedAt?: unknown } } | undefined)
+    ?.where;
+  return where?.processingStartedAt != null;
+}
+
 describe("payment recovery worker", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -279,7 +322,7 @@ describe("payment recovery worker", () => {
     mockPaymentRecoveryFindMany.mockImplementation(
       (args?: { where?: { status?: unknown; attempts?: { gte?: number } } }) => {
         // resetStaleProcessingOperations queries for exhausted PROCESSING rows.
-        if (args?.where?.attempts && "gte" in args.where.attempts) {
+        if (isStaleWorkerSweep(args)) {
           return Promise.resolve([]);
         }
         return Promise.resolve([makeOperation({ status: "PENDING" })]);
@@ -414,8 +457,20 @@ describe("payment recovery worker", () => {
       retried: 1,
       failed: 0,
     });
-    expect(mockPaymentRecoveryUpdate).toHaveBeenCalledWith({
-      where: { id: "recovery-1" },
+    expect(mockPaymentRecoveryUpdateMany).toHaveBeenCalledWith({
+      where: {
+        id: "recovery-1",
+        // #3220: fenced rather than an `update` by id, so a row a manual
+        // mark-paid reversal deleted mid-flight matches nothing instead of
+        // throwing out of the loop's own catch.
+        status: {
+          in: [
+            PaymentRecoveryOperationStatus.PENDING,
+            PaymentRecoveryOperationStatus.PROCESSING,
+            PaymentRecoveryOperationStatus.FAILED,
+          ],
+        },
+      },
       data: expect.objectContaining({
         status: PaymentRecoveryOperationStatus.FAILED,
         lastError: "Stripe unavailable",
@@ -439,8 +494,20 @@ describe("payment recovery worker", () => {
       failed: 1,
       retried: 0,
     });
-    expect(mockPaymentRecoveryUpdate).toHaveBeenCalledWith({
-      where: { id: "recovery-1" },
+    expect(mockPaymentRecoveryUpdateMany).toHaveBeenCalledWith({
+      where: {
+        id: "recovery-1",
+        // #3220: fenced rather than an `update` by id, so a row a manual
+        // mark-paid reversal deleted mid-flight matches nothing instead of
+        // throwing out of the loop's own catch.
+        status: {
+          in: [
+            PaymentRecoveryOperationStatus.PENDING,
+            PaymentRecoveryOperationStatus.PROCESSING,
+            PaymentRecoveryOperationStatus.FAILED,
+          ],
+        },
+      },
       data: expect.objectContaining({
         status: PaymentRecoveryOperationStatus.FAILED,
         lastError: "Stripe still unavailable",
@@ -455,6 +522,96 @@ describe("payment recovery worker", () => {
         errorMessage: expect.stringContaining("failed after 5 attempts"),
       })
     );
+  });
+
+  /**
+   * #3220: the three failure transitions became ONE, so these pin what that one
+   * transition guarantees for every caller rather than for the arm each used to
+   * live in.
+   */
+  it("does not alert, or act, on a failure that matched no live operation", async () => {
+    // The row a manual mark-paid reversal DELETED mid-flight. The worker still
+    // holds its in-memory copy and still runs its catch; before the chokepoint
+    // this was `update` by id, which throws P2025 - out of the loop's own catch,
+    // abandoning every remaining operation in the batch.
+    mockPaymentRecoveryFindUnique.mockResolvedValue(makeOperation({ attempts: 5 }));
+    mockCancelPaymentIntentIfCancellableWithResult.mockRejectedValue(
+      new Error("Stripe still unavailable")
+    );
+    // Only the FAILURE write misses: the claim that put the row in PROCESSING
+    // still has to succeed, or the worker never reaches its catch at all.
+    mockPaymentRecoveryUpdateMany.mockImplementation(
+      (args: { where?: { id?: string }; data?: { status?: string } }) =>
+        Promise.resolve({
+          count:
+            args?.data?.status === PaymentRecoveryOperationStatus.FAILED ? 0 : 1,
+        })
+    );
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    // The batch completes rather than throwing, and the tally is what it was
+    // before this transition was centralised.
+    expect(result).toMatchObject({ processed: 1, failed: 1, retried: 0 });
+    // Nothing is alerted about a row that is gone or already finished.
+    expect(mockSendAdminPaymentFailureAlert).not.toHaveBeenCalled();
+  });
+
+  it("never drags a SUCCEEDED operation back to FAILED", async () => {
+    mockCancelPaymentIntentIfCancellableWithResult.mockRejectedValue(
+      new Error("Stripe unavailable")
+    );
+
+    await processPaymentRecoveryOperations({ limit: 1 });
+
+    const failureWrites = mockPaymentRecoveryUpdateMany.mock.calls.filter(
+      (call) =>
+        (call[0] as { data?: { status?: string } })?.data?.status === "FAILED"
+    );
+    expect(failureWrites).toHaveLength(1);
+    const where = (failureWrites[0][0] as {
+      where: { status: { in: string[] } };
+    }).where;
+    expect(where.status.in).not.toContain(
+      PaymentRecoveryOperationStatus.SUCCEEDED
+    );
+  });
+
+  it("re-arms a stale PROCESSING row that still has attempts left, without alerting", async () => {
+    // The arm that used to be a bulk `updateMany` over every stale row at once.
+    // It is now the same fenced, per-row transition the exhausted arm takes -
+    // with `terminal` false, which is the only thing that differs.
+    const staleRetryable = makeOperation({
+      id: "recovery-stale-2",
+      attempts: 2,
+      status: PaymentRecoveryOperationStatus.PROCESSING,
+      processingStartedAt: new Date("2026-05-01T00:00:00.000Z"),
+    });
+
+    mockPaymentRecoveryFindMany.mockImplementation(
+      (args?: { where?: { processingStartedAt?: unknown } }) =>
+        Promise.resolve(isStaleWorkerSweep(args) ? [staleRetryable] : [])
+    );
+
+    await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(mockPaymentRecoveryUpdateMany).toHaveBeenCalledWith({
+      where: {
+        id: "recovery-stale-2",
+        status: { in: [PaymentRecoveryOperationStatus.PROCESSING] },
+        // #3220 fix round: the exact attempt the sweep read. Status alone would
+        // also match a row that has since been re-claimed.
+        processingStartedAt: new Date("2026-05-01T00:00:00.000Z"),
+      },
+      data: {
+        status: PaymentRecoveryOperationStatus.FAILED,
+        lastError: "Payment recovery worker timed out before completion.",
+        processingStartedAt: null,
+        // A retry time, not null: this row is re-armed, not dead.
+        nextRetryAt: expect.any(Date),
+      },
+    });
+    expect(mockSendAdminPaymentFailureAlert).not.toHaveBeenCalled();
   });
 
   it("marks stale PROCESSING rows at max attempts terminally failed and alerts admins", async () => {
@@ -476,7 +633,10 @@ describe("payment recovery worker", () => {
     expect(mockPaymentRecoveryUpdateMany).toHaveBeenCalledWith({
       where: {
         id: "recovery-stale-5",
-        status: PaymentRecoveryOperationStatus.PROCESSING,
+        status: { in: [PaymentRecoveryOperationStatus.PROCESSING] },
+        // #3220 fix round: as above - the read and the write are fenced to one
+        // attempt, so a re-claimed row falls out instead of being killed.
+        processingStartedAt: new Date("2026-05-01T00:00:00.000Z"),
       },
       data: expect.objectContaining({
         status: PaymentRecoveryOperationStatus.FAILED,
@@ -709,7 +869,7 @@ describe("payment recovery worker", () => {
     );
     mockPaymentRecoveryFindMany.mockImplementation(
       (args?: { where?: { status?: unknown; attempts?: { gte?: number } } }) => {
-        if (args?.where?.attempts && "gte" in args.where.attempts) {
+        if (isStaleWorkerSweep(args)) {
           return Promise.resolve([]);
         }
         return Promise.resolve([
@@ -782,7 +942,7 @@ describe("payment recovery worker", () => {
     mockPaymentRecoveryFindUnique.mockResolvedValue(planned);
     mockPaymentRecoveryFindMany.mockImplementation(
       (args?: { where?: { attempts?: { gte?: number } } }) => {
-        if (args?.where?.attempts && "gte" in args.where.attempts) {
+        if (isStaleWorkerSweep(args)) {
           return Promise.resolve([]);
         }
         return Promise.resolve([{ ...planned, status: "PENDING" }]);
@@ -818,7 +978,7 @@ describe("payment recovery worker", () => {
     mockPaymentRecoveryFindUnique.mockResolvedValue(stored);
     mockPaymentRecoveryFindMany.mockImplementation(
       (args?: { where?: { attempts?: { gte?: number } } }) => {
-        if (args?.where?.attempts && "gte" in args.where.attempts) {
+        if (isStaleWorkerSweep(args)) {
           return Promise.resolve([]);
         }
         return Promise.resolve([{ ...stored, status: "PENDING" }]);
@@ -868,7 +1028,7 @@ describe("payment recovery worker", () => {
     mockPaymentRecoveryFindUnique.mockResolvedValue(crashed);
     mockPaymentRecoveryFindMany.mockImplementation(
       (args?: { where?: { attempts?: { gte?: number } } }) => {
-        if (args?.where?.attempts && "gte" in args.where.attempts) {
+        if (isStaleWorkerSweep(args)) {
           return Promise.resolve([]);
         }
         return Promise.resolve([{ ...crashed, status: "PENDING" }]);
@@ -916,7 +1076,7 @@ describe("payment recovery worker", () => {
     mockPaymentRecoveryFindUnique.mockResolvedValue(crashed);
     mockPaymentRecoveryFindMany.mockImplementation(
       (args?: { where?: { attempts?: { gte?: number } } }) => {
-        if (args?.where?.attempts && "gte" in args.where.attempts) {
+        if (isStaleWorkerSweep(args)) {
           return Promise.resolve([]);
         }
         return Promise.resolve([{ ...crashed, status: "PENDING" }]);
@@ -982,7 +1142,7 @@ describe("payment recovery worker", () => {
     );
     mockPaymentRecoveryFindMany.mockImplementation(
       (args?: { where?: { status?: unknown; attempts?: { gte?: number } } }) => {
-        if (args?.where?.attempts && "gte" in args.where.attempts) {
+        if (isStaleWorkerSweep(args)) {
           return Promise.resolve([]);
         }
         return Promise.resolve([
@@ -1044,7 +1204,7 @@ describe("payment recovery worker", () => {
     mockPaymentRecoveryFindUnique.mockResolvedValue(crashed);
     mockPaymentRecoveryFindMany.mockImplementation(
       (args?: { where?: { attempts?: { gte?: number } } }) => {
-        if (args?.where?.attempts && "gte" in args.where.attempts) {
+        if (isStaleWorkerSweep(args)) {
           return Promise.resolve([]);
         }
         return Promise.resolve([{ ...crashed, status: "PENDING" }]);
@@ -1112,7 +1272,7 @@ describe("payment recovery worker", () => {
     mockPaymentRecoveryFindUnique.mockResolvedValue(legacy);
     mockPaymentRecoveryFindMany.mockImplementation(
       (args?: { where?: { attempts?: { gte?: number } } }) => {
-        if (args?.where?.attempts && "gte" in args.where.attempts) {
+        if (isStaleWorkerSweep(args)) {
           return Promise.resolve([]);
         }
         return Promise.resolve([{ ...legacy, status: "PENDING" }]);
@@ -1183,7 +1343,7 @@ describe("payment recovery worker", () => {
     );
     mockPaymentRecoveryFindMany.mockImplementation(
       (args?: { where?: { attempts?: { gte?: number } } }) => {
-        if (args?.where?.attempts && "gte" in args.where.attempts) {
+        if (isStaleWorkerSweep(args)) {
           return Promise.resolve([]);
         }
         return Promise.resolve([
@@ -1244,7 +1404,7 @@ describe("payment recovery worker", () => {
     mockPaymentRecoveryFindUnique.mockResolvedValue(crashed);
     mockPaymentRecoveryFindMany.mockImplementation(
       (args?: { where?: { attempts?: { gte?: number } } }) => {
-        if (args?.where?.attempts && "gte" in args.where.attempts) {
+        if (isStaleWorkerSweep(args)) {
           return Promise.resolve([]);
         }
         return Promise.resolve([{ ...crashed, status: "PENDING" }]);
@@ -1292,7 +1452,7 @@ describe("payment recovery worker", () => {
     mockPaymentRecoveryFindUnique.mockResolvedValue(crashed);
     mockPaymentRecoveryFindMany.mockImplementation(
       (args?: { where?: { attempts?: { gte?: number } } }) => {
-        if (args?.where?.attempts && "gte" in args.where.attempts) {
+        if (isStaleWorkerSweep(args)) {
           return Promise.resolve([]);
         }
         return Promise.resolve([{ ...crashed, status: "PENDING" }]);
@@ -1409,7 +1569,7 @@ describe("payment recovery worker", () => {
     mockPaymentRecoveryFindUnique.mockResolvedValue(capacityOp);
     mockPaymentRecoveryFindMany.mockImplementation(
       (args?: { where?: { attempts?: { gte?: number } } }) => {
-        if (args?.where?.attempts && "gte" in args.where.attempts) {
+        if (isStaleWorkerSweep(args)) {
           return Promise.resolve([]);
         }
         return Promise.resolve([{ ...capacityOp, status: "PENDING" }]);
@@ -1456,7 +1616,7 @@ describe("payment recovery worker", () => {
     mockPaymentRecoveryFindUnique.mockResolvedValue(groupOp);
     mockPaymentRecoveryFindMany.mockImplementation(
       (args?: { where?: { attempts?: { gte?: number } } }) => {
-        if (args?.where?.attempts && "gte" in args.where.attempts) {
+        if (isStaleWorkerSweep(args)) {
           return Promise.resolve([]);
         }
         return Promise.resolve([{ ...groupOp, status: "PENDING" }]);
@@ -1496,7 +1656,7 @@ describe("payment recovery worker", () => {
     mockPaymentRecoveryFindUnique.mockResolvedValue(groupOp);
     mockPaymentRecoveryFindMany.mockImplementation(
       (args?: { where?: { attempts?: { gte?: number } } }) => {
-        if (args?.where?.attempts && "gte" in args.where.attempts) {
+        if (isStaleWorkerSweep(args)) {
           return Promise.resolve([]);
         }
         return Promise.resolve([{ ...groupOp, status: "PENDING" }]);
@@ -1511,9 +1671,11 @@ describe("payment recovery worker", () => {
     expect(result.retried).toBe(1);
     // Not exhausted yet: retry scheduled, NO admin alert.
     expect(mockSendAdminPaymentFailureAlert).not.toHaveBeenCalled();
-    expect(mockPaymentRecoveryUpdate).toHaveBeenCalledWith(
+    expect(mockPaymentRecoveryUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "recovery-group-settlement-fail" },
+        where: expect.objectContaining({
+          id: "recovery-group-settlement-fail",
+        }),
         data: expect.objectContaining({
           status: PaymentRecoveryOperationStatus.FAILED,
           nextRetryAt: expect.any(Date),
@@ -1579,7 +1741,7 @@ describe("payment recovery worker", () => {
     );
     mockPaymentRecoveryFindMany.mockImplementation(
       (args?: { where?: { attempts?: { gte?: number } } }) => {
-        if (args?.where?.attempts && "gte" in args.where.attempts) {
+        if (isStaleWorkerSweep(args)) {
           return Promise.resolve([]);
         }
         return Promise.resolve([
@@ -1624,7 +1786,7 @@ describe("payment recovery worker", () => {
     mockPaymentRecoveryFindUnique.mockResolvedValue(exhaustedOperation);
     mockPaymentRecoveryFindMany.mockImplementation(
       (args?: { where?: { attempts?: { gte?: number } } }) => {
-        if (args?.where?.attempts && "gte" in args.where.attempts) {
+        if (isStaleWorkerSweep(args)) {
           return Promise.resolve([]);
         }
         return Promise.resolve([
@@ -1721,7 +1883,7 @@ describe("payment recovery worker", () => {
       mockPaymentRecoveryFindUnique.mockResolvedValue(operation);
       mockPaymentRecoveryFindMany.mockImplementation(
         (args?: { where?: { attempts?: { gte?: number } } }) => {
-          if (args?.where?.attempts && "gte" in args.where.attempts) {
+          if (isStaleWorkerSweep(args)) {
             return Promise.resolve([]);
           }
           return Promise.resolve([{ ...operation, status: "PENDING" }]);
@@ -2299,7 +2461,7 @@ describe("payment recovery worker", () => {
       const dupOp = makeDuplicateCaptureOp();
       mockPaymentRecoveryFindMany.mockImplementation(
         (args?: { where?: { attempts?: { gte?: number } } }) => {
-          if (args?.where?.attempts && "gte" in args.where.attempts) {
+          if (isStaleWorkerSweep(args)) {
             return Promise.resolve([]);
           }
           return Promise.resolve([dupOp]);
@@ -2334,7 +2496,7 @@ describe("payment recovery worker", () => {
       const dupOp = makeDuplicateCaptureOp();
       mockPaymentRecoveryFindMany.mockImplementation(
         (args?: { where?: { attempts?: { gte?: number } } }) => {
-          if (args?.where?.attempts && "gte" in args.where.attempts) {
+          if (isStaleWorkerSweep(args)) {
             return Promise.resolve([]);
           }
           return Promise.resolve([dupOp]);
@@ -2439,7 +2601,7 @@ describe("#2262 — deleted-operation coherence (H1/H2)", () => {
     const op = makeOperation({ status: PaymentRecoveryOperationStatus.PENDING });
     mockPaymentRecoveryFindMany.mockImplementation(
       (args?: { where?: { attempts?: { gte?: number } } }) => {
-        if (args?.where?.attempts && "gte" in args.where.attempts) {
+        if (isStaleWorkerSweep(args)) {
           return Promise.resolve([]);
         }
         return Promise.resolve([op]);
@@ -2514,7 +2676,7 @@ describe("#2262 L3 — the recovery dispatcher is exhaustive", () => {
     });
     mockPaymentRecoveryFindMany.mockImplementation(
       (args?: { where?: { attempts?: { gte?: number } } }) => {
-        if (args?.where?.attempts && "gte" in args.where.attempts) {
+        if (isStaleWorkerSweep(args)) {
           return Promise.resolve([]);
         }
         return Promise.resolve([rogue]);
@@ -2531,8 +2693,20 @@ describe("#2262 L3 — the recovery dispatcher is exhaustive", () => {
     // no Stripe refund.
     expect(mockPaymentTransactionFindUnique).not.toHaveBeenCalled();
     expect(mockProcessRefund).not.toHaveBeenCalled();
-    expect(mockPaymentRecoveryUpdate).toHaveBeenCalledWith({
-      where: { id: "recovery-rogue" },
+    expect(mockPaymentRecoveryUpdateMany).toHaveBeenCalledWith({
+      where: {
+        id: "recovery-rogue",
+        // #3220: fenced rather than an `update` by id, so a row a manual
+        // mark-paid reversal deleted mid-flight matches nothing instead of
+        // throwing out of the loop's own catch.
+        status: {
+          in: [
+            PaymentRecoveryOperationStatus.PENDING,
+            PaymentRecoveryOperationStatus.PROCESSING,
+            PaymentRecoveryOperationStatus.FAILED,
+          ],
+        },
+      },
       data: expect.objectContaining({
         status: PaymentRecoveryOperationStatus.FAILED,
         lastError: expect.stringContaining(
@@ -2612,7 +2786,7 @@ describe("edit-financial-review charge recovery (#3170)", () => {
     mockPaymentRecoveryFindUnique.mockResolvedValue(operation);
     mockPaymentRecoveryFindMany.mockImplementation(
       (args?: { where?: { attempts?: { gte?: number } } }) => {
-        if (args?.where?.attempts && "gte" in args.where.attempts) {
+        if (isStaleWorkerSweep(args)) {
           return Promise.resolve([]);
         }
         return Promise.resolve([{ ...operation, status: "PENDING" }]);
@@ -2657,8 +2831,17 @@ describe("edit-financial-review charge recovery (#3170)", () => {
 
   /** Did this run leave the operation FAILED with a retry still to come? */
   function wasLeftForRetry() {
-    return mockPaymentRecoveryUpdate.mock.calls.some((call) => {
-      const data = (call[0] as { data?: Record<string, unknown> })?.data;
+    return mockPaymentRecoveryUpdateMany.mock.calls.some((call) => {
+      const args = call[0] as {
+        where?: { id?: string };
+        data?: Record<string, unknown>;
+      };
+      // Scoped to THIS operation (#3220). Every failure transition is one
+      // fenced `updateMany` now, and the stale-worker reaper writes the same
+      // shape - so a helper matching on the data alone would answer for a row
+      // this test never asked about.
+      if (args?.where?.id !== "recovery-review-charge") return false;
+      const data = args?.data;
       return data?.status === "FAILED" && data?.nextRetryAt != null;
     });
   }
@@ -2900,7 +3083,7 @@ describe("edit-financial-review charge recovery (#3170)", () => {
     mockPaymentRecoveryFindUnique.mockResolvedValue(operation);
     mockPaymentRecoveryFindMany.mockImplementation(
       (args?: { where?: { attempts?: { gte?: number } } }) => {
-        if (args?.where?.attempts && "gte" in args.where.attempts) {
+        if (isStaleWorkerSweep(args)) {
           return Promise.resolve([]);
         }
         return Promise.resolve([{ ...operation, status: "PENDING" }]);
@@ -3013,5 +3196,387 @@ describe("edit-financial-review charge recovery (#3170)", () => {
     expect(result.succeeded).toBe(1);
     expect(mockSyncEditFinancialReviewChargeRequest).not.toHaveBeenCalled();
     expect(mockAttachIntentToWaitingOps).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * #3220: A DEAD RECOVERY WITHDRAWS THE ASK IT LEFT STANDING.
+ *
+ * A `CREATE_ADDITIONAL_PAYMENT_INTENT` recovery is the club still owing itself
+ * the job of asking a member for money a booking edit raised. While it is alive
+ * the booking-vs-Xero repair tool defers; the moment it dies the repair raises
+ * that edit's supplementary invoice UNPAID (`OPEN_PAYMENT_RECOVERY_STATUSES`,
+ * the #3202 control). So an ask still standing at the terminal transition is a
+ * SECOND live instrument for one debt, and paying it leaves the club holding a
+ * payment and an unpaid invoice for the same money.
+ *
+ * Everything here is about the TERMINAL transition specifically, and about the
+ * cancel being unable to make the recovery worse than not trying.
+ */
+describe("#3220 - the terminal transition withdraws a stranded ask", () => {
+  const MOD = "mod-3220";
+  const RECOVERY_ID = "recovery-3220";
+
+  function deadOnThisAttempt(overrides: Record<string, unknown> = {}) {
+    return makeOperation({
+      id: RECOVERY_ID,
+      type: PaymentRecoveryOperationType.CREATE_ADDITIONAL_PAYMENT_INTENT,
+      // The claim has already burnt the last attempt, so this failure is the
+      // one that ends the operation.
+      attempts: MAX_PAYMENT_RECOVERY_ATTEMPTS,
+      amountCents: 20000,
+      paymentIntentId: buildEditFinancialReviewAdditionalIntentStripeKey(MOD),
+      idempotencyKey:
+        buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey(MOD),
+      paymentTransactionId: null,
+      hadIssuedXeroInvoice: true,
+      ...overrides,
+    });
+  }
+
+  /** The ask as the ledger holds it, i.e. what a live intent looks like. */
+  function liveAsk(overrides: Record<string, unknown> = {}) {
+    return {
+      paymentTransactionId: "txn-ask",
+      stripePaymentIntentId: "pi_stranded_ask",
+      amountCents: 23000,
+      status: PaymentStatus.PENDING,
+      ...overrides,
+    };
+  }
+
+  function markedTerminallyFailed() {
+    return mockPaymentRecoveryUpdateMany.mock.calls.some((call) => {
+      const args = call[0] as {
+        where?: { id?: string };
+        data?: Record<string, unknown>;
+      };
+      if (args?.where?.id !== RECOVERY_ID) return false;
+      return args?.data?.status === "FAILED" && args?.data?.nextRetryAt === null;
+    });
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    settlementModuleLoadFailure.current = null;
+    const operation = deadOnThisAttempt();
+    mockPaymentRecoveryFindUnique.mockResolvedValue(operation);
+    mockPaymentRecoveryFindMany.mockImplementation((args?: unknown) =>
+      Promise.resolve(
+        isStaleWorkerSweep(args) ? [] : [{ ...operation, status: "PENDING" }],
+      ),
+    );
+    mockPaymentRecoveryUpdateMany.mockImplementation(
+      ({ where }: { where?: { id?: string } }) =>
+        Promise.resolve({ count: where?.id ? 1 : 0 }),
+    );
+    mockPaymentRecoveryUpdate.mockResolvedValue({});
+    mockBookingFindUnique.mockResolvedValue({
+      status: "PAID",
+      checkIn: new Date("2026-07-01"),
+      checkOut: new Date("2026-07-03"),
+      member: {
+        id: "m1",
+        email: "alice@test.com",
+        firstName: "Alice",
+        lastName: "Smith",
+      },
+      payment: { stripeCustomerId: "cus_123", status: PaymentStatus.SUCCEEDED },
+    });
+    // The replay's own work fails, which is what drives the terminal
+    // transition. WHY it failed is not this block's subject.
+    mockSyncEditFinancialReviewChargeRequest.mockRejectedValue(
+      new Error("Stripe is unavailable"),
+    );
+    mockFindEditReviewChargeRequest.mockResolvedValue(liveAsk());
+    // `clearAllMocks` clears calls, not implementations, so the one test that
+    // parks a waiting operation on the ask has to be undone here or every test
+    // after it silently exercises the exception instead of the rule.
+    mockFindWaitingSupplementaryOpForIntent.mockResolvedValue(null);
+    mockCancelPaymentIntentIfCancellableWithResult.mockResolvedValue({
+      canceled: true,
+      paymentIntent: { id: "pi_stranded_ask", status: "canceled" },
+    });
+  });
+
+  it("cancels the stranded ask, and says abandoned rather than blaming the member", async () => {
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result.failed).toBe(1);
+    expect(markedTerminallyFailed()).toBe(true);
+    /**
+     * `requested_by_customer` - what the helper hard-coded before #3220 - would
+     * be a lie in the club's own Stripe record. The member never declined this
+     * ask; the club ran out of attempts to raise it.
+     */
+    expect(mockCancelPaymentIntentIfCancellableWithResult).toHaveBeenCalledWith(
+      "pi_stranded_ask",
+      { cancellationReason: "abandoned" },
+    );
+  });
+
+  it("leaves an ask the member has ALREADY PAID completely alone", async () => {
+    // The acceptance criterion from the decision comment. The Stripe helper
+    // would refuse a `succeeded` intent anyway, so this is the second lock on
+    // the same door - but getting it wrong here would take money back off a
+    // member who paid, so the door has two locks.
+    mockFindEditReviewChargeRequest.mockResolvedValue(
+      liveAsk({ status: PaymentStatus.SUCCEEDED }),
+    );
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result.failed).toBe(1);
+    expect(markedTerminallyFailed()).toBe(true);
+    expect(
+      mockCancelPaymentIntentIfCancellableWithResult,
+    ).not.toHaveBeenCalled();
+  });
+
+  it("makes no provider call at all when the mint never produced an ask", async () => {
+    // The ORDINARY ending: the recovery existed precisely because nothing was
+    // minted, so there is no second instrument and nothing to withdraw. A
+    // provider call here would be a round trip on every dead recovery.
+    mockFindEditReviewChargeRequest.mockResolvedValue(null);
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result.failed).toBe(1);
+    expect(
+      mockCancelPaymentIntentIfCancellableWithResult,
+    ).not.toHaveBeenCalled();
+  });
+
+  it("does not touch the ask while the recovery still has attempts left", async () => {
+    // A retry is not a death. Withdrawing the ask here would cancel an intent
+    // the very next attempt is going to raise.
+    const retryable = deadOnThisAttempt({ attempts: 1 });
+    mockPaymentRecoveryFindUnique.mockResolvedValue(retryable);
+    mockPaymentRecoveryFindMany.mockImplementation((args?: unknown) =>
+      Promise.resolve(
+        isStaleWorkerSweep(args) ? [] : [{ ...retryable, status: "PENDING" }],
+      ),
+    );
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result.retried).toBe(1);
+    expect(
+      mockCancelPaymentIntentIfCancellableWithResult,
+    ).not.toHaveBeenCalled();
+  });
+
+  /**
+   * THE REFUSAL PATH, which the decision comment singles out: `processing` is in
+   * Stripe's cancellable set and Stripe routinely refuses to cancel a processing
+   * intent, so this is a live path rather than a theoretical one.
+   */
+  it("records a refused cancel and still leaves the recovery dead, not blocked", async () => {
+    mockCancelPaymentIntentIfCancellableWithResult.mockRejectedValue(
+      new Error("You cannot cancel this PaymentIntent because it is processing"),
+    );
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    // The status write happened BEFORE the cancel and cannot be undone by it.
+    // If a Stripe refusal could hold the row out of FAILED, the repair tool
+    // would defer this edit's invoice for ever - the #3202 control.
+    expect(markedTerminallyFailed()).toBe(true);
+    expect(result.failed).toBe(1);
+
+    // A logger.error is not a record an officer can find, and this one asks
+    // them to do something before the member pays an already-invoiced ask.
+    expect(mockCreateAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "payment.recovery.strandedIntentCancellationRefused",
+        category: "payment",
+        outcome: "failure",
+        entityId: "booking-1",
+      }),
+    );
+  });
+
+  it("never lets a refused cancel abandon the rest of the batch", async () => {
+    /**
+     * `failPaymentRecoveryOperation` is called from inside the worker loop's own
+     * `catch`. A throw from there escapes the loop and abandons every remaining
+     * operation - the exact bug the chokepoint was built to fix - so the cancel
+     * is best-effort in the strongest sense: even the AUDIT write failing must
+     * not propagate.
+     */
+    mockCancelPaymentIntentIfCancellableWithResult.mockRejectedValue(
+      new Error("Stripe refused"),
+    );
+    mockCreateAuditLog.mockRejectedValue(new Error("the audit write also died"));
+
+    const first = deadOnThisAttempt({ id: RECOVERY_ID });
+    const second = deadOnThisAttempt({ id: "recovery-3220-second" });
+    mockPaymentRecoveryFindMany.mockImplementation((args?: unknown) =>
+      Promise.resolve(
+        isStaleWorkerSweep(args)
+          ? []
+          : [
+              { ...first, status: "PENDING" },
+              { ...second, status: "PENDING" },
+            ],
+      ),
+    );
+    mockPaymentRecoveryFindUnique.mockImplementation(
+      ({ where }: { where: { id: string } }) =>
+        Promise.resolve(where.id === second.id ? second : first),
+    );
+
+    const result = await processPaymentRecoveryOperations({ limit: 5 });
+
+    // BOTH were processed. One failing cancel must not cost the other one its
+    // terminal transition, its alert, or its own withdrawal.
+    expect(result.processed).toBe(2);
+    expect(result.failed).toBe(2);
+  });
+
+  /**
+   * #3220 fix round: THE ONE ASK THE WITHDRAWAL LEAVES STANDING.
+   *
+   * The replay attaches this change's supplementary invoice operation to the
+   * intent it mints, parked `WAITING_PAYMENT`, and can then throw while raising
+   * the deferred invoice - so a dead recovery can arrive at the withdrawal with
+   * a live ask AND a live outbox row pointing at it. That row is released by a
+   * confirmed payment on that very intent and by nothing else, and while it
+   * stands the repair pass raises NO invoice. There is therefore no second
+   * instrument, and cancelling would remove the only live route to the money
+   * while stranding the row until the fourteen-day reaper.
+   */
+  it("leaves the ask alone when this change's invoice is still waiting on it", async () => {
+    mockFindWaitingSupplementaryOpForIntent.mockResolvedValue({
+      id: "xero-op-waiting",
+    });
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    // The recovery still dies. The exception is about the ASK, never about the
+    // status write - holding a row out of FAILED would re-block the repair tool
+    // for ever, which is the #3202 control.
+    expect(result.failed).toBe(1);
+    expect(markedTerminallyFailed()).toBe(true);
+
+    expect(mockFindWaitingSupplementaryOpForIntent).toHaveBeenCalledWith({
+      bookingModificationId: MOD,
+      paymentIntentId: "pi_stranded_ask",
+    });
+    expect(
+      mockCancelPaymentIntentIfCancellableWithResult,
+    ).not.toHaveBeenCalled();
+    // Nothing went wrong, so no officer is asked to chase a non-problem.
+    expect(mockCreateAuditLog).not.toHaveBeenCalled();
+  });
+
+  it("still withdraws the ask when the waiting invoice is on a DIFFERENT intent", async () => {
+    // The exception is scoped to the ask being withdrawn, not to the booking
+    // change: an operation waiting on some other intent is not this ask's
+    // blocker, and reading it as one would leave a genuine duplicate standing.
+    // The read is what decides that, so this pins the caller passing the intent
+    // id at all rather than only the modification.
+    mockFindWaitingSupplementaryOpForIntent.mockResolvedValue(null);
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result.failed).toBe(1);
+    expect(mockCancelPaymentIntentIfCancellableWithResult).toHaveBeenCalledWith(
+      "pi_stranded_ask",
+      { cancellationReason: "abandoned" },
+    );
+  });
+
+  it("is idempotent on replay: an already-cancelled ask makes no second cancel", async () => {
+    /**
+     * Idempotency here is STRUCTURAL rather than defensive.
+     * `cancelPaymentIntentIfCancellableWithResult` reads the intent first and
+     * returns `canceled: false` without calling Stripe at all unless the status
+     * is one it can cancel - so a replay of this transition finds `canceled`,
+     * makes no provider mutation, and cannot error or double-cancel. This pins
+     * that the caller treats that answer as success rather than retrying it.
+     */
+    mockCancelPaymentIntentIfCancellableWithResult.mockResolvedValue({
+      canceled: false,
+      paymentIntent: { id: "pi_stranded_ask", status: "canceled" },
+    });
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result.failed).toBe(1);
+    expect(
+      mockCancelPaymentIntentIfCancellableWithResult,
+    ).toHaveBeenCalledTimes(1);
+    // Not an error, so no officer is asked to chase a non-problem.
+    expect(mockCreateAuditLog).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * #3220 fix round: THE STALE-WORKER REAPER FENCES THE ATTEMPT IT READ.
+ *
+ * Folding the reaper's two arms into the terminal chokepoint turned one bulk
+ * `updateMany` into read-then-write. The bulk form's `where` carried
+ * `processingStartedAt < staleBefore`; a fence of `status: PROCESSING` alone
+ * does not, and matches a row that left `PROCESSING` and came straight back -
+ * a concurrent reaper marks it failed with a `nextRetryAt` of NOW and the very
+ * next queue read claims it. Taking that path kills a live attempt and acts on
+ * terminality one attempt out of date.
+ */
+describe("#3220 - the stale-worker reaper cannot kill a re-claimed attempt", () => {
+  it("pins the exact attempt it read, not merely the status", async () => {
+    vi.clearAllMocks();
+    const readAt = new Date("2026-06-01T00:00:00.000Z");
+    const stale = makeOperation({
+      id: "recovery-stale-fence",
+      status: PaymentRecoveryOperationStatus.PROCESSING,
+      attempts: 1,
+      processingStartedAt: readAt,
+    });
+    mockPaymentRecoveryFindMany.mockImplementation((args?: unknown) =>
+      Promise.resolve(isStaleWorkerSweep(args) ? [stale] : []),
+    );
+    mockPaymentRecoveryUpdateMany.mockResolvedValue({ count: 1 });
+
+    await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(mockPaymentRecoveryUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          id: "recovery-stale-fence",
+          status: { in: [PaymentRecoveryOperationStatus.PROCESSING] },
+          // Without this the reaper matches a row that has since been failed,
+          // re-armed and re-claimed - and kills the live attempt.
+          processingStartedAt: readAt,
+        },
+      }),
+    );
+  });
+
+  /**
+   * #3220 fix round: THE SWEEP IS BOUNDED, because it now costs provider calls.
+   *
+   * It runs BEFORE the main queue, and each row it takes can cost an alert plus
+   * a Stripe read and cancel where the bulk `updateMany` it replaced made no
+   * provider call at all. A backlog drains on its own - every row it touches
+   * leaves `PROCESSING` for good - so the cap only ever defers work to the next
+   * run, and oldest-first is what stops it deferring the same rows for ever.
+   */
+  it("reads the stale rows oldest-first and in a bounded batch", async () => {
+    vi.clearAllMocks();
+    mockPaymentRecoveryFindMany.mockImplementation((args?: unknown) =>
+      Promise.resolve(isStaleWorkerSweep(args) ? [] : []),
+    );
+
+    await processPaymentRecoveryOperations({ limit: 1 });
+
+    const sweep = mockPaymentRecoveryFindMany.mock.calls
+      .map((call) => call[0])
+      .find((args) => isStaleWorkerSweep(args)) as {
+      take?: number;
+      orderBy?: unknown;
+    };
+    expect(sweep?.take, "the stale sweep is unbounded again").toBeGreaterThan(0);
+    expect(sweep?.orderBy).toEqual({ processingStartedAt: "asc" });
   });
 });
