@@ -76,7 +76,7 @@ reason: composes the offer's final price from the reprice this function has just
 The last one is #3219 D2 rather than #3260, and it is comment.
 
 file: src/components/admin/manual-refund-task-queue.tsx
-lines: 1568
+lines: 1700
 reason: the condition itself is one line SHORTER than what it replaces — the
   growth is the paragraph beside it, which records that leaving the boxes blank
   used to be a valid answer and stopped being one, and why a disabled button here

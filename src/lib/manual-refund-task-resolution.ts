@@ -224,9 +224,7 @@ export async function resolveManualRefundTask(
     );
   }
 
-  // #3219 (`INV-LOCK-004`): outside the transaction, which a timezone read may
-  // not take. It dates the promotion's window in the re-price below.
-  const todayAtClub = clubToday(await readClubTimeZoneOutsideRequest());
+  const todayAtClub = clubToday(await readClubTimeZoneOutsideRequest()); // #3219 `INV-LOCK-004`: read outside the transaction; dates the promo window
   const result = await prisma.$transaction(async (tx) => {
     const task = await tx.manualRefundTask.findUnique({
       where: { id: taskId },
@@ -427,17 +425,14 @@ export async function resolveManualRefundTask(
         })
       : null;
 
-    // #3191: what the officer says the booking's unpriced nights sold for,
-    // checked BEFORE the claim so a refusal leaves the task OPEN and its money
-    // question intact. The store owns the rules, the re-read of the blanks, and
-    // (since #3219 D2) the refusal to close a review whose boxes are blank.
-    const settledForRepair = settlement
-      ? { direction: settlementDirection, amountCents: settlement.amountCents }
-      : null;
+    // #3191/#3219 D2: the night prices, checked BEFORE the claim so a refusal
+    // leaves the task OPEN. The store owns the rules and the refusal.
     const nightPriceRepair = await planStoredNightPriceRepair({
       task,
       requested: input.recordedNightPrices,
-      settled: settledForRepair,
+      settled: settlement
+        ? { direction: settlementDirection, amountCents: settlement.amountCents }
+        : null,
       store: tx,
     });
 
@@ -573,11 +568,9 @@ export async function resolveManualRefundTask(
       }
     }
 
-    // #3191: the blanks become numbers, after the claim and inside it, so a lost
-    // claim writes no prices; #3219: the BOOKING is re-priced from its strands
-    // in the same breath, on a dismissal too; #3257: on EVERY parked review
-    // closing, so the plan is the OPTIONAL half and the KIND is the condition -
-    // the two shapes that offer no price boxes used to re-price nothing at all.
+    // #3191/#3219/#3257: blanks become numbers inside the claim; the booking
+    // re-prices on EVERY parked review closing. Why, and why the KIND is the
+    // condition, is `recordReviewClosurePricing`'s docblock.
     if (task.kind === ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW) {
       await recordReviewClosurePricing({
         plan: nightPriceRepair,
