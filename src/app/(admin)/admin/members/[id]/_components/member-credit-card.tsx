@@ -13,6 +13,7 @@ import { formatAdminName } from "@/lib/admin-member-detail-helpers"
 import { useClubTime } from "@/components/club-time-provider"
 import { formatPayloadCalendarDay } from "../../../_lib/calendar-day"
 import { formatPayloadInstantDate } from "../../../_lib/payload-instant"
+import { formatCents, formatSignedCents } from "@/lib/utils"
 import type {
   CreditHistoryItem,
   PendingCreditAdjustmentItem,
@@ -83,7 +84,7 @@ export function MemberCreditCard({
             className={`text-lg font-semibold ${
               creditBalance > 0 ? "text-success-11" : creditBalance < 0 ? "text-danger-11" : "text-muted-foreground"
             }`}
-          >{`$${(creditBalance / 100).toFixed(2)}`}</span>
+          >{formatCents(creditBalance)}</span>
           <ViewOnlyActionButton canEdit={canEditFinance} size="sm" variant="outline" onClick={onToggleAdjustmentForm}>
             {showAdjustmentForm ? "Cancel" : "Request Adjustment"}
           </ViewOnlyActionButton>
@@ -172,7 +173,7 @@ export function MemberCreditCard({
                             className={`font-medium ${
                               item.amountCents > 0 ? "text-success-11" : "text-danger-11"
                             }`}
-                          >{`${item.amountCents > 0 ? "+" : ""}$${(item.amountCents / 100).toFixed(2)}`}</TableCell>
+                          >{formatSignedCents(item.amountCents)}</TableCell>
                           <TableCell className="text-sm text-muted-foreground max-w-[260px] truncate">{item.description}</TableCell>
                           <TableCell className="text-sm">{formatAdminName(item.requestedBy)}</TableCell>
                           <TableCell className="text-right">
@@ -244,7 +245,7 @@ export function MemberCreditCard({
                       </TableCell>
                       <TableCell
                         className={`font-medium ${item.amountCents > 0 ? "text-success-11" : "text-danger-11"}`}
-                      >{`${item.amountCents > 0 ? "+" : ""}$${(item.amountCents / 100).toFixed(2)}`}</TableCell>
+                      >{formatSignedCents(item.amountCents)}</TableCell>
                       <TableCell className="text-sm text-muted-foreground max-w-[200px] truncate">{item.description}</TableCell>
                       <TableCell className="text-xs text-muted-foreground">
                         {item.type === "ADMIN_ADJUSTMENT" && (item.requestedBy || item.approvedBy) ? (
