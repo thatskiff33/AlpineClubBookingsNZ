@@ -47,12 +47,20 @@ refusal rather than something quietly ignored — that is what stops a future
 client opening a second serialization channel through this object.
 
 The schema itself is **module-private to `parse.ts`**, and that is a security
-property rather than tidiness. A strict object schema is not total on its own: zod
-accepts a `JSON.parse`-created `__proto__` own property and silently strips it,
-reporting no unknown key at all. An exported schema would therefore be a second
-door that repairs a selector this layer is required to refuse, so
+property rather than tidiness. This schema is not total on its own, because
+`filters` is a `z.record(...)`: zod never surfaces a `JSON.parse`-created
+`__proto__` to a record's key schema, so the key is dropped silently and no
+unknown key is reported. An exported schema would therefore be a second door that
+repairs a selector this layer is required to refuse, so
 `parseDiagnosticsPageSelector` is the only way in — and the resolver takes the
 selector as `unknown` for the same reason, so no caller needs the schema anyway.
+
+The top-level strict object no longer needs that help — zod 4.5 began refusing an
+enumerable reserved key there — but the scan still covers it, because what one
+version of a dependency happens to refuse is not a contract it has made, and
+because that refusal does not extend to a non-enumerable key. The current
+behaviour is measured in
+`src/lib/diagnostics/tools/__tests__/registry.test.ts` rather than restated here.
 
 ## How a resolution runs
 
