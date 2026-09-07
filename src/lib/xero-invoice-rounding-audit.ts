@@ -29,6 +29,7 @@
 import { BookingStatus } from "@prisma/client";
 import { getStayNights } from "./pricing";
 import { formatDateOnly } from "@/lib/date-only";
+import { formatCents } from "@/lib/utils";
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -694,10 +695,15 @@ export async function scanXeroInvoiceRoundingDrift(
 // Human-readable report
 // ---------------------------------------------------------------------------
 
-function formatCents(cents: number): string {
-  const sign = cents < 0 ? "-" : "";
-  const abs = Math.abs(cents);
-  return `${sign}$${(abs / 100).toFixed(2)} (${cents >= 0 ? "+" : ""}${cents}c)`;
+/**
+ * This report deliberately shows both the dollar amount AND the raw signed
+ * cent delta in parens ("$1.50 (+150c)") — useful for a rounding-drift audit
+ * where the exact cent matters, and no fixture pins the compound string. The
+ * dollar part is `formatCents` (#3302), verified byte-identical for both
+ * signs and zero; only the "(+/-Nc)" suffix is local to this report.
+ */
+function formatDriftCents(cents: number): string {
+  return `${formatCents(cents)} (${cents >= 0 ? "+" : ""}${cents}c)`;
 }
 
 /** Render a plain-text operator report for a scan result. */
@@ -716,7 +722,7 @@ export function formatRoundingAuditReport(result: RoundingAuditScanResult): stri
       `settlement ${result.scannedSettlementInvoices})`
   );
   lines.push(`Candidate affected invoices: ${result.affectedCount}`);
-  lines.push(`Net drift across candidates: ${formatCents(result.totalDriftCents)}`);
+  lines.push(`Net drift across candidates: ${formatDriftCents(result.totalDriftCents)}`);
   if (result.issuedBefore) {
     lines.push(`Scope: issued-at proxy (createdAt) < ${result.issuedBefore}`);
   } else {
@@ -758,12 +764,12 @@ export function formatRoundingAuditReport(result: RoundingAuditScanResult): stri
       lines.push(`  Booking: ${invoice.sourceId}`);
       lines.push(`  Issued-at proxy (payment.createdAt): ${invoice.issuedAtProxy ?? "unknown"}`);
     }
-    lines.push(`  Total drift: ${formatCents(invoice.totalDriftCents)}`);
+    lines.push(`  Total drift: ${formatDriftCents(invoice.totalDriftCents)}`);
     for (const guest of invoice.guests) {
       lines.push(
         `  Guest ${guest.guestName} (${guest.ageTier}` +
           `${guest.isMember ? ", Member" : ", Non-member"}): ` +
-          `${formatCents(guest.guestDriftCents)}`
+          `${formatDriftCents(guest.guestDriftCents)}`
       );
       for (const run of guest.driftedRuns) {
         const range =
@@ -771,11 +777,11 @@ export function formatRoundingAuditReport(result: RoundingAuditScanResult): stri
             ? `${run.startDate} - ${run.endExclusive}`
             : "flat total (no per-night rows)";
         lines.push(
-          `    ${run.nightCount} night(s) ${range}: ledger ${formatCents(
+          `    ${run.nightCount} night(s) ${range}: ledger ${formatDriftCents(
             run.totalCents
-          )}, billed ${run.nightCount} x ${formatCents(
+          )}, billed ${run.nightCount} x ${formatDriftCents(
             run.roundedPerNightCents
-          )} = ${formatCents(run.emittedTotalCents)} -> drift ${formatCents(
+          )} = ${formatDriftCents(run.emittedTotalCents)} -> drift ${formatDriftCents(
             run.driftCents
           )}${run.mixedPrices ? " [mixed nightly prices]" : ""}`
         );

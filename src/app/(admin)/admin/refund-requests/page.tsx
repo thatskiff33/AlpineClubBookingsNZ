@@ -34,6 +34,7 @@ import { useClubTime } from "@/components/club-time-provider"
 import { parseInstant, type BoundClubTime } from "@/lib/club-time"
 import { formatPayloadCalendarDay } from "../_lib/calendar-day"
 import { parseDecimalDollarsToCents } from "@/lib/money-input"
+import { formatCents } from "@/lib/utils"
 
 type ReviewFilter = "PENDING" | "APPROVED" | "REJECTED" | "ALL"
 const reviewFilters = new Set<ReviewFilter>(["PENDING", "APPROVED", "REJECTED", "ALL"])
@@ -108,10 +109,6 @@ interface CreditApprovalRequestData {
     id: string
     createdAt: string
   } | null
-}
-
-function formatCents(cents: number): string {
-  return "$" + (cents / 100).toFixed(2)
 }
 
 function formatAdminName(admin: AdminActor | null | undefined) {
