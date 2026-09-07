@@ -48,6 +48,7 @@ import {
 } from "@/lib/member-credit";
 import { calculateRestoredCreditAmount } from "@/lib/policies/member-credit";
 import { paymentHasCaptureEvidence } from "@/lib/cancel-flattened-payment-backfill";
+import { formatCentsPlain } from "@/lib/utils";
 
 // The full client, not a nested TransactionClient: the heal path opens its own
 // per-booking $transaction, so it must not run inside another one.
@@ -273,7 +274,16 @@ export async function healOrphanedAppliedCredits(options?: {
           severity: "critical",
           outcome: "success",
           summary: "Orphaned applied credit restored by backfill",
-          details: `Restored NZ$${(restoredCents / 100).toFixed(2)} of applied account credit orphaned by a pre-#1547 cancellation`,
+          // The "NZ$" prefix is left exactly as it was (#3302 SSOT review):
+          // whether an Internet-Banking-adjacent audit line should always read
+          // NZD, like several other IB-specific messages elsewhere in this
+          // codebase, or the club's configured currency, is open on #3325.
+          // Only the arithmetic moved — it is now the one shared
+          // cents-to-decimal conversion (`formatCentsPlain`)
+          // rather than its own `(x / 100).toFixed(2)`, so this line cannot
+          // drift from every other caller of that conversion while the
+          // prefix question is still open.
+          details: `Restored NZ$${formatCentsPlain(restoredCents)} of applied account credit orphaned by a pre-#1547 cancellation`,
           metadata: { restoredCents, appliedRowCount: recheck.appliedRowCount },
         },
         tx

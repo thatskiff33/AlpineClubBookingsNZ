@@ -26,6 +26,14 @@ export declare const MONEY_GUARD_ARMS: {
 };
 export declare const MONEY_GUARD_EXEMPTIONS: readonly FileExemption[];
 
+/** #3302 — the reverse-direction guard: rendering cents, not building them. */
+export declare const CENTS_DISPLAY_GUARD_ARM: readonly string[];
+/** Multi-file exemption entries (unlike `FileExemption`'s one file each). */
+export declare const CENTS_DISPLAY_EXEMPTIONS: ReadonlyArray<{
+  readonly files: readonly string[];
+  readonly reason: string;
+}>;
+
 export declare const DATE_FNS_ADAPTERS: ReadonlyArray<
   FileExemption & { readonly uses: string }
 >;

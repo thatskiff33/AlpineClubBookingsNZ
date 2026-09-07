@@ -10,6 +10,7 @@ import {
 import { sendAdminManualRefundTaskAlert, sendBookingCancelledEmail } from "./email";
 import { logAudit } from "./audit";
 import { recordBookingEvent } from "./booking-events";
+import { formatCents } from "./utils";
 import {
   BookingEventType,
   BookingStatus,
@@ -1807,7 +1808,7 @@ async function performBookingCancellation(
         refundMethod: "manual",
         creditRestoredCents: creditRestoredCents || undefined,
         manualRefundTaskId: manualRefundTaskId ?? undefined,
-        message: `Booking cancelled. This booking was settled in cash, so a manual refund task for $${(refundAmountCents / 100).toFixed(2)} has been raised for an admin to pay back by hand.`,
+        message: `Booking cancelled. This booking was settled in cash, so a manual refund task for ${formatCents(refundAmountCents)} has been raised for an admin to pay back by hand.`,
       },
     };
   }
@@ -1899,7 +1900,7 @@ async function performBookingCancellation(
         refundMethod: "credit",
         creditAmountCents: refundAmountCents,
         creditRestoredCents: creditRestoredCents || undefined,
-        message: `Booking cancelled. ${refundPercentage}% credit of $${(refundAmountCents / 100).toFixed(2)} added to your account.`,
+        message: `Booking cancelled. ${refundPercentage}% credit of ${formatCents(refundAmountCents)} added to your account.`,
       },
     };
   }
@@ -2070,7 +2071,7 @@ async function performBookingCancellation(
         refundMethod: "card",
         creditRestoredCents: creditRestoredCents || undefined,
         stripeRefundId,
-        message: `Booking cancelled. ${refundPercentage}% refund of $${(refundAmountCents / 100).toFixed(2)} processed.`,
+        message: `Booking cancelled. ${refundPercentage}% refund of ${formatCents(refundAmountCents)} processed.`,
       },
     };
   }
