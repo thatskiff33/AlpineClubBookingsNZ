@@ -987,20 +987,20 @@ export function ManualRefundTaskQueue() {
           });
   /*
     REQUIRED SINCE #3219 D2, where it used to be merely "blocked once you start".
-    Leaving every box blank was a valid answer before that decision; it is not
-    any more, on a dismissal any more than on a completion, because the booking's
-    own price is worked out again from these nights when the review closes and a
-    review closed blank leaves a headline its guests no longer agree with -
-    including, after a parked removal, still counting a guest who is gone
-    (#3257). The server refuses it either way; this stops the officer finding
-    that out after a round trip.
+    Leaving every box blank was a valid answer before that decision and is not
+    any more, on a dismissal as much as on a completion: the booking's own price
+    is worked out again from these nights when the review closes, and a blank
+    closure leaves a headline its guests no longer agree with - after a parked
+    removal, one still counting a guest who is gone (#3257). The server refuses
+    it either way; this only saves the officer the round trip.
 
-    NOTHING NEW IS SAID HERE. The paragraph above the boxes already tells them,
-    in the words D2 chose, that the review cannot be closed until the figures are
-    recorded - so a disabled button is not the bare refusal #3195 rejected, and
-    a second wording of the same rule is exactly what that decision ruled out.
+    NOTHING NEW IS SAID HERE: the paragraph above the boxes already says, in D2's
+    own words, that the review cannot be closed until the figures are recorded.
 
-    Rows that offer no boxes have `unpricedNights === null` and are untouched.
+    Rows that offer no boxes have `unpricedNights === null`, so this flag leaves
+    them alone - but since #3257 their closure RE-PRICES THE BOOKING too, with
+    nothing saying so first. It is recorded afterwards, in the booking's own
+    PRICE_REBASE row and the closure's audit entry, rather than reworded here.
   */
   const nightPricesBlocked =
     unpricedNights !== null &&
