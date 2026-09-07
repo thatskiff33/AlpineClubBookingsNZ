@@ -189,4 +189,3 @@ export function alertBox(
   <p style="margin: 0; color: ${c.text}; font-size: 14px; font-weight: 600; white-space: pre-wrap;">${text}</p>
 </div>`;
 }
-
