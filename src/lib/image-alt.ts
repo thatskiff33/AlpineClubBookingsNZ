@@ -20,7 +20,10 @@ export function deriveAltFromImageSrc(src: string): string {
   if (/^data:/i.test(src.trim())) {
     return "";
   }
-  const withoutQuery = src.split(/[?#]/)[0];
+  // `String.prototype.split` always returns at least one element, even for
+  // an empty string -- the same guarantee `lastSegment`'s `?? ""` below
+  // already leans on.
+  const withoutQuery = src.split(/[?#]/)[0] ?? "";
   const lastSegment = withoutQuery.split("/").pop() ?? "";
   let name: string;
   try {

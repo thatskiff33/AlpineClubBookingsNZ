@@ -115,8 +115,9 @@ async function createSeriesRows(
   // (earliest occurrence, rows[0]) ONLY — never on every row (which would
   // collide with itself) and never via buildOccurrenceRows (shared with
   // regenerate, which must not carry a key).
-  if (idempotencyKey && rows.length > 0) {
-    rows[0] = { ...rows[0], idempotencyKey };
+  const [anchorRow] = rows;
+  if (idempotencyKey && anchorRow) {
+    rows[0] = { ...anchorRow, idempotencyKey };
   }
   await tx.calendarEvent.createMany({ data: rows });
 
