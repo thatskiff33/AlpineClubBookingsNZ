@@ -110,8 +110,35 @@ jobs:
         with:
           node-version: 24
 
+      # #3254: this used to be the bare `npm audit --audit-level=high`. That
+      # command asks npmjs.org for advisories over the network, and when the
+      # request failed it exited non-zero — so a REQUIRED security check went red
+      # in exactly the same way as it does for a real vulnerability. Measured
+      # three times across #3246 and #3247 inside about an hour on 4 September
+      # 2026 (a network timeout, a 503, and the same 503 again after a re-run);
+      # none had a vulnerability, and a fully-green pull request was held for
+      # hours while the check was re-run without the log being read.
+      #
+      # Owner decision, 5 September 2026 — RETRY, THEN STILL FAIL. The script
+      # retries a small number of times with a short backoff and then fails if
+      # the advisory service is still unreachable, because a required security
+      # gate that could not do its job does not get to report success: green
+      # keeps meaning "the audit really ran and found nothing". The accepted cost
+      # is that a sustained npm outage blocks merges. What the script adds is
+      # that the failure SAYS WHICH CASE IT IS on its first line, so nobody has
+      # to infer "the registry was down" from a warning buried in the log.
+      #
+      # The threshold is unchanged: high or worse fails. The script needs no
+      # install — `npm audit` reads `package-lock.json` — and carries no skip,
+      # no soft-failure escape, and no environment switch that softens the
+      # verdict.
+      #
+      # This step must never acquire a job-level `if:` or `needs:`. GitHub counts
+      # a SKIPPED required check as satisfying branch protection, so a condition
+      # at job level would turn this gate vacuously green. See AGENTS.md ->
+      # "Completion and Merge".
       - name: Audit dependencies
-        run: npm audit --audit-level=high
+        run: node scripts/ci/audit-dependencies.mjs
 
   static-analysis:
     name: Static analysis gate
