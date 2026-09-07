@@ -47,8 +47,6 @@ function startsWithCaseInsensitive(
 
 function skipWhitespace(text: string, index: number): number {
   let next = index;
-  // `next < text.length` is checked (and short-circuits) before the index
-  // read, so the character is always in range.
   while (next < text.length && /\s/.test(must(text[next], "skipWhitespace: index within text.length"))) {
     next += 1;
   }
@@ -194,8 +192,6 @@ function extractJpegDimensions(bytes: Buffer): ImageDimensions | null {
       offset += 1;
       continue;
     }
-    // `offset + 9 <= bytes.length` (the loop condition) already guarantees
-    // `offset + 1` is in range.
     const marker = must(bytes[offset + 1], "extractJpegDimensions: offset within bytes.length");
     // Start-of-frame markers (baseline/progressive/etc), excluding DHT/JPG/DAC.
     const isSofMarker =
@@ -222,11 +218,7 @@ function extractJpegDimensions(bytes: Buffer): ImageDimensions | null {
 }
 
 function readUInt24LE(bytes: Buffer, offset: number): number {
-  // Callers only reach here after checking `bytes.length` covers offset+2.
-  const b0 = must(bytes[offset], "readUInt24LE: offset within bytes.length");
-  const b1 = must(bytes[offset + 1], "readUInt24LE: offset+1 within bytes.length");
-  const b2 = must(bytes[offset + 2], "readUInt24LE: offset+2 within bytes.length");
-  return b0 | (b1 << 8) | (b2 << 16);
+  return must(bytes[offset], "readUInt24LE: offset within bytes.length") | (must(bytes[offset + 1], "readUInt24LE: offset+1 within bytes.length") << 8) | (must(bytes[offset + 2], "readUInt24LE: offset+2 within bytes.length") << 16);
 }
 
 /**
@@ -273,7 +265,6 @@ function extractWebpDimensions(bytes: Buffer): ImageDimensions | null {
     // packed little-endian across the next 4 bytes.
     if (bytes.length < payload + 5) return null;
     if (bytes[payload] !== 0x2f) return null;
-    // `bytes.length < payload + 5` was checked above, so payload+1..+4 are in range.
     const b1 = must(bytes[payload + 1], "extractWebpDimensions VP8L: payload+1 within bytes.length");
     const b2 = must(bytes[payload + 2], "extractWebpDimensions VP8L: payload+2 within bytes.length");
     const b3 = must(bytes[payload + 3], "extractWebpDimensions VP8L: payload+3 within bytes.length");
@@ -297,7 +288,6 @@ function extractSvgDimensions(bytes: Buffer): ImageDimensions | null {
   const widthMatch = svgTag.match(/\bwidth="([0-9.]+)(?:px)?"/i);
   const heightMatch = svgTag.match(/\bheight="([0-9.]+)(?:px)?"/i);
   if (widthMatch && heightMatch) {
-    // Each pattern's 1st group is mandatory, so a match always captures it.
     const width = Math.round(Number.parseFloat(must(widthMatch[1], "extractSvgDimensions: width match has no capture group")));
     const height = Math.round(Number.parseFloat(must(heightMatch[1], "extractSvgDimensions: height match has no capture group")));
     if (Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0) {
@@ -309,7 +299,6 @@ function extractSvgDimensions(bytes: Buffer): ImageDimensions | null {
     /\bviewBox="\s*[-0-9.]+\s+[-0-9.]+\s+([0-9.]+)\s+([0-9.]+)\s*"/i,
   );
   if (viewBoxMatch) {
-    // Both groups are mandatory, so a match always captures them.
     const width = Math.round(Number.parseFloat(must(viewBoxMatch[1], "extractSvgDimensions: viewBox match has no width capture group")));
     const height = Math.round(Number.parseFloat(must(viewBoxMatch[2], "extractSvgDimensions: viewBox match has no height capture group")));
     if (Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0) {
@@ -381,7 +370,6 @@ function stripJpegMetadata(bytes: Buffer): StripImageResult {
   let offset = 2;
   while (offset + 2 <= bytes.length) {
     if (bytes[offset] !== 0xff) return { ok: false, bytes }; // not at a marker
-    // `offset + 2 <= bytes.length` (the loop condition) guarantees offset+1 is in range.
     const marker = must(bytes[offset + 1], "stripJpegMetadata: offset within bytes.length");
 
     if (marker === 0xd9) {
@@ -403,7 +391,6 @@ function stripJpegMetadata(bytes: Buffer): StripImageResult {
       if (scan > bytes.length) return { ok: false, bytes };
       while (scan + 1 < bytes.length) {
         if (bytes[scan] === 0xff) {
-          // The while condition `scan + 1 < bytes.length` guarantees this is in range.
           const m = must(bytes[scan + 1], "stripJpegMetadata scan: scan+1 within bytes.length");
           if (m === 0x00 || (m >= 0xd0 && m <= 0xd7)) {
             scan += 2; // stuffed byte or restart marker → part of the scan
@@ -516,7 +503,6 @@ function stripWebpMetadata(bytes: Buffer): StripImageResult {
     let chunk = bytes.subarray(offset, chunkEnd);
     if (fourCC === "VP8X" && chunk.length > 8) {
       // Clear the EXIF (0x08) and XMP (0x04) flag bits in the first payload byte.
-      // `chunk.length > 8` above guarantees index 8 is in range.
       const flags = must(chunk[8], "stripWebpMetadata: chunk has more than 8 bytes");
       const cleared = flags & ~0b0000_1100;
       if (cleared !== flags) {
@@ -683,8 +669,6 @@ export function storableLogoDataUrl(
     );
     return value;
   }
-  // Both groups are mandatory (no trailing `?`), so a successful match always
-  // captures them (the 2nd may capture an empty string, never undefined).
   const declaredType = must(match[1], "storableLogoDataUrl: matched data URI has no media-type capture group");
   const base64 = must(match[2], "storableLogoDataUrl: matched data URI has no base64 capture group");
   const bytes = Buffer.from(base64, "base64");
