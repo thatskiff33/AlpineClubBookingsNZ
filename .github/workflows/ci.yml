@@ -86,9 +86,13 @@ jobs:
   # `npm audit --audit-level=high` builds its tree from `package-lock.json` and
   # returns the same verdict with and without `node_modules` present — exit 0 on
   # this lock either way, exit 1 either way with the deepmerge-ts advisory planted
-  # back into the lock. The command is unchanged from the one `verify` ran, and
-  # skipping the install keeps this gate from reddening for anything except an
-  # advisory, which is the entire point of separating it.
+  # back into the lock. Skipping the install keeps this gate from reddening for
+  # anything except an advisory, which is the entire point of separating it.
+  #
+  # The step below no longer runs that bare command — since #3254 it runs the
+  # wrapper around it, for the reasons written at the step itself. The audit
+  # semantics are unchanged: same `--audit-level=high` threshold, same
+  # lockfile-only, install-free reading of the tree.
   #
   # This does NOT duplicate the `dependency-review` job above, and neither
   # replaces the other. That one is pull-request-only — it carries a job-level
