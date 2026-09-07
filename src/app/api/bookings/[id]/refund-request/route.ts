@@ -8,6 +8,7 @@ import { sendAdminRefundRequestAlert } from "@/lib/email";
 import { getRemainingRefundableCents } from "@/lib/booking-payment-state";
 import { hasAdminAccess } from "@/lib/access-roles";
 import { deletedBookingRefusalResponse } from "@/lib/deleted-booking-refusal";
+import { formatCents } from "@/lib/utils";
 
 const createSchema = z.object({
   reason: z.string().min(10).max(2000),
@@ -145,7 +146,7 @@ export async function POST(
   if (requestedAmountCents && requestedAmountCents > maxRefundable) {
     return NextResponse.json(
       {
-        error: `Requested amount exceeds maximum refundable amount of $${(maxRefundable / 100).toFixed(2)}`,
+        error: `Requested amount exceeds maximum refundable amount of ${formatCents(maxRefundable)}`,
       },
       { status: 400 }
     );
@@ -170,7 +171,7 @@ export async function POST(
     category: "payment",
     outcome: "success",
     summary: "Refund appeal submitted",
-    details: `Refund appeal submitted${requestedAmountCents ? ` for $${(requestedAmountCents / 100).toFixed(2)}` : ""}`,
+    details: `Refund appeal submitted${requestedAmountCents ? ` for ${formatCents(requestedAmountCents)}` : ""}`,
     metadata: {
       bookingId,
       requestedAmountCents: requestedAmountCents ?? null,

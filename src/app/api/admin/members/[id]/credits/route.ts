@@ -9,6 +9,7 @@ import {
 } from "@/lib/member-credit";
 import { getClientIp } from "@/lib/rate-limit";
 import logger from "@/lib/logger";
+import { formatCentsPlain } from "@/lib/utils";
 import {
   ADMIN_ADJUSTMENT_IDEMPOTENCY_CONFLICT,
   MemberCreditValidationError,
@@ -90,7 +91,7 @@ export async function POST(
       requestId: result.request.id,
       requestStatus: result.request.status,
       replayed: result.replayed,
-      message: `Adjustment of ${parsed.data.amountCents > 0 ? "+" : ""}${(parsed.data.amountCents / 100).toFixed(2)} submitted for approval`,
+      message: `Adjustment of ${parsed.data.amountCents > 0 ? "+" : ""}${formatCentsPlain(parsed.data.amountCents)} submitted for approval`,
     });
   } catch (error) {
     logger.error({ err: error }, "Error creating credit adjustment");
