@@ -1060,24 +1060,23 @@ export async function modifyBookingDates({
               dateEditEvidence.storedNightPriceByGuestId.get(g.id),
               nightDates,
             )
-          : priced.perNightCents.map((priceCents, index) => {
-              // #3275 gave every written night a provenance, and this arm is
-              // the reprice one. The source vector and the price vector are
-              // both built from `nightDates` above, so a short source vector is
-              // a defect in whoever built one of them rather than a state a
-              // night can be in — and there is no default available here that
-              // is not invented evidence about how an amount was arrived at.
-              // So refuse by name, the way this file already refuses an absent
-              // priced row.
-              const priceSource = repricedSources[index];
-              if (priceSource === undefined) {
-                throw new Error(
-                  `Repriced night sources are shorter than the priced vector for booking guest ${g.id}: ` +
-                    `${repricedSources.length} source(s) for ${priced.perNightCents.length} night price(s).`,
-                );
-              }
-              return { priceCents, priceSource };
-            });
+          : // #3275 gave every written night a provenance, and this arm is the
+            // reprice one. It is built over `nightDates` — the set actually
+            // written — rather than over the price vector, because the two are
+            // NOT the same length: a breakdown can carry per-night amounts with
+            // no night list, in which case nothing is written at all and the
+            // `createMany` below is skipped entirely.
+            //
+            // NO REFUSAL HERE, deliberately. An earlier revision of this port
+            // refused a short source vector by name and that was wrong twice
+            // over: it fired on the empty-night case where nothing is written,
+            // and it added a SECOND answer to a condition this file already
+            // answers one screen below, where `classifyNightPriceToWrite`
+            // raises the member-visible 400. One condition, one answer (#3031).
+            nightDates.map((_stayDate, index) => ({
+              priceCents: priced.perNightCents[index],
+              priceSource: repricedSources[index],
+            }));
         if (nightDates.length > 0) {
           await tx.bookingGuestNight.createMany({
             data: nightDates.map((stayDate, k) => {
