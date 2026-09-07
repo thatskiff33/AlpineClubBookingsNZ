@@ -570,21 +570,6 @@ src/lib/deploy/warmup-run.ts:TS2345:Argument of type 'PlannedWarmupRoute | undef
 src/lib/deploy/warmup-run.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
 src/lib/deploy/warmup-run.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
 src/lib/deploy/warmup-run.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/diagnostics/answer/provenance.ts:TS2532:Object is possibly 'undefined'.
-src/lib/diagnostics/knowledge/allowlist.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/diagnostics/knowledge/excerpt.ts:TS2322:Type 'string | undefined' is not assignable to type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/diagnostics/knowledge/excerpt.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/diagnostics/knowledge/excerpt.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/diagnostics/knowledge/excerpt.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/diagnostics/knowledge/excerpt.ts:TS2532:Object is possibly 'undefined'.
-src/lib/diagnostics/knowledge/excerpt.ts:TS2532:Object is possibly 'undefined'.
-src/lib/diagnostics/knowledge/excerpt.ts:TS2532:Object is possibly 'undefined'.
-src/lib/diagnostics/knowledge/excerpt.ts:TS2532:Object is possibly 'undefined'.
-src/lib/diagnostics/knowledge/excerpt.ts:TS2532:Object is possibly 'undefined'.
-src/lib/diagnostics/knowledge/excerpt.ts:TS2532:Object is possibly 'undefined'.
-src/lib/diagnostics/knowledge/retrieve.ts:TS2532:Object is possibly 'undefined'.
-src/lib/diagnostics/knowledge/secret-scan.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
-src/lib/diagnostics/page-context/match.ts:TS2345:Argument of type 'string | undefined' is not assignable to parameter of type 'string'. Type 'undefined' is not assignable to type 'string'.
 src/lib/email-delivery.ts:TS18048:'b' is possibly 'undefined'.
 src/lib/email-delivery.ts:TS18048:'b' is possibly 'undefined'.
 src/lib/email-delivery.ts:TS18048:'b' is possibly 'undefined'.
