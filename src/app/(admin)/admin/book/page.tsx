@@ -812,7 +812,7 @@ export default function AdminBookPage() {
           </span>
           <span className="text-muted-foreground">&rarr;</span>
           <span className={step === "review" ? "app-step-active" : "text-muted-foreground"}>
-            3. Review & Confirm
+            3. Review &amp; Confirm
           </span>
         </div>
       )}

@@ -405,7 +405,7 @@ export default function RefundRequestsPage() {
       {viewOnlyBanner}
       <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold">Refund Appeals & Credits</h1>
+        <h1 className="text-3xl font-bold">Refund Appeals &amp; Credits</h1>
         <p className="text-muted-foreground mt-1">
           Review refund appeals and manual credit approvals from one queue
         </p>

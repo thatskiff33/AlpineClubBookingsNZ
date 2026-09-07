@@ -15,7 +15,6 @@ function collectSourceFiles(dir: string): string[] {
 
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     // Test helper: walks the repo source tree under fixed SCAN_ROOTS; entry.name comes from readdir, not user input.
-    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
     const fullPath = path.join(dir, entry.name);
 
     if (entry.isDirectory()) {

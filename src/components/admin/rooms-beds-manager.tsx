@@ -826,7 +826,7 @@ export function RoomsBedsManager({
       ) : null}
       <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">Rooms & Beds</h1>
+          <h1 className="text-2xl font-bold text-foreground">Rooms &amp; Beds</h1>
           <div className="mt-2 flex flex-wrap gap-2">
             {payload ? (
               <>
