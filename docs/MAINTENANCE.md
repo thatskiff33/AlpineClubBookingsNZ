@@ -92,6 +92,15 @@ CI also runs independent static and container checks:
   longer needs it. `package.json` is strict JSON and cannot carry a comment, so
   the register below — not the manifest — is where an override records why it
   exists and when it retires. Adding an override means adding a row.
+- Exact-pinning a **direct** dependency *below its newest release, because the
+  newer one is broken*, is a **hold**: it needs a row in the hold register below
+  and a written condition that lifts it. An exact pin at the version that is
+  already current is **not** a hold and needs no row — that covers the
+  version-coupling pins (`next` with `eslint-config-next`, `react` with
+  `react-dom`, `@prisma/client` with `@prisma/adapter-pg`) and every other exact
+  pin Dependabot steps forward each release. Thirteen direct dependencies are
+  exact-pinned today and only one of them is a hold; the difference is whether
+  anything is being held back, not whether the range has a caret.
 - Use test or demo credentials for Stripe, Xero, SES, and Sentry in local and
   CI environments.
 
@@ -124,6 +133,38 @@ four are load-bearing; none is inert.
 | `eslint-plugin-react-hooks` | **Compatibility hold**, not security — `b1989558f` introduced it as "hold eslint-plugin-react-hooks at 7.0.1", and it has since been stepped forward to 7.1.1. Currently non-binding: natural resolution lands on 7.1.1 with or without it. | The hold is reviewed and lifted on purpose. |
 | `browserslist` (`^4.28.7`) | **Security.** Two high advisories against `browserslist <= 4.28.6` — unbounded memory growth with no cache eviction (GHSA-c83g-rgw3-j3cx), and an uncaught crash / prototype write via untrusted `browserslist-stats.json` (GHSA-73wf-gq98-2v4g). Transitive only; nothing declares it directly. A **range**, not a pin, so it keeps floating with future patches. | the deepest parent requiring it admits 4.28.7 or later, which `npm audit` will show by this entry becoming inert. |
 | `mysql2` (`^3.22.0`) | **Security, on a driver this application never loads.** `mysql2 < 3.22.0` carries an auth-plugin downgrade to `mysql_clear_password` that leaks plaintext credentials (GHSA-3f6p-5ww8-9rcr). It arrives transitively through `prisma`, and this product's datasource is `provider = "postgresql"` — nothing in `src/` imports it, so the advisory is not reachable here. It is overridden rather than accepted because `npm audit --audit-level=high` is a required check and cannot express "unreachable", and because the only remedy npm offers is `--force`, which **downgrades Prisma** and is a far larger change than the one it avoids. A **range**, not a pin. | `prisma` requires mysql2 3.22.0 or later. |
+
+### The direct-dependency hold register
+
+An override constrains what a *parent* is allowed to resolve. A hold is the other
+thing: a package this project declares itself, deliberately pinned to an exact
+version so a Dependabot group PR cannot carry it forward. It is recorded here and
+not in the table above, because the removal-and-re-resolve check described below
+does not apply — nothing transitive is being forced, so an inert hold looks
+identical to a load-bearing one.
+
+The word also appears in the override register above, in the older and looser
+sense: the `eslint-plugin-react-hooks` row calls itself a "compatibility hold"
+because it is kept for a compatibility reason rather than an advisory. That entry
+is an **override** on a transitive package and it stays where it is. Only a
+direct dependency this project declares belongs in the table below.
+
+Two rules, both learned the expensive way:
+
+- **A hold must be an exact version, never a `^` floor.** The preference for a
+  range stated above is about *overrides*, where the goal is to raise a floor. A
+  hold has the opposite goal, and `"^10.70.0"` does not hold anything back: the
+  range admits the broken release, so any re-resolve lands on it again. Measured
+  on #3313, where the caret was tried first and the lockfile came back on
+  **10.72.0 — the release being held back from.** The exact pin is also what
+  makes a future move show up as a visible `package.json` diff rather than as a
+  lockfile line nobody reads.
+- **A hold needs a written retirement condition, or it becomes permanent.** The
+  package stops being maintained by the system the moment it is pinned.
+
+| hold | why it exists | retires when |
+| --- | --- | --- |
+| `@sentry/nextjs` (`10.70.0`, exact) | **Compatibility**, not security. `@sentry/server-utils@10.72.0` removed `@apm-js-collab/code-transformer-bundler-plugins`, `@apm-js-collab/tracing-hooks` and `meriyah` from its dependencies, but the code it ships still loads the first of those. Importing it throws `TypeError: The URL must be of scheme file` from `orchestrion/bundler/webpack.js`, which kills six test files at import time and fails a seventh. Nothing in this repository is at fault and there is no local workaround worth carrying, so the version is held instead (#3313, #3304). | Sentry ships a release whose `@sentry/server-utils` loads only what it declares. Verify by pinning that version in a scratch copy and running the suites named in #3313, not by reading the changelog. |
 
 ### Checking whether an override still earns its place
 
