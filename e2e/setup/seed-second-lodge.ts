@@ -110,6 +110,7 @@ async function createBookingWithGuests(opts: {
           bookingGuestId: guestRow.id,
           stayDate: d(night),
           priceCents: NIGHTLY_CENTS,
+          priceSource: "SOLD",
         },
       });
     }

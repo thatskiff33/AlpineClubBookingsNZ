@@ -79,6 +79,17 @@ function migrationSql(name: string): string {
   return readFileSync(path.join(MIGRATIONS_DIR, name, "migration.sql"), "utf8");
 }
 
+/**
+ * A verification case already owns a rollback transaction. Remove only a
+ * migration's complete outer transaction envelope before running it there;
+ * replaying the committed migration chain still executes the real envelope.
+ */
+function sqlInsideVerificationTransaction(sql: string): string {
+  const match = sql.match(/^\s*BEGIN\s*;([\s\S]*)COMMIT\s*;\s*$/i);
+  if (!match) return sql;
+  return match[1];
+}
+
 // ---------------------------------------------------------------------------
 // Structural checks. These run with or without a database, so the arrangement
 // that makes the real checks happen cannot quietly come undone.
@@ -363,8 +374,19 @@ describeWithDatabase("data migrations against a real PostgreSQL (#2418)", () => 
       }
       for (const version of versions) {
         // The migration under test, or a deliberately mutated copy of it,
-        // inside a transaction this case will roll back.
-        await runScript(version, `applying the migration for "${testCase.name}"`);
+        // inside a transaction this case will roll back. A migration may carry
+        // its own production BEGIN/COMMIT envelope; do not let that commit the
+        // fixture's enclosing transaction.
+        await runScript(
+          sqlInsideVerificationTransaction(version),
+          `applying the migration for "${testCase.name}"`,
+        );
+      }
+      if (testCase.afterMigration?.trim()) {
+        await runScript(
+          testCase.afterMigration,
+          `exercising the migrated shape for "${testCase.name}"`,
+        );
       }
       for (const expectation of testCase.expectations) {
         // Test fixture: the fixture's own read-only assertion query.

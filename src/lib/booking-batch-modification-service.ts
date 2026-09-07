@@ -347,7 +347,16 @@ function buildIdentityOnlyPricing(booking: LoadedBookingForModify): PricingResul
           `Booking guest ${guest.id} night ${night.stayDate.toISOString()} was loaded without its stored sold price (#3031)`,
         );
       }
-      return { stayDate: night.stayDate, priceCents: night.priceCents };
+      if (night.priceSource === undefined) {
+        throw new Error(
+          `Booking guest ${guest.id} night ${night.stayDate.toISOString()} was loaded without price provenance (#3275)`,
+        );
+      }
+      return {
+        stayDate: night.stayDate,
+        priceCents: night.priceCents,
+        priceSource: night.priceSource,
+      };
     }),
   );
   return {
@@ -361,6 +370,7 @@ function buildIdentityOnlyPricing(booking: LoadedBookingForModify): PricingResul
         priceCents: guest.priceCents,
         perNightCents: echoedNights[index].map((night) => night.priceCents),
         nightDates: echoedNights[index].map((night) => night.stayDate),
+        perNightPriceSources: echoedNights[index].map((night) => night.priceSource),
       })),
     },
     // #3170: RATES ONLY, and the pair stays aligned. A night whose stored price
@@ -372,7 +382,7 @@ function buildIdentityOnlyPricing(booking: LoadedBookingForModify): PricingResul
     // positions no longer matched its dates.
     guestNightRates: booking.guests.map((guest, index) => {
       const rated = echoedNights[index].filter(
-        (night): night is { stayDate: Date; priceCents: number } =>
+        (night): night is typeof night & { priceCents: number } =>
           night.priceCents !== null,
       );
       return {
@@ -905,7 +915,7 @@ export async function modifyBookingBatch({
         // pricing, promo targeting and the client's guest list must all agree
         // on guest order, so never rely on the planner's unordered scan.
         guests: {
-          include: { nights: { select: { stayDate: true, priceCents: true } } },
+          include: { nights: { select: { stayDate: true, priceCents: true, priceSource: true } } },
           orderBy: [{ createdAt: "asc" }, { id: "asc" }],
         },
         payment: true,

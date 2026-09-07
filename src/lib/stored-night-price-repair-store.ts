@@ -471,6 +471,7 @@ async function applyFencedStrandNightPrices({
             bookingGuestId,
             stayDate: dateOnlyInstantOf(write.date),
             priceCents: write.priceCents,
+            priceSource: "OFFICER_PRICED",
           },
         });
       } catch (err) {
@@ -493,7 +494,10 @@ async function applyFencedStrandNightPrices({
         // carries a price is not matched and cannot be rewritten there at all.
         priceCents: write.expectedPriceCents,
       },
-      data: { priceCents: write.priceCents },
+      data: {
+        priceCents: write.priceCents,
+        priceSource: "OFFICER_PRICED",
+      },
     });
     if (written.count !== 1) {
       throw new ManualBookingPaymentError(NIGHT_PRICE_REPAIR_RACED_MESSAGE, 409);

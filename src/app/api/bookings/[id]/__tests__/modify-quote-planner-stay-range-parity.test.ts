@@ -265,6 +265,7 @@ function liveGuest(
     nights: (nights ?? nightsBetween(D(start), D(end))).map((night) => ({
       stayDate: D(night),
       priceCents: BOOKED_NIGHT_CENTS,
+      priceSource: "SOLD" as const,
     })),
   };
 }
@@ -323,7 +324,11 @@ type PricedGuest = {
   stayStart: Date;
   stayEnd: Date;
   nights?: ReadonlyArray<Date> | null;
-  lockedNightPrices?: ReadonlyArray<{ stayDate: Date; priceCents: number }>;
+  lockedNightPrices?: ReadonlyArray<{
+    stayDate: Date;
+    priceCents: number;
+    priceSource: "SOLD";
+  }>;
 };
 
 function priceParty(guests: ReadonlyArray<PricedGuest>) {
