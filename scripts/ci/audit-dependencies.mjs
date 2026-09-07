@@ -242,6 +242,12 @@ export function classifyAuditRun({ exitCode, stdout = "", stderr = "" }) {
 /** Spawns the real `npm audit`, capturing both streams. */
 export function runNpmAudit({ cwd = process.cwd() } = {}) {
   return new Promise((resolve) => {
+    // `shell: true` on Windows only, because `npm` there is `npm.cmd` and Node
+    // refuses to spawn a batch file without a shell. It prints a DEP0190
+    // deprecation warning about unescaped arguments; that warning is about
+    // arguments an attacker could influence, and every element of
+    // AUDIT_COMMAND is a module-level constant in this file. CI runs on Linux,
+    // where the shell is not used at all.
     const child = spawn("npm", AUDIT_COMMAND, {
       cwd,
       shell: process.platform === "win32",
