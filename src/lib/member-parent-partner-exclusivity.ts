@@ -287,16 +287,19 @@ export async function loadMemberMergeExclusivityTopology(
     participants.add(member.id);
     if (member.parentMemberId) participants.add(member.parentMemberId);
     if (member.secondaryParentId) participants.add(member.secondaryParentId);
+    const currentParentIds = [
+      member.parentMemberId,
+      member.secondaryParentId,
+    ];
+    for (const parentId of currentParentIds) {
+      if (parentId) recordProspectivePair(member.id, parentId);
+    }
     // The duplicate row is deleted; its own outbound parent pointers do not
     // move onto the master (the established master-wins merge rule).
     if (member.id === duplicateId) continue;
     const childId = finalId(member.id);
-    for (const parentIdBefore of [
-      member.parentMemberId,
-      member.secondaryParentId,
-    ]) {
+    for (const parentIdBefore of currentParentIds) {
       if (!parentIdBefore) continue;
-      recordProspectivePair(member.id, parentIdBefore);
       const parentId = finalId(parentIdBefore);
       if (parentId !== childId) {
         parentPairs.add(pairKey(childId, parentId));

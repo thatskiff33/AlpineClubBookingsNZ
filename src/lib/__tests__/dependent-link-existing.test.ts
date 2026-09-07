@@ -745,13 +745,14 @@ describe("POST /api/admin/members/[id]/dependents/link", () => {
         const lockTexts = tx.$executeRaw.mock.calls.map((call) =>
           call.flat().join(" "),
         );
-        expect(lockTexts).toHaveLength(4);
+        expect(lockTexts).toHaveLength(5);
         expect(lockTexts.slice(0, 2).every((text) =>
           text.includes("member-lifecycle:"),
         )).toBe(true);
-        expect(lockTexts.slice(2).every((text) =>
+        expect(lockTexts.slice(2, 4).every((text) =>
           text.includes("member-partner-link:"),
         )).toBe(true);
+        expect(lockTexts[4]).toContain("MemberParentPartnerExclusion");
       },
     );
 

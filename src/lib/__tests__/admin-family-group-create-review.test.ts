@@ -808,16 +808,17 @@ describe("reviewAdminFamilyGroupRequest — CHILD_REQUEST memberless-group guard
     expect(result.body).toEqual({ success: true, action: "approve" });
     // #1936: the linked member's member-lifecycle advisory lock is taken in-tx
     // so the group link serializes with application-approval mapping.
-    expect(txExecuteRaw).toHaveBeenCalledTimes(4);
+    expect(txExecuteRaw).toHaveBeenCalledTimes(5);
     const lockTexts = txExecuteRaw.mock.calls.map((call) =>
       call.flat().join(" "),
     );
     expect(lockTexts.slice(0, 2).every((text) =>
       text.includes("member-lifecycle:"),
     )).toBe(true);
-    expect(lockTexts.slice(2).every((text) =>
+    expect(lockTexts.slice(2, 4).every((text) =>
       text.includes("member-partner-link:"),
     )).toBe(true);
+    expect(lockTexts[4]).toContain("MemberParentPartnerExclusion");
     expect(txUpsert).toHaveBeenCalledWith(
       expect.objectContaining({
         // #2520: membership only — no `role` is written any more.

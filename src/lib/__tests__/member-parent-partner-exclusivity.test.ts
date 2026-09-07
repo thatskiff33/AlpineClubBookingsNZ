@@ -5,6 +5,7 @@ import {
   MEMBER_PARTNER_RELATIONSHIP_SELECT,
   MEMBER_PARENT_PARTNER_EXCLUSION_CONSTRAINT,
   MEMBER_PARENT_PARTNER_EXCLUSION_DATABASE_MESSAGE,
+  acquireMemberParentPartnerPairLocks,
   directParentPairWhere,
   hasAnyPartnerRelationship,
   hasDirectParentRelationship,
@@ -145,6 +146,45 @@ describe("direct parent/partner exclusivity predicates", () => {
   });
 });
 
+describe("database pair-row serialization", () => {
+  it("canonicalizes, deduplicates and locks raw pairs in C order with DO UPDATE", async () => {
+    const executeRaw = vi.fn().mockResolvedValue(1);
+
+    await acquireMemberParentPartnerPairLocks(
+      { $executeRaw: executeRaw } as never,
+      [
+        ["member-z", "member-a"],
+        ["member-a", "member-z"],
+        ["member-c", "member-b"],
+      ],
+    );
+
+    expect(executeRaw).toHaveBeenCalledTimes(2);
+    expect(executeRaw.mock.calls.map((call) => call.slice(1))).toEqual([
+      ["member-a", "member-z"],
+      ["member-b", "member-c"],
+    ]);
+    const sql = executeRaw.mock.calls
+      .map((call) => (call[0] as TemplateStringsArray).join("?"))
+      .join("\n");
+    expect(sql).toContain("ON CONFLICT");
+    expect(sql).toContain("DO UPDATE");
+    expect(sql).not.toContain("DO NOTHING");
+  });
+
+  it("fails closed before SQL for an empty or self pair", async () => {
+    const executeRaw = vi.fn();
+
+    await expect(
+      acquireMemberParentPartnerPairLocks(
+        { $executeRaw: executeRaw } as never,
+        [["member-a", "member-a"]],
+      ),
+    ).rejects.toThrow("two distinct member ids");
+    expect(executeRaw).not.toHaveBeenCalled();
+  });
+});
+
 describe("Prisma exclusion-error decoding", () => {
   it("walks adapter cause/originalMessage shapes", () => {
     const error = {
@@ -233,6 +273,11 @@ describe("member merge topology projection", () => {
         "discarded-parent",
         "duplicate",
         "master",
+      ],
+      prospectivePairs: [
+        ["child-z", "duplicate"],
+        ["child-z", "master"],
+        ["discarded-parent", "duplicate"],
       ],
       conflictingPairCount: 1,
     });
