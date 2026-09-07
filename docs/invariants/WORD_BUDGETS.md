@@ -80,7 +80,6 @@ file; the checker treats an absent register as "no exceptions, no debt".
 | `INV-DATE-013` | 781 |
 | `INV-GUEST-016` | 781 |
 | `INV-INT-016` | 762 |
-| `INV-PAY-053` | 738 |
 | `INV-HOST-049` | 715 |
 | `INV-HOST-029` | 707 |
 | `INV-PAY-057` | 696 |

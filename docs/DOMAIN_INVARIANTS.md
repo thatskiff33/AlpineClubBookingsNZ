@@ -222,6 +222,8 @@ Prefix `INV-PAY`.
 | `INV-PAY-074` | A succeeded SetupIntent is not, alone, proof of a chargeable card |
 | `INV-PAY-075` | A cancelled SetupIntent leaves the row alone; the form still shows |
 | `INV-PAY-053` | Off-session charging needs SetupIntent provenance, decided in one place |
+| `INV-PAY-076` | No charge claim writes the card column; a captured charge does |
+| `INV-PAY-077` | A SetupIntent id on a legacy row does not prove its card |
 | `INV-PAY-054` | An unusable saved card is terminal for the cron; escalated once |
 | `INV-PAY-055` | One charge attempt is one durable ledger row with its own key |
 | `INV-PAY-056` | A payment recovery becomes terminally failed in exactly one place |

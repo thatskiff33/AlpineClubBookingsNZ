@@ -1431,47 +1431,60 @@ _Split from `INV-PAY-052` (#3266, epic #3270)._
   card checkout therefore leaves the child with NO card, and the child takes the
   same payment-link path as a child of an Internet-Banking parent
   (`INV-CAP-005`), instead of a charge that cannot succeed.
-  - **No charge CLAIM writes the card column.** The claim's upsert
-    (`savedPaymentMethodRowStamp`, spread by the settlement cron and the admin
-    confirm-pending-guests route) writes the `stripeCustomerId` the booking is
-    charged under and nothing else, whichever row supplied the card. Not the
-    parent's payment method: copying it is what turned a one-off checkout
-    artefact into a "saved card" the admin button and both charge routes then
-    trusted — in production the parent and child rows carried the identical
-    payment method. And not the booking's own payment method either, even
-    though writing it back looks like a no-op: the claim races the setup-intent
-    route's replacement mint, which clears the payment method beside a fresh
-    `stripeSetupIntentId`, and a write-back of the value the claim read would
-    leave the old card next to the new id — a card mid-replacement that passes
-    this very check. A claim that writes only the customer can resurrect nothing.
-  - **A captured charge records the card that paid, as on every paid row, and
-    that copy never reads as reusable.** The claim is not the only writer. After
-    a charge attempt, `upsertPaymentIntentTransaction` →
-    `reconcilePaymentAggregates` mirrors the latest primary attempt's payment
-    method onto the row whether it succeeded, failed or is still pending, and
-    `markBookingPaymentSucceeded` writes the payment method that paid. So a PAID
-    child charged on its parent's card carries that card, and a PENDING child
-    whose borrowed charge failed or is pending carries it too — both without a
-    `stripeSetupIntentId`, so `reusableSavedPaymentMethodOnRow` offers neither
-    for a second charge. The predicate is what makes the copy harmless, not the
-    absence of the copy. A legacy row of the laundered shape — customer and
-    payment method, no `stripeSetupIntentId` — reads as "no card" for the same
-    reason, which repairs it without a migration.
-  - **What the proxy does not prove, stated so nobody widens it by accident.**
-    On a legacy row, `stripeSetupIntentId` does not prove the payment method
-    beside it is the SetupIntent's card: before `INV-PAY-054`'s derivation rule
-    a later Payment Element capture on a row still carrying an old SetupIntent
-    id overwrote the payment method with a one-off one, which passed this
-    check. Since that rule the only writers of the card column are the guarded
-    SetupIntent stamp, the ledger reconcile — which leaves a row carrying a
-    SetupIntent alone — and the null-writers, so a row carrying a SetupIntent
-    written after it shipped holds that intent's card or nothing and the proxy
-    is exact for it; the hazard survives only in rows the old reconcile wrote,
-    and #3268's terminal handling of a Stripe refusal is the backstop there.
-    Nor does it prove the SetupIntent succeeded: the
-    setup-intent route stamps a freshly minted id, and a row holding a stale
-    payment method beside a replacement id is #3266's repair. The rule here is
-    the gate, not the whole defence.
+
+- The rest of this rule: the write-time guard `INV-PAY-076`; what the SetupIntent proxy does not prove `INV-PAY-077`.
+
+## INV-PAY-076
+
+_Split from `INV-PAY-053` (#3269, epic #3270)._
+
+- **No charge CLAIM writes the card column.** The claim's upsert
+  (`savedPaymentMethodRowStamp`, spread by the settlement cron and the admin
+  confirm-pending-guests route) writes the `stripeCustomerId` the booking is
+  charged under and nothing else, whichever row supplied the card. Not the
+  parent's payment method: copying it is what turned a one-off checkout
+  artefact into a "saved card" the admin button and both charge routes then
+  trusted — in production the parent and child rows carried the identical
+  payment method. And not the booking's own payment method either, even
+  though writing it back looks like a no-op: the claim races the setup-intent
+  route's replacement mint, which clears the payment method beside a fresh
+  `stripeSetupIntentId`, and a write-back of the value the claim read would
+  leave the old card next to the new id — a card mid-replacement that passes
+  this very check. A claim that writes only the customer can resurrect nothing.
+
+- **A captured charge records the card that paid, as on every paid row, and
+  that copy never reads as reusable.** The claim is not the only writer. After
+  a charge attempt, `upsertPaymentIntentTransaction` →
+  `reconcilePaymentAggregates` mirrors the latest primary attempt's payment
+  method onto the row whether it succeeded, failed or is still pending, and
+  `markBookingPaymentSucceeded` writes the payment method that paid. So a PAID
+  child charged on its parent's card carries that card, and a PENDING child
+  whose borrowed charge failed or is pending carries it too — both without a
+  `stripeSetupIntentId`, so `reusableSavedPaymentMethodOnRow` offers neither
+  for a second charge. The predicate is what makes the copy harmless, not the
+  absence of the copy. A legacy row of the laundered shape — customer and
+  payment method, no `stripeSetupIntentId` — reads as "no card" for the same
+  reason, which repairs it without a migration.
+
+## INV-PAY-077
+
+_Split from `INV-PAY-053` (#3269, epic #3270)._
+
+- **What the proxy does not prove, stated so nobody widens it by accident.**
+  On a legacy row, `stripeSetupIntentId` does not prove the payment method
+  beside it is the SetupIntent's card: before `INV-PAY-054`'s derivation rule
+  a later Payment Element capture on a row still carrying an old SetupIntent
+  id overwrote the payment method with a one-off one, which passed this
+  check. Since that rule the only writers of the card column are the guarded
+  SetupIntent stamp, the ledger reconcile — which leaves a row carrying a
+  SetupIntent alone — and the null-writers, so a row carrying a SetupIntent
+  written after it shipped holds that intent's card or nothing and the proxy
+  is exact for it; the hazard survives only in rows the old reconcile wrote,
+  and #3268's terminal handling of a Stripe refusal is the backstop there.
+  Nor does it prove the SetupIntent succeeded: the
+  setup-intent route stamps a freshly minted id, and a row holding a stale
+  payment method beside a replacement id is #3266's repair. The rule here is
+  the gate, not the whole defence.
 
 ## INV-PAY-054
 
