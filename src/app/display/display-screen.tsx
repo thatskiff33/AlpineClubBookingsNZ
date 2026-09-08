@@ -31,7 +31,6 @@ import {
 import { DISPLAY_AUTHORED_ROOT_CLASS } from "@/lib/lodge-display/css-tokens";
 import type { DisplayModuleName } from "@/lib/lodge-display/template-registry";
 import { evaluateDisplayCondition } from "@/lib/lodge-display/conditions";
-import { must } from "@/lib/indexed-access";
 import { resolveDisplayText } from "@/lib/lodge-display/display-text";
 import {
   DISPLAY_MODULE_COMPONENTS,
@@ -174,10 +173,7 @@ function Region({
     return () => clearInterval(timer);
   }, [rotates, panels.length, region.rotateSeconds]);
 
-  // The first eligible panel IS the "nothing eligible" check, and it is also
-  // what the rotation below falls back to (#2801).
-  const [firstPanel] = panels;
-  if (firstPanel === undefined) return <div className={`display-region display-region-${region.key}`} />;
+  if (panels.length === 0) return <div className={`display-region display-region-${region.key}`} />;
 
   // "stack" (issue #56): every eligible panel at once — the sidebar-card
   // treatment; "rotate" (default): one panel at a time on the region timer.
@@ -191,14 +187,11 @@ function Region({
     );
   }
 
-  // `index % panels.length` is in range for a non-empty list, so the fallback
-  // is unreachable. It is `firstPanel` rather than a throw because this is an
-  // unattended wall surface (LTV-030, ADR-003 §5): showing the first eligible
-  // panel is always better than blanking the wall.
-  const panel = panels[index % panels.length] ?? firstPanel;
+  const panel = panels[index % panels.length];
   return (
     <div className={`display-region display-region-${region.key}`}>
-      <Panel panel={panel} state={state} />
+      {/* In range for the non-empty list checked above; an empty region rather than a throw, because a wall is unattended (LTV-030) (#2801). */}
+      {panel ? <Panel panel={panel} state={state} /> : null}
     </div>
   );
 }
@@ -363,10 +356,8 @@ function RotatorArea({
     return () => clearInterval(timer);
   }, [eligible.length, area.rotateSeconds]);
 
-  // `index % 0` is NaN, so an absent child IS the "no eligible children" case
-  // the length test expressed — one condition, one answer (#2801).
   const child = eligible[index % eligible.length];
-  if (child === undefined) return null;
+  if (!child) return null; // `index % 0` is NaN: absent IS "no children" (#2801)
   return (
     <SlotRender content={slotContent[`${area.key}/${child.key}`]} state={state} />
   );
@@ -527,18 +518,10 @@ function LayoutScreen({
 // serve-time validation, so no layoutRender shipped).
 // ---------------------------------------------------------------------------
 
-// Both existing arms are kept — the default key, then the first built-in. The
-// third case is the one nothing could ever do anything about: an EMPTY built-in
-// registry leaves no known-good board at all, and the old expression met that
-// by handing `undefined` on to a `.regions` read. `must` names it instead
-// (#2801), and the registry is read once rather than twice.
-const BUILT_IN_DISPLAY_TEMPLATES = listBuiltInDisplayTemplates();
-const FALLBACK_TEMPLATE: DisplayTemplateDefinition = must(
-  BUILT_IN_DISPLAY_TEMPLATES.find(
+const FALLBACK_TEMPLATE: DisplayTemplateDefinition | undefined =
+  listBuiltInDisplayTemplates().find(
     (template) => template.key === DEFAULT_DISPLAY_TEMPLATE_KEY
-  ) ?? BUILT_IN_DISPLAY_TEMPLATES[0],
-  "display fallback board: the built-in template registry is empty, so there is no known-good board to fall back to"
-);
+  ) ?? listBuiltInDisplayTemplates()[0];
 
 function FallbackBoard({
   payload,
@@ -556,6 +539,8 @@ function FallbackBoard({
   // renders after mount, downstream of an error/flag, so there is no SSR of it).
   const isPreview =
     typeof window !== "undefined" && readPreviewState().isPreview;
+  // Only an EMPTY built-in registry: no known-good board exists to show (#2801).
+  if (!FALLBACK_TEMPLATE) return null;
   return (
     <div
       className="display-screen display-fallback-board"

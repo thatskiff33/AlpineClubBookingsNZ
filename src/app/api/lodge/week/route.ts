@@ -34,29 +34,8 @@ function isDateAccessible(date: string, range: DateRange): boolean {
   return date >= range.minDate && date <= range.maxDate;
 }
 
-type WeekAuthResult = Awaited<ReturnType<typeof checkLodgeAuth>>;
-
-/**
- * The week's authorisation, and — only when it was granted — the date it was
- * granted for.
- *
- * `accepted` is `!authResult.error`, computed at the same three points the
- * caller's own `if (authResult.error)` used to read it, so the decision about
- * who gets a week payload is unchanged. What the discriminant buys is the
- * `authDate`: the refusal arms have no accepted date, and the fallback arm used
- * to answer with `dates[0]` — a value nothing reads, because the caller returns
- * the refusal before it looks. Saying that in the type replaces both an unread
- * value and the assertion the reader would otherwise have needed (#2801).
- */
-type WeekAuth =
-  | { accepted: false; authResult: WeekAuthResult }
-  | { accepted: true; authResult: WeekAuthResult; authDate: string };
-
-async function resolveWeekAuth(
-  req: NextRequest,
-  dates: readonly string[]
-): Promise<WeekAuth> {
-  let forbidden: WeekAuthResult | null = null;
+async function resolveWeekAuth(req: NextRequest, dates: readonly string[]) {
+  let forbidden: Awaited<ReturnType<typeof checkLodgeAuth>> | null = null;
 
   for (const date of dates) {
     const authResult = await checkLodgeAuth(date, {
@@ -65,7 +44,7 @@ async function resolveWeekAuth(
     });
 
     if (!authResult.error) {
-      return { accepted: true, authResult, authDate: date };
+      return { authResult, authDate: date };
     }
 
     if (authResult.status === 403) {
@@ -73,11 +52,10 @@ async function resolveWeekAuth(
       continue;
     }
 
-    return { accepted: false, authResult };
+    return { authResult, authDate: date };
   }
 
   return {
-    accepted: false,
     authResult:
       forbidden ?? {
         error: "Forbidden" as const,
@@ -85,6 +63,7 @@ async function resolveWeekAuth(
         tier: "none" as const,
         session: null,
       },
+    authDate: null,
   };
 }
 
@@ -115,23 +94,18 @@ async function handleGet(req: NextRequest) {
   }
 
   const endDate = addDaysDateOnly(startDate, WEEK_DAYS);
-  // Each day of the strip carried as one value with its own key, rather than a
-  // `Date[]` and a `string[]` read back against each other by position further
-  // down (#2801).
-  const weekDays = eachDateOnlyInRange(startDate, endDate).map((date) => ({
-    date,
-    dateKey: formatDateOnly(date),
-  }));
-  const dateKeys = weekDays.map((day) => day.dateKey);
-  const weekAuth = await resolveWeekAuth(req, dateKeys);
+  const weekDates = eachDateOnlyInRange(startDate, endDate);
+  const dateKeys = weekDates.map(formatDateOnly);
+  const { authResult, authDate } = await resolveWeekAuth(req, dateKeys);
 
-  if (!weekAuth.accepted) {
+  // #2801: `authDate` is null only on the arms that also set `error`, so this
+  // refuses exactly what it refused before, and narrows the granted day too.
+  if (authResult.error || authDate === null) {
     return NextResponse.json(
-      { error: weekAuth.authResult.error },
-      { status: weekAuth.authResult.status! }
+      { error: authResult.error },
+      { status: authResult.status! }
     );
   }
-  const { authResult, authDate } = weekAuth;
 
   const dateRange =
     "pinSession" in authResult && authResult.pinSession
@@ -225,7 +199,8 @@ async function handleGet(req: NextRequest) {
     },
   });
 
-  const days = weekDays.map(({ date, dateKey }) => {
+  const days = weekDates.map((date) => {
+    const dateKey = formatDateOnly(date);
     if (!isDateAccessible(dateKey, dateRange)) {
       return { date: dateKey, accessible: false };
     }
