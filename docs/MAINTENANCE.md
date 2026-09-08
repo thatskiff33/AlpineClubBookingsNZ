@@ -337,29 +337,59 @@ read has looked exactly like a file the scanner read and cleared.
 
 Measured for #2842 on the same pinned image: 177 of 4,219 scanned files carried
 a parse error behind a green gate, and **three were whole-file failures where no
-rule ran at all**. Two parser faults caused every one of them, and both fire on
-valid TypeScript that `tsc` and the build accept.
+rule ran at all**. **Three** parser faults cause all of them, and every one
+fires on valid TypeScript that `tsc` and the build accept.
 
-Those two are stated once, as the rule rather than as a spelling, in
+Those three are stated once, as the rule rather than as a spelling, in
 `KNOWN_CONSTRUCTS` in `scripts/ci/check-semgrep-coverage.mjs` — which is also
 the text the gate hands you when it fires, so it is the copy that has to be
 right. They are deliberately not restated here.
 
-Two traps worth knowing before you reach for a remedy, both measured:
+**Two of the three are now banned by lint and cannot come back.** #3318 added
+`scan/no-semgrep-unparsable-import-type` to `eslint.config.mjs`, rewrote the 307
+call sites that carried the first, named the four types that carried the second,
+and took the allowlist from 169 entries to 3. A partial parse of either shape
+now means the rule was bypassed or the file is outside its globs, and that is
+what to fix — not the allowlist.
 
-- the generic-call fault is about the SHAPE, not the name. 143 of the
-  allowlisted files spell it `importOriginal`, but 22 spell it
-  `vi.importActual` or `importActual`, and grepping for the first name finds
-  nothing in those. It is also specifically the EMPTY argument list — measured
-  with a minimal repro, `f<typeof import("x")>()` fails and
-  `f<typeof import("x")>("x")` parses — so ten files here carry the same
-  generic with an argument and are correctly *not* allowlisted. A rule stated
-  without that qualifier sends somebody to rewrite code that was never broken;
-- the `&amp;` remedy is for JSX **text** only. The same fault fires on a `&`
+The description of those faults was wrong three times, each time by being
+narrower than the fault, and each correction cost somebody a wrong turn. Worth
+knowing before you reach for a remedy, all measured:
+
+- **the call fault is about the SHAPE, not the name.** 143 files spelled it
+  `importOriginal`, 22 spelled it `vi.importActual` or a destructured
+  `importActual`, and grepping for the first name finds nothing in those;
+- **and it is not only the empty argument list.** #2842 corrected the
+  description to "an EMPTY argument list", measured on a single-line repro:
+  `f<typeof import("x")>()` fails and `f<typeof import("x")>("x")` parses. That
+  correction is also incomplete — a **trailing comma** breaks it just as
+  reliably: the multi-line form, with a comma after the last argument, fails
+  with "`,` was unexpected". 11 files reached the allowlist that way, because a
+  formatter split a long argument list across lines and added one. So which
+  side of the line a call sits on is decided by **print width**, which is why
+  #3318's rule reports the whole class: 23 files held the "parses today"
+  spelling and every one of them was one rename away from an entry of its own;
+- **a third fault exists that neither description reached**: an `import()` type
+  in a function **parameter** annotation, once it carries a type-argument list
+  or an indexed access. `(i: import("x").A)` parses; `(i: import("x").A<null>)`,
+  `(i: import("x").A["k"])` and `(i: (import("x").A)["k"])` all fail, while the
+  identical types parse in a return position, a variable annotation, an
+  interface property or a type alias. One allowlisted file carried this and no
+  call shape at all, so its entry read as unexplained for as long as the
+  description named only the call. The remedy is to **name the type** and use
+  the name;
+- **the `&amp;` remedy is for JSX text only.** The same fault fires on a `&`
   inside a string literal — a URL query such as
   `href="/admin/bookings?sortBy=member&sortDir=asc"` — where rewriting it
-  changes the value, and in one case the value a test asserts. Those four files
-  are on the allowlist precisely because they have no safe rewrite.
+  changes the value, and in one case the value a test asserts. The **three**
+  files left on the allowlist are there precisely because they have no safe
+  rewrite. It was reported here as four until #3318 re-measured it: the fourth
+  was unparsed for the call shape, and its own `&` never tripped anything.
+
+Each surviving entry carries its own `reason`, and the gate **refuses** an entry
+without one. The reasons used to sit in a composition summary beside the list,
+and both of that summary's clauses had gone false — a summary of a list is a
+second statement of the list (`INV-SSOT-001`).
 
 #### The coverage gate
 
@@ -396,9 +426,12 @@ floor catches the accident, not the intent.
 
 Every entry in the allowlist is a **test file**: the production files and all
 three whole-file failures the measurement found were fixed rather than listed.
-The file itself is the count — it is not restated here, because the gate exists
-to drive it down and a copied number would be wrong on the first success. Run it
-locally against a scan you produced yourself:
+The file itself is the count — the numbers above are dated facts about what
+#3318 removed, not a running total, because the gate exists to drive the list
+down and a copied total is wrong on the first success. Run it locally against a
+scan you produced yourself, and note that the scan reads the whole worktree:
+a stray `.ts` file under `.artifacts/` is scanned and will be reported as a new
+unparsed region, which is not something CI can see.
 
 ```bash
 docker run --rm -v "$PWD:/src:ro" -v "$PWD/.semgrep-out:/out" -w /src \
@@ -437,12 +470,14 @@ Two consequences worth holding on to.
   gate for the first list and `semgrep-suppression-census.test.ts` for the
   second, and each caught its regrowth on the very first merge that produced
   one, before any human read the diff.
-- **The recurrence is what [#3318](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3318)
-  is for.** An ESLint rule banning the unparseable shape at the source removes
-  the first list's growth entirely rather than catching it after the fact,
-  which is the structural fix `INV-SSOT-001` prefers over a policed one. Until
-  that lands, expect to rewrite a handful of files after each `main` sync, and
-  prefer the parsing form when you write a new partial mock.
+- **The first list's recurrence is closed, and the second's is not.**
+  [#3318](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3318)
+  banned both call-site shapes with `scan/no-semgrep-unparsable-import-type`,
+  which removes that growth at the source rather than catching it after the
+  fact — the structural fix `INV-SSOT-001` prefers over a policed one. Write a
+  new partial mock as `(await importOriginal()) as typeof import("@/lib/x")` and
+  lint will tell you if you forget. The **suppression census** has no equivalent
+  and still regrows on merges, so expect to prune it after a sync.
 
 ### Break-glass: a new CRITICAL image finding with no code change
 
