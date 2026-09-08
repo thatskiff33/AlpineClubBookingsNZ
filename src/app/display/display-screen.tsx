@@ -31,6 +31,7 @@ import {
 import { DISPLAY_AUTHORED_ROOT_CLASS } from "@/lib/lodge-display/css-tokens";
 import type { DisplayModuleName } from "@/lib/lodge-display/template-registry";
 import { evaluateDisplayCondition } from "@/lib/lodge-display/conditions";
+import { must } from "@/lib/indexed-access";
 import { resolveDisplayText } from "@/lib/lodge-display/display-text";
 import {
   DISPLAY_MODULE_COMPONENTS,
@@ -173,7 +174,10 @@ function Region({
     return () => clearInterval(timer);
   }, [rotates, panels.length, region.rotateSeconds]);
 
-  if (panels.length === 0) return <div className={`display-region display-region-${region.key}`} />;
+  // The first eligible panel IS the "nothing eligible" check, and it is also
+  // what the rotation below falls back to (#2801).
+  const [firstPanel] = panels;
+  if (firstPanel === undefined) return <div className={`display-region display-region-${region.key}`} />;
 
   // "stack" (issue #56): every eligible panel at once — the sidebar-card
   // treatment; "rotate" (default): one panel at a time on the region timer.
@@ -187,7 +191,11 @@ function Region({
     );
   }
 
-  const panel = panels[index % panels.length];
+  // `index % panels.length` is in range for a non-empty list, so the fallback
+  // is unreachable. It is `firstPanel` rather than a throw because this is an
+  // unattended wall surface (LTV-030, ADR-003 §5): showing the first eligible
+  // panel is always better than blanking the wall.
+  const panel = panels[index % panels.length] ?? firstPanel;
   return (
     <div className={`display-region display-region-${region.key}`}>
       <Panel panel={panel} state={state} />
@@ -355,8 +363,10 @@ function RotatorArea({
     return () => clearInterval(timer);
   }, [eligible.length, area.rotateSeconds]);
 
-  if (eligible.length === 0) return null;
+  // `index % 0` is NaN, so an absent child IS the "no eligible children" case
+  // the length test expressed — one condition, one answer (#2801).
   const child = eligible[index % eligible.length];
+  if (child === undefined) return null;
   return (
     <SlotRender content={slotContent[`${area.key}/${child.key}`]} state={state} />
   );
@@ -517,10 +527,18 @@ function LayoutScreen({
 // serve-time validation, so no layoutRender shipped).
 // ---------------------------------------------------------------------------
 
-const FALLBACK_TEMPLATE: DisplayTemplateDefinition =
-  listBuiltInDisplayTemplates().find(
+// Both existing arms are kept — the default key, then the first built-in. The
+// third case is the one nothing could ever do anything about: an EMPTY built-in
+// registry leaves no known-good board at all, and the old expression met that
+// by handing `undefined` on to a `.regions` read. `must` names it instead
+// (#2801), and the registry is read once rather than twice.
+const BUILT_IN_DISPLAY_TEMPLATES = listBuiltInDisplayTemplates();
+const FALLBACK_TEMPLATE: DisplayTemplateDefinition = must(
+  BUILT_IN_DISPLAY_TEMPLATES.find(
     (template) => template.key === DEFAULT_DISPLAY_TEMPLATE_KEY
-  ) ?? listBuiltInDisplayTemplates()[0];
+  ) ?? BUILT_IN_DISPLAY_TEMPLATES[0],
+  "display fallback board: the built-in template registry is empty, so there is no known-good board to fall back to"
+);
 
 function FallbackBoard({
   payload,
