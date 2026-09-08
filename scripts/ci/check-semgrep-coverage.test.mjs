@@ -108,16 +108,48 @@ describe("summariseCoverage", () => {
 });
 
 describe("readAllowlistFiles", () => {
-  it("accepts a list of paths", () => {
-    expect(readAllowlistFiles({ files: ["a.ts", "b.ts"] })).toEqual(["a.ts", "b.ts"]);
+  it("accepts entries carrying a file and a reason", () => {
+    expect(
+      readAllowlistFiles({
+        files: [
+          { file: "a.ts", reason: "a bare & inside a string literal" },
+          { file: "b.ts", reason: "the same, asserted with toHaveAttribute" },
+        ],
+      }),
+    ).toEqual(["a.ts", "b.ts"]);
   });
 
   it("refuses a malformed allowlist rather than treating it as empty", () => {
     // An empty allowlist and an unreadable one are opposite facts: the first
     // says nothing is exempt, the second says we do not know.
     expect(() => readAllowlistFiles({})).toThrow(/expected a `files` array/);
-    expect(() => readAllowlistFiles({ files: [1] })).toThrow(/non-empty string/);
-    expect(() => readAllowlistFiles({ files: [""] })).toThrow(/non-empty string/);
+    expect(() => readAllowlistFiles({ files: [1] })).toThrow(/non-empty `file`/);
+    expect(() => readAllowlistFiles({ files: [{}] })).toThrow(/non-empty `file`/);
+    expect(() => readAllowlistFiles({ files: [{ file: "" }] })).toThrow(
+      /non-empty `file`/,
+    );
+  });
+
+  // #3318: the entry shape became `{ file, reason }` so that the reason sits on
+  // the entry it explains instead of in a prose summary next to the list - which
+  // is where it used to live, and where BOTH of its clauses had drifted false.
+  // An entry signs part of a real file off as unscanned, and after #3318 removed
+  // everything that had a rewrite, an entry with nothing to say for itself is
+  // almost certainly a shape `scan/no-semgrep-unparsable-import-type` should
+  // have caught. Refusing it is what keeps that true.
+  it("refuses a bare path string, the shape it used to accept", () => {
+    expect(() => readAllowlistFiles({ files: ["a.ts"] })).toThrow(
+      /non-empty `file`/,
+    );
+  });
+
+  it("refuses an entry with no reason, or a blank one", () => {
+    expect(() => readAllowlistFiles({ files: [{ file: "a.ts" }] })).toThrow(
+      /carries no `reason`/,
+    );
+    expect(() =>
+      readAllowlistFiles({ files: [{ file: "a.ts", reason: "   " }] }),
+    ).toThrow(/carries no `reason`/);
   });
 });
 
@@ -304,7 +336,13 @@ describe("normalisePath", () => {
     });
     expect(summary.partial).toEqual(["src/lib/known.tsx"]);
     expect(
-      findCoverageFailures(summary, readAllowlistFiles({ files: ["src/lib/known.tsx"] }), () => true),
+      findCoverageFailures(
+        summary,
+        readAllowlistFiles({
+          files: [{ file: "src/lib/known.tsx", reason: "a bare & in a string" }],
+        }),
+        () => true,
+      ),
     ).toEqual([]);
   });
 });
