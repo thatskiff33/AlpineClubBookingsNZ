@@ -2102,14 +2102,19 @@ function calleeSpelling(callee) {
 /**
  * Whether this `import()` type sits in a parameter annotation.
  *
- * A type ALIAS terminates the walk rather than continuing it, because an alias
- * is the remedy: `type Plan = import("x").A["k"]` used as `(i: Plan)` parses,
- * and reporting the alias would send its author in a circle.
+ * The remedy — naming the type — needs nothing special here, and a first cut
+ * that stopped the walk at a `TSTypeAliasDeclaration` "so the alias is not
+ * reported in a circle" was DEAD CODE: a type alias can only be declared at
+ * statement level, so an `import()` type inside one never has a function whose
+ * `params` contain the branch it came up through. A mutation probe that deleted
+ * that branch left all 27 cases of
+ * `semgrep-unparsable-import-type-guard.test.ts` green, which is how it was
+ * found; it is gone rather than left in place with a comment claiming it does
+ * work.
  */
 function inParameterAnnotation(node) {
   let child = node;
   for (let current = node.parent; current; current = current.parent) {
-    if (current.type === "TSTypeAliasDeclaration") return false;
     if (
       PARAMETER_OWNER_NODE_TYPES.has(current.type) &&
       Array.isArray(current.params) &&
