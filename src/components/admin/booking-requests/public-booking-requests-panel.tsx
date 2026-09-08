@@ -564,16 +564,15 @@ export function PublicBookingRequestsPanel({
     fetchRequests();
   }, [fetchRequests]);
 
+  // #2801: this used to open with `if (request.id in priceInputs) return
+  // priceInputs[request.id]`, and a mutation probe proved that branch DEAD.
+  // Every write to `priceInputs` goes through `priceInputKey`, which keys
+  // `${requestId}:${optionId}` - so a bare request id is never a key there and
+  // the lookup could only ever miss. It is a leftover from before totals became
+  // per-option. Deleting it removes the indexed read rather than guarding it,
+  // and this function is now purely the fallback its one caller wants: the
+  // figure to show when the officer has not typed in that option's box.
   function priceInputValue(request: PublicBookingRequestData) {
-    // Read the value, not the key. `request.id in priceInputs` proves an entry
-    // exists and tells the compiler nothing about its type, so this used to
-    // hand a `string | undefined` to every caller. Testing `undefined` rather
-    // than falsiness is load-bearing: an officer who CLEARS the box stores "",
-    // and "" must survive to `dollarsToCents` so it throws "Enter a valid
-    // ... total". A falsy check would silently substitute the indicative price
-    // for a total the officer had deliberately emptied.
-    const typed = priceInputs[request.id];
-    if (typed !== undefined) return typed;
     const cents = request.priceCents ?? request.indicativePriceCents;
     return cents != null ? (cents / 100).toFixed(2) : "";
   }
