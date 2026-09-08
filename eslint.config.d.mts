@@ -28,6 +28,8 @@ export declare const MONEY_GUARD_EXEMPTIONS: readonly FileExemption[];
 
 /** #3302 — the reverse-direction guard: rendering cents, not building them. */
 export declare const CENTS_DISPLAY_GUARD_ARM: readonly string[];
+/** #3325 — INV-CONFIG-001: a literal locale on a currency `Intl.NumberFormat`. */
+export declare const CURRENCY_LOCALE_GUARD_ARM: readonly string[];
 /** Multi-file exemption entries (unlike `FileExemption`'s one file each). */
 export declare const CENTS_DISPLAY_EXEMPTIONS: ReadonlyArray<{
   readonly files: readonly string[];
