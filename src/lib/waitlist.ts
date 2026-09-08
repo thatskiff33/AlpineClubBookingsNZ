@@ -280,6 +280,7 @@ async function repriceWaitlistCandidate(
           stayDate,
           "the waitlist offer reprice",
         ),
+        priceSource: "SOLD" as const,
       }));
     });
 

@@ -278,6 +278,21 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   consequence is that such a stay can carry the code indefinitely — which
   costs nothing, because it gives nothing.
 
+## INV-MONEY-028
+
+- **Every `BookingGuestNight.priceCents` records where that amount came from.**
+  `SOLD` means a live sale or reprice wrote the per-night quote;
+  `OFFICER_PRICED` means a person supplied the amount while resolving stored
+  history; `EVEN_SPLIT` means a writer mechanically divided a guest total across
+  nights (including the three historical backfills); and `UNKNOWN` means the
+  origin cannot be proved. `EVEN_SPLIT` is not evidence of what any individual
+  night was sold for. Unknown provenance stays
+  unknown: no reader or migration may re-derive it from the amount, rate table,
+  guest total, timestamp, or any other present-day data (#3275, programme
+  #3272). Migration verification must mutation-prove both the historical
+  writer classifiers (including zero and null amounts) and every predicate that
+  admits a draining-colour officer-repair audit.
+
 ## INV-MONEY-006
 
 **Related: `INV-MONEY-001`** (money is held as integer cents) and

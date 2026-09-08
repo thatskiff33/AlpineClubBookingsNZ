@@ -280,7 +280,7 @@ export async function POST(
         include: {
           guests: {
             include: {
-              nights: { select: { stayDate: true, priceCents: true } },
+              nights: { select: { stayDate: true, priceCents: true, priceSource: true } },
             },
           },
           payment: true,
@@ -721,6 +721,7 @@ export async function POST(
                   stayDate,
                   "the add-guest route"
                 ),
+                priceSource: "SOLD",
               })),
             },
           },

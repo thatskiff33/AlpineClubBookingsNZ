@@ -9,8 +9,12 @@ import {
   getExplicitGuestBedNightKeys,
   getGuestBedNightKeys,
   type BookingStayRange,
-  type GuestNightInput,
 } from "@/lib/booking-guest-stay-ranges";
+import type { BookingGuestNightPriceSource } from "@prisma/client";
+import {
+  storedNightPriceDetailsByKey,
+  storedNightPricesByKey,
+} from "@/lib/stored-night-price-write";
 
 /**
  * #3031 (epic #2797): can this guest strand's stored history price an edit
@@ -18,19 +22,21 @@ import {
  *
  * ## What a stored `BookingGuestNight.priceCents` is, and is not
  *
- * It is the only per-night money this system keeps, and it is NOT provenanced.
- * Two of the three events that populated the table were themselves even splits:
+ * It is the only per-night money this system keeps. Since #3275 each row also
+ * records its origin, but this stage deliberately does not use that fact to
+ * change a verdict: stage 3 of programme #3272 owns that reader decision.
+ * Three historical migrations populated the table with even splits:
+ * `20260614090000_add_booking_guest_night` (#713) created the table and divided
+ * every existing guest total across its nights;
  * `20260704150000_backfill_booking_guest_nights` (#1098) divided
  * `BookingGuest.priceCents` by the night count for guests with no rows, and
  * `20260810010000_backfill_booking_request_guest_nights` (#2739) did the same
  * for request-derived bookings — its own header says it "deliberately does NOT
- * reprice anything: it reads the stored total and divides it". There is no
- * `source` column, and `createdAt` does not separate a backfilled row from a
- * live one. So the database holds rows that are indistinguishable from what the
- * member was really quoted per night and are not that.
- *
- * Exactness therefore CANNOT be tested on provenance, and this module does not
- * try. It tests RECONCILIATION, which is what epic #2797 asks for in as many
+ * reprice anything: it reads the stored total and divides it". The new source
+ * column distinguishes those migration-authored averages, but stage 1 records
+ * that fact without changing a reader decision. This module therefore still
+ * tests RECONCILIATION only; stage 3 of programme #3272 owns the deliberate
+ * switch to provenance-aware evidence. That is what epic #2797 asks for in as many
  * words — "a deliberate negotiated-flat initial allocation remains valid once
  * stored", and "if required historical amount is missing/unusable or rows do
  * not reconcile … the financial adjustment becomes explicit pending admin
@@ -358,6 +364,7 @@ export function storedSoldPriceEvidenceForGuest(
     nights?: ReadonlyArray<{
       stayDate: Date | string;
       priceCents?: number | null;
+      priceSource?: BookingGuestNightPriceSource;
     }> | null;
   },
   booking: BookingStayRange,
@@ -390,25 +397,6 @@ export function storedSoldPriceEvidenceForGuest(
  * ONE PROJECTION (`INV-SSOT`). The planner and the removal path both need it and
  * had written it twice, already normalising differently.
  */
-export function storedNightPricesByKey(
-  nights: ReadonlyArray<GuestNightInput> | null | undefined,
-): Map<string, number | null> {
-  const byKey = new Map<string, number | null>();
-  for (const entry of nights ?? []) {
-    const priceCents =
-      entry instanceof Date || typeof entry === "string"
-        ? undefined
-        : "priceCents" in entry
-          ? entry.priceCents
-          : undefined;
-    const [key] = getExplicitGuestBedNightKeys({ nights: [entry] }) ?? [];
-    if (key !== undefined) {
-      byKey.set(key, isNonNegativeIntegerCents(priceCents) ? priceCents : null);
-    }
-  }
-  return byKey;
-}
-
 /**
  * One existing guest strand as an edit to a NOT-YET-STARTED booking proposes to
  * leave it (#3166, epic #2797).
@@ -435,6 +423,7 @@ export type PreCheckInEditStrand = {
   nights?: ReadonlyArray<{
     stayDate: Date | string;
     priceCents?: number | null;
+    priceSource: BookingGuestNightPriceSource;
   }> | null;
   /** The nights this strand ends up holding. Empty for a strand being removed. */
   proposedNightDates: ReadonlyArray<Date | string>;
@@ -482,7 +471,7 @@ export type PreCheckInEditStrand = {
  * too — removed, shortened or extended — so a parked edit never destroys a
  * number the system could have known. There is no amount anywhere in here.
  *
- * `soldNightPriceByGuestId` carries, per strand, the stored integer against each
+ * `storedNightPriceByGuestId` carries, per strand, the stored integer and source against each
  * night it holds — usable rows only, from either verdict, so a PARTIAL strand
  * keeps the rows it does have. It is the ONLY source of a historical amount for
  * the parked write, which is what makes "preserved byte for byte" true by
@@ -494,13 +483,22 @@ export function preCheckInEditEvidence(args: {
   strands: readonly PreCheckInEditStrand[];
 }): {
   occurrences: EditFinancialReviewOccurrence[];
-  soldNightPriceByGuestId: Map<string, ReadonlyMap<CalendarDate, number>>;
+  storedNightPriceByGuestId: Map<
+    string,
+    ReadonlyMap<
+      CalendarDate,
+      { priceCents: number; priceSource: BookingGuestNightPriceSource }
+    >
+  >;
 } {
   const unusable: EditFinancialReviewOccurrence[] = [];
   const destroyedButReadable: EditFinancialReviewOccurrence[] = [];
-  const soldNightPriceByGuestId = new Map<
+  const storedNightPriceByGuestId = new Map<
     string,
-    ReadonlyMap<CalendarDate, number>
+    ReadonlyMap<
+      CalendarDate,
+      { priceCents: number; priceSource: BookingGuestNightPriceSource }
+    >
   >();
 
   for (const strand of args.strands) {
@@ -526,13 +524,22 @@ export function preCheckInEditEvidence(args: {
       },
       args.booking,
     );
-    soldNightPriceByGuestId.set(
+    storedNightPriceByGuestId.set(
       strand.bookingGuestId,
       new Map(
-        evidence.nightPrices.flatMap((night) =>
-          isNonNegativeIntegerCents(night.priceCents)
-            ? [[night.date, night.priceCents] as const]
-            : [],
+        [...storedNightPriceDetailsByKey(strand.nights)].flatMap(
+          ([date, stored]) =>
+            isNonNegativeIntegerCents(stored.priceCents)
+              ? [
+                  [
+                    requireCalendarDate(date),
+                    {
+                      priceCents: stored.priceCents,
+                      priceSource: stored.priceSource,
+                    },
+                  ] as const,
+                ]
+              : [],
         ),
       ),
     );
@@ -591,7 +598,7 @@ export function preCheckInEditEvidence(args: {
   return {
     occurrences:
       unusable.length > 0 ? [...unusable, ...destroyedButReadable] : [],
-    soldNightPriceByGuestId,
+    storedNightPriceByGuestId,
   };
 }
 
@@ -639,6 +646,7 @@ export function preCheckInEditStrands(args: {
     nights?: ReadonlyArray<{
       stayDate: Date | string;
       priceCents?: number | null;
+      priceSource: BookingGuestNightPriceSource;
     }> | null;
   }>;
   guestsForPricing: ReadonlyArray<{ bookingGuestId?: string | null }>;
