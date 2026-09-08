@@ -39,3 +39,20 @@ reason: one line net. groupTrailAreas was rewritten from an offset-indexing
   seven-line explaining comment the original two-line comment didn't carry;
   the net file growth is one line because the rewritten function body is
   shorter than the original.
+
+file: src/components/admin/booking-requests/public-booking-requests-panel.tsx
+lines: 2255
+reason: sixteen lines net, and thirteen of them are comment. The tranche
+  ESCALATED this file rather than fixing it, because one of its three
+  diagnostics sits where an officer's typed dollar string becomes a quote's
+  `totalCents`. The fix is two accessors reading `priceInputs` by value instead
+  of behind `key in priceInputs`, plus one named read for the member-night
+  overlap banner that used to look its entry up three times and guard only the
+  first. The comment that pays for the growth is the one saying why the guard
+  tests `undefined` and not falsiness: an empty string is the officer having
+  CLEARED the box, and under a falsy check it would fall through and quote the
+  request's stored price instead of refusing. That reasoning cannot live
+  anywhere but at the accessor, because the accessor is what the next person
+  will "simplify". A third lookup was DELETED rather than guarded once a
+  mutation probe proved it dead, so the file is shorter than a guard-everything
+  fix would have left it.
