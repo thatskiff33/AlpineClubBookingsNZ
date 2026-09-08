@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+
+import { compareOrdinal } from "@/lib/stable-digest";
 import type {
   AgeTier,
   MembershipBillingExceptionResolution,
@@ -642,7 +644,7 @@ export async function buildSubscriptionBillingPreview(input: {
       xeroInvoiceNumber: row.xeroInvoiceNumber,
       status: row.status,
     }))
-    .sort((left, right) => left.memberId.localeCompare(right.memberId));
+    .sort((left, right) => compareOrdinal(left.memberId, right.memberId));
   // The effective fee depends on the membership type, the member's age tier
   // (#2067 per-tier pricing), and the decision date; the decision date is fixed
   // for the whole preview, so memoize per (type, tier) instead of querying once
@@ -1081,10 +1083,24 @@ export async function buildSubscriptionBillingPreview(input: {
     entries.push(entry);
   }
 
+  // ORDINAL from here down, never `localeCompare` (#3252). `entries` and
+  // `exceptions` are serialised into `tokenPayload` below and hashed into
+  // `confirmationToken`, which the preview hands to the browser and
+  // `api/admin/subscription-billing/route.ts` re-derives and compares when the
+  // admin confirms. Those are TWO REQUESTS, and under a blue/green changeover
+  // they can be served by two colours at once — so the collation the two
+  // derivations resolve is not guaranteed to be the same one.
+  //
+  // The divergence is not theoretical at this call site. `entry.key` is
+  // `<year>:<id>:family:<id>` or `<year>:<id>:member:<id>`, and `:` is
+  // punctuation: locale collation orders it BEFORE a digit, a code-unit
+  // comparison orders it after, so `"2026:x1a:family:q"` and `"2026:x:member:q"`
+  // order oppositely under the two rules (measured). The admin would be told the
+  // billing run changed underneath them when nothing had.
   for (const entry of entries) {
-    entry.coveredMembers.sort((left, right) => left.id.localeCompare(right.id));
+    entry.coveredMembers.sort((left, right) => compareOrdinal(left.id, right.id));
   }
-  entries.sort((left, right) => left.key.localeCompare(right.key));
+  entries.sort((left, right) => compareOrdinal(left.key, right.key));
   const invoiceEntries = entries.filter((entry) => entry.billingBasis !== "NO_INVOICE");
   if (invoiceEntries.length > 0) {
     const mapping = await getResolvedAccountMapping("subscriptionIncome", db);
@@ -1116,7 +1132,7 @@ export async function buildSubscriptionBillingPreview(input: {
       }
     }
   }
-  exceptions.sort((left, right) => left.fingerprint.localeCompare(right.fingerprint));
+  exceptions.sort((left, right) => compareOrdinal(left.fingerprint, right.fingerprint));
   const scopeMemberIds = input.memberIds?.length ? [...new Set(input.memberIds)].sort() : null;
   const tokenPayload = { seasonYear: input.seasonYear, decisionDate: decisionDateOnly, dueDays, scopeMemberIds, entries, exceptions };
   return {
@@ -1129,10 +1145,14 @@ export async function buildSubscriptionBillingPreview(input: {
     exceptions,
     alreadyCoveredMemberIds: [...coveredSet].sort(),
     exemptMemberIds: [...exemptMemberIds].sort(),
-    exemptMembers: [...exemptMembers].sort((left, right) => left.memberId.localeCompare(right.memberId)),
+    // Ordinal too. These two do NOT feed `tokenPayload` — they are returned for
+    // display — but they order opaque ids, where locale-aware collation buys a
+    // reader nothing, and one rule for the whole file is what makes the census
+    // above enforceable without a line-level exemption.
+    exemptMembers: [...exemptMembers].sort((left, right) => compareOrdinal(left.memberId, right.memberId)),
     alreadyInvoiced,
     alreadyInvoicedFamilies: alreadyInvoicedFamilies.sort((left, right) =>
-      left.familyGroupId.localeCompare(right.familyGroupId)),
+      compareOrdinal(left.familyGroupId, right.familyGroupId)),
     totalCents: entries.reduce((sum, entry) => sum + entry.chargedAmountCents, 0),
     confirmationToken: digest(tokenPayload),
   };

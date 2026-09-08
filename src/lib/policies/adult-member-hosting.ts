@@ -10,6 +10,7 @@ import type {
   UncoveredGuestNight,
 } from "@/lib/booking-policy-exceptions";
 import { ADULT_MEMBER_HOST_SCOPES } from "@/lib/booking-policy-exceptions";
+import { compareOrdinal } from "@/lib/stable-digest";
 
 /**
  * The configurable adult-member hosting policy (#2364, epic decision D-R3).
@@ -815,9 +816,16 @@ export function evaluateAdultMemberHostingWithPolicy(
 
   if (uncovered.length === 0) return null;
 
+  // ORDINAL, never `localeCompare` (#3252). This sorted array is stored
+  // VERBATIM in `frozenEvidence`, and approval string-joins it into a violation
+  // fingerprint which is compared against a freshly evaluated one
+  // (`booking-exception-requests.ts` -> `violationFingerprint`). A collation
+  // that moved between submit and approval would make the two orders disagree
+  // and refuse the request with POLICY_DRIFT_MESSAGE — the same wrongly-refused
+  // request as the proposal-hash defect, through a different door.
   uncovered.sort(
     (a, b) =>
-      a.night.localeCompare(b.night) || a.guestRef.localeCompare(b.guestRef),
+      compareOrdinal(a.night, b.night) || compareOrdinal(a.guestRef, b.guestRef),
   );
 
   const affectedNights = uniqueSortedNights(uncovered.map((row) => row.night));

@@ -130,6 +130,35 @@ function normalizePayloadHashValue(value: unknown): unknown {
   );
 }
 
+/**
+ * The short hash of an outbound Xero payload, feeding
+ * `XeroSyncOperation.idempotencyKey` — and, through it, the `Idempotency-Key`
+ * header Xero itself deduplicates on.
+ *
+ * ## Deliberately NOT routed through `stableDigest` (#3250/#3251/#3252)
+ *
+ * The sweep that gave deterministic identity one home left this one alone ON
+ * PURPOSE, and this note exists so the next reader does not "finish the job".
+ *
+ * `stableDigest` sorts object keys recursively before hashing. This does not: it
+ * preserves insertion order, deliberately. Every idempotency key already stored
+ * in `XeroSyncOperation` was derived under insertion order, so sorting the keys
+ * would re-derive EVERY one of them. A retry or replay would then present Xero
+ * with a key it has never seen for a document it has already accepted, and Xero
+ * would create a SECOND invoice, credit note or payment. The failure is a
+ * duplicate financial document at the provider, which no later code change can
+ * take back.
+ *
+ * The property `stableDigest` exists to give — "the same data hashes the same
+ * however its keys were ordered" — is not wanted here either. This hash asks a
+ * narrower question: *is the request I am about to send byte-for-byte the
+ * request I sent before?* An outbound payload is built by one code path in one
+ * order, so insertion order is stable in practice, and a change in that order IS
+ * a change in the request.
+ *
+ * `identity-ordering-census.test.ts` records this exclusion by name, so removing
+ * it is a deliberate act rather than a tidy-up.
+ */
 export function buildXeroPayloadHash(payload: unknown): string {
   // Idempotency keys must change when the outbound request changes, including
   // fields that are redacted before storage such as email addresses and phone numbers.

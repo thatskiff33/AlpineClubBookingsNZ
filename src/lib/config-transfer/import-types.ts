@@ -109,20 +109,49 @@ export function canonicalValue(value: unknown): string {
   // regardless of key order — String(value) would collapse every object to
   // "[object Object]" and hide changes.
   if (typeof value === "object") {
-    return stableJson(value);
+    return comparisonJson(value);
   }
   return String(value);
 }
 
-function stableJson(value: unknown): string {
+/**
+ * A key-sorted rendering of a value, FOR COMPARING TWO OF THEM AND NOTHING ELSE.
+ *
+ * ## Why this is not `stableStringify` (#3251)
+ *
+ * It looks like the canonical deterministic stringifier in
+ * `@/lib/stable-digest`, and it is deliberately NOT it. Two facts decide that:
+ *
+ * 1. **This is not an identity.** Nothing here is hashed, stored, or re-derived
+ *    later and compared against a stored value. The output exists for the
+ *    length of one `!==` inside `changedFields`, to decide whether an import
+ *    preview should call a row changed. `INV-SSOT-001` is about one FACT having
+ *    one home, and "a stored key that must survive a redeploy" and "a scratch
+ *    string two values are compared through" are different facts.
+ * 2. **They are not byte-equivalent, so adopting the canonical helper would be
+ *    an unforced behaviour change.** This function renders a one-element array
+ *    holding `undefined` as `"[]"` — `JSON.stringify(undefined)` returns the
+ *    VALUE `undefined`, which `Array#join` renders as the empty string — while
+ *    the canonical `stableStringify` renders it `"[null]"`, because
+ *    `JSON.stringify` maps a hole in an array to `null`. Measured, not assumed;
+ *    `config-transfer-import-types.test.ts` pins both sides of that divergence.
+ *    Neither answer is wrong; they answer different questions, and swapping one
+ *    for the other inside a differ would silently change which rows an operator
+ *    is told changed.
+ *
+ * The NAME is what #3251 was actually about: the old one read as a near-synonym
+ * of `stableStringify` and invited a future reader to "finish the job" by
+ * importing the canonical one. `comparisonJson` says what it is for.
+ */
+function comparisonJson(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
   if (Array.isArray(value)) {
-    return `[${value.map(stableJson).join(",")}]`;
+    return `[${value.map(comparisonJson).join(",")}]`;
   }
   const record = value as Record<string, unknown>;
   const keys = Object.keys(record).sort();
   return `{${keys
-    .map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`)
+    .map((key) => `${JSON.stringify(key)}:${comparisonJson(record[key])}`)
     .join(",")}}`;
 }
 

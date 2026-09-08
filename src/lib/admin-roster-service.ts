@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client"
 import { createHash } from "node:crypto"
 import { prisma } from "@/lib/prisma"
+import { compareOrdinal } from "@/lib/stable-digest"
 import {
   allocateChores,
   filterChoresByFrequency,
@@ -96,7 +97,9 @@ export function createRosterRevision(assignments: RevisionAssignment[]) {
       completedVia: assignment.completedVia ?? null,
       updatedAt: assignment.updatedAt?.toISOString() ?? null,
     }))
-    .sort((a, b) => a.id.localeCompare(b.id))
+    // Ordinal (#3252): this order decides the bytes of the roster revision
+    // token, which a later save re-derives and compares as a CAS check.
+    .sort((a, b) => compareOrdinal(a.id, b.id))
   return createHash("sha256").update(JSON.stringify(canonical)).digest("base64url")
 }
 

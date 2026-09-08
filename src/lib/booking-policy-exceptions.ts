@@ -1,5 +1,6 @@
 import { formatDateOnly } from "@/lib/date-only";
 import { ApiError } from "@/lib/api-error";
+import { compareOrdinal } from "@/lib/stable-digest";
 
 /**
  * The complete, explicit soft-policy allowlist (#2363).
@@ -318,11 +319,15 @@ export function canonicalAffectedNights(nights: Date[]): string[] {
 export function sortPolicyExceptionViolations(
   violations: PolicyExceptionViolation[],
 ): PolicyExceptionViolation[] {
+  // Ordinal, never `localeCompare` (#3252): this order is frozen into
+  // `frozenEvidence.violations` and re-derived at approval, and a reason code
+  // contains `_` — which locale collation orders before a letter and a code-unit
+  // comparison orders after (`compareOrdinal`, `INV-SSOT-001`).
   return [...violations].sort((a, b) =>
-    a.reasonCode.localeCompare(b.reasonCode) ||
-    a.policyId.localeCompare(b.policyId) ||
+    compareOrdinal(a.reasonCode, b.reasonCode) ||
+    compareOrdinal(a.policyId, b.policyId) ||
     a.policyVersion - b.policyVersion ||
-    a.affectedNights.join(",").localeCompare(b.affectedNights.join(",")),
+    compareOrdinal(a.affectedNights.join(","), b.affectedNights.join(",")),
   );
 }
 

@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import { addDaysDateOnly, eachDateOnlyInRange, formatDateOnly } from "@/lib/date-only";
+import { compareOrdinal } from "@/lib/stable-digest";
 
 type RosterLockTx = Pick<Prisma.TransactionClient, "$executeRaw">;
 
@@ -65,7 +66,13 @@ export async function lockRosterDates(
 ) {
   const uniqueDates = new Map<string, Date>();
   for (const date of dates) uniqueDates.set(formatDateOnly(date), date);
-  for (const [, date] of [...uniqueDates].sort(([a], [b]) => a.localeCompare(b))) {
+  // ORDINAL (#3252), and here it is not an identity at all: this is the ORDER
+  // advisory locks are taken in. Two writers that ordered the same date set
+  // differently would take the same two locks in opposite orders and DEADLOCK.
+  // A locale-aware comparison makes that order depend on the collation each
+  // instance resolves, which nothing guarantees is the same across a blue/green
+  // changeover — so the ordering must come from the strings themselves.
+  for (const [, date] of [...uniqueDates].sort(([a], [b]) => compareOrdinal(a, b))) {
     await lockRosterDate(tx, date);
   }
 }
