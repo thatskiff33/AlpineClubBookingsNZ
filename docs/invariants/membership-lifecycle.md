@@ -1663,6 +1663,11 @@ and is hard-deleted at the end. The merge is **additive and master-wins**:
   - **cascade** — the loser's auth identity and ephemeral tokens
     (password-reset / email-verification / email-change tokens, all 2FA rows,
     partner-invite tokens) are never moved; they die with `member.delete(loser)`.
+  - **derived** — `MemberParentPartnerExclusion.memberAId/memberBId` are
+    FK-less internal pair endpoints maintained from `Member` parent fields and
+    `MemberPartnerLink` rows by statement triggers. Merge never snapshots or
+    directly moves them: its source-edge writes produce the exact net deltas,
+    and the deferred cleanup removes empty loser pairs.
   - **snapshot** — FK-less scalar member-id columns
     (`MemberLifecycleActionRequest.memberId`, `BookingModification.memberId`,
     `MemberApplication` nominator/reviewer ids, `NominationToken`,

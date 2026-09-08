@@ -1815,7 +1815,9 @@ describe("member-photo reconciliation at execute time (MP1, #189)", () => {
     ).rejects.toMatchObject({
       statusCode: 409,
       code: "merge_drift_in_transaction",
-      details: { driftFields: ["parentPartnerParticipants"] },
+      details: {
+        driftFields: ["parentPartnerParticipants", "parentPartnerPairs"],
+      },
     });
 
     expect(memberDelegate.update).not.toHaveBeenCalled();
