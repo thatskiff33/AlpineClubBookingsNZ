@@ -8,7 +8,7 @@
  * groups lives in xero-member-import.ts.
  */
 
-import type { Contact } from "xero-node";
+import type { Contact, XeroClient } from "xero-node";
 import { prisma } from "./prisma";
 import logger from "@/lib/logger";
 import { formatXeroPhone } from "./phone";
@@ -180,7 +180,7 @@ async function writeXeroContactSyncAudit(input: {
 // ---------------------------------------------------------------------------
 
 async function repairXeroContactNameOrderIfNeeded(input: {
-  xero: import("xero-node").XeroClient;
+  xero: XeroClient;
   tenantId: string;
   contact: Contact;
   cachedContact: CachedXeroContact;

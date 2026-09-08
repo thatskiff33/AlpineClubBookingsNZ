@@ -239,6 +239,19 @@ describe("hosting queue/member merge race DB safety guard (#2597)", () => {
   });
 });
 
+/**
+ * The reservation input this suite builds by hand.
+ *
+ * Named rather than written inline in the parameter annotation below, because
+ * an `import()` type in a PARAMETER position carrying a type argument or an
+ * indexed access is one of the two shapes Semgrep cannot parse (#3318) - and
+ * it was this one line that put the whole file on
+ * `.semgrep/unparsed-allowlist.json`, with none of the generic-call shape in
+ * it at all. The identical type in an alias parses, which is the remedy.
+ */
+type StaticContactCreateInput =
+  import("@/lib/xero-contacts").MemberContactCreateReservationPlan<null>["input"];
+
 let primary: PrismaClient;
 let ordinary: PrismaClient;
 let mergeA: PrismaClient;
@@ -284,7 +297,7 @@ let deletionApprovalWasReleased: (typeof import("@/lib/deletion-request-decision
   () => {
     async function reserveStaticContactCreate(
       memberId: string,
-      input: import("@/lib/xero-contacts").MemberContactCreateReservationPlan<null>["input"],
+      input: StaticContactCreateInput,
       db: PrismaClient = ordinary,
     ) {
       const { operation } = await reserveMemberContactCreateOperation(
