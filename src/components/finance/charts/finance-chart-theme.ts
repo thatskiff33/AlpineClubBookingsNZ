@@ -1,4 +1,9 @@
-import { formatDollarsDisplay } from "@/lib/finance-format";
+import {
+  formatDollarsDisplay,
+  formatFinanceNumber,
+  formatFinancePercent,
+  formatFinanceRatio,
+} from "@/lib/finance-format";
 import { buildThemeSubstrate } from "@/lib/theme/theme-substrate";
 import {
   DEFAULT_CLUB_THEME_VALUES,
@@ -54,22 +59,9 @@ export const FINANCE_MIX_COLORS = buildFinanceMixColors();
 
 export type FinanceValueType = "currency" | "count" | "percent" | "ratio";
 
-const wholeNumber = new Intl.NumberFormat("en-NZ", {
-  maximumFractionDigits: 0,
-});
-
-const percentFormatter = new Intl.NumberFormat("en-NZ", {
-  style: "percent",
-  minimumFractionDigits: 1,
-  maximumFractionDigits: 1,
-});
-
-// Ratios (e.g. the current ratio) are not integers; show two decimal places so
-// values like 1.35 are not rounded to "1".
-const ratioFormatter = new Intl.NumberFormat("en-NZ", {
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-});
+// Every number shape here comes from `@/lib/finance-format`, which reads the
+// club's configured locale; this file used to hold three hard-coded `en-NZ`
+// instances of its own (#3325).
 
 /** Display value for tooltips and labels (currency: whole dollars). */
 export function formatFinanceValue(
@@ -80,12 +72,12 @@ export function formatFinanceValue(
     case "currency":
       return formatDollarsDisplay(value);
     case "percent":
-      return percentFormatter.format(value);
+      return formatFinancePercent(value);
     case "ratio":
-      return ratioFormatter.format(value);
+      return formatFinanceRatio(value);
     case "count":
     default:
-      return wholeNumber.format(value);
+      return formatFinanceNumber(value);
   }
 }
 
@@ -95,11 +87,11 @@ export function formatFinanceAxisTick(
   valueType: FinanceValueType
 ): string {
   if (valueType === "percent") {
-    return percentFormatter.format(value);
+    return formatFinancePercent(value);
   }
 
   if (valueType === "ratio") {
-    return ratioFormatter.format(value);
+    return formatFinanceRatio(value);
   }
 
   if (valueType === "currency") {
@@ -112,5 +104,5 @@ export function formatFinanceAxisTick(
 
   const abs = Math.abs(value);
   if (abs >= 1_000) return `${(value / 1_000).toFixed(1)}k`;
-  return wholeNumber.format(value);
+  return formatFinanceNumber(value);
 }

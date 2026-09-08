@@ -97,6 +97,40 @@ describe("public PageContent token view models", () => {
     expect(mocks.membershipTypes).toHaveBeenCalledWith(expect.objectContaining({ where: { isActive: true, publiclyListed: true } }));
   });
 
+  // The module used to build its own `Intl.NumberFormat("en-NZ", ...)` while the
+  // mock above set `APP_LOCALE` that nothing read, so every label pin passed
+  // for a configuration the code ignored. `money()` now renders through
+  // `formatCents` (#3325); a second locale/currency pair is what makes the
+  // mock discriminate. A fresh import is required because the formatter is
+  // built at module load. Literal expected string, not a recomputation.
+  it("renders public money in the configured locale and currency, not a hard-coded en-NZ (#3325)", async () => {
+    vi.resetModules();
+    vi.doMock("@/config/operational", () => ({
+      APP_CURRENCY: "EUR",
+      APP_STRIPE_CURRENCY: "eur",
+      APP_TIME_ZONE: "Europe/Berlin",
+      APP_LOCALE: "de-DE",
+    }));
+    try {
+      const fresh = await import("@/lib/public-page-content-tokens");
+      mocks.membershipTypes.mockResolvedValue([
+        { key: "FULL", name: "Full", ageGroupsApply: false, joiningFees: [{ ageTier: null, amountCents: 123456 }] },
+      ]);
+      mocks.ageTiers.mockResolvedValue([]);
+      await expect(fresh.loadPublicJoiningFees()).resolves.toEqual([
+        { heading: "Full", rows: [{ label: "All ages", fee: { amountCents: 123456, label: "1.234,56\u00a0€" } }] },
+      ]);
+    } finally {
+      vi.doMock("@/config/operational", () => ({
+        APP_CURRENCY: "NZD",
+        APP_STRIPE_CURRENCY: "nzd",
+        APP_TIME_ZONE: "Pacific/Auckland",
+        APP_LOCALE: "en-NZ",
+      }));
+      vi.resetModules();
+    }
+  });
+
   it("regroups public joining fees by age tier when byAge is set (#1933)", async () => {
     mocks.membershipTypes.mockResolvedValue([
       { key: "FULL", name: "Full", ageGroupsApply: true, joiningFees: [{ ageTier: "ADULT", amountCents: 12500 }] },

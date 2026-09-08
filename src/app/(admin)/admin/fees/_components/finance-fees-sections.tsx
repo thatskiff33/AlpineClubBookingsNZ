@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { FieldHint, describedByFieldHint, useFieldHint } from "@/components/ui/field-hint";
 import { Input } from "@/components/ui/input";
+import { formatCents } from "@/lib/utils";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -67,7 +68,7 @@ const JOINING_TIERS = [
 ] as const;
 const tierLabel = (tier: string | null) =>
   JOINING_TIERS.find((option) => option.value === (tier ?? "FLAT"))?.label ?? (tier ?? "Flat");
-const dollars = (cents: number | null) => cents == null ? "Not configured" : new Intl.NumberFormat("en-NZ", { style: "currency", currency: "NZD" }).format(cents / 100);
+const dollars = (cents: number | null) => cents == null ? "Not configured" : formatCents(cents);
 const memberName = (member: { firstName: string; lastName: string }) => `${member.firstName} ${member.lastName}`.trim();
 // The fee-level proration rule, in the same words as the editor's Proration
 // select (#2068, finding 7). Rendered on saved fees so the display can never

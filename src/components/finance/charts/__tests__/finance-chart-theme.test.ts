@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { FINANCE_MIX_COLORS } from "../finance-chart-theme";
+import { FINANCE_MIX_COLORS, formatFinanceValue } from "../finance-chart-theme";
 import { buildThemeSubstrate } from "@/lib/theme/theme-substrate";
 import {
   DEFAULT_CLUB_THEME_VALUES,
@@ -55,5 +55,18 @@ describe("FINANCE_MIX_COLORS (derived categorical palette)", () => {
     for (const hex of FINANCE_MIX_COLORS) {
       expect(hex).toMatch(/^#[0-9a-f]{6}$/i);
     }
+  });
+});
+
+// #3325: the three number shapes used to be this file's own hard-coded `en-NZ`
+// `Intl.NumberFormat` instances; they now come from `@/lib/finance-format`,
+// which reads the configured locale. Literal pins under the default (en-NZ),
+// byte-identical to what the local instances produced.
+describe("formatFinanceValue renders through the shared finance formatters (#3325)", () => {
+  it("keeps count, percent, ratio and whole-dollar currency byte-identical", () => {
+    expect(formatFinanceValue(1234567, "count")).toBe("1,234,567");
+    expect(formatFinanceValue(0.125, "percent")).toBe("12.5%");
+    expect(formatFinanceValue(1.35, "ratio")).toBe("1.35");
+    expect(formatFinanceValue(123456, "currency")).toBe("$1,235");
   });
 });

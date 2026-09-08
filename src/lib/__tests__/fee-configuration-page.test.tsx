@@ -50,7 +50,7 @@ const editableData = {
   membershipTypes: [{
     id: "type-1", key: "FULL", name: "Full", isActive: true,
     annualFees: [{ id: "fee-1", ageTier: null, amountCents: 10000, effectiveFrom: "2026-01-01", effectiveTo: null, billingBasis: "PER_MEMBER", prorationRule: "NONE" }],
-    joiningFees: [{ id: "joining-1", ageTier: "ADULT", amountCents: 5000, effectiveFrom: "2026-01-01", effectiveTo: null }],
+    joiningFees: [{ id: "joining-1", ageTier: "ADULT", amountCents: 123456, effectiveFrom: "2026-01-01", effectiveTo: null }],
   }],
   familyGroups: [{
     id: "family-1", name: "Example family", billingMemberId: "member-1", billingException: false,
@@ -235,6 +235,15 @@ describe("fee configuration page", () => {
     expect(screen.queryByRole("combobox", { name: "Billing member" })).toBeNull();
     // Saved values still render (fee schedule + billing member as static text).
     expect(screen.getByText("$100.00")).toBeTruthy();
+    // The joining fee renders through the shared `formatCents` (#3325): the
+    // club's configured currency, grouped — a hand-rolled or hard-coded
+    // formatter would print "$1234.56" or a fixed "NZ$". The row's span also
+    // carries the date range, so match the exact amount prefix.
+    expect(
+      screen.getByText((_, element) =>
+        element?.tagName === "SPAN" && (element.textContent ?? "").startsWith("$1,234.56 · "),
+      ),
+    ).toBeTruthy();
     expect(screen.getByText(/Alex Example/)).toBeTruthy();
   });
 

@@ -22,6 +22,14 @@ const percentFormatter = new Intl.NumberFormat(APP_LOCALE, {
   maximumFractionDigits: 1,
 });
 
+// Ratios (the current ratio, for one) are not integers; two decimal places so
+// 1.35 is not rounded to "1". Lives here rather than in the chart theme so the
+// dashboard has one home for every number shape it renders (#3325).
+const ratioFormatter = new Intl.NumberFormat(APP_LOCALE, {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
 /** Whole-dollar display value with separators, e.g. 44667484 -> "$446,675". */
 export function formatDollarsDisplay(cents: number): string {
   return dollarsDisplayFormatter.format(Math.round(cents / 100));
@@ -52,4 +60,9 @@ export function formatFinanceSignedNumber(value: number): string {
 
 export function formatFinancePercent(value: number): string {
   return percentFormatter.format(value);
+}
+
+/** Two-decimal ratio, e.g. 1.35 -> "1.35". */
+export function formatFinanceRatio(value: number): string {
+  return ratioFormatter.format(value);
 }
