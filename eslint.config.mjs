@@ -370,6 +370,33 @@ export const CENTS_DISPLAY_GUARD_ARM = CENTS_DISPLAY_RESTRICTIONS.map(
   (entry) => entry.selector,
 );
 
+// INV-CONFIG-001 (#3325) — the locale and currency are the club's
+// configuration. `new Intl.NumberFormat("en-NZ", { style: "currency", ... })`
+// was found in four files that #3302's toFixed arm above structurally cannot
+// see (there is no division to match), and two of them sat on that arm's
+// editable-input exemption. This is therefore its OWN group, on the mandatory
+// set, so `srcRestrictedSyntaxWithout(CENTS_DISPLAY_RESTRICTIONS, ...)` does
+// not lift it: an exemption written for seeding an input's plain value never
+// excused a hard-coded locale. The two homes (`@/lib/utils`,
+// `@/lib/finance-format`) build from `APP_LOCALE`, an Identifier, so they
+// pass without an exemption list — which is the point: there is no legitimate
+// literal locale in `src/`.
+const CURRENCY_LOCALE_MESSAGE =
+  "INV-CONFIG-001 / #3325: do not construct `new Intl.NumberFormat(<literal locale>, { style: \"currency\" })` — the locale and currency are the club's configuration, not this codebase's. Render an integer-cent amount with formatCents / formatSignedCents from @/lib/utils, or a whole-dollar dashboard figure with formatDollarsDisplay from @/lib/finance-format; both read APP_LOCALE and APP_CURRENCY. A genuinely new rendering shape is added to one of those two modules, built from APP_LOCALE, never as another Intl instance. There is no exemption list for this rule and no eslint-disable.";
+
+const CURRENCY_LOCALE_RESTRICTIONS = [
+  {
+    selector:
+      'NewExpression[callee.object.name="Intl"][callee.property.name="NumberFormat"][arguments.0.type="Literal"]:has(Property[key.name="style"][value.value="currency"])',
+    message: CURRENCY_LOCALE_MESSAGE,
+  },
+];
+
+/** Bare selectors, for `cents-display-guard.test.ts` — same mirror as above. */
+export const CURRENCY_LOCALE_GUARD_ARM = CURRENCY_LOCALE_RESTRICTIONS.map(
+  (entry) => entry.selector,
+);
+
 /**
  * THE ESCAPE HATCH for `CENTS_DISPLAY_RESTRICTIONS`, same rule as
  * `MONEY_GUARD_EXEMPTIONS`: every entry names the file(s) and states in
@@ -419,10 +446,8 @@ export const CENTS_DISPLAY_EXEMPTIONS = [
  * members (declared below) — `finance-legacy-dashboard-export.ts`
  * (`finance-*`), `promo-redemptions-csv.ts` (`*promo*`),
  * and `membership-cancellation-blocker-messages.ts`
- * (`membership-cancellation-*`). (`internet-banking-payment-cron.ts`,
- * `*payment*`, was the fourth until #3325 routed its one hard-coded `NZ$`
- * line through `formatCents` and its exemption was deleted with its cause.)
- * Those three already take the broader
+ * (`membership-cancellation-*`); `internet-banking-payment-cron.ts` left the
+ * list with #3325. Those three already take the broader
  * `MONEY_MODULE_RESTRICTIONS` arm instead of the narrow one, so the block that
  * lifts `CENTS_DISPLAY_RESTRICTIONS` for them has to replicate that swap
  * rather than the ordinary exemption block's plain
@@ -2000,6 +2025,7 @@ const ALWAYS_RESTRICTED_IN_SRC = [
   ...DATE_FNS_RESTRICTIONS,
   ...MONEY_CENTS_RESTRICTIONS,
   ...CENTS_DISPLAY_RESTRICTIONS,
+  ...CURRENCY_LOCALE_RESTRICTIONS,
   ...AUTHORITY_DEFAULT_RESTRICTIONS,
 ];
 

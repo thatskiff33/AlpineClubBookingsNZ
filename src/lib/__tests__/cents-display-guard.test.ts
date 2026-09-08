@@ -177,6 +177,62 @@ describe("cents-display guard: catches the shape", () => {
   });
 });
 
+describe("currency-locale guard (#3325, INV-CONFIG-001): a literal locale on a currency formatter", () => {
+  const LOCALE_RULE_ID = "INV-CONFIG-001";
+  const hitsIn = (results: Awaited<ReturnType<ESLint["lintText"]>>) =>
+    results
+      .flatMap((result) => result.messages)
+      .filter(
+        (message) =>
+          message.ruleId === "no-restricted-syntax" &&
+          typeof message.message === "string" &&
+          message.message.startsWith(LOCALE_RULE_ID),
+      );
+
+  it("fires on new Intl.NumberFormat(\"en-NZ\", { style: \"currency\" }) at an ordinary src file", async () => {
+    const code =
+      'export const dollars = (cents: number) => new Intl.NumberFormat("en-NZ", { style: "currency", currency: "NZD" }).format(cents / 100);\n';
+    const results = await eslint.lintText(code, {
+      filePath: path.join(REPO_ROOT, ORDINARY_FILE),
+    });
+    const hits = hitsIn(results);
+    expect(hits).toHaveLength(1);
+    expect(hits[0]?.severity).toBe(2);
+    expect(hits[0]?.message).toContain("formatCents");
+    expect(hits[0]?.message).toContain("finance-format");
+  });
+
+  it("does not fire when the locale is the configured APP_LOCALE", async () => {
+    const code =
+      'import { APP_CURRENCY, APP_LOCALE } from "@/config/operational";\nexport const f = new Intl.NumberFormat(APP_LOCALE, { style: "currency", currency: APP_CURRENCY });\n';
+    const results = await eslint.lintText(code, {
+      filePath: path.join(REPO_ROOT, ORDINARY_FILE),
+    });
+    expect(hitsIn(results)).toEqual([]);
+  });
+
+  it("does not fire on a literal-locale formatter that is not a currency one", async () => {
+    const code =
+      'export const f = new Intl.NumberFormat("en-NZ", { maximumFractionDigits: 0 });\n';
+    const results = await eslint.lintText(code, {
+      filePath: path.join(REPO_ROOT, ORDINARY_FILE),
+    });
+    expect(hitsIn(results)).toEqual([]);
+  });
+
+  it("is NOT lifted at a file on the toFixed exemption list — that list excuses an input's plain value, never a hard-coded locale", async () => {
+    const { exemptFiles } = await loadEslintConfig();
+    const [exempted] = Array.from(exemptFiles).filter((file) => file !== "src/lib/utils.ts");
+    expect(exempted).toBeDefined();
+    const code =
+      'export const dollars = (cents: number) => new Intl.NumberFormat("en-NZ", { style: "currency", currency: "NZD" }).format(cents / 100);\n';
+    const results = await eslint.lintText(code, {
+      filePath: path.join(REPO_ROOT, exempted as string),
+    });
+    expect(hitsIn(results)).toHaveLength(1);
+  });
+});
+
 describe("cents-display guard: the declared exemptions", () => {
   it("reads its exemption list from the config, and every entry states files and a reason", async () => {
     const { exemptions } = await loadEslintConfig();
