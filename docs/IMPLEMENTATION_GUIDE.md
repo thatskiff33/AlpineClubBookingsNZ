@@ -213,7 +213,7 @@ Webhook routes are:
 Run the core gates before opening a PR or exposing an environment:
 
 ```bash
-npm audit --audit-level=high
+npm run audit:deps            # the same gate CI runs, with the same threshold
 npm run lint
 DATABASE_URL=postgresql://user:pass@localhost:5432/tacbookings npx prisma validate
 npm test

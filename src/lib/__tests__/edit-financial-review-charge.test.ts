@@ -41,6 +41,10 @@ const mocks = vi.hoisted(() => ({
   paymentTransactionFindFirst: vi.fn(),
   paymentFindUnique: vi.fn(),
   xeroObjectLinkFindFirst: vi.fn(),
+  bookingGuestFindUnique: vi.fn(),
+  bookingFindUnique: vi.fn(),
+  bookingUpdateMany: vi.fn(),
+  bookingModificationCreate: vi.fn(),
   memberCreditFindUnique: vi.fn(),
   applyLocalRefundAllocation: vi.fn(),
   planStripeRefundAllocation: vi.fn(),
@@ -204,6 +208,26 @@ const tx = {
   xeroObjectLink: {
     findFirst: (...a: unknown[]) => mocks.xeroObjectLinkFindFirst(...a),
   },
+  // #3219 D2: closing a review whose price boxes are OFFERED is refused while
+  // they are blank, so every edit-review closure now asks whether this strand
+  // has any. These fixtures send no figures and are not about that question, so
+  // the strand comes back with none - the boxes are not offered and the close is
+  // exactly the one this suite was written against.
+  bookingGuest: {
+    findUnique: (...a: unknown[]) => mocks.bookingGuestFindUnique(...a),
+  },
+  // #3257: and EVERY edit-review closure now re-prices the booking from its
+  // strands, whether or not it recorded a night price - so these fixtures reach
+  // the booking too. They are not about that question, so the strands below
+  // reconcile to the figures already stored: the re-price runs, agrees, and
+  // writes no history row.
+  booking: {
+    findUnique: (...a: unknown[]) => mocks.bookingFindUnique(...a),
+    updateMany: (...a: unknown[]) => mocks.bookingUpdateMany(...a),
+  },
+  bookingModification: {
+    create: (...a: unknown[]) => mocks.bookingModificationCreate(...a),
+  },
 };
 
 function reviewContext(overrides: Record<string, unknown> = {}) {
@@ -323,6 +347,35 @@ beforeEach(() => {
   mocks.manualRefundTaskFindUnique.mockResolvedValue(cardReviewTask());
   mocks.manualRefundTaskUpdateMany.mockResolvedValue({ count: 1 });
   mocks.memberCreditFindUnique.mockResolvedValue(null);
+  // #3257: one strand, fully priced, under a headline that already agrees with
+  // it - so the re-price this closure now performs is a correct no-op.
+  mocks.bookingFindUnique.mockResolvedValue({
+    id: "booking-1",
+    memberId: "member-1",
+    lodgeId: null,
+    checkIn: new Date("2026-08-20T00:00:00.000Z"),
+    totalPriceCents: 15_000,
+    discountCents: 0,
+    promoAdjustmentCents: 0,
+    finalPriceCents: 15_000,
+    promoRedemption: null,
+    guests: [
+      {
+        id: "guest-1",
+        priceCents: 15_000,
+        memberId: "member-1",
+        isMember: true,
+        nights: [
+          {
+            stayDate: new Date("2026-08-20T00:00:00.000Z"),
+            priceCents: 15_000,
+          },
+        ],
+      },
+    ],
+  });
+  mocks.bookingUpdateMany.mockResolvedValue({ count: 1 });
+  mocks.bookingModificationCreate.mockResolvedValue({ id: "mod-rebase-1" });
   // No request for this edit yet, and no supplementary invoice out.
   mocks.paymentTransactionFindFirst.mockResolvedValue(null);
   mocks.xeroObjectLinkFindFirst.mockResolvedValue(null);

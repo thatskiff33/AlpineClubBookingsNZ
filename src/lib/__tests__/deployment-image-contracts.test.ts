@@ -662,12 +662,25 @@ describe("deployment image contracts", () => {
       // The context name is what branch protection stores. Renaming it silently
       // un-requires the gate until someone re-reads the protection API.
       expect(job).toMatch(/^ {4}name: Dependency audit$/m);
-      // Still BLOCKING, and still the same command (owner decision, 19 Aug 2026):
-      // a new advisory is a supply-chain decision a human makes, not a report.
-      // Anchored to the run line — the job's comment quotes the command while
-      // explaining why it needs no install.
-      expect(job).toMatch(/^ +run: npm audit --audit-level=high$/m);
+      // Still BLOCKING (owner decision, 19 Aug 2026): a new advisory is a
+      // supply-chain decision a human makes, not a report.
+      //
+      // #3254 replaced the bare `npm audit --audit-level=high` with a wrapper
+      // that distinguishes "found a vulnerability" from "could not reach the
+      // advisory service", retries the second and then fails anyway. The
+      // threshold is unchanged and lives in the script; what is anchored here is
+      // that the job runs the wrapper rather than the raw command, because
+      // reverting to the raw command silently restores the misleading red.
+      // Anchored to the run line — the job's comment quotes both.
+      expect(job).toMatch(/^ +run: node scripts\/ci\/audit-dependencies\.mjs$/m);
       expect(job).not.toContain("continue-on-error");
+
+      // The other hazard #3254 raises — a job-level `if:` or `needs:` making
+      // this gate vacuously green, because GitHub counts a SKIPPED required
+      // check as satisfying branch protection — is deliberately not re-asserted
+      // here. The repo-wide case below ("puts no job-level `if:` or `needs:` on
+      // any required-check job") already covers every required job including
+      // this one, and a second copy would be a rule with two homes.
 
       // ...and `verify` must no longer run it. Asserted against the DIRECTIVES,
       // because verify now carries a comment naming the departed step and saying

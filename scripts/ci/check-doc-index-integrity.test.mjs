@@ -1448,7 +1448,11 @@ describe("tracked citation source extensions", () => {
     // a second time when #2789 split INV-MOD-027 and INV-MOD-028 into
     // INV-MOD-029..054, which is the same lesson at scale: a split mints a
     // whole range, so re-read this number after one.
-    const planted = "INV-MOD-055";
+    // Moved up by the fourth `main`-into-epic sync: `main`'s #3219/#3257
+    // settle-time re-price rule arrived stacked inside INV-MOD-038 and was given
+    // its own id, INV-MOD-055, so the planted id had been taken. One above the
+    // maximum, and no further, exactly as the note above requires.
+    const planted = "INV-MOD-056";
     // The precondition the fixture rests on. When this fails, `planted` has been
     // taken by a real invariant: move it up one, and no further.
     expect(files.get("docs/DOMAIN_INVARIANTS.md")).not.toContain(planted);
