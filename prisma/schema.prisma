@@ -5541,6 +5541,12 @@ model BookingChangeRequest {
   // rewritten. `proposalHash` is the canonical SHA-256 over that snapshot plus
   // the base facts, so approval can detect that what it is about to execute is
   // byte-for-byte what was reviewed (proposal drift).
+  // ONE MIGRATION HAS REWRITTEN `proposalHash` AND `frozenEvidence`, and that is
+  // recorded rather than hidden. #3252's comparator fix changed the derivation,
+  // so 20260912010000 re-derived the stored values for REQUESTED rows only —
+  // otherwise a waiting member request would have been refused at approval as
+  // tampered with. A DERIVATION of the frozen proposal moved; the proposal
+  // itself never has. See INV-EXCEPT-036; do not read that as a licence.
   proposalSnapshot     Json?
   proposalHash         String?                    @db.VarChar(64)
   // The frozen AggregatedPolicyExceptions: every covered structured violation
@@ -5687,6 +5693,12 @@ model NewBookingPolicyExceptionRequest {
   // order-independent SHA-256 over it (src/lib/booking-exception-requests.ts),
   // so #2525's approval can prove what it executes is byte-for-byte what was
   // reviewed.
+  // ONE MIGRATION HAS REWRITTEN `proposalHash` AND `frozenEvidence`, and that is
+  // recorded rather than hidden. #3252's comparator fix changed the derivation,
+  // so 20260912010000 re-derived the stored values for REQUESTED rows only —
+  // otherwise a waiting member request would have been refused at approval as
+  // tampered with. A DERIVATION of the frozen proposal moved; the proposal
+  // itself never has. See INV-EXCEPT-036; do not read that as a licence.
   proposalSnapshot      Json
   proposalHash          String                     @db.VarChar(64)
   // The frozen #2363 AggregatedPolicyExceptions (every covered structured
