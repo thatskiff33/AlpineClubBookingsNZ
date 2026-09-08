@@ -2217,10 +2217,13 @@ const noSemgrepUnparsableImportType = {
  * enforces Semgrep's parse coverage, not single-source-of-truth, and a rule id
  * that misdescribes what it protects is the first thing a reader gets wrong.
  *
- * Exported for `semgrep-unparsable-import-type-guard.test.ts`, which lints
- * fixtures through the SHIPPED config rather than through a copy of the rule.
+ * NOT exported, unlike its neighbour, and deliberately.
+ * `semgrep-unparsable-import-type-guard.test.ts` reaches the rule by linting
+ * fixture text through the shipped config with the real `ESLint` class, so it
+ * never needs the plugin object — and an export nothing imports would also
+ * owe `eslint.config.d.mts` a declaration to stay reachable from TypeScript.
  */
-export const SCAN_COVERAGE_LOCAL_RULES = {
+const SCAN_COVERAGE_LOCAL_RULES = {
   rules: { "no-semgrep-unparsable-import-type": noSemgrepUnparsableImportType },
 };
 
