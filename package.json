@@ -38,6 +38,7 @@
     "stale-containers": "node scripts/stale-containers.mjs",
     "pr:check": "node scripts/ci/check-pr-body.mjs",
     "ci:workflowcheck": "node scripts/ci/check-workflow-suite-checkout-depth.mjs",
+    "audit:deps": "node scripts/ci/audit-dependencies.mjs",
     "test": "vitest run",
     "test:related": "vitest related --run",
     "test:named": "node scripts/run-named-tests.mjs",

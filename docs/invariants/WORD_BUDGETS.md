@@ -42,7 +42,14 @@ last measured, and the gate holds the entry to that number: it may only shrink
 within budget. A compliant entry can never join it. One row is a restore rather than a
 regression: `INV-CAP-027` measured 317 words on the epic base (82f820dfb), was
 briefly 298 after a lossy rewrite, and stands at 303 with its original wording
-put back — a shrink against the base. When the last row goes,
+put back — a shrink against the base. A row can also ARRIVE, and one has:
+`INV-MOD-055` came in on the fourth `main`-into-epic sync as #3219/#3257's
+settle-time re-price rule, written on `main` where this register does not exist
+and therefore never measured against a budget. The sync gave it its own id
+rather than leaving it stacked under `INV-MOD-038`, whose own 263 words it had
+pushed to 1420 while they were sharing a heading. Nothing was reworded to fit:
+compacting an owner-decided rule is a compaction-wave job on #2789, not
+something a conflict resolution should do. When the last row goes,
 delete this section — and when the exceptions table is also empty, delete this
 file; the checker treats an absent register as "no exceptions, no debt".
 
@@ -65,6 +72,7 @@ file; the checker treats an absent register as "no exceptions, no debt".
 | `INV-CONFIG-004` | 1304 |
 | `INV-OPS-012` | 1219 |
 | `INV-SSOT-003` | 1161 |
+| `INV-MOD-055` | 1157 |
 | `INV-ADDPAY-036` | 1137 |
 | `INV-ADDPAY-038` | 1032 |
 | `INV-HOST-052` | 1010 |
