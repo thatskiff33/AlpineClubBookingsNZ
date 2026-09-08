@@ -293,6 +293,43 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   writer classifiers (including zero and null amounts) and every predicate that
   admits a draining-colour officer-repair audit.
 
+## INV-MONEY-029
+
+- **What a promotion took off each night or guest is recorded beside it, at
+  the grain the pricing engine decided it, and the rows reconcile to the
+  recorded promo totals** (#3276, stage 2 of programme #3272; D1 on #3272 as
+  refined 8 Sep 2026). `BookingGuestNightAdjustment` holds one row per
+  adjustment per target: the NIGHT for a percentage, free-night or fixed-nightly
+  promotion, whose arithmetic is per night; the GUEST for a fixed-amount
+  promotion, which is `min(value, guest total)` with no per-night rule. The
+  amount is the engine's own figure — the very term its totals were summed from
+  — never translated to a finer grain by a rule. It is a signed delta in integer
+  cents like `priceAdjustmentCents`: negative for a discount, positive where a
+  `SET_PRICE` code raised a night, and `0` where it set a night to exactly its
+  rate, which is a real value. The self-check, enforced at write time by
+  `recordBookingNightAdjustments` in `night-adjustment-write.ts` and by a census
+  test: the rows of one redemption sum, per beneficiary, to that member's
+  `PromoRedemptionAllocation.priceAdjustmentCents` (an absent allocation row
+  means the member received nothing, per `INV-MONEY-005`) and, overall, to
+  `PromoRedemption.priceAdjustmentCents`; a mismatch refuses before a row is
+  written and the transaction rolls back. `amountCents = NULL` means NOT KNOWN
+  and is written only where the engine genuinely has no per-target figure — the
+  per-member safety-cap rescale; unknown rows are excluded from the sums they
+  would make meaningless, and `?? 0` on the column is prohibited exactly as it is
+  on `BookingGuestNight.priceCents`. `BookingGuestNight.adjustmentsState`
+  defaults to `UNKNOWN` — the only honest value for a row a colour compiled
+  before the column existed inserts — and becomes `RECORDED` only through that
+  one writer, after the rows are in place in the same transaction; `RECORDED`
+  with no rows means nothing was taken off. Officer-priced nights, even splits
+  and parked edits leave it `UNKNOWN`. A mechanical rewrite that moves no money
+  (a name-only correction, an in-progress extension, an admin date shift)
+  carries the recorded rows across by guest and stay date byte for byte, and
+  where it cannot, leaves the booking's nights `UNKNOWN` rather than guess.
+  **Account credit is not in this table**: it has one home, the `MemberCredit`
+  ledger entry with its booking link, and is composed from there, never split
+  across nights. No reader changes and no figure a member sees changes in this
+  stage (D3), pinned by `promo-money-byte-identical.test.ts`.
+
 ## INV-MONEY-006
 
 **Related: `INV-MONEY-001`** (money is held as integer cents) and

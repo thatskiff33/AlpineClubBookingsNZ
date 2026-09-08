@@ -214,9 +214,9 @@ describe("INV-MONEY-029 night adjustment build-up census", () => {
       offenders,
       `INV-MONEY-029: only ${MODULE} may write adjustment rows or adjustmentsState; a night becomes RECORDED only once its rows are in place.`,
     ).toEqual([]);
-    const module = read(MODULE);
-    expect(module).toMatch(/adjustmentsState: "RECORDED"/);
-    expect(module).not.toMatch(/adjustmentsState: "UNKNOWN"/);
+    const writerModule = read(MODULE);
+    expect(writerModule).toMatch(/adjustmentsState: "RECORDED"/);
+    expect(writerModule).not.toMatch(/adjustmentsState: "UNKNOWN"/);
   });
 
   it("pairs every promotion writer with the recorder, in the order the night rows allow", () => {
