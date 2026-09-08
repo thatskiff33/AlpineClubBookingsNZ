@@ -41,7 +41,7 @@ reason: the largest single entry, and the only one over a hundred lines. The
   reviewer asked and the next reader will too.
 
 file: src/lib/booking-edit-guest-ranges.ts
-lines: 1978
+lines: 1982
 reason: each existing strand now carries its own sold-price map instead of a
   parallel array read by position, and four party-pricing slices are read once
   and refused when absent. The money rule they are refusing under is #3031's,
@@ -81,12 +81,12 @@ reason: twelve lines. The retry schedule's clamped step carries NO numeric
   schedule's length is asserted at module load, so an empty one cannot ship.
 
 file: src/lib/booking-batch-modification-service.ts
-lines: 2447
+lines: 2451
 reason: five lines. Each guest carries its own echoed nights, so the rate vector
   and its dates cannot drift from the guest they describe.
 
 file: src/lib/booking-date-modification-service.ts
-lines: 2176
+lines: 2180
 reason: the guest's priced row is read once at the top of the write loop and
   reused by the four places that had each indexed the breakdown again, and the
   refusal sits ABOVE the parked condition rather than inside it. The parked
@@ -108,7 +108,7 @@ reason: two lines. Both hold loads read both ends of the changed nights, and the
   destination's sole occupant is destructured rather than indexed twice.
 
 file: src/lib/booking-create.ts
-lines: 1980
+lines: 1990
 reason: eleven lines. Promo evaluation reads each guest's priced row once and
   refuses an unpriced guest, which is #3167's rule stated where the money leaves
   the breakdown.
@@ -120,7 +120,7 @@ reason: sixteen lines across the party window, the frozen guest's stay range and
   there.
 
 file: src/lib/booking-guest-removal-service.ts
-lines: 1351
+lines: 1355
 reason: twenty lines. The reprice and the per-guest write each read that guest's
   breakdown row once and refuse when it is absent, under #3031.
 
@@ -151,7 +151,7 @@ reason: five lines. The refusal message reads its first block where the no-block
   from a value the function holds.
 
 file: src/lib/waitlist.ts
-lines: 1437
+lines: 1441
 reason: eighteen lines. The offer reprice pairs each booking guest with its
   priced row and its night rows in one pass, keeping the "built first, before
   any write" ordering this function's own comment says is load-bearing.
@@ -193,3 +193,22 @@ reason: twelve lines. The email search still tests the RESPONSE for a contact
   the direction that matters: falling through on a non-empty response would
   reach the create path and mint a second Xero contact for a member who already
   has one.
+
+## Re-measured after the fourth `main`-into-epic sync
+
+Six of the numbers below moved, and none of them because this tranche changed.
+Bringing `main` in composed #3219's final-price extraction with this tranche's
+growth on the same six files, so each is a few lines longer than either change
+left it: `booking-batch-modification-service.ts` 2451, `booking-create.ts` 1990,
+`booking-date-modification-service.ts` 2180, `booking-edit-guest-ranges.ts` 1982,
+`booking-guest-removal-service.ts` 1355, `waitlist.ts` 1441. Measured off the
+merged tree rather than added up.
+
+`3219-review-settlement-reprices-booking.md` names the same six and needs no
+change: it merged to `main`, so it is part of the base this gate measures
+against and is inert. That is worth stating because it is NOT how it looks
+mid-merge — with the merge staged but uncommitted the base is still the old
+merge point, both fragments read as live, and the gate correctly reports six
+files declared twice. Committing the merge moves the base to `main`'s tip and
+the collision disappears. Resolve it after committing, not before, or you will
+delete an entry that was never in conflict.
