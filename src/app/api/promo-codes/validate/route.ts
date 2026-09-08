@@ -277,15 +277,29 @@ export async function POST(req: NextRequest) {
       groupDiscount,
     });
 
-    const promoGuests = price.guests.map((g, index) => ({
-      memberId: guests[index].memberId ?? null,
-      isMember: g.isMember,
-      perNightRates: g.perNightCents,
-      nightDates: g.nightDates,
-      // Dates the positional rates so internal work-party promos restrict
-      // the discount to the event's night window.
-      firstNight: guests[index].stayStart ?? checkIn,
-    }));
+    // Walked over the guests the pricing pass was GIVEN, each paired with the
+    // row that priced it, rather than over the breakdown with the input read
+    // back by position (#2801). The engine returns one row per input guest, but
+    // `PriceBreakdown` declares no such relation, so a short breakdown is a
+    // wiring defect: refused by name, because a promo allocated against the
+    // wrong guest's nightly rates quotes a discount the save will not honour.
+    const promoGuests = guests.map((guest, index) => {
+      const priced = price.guests[index];
+      if (priced === undefined) {
+        throw new Error(
+          `Promo validation has no priced guest at breakdown position ${index} of ${price.guests.length} (#3031).`
+        );
+      }
+      return {
+        memberId: guest.memberId ?? null,
+        isMember: priced.isMember,
+        perNightRates: priced.perNightCents,
+        nightDates: priced.nightDates,
+        // Dates the positional rates so internal work-party promos restrict
+        // the discount to the event's night window.
+        firstNight: guest.stayStart ?? checkIn,
+      };
+    });
 
     const application = await validateAndCalculatePromoDiscount(
       promoCode,
