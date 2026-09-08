@@ -234,24 +234,21 @@ export async function planStoredNightPriceRepair({
   store: Prisma.TransactionClient;
 }): Promise<StoredNightPriceRepairPlan | null> {
   if (requested === null) {
-    // #3219 D2 (owner, 5 September 2026): the night prices are MANDATORY where
-    // the price boxes are ALREADY OFFERED - on a dismissal as well as on a
-    // completion - because the booking's own price is re-based from the strands
-    // when the review closes, and a review closed blank leaves a headline that
-    // still counts a guest the edit has already deleted (#3257).
+    // #3219 D2 (owner, 5 Sep 2026): night prices are MANDATORY where the boxes
+    // are ALREADY OFFERED, on a dismissal as on a completion - the booking's
+    // price re-bases from the strands when the review closes, and one closed
+    // blank leaves a headline still counting a deleted guest (#3257).
     //
-    // "WHERE THE BOXES ARE OFFERED" IS STRUCTURAL, NOT A CARVE-OUT LIST, and
-    // that is what keeps the rule narrow. The boxes appear only for a review
-    // that names a guest strand whose blanks can be filled in against usable
-    // money. Everything else answers `null` from one of the two reads below and
-    // closes exactly as it did before: a legacy hand-back task, a total mismatch
-    // with no blanks, damaged rows, a removed guest whose rows the edit deleted,
-    // the "a different guest is the problem" item, and #3213's withheld-share
-    // notice, which reviews no stay and has no nights.
+    // "WHERE THE BOXES ARE OFFERED" IS STRUCTURAL, NOT A CARVE-OUT LIST, which
+    // is what keeps the rule narrow: the boxes appear only for a review naming a
+    // strand whose blanks can be filled against usable money. Everything else
+    // answers `null` from one of the two reads below and closes as it did
+    // before - a legacy hand-back, a total mismatch with no blanks, damaged
+    // rows, a removed guest whose rows the edit deleted, the "different guest"
+    // item, and #3213's withheld-share notice, which reviews no stay.
     //
-    // The refusal is `unpricedNightsExplanation` verbatim - the same sentence
-    // the officer was already shown at the moment of decision - rather than a
-    // second wording of the same rule (`INV-SSOT`).
+    // The refusal is `unpricedNightsExplanation` verbatim - the sentence the
+    // officer already saw - not a second wording of one rule (`INV-SSOT`).
     const offeredGuestId = reviewTaskGuestId(task);
     if (offeredGuestId === null) return null;
     const offered = await loadUnpricedNightsSummary({

@@ -28,7 +28,7 @@ These files' real size debt is untouched by this pull request and is not this
 issue's to pay down.
 
 file: src/app/api/bookings/[id]/guests/route.ts
-lines: 1410
+lines: 1411
 reason: the parked-add ternary (#3166) computes `newFinalPriceCents` from a
   local the surrounding handler wrote three lines earlier and immediately turns
   into `priceDiffCents`. Its parked branch is unchanged.
@@ -44,7 +44,7 @@ reason: shapes one JSON response field from the promo result the handler has
   just computed; there is nothing to lift out but the addition itself.
 
 file: src/lib/booking-batch-modification-service.ts
-lines: 2436
+lines: 2446
 reason: one arm of the priced/parked ternary, beside the comment that says why
   the other arm writes the stored figure back. Both stay in place.
 
@@ -54,12 +54,12 @@ reason: three sites, one per creation path, each composing the final price from
   that path's own priced breakdown immediately before writing the booking row.
 
 file: src/lib/booking-date-modification-service.ts
-lines: 2094
+lines: 2114
 reason: the parked/priced ternary, unchanged in shape; only its computed branch
   now calls the helper.
 
 file: src/lib/booking-edit-guest-ranges.ts
-lines: 1913
+lines: 1940
 reason: the plan builder's single composition, feeding `priceDiffCents` on the
   next line.
 
@@ -69,7 +69,7 @@ reason: the parked-removal ternary, which carries the original statement of why
   the parked branch must not derive. That comment is untouched.
 
 file: src/lib/waitlist.ts
-lines: 1422
+lines: 1423
 reason: composes the offer's final price from the reprice this function has just
   run, immediately before the booking write.
 
