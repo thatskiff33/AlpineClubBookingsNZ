@@ -1,4 +1,4 @@
-- **The security scanner now reads 165 files it was only reading part of, and
+- **The security scanner now reads 166 files it was only reading part of, and
   a lint rule stops that happening again (#3318).** Nothing a member or an
   administrator sees changes; this is about how much of the code the automated
   security scan is actually able to check before a change is allowed to merge.
@@ -21,7 +21,7 @@
   Two further findings came out of measuring it. The description of the fault
   everyone was working from was incomplete in two ways: an automatic code
   formatter reflowing a long line was enough to create a new unreadable region,
-  which is how eleven of the files got there in the first place; and one file
+  which is how ten of the files got there in the first place; and one file
   was affected by a second, unrelated version of the same fault that nobody had
   written down. Both are now stated where the check tells you about them, and
   both are banned rather than merely described.

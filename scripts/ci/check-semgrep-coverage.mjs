@@ -247,8 +247,9 @@ export function readAllowlistFiles(allowlist) {
  *    decides the gate is confused, and takes the allowlist escape;
  *  - "it is the EMPTY argument list" (#2842's correction, measured on a
  *    single-line repro) missed the TRAILING COMMA, which breaks it just as
- *    reliably: 11 files reached the allowlist because a formatter split the
- *    argument list across lines and added one. Nobody wrote that spelling
+ *    reliably: it appeared at 12 call sites, and for 10 of the 169 entries it
+ *    was the only cause - a formatter split a long argument list across lines
+ *    and added the comma with the reflow. Nobody wrote that spelling
  *    deliberately, which is why a description keyed on the empty parens went on
  *    missing it;
  *  - and both of those described only a CALL. One allowlisted file carried no

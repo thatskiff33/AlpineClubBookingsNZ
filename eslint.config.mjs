@@ -1987,9 +1987,9 @@ export const SSOT_LOCAL_RULES = {
 // rename that pushes the call past it splits the argument list across lines, the
 // trailing comma arrives with the reflow, and a passing line becomes an
 // unscanned region with no change of any substance. That is not hypothetical —
-// 12 of the 169 allowlist entries #3318 inherited were exactly that, and 23
-// files in the tree held the "parses today" spelling, every one of them one
-// reflow from an entry of its own. So the rule reports the whole class, and the
+// it appeared at 12 call sites, and for 10 of the 169 entries #3318 inherited
+// it was the only cause. A further 23 files in the tree held the "parses today"
+// spelling, every one of them one reflow from an entry of its own. So the rule reports the whole class, and the
 // remedy moves the type out of the call, where nothing about it depends on
 // formatting:
 //

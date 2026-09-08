@@ -364,9 +364,10 @@ knowing before you reach for a remedy, all measured:
   `f<typeof import("x")>()` fails and `f<typeof import("x")>("x")` parses. That
   correction is also incomplete — a **trailing comma** breaks it just as
   reliably: the multi-line form, with a comma after the last argument, fails
-  with "`,` was unexpected". 11 files reached the allowlist that way, because a
-  formatter split a long argument list across lines and added one. So which
-  side of the line a call sits on is decided by **print width**, which is why
+  with "`,` was unexpected". It appeared at 12 call sites, and for 10 of the
+  169 entries it was the only cause: a formatter split a long argument list
+  across lines and added the comma with the reflow. So which side of the line a
+  call sits on is decided by **print width**, which is why
   #3318's rule reports the whole class: 23 files held the "parses today"
   spelling and every one of them was one rename away from an entry of its own;
 - **a third fault exists that neither description reached**: an `import()` type

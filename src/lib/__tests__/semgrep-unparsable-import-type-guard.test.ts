@@ -97,9 +97,9 @@ export async function build() {
  *
  * #2842 corrected "a generic call with an `import()` type argument" to "with an
  * EMPTY argument list", measured on a single-line repro. That correction is also
- * incomplete: a trailing comma breaks it just as reliably, and 11 files reached
- * the allowlist that way — a formatter split the argument list across lines and
- * added the comma. Nobody wrote that spelling deliberately, which is exactly why
+ * incomplete: a trailing comma breaks it just as reliably, and 10 files were on
+ * the allowlist for that alone — a formatter split the argument list across
+ * lines and added the comma with the reflow. Nobody wrote that spelling deliberately, which is exactly why
  * a rule keyed on the empty parens would have gone on missing it.
  */
 const TRAILING_COMMA_ARGUMENT = `
