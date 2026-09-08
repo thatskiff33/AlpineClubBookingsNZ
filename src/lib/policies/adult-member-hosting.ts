@@ -10,7 +10,7 @@ import type {
   UncoveredGuestNight,
 } from "@/lib/booking-policy-exceptions";
 import { ADULT_MEMBER_HOST_SCOPES } from "@/lib/booking-policy-exceptions";
-import { compareOrdinal } from "@/lib/stable-digest";
+import { compareOrdinal } from "@/lib/ordinal-order";
 
 /**
  * The configurable adult-member hosting policy (#2364, epic decision D-R3).

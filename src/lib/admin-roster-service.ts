@@ -1,7 +1,7 @@
 import type { Prisma } from "@prisma/client"
 import { createHash } from "node:crypto"
 import { prisma } from "@/lib/prisma"
-import { compareOrdinal } from "@/lib/stable-digest"
+import { compareOrdinal } from "@/lib/ordinal-order"
 import {
   allocateChores,
   filterChoresByFrequency,

@@ -11,7 +11,7 @@ import { prisma } from "@/lib/prisma";
 // Ordinal, never `localeCompare`: a locale must not be able to reorder an API
 // response, and an ICU build difference between two servers would do exactly
 // that. One home for that rule (`INV-SSOT-001`, #3252).
-import { compareOrdinal } from "@/lib/stable-digest";
+import { compareOrdinal } from "@/lib/ordinal-order";
 
 /**
  * ONE UNCOVERED LODGE-NIGHT, never a bare calendar night (#2917).

@@ -18,7 +18,7 @@ import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { isDateOnlyString, parseDateOnly } from "@/lib/date-only";
 import { MEMBER_IMPORT_ROLE_VALUES } from "@/lib/member-roles";
 import { prisma } from "@/lib/prisma";
-import { compareOrdinal } from "@/lib/stable-digest";
+import { compareOrdinal } from "@/lib/ordinal-order";
 import {
   validateAgeTierPartition,
   type AgeTierPartitionRow,

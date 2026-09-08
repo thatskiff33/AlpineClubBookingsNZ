@@ -323,7 +323,29 @@ export interface CategoryImporter {
   apply(ctx: ApplyContext): Promise<CategoryApplyResult>;
 }
 
-/** Stable content hash of an allowlisted row projection (order-independent). */
+/**
+ * Stable content hash of an allowlisted row projection (order-independent).
+ *
+ * ## Considered and deliberately left alone by the #3250 sweep
+ *
+ * This is a third `sha256(JSON.stringify(...))` in the deterministic-identity
+ * family, and the sweep that gave that family one home looked at it and did not
+ * move it. The reasoning, recorded so the next reader inherits a decision rather
+ * than an oversight:
+ *
+ * - The FIELD LIST is already ordinal — `[...fields].sort()` with no comparator
+ *   is a code-unit sort — so the locale hazard #3252 was about does not reach
+ *   here at all.
+ * - The residual difference from `stableDigest` is that a field's VALUE may be a
+ *   Json column whose keys arrive in insertion order, which this does not
+ *   normalise. That is a genuine latent hazard, and it is NOT a locale one.
+ * - Its remedy is not free: this hash is the preview-to-apply fingerprint of a
+ *   config import, so adopting a different derivation refuses every in-flight
+ *   preview at deploy. That is a self-healing refusal, but it is a behaviour
+ *   change with no reported defect behind it, on a path none of #3250/#3251/#3252
+ *   names in its body — so it belongs in its own issue with its own evidence,
+ *   not folded into this one.
+ */
 export function hashRow(fields: string[], row: object): string {
   const record = row as Record<string, unknown>;
   const ordered = [...fields].sort();

@@ -10,7 +10,7 @@ import {
 } from "@/lib/adult-member-hosting-coverage-envelope";
 import { ApiError } from "@/lib/api-error";
 import { formatBookingReference } from "@/lib/booking-reference";
-import { compareOrdinal } from "@/lib/stable-digest";
+import { compareOrdinal } from "@/lib/ordinal-order";
 import { bookingsOverlap } from "@/lib/booking-night-overlap";
 import {
   HOSTING_COVERAGE_STATE_KEY_PATTERN,

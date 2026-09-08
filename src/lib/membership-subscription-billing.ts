@@ -1,6 +1,6 @@
-import { createHash } from "node:crypto";
 
-import { compareOrdinal } from "@/lib/stable-digest";
+import { compareOrdinal } from "@/lib/ordinal-order";
+import { stableDigest } from "@/lib/stable-digest";
 import type {
   AgeTier,
   MembershipBillingExceptionResolution,
@@ -192,8 +192,32 @@ export type SubscriptionBillingPreview = {
   confirmationToken: string;
 };
 
+/**
+ * Through the canonical `stableDigest` (`INV-SSOT-001`, #3250).
+ *
+ * This module used to define its own `createHash("sha256")
+ * .update(JSON.stringify(value)).digest("hex")` — character for character the
+ * private copy #3250 was filed about, in a second file. Two consequences of
+ * routing it to the shared helper, both measured rather than assumed and both
+ * pinned by `membership-subscription-billing.test.ts`:
+ *
+ * - **`SubscriptionBillingException.fingerprint` is byte-identical**, because
+ *   `exception()` hashes an ARRAY OF PRIMITIVES and recursive key sorting is the
+ *   identity on that. This matters: the fingerprint is a STORED column that a
+ *   later run reads back (`where: { fingerprint }`) and prunes against
+ *   (`notIn: currentFingerprints`), so a change there would duplicate every
+ *   existing exception row and delete the originals.
+ * - **`confirmationToken` moves once, at deploy.** It hashes a nested OBJECT, so
+ *   sorted keys give different bytes. Nothing stores it: the preview hands it to
+ *   the browser and the confirm route re-derives it. An admin holding an open
+ *   preview across the deploy is answered with the route's ordinary 409 —
+ *   "Billing configuration changed after preview. Review the refreshed preview
+ *   before confirming." — and re-previews. In exchange the token becomes
+ *   independent of the order the preview object's keys were built in, which is
+ *   the property the canonical helper exists to give.
+ */
 function digest(value: unknown) {
-  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+  return stableDigest(value);
 }
 
 function seasonBounds(seasonYear: number) {

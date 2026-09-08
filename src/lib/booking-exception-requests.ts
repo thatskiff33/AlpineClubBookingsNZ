@@ -11,7 +11,8 @@ import {
   type PolicyExceptionViolation,
 } from "@/lib/booking-policy-exceptions";
 
-import { canonicalNights, compareOrdinal, stableDigest } from "@/lib/stable-digest";
+import { compareOrdinal } from "@/lib/ordinal-order";
+import { canonicalNights, stableDigest } from "@/lib/stable-digest";
 
 /**
  * The durable member-request + admin-decision workflow that sits ON TOP of the

@@ -36,7 +36,8 @@ import { prisma } from "@/lib/prisma";
 // pass arrays of primitives where key sorting is the identity and `"utf8"` is
 // already the default; `xero-member-grouping-resync.test.ts` pins both digests
 // against the literals measured before the swap rather than asserting it.
-import { compareOrdinal, stableDigest } from "@/lib/stable-digest";
+import { compareOrdinal } from "@/lib/ordinal-order";
+import { stableDigest } from "@/lib/stable-digest";
 import { XeroDailyLimitError } from "@/lib/xero-api-client";
 import { syncManagedXeroContactGroupForMember } from "@/lib/xero-contact-groups";
 import {

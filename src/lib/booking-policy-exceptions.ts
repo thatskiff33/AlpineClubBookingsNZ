@@ -1,6 +1,6 @@
 import { formatDateOnly } from "@/lib/date-only";
 import { ApiError } from "@/lib/api-error";
-import { compareOrdinal } from "@/lib/stable-digest";
+import { compareOrdinal } from "@/lib/ordinal-order";
 
 /**
  * The complete, explicit soft-policy allowlist (#2363).

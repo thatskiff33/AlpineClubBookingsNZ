@@ -1,7 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import { addDaysDateOnly, eachDateOnlyInRange, formatDateOnly } from "@/lib/date-only";
-import { compareOrdinal } from "@/lib/stable-digest";
+import { compareOrdinal } from "@/lib/ordinal-order";
 
 type RosterLockTx = Pick<Prisma.TransactionClient, "$executeRaw">;
 

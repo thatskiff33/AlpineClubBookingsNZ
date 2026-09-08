@@ -14,7 +14,7 @@
  * broken fixture and prove it actually bites.
  */
 
-import { compareOrdinal } from "@/lib/stable-digest";
+import { compareOrdinal } from "@/lib/ordinal-order";
 
 export interface EmailTemplateDefaults {
   defaultSubject: string;
