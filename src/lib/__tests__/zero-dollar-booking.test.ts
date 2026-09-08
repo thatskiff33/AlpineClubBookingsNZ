@@ -75,6 +75,16 @@ const mockTx = {
   season: { findMany: mockTxSeasonFindMany },
   payment: { create: mockTxPaymentCreate, upsert: mockPaymentUpsert },
   promoRedemption: { findUnique: vi.fn().mockResolvedValue(null) },
+  // #3276: the night adjustment build-up writer reads and rewrites these.
+  bookingGuestNightAdjustment: {
+    deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+    createMany: vi.fn().mockResolvedValue({ count: 0 }),
+    findMany: vi.fn().mockResolvedValue([]),
+  },
+  bookingGuestNight: {
+    findMany: vi.fn().mockResolvedValue([]),
+    updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+  },
   lodge: { findFirst: mockTxLodgeFindFirst, findUnique: mockLodgeFindUnique },
   lodgeSettings: { findUnique: async () => ({ capacity: 100 }) },
   memberLodgeAccess: { findMany: mockTxMemberLodgeAccessFindMany },
@@ -165,6 +175,7 @@ vi.mock("@/lib/capacity", () => ({
 vi.mock("@/lib/promo", () => ({
   validatePromoCodeRules: vi.fn(),
   validateAndCalculatePromoDiscount: vi.fn().mockResolvedValue({
+    adjustmentTargets: [],
     discount: { discountCents: 0, priceAdjustmentCents: 0, freeNightsUsed: 0, eligibleGuestCount: 0, allocations: [] },
     beneficiaryMemberIds: [],
   }),

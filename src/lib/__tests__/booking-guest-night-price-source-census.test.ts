@@ -110,6 +110,15 @@ const REQUIRED_WRITER_SHAPES = new Map<string, RegExp[]>([
       /bookingGuestNight\.create\([\s\S]*?priceSource:\s*"OFFICER_PRICED"/,
     ],
   ],
+  // #3276 (INV-MONEY-029): the one writer of adjustmentsState touches no price
+  // and no provenance — both of its updateMany sites set exactly that column.
+  [
+    "src/lib/night-adjustment-write.ts",
+    [
+      /bookingGuestNight\.updateMany\(\{\s*where:\s*\{\s*bookingGuestId:\s*\{\s*in:\s*engineGuestIds\s*\}\s*\},\s*data:\s*\{\s*adjustmentsState:\s*"RECORDED"\s*\},?\s*\}\)/,
+      /bookingGuestNight\.updateMany\(\{\s*where:\s*\{\s*id:\s*\{\s*in:\s*recordedIds\s*\}\s*\},\s*data:\s*\{\s*adjustmentsState:\s*"RECORDED"\s*\},?\s*\}\)/,
+    ],
+  ],
   [
     "src/lib/waitlist.ts",
     [
@@ -131,6 +140,7 @@ const REQUIRED_WRITER_SITE_COUNTS = new Map<
   ["src/lib/booking-request.ts", { direct: 2, nested: 0 }],
   ["src/lib/booking-request-shared.ts", { direct: 0, nested: 1 }],
   ["src/lib/stored-night-price-repair-store.ts", { direct: 2, nested: 0 }],
+  ["src/lib/night-adjustment-write.ts", { direct: 2, nested: 0 }],
   ["src/lib/waitlist.ts", { direct: 1, nested: 0 }],
 ]);
 

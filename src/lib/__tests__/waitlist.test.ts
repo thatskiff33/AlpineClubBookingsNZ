@@ -128,7 +128,16 @@ const mockTx = {
   },
   // #3031: the offer-time reprice now writes the per-night rows it prices, so
   // the rows and the guest total agree afterwards (INV-MOD-028).
+  // #3276: the night adjustment build-up writer reads and rewrites these.
+  bookingGuestNightAdjustment: {
+    deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+    createMany: vi.fn().mockResolvedValue({ count: 0 }),
+    findMany: vi.fn().mockResolvedValue([]),
+  },
+  promoRedemption: { findUnique: vi.fn().mockResolvedValue(null) },
   bookingGuestNight: {
+    findMany: vi.fn().mockResolvedValue([]),
+    updateMany: vi.fn().mockResolvedValue({ count: 0 }),
     deleteMany: vi.fn(),
     createMany: vi.fn(),
   },
@@ -329,6 +338,9 @@ beforeEach(() => {
     newDiscountCents: 0,
     newPromoAdjustmentCents: 0,
     promoRemoved: false,
+    // #3276: no promotion, so nothing to attribute and no engine result.
+    adjustmentTargets: [],
+    discount: null,
   });
 });
 
@@ -926,6 +938,8 @@ describe("processWaitlistForDates", () => {
       newDiscountCents: 0,
       newPromoAdjustmentCents: 0,
       promoRemoved: true,
+      adjustmentTargets: [],
+      discount: null,
     });
 
     await processWaitlistForDates({

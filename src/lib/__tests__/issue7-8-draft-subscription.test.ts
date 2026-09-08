@@ -29,7 +29,17 @@ const mockTx = {
     upsert: vi.fn(),
   },
   season: { findMany: vi.fn() },
-  promoRedemption: { count: vi.fn(), create: vi.fn(), aggregate: vi.fn() },
+  promoRedemption: { count: vi.fn(), create: vi.fn(), aggregate: vi.fn(), findUnique: vi.fn().mockResolvedValue(null) },
+  // #3276: the night adjustment build-up writer reads and rewrites these.
+  bookingGuestNightAdjustment: {
+    deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+    createMany: vi.fn().mockResolvedValue({ count: 0 }),
+    findMany: vi.fn().mockResolvedValue([]),
+  },
+  bookingGuestNight: {
+    findMany: vi.fn().mockResolvedValue([]),
+    updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+  },
   promoCode: { findUnique: vi.fn(), update: vi.fn() },
   promoCodeAssignment: { findMany: vi.fn() },
   member: { findUnique: vi.fn(), findMany: vi.fn() },
@@ -196,6 +206,7 @@ vi.mock("@/lib/capacity", () => ({
 vi.mock("@/lib/promo", () => ({
   validatePromoCodeRules: vi.fn().mockReturnValue(null),
   validateAndCalculatePromoDiscount: vi.fn().mockResolvedValue({
+    adjustmentTargets: [],
     discount: { discountCents: 0, priceAdjustmentCents: 0, freeNightsUsed: 0, eligibleGuestCount: 0, allocations: [] },
     beneficiaryMemberIds: [],
   }),
