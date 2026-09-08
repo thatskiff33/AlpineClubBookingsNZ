@@ -50,10 +50,12 @@ SHADOW_DATABASE_URL=postgresql://user:pass@localhost:5432/drift_shadow \
 
 CI also runs independent static and container checks:
 
-- `npm audit --audit-level=high` in its own blocking `Dependency audit` job, on
-  pull requests and on pushes to `main`. It runs from a bare checkout with no
-  `npm ci`: measured on npm 11.16.0 / Node 24 the audit builds its tree from
-  `package-lock.json` and returns the same verdict with or without
+- `npm run audit:deps` (`scripts/ci/audit-dependencies.mjs`) in its own blocking
+  `Dependency audit` job, on pull requests and on pushes to `main`. It runs
+  `npm audit --audit-level=high --json` and reports which of three things
+  happened — see "When the advisory service is down" below. It runs from a bare
+  checkout with no `npm ci`: measured on npm 11.16.0 / Node 24 the audit builds
+  its tree from `package-lock.json` and returns the same verdict with or without
   `node_modules`, and skipping the install keeps a required supply-chain gate
   from reddening for anything except an advisory
 - `npm audit --audit-level=high --package-lock-only` again in the advisory,
@@ -103,6 +105,50 @@ CI also runs independent static and container checks:
   anything is being held back, not whether the range has a caret.
 - Use test or demo credentials for Stripe, Xero, SES, and Sentry in local and
   CI environments.
+
+### When the advisory service is down
+
+**Audience: operator, developer.**
+
+`npm audit` asks npmjs.org for advisories over the network, so it can fail for
+two entirely different reasons. Until #3254 those two failures were
+indistinguishable at a glance: the same required check, the same red tick, and a
+`npm warn audit ...` line buried in the job log as the only way to tell them
+apart. On 4 September 2026 that cost a fully-green pull request several hours,
+and the check was re-run three times without the log being read - which is
+exactly how a genuine advisory eventually gets clicked past.
+
+The job now runs `scripts/ci/audit-dependencies.mjs`, and its **first line of
+output names the case**:
+
+| First line | What it means | What to do |
+| --- | --- | --- |
+| `Dependency audit: CLEAN - ...` | The advisory service answered and this branch has nothing at high or above. | Nothing. The job exits 0. |
+| `Dependency audit: FAILED - VULNERABILITY FOUND ...` | A real finding. The service answered; the packages are listed underneath. | Upgrade the dependency, or add a deliberate override with its reasoning to the register above. **Re-running will not help.** |
+| `Dependency audit: FAILED - ADVISORY SERVICE UNREACHABLE ...` | npmjs.org did not answer, after four attempts. Nothing is known to be wrong with the branch - but it has not been cleared either. | Check <https://status.npmjs.org>, then re-run the job once the service has recovered. |
+| `Dependency audit: FAILED - THE AUDIT COULD NOT RUN ...` | npm answered with something that is not a readable audit report - usually a missing or malformed `package-lock.json`, or a report whose severity counts are missing or non-numeric. | Read the npm output above the verdict. The verdict names which severities it could not read when that is the cause. |
+
+**The retry budget: four attempts, with 5s, 15s and 45s between them** - at most
+65 seconds added to a job whose own timeout is ten minutes. Generous enough to
+absorb the ordinary bad minute, which is what all three measured failures were;
+deliberately not generous enough to sit out a real outage, because a runner
+spending ten minutes discovering that npm is down helps nobody. Only an
+unreachable service is retried: a vulnerability is an answer, not a failure to
+answer.
+
+**Each attempt is also capped at 90 seconds** and killed if it exceeds that,
+which is what makes the budget a bound rather than an estimate. npm's own
+`fetch-timeout` default is 300 seconds, so an endpoint that swallows packets
+without answering could otherwise leave four attempts running past the job's
+ten-minute ceiling - and a cancelled runner prints no verdict line at all, which
+is the unexplained red this whole change exists to abolish. A killed attempt
+counts as unreachable, so it is retried and then named as an outage.
+
+**The accepted cost.** A sustained npmjs.org outage blocks every merge. That is
+the deliberate trade recorded on #3254: a required security gate that could not
+do its job does not get to report success, so green keeps meaning "the audit
+really ran and found nothing". Passing with a loud warning was considered and
+rejected - a green tick is what people read, not the summary underneath it.
 
 ### Why a stale override is not harmless
 
@@ -331,6 +377,8 @@ Accepted residual risk:
   GHCR package publish job.
 - The `npm audit --audit-level=high` gate keeps high/critical npm advisories
   blocking, while lower severity advisories remain review-driven.
+- A sustained npmjs.org advisory outage blocks every merge, by deliberate
+  decision (#3254). See "When the advisory service is down" above.
 - Until `Dependency audit` is added to branch protection it is a red check
   rather than a merge block (#2946). Adding the context before the job exists on
   `main` would leave every open pull request waiting forever on a check that has
