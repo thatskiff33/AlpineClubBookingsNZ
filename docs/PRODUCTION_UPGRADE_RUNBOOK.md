@@ -306,7 +306,7 @@ cutover. Then let the warm-up gate (step 16) pass and step 17 perform the cutove
 ### 2.4 Windowed migration deploy sequence
 
 Use this instead of the normal blue/green flow whenever any pending migration is
-declared `old_code_compatible=windowed` in the safety ledger. Three migrations are
+declared `old_code_compatible=windowed` in the safety ledger. Four migrations are
 in that class:
 
 - `20260803010000_contract_subscription_lockout_drop_enabled` (#2543 / #2561) —
@@ -316,15 +316,24 @@ in that class:
 - `20260806010000_fence_hosting_coverage_delivery_claims` (#2596) — additive DDL,
   but an old hosting worker ignores the new tokens and can process a new worker's
   live claim, so mixed old/new workers are forbidden.
+- `20260912010000_add_member_parent_partner_exclusion` (#3271 / #3292) — additive
+  DDL with a deliberately incompatible write protocol. The previous runtime can
+  attempt an overlap that the new triggers reject and cannot decode the new safe
+  database error. Its private repair and public deploy sequence are in
+  [§2.4.2](#242-3271-parentpartner-exclusivity-backstop).
 
 **If several are pending, they share ONE window.** `prisma migrate deploy` applies
 them in the same command — you do not stop and start the application repeatedly. Work
 the checks in [§2.4.1](#241-2520-drop-familygroupmemberrole) as well as the ones
-here, and name both migrations in the override reason.
+here, plus [§2.4.2](#242-3271-parentpartner-exclusivity-backstop) when #3271 is
+pending, and name every pending windowed migration in the override reason.
 
-**Rolling a window containing #2596 back starts with its no-op `rollback.sql`
-boundary:** stop all new app/worker processes, but retain its nullable columns and
-applied history. Then the two schema-removal `rollback.sql` scripts run in reverse
+**Reverse every pending windowed migration in application order.** Stop all new
+app/worker processes first. If #3271 is present, run its `rollback.sql` before any
+older reverse and verify the pair table, functions, and triggers are gone while
+both source relationship tables are unchanged. A window containing #2596 next
+uses its no-op `rollback.sql` boundary and retains its nullable columns and applied
+history. Then the two schema-removal `rollback.sql` scripts run in reverse
 order — `20260803030000` first, then `20260803010000`. Running only one leaves the other's column missing, so the
 previous release is still broken; if the one you skip is `20260803010000`, what
 stays broken is every booking write path. Spelled out at
@@ -812,6 +821,62 @@ the old version runs against the migrated schema.
 Both directions were rehearsed against a production-shaped database before merge
 ([§7.2](#72-windowed-migration-rehearsal-20260803030000_contract_drop_family_group_member_role)).
 
+#### 2.4.2 #3271: parent/partner exclusivity backstop
+
+Use this sequence when
+`20260912010000_add_member_parent_partner_exclusion` is pending. The migration is
+additive, but it is **not** safe for mixed old-runtime/new-schema traffic: old
+parent and partner writers do not all use the canonical pair-row protocol and do
+not decode its stable database refusal. The maintenance window starts before the
+private repair, not merely before `prisma migrate deploy`.
+
+1. Build and validate the complete epic replacement image. Confirm it contains
+   the application guards, the pair-state migration, `rollback.sql`, and the
+   runtime decoder for `member_parent_partner_exclusion_conflict`.
+2. Rehearse the exact committed migration, rollback, and roll-forward on a
+   disposable PostgreSQL database. Include a pre-epic-client conflicting-write
+   probe: the old client may fail after the migration, and that failure is the
+   reason this row is `windowed`; an old-client read-only rehearsal is not enough.
+3. Remove public traffic. Stop every old web process, worker, scheduler, cron
+   runner, and queue consumer that can reach the database. Use `pg_stat_activity`
+   to verify no old application connection remains. Set
+   `BLUE_GREEN_OLD_APP_AND_WORKERS_STOPPED=1` only after this proof.
+4. Take and verify a fresh backup at this quiet point. Retain the pre-repair
+   before-image and rollback instructions only in the private deployment record.
+5. Run the owner-approved private repair. It must re-read and lock the approved
+   rows, change only the individually approved parent field, preserve the valid
+   partnership and family membership, reconcile email-inheritance provenance, and
+   verify the post-state. Do not paste identifiers, SQL, or before-images into a
+   public issue, PR, transcript, or log attachment.
+6. Repeat the complete read-only parent/partner overlap census. Proceed only when
+   it returns zero. If the approved row changed or any additional pair appears,
+   stop: return those rows privately for individual owner decisions. Do not widen
+   or automate the repair.
+7. Run `scripts/validate-blue-green-migrations.sh` with
+   `ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1`, a non-empty
+   `BLUE_GREEN_MIGRATION_OVERRIDE_REASON` naming the #3271 window, and the stopped
+   runtime acknowledgement. Then run the normal compose migration service. The
+   explicit migration transaction locks `Member` and `MemberPartnerLink` in
+   `SHARE ROW EXCLUSIVE` mode, repeats the zero-overlap preflight, backfills the
+   derived pair rows, installs the triggers, and commits atomically. A conflict
+   aborts without leaving the table, functions, or triggers behind.
+8. Verify the migration-history row, pair-state counts, trigger/function presence,
+   and a sanitized conflicting-write refusal. The refusal must contain only the
+   pinned message/constraint contract and no member identifiers, counts, `DETAIL`,
+   or `HINT`. Start only the epic runtime and its workers, run the affected member,
+   family, partner, nomination, and merge smoke checks, inspect logs, and then
+   restore traffic.
+
+**Rollback boundary.** Before any post-cutover source relationship write, keep
+traffic removed, stop the replacement runtime, run this migration's
+`rollback.sql`, verify the seven triggers, four functions, and pair table are gone,
+then start the previous runtime. The reverse changes no `Member` or
+`MemberPartnerLink` row. Roll forward by reapplying the exact `migration.sql` by
+hand because Prisma history still records it as applied. Once the epic runtime or
+an operator has written a source relationship after cutover, `rollback.sql` alone
+is not a release rollback: keep all processes stopped and use the verified backup
+plus owner-led recovery. Never start the old runtime against the migrated schema.
+
 ---
 
 ## 3. Post-upgrade checklist
@@ -933,8 +998,8 @@ already broken, so the boundary moves back to **step 13 (migrate)** and the
 recovery paths are forward to cutover, the migration's own `rollback.sql`, or the
 verified backup.
 
-**The ledger now holds three real `windowed` rows**, and they are not the only
-migrations in that class. Check for all four:
+**The ledger now holds four real `windowed` rows**, and they are not the only
+migrations in that class. Check for all five:
 
 - `20260803010000_contract_subscription_lockout_drop_enabled` (#2543 / #2561) is
   declared `old_code_compatible=windowed`. It drops `MembershipLockoutSettings.enabled`,
@@ -954,6 +1019,12 @@ migrations in that class. Check for all four:
   token-fenced claim. It ships a no-op `rollback.sql`; old/new worker overlap is
   forbidden in both deploy and rollback directions. Pending windowed migrations
   share **one** window.
+- `20260912010000_add_member_parent_partner_exclusion` (#3271 / #3292) is
+  `windowed` because the previous runtime can attempt writes rejected by the new
+  trigger and cannot decode that safe refusal. Use [§2.4.2](#242-3271-parentpartner-exclusivity-backstop):
+  stop every old process before the private repair, preserve the quiet-point
+  backup, and do not restart old code until this migration's `rollback.sql` has
+  removed the trigger protocol or the backup has been restored.
 - **`v0.10.0` has one migration in that class too**, declared before the value
   existed. `20260707000100_backfill_org_age_tier_not_applicable` is
   `old_code_compatible=no`, and its `lock_impact_plan` states plainly that

@@ -705,7 +705,7 @@ Check for these before every deploy:
 awk -F'\t' '$4 == "windowed" { print $1 }' docs/BLUE_GREEN_MIGRATION_SAFETY.tsv
 ```
 
-**Current windowed migrations — there are three, and pending rows share ONE
+**Current windowed migrations — there are four, and pending rows share ONE
 window.** `prisma migrate deploy` applies them in the same command, so the
 sequence below is run once, not once per migration.
 
@@ -729,6 +729,14 @@ sequence below is run once, not once per migration.
   not: an old hosting worker ignores the token/expiry fields and can take, email and
   complete work that a new worker already owns. The old web colour and **every** old
   worker must therefore be stopped before migrate, and only new workers may start.
+- `20260912010000_add_member_parent_partner_exclusion` (#3271 / #3292). Its
+  additive pair-state table and triggers reject a direct-parent/partner overlap
+  that the previous runtime can still attempt, and that runtime does not decode
+  the new database error. Stop every old runtime and database-capable worker before
+  the private owner-run repair and keep them stopped through the repeat zero-conflict
+  census, migration, verification, and replacement-runtime start. Follow the
+  issue-specific sequence in `docs/PRODUCTION_UPGRADE_RUNBOOK.md` §2.4.2; no member
+  identifiers or repair SQL belong in this public repository.
 
 There is no ordering that keeps both runtime protocols working, which is why the
 window exists.
@@ -767,6 +775,10 @@ says which governs when:
    **host** path and then move somewhere durable — a `\copy` through
    `docker compose exec postgres psql` writes inside that container's writable layer,
    which the deploy recreates. After migrate those values are unrecoverable.
+   For `20260912010000`, complete the privately approved repair, repeat the full
+   read-only overlap census, and record only that the deployment prerequisite
+   passed. Any changed row or additional pair stops the release for an individual
+   owner decision.
 6. **Run the safety validator, then migrate** — two commands, in that order. The
    validator is `scripts/validate-blue-green-migrations.sh`, a **separate script**
    that `prisma migrate deploy` knows nothing about: the only thing that runs it
@@ -846,10 +858,13 @@ when the queue is empty. Repeat the ENFORCED, unprocessed-work and unresolved-in
 proofs after the last policy change. **Only after all three remain empty** may you
 stop every new worker and start the old-only release.
 
-**When all three windowed migrations were applied in one window, first follow
-`20260806010000/rollback.sql`'s no-op operational boundary:** keep traffic removed,
-stop every new app/worker, and leave its nullable columns plus migration history
-intact. Then roll back the two schema-removal migrations in reverse order —
+**When all four windowed migrations were applied in one window, keep traffic
+removed and stop every new app/worker, then reverse them in application order.**
+Run `20260912010000/rollback.sql` first while no relationship writer is active;
+verify its pair table, functions, and triggers are gone without changing either
+source table. Then follow `20260806010000/rollback.sql`'s no-op operational
+boundary and leave its nullable columns plus migration history intact. Finally
+roll back the two schema-removal migrations in reverse order —
 `20260803030000` first, then `20260803010000`. One schema script is not enough:
 whichever you skip leaves its column missing
 and the previous release still broken, and if you skip `20260803010000` what stays

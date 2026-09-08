@@ -2464,6 +2464,15 @@ allocation may outlive its partner link or the active-adult precondition (see
 `INV-CAP-010` for the #1756 sweep and `INV-CAP-030` for the merge form, both in
 docs/invariants/booking-dates-and-capacity.md).
 
+The direct-parent exclusion also has a transactional PostgreSQL backstop (#3271):
+statement triggers on both parent columns and on every `MemberPartnerLink` status
+maintain one canonical `MemberParentPartnerExclusion` count row per unordered
+pair. The pair primary key serializes application writers and direct SQL. The
+check rejects a state with both counts positive using a stable, non-identifying
+error; deleting or moving the last source edge decrements the counts and a
+deferred trigger removes an empty pair row. This table is derived internal state,
+not a second relationship API or an operator-editable record.
+
 ## Member Guest Consent Lifecycle ("+ Add Member Guest", #2305 / MG2 #2307, MG4 #2309)
 
 Known `BookingGuest.consentStatus` values: `null`, `PENDING`, `CONFIRMED`,
@@ -2818,7 +2827,8 @@ To verify: non-login adult confirmation, dependent age-up behavior, inherited
 email changes, the four-generation cap and its cycle guard at depth, direct-
 partner exclusion through both parent columns and both partner statuses, blocked
 request/application recovery without partial membership or notification side
-effects, and Xero contact synchronization.
+effects, database-trigger recovery after unlink/delete, and Xero contact
+synchronization.
 
 ## Email Retry Lifecycle
 
