@@ -564,8 +564,15 @@ export function PublicBookingRequestsPanel({
     fetchRequests();
   }, [fetchRequests]);
 
+  // #2801: this used to open with `if (request.id in priceInputs) return
+  // priceInputs[request.id]`, and a mutation probe proved that branch DEAD.
+  // Every write to `priceInputs` goes through `priceInputKey`, which keys
+  // `${requestId}:${optionId}` - so a bare request id is never a key there and
+  // the lookup could only ever miss. It is a leftover from before totals became
+  // per-option. Deleting it removes the indexed read rather than guarding it,
+  // and this function is now purely the fallback its one caller wants: the
+  // figure to show when the officer has not typed in that option's box.
   function priceInputValue(request: PublicBookingRequestData) {
-    if (request.id in priceInputs) return priceInputs[request.id];
     const cents = request.priceCents ?? request.indicativePriceCents;
     return cents != null ? (cents / 100).toFixed(2) : "";
   }
@@ -645,7 +652,10 @@ export function PublicBookingRequestsPanel({
 
   function optionTotalInputValue(request: PublicBookingRequestData, optionId: string) {
     const key = priceInputKey(request.id, optionId);
-    if (key in priceInputs) return priceInputs[key];
+    // Same read-the-value rule as `priceInputValue`, and the same reason: ""
+    // means the officer emptied this option's total and must reach the refusal.
+    const typed = priceInputs[key];
+    if (typed !== undefined) return typed;
     if (request.latestQuote) {
       const option = request.latestQuote.options.find((item) => item.id === optionId);
       if (option) return (option.totalCents / 100).toFixed(2);
@@ -1289,6 +1299,12 @@ export function PublicBookingRequestsPanel({
             // service layer refuses them too (booking-request-quotes.ts):
             // hiding is the UX, the 409 is the guarantee.
             const memberWholeLodge = isMemberWholeLodgeRequest(request);
+            // One read for the advisory member-night overlaps below, which used
+            // to look this entry up three times and guard only the first. No
+            // entry means the pre-check has not run or found nothing, and an
+            // empty list means it ran and found none -- the banner has always
+            // treated those the same, so naming it changes no rendering.
+            const requestLinkConflicts = linkConflicts[request.id] ?? [];
             // #2342: same shape as the line above — the acting affordances are
             // disabled below AND the routes refuse; the disable is the UX, the
             // 409 is the guarantee. Decline stays enabled: it is the one action
@@ -1800,19 +1816,19 @@ export function PublicBookingRequestsPanel({
                       {memberWholeLodge ? null : (
                       <div className="space-y-2">
                         <p className="text-sm font-medium">Linked member guests</p>
-                        {linkConflicts[request.id]?.length ? (
+                        {requestLinkConflicts.length ? (
                           <div
                             className="rounded-md border border-warning-6 bg-warning-3 p-2 text-xs text-warning-11"
                             role="status"
                           >
                             <p className="font-medium">
                               Heads up: member-night overlap on{" "}
-                              {linkConflicts[request.id].length === 1
+                              {requestLinkConflicts.length === 1
                                 ? "a linked member"
                                 : "linked members"}
                             </p>
                             <ul className="mt-1 list-disc space-y-0.5 pl-4">
-                              {linkConflicts[request.id].map((conflict) => (
+                              {requestLinkConflicts.map((conflict) => (
                                 <li key={`${conflict.memberId}-${conflict.bookingCheckIn}`}>
                                   {conflict.memberName} is already on{" "}
                                   {conflict.bookingOwnerName}&apos;s booking (

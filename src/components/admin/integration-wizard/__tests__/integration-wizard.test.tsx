@@ -750,3 +750,32 @@ describe("IntegrationWizard view-only vouch (#2324)", () => {
     );
   });
 });
+
+describe("IntegrationWizard with zero configured steps (#2801)", () => {
+  // No real provider config (Xero/Stripe/Google) ever supplies an empty
+  // `steps` array, but the shell has to type its per-index lookups
+  // (`stepStates[index]`, `stepStates[clamped]`) as possibly missing under
+  // `noUncheckedIndexedAccess` — nothing about a numeric index proves it is
+  // in range. This pins the documented empty state those lookups fall back
+  // to: the banner renders and nothing below it does, rather than crashing
+  // on `activeStep.render(...)`.
+  it("renders only the banner, with no step body and no crash", async () => {
+    render(
+      <IntegrationWizard<Ctx>
+        wizardId="test-empty"
+        title="Test wizard"
+        steps={[]}
+        context={{ bReady: false, cReady: false }}
+        contextLoading={false}
+        onRefresh={() => {}}
+        canEdit={false}
+        viewOnlyBanner={<>view only</>}
+      />,
+    );
+    await waitFor(() => {
+      expect(screen.getByText("view only")).toBeTruthy();
+    });
+    expect(screen.queryByText(/Step \d+ of/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Continue" })).toBeNull();
+  });
+});
