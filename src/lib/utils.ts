@@ -49,10 +49,12 @@ export function formatCents(cents: number): string {
 
 /**
  * The bare two-decimal rendering `formatCents` deliberately does not do: no
- * currency symbol, no thousands grouping. For an editable dollars input (the
- * AI assistant and AI Diagnostics spend-cap boxes, which show `"10.00"` not
- * `"$10.00"`) and for a report line that already reads as a delta (the Xero
- * refund-note repair report). Pinned by each caller's own fixture.
+ * currency symbol, no thousands grouping. For seeding an editable dollars
+ * input (`"10.00"`, not `"$10.00"` — nobody types a symbol into an amount box)
+ * and for a report line that already reads as a delta. Callers are not listed
+ * here — a list drifts the first time one is added; the cents-display lint arm
+ * in `eslint.config.mjs` (#3302) is what polices who renders cents, and each
+ * caller pins its own rendering.
  *
  * A separate named function rather than an option on `formatCents` (#3302
  * review): the wrong rendering is then a different import a reviewer sees at

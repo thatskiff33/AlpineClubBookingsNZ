@@ -274,9 +274,7 @@ export async function healOrphanedAppliedCredits(options?: {
           severity: "critical",
           outcome: "success",
           summary: "Orphaned applied credit restored by backfill",
-          // The club's configured currency, through the one formatter (#3325
-          // decided the former hard-coded "NZ$" prefix was drift, not a
-          // deliberate country choice).
+          // The club's configured currency, through the one formatter (#3325).
           details: `Restored ${formatCents(restoredCents)} of applied account credit orphaned by a pre-#1547 cancellation`,
           metadata: { restoredCents, appliedRowCount: recheck.appliedRowCount },
         },

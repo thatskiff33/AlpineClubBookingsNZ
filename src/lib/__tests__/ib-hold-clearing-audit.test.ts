@@ -318,12 +318,10 @@ describe("auditCardAppliedCreditDoublePays (#1641 card scan)", () => {
 });
 
 describe("formatIbHoldClearingAuditReport (#3302, #3325)", () => {
-  // This report's amounts render through the shared, currency-aware
-  // `formatCents` (#3325): the former hard-coded "NZ$" + toFixed(2) helper
-  // was decided to be drift, not a deliberate country choice, and under the
-  // default configuration (en-NZ, NZD) the club reads a plain "$" here as it
-  // does on every other screen. Pinned so a future edit back to a
-  // hand-rolled prefix is a deliberate decision rather than accidental drift.
+  // This report's amounts render through the shared `formatCents` (#3325);
+  // under the default configuration (en-NZ, NZD) that is a plain "$". Pinned
+  // so a future edit back to a hand-rolled prefix is a deliberate decision
+  // rather than accidental drift.
   it("renders the total open delta in the club's configured currency", () => {
     const report = formatIbHoldClearingAuditReport({
       scannedReleasedHolds: 0,
