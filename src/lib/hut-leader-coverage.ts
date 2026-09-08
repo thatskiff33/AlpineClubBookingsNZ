@@ -8,6 +8,10 @@ import {
   type LodgeSettingsReader,
 } from "@/lib/lodge-settings";
 import { prisma } from "@/lib/prisma";
+// Ordinal, never `localeCompare`: a locale must not be able to reorder an API
+// response, and an ICU build difference between two servers would do exactly
+// that. One home for that rule (`INV-SSOT-001`, #3252).
+import { compareOrdinal } from "@/lib/ordinal-order";
 
 /**
  * ONE UNCOVERED LODGE-NIGHT, never a bare calendar night (#2917).
@@ -76,13 +80,6 @@ type HutLeaderCoverageDb = LodgeSettingsReader & {
     >;
   };
 };
-
-/** Ordinal string comparison. Never localeCompare: a locale must not be able to
- * reorder an API response, and an ICU build difference between two servers would
- * do exactly that. */
-function compare(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0;
-}
 
 export type HutLeaderCoverageScope =
   | { kind: "lodge"; lodgeId: string }
@@ -262,8 +259,8 @@ export async function getUnassignedHutLeaderDates(input: {
     // between calls.
     const lodgeNights = [...getBookingStatsByLodge(day).values()].sort(
       (left, right) =>
-        compare(left.lodgeName ?? "", right.lodgeName ?? "") ||
-        compare(left.lodgeId ?? "", right.lodgeId ?? ""),
+        compareOrdinal(left.lodgeName ?? "", right.lodgeName ?? "") ||
+        compareOrdinal(left.lodgeId ?? "", right.lodgeId ?? ""),
     );
 
     for (const lodgeNight of lodgeNights) {

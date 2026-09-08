@@ -10,6 +10,7 @@ import {
 } from "@/lib/adult-member-hosting-coverage-envelope";
 import { ApiError } from "@/lib/api-error";
 import { formatBookingReference } from "@/lib/booking-reference";
+import { compareOrdinal } from "@/lib/ordinal-order";
 import { bookingsOverlap } from "@/lib/booking-night-overlap";
 import {
   HOSTING_COVERAGE_STATE_KEY_PATTERN,
@@ -325,13 +326,13 @@ export function canonicalStrandedRows(
       bookingId: row.bookingId,
       nights: [...new Set(row.nights)].sort(),
     }))
-    .sort((left, right) => {
-      if (left.bookingId < right.bookingId) return -1;
-      if (left.bookingId > right.bookingId) return 1;
-      const leftNights = JSON.stringify(left.nights);
-      const rightNights = JSON.stringify(right.nights);
-      return leftNights < rightNights ? -1 : leftNights > rightNights ? 1 : 0;
-    });
+    .sort(
+      (left, right) =>
+        // Ordinal, never `localeCompare`: this order is part of an identity
+        // (`compareOrdinal`, `INV-SSOT-001`, #3252).
+        compareOrdinal(left.bookingId, right.bookingId) ||
+        compareOrdinal(JSON.stringify(left.nights), JSON.stringify(right.nights)),
+    );
 }
 
 /**

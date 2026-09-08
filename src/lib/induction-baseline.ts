@@ -18,6 +18,7 @@ import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { isDateOnlyString, parseDateOnly } from "@/lib/date-only";
 import { MEMBER_IMPORT_ROLE_VALUES } from "@/lib/member-roles";
 import { prisma } from "@/lib/prisma";
+import { compareOrdinal } from "@/lib/ordinal-order";
 import {
   validateAgeTierPartition,
   type AgeTierPartitionRow,
@@ -362,7 +363,7 @@ function compareOrderedRows(
   left: { sortOrder: number; id: string },
   right: { sortOrder: number; id: string },
 ): number {
-  return left.sortOrder - right.sortOrder || left.id.localeCompare(right.id);
+  return left.sortOrder - right.sortOrder || compareOrdinal(left.id, right.id);
 }
 
 function validateActiveTemplate(
@@ -408,7 +409,7 @@ function inductionRefs(
   rows: BaselineExistingInduction[],
 ): InductionBaselineExistingRef[] {
   return [...rows]
-    .sort((a, b) => a.id.localeCompare(b.id))
+    .sort((a, b) => compareOrdinal(a.id, b.id))
     .map(({ id, kind, status }) => ({ id, kind, status }));
 }
 
@@ -543,7 +544,7 @@ function buildReport(params: {
   const openWorkflows: InductionBaselineMemberPlan[] = [];
 
   for (const member of [...params.eligibleMembers].sort((left, right) =>
-    left.id.localeCompare(right.id),
+    compareOrdinal(left.id, right.id),
   )) {
     const existing = rowsByMember.get(member.id) ?? [];
     const plan = {
@@ -584,7 +585,7 @@ function buildReport(params: {
   }));
 
   const notApplicable = [...params.notApplicableMembers]
-    .sort((left, right) => left.id.localeCompare(right.id))
+    .sort((left, right) => compareOrdinal(left.id, right.id))
     .map((member) => ({
       memberId: member.id,
       ageTier: "NOT_APPLICABLE" as const,

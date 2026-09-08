@@ -528,6 +528,7 @@ Prefix `INV-EXCEPT`.
 | `INV-EXCEPT-032` | One algorithm decides both request tables, so the two flavours cannot drift apart |
 | `INV-EXCEPT-033` | A new booking is authorised as the requesting member, not merely created |
 | `INV-EXCEPT-034` | A supersede carries the predecessor's attempt count forward |
+| `INV-EXCEPT-036` | A stored proposal identity is ordered by code unit, never by the server's locale |
 
 ### Additional-payment chasing, request holds and refund settlement
 

@@ -11,6 +11,7 @@ import {
   type PolicyExceptionViolation,
 } from "@/lib/booking-policy-exceptions";
 
+import { compareOrdinal } from "@/lib/ordinal-order";
 import { canonicalNights, stableDigest } from "@/lib/stable-digest";
 
 /**
@@ -346,12 +347,28 @@ export function canonicalizeProposalParty(party: ProposalParty): ProposalParty {
     }))
     // Stable, content-derived order: two parties with the same guests in a
     // different input order must hash identically.
+    //
+    // ORDINAL, never `localeCompare` (#3252). This order decides the bytes that
+    // become `proposalHash`, and `localeCompare` resolves its collation from the
+    // environment — so the stored signature would depend on a setting nothing in
+    // this repository pins, and a base-image bump would make approval report a
+    // proposal as TAMPERED WITH that nobody touched. `compareOrdinal` carries
+    // the measured evidence (`INV-SSOT-001`).
+    //
+    // TOTAL, and that is not decoration. Until #3252 the chain stopped at
+    // `nights`, so two guests alike in name, member link and nights but
+    // differing in age tier TIED — and `Array#sort` is stable, so the tie kept
+    // INPUT order and the hash depended on the very thing this sort exists to
+    // remove. Every field of the canonical guest is now compared, so no tie can
+    // remain that a caller could resolve two ways.
     .sort(
       (a, b) =>
-        a.lastName.localeCompare(b.lastName) ||
-        a.firstName.localeCompare(b.firstName) ||
-        (a.memberId ?? "").localeCompare(b.memberId ?? "") ||
-        a.nights.join(",").localeCompare(b.nights.join(",")),
+        compareOrdinal(a.lastName, b.lastName) ||
+        compareOrdinal(a.firstName, b.firstName) ||
+        compareOrdinal(a.memberId ?? "", b.memberId ?? "") ||
+        compareOrdinal(a.nights.join(","), b.nights.join(",")) ||
+        compareOrdinal(a.ageTier, b.ageTier) ||
+        Number(a.isMember) - Number(b.isMember),
     );
   return { checkIn: party.checkIn, checkOut: party.checkOut, guests };
 }
@@ -432,7 +449,9 @@ function demandToReservations(demand: Map<string, number>): NightReservation[] {
   return [...demand.entries()]
     .filter(([, beds]) => beds > 0)
     .map(([night, beds]) => ({ night, beds }))
-    .sort((a, b) => a.night.localeCompare(b.night));
+    // Ordinal (#3252): this order is written to the reservation ledger, so it
+    // must not vary with the runtime's collation.
+    .sort((a, b) => compareOrdinal(a.night, b.night));
 }
 
 /**
@@ -524,10 +543,13 @@ export function freezePolicyExceptionEvidence(
       policyVersion: violation.policyVersion,
       capacityMode: violation.capacityMode,
     }))
+    // Ordinal (#3252): `policyRefs` is frozen into `frozenEvidence`, and a
+    // reason code contains `_`, which locale collation orders BEFORE a letter
+    // while a code-unit comparison orders it after.
     .sort(
       (a, b) =>
-        a.reasonCode.localeCompare(b.reasonCode) ||
-        a.policyId.localeCompare(b.policyId) ||
+        compareOrdinal(a.reasonCode, b.reasonCode) ||
+        compareOrdinal(a.policyId, b.policyId) ||
         a.policyVersion - b.policyVersion,
     );
   const affectedNights = [
@@ -688,8 +710,10 @@ export function classifyPolicyExceptionDrift(
     a: { reasonCode: string; policyId: string },
     b: { reasonCode: string; policyId: string },
   ) =>
-    a.reasonCode.localeCompare(b.reasonCode) ||
-    a.policyId.localeCompare(b.policyId);
+    // Ordinal (#3252): `overridable` is the set an approval overrides, and its
+    // order must not depend on the machine that computed it.
+    compareOrdinal(a.reasonCode, b.reasonCode) ||
+    compareOrdinal(a.policyId, b.policyId);
 
   clearedReviewed.sort(byIdentity);
   changedReviewed.sort(byIdentity);

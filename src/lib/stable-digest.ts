@@ -58,6 +58,17 @@
  * on-disk bytes and its byte ceilings. That formatting is specific to that
  * bundle, so it stays in `diagnostics/knowledge/hash.ts` and imports the sorter
  * from here.
+ *
+ * And `compareOrdinal` (#3252), which belongs here by subject — beside
+ * `canonicalNights`, the other order-normaliser — and cannot live here for the
+ * boundary reason above. One identity path is deliberately BROWSER-SIDE
+ * (`hosting-coverage-override-client.ts`, reached from six `"use client"`
+ * modules and required to stay free of Node crypto), so a comparator next to
+ * this `node:crypto` import could not be the one home the rule needs. It lives
+ * in `ordinal-order.ts`, which imports nothing — #2851's remedy, applied
+ * before the census failed rather than after. Do not re-export it from here:
+ * one symbol reachable by one specifier is what makes
+ * `identity-ordering-census.test.ts` able to refuse a second copy.
  */
 
 import { createHash } from "node:crypto";

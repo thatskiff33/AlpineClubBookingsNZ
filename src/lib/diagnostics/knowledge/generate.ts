@@ -19,6 +19,7 @@ import {
   resolveAllowlist,
   type KnowledgeAllowlistOverlay,
 } from "./allowlist";
+import { compareOrdinal } from "@/lib/ordinal-order";
 import { buildExcerpts } from "./excerpt";
 import { normalizeContent, sha256Hex } from "./hash";
 import { overlayFilesFrom } from "./overlay";
@@ -156,7 +157,11 @@ export function buildKnowledgeBundle(
   const entries = [
     ...fileCandidates.map((f) => buildEntry(f)),
     ...overlayCandidates.map((f) => buildEntry(f, { overlay: true })),
-  ].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+    // Ordinal (#3252): the bundle's integrity digest is computed over these
+    // entries IN THIS ORDER and later compared against bytes already written to
+    // disk, so the order cannot depend on the collation of the machine that
+    // generated it.
+  ].sort((a, b) => compareOrdinal(a.path, b.path));
 
   return {
     schemaVersion: KNOWLEDGE_BUNDLE_SCHEMA_VERSION,

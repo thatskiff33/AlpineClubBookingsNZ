@@ -59,6 +59,27 @@ are permanent: never renumbered, never reused.
   restated here — a number repeated in prose is a number that drifts.
 - A duplicated age rule that still carried a bug its canonical copy had been
   fixed for is the shape this rule exists to prevent; #3123 measured it.
+- **Third worked example: three correct explanations and no shared helper.**
+  #3252 found the ordinal string comparator — `left < right ? -1 : left > right ?
+  1 : 0` — hand-rolled in three modules, each with a docblock explaining why
+  locale-aware comparison would be wrong there, while the booking-exception
+  proposal hash two files away still used bare `localeCompare`. The knowledge was
+  present three times over and the defect was present anyway, which is the
+  clearest statement of why "one home" is about the definition and not about
+  whether anyone understands the rule. It is now `compareOrdinal` in
+  `src/lib/ordinal-order.ts`, and `identity-ordering-census.test.ts` fails a
+  second copy.
+
+  Two details are worth carrying forward. **It could not live where it belonged
+  by subject.** `stable-digest.ts` is the natural home — beside
+  `canonicalNights`, the other order-normaliser — and that module imports
+  `node:crypto`, which `INV-OPS-013` refuses on the browser graph; one identity
+  path (`hosting-coverage-override-client.ts`, reached from six `"use client"`
+  modules) is deliberately browser-side. So the home is a module that imports
+  NOTHING, which is the same remedy #2851 used when this boundary last bit. And
+  the census that keeps it **strips comments and strings before matching**,
+  because every docblock forbidding `localeCompare` names `localeCompare`
+  (`INV-SSOT-004`).
 - Second worked example, and the one that shows the drift happening rather than
   its consequence: #3131 found the rule deciding which guests a promotional code
   covers on an existing booking written out **five** times across the
@@ -350,7 +371,7 @@ are permanent: never renumbered, never reused.
   `INV-OPS` fact is the real risk, because the eleventh nobody tightened is the one
   that connects to something real. This change converged its own caller only.
 - **`src/lib/__tests__/support/strip-comments.ts` is the canonical
-  `stripComments`, and since #3164 a lint rule enforces it.** 73 test files, a test
+  `stripComments`, and since #3164 a lint rule enforces it.** 74 test files, a test
   helper and one CI script import it, and `ssot/no-local-comment-stripper` in
   `eslint.config.mjs` reports a second scanner as it is written rather than
   twelve minutes later in CI. **Use it; do not write a second.** The figure was

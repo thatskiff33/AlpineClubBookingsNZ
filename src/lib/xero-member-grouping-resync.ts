@@ -25,10 +25,19 @@
  * authoritative group-cache staleness signal.
  */
 
-import { createHash } from "node:crypto";
 import type { AgeTier, XeroMemberGroupingMode } from "@prisma/client";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+// #3250: the CANONICAL `stableDigest`. This module used to define a private
+// function of the same name that did LESS — plain `JSON.stringify` with no
+// recursive key sort — so a reader who knew what `stableDigest` means everywhere
+// else in the tree was told something untrue here. Adopting the canonical helper
+// is a no-op on every fingerprint this module computes, because both call sites
+// pass arrays of primitives where key sorting is the identity and `"utf8"` is
+// already the default; `xero-member-grouping-resync.test.ts` pins both digests
+// against the literals measured before the swap rather than asserting it.
+import { compareOrdinal } from "@/lib/ordinal-order";
+import { stableDigest } from "@/lib/stable-digest";
 import { XeroDailyLimitError } from "@/lib/xero-api-client";
 import { syncManagedXeroContactGroupForMember } from "@/lib/xero-contact-groups";
 import {
@@ -95,10 +104,6 @@ export class StaleDryRunError extends Error {
   }
 }
 
-function stableDigest(value: unknown): string {
-  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
-}
-
 /**
  * Fingerprint-compatibility serialization of a rule's tier set (#2093, D-B5).
  * The historical tuple element was the SCALAR rule.ageTier, so to keep the
@@ -163,7 +168,9 @@ function computePlannedDigest(mismatches: MemberGroupingDiffEntry[]): string {
           [...entry.removeGroupIds].sort(),
         ] as const,
     )
-    .sort((left, right) => left[0].localeCompare(right[0]));
+    // Ordinal (#3252): this order decides the bytes of a stored dry-run digest
+    // that a later resume re-derives and compares.
+    .sort((left, right) => compareOrdinal(left[0], right[0]));
   return stableDigest(ops);
 }
 
@@ -737,11 +744,18 @@ export async function runXeroMemberGroupingBulkResyncChunk(
     }
   }
 
+  // ORDINAL (#3252), and here the reason is not a digest: this order IS the
+  // resume cursor. A chunk stops at a member id and the next chunk takes
+  // everything ordered after it, so two chunks that ordered the list differently
+  // would SKIP members (never processed) or REPROCESS them. Two instances of the
+  // same release resolving different collations — which an ordinary base-image
+  // rebuild is enough to produce — is exactly the case a locale-aware comparison
+  // cannot rule out.
   const ordered = snapshot.mismatches
     .slice()
-    .sort((left, right) => left.memberId.localeCompare(right.memberId));
+    .sort((left, right) => compareOrdinal(left.memberId, right.memberId));
   const pending = options.afterMemberId
-    ? ordered.filter((entry) => entry.memberId.localeCompare(options.afterMemberId!) > 0)
+    ? ordered.filter((entry) => compareOrdinal(entry.memberId, options.afterMemberId!) > 0)
     : ordered;
   const chunk = pending.slice(0, chunkSize);
 
