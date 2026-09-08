@@ -73,9 +73,11 @@ import {
   lockPromoCodeRowsForUpdate,
   redeemPromoCode,
   replacePromoRedemptionAllocations,
+  requiredAdjustmentTargets,
   shouldPersistPromoRedemption,
   validateAndCalculatePromoDiscount,
 } from "@/lib/promo";
+import type { PromoAdjustmentTarget } from "@/lib/night-adjustment-write";
 import {
   describePromoCapCoverage,
   type PromoCoverageNotice,
@@ -1304,7 +1306,8 @@ export type PricedModification = {
     memberId: string | null;
     isMember: boolean;
     perNightRates: number[];
-    nightDates?: Date[];
+    /** #3276: REQUIRED, so an adjustment row can be attributed to a night by date. */
+    nightDates: Date[];
   }>;
   /**
    * The existing guests pricing ACTUALLY resolved to the other-lodge member rate
@@ -2050,6 +2053,16 @@ export type PromoChangeResult = {
   // the repriced booking; null means everyone it applies to is covered.
   promoCoverage: PromoCoverageNotice | null;
   /**
+   * #3276: what the promotion took off each night or guest of the
+   * `guestNightRates` this ran over — `[]` when the engine ran and no
+   * promotion remains, `null` when the engine did NOT run (`promoEngineRan`
+   * false), so the caller carries the stored build-up across instead of
+   * writing one. The batch service records these AFTER `applyGuestChanges`
+   * has rewritten the night rows, which is the only order in which they can be
+   * attached.
+   */
+  adjustmentTargets: PromoAdjustmentTarget[] | null;
+  /**
    * #3179: whether the promotion engine actually ran for this edit.
    *
    * `false` means every figure above is the booking's own, carried across
@@ -2161,6 +2174,8 @@ export async function applyPromoCodeChanges(
       memberId: string | null;
       isMember: boolean;
       perNightRates: number[];
+      /** #3276: REQUIRED, so an adjustment row can be attributed to a night by date. */
+      nightDates: Date[];
     }>;
     /**
      * The club's own calendar day (#3123, `INV-CONFIG-002`), resolved by the
@@ -2190,6 +2205,7 @@ export async function applyPromoCodeChanges(
       // is what lets the save build the member's notice on this branch too, so
       // relaxing the in-progress refusals above cannot re-open the silence.
       promoEngineRan: false,
+      adjustmentTargets: null,
     };
   }
 
@@ -2198,6 +2214,7 @@ export async function applyPromoCodeChanges(
   let promoRemoved = false;
   let promoChanged = false;
   let promoCoverage: PromoCoverageNotice | null = null;
+  let adjustmentTargets: PromoAdjustmentTarget[] = [];
   const bookingLodgeId = booking.lodgeId ?? (await getDefaultLodgeId(tx));
 
   // Row-lock every promo code whose usage caps this transaction may charge or
@@ -2285,6 +2302,7 @@ export async function applyPromoCodeChanges(
     const promoResult = application.discount;
     newDiscountCents = promoResult.discountCents;
     newPromoAdjustmentCents = promoResult.priceAdjustmentCents;
+    adjustmentTargets = requiredAdjustmentTargets(application);
 
     if (shouldPersistPromoRedemption(promoResult)) {
       await redeemPromoCode(
@@ -2356,6 +2374,7 @@ export async function applyPromoCodeChanges(
       const promoResult = application.discount;
       newDiscountCents = promoResult.discountCents;
       newPromoAdjustmentCents = promoResult.priceAdjustmentCents;
+      adjustmentTargets = requiredAdjustmentTargets(application);
       promoCoverage = await describePromoCapCoverage(tx, {
         promoCode: promo.code,
         capCoverage: application.capCoverage,
@@ -2384,6 +2403,7 @@ export async function applyPromoCodeChanges(
     promoChanged,
     promoCoverage,
     promoEngineRan: true,
+    adjustmentTargets,
   };
 }
 

@@ -8,7 +8,9 @@
 import { PromoCodeType, type FixedNightlyMode, type BookingGuest } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import type { CalendarDate } from "@/lib/club-time";
+import type { PromoAdjustmentTarget } from "@/lib/night-adjustment-write";
 import {
+  requiredAdjustmentTargets,
   shouldPersistPromoRedemption,
   validateAndCalculatePromoDiscount,
   type PromoBeneficiaryAllocation,
@@ -23,6 +25,8 @@ export interface ResolvedPromo {
   promoFreeNightsUsed: number;
   promoEligibleGuestCount: number;
   promoAllocations: PromoBeneficiaryAllocation[];
+  /** #3276: what the promotion took off each night or guest, by guest index. */
+  promoAdjustmentTargets: PromoAdjustmentTarget[];
   promoSelectedGuestIndexes?: number[];
   promoShouldPersist: boolean;
   promoCodeRecord:
@@ -230,6 +234,7 @@ export async function resolvePromoInTransaction(
     promoFreeNightsUsed: promoResult.freeNightsUsed,
     promoEligibleGuestCount: promoResult.eligibleGuestCount,
     promoAllocations: promoResult.allocations,
+    promoAdjustmentTargets: requiredAdjustmentTargets(application),
     promoSelectedGuestIndexes: application.selectedGuestIndexes,
     promoShouldPersist: shouldPersistPromoRedemption(promoResult),
     promoCodeRecord: promoCode,

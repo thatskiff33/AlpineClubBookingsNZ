@@ -51,6 +51,10 @@ import { formatMissingPaidUpAdultWaitlistRefusal } from "@/lib/policies/subscrip
 import { formatAdultMemberHostingWaitlistRefusal } from "@/lib/policies/adult-member-hosting";
 import { requiredNightPriceCents } from "@/lib/required-price-cents";
 import { carriesUnvaluedStoredNight } from "@/lib/stored-night-price-write";
+import {
+  reconcilePromoAdjustmentTargets,
+  recordBookingNightAdjustments,
+} from "@/lib/night-adjustment-write";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 
 export const WAITLIST_OFFER_HOURS =
@@ -240,6 +244,18 @@ async function repriceWaitlistCandidate(
         totalPriceCents: newTotalPriceCents,
         promoAdjustmentCents: promoResult.newPromoAdjustmentCents,
       });
+    // #3276: this function's catch degrades to the stored snapshot rather than
+    // rolling back, so the build-up is reconciled to the engine's own figures
+    // HERE, before the night rows below are touched. The write after them can
+    // then refuse only on a wiring defect, never on the money.
+    if (promoResult.discount) {
+      reconcilePromoAdjustmentTargets({
+        targets: promoResult.adjustmentTargets,
+        allocations: promoResult.discount.allocations,
+        priceAdjustmentCents: promoResult.discount.priceAdjustmentCents,
+        context: "the waitlist offer reprice",
+      });
+    }
 
     // #3031 (epic #2797): THE NIGHT ROWS THIS REPRICE PRICED, built and checked
     // BEFORE anything is written.
@@ -309,6 +325,13 @@ async function repriceWaitlistCandidate(
         }
       })
     );
+    // #3276: after the last night write and the promotion write above.
+    await recordBookingNightAdjustments(tx, {
+      bookingId: candidate.id,
+      guestIds: candidate.guests.map((guest) => guest.id),
+      targets: promoResult.adjustmentTargets,
+      writer: "the waitlist offer reprice",
+    });
     await tx.booking.update({
       where: { id: candidate.id },
       data: {

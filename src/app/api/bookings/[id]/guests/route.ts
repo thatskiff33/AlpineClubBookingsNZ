@@ -34,8 +34,13 @@ import {
   deletePromoRedemptionAndAdjustCount,
   lockAndRefreshPromoCodeUsage,
   replacePromoRedemptionAllocations,
+  requiredAdjustmentTargets,
   validateAndCalculatePromoDiscount,
 } from "@/lib/promo";
+import {
+  recordBookingNightAdjustments,
+  type PromoAdjustmentTarget,
+} from "@/lib/night-adjustment-write";
 import {
   describePromoCapCoverage,
   type PromoCoverageNotice,
@@ -758,6 +763,9 @@ export async function POST(
       let newPromoAdjustmentCents = 0;
       let promoRemoved = false;
       let promoCoverage: PromoCoverageNotice | null = null;
+      // #3276: what the promotion took off each night or guest; empty when the
+      // booking carries none.
+      let adjustmentTargets: PromoAdjustmentTarget[] = [];
 
       if (parked) {
         // The booking's stored promotion figures, written back untouched. A
@@ -816,6 +824,7 @@ export async function POST(
           const promoResult = application.discount;
           newDiscountCents = promoResult.discountCents;
           newPromoAdjustmentCents = promoResult.priceAdjustmentCents;
+          adjustmentTargets = requiredAdjustmentTargets(application);
           promoCoverage = await describePromoCapCoverage(tx, {
             promoCode: promo.code,
             capCoverage: application.capCoverage,
@@ -835,6 +844,19 @@ export async function POST(
             ),
           );
         }
+      }
+
+      // #3276: after the last night write and the promotion write, record what
+      // the promotion took off every night of every guest the engine priced —
+      // the existing guests included, since it re-decided the whole booking.
+      // A PARKED add re-ran nothing, so its new nights stay UNKNOWN.
+      if (!parked) {
+        await recordBookingNightAdjustments(tx, {
+          bookingId,
+          guestIds: guestNightRates.map((guest) => guest.bookingGuestId),
+          targets: adjustmentTargets,
+          writer: "the add-guest route",
+        });
       }
 
       // #3166: the booking's own stored final price on a parked add, written

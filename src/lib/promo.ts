@@ -1,5 +1,6 @@
 import { PromoCodeType, type FixedNightlyMode } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import type { PromoAdjustmentTarget } from "@/lib/night-adjustment-write";
 import {
   calculatePromoDiscount,
   type PromoCodeInput,
@@ -16,7 +17,7 @@ import {
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import {
   getWorkPartyNightWindowForPromo,
-  restrictPerNightRatesToWindow,
+  inWindowNightIndexes,
 } from "@/lib/work-party";
 import { ApiError } from "@/lib/api-error";
 import {
@@ -122,11 +123,12 @@ export interface AssignedPromoCodeSummary extends AvailablePromoCode {
  */
 interface PromoDiscountGuestWithNights extends PromoDiscountGuest {
   firstNight?: Date | null;
-  // Actual dates of each entry in perNightRates (issue #713), parallel to that
-  // array. Used to restrict an internal work-party promo to its night window
-  // correctly when the guest stays non-contiguous nights. Falls back to
-  // positional dates from firstNight when omitted.
-  nightDates?: Date[] | null;
+  // `nightDates` — the actual date of each entry in perNightRates, parallel to
+  // it (issue #713) — is declared once, on `PromoDiscountGuest` in
+  // `pricing.ts` (#3276). It restricts an internal work-party promo to its
+  // night window correctly on a non-contiguous stay, and it is what an
+  // adjustment row is attributed by. Positional dates from `firstNight` are the
+  // fallback for the window only, never for attribution.
 }
 
 export interface BookingDetailsForPromo {
@@ -183,6 +185,13 @@ export interface PromoApplicationResult {
   requiresGuestSelection?: boolean;
   selectableGuestIndexes?: number[];
   discount?: PromoDiscountResult;
+  /**
+   * #3276: what `discount` took off each night or guest of
+   * `bookingDetails.guests`, by position in THAT list, with the beneficiary
+   * each row belongs to. Present exactly when `discount` is. A writer hands it
+   * to `recordBookingNightAdjustments` after its last night write.
+   */
+  adjustmentTargets?: PromoAdjustmentTarget[];
   beneficiaryMemberIds: string[];
   remainingFreeNights?: number;
   remainingFreeNightsByMemberId?: Record<string, number>;
@@ -997,17 +1006,25 @@ export async function validateAndCalculatePromoDiscount(
   if (promoCode.internal) {
     const nightWindow = await getWorkPartyNightWindowForPromo(db, promoCode.id);
     if (nightWindow) {
-      detailGuests = bookingDetails.guests.map((guest) => ({
-        ...guest,
-        perNightRates: guest.firstNight
-          ? restrictPerNightRatesToWindow(
-              guest.perNightRates,
-              guest.firstNight,
-              nightWindow,
-              guest.nightDates
-            )
-          : [],
-      }));
+      detailGuests = bookingDetails.guests.map((guest) => {
+        if (!guest.firstNight) return { ...guest, perNightRates: [], nightDates: [] };
+        // Rates AND dates filtered by the same positions (#3276): an adjustment
+        // row is attributed to a night by date, so the two vectors must stay
+        // parallel through the window.
+        const kept = inWindowNightIndexes(
+          guest.perNightRates.length,
+          guest.firstNight,
+          nightWindow,
+          guest.nightDates
+        );
+        return {
+          ...guest,
+          perNightRates: kept.map((index) => guest.perNightRates[index]),
+          nightDates: guest.nightDates
+            ? kept.map((index) => guest.nightDates![index])
+            : guest.nightDates,
+        };
+      });
     }
   }
 
@@ -1380,12 +1397,84 @@ export async function validateAndCalculatePromoDiscount(
   // scopes its cap to the booker, so this branch and the trim rarely meet.)
   return {
     discount,
+    adjustmentTargets: promoAdjustmentTargetsFor({
+      discount,
+      guests: detailGuests,
+      bookingMemberId: bookingDetails.memberId,
+      assignedMemberIds: effectiveGuestScopeMemberIds,
+    }),
     beneficiaryMemberIds: coveredBeneficiaryMemberIds,
     remainingFreeNights,
     remainingFreeNightsByMemberId,
     selectedGuestIndexes: requiresGuestSelection ? selectedGuestIndexes.indexes : undefined,
     capCoverage,
   };
+}
+
+/**
+ * The build-up a WRITER hands to `recordBookingNightAdjustments` (#3276): the
+ * application's targets, or none when no promotion applied. A result that
+ * carries a discount without its targets is a wiring defect and is refused
+ * here, once, rather than defaulted to "nothing was taken off" at every site.
+ */
+export function requiredAdjustmentTargets(
+  application: PromoApplicationResult,
+): PromoAdjustmentTarget[] {
+  if (!application.discount) return [];
+  if (!application.adjustmentTargets) {
+    throw new Error(
+      "INV-MONEY-029: a promotion was applied without its per-target build-up",
+    );
+  }
+  return application.adjustmentTargets;
+}
+
+/**
+ * Resolve the engine's per-target detail to the caller's guest list and stamp
+ * each row's beneficiary (#3276).
+ *
+ * The engine names each target by the GUEST OBJECT it was handed; every filter
+ * between `guests` and the engine (`filterGuestsByIndexes`,
+ * `scopeGuestsForAssignedMembers`, `selectPromoDiscountGuests`) passes the same
+ * objects through, so identity maps a target back to its position in `guests`
+ * — which is the position a writer resolves to a `BookingGuest.id`.
+ *
+ * The beneficiary is decided exactly as `calculatePromoDiscountForGuestRates`
+ * decides the allocation rows it returns: an assigned-scoped code benefits the
+ * guest's own linked member; every other code benefits the booker (the same
+ * `hasAssignedMembers(assignedMemberIds)` test, on the same list). That is
+ * what makes the rows reconcile per beneficiary to the allocations
+ * (INV-MONEY-029).
+ */
+export function promoAdjustmentTargetsFor(params: {
+  discount: PromoDiscountResult;
+  guests: ReadonlyArray<PromoDiscountGuest>;
+  bookingMemberId: string;
+  assignedMemberIds: string[] | null | undefined;
+}): PromoAdjustmentTarget[] {
+  const { discount, guests, bookingMemberId, assignedMemberIds } = params;
+  const assignedScoped = hasAssignedMembers(assignedMemberIds);
+  return discount.targets.map((target) => {
+    const guestIndex = guests.indexOf(target.guest);
+    if (guestIndex < 0) {
+      throw new Error(
+        "INV-MONEY-029: the promotion engine attributed an adjustment to a guest that is not on the priced list",
+      );
+    }
+    const beneficiaryMemberId = assignedScoped ? target.guest.memberId : bookingMemberId;
+    if (!beneficiaryMemberId) {
+      throw new Error(
+        "INV-MONEY-029: an assigned-scoped promotion attributed an adjustment to a guest with no linked member",
+      );
+    }
+    return {
+      guestIndex,
+      scope: target.scope,
+      stayDate: target.scope === "night" ? target.stayDate : null,
+      beneficiaryMemberId,
+      amountCents: target.amountCents,
+    };
+  });
 }
 
 /**

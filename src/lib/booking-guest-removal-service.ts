@@ -5,6 +5,7 @@ import {
   type Prisma,
 } from "@prisma/client";
 import {
+  type PromoDiscountResult,
   type SeasonRateData,
 } from "@/lib/pricing";
 import {
@@ -15,8 +16,13 @@ import {
   deletePromoRedemptionAndAdjustCount,
   lockAndRefreshPromoCodeUsage,
   replacePromoRedemptionAllocations,
+  requiredAdjustmentTargets,
   validateAndCalculatePromoDiscount,
 } from "@/lib/promo";
+import {
+  recordBookingNightAdjustments,
+  type PromoAdjustmentTarget,
+} from "@/lib/night-adjustment-write";
 import {
   describePromoCapCoverage,
   type PromoCoverageNotice,
@@ -783,6 +789,8 @@ export async function removeBookingGuestInTransaction({
     newPromoAdjustmentCents: booking.promoAdjustmentCents,
     promoRemoved: false,
     promoCoverage: null,
+    adjustmentTargets: [],
+    discount: null,
   };
 
   if (!parkedFinancialReview) {
@@ -851,6 +859,15 @@ export async function removeBookingGuestInTransaction({
       newTotalPriceCents,
       guestNightRates,
       todayAtClub,
+    });
+    // #3276: the remaining guests' nights are untouched by a removal, so only
+    // the build-up is rewritten — from the engine's fresh decision over exactly
+    // those guests. A PARKED removal re-ran nothing and records nothing.
+    await recordBookingNightAdjustments(tx, {
+      bookingId,
+      guestIds: guestsForPricing.map((guest) => guest.bookingGuestId),
+      targets: promoResult.adjustmentTargets,
+      writer: "guest removal",
     });
   }
 
@@ -1246,6 +1263,8 @@ export async function recalculateBookingPromo({
     memberId: string | null;
     isMember: boolean;
     perNightRates: number[];
+    /** #3276: REQUIRED, so an adjustment row can be attributed to a night by date. */
+    nightDates: Date[];
     firstNight?: Date | null;
   }>;
   /**
@@ -1263,6 +1282,8 @@ export async function recalculateBookingPromo({
   let newPromoAdjustmentCents = 0;
   let promoRemoved = false;
   let promoCoverage: PromoCoverageNotice | null = null;
+  let adjustmentTargets: PromoAdjustmentTarget[] = [];
+  let discount: PromoDiscountResult | null = null;
 
   if (booking.promoRedemption?.promoCode) {
     // Row-lock the promo code and re-read its usage counter before the caps are
@@ -1307,9 +1328,10 @@ export async function recalculateBookingPromo({
       promoRemoved = true;
       await deletePromoRedemptionAndAdjustCount(tx, booking.promoRedemption);
     } else {
-      const discount = application.discount;
+      discount = application.discount;
       newDiscountCents = discount.discountCents;
       newPromoAdjustmentCents = discount.priceAdjustmentCents;
+      adjustmentTargets = requiredAdjustmentTargets(application);
       promoCoverage = await describePromoCapCoverage(tx, {
         promoCode: promo.code,
         capCoverage: application.capCoverage,
@@ -1331,5 +1353,15 @@ export async function recalculateBookingPromo({
     }
   }
 
-  return { newDiscountCents, newPromoAdjustmentCents, promoRemoved, promoCoverage };
+  return {
+    newDiscountCents,
+    newPromoAdjustmentCents,
+    promoRemoved,
+    promoCoverage,
+    // #3276: what the engine took off each night or guest of `guestNightRates`,
+    // and the engine result it came from, so a caller that cannot roll back
+    // can reconcile the two BEFORE its first write.
+    adjustmentTargets,
+    discount,
+  };
 }
