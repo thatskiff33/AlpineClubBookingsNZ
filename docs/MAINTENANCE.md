@@ -347,7 +347,7 @@ right. They are deliberately not restated here.
 
 **Two of the three are now banned by lint and cannot come back.** #3318 added
 `scan/no-semgrep-unparsable-import-type` to `eslint.config.mjs`, rewrote the 307
-call sites that carried the first, named the four types that carried the second,
+call sites that carried the first, named the five types that carried the second,
 and took the allowlist from 169 entries to 3. A partial parse of either shape
 now means the rule was bypassed or the file is outside its globs, and that is
 what to fix — not the allowlist.
