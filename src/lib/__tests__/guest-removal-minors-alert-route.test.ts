@@ -58,7 +58,7 @@ vi.mock("@/lib/booking-modify", async (importActual) => {
   // repriced guest keeps its stored rate snapshot, so the real one is pulled through
   // rather than stubbed — a stub here would make the removal path's coding behaviour
   // untested on the very route that exercises it.
-  const actual = await importActual<typeof import("@/lib/booking-modify")>();
+  const actual = (await importActual()) as typeof import("@/lib/booking-modify");
   return {
     assertBookingNotQuotePriced: mocks.assertBookingNotQuotePriced,
     applyLifecycleTransitions: mocks.applyLifecycleTransitions,

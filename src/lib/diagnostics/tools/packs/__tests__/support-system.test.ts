@@ -28,11 +28,11 @@ vi.mock("@/lib/ai-diagnostics-config", () => ({
 }));
 vi.mock("@/lib/ai-diagnostics-usage", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("@/lib/ai-diagnostics-usage")>();
+    (await importOriginal()) as typeof import("@/lib/ai-diagnostics-usage");
   return { ...actual, getDiagnosticsUsageSummary: vi.fn() };
 });
 vi.mock("@/lib/admin-cron-runs", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/admin-cron-runs")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/admin-cron-runs");
   return { ...actual, getCronRunsForAdminHealth: vi.fn() };
 });
 /**

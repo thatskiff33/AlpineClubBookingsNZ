@@ -30,9 +30,7 @@ vi.mock("@/lib/admin-modules", () => ({
   isEffectiveModuleEnabled: () => mockModuleEnabled(),
 }));
 vi.mock("@/lib/bed-allocation-approval", async () => {
-  const actual = await vi.importActual<
-    typeof import("@/lib/bed-allocation-approval")
-  >("@/lib/bed-allocation-approval");
+  const actual = (await vi.importActual("@/lib/bed-allocation-approval")) as typeof import("@/lib/bed-allocation-approval");
   return {
     ...actual,
     approveBedAllocations: (...args: unknown[]) =>

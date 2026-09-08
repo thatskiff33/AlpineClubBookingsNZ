@@ -42,7 +42,7 @@ vi.mock("@/lib/audit", () => ({ logAudit: vi.fn() }));
 // Partial mock: keep real implementations (including getAccountMapping) but stub
 // getAuthenticatedXeroClient so chart-of-accounts tests can control Xero responses.
 vi.mock("@/lib/xero", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/xero")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/xero");
   return {
     ...actual,
     callXeroApi: vi.fn(async (operation: () => Promise<unknown>) => operation()),

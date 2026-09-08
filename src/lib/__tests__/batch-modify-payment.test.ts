@@ -134,7 +134,7 @@ vi.mock("@/lib/booking-policies", () => ({
 
 vi.mock("@/lib/adult-member-hosting-review", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("@/lib/adult-member-hosting-review")>();
+    (await importOriginal()) as typeof import("@/lib/adult-member-hosting-review");
   return {
     ...actual,
     reconcileAdultMemberHostingReviewWithSiblings: (...args: unknown[]) =>

@@ -781,9 +781,7 @@ describe("#2262 guard 3 — the self-match refutation, pinned", () => {
     // so a future "derive the source from the payment" refactor fails loudly
     // instead of quietly making a Stripe capture refund itself.
     const upsert = vi.fn().mockResolvedValue(undefined);
-    const { upsertPaymentIntentTransaction } = await vi.importActual<
-      typeof import("@/lib/payment-transactions")
-    >("@/lib/payment-transactions");
+    const { upsertPaymentIntentTransaction } = (await vi.importActual("@/lib/payment-transactions")) as typeof import("@/lib/payment-transactions");
 
     await upsertPaymentIntentTransaction({
       paymentId: "payment-1",

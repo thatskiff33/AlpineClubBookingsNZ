@@ -87,7 +87,7 @@ vi.mock("@/lib/prisma", () => ({
  */
 vi.mock("@/lib/payment-transactions", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("@/lib/payment-transactions")>();
+    (await importOriginal()) as typeof import("@/lib/payment-transactions");
   return {
     ...actual,
     applyLocalRefundAllocation: (...a: unknown[]) =>

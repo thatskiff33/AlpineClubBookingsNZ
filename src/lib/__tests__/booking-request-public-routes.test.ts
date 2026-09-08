@@ -91,7 +91,7 @@ vi.mock("@/lib/lodge-settings", () => ({
  * graph imports a sibling cached read.
  */
 vi.mock("@/lib/public-layout-config", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/public-layout-config")>()),
+  ...((await importOriginal()) as typeof import("@/lib/public-layout-config")),
   getCachedDefaultLodgeCapacity: vi.fn().mockResolvedValue(20),
 }));
 

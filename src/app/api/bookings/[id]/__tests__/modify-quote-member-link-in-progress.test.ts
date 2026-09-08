@@ -52,7 +52,7 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 vi.mock("@/lib/capacity", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/capacity")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/capacity");
   return { ...actual, checkCapacityForGuestRanges: h.checkCapacityForGuestRanges };
 });
 vi.mock("@/lib/booking-member-night-conflicts", () => ({
@@ -72,7 +72,7 @@ vi.mock("@/lib/lodges", () => ({
 // file died before a single test ran. `importOriginal` keeps every other export
 // real, so the next widening cannot break it the same way (docs/TESTING.md).
 vi.mock("@/lib/lodge-capacity", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/lodge-capacity")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/lodge-capacity");
   return { ...actual, getLodgeCapacity: h.getLodgeCapacity };
 });
 vi.mock("@/lib/membership-type-policy", () => ({
@@ -96,9 +96,7 @@ vi.mock("@/lib/membership-type-policy", () => ({
 // imported from the validation module and re-provided here — preview and apply
 // therefore assert against ONE source of truth.
 vi.mock("@/lib/booking-modify", async () => {
-  const { GUEST_MEMBER_LINK_IN_PROGRESS_MESSAGE } = await vi.importActual<
-    typeof import("@/lib/booking-modify-validation")
-  >("@/lib/booking-modify-validation");
+  const { GUEST_MEMBER_LINK_IN_PROGRESS_MESSAGE } = (await vi.importActual("@/lib/booking-modify-validation")) as typeof import("@/lib/booking-modify-validation");
   return {
     isQuotePricedBooking: vi.fn().mockResolvedValue(false),
     isMemberWholeLodgeBooking: h.isMemberWholeLodgeBooking,
@@ -140,7 +138,7 @@ vi.mock("@/lib/xero-token-store", () => ({
 }));
 vi.mock("@/lib/xero-organisation", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("@/lib/xero-organisation")>();
+    (await importOriginal()) as typeof import("@/lib/xero-organisation");
   return { ...actual, getXeroLockDates: h.getXeroLockDates };
 });
 vi.mock("@/lib/booking-policies", () => ({

@@ -21,7 +21,7 @@ const CLUB_ZONE = "Pacific/Auckland";
 // The cron resolves each lodge's own capacity; pin it to the club config
 // total so the fixtures keep their original arithmetic.
 vi.mock("@/lib/lodge-capacity", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/lodge-capacity")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/lodge-capacity");
   return {
     ...actual,
     getLodgeCapacity: vi.fn(async () => actual.FALLBACK_LODGE_CAPACITY),
