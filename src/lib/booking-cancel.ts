@@ -2348,8 +2348,7 @@ async function paymentHasCaptureEvidence(
 // #1547: every cancel branch that restores applied credit appends this line to
 // the CANCELLED narrative event when a positive amount was returned, so the
 // member/admin story reflects the restore. Money stays in cents internally; the
-// sentence renders the amount in the club's configured currency (#3325), like
-// every other amount in the product.
+// sentence renders the club's configured currency (#3325).
 function appendReturnedCreditSentence(
   reason: string,
   creditRestoredCents: number

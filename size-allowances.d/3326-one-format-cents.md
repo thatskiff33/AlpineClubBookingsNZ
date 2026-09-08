@@ -1,9 +1,11 @@
 # File-size allowances for #3326 (#3302, one `formatCents`)
 
-Three already-oversized report modules grow slightly, and in all three cases
+Two already-oversized report modules grow slightly, and in both cases
 **the code got shorter and the comment got longer**. Each had a local
-`formatCents` copy; each now either calls the canonical helper or composes from
-it, and each carries a docblock saying why it is not simply the canonical call.
+`formatCents` copy; each now composes from the canonical helper, and each
+carries a docblock saying why it is not simply the canonical call. (A third,
+`src/lib/ib-hold-clearing-audit.ts`, was declared here until #3325 deleted its
+local `NZ$` helper outright and the file fell back under its budget.)
 
 That comment is the point of the change rather than overhead on it. The whole
 defect this issue fixes is a money formatter copied across call sites that
@@ -14,17 +16,6 @@ pass deletes it as a leftover and changes a report line by accident. Splitting
 any of these files would separate the explanation from the thing it explains,
 which is the opposite of what is wanted. The exact count of sites this issue
 touched is in the pull request description, stated once.
-
-file: src/lib/ib-hold-clearing-audit.ts
-lines: 813
-reason: the local copy was renamed to `formatIbAuditCents` and its rendering
-  left byte-for-byte unchanged, because it hard-codes an `NZ$` prefix that no
-  fixture pins. Unifying it would silently change a member-visible currency for
-  any club not configured for New Zealand dollars, and two other modules
-  hard-code the same prefix with tests pinning them, so changing this one alone
-  would make an inconsistency look deliberate. That question is filed as #3325
-  with options; the docblock records the evidence on both sides so whoever
-  answers it does not have to rediscover it. Fourteen lines, all comment.
 
 file: src/lib/xero-invoice-rounding-audit.ts
 lines: 799
