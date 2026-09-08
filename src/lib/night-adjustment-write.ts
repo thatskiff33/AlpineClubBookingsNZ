@@ -316,9 +316,30 @@ export async function snapshotBookingNightAdjustments(
   tx: Tx,
   bookingId: string,
 ): Promise<CarriedNightAdjustments> {
-  const [rows, recordedNights] = await Promise.all([
+  // Night-scope rows are read THROUGH their nights and guest-scope rows on
+  // their own, so this module never touches a night delegate it is not
+  // writing (the INV-MONEY-028 census counts every `.bookingGuestNight`
+  // access that is not a direct write as an alias to be refused).
+  const [nights, guestRows] = await Promise.all([
+    tx.bookingGuestNight.findMany({
+      where: { bookingGuest: { bookingId } },
+      select: {
+        bookingGuestId: true,
+        stayDate: true,
+        adjustmentsState: true,
+        adjustments: {
+          select: {
+            kind: true,
+            amountCents: true,
+            promoRedemptionId: true,
+            promoCodeId: true,
+            beneficiaryMemberId: true,
+          },
+        },
+      },
+    }),
     tx.bookingGuestNightAdjustment.findMany({
-      where: { bookingId },
+      where: { bookingId, bookingGuestNightId: null },
       select: {
         kind: true,
         amountCents: true,
@@ -326,32 +347,27 @@ export async function snapshotBookingNightAdjustments(
         promoCodeId: true,
         beneficiaryMemberId: true,
         bookingGuestId: true,
-        bookingGuestNight: { select: { bookingGuestId: true, stayDate: true } },
       },
     }),
-    tx.bookingGuestNight.findMany({
-      where: { bookingGuest: { bookingId }, adjustmentsState: "RECORDED" },
-      select: { bookingGuestId: true, stayDate: true },
-    }),
   ]);
+  const rows: CarriedNightAdjustments["rows"] = [];
+  for (const night of nights) {
+    for (const row of night.adjustments) {
+      rows.push({ ...row, bookingGuestId: night.bookingGuestId, stayDate: night.stayDate });
+    }
+  }
+  for (const row of guestRows) {
+    if (!row.bookingGuestId) {
+      refuse(`booking ${bookingId} holds an adjustment row attached to neither a night nor a guest`);
+    }
+    rows.push({ ...row, bookingGuestId: row.bookingGuestId, stayDate: null });
+  }
   return {
     bookingId,
-    rows: rows.map((row) => {
-      const bookingGuestId = row.bookingGuestNight?.bookingGuestId ?? row.bookingGuestId;
-      if (!bookingGuestId) {
-        refuse(`booking ${bookingId} holds an adjustment row attached to neither a night nor a guest`);
-      }
-      return {
-        kind: row.kind,
-        amountCents: row.amountCents,
-        promoRedemptionId: row.promoRedemptionId,
-        promoCodeId: row.promoCodeId,
-        beneficiaryMemberId: row.beneficiaryMemberId,
-        bookingGuestId,
-        stayDate: row.bookingGuestNight?.stayDate ?? null,
-      };
-    }),
-    recordedNights,
+    rows,
+    recordedNights: nights
+      .filter((night) => night.adjustmentsState === "RECORDED")
+      .map((night) => ({ bookingGuestId: night.bookingGuestId, stayDate: night.stayDate })),
   };
 }
 

@@ -1576,7 +1576,7 @@ export async function modifyBookingBatch({
     // existed. Guest identity follows the engine's own list: a remaining guest
     // by its id, an added guest by its position among the rows just created.
     if (promo.promoEngineRan) {
-      if (promo.adjustmentTargets === null) {
+      if (promo.adjustmentTargets === null || pricingResult.kind !== "priced") {
         throw new Error(
           "INV-MONEY-029: the promotion engine ran but reported no build-up",
         );
