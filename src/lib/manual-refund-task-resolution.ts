@@ -27,6 +27,8 @@ import {
   RefundAllocationRacedError,
 } from "@/lib/payment-transactions";
 import { prisma } from "@/lib/prisma";
+import { clubToday } from "@/lib/club-time";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 // #3195: the $0 refusal is said by the settle SCREEN as well as thrown here, and
 // this module is `server-only` - so the sentence lives in a client-safe home and
 // both read it (`INV-SSOT`).
@@ -35,7 +37,7 @@ import { manualRefundTaskSettlementRefusal } from "@/lib/manual-refund-task-sett
 import type { RecordedNightPrice } from "@/lib/stored-night-price-repair";
 import {
   planStoredNightPriceRepair,
-  recordStoredNightPriceRepair,
+  recordReviewClosurePricing,
 } from "@/lib/stored-night-price-repair-store";
 
 /**
@@ -222,6 +224,7 @@ export async function resolveManualRefundTask(
     );
   }
 
+  const todayAtClub = clubToday(await readClubTimeZoneOutsideRequest()); // #3219 `INV-LOCK-004`: read outside the transaction; dates the promo window
   const result = await prisma.$transaction(async (tx) => {
     const task = await tx.manualRefundTask.findUnique({
       where: { id: taskId },
@@ -422,19 +425,13 @@ export async function resolveManualRefundTask(
         })
       : null;
 
-    // #3191: what the officer says the booking's unpriced nights sold for,
-    // checked BEFORE the claim so a refusal leaves the task OPEN and its money
-    // question intact. `stored-night-price-repair-store.ts` owns the rules, the
-    // re-read of the blanks and the refusals; null in means null out, and the
-    // strand is not touched at all.
+    // #3191/#3219 D2: the night prices, checked BEFORE the claim so a refusal
+    // leaves the task OPEN. The store owns the rules and the refusal.
     const nightPriceRepair = await planStoredNightPriceRepair({
       task,
       requested: input.recordedNightPrices,
       settled: settlement
-        ? {
-            direction: settlementDirection,
-            amountCents: settlement.amountCents,
-          }
+        ? { direction: settlementDirection, amountCents: settlement.amountCents }
         : null,
       store: tx,
     });
@@ -571,17 +568,20 @@ export async function resolveManualRefundTask(
       }
     }
 
-    // #3191: the blanks become numbers, after the claim and inside it, so a lost
-    // claim writes no prices. It records its OWN audit entry rather than adding
-    // to the one below - see `recordStoredNightPriceRepair` for why that is not
-    // tidiness.
-    if (nightPriceRepair) {
-      await recordStoredNightPriceRepair({
+    // #3191/#3219/#3257: blanks become numbers inside the claim; the booking
+    // re-prices on EVERY parked review closing. Why, and why the KIND is the
+    // condition, is `recordReviewClosurePricing`'s docblock.
+    if (task.kind === ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW) {
+      await recordReviewClosurePricing({
         plan: nightPriceRepair,
         task,
         actingMemberId,
         resolution,
         note: trimmedNote,
+        todayAtClub,
+        hasIssuedXeroInvoice,
+        settlementRoute,
+        settlementAmountCents: settlement?.amountCents ?? null,
         store: tx,
       });
     }

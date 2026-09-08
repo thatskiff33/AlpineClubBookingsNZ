@@ -114,6 +114,7 @@ import {
 import { recordAdultMemberHostingReviewForNewBooking } from "@/lib/adult-member-hosting-review";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { withOptionalTransaction } from "@/lib/db-transaction";
+import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 
 // The helper types, errors, and pure functions that used to live here now live
 // in three cohesive sibling modules (types <- promo, types <- guests). Re-export
@@ -391,7 +392,10 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
       promoCodeRecord = resolved.promoCodeRecord;
     }
 
-    const finalPriceCents = price.totalPriceCents + promoAdjustmentCents;
+    const finalPriceCents = bookingFinalPriceCents({
+      totalPriceCents: price.totalPriceCents,
+      promoAdjustmentCents,
+    });
     const hasNonMembers = guests.some((g) => !g.isMember);
 
     const createdBooking = await tx.booking.create({
@@ -923,7 +927,10 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
         promoCodeRecord = resolved.promoCodeRecord;
       }
 
-      const finalPriceCents = price.totalPriceCents + promoAdjustmentCents;
+      const finalPriceCents = bookingFinalPriceCents({
+        totalPriceCents: price.totalPriceCents,
+        promoAdjustmentCents,
+      });
       // Credit is only applied at payment time. For a booking heading to
       // AWAITING_REVIEW, defer credit application until the admin approves
       // and the member completes payment.
@@ -1789,7 +1796,10 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
     promoCodeRecord = promoCode;
   }
 
-  const finalPriceCents = price.totalPriceCents + promoAdjustmentCents;
+  const finalPriceCents = bookingFinalPriceCents({
+    totalPriceCents: price.totalPriceCents,
+    promoAdjustmentCents,
+  });
   const hasNonMembers = guests.some((g) => !g.isMember);
 
   const { newBooking, position } = await prisma.$transaction(async (tx) => {

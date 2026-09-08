@@ -986,14 +986,24 @@ export function ManualRefundTaskQueue() {
             deltaCents: nightPriceDeltaCents,
           });
   /*
-    Blocked, not required. Leaving every box blank is a valid answer and settles
-    exactly as it did before #3191; having typed into SOME of them and not
-    reached a set of figures that adds up is not, because that is an answer the
-    server would refuse after the task had already been claimed.
+    REQUIRED SINCE #3219 D2, where it used to be merely "blocked once you start".
+    Leaving every box blank was a valid answer before that decision and is not
+    any more, on a dismissal as much as on a completion: the booking's own price
+    is worked out again from these nights when the review closes, and a blank
+    closure leaves a headline its guests no longer agree with - after a parked
+    removal, one still counting a guest who is gone (#3257). The server refuses
+    it either way; this only saves the officer the round trip.
+
+    NOTHING NEW IS SAID HERE: the paragraph above the boxes already says, in D2's
+    own words, that the review cannot be closed until the figures are recorded.
+
+    Rows that offer no boxes have `unpricedNights === null`, so this flag leaves
+    them alone - but since #3257 their closure RE-PRICES THE BOOKING too, with
+    nothing saying so first. It is recorded afterwards, in the booking's own
+    PRICE_REBASE row and the closure's audit entry, rather than reworded here.
   */
   const nightPricesBlocked =
     unpricedNights !== null &&
-    nightBoxesTyped > 0 &&
     (nightPriceDeltaCents === null || nightPriceCheck?.ok !== true);
 
   async function submit() {
