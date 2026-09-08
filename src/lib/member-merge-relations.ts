@@ -203,6 +203,11 @@ export const MEMBER_MERGE_RELATION_SPECS: readonly MemberMergeRelationSpec[] = [
   spec("PromoCodeAssignment", "member", "memberId", "resolve", {
     note: "@@unique(promoCodeId,memberId)",
   }),
+  // #3276: the per-night / per-guest decomposition of a promo allocation. No
+  // unique on the member column, so it simply follows the person, as the
+  // redemption above does; its allocation row is re-pointed by the resolver
+  // above, so the two keep reconciling (INV-MONEY-029) after a merge.
+  spec("BookingGuestNightAdjustment", "beneficiaryMember", "beneficiaryMemberId", "move"),
 
   // --- Credits / refunds ---
   spec("MemberCredit", "member", "memberId", "move"),

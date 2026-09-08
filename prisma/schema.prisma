@@ -669,6 +669,7 @@ model Member {
   newBookingPolicyExceptionRequestsReviewed  NewBookingPolicyExceptionRequest[]         @relation("NewBookingPolicyExceptionRequestsReviewed")
   promoRedemptions                           PromoRedemption[]
   promoRedemptionAllocations                 PromoRedemptionAllocation[]
+  nightAdjustmentsAsBeneficiary              BookingGuestNightAdjustment[]
   promoCodeAssignments                       PromoCodeAssignment[]
   notificationPreference                     NotificationPreference?
   hutLeaderAssignments                       HutLeaderAssignment[]
@@ -1869,6 +1870,7 @@ model Booking {
   promoRedemption             PromoRedemption?
   promoRedemptionAllocations  PromoRedemptionAllocation[]
   promoRedemptionGuestTargets PromoRedemptionGuestTarget[]
+  nightAdjustments            BookingGuestNightAdjustment[]
   modifications               BookingModification[]
   changeRequests              BookingChangeRequest[]
   creditsFromCancellation     MemberCredit[]                  @relation("CreditSource")
@@ -2058,6 +2060,9 @@ model BookingGuest {
   // sync on every write. Reads outside the creation + manage-guests editing
   // flows keep using the envelope.
   nights                      BookingGuestNight[]
+  // #3276: guest-scope adjustment rows (a fixed-amount promo is decided per
+  // guest, never per night). Night-scope rows hang off BookingGuestNight.
+  nightAdjustments            BookingGuestNightAdjustment[]
 
   @@index([bookingId])
   @@index([bookingId, stayStart, stayEnd])
@@ -2092,6 +2097,26 @@ enum BookingGuestNightPriceSource {
   UNKNOWN
 }
 
+// #3276 (stage 2 of programme #3272): is this night's adjustment build-up
+// recorded? UNKNOWN is the column default so that a night row inserted by a
+// colour compiled before the column existed reads honestly as "nobody said".
+// RECORDED means the writer that sold this night also recorded every
+// adjustment the pricing engine decided for it, in the same transaction —
+// so RECORDED with no BookingGuestNightAdjustment rows means "nothing was
+// taken off this night", which is a real answer and not an absence.
+enum BookingGuestNightAdjustmentsState {
+  UNKNOWN
+  RECORDED
+}
+
+// #3276: what kind of adjustment a BookingGuestNightAdjustment row records.
+// PROMO is the only writer today. A change-fee waiver is fee-level, never a
+// night reduction, and account credit has its one home in the MemberCredit
+// ledger — so neither is a kind here (owner decision, 8 Sep 2026).
+enum BookingGuestNightAdjustmentKind {
+  PROMO
+}
+
 // Per-night stay record for a booking guest (issue #713). One row per night
 // the guest is actually staying, with that night's price in integer cents.
 // Non-contiguous stays are represented as a sparse set of these rows; the
@@ -2110,12 +2135,77 @@ model BookingGuestNight {
   // outright: a comped night stores 0, and 0 is a real sold price.
   priceCents     Int?
   priceSource    BookingGuestNightPriceSource @default(UNKNOWN)
+  // #3276: written ONLY by `night-adjustment-write.ts`, after that module has
+  // put the night's adjustment rows in place. Every night writer leaves the
+  // default, exactly as the old colour does.
+  adjustmentsState BookingGuestNightAdjustmentsState @default(UNKNOWN)
   createdAt      DateTime @default(now())
 
   bookingGuest BookingGuest @relation(fields: [bookingGuestId], references: [id], onDelete: Cascade)
+  adjustments  BookingGuestNightAdjustment[]
 
   @@unique([bookingGuestId, stayDate])
   @@index([stayDate])
+}
+
+// #3276 (stage 2 of programme #3272): what each adjustment took off a night —
+// or off a guest, where the pricing engine decides the adjustment at guest
+// grain. One row per adjustment per target (D1 on #3272, refined 8 Sep 2026).
+//
+// TARGET: exactly one of bookingGuestNightId / bookingGuestId is set, enforced
+// by the CHECK constraint `BookingGuestNightAdjustment_exactly_one_target` in
+// the migration (Prisma cannot express it) and by the writer. A percentage,
+// free-night or fixed-nightly promo is computed per night, so its rows attach
+// to nights; a fixed-amount promo is `min(value, guest total)` per GUEST with
+// no per-night rule, so its row attaches to the guest. The amount is always
+// the engine's own figure at the grain it decided it — never translated to a
+// finer grain by a rule that would have to be invented.
+//
+// AMOUNT: a signed delta in integer cents, like `priceAdjustmentCents` (a
+// discount is negative; a SET_PRICE fixed-nightly code that raises a night is
+// positive). `0` is a real value. NULL means NOT KNOWN — written only where the
+// engine genuinely has no per-target figure (the per-member cap rescale) — and
+// `?? 0` on it is prohibited exactly as it is on `BookingGuestNight.priceCents`.
+//
+// RECONCILIATION (INV-MONEY-029): the rows of one redemption sum, per
+// beneficiary, to that member's `PromoRedemptionAllocation.priceAdjustmentCents`
+// and, overall, to `PromoRedemption.priceAdjustmentCents`. The writer refuses
+// (and the transaction rolls back) when they do not.
+//
+// PROVENANCE is the redemption and the code, never the allocation row: every
+// reprice regenerates allocation ids, and so does the
+// `PromoRedemption_sync_allocation_*` trigger pair. `promoRedemptionId` is
+// CASCADE so a row can never outlive the promotion it decomposes — every path
+// that deletes a redemption otherwise leaves rows asserting a promo amount
+// nothing backs. `bookingId` mirrors the sibling promo tables so a booking's
+// rows are one indexed delete-and-rewrite.
+model BookingGuestNightAdjustment {
+  id                  String                          @id @default(cuid())
+  kind                BookingGuestNightAdjustmentKind
+  amountCents         Int?
+  bookingGuestNightId String?
+  bookingGuestId      String?
+  bookingId           String
+  promoRedemptionId   String
+  promoCodeId         String
+  beneficiaryMemberId String
+  createdAt           DateTime                        @default(now())
+
+  bookingGuestNight BookingGuestNight? @relation(fields: [bookingGuestNightId], references: [id], onDelete: Cascade)
+  bookingGuest      BookingGuest?      @relation(fields: [bookingGuestId], references: [id], onDelete: Cascade)
+  booking           Booking            @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  promoRedemption   PromoRedemption    @relation(fields: [promoRedemptionId], references: [id], onDelete: Cascade)
+  promoCode         PromoCode          @relation(fields: [promoCodeId], references: [id], onDelete: Restrict)
+  beneficiaryMember Member             @relation(fields: [beneficiaryMemberId], references: [id], onDelete: Cascade)
+
+  // Explicit names: Prisma's defaults for these two run past PostgreSQL's
+  // 63-character identifier limit and would be truncated silently.
+  @@unique([bookingGuestNightId, kind, promoRedemptionId], map: "BookingGuestNightAdjustment_night_kind_redemption_key")
+  @@unique([bookingGuestId, kind, promoRedemptionId], map: "BookingGuestNightAdjustment_guest_kind_redemption_key")
+  @@index([bookingId])
+  @@index([promoRedemptionId])
+  @@index([promoCodeId])
+  @@index([beneficiaryMemberId])
 }
 
 // ---------------------------------------------------------------------------
@@ -3103,6 +3193,7 @@ model PromoCode {
   redemptions    PromoRedemption[]
   lodges         PromoCodeLodge[]
   allocations    PromoRedemptionAllocation[]
+  nightAdjustments BookingGuestNightAdjustment[]
   assignments    PromoCodeAssignment[]
   workPartyEvent WorkPartyEvent?
 
@@ -3128,6 +3219,7 @@ model PromoRedemption {
   member       Member                       @relation(fields: [memberId], references: [id], onDelete: Cascade)
   allocations  PromoRedemptionAllocation[]
   guestTargets PromoRedemptionGuestTarget[]
+  nightAdjustments BookingGuestNightAdjustment[]
 
   @@index([promoCodeId])
   @@index([memberId])
