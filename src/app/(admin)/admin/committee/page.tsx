@@ -748,18 +748,23 @@ export default function CommitteePage() {
                 </div>
               </div>
               <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-4">
-                {[
-                  ["published", "Published"],
-                  ["showPhone", "Show phone"],
-                  ["contactable", "Contactable"],
-                  ["isActive", "Active"],
-                ].map(([key, label]) => (
+                {/* `as const` makes each row a 2-tuple of literals, so `key`
+                    is one of the four boolean field names rather than
+                    `string | undefined` — which is what a computed property
+                    name and the form lookup both need. Two casts go with it
+                    (#2801). */}
+                {(
+                  [
+                    ["published", "Published"],
+                    ["showPhone", "Show phone"],
+                    ["contactable", "Contactable"],
+                    ["isActive", "Active"],
+                  ] as const
+                ).map(([key, label]) => (
                   <label key={key} className="flex items-center gap-2 text-sm">
                     <input
                       type="checkbox"
-                      checked={
-                        assignmentForm[key as keyof typeof assignmentForm] as boolean
-                      }
+                      checked={assignmentForm[key]}
                       onChange={(event) =>
                         setAssignmentForm({
                           ...assignmentForm,

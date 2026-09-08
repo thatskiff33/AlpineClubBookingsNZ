@@ -107,6 +107,15 @@ export function AllocationPreferencesSection({
     section.setDraft((current) => {
       const next = [...current.allocationPriorityOrder];
       const [priority] = next.splice(from, 1);
+      // A REAL missing state, not a restatement of the guard above: that guard
+      // bounds `to` and has never bounded `from`. The drop handler passes a
+      // `draggedIndex` captured at drag start, so removing a preference (or a
+      // refresh shortening the list) mid-drag can hand this an index past the
+      // end. `splice` then removes nothing and the insert below would put an
+      // `undefined` INTO the saved priority order — one entry longer than it
+      // started, with a bogus preference in it. Leaving the draft alone is the
+      // only answer that cannot corrupt it (#2801).
+      if (priority === undefined) return current;
       next.splice(to, 0, priority);
       return { ...current, allocationPriorityOrder: next };
     });
