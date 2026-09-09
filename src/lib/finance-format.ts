@@ -66,3 +66,34 @@ export function formatFinancePercent(value: number): string {
 export function formatFinanceRatio(value: number): string {
   return ratioFormatter.format(value);
 }
+
+/**
+ * Compact whole-dollar chart tick — `$10k`, `$1.2m`, `$450` — in the club's
+ * configured currency (#3325). The NUMBER keeps the chart theme's long-standing
+ * shape (lowercase `k`/`m`, one decimal for millions, the sign inside the
+ * number as before), pinned byte-identical; `Intl`'s own `notation: "compact"`
+ * renders `$10K` / `$1.2M` and was measured and rejected for that reason. The
+ * currency SYMBOL and where it sits come from the display formatter's parts, so
+ * a locale that writes `0 €` gets `10k €` rather than a `$` this codebase used
+ * to spell by hand.
+ */
+export function formatCompactDollarsDisplay(cents: number): string {
+  const dollars = cents / 100;
+  const abs = Math.abs(dollars);
+  const compact =
+    abs >= 1_000_000
+      ? `${(dollars / 1_000_000).toFixed(1)}m`
+      : abs >= 1_000
+        ? `${Math.round(dollars / 1_000)}k`
+        : `${Math.round(dollars)}`;
+  let placed = false;
+  return dollarsDisplayFormatter
+    .formatToParts(0)
+    .map((part) => {
+      if (part.type === "currency" || part.type === "literal") return part.value;
+      if (placed) return "";
+      placed = true;
+      return compact;
+    })
+    .join("");
+}

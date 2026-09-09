@@ -1,4 +1,5 @@
 import {
+  formatCompactDollarsDisplay,
   formatDollarsDisplay,
   formatFinanceNumber,
   formatFinancePercent,
@@ -95,11 +96,7 @@ export function formatFinanceAxisTick(
   }
 
   if (valueType === "currency") {
-    const dollars = value / 100;
-    const abs = Math.abs(dollars);
-    if (abs >= 1_000_000) return `$${(dollars / 1_000_000).toFixed(1)}m`;
-    if (abs >= 1_000) return `$${Math.round(dollars / 1_000)}k`;
-    return `$${Math.round(dollars)}`;
+    return formatCompactDollarsDisplay(value);
   }
 
   const abs = Math.abs(value);

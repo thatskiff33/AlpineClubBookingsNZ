@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { FINANCE_MIX_COLORS, formatFinanceValue } from "../finance-chart-theme";
+import {
+  FINANCE_MIX_COLORS,
+  formatFinanceAxisTick,
+  formatFinanceValue,
+} from "../finance-chart-theme";
 import { buildThemeSubstrate } from "@/lib/theme/theme-substrate";
 import {
   DEFAULT_CLUB_THEME_VALUES,
@@ -68,5 +72,15 @@ describe("formatFinanceValue renders through the shared finance formatters (#332
     expect(formatFinanceValue(0.125, "percent")).toBe("12.5%");
     expect(formatFinanceValue(1.35, "ratio")).toBe("1.35");
     expect(formatFinanceValue(123456, "currency")).toBe("$1,235");
+  });
+
+  // Measured against the hand-rolled `$` version before it was replaced, so
+  // this is the byte-identical proof, not a recomputation.
+  it("keeps the compact currency tick byte-identical under the default configuration", () => {
+    expect(
+      [1_000_000, 120_000_000, 45_000, -120_000_000, -1_000_000, 0].map((cents) =>
+        formatFinanceAxisTick(cents, "currency"),
+      ),
+    ).toEqual(["$10k", "$1.2m", "$450", "$-1.2m", "$-10k", "$0"]);
   });
 });
