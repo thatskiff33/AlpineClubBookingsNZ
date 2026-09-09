@@ -129,6 +129,14 @@ export function normalisePath(path) {
 /**
  * Reduces a Semgrep JSON report to the coverage facts this gate decides on.
  *
+ * WHAT IT DOES NOT SEE, and this is pre-existing (#2842) rather than something
+ * #3318 or #3345 changed: it reads `errors` and `paths.scanned` only, and the
+ * report's `paths` object carries no `skipped` key at all. A target above
+ * Semgrep's default `--max-target-bytes` is therefore neither scanned nor an
+ * error — it costs exactly 1 against `minimumScannedFiles`, which is a coarse
+ * floor with roughly 290 files of slack (4,293 measured against a committed
+ * 4,000). One oversized file drops out silently; a directory's worth does not.
+ *
  * @param {{ errors?: ReadonlyArray<Record<string, unknown>>, paths?: { scanned?: ReadonlyArray<string> } }} report
  */
 export function summariseCoverage(report) {
@@ -173,8 +181,8 @@ export function summariseCoverage(report) {
 }
 
 /**
- * @param {{ files?: unknown }} allowlist
- * @returns {string[]}
+ * @param {{ minimumScannedFiles?: unknown }} allowlist
+ * @returns {number}
  */
 export function readMinimumScannedFiles(allowlist) {
   const floor = allowlist?.minimumScannedFiles;
@@ -263,15 +271,35 @@ export function readAllowlistFiles(allowlist) {
  * asserted with `toHaveAttribute` - so those have no rewrite and are the only
  * legitimate entries left.
  *
- * THE FIRST TWO SHAPES ARE NOW BANNED BY LINT. Since #3318,
- * `scan/no-semgrep-unparsable-import-type` in `eslint.config.mjs` reports both,
- * as the whole class rather than the broken spelling, and autofixes the call
- * form. So a partial-parse failure of either shape means the rule was bypassed
- * or the file is outside its globs, and the answer is to fix that rather than
- * to add an entry here.
+ * AND THE FOURTH CORRECTION, #3345: "three shapes defeat the parser" was itself
+ * too narrow, and so was the claim that two of them "cannot come back". #3318
+ * had measured the parameter POSITION and generalised from it. Re-measured on
+ * the same pinned image against minimal single-construct files, roughly a dozen
+ * further positions fail - a type alias, an interface property, a return
+ * annotation, a class property, a generic constraint or default, a nested type
+ * argument, an `extends` or `implements` clause, `keyof`, a parenthesised
+ * qualified type - and #3318's rule was silent on every one. Worse, the remedy
+ * it printed ("give the type a name") produces `type P = import("x").A<null>`,
+ * which is one of the failing forms: the guard was handing out an instruction
+ * that opened the region it exists to protect. Two members of the CALL class
+ * were silent too - a bare instantiation expression `f<typeof import("x")>`
+ * with no call, and `f<typeof import("x")>?.()`, where the type arguments hang
+ * off the callee.
+ *
+ * WHAT LINT NOW BANS, and what it does not. Since #3345,
+ * `scan/no-semgrep-unparsable-import-type` reports the call class including
+ * both instantiation shapes, every DECORATED `import()` type wherever it
+ * appears, and an undecorated one in a parameter position; it autofixes the
+ * call form. That removes the growth at source for those positions, and THIS
+ * GATE REMAINS THE BACKSTOP FOR THE REST - a parse fault in a shape the rule
+ * does not reach still lands here, which is the arrangement rather than a
+ * failure of it. So a partial parse of a shape the rule DOES reach means the
+ * rule was bypassed or the file is outside its globs, and that is what to fix;
+ * a partial parse of anything else is a real finding, and the honest response
+ * is to measure the construct and widen the rule.
  */
 const KNOWN_CONSTRUCTS =
-  'Three shapes defeat the parser, and all three are valid TypeScript the build accepts. (1) A CALL whose type argument contains an `import()` type - `f<typeof import("...")>(...)`, for any `f`; the spellings measured here are `importOriginal`, `vi.importActual` and `importActual`. It fails when the argument list is EMPTY (`>()` was unexpected) and when it carries a TRAILING COMMA, which is what a formatter adds on reflowing a long call (`,` was unexpected); it parses with an argument and no trailing comma, so which side of the line a call sits on is decided by print width. Move the type out of the call: `(await f()) as typeof import("...")`. (2) An `import()` type in a FUNCTION PARAMETER annotation, once it carries a type-argument list or an indexed access - `(i: import("x").A<null>)`, `(i: import("x").A["k"])`. The identical type parses in a return position, a variable annotation, an interface property or a type alias, so the remedy is to NAME it and use the name. Shapes (1) and (2) are both banned by `scan/no-semgrep-unparsable-import-type` and cannot legitimately reach this allowlist: if one did, the lint rule was bypassed. (3) A BARE `&` IN JSX TEXT - `<h1>Rooms & Beds</h1>` - which becomes `&amp;`. That remedy applies to JSX TEXT ONLY: the same parser fault fires on a `&` inside a string literal, such as a URL query, and rewriting it there would change the value, so those are the entries this allowlist legitimately holds.'
+  'Three FAMILIES defeat the parser, all of them valid TypeScript the build accepts. Do not read the lists inside them as closed - #3318 stated them narrower than they are and #3345 re-measured; if your construct is not below, measure it before adding an entry. (1) A CALL whose type argument contains an `import()` type - `f<typeof import("...")>(...)`, for any `f`; the spellings measured here are `importOriginal`, `vi.importActual` and `importActual`. It fails with an EMPTY argument list (`>()` was unexpected), with a TRAILING COMMA, which is what a formatter adds on reflowing a long call (`,` was unexpected), with a SECOND type argument even given an argument, as a bare instantiation `f<typeof import("...")>` with no call, and as `f<typeof import("...")>?.()`. It parses with one type argument and a non-empty argument list, as `f?.<typeof import("...")>()`, as a tagged template, and under `new` in every argument-list variant. Move the type out of the call: `(await f()) as typeof import("...")`. (2) A DECORATED `import()` type - one carrying a type-argument list, an indexed access, a `keyof`, or a wrapping parenthesis - in almost any type position: a parameter, a return, a variable, a TYPE ALIAS, an interface property, a class property, a generic constraint or default, a nested type argument, an `extends` or `implements` clause. THE REMEDY IS A TOP-LEVEL TYPE-ONLY IMPORT, not an alias: `type P = import("x").A<null>;` also fails, which is what #3318 wrongly told people to write. Use `import type { A } from "x";` and then `A<null>["k"]`, or root the type at `typeof` - `typeof import("x").k` and `(typeof import("x"))["k"]` parse everywhere outside a call. The boundary inside this family is incoherent: `import("x").A<null>["k"]` parses in an alias while deleting the index makes it fail, and `keyof import("x")` fails while `keyof typeof import("x")` parses, which is why the lint rule reports the whole decoration rather than the failing spelling. Families (1) and (2) are banned by `scan/no-semgrep-unparsable-import-type`, so a partial parse of one means the rule was bypassed - but the rule bans the positions listed here and not a closed set, and this gate is the backstop for anything it does not reach. (3) A BARE `&` IN JSX TEXT - `<h1>Rooms & Beds</h1>` - which becomes `&amp;`. That remedy applies to JSX TEXT ONLY: the same parser fault fires on a `&` inside a string literal, such as a URL query, and rewriting it there would change the value, so those are the entries this allowlist legitimately holds.'
 
 
 /**

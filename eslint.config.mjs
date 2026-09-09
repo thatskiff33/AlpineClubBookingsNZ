@@ -1958,7 +1958,7 @@ export const SSOT_LOCAL_RULES = {
 };
 
 // ---------------------------------------------------------------------------
-// #3318 — the two shapes Semgrep's TypeScript parser cannot read.
+// #3318 — the TypeScript shapes Semgrep's parser cannot read.
 // ---------------------------------------------------------------------------
 //
 // `semgrep scan --error` exits 0 on code it could not PARSE. A parse failure is
@@ -1973,63 +1973,140 @@ export const SSOT_LOCAL_RULES = {
 // recurrence is not an event to absorb once, it is anything landing at all.
 // Removing the growth at source is the structural fix `INV-SSOT-001` prefers.
 //
-// WHY THE CLASS IS BANNED AND NOT THE BROKEN SPELLING. Measured for #3318 on
-// the pinned image (`semgrep/semgrep:1.161.0`, the one the blocking scan runs)
-// with minimal repros, `f` being any function at all:
+// HOW MUCH OF THE CLASS THIS RULE REACHES, said plainly, because the honest
+// version is not "the shapes are closed". #3318 shipped saying THREE shapes
+// defeat the parser and that two of them could not come back. #3345 re-measured
+// and found roughly a dozen further failing positions with the rule silent on
+// every one of them, so the arms below are wider and the CLAIM is narrower:
+// this rule reaches the positions listed here, and the coverage gate remains
+// the backstop for anything it does not.
 //
-//     f<typeof import("x")>()                 FAILS  `>()` was unexpected
-//     f<typeof import("x")>( "x", ) on 3 lines FAILS  `,` was unexpected
-//     f<typeof import("x")>("x")              parses
-//     f<typeof import("x")>("x", 1)           parses
-//     new C<typeof import("x")>()             parses  — so `new` is unaffected
+// EVERY LINE BELOW WAS MEASURED, on the pinned image `semgrep/semgrep:1.161.0`
+// (the one the blocking scan runs) against minimal single-construct files, with
+// a probe rule written to defeat Semgrep's prefilter so that every target is
+// really parsed. `f` is any function at all and `A` is any exported type.
 //
-// Which side of that line a call sits on is therefore decided by PRINT WIDTH: a
-// rename that pushes the call past it splits the argument list across lines, the
+// THE CALL CLASS — an `import()` type inside a call's type-argument list:
+//
+//     f<typeof import("x")>()                   FAILS  `>()` was unexpected
+//     f<typeof import("x")>( "x", ) on 3 lines   FAILS  `,` was unexpected
+//     f<typeof import("x"), string>("x")         FAILS  two type arguments
+//     f<typeof import("x")>                      FAILS  `>` was unexpected
+//     f<typeof import("x")>?.()                  FAILS  `>?.()` was unexpected
+//     f<typeof import("x")>("x")                parses
+//     f<typeof import("x")>("x", 1)             parses
+//     f?.<typeof import("x")>()                 parses
+//     tag<typeof import("x")>`abc`              parses
+//     new K<typeof import("x")>()               parses, and so does every other
+//                                               argument-list variant of `new`,
+//                                               INCLUDING the trailing comma
+//
+// Which side of that line a CALL sits on is decided by PRINT WIDTH: a rename
+// that pushes the call past it splits the argument list across lines, the
 // trailing comma arrives with the reflow, and a passing line becomes an
 // unscanned region with no change of any substance. That is not hypothetical —
 // it appeared at 12 call sites, and for 10 of the 169 entries #3318 inherited
 // it was the only cause. A further 23 files in the tree held the "parses today"
-// spelling, every one of them one reflow from an entry of its own. So the rule reports the whole class, and the
-// remedy moves the type out of the call, where nothing about it depends on
-// formatting:
+// spelling, every one of them one reflow from an entry of its own. So the whole
+// call class is reported, and the remedy moves the type out of the call, where
+// nothing about it depends on formatting:
 //
 //     (await f()) as typeof import("x")
 //
 // which is measured clean, including with the multi-line trailing-comma
 // argument list the fixer leaves behind.
 //
-// THE SECOND SHAPE, which nothing had written down until #3318 measured it: an
-// `import()` type inside a FUNCTION PARAMETER annotation, once it carries a
-// type-argument list or an indexed access. Measured the same way:
+// `new` is the one member of the family that print width does NOT reach, so it
+// is deliberately not reported: `new K<typeof import("x")>` is clean with no
+// arguments, with arguments, with a trailing comma and with no parentheses at
+// all. A `new` whose type argument is DECORATED does fail, and the arm below
+// reports that wherever it appears — including there.
 //
-//     (i: import("x").A)                      parses
-//     (i: import("x").A<null>)                FAILS
-//     (i: import("x").A["k"])                 FAILS
-//     (i: (import("x").A)["k"])               FAILS
-//     (i: (typeof import("x"))["k"])          parses
+// THE DECORATED-TYPE CLASS — an `import()` type carrying a type-argument list,
+// an indexed access, a `keyof`, or a wrapping parenthesis. This is where #3318
+// was narrowest: it reported only the FUNCTION PARAMETER position, and the
+// position turned out to be almost irrelevant.
 //
-// and the identical types parse in a RETURN position, a variable annotation, an
-// interface property and a type alias. So the remedy is to name the type and
-// use the name, which is also the more readable code:
+//     type P = import("x").A<null>                   FAILS  `<null>` unexpected
+//     interface I { p: import("x").A<null> }         FAILS
+//     (i: import("x").A<null>)                       FAILS
+//     (): import("x").A<null>                        FAILS
+//     let v: import("x").A<null>                     FAILS
+//     class C { p!: import("x").A<null> }            FAILS
+//     <T extends import("x").A<null>>                FAILS
+//     <T = import("x").A<null>>                      FAILS
+//     Array<import("x").A<null>>                     FAILS
+//     interface I extends import("x").A<null> {}     FAILS
+//     class C implements import("x").A<null> {}      FAILS
+//     new () => import("x").A<null>                  FAILS
+//     new K<import("x").A<null>>()                   FAILS
+//     keyof import("x")                              FAILS
+//     keyof import("x").A                            FAILS
+//     (import("x").A)                                FAILS
+//     (typeof import("x").v)                         FAILS
+//     (i: import("x").A["k"])                        FAILS
+//     (): import("x").A["k"]                         FAILS
+//     (i: import("x")["v"])                          FAILS
 //
-//     type Plan = import("x").A<null>["k"];
-//     function g(i: Plan) { … }
+// and, in the SAME construct family, measured clean:
 //
-// This shape is the entire reason
-// `adult-member-hosting-queue-merge.realdb.test.ts` sat on the allowlist while
-// carrying none of the call shape at all — the entry read as unexplained for as
-// long as the construct description named only the call.
+//     type P = import("x").A<null>["k"]             parses
+//     type P = import("x").A["k"]                   parses
+//     x as import("x").A<null>                      parses
+//     x satisfies import("x").A<null>               parses
+//     readonly import("x").A<null>[]                parses
+//     (typeof import("x"))                          parses
+//     keyof typeof import("x")                      parses
 //
-// The parameter positions were measured on a function declaration, an arrow, an
-// object method and a `TSFunctionType`. The class-method and constructor
-// signature kinds are the same syntactic position — a parameter list — and are
-// included by shape rather than each measured; none occurs in this tree.
+// THAT is the argument for reporting the class. Adding an index to a failing
+// alias FIXES it and removing one BREAKS it; the same type fails in a return
+// position and parses in an alias; `keyof` fails on a bare module type and
+// parses the moment a `typeof` is in front of it. No contributor can predict
+// which side of that boundary their line lands on, and nothing in the shape
+// tells them.
+//
+// THE REMEDY FOR A DECORATED TYPE IS A TOP-LEVEL `import type`, and getting
+// this wrong is what #3345 was filed to fix. #3318's message said "give the
+// type a name and use the name", which is measured WRONG for the commonest
+// member of the class: `type P = import("x").A<null>;` does not parse, so
+// following that instruction verbatim produced a new unscanned region and the
+// rule was silent on it — a guard printing an instruction that creates the hole
+// it exists to close. Measured clean:
+//
+//     import type { A } from "@/lib/x";        then  A<null>["k"]
+//     import type * as M from "@/lib/x";       then  M.A<null>
+//
+// Both are type-only and fully erased, so a module that must stay dynamically
+// loaded stays dynamically loaded. Where a value-space namespace is genuinely
+// wanted, rooting the type at `typeof` is the other clean answer:
+// `typeof import("@/lib/x").k` and `(typeof import("@/lib/x"))["k"]` parse in
+// every position outside a call.
+//
+// THE PARAMETER POSITION is still reported on its own, for an UNDECORATED type
+// that measures clean there, and it is the one arm resting on a margin argument
+// rather than on a measured failure: `(i: import("x").A)` and
+// `(i: typeof import("x"))` both parse, and one added type argument, index or
+// `keyof` fails. It is also the shape that put
+// `adult-member-hosting-queue-merge.realdb.test.ts` on the allowlist while
+// carrying no call shape at all, so that entry read as unexplained for as long
+// as the construct description named only the call.
+//
+// WHAT THIS RULE STILL CANNOT SEE, stated rather than left to be found:
+// `((typeof import("x")))` — a DOUBLY parenthesised module type, which fails
+// where the single-parenthesised form parses. typescript-eslint drops
+// `TSParenthesizedType` from the AST entirely, so parentheses are visible only
+// as tokens; the arm below reads the one pair immediately around the type and
+// requires a qualifier, which is the measured-failing shape. Population in this
+// tree is zero, and the coverage gate is what would catch it.
 
 const IMPORT_TYPE_CALL_MESSAGE =
-  '#3318: Semgrep cannot parse a call whose TYPE ARGUMENT contains an `import()` type, so it skips a region of this file and every security rule stops running there — while `semgrep scan --error` still exits 0 and reports nothing (#2842). Move the type out of the call: `(await importOriginal()) as typeof import("@/lib/x")`, which is type-equivalent because these helpers are declared `<T = unknown>() => Promise<T>`. YOUR CALL MAY WELL PARSE TODAY, and it is still reported: measured on semgrep 1.161.0, `f<typeof import("x")>()` and the multi-line trailing-comma form both fail while `f<typeof import("x")>("x")` parses, so which side of the line a call sits on is decided by print width, and a rename that reflows the argument list turns a scanned line into an unscanned region. Gate: `scripts/ci/check-semgrep-coverage.mjs`. Background: docs/MAINTENANCE.md -> "Semgrep parse coverage".';
+  '#3318: Semgrep cannot parse a call whose TYPE ARGUMENT contains an `import()` type, so it skips a region of this file and every security rule stops running there — while `semgrep scan --error` still exits 0 and reports nothing (#2842). Move the type out of the call: `(await importOriginal()) as typeof import("@/lib/x")`, which is type-equivalent because these helpers are declared `<T = unknown>() => Promise<T>`. YOUR CALL MAY WELL PARSE TODAY, and it is still reported: measured on semgrep 1.161.0, an EMPTY argument list, a multi-line TRAILING COMMA, a second type argument, a bare instantiation `f<typeof import("x")>` with no call, and `f<typeof import("x")>?.()` all fail, while `f<typeof import("x")>("x")`, `f?.<typeof import("x")>()` and a tagged template parse — so which side of the line a call sits on is decided by print width, and a rename that reflows the argument list turns a scanned line into an unscanned region. Gate: `scripts/ci/check-semgrep-coverage.mjs`. Background: docs/MAINTENANCE.md -> "Semgrep parse coverage".';
+
+const IMPORT_TYPE_DECORATED_MESSAGE =
+  '#3318/#3345: Semgrep cannot parse an `import()` type once it carries a type-argument list, an indexed access, a `keyof` or a wrapping parenthesis, so it skips a region of this file and every security rule stops running there — while `semgrep scan --error` still exits 0 and reports nothing (#2842). THE REMEDY IS A TOP-LEVEL TYPE-ONLY IMPORT, NOT AN ALIAS: measured on semgrep 1.161.0, `type P = import("@/lib/x").A<null>;` FAILS, so the "give the type a name" instruction this rule used to print created the very hole it exists to close (#3345). Write `import type { A } from "@/lib/x";` and then `A<null>["k"]`, or `import type * as M from "@/lib/x";` and then `M.A<null>` — both are erased at compile time, so a dynamically-loaded module stays dynamically loaded. If you need the value-space namespace, root the type at `typeof`: `typeof import("@/lib/x").k` and `(typeof import("@/lib/x"))["k"]` parse everywhere outside a call. The whole class is reported because the boundary inside it is incoherent and unguessable: `import("x").A<null>` fails in an alias while `import("x").A<null>["k"]` parses, the same type fails in a return position and parses in an alias, `keyof import("x")` fails while `keyof typeof import("x")` parses, and `(import("x").A)` fails while `(typeof import("x"))` parses. Gate: `scripts/ci/check-semgrep-coverage.mjs`. Background: docs/MAINTENANCE.md -> "Semgrep parse coverage".';
 
 const IMPORT_TYPE_PARAMETER_MESSAGE =
-  '#3318: Semgrep cannot parse an `import()` type in a FUNCTION PARAMETER annotation once it carries a type-argument list or an indexed access, so it skips a region of this file and every security rule stops running there — while `semgrep scan --error` still exits 0 and reports nothing (#2842). Give the type a name and use the name: `type Plan = import("@/lib/x").A<null>["k"];` then `(input: Plan)`. Measured on semgrep 1.161.0: `i: import("x").A` parses, and `i: import("x").A<null>`, `i: import("x").A["k"]` and `i: (import("x").A)["k"]` all fail — while every one of them parses in a RETURN position, a variable annotation, an interface property or an alias, which is why the remedy is a name rather than a rewrite. The whole class is reported because the boundary INSIDE that position is incoherent - `i: (typeof import("x"))["k"]` parses while `i: (import("x").A)["k"]` does not - so a bare parameter annotation is one added index away from a failing form nobody can predict from the shape. Gate: `scripts/ci/check-semgrep-coverage.mjs`. Background: docs/MAINTENANCE.md -> "Semgrep parse coverage".';
+  '#3318: an `import()` type in a FUNCTION PARAMETER annotation is one added type argument, index or `keyof` away from a shape Semgrep cannot parse — and when it cannot parse one it skips a region of this file, every security rule stops running there, and `semgrep scan --error` still exits 0 and reports nothing (#2842). THIS EXACT LINE PARSES TODAY: measured on semgrep 1.161.0, `(i: import("x").A)` and `(i: typeof import("x"))` are clean, while `(i: import("x").A<null>)`, `(i: import("x").A["k"])` and `(i: import("x")["v"])` all fail. It is reported because a parameter annotation is where this fault was found — one line of it put a whole file on `.semgrep/unparsed-allowlist.json` with none of the generic-call shape in it at all — and because the remedy costs a line: `import type { A } from "@/lib/x";` at the top of the file, then `(input: A)`. A type-only import is erased at compile time, so a dynamically-loaded module stays dynamically loaded. Gate: `scripts/ci/check-semgrep-coverage.mjs`. Background: docs/MAINTENANCE.md -> "Semgrep parse coverage".';
 
 /**
  * The callee spellings whose declared signature makes the cast form
@@ -2062,6 +2139,25 @@ const PARAMETER_OWNER_NODE_TYPES = new Set([
   "TSEmptyBodyFunctionExpression",
   "TSConstructorType",
   "TSConstructSignatureDeclaration",
+]);
+
+/**
+ * The expression kinds whose type-argument list the parser chokes on.
+ *
+ * `TSInstantiationExpression` is the shape #3318 missed twice over. It is
+ * `f<typeof import("x")>` with no call at all, which fails on its own, and it
+ * is ALSO how `f<typeof import("x")>?.()` parses — there the type arguments
+ * hang off the callee rather than off the optional call, so a visitor keyed on
+ * `CallExpression.typeArguments` sees neither (#3345).
+ *
+ * `NewExpression` is deliberately absent: measured, every `new` variant of the
+ * fault parses, including the trailing-comma reflow that is the whole reason
+ * the call class is banned wholesale. A decorated type argument still fails
+ * under `new`, and the decorated arm reports that wherever it appears.
+ */
+const IMPORT_TYPE_ARGUMENT_OWNER_NODE_TYPES = new Set([
+  "CallExpression",
+  "TSInstantiationExpression",
 ]);
 
 /** Whether `node`'s subtree contains an `import()` TYPE anywhere. */
@@ -2100,14 +2196,88 @@ function calleeSpelling(callee) {
 }
 
 /**
+ * Whether this `import()` type sits in a type-argument list the call arm has
+ * already reported, so the decorated and parameter arms stay quiet and one
+ * construct produces exactly one report.
+ */
+function inReportedTypeArgumentList(node) {
+  let child = node;
+  for (let current = node.parent; current; current = current.parent) {
+    if (
+      IMPORT_TYPE_ARGUMENT_OWNER_NODE_TYPES.has(current.type) &&
+      current.typeArguments === child
+    ) {
+      return true;
+    }
+    child = current;
+  }
+  return false;
+}
+
+/**
+ * How this `import()` type is DECORATED, or null when it is a plain module or
+ * qualified-name type.
+ *
+ * The four decorations are the measured-failing ones, listed in the block
+ * comment above with the clean forms beside them. Two details of the walk are
+ * load-bearing:
+ *
+ * - a `typeof` in front RESCUES the indexed and `keyof` forms — measured,
+ *   `typeof import("x")["k"]` and `keyof typeof import("x")` are clean while
+ *   `import("x")["k"]` and `keyof import("x")` fail — so the walk records
+ *   whether it crossed a `TSTypeQuery` and stops asking;
+ * - the QUALIFIER is a child of `TSImportType`, never a `TSQualifiedName`
+ *   parent, so there is nothing to climb for it. `node.qualifier` is the whole
+ *   test, and it is what separates the failing `(import("x").A)` and
+ *   `(typeof import("x").v)` from the clean `(typeof import("x"))`.
+ *
+ * Parentheses are read as TOKENS because typescript-eslint drops
+ * `TSParenthesizedType` from the AST: `(import("x").A)` and `import("x").A` are
+ * the identical tree. Reading the single pair immediately around the type is
+ * why the doubly-parenthesised module type is a stated limit rather than a
+ * covered case.
+ */
+function importTypeDecoration(node, sourceCode) {
+  if (node.typeArguments) return "typeArguments";
+
+  let outer = node;
+  let underTypeof = false;
+  while (outer.parent && outer.parent.type === "TSTypeQuery") {
+    underTypeof = true;
+    outer = outer.parent;
+  }
+
+  const consumer = outer.parent;
+  if (!underTypeof && consumer) {
+    if (
+      consumer.type === "TSIndexedAccessType" &&
+      consumer.objectType === outer
+    ) {
+      return "indexedAccess";
+    }
+    if (consumer.type === "TSTypeOperator" && consumer.operator === "keyof") {
+      return "keyof";
+    }
+  }
+
+  if (node.qualifier) {
+    const before = sourceCode.getTokenBefore(outer);
+    const after = sourceCode.getTokenAfter(outer);
+    if (before?.value === "(" && after?.value === ")") return "parenthesised";
+  }
+
+  return null;
+}
+
+/**
  * Whether this `import()` type sits in a parameter annotation.
  *
- * The remedy — naming the type — needs nothing special here, and a first cut
- * that stopped the walk at a `TSTypeAliasDeclaration` "so the alias is not
- * reported in a circle" was DEAD CODE: a type alias can only be declared at
+ * The remedy — a top-level type-only import — needs nothing special here, and a
+ * first cut that stopped the walk at a `TSTypeAliasDeclaration` "so the alias is
+ * not reported in a circle" was DEAD CODE: a type alias can only be declared at
  * statement level, so an `import()` type inside one never has a function whose
  * `params` contain the branch it came up through. A mutation probe that deleted
- * that branch left all 27 cases of
+ * that branch left every case of
  * `semgrep-unparsable-import-type-guard.test.ts` green, which is how it was
  * found; it is gone rather than left in place with a comment claiming it does
  * work.
@@ -2134,10 +2304,12 @@ function inParameterAnnotation(node) {
  * argument, so the trailing comma and the line break a reflow introduced go
  * away with it. Anything it cannot account for — a callee it does not know to
  * resolve to `T`, more than one type argument, a call that is not directly
- * awaited, an optional call, or a comment inside the expression it would
- * rewrite — is reported with no fix rather than fixed approximately.
+ * awaited, an optional call, an instantiation expression with no call to await
+ * at all, or a comment inside the expression it would rewrite — is reported
+ * with no fix rather than fixed approximately.
  */
 function importTypeCallFix(node, typeArguments, sourceCode) {
+  if (node.type !== "CallExpression") return null;
   if (typeArguments.params.length !== 1) return null;
   if (node.optional) return null;
   const spelling = calleeSpelling(node.callee);
@@ -2164,7 +2336,7 @@ function importTypeCallFix(node, typeArguments, sourceCode) {
 }
 
 /**
- * The rule. Exported through `SCAN_COVERAGE_LOCAL_RULES` below and exercised by
+ * The rule, reached through `SCAN_COVERAGE_LOCAL_RULES` below and exercised by
  * `semgrep-unparsable-import-type-guard.test.ts` through the SHIPPED config.
  *
  * It is a rule of its own rather than a `no-restricted-syntax` arm for the same
@@ -2177,12 +2349,13 @@ const noSemgrepUnparsableImportType = {
     type: "problem",
     docs: {
       description:
-        "Report the two TypeScript shapes Semgrep cannot parse, each of which silently removes a region of the file from the security scan (#2842, #3318).",
+        "Report the TypeScript shapes Semgrep cannot parse, each of which silently removes a region of the file from the security scan (#2842, #3318, #3345).",
     },
     fixable: "code",
     schema: [],
     messages: {
       callTypeArgument: IMPORT_TYPE_CALL_MESSAGE,
+      decoratedImportType: IMPORT_TYPE_DECORATED_MESSAGE,
       parameterAnnotation: IMPORT_TYPE_PARAMETER_MESSAGE,
     },
   },
@@ -2190,21 +2363,31 @@ const noSemgrepUnparsableImportType = {
     const sourceCode = context.sourceCode;
     const visitorKeys = sourceCode.visitorKeys ?? {};
 
+    /** Shared by the call and instantiation visitors — the fault is identical. */
+    const reportTypeArgumentOwner = (node) => {
+      const typeArguments = node.typeArguments;
+      if (!typeArguments) return;
+      if (!containsImportType(typeArguments, visitorKeys)) return;
+      const fix = importTypeCallFix(node, typeArguments, sourceCode);
+      context.report({
+        node: typeArguments,
+        messageId: "callTypeArgument",
+        ...(fix ? { fix } : {}),
+      });
+    };
+
     return {
-      CallExpression(node) {
-        const typeArguments = node.typeArguments;
-        if (!typeArguments) return;
-        if (!containsImportType(typeArguments, visitorKeys)) return;
-        const fix = importTypeCallFix(node, typeArguments, sourceCode);
-        context.report({
-          node: typeArguments,
-          messageId: "callTypeArgument",
-          ...(fix ? { fix } : {}),
-        });
-      },
+      CallExpression: reportTypeArgumentOwner,
+      TSInstantiationExpression: reportTypeArgumentOwner,
       TSImportType(node) {
-        if (!inParameterAnnotation(node)) return;
-        context.report({ node, messageId: "parameterAnnotation" });
+        if (inReportedTypeArgumentList(node)) return;
+        if (importTypeDecoration(node, sourceCode)) {
+          context.report({ node, messageId: "decoratedImportType" });
+          return;
+        }
+        if (inParameterAnnotation(node)) {
+          context.report({ node, messageId: "parameterAnnotation" });
+        }
       },
     };
   },
@@ -2825,16 +3008,29 @@ const eslintConfig = defineConfig([
     rules: { "ssot/no-local-comment-stripper": "error" },
   },
   {
-    // #3318 — the two shapes Semgrep cannot parse, applied to EVERY linted file
+    // #3318 — the shapes Semgrep cannot parse, applied to EVERY linted file
     // for the same reason as the block above: the population is TESTS, and
     // `no-restricted-syntax` is switched off for every one of those.
     //
-    // There is no allowlist and no per-file escape. Both shapes have a remedy
-    // that is available everywhere and changes no behaviour — the cast form for
-    // the call, a named type for the parameter — so an exemption would only ever
-    // be a way of signing part of a file off as unscanned, which is what
-    // `.semgrep/unparsed-allowlist.json` is for and what this rule exists to
-    // stop needing.
+    // This config grants no allowlist and no per-file exemption. Every arm has
+    // a remedy that is available everywhere and changes no behaviour — the cast
+    // form for the call, a top-level type-only import for the type — so an
+    // exemption would only ever be a way of signing part of a file off as
+    // unscanned, which is what `.semgrep/unparsed-allowlist.json` is for and
+    // what this rule exists to stop needing.
+    //
+    // "No escape" USED to be an overclaim, because an inline ESLint disable
+    // directive naming the rule is exactly one: `npm run lint` is bare
+    // `eslint`, `noInlineConfig` is not set, and 37 files in this tree already
+    // carry directives for other rules. The residual was bounded for a
+    // construct that genuinely fails to parse — the coverage gate catches those
+    // — and UNBOUNDED for the half of the class that parses today, which is the
+    // whole reason the rule was widened past the broken spelling. So the claim
+    // is now enforced the way #2685 enforced the money guard's:
+    // `semgrep-unparsable-import-type-guard.test.ts` censuses the tree for one
+    // (#3345). That census reads raw source, so it keeps prose about a
+    // directive on a different line from the rule id — which is why the
+    // sentence above is spelled the long way round.
     files: ["**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}"],
     plugins: { scan: SCAN_COVERAGE_LOCAL_RULES },
     rules: { "scan/no-semgrep-unparsable-import-type": "error" },

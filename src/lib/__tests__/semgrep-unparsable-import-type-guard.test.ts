@@ -21,12 +21,28 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
  * them from sibling children rather than an upstream sync. The fixtures below
  * are the spellings that were not in the tree when the rule was written:
  * `importOriginal`, `vi.importActual` and a destructured bare `importActual`;
- * the multi-line trailing-comma form that the original description of this fault
- * missed entirely; and the four parameter-annotation forms.
+ * the multi-line trailing-comma form that the original description of this
+ * fault missed entirely; the instantiation-expression shapes that carry type
+ * arguments with no call to hang them on; and every decorated `import()` type,
+ * in and out of a parameter position.
+ *
+ * WHAT #3345 CHANGED, because this suite could not see either fault. #3318
+ * reported only the FUNCTION PARAMETER position and printed "give the type a
+ * name and use the name" as the remedy. Measured, `type P = import("x").A<null>`
+ * does not parse either — so the guard was handing out an instruction that
+ * created the hole it exists to close, and it was silent on the result. This
+ * suite missed it because its remedy fixture kept a trailing index
+ * (`Plan<null>["input"]`), which happens to be one of the few clean forms. Its
+ * "measured clean: the same types outside a parameter position" fixture was
+ * measurably NOT clean either — the `interface Holder` member in it fails — and
+ * the case passed anyway because it only ever asserted ESLint's silence.
  *
  * THE MEASUREMENTS BEHIND EVERY CASE were taken with the pinned blocking image
- * `semgrep/semgrep:1.161.0` against minimal repro files, not inferred. Where a
- * case says a shape "parses", that is what the scanner did with it.
+ * `semgrep/semgrep:1.161.0` against minimal single-construct files, with a probe
+ * rule written to defeat Semgrep's prefilter so every target is really parsed.
+ * They are not inferred. Where a case says a shape "parses", that is what the
+ * scanner did with it — and where a shape parses and is reported anyway, the
+ * case says which margin argument pays for that.
  */
 
 const BOOTSTRAP_TIMEOUT_MS = 60_000;
@@ -155,26 +171,157 @@ export function build() {
 }
 `;
 
-/*
-  THE PARAMETER SHAPE, which nothing had written down until #3318 measured it,
-  and which is the entire reason `adult-member-hosting-queue-merge.realdb.test.ts`
-  sat on the allowlist carrying none of the call shape at all.
+/**
+ * TYPE ARGUMENTS WITH NO CALL AT ALL — a `TSInstantiationExpression`.
+ *
+ * Measured: `f<typeof import("x")>` fails with "`>` was unexpected". #3318's
+ * visitor keyed on `CallExpression.typeArguments`, and an instantiation
+ * expression has no such property, so this was silent (#3345).
+ */
+const INSTANTIATION_EXPRESSION = `
+declare function load<T = unknown>(): Promise<T>;
+export const bound = load<typeof import("@/lib/capacity")>;
+`;
 
-  MEASURED: `(i: import("x").A)` parses; `(i: import("x").A<null>)`,
-  `(i: import("x").A["k"])` and `(i: (import("x").A)["k"])` all fail; and
-  `(i: (typeof import("x"))["k"])` parses. The boundary inside the position is
-  therefore incoherent, which is why the rule reports the POSITION and the remedy
-  is to name the type rather than to reshape it.
+/**
+ * THE OPTIONAL CALL, whose type arguments hang off the CALLEE.
+ *
+ * Measured: `f<typeof import("x")>?.()` fails with "`>?.()` was unexpected".
+ * It parses as an optional `CallExpression` over a `TSInstantiationExpression`,
+ * so `CallExpression.typeArguments` is undefined here too and #3318 reported
+ * nothing (#3345). Note the OTHER optional spelling,
+ * `f?.<typeof import("x")>()`, measures clean — and is still reported, because
+ * it is an ordinary call type-argument list and print width decides the rest.
+ */
+const INSTANTIATION_OPTIONAL_CALL = `
+declare const load: (<T = unknown>() => Promise<T>) | undefined;
+export const build = () => load<typeof import("@/lib/capacity")>?.();
+`;
+
+/** The other optional spelling. Measured clean; reported as part of the call class. */
+const OPTIONAL_CALL_TYPE_ARGUMENTS = `
+declare const load: (<T = unknown>() => Promise<T>) | undefined;
+export const build = () => load?.<typeof import("@/lib/capacity")>();
+`;
+
+/**
+ * TWO TYPE ARGUMENTS, with an argument and no trailing comma.
+ *
+ * Measured: `f<typeof import("x"), string>("x")` fails, where the same call with
+ * ONE type argument parses. So "it needs an empty argument list" was never the
+ * whole predicate even for a plain call.
+ */
+const TWO_TYPE_ARGUMENTS = `
+declare function load<T = unknown, K = string>(path: string): Promise<T>;
+export async function build() {
+  return await load<typeof import("@/lib/capacity"), string>("@/lib/capacity");
+}
+`;
+
+/*
+  THE DECORATED-TYPE SHAPE. #3318 called this "the parameter shape" and reported
+  it only there; #3345 measured the position out of the predicate almost
+  entirely.
+
+  MEASURED FAILING, everywhere they were tried: an `import()` type carrying a
+  type-argument list (a parameter, a return, a variable, a TYPE ALIAS, an
+  interface property, a class property, a generic constraint or default, a
+  nested type argument, an `extends` or `implements` clause); one under `keyof`,
+  with or without a qualifier; one wrapped in parentheses while carrying a
+  qualifier; and an indexed access on one in a parameter or return position.
+
+  MEASURED CLEAN in the same family: `import("x").A<null>["k"]` and
+  `import("x").A["k"]` in an ALIAS, `x as import("x").A<null>`,
+  `readonly import("x").A<null>[]`, `(typeof import("x"))` and
+  `keyof typeof import("x")`.
+
+  Adding an index to a failing alias FIXES it and removing one BREAKS it. That
+  is why the rule reports the decoration wherever it appears rather than trying
+  to describe the boundary, and why the remedy is a top-level type-only import
+  rather than a reshape.
 */
 
-/** A type argument on the imported type. Measured: fails. */
+/**
+ * THE FORM #3345 EXISTS FOR: a type-argument list on an `import()` type in a
+ * plain type alias, with no index after it.
+ *
+ * Measured: FAILS, `<null>` was unexpected. This is exactly what #3318's own
+ * remedy text told an author to write, and #3318's rule was silent on it. If
+ * this case ever goes green-by-silence again, the guard is back to printing an
+ * instruction that opens an unscanned region.
+ */
+const ALIAS_TYPE_ARGUMENT = `
+type Plan = import("@/lib/xero-contacts").Plan<null>;
+export function reserve(input: Plan) {
+  return input;
+}
+`;
+
+/**
+ * An interface property. Measured: FAILS.
+ *
+ * #3318 shipped a fixture asserting the opposite — "measured clean: the same
+ * types outside a parameter position" — whose `interface Holder` member is this
+ * construct. The case passed because it only asserted ESLint's silence, never
+ * the scanner's.
+ */
+const INTERFACE_PROPERTY_TYPE_ARGUMENT = `
+export interface Holder {
+  plan: import("@/lib/x").Plan<null>;
+}
+`;
+
+/** A return annotation. Measured: FAILS. Not a parameter, so #3318 missed it. */
+const RETURN_TYPE_ARGUMENT = `
+export function build(): import("@/lib/x").Plan<null> {
+  throw new Error("never");
+}
+`;
+
+/**
+ * `keyof` over a module type. Measured: `keyof import("x")` and
+ * `keyof import("x").A` both fail, while `keyof typeof import("x")` parses — so
+ * the `typeof` in front is what rescues it, not the qualifier.
+ */
+const KEYOF_MODULE_TYPE = `
+export type Keys = keyof import("@/lib/capacity");
+`;
+
+/**
+ * An indexed access on an `import()` type in an ALIAS. Measured: parses.
+ *
+ * Reported anyway, and this is the case that shows why the class is the unit:
+ * deleting the `["input"]` from this line produces `ALIAS_TYPE_ARGUMENT`, which
+ * fails. A rule that only reported the failing spelling would leave every one of
+ * these one edit from an allowlist entry.
+ */
+const INDEXED_ALIAS = `
+type Input = import("@/lib/xero-contacts").Plan<null>["input"];
+export function reserve(input: Input) {
+  return input;
+}
+`;
+
+/**
+ * A parenthesised qualified `import()` type. Measured: `(import("x").A)` and
+ * `(typeof import("x").v)` fail, while `(typeof import("x"))` parses.
+ *
+ * typescript-eslint drops `TSParenthesizedType` from the AST, so the rule reads
+ * the surrounding tokens for this one. That is also why the DOUBLY parenthesised
+ * module type is a stated limit rather than a covered case.
+ */
+const PARENTHESISED_QUALIFIED = `
+export type Plan = (import("@/lib/xero-contacts").Plan);
+`;
+
+/** A type argument on the imported type, in a parameter. Measured: fails. */
 const PARAM_TYPE_ARGUMENT = `
 export function reserve(input: import("@/lib/xero-contacts").Plan<null>) {
   return input;
 }
 `;
 
-/** An indexed access on the imported type. Measured: fails. */
+/** An indexed access on the imported type, in a parameter. Measured: fails. */
 const PARAM_INDEXED_ACCESS = `
 export function reserve(input: import("@/lib/xero-contacts").Plan["input"]) {
   return input;
@@ -188,22 +335,34 @@ export function reserve(input: (import("@/lib/xero-contacts").Plan)["input"]) {
 }
 `;
 
-/**
- * A BARE `import()` type in a parameter, which parses today.
- *
- * Reported for the same reason `SINGLE_LINE_ARGUMENT` is: one added type
- * argument or index turns it into one of the three above, and the sub-shape that
- * breaks cannot be predicted from the shape.
- */
+/** A `TSFunctionType`'s parameter list is a parameter list. Measured: fails. */
+const FUNCTION_TYPE_PARAM = `
+export type Handler = (input: import("@/lib/x").Plan<null>["k"]) => void;
+`;
+
+/*
+  THE PARAMETER POSITION, on its own, for an UNDECORATED type.
+
+  This is the one arm resting on a margin argument rather than on a measured
+  failure. MEASURED: `(i: import("x").A)` and `(i: typeof import("x"))` are both
+  clean, and one added type argument, index or `keyof` fails. It is kept because
+  a parameter annotation is where this fault was found — one line of it put
+  `adult-member-hosting-queue-merge.realdb.test.ts` on the allowlist with none of
+  the call shape in it at all — and because the remedy costs one import line.
+*/
+
+/** A bare qualified `import()` type in a parameter. Measured: parses. Reported. */
 const PARAM_BARE = `
 export function reserve(input: import("@/lib/xero-contacts").Plan) {
   return input;
 }
 `;
 
-/** A `TSFunctionType`'s parameter list is a parameter list. Measured: fails. */
-const FUNCTION_TYPE_PARAM = `
-export type Handler = (input: import("@/lib/x").Plan<null>["k"]) => void;
+/** A bare module type in a parameter. Measured: parses. Reported. */
+const PARAM_TYPEOF_MODULE = `
+export function reserve(input: typeof import("@/lib/capacity")) {
+  return input;
+}
 `;
 
 /*
@@ -222,10 +381,30 @@ export async function build() {
 }
 `;
 
-/** The remedy for the parameter shape: name the type, use the name. */
-const NAMED_ALIAS_PARAM = `
-type Plan = import("@/lib/xero-contacts").Plan<null>["input"];
-export function reserve(input: Plan) {
+/**
+ * THE REMEDY FOR A DECORATED TYPE: a top-level TYPE-ONLY import, and the name.
+ *
+ * Measured clean. It is a type-only import, so it is erased at compile time and
+ * a module that must stay dynamically loaded stays dynamically loaded — which is
+ * the objection that made #3318 reach for an alias instead.
+ *
+ * NOT the alias form. `type Plan = import("@/lib/x").Plan<null>` fails, and
+ * `type Plan = import("@/lib/x").Plan<null>["input"]` — which #3318 shipped here
+ * as the remedy fixture — happens to parse only because of the trailing index.
+ * A remedy fixture that lands on the one clean sub-shape by luck cannot see the
+ * instruction being wrong, which is how #3318 went out.
+ */
+const IMPORT_TYPE_REMEDY = `
+import type { Plan } from "@/lib/xero-contacts";
+export function reserve(input: Plan<null>["input"]) {
+  return input;
+}
+`;
+
+/** The namespace spelling of the same remedy. Measured clean. */
+const NAMESPACE_IMPORT_TYPE_REMEDY = `
+import type * as XeroContacts from "@/lib/xero-contacts";
+export function reserve(input: XeroContacts.Plan<null>) {
   return input;
 }
 `;
@@ -238,27 +417,76 @@ export async function build() {
 }
 `;
 
-/** Measured: `new C<typeof import("x")>()` parses. `new` is unaffected. */
+/**
+ * `new` with an UNDECORATED module type. Measured clean in every argument-list
+ * variant — empty, with arguments, with a trailing comma, and with no
+ * parentheses at all — which is why print width does not reach it and why
+ * `NewExpression` is deliberately outside the call arm.
+ */
 const NEW_EXPRESSION = `
 declare class Holder<T> {
-  constructor();
+  constructor(path?: string);
   value: T;
 }
 export function build() {
   return new Holder<typeof import("@/lib/capacity")>();
 }
+export function reflowed() {
+  return new Holder<typeof import("@/lib/capacity")>(
+    "@/lib/capacity",
+  );
+}
+export function bare() {
+  return new Holder<typeof import("@/lib/capacity")>;
+}
 `;
 
-/** Measured clean: the same types outside a parameter position. */
-const NON_PARAMETER_POSITIONS = `
-type Alias = import("@/lib/x").Plan<null>["k"];
-let held: import("@/lib/x").Plan<null>["k"];
-export interface Holder {
-  plan: import("@/lib/x").Plan<null>["k"];
+/** A tagged template's type argument. Measured clean, and not reported. */
+const TAGGED_TEMPLATE = `
+declare function sql<T = unknown>(strings: TemplateStringsArray): T;
+export const rows = sql<typeof import("@/lib/capacity")>\`select 1\`;
+`;
+
+/**
+ * THE `typeof import()` IDIOM, which is 454 of the 455 `import()` types in this
+ * tree and must stay usable.
+ *
+ * Measured clean in every one of these positions, and none of them is reported:
+ * the module type plain, a member of it, and an indexed access on it with and
+ * without the parentheses. A rule that swept these up would have nowhere left to
+ * send the 307 call sites #3318 rewrote.
+ */
+const TYPEOF_MODULE_POSITIONS = `
+type Whole = typeof import("@/lib/capacity");
+type Member = typeof import("@/lib/capacity").resolveCapacity;
+type Indexed = (typeof import("@/lib/capacity"))["resolveCapacity"];
+type IndexedNoParens = typeof import("@/lib/capacity")["resolveCapacity"];
+let whole: Whole;
+export function read(): [Whole, Member, Indexed, IndexedNoParens] {
+  return [whole, whole.resolveCapacity, whole.resolveCapacity, whole.resolveCapacity];
 }
-export function build(): import("@/lib/x").Plan<null>["k"] {
+`;
+
+/**
+ * A BARE qualified `import()` type outside a parameter position. Measured clean,
+ * and not reported.
+ *
+ * This is the undecorated half of the decorated arm's boundary, and the tree has
+ * real instances of it — a return annotation in
+ * `display-built-in-parity.test.tsx`, an alias in
+ * `ai-diagnostics-select-only-role.realdb.test.ts`. Reporting these would turn
+ * the rule into a ban on `import()` types outright.
+ */
+const BARE_QUALIFIED_OUTSIDE_PARAMETER = `
+type Alias = import("@/lib/x").Plan;
+let held: import("@/lib/x").Plan;
+export interface Holder {
+  plan: import("@/lib/x").Plan;
+}
+export function build(): import("@/lib/x").Plan {
   throw new Error("never");
 }
+export const cast = held as unknown as import("@/lib/x").Plan;
 export function read(): Alias {
   return held;
 }
@@ -355,6 +583,10 @@ describe("#3318: the call shape is reported however it is spelled", () => {
     ["the single-line form that parses today", SINGLE_LINE_ARGUMENT],
     ["a callee the rule cannot autofix", UNKNOWN_CALLEE],
     ["a call that is not directly awaited", NOT_AWAITED],
+    ["an instantiation expression with no call", INSTANTIATION_EXPRESSION],
+    ["type arguments on an optional call's callee", INSTANTIATION_OPTIONAL_CALL],
+    ["the other optional spelling, which parses", OPTIONAL_CALL_TYPE_ARGUMENTS],
+    ["two type arguments with an argument", TWO_TYPE_ARGUMENTS],
   ])("reports %s", async (_label, code) => {
     const reports = await reportsFor(code, FIXTURE_FILE);
 
@@ -379,13 +611,46 @@ describe("#3318: the call shape is reported however it is spelled", () => {
   });
 });
 
-describe("#3318: the parameter shape is reported in every failing form", () => {
+describe("#3345: a decorated import() type is reported wherever it appears", () => {
   it.each([
-    ["a type argument on the imported type", PARAM_TYPE_ARGUMENT],
-    ["an indexed access on it", PARAM_INDEXED_ACCESS],
+    ["a type argument in a plain type alias", ALIAS_TYPE_ARGUMENT],
+    ["a type argument on an interface property", INTERFACE_PROPERTY_TYPE_ARGUMENT],
+    ["a type argument in a return annotation", RETURN_TYPE_ARGUMENT],
+    ["keyof over a module type", KEYOF_MODULE_TYPE],
+    ["an indexed alias, which parses today", INDEXED_ALIAS],
+    ["a parenthesised qualified type", PARENTHESISED_QUALIFIED],
+    ["a type argument in a parameter", PARAM_TYPE_ARGUMENT],
+    ["an indexed access in a parameter", PARAM_INDEXED_ACCESS],
     ["the same, parenthesised", PARAM_PARENTHESISED_INDEXED],
-    ["a bare import() type, which parses today", PARAM_BARE],
     ["a TSFunctionType's parameter", FUNCTION_TYPE_PARAM],
+  ])("reports %s", async (_label, code) => {
+    const reports = await reportsFor(code, FIXTURE_FILE);
+
+    expect(
+      reports.length,
+      "#3318 reported this class in the PARAMETER position only, and roughly a dozen further positions failed with the rule silent on every one. The position is nearly irrelevant; the decoration is the fault.",
+    ).toBe(1);
+    expect(reports[0]?.severity, "a warning blocks nothing").toBe(2);
+    expect(
+      reports[0]?.message,
+      "The remedy for this shape is a top-level type-only import. An ALIAS over the import() type is what #3318 printed, and it does not parse — a guard that hands out that instruction opens the region it exists to protect.",
+    ).toContain("import type { A } from");
+  });
+
+  it("does not print the alias remedy that #3318 got wrong", async () => {
+    const [report] = await reportsFor(ALIAS_TYPE_ARGUMENT, FIXTURE_FILE);
+
+    expect(
+      report?.message,
+      'Somebody following "give the type a name and use the name" writes `type P = import("x").A<null>;`, which is measured to FAIL and which this rule did not report. The message has to say the alias form fails, or the wrong instruction comes straight back.',
+    ).toContain('`type P = import("@/lib/x").A<null>;` FAILS');
+  });
+});
+
+describe("#3318: an undecorated import() type in a parameter is reported", () => {
+  it.each([
+    ["a bare qualified type, which parses today", PARAM_BARE],
+    ["a bare module type, which parses today", PARAM_TYPEOF_MODULE],
   ])("reports %s", async (_label, code) => {
     const reports = await reportsFor(code, FIXTURE_FILE);
 
@@ -396,24 +661,66 @@ describe("#3318: the parameter shape is reported in every failing form", () => {
     expect(reports[0]?.severity).toBe(2);
     expect(
       reports[0]?.message,
-      "the remedy for this shape is a NAMED type, not the cast",
-    ).toContain("Give the type a name");
+      "This line parses. The message has to say so, and say what pays for reporting it anyway, or it reads as a false positive and the reader reaches for a disable comment.",
+    ).toContain("THIS EXACT LINE PARSES TODAY");
   });
 });
 
 describe("#3318: the remedies and their neighbours are silent", () => {
   it.each([
     ["the cast the autofix writes", CAST_REMEDY],
-    ["a named alias used as a parameter", NAMED_ALIAS_PARAM],
+    ["a top-level type-only import", IMPORT_TYPE_REMEDY],
+    ["the namespace spelling of it", NAMESPACE_IMPORT_TYPE_REMEDY],
     ["a generic call with no import() type", GENERIC_WITHOUT_IMPORT_TYPE],
-    ["new C<typeof import(...)>(), measured clean", NEW_EXPRESSION],
-    ["the same types outside a parameter position", NON_PARAMETER_POSITIONS],
+    ["every argument-list variant of new", NEW_EXPRESSION],
+    ["a tagged template's type argument", TAGGED_TEMPLATE],
+    ["the typeof import() idiom in every position", TYPEOF_MODULE_POSITIONS],
+    ["a bare qualified type outside a parameter", BARE_QUALIFIED_OUTSIDE_PARAMETER],
   ])("is silent on %s", async (_label, code) => {
     const reports = await reportsFor(code, FIXTURE_FILE);
 
     expect(
       reports.map((report) => `${report.line}: ${report.message}`),
-      "A guard that fires on the remedy it recommends, or on code the scanner reads perfectly well, teaches its reader to switch it off. Every fixture here was measured clean against semgrep/semgrep:1.161.0.",
+      "A guard that fires on the remedy it recommends, or on code the scanner reads perfectly well, teaches its reader to switch it off. Every construct in this group was measured against semgrep/semgrep:1.161.0 and parses.",
+    ).toEqual([]);
+  });
+});
+
+describe("#3345: the rule carries no per-file escape", () => {
+  it("has no eslint-disable naming it anywhere in the tree", async () => {
+    // `eslint.config.mjs` grants no allowlist and no exemption block, and until
+    // #3345 that was the whole claim. An inline ESLint disable directive naming
+    // this rule is exactly such an escape: `npm run lint` is bare `eslint` and
+    // `noInlineConfig` is not set, and 37 files already carry directives for
+    // other rules. This is the #2685 money-guard census applied to the same
+    // hole — and `npm run lint` reports an unused directive, so a stale one
+    // cannot hide here either.
+    //
+    // The residual it closes is asymmetric, which is why it is worth a test. For
+    // a construct that genuinely fails to parse, a directive is bounded: the
+    // coverage gate still sees the partial parse and fails the build. For the
+    // half of the class that PARSES today it is unbounded, and that half is the
+    // entire reason the rule was widened past the broken spelling.
+    //
+    // THIS CENSUS READS RAW SOURCE, so writing this rule's id on the same line
+    // as the word below would make it report itself — `INV-SSOT-004`, the hazard
+    // this repository hits hardest because it documents each defect at the site
+    // it removed it. Comment-stripping is not the answer here: the thing being
+    // hunted IS a comment. The discipline is instead to keep prose about a
+    // directive on a different line from the rule id, which every mention in
+    // this suite and in `eslint.config.mjs` does.
+    const { execSync } = await import("child_process");
+    const hits = execSync(
+      'git grep -n --fixed-strings "eslint-disable" -- "*.ts" "*.tsx" "*.mts" "*.cts" "*.js" "*.jsx" "*.mjs" "*.cjs" || true',
+      { cwd: REPO_ROOT, encoding: "utf8", maxBuffer: 1 << 26 },
+    );
+    const escapes = hits
+      .split("\n")
+      .filter((line) => line.includes("no-semgrep-unparsable-import-type"));
+
+    expect(
+      escapes,
+      "Every arm of this rule has a remedy available everywhere that changes no behaviour, so a disable comment is only ever a way of signing part of a file off as unscanned. That is what `.semgrep/unparsed-allowlist.json` is for, with a written reason the gate refuses to omit.",
     ).toEqual([]);
   });
 });
@@ -461,7 +768,9 @@ describe("#3318: the autofix writes the measured-clean form", () => {
   it.each([
     ["a callee it cannot prove resolves to T", UNKNOWN_CALLEE],
     ["a call that is not directly awaited", NOT_AWAITED],
-    ["a parameter annotation, whose remedy is a new declaration", PARAM_BARE],
+    ["an instantiation expression with no call to await", INSTANTIATION_EXPRESSION],
+    ["a parameter annotation, whose remedy is a new import line", PARAM_BARE],
+    ["a decorated type, whose remedy is a new import line", ALIAS_TYPE_ARGUMENT],
   ])("refuses to fix %s", async (_label, code) => {
     const [report] = await reportsFor(code, FIXTURE_FILE);
 

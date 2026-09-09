@@ -337,24 +337,33 @@ read has looked exactly like a file the scanner read and cleared.
 
 Measured for #2842 on the same pinned image: 177 of 4,219 scanned files carried
 a parse error behind a green gate, and **three were whole-file failures where no
-rule ran at all**. **Three** parser faults cause all of them, and every one
-fires on valid TypeScript that `tsc` and the build accept.
+rule ran at all**. **Three families** of parser fault cause all of them, and
+every one fires on valid TypeScript that `tsc` and the build accept.
 
-Those three are stated once, as the rule rather than as a spelling, in
+Those three families are stated once, as the rule rather than as a spelling, in
 `KNOWN_CONSTRUCTS` in `scripts/ci/check-semgrep-coverage.mjs` — which is also
 the text the gate hands you when it fires, so it is the copy that has to be
 right. They are deliberately not restated here.
 
-**Two of the three are now banned by lint and cannot come back.** #3318 added
+**Two of the three are banned by lint, for the positions the rule reaches — and
+that qualifier is the whole point.** #3318 added
 `scan/no-semgrep-unparsable-import-type` to `eslint.config.mjs`, rewrote the 307
 call sites that carried the first, named the five types that carried the second,
-and took the allowlist from 169 entries to 3. A partial parse of either shape
-now means the rule was bypassed or the file is outside its globs, and that is
-what to fix — not the allowlist.
+and took the allowlist from 169 entries to 3. It then said the two shapes
+"cannot come back", which #3345 measured as false: roughly a dozen further
+positions fail and the rule was silent on every one, including two members of
+the call family. The rule is now wider — the whole call family including the
+instantiation shapes, every **decorated** `import()` type wherever it appears,
+and an undecorated one in a parameter position — and the claim is narrower.
+**The gate remains the backstop for anything the rule does not reach**, which
+is the arrangement rather than a failure of it. So a partial parse of a shape
+the rule DOES reach means the rule was bypassed or the file is outside its
+globs; a partial parse of anything else is a real finding, and the response is
+to measure the construct and widen the rule rather than to add an entry.
 
-The description of those faults was wrong three times, each time by being
-narrower than the fault, and each correction cost somebody a wrong turn. Worth
-knowing before you reach for a remedy, all measured:
+The description of those faults has now been wrong four times, each time by
+being narrower than the fault, and each correction cost somebody a wrong turn.
+Worth knowing before you reach for a remedy, all measured:
 
 - **the call fault is about the SHAPE, not the name.** 143 files spelled it
   `importOriginal`, 22 spelled it `vi.importActual` or a destructured
@@ -370,15 +379,40 @@ knowing before you reach for a remedy, all measured:
   call sits on is decided by **print width**, which is why
   #3318's rule reports the whole class: 23 files held the "parses today"
   spelling and every one of them was one rename away from an entry of its own;
-- **a third fault exists that neither description reached**: an `import()` type
-  in a function **parameter** annotation, once it carries a type-argument list
-  or an indexed access. `(i: import("x").A)` parses; `(i: import("x").A<null>)`,
-  `(i: import("x").A["k"])` and `(i: (import("x").A)["k"])` all fail, while the
-  identical types parse in a return position, a variable annotation, an
-  interface property or a type alias. One allowlisted file carried this and no
+- **a third fault exists that neither description reached**: a **decorated**
+  `import()` type — one carrying a type-argument list, an indexed access, a
+  `keyof` or a wrapping parenthesis. One allowlisted file carried this and no
   call shape at all, so its entry read as unexplained for as long as the
-  description named only the call. The remedy is to **name the type** and use
-  the name;
+  description named only the call;
+- **and #3318 described that third fault as a PARAMETER fault, which was the
+  fourth time the description was too narrow.** It measured
+  `(i: import("x").A<null>)` and generalised from the position. Re-measured for
+  #3345, the position is nearly irrelevant: the same type fails in a type alias,
+  an interface property, a return annotation, a class property, a generic
+  constraint or default, a nested type argument and an `extends` or `implements`
+  clause. The boundary INSIDE the family is incoherent, which is why the rule
+  reports the decoration rather than a spelling —
+  `import("x").A<null>["k"]` parses in an alias and deleting the index makes it
+  fail, `keyof import("x")` fails while `keyof typeof import("x")` parses,
+  `(import("x").A)` fails while `(typeof import("x"))` parses, and `x as
+  import("x").A<null>` parses;
+- **the remedy for that third fault is a top-level `import type`, not a named
+  alias**, and getting this wrong is what #3345 was filed to fix. #3318's rule
+  printed "give the type a name and use the name", which produces
+  `type P = import("x").A<null>;` — measured to FAIL, with the rule silent on
+  it. A guard printing an instruction that creates the hole it exists to close
+  is the worst failure mode available to one. Use
+  `import type { A } from "@/lib/x";` and then `A<null>["k"]`, or root the type
+  at `typeof`: `typeof import("@/lib/x").k` and `(typeof import("@/lib/x"))["k"]`
+  parse everywhere outside a call. A type-only import is erased at compile time,
+  so a dynamically-loaded module stays dynamically loaded;
+- **two members of the CALL family were silent too** (#3345): a bare
+  instantiation expression `f<typeof import("x")>` with no call, and
+  `f<typeof import("x")>?.()`, where the type arguments hang off the callee
+  rather than the optional call. A second type argument also fails even with an
+  ordinary argument list. `new`, by contrast, is genuinely unaffected — every
+  argument-list variant of `new K<typeof import("x")>` parses, including the
+  trailing-comma reflow, which is why the rule leaves it alone;
 - **the `&amp;` remedy is for JSX text only.** The same fault fires on a `&`
   inside a string literal — a URL query such as
   `href="/admin/bookings?sortBy=member&sortDir=asc"` — where rewriting it
