@@ -62,7 +62,7 @@ reason: the reprice degrades instead of rolling back, so the pure
   last, both beside the writes they bracket.
 
 file: src/lib/member-merge.ts
-lines: 2828
+lines: 2831
 reason: the keep-master resolver that drops a duplicate's colliding promo
   allocation must delete that duplicate's adjustment rows in the same step,
   while their member column still names the loser; a second pass elsewhere
