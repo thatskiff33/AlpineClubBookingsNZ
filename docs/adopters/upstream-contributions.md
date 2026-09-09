@@ -140,7 +140,7 @@ what you are taking on.
 Both repositories should run the same core validation gates:
 
 ```bash
-npm audit --audit-level=high
+npm run audit:deps            # the same gate CI runs, with the same threshold
 npm run lint
 npx prisma validate
 npm test
