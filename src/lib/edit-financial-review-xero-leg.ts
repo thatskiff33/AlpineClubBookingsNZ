@@ -23,6 +23,50 @@ import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settleme
  * next reader treating the dispatch as fire-and-forget plumbing, which is
  * exactly what let its answer be discarded.
  */
+
+/**
+ * WILL THIS CLOSURE SEND XERO A DOCUMENT? The one home for that question
+ * (`INV-SSOT-001`), owned by the module that acts on the answer.
+ *
+ * Two callers need it and they need it for opposite reasons. This module gates
+ * its own dispatch on it. #3219's re-price asks it the other way round - a
+ * closure that issues NO document is exactly the one that leaves the club's
+ * invoice saying one figure while the booking now says another, so the answer
+ * decides whether the booking's history warns a treasurer and whether the audit
+ * entry is `critical`.
+ *
+ * It is deliberately NOT `route !== null`. `local-allocation` carries a NULLABLE
+ * anchor, and a zero amount dispatches nothing either - so the looser test
+ * returns true for a closure that sends Xero nothing at all, which is the unsafe
+ * direction: the warning the re-price exists to raise would stay silent while
+ * this module logged that the invoice must be corrected by hand.
+ */
+export function editReviewXeroDocumentAsk({
+  route,
+  xeroAmountCents,
+}: {
+  route: Pick<EditReviewSettlementRoute, "bookingModificationId"> | null;
+  /**
+   * The amount the dispatch would bill - this task's share on a refund, the
+   * edit's combined total on a charge. A caller inside the completion
+   * transaction does not yet know a charge's combined total, and passing the
+   * share instead is safe in the one direction that matters: the total includes
+   * the share, so a non-zero share can never make a zero dispatch look real.
+   */
+  xeroAmountCents: number | null;
+}): { bookingModificationId: string; amountCents: number } | null {
+  const bookingModificationId = route?.bookingModificationId ?? null;
+  if (!bookingModificationId || !xeroAmountCents) return null;
+  return { bookingModificationId, amountCents: xeroAmountCents };
+}
+
+/** The same answer as a yes/no, derived from it rather than restated. */
+export function editReviewSettlementIssuesXeroDocument(
+  input: Parameters<typeof editReviewXeroDocumentAsk>[0],
+): boolean {
+  return editReviewXeroDocumentAsk(input) !== null;
+}
+
 export async function dispatchEditReviewXeroSettlement({
   bookingId,
   taskId,
@@ -68,20 +112,27 @@ export async function dispatchEditReviewXeroSettlement({
    * Best-effort and after the commit, matching every other caller: a Xero outage
    * must not undo a completion whose money has already moved.
    */
-  const xeroAnchorId = route?.bookingModificationId ?? null;
   const isCharge = route?.kind === "additional-charge";
-  // #3170: a refund bills this task's own share; a CHARGE bills the edit's
-  // combined total, because there is one supplementary invoice per edit and it
-  // has to match the one request the member is asked to pay. Sending the share is
-  // how the Xero leg lost the second $30 - a second invoice for an anchor that
-  // already has an active one is refused quietly, not raised.
-  const xeroAmountCents = isCharge ? chargeTotalCents : amountCents;
   // Captured outside the dispatch closure: `isCharge` is a boolean and does not
   // narrow `route` inside a `.then`.
   const chargeMemberId =
     route?.kind === "additional-charge" ? (route.member?.id ?? null) : null;
 
-  if (!xeroAnchorId || !xeroAmountCents) {
+  // The gate and #3219's divergence flag are ONE derivation, called here rather
+  // than restated, so a change to what dispatches can never leave the treasurer
+  // warning behind.
+  //
+  // #3170: a refund bills this task's own share; a CHARGE bills the edit's
+  // combined total, because there is one supplementary invoice per edit and it
+  // has to match the one request the member is asked to pay. Sending the share is
+  // how the Xero leg lost the second $30 - a second invoice for an anchor that
+  // already has an active one is refused quietly, not raised.
+  const ask = editReviewXeroDocumentAsk({
+    route,
+    xeroAmountCents: isCharge ? chargeTotalCents : amountCents,
+  });
+
+  if (ask === null) {
     if (route && hasIssuedXeroInvoice) {
       // An edit-review completion that moved money on a booking with an issued
       // invoice but carries no anchor to correct it against. The card,
@@ -106,8 +157,8 @@ export async function dispatchEditReviewXeroSettlement({
     (await restateEditReviewChargeSupplementaryInvoice({
       bookingId,
       taskId,
-      bookingModificationId: xeroAnchorId,
-      totalCents: xeroAmountCents,
+      bookingModificationId: ask.bookingModificationId,
+      totalCents: ask.amountCents,
     }))
   ) {
     return;
@@ -121,7 +172,7 @@ export async function dispatchEditReviewXeroSettlement({
   // `recordShortEditReviewChargeInvoice` owns what to do about it.
   void queueXeroBookingEditSettlement({
     bookingId,
-    bookingModificationId: xeroAnchorId,
+    bookingModificationId: ask.bookingModificationId,
     createdByMemberId: actingMemberId,
     hasIssuedXeroInvoice,
     originalPaymentStatus: bookingPaymentStatus,
@@ -130,7 +181,7 @@ export async function dispatchEditReviewXeroSettlement({
     // reaches the supplementary-invoice branch, which is the same branch an
     // ordinary price increase takes. `amountCents` itself is a positive
     // magnitude on both.
-    priceDiffCents: isCharge ? xeroAmountCents : -xeroAmountCents,
+    priceDiffCents: isCharge ? ask.amountCents : -ask.amountCents,
     changeFeeCents: 0,
     // The structural edit that raised this review queued its own narration
     // update when it committed. This is the money leg alone; claiming the dates
@@ -146,7 +197,7 @@ export async function dispatchEditReviewXeroSettlement({
     // Read only on the reduction branch (`settlementAmountCents ?? Math.abs`),
     // so a charge passes null and lets the positive delta speak for itself
     // rather than handing the credit-note arm an amount it must not use.
-    settlementAmountCents: isCharge ? null : xeroAmountCents,
+    settlementAmountCents: isCharge ? null : ask.amountCents,
     // #3170: the supplementary invoice waits for the additional payment when
     // there is one to wait for, which is the ordinary price-increase
     // arrangement. On the `invoice` route no intent exists and the
@@ -159,7 +210,7 @@ export async function dispatchEditReviewXeroSettlement({
       await recordShortEditReviewChargeInvoice({
         outcome: queued.supplementaryInvoice,
         bookingId,
-        bookingModificationId: xeroAnchorId,
+        bookingModificationId: ask.bookingModificationId,
         // #3193: THIS TASK, and THIS TASK'S OWN SHARE, are what a second ask is
         // anchored to and what it bills. The combined total above is what the
         // change's own invoice bills; handing that figure to the second ask
@@ -168,7 +219,7 @@ export async function dispatchEditReviewXeroSettlement({
         reviewTaskId: taskId,
         shareCents: amountCents,
         memberId: chargeMemberId,
-        totalCents: xeroAmountCents,
+        totalCents: ask.amountCents,
         createdByMemberId: actingMemberId,
       });
     })

@@ -52,6 +52,11 @@ const PROJECT_SUPPORTED_VITEST_EXTENSIONS = new Set([
  * here is a deliberate act; the default for a new test is TypeScript.
  */
 const JAVASCRIPT_VITEST_TESTS = [
+  // #3254 split the dependency audit out of `verify` into its own job and its
+  // own `.mjs` tool. Its suite tests that tool, so it stays JavaScript for the
+  // same reason every other entry here does. It arrived on `main`, whose copy of
+  // this contract has no such list, so nothing there asked for the entry.
+  "scripts/ci/audit-dependencies.test.mjs",
   "scripts/ci/check-doc-index-integrity.test.mjs",
   "scripts/ci/check-pr-body.test.mjs",
   "scripts/ci/check-pr-changelog-fragment.test.mjs",

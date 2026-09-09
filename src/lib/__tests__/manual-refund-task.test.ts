@@ -25,6 +25,11 @@ const mocks = vi.hoisted(() => ({
   bookingGuestFindUnique: vi.fn(),
   bookingGuestUpdateMany: vi.fn(),
   bookingGuestNightUpdateMany: vi.fn(),
+  // #3219: the booking's own headline totals, re-based from those strands in the
+  // same transaction.
+  bookingFindUnique: vi.fn(),
+  bookingUpdateMany: vi.fn(),
+  bookingModificationCreate: vi.fn(),
   applyLocalRefundAllocation: vi.fn(),
   createAuditLog: vi.fn(),
   recordBookingEvent: vi.fn(),
@@ -126,7 +131,102 @@ const tx = {
   bookingGuestNight: {
     updateMany: (...a: unknown[]) => mocks.bookingGuestNightUpdateMany(...a),
   },
+  // #3219: the booking whose four money columns move with the strands.
+  booking: {
+    findUnique: (...a: unknown[]) => mocks.bookingFindUnique(...a),
+    updateMany: (...a: unknown[]) => mocks.bookingUpdateMany(...a),
+  },
+  // #3219: the booking's OWN history, which is where a re-base has to be
+  // readable from - D1 lets a later cancellation refund less than the member
+  // paid, so "why did I only get $120 back?" is answered here.
+  bookingModification: {
+    create: (...a: unknown[]) => mocks.bookingModificationCreate(...a),
+  },
 };
+
+/**
+ * #3219: the booking as this transaction can see it, with its headline totals
+ * FROZEN where a parked edit left them and its strands saying something else.
+ *
+ * `guest-1` is read back at whatever value the strand write has just put there,
+ * which is what makes the re-base a recomputation of the rows this transaction
+ * wrote rather than an arithmetic on a stored number. It is also what pins the
+ * ORDER: read the booking before the strand write and `guest-1` comes back at
+ * its pre-repair value, so the sums below stop matching.
+ *
+ * `guest-2` is a second strand this settle never touches. Without it the
+ * headline would equal one strand's total and a writer that copied the strand
+ * instead of summing the booking would pass.
+ */
+function frozenBooking(overrides?: Record<string, unknown>) {
+  const written = mocks.bookingGuestUpdateMany.mock.calls.at(-1)?.[0] as
+    | { data: { priceCents: number } }
+    | undefined;
+  const guestOneTotal = written?.data.priceCents ?? 10_000;
+  return {
+    id: "booking-1",
+    memberId: "member-1",
+    lodgeId: null,
+    checkIn: new Date("2026-08-01T00:00:00.000Z"),
+    totalPriceCents: 24_000,
+    discountCents: 0,
+    promoAdjustmentCents: 0,
+    finalPriceCents: 24_000,
+    // No promotion on the default booking, so `recalculateBookingPromo` answers
+    // zero without reading anything. The promotion cases install their own.
+    promoRedemption: null,
+    guests: [
+      {
+        id: "guest-1",
+        priceCents: guestOneTotal,
+        memberId: "member-1",
+        isMember: true,
+        // The strand's rows AS THIS TRANSACTION HAS JUST LEFT THEM: the night
+        // that always carried $40.00, and the one the officer has just priced.
+        // They reconcile to the strand's total by construction, which is what
+        // `INV-MOD-028` requires before the booking may be re-priced from them.
+        nights: [
+          { stayDate: new Date("2026-08-01T00:00:00.000Z"), priceCents: 4_000 },
+          {
+            stayDate: new Date("2026-08-02T00:00:00.000Z"),
+            priceCents: guestOneTotal - 4_000,
+          },
+        ],
+      },
+      {
+        id: "guest-2",
+        priceCents: 8_000,
+        memberId: null,
+        isMember: false,
+        nights: [
+          { stayDate: new Date("2026-08-01T00:00:00.000Z"), priceCents: 4_000 },
+          { stayDate: new Date("2026-08-02T00:00:00.000Z"), priceCents: 4_000 },
+        ],
+      },
+    ],
+    ...overrides,
+  };
+}
+
+/**
+ * #3219 D2: install a strand that HAS a blank night, so this review's price
+ * boxes are offered and the officer must fill them in.
+ *
+ * The default fixture below is a strand with NO blanks, because D2 makes an
+ * unfilled box a refusal: a review with boxes cannot be closed without them, so
+ * every case here that legitimately closes with `recordedNightPrices: null` is
+ * one whose boxes are not offered at all.
+ */
+function offerUnpricedNight() {
+  mocks.bookingGuestFindUnique.mockResolvedValue({
+    id: "guest-1",
+    priceCents: 10_000,
+    nights: [
+      { stayDate: new Date("2026-08-01T00:00:00.000Z"), priceCents: 4_000 },
+      { stayDate: new Date("2026-08-02T00:00:00.000Z"), priceCents: null },
+    ],
+  });
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -170,20 +270,27 @@ beforeEach(() => {
     supplementaryInvoice: "none",
   });
   /*
-    #3191: by default the strand has ONE blank night out of two, so a settle that
-    sends figures has something to fill in. Every write reports one row claimed;
-    the race cases override that.
+    #3219 D2: by default the strand is FULLY PRICED, so this review offers no
+    price boxes and closes exactly as it always did. That is the majority case
+    here and it is why most of these tests still send `recordedNightPrices:
+    null`. A case that needs the boxes calls `offerUnpricedNight()`, and is then
+    bound by D2: it may not close them blank.
   */
   mocks.bookingGuestFindUnique.mockResolvedValue({
     id: "guest-1",
     priceCents: 10_000,
     nights: [
       { stayDate: new Date("2026-08-01T00:00:00.000Z"), priceCents: 4_000 },
-      { stayDate: new Date("2026-08-02T00:00:00.000Z"), priceCents: null },
+      { stayDate: new Date("2026-08-02T00:00:00.000Z"), priceCents: 6_000 },
     ],
   });
   mocks.bookingGuestUpdateMany.mockResolvedValue({ count: 1 });
   mocks.bookingGuestNightUpdateMany.mockResolvedValue({ count: 1 });
+  // #3219: read fresh on every call so it reflects the strand write this
+  // transaction has just made.
+  mocks.bookingFindUnique.mockImplementation(async () => frozenBooking());
+  mocks.bookingUpdateMany.mockResolvedValue({ count: 1 });
+  mocks.bookingModificationCreate.mockResolvedValue({ id: "mod-rebase-1" });
 });
 
 describe("resolveManualRefundTask", () => {
@@ -1329,6 +1436,8 @@ describe("recording per-night amounts while settling (#3191)", () => {
   ];
 
   it("writes the nights, re-bases the strand, and audits it as its own act", async () => {
+    // #3219 D2: this case needs the price boxes, so the strand has a blank.
+    offerUnpricedNight();
     mocks.manualRefundTaskFindUnique.mockResolvedValue(editReviewTask());
 
     await resolveManualRefundTask({
@@ -1376,6 +1485,8 @@ describe("recording per-night amounts while settling (#3191)", () => {
   });
 
   it("records them on a DISMISSAL too, where nothing moves and the total does not", async () => {
+    // #3219 D2: this case needs the price boxes, so the strand has a blank.
+    offerUnpricedNight();
     mocks.manualRefundTaskFindUnique.mockResolvedValue(editReviewTask());
 
     await resolveManualRefundTask({
@@ -1400,6 +1511,8 @@ describe("recording per-night amounts while settling (#3191)", () => {
   });
 
   it("refuses figures that do not reconcile BEFORE the task is claimed", async () => {
+    // #3219 D2: this case needs the price boxes, so the strand has a blank.
+    offerUnpricedNight();
     mocks.manualRefundTaskFindUnique.mockResolvedValue(editReviewTask());
 
     await expect(
@@ -1420,6 +1533,8 @@ describe("recording per-night amounts while settling (#3191)", () => {
   });
 
   it("refuses a task with no strand to price rather than guessing one", async () => {
+    // #3219 D2: this case needs the price boxes, so the strand has a blank.
+    offerUnpricedNight();
     mocks.manualRefundTaskFindUnique.mockResolvedValue({
       ...editReviewTask(),
       kind: ManualRefundTaskKind.CANCELLED_BOOKING_HAND_BACK,
@@ -1440,10 +1555,13 @@ describe("recording per-night amounts while settling (#3191)", () => {
     expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
   });
 
-  it("settles exactly as before when no figures are sent", async () => {
-    // THE CONTROL. Leaving the boxes blank is a valid answer, and it must reach
-    // the strand not at all - a settle that read or wrote the guest rows anyway
-    // would make this an every-settle change rather than an opt-in repair.
+  it("writes no night prices when this review offers no price boxes - but still re-prices the booking (#3257)", async () => {
+    // THE CONTROL, AND WHAT D2 LEFT OF IT. Sending no figures is still an
+    // ordinary answer wherever the boxes are not offered - here the strand is
+    // fully priced, so there is nothing to fill in - and it must reach the
+    // strand's WRITES not at all. The strand is READ, because "are the boxes
+    // offered?" is the question D2 turns on and it cannot be answered from the
+    // browser.
     mocks.manualRefundTaskFindUnique.mockResolvedValue(editReviewTask());
 
     await resolveManualRefundTask({
@@ -1456,15 +1574,122 @@ describe("recording per-night amounts while settling (#3191)", () => {
       recordedNightPrices: null,
     });
 
-    expect(mocks.bookingGuestFindUnique).not.toHaveBeenCalled();
     expect(mocks.bookingGuestNightUpdateMany).not.toHaveBeenCalled();
     expect(mocks.bookingGuestUpdateMany).not.toHaveBeenCalled();
+    /*
+      #3257 (owner, 7 September 2026) INVERTED THE SECOND HALF OF THIS TEST. It
+      used to assert the booking was not read and not re-priced, because the
+      re-price rode on the repair - which is exactly how a parked removal's
+      headline kept counting a guest the edit had deleted. The trigger is now the
+      review CLOSING, so the booking is re-priced from the strands it still has:
+      $100.00 + $80.00 against a headline the park froze at $240.00.
+    */
+    expect(mocks.bookingUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          totalPriceCents: 18_000,
+          finalPriceCents: 18_000,
+        }),
+      }),
+    );
+    // Recorded under its own action, because nothing here priced a night and a
+    // reader filtering for what an officer priced must not be handed this.
+    expect(mocks.createAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "booking-payment.review-closure.reprice",
+        category: "payment",
+        entityType: "Booking",
+        entityId: "booking-1",
+        metadata: expect.objectContaining({
+          nightPrices: null,
+          newGuestTotalCents: null,
+          bookingRebased: true,
+          bookingPriceMoved: true,
+        }),
+      }),
+      tx,
+    );
     expect(mocks.createAuditLog).not.toHaveBeenCalledWith(
       expect.objectContaining({
         action: "booking-payment.stored-night-price.record",
       }),
       tx,
     );
+  });
+
+  it("D2: REFUSES to close a review whose price boxes are offered and blank - on a dismissal as well as a completion", async () => {
+    /*
+      #3219 D2 (owner, 5 September 2026). Before this, closing with the boxes
+      blank left the booking's headline where the park put it - and after a
+      parked guest REMOVAL that headline is counting a guest the edit has
+      already deleted (#3257). The officer is already warned in these words at
+      the moment of decision; D2 makes that warning binding.
+
+      Both closures are refused, and the refusal fires BEFORE the claim, so the
+      task is still OPEN and its money question survives.
+    */
+    offerUnpricedNight();
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(editReviewTask());
+
+    await expect(
+      resolveManualRefundTask({
+        taskId: "task-1",
+        resolution: "dismissed",
+        note: "Nothing owed either way.",
+        actingMemberId: "admin-1",
+        recordedNightPrices: null,
+      }),
+    ).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringContaining("this review cannot be closed"),
+    });
+
+    await expect(
+      resolveManualRefundTask({
+        taskId: "task-1",
+        resolution: "completed",
+        note: "Priced from the booking's payment history.",
+        actingMemberId: "admin-1",
+        confirmedAmountCents: 4_500,
+        direction: "REFUND_TO_MEMBER",
+        recordedNightPrices: null,
+      }),
+    ).rejects.toMatchObject({ status: 400 });
+
+    expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.bookingGuestNightUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("D2 does NOT fire where no price boxes are offered - a legacy hand-back closes blank exactly as it always did", async () => {
+    /*
+      "Where the boxes are offered" is STRUCTURAL rather than a carve-out list,
+      and this is the case that proves it. A legacy hand-back names no strand at
+      all, so the question never reaches a summary and the close is untouched.
+      #3213's withheld-share notice is exempt by the same mechanism: it reviews
+      no stay and has no nights.
+    */
+    offerUnpricedNight();
+    mocks.manualRefundTaskFindUnique.mockResolvedValue({
+      ...editReviewTask(),
+      kind: ManualRefundTaskKind.CANCELLED_BOOKING_HAND_BACK,
+      reviewContext: null,
+      amountCents: 9_000,
+    });
+
+    await resolveManualRefundTask({
+      taskId: "task-1",
+      resolution: "completed",
+      note: "Handed back in cash at the lodge.",
+      actingMemberId: "admin-1",
+      confirmedAmountCents: 9_000,
+      direction: null,
+      recordedNightPrices: null,
+    });
+
+    expect(mocks.manualRefundTaskUpdateMany).toHaveBeenCalled();
+    expect(mocks.bookingGuestFindUnique).not.toHaveBeenCalled();
+    expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
   });
 
   it("refuses a $0 settlement in words that name the control to use instead (#3195)", async () => {
@@ -1515,6 +1740,425 @@ describe("recording per-night amounts while settling (#3191)", () => {
         recordedNightPrices: null,
       }),
     ).rejects.toThrow(/dismiss the task with a note instead/);
+  });
+});
+
+/**
+ * #3219 (epic #2797): settling the review brings the BOOKING'S OWN headline
+ * totals back into agreement with its strands.
+ *
+ * A parked edit deliberately freezes `Booking.totalPriceCents` and
+ * `Booking.finalPriceCents`, because a parked edit is precisely one whose money
+ * nobody may compute. Nothing thawed them when the review settled, so after
+ * every repair the booking's headline and its nights disagreed permanently,
+ * with nothing reconciling them and nothing flagging the gap.
+ *
+ * TWO PROPERTIES ARE LOAD-BEARING AND EACH HAS ITS OWN CASE.
+ *
+ * The new figures are RECOMPUTED FROM THE STRANDS, never derived by applying the
+ * settled amount to what was stored. Both cases below are built so the two
+ * answers differ: a delta-based writer passes neither.
+ *
+ * And BOTH figures move. `finalPriceCents` is the total plus the signed
+ * promotion adjustment and is what settlement decisions actually read, so moving
+ * only `totalPriceCents` would trade one disagreement for another.
+ */
+describe("re-basing the booking's headline totals while settling (#3219)", () => {
+  it("a DISMISSAL re-bases them from the strands, though it settled nothing at all", async () => {
+    // #3219 D2: this case needs the price boxes, so the strand has a blank.
+    offerUnpricedNight();
+    /*
+      THE CASE THE ACCEPTANCE CRITERION NAMES, and the one a delta-based fix gets
+      exactly wrong. The repair runs on a dismissal too - the officer decides
+      nobody owes anybody anything and still records what the nights sold for -
+      and the dismissal's own audit entry says in as many words that nothing
+      moved. There is no delta to apply here, and the headline still has to come
+      back into agreement: the park left it at $240.00 while the strands come to
+      $180.00.
+    */
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(editReviewTask());
+
+    await resolveManualRefundTask({
+      taskId: "task-1",
+      resolution: "dismissed",
+      note: "Nothing owed either way; the nights were already paid for.",
+      actingMemberId: "admin-1",
+      recordedNightPrices: [
+        { date: requireCalendarDate("2026-08-02"), priceCents: 6_000 },
+      ],
+    });
+
+    // Nothing was settled: the claim writes no amount and no direction.
+    const claim = mocks.manualRefundTaskUpdateMany.mock.calls[0][0];
+    expect(claim.data.amountCents).toBeUndefined();
+    expect(claim.data.settlementDirection).toBeUndefined();
+
+    // The strand is unmoved by the repair - $100.00 before and after - so EVERY
+    // cent of the headline's move comes from the recomputation.
+    expect(mocks.bookingGuestUpdateMany).toHaveBeenCalledWith({
+      where: { id: "guest-1", priceCents: 10_000 },
+      data: { priceCents: 10_000 },
+    });
+    expect(mocks.bookingUpdateMany).toHaveBeenCalledWith({
+      // Fenced on ALL FOUR money columns as they were read inside this
+      // transaction: this path holds no advisory lock, so an edit that moved any
+      // of them underneath us must match nothing and become a refusal.
+      where: {
+        id: "booking-1",
+        totalPriceCents: 24_000,
+        discountCents: 0,
+        promoAdjustmentCents: 0,
+        finalPriceCents: 24_000,
+      },
+      // $100.00 + $80.00, the two strands. NOT $240.00, which is what applying
+      // this dismissal's zero delta to the stored headline would leave.
+      data: {
+        totalPriceCents: 18_000,
+        discountCents: 0,
+        promoAdjustmentCents: 0,
+        finalPriceCents: 18_000,
+      },
+    });
+    expect(mocks.createAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "booking-payment.stored-night-price.record",
+        metadata: expect.objectContaining({
+          resolution: "dismissed",
+          previousBookingTotalPriceCents: 24_000,
+          newBookingTotalPriceCents: 18_000,
+          previousBookingFinalPriceCents: 24_000,
+          newBookingFinalPriceCents: 18_000,
+        }),
+      }),
+      tx,
+    );
+  });
+
+  it("a completion moves BOTH figures to the strand sum, not to the stored figures plus the settled amount", async () => {
+    // #3219 D2: this case needs the price boxes, so the strand has a blank.
+    offerUnpricedNight();
+    /*
+      #3219: THE PROMOTION FOLLOWS THE STRANDS. The frozen $10.00 adjustment is
+      NOT carried through - it is recomputed against the new total, and this
+      booking's redemption is gone, so the recompute answers zero and the two
+      figures land together on the strand sum.
+
+      Carrying it through is what could produce a stored price below zero, which
+      is the defect this issue's promotion decision exists to remove.
+
+      A delta-based writer would land on $195.00 and $185.00 here. The strands
+      come to $135.00.
+    */
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(editReviewTask());
+    mocks.bookingFindUnique.mockImplementation(async () =>
+      frozenBooking({ promoAdjustmentCents: -1_000, finalPriceCents: 23_000 }),
+    );
+
+    await resolveManualRefundTask({
+      taskId: "task-1",
+      resolution: "completed",
+      note: "Priced from the 2024 rate card the member was quoted from.",
+      actingMemberId: "admin-1",
+      confirmedAmountCents: 4_500,
+      direction: "REFUND_TO_MEMBER",
+      recordedNightPrices: [
+        { date: requireCalendarDate("2026-08-02"), priceCents: 1_500 },
+      ],
+    });
+
+    // The strand absorbed the refund: $100.00 less the $45.00 going back.
+    expect(mocks.bookingGuestUpdateMany).toHaveBeenCalledWith({
+      where: { id: "guest-1", priceCents: 10_000 },
+      data: { priceCents: 5_500 },
+    });
+    expect(mocks.bookingUpdateMany).toHaveBeenCalledWith({
+      where: {
+        id: "booking-1",
+        totalPriceCents: 24_000,
+        discountCents: 0,
+        promoAdjustmentCents: -1_000,
+        finalPriceCents: 23_000,
+      },
+      data: {
+        totalPriceCents: 13_500,
+        discountCents: 0,
+        // Recomputed, not carried: this booking holds no redemption any more.
+        promoAdjustmentCents: 0,
+        finalPriceCents: 13_500,
+      },
+    });
+
+    // D1's second consequence: the re-price is in the BOOKING'S OWN HISTORY, so
+    // a member asking why a later cancellation refunded less than they paid can
+    // be answered from the booking rather than from an audit trail.
+    expect(mocks.bookingModificationCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          bookingId: "booking-1",
+          modificationType: "PRICE_REBASE",
+          // No money moved by this row, so no money component on it - the Xero
+          // repair tool reads those to decide a second invoice is owed.
+          priceDiffCents: 0,
+          changeFeeCents: 0,
+          newData: expect.objectContaining({
+            finalPriceCents: 13_500,
+            rebasedPriceMovementCents: 13_500 - 23_000,
+            financialReviewResolution: "completed",
+          }),
+        }),
+      }),
+    );
+  });
+
+  it("refuses, and writes nothing, when the booking's totals moved underneath it", async () => {
+    // #3219 D2: this case needs the price boxes, so the strand has a blank.
+    offerUnpricedNight();
+    // The same answer the strand fences give one row over: this path holds no
+    // advisory lock, so a concurrent edit that moved the headline has to become
+    // a refusal that rolls the whole completion back rather than a lost update.
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(editReviewTask());
+    mocks.bookingUpdateMany.mockResolvedValue({ count: 0 });
+
+    await expect(
+      resolveManualRefundTask({
+        taskId: "task-1",
+        resolution: "dismissed",
+        note: "Nothing owed either way.",
+        actingMemberId: "admin-1",
+        recordedNightPrices: [
+          { date: requireCalendarDate("2026-08-02"), priceCents: 6_000 },
+        ],
+      }),
+    ).rejects.toMatchObject({ status: 409 });
+
+    expect(mocks.createAuditLog).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "booking-payment.stored-night-price.record",
+      }),
+      tx,
+    );
+  });
+
+  it("refuses when the review names a strand that is not on this booking", async () => {
+    // #3219 D2: this case needs the price boxes, so the strand has a blank.
+    offerUnpricedNight();
+    /*
+      Nothing cross-checks the guest id an EDIT_FINANCIAL_REVIEW context carries
+      against the task's own bookingId, so without this guard a task pointing at
+      another booking's strand would re-base THIS booking's headline from a set
+      of strands that has nothing to do with it - and a booking whose guest list
+      came back empty would have its headline zeroed outright.
+    */
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(editReviewTask());
+    mocks.bookingFindUnique.mockResolvedValue({
+      totalPriceCents: 24_000,
+      promoAdjustmentCents: 0,
+      finalPriceCents: 24_000,
+      guests: [{ id: "guest-2", priceCents: 8_000 }],
+    });
+
+    await expect(
+      resolveManualRefundTask({
+        taskId: "task-1",
+        resolution: "dismissed",
+        note: "Nothing owed either way.",
+        actingMemberId: "admin-1",
+        recordedNightPrices: [
+          { date: requireCalendarDate("2026-08-02"), priceCents: 6_000 },
+        ],
+      }),
+    ).rejects.toThrow(/not on this booking/);
+
+    expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
+  });
+
+  /*
+    #3257, owner decision 7 September 2026: THE TWO SHAPES THE RE-PRICE USED TO
+    MISS ENTIRELY. Both are a parked guest REMOVAL, which is the case whose
+    structural half commits and takes a strand away while the headline stays
+    frozen, and neither offers the officer a single price box - so under the old
+    trigger neither produced a repair and neither re-priced. A booking stored at
+    $240.00 whose survivors sum to $80.00 kept the $240.00 permanently:
+    Internet-Banking reconciliation refusing a correct payment, revenue and
+    lifetime spend overstating, and no open review left to correct it.
+
+    The pair below is deliberately one of each ANSWER, because the fix is not
+    "re-price more often" - it is "re-price whenever a review closes, and DECLINE
+    where the evidence is not there". Shape 1 re-prices; shape 2 must not.
+  */
+  it("SHAPE 1 (#3257): the review names the REMOVED guest, so no boxes - and the headline still comes off the survivors", async () => {
+    // The park raised its review over the departing strand and the same
+    // transaction deleted it, so the strand this task names is simply gone.
+    mocks.bookingGuestFindUnique.mockResolvedValue(null);
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(editReviewTask());
+    mocks.bookingFindUnique.mockImplementation(async () =>
+      frozenBooking({
+        guests: [
+          {
+            id: "guest-2",
+            priceCents: 8_000,
+            memberId: null,
+            isMember: false,
+            nights: [
+              {
+                stayDate: new Date("2026-08-01T00:00:00.000Z"),
+                priceCents: 4_000,
+              },
+              {
+                stayDate: new Date("2026-08-02T00:00:00.000Z"),
+                priceCents: 4_000,
+              },
+            ],
+          },
+        ],
+      }),
+    );
+
+    await resolveManualRefundTask({
+      taskId: "task-1",
+      resolution: "dismissed",
+      note: "Nothing owed; the member never paid for the guest who left.",
+      actingMemberId: "admin-1",
+      recordedNightPrices: null,
+    });
+
+    // Nothing was priced - there was no strand left to price.
+    expect(mocks.bookingGuestNightUpdateMany).not.toHaveBeenCalled();
+    // And the headline stops counting the deleted guest: $80.00, not $240.00.
+    expect(mocks.bookingUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: "booking-1",
+          totalPriceCents: 24_000,
+        }),
+        data: expect.objectContaining({
+          totalPriceCents: 8_000,
+          finalPriceCents: 8_000,
+        }),
+      }),
+    );
+    expect(mocks.bookingModificationCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          modificationType: "PRICE_REBASE",
+          // The blocker this branch already fixed, and it must survive being
+          // reached from a second path: a signed component here reads to the
+          // Xero repair tool as an unbilled ask.
+          priceDiffCents: 0,
+          changeFeeCents: 0,
+        }),
+      }),
+    );
+  });
+
+  it("SHAPE 2 (#3257): a surviving strand with NO night rows DECLINES rather than inventing a figure", async () => {
+    /*
+      The strand carries $80.00 and no evidence whatever of what any night of it
+      sold for. Its review is raised, but boxes appear only for a strand with
+      genuine BLANK nights among readable ones, so it closes with none - and this
+      is the shape that would be dangerous if a re-price-on-any-close simply
+      summed what it found. `INV-MOD-028` applied to the whole booking says the
+      strands do not reconcile, so the booking's four columns are left exactly
+      where the park put them.
+    */
+    mocks.bookingGuestFindUnique.mockResolvedValue({
+      id: "guest-2",
+      priceCents: 8_000,
+      nights: [],
+    });
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(
+      editReviewTask({
+        reviewContext: reviewContext({
+          occurrence: {
+            bookingId: "booking-1",
+            bookingGuestId: "guest-2",
+            cause: "NO_STORED_NIGHT_PRICES",
+            surrenderedNightDates: [],
+            addedNightDates: [],
+            storedEvidence: { guestTotalCents: null, nightPrices: [] },
+          },
+        }),
+      }),
+    );
+    mocks.bookingFindUnique.mockImplementation(async () =>
+      frozenBooking({
+        guests: [
+          {
+            id: "guest-2",
+            priceCents: 8_000,
+            memberId: null,
+            isMember: false,
+            nights: [],
+          },
+        ],
+      }),
+    );
+
+    await resolveManualRefundTask({
+      taskId: "task-1",
+      resolution: "dismissed",
+      note: "Nobody can say what those nights sold for.",
+      actingMemberId: "admin-1",
+      recordedNightPrices: null,
+    });
+
+    // NOTHING was written to the booking, and no history row claims a price was
+    // recalculated. The task still closes - declining is an answer.
+    expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.bookingModificationCreate).not.toHaveBeenCalled();
+    expect(mocks.manualRefundTaskUpdateMany).toHaveBeenCalled();
+    // And WHY it wrote nothing is on the record rather than silent.
+    expect(mocks.createAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "booking-payment.review-closure.reprice",
+        metadata: expect.objectContaining({
+          bookingRebased: false,
+          bookingPriceMoved: false,
+          bookingRebaseDeclinedReason: "strand-evidence-unreadable",
+          previousBookingTotalPriceCents: null,
+          newBookingTotalPriceCents: null,
+        }),
+      }),
+      tx,
+    );
+  });
+
+  it("#3257: a closure that re-prices to the figures already stored writes NO history row", async () => {
+    /*
+      Now that EVERY parked review closing re-prices, the ordinary outcome on a
+      booking the park never left out of step is a recomputation that lands on
+      the numbers already there. That is a correct no-op, and a "Price
+      Recalculated" entry recording no change would be noise on a page a member
+      and an operator both read. The audit entry still records the closure.
+    */
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(editReviewTask());
+    mocks.bookingFindUnique.mockImplementation(async () =>
+      // $100.00 + $80.00 strands under a headline that already says $180.00.
+      frozenBooking({
+        totalPriceCents: 18_000,
+        finalPriceCents: 18_000,
+      }),
+    );
+
+    await resolveManualRefundTask({
+      taskId: "task-1",
+      resolution: "dismissed",
+      note: "Reviewed; nothing to adjust.",
+      actingMemberId: "admin-1",
+      recordedNightPrices: null,
+    });
+
+    expect(mocks.bookingModificationCreate).not.toHaveBeenCalled();
+    expect(mocks.createAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "booking-payment.review-closure.reprice",
+        metadata: expect.objectContaining({
+          bookingRebased: true,
+          bookingPriceMoved: false,
+        }),
+      }),
+      tx,
+    );
   });
 });
 
