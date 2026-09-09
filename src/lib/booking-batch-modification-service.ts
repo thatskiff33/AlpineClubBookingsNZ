@@ -1382,8 +1382,9 @@ export async function modifyBookingBatch({
           // `PromoChangeResult` is what forces this literal to answer the same
           // question the function does, so the notice below cannot be built off
           // a predicate that knows about only one of the two stubs.
-          promoEngineRan: false,
-          adjustmentTargets: null,
+          // `as const` keeps the literal narrow so the union on
+          // `PromoChangeResult` discriminates: no build-up exists on this arm.
+          promoEngineRan: false as const,
         }
       : await applyPromoCodeChanges(tx, {
           booking,
@@ -1576,9 +1577,9 @@ export async function modifyBookingBatch({
     // existed. Guest identity follows the engine's own list: a remaining guest
     // by its id, an added guest by its position among the rows just created.
     if (promo.promoEngineRan) {
-      if (promo.adjustmentTargets === null || pricingResult.kind !== "priced") {
+      if (pricingResult.kind !== "priced") {
         throw new Error(
-          "INV-MONEY-029: the promotion engine ran but reported no build-up",
+          "INV-MONEY-029: the promotion engine ran on a modification that priced nothing",
         );
       }
       let created = 0;

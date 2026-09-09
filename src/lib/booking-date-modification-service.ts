@@ -103,7 +103,6 @@ import {
   deletePromoRedemptionAndAdjustCount,
   lockAndRefreshPromoCodeUsage,
   replacePromoRedemptionAllocations,
-  requiredAdjustmentTargets,
   validateAndCalculatePromoDiscount,
 } from "@/lib/promo";
 import {
@@ -781,7 +780,7 @@ export async function modifyBookingDates({
         const promoResult = application.discount;
         newDiscountCents = promoResult.discountCents;
         newPromoAdjustmentCents = promoResult.priceAdjustmentCents;
-        adjustmentTargets = requiredAdjustmentTargets(application);
+        adjustmentTargets = promoResult.adjustmentTargets;
         promoCoverage = await describePromoCapCoverage(tx, {
           promoCode: promo.code,
           capCoverage: application.capCoverage,

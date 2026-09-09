@@ -596,16 +596,11 @@ export interface PromoDiscountResult {
   allocations: PromoDiscountAllocation[];
   /**
    * What this application took off each target, at the grain the engine decided
-   * it (#3276, D1 on #3272 as refined 8 Sep 2026). Nights for PERCENTAGE,
-   * FREE_NIGHTS and FIXED_NIGHTLY_PRICE, whose arithmetic is per night; the
-   * GUEST for FIXED_AMOUNT, which is `min(value, guest total)` with no per-night
-   * rule. Amounts are the engine's own numbers — the very `capped` and
-   * `fixedNightlyPriceCents - rate` terms the totals above are summed from — so
-   * they reconcile to `allocations` and `priceAdjustmentCents` exactly, and no
-   * figure a member sees is derived from them. `amountCents` is `null` only when
-   * the safety cap in `capPromoDiscountAcrossAllocations` rescaled the members'
-   * allocations, because then the per-night terms are no longer what was
-   * charged: NOT KNOWN, never guessed.
+   * it (#3276): the very terms the totals above are summed from, so they
+   * reconcile to `allocations` and `priceAdjustmentCents` exactly. The grain,
+   * the signed-cents amount and its NULL-means-not-known rule are stated once,
+   * as INV-MONEY-029 in `docs/invariants/money.md`; `null` is emitted only by
+   * `targetsAfterCap`, when the safety cap rescaled the allocations.
    */
   targets: PromoDiscountTarget[];
 }
@@ -615,10 +610,11 @@ export interface PromoDiscountResult {
  * object from the caller's `guests` list, so a caller can map it back to the
  * booking guest it built the entry for; `nightIndex` indexes that guest's
  * `perNightRates`, and `stayDate` is the matching `nightDates` entry when the
- * caller supplied dates. The amount is a signed delta like
- * `priceAdjustmentCents`: negative for a discount, positive when a SET_PRICE
- * fixed-nightly code raises a night, `0` when it set a night to exactly its
- * rate — a real value, distinct from `null`.
+ * caller supplied dates. `beneficiaryMemberId` is the member whose allocation
+ * this row decomposes — here always the guest's own member, exactly as
+ * `addPromoAllocation` keys the allocation; `calculatePromoDiscountForGuestRates`
+ * redirects both to the booker for an unassigned code in the one branch that
+ * decides that, so a row and its allocation can never name different people.
  */
 export type PromoDiscountTarget =
   | {
@@ -626,11 +622,13 @@ export type PromoDiscountTarget =
       guest: PromoDiscountGuest;
       nightIndex: number;
       stayDate: Date | null;
+      beneficiaryMemberId: string | null;
       amountCents: number | null;
     }
   | {
       scope: "guest";
       guest: PromoDiscountGuest;
+      beneficiaryMemberId: string | null;
       amountCents: number | null;
     };
 
@@ -762,6 +760,7 @@ function nightTarget(
     guest,
     nightIndex,
     stayDate: guest.nightDates?.[nightIndex] ?? null,
+    beneficiaryMemberId: guest.memberId,
     amountCents,
   };
 }
@@ -870,7 +869,12 @@ export function calculatePromoDiscount(
         addPromoAllocation(allocations, guest.memberId, guestDiscount, -guestDiscount, 0);
         // Decided per GUEST: there is no per-night rule for a fixed amount, so
         // the target is the guest (D1 on #3272, refined 8 Sep 2026).
-        targets.push({ scope: "guest", guest, amountCents: -guestDiscount });
+        targets.push({
+          scope: "guest",
+          guest,
+          beneficiaryMemberId: guest.memberId,
+          amountCents: -guestDiscount,
+        });
       }
       const discountCents = capPromoDiscountAcrossAllocations(allocations, discount, totalPriceCents);
       return {

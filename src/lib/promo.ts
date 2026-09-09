@@ -180,18 +180,22 @@ export interface PromoCapCoverage {
   excludedMemberIds: string[];
 }
 
+/**
+ * The engine's result with, beside it, what it took off each night or guest of
+ * `bookingDetails.guests` by position in THAT list (#3276). Bundled so that a
+ * discount without its build-up cannot be represented: a writer reads
+ * `discount.adjustmentTargets` and hands it to `recordBookingNightAdjustments`
+ * after its last night write.
+ */
+export type PromoApplicationDiscount = PromoDiscountResult & {
+  adjustmentTargets: PromoAdjustmentTarget[];
+};
+
 export interface PromoApplicationResult {
   error?: string;
   requiresGuestSelection?: boolean;
   selectableGuestIndexes?: number[];
-  discount?: PromoDiscountResult;
-  /**
-   * #3276: what `discount` took off each night or guest of
-   * `bookingDetails.guests`, by position in THAT list, with the beneficiary
-   * each row belongs to. Present exactly when `discount` is. A writer hands it
-   * to `recordBookingNightAdjustments` after its last night write.
-   */
-  adjustmentTargets?: PromoAdjustmentTarget[];
+  discount?: PromoApplicationDiscount;
   beneficiaryMemberIds: string[];
   remainingFreeNights?: number;
   remainingFreeNightsByMemberId?: Record<string, number>;
@@ -343,6 +347,12 @@ export function calculatePromoDiscountForGuestRates(
       result.priceAdjustmentCents,
       result.freeNightsUsed
     ),
+    // #3276: the rows follow the allocation they decompose, decided HERE and
+    // nowhere else — the same branch, the same member (INV-MONEY-029).
+    targets: result.targets.map((target) => ({
+      ...target,
+      beneficiaryMemberId: bookingMemberId,
+    })),
   };
 }
 
@@ -1396,13 +1406,10 @@ export async function validateAndCalculatePromoDiscount(
   // rewritten by a cap that has since moved. (In practice a guest-targeted code
   // scopes its cap to the booker, so this branch and the trim rarely meet.)
   return {
-    discount,
-    adjustmentTargets: promoAdjustmentTargetsFor({
-      discount,
-      guests: detailGuests,
-      bookingMemberId: bookingDetails.memberId,
-      assignedMemberIds: effectiveGuestScopeMemberIds,
-    }),
+    discount: {
+      ...discount,
+      adjustmentTargets: promoAdjustmentTargetsFor({ discount, guests: detailGuests }),
+    },
     beneficiaryMemberIds: coveredBeneficiaryMemberIds,
     remainingFreeNights,
     remainingFreeNightsByMemberId,
@@ -1412,48 +1419,22 @@ export async function validateAndCalculatePromoDiscount(
 }
 
 /**
- * The build-up a WRITER hands to `recordBookingNightAdjustments` (#3276): the
- * application's targets, or none when no promotion applied. A result that
- * carries a discount without its targets is a wiring defect and is refused
- * here, once, rather than defaulted to "nothing was taken off" at every site.
- */
-export function requiredAdjustmentTargets(
-  application: PromoApplicationResult,
-): PromoAdjustmentTarget[] {
-  if (!application.discount) return [];
-  if (!application.adjustmentTargets) {
-    throw new Error(
-      "INV-MONEY-029: a promotion was applied without its per-target build-up",
-    );
-  }
-  return application.adjustmentTargets;
-}
-
-/**
- * Resolve the engine's per-target detail to the caller's guest list and stamp
- * each row's beneficiary (#3276).
+ * Resolve the engine's per-target detail to the caller's guest list (#3276).
  *
  * The engine names each target by the GUEST OBJECT it was handed; every filter
  * between `guests` and the engine (`filterGuestsByIndexes`,
  * `scopeGuestsForAssignedMembers`, `selectPromoDiscountGuests`) passes the same
  * objects through, so identity maps a target back to its position in `guests`
- * — which is the position a writer resolves to a `BookingGuest.id`.
- *
- * The beneficiary is decided exactly as `calculatePromoDiscountForGuestRates`
- * decides the allocation rows it returns: an assigned-scoped code benefits the
- * guest's own linked member; every other code benefits the booker (the same
- * `hasAssignedMembers(assignedMemberIds)` test, on the same list). That is
- * what makes the rows reconcile per beneficiary to the allocations
- * (INV-MONEY-029).
+ * — which is the position a writer resolves to a `BookingGuest.id`. Nothing
+ * about the money is decided here: the beneficiary arrives already stamped by
+ * `calculatePromoDiscountForGuestRates`, the one place that decides it for the
+ * allocations too.
  */
 export function promoAdjustmentTargetsFor(params: {
   discount: PromoDiscountResult;
   guests: ReadonlyArray<PromoDiscountGuest>;
-  bookingMemberId: string;
-  assignedMemberIds: string[] | null | undefined;
 }): PromoAdjustmentTarget[] {
-  const { discount, guests, bookingMemberId, assignedMemberIds } = params;
-  const assignedScoped = hasAssignedMembers(assignedMemberIds);
+  const { discount, guests } = params;
   return discount.targets.map((target) => {
     const guestIndex = guests.indexOf(target.guest);
     if (guestIndex < 0) {
@@ -1461,8 +1442,7 @@ export function promoAdjustmentTargetsFor(params: {
         "INV-MONEY-029: the promotion engine attributed an adjustment to a guest that is not on the priced list",
       );
     }
-    const beneficiaryMemberId = assignedScoped ? target.guest.memberId : bookingMemberId;
-    if (!beneficiaryMemberId) {
+    if (!target.beneficiaryMemberId) {
       throw new Error(
         "INV-MONEY-029: an assigned-scoped promotion attributed an adjustment to a guest with no linked member",
       );
@@ -1471,7 +1451,7 @@ export function promoAdjustmentTargetsFor(params: {
       guestIndex,
       scope: target.scope,
       stayDate: target.scope === "night" ? target.stayDate : null,
-      beneficiaryMemberId,
+      beneficiaryMemberId: target.beneficiaryMemberId,
       amountCents: target.amountCents,
     };
   });

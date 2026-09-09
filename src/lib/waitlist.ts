@@ -52,8 +52,8 @@ import { formatAdultMemberHostingWaitlistRefusal } from "@/lib/policies/adult-me
 import { requiredNightPriceCents } from "@/lib/required-price-cents";
 import { carriesUnvaluedStoredNight } from "@/lib/stored-night-price-write";
 import {
-  reconcilePromoAdjustmentTargets,
   recordBookingNightAdjustments,
+  type PromoAdjustmentTarget,
 } from "@/lib/night-adjustment-write";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 
@@ -192,6 +192,15 @@ async function repriceWaitlistCandidate(
     return candidate.finalPriceCents;
   }
 
+  // #3276 (INV-MONEY-029): the recorder runs AFTER this try/catch, not inside
+  // it. The catch below degrades to the stored snapshot instead of rolling
+  // back, so a refusal raised inside it after the night rewrite would commit a
+  // half-reprice. Outside it, a refusal fails the sweep transaction like any
+  // other post-mutation error, and the recorder itself refuses before it writes.
+  let repriced: {
+    newFinalPriceCents: number;
+    adjustmentTargets: PromoAdjustmentTarget[];
+  } | null = null;
   try {
     const seasonRateData = await loadSeasonRateData(tx, lodgeId);
     const groupDiscountSetting = await tx.groupDiscountSetting.findUnique({
@@ -244,18 +253,6 @@ async function repriceWaitlistCandidate(
         totalPriceCents: newTotalPriceCents,
         promoAdjustmentCents: promoResult.newPromoAdjustmentCents,
       });
-    // #3276: this function's catch degrades to the stored snapshot rather than
-    // rolling back, so the build-up is reconciled to the engine's own figures
-    // HERE, before the night rows below are touched. The write after them can
-    // then refuse only on a wiring defect, never on the money.
-    if (promoResult.discount) {
-      reconcilePromoAdjustmentTargets({
-        targets: promoResult.adjustmentTargets,
-        allocations: promoResult.discount.allocations,
-        priceAdjustmentCents: promoResult.discount.priceAdjustmentCents,
-        context: "the waitlist offer reprice",
-      });
-    }
 
     // #3031 (epic #2797): THE NIGHT ROWS THIS REPRICE PRICED, built and checked
     // BEFORE anything is written.
@@ -325,13 +322,6 @@ async function repriceWaitlistCandidate(
         }
       })
     );
-    // #3276: after the last night write and the promotion write above.
-    await recordBookingNightAdjustments(tx, {
-      bookingId: candidate.id,
-      guestIds: candidate.guests.map((guest) => guest.id),
-      targets: promoResult.adjustmentTargets,
-      writer: "the waitlist offer reprice",
-    });
     await tx.booking.update({
       where: { id: candidate.id },
       data: {
@@ -359,7 +349,7 @@ async function repriceWaitlistCandidate(
       );
     }
 
-    return newFinalPriceCents;
+    repriced = { newFinalPriceCents, adjustmentTargets: promoResult.adjustmentTargets };
   } catch (err) {
     logger.error(
       { err, bookingId: candidate.id },
@@ -367,6 +357,15 @@ async function repriceWaitlistCandidate(
     );
     return candidate.finalPriceCents;
   }
+  // #3276: after the last night write and the promotion write, and outside the
+  // degrade path above (see the comment at the top of the try).
+  await recordBookingNightAdjustments(tx, {
+    bookingId: candidate.id,
+    guestIds: candidate.guests.map((guest) => guest.id),
+    targets: repriced.adjustmentTargets,
+    writer: "the waitlist offer reprice",
+  });
+  return repriced.newFinalPriceCents;
 }
 
 /**

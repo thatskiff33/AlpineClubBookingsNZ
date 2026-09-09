@@ -73,7 +73,6 @@ import {
   lockPromoCodeRowsForUpdate,
   redeemPromoCode,
   replacePromoRedemptionAllocations,
-  requiredAdjustmentTargets,
   shouldPersistPromoRedemption,
   validateAndCalculatePromoDiscount,
 } from "@/lib/promo";
@@ -2053,16 +2052,6 @@ export type PromoChangeResult = {
   // the repriced booking; null means everyone it applies to is covered.
   promoCoverage: PromoCoverageNotice | null;
   /**
-   * #3276: what the promotion took off each night or guest of the
-   * `guestNightRates` this ran over — `[]` when the engine ran and no
-   * promotion remains, `null` when the engine did NOT run (`promoEngineRan`
-   * false), so the caller carries the stored build-up across instead of
-   * writing one. The batch service records these AFTER `applyGuestChanges`
-   * has rewritten the night rows, which is the only order in which they can be
-   * attached.
-   */
-  adjustmentTargets: PromoAdjustmentTarget[] | null;
-  /**
    * #3179: whether the promotion engine actually ran for this edit.
    *
    * `false` means every figure above is the booking's own, carried across
@@ -2078,8 +2067,24 @@ export type PromoChangeResult = {
    * honour a promo change flips this flag at the same time, and the notice
    * disappears on its own.
    */
-  promoEngineRan: boolean;
-};
+} & (
+  | {
+      promoEngineRan: true;
+      /**
+       * #3276: what the promotion took off each night or guest of the
+       * `guestNightRates` this ran over — `[]` when the engine ran and no
+       * promotion remains. The batch service records these AFTER
+       * `applyGuestChanges` has rewritten the night rows, which is the only
+       * order in which they can be attached.
+       */
+      adjustmentTargets: PromoAdjustmentTarget[];
+    }
+  | {
+      promoEngineRan: false;
+      /** The engine did not run, so there is no build-up to record: the caller carries the stored rows across. */
+      adjustmentTargets?: undefined;
+    }
+);
 
 /**
  * Resolve a request's promo beneficiaries to positional indexes over the
@@ -2205,7 +2210,6 @@ export async function applyPromoCodeChanges(
       // is what lets the save build the member's notice on this branch too, so
       // relaxing the in-progress refusals above cannot re-open the silence.
       promoEngineRan: false,
-      adjustmentTargets: null,
     };
   }
 
@@ -2302,7 +2306,7 @@ export async function applyPromoCodeChanges(
     const promoResult = application.discount;
     newDiscountCents = promoResult.discountCents;
     newPromoAdjustmentCents = promoResult.priceAdjustmentCents;
-    adjustmentTargets = requiredAdjustmentTargets(application);
+    adjustmentTargets = promoResult.adjustmentTargets;
 
     if (shouldPersistPromoRedemption(promoResult)) {
       await redeemPromoCode(
@@ -2374,7 +2378,7 @@ export async function applyPromoCodeChanges(
       const promoResult = application.discount;
       newDiscountCents = promoResult.discountCents;
       newPromoAdjustmentCents = promoResult.priceAdjustmentCents;
-      adjustmentTargets = requiredAdjustmentTargets(application);
+      adjustmentTargets = promoResult.adjustmentTargets;
       promoCoverage = await describePromoCapCoverage(tx, {
         promoCode: promo.code,
         capCoverage: application.capCoverage,

@@ -51,7 +51,6 @@ import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import {
   redeemPromoCode,
-  requiredAdjustmentTargets,
   shouldPersistPromoRedemption,
   validateAndCalculatePromoDiscount,
   type PromoBeneficiaryAllocation,
@@ -1829,7 +1828,7 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
     promoFreeNightsUsed = promoResult.freeNightsUsed;
     promoEligibleGuestCount = promoResult.eligibleGuestCount;
     promoAllocations = promoResult.allocations;
-    promoAdjustmentTargets = requiredAdjustmentTargets(application);
+    promoAdjustmentTargets = promoResult.adjustmentTargets;
     promoSelectedGuestIndexes = application.selectedGuestIndexes;
     promoShouldPersist = shouldPersistPromoRedemption(promoResult);
     promoCodeRecord = promoCode;

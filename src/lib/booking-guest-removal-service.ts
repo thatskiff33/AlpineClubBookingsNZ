@@ -5,7 +5,6 @@ import {
   type Prisma,
 } from "@prisma/client";
 import {
-  type PromoDiscountResult,
   type SeasonRateData,
 } from "@/lib/pricing";
 import {
@@ -16,7 +15,6 @@ import {
   deletePromoRedemptionAndAdjustCount,
   lockAndRefreshPromoCodeUsage,
   replacePromoRedemptionAllocations,
-  requiredAdjustmentTargets,
   validateAndCalculatePromoDiscount,
 } from "@/lib/promo";
 import {
@@ -790,7 +788,6 @@ export async function removeBookingGuestInTransaction({
     promoRemoved: false,
     promoCoverage: null,
     adjustmentTargets: [],
-    discount: null,
   };
 
   if (!parkedFinancialReview) {
@@ -1283,7 +1280,6 @@ export async function recalculateBookingPromo({
   let promoRemoved = false;
   let promoCoverage: PromoCoverageNotice | null = null;
   let adjustmentTargets: PromoAdjustmentTarget[] = [];
-  let discount: PromoDiscountResult | null = null;
 
   if (booking.promoRedemption?.promoCode) {
     // Row-lock the promo code and re-read its usage counter before the caps are
@@ -1328,10 +1324,10 @@ export async function recalculateBookingPromo({
       promoRemoved = true;
       await deletePromoRedemptionAndAdjustCount(tx, booking.promoRedemption);
     } else {
-      discount = application.discount;
+      const discount = application.discount;
       newDiscountCents = discount.discountCents;
       newPromoAdjustmentCents = discount.priceAdjustmentCents;
-      adjustmentTargets = requiredAdjustmentTargets(application);
+      adjustmentTargets = discount.adjustmentTargets;
       promoCoverage = await describePromoCapCoverage(tx, {
         promoCode: promo.code,
         capCoverage: application.capCoverage,
@@ -1358,10 +1354,7 @@ export async function recalculateBookingPromo({
     newPromoAdjustmentCents,
     promoRemoved,
     promoCoverage,
-    // #3276: what the engine took off each night or guest of `guestNightRates`,
-    // and the engine result it came from, so a caller that cannot roll back
-    // can reconcile the two BEFORE its first write.
+    // #3276: what the engine took off each night or guest of `guestNightRates`.
     adjustmentTargets,
-    discount,
   };
 }
