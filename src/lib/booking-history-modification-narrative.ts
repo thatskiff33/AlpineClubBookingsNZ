@@ -36,6 +36,12 @@ export const MODIFICATION_LABELS: Record<string, string> = {
   BATCH_MODIFY: "Booking Modified",
   // #2266: an edit that changed ONLY the stored credit election (#2265).
   CREDIT_ELECTION: "Credit Choice Updated",
+  // #3219: not an edit at all - the booking's own price brought back into
+  // agreement with its nights when a parked edit's financial review was closed.
+  // It is in the booking's history rather than only in the audit log because a
+  // re-base can reduce what a later cancellation refunds, and "why did I only
+  // get $120 back?" has to be answerable from the booking.
+  PRICE_REBASE: "Price Recalculated",
 };
 
 function isRemovedGuest(
@@ -112,6 +118,34 @@ export function describeModification(modification: BookingHistoryModification): 
       return typeof electionCents === "number" && electionCents > 0
         ? `${formatCents(electionCents)} of account credit will be applied at payment.`
         : "The saved account-credit choice was removed.";
+    }
+    // #3219: the review settle re-based the booking from its strands. The
+    // sentence says what moved and, when it matters, that the club's invoice no
+    // longer agrees - which is the one thing a treasurer settling this booking
+    // by bank transfer has to know before they mark it PAID.
+    case "PRICE_REBASE": {
+      const parts: string[] = [];
+      if (
+        typeof previous.finalPriceCents === "number" &&
+        typeof next.finalPriceCents === "number"
+      ) {
+        parts.push(
+          `${formatCents(previous.finalPriceCents)} to ${formatCents(next.finalPriceCents)}, recalculated from what this booking's nights sold for.`,
+        );
+      } else {
+        parts.push(
+          "Recalculated from what this booking's nights sold for.",
+        );
+      }
+      if (next.xeroInvoiceDiverged === true) {
+        parts.push(
+          "The club's invoice for this booking was not changed to match, so check it before recording a payment against this figure.",
+        );
+      }
+      if (next.promoRemoved === true) {
+        parts.push("The promotion no longer applies and was removed.");
+      }
+      return parts.join(" ");
     }
     default:
       return "Booking details were updated.";

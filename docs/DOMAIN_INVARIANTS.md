@@ -398,6 +398,7 @@ Prefix `INV-MOD`.
 | `INV-MOD-052` | Where the base rule and the three added paths are pinned |
 | `INV-MOD-053` | Where the removal park and the second act are pinned |
 | `INV-MOD-054` | Where the settle-time repair is pinned |
+| `INV-MOD-055` | Closing a parked review re-prices the booking from its strands, or declines |
 
 ### Adult-member hosting
 
