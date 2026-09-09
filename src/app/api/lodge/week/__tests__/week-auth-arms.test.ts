@@ -46,8 +46,14 @@ const kioskAccessMocks = vi.hoisted(() => ({
 // this route's module graph than the one function under test, and replacing the
 // whole module breaks the file at import (the shape `test:related` exists to
 // catch — docs/TESTING.md).
+// The type sits OUTSIDE the call deliberately. A generic call with an EMPTY
+// argument list whose type argument holds an `import()` type is valid
+// TypeScript that Semgrep's parser cannot read, so the scanner silently skips
+// a region of the file and the blocking coverage gate (#2842) fails. #3318 bans
+// the shape with a lint rule; until that lands, writing it this way is what
+// keeps the file scanned.
 vi.mock("@/lib/kiosk-access", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/kiosk-access")>()),
+  ...((await importOriginal()) as typeof import("@/lib/kiosk-access")),
   getKioskDateRange: kioskAccessMocks.getKioskDateRange,
 }));
 

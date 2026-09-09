@@ -67,14 +67,20 @@ vi.mock("@/lib/rate-limit", () => ({
 // Partial mocks with `importOriginal`: both modules export a great deal this
 // route's graph reads at import time, and replacing either wholesale kills the
 // file before a test runs (docs/TESTING.md).
+// The type sits OUTSIDE the call deliberately. A generic call with an EMPTY
+// argument list whose type argument holds an `import()` type is valid
+// TypeScript that Semgrep's parser cannot read, so the scanner silently skips
+// a region of the file and the blocking coverage gate (#2842) fails. #3318 bans
+// the shape with a lint rule; until that lands, writing it this way is what
+// keeps the file scanned.
 vi.mock("@/lib/membership-type-policy", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/membership-type-policy")>()),
+  ...((await importOriginal()) as typeof import("@/lib/membership-type-policy")),
   priceBookingGuestsWithMembershipTypePolicy:
     mocks.priceBookingGuestsWithMembershipTypePolicy,
 }));
 
 vi.mock("@/lib/promo", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/promo")>()),
+  ...((await importOriginal()) as typeof import("@/lib/promo")),
   validateAndCalculatePromoDiscount: mocks.validateAndCalculatePromoDiscount,
 }));
 
