@@ -638,4 +638,38 @@ describe("fee configuration page", () => {
     expect(screen.getByRole("checkbox")).toBeTruthy();
     expect(screen.queryByText("Prorate n/a")).toBeNull();
   });
+
+  // The amount labels used to hard-code "(NZD)"; they now read the club's
+  // configured currency code (#3325). The literal "(NZD)" pins above are the
+  // byte-identical proof under the default configuration; this case is what
+  // makes the code path discriminate — a fresh import under a different
+  // configured currency must label the inputs with THAT code.
+  it("labels the amount inputs with the configured currency code, not a hard-coded NZD (#3325)", async () => {
+    vi.resetModules();
+    vi.doMock("@/config/operational", () => ({
+      APP_CURRENCY: "AUD",
+      APP_STRIPE_CURRENCY: "aud",
+      APP_TIME_ZONE: "Australia/Sydney",
+      APP_LOCALE: "en-AU",
+    }));
+    try {
+      const { FinanceFeesSections } = await import("@/app/(admin)/admin/fees/_components/finance-fees-sections");
+      // The fresh module tree has its own club-time context object, so the
+      // render helper's (static) provider would not be seen; wrap with the
+      // freshly imported one.
+      const { ClubTimeProvider: FreshClubTimeProvider } = await import("@/components/club-time-provider");
+      stubFetch(response(true, editableData));
+      render(<FinanceFeesSections />, {
+        wrapper: ({ children }) => (
+          <FreshClubTimeProvider zone="Australia/Sydney">{children}</FreshClubTimeProvider>
+        ),
+      });
+      fireEvent.click(await screen.findByRole("button", { name: "Edit membership fees" }));
+      expect(screen.getByLabelText("Annual amount (AUD)")).toBeTruthy();
+      expect(screen.queryByLabelText("Annual amount (NZD)")).toBeNull();
+    } finally {
+      vi.doUnmock("@/config/operational");
+      vi.resetModules();
+    }
+  });
 });
