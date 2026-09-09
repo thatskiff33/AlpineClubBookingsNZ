@@ -93,8 +93,8 @@ vi.mock("@/lib/xero-operation-outbox", () => ({
 vi.mock("@/lib/promo", () => ({
   validatePromoCodeRules: vi.fn().mockReturnValue(null),
   validateAndCalculatePromoDiscount: vi.fn().mockResolvedValue({
-    adjustmentTargets: [],
     discount: {
+      adjustmentTargets: [],
       discountCents: 0,
       priceAdjustmentCents: 0,
       freeNightsUsed: 0,
@@ -1098,8 +1098,8 @@ describe("Promo Validate API - forMemberId", () => {
     });
     const { validateAndCalculatePromoDiscount } = await import("@/lib/promo");
     vi.mocked(validateAndCalculatePromoDiscount).mockResolvedValueOnce({
-      adjustmentTargets: [],
       discount: {
+        adjustmentTargets: [],
         discountCents: 0,
         priceAdjustmentCents: 2000,
         freeNightsUsed: 0,

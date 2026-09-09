@@ -59,8 +59,8 @@ vi.mock("@/lib/cancellation", () => ({
 vi.mock("@/lib/promo", () => ({
   validatePromoCodeRules: vi.fn().mockReturnValue(null),
   validateAndCalculatePromoDiscount: vi.fn().mockResolvedValue({
-    adjustmentTargets: [],
     discount: {
+      adjustmentTargets: [],
       discountCents: 0,
       priceAdjustmentCents: 0,
       freeNightsUsed: 0,

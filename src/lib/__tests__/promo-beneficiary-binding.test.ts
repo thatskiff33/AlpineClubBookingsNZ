@@ -29,8 +29,6 @@ vi.mock("@/lib/promo", () => ({
     promoMocks.replacePromoRedemptionAllocations,
   shouldPersistPromoRedemption: promoMocks.shouldPersistPromoRedemption,
   lockPromoCodeRowsForUpdate: promoMocks.lockPromoCodeRowsForUpdate,
-  // #3276: the build-up the apply path hands to the night adjustment writer.
-  requiredAdjustmentTargets: () => [],
 }));
 
 import {

@@ -149,7 +149,7 @@ async function attribute(
   );
   expect(application.error, application.error).toBeUndefined();
   const discount = application.discount!;
-  const targets = application.adjustmentTargets!;
+  const targets = discount.adjustmentTargets;
   // Every row reconciles to what would be recorded (INV-MONEY-029), and every
   // night-scope row knows its night by DATE.
   reconcilePromoAdjustmentTargets({
@@ -224,6 +224,28 @@ describe("INV-MONEY-029: what each promotion took off each night or guest (#3276
       { guestIndex: 2, scope: "guest", stayDate: null, beneficiaryMemberId: BOOKER, amountCents: -10000 },
       { guestIndex: 0, scope: "guest", stayDate: null, beneficiaryMemberId: BOOKER, amountCents: -10000 },
       { guestIndex: 1, scope: "guest", stayDate: null, beneficiaryMemberId: BOOKER, amountCents: -8500 },
+    ]);
+  });
+
+  it("FIXED_AMOUNT, assigned own-night: the guest-scope row belongs to the linked member, not the booker", async () => {
+    await expect(
+      attribute(promoOf({ type: "FIXED_AMOUNT", valueCents: 10000, assignedMembersOnlyOwnNights: true }), {
+        assignedMemberIds: [LINKED],
+      }),
+    ).resolves.toEqual([
+      { guestIndex: 1, scope: "guest", stayDate: null, beneficiaryMemberId: LINKED, amountCents: -8500 },
+    ]);
+  });
+
+  it("FREE_NIGHTS: among equal rates the stable sort frees the EARLIER night", () => {
+    const guest = { memberId: "m", isMember: true, perNightRates: [3000, 3000, 2500], nightDates: [N1, N2, N3] };
+    const result = calculatePromoDiscount(
+      { type: "FREE_NIGHTS", freeNightsPerIndividual: 1 },
+      { totalPriceCents: 8500, guests: [guest] },
+    );
+    expect(result.discountCents).toBe(3000);
+    expect(result.targets).toEqual([
+      expect.objectContaining({ scope: "night", nightIndex: 0, stayDate: N1, amountCents: -3000, beneficiaryMemberId: "m" }),
     ]);
   });
 
@@ -331,7 +353,7 @@ describe("INV-MONEY-029: what each promotion took off each night or guest (#3276
           guestIndex: 0,
           scope: t.scope,
           stayDate: t.scope === "night" ? t.stayDate : null,
-          beneficiaryMemberId: "m",
+          beneficiaryMemberId: t.beneficiaryMemberId ?? "m",
           amountCents: t.amountCents,
         })),
         allocations: result.allocations,

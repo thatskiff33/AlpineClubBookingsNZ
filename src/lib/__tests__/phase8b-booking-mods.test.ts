@@ -13,8 +13,7 @@ const mockFindMany = vi.fn();
 const mockMemberCount = vi.fn();
 const mockValidateAndCalculatePromoDiscount = vi.hoisted(() =>
   vi.fn().mockResolvedValue({
-    adjustmentTargets: [],
-    discount: { discountCents: 0, priceAdjustmentCents: 0, freeNightsUsed: 0, eligibleGuestCount: 0, allocations: [] },
+    discount: { adjustmentTargets: [], discountCents: 0, priceAdjustmentCents: 0, freeNightsUsed: 0, eligibleGuestCount: 0, allocations: [] },
     beneficiaryMemberIds: [],
   })
 );
@@ -126,9 +125,6 @@ vi.mock("@/lib/promo", () => ({
     async (_tx: unknown, promoCode: unknown) => promoCode
   ),
   deletePromoRedemptionAndAdjustCount: vi.fn(),
-  // #3276: the build-up a writer hands to the night adjustment recorder.
-  requiredAdjustmentTargets: (application: { adjustmentTargets?: unknown[] }) =>
-    application.adjustmentTargets ?? [],
   getMemberFreeNightsUsed: vi.fn().mockResolvedValue(0),
 }));
 vi.mock("@/lib/stripe", () => ({
@@ -2691,8 +2687,8 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
       guests: [{ priceCents: 10000, perNightCents: [5000, 5000], nightDates: [] }],
     } as any);
     mockValidateAndCalculatePromoDiscount.mockResolvedValueOnce({
-      adjustmentTargets: [],
       discount: {
+        adjustmentTargets: [],
         discountCents: 0,
         priceAdjustmentCents: -10000,
         freeNightsUsed: 0,

@@ -102,14 +102,6 @@ const SRC = resolve(process.cwd(), "src");
 
 /** The one module allowed to update an existing night row's price in place. */
 const REPAIR_WRITER = "lib/stored-night-price-repair-store.ts";
-/**
- * #3276 (INV-MONEY-029): the one module that updates a night row IN PLACE
- * without touching its price — it flips `adjustmentsState` once the night's
- * adjustment rows are written. Exempted from the price census below, and held
- * to that exemption by its own control: every night update it makes writes
- * exactly that column and nothing else.
- */
-const STATE_ONLY_WRITER = "lib/night-adjustment-write.ts";
 
 /**
  * The whole of this feature, as files.
@@ -321,7 +313,7 @@ describe("only one module may fill in a blank night price", () => {
         continue;
       }
       const rel = relative(SRC, file).split("\\").join("/");
-      if (rel === REPAIR_WRITER || rel === STATE_ONLY_WRITER) continue;
+      if (rel === REPAIR_WRITER) continue;
       offenders.push(rel);
     }
     expect(
@@ -348,24 +340,6 @@ describe("only one module may fill in a blank night price", () => {
     // make the widening pass by having nothing to find, exactly as a stale
     // allowlist entry would.
     expect(code).toMatch(/bookingGuestNight\s*\.\s*create\b/);
-  });
-
-  it("the state-only writer touches adjustmentsState and never a price (#3276)", () => {
-    // THE CONTROL for the second exemption above. Every in-place night update
-    // in that module writes `adjustmentsState` alone; a price or provenance key
-    // appearing in one of its payloads would be a second price writer hiding
-    // behind an exemption granted for a different reason.
-    const code = stripCommentsAndStrings(
-      readFileSync(join(SRC, STATE_ONLY_WRITER), "utf8"),
-    );
-    const updates =
-      code.match(/bookingGuestNight\s*\.\s*updateMany\(\{[\s\S]*?\}\)/g) ?? [];
-    expect(updates.length).toBeGreaterThan(0);
-    for (const update of updates) {
-      expect(update).toMatch(/data:\s*\{\s*adjustmentsState:/);
-      expect(update).not.toMatch(/priceCents|priceSource/);
-    }
-    expect(code).not.toMatch(/bookingGuestNight\s*\.\s*(update|upsert|create)\b/);
   });
 });
 

@@ -20,8 +20,8 @@ const mockCalculatePromoDiscountForGuestRates = vi.fn();
 const mockValidateAndCalculatePromoDiscount = vi.fn(async () => {
   const discount = mockCalculatePromoDiscountForGuestRates();
   return {
-    adjustmentTargets: [],
     discount: {
+      adjustmentTargets: [],
       discountCents: discount?.discountCents ?? 0,
       priceAdjustmentCents:
         discount?.priceAdjustmentCents ?? -(discount?.discountCents ?? 0),
@@ -203,9 +203,6 @@ vi.mock("@/lib/promo", () => ({
     async (_tx: unknown, promoCode: unknown) => promoCode
   ),
   deletePromoRedemptionAndAdjustCount: vi.fn(),
-  // #3276: the build-up a writer hands to the night adjustment recorder.
-  requiredAdjustmentTargets: (application: { adjustmentTargets?: unknown[] }) =>
-    application.adjustmentTargets ?? [],
   getMemberFreeNightsUsed: vi.fn().mockResolvedValue(0),
 }));
 

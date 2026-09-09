@@ -3,6 +3,7 @@ import type { Prisma } from "@prisma/client";
 
 import { parseDateOnly } from "@/lib/date-only";
 import {
+  deriveNightAdjustmentState,
   NIGHT_ADJUSTMENT_INVARIANT,
   reconcilePromoAdjustmentTargets,
   recordBookingNightAdjustments,
@@ -11,16 +12,17 @@ import {
   type PromoAdjustmentTarget,
 } from "@/lib/night-adjustment-write";
 
+const loggerMocks = vi.hoisted(() => ({ warn: vi.fn(), error: vi.fn() }));
 vi.mock("@/lib/logger", () => ({
-  default: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+  default: { info: vi.fn(), warn: loggerMocks.warn, error: loggerMocks.error, debug: vi.fn() },
 }));
 
 /**
  * #3276: the one writer of the night adjustment build-up, exercised against a
- * recording transaction double. The reconciliation guard (INV-MONEY-029) is
- * proved in both directions — it passes rows that sum to the recorded totals
- * and refuses, BEFORE any row is written and before any night is marked
- * RECORDED, when they do not.
+ * recording transaction double, and the one derivation of whether a booking's
+ * build-up can be trusted. The reconciliation guard (INV-MONEY-029) is proved
+ * in both directions; every refusal is proved to leave the transaction
+ * untouched (refuse before mutate).
  */
 
 const d = parseDateOnly;
@@ -33,7 +35,6 @@ type Recorded = {
   adjustmentFindMany: ReturnType<typeof vi.fn>;
   redemptionFindUnique: ReturnType<typeof vi.fn>;
   nightFindMany: ReturnType<typeof vi.fn>;
-  nightUpdateMany: ReturnType<typeof vi.fn>;
   guestFindMany: ReturnType<typeof vi.fn>;
   order: string[];
 };
@@ -49,7 +50,6 @@ function fakeTx(options: {
     id: string;
     bookingGuestId: string;
     stayDate: Date;
-    adjustmentsState?: string;
     adjustments?: Array<Record<string, unknown>>;
   }>;
   guests?: Array<{ id: string }>;
@@ -66,8 +66,10 @@ function fakeTx(options: {
     adjustmentCreateMany: track("adjustment.createMany", { count: 0 }),
     adjustmentFindMany: track("adjustment.findMany", options.adjustments ?? []),
     redemptionFindUnique: track("redemption.findUnique", options.redemption ?? null),
-    nightFindMany: track("night.findMany", (options.nights ?? []).map((night) => ({ adjustments: [], ...night }))),
-    nightUpdateMany: track("night.updateMany", { count: 0 }),
+    nightFindMany: track(
+      "night.findMany",
+      (options.nights ?? []).map((night) => ({ adjustments: [], ...night })),
+    ),
     guestFindMany: track("guest.findMany", options.guests ?? []),
     order,
   };
@@ -78,10 +80,15 @@ function fakeTx(options: {
       findMany: recorded.adjustmentFindMany,
     },
     promoRedemption: { findUnique: recorded.redemptionFindUnique },
-    bookingGuestNight: { findMany: recorded.nightFindMany, updateMany: recorded.nightUpdateMany },
+    bookingGuestNight: { findMany: recorded.nightFindMany },
     bookingGuest: { findMany: recorded.guestFindMany },
   } as unknown as Prisma.TransactionClient;
   return { tx, recorded };
+}
+
+function nothingWritten(recorded: Recorded) {
+  expect(recorded.adjustmentDeleteMany).not.toHaveBeenCalled();
+  expect(recorded.adjustmentCreateMany).not.toHaveBeenCalled();
 }
 
 const REDEMPTION = {
@@ -100,6 +107,16 @@ const TARGETS: PromoAdjustmentTarget[] = [
   { guestIndex: 0, scope: "night", stayDate: N2, beneficiaryMemberId: "booker", amountCents: -400 },
   { guestIndex: 1, scope: "guest", stayDate: null, beneficiaryMemberId: "booker", amountCents: -600 },
 ];
+const ROW = (bookingGuestNightId: string | null, bookingGuestId: string | null, amountCents: number | null) => ({
+  kind: "PROMO" as const,
+  amountCents,
+  bookingGuestNightId,
+  bookingGuestId,
+  bookingId: "booking-1",
+  promoRedemptionId: "redemption-1",
+  promoCodeId: "promo-1",
+  beneficiaryMemberId: "booker",
+});
 
 describe("reconcilePromoAdjustmentTargets (INV-MONEY-029)", () => {
   const base = { targets: TARGETS, allocations: REDEMPTION.allocations, priceAdjustmentCents: -1500, context: "test" };
@@ -127,8 +144,8 @@ describe("reconcilePromoAdjustmentTargets (INV-MONEY-029)", () => {
     expect(() =>
       reconcilePromoAdjustmentTargets({
         targets: [
-          { guestIndex: 0, scope: "night", stayDate: N1, beneficiaryMemberId: "even", amountCents: 500 },
-          { guestIndex: 0, scope: "night", stayDate: N2, beneficiaryMemberId: "even", amountCents: -500 },
+          { beneficiaryMemberId: "even", amountCents: 500 },
+          { beneficiaryMemberId: "even", amountCents: -500 },
         ],
         allocations: [],
         priceAdjustmentCents: 0,
@@ -152,8 +169,8 @@ describe("reconcilePromoAdjustmentTargets (INV-MONEY-029)", () => {
     expect(() =>
       reconcilePromoAdjustmentTargets({
         targets: [
-          { guestIndex: 0, scope: "night", stayDate: N1, beneficiaryMemberId: "capped", amountCents: null },
-          { guestIndex: 1, scope: "night", stayDate: N1, beneficiaryMemberId: "known", amountCents: -300 },
+          { beneficiaryMemberId: "capped", amountCents: null },
+          { beneficiaryMemberId: "known", amountCents: -300 },
         ],
         allocations: [
           { memberId: "capped", priceAdjustmentCents: -999 },
@@ -167,16 +184,49 @@ describe("reconcilePromoAdjustmentTargets (INV-MONEY-029)", () => {
 
   it("refuses a non-integer amount", () => {
     expect(() =>
-      reconcilePromoAdjustmentTargets({
-        ...base,
-        targets: [{ ...TARGETS[0], amountCents: -1500.5 }],
-      }),
+      reconcilePromoAdjustmentTargets({ ...base, targets: [{ ...TARGETS[0], amountCents: -1500.5 }] }),
     ).toThrow(new RegExp(`${NIGHT_ADJUSTMENT_INVARIANT}.*integer`));
   });
 });
 
+describe("deriveNightAdjustmentState: validity is derived from the rows, never stored", () => {
+  const redemption = { priceAdjustmentCents: -1500, allocations: REDEMPTION.allocations };
+  const rows = TARGETS.map(({ beneficiaryMemberId, amountCents }) => ({ beneficiaryMemberId, amountCents }));
+
+  it("a booking with no promotion had nothing taken off", () => {
+    expect(deriveNightAdjustmentState({ rows: [], redemption: null })).toBe("NO_PROMOTION");
+  });
+
+  it("rows that reconcile to the recorded totals are KNOWN", () => {
+    expect(deriveNightAdjustmentState({ rows, redemption })).toBe("KNOWN");
+  });
+
+  it("a parked removal that deleted a guest without re-running the promotion leaves the remaining rows under-summing: NOT_KNOWN", () => {
+    // K1: the departed guest's rows cascaded away, the allocation still says
+    // -1500, nobody re-ran the engine. No special case is needed to see it.
+    const remaining = rows.filter((_, i) => i !== 2);
+    expect(deriveNightAdjustmentState({ rows: remaining, redemption })).toBe("NOT_KNOWN");
+  });
+
+  it("a promotion with no rows at all (written by the old colour, or never recorded) is NOT_KNOWN", () => {
+    expect(deriveNightAdjustmentState({ rows: [], redemption })).toBe("NOT_KNOWN");
+  });
+
+  it("a NOT KNOWN amount anywhere makes the booking NOT_KNOWN rather than summing null as zero", () => {
+    expect(
+      deriveNightAdjustmentState({ rows: [{ beneficiaryMemberId: "booker", amountCents: null }], redemption }),
+    ).toBe("NOT_KNOWN");
+  });
+
+  it("rows that sum per beneficiary but not to the redemption total are NOT_KNOWN", () => {
+    expect(
+      deriveNightAdjustmentState({ rows, redemption: { ...redemption, priceAdjustmentCents: -1600 } }),
+    ).toBe("NOT_KNOWN");
+  });
+});
+
 describe("recordBookingNightAdjustments", () => {
-  it("writes one row per target against the resolved night (or guest), then marks the nights RECORDED", async () => {
+  it("writes one row per target against the resolved night (or guest), reading everything before it writes anything", async () => {
     const { tx, recorded } = fakeTx({ redemption: REDEMPTION, nights: NIGHTS });
     await recordBookingNightAdjustments(tx, {
       bookingId: "booking-1",
@@ -187,50 +237,18 @@ describe("recordBookingNightAdjustments", () => {
     expect(recorded.adjustmentDeleteMany).toHaveBeenCalledWith({ where: { bookingId: "booking-1" } });
     expect(recorded.adjustmentCreateMany).toHaveBeenCalledTimes(1);
     expect(recorded.adjustmentCreateMany.mock.calls[0][0]).toEqual({
-      data: [
-        {
-          kind: "PROMO",
-          amountCents: -500,
-          bookingGuestNightId: "night-a1",
-          bookingGuestId: null,
-          bookingId: "booking-1",
-          promoRedemptionId: "redemption-1",
-          promoCodeId: "promo-1",
-          beneficiaryMemberId: "booker",
-        },
-        {
-          kind: "PROMO",
-          amountCents: -400,
-          bookingGuestNightId: "night-a2",
-          bookingGuestId: null,
-          bookingId: "booking-1",
-          promoRedemptionId: "redemption-1",
-          promoCodeId: "promo-1",
-          beneficiaryMemberId: "booker",
-        },
-        {
-          kind: "PROMO",
-          amountCents: -600,
-          bookingGuestNightId: null,
-          bookingGuestId: "guest-b",
-          bookingId: "booking-1",
-          promoRedemptionId: "redemption-1",
-          promoCodeId: "promo-1",
-          beneficiaryMemberId: "booker",
-        },
-      ],
+      data: [ROW("night-a1", null, -500), ROW("night-a2", null, -400), ROW(null, "guest-b", -600)],
     });
-    expect(recorded.nightUpdateMany).toHaveBeenCalledWith({
-      where: { bookingGuestId: { in: ["guest-a", "guest-b"] } },
-      data: { adjustmentsState: "RECORDED" },
-    });
-    // RECORDED only after the rows are in place.
-    expect(recorded.order.indexOf("adjustment.createMany")).toBeLessThan(
-      recorded.order.indexOf("night.updateMany"),
-    );
+    // Refuse-before-mutate: every read precedes the first write.
+    expect(recorded.order).toEqual([
+      "redemption.findUnique",
+      "night.findMany",
+      "adjustment.deleteMany",
+      "adjustment.createMany",
+    ]);
   });
 
-  it("with no promotion on the booking, writes no rows and still marks the nights RECORDED (nothing taken off)", async () => {
+  it("with no promotion on the booking, clears the booking's rows and writes none (nothing was taken off)", async () => {
     const { tx, recorded } = fakeTx({ redemption: null, nights: NIGHTS });
     await recordBookingNightAdjustments(tx, {
       bookingId: "booking-1",
@@ -238,11 +256,11 @@ describe("recordBookingNightAdjustments", () => {
       targets: [],
       writer: "test writer",
     });
+    expect(recorded.adjustmentDeleteMany).toHaveBeenCalledTimes(1);
     expect(recorded.adjustmentCreateMany).not.toHaveBeenCalled();
-    expect(recorded.nightUpdateMany).toHaveBeenCalledTimes(1);
   });
 
-  it("refuses, before any row or state write, when the rows do not reconcile to the stored allocation", async () => {
+  it("refuses, leaving no partial write, when the rows do not reconcile to the stored allocation", async () => {
     const { tx, recorded } = fakeTx({
       redemption: { ...REDEMPTION, allocations: [{ memberId: "booker", priceAdjustmentCents: -1000 }] },
       nights: NIGHTS,
@@ -255,11 +273,10 @@ describe("recordBookingNightAdjustments", () => {
         writer: "test writer",
       }),
     ).rejects.toThrow(new RegExp(NIGHT_ADJUSTMENT_INVARIANT));
-    expect(recorded.adjustmentCreateMany).not.toHaveBeenCalled();
-    expect(recorded.nightUpdateMany).not.toHaveBeenCalled();
+    nothingWritten(recorded);
   });
 
-  it("refuses targets that name a promotion the booking does not carry", async () => {
+  it("refuses targets that name a promotion the booking does not carry, writing nothing", async () => {
     const { tx, recorded } = fakeTx({ redemption: null, nights: NIGHTS });
     await expect(
       recordBookingNightAdjustments(tx, {
@@ -269,11 +286,11 @@ describe("recordBookingNightAdjustments", () => {
         writer: "test writer",
       }),
     ).rejects.toThrow(/no stored redemption/);
-    expect(recorded.nightUpdateMany).not.toHaveBeenCalled();
+    nothingWritten(recorded);
   });
 
-  it("refuses a night-scope target the guest holds no night row for", async () => {
-    const { tx, recorded } = fakeTx({ redemption: REDEMPTION, nights: NIGHTS.slice(0, 1) });
+  it("refuses a date missing from a guest that DOES hold night rows, writing nothing", async () => {
+    const { tx, recorded } = fakeTx({ redemption: REDEMPTION, nights: [NIGHTS[0], NIGHTS[2]] });
     await expect(
       recordBookingNightAdjustments(tx, {
         bookingId: "booking-1",
@@ -282,11 +299,34 @@ describe("recordBookingNightAdjustments", () => {
         writer: "test writer",
       }),
     ).rejects.toThrow(/holds no such night row/);
-    expect(recorded.adjustmentCreateMany).not.toHaveBeenCalled();
-    expect(recorded.nightUpdateMany).not.toHaveBeenCalled();
+    nothingWritten(recorded);
   });
 
-  it("refuses an undated night-scope target and a dated guest-scope target", async () => {
+  it("drops the night rows of a guest that holds NO night rows (a pre-#713 strand), warns, and records the rest", async () => {
+    // guest-a has no night rows at all; guest-b's guest-scope row is unaffected.
+    const { tx, recorded } = fakeTx({ redemption: REDEMPTION, nights: [NIGHTS[2]] });
+    loggerMocks.warn.mockClear();
+    await recordBookingNightAdjustments(tx, {
+      bookingId: "booking-1",
+      guestIds: ["guest-a", "guest-b"],
+      targets: TARGETS,
+      writer: "test writer",
+    });
+    expect(recorded.adjustmentCreateMany.mock.calls[0][0]).toEqual({ data: [ROW(null, "guest-b", -600)] });
+    expect(loggerMocks.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ bookingId: "booking-1", guestIds: ["guest-a"] }),
+      expect.stringContaining(NIGHT_ADJUSTMENT_INVARIANT),
+    );
+    // And what got written derives, honestly, as not known.
+    expect(
+      deriveNightAdjustmentState({
+        rows: [{ beneficiaryMemberId: "booker", amountCents: -600 }],
+        redemption: { priceAdjustmentCents: -1500, allocations: REDEMPTION.allocations },
+      }),
+    ).toBe("NOT_KNOWN");
+  });
+
+  it("refuses an undated night-scope target and a dated guest-scope target before any read", async () => {
     for (const target of [
       { ...TARGETS[0], stayDate: null },
       { ...TARGETS[2], stayDate: N1 },
@@ -300,7 +340,8 @@ describe("recordBookingNightAdjustments", () => {
           writer: "test writer",
         }),
       ).rejects.toThrow(new RegExp(NIGHT_ADJUSTMENT_INVARIANT));
-      expect(recorded.adjustmentDeleteMany).not.toHaveBeenCalled();
+      nothingWritten(recorded);
+      expect(recorded.redemptionFindUnique).not.toHaveBeenCalled();
     }
   });
 
@@ -314,12 +355,11 @@ describe("recordBookingNightAdjustments", () => {
         writer: "test writer",
       }),
     ).rejects.toThrow(/no booking guest id/);
-    expect(recorded.adjustmentDeleteMany).not.toHaveBeenCalled();
+    nothingWritten(recorded);
   });
 });
 
 describe("snapshot and restore across a mechanical rewrite", () => {
-  // A night-scope row rides on its night; a guest-scope row is read on its own.
   const NIGHT_ROW = {
     kind: "PROMO",
     amountCents: -500,
@@ -338,17 +378,13 @@ describe("snapshot and restore across a mechanical rewrite", () => {
     },
   ];
 
-  it("re-attaches rows by (guest, date + shift) byte for byte and restores RECORDED on the moved nights", async () => {
+  it("re-attaches rows by (guest, date + shift) byte for byte, reading before it writes", async () => {
     const before = fakeTx({
       adjustments: GUEST_ROWS,
-      nights: [
-        { id: "old-a1", bookingGuestId: "guest-a", stayDate: N1, adjustmentsState: "RECORDED", adjustments: [NIGHT_ROW] },
-        { id: "old-b1", bookingGuestId: "guest-b", stayDate: N1, adjustmentsState: "RECORDED", adjustments: [] },
-      ],
+      nights: [{ id: "old-a1", bookingGuestId: "guest-a", stayDate: N1, adjustments: [NIGHT_ROW] }],
     });
     const snapshot = await snapshotBookingNightAdjustments(before.tx, "booking-1");
     expect(snapshot.rows).toHaveLength(2);
-    expect(snapshot.recordedNights).toHaveLength(2);
 
     const after = fakeTx({
       nights: [
@@ -361,39 +397,20 @@ describe("snapshot and restore across a mechanical rewrite", () => {
       restoreBookingNightAdjustments(after.tx, { snapshot, shiftDays: 1, writer: "test shift" }),
     ).resolves.toEqual({ carried: true });
     expect(after.recorded.adjustmentCreateMany.mock.calls[0][0]).toEqual({
-      data: [
-        {
-          kind: "PROMO",
-          amountCents: -500,
-          bookingGuestNightId: "new-a2",
-          bookingGuestId: null,
-          bookingId: "booking-1",
-          promoRedemptionId: "redemption-1",
-          promoCodeId: "promo-1",
-          beneficiaryMemberId: "booker",
-        },
-        {
-          kind: "PROMO",
-          amountCents: -600,
-          bookingGuestNightId: null,
-          bookingGuestId: "guest-b",
-          bookingId: "booking-1",
-          promoRedemptionId: "redemption-1",
-          promoCodeId: "promo-1",
-          beneficiaryMemberId: "booker",
-        },
-      ],
+      data: [ROW("new-a2", null, -500), ROW(null, "guest-b", -600)],
     });
-    expect(after.recorded.nightUpdateMany).toHaveBeenCalledWith({
-      where: { id: { in: ["new-a2", "new-b2"] } },
-      data: { adjustmentsState: "RECORDED" },
-    });
+    expect(after.recorded.order).toEqual([
+      "night.findMany",
+      "guest.findMany",
+      "adjustment.deleteMany",
+      "adjustment.createMany",
+    ]);
   });
 
-  it("abandons the carry, writing nothing and marking nothing, when a recorded night no longer exists", async () => {
+  it("abandons the carry, writing nothing, when a recorded night no longer exists", async () => {
     const before = fakeTx({
       adjustments: GUEST_ROWS,
-      nights: [{ id: "old-a1", bookingGuestId: "guest-a", stayDate: N1, adjustmentsState: "RECORDED", adjustments: [NIGHT_ROW] }],
+      nights: [{ id: "old-a1", bookingGuestId: "guest-a", stayDate: N1, adjustments: [NIGHT_ROW] }],
     });
     const snapshot = await snapshotBookingNightAdjustments(before.tx, "booking-1");
     const after = fakeTx({
@@ -403,8 +420,7 @@ describe("snapshot and restore across a mechanical rewrite", () => {
     await expect(
       restoreBookingNightAdjustments(after.tx, { snapshot, writer: "test edit" }),
     ).resolves.toEqual({ carried: false });
-    expect(after.recorded.adjustmentCreateMany).not.toHaveBeenCalled();
-    expect(after.recorded.nightUpdateMany).not.toHaveBeenCalled();
+    nothingWritten(after.recorded);
   });
 
   it("is a no-op for a booking that recorded nothing", async () => {
@@ -415,6 +431,6 @@ describe("snapshot and restore across a mechanical rewrite", () => {
       restoreBookingNightAdjustments(after.tx, { snapshot, writer: "test edit" }),
     ).resolves.toEqual({ carried: true });
     expect(after.recorded.nightFindMany).not.toHaveBeenCalled();
-    expect(after.recorded.adjustmentDeleteMany).not.toHaveBeenCalled();
+    nothingWritten(after.recorded);
   });
 });

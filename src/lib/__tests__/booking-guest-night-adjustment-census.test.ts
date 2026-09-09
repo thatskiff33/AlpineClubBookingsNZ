@@ -1,35 +1,39 @@
-import { readFileSync, readdirSync } from "node:fs";
-import { join, relative } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import {
+  discoveredWriterSiteCounts,
+  relativeSource,
+  sourceFiles,
+} from "@/lib/__tests__/support/booking-guest-night-writer-scan";
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
 
 /**
  * #3276 (INV-MONEY-029): the census that keeps the night adjustment build-up
  * single-homed and every promotion writer paired with it.
  *
- * Extends the stage-1 pattern in `booking-guest-night-price-source-census.test.ts`
- * (INV-MONEY-028), which pins who may write a night row. This one pins:
+ * Extends the stage-1 census (`booking-guest-night-price-source-census.test.ts`,
+ * INV-MONEY-028), which pins who may write a night row, and reads the SAME
+ * AST discovery of night writers from the shared scanner. This one pins:
  *
  *  1. ONE WRITER. Only `src/lib/night-adjustment-write.ts` writes
- *     `BookingGuestNightAdjustment` rows or `BookingGuestNight.adjustmentsState`.
- *     Every night writer leaves the column at its default, exactly as the old
- *     colour does, so a night can become RECORDED only through the module that
- *     also puts its rows in place.
+ *     `BookingGuestNightAdjustment` rows; nothing stores a validity flag
+ *     anywhere (validity is derived — owner decision, 10 Sep 2026).
  *  2. EVERY PROMOTION WRITER IS PAIRED, in the right order. Each site that
  *     writes a redemption (`redeemPromoCode`, `replacePromoRedemptionAllocations`,
  *     `recalculateBookingPromo`, `applyPromoCodeChanges`) is followed in the
- *     same file by `recordBookingNightAdjustments`, and where the promotion is
- *     written BEFORE the night rows (the batch path, the waitlist reprice) the
- *     record comes after the last night write.
- *  3. THE MECHANICAL REWRITES CARRY ROWS FORWARD. The admin date shift and the
- *     batch path's non-engine branches snapshot before the rewrite and restore
- *     after it.
- *  4. THE WRITERS THAT LEAVE UNKNOWN ARE NAMED. Request approval (an officer's
- *     total, an even split), the officer price repair, the seeds and the nested
- *     guest-create helper (recorded by its callers) do not reach for the
- *     recorder, by design.
+ *     same file by `recordBookingNightAdjustments`, after the last night write,
+ *     and — for the waitlist reprice — outside its degrade-instead-of-rollback
+ *     path.
+ *  3. THE REDEMPTION ITSELF HAS ONE WRITER. Direct Prisma writes to
+ *     `PromoRedemption`, `PromoRedemptionAllocation` and
+ *     `PromoRedemptionGuestTarget` live in `src/lib/promo.ts` only, so a
+ *     promotion cannot be written by a path the pairing above never sees.
+ *  4. EVERY DISCOVERED NIGHT WRITER HAS DECLARED ITSELF: it is a paired
+ *     promotion writer, or it is named below with the reason it records
+ *     nothing. A new night writer fails this census until it says which.
  *
  * `npm run test:related` cannot select this file — it reads the tree from disk —
  * so it is CI-caught by design, like the stage-1 census.
@@ -37,44 +41,15 @@ import { stripComments } from "@/lib/__tests__/support/strip-comments";
 
 const REPO = process.cwd();
 const MODULE = "src/lib/night-adjustment-write.ts";
-const SKIPPED_DIRECTORIES = new Set([
-  ".artifacts",
-  ".git",
-  ".next",
-  "__tests__",
-  "coverage",
-  "migration-verification",
-  "migrations",
-  "node_modules",
-]);
-const EXECUTABLE_EXTENSION = /\.(?:[cm]?[jt]sx?)$/;
-const TEST_FILE = /(?:^|\.)(?:test|spec)\.[cm]?[jt]sx?$/;
 
-const STATE_WRITE = /\badjustmentsState\s*:/;
 const ROW_WRITE =
   /bookingGuestNightAdjustment\s*\.\s*(?:create|createMany|update|updateMany|upsert|delete|deleteMany)\b/;
 const RAW_SQL_WRITE =
-  /\b(?:INSERT\s+INTO|UPDATE|MERGE\s+INTO|DELETE\s+FROM)\b[\s\S]{0,500}["'`](?:BookingGuestNightAdjustment|adjustmentsState)["'`]/i;
-
-function sourceFiles(): string[] {
-  const files: string[] = [];
-  const walk = (directory: string) => {
-    for (const entry of readdirSync(directory, { withFileTypes: true })) {
-      const full = join(directory, entry.name);
-      if (entry.isDirectory()) {
-        if (!SKIPPED_DIRECTORIES.has(entry.name)) walk(full);
-      } else if (EXECUTABLE_EXTENSION.test(entry.name) && !TEST_FILE.test(entry.name)) {
-        files.push(full);
-      }
-    }
-  };
-  walk(REPO);
-  return files;
-}
-
-function rel(file: string): string {
-  return relative(REPO, file).split("\\").join("/");
-}
+  /\b(?:INSERT\s+INTO|UPDATE|MERGE\s+INTO|DELETE\s+FROM)\b[\s\S]{0,500}["'`]BookingGuestNightAdjustment["'`]/i;
+const REDEMPTION_WRITE =
+  /promoRedemption(?:Allocation|GuestTarget)?\s*\.\s*(?:create|createMany|update|updateMany|upsert|delete|deleteMany)\b/;
+const REDEMPTION_RAW_SQL_WRITE =
+  /\b(?:INSERT\s+INTO|UPDATE|MERGE\s+INTO|DELETE\s+FROM)\b[\s\S]{0,500}["'`]PromoRedemption(?:Allocation|GuestTarget)?["'`]/i;
 
 function read(file: string): string {
   return stripComments(readFileSync(join(REPO, file), "utf8"));
@@ -82,8 +57,8 @@ function read(file: string): string {
 
 /**
  * Every occurrence of `writer` in `code` is followed, before the next
- * occurrence of `writer`, by `record`. Exported-for-test shape: the mutant
- * proof below feeds it a site with the pairing dropped.
+ * occurrence of `writer`, by `record`. The mutant proof below feeds it a site
+ * with the pairing dropped.
  */
 export function everyWriteIsFollowedBy(code: string, writer: RegExp, record: RegExp): boolean {
   const writerGlobal = new RegExp(writer.source, "g");
@@ -122,15 +97,16 @@ const PROMO_WRITERS: Record<string, (code: string) => void> = {
   },
   "src/app/api/bookings/[id]/guests/route.ts": (code) => {
     expect(everyWriteIsFollowedBy(code, /\bawait replacePromoRedemptionAllocations\(/, RECORD)).toBe(true);
-    // The nested night write precedes the record.
+    // The nested night write precedes the record; the targets come off the
+    // bundled discount; a PARKED add records nothing.
     expect(precedes(code, /nights:\s*\{\s*create:/, RECORD)).toBe(true);
-    // A PARKED add records nothing.
+    expect(code).toMatch(/adjustmentTargets = promoResult\.adjustmentTargets/);
     expect(code).toMatch(/if \(!parked\) \{\s*await recordBookingNightAdjustments\(/);
   },
   "src/lib/booking-date-modification-service.ts": (code) => {
     expect(everyWriteIsFollowedBy(code, /\bawait replacePromoRedemptionAllocations\(/, RECORD)).toBe(true);
-    // The date change's night rewrite precedes its record, and a parked one skips it.
     expect(precedes(code, /bookingGuestNight\.createMany\(/, RECORD)).toBe(true);
+    expect(code).toMatch(/adjustmentTargets = promoResult\.adjustmentTargets/);
     expect(code).toMatch(/if \(!parked\) \{\s*await recordBookingNightAdjustments\(/);
     // The admin shift snapshots before translating the rows and restores after,
     // shifted by the same delta.
@@ -140,9 +116,9 @@ const PROMO_WRITERS: Record<string, (code: string) => void> = {
   },
   "src/lib/booking-guest-removal-service.ts": (code) => {
     expect(everyWriteIsFollowedBy(code, /\bpromoResult = await recalculateBookingPromo\(/, RECORD)).toBe(true);
-    // recalculateBookingPromo itself hands the build-up back to its callers.
-    expect(code).toMatch(/adjustmentTargets = requiredAdjustmentTargets\(application\)/);
-    expect(code).toMatch(/return \{\s*newDiscountCents,[\s\S]{0,300}adjustmentTargets,\s*discount,\s*\}/);
+    // recalculateBookingPromo hands the bundled build-up back to its callers.
+    expect(code).toMatch(/adjustmentTargets = discount\.adjustmentTargets/);
+    expect(code).toMatch(/return \{\s*newDiscountCents,[\s\S]{0,300}adjustmentTargets,\s*\}/);
   },
   "src/lib/booking-review-price-rebase.ts": (code) => {
     // Settling a review re-runs the promotion over the strands' stored nights;
@@ -151,20 +127,26 @@ const PROMO_WRITERS: Record<string, (code: string) => void> = {
     expect(precedes(code, RECORD, /store\.booking\.updateMany\(/)).toBe(true);
   },
   "src/lib/waitlist.ts": (code) => {
-    // Promotion first, then nights, then the record, then the booking totals.
+    // Promotion first, then nights, then the totals — all inside the
+    // degrade-to-snapshot try — and the record AFTER the catch, so a refusal
+    // fails the sweep transaction instead of committing a half-reprice (C1).
     expect(precedes(code, /\bawait recalculateBookingPromo\(/, /bookingGuestNight\.createMany\(/)).toBe(true);
     expect(precedes(code, /bookingGuestNight\.createMany\(/, RECORD)).toBe(true);
-    expect(precedes(code, RECORD, /await tx\.booking\.update\(\{\s*where: \{ id: candidate\.id \}/)).toBe(true);
-    // And the pure reconciliation runs before the first night write, because
-    // this function degrades instead of rolling back.
-    expect(precedes(code, /\breconcilePromoAdjustmentTargets\(/, /bookingGuestNight\.deleteMany\(/)).toBe(true);
+    expect(
+      precedes(
+        code,
+        /\} catch \(err\) \{\s*logger\.error\(\s*\{ err, bookingId: candidate\.id \},\s*"Failed to reprice waitlisted booking/,
+        RECORD,
+      ),
+    ).toBe(true);
+    expect(code).toMatch(/targets: repriced\.adjustmentTargets,/);
   },
   "src/lib/booking-modify-plan.ts": (code) => {
-    // applyPromoCodeChanges reports the build-up on every branch: null when
-    // the engine did not run, the targets when it did.
-    expect(code).toMatch(/promoEngineRan: false,\s*adjustmentTargets: null,/);
+    // applyPromoCodeChanges reports the build-up only on the arm where the
+    // engine ran; the union on PromoChangeResult makes the other arm carry none.
     expect(code).toMatch(/promoEngineRan: true,\s*adjustmentTargets,/);
-    expect(code.match(/adjustmentTargets = requiredAdjustmentTargets\(application\)/g)).toHaveLength(2);
+    expect(code).toMatch(/promoEngineRan: false,\s*\};/);
+    expect(code.match(/adjustmentTargets = promoResult\.adjustmentTargets/g)).toHaveLength(2);
   },
   "src/lib/booking-batch-modification-service.ts": (code) => {
     // THE ORDERING HAZARD: the promotion is written before the night rows are
@@ -175,15 +157,23 @@ const PROMO_WRITERS: Record<string, (code: string) => void> = {
     // Non-engine priced branches carry the stored rows across.
     expect(precedes(code, SNAPSHOT, /\bawait applyGuestChanges\(/)).toBe(true);
     expect(precedes(code, /\bawait applyGuestChanges\(/, RESTORE)).toBe(true);
-    expect(code).toMatch(/adjustmentTargets: null,\s*\}\s*:\s*await applyPromoCodeChanges\(/);
+    expect(code).toMatch(/promoEngineRan: false as const,\s*\}\s*:\s*await applyPromoCodeChanges\(/);
   },
 };
 
-/** Night writers that leave adjustmentsState UNKNOWN by design. */
-const UNKNOWN_LEAVING_NIGHT_WRITERS = new Map<string, string>([
+/**
+ * Night writers that record no build-up, by design, and why. A file that the
+ * shared scanner discovers as a night writer must appear here or in
+ * `PROMO_WRITERS`; a reader derives these bookings' build-up from their rows
+ * (absent rows on a promoted booking read as not known).
+ */
+const NIGHT_WRITERS_WITHOUT_PROMOTION = new Map<string, string>([
   ["src/lib/booking-request.ts", "request conversion: an officer's total or an even split, no promotion"],
   ["src/lib/booking-request-shared.ts", "approval night vector: SOLD or EVEN_SPLIT, no promotion"],
-  ["src/lib/stored-night-price-repair-store.ts", "officer-priced rows are not known to any promotion engine run"],
+  [
+    "src/lib/stored-night-price-repair-store.ts",
+    "an officer prices a night; the settle re-base that follows records the engine's figure over it",
+  ],
   ["src/lib/booking-create-guests.ts", "nested create helper; its callers in booking-create.ts record"],
   ["e2e/setup/seed-second-lodge.ts", "test seed"],
   ["prisma/demo-seed.ts", "demo seed"],
@@ -200,23 +190,25 @@ const MODULE_IMPORTERS = new Set([
 const SOURCE = sourceFiles();
 
 describe("INV-MONEY-029 night adjustment build-up census", () => {
-  it("has exactly one writer of BookingGuestNightAdjustment rows and of adjustmentsState", () => {
+  it("has exactly one writer of BookingGuestNightAdjustment rows, and no stored validity flag anywhere", () => {
     const offenders: string[] = [];
     for (const file of SOURCE) {
-      const relative = rel(file);
+      const relative = relativeSource(file);
       if (relative === MODULE) continue;
       const code = stripComments(readFileSync(file, "utf8"));
-      if (STATE_WRITE.test(code) || ROW_WRITE.test(code) || RAW_SQL_WRITE.test(code)) {
-        offenders.push(relative);
-      }
+      if (ROW_WRITE.test(code) || RAW_SQL_WRITE.test(code)) offenders.push(relative);
     }
     expect(
       offenders,
-      `INV-MONEY-029: only ${MODULE} may write adjustment rows or adjustmentsState; a night becomes RECORDED only once its rows are in place.`,
+      `INV-MONEY-029: only ${MODULE} may write adjustment rows.`,
     ).toEqual([]);
+    // Validity is derived by summing rows (owner decision, 10 Sep 2026). A flag
+    // column would be a second statement of that fact that a draining colour or
+    // a rollback could leave false; the schema must not grow one back.
+    expect(readFileSync(join(REPO, "prisma/schema.prisma"), "utf8")).not.toMatch(/adjustmentsState/);
     const writerModule = read(MODULE);
-    expect(writerModule).toMatch(/adjustmentsState: "RECORDED"/);
-    expect(writerModule).not.toMatch(/adjustmentsState: "UNKNOWN"/);
+    expect(writerModule).toMatch(/export function deriveNightAdjustmentState\(/);
+    expect(writerModule).not.toMatch(/adjustmentsState/);
   });
 
   it("pairs every promotion writer with the recorder, in the order the night rows allow", () => {
@@ -237,7 +229,7 @@ describe("INV-MONEY-029 night adjustment build-up census", () => {
     const WRITER_CALL =
       /\b(?:await redeemPromoCode|await replacePromoRedemptionAllocations|await recalculateBookingPromo|await applyPromoCodeChanges)\(/;
     for (const file of SOURCE) {
-      const relative = rel(file);
+      const relative = relativeSource(file);
       if (relative === "src/lib/promo.ts") continue;
       if (WRITER_CALL.test(stripComments(readFileSync(file, "utf8")))) writers.add(relative);
     }
@@ -247,17 +239,51 @@ describe("INV-MONEY-029 night adjustment build-up census", () => {
     ).toEqual(Object.keys(PROMO_WRITERS).sort());
   });
 
-  it("names the night writers that leave UNKNOWN, and none of them records", () => {
-    for (const [file, reason] of UNKNOWN_LEAVING_NIGHT_WRITERS) {
-      const code = read(file);
-      expect(code, `INV-MONEY-029: ${file} (${reason}) must not record a build-up`).not.toMatch(RECORD);
+  it("keeps every direct PromoRedemption / allocation / guest-target write inside src/lib/promo.ts", () => {
+    // A seed is not a runtime path: no member is charged by it and no recorder
+    // can pair with it. Named so a second seed, or a runtime file, still fails.
+    const SEEDS = new Set(["prisma/demo-seed.ts"]);
+    const offenders: string[] = [];
+    for (const file of SOURCE) {
+      const relative = relativeSource(file);
+      if (relative === "src/lib/promo.ts" || SEEDS.has(relative)) continue;
+      const code = stripComments(readFileSync(file, "utf8"));
+      if (REDEMPTION_WRITE.test(code) || REDEMPTION_RAW_SQL_WRITE.test(code)) offenders.push(relative);
     }
+    expect(
+      offenders,
+      "INV-MONEY-029: a promotion written outside promo.ts bypasses the four helpers the pairing census watches.",
+    ).toEqual([]);
+    for (const seed of SEEDS) {
+      expect(read(seed), `${seed} is listed as a seed that writes a promotion; it no longer does`).toMatch(REDEMPTION_WRITE);
+    }
+    // The control: promo.ts really is where those writes live.
+    expect(read("src/lib/promo.ts")).toMatch(REDEMPTION_WRITE);
+  });
+
+  it("requires every discovered night writer to say how it records — paired, or exempt with a reason", () => {
+    const discovered = [...discoveredWriterSiteCounts().keys()].sort();
+    const declared = new Set([...Object.keys(PROMO_WRITERS), ...NIGHT_WRITERS_WITHOUT_PROMOTION.keys()]);
+    const undeclared = discovered.filter((file) => !declared.has(file));
+    expect(
+      undeclared,
+      "INV-MONEY-029: a night writer must either pair with recordBookingNightAdjustments (PROMO_WRITERS) or be listed in NIGHT_WRITERS_WITHOUT_PROMOTION with the reason it records nothing.",
+    ).toEqual([]);
+    // Nothing is both, and every exemption still names a real file that really
+    // does not record.
+    for (const [file, reason] of NIGHT_WRITERS_WITHOUT_PROMOTION) {
+      expect(file in PROMO_WRITERS, `${file} cannot be both paired and exempt`).toBe(false);
+      expect(existsSync(join(REPO, file)), `${file} (${reason}) is not on disk`).toBe(true);
+      expect(read(file), `INV-MONEY-029: ${file} (${reason}) must not record a build-up`).not.toMatch(RECORD);
+    }
+    // The control for the discovery itself: the shared scanner does find writers.
+    expect(discovered.length).toBeGreaterThanOrEqual(8);
   });
 
   it("allows the writer module to be imported only by the paired writers and the two type-only carriers", () => {
     const importers: string[] = [];
     for (const file of SOURCE) {
-      const relative = rel(file);
+      const relative = relativeSource(file);
       if (relative === MODULE) continue;
       if (/from "@\/lib\/night-adjustment-write"/.test(readFileSync(file, "utf8"))) importers.push(relative);
     }

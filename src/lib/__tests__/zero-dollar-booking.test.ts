@@ -175,8 +175,7 @@ vi.mock("@/lib/capacity", () => ({
 vi.mock("@/lib/promo", () => ({
   validatePromoCodeRules: vi.fn(),
   validateAndCalculatePromoDiscount: vi.fn().mockResolvedValue({
-    adjustmentTargets: [],
-    discount: { discountCents: 0, priceAdjustmentCents: 0, freeNightsUsed: 0, eligibleGuestCount: 0, allocations: [] },
+    discount: { adjustmentTargets: [], discountCents: 0, priceAdjustmentCents: 0, freeNightsUsed: 0, eligibleGuestCount: 0, allocations: [] },
     beneficiaryMemberIds: [],
   }),
   shouldPersistPromoRedemption: vi.fn().mockReturnValue(true),
