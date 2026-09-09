@@ -76,6 +76,12 @@ export function formatFinanceRatio(value: number): string {
  * currency SYMBOL and where it sits come from the display formatter's parts, so
  * a locale that writes `0 €` gets `10k €` rather than a `$` this codebase used
  * to spell by hand.
+ *
+ * Stated limit, for adopters: the NUMBER is not localised. `toFixed(1)` and the
+ * Latin `k`/`m` suffixes are used whatever the locale, so a de-DE club's axis
+ * reads `1.2m €` beside tooltips (`formatDollarsDisplay`) reading
+ * `1.234.567 €`. Deliberate: byte-identical for the default configuration,
+ * and a localised compact number is a visible change no one has asked for.
  */
 export function formatCompactDollarsDisplay(cents: number): string {
   const dollars = cents / 100;

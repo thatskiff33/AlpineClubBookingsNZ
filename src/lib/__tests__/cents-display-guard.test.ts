@@ -60,6 +60,7 @@ type CentsDisplayExemption = { files: string[]; reason: string };
 async function loadEslintConfig(): Promise<{
   blocks: ConfigBlock[];
   arm: string[];
+  currencyArm: string[];
   exemptions: CentsDisplayExemption[];
   exemptFiles: Set<string>;
 }> {
@@ -67,6 +68,7 @@ async function loadEslintConfig(): Promise<{
   const configModule: {
     default: unknown;
     CENTS_DISPLAY_GUARD_ARM?: unknown;
+    CURRENCY_LOCALE_GUARD_ARM?: unknown;
     CENTS_DISPLAY_EXEMPTIONS?: unknown;
   } = await import(
     pathToFileURL(path.join(REPO_ROOT, "eslint.config.mjs")).href
@@ -78,6 +80,7 @@ async function loadEslintConfig(): Promise<{
   return {
     blocks: configModule.default as ConfigBlock[],
     arm: (configModule.CENTS_DISPLAY_GUARD_ARM ?? []) as string[],
+    currencyArm: (configModule.CURRENCY_LOCALE_GUARD_ARM ?? []) as string[],
     exemptions,
     exemptFiles: new Set(exemptions.flatMap((entry) => entry.files)),
   };
@@ -177,8 +180,18 @@ describe("cents-display guard: catches the shape", () => {
   });
 });
 
-describe("currency-locale guard (#3325, INV-CONFIG-001): a literal locale on a currency formatter", () => {
-  const LOCALE_RULE_ID = "INV-CONFIG-001";
+// Two arms (#3325, INV-CONFIG-001): a string-literal LOCALE on a currency
+// formatter, and a string-literal CURRENCY code on any Intl.NumberFormat, both
+// with or without `new`. Shapes DELIBERATELY NOT covered, so the gap is stated
+// rather than implied: a template-literal or array locale, an aliased
+// constructor (`const F = Intl.NumberFormat`), `Intl["NumberFormat"]`, and
+// `Number.prototype.toLocaleString("en-NZ", { style: "currency" })`. None of
+// those has ever been written in this tree; the guard polices the one shape
+// that was, three times, and the whole-tree lint run is what shows it silent.
+describe("currency-locale guard (#3325, INV-CONFIG-001): literal locale or currency code on Intl.NumberFormat", () => {
+  const RULE_PREFIX = "INV-CONFIG-001";
+  const LOCALE_TEXT = "literal locale";
+  const CURRENCY_TEXT = "literal currency code";
   const hitsIn = (results: Awaited<ReturnType<ESLint["lintText"]>>) =>
     results
       .flatMap((result) => result.messages)
@@ -186,50 +199,117 @@ describe("currency-locale guard (#3325, INV-CONFIG-001): a literal locale on a c
         (message) =>
           message.ruleId === "no-restricted-syntax" &&
           typeof message.message === "string" &&
-          message.message.startsWith(LOCALE_RULE_ID),
+          message.message.startsWith(RULE_PREFIX),
       );
+  const lintAtOrdinary = (code: string) =>
+    eslint.lintText(code, { filePath: path.join(REPO_ROOT, ORDINARY_FILE) });
 
-  it("fires on new Intl.NumberFormat(\"en-NZ\", { style: \"currency\" }) at an ordinary src file", async () => {
-    const code =
-      'export const dollars = (cents: number) => new Intl.NumberFormat("en-NZ", { style: "currency", currency: "NZD" }).format(cents / 100);\n';
-    const results = await eslint.lintText(code, {
-      filePath: path.join(REPO_ROOT, ORDINARY_FILE),
-    });
-    const hits = hitsIn(results);
+  it("locale arm: fires on new Intl.NumberFormat(\"en-NZ\", { style: \"currency\" }) with the configured currency", async () => {
+    const hits = hitsIn(
+      await lintAtOrdinary(
+        'import { APP_CURRENCY } from "@/config/operational";\nexport const f = new Intl.NumberFormat("en-NZ", { style: "currency", currency: APP_CURRENCY });\n',
+      ),
+    );
     expect(hits).toHaveLength(1);
     expect(hits[0]?.severity).toBe(2);
+    expect(hits[0]?.message).toContain(LOCALE_TEXT);
     expect(hits[0]?.message).toContain("formatCents");
     expect(hits[0]?.message).toContain("finance-format");
   });
 
-  it("does not fire when the locale is the configured APP_LOCALE", async () => {
-    const code =
-      'import { APP_CURRENCY, APP_LOCALE } from "@/config/operational";\nexport const f = new Intl.NumberFormat(APP_LOCALE, { style: "currency", currency: APP_CURRENCY });\n';
-    const results = await eslint.lintText(code, {
-      filePath: path.join(REPO_ROOT, ORDINARY_FILE),
-    });
-    expect(hitsIn(results)).toEqual([]);
+  it("locale arm: fires without `new` as well", async () => {
+    const hits = hitsIn(
+      await lintAtOrdinary(
+        'import { APP_CURRENCY } from "@/config/operational";\nexport const f = Intl.NumberFormat("en-NZ", { style: "currency", currency: APP_CURRENCY });\n',
+      ),
+    );
+    expect(hits).toHaveLength(1);
+    expect(hits[0]?.message).toContain(LOCALE_TEXT);
   });
 
-  it("does not fire on a literal-locale formatter that is not a currency one", async () => {
-    const code =
-      'export const f = new Intl.NumberFormat("en-NZ", { maximumFractionDigits: 0 });\n';
-    const results = await eslint.lintText(code, {
-      filePath: path.join(REPO_ROOT, ORDINARY_FILE),
-    });
-    expect(hitsIn(results)).toEqual([]);
+  it("locale arm: does not fire on a literal-locale formatter that is not a currency one", async () => {
+    expect(
+      hitsIn(await lintAtOrdinary('export const f = new Intl.NumberFormat("en-NZ", { maximumFractionDigits: 0 });\n')),
+    ).toEqual([]);
+  });
+
+  it("currency arm: fires on a literal currency code even when the locale is the configured APP_LOCALE", async () => {
+    const hits = hitsIn(
+      await lintAtOrdinary(
+        'import { APP_LOCALE } from "@/config/operational";\nexport const f = new Intl.NumberFormat(APP_LOCALE, { style: "currency", currency: "NZD" });\n',
+      ),
+    );
+    expect(hits).toHaveLength(1);
+    expect(hits[0]?.severity).toBe(2);
+    expect(hits[0]?.message).toContain(CURRENCY_TEXT);
+    expect(hits[0]?.message).toContain("APP_CURRENCY");
+  });
+
+  it("currency arm: fires without `new` as well", async () => {
+    const hits = hitsIn(
+      await lintAtOrdinary(
+        'import { APP_LOCALE } from "@/config/operational";\nexport const f = Intl.NumberFormat(APP_LOCALE, { style: "currency", currency: "NZD" });\n',
+      ),
+    );
+    expect(hits).toHaveLength(1);
+    expect(hits[0]?.message).toContain(CURRENCY_TEXT);
+  });
+
+  it("currency arm: does not fire when the currency is a variable (a Xero invoice's own currency)", async () => {
+    expect(
+      hitsIn(
+        await lintAtOrdinary(
+          'import { APP_LOCALE } from "@/config/operational";\nexport const f = (code: string) => new Intl.NumberFormat(APP_LOCALE, { style: "currency", currency: code });\n',
+        ),
+      ),
+    ).toEqual([]);
+  });
+
+  it("both arms: a literal locale AND a literal currency report once each", async () => {
+    const hits = hitsIn(
+      await lintAtOrdinary(
+        'export const f = new Intl.NumberFormat("en-NZ", { style: "currency", currency: "NZD" });\n',
+      ),
+    );
+    expect(hits.map((hit) => hit.message.includes(LOCALE_TEXT) ? "locale" : hit.message.includes(CURRENCY_TEXT) ? "currency" : "?").sort()).toEqual(["currency", "locale"]);
+  });
+
+  it("neither arm fires on the two homes' own shape: APP_LOCALE and APP_CURRENCY", async () => {
+    expect(
+      hitsIn(
+        await lintAtOrdinary(
+          'import { APP_CURRENCY, APP_LOCALE } from "@/config/operational";\nexport const f = new Intl.NumberFormat(APP_LOCALE, { style: "currency", currency: APP_CURRENCY });\n',
+        ),
+      ),
+    ).toEqual([]);
   });
 
   it("is NOT lifted at a file on the toFixed exemption list — that list excuses an input's plain value, never a hard-coded locale", async () => {
     const { exemptFiles } = await loadEslintConfig();
     const [exempted] = Array.from(exemptFiles).filter((file) => file !== "src/lib/utils.ts");
     expect(exempted).toBeDefined();
-    const code =
-      'export const dollars = (cents: number) => new Intl.NumberFormat("en-NZ", { style: "currency", currency: "NZD" }).format(cents / 100);\n';
-    const results = await eslint.lintText(code, {
-      filePath: path.join(REPO_ROOT, exempted as string),
-    });
+    const results = await eslint.lintText(
+      'import { APP_CURRENCY } from "@/config/operational";\nexport const f = new Intl.NumberFormat("en-NZ", { style: "currency", currency: APP_CURRENCY });\n',
+      { filePath: path.join(REPO_ROOT, exempted as string) },
+    );
     expect(hitsIn(results)).toHaveLength(1);
+  });
+
+  // The structural mirror: the config's exported arm is what the resolved rule
+  // must carry, at an ordinary file and at every toFixed-exempted file alike.
+  // A selector edited in the config but not here, or a block that quietly
+  // lifted the group, fails this rather than passing the fixtures above
+  // vacuously.
+  it("resolves every CURRENCY_LOCALE_GUARD_ARM selector at an ordinary file and at every exempted file", async () => {
+    const { currencyArm, exemptFiles } = await loadEslintConfig();
+    expect(currencyArm.length).toBeGreaterThan(0);
+    for (const file of [ORDINARY_FILE, ...exemptFiles]) {
+      const resolved = await resolveRestrictedSyntax(eslint, REPO_ROOT, file);
+      expect(resolved.severity).toBe(2);
+      for (const selector of currencyArm) {
+        expect(resolved.selectors, `${file} must carry ${selector}`).toContain(selector);
+      }
+    }
   });
 });
 
