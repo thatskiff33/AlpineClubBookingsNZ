@@ -29,7 +29,7 @@ The recurring shapes, each costing a line or two of code and a sentence:
   amount — a money path has no default that is not invented money.
 
 file: src/app/api/bookings/[id]/guests/route.ts
-lines: 1463
+lines: 1467
 reason: the largest entry, and the only structural one. The created
   `BookingGuest`, the normalized input it came from and the breakdown row that
   priced it are now carried together through one pass, so the promo-allocation
@@ -62,7 +62,7 @@ reason: the expanded event's bookings table moves into its own local component
   answer, and its docblock is the rest of the addition.
 
 file: src/app/api/promo-codes/validate/route.ts
-lines: 391
+lines: 395
 reason: fourteen lines. The promo guests are walked over the guests the pricing
   pass was GIVEN, each paired with the row that priced it, and a missing row is
   refused rather than read past. The reasoning is the quote-versus-save
@@ -70,7 +70,7 @@ reason: fourteen lines. The promo guests are walked over the guests the pricing
   saying beside a #3031 refusal on a preview path.
 
 file: src/app/api/bookings/[id]/modify-quote/route.ts
-lines: 2333
+lines: 2337
 reason: twelve lines. The added guests' resolved stay ranges are read once and
   refused when absent. The positional join was already documented as sound by
   construction directly above; the refusal is what happens when the type cannot
@@ -171,3 +171,13 @@ file: src/app/api/admin/bookings/search/route.ts
 lines: 260
 reason: two lines. The booking-reference pattern's mandatory capture is read out
   of the destructure, so its presence is the same condition as the match.
+
+## Re-measured after the epic's fourth `main` sync
+
+Three of the numbers below moved, and none because this stage changed. Merging the
+epic's sync brought #3219's final-price extraction, which added a line to each of
+these three route handlers, so each is four lines longer than this stage left it:
+`route.ts` 1467, `route.ts` 395, `route.ts` 2337.
+Measured off the merged tree rather than added up. `3219-review-settlement-reprices-booking.md`
+names them too and needs no change: it merged to `main`, so it is part of the base
+this gate measures against and is inert.
