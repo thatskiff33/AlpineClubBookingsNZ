@@ -1,6 +1,10 @@
 import type { Prisma } from "@prisma/client";
 
-import { addDaysDateOnly, formatDateOnly } from "@/lib/date-only";
+import {
+  addCalendarDays,
+  calendarDateOfDateOnlyInstant,
+  dateOnlyInstantOf,
+} from "@/lib/club-time";
 import logger from "@/lib/logger";
 
 /**
@@ -68,8 +72,14 @@ function refuse(message: string): never {
   throw new Error(`${NIGHT_ADJUSTMENT_INVARIANT}: ${message}`);
 }
 
+/**
+ * A night is matched by GUEST and CALENDAR DAY. `stayDate` is a `@db.Date`
+ * value — a calendar day encoded at UTC midnight — so it is decoded through the
+ * club-time kernel (INV-CONFIG-002, INV-DATE-019), never projected through a
+ * zone and never formatted by hand.
+ */
 function nightKey(bookingGuestId: string, stayDate: Date): string {
-  return `${bookingGuestId}|${formatDateOnly(stayDate)}`;
+  return `${bookingGuestId}|${calendarDateOfDateOnlyInstant(stayDate)}`;
 }
 
 /**
@@ -293,7 +303,7 @@ export async function recordBookingNightAdjustments(
       const bookingGuestNightId = nightIdByKey.get(nightKey(target.bookingGuestId, target.stayDate!));
       if (!bookingGuestNightId) {
         refuse(
-          `${writer}: the engine attributed the night of ${formatDateOnly(target.stayDate!)} for guest ${target.bookingGuestId}, but that guest holds no such night row`,
+          `${writer}: the engine attributed the night of ${calendarDateOfDateOnlyInstant(target.stayDate!)} for guest ${target.bookingGuestId}, but that guest holds no such night row`,
         );
       }
       rows.push({ ...base, bookingGuestNightId, bookingGuestId: null });
@@ -404,8 +414,11 @@ export async function restoreBookingNightAdjustments(
   const { snapshot, writer } = params;
   const shiftDays = params.shiftDays ?? 0;
   if (snapshot.rows.length === 0) return { carried: true };
+  // Whole calendar days through the kernel: decode the stored day, add, re-encode.
   const shifted = (stayDate: Date) =>
-    shiftDays === 0 ? stayDate : addDaysDateOnly(stayDate, shiftDays);
+    shiftDays === 0
+      ? stayDate
+      : dateOnlyInstantOf(addCalendarDays(calendarDateOfDateOnlyInstant(stayDate), shiftDays));
 
   const [nights, guests] = await Promise.all([
     tx.bookingGuestNight.findMany({
@@ -445,7 +458,7 @@ export async function restoreBookingNightAdjustments(
       return abandonCarry(
         writer,
         snapshot.bookingId,
-        `guest ${row.bookingGuestId} no longer holds the night of ${formatDateOnly(target)}`,
+        `guest ${row.bookingGuestId} no longer holds the night of ${calendarDateOfDateOnlyInstant(target)}`,
       );
     }
     rows.push({ ...base, bookingGuestNightId, bookingGuestId: null });
