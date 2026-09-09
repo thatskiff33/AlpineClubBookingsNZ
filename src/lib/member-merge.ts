@@ -1117,8 +1117,11 @@ const GENERIC_KEYED_RESOLVERS: readonly {
     // #3276 (INV-MONEY-029): a loser's per-night/per-guest adjustment rows
     // decompose that loser's allocation on the same redemption. When the
     // allocation is dropped because the master already holds one, its rows
-    // go with it in this same step; otherwise the generic move re-points them
-    // to the master alongside the allocation, and the two keep reconciling.
+    // go with it in this same step, so every surviving allocation still
+    // matches its rows PER BENEFICIARY; the redemption total still carries
+    // the dropped share, so that booking derives as not known until the next
+    // engine run rewrites it. Otherwise the generic move re-points the rows to
+    // the master alongside the allocation.
     dependents: [
       {
         delegate: "bookingGuestNightAdjustment",
@@ -1143,7 +1146,7 @@ const GENERIC_KEYED_RESOLVERS: readonly {
  */
 const MONEY_ROSTER_DROP_NOTES: Record<string, string> = {
   "PromoRedemptionAllocation.member":
-    "duplicate promo redemption allocation row(s) will be dropped (the master already holds the same allocation) — the dropped rows' promo money history is removed, together with the per-night adjustment rows that decomposed them (INV-MONEY-029), so the master's allocation and its own rows keep reconciling.",
+    "duplicate promo redemption allocation row(s) will be dropped (the master already holds the same allocation) — the dropped rows' promo money history is removed, together with the per-night adjustment rows that decomposed them (INV-MONEY-029); the master's own allocation still matches its rows, and the booking's build-up reads as not known until its promotion is next recomputed.",
   "GroupBookingJoin.joinerMember":
     "duplicate group-booking join row(s) will be dropped (both members joined the same group booking) — the dropped rows leave that group's roster.",
 };

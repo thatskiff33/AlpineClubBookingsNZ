@@ -4,10 +4,12 @@ import { addDaysDateOnly, formatDateOnly } from "@/lib/date-only";
 import logger from "@/lib/logger";
 
 /**
- * #3276 (stage 2 of programme #3272): THE ONE WRITER of `BookingGuestNightAdjustment`
- * rows, and the one home of the rule a reader uses to decide whether a
- * booking's recorded build-up can be trusted (`deriveNightAdjustmentState`).
- * `booking-guest-night-adjustment-census.test.ts` holds both.
+ * #3276 (stage 2 of programme #3272): THE ONE WRITER OF AN AMOUNT into
+ * `BookingGuestNightAdjustment` — a member merge (`member-merge.ts`) moves or
+ * deletes rows and never invents one — and the one home of the rule a reader
+ * uses to decide whether a booking's recorded build-up can be trusted
+ * (`deriveNightAdjustmentState`). `booking-guest-night-adjustment-census.test.ts`
+ * holds both.
  *
  * The rule itself — the grain a row attaches at, the signed integer-cent amount
  * with NULL meaning not known, the reconciliation to the recorded promo totals,

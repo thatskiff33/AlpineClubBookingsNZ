@@ -314,9 +314,10 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   people. **The identity:** the rows of one redemption sum, per beneficiary, to
   that member's `PromoRedemptionAllocation.priceAdjustmentCents` (an absent
   allocation row means the member received nothing, per `INV-MONEY-005`) and,
-  overall, to `PromoRedemption.priceAdjustmentCents`. The one writer,
-  `recordBookingNightAdjustments` in `night-adjustment-write.ts`, enforces it
-  at write time and REFUSES BEFORE IT MUTATES — every read and every check
+  overall, to `PromoRedemption.priceAdjustmentCents`. The one writer of an
+  AMOUNT, `recordBookingNightAdjustments` in `night-adjustment-write.ts`
+  (a member merge only moves or deletes rows and never invents one), enforces
+  it at write time and REFUSES BEFORE IT MUTATES — every read and every check
   precedes its first write, so a refusal leaves the transaction as it found it
   and the edit rolls back; the waitlist reprice, whose own catch degrades to
   the stored snapshot instead of rolling back, therefore calls the recorder
@@ -343,8 +344,11 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   carries the recorded rows across by guest and stay date byte for byte, and
   where it cannot, leaves the booking's rows absent rather than guess. A member
   merge that drops a duplicate's colliding allocation deletes that duplicate's
-  rows on the same redemption in the same step, so the survivor's allocation
-  and rows keep reconciling. **Account credit is not in this table**: it has
+  rows on the same redemption in the same step, so each surviving allocation
+  still matches its rows per beneficiary — but the redemption total still
+  carries the dropped share, so that booking derives as not known until the
+  next engine run rewrites it, which is the honest answer. **Account credit is
+  not in this table**: it has
   one home, the `MemberCredit` ledger entry with its booking link, and is
   composed from there, never split across nights. No reader changes and no
   figure a member sees changes in this stage (D3), pinned by

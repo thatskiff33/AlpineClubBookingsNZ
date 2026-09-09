@@ -1583,9 +1583,8 @@ describe("recording per-night amounts while settling (#3191)", () => {
       recordedNightPrices: null,
     });
 
-    // #3276: the re-base that follows records the promotion build-up and flips
-    // `adjustmentsState`; that is the ONE in-place night write this closure may
-    // make, and it carries no price. No call here may write priceCents.
+    // #3276: the re-base that follows records the promotion build-up as
+    // adjustment rows, not as a night write. No call here may write priceCents.
     expect(
       mocks.bookingGuestNightUpdateMany.mock.calls.filter(
         ([args]) => "priceCents" in ((args as { data?: object }).data ?? {}),
@@ -2039,9 +2038,8 @@ describe("re-basing the booking's headline totals while settling (#3219)", () =>
     });
 
     // Nothing was priced - there was no strand left to price.
-    // #3276: the re-base that follows records the promotion build-up and flips
-    // `adjustmentsState`; that is the ONE in-place night write this closure may
-    // make, and it carries no price. No call here may write priceCents.
+    // #3276: the re-base that follows records the promotion build-up as
+    // adjustment rows, not as a night write. No call here may write priceCents.
     expect(
       mocks.bookingGuestNightUpdateMany.mock.calls.filter(
         ([args]) => "priceCents" in ((args as { data?: object }).data ?? {}),

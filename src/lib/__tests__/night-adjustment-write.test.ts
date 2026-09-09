@@ -218,6 +218,19 @@ describe("deriveNightAdjustmentState: validity is derived from the rows, never s
     ).toBe("NOT_KNOWN");
   });
 
+  it("after a merge dropped a duplicate's allocation, the survivor's rows match per beneficiary but the redemption total still carries the dropped share: NOT_KNOWN", () => {
+    // Two beneficiaries on one redemption; the merge dropped 'dup' and its rows.
+    expect(
+      deriveNightAdjustmentState({
+        rows: [{ beneficiaryMemberId: "master", amountCents: -1000 }],
+        redemption: {
+          priceAdjustmentCents: -1500,
+          allocations: [{ memberId: "master", priceAdjustmentCents: -1000 }],
+        },
+      }),
+    ).toBe("NOT_KNOWN");
+  });
+
   it("rows that sum per beneficiary but not to the redemption total are NOT_KNOWN", () => {
     expect(
       deriveNightAdjustmentState({ rows, redemption: { ...redemption, priceAdjustmentCents: -1600 } }),

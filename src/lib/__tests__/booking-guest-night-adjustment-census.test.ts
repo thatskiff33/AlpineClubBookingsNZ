@@ -18,9 +18,13 @@ import { stripComments } from "@/lib/__tests__/support/strip-comments";
  * INV-MONEY-028), which pins who may write a night row, and reads the SAME
  * AST discovery of night writers from the shared scanner. This one pins:
  *
- *  1. ONE WRITER. Only `src/lib/night-adjustment-write.ts` writes
- *     `BookingGuestNightAdjustment` rows; nothing stores a validity flag
- *     anywhere (validity is derived — owner decision, 10 Sep 2026).
+ *  1. ONE WRITER OF AMOUNTS. Only `src/lib/night-adjustment-write.ts` creates
+ *     `BookingGuestNightAdjustment` rows or puts an amount on one. The member
+ *     merge (`member-merge.ts`) reaches the table through a string delegate
+ *     name to MOVE or DELETE rows with their allocation, never to invent one;
+ *     it is the acknowledged indirect writer and the only file allowed to name
+ *     that delegate outside the module. Nothing stores a validity flag anywhere
+ *     (validity is derived — owner decision, 10 Sep 2026).
  *  2. EVERY PROMOTION WRITER IS PAIRED, in the right order. Each site that
  *     writes a redemption (`redeemPromoCode`, `replacePromoRedemptionAllocations`,
  *     `recalculateBookingPromo`, `applyPromoCodeChanges`) is followed in the
@@ -50,6 +54,16 @@ const REDEMPTION_WRITE =
   /promoRedemption(?:Allocation|GuestTarget)?\s*\.\s*(?:create|createMany|update|updateMany|upsert|delete|deleteMany)\b/;
 const REDEMPTION_RAW_SQL_WRITE =
   /\b(?:INSERT\s+INTO|UPDATE|MERGE\s+INTO|DELETE\s+FROM)\b[\s\S]{0,500}["'`]PromoRedemption(?:Allocation|GuestTarget)?["'`]/i;
+/**
+ * The member merge reaches Prisma delegates by NAME (`delegates[args.delegate]`),
+ * which no property-access scan can see. So the delegate names themselves are
+ * censused: outside the writer module and `promo.ts`, a string literal naming
+ * one of these delegates may appear only in the merge — the acknowledged
+ * indirect writer, which moves or deletes rows and never invents an amount.
+ */
+const INDIRECT_WRITER = "src/lib/member-merge.ts";
+const DELEGATE_NAME_LITERAL =
+  /["'](?:bookingGuestNightAdjustment|promoRedemption|promoRedemptionAllocation|promoRedemptionGuestTarget)["']/;
 
 function read(file: string): string {
   return stripComments(readFileSync(join(REPO, file), "utf8"));
@@ -194,18 +208,30 @@ const SOURCE = sourceFiles();
 const DISCOVERED_NIGHT_WRITERS = [...discoveredWriterSiteCounts().keys()].sort();
 
 describe("INV-MONEY-029 night adjustment build-up census", () => {
-  it("has exactly one writer of BookingGuestNightAdjustment rows, and no stored validity flag anywhere", () => {
+  it("has exactly one writer of BookingGuestNightAdjustment amounts, one acknowledged indirect mover, and no stored validity flag anywhere", () => {
     const offenders: string[] = [];
+    const delegateNamers: string[] = [];
     for (const file of SOURCE) {
       const relative = relativeSource(file);
       if (relative === MODULE) continue;
       const code = stripComments(readFileSync(file, "utf8"));
       if (ROW_WRITE.test(code) || RAW_SQL_WRITE.test(code)) offenders.push(relative);
+      if (relative !== "src/lib/promo.ts" && DELEGATE_NAME_LITERAL.test(code)) delegateNamers.push(relative);
     }
     expect(
       offenders,
-      `INV-MONEY-029: only ${MODULE} may write adjustment rows.`,
+      `INV-MONEY-029: only ${MODULE} may write adjustment rows directly.`,
     ).toEqual([]);
+    // The indirect route: a delegate reached by name. Only the merge may, and it
+    // must still be doing so (the control), and it must never put an amount on a
+    // row — its only data write is the beneficiary move.
+    expect(
+      delegateNamers.sort(),
+      "INV-MONEY-029: a file names an adjustment or promotion delegate as a string; only the member merge may reach these tables indirectly.",
+    ).toEqual([INDIRECT_WRITER]);
+    const merge = read(INDIRECT_WRITER);
+    expect(merge).toMatch(/delegate: "bookingGuestNightAdjustment"/);
+    expect(merge).not.toMatch(/amountCents/);
     // Validity is derived by summing rows (owner decision, 10 Sep 2026). A flag
     // column would be a second statement of that fact that a draining colour or
     // a rollback could leave false; the schema must not grow one back.
@@ -258,6 +284,9 @@ describe("INV-MONEY-029 night adjustment build-up census", () => {
       offenders,
       "INV-MONEY-029: a promotion written outside promo.ts bypasses the four helpers the pairing census watches.",
     ).toEqual([]);
+    // The one indirect route is the member merge, which moves or drops
+    // allocation rows by delegate NAME (censused above) and writes no amount.
+    expect(read(INDIRECT_WRITER)).toMatch(/delegate: "promoRedemptionAllocation"/);
     for (const seed of SEEDS) {
       expect(read(seed), `${seed} is listed as a seed that writes a promotion; it no longer does`).toMatch(REDEMPTION_WRITE);
     }

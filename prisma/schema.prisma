@@ -2138,8 +2138,9 @@ model BookingGuestNight {
 // CHECK lives in the migration, Prisma cannot express it). The amount, its
 // NULL-means-not-known rule, the reconciliation to the recorded promo totals and
 // how a reader derives whether a booking's build-up is known are all stated
-// once, in INV-MONEY-029 (`docs/invariants/money.md`). Written only by
-// `night-adjustment-write.ts`. Rows cascade with their redemption and carry
+// once, in INV-MONEY-029 (`docs/invariants/money.md`). Amounts are written only
+// by `night-adjustment-write.ts`; a member merge moves or deletes rows and
+// never invents one. Rows cascade with their redemption and carry
 // bookingId so a booking's rows are one indexed delete-and-rewrite.
 model BookingGuestNightAdjustment {
   id                  String                          @id @default(cuid())
