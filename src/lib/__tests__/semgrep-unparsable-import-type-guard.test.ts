@@ -454,7 +454,7 @@ export const rows = sql<typeof import("@/lib/capacity")>\`select 1\`;
  * Measured clean in every one of these positions, and none of them is reported:
  * the module type plain, a member of it, and an indexed access on it with and
  * without the parentheses. A rule that swept these up would have nowhere left to
- * send the 307 call sites #3318 rewrote.
+ * send the call sites #3318 rewrote.
  */
 const TYPEOF_MODULE_POSITIONS = `
 type Whole = typeof import("@/lib/capacity");
@@ -505,7 +505,7 @@ export function read(): Alias {
 const REACHED_PATHS: readonly { file: string; why: string }[] = [
   {
     file: "src/lib/__tests__/example.test.ts",
-    why: "a unit test — where all 307 call sites measured for #3318 lived",
+    why: "a unit test — where every call site #3318 measured lived",
   },
   {
     file: "src/components/admin/__tests__/example.test.tsx",
@@ -757,7 +757,7 @@ describe("#3318: the autofix writes the measured-clean form", () => {
 
     expect(
       output.split("\n").map((line) => line.trim()),
-      "The fix rebuilds the whole await expression, so the line break and trailing comma a reflow introduced go away with it. If this drifts, the 307-site rewrite #3318 shipped is no longer what the rule would write.",
+      "The fix rebuilds the whole await expression, so the line break and trailing comma a reflow introduced go away with it. If this drifts, the rewrite #3318 shipped is no longer what the rule would write.",
     ).toContain(expected);
     expect(
       await reportsFor(output, FIXTURE_FILE),

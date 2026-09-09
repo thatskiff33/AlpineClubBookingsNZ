@@ -395,7 +395,12 @@ right. They are deliberately not restated here.
 that qualifier is the whole point.** #3318 added
 `scan/no-semgrep-unparsable-import-type` to `eslint.config.mjs`, rewrote the 307
 call sites that carried the first, named the five types that carried the second,
-and took the allowlist from 169 entries to 3. It then said the two shapes
+and took the allowlist from 169 entries to 3. **This paragraph is the one home
+for those four numbers.** They are measurements taken at that change rather than
+facts about the design, so a second copy goes stale silently and nobody notices
+which copy is wrong — `INV-SSOT-004`. The rule's own comments and its guard suite
+therefore describe the rewrite without counting it, and a later change
+re-measures here rather than stating a number of its own. It then said the two shapes
 "cannot come back", which #3345 measured as false: roughly a dozen further
 positions fail and the rule was silent on every one, including two members of
 the call family. The rule is now wider — the whole call family including the

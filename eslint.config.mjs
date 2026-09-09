@@ -2342,7 +2342,8 @@ function importTypeCallFix(node, typeArguments, sourceCode) {
  * It is a rule of its own rather than a `no-restricted-syntax` arm for the same
  * reason `no-local-comment-stripper` is: that rule is switched OFF for every
  * test file by the block at the bottom of this config, and test files are the
- * entire population — all 307 call sites measured for #3318 were in tests.
+ * entire population — every call site #3318 measured was in a test
+ * (counts live in `docs/MAINTENANCE.md` -> "Semgrep parse coverage", their one home).
  */
 const noSemgrepUnparsableImportType = {
   meta: {
