@@ -2097,18 +2097,6 @@ enum BookingGuestNightPriceSource {
   UNKNOWN
 }
 
-// #3276 (stage 2 of programme #3272): is this night's adjustment build-up
-// recorded? UNKNOWN is the column default so that a night row inserted by a
-// colour compiled before the column existed reads honestly as "nobody said".
-// RECORDED means the writer that sold this night also recorded every
-// adjustment the pricing engine decided for it, in the same transaction —
-// so RECORDED with no BookingGuestNightAdjustment rows means "nothing was
-// taken off this night", which is a real answer and not an absence.
-enum BookingGuestNightAdjustmentsState {
-  UNKNOWN
-  RECORDED
-}
-
 // #3276: what kind of adjustment a BookingGuestNightAdjustment row records.
 // PROMO is the only writer today. A change-fee waiver is fee-level, never a
 // night reduction, and account credit has its one home in the MemberCredit
@@ -2135,10 +2123,6 @@ model BookingGuestNight {
   // outright: a comped night stores 0, and 0 is a real sold price.
   priceCents     Int?
   priceSource    BookingGuestNightPriceSource @default(UNKNOWN)
-  // #3276: written ONLY by `night-adjustment-write.ts`, after that module has
-  // put the night's adjustment rows in place. Every night writer leaves the
-  // default, exactly as the old colour does.
-  adjustmentsState BookingGuestNightAdjustmentsState @default(UNKNOWN)
   createdAt      DateTime @default(now())
 
   bookingGuest BookingGuest @relation(fields: [bookingGuestId], references: [id], onDelete: Cascade)
@@ -2148,37 +2132,15 @@ model BookingGuestNight {
   @@index([stayDate])
 }
 
-// #3276 (stage 2 of programme #3272): what each adjustment took off a night —
-// or off a guest, where the pricing engine decides the adjustment at guest
-// grain. One row per adjustment per target (D1 on #3272, refined 8 Sep 2026).
-//
-// TARGET: exactly one of bookingGuestNightId / bookingGuestId is set, enforced
-// by the CHECK constraint `BookingGuestNightAdjustment_exactly_one_target` in
-// the migration (Prisma cannot express it) and by the writer. A percentage,
-// free-night or fixed-nightly promo is computed per night, so its rows attach
-// to nights; a fixed-amount promo is `min(value, guest total)` per GUEST with
-// no per-night rule, so its row attaches to the guest. The amount is always
-// the engine's own figure at the grain it decided it — never translated to a
-// finer grain by a rule that would have to be invented.
-//
-// AMOUNT: a signed delta in integer cents, like `priceAdjustmentCents` (a
-// discount is negative; a SET_PRICE fixed-nightly code that raises a night is
-// positive). `0` is a real value. NULL means NOT KNOWN — written only where the
-// engine genuinely has no per-target figure (the per-member cap rescale) — and
-// `?? 0` on it is prohibited exactly as it is on `BookingGuestNight.priceCents`.
-//
-// RECONCILIATION (INV-MONEY-029): the rows of one redemption sum, per
-// beneficiary, to that member's `PromoRedemptionAllocation.priceAdjustmentCents`
-// and, overall, to `PromoRedemption.priceAdjustmentCents`. The writer refuses
-// (and the transaction rolls back) when they do not.
-//
-// PROVENANCE is the redemption and the code, never the allocation row: every
-// reprice regenerates allocation ids, and so does the
-// `PromoRedemption_sync_allocation_*` trigger pair. `promoRedemptionId` is
-// CASCADE so a row can never outlive the promotion it decomposes — every path
-// that deletes a redemption otherwise leaves rows asserting a promo amount
-// nothing backs. `bookingId` mirrors the sibling promo tables so a booking's
-// rows are one indexed delete-and-rewrite.
+// #3276 (stage 2 of programme #3272): what each promotion took off a night, or
+// off a guest where the engine decides at guest grain. One row per adjustment
+// per target; exactly one of bookingGuestNightId / bookingGuestId is set (the
+// CHECK lives in the migration, Prisma cannot express it). The amount, its
+// NULL-means-not-known rule, the reconciliation to the recorded promo totals and
+// how a reader derives whether a booking's build-up is known are all stated
+// once, in INV-MONEY-029 (`docs/invariants/money.md`). Written only by
+// `night-adjustment-write.ts`. Rows cascade with their redemption and carry
+// bookingId so a booking's rows are one indexed delete-and-rewrite.
 model BookingGuestNightAdjustment {
   id                  String                          @id @default(cuid())
   kind                BookingGuestNightAdjustmentKind

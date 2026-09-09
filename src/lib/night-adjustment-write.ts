@@ -4,68 +4,45 @@ import { addDaysDateOnly, formatDateOnly } from "@/lib/date-only";
 import logger from "@/lib/logger";
 
 /**
- * #3276 (stage 2 of programme #3272): THE ONE WRITER of a night's adjustment
- * build-up — `BookingGuestNightAdjustment` rows and
- * `BookingGuestNight.adjustmentsState`. Nothing else in `src/` may write either;
- * `booking-guest-night-adjustment-census.test.ts` is the census that holds it.
+ * #3276 (stage 2 of programme #3272): THE ONE WRITER of `BookingGuestNightAdjustment`
+ * rows, and the one home of the rule a reader uses to decide whether a
+ * booking's recorded build-up can be trusted (`deriveNightAdjustmentState`).
+ * `booking-guest-night-adjustment-census.test.ts` holds both.
  *
- * ## What is recorded
+ * The rule itself — the grain a row attaches at, the signed integer-cent amount
+ * with NULL meaning not known, the reconciliation to the recorded promo totals,
+ * and derived (never stored) validity — is stated once, as `INV-MONEY-029` in
+ * `docs/invariants/money.md`. This file implements it and does not restate it.
  *
- * One row per adjustment per target, at the grain the pricing engine decided
- * it (D1 on #3272, refined 8 Sep 2026): a NIGHT for a percentage, free-night or
- * fixed-nightly promotion, whose arithmetic is per night; the GUEST for a
- * fixed-amount promotion, which is `min(value, guest total)` with no per-night
- * rule. The amount is the engine's own figure — never translated to a finer
- * grain by a rule that would have to be invented — and it is a signed delta in
- * integer cents like `priceAdjustmentCents`. `0` is a real value. `null` means
- * NOT KNOWN, and is written only where the engine genuinely has no per-target
- * figure (the per-member safety-cap rescale); `?? 0` on it is prohibited.
+ * ## Refuse before mutate
  *
- * Account credit is NOT here. It has one home already — the `MemberCredit`
- * ledger entry with its booking link — and there is no per-night rule for it.
- *
- * ## The invariant, and where it is enforced
- *
- * `INV-MONEY-029`: the rows of one redemption sum, per beneficiary, to that
- * member's `PromoRedemptionAllocation.priceAdjustmentCents` (an absent
- * allocation row means the member received nothing, which is what
- * `normalizeAllocations` dropping a zero-benefit entry means) and, overall, to
- * `PromoRedemption.priceAdjustmentCents`. `recordBookingNightAdjustments`
- * reads those STORED figures inside the writer's own transaction and refuses
- * before writing a single row when they do not reconcile — so a mismatch rolls
- * the whole edit back rather than recording a build-up that lies. Rows whose
- * amount is NOT KNOWN are excluded from the sums they would make meaningless,
- * and only from those.
- *
- * ## `adjustmentsState`
- *
- * Every night writer leaves the column at its default, UNKNOWN — exactly what
- * a colour compiled before the column existed writes. This module flips a
- * night to RECORDED only AFTER its rows are in place in the same transaction,
- * so a failure anywhere between leaves the night honestly UNKNOWN, and RECORDED
- * with zero rows means "nothing was taken off this night". Three writer classes
- * never reach RECORDED and are meant not to: a night an officer priced, a night
- * that is a mechanical even split of a total, and a night a PARKED edit wrote
- * while its money waits for a person.
+ * `recordBookingNightAdjustments` resolves every target, reads the stored
+ * redemption and allocations, reconciles, and resolves every night row BEFORE
+ * its first write. Every refusal therefore leaves the transaction exactly as it
+ * found it; the only failures that can follow the first write are database
+ * errors, which abort the transaction themselves. The waitlist reprice relies on
+ * this: it degrades to the stored snapshot instead of rolling back, so it calls
+ * the recorder OUTSIDE that degrade path, where a refusal fails the sweep like
+ * any other post-mutation error.
  *
  * ## Mechanical rewrites
  *
- * A night row is delete-and-recreated by every night writer, which cascades its
- * adjustment rows away. Where the pricing engine re-runs, the rows are simply
- * rewritten from its output. Where it does NOT run and no money moves — a
+ * Every night writer delete-and-recreates its rows, which cascades the
+ * adjustment rows attached to them. Where the pricing engine re-runs, the rows
+ * are rewritten from its output. Where it does not and no money moves — a
  * name-only correction, an in-progress extension, an admin date shift —
  * `snapshotBookingNightAdjustments` before the rewrite and
- * `restoreBookingNightAdjustments` after it carry the recorded rows across by
- * (guest, stay date), byte for byte, exactly as those paths already echo the
- * stored price. That is preservation, not derivation: no amount is computed.
+ * `restoreBookingNightAdjustments` after it carry the rows across by (guest,
+ * stay date), byte for byte. Preservation, not derivation: no amount is
+ * computed. Where a row's night no longer exists the carry is abandoned and
+ * the booking's rows are left absent, which a reader derives as not known.
  *
  * ## Ordering
  *
  * Call `recordBookingNightAdjustments` AFTER THE LAST NIGHT WRITE of the
- * transaction, and after the redemption/allocation write. The batch path and the
- * waitlist reprice write their promotion BEFORE they rewrite nights, so the
- * rows cannot be attached earlier than that. One `createMany` per transaction,
- * inside Prisma's interactive-transaction budget.
+ * transaction and after the redemption/allocation write. The batch path and the
+ * waitlist reprice write their promotion before they rewrite nights, so the rows
+ * cannot be attached earlier than that. One `createMany` per transaction.
  */
 export const NIGHT_ADJUSTMENT_INVARIANT = "INV-MONEY-029";
 
@@ -94,18 +71,30 @@ function nightKey(bookingGuestId: string, stayDate: Date): string {
 }
 
 /**
- * The pure half of the guard: do these targets reconcile to these recorded
- * promo totals? Exported so a writer that cannot roll back (the waitlist
- * reprice degrades to the stored snapshot instead) can ask BEFORE its first
- * write, and so the guard can be mutation-tested without a database.
+ * The pure half of the guard: do these rows reconcile to these recorded promo
+ * totals? Per beneficiary to that member's allocation (an absent allocation row
+ * means the member received nothing — `normalizeAllocations` drops a
+ * zero-benefit entry at write time, INV-MONEY-005 — so the recorded total for
+ * that member IS zero; this is the meaning of an absent row, not a default over
+ * a missing amount), and overall to the redemption. A beneficiary with any NOT
+ * KNOWN row is excluded from both sums, and only from those.
  */
 export function reconcilePromoAdjustmentTargets(params: {
-  targets: ReadonlyArray<PromoAdjustmentTarget>;
+  targets: ReadonlyArray<{ beneficiaryMemberId: string; amountCents: number | null }>;
   allocations: ReadonlyArray<{ memberId: string; priceAdjustmentCents: number }>;
   priceAdjustmentCents: number;
   context: string;
 }): void {
-  const { targets, allocations, priceAdjustmentCents, context } = params;
+  const mismatch = findReconciliationMismatch(params);
+  if (mismatch) refuse(`${params.context}: ${mismatch}`);
+}
+
+function findReconciliationMismatch(params: {
+  targets: ReadonlyArray<{ beneficiaryMemberId: string; amountCents: number | null }>;
+  allocations: ReadonlyArray<{ memberId: string; priceAdjustmentCents: number }>;
+  priceAdjustmentCents: number;
+}): string | null {
+  const { targets, allocations, priceAdjustmentCents } = params;
   const sums = new Map<string, number>();
   const unknown = new Set<string>();
   for (const target of targets) {
@@ -114,7 +103,7 @@ export function reconcilePromoAdjustmentTargets(params: {
       continue;
     }
     if (!Number.isInteger(target.amountCents)) {
-      refuse(`${context}: an adjustment amount is not integer cents (${target.amountCents})`);
+      return `an adjustment amount is not integer cents (${target.amountCents})`;
     }
     sums.set(
       target.beneficiaryMemberId,
@@ -127,28 +116,56 @@ export function reconcilePromoAdjustmentTargets(params: {
   const members = new Set([...sums.keys(), ...unknown, ...allocationByMember.keys()]);
   for (const memberId of members) {
     if (unknown.has(memberId)) continue;
-    // No allocation row means the member received nothing: `normalizeAllocations`
-    // drops a zero-benefit entry at write time (INV-MONEY-005), so the recorded
-    // total for that member IS zero. This is the meaning of an absent row, not a
-    // default over a missing amount.
-    const recorded = allocationByMember.has(memberId)
-      ? allocationByMember.get(memberId)!
-      : 0;
+    const recorded = allocationByMember.has(memberId) ? allocationByMember.get(memberId)! : 0;
     const summed = sums.get(memberId) ?? 0;
     if (summed !== recorded) {
-      refuse(
-        `${context}: adjustment rows for member ${memberId} sum to ${summed} cents but the recorded allocation is ${recorded} cents`,
-      );
+      return `adjustment rows for member ${memberId} sum to ${summed} cents but the recorded allocation is ${recorded} cents`;
     }
   }
   if (unknown.size === 0) {
     const total = [...sums.values()].reduce((sum, cents) => sum + cents, 0);
     if (total !== priceAdjustmentCents) {
-      refuse(
-        `${context}: adjustment rows sum to ${total} cents but the recorded redemption adjustment is ${priceAdjustmentCents} cents`,
-      );
+      return `adjustment rows sum to ${total} cents but the recorded redemption adjustment is ${priceAdjustmentCents} cents`;
     }
   }
+  return null;
+}
+
+/**
+ * Whether a booking's recorded build-up can be trusted — DERIVED from its rows
+ * every time it is asked, never stored (owner decision, 10 Sep 2026): a flag
+ * could be left asserting a state that a draining colour or a rollback had since
+ * made false, and a sum cannot.
+ *
+ * - `NO_PROMOTION`: the booking carries no redemption, so nothing was taken off
+ *   any of its nights. Rows without a redemption cannot exist (the FK cascades).
+ * - `KNOWN`: the rows reconcile to the recorded totals — the INV-MONEY-029
+ *   identity the writer enforced, re-run by the reader.
+ * - `NOT_KNOWN`: anything else — rows missing, rows that do not sum (a parked
+ *   removal that deleted a guest without re-running the promotion, an
+ *   old-colour promotion edit), or a NOT KNOWN amount somewhere in them.
+ *
+ * Stage 3 calls this and nothing else; it is the one home.
+ */
+export type NightAdjustmentState = "KNOWN" | "NOT_KNOWN" | "NO_PROMOTION";
+
+export function deriveNightAdjustmentState(params: {
+  rows: ReadonlyArray<{ beneficiaryMemberId: string; amountCents: number | null }>;
+  redemption: {
+    priceAdjustmentCents: number;
+    allocations: ReadonlyArray<{ memberId: string; priceAdjustmentCents: number }>;
+  } | null;
+}): NightAdjustmentState {
+  const { rows, redemption } = params;
+  if (redemption === null) return "NO_PROMOTION";
+  if (rows.some((row) => row.amountCents === null)) return "NOT_KNOWN";
+  return findReconciliationMismatch({
+    targets: rows,
+    allocations: redemption.allocations,
+    priceAdjustmentCents: redemption.priceAdjustmentCents,
+  }) === null
+    ? "KNOWN"
+    : "NOT_KNOWN";
 }
 
 type ResolvedTarget = {
@@ -188,15 +205,20 @@ function resolveTargets(
 
 /**
  * Record what the promotion the engine just ran took off each night and guest
- * of `bookingId`, and mark the nights of every guest the engine saw RECORDED.
+ * of `bookingId`.
  *
  * `guestIds` is the caller's guest list in the order the engine saw it, with the
  * `BookingGuest.id` of each (created guests included — this runs after they
- * exist). `targets` is `PromoApplicationResult.adjustmentTargets`, or `[]` when
- * the booking carries no promotion: RECORDED with no rows is then the true
- * statement that nothing was taken off. The redemption and its allocations are
- * read from the database, not trusted from the caller, because the invariant is
- * about what is RECORDED.
+ * exist). `targets` is `application.discount.adjustmentTargets`, or `[]` when
+ * the booking carries no promotion. The redemption and its allocations are read
+ * from the database, not trusted from the caller, because the invariant is about
+ * what is RECORDED. Nothing is written until every refusal has had its chance.
+ *
+ * A guest that holds NO night rows at all (a pre-#713 strand priced from its
+ * stay envelope) cannot carry night-scope rows: those targets are dropped with a
+ * warning rather than refused, so an edit that succeeds today keeps succeeding,
+ * and the booking's build-up derives as not known — which it is. A date missing
+ * from a guest that DOES hold night rows is still a wiring defect and refuses.
  */
 export async function recordBookingNightAdjustments(
   tx: Tx,
@@ -214,9 +236,6 @@ export async function recordBookingNightAdjustments(
   }
   const resolved = resolveTargets(targets, guestIds, writer);
 
-  // Delete-and-rewrite: the rows are a function of the engine's latest run.
-  await tx.bookingGuestNightAdjustment.deleteMany({ where: { bookingId } });
-
   const redemption = await tx.promoRedemption.findUnique({
     where: { bookingId },
     select: {
@@ -226,12 +245,12 @@ export async function recordBookingNightAdjustments(
       allocations: { select: { memberId: true, priceAdjustmentCents: true } },
     },
   });
+  if (!redemption && resolved.length > 0) {
+    refuse(`${writer}: the engine attributed a promotion but the booking has no stored redemption`);
+  }
 
-  if (!redemption) {
-    if (resolved.length > 0) {
-      refuse(`${writer}: the engine attributed a promotion but the booking has no stored redemption`);
-    }
-  } else {
+  let rows: Prisma.BookingGuestNightAdjustmentCreateManyInput[] = [];
+  if (redemption) {
     reconcilePromoAdjustmentTargets({
       targets,
       allocations: redemption.allocations,
@@ -239,56 +258,59 @@ export async function recordBookingNightAdjustments(
       context: writer,
     });
 
-    const nights = await tx.bookingGuestNight.findMany({
-      where: { bookingGuestId: { in: engineGuestIds } },
-      select: { id: true, bookingGuestId: true, stayDate: true },
-    });
+    const nights =
+      engineGuestIds.length > 0
+        ? await tx.bookingGuestNight.findMany({
+            where: { bookingGuestId: { in: engineGuestIds } },
+            select: { id: true, bookingGuestId: true, stayDate: true },
+          })
+        : [];
     const nightIdByKey = new Map(
       nights.map((night) => [nightKey(night.bookingGuestId, night.stayDate), night.id]),
     );
-    const rows = resolved.map((target) => {
-      if (target.scope === "guest") {
-        return {
-          kind: "PROMO" as const,
-          amountCents: target.amountCents,
-          bookingGuestNightId: null,
-          bookingGuestId: target.bookingGuestId,
-          bookingId,
-          promoRedemptionId: redemption.id,
-          promoCodeId: redemption.promoCodeId,
-          beneficiaryMemberId: target.beneficiaryMemberId,
-        };
-      }
-      const bookingGuestNightId = nightIdByKey.get(
-        nightKey(target.bookingGuestId, target.stayDate!),
-      );
-      if (!bookingGuestNightId) {
-        refuse(
-          `${writer}: the engine attributed the night of ${formatDateOnly(target.stayDate!)} for guest ${target.bookingGuestId}, but that guest holds no such night row`,
-        );
-      }
-      return {
+    const guestsHoldingNights = new Set(nights.map((night) => night.bookingGuestId));
+    const guestsWithoutNights = new Set<string>();
+
+    for (const target of resolved) {
+      const base = {
         kind: "PROMO" as const,
         amountCents: target.amountCents,
-        bookingGuestNightId,
-        bookingGuestId: null,
         bookingId,
         promoRedemptionId: redemption.id,
         promoCodeId: redemption.promoCodeId,
         beneficiaryMemberId: target.beneficiaryMemberId,
       };
-    });
-    if (rows.length > 0) {
-      await tx.bookingGuestNightAdjustment.createMany({ data: rows });
+      if (target.scope === "guest") {
+        rows.push({ ...base, bookingGuestNightId: null, bookingGuestId: target.bookingGuestId });
+        continue;
+      }
+      if (!guestsHoldingNights.has(target.bookingGuestId)) {
+        guestsWithoutNights.add(target.bookingGuestId);
+        continue;
+      }
+      const bookingGuestNightId = nightIdByKey.get(nightKey(target.bookingGuestId, target.stayDate!));
+      if (!bookingGuestNightId) {
+        refuse(
+          `${writer}: the engine attributed the night of ${formatDateOnly(target.stayDate!)} for guest ${target.bookingGuestId}, but that guest holds no such night row`,
+        );
+      }
+      rows.push({ ...base, bookingGuestNightId, bookingGuestId: null });
     }
+    if (guestsWithoutNights.size > 0) {
+      logger.warn(
+        { bookingId, writer, guestIds: [...guestsWithoutNights] },
+        `${NIGHT_ADJUSTMENT_INVARIANT}: a guest holds no night rows, so the promotion's per-night rows for that guest are not recorded; the booking's build-up derives as not known`,
+      );
+    }
+  } else {
+    rows = [];
   }
 
-  // Only now, with the rows in place: these nights' build-up is recorded.
-  if (engineGuestIds.length > 0) {
-    await tx.bookingGuestNight.updateMany({
-      where: { bookingGuestId: { in: engineGuestIds } },
-      data: { adjustmentsState: "RECORDED" },
-    });
+  // Every refusal above has had its chance. From here only the database can
+  // fail, and a database error aborts the transaction itself.
+  await tx.bookingGuestNightAdjustment.deleteMany({ where: { bookingId } });
+  if (rows.length > 0) {
+    await tx.bookingGuestNightAdjustment.createMany({ data: rows });
   }
 }
 
@@ -309,7 +331,6 @@ export type CarriedNightAdjustments = {
     /** `null` for a guest-scope row. */
     stayDate: Date | null;
   }>;
-  recordedNights: Array<{ bookingGuestId: string; stayDate: Date }>;
 };
 
 export async function snapshotBookingNightAdjustments(
@@ -322,11 +343,10 @@ export async function snapshotBookingNightAdjustments(
   // access that is not a direct write as an alias to be refused).
   const [nights, guestRows] = await Promise.all([
     tx.bookingGuestNight.findMany({
-      where: { bookingGuest: { bookingId } },
+      where: { bookingGuest: { bookingId }, adjustments: { some: {} } },
       select: {
         bookingGuestId: true,
         stayDate: true,
-        adjustmentsState: true,
         adjustments: {
           select: {
             kind: true,
@@ -362,13 +382,7 @@ export async function snapshotBookingNightAdjustments(
     }
     rows.push({ ...row, bookingGuestId: row.bookingGuestId, stayDate: null });
   }
-  return {
-    bookingId,
-    rows,
-    recordedNights: nights
-      .filter((night) => night.adjustmentsState === "RECORDED")
-      .map((night) => ({ bookingGuestId: night.bookingGuestId, stayDate: night.stayDate })),
-  };
+  return { bookingId, rows };
 }
 
 /**
@@ -377,9 +391,9 @@ export async function snapshotBookingNightAdjustments(
  * (the admin date shift). Amounts are copied byte for byte; nothing is computed.
  *
  * If a recorded row's night no longer exists after the rewrite, the build-up
- * can no longer be stated coherently: NO rows are restored and every night is
- * left UNKNOWN, which is the honest answer, and the edit is not refused over
- * bookkeeping. Returns whether the carry-forward held.
+ * can no longer be stated coherently: NO rows are restored (a reader then
+ * derives not known) and the edit is not refused over bookkeeping. Returns
+ * whether the carry-forward held. Every lookup precedes the first write.
  */
 export async function restoreBookingNightAdjustments(
   tx: Tx,
@@ -387,9 +401,7 @@ export async function restoreBookingNightAdjustments(
 ): Promise<{ carried: boolean }> {
   const { snapshot, writer } = params;
   const shiftDays = params.shiftDays ?? 0;
-  if (snapshot.rows.length === 0 && snapshot.recordedNights.length === 0) {
-    return { carried: true };
-  }
+  if (snapshot.rows.length === 0) return { carried: true };
   const shifted = (stayDate: Date) =>
     shiftDays === 0 ? stayDate : addDaysDateOnly(stayDate, shiftDays);
 
@@ -408,28 +420,21 @@ export async function restoreBookingNightAdjustments(
   );
   const guestIds = new Set(guests.map((guest) => guest.id));
 
-  // The rewrite cascaded most of these away already; a guest whose night rows
-  // were left alone still holds its rows, so clear and re-insert uniformly.
-  await tx.bookingGuestNightAdjustment.deleteMany({
-    where: { bookingId: snapshot.bookingId },
-  });
-
-  const rows: Array<Prisma.BookingGuestNightAdjustmentCreateManyInput> = [];
+  const rows: Prisma.BookingGuestNightAdjustmentCreateManyInput[] = [];
   for (const row of snapshot.rows) {
+    const base = {
+      kind: row.kind,
+      amountCents: row.amountCents,
+      bookingId: snapshot.bookingId,
+      promoRedemptionId: row.promoRedemptionId,
+      promoCodeId: row.promoCodeId,
+      beneficiaryMemberId: row.beneficiaryMemberId,
+    };
     if (row.stayDate === null) {
       if (!guestIds.has(row.bookingGuestId)) {
         return abandonCarry(writer, snapshot.bookingId, `guest ${row.bookingGuestId} is gone`);
       }
-      rows.push({
-        kind: row.kind,
-        amountCents: row.amountCents,
-        bookingGuestNightId: null,
-        bookingGuestId: row.bookingGuestId,
-        bookingId: snapshot.bookingId,
-        promoRedemptionId: row.promoRedemptionId,
-        promoCodeId: row.promoCodeId,
-        beneficiaryMemberId: row.beneficiaryMemberId,
-      });
+      rows.push({ ...base, bookingGuestNightId: null, bookingGuestId: row.bookingGuestId });
       continue;
     }
     const target = shifted(row.stayDate);
@@ -441,37 +446,22 @@ export async function restoreBookingNightAdjustments(
         `guest ${row.bookingGuestId} no longer holds the night of ${formatDateOnly(target)}`,
       );
     }
-    rows.push({
-      kind: row.kind,
-      amountCents: row.amountCents,
-      bookingGuestNightId,
-      bookingGuestId: null,
-      bookingId: snapshot.bookingId,
-      promoRedemptionId: row.promoRedemptionId,
-      promoCodeId: row.promoCodeId,
-      beneficiaryMemberId: row.beneficiaryMemberId,
-    });
-  }
-  if (rows.length > 0) {
-    await tx.bookingGuestNightAdjustment.createMany({ data: rows });
+    rows.push({ ...base, bookingGuestNightId, bookingGuestId: null });
   }
 
-  const recordedIds = snapshot.recordedNights
-    .map((night) => nightIdByKey.get(nightKey(night.bookingGuestId, shifted(night.stayDate))))
-    .filter((id): id is string => Boolean(id));
-  if (recordedIds.length > 0) {
-    await tx.bookingGuestNight.updateMany({
-      where: { id: { in: recordedIds } },
-      data: { adjustmentsState: "RECORDED" },
-    });
-  }
+  // The rewrite cascaded most of these away already; a guest whose night rows
+  // were left alone still holds its rows, so clear and re-insert uniformly.
+  await tx.bookingGuestNightAdjustment.deleteMany({
+    where: { bookingId: snapshot.bookingId },
+  });
+  await tx.bookingGuestNightAdjustment.createMany({ data: rows });
   return { carried: true };
 }
 
 function abandonCarry(writer: string, bookingId: string, reason: string): { carried: false } {
   logger.warn(
     { bookingId, writer, reason },
-    `${NIGHT_ADJUSTMENT_INVARIANT}: the recorded promotion build-up could not be carried across this rewrite; the booking's nights are left UNKNOWN`,
+    `${NIGHT_ADJUSTMENT_INVARIANT}: the recorded promotion build-up could not be carried across this rewrite; the booking's build-up derives as not known`,
   );
   return { carried: false };
 }

@@ -4,18 +4,18 @@ import type { DataMigrationVerification } from "./types";
  * #3276 (stage 2 of programme #3272). This migration rewrites no data — the
  * PR-time gate classifies it shape-only and demands no fixture. It is
  * registered anyway because three of its properties are semantic and an empty
- * schema diff cannot see them: a night row that predates the column must read
- * UNKNOWN (that is the whole blue/green honesty argument), a row must name
- * exactly one target, and a row must not outlive the promotion it decomposes.
+ * schema diff cannot see them: a row must name exactly one target, a row's
+ * amount may be NULL (not known) and is never coerced, and a row must not
+ * outlive the promotion it decomposes.
  */
 const verification: DataMigrationVerification = {
-  migration: "20260912010000_add_booking_guest_night_adjustment",
+  migration: "20260913010000_add_booking_guest_night_adjustment",
   intent:
-    "Add the night adjustment build-up table and the adjustmentsState column without touching any stored amount; pre-existing nights read UNKNOWN, a row names exactly one target, and rows cascade with their redemption.",
+    "Add the night adjustment build-up table without touching any stored amount or any existing table; a row names exactly one target, may carry a not-known amount, and cascades with its redemption.",
   idempotentReRun: false,
   cases: [
     {
-      name: "a booking priced before the column existed, then one promo build-up written after it",
+      name: "a booking priced before the table existed, then one promo build-up written after it",
       seed: `
         INSERT INTO "Member"
           ("id", "email", "passwordHash", "firstName", "lastName", "updatedAt")
@@ -63,11 +63,9 @@ const verification: DataMigrationVerification = {
           ('adj-row-night', 'PROMO', -450, 'adj-night-1', NULL,
            'adj-booking', 'adj-redemption', 'adj-promo', 'adj-owner'),
           ('adj-row-guest', 'PROMO', -450, NULL, 'adj-guest',
+           'adj-booking', 'adj-redemption', 'adj-promo', 'adj-owner'),
+          ('adj-row-unknown', 'PROMO', NULL, 'adj-night-2', NULL,
            'adj-booking', 'adj-redemption', 'adj-promo', 'adj-owner');
-
-        UPDATE "BookingGuestNight"
-        SET "adjustmentsState" = 'RECORDED'
-        WHERE "id" = 'adj-night-1';
 
         -- A second booking whose promotion is then removed: its rows must go
         -- with the redemption, and nothing else may.
@@ -101,37 +99,23 @@ const verification: DataMigrationVerification = {
       `,
       expectations: [
         {
-          claim:
-            "a night row written before the column existed reads UNKNOWN, and nothing about its price moved; the row the new colour marked reads RECORDED",
+          claim: "the existing night rows are byte-identical: no price and no provenance moved, and no column was added to them",
           sql: `
             SELECT "id", "priceCents", "priceSource"::text AS "priceSource",
-                   "adjustmentsState"::text AS "adjustmentsState"
+                   (SELECT count(*)::int FROM information_schema.columns
+                     WHERE table_name = 'BookingGuestNight') AS "nightColumns"
             FROM "BookingGuestNight"
             WHERE "bookingGuestId" = 'adj-guest'
             ORDER BY "id"
           `,
           rows: [
-            { id: "adj-night-1", priceCents: 4500, priceSource: "SOLD", adjustmentsState: "RECORDED" },
-            { id: "adj-night-2", priceCents: 4500, priceSource: "SOLD", adjustmentsState: "UNKNOWN" },
+            { id: "adj-night-1", priceCents: 4500, priceSource: "SOLD", nightColumns: 6 },
+            { id: "adj-night-2", priceCents: 4500, priceSource: "SOLD", nightColumns: 6 },
           ],
         },
         {
           claim:
-            "the column default is UNKNOWN, so a draining-colour insert that omits the column reads honestly",
-          sql: `
-            SELECT column_default AS "columnDefault", is_nullable AS "isNullable"
-            FROM information_schema.columns
-            WHERE table_name = 'BookingGuestNight' AND column_name = 'adjustmentsState'
-          `,
-          rows: [
-            {
-              columnDefault: `'UNKNOWN'::"BookingGuestNightAdjustmentsState"`,
-              isNullable: "NO",
-            },
-          ],
-        },
-        {
-          claim: "a night-scope row and a guest-scope row both exist, each naming exactly one target",
+            "a night-scope row, a guest-scope row and a NOT KNOWN row all exist, each naming exactly one target, and the NULL amount is stored as NULL",
           sql: `
             SELECT "id", "amountCents",
                    ("bookingGuestNightId" IS NOT NULL) AS "hasNight",
@@ -142,6 +126,7 @@ const verification: DataMigrationVerification = {
           rows: [
             { id: "adj-row-guest", amountCents: -450, hasNight: false, hasGuest: true },
             { id: "adj-row-night", amountCents: -450, hasNight: true, hasGuest: false },
+            { id: "adj-row-unknown", amountCents: null, hasNight: true, hasGuest: false },
           ],
         },
         {
@@ -153,8 +138,7 @@ const verification: DataMigrationVerification = {
           `,
           rows: [
             {
-              definition:
-                `CHECK ((("bookingGuestNightId" IS NULL) <> ("bookingGuestId" IS NULL)))`,
+              definition: `CHECK ((("bookingGuestNightId" IS NULL) <> ("bookingGuestId" IS NULL)))`,
             },
           ],
         },
@@ -174,18 +158,18 @@ const verification: DataMigrationVerification = {
   ],
   mutants: [
     {
-      name: "default the state to RECORDED",
-      harm:
-        "Every night the draining colour inserts, and every historical night, would claim its build-up was recorded when nobody recorded anything — the magic-zero defect wearing an enum.",
-      find: `NOT NULL DEFAULT 'UNKNOWN'`,
-      replace: `NOT NULL DEFAULT 'RECORDED'`,
-    },
-    {
       name: "let a row name both targets or neither",
       harm:
         "A row attached to a night AND a guest would be counted twice by a reader summing either grain, and a row attached to nothing would be money that belongs nowhere.",
       find: `CHECK (("bookingGuestNightId" IS NULL) <> ("bookingGuestId" IS NULL))`,
       replace: `CHECK (TRUE)`,
+    },
+    {
+      name: "force an amount onto every row",
+      harm:
+        "A NOT KNOWN adjustment (the per-member cap rescale) could no longer be stored as NULL, so a writer would have to invent a number — the magic-zero defect the column's nullability exists to prevent.",
+      find: `"amountCents" INTEGER,`,
+      replace: `"amountCents" INTEGER NOT NULL DEFAULT 0,`,
     },
     {
       name: "let rows survive their redemption",

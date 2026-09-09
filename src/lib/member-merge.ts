@@ -1084,18 +1084,49 @@ async function loserAccessRolesGainedByMaster(
  * Generic keep-master resolver table, shared by the execute-time resolvers and
  * the preview drop-note summariser so the two can never disagree on keys.
  */
+/**
+ * Rows in another table that belong to a keyed row and must be dropped WITH it
+ * when the keep-master resolver drops the loser's colliding row. `matchColumn`
+ * is the column both tables share; `memberColumn` is the dependent table's own
+ * member id, still the loser's at resolve time because the generic moves run
+ * after every resolver (`resolveAllCollisions` precedes `applyMoves`).
+ */
+type DependentRows = {
+  delegate: string;
+  memberColumn: string;
+  matchColumn: string;
+};
+
 const GENERIC_KEYED_RESOLVERS: readonly {
   spec: string;
   delegate: string;
   memberColumn: string;
   keys: string[][];
+  dependents?: readonly DependentRows[];
 }[] = [
   { spec: "MemberAccessRole.member", delegate: "memberAccessRole", memberColumn: "memberId", keys: [["role"], ["roleDefinitionId"]] },
   { spec: "MemberSubscription.member", delegate: "memberSubscription", memberColumn: "memberId", keys: [["seasonYear"]] },
   { spec: "SeasonalMembershipAssignment.member", delegate: "seasonalMembershipAssignment", memberColumn: "memberId", keys: [["seasonYear"]] },
   { spec: "MembershipCancellationRequestParticipant.member", delegate: "membershipCancellationRequestParticipant", memberColumn: "memberId", keys: [["requestId"]] },
   { spec: "GroupBookingJoin.joinerMember", delegate: "groupBookingJoin", memberColumn: "joinerMemberId", keys: [["groupBookingId"]] },
-  { spec: "PromoRedemptionAllocation.member", delegate: "promoRedemptionAllocation", memberColumn: "memberId", keys: [["promoRedemptionId"], ["promoCodeId", "bookingId"]] },
+  {
+    spec: "PromoRedemptionAllocation.member",
+    delegate: "promoRedemptionAllocation",
+    memberColumn: "memberId",
+    keys: [["promoRedemptionId"], ["promoCodeId", "bookingId"]],
+    // #3276 (INV-MONEY-029): a loser's per-night/per-guest adjustment rows
+    // decompose that loser's allocation on the same redemption. When the
+    // allocation is dropped because the master already holds one, its rows
+    // go with it in this same step; otherwise the generic move re-points them
+    // to the master alongside the allocation, and the two keep reconciling.
+    dependents: [
+      {
+        delegate: "bookingGuestNightAdjustment",
+        memberColumn: "beneficiaryMemberId",
+        matchColumn: "promoRedemptionId",
+      },
+    ],
+  },
   { spec: "PromoCodeAssignment.member", delegate: "promoCodeAssignment", memberColumn: "memberId", keys: [["promoCodeId"]] },
   { spec: "MemberLodgeAccess.member", delegate: "memberLodgeAccess", memberColumn: "memberId", keys: [["lodgeId", "kind"]] },
   { spec: "CommitteeAssignment.member", delegate: "committeeAssignment", memberColumn: "memberId", keys: [["committeeRoleId"]] },
@@ -1112,7 +1143,7 @@ const GENERIC_KEYED_RESOLVERS: readonly {
  */
 const MONEY_ROSTER_DROP_NOTES: Record<string, string> = {
   "PromoRedemptionAllocation.member":
-    "duplicate promo redemption allocation row(s) will be dropped (the master already holds the same allocation) — the dropped rows' promo money history is removed.",
+    "duplicate promo redemption allocation row(s) will be dropped (the master already holds the same allocation) — the dropped rows' promo money history is removed, together with the per-night adjustment rows that decomposed them (INV-MONEY-029), so the master's allocation and its own rows keep reconciling.",
   "GroupBookingJoin.joinerMember":
     "duplicate group-booking join row(s) will be dropped (both members joined the same group booking) — the dropped rows leave that group's roster.",
 };
@@ -2456,6 +2487,7 @@ async function resolveAllCollisions(
       delegate: g.delegate,
       memberColumn: g.memberColumn,
       keySpecs: g.keys,
+      dependents: g.dependents,
       masterId,
       loserId,
     });
@@ -2508,15 +2540,17 @@ async function resolveKeyedCollisions(
     delegate: string;
     memberColumn: string;
     keySpecs: string[][];
+    dependents?: readonly DependentRows[];
     masterId: string;
     loserId: string;
   },
 ): Promise<{ moved: number; dropped: number }> {
-  const delegate = (tx as unknown as Record<string, {
+  const delegates = tx as unknown as Record<string, {
     findMany: (a: unknown) => Promise<Record<string, unknown>[]>;
     deleteMany: (a: unknown) => Promise<{ count: number }>;
     updateMany: (a: unknown) => Promise<{ count: number }>;
-  }>)[args.delegate];
+  }>;
+  const delegate = delegates[args.delegate];
 
   const [loserRows, masterRows] = await Promise.all([
     delegate.findMany({ where: { [args.memberColumn]: args.loserId } }),
@@ -2531,6 +2565,22 @@ async function resolveKeyedCollisions(
   );
 
   if (dropIds.length > 0) {
+    // Dependents first, while their member column still names the loser: the
+    // dropped parents' key values select exactly the loser's rows that
+    // decomposed them, and the master's own rows on the same key are untouched.
+    const droppedRows = loserRows.filter((row) => dropIds.includes(row.id as string));
+    for (const dependent of args.dependents ?? []) {
+      const matches = [...new Set(droppedRows.map((row) => row[dependent.matchColumn]))].filter(
+        (value): value is string => typeof value === "string",
+      );
+      if (matches.length === 0) continue;
+      await delegates[dependent.delegate].deleteMany({
+        where: {
+          [dependent.memberColumn]: args.loserId,
+          [dependent.matchColumn]: { in: matches },
+        },
+      });
+    }
     await delegate.deleteMany({ where: { id: { in: dropIds } } });
   }
   await delegate.updateMany({

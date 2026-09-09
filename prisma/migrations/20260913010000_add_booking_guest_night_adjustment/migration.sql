@@ -1,25 +1,14 @@
 BEGIN;
 
--- #3276 (stage 2 of programme #3272): record what each adjustment took off a
--- night. EXPAND ONLY. This migration changes no stored amount: no priceCents,
--- no discountCents, no promoAdjustmentCents, no allocation row. It adds one
--- enum-typed column with a constant default and one empty child table.
---
--- UNKNOWN is deliberately the column default. During a blue/green deploy the
--- draining colour does not know this column and omits it from inserts; the
--- default records the only fact the new colour can honestly know about such a
--- row. Only `night-adjustment-write.ts` ever writes RECORDED, and only after
--- the night's adjustment rows are in place in the same transaction.
-CREATE TYPE "BookingGuestNightAdjustmentsState" AS ENUM ('UNKNOWN', 'RECORDED');
-
+-- #3276 (stage 2 of programme #3272): record what each promotion took off a
+-- night, or off a guest where the engine decides at guest grain. EXPAND ONLY.
+-- This migration changes no stored amount and adds no column to any existing
+-- table: whether a booking's build-up can be trusted is derived by summing its
+-- rows against the recorded promo totals (INV-MONEY-029), never read off a
+-- flag. The amount rule, the grain and the reconciliation are stated once, in
+-- docs/invariants/money.md under INV-MONEY-029.
 CREATE TYPE "BookingGuestNightAdjustmentKind" AS ENUM ('PROMO');
 
-ALTER TABLE "BookingGuestNight"
-ADD COLUMN "adjustmentsState" "BookingGuestNightAdjustmentsState" NOT NULL DEFAULT 'UNKNOWN';
-
--- One row per adjustment per target. `amountCents` is a signed delta in
--- integer cents like `priceAdjustmentCents`; NULL means NOT KNOWN and is never
--- to be read as zero (INV-MONEY-029).
 CREATE TABLE "BookingGuestNightAdjustment" (
     "id" TEXT NOT NULL,
     "kind" "BookingGuestNightAdjustmentKind" NOT NULL,
