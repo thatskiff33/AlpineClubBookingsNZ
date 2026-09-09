@@ -188,6 +188,10 @@ const MODULE_IMPORTERS = new Set([
 ]);
 
 const SOURCE = sourceFiles();
+// Computed at module load, as the stage-1 census does: the AST walk over the
+// whole tree takes seconds under a parallel run, which is longer than one
+// test's budget, and its result is the same for every assertion below.
+const DISCOVERED_NIGHT_WRITERS = [...discoveredWriterSiteCounts().keys()].sort();
 
 describe("INV-MONEY-029 night adjustment build-up census", () => {
   it("has exactly one writer of BookingGuestNightAdjustment rows, and no stored validity flag anywhere", () => {
@@ -262,7 +266,7 @@ describe("INV-MONEY-029 night adjustment build-up census", () => {
   });
 
   it("requires every discovered night writer to say how it records — paired, or exempt with a reason", () => {
-    const discovered = [...discoveredWriterSiteCounts().keys()].sort();
+    const discovered = DISCOVERED_NIGHT_WRITERS;
     const declared = new Set([...Object.keys(PROMO_WRITERS), ...NIGHT_WRITERS_WITHOUT_PROMOTION.keys()]);
     const undeclared = discovered.filter((file) => !declared.has(file));
     expect(
