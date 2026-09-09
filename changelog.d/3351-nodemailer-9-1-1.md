@@ -1,0 +1,1 @@
+- **Security: email library patched (#3351).** The Nodemailer library the product sends email through moves to 9.1.1, which closes four published advisories (one rated high) in its address parsing and attachment handling. No change to any message or to how email is sent.
