@@ -539,8 +539,18 @@ const CENSUS_CEILING = {
    * for a new file outright — and the shift rule it took with it needs the same
    * three zone-free exports. Both modules now import them; neither resolves a
    * timezone. Re-measured, not incremented.
+   *
+   * 221 -> 222 (#2698): the same shape again. The hut-leader route sat exactly
+   * on its file-size ceiling, and the gate refuses an allowance for a file that
+   * was inside its budget, so the audit blocks moved into
+   * `hut-leader-assignment-audit.ts` and took `formatDateOnly` with them. That
+   * export is `date.toISOString().slice(0, 10)` — it resolves no timezone at
+   * all, and the zone-aware sibling `formatDateOnlyForTimeZone` is not used
+   * here. The dates it formats are the assignment's own `@db.Date` bounds, which
+   * arrive date-only and are written into an audit payload unchanged.
+   * Re-measured, not incremented.
    */
-  dateOnlyImporters: 221,
+  dateOnlyImporters: 222,
   /**
    * `new Date(y, m, d)` — local midnight in the HOST's zone.
    *

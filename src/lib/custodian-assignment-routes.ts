@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import {
   CustodianBedHoldError,
   CustodianOverCapacityConfirmationRequiredError,
+  CustodianOverlapsWholeLodgeHoldError,
 } from "@/lib/custodian-assignment";
 
 /**
@@ -26,6 +27,21 @@ export function custodianBedHoldErrorResponse(err: unknown) {
         // the admin confirming an over-capacity night knows the real total may
         // be higher.
         nonHoldingBookings: err.nonHoldingBookings,
+      },
+      { status: err.status },
+    );
+  }
+  if (err instanceof CustodianOverlapsWholeLodgeHoldError) {
+    // #2698 ordering case: a question, not a failure. The nights and the
+    // holding bookings' ids are all that leaves the server — the officer is
+    // deciding about bed-nights, and party data is neither needed nor allowed
+    // here (INV-PRIV).
+    return NextResponse.json(
+      {
+        error: err.message,
+        code: err.code,
+        amendments: err.amendments,
+        nights: err.nights,
       },
       { status: err.status },
     );

@@ -31,6 +31,7 @@ import {
   findCustodianBedHolds,
   holdCoversNight,
   holdOverlapsRange,
+  isCustodianHeldBedNight,
   isMinorAgeTier,
   type CustodianBedHold,
 } from "@/lib/custodian-occupancy";
@@ -292,5 +293,46 @@ describe("the placement guard", () => {
 
     const where = mocks.hutLeaderAssignmentFindMany.mock.calls[0][0].where;
     expect(where.endDate.gte).toEqual(parseDateOnly("2026-07-02"));
+  });
+});
+
+/**
+ * THE whole-lodge-hold exclusion predicate (#2698, INV-CAP-035). The planner
+ * expansion and the custodian write path's ordering check both subtract
+ * through this one function, so its boundaries are the rule's boundaries.
+ */
+describe("isCustodianHeldBedNight", () => {
+  const holds = [hold()];
+
+  it("covers the endDate night itself — the range is inclusive-inclusive", () => {
+    expect(isCustodianHeldBedNight(holds, "bed-1", "2026-07-04")).toBe(true);
+    expect(isCustodianHeldBedNight(holds, "bed-1", "2026-07-05")).toBe(false);
+  });
+
+  it("covers the startDate night and nothing before it", () => {
+    expect(isCustodianHeldBedNight(holds, "bed-1", "2026-07-02")).toBe(true);
+    expect(isCustodianHeldBedNight(holds, "bed-1", "2026-07-01")).toBe(false);
+  });
+
+  it("is per BED, so another bed's hold excludes nothing", () => {
+    expect(isCustodianHeldBedNight(holds, "bed-2", "2026-07-03")).toBe(false);
+  });
+
+  it("answers false for an empty hold set", () => {
+    expect(isCustodianHeldBedNight([], "bed-1", "2026-07-03")).toBe(false);
+  });
+
+  it("takes the union of several holds on one bed", () => {
+    const handover = [
+      hold({ startDate: "2026-07-02", endDate: "2026-07-02" }),
+      hold({
+        assignmentId: "assignment-2",
+        startDate: "2026-07-06",
+        endDate: "2026-07-07",
+      }),
+    ];
+    expect(isCustodianHeldBedNight(handover, "bed-1", "2026-07-02")).toBe(true);
+    expect(isCustodianHeldBedNight(handover, "bed-1", "2026-07-04")).toBe(false);
+    expect(isCustodianHeldBedNight(handover, "bed-1", "2026-07-07")).toBe(true);
   });
 });

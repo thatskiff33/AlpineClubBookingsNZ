@@ -405,7 +405,23 @@ export const AUDIT_CENSUS_TOTALS = {
   // the merged tree (468 sites, 2261 files scanned), not by adding one to the
   // literal: #3214 landed on `main` first, so this branch's own delta reads
   // 467 -> 468 after the merge where it read 466 -> 467 before it.
-  writeSites: 468,
+  // 468 -> 470 (#2698): the hut-leader assignment create, update and delete
+  // gain audit rows they never had — `lodge.hut-leader-assignment.created` /
+  // `.updated` / `.deleted`, category `lodge` per the audit guide's roster row
+  // — plus `recordWholeLodgeHoldAmendment` in `custodian-assignment.ts`, which
+  // records the officer's explicit acceptance that a custodian bed narrows an
+  // existing whole-lodge hold (INV-CAP-035), category `booking` to match the
+  // exclusive-hold writer it answers. Coverage is derived rather than stored,
+  // so that row IS the amendment, not a note about one.
+  //
+  // FOUR new actions and only TWO new sites, which is the census measuring
+  // something a delta could not: the three roster rows are written by ONE
+  // shared writer, `recordHutLeaderAssignmentAudit`, because three
+  // near-identical blocks across two route files is the `INV-SSOT-002` shape
+  // and the `lodge` category decision needs one home. Both categorised at the
+  // site, so neither joins `UNCATEGORISED_AUDIT_WRITERS` below. Measured by
+  // RUNNING the census, never by adding to the literal.
+  writeSites: 470,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -498,7 +514,12 @@ export const AUDIT_CENSUS_TOTALS = {
     // not be withdrawn from Stripe. #3214 landed on `main` first, so this
     // branch's own delta was 120 -> 121 before the merge and is 121 -> 122
     // after it - re-measured, never re-derived by arithmetic.
-    createAuditLog: { total: 122, uncategorised: 0 },
+    // 122 -> 124 (#2698): the shared hut-leader assignment writer and the
+    // whole-lodge hold amendment record, both awaited `createAuditLog` inside
+    // the write's own transaction — a rolled-back assignment records nothing,
+    // which is what makes accept-writes-both-or-neither a transaction rather
+    // than a cleanup path.
+    createAuditLog: { total: 124, uncategorised: 0 },
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -584,7 +605,28 @@ export const AUDIT_CENSUS_TOTALS = {
     // 101 -> 102 (#3039): the truncated-fan-out row is categorised `booking`,
     // which is a widening of nothing — a bound ceiling is a booking fact and the
     // row names the GroupBooking, not a member.
-    booking: 102,
+    // 102 -> 103 (#2698): `booking.wholeLodgeHold.custodianAmended`, the
+    // officer's acceptance that a custodian bed leaves an existing hold's
+    // represented set. `booking` rather than `lodge` because what narrowed is
+    // a BOOKING's sole occupancy, matching `booking.exclusiveHold.set`. It
+    // widens no ADMIN's access — the same support + bookings reads.
+    //
+    // WHICH WAY IT MOVED FOR A MEMBER, since this census asks that of every
+    // row rather than only of admins (#2698 review A-6). `booking` IS in
+    // `MEMBER_VISIBLE_AUDIT_CATEGORIES` and the writer sets
+    // `memberId: actorMemberId`, so this row DOES appear on one member's own
+    // activity list: the officer who accepted. That is a widening, and it is
+    // safe for the member it is about. The officer sees a record of their own
+    // deliberate action, already on their screen a moment earlier. Nobody else
+    // reaches it: `targetId` is a HutLeaderAssignment cuid, so no other
+    // member's timeline matches, and the hut leader the assignment is FOR is
+    // not named as the subject of this row (the roster rows carry that, under
+    // `lodge`, which is not member-visible). And the member projection
+    // suppresses `metadata` entirely, so `amendedBookingIds`, `nights` and the
+    // per-booking breakdown never reach a member surface — what is left is a
+    // `details` sentence naming no booking, no nights and no party
+    // (`INV-PRIV`).
+    booking: 103,
     // 16 -> 33 (#2581 child 2): the seventeen money writers — subscription
     // billing, member credit, fee configuration, saved-card charges and the five
     // Stripe webhook outcomes. `payment` is `support` plus `finance`, the
@@ -794,7 +836,12 @@ export const AUDIT_CENSUS_TOTALS = {
     // not already see about that registry.
     // 55 -> 65 (#2780 merged with main): both additions are `lodge` and both are
     // disjoint, so the merged figure is 65. Measured, not added up.
-    lodge: 65,
+    // 65 -> 66 (#2698): ONE writer, `recordHutLeaderAssignmentAudit`, for the
+    // three hut-leader assignment actions — create, update and delete — which
+    // recorded nothing at all before. `lodge` is the audit guide's roster row,
+    // and these are the lodge roster; the officers who can write them already
+    // hold lodge access, so nobody gains a read.
+    lodge: 66,
     // 19 -> 34 (#2581 child 2): the fifteen Xero settings, mapping, replay and
     // retry writers. `xero` is `support` plus `finance`.
     xero: 34,

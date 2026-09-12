@@ -1,4 +1,5 @@
 import type { Prisma } from "@prisma/client";
+import { createAuditLog } from "@/lib/audit";
 import {
   computeNightOccupancy,
   findOverlappingOverriddenNonHoldingBookings,
@@ -6,7 +7,12 @@ import {
 import {
   custodianHeldNightsForBed,
   findCustodianBedHolds,
+  isCustodianHeldBedNight,
 } from "@/lib/custodian-occupancy";
+import {
+  findBlockingWholeLodgeHolds,
+  wholeLodgeHoldCoversNight,
+} from "@/lib/exclusive-hold-occupancy";
 import {
   eachDateOnlyInRange,
   addDaysDateOnly,
@@ -103,6 +109,55 @@ export class CustodianOverCapacityConfirmationRequiredError extends Error {
       "Holding that bed puts the lodge over capacity on at least one night. Confirm to proceed.",
     );
     this.name = "CustodianOverCapacityConfirmationRequiredError";
+  }
+}
+
+/**
+ * One existing whole-lodge hold a custodian bed hold would narrow, and the
+ * nights on which it would (#2698).
+ *
+ * Deliberately carries the booking ID and the dates and NOTHING ELSE: the
+ * officer is being asked about bed-nights, not about who is staying, and this
+ * shape reaches an API response, an audit row and a screen. `INV-PRIV` — no
+ * member name, no guest count, no party data (the exclusive-hold route records
+ * overlapping booking ids the same way and for the same reason).
+ */
+export interface WholeLodgeHoldAmendment {
+  /** The holding booking whose represented bed set would narrow. */
+  bookingId: string;
+  /** Sorted `YYYY-MM-DD` nights this bed would leave that hold's set. */
+  nights: string[];
+}
+
+/**
+ * The ordering case, refused pending an explicit officer choice (#2698, owner
+ * decision 9 Aug 2026).
+ *
+ * A custodian bed hold created or changed over nights an EXISTING whole-lodge
+ * hold already covers narrows that hold's represented bed set (`INV-CAP-035`).
+ * That is somebody else's sole-occupancy booking, so it is not rewritten
+ * silently: the write is refused, the officer is shown which nights and which
+ * holds, and only an explicit `amendOverlappingHolds` re-send goes through — as
+ * ONE transaction, so accept writes both facts or neither and decline writes
+ * nothing at all.
+ *
+ * The reverse direction raises nothing: setting a whole-lodge hold over nights
+ * a custodian already holds is correct by construction, because the exclusion is
+ * derived at read time rather than stored on the hold.
+ */
+export class CustodianOverlapsWholeLodgeHoldError extends Error {
+  readonly status = 409;
+  readonly code = "CUSTODIAN_OVERLAPS_WHOLE_LODGE_HOLD";
+  constructor(
+    /** The holds that would narrow, with the nights each would lose. */
+    readonly amendments: WholeLodgeHoldAmendment[],
+    /** Every affected night, de-duplicated and sorted, for a one-line message. */
+    readonly nights: string[],
+  ) {
+    super(
+      "The lodge is exclusively held for another booking on at least one of those nights. Holding this bed takes it out of that booking's sole occupancy — accept the amendment to do both together, or cancel and neither changes.",
+    );
+    this.name = "CustodianOverlapsWholeLodgeHoldError";
   }
 }
 
@@ -227,21 +282,25 @@ export async function validateCustodianBedHold(input: {
   // reservations (#2525), so a bed a held request had reserved was invisible
   // and the admin was not warned that the hold tips the lodge over.
   //
-  // The whole-lodge hold flag is deliberately NOT pinned here, and the reason
-  // is a POLICY, not an arithmetic fact: a hold and a custodian hold do not
-  // block each other in either direction (docs/CAPACITY_MODEL.md, "Whole-lodge
-  // holds and custodian beds do not block each other"). Pinning would turn this
-  // advisory count into a hard "lodge is full" on every held night and refuse a
-  // hut leader a bed the club fully intends them to occupy.
+  // The whole-lodge hold flag is deliberately NOT pinned here, and since #2698
+  // the reason is an arithmetic fact rather than a bare policy. A hold's
+  // represented bed set EXCLUDES the bed-nights a custodian holds
+  // (INV-CAP-035), so holding a bed on an exclusively held night takes that bed
+  // out of the held group's set and adds it to the custodian's: the lodge's
+  // occupancy is unchanged and there is nothing over-capacity about it. Pinning
+  // would turn this advisory count into a hard "lodge is full" on every held
+  // night and refuse a hut leader a bed the club fully intends them to occupy.
   //
-  // Do NOT restate that as "the custodian's bed is outside the held pool" — it
-  // is not. `getLodgeCapacityStatus` counts every active bed, including the
-  // custodian's, and `wholeLodgeHoldOccupiedBedNightsForPlanner` (#2317)
-  // expands a hold across every active bed too. The consequence is a real gap,
-  // stated rather than hidden: creating a custodian hold over an exclusively
-  // held night raises no warning at all, because this loop compares against the
-  // holding group's own headcount. Whether it should is an owner decision, not
-  // something #2681 changed.
+  // The gap this comment used to state — that creating a custodian hold over an
+  // exclusively held night raised no warning at all — was the ORDERING case,
+  // and it is closed, but not here. It is not an over-capacity question, so it
+  // does not belong in an over-capacity loop: narrowing somebody else's hold is
+  // a decision for the officer, taken through
+  // `findWholeLodgeHoldAmendments` below and refused with
+  // `CustodianOverlapsWholeLodgeHoldError` until they accept it (#2698, owner
+  // decision 9 Aug 2026). The reverse direction needs no prompt at all — a hold
+  // set over an existing custodian night is correct by construction, because
+  // the exclusion is derived at read time.
   const occupancy = await computeNightOccupancy({
     lodgeId,
     from: startDate,
@@ -283,6 +342,177 @@ export async function validateCustodianBedHold(input: {
       })),
     );
   }
+}
+
+/**
+ * Which existing whole-lodge holds this custodian bed hold would narrow
+ * (#2698, `INV-CAP-035`) — the ordering case, and nothing else.
+ *
+ * Runs inside the caller's locked transaction, on the caller's client, so the
+ * hold set it reads is the one the write commits against. The routes call it
+ * AFTER `validateCustodianBedHold`, so a hold that is going to be refused
+ * outright never raises an amendment question the officer would then have to
+ * un-answer.
+ *
+ * ## Night semantics
+ *
+ * Custodian ranges are inclusive-inclusive covered DAYS; a whole-lodge hold's
+ * nights are the half-open booking envelope `[checkIn, checkOut)`, because a
+ * `checkOut` is a departure morning. Both conventions are applied by their own
+ * module's predicate — `custodianAssignmentNights` here,
+ * `wholeLodgeHoldCoversNight` there — rather than converted by hand, so a hold
+ * departing on the morning of day D does not claim the night of D and a
+ * custodian holding the bed that night is not reported as narrowing it.
+ *
+ * ## Why `excludeAssignmentId` matters, and is not merely an optimisation
+ *
+ * "New and amended holds only" (owner decision, 9 Aug 2026). A bed-night THIS
+ * assignment already holds left the overlapping hold's represented set when it
+ * was first created; re-asking about it on every unrelated edit — a date
+ * tweak, a lodge move, a PIN reset that round-trips the form — would turn one
+ * decided amendment into a prompt the officer has to re-accept for ever, and
+ * would audit a second acceptance for a change that moved nothing. So the
+ * nights already held by this same assignment on this same bed are subtracted,
+ * through the one predicate (`isCustodianHeldBedNight`) rather than by
+ * re-deriving coverage here.
+ *
+ * Returns an empty array when there is nothing to amend, which is the ordinary
+ * case and costs one indexed query.
+ */
+export async function findWholeLodgeHoldAmendments(input: {
+  bedId: string;
+  lodgeId: string;
+  /** Inclusive first covered date. */
+  startDate: Date;
+  /** Inclusive last covered date. */
+  endDate: Date;
+  /** Present when editing, so nights this assignment already holds do not re-prompt. */
+  assignmentId?: string;
+  db: CustodianAssignmentDb;
+}): Promise<WholeLodgeHoldAmendment[]> {
+  const nights = custodianAssignmentNights(input.startDate, input.endDate);
+  if (nights.length === 0) return [];
+  const toExclusive = addDaysDateOnly(input.endDate, 1);
+
+  const holds = await findBlockingWholeLodgeHolds({
+    lodgeId: input.lodgeId,
+    from: input.startDate,
+    toExclusive,
+    db: input.db,
+  });
+  if (holds.length === 0) return [];
+
+  // What this bed already takes out of those holds' sets — this assignment's
+  // own coverage only. Another custodian's hold on the same bed is impossible
+  // on a night this one covers (validateCustodianBedHold refuses it), so the
+  // filter is exact rather than approximate.
+  const ownHolds = input.assignmentId
+    ? (
+        await findCustodianBedHolds({
+          bedIds: [input.bedId],
+          from: input.startDate,
+          toExclusive,
+          db: input.db,
+        })
+      ).filter((hold) => hold.assignmentId === input.assignmentId)
+    : [];
+
+  const amendments: WholeLodgeHoldAmendment[] = [];
+  for (const hold of holds) {
+    const affected: string[] = [];
+    for (const night of nights) {
+      const nightKey = formatDateOnly(night);
+      if (!wholeLodgeHoldCoversNight(hold, nightKey)) continue;
+      // Already outside this hold's set, so nothing changes tonight.
+      if (isCustodianHeldBedNight(ownHolds, input.bedId, nightKey)) continue;
+      affected.push(nightKey);
+    }
+    if (affected.length > 0) {
+      amendments.push({ bookingId: hold.bookingId, nights: affected });
+    }
+  }
+  return amendments;
+}
+
+/** Every affected night across a set of amendments, de-duplicated and sorted. */
+export function wholeLodgeHoldAmendmentNights(
+  amendments: readonly WholeLodgeHoldAmendment[],
+): string[] {
+  return [
+    ...new Set(amendments.flatMap((amendment) => amendment.nights)),
+  ].sort();
+}
+
+/**
+ * Record the officer's explicit acceptance that a custodian bed hold narrows
+ * one or more existing whole-lodge holds (#2698).
+ *
+ * **This audit row IS the amendment.** Coverage is derived at read time — the
+ * hold's represented bed set is computed from the live custodian holds every
+ * time anything asks (`INV-CAP-035`) — so there is no bed set on the hold row
+ * to edit and no column to write. What the decision requires to be durable and
+ * atomic is therefore the officer's acceptance itself, and it is written on the
+ * SAME transaction as the custodian assignment that caused it: accept commits
+ * both, decline or failure commits neither.
+ *
+ * Category `booking`, matching the exclusive-hold writer
+ * (`booking.exclusiveHold.set/cleared`) that owns the other half of this
+ * conversation — docs/guides/audit-log.md's `booking` row is "Member-facing and
+ * automatic booking events, and the booking rules themselves", and what
+ * narrowed here is a BOOKING's sole occupancy, not the lodge roster. The
+ * roster half of the same action is audited separately under `lodge`, so each
+ * reader's Category filter finds the half that belongs to them.
+ *
+ * `INV-PRIV`: booking IDs and dates only. No member name, no guest count and
+ * no party data — a hold can begin life as a public school request, and the
+ * officer is deciding about bed-nights.
+ */
+export async function recordWholeLodgeHoldAmendment(
+  db: CustodianAssignmentDb,
+  input: {
+    actorMemberId: string;
+    assignmentId: string;
+    lodgeId: string;
+    bedId: string;
+    amendments: readonly WholeLodgeHoldAmendment[];
+    requestId?: string | null;
+    ipAddress?: string | null;
+    userAgent?: string | null;
+  },
+): Promise<void> {
+  const nights = wholeLodgeHoldAmendmentNights(input.amendments);
+  await createAuditLog(
+    {
+      action: "booking.wholeLodgeHold.custodianAmended",
+      memberId: input.actorMemberId,
+      actorMemberId: input.actorMemberId,
+      targetId: input.assignmentId,
+      entityType: "HutLeaderAssignment",
+      entityId: input.assignmentId,
+      category: "booking",
+      severity: "important",
+      outcome: "success",
+      summary: "Whole-lodge hold narrowed for a custodian bed",
+      details:
+        "An officer accepted that holding a bed for a hut leader takes that bed out of an existing whole-lodge hold's sole occupancy on the nights listed. The holding booking's nights, price and every other booking on the lodge are unchanged.",
+      metadata: {
+        lodgeId: input.lodgeId,
+        bedId: input.bedId,
+        nights,
+        amendedBookingIds: input.amendments.map(
+          (amendment) => amendment.bookingId,
+        ),
+        amendments: input.amendments.map((amendment) => ({
+          bookingId: amendment.bookingId,
+          nights: amendment.nights,
+        })),
+      },
+      requestId: input.requestId,
+      ipAddress: input.ipAddress,
+      userAgent: input.userAgent,
+    },
+    db,
+  );
 }
 
 /**

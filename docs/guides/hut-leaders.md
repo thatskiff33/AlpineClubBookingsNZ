@@ -97,6 +97,24 @@ What a held bed does, and does not, do:
   own, anywhere — including at the same lodge.
 - **Ending or shortening** the assignment frees the bed immediately; there is
   nothing to clean up.
+- A **whole-lodge hold does not cover the custodian's bed.** When a booking has
+  the lodge to itself, the custodian's bed is not part of what that group has —
+  they have every other bed. Nothing about the group's dates, their price or
+  what members see changes; the lodge still reads as full on those nights.
+
+> **If the lodge is already held for those nights, you will be asked first.**
+> Holding a bed on a night another booking has taken the whole lodge for means
+> that group gives up one bed. Rather than doing that quietly, the page stops
+> and shows you the nights, with two choices:
+>
+> - **Accept and hold the bed** — the assignment is created and the other
+>   booking's sole occupancy is narrowed by that one bed on those nights, as a
+>   single recorded action. Their dates and what they pay do not change.
+> - **Cancel** — nothing changes at all, on either side.
+>
+> It only works in that direction. Putting a whole-lodge hold on a booking over
+> nights a custodian already holds needs no question and asks none: the
+> custodian's bed was never part of the hold.
 
 **Changing your mind later.** The assignments table has two bed controls on each
 row, so you never have to delete an assignment to change its bed:
@@ -141,17 +159,18 @@ row, so you never have to delete an assignment to change its bed:
 | Start Date / End Date | The nights the leader covers | NZ date-only; an >1-day overlap with an existing assignment is blocked, EXCEPT against a school group's teacher assignments, which never block you |
 | Eligible members list | Members whose bookings make them a natural fit | Adopts each member's conflict-free suggested range |
 | Pick any member | Assign a member with no booking (e.g. a visiting custodian) | Keeps the range you picked |
-| Hold a bed (optional) | Holds one bed for every covered night, with no booking | Default is **No bed — role only** (no capacity effect). Needs the `bedAllocation` module on to *set* a bed. Inclusive of the end date's night. Each choice names the bed type, so a double is obvious before you take it |
+| Hold a bed (optional) | Holds one bed for every covered night, with no booking | Default is **No bed — role only** (no capacity effect). Needs the `bedAllocation` module on to *set* a bed. Inclusive of the end date's night. Each choice names the bed type, so a double is obvious before you take it. If a booking already has the whole lodge on any covered night, you are asked to accept narrowing it by that one bed before anything is written |
 | Release bed (undo icon) | Hands the held bed back and keeps the assignment | Available whether or not the `bedAllocation` module is on — a hold made while it was on still occupies a real bed |
 | Change bed (bed icon) | Opens the bed picker for that row's own dates | Works on automatically created assignments too, which never come with a bed |
 | Reset kiosk PIN (key icon) | Issues a new kiosk PIN for that leader | Shown once; emailed if delivery works; old PIN is revoked |
-| Delete (trash icon) | Removes the assignment | Frees those nights (they may go red again) |
+| Delete (trash icon) | Removes the assignment | Frees those nights (they may go red again). A held bed goes straight back to the bookable pool, and any booking holding the whole lodge on those nights covers it again |
 | Lodge selector | Which lodge the whole workspace describes | Only shown with more than one active lodge. It scopes reads, bed choices and new assignments together |
 
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
+| Holding a bed says the lodge is exclusively held on some nights | Another booking has taken the whole lodge for those nights, so holding this bed takes one bed off them | Read the nights listed. **Accept and hold the bed** does both changes together and records them; **Cancel** leaves everything exactly as it was. If the other booking should not have the lodge to itself, clear its whole-lodge hold on the booking first and try again |
 | The lodge list could not be loaded | The page cannot prove which lodge its reads or writes belong to | Press **Try again**. Assignment controls remain hidden until a real lodge returns |
 | The dashboard says more uncovered nights than this page lists | Expected on a club with more than one lodge. The dashboard and the sidebar badge count **lodge-nights** across the whole club — one night with two uncovered lodges is two — while this page shows only the lodge in its selector. On a club with more than one lodge the dashboard names the lodge beside every date, so you can see where the extra ones are. A club with one lodge sees the same number in both places, with no lodge names | Switch lodges here to see the rest, or read the dashboard's dates, which name the lodge each belongs to |
 | The dashboard lists an uncovered night at a lodge you have archived, shown as "*Lodge name*, archived" | Archiving a lodge stops new bookings but does not cancel the ones it already had. Those guests still arrive and still need a leader, so the night is still counted and is labelled archived. It will not clear itself: the nightly automatic assignment only ever assigns at active lodges | Decide which of the two you meant. To cover it, make the lodge active again (**Admin → Lodges**), assign a leader here, and archive it again afterwards. To be rid of it, cancel or move the remaining bookings at that lodge — the row goes when the last one does |

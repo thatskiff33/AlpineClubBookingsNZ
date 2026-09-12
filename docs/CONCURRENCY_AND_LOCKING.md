@@ -132,8 +132,8 @@ are the literal `1`.
 
 | Lock | Key | Helper / where | Tier | Serialises |
 | --- | --- | --- | --- | --- |
-| **Global booking / money** | `1` (literal) | inline `tx.$executeRaw` | 2 | Booking-status + money side effects that must exclude across the whole booking regardless of lodge: cancel, capture/settle, hold-release, group-settlement reaper/settle/refund/organiser-cancel, refunds, credit restore; plus bed-allocation inventory/placement/move/range/auto/approval/removal writers that must serialize with lifecycle prune. Member merge is the one bed-allocation writer that deliberately does NOT take this key — see "Merge joins the bed-allocation cohort" (#2595). |
-| **Per-lodge capacity** | `hashtextextended(<lodgeId>, 0)` | `acquireLodgeCapacityLock(tx, lodgeId)` (`lodge-capacity-lock.ts`, re-exported by `capacity.ts`) | 1 | Capacity claims/checks and bed-allocation mutations for one lodge; booking admission versus lodge deactivation; hut-leader overlap and optional bed-hold writes; roster eligibility snapshots; and direct or config-transfer chore-template changes, which serialize active-template validation for that lodge. |
+| **Global booking / money** | `1` (literal) | inline `tx.$executeRaw` | 2 | Booking-status + money side effects that must exclude across the whole booking regardless of lodge: cancel, capture/settle, hold-release, group-settlement reaper/settle/refund/organiser-cancel, refunds, credit restore; plus bed-allocation inventory/placement/move/range/auto/approval/removal writers that must serialize with lifecycle prune; and, since #2698, the hut-leader ACCEPT path only — a custodian bed hold the officer has explicitly accepted narrowing an existing whole-lodge hold, which must exclude that hold's release (`INV-CAP-035`). Gated on the acceptance AND on a bed being involved, so a bedless write cannot take the club-wide key by asserting a flag. The hut-leader routes are otherwise not in this cohort: the detect-and-refuse path writes nothing and takes the per-lodge key alone. Member merge is the one bed-allocation writer that deliberately does NOT take this key — see "Merge joins the bed-allocation cohort" (#2595). |
+| **Per-lodge capacity** | `hashtextextended(<lodgeId>, 0)` | `acquireLodgeCapacityLock(tx, lodgeId)` (`lodge-capacity-lock.ts`, re-exported by `capacity.ts`) | 1 | Capacity claims/checks and bed-allocation mutations for one lodge; booking admission versus lodge deactivation; hut-leader overlap, optional bed-hold writes and assignment DELETE (#2698: removing a custodian hold widens every overlapping whole-lodge hold's represented set); roster eligibility snapshots; and direct or config-transfer chore-template changes, which serialize active-template validation for that lodge. |
 | **Per-member night footprint** | `hashtext("booking-member-night"), hashtext(<memberId>)` | `lockBookingMemberNights(tx, guests)` (`booking-member-night-conflicts.ts`) | cross-lodge | Serialises the person-night guard ACROSS lodges (see below). |
 | **Per-trip hosting coverage** | `hashtext("hosting-coverage-group"), hashtext(<GroupBooking.id>)` | `lockHostingCoverageGroup` / `lockHostingCoverageGroups`, with `tryLockHostingCoverageGroup(s)` tried first (`adult-member-hosting-coverage-lock.ts`) | cross-account | Serialises `SAME_GROUP_TRIP` coverage (#3039, epic #2943). The owner key cannot do this job: it is `Booking.memberId`, the DEPENDENT's own account, while every Group Trip source belongs to somebody else — so two writers changing two bookings in one trip hold two DIFFERENT owner keys and are not serialised at all. Not the lodge key either: one lodge holds many unrelated trips. Taken immediately BEFORE the sorted owner keys, because the trip's membership is what decides which owners the reconciliation fan-out will name. Several trips are taken in sorted order, and EVERY acquisition is tried with `pg_try_advisory_xact_lock` before the blocking form — one transaction can discover two trip keys (a booking in one trip whose same-owner dependent sits in another), so sorting within a call cannot order keys discovered in two, and a conflict rolls the whole outer transaction back with the stable `HOSTING_COVERAGE_PARTICIPANT_RETRY` 409 rather than waiting inside a booking transaction. Taken only where the lodge has `SAME_GROUP_TRIP` enabled AND the booking is in a trip. |
 | **Per-owner hosting coverage** | `hashtext("hosting-coverage-owner"), hashtext(<Booking.memberId>)` | `lockHostingCoverageOwner` / `lockHostingCoverageOwners` (`adult-member-hosting-coverage-lock.ts`) | cross-booking | Serialises `SAME_BOOKING_OWNER` coverage (#2576 §9): one booking's compliance depends on another booking of the SAME owner, so the key remains authoritative even though #2600 made allocation-participating confirmation and cancellation compose global → lodge. Taken LAST among the application lock families a caller composes, EXCEPT that since #3039 the per-TRIP hosting coverage key above sits immediately before it — so it is the second of the last two rather than the last. Roster-aware modification paths take global → lodge → roster-date → any applicable member keys → sorted queue-participant `Member FOR KEY SHARE NOWAIT` rows → coverage-group → coverage-owner; queued incident reconciliation takes hosting policy-set → sorted claimed member-lifecycle keys → sorted claimed `Member FOR KEY SHARE` rows → coverage-group (only where the reconciled booking is in a Group Trip at a lodge with `SAME_GROUP_TRIP` on; the evaluator takes it fail-fast before it reads a sibling as cover) → coverage-owner. Paths that do not use roster or member keys omit those tiers. Ordinary producers try sorted owner keys before re-entering the blocking helper, while merge takes its sorted owner keys only after its one sorted participant `FOR UPDATE` statement. The key is taken only when the lodge actually has the scope enabled. |
@@ -201,7 +201,10 @@ There is no unique constraint on the range behind the application check, so
 that holds only for as long as all three keep deciding under the key:
 
 - `POST /api/admin/hut-leaders` — role-only and bed-holding alike. Member,
-  overlap and optional bed-availability checks all re-run under the key.
+  overlap and optional bed-availability checks all re-run under the key. A
+  bed-holding write additionally asks, under the key, which existing whole-lodge
+  holds the bed would narrow (`INV-CAP-035`, #2698) and refuses with
+  `409 CUSTODIAN_OVERLAPS_WHOLE_LODGE_HOLD` unless the officer has accepted.
 - `PUT /api/admin/hut-leaders/[id]` — including an edit that clears the bed or
   never had one. #2887 corrected this: #2286 had locked only the bed-holding
   branch on the reasoning that releasing capacity is safe, which is true of
@@ -218,6 +221,25 @@ that holds only for as long as all three keep deciding under the key:
 
 Different lodges retain independent keys. Confirmation email is sent only after
 commit and outside the transaction.
+
+**The custodian/whole-lodge-hold amendment composes TWO tiers, and only on the
+accept path (#2698).** When the officer re-sends `amendOverlappingHolds: true`,
+the create and the edit take the global cohort key `pg_advisory_xact_lock(1)`
+**first** and `acquireLodgeCapacityLock` second — the same order the exclusive-
+hold route uses (`INV-LOCK-002`) — and re-read both the assignment row and the
+blocking whole-lodge holds under them before writing the assignment and the
+audited acceptance in that one transaction. The global tier is what makes the
+amendment decidable: the hold RELEASE path is booking cancel's
+`RELEASE_WHOLE_LODGE_HOLD_UPDATE`, which serialises on the club-wide key and
+never on this lodge's, so the lodge key alone would let a hold be released
+between the read and the audited acceptance of an amendment to it.
+
+Whether that tier is taken is decided from the REQUEST, before any lock —
+`amendRequested` is read off the parsed body — so the order can never invert
+into lodge-then-global. The detect-and-refuse path therefore keeps the narrower
+pre-#2698 topology: it writes nothing, so a hold released underneath it costs
+the officer a retry rather than a wrong write, and hut-leader writes as a class
+do not join the global cohort.
 
 The other three writers, and why the guarantee is worded the way it is:
 
@@ -238,10 +260,21 @@ The other three writers, and why the guarantee is worded the way it is:
   two **independently created** assignments overlap", which reads as covering the
   second case and does not — those two approvals are as independent as any two
   writes in the system.
-- `[id]/pin/route.ts` rotates a PIN and `[id]/route.ts`'s DELETE removes a row.
-  Both write on the base client outside any lock. Neither can create an overlap
-  — one changes no dates and no lodge, the other only ever removes a row — so
-  neither needs the key.
+- `[id]/pin/route.ts` rotates a PIN on the base client outside any lock. It
+  cannot create an overlap — it changes no dates and no lodge — so it does not
+  need the key.
+- `[id]/route.ts`'s DELETE removes a row, so it cannot create an overlap either
+  and still runs no overlap read. It **does** hold the per-lodge key since
+  #2698, for a different reason: removing a custodian bed hold WIDENS the
+  represented bed set of every overlapping whole-lodge hold (`INV-CAP-035`),
+  because that exclusion is derived from the live holds at read time. That is a
+  capacity move, and it ran on the base client outside any transaction until
+  then. It now takes the key from the pre-lock row's `lodgeId`, re-reads the row
+  under it, refuses with 409 if the row moved lodges in between, and deletes and
+  audits in one transaction. **That 409 is new** — the delete's response
+  contract gained one refusal, and the Hut Leaders page surfaces it as a
+  page-level error rather than leaving the officer clicking Delete with nothing
+  happening.
 
 **The cron's coverage probes are a fifth decision point, and they are
 deliberately NOT the same rule** (#2926). `cron-hut-leader-auto-assign` asks two

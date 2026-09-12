@@ -14,8 +14,14 @@ import {
   resolveOptionalActiveLodgeId,
 } from "@/lib/lodges";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
+import { getAuditRequestContext } from "@/lib/audit";
+import { recordHutLeaderAssignmentAudit } from "@/lib/hut-leader-assignment-audit";
 import { findHutLeaderOverlapRefusal } from "@/lib/hut-leader-overlap-guard";
-import { validateCustodianBedHold } from "@/lib/custodian-assignment";
+import {
+  recordWholeLodgeHoldAmendment,
+  type WholeLodgeHoldAmendment,
+} from "@/lib/custodian-assignment";
+import { validateCustodianBedHoldAndHoldAmendment } from "@/lib/hut-leader-assignment-service";
 import { custodianBedHoldErrorResponse } from "@/lib/custodian-assignment-routes";
 import { isMinorAgeTier } from "@/lib/custodian-occupancy";
 import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
@@ -32,6 +38,11 @@ const createSchema = z.object({
   bedId: z.string().min(1).nullable().optional(),
   // #1668-style explicit override of the over-capacity warning.
   confirmOverCapacity: z.boolean().optional(),
+  // #2698 ordering case: the officer's EXPLICIT acceptance that holding this
+  // bed narrows an existing whole-lodge hold's represented bed set. Absent is
+  // decline-by-default — the request is refused with 409
+  // CUSTODIAN_OVERLAPS_WHOLE_LODGE_HOLD and nothing is written.
+  amendOverlappingHolds: z.boolean().optional(),
 }).refine((data) => data.startDate <= data.endDate, {
   message: "startDate must be before or equal to endDate",
 });
@@ -105,6 +116,7 @@ export async function POST(req: NextRequest) {
     permission: { area: "lodge", level: "edit" },
   });
   if (!guard.ok) return guard.response;
+  const session = guard.session;
   let body: unknown;
   try {
     body = await req.json();
@@ -189,6 +201,21 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  const auditRequest = getAuditRequestContext(req);
+  // #2698: the officer has already been shown the 409 and accepted, so this
+  // request will narrow somebody else's whole-lodge hold. Decided BEFORE any
+  // lock is taken, because it decides WHICH locks are taken (INV-LOCK-002:
+  // global then lodge, never the other order).
+  //
+  // AND a bed has to be involved (#2698 review A-3). Without that conjunct any
+  // `lodge:edit` admin could send `{bedId: null, amendOverlappingHolds: true}`
+  // and hold the club-wide key that serialises cancel, capture, settle, refund
+  // and credit-restore — while no amendment is possible at all, because a
+  // bedless assignment narrows nothing. The bed is already derived above, so
+  // this costs no read.
+  const amendRequested =
+    parsed.data.amendOverlappingHolds === true && bedId !== null;
+
   try {
     const pin = generateHutLeaderPin();
     const hutLeaderPin = await hashHutLeaderPin(pin);
@@ -201,6 +228,18 @@ export async function POST(req: NextRequest) {
     // external provider call inside a DB transaction), with its existing
     // failure-tolerant `emailSent` handling untouched.
     const created = await prisma.$transaction(async (tx) => {
+      // #2698 amend path only: the global cohort key, taken FIRST and only
+      // when the officer has accepted (INV-LOCK-001/002). Narrowing a hold's
+      // represented set has to be decided against a hold that cannot be
+      // released underneath it, and the release path — booking cancel's
+      // RELEASE_WHOLE_LODGE_HOLD_UPDATE — serialises on the club-wide key and
+      // never on this lodge's, so the lodge key alone would not exclude it.
+      // The detect-and-refuse path writes nothing, so it keeps the narrower
+      // pre-#2698 topology: a hold cancelled under it costs the officer a
+      // retry, never a wrong write.
+      if (amendRequested) {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      }
       await acquireLodgeCapacityLock(tx, parsed.data.lodgeId);
       const lockedLodgeId = await resolveOptionalActiveLodgeId(
         tx,
@@ -236,15 +275,20 @@ export async function POST(req: NextRequest) {
       });
       if (lockedOverlap) throw new HutLeaderOverlapError(lockedOverlap.error);
 
+      // The hard bed refusals, then the #2698 ordering question — in that
+      // order, and shared with the edit so the two cannot drift. Declining
+      // throws, which rolls this whole transaction back: "no partial durable
+      // state" is the transaction, not a cleanup path.
+      let amendments: WholeLodgeHoldAmendment[] = [];
       if (bedId) {
-          await validateCustodianBedHold({
-            bedId,
-            lodgeId: lockedLodgeId,
-            startDate: newStart,
-            endDate: newEnd,
-            confirmOverCapacity: parsed.data.confirmOverCapacity,
-            db: tx,
-          });
+        amendments = await validateCustodianBedHoldAndHoldAmendment(tx, {
+          bedId,
+          lodgeId: lockedLodgeId,
+          startDate: newStart,
+          endDate: newEnd,
+          confirmOverCapacity: parsed.data.confirmOverCapacity,
+          amendAccepted: amendRequested,
+        });
       }
       const assignment = await tx.hutLeaderAssignment.create({
         data: {
@@ -259,7 +303,36 @@ export async function POST(req: NextRequest) {
           ...(bedId ? { bedId } : {}),
         },
       });
-      return { assignment, member: lockedMember };
+
+      await recordHutLeaderAssignmentAudit(tx, {
+        event: "created",
+        actorMemberId: session.user.id,
+        subjectMemberId: parsed.data.memberId,
+        assignmentId: assignment.id,
+        lodgeId: lockedLodgeId,
+        startDate: newStart,
+        endDate: newEnd,
+        bedId,
+        requestId: auditRequest?.id,
+        ipAddress: auditRequest?.ipAddress,
+        userAgent: auditRequest?.userAgent,
+      });
+
+      if (bedId && amendments.length > 0) {
+        // Same transaction as the create above: accept writes both facts or
+        // neither (#2698, "one logical atomic audited action").
+        await recordWholeLodgeHoldAmendment(tx, {
+          actorMemberId: session.user.id,
+          assignmentId: assignment.id,
+          lodgeId: lockedLodgeId,
+          bedId,
+          amendments,
+          requestId: auditRequest?.id,
+          ipAddress: auditRequest?.ipAddress,
+          userAgent: auditRequest?.userAgent,
+        });
+      }
+      return { assignment, member: lockedMember, amendments };
     });
     const { assignment } = created;
 

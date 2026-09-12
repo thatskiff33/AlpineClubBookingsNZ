@@ -1,5 +1,9 @@
 import { bookingHoldsCapacity, capacityHoldingBookingFilter } from "@/lib/booking-status";
 import { sameLodgeNullTolerant } from "@/lib/capacity";
+import {
+  type CustodianBedHold,
+  isCustodianHeldBedNight,
+} from "@/lib/custodian-occupancy";
 import { formatDateOnly } from "@/lib/date-only";
 import { lodgeNullTolerantScope } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
@@ -86,6 +90,16 @@ import { prisma } from "@/lib/prisma";
  *
  * Every date key here is `YYYY-MM-DD` from {@link formatDateOnly} — the ONE
  * date-only convention the bed-allocation and capacity domain uses.
+ *
+ * ## The custodian exclusion is imported, not restated (#2698)
+ *
+ * A hold's represented bed set excludes a bed-night a custodian holds
+ * (`INV-CAP-035`). That rule is decided in exactly one place —
+ * `isCustodianHeldBedNight` in `custodian-occupancy.ts` — and this module
+ * subtracts through it rather than re-deriving "is this bed the custodian's
+ * tonight" from an inclusive-inclusive assignment range a second time. The
+ * night-span note above is still a hand-match with `buildWholeLodgeHoldIndex`
+ * and stays one; #2698 did not widen into unifying that, and says so.
  *
  * ## What this module deliberately does NOT do
  *
@@ -284,13 +298,36 @@ export interface WholeLodgeHoldOccupiedBedNight {
 
 /**
  * Expand blocking whole-lodge holds into planner `occupiedBedNights` rows —
- * EVERY ACTIVE BED of the held lodge, on EVERY held night in `nights`.
+ * every ACTIVE bed of the held lodge on every held night in `nights`, EXCEPT
+ * the bed-nights a custodian holds.
  *
  * `bookingId`/`bookingGuestId` are null by construction (see the module note):
  * that is what makes the occupancy unattributed and non-displaceable. `ageTier`
  * is deliberately omitted, so the planner reads the occupant as an adult — the
  * conservative choice for the #1768 room-mix guard, and one that leaks nothing
  * about who the held group actually is.
+ *
+ * ## The custodian exclusion (`INV-CAP-035`, #2698)
+ *
+ * `custodianHolds` is REQUIRED rather than optional, and that is the point: a
+ * caller that forgets it is a compile error rather than a hold quietly
+ * re-claiming the custodian's bed. Both planners already load the identical
+ * hold set on the identical window to feed
+ * `custodianOccupiedBedNightsForPlanner`, so passing it costs no query.
+ *
+ * The decision it implements is the owner's, 9 Aug 2026: a whole-lodge hold
+ * represents every bed of its lodge EXCEPT one a custodian holds that night.
+ * Before it, the custodian's bed-night was emitted TWICE into
+ * `occupiedBedNights` — once here and once by the custodian expansion — and
+ * while the planner's `bedId:stayDate` keying made that harmless arithmetically,
+ * "the same bed-night is claimed by two different occupants" is exactly the
+ * double-held bed-night the rule forbids. The bed-night is still occupied after
+ * the exclusion; it is occupied by the CUSTODIAN, once, which is who is
+ * actually sleeping in it. Nothing about which beds are available to a third
+ * booking changes, by design — the rule is about representation, not admission.
+ *
+ * The predicate is imported, never restated: `isCustodianHeldBedNight` in
+ * `custodian-occupancy.ts` is its one home.
  *
  * Inactive rooms and inactive beds are skipped: they are not in the planner's
  * bed stock at all, so a row for one would be occupancy on a bed that cannot be
@@ -303,6 +340,7 @@ export function wholeLodgeHoldOccupiedBedNightsForPlanner(
   holds: readonly WholeLodgeHoldSpan[],
   rooms: readonly WholeLodgeHoldPlannerRoom[],
   nights: readonly Date[],
+  custodianHolds: readonly CustodianBedHold[],
 ): WholeLodgeHoldOccupiedBedNight[] {
   if (holds.length === 0) return [];
   const isHeld = buildWholeLodgeHeldNightPredicate(holds);
@@ -316,6 +354,8 @@ export function wholeLodgeHoldOccupiedBedNightsForPlanner(
       if (!isHeld(room.lodgeId ?? null, nightKey)) continue;
       for (const bed of room.beds) {
         if (!bed.active) continue;
+        // INV-CAP-035: this bed-night is the custodian's, not the held group's.
+        if (isCustodianHeldBedNight(custodianHolds, bed.id, nightKey)) continue;
         const key = `${bed.id}:${nightKey}`;
         if (seen.has(key)) continue;
         seen.add(key);

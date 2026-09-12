@@ -4,9 +4,11 @@ import { isDateOnlyString, parseDateOnly } from "@/lib/date-only";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import logger from "@/lib/logger";
-import { acquireLodgeCapacityLock } from "@/lib/capacity";
-import { findHutLeaderOverlapRefusal } from "@/lib/hut-leader-overlap-guard";
-import { validateCustodianBedHold } from "@/lib/custodian-assignment";
+import { getAuditRequestContext } from "@/lib/audit";
+import {
+  applyHutLeaderAssignmentEditUnderLocks,
+  deleteHutLeaderAssignmentUnderLodgeLock,
+} from "@/lib/hut-leader-assignment-service";
 import { custodianBedHoldErrorResponse } from "@/lib/custodian-assignment-routes";
 import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
 
@@ -25,6 +27,11 @@ const updateSchema = z.object({
   bedId: z.string().min(1).nullable().optional(),
   // #1668-style explicit override of the over-capacity warning.
   confirmOverCapacity: z.boolean().optional(),
+  // #2698 ordering case: the officer's EXPLICIT acceptance that holding this
+  // bed narrows an existing whole-lodge hold's represented bed set. Absent is
+  // decline-by-default — 409 CUSTODIAN_OVERLAPS_WHOLE_LODGE_HOLD, nothing
+  // written on either side.
+  amendOverlappingHolds: z.boolean().optional(),
 });
 
 /**
@@ -39,6 +46,7 @@ export async function PUT(
     permission: { area: "lodge", level: "edit" },
   });
   if (!guard.ok) return guard.response;
+  const session = guard.session;
   const { id } = await params;
 
   let body: unknown;
@@ -144,65 +152,32 @@ export async function PUT(
     );
   }
 
+  const auditRequest = getAuditRequestContext(req);
+  // #2698: decided BEFORE any lock, because it decides WHICH locks are taken
+  // (INV-LOCK-002: global then lodge, never the other order) — and only when a
+  // bed is involved (review A-3), because an edit ending with no bed held can
+  // narrow no hold and must not take the club-wide key that serialises cancel,
+  // capture, settle, refund and credit-restore. `requestedBedId` is the
+  // pre-lock view: a stale null costs the officer a retry and nothing more,
+  // because the locked ordering check then THROWS with nothing written.
+  const amendRequested =
+    parsed.data.amendOverlappingHolds === true && Boolean(requestedBedId);
+
   try {
-    /*
-      EVERY edit runs under the target lodge's capacity key (#2887), not just a
-      bed-holding one. #2286 locked only the bed path, reasoning that clearing a
-      bed moves no capacity — true of capacity, false of the OVERLAP predicate
-      this route also decides, which a bedless edit breaks by MOVING DATES.
-    */
-    const refusal = await prisma.$transaction(async (tx) => {
-      await acquireLodgeCapacityLock(tx, intendedLodgeId);
-
-      // The authoritative row. Everything the decision rests on comes from
-      // HERE, under the key, not from the pre-lock read.
-      const locked = await tx.hutLeaderAssignment.findUnique({ where: { id } });
-      if (!locked) return { status: 404, error: "Assignment not found" };
-
-      const finalLodgeId = updateData.lodgeId ?? locked.lodgeId;
-      if (finalLodgeId !== intendedLodgeId) {
-        // The row moved lodges between the two reads, so the key we hold is
-        // not the key that governs it. Refuse rather than validate one lodge's
-        // roster and write to another's.
-        return {
-          status: 409,
-          error:
-            "This assignment moved to a different lodge while you were editing it. Reload and try again.",
-        };
-      }
-      const finalStart = updateData.startDate ?? locked.startDate;
-      const finalEnd = updateData.endDate ?? locked.endDate;
-      if (finalStart > finalEnd) {
-        return {
-          status: 400,
-          error: "startDate must be before or equal to endDate",
-        };
-      }
-      const nextBedId = bedIdProvided ? parsed.data.bedId : locked.bedId;
-
-      const overlap = await findHutLeaderOverlapRefusal(tx, {
-        lodgeId: finalLodgeId,
-        startDate: finalStart,
-        endDate: finalEnd,
-        excludeAssignmentId: id,
-        // #2926: a DELIBERATE officer action, so the teacher carve-out applies.
-        allowOverlappingSchoolRows: true,
-      });
-      if (overlap) return { status: 409, error: overlap.error };
-
-      if (nextBedId) {
-        await validateCustodianBedHold({
-          bedId: nextBedId,
-          lodgeId: finalLodgeId,
-          startDate: finalStart,
-          endDate: finalEnd,
-          assignmentId: id,
-          confirmOverCapacity: parsed.data.confirmOverCapacity,
-          db: tx,
-        });
-      }
-      await tx.hutLeaderAssignment.update({ where: { id }, data: updateData });
-      return null;
+    // Everything from here runs under the lodge capacity key, and the #2698
+    // amend path additionally under the global cohort key ahead of it
+    // (INV-LOCK-002). Both the locks and the reads that decide the edit live in
+    // `hut-leader-assignment-service.ts`; see its module note for why.
+    const refusal = await applyHutLeaderAssignmentEditUnderLocks({
+      assignmentId: id,
+      intendedLodgeId,
+      updateData,
+      bedIdProvided,
+      requestedBedId: parsed.data.bedId,
+      confirmOverCapacity: parsed.data.confirmOverCapacity,
+      amendAccepted: amendRequested,
+      actorMemberId: session.user.id,
+      auditRequest,
     });
 
     if (refusal) {
@@ -223,9 +198,15 @@ export async function PUT(
 /**
  * DELETE /api/admin/hut-leaders/[id]
  * Delete a hut leader assignment.
+ *
+ * Under the lodge capacity key since #2698 — removing a custodian bed hold
+ * widens the represented bed set of every overlapping whole-lodge hold
+ * (`INV-CAP-035`), which is a capacity move. The key, the locked re-read and
+ * the audited delete live in `hut-leader-assignment-service.ts`; the response
+ * contract here is unchanged.
  */
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const guard = await requireAdmin({
@@ -234,13 +215,26 @@ export async function DELETE(
   if (!guard.ok) return guard.response;
   const { id } = await params;
 
+  // The cheap 404 and the lock KEY. Every fact the delete records comes from
+  // the re-read under the key (#2887's rule, applied here too).
   const existing = await prisma.hutLeaderAssignment.findUnique({ where: { id } });
   if (!existing) {
     return NextResponse.json({ error: "Assignment not found" }, { status: 404 });
   }
 
   try {
-    await prisma.hutLeaderAssignment.delete({ where: { id } });
+    const refusal = await deleteHutLeaderAssignmentUnderLodgeLock({
+      assignmentId: id,
+      lodgeId: existing.lodgeId,
+      actorMemberId: guard.session.user.id,
+      auditRequest: getAuditRequestContext(req),
+    });
+    if (refusal) {
+      return NextResponse.json(
+        { error: refusal.error },
+        { status: refusal.status },
+      );
+    }
     logger.info({ assignmentId: id }, "Hut leader assignment deleted");
     return NextResponse.json({ success: true });
   } catch (err) {

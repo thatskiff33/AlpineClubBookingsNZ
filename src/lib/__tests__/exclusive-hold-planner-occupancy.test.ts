@@ -57,7 +57,11 @@ import { requireCalendarDate } from "@/lib/club-time";
 import { buildFirstFitBedAllocationPlan } from "@/lib/bed-allocation";
 import { BED_ALLOCATION_PRIORITY_VOCABULARY } from "@/lib/bed-allocation-settings";
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld as reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
-import { getLodgeHeldNights } from "@/lib/capacity";
+import {
+  getLodgeHeldNights,
+  wholeLodgeHeldNightOccupiedBeds,
+  wholeLodgeHoldRepresentedBeds,
+} from "@/lib/capacity";
 import {
   buildWholeLodgeHeldNightPredicate,
   findBlockingWholeLodgeHolds,
@@ -65,8 +69,40 @@ import {
   toWholeLodgeHoldSpans,
   wholeLodgeHoldOccupiedBedNightsForPlanner,
 } from "@/lib/exclusive-hold-occupancy";
+import {
+  buildCustodianNightIndex,
+  custodianOccupiedBedNightsForPlanner,
+  type CustodianBedHold,
+} from "@/lib/custodian-occupancy";
 
 const LODGE = "lodge-1";
+
+/**
+ * The #2698 custodian exclusion argument, empty — "no custodian holds this
+ * window", which is what every pre-#2698 case in this file assumed implicitly.
+ * Named rather than inlined so the exclusion cases below read as the deliberate
+ * contrast to it.
+ */
+const NO_CUSTODIAN_HOLDS: CustodianBedHold[] = [];
+
+/** A custodian bed hold, inclusive-inclusive covered days (#2286). */
+function custodianHold(
+  overrides: Partial<CustodianBedHold> & Pick<CustodianBedHold, "bedId">,
+): CustodianBedHold {
+  return {
+    assignmentId: "assignment-1",
+    memberId: "member-custodian",
+    memberName: "Custodian Name",
+    memberIsMinor: false,
+    lodgeId: LODGE,
+    bedName: "A1",
+    roomId: "room-a",
+    roomName: "Kea",
+    startDate: "2026-07-01",
+    endDate: "2026-07-01",
+    ...overrides,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // A small, GENERIC Prisma `where` interpreter.
@@ -367,6 +403,7 @@ describe("the synthesised rows are unattributed and non-displaceable", () => {
       toWholeLodgeHoldSpans([holdBooking()]),
       [ROOM],
       nights,
+      NO_CUSTODIAN_HOLDS,
     );
 
     expect(rows).toEqual([
@@ -394,6 +431,7 @@ describe("the synthesised rows are unattributed and non-displaceable", () => {
         { ...ROOM, id: "room-b", active: false },
       ],
       nights,
+      NO_CUSTODIAN_HOLDS,
     );
     expect(rows.map((row) => row.bedId)).toEqual(["bed-a2", "bed-a2"]);
   });
@@ -403,6 +441,7 @@ describe("the synthesised rows are unattributed and non-displaceable", () => {
       toWholeLodgeHoldSpans([holdBooking(), holdBooking({ id: "booking-hold-2" })]),
       [ROOM],
       nights,
+      NO_CUSTODIAN_HOLDS,
     );
     expect(rows).toHaveLength(4);
   });
@@ -413,8 +452,223 @@ describe("the synthesised rows are unattributed and non-displaceable", () => {
         toWholeLodgeHoldSpans([holdBooking({ status: "PAYMENT_PENDING" })]),
         [ROOM],
         nights,
+        NO_CUSTODIAN_HOLDS,
       ),
     ).toEqual([]);
+  });
+
+  /**
+   * #2698 / `INV-CAP-035` — a whole-lodge hold's represented bed set excludes
+   * the bed-nights a custodian holds.
+   *
+   * The hold covers 2026-07-01 and 2026-07-02 (half-open `[checkIn,
+   * checkOut)`); the custodian's ranges below are inclusive-inclusive covered
+   * DAYS. Nothing here converts between the two by hand — each side's own
+   * predicate does it — so a one-day drift in either convention shows up as a
+   * wrong night rather than as a passing test.
+   */
+  describe("the custodian's bed-nights leave the hold's represented set (#2698)", () => {
+    it("drops exactly the held bed-night, keeping the same bed on other nights", () => {
+      const rows = wholeLodgeHoldOccupiedBedNightsForPlanner(
+        toWholeLodgeHoldSpans([holdBooking()]),
+        [ROOM],
+        nights,
+        [custodianHold({ bedId: "bed-a1", startDate: "2026-07-01", endDate: "2026-07-01" })],
+      );
+
+      // Per overlapping NIGHT, never a lodge-wide rewrite: bed-a1 is gone on
+      // 07-01 and back on 07-02, and bed-a2 is untouched throughout.
+      expect(rows.map((row) => `${row.bedId}:${row.stayDate}`)).toEqual([
+        "bed-a2:2026-07-01",
+        "bed-a1:2026-07-02",
+        "bed-a2:2026-07-02",
+      ]);
+    });
+
+    it("drops the bed on every night a longer custodian range covers", () => {
+      const rows = wholeLodgeHoldOccupiedBedNightsForPlanner(
+        toWholeLodgeHoldSpans([holdBooking()]),
+        [ROOM],
+        nights,
+        [custodianHold({ bedId: "bed-a1", startDate: "2026-06-01", endDate: "2026-09-30" })],
+      );
+      expect(rows.map((row) => row.bedId)).toEqual(["bed-a2", "bed-a2"]);
+    });
+
+    it("leaves the set alone for a custodian range that ends before the hold starts", () => {
+      // endDate 06-30 is the last covered NIGHT, so the bed is free again for
+      // the night of 07-01 — the inclusive-endDate convention, applied by
+      // custodian-occupancy rather than restated here.
+      const rows = wholeLodgeHoldOccupiedBedNightsForPlanner(
+        toWholeLodgeHoldSpans([holdBooking()]),
+        [ROOM],
+        nights,
+        [custodianHold({ bedId: "bed-a1", startDate: "2026-06-01", endDate: "2026-06-30" })],
+      );
+      expect(rows).toHaveLength(4);
+    });
+
+    it("ignores a custodian hold on a bed that is not in the lodge's stock", () => {
+      const rows = wholeLodgeHoldOccupiedBedNightsForPlanner(
+        toWholeLodgeHoldSpans([holdBooking()]),
+        [ROOM],
+        nights,
+        [custodianHold({ bedId: "bed-elsewhere" })],
+      );
+      expect(rows).toHaveLength(4);
+    });
+
+    /**
+     * The acceptance criterion in its own words: **no double-held bed-night.**
+     *
+     * Both planners feed the hold expansion and the custodian expansion into
+     * ONE `occupiedBedNights` array. Before #2698 the custodian's bed-night
+     * appeared in it twice — once claimed by the held group, once by the
+     * custodian — which is two occupants for one bed. The planner's
+     * `bedId:stayDate` keying made that harmless arithmetically and is exactly
+     * why it survived: nothing failed. This asserts the property directly.
+     */
+    it("claims each bed-night exactly once across the hold and custodian feeds", () => {
+      const holds = [
+        custodianHold({ bedId: "bed-a1", startDate: "2026-07-01", endDate: "2026-07-02" }),
+      ];
+      const combined = [
+        ...custodianOccupiedBedNightsForPlanner(holds, nights),
+        ...wholeLodgeHoldOccupiedBedNightsForPlanner(
+          toWholeLodgeHoldSpans([holdBooking()]),
+          [ROOM],
+          nights,
+          holds,
+        ),
+      ];
+      const keys = combined.map((row) => `${row.bedId}:${row.stayDate}`);
+      expect(new Set(keys).size).toBe(keys.length);
+      // And the lodge is still fully occupied on both held nights — the rule
+      // moves a bed-night between occupants, it never frees one.
+      expect(new Set(keys)).toEqual(
+        new Set([
+          "bed-a1:2026-07-01",
+          "bed-a2:2026-07-01",
+          "bed-a1:2026-07-02",
+          "bed-a2:2026-07-02",
+        ]),
+      );
+    });
+
+    /**
+     * Engine/planner parity, per night: the count the capacity engine says a
+     * hold represents ({@link wholeLodgeHoldRepresentedBeds}) is the number of
+     * rows the planner actually emits for it. The two consumers of
+     * `INV-CAP-035` work in different shapes — a count and a bed set — and this
+     * is what stops one of them being changed without the other.
+     *
+     * CONDITIONAL, and the case below records on what: the engine counts
+     * EFFECTIVE CAPACITY and the planner walks BED STOCK, so the identity holds
+     * where the two are equal — `lodgeCapacity` is fixed to `ROOM.beds.length`
+     * here for exactly that reason. A capped lodge is the documented exception
+     * (`INV-CAP-035`), not a failure of this assertion.
+     *
+     * Mutation-verified: deleting the `isCustodianHeldBedNight` guard from the
+     * planner makes the planner emit 2 where the engine says 1, and deleting
+     * the subtraction from `wholeLodgeHoldRepresentedBeds` makes the engine say
+     * 2 where the planner emits 1. Either direction fails here.
+     *
+     * The two arms are not equally strong, and saying so is the honest version
+     * (#2698 review L2-F2). The PLANNER arm discriminates reachable behaviour.
+     * The ENGINE arm does not: `wholeLodgeHoldRepresentedBeds` has exactly one
+     * production caller, `wholeLodgeHeldNightOccupiedBeds`, which adds the
+     * subtraction straight back — so deleting it changes no production output
+     * and fails only this test. That is by design (`capacity.ts` concedes it in
+     * the same words) and it is why this assertion exists at all: the composed
+     * pin is what stops a future change re-claiming the custodian's bed, and
+     * nothing else would notice.
+     */
+    it("agrees bed-for-bed with the capacity engine's represented-bed count", () => {
+      const lodgeCapacity = ROOM.beds.length;
+      const holds = [
+        custodianHold({ bedId: "bed-a1", startDate: "2026-07-01", endDate: "2026-07-01" }),
+      ];
+      const spans = toWholeLodgeHoldSpans([holdBooking()]);
+
+      for (const nightKey of ["2026-07-01", "2026-07-02"]) {
+        const night = parseDateOnly(nightKey);
+        const custodianBeds = buildCustodianNightIndex(holds, [night]).get(nightKey) ?? 0;
+        const plannerRows = wholeLodgeHoldOccupiedBedNightsForPlanner(
+          spans,
+          [ROOM],
+          [night],
+          holds,
+        );
+        expect(
+          plannerRows.length,
+          `INV-CAP-035: the planner and the capacity engine disagree about how many beds the hold represents on ${nightKey}`,
+        ).toBe(wholeLodgeHoldRepresentedBeds(lodgeCapacity, custodianBeds));
+        // And the partition is total: hold beds + custodian beds = the lodge.
+        expect(
+          wholeLodgeHeldNightOccupiedBeds(lodgeCapacity, custodianBeds),
+        ).toBe(lodgeCapacity);
+      }
+    });
+
+    /**
+     * The condition the identity above needs, recorded as a case rather than
+     * left to be discovered (#2698 review L1-F2 / L2-F1, found independently by
+     * two lenses).
+     *
+     * Effective lodge capacity is `min(explicit override, active bed count)` —
+     * the #1653 licence cap, `source: "capped_beds"` in `lodge-capacity.ts`.
+     * The capacity engine counts CAPPED CAPACITY; the planner walks BED STOCK.
+     * So in a lodge whose licence cap is below its bed count the two figures
+     * are not equal and never were, with or without a custodian: the test above
+     * fixes `lodgeCapacity` to the bed count, which is the only world in which
+     * it can hold.
+     *
+     * **This is not a regression and not a number that moved.** Both sides
+     * shift by the same custodian count, and the engine's own held-night pin
+     * stays identically `cap` either way — asserted below, because that is the
+     * fact the #155 payload contract and ADR-001 decision 6 rest on. What #2698
+     * added is a guard and an invariant sentence that read as more general than
+     * the identity is, so the narrower claim is written down here and qualified
+     * in `INV-CAP-035`.
+     *
+     * A historic hold on a since-deactivated bed diverges the same way and for
+     * the same reason: the planner's stock shrank, the recorded capacity did
+     * not.
+     */
+    it("records that engine and planner DIVERGE in a capped-capacity lodge", () => {
+      // 2 active beds, licence cap 1 — `capped_beds`.
+      const cappedCapacity = ROOM.beds.length - 1;
+      const holds = [
+        custodianHold({ bedId: "bed-a1", startDate: "2026-07-01", endDate: "2026-07-01" }),
+      ];
+      const night = parseDateOnly("2026-07-01");
+      const custodianBeds =
+        buildCustodianNightIndex(holds, [night]).get("2026-07-01") ?? 0;
+      const plannerRows = wholeLodgeHoldOccupiedBedNightsForPlanner(
+        toWholeLodgeHoldSpans([holdBooking()]),
+        [ROOM],
+        [night],
+        holds,
+      );
+
+      // The planner emits one row (bed-a2, the bed the custodian does not
+      // hold); the engine says the hold represents zero of its one capped bed.
+      expect(plannerRows.map((row) => row.bedId)).toEqual(["bed-a2"]);
+      expect(wholeLodgeHoldRepresentedBeds(cappedCapacity, custodianBeds)).toBe(0);
+      expect(
+        plannerRows.length,
+        "INV-CAP-035's parity identity is conditional on capacity equalling bed stock; a capped lodge is expected to differ here, and this case exists so that stays a recorded fact rather than a surprise",
+      ).not.toBe(wholeLodgeHoldRepresentedBeds(cappedCapacity, custodianBeds));
+
+      // The number a member or an engine can SEE is unchanged: a held night is
+      // still pinned to exactly the lodge's capacity, custodian or not.
+      expect(
+        wholeLodgeHeldNightOccupiedBeds(cappedCapacity, custodianBeds),
+      ).toBe(cappedCapacity);
+      expect(wholeLodgeHeldNightOccupiedBeds(cappedCapacity, 0)).toBe(
+        cappedCapacity,
+      );
+    });
   });
 
   /**
@@ -456,6 +710,7 @@ describe("the synthesised rows are unattributed and non-displaceable", () => {
       ]),
       [PLANNER_ROOM],
       [parseDateOnly(HELD_NIGHT)],
+      NO_CUSTODIAN_HOLDS,
     );
 
     /**

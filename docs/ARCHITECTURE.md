@@ -1120,11 +1120,11 @@ tree** (#2160, extended by #2168 and #2324) — not a claim that nothing is left
 Measured
 on the current tree by `view-only-banner-contract.test.ts`, which asserts these
 figures rather than trusting a hand count: **92 components render a banner, and
-293 of the 346 `ViewOnlyActionButton` call sites opt out** of the per-button
+294 of the 347 `ViewOnlyActionButton` call sites opt out** of the per-button
 reason. (Earlier revisions of this page published 76/232/264/211 — those were
 upstream-historical and had drifted; the numbers here are the ones the contract
-test currently pins, which is the only authority.) Those 293 split by WHICH rule
-covers them: **259** pass the literal
+test currently pins, which is the only authority.) Those 294 split by WHICH rule
+covers them: **260** pass the literal
 `describeReason={false}` and are covered by a banner in the same file, and **34**
 pass `describeReason={!ancestorRendersViewOnlyBanner}` and are covered by a
 verified vouching parent — 29 by a parent's own JSX render site (#2168), 5 by the

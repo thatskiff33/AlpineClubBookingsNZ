@@ -286,16 +286,25 @@ const FIGURES = {
    * 345 -> 346 (#3214): the booking page's "Record what these nights sold for"
    * control. One per unreadable guest strand at RUN time, but one render site in
    * the source, which is what this census counts. MEASURED by re-running it.
+   *
+   * 346 -> 347 (#2698): the hut-leaders page's Accept control, which narrows an
+   * overlapping whole-lodge hold in the same action that writes the custodian
+   * bed. Decline is a plain Button — it sends nothing and writes nothing, so
+   * gating it would refuse a view-only admin the way out of a prompt they could
+   * not have acted on, exactly as #2999's Cancel reasons. MEASURED by re-running
+   * this census.
    */
-  callSites: 346,
+  callSites: 347,
   /**
    * Those that hand their explanation to a banner, by either rule.
    *
    * 285 -> 289 (#2998): all four of the moderation queue's controls opt out.
    * 289 -> 292 (#2999): so do the Retention section's three.
    * 292 -> 293 (#3214): so does the night-price control.
+   * 293 -> 294 (#2698): so does the custodian/whole-lodge-hold amendment
+   * control, whose Accept sits under the hut-leaders page's own banner.
    */
-  optOuts: 293,
+  optOuts: 294,
   /**
    * `describeReason={false}` — needs a banner in the SAME file.
    *
@@ -307,7 +316,7 @@ const FIGURES = {
    * one file, so it is static rather than vouched — the button sits in a child
    * COMPONENT, but the static rule is about the FILE.
    */
-  staticOptOuts: 259,
+  staticOptOuts: 260,
   /**
    * `describeReason={!ancestorRendersViewOnlyBanner}` — needs a vouch.
    *
