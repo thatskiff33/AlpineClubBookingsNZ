@@ -8,9 +8,10 @@ import {
   sourceFiles,
 } from "@/lib/__tests__/support/booking-guest-night-writer-scan";
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
+import { BOOKING_MONEY_BUILD_UP_INVARIANT } from "@/lib/booking-money-build-up";
 
 /**
- * #3277 (INV-MONEY-029, INV-SSOT-001): every Stage 3 money reader is named,
+ * #3277 (INV-MONEY-030, INV-SSOT-001): every Stage 3 money reader is named,
  * loads through the canonical projection, selects through the D3 discriminator,
  * and records the discriminator on an existing atomic history seam.
  *
@@ -84,7 +85,7 @@ describe("#3277 canonical stored-money reader census", () => {
     for (const [file, site] of Object.entries(NAMED_READERS)) {
       expect(
         canonicalReaderShape(productionCode(file), site),
-        `INV-MONEY-029: ${file} must use the canonical ${site.operation} result and its existing atomic history seam`,
+        `${BOOKING_MONEY_BUILD_UP_INVARIANT}: ${file} must use the canonical ${site.operation} result and its existing atomic history seam`,
       ).toBe(true);
     }
   });
@@ -124,6 +125,9 @@ describe("#3277 canonical stored-money reader census", () => {
 
     const xero = productionCode("src/lib/xero-booking-invoices.ts");
     before(xero, "readBookingMoneyBuildUp(prisma", "getAuthenticatedXeroClient()");
+    expect(xero).toMatch(
+      /buildRequestPayload:[\s\S]{0,240}moneyBuildUp:\s*promoMoneyBuildUpSelection\?\.historyMetadata/,
+    );
 
     const rebase = productionCode("src/lib/booking-review-price-rebase.ts");
     before(rebase, "const freshlyRecordedMoneyBuildUp", "store.booking.updateMany");

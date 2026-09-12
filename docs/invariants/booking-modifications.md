@@ -1225,13 +1225,9 @@ rule already had — an absent row, a negative row, a non-integer row — as an
 ABSENCE of usable evidence. It is never a zero: a stored `0` is a real sold price
 (a comped night) and reconciles like any other. So the definition above does not
 change shape, and that is why it can be restated in one sentence: **a strand
-holding a `NULL` night is not exact, and goes to a person.** Grain matters
-(#3277): an evenly-split backfilled strand can reconcile as a whole-guest total,
-so removing that entire guest may value the one stored total exactly; its
-`EVEN_SPLIT` or `UNKNOWN` rows are not evidence of what any individual night
-sold for, so a partial-night surrender or review re-base that consumes those
-nights parks or declines with `INEXACT_STORED_NIGHT_PRICES`. A broader
-whole-guest or booking-wide check never makes a partial-night edit actionable.
+holding a `NULL` night is not exact, and goes to a person.** An evenly-split
+backfilled strand carries an integer on every night, so it still reconciles and
+still prices as exact — the consequence this rule was written to preserve.
 
 Only a PARKED edit writes a `NULL`, and only for a night it cannot value: one the
 strand already held whose row carried no usable money, or one the edit newly puts
@@ -1325,20 +1321,22 @@ none of them restates an amount already billed:
 
 ## INV-MOD-039
 
-The test is RECONCILIATION and not provenance: two of the three events that populated that table were themselves
-even splits (migrations `20260704150000` #1098 and `20260810010000` #2739), there
-is no provenance column and `createdAt` does not separate a backfilled row from a
-live one — so an evenly-split backfilled strand reconciles and prices as exact,
-which is the intended consequence. A deliberate negotiated-flat allocation is
-valid evidence once stored; equal nightly rows alone are not a defect.
+The test is operation-grain aware (#3275, #3277). Reconciliation proves a
+whole-guest total: a guest whose stored night rows add back to
+`BookingGuest.priceCents` may be removed as one exact strand even when those
+rows came from an `EVEN_SPLIT`. It does not prove what any one night sold for.
+An edit or review re-base that consumes individual nights therefore also
+requires every relevant row to have `SOLD` or `OFFICER_PRICED` provenance.
+`EVEN_SPLIT` and `UNKNOWN` stay inexact at that grain; no amount, timestamp,
+rate table, or surrounding row may be used to infer a better provenance.
 
 Where a strand is exact, an edit values every night it keeps or gives back at the
 integer on the row, and every night it newly buys under current pricing policy
 (INV-MOD-005, INV-MOD-006). Where it is not, the edit produces **no numeric
 result at all** — not zero, not an amount, not an optional a caller can default —
 only a typed cause (`NO_STORED_NIGHT_PRICES`, `PARTIAL_STORED_NIGHT_PRICES`,
-`STORED_TOTAL_MISMATCH`, `COUNTERPART_STRAND_UNREADABLE`) and the evidence as it
-stands.
+`INEXACT_STORED_NIGHT_PRICES`, `STORED_TOTAL_MISMATCH`,
+`COUNTERPART_STRAND_UNREADABLE`) and the evidence as it stands.
 
 ## INV-MOD-040
 
@@ -1736,14 +1734,6 @@ Five things about that re-price are load-bearing:
   $75 off $100 and a stored price of $25. A non-negative stored price is
   therefore structural rather than policed, and the assertion beside the write
   exists only because this is the one column shown able to go negative;
-- **the re-base records a fresh build-up and compares it before the headline
-  write** (#3277). `SOLD` and `OFFICER_PRICED` night rows are exact inputs;
-  `EVEN_SPLIT`, `UNKNOWN`, absent, partial, or non-reconciling rows make the
-  re-base decline without moving any of the four columns. A recorded build-up
-  may govern only when it is byte-identical to the recomputed result. Otherwise
-  the existing recomputed result wins under a classified compatibility fallback,
-  and the source, reason and both cents figures are copied into the existing
-  audit metadata and any `PRICE_REBASE` history row;
 - **the recomputed price GOVERNS EVERYWHERE** (owner decision D1, 5 September
   2026), including the cancellation refund cap, Internet-Banking reconciliation's
   amount law, the unpaid-invoice clearing credit note, per-night revenue
@@ -1819,3 +1809,28 @@ consequences follow and are load-bearing:
   Recalculated" entry recording no change would be noise on a page a member and
   an operator both read. The audit entry records the closure either way, and
   says which of the two happened.
+
+## INV-MOD-056
+
+**Historical price evidence is operation-grain aware, and review re-base
+records the fresh build-up it computes** (#3277, programme #3272;
+owner-approved blueprint, 12 September 2026).
+
+A whole-guest operation may use `BookingGuest.priceCents` when it is valid
+integer cents, so a guest whose historical nights were `EVEN_SPLIT` can still be
+removed using the exact stored guest total. An individual-night operation also
+requires every relevant night to carry `SOLD` or `OFFICER_PRICED` provenance.
+`EVEN_SPLIT`, `UNKNOWN`, missing, partial, or non-reconciling rows yield a typed
+unknown result and make a partial edit park or a review re-base decline. A
+booking-wide headline or promotion-aggregate check never upgrades evidence at a
+finer grain. Every caller must name its grain; there is no default that can turn
+unknown provenance into evidence.
+
+Review re-base remains a writer, not a historical reader conversion. It
+recomputes the promotion from the surviving strands, records a fresh adjustment
+build-up, then compares that build-up before the fenced headline write. Stored
+money may govern only when byte-identical to the recomputed result. Otherwise
+the recomputed result wins through a classified compatibility fallback, and the
+source, reason, and both cents figures are copied into the existing audit
+metadata and any `PRICE_REBASE` history row. No inexact input moves any of the
+four booking money columns.
