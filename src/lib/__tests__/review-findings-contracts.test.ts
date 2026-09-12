@@ -1279,42 +1279,23 @@ describe("review finding source/schema contracts", () => {
     expect(suite).toContain("SELECT pg_advisory_xact_lock(1)");
   });
 
-  it("keeps the noUncheckedIndexedAccess ratchet BELOW Typecheck in the verify job (#2799)", () => {
-    // The ratchet re-runs the same compiler with one extra flag forced on and
-    // calls everything that appears debt THAT FLAG surfaced. The attribution is
-    // only true while the plain project is already green, which is exactly what
-    // running directly after `Typecheck` buys. Move the step above `Typecheck`
-    // and the gate starts reporting ordinary pre-existing type errors as flag
-    // debt, in a NEW list naming files nobody touched — and nothing else in the
-    // repository notices. Actions fail-fast covers `Typecheck` going RED; it
-    // says nothing about the two steps swapping places, and the precondition was
-    // otherwise asserted only in a comment on each side. Stages #2800, #2801 and
-    // #2802 all inherit it, so it is pinned here.
-    //
-    // SCOPED TO THE JOB, per this file's other ci.yml guards: a ratchet step
-    // that migrated into some other job must not be paid for by `Typecheck`
-    // still sitting in `verify`.
+  it("no longer runs the retired noUncheckedIndexedAccess ratchet in the verify job (#2802)", () => {
+    // #2799-#2801 pinned the ratchet step BELOW Typecheck here because it
+    // attributed every diagnostic to the flag only while the plain project
+    // was already green. #2802 turned the flag on in tsconfig.json itself and
+    // deleted the ratchet script, its baseline and this step together: a
+    // ratchet whose baseline is empty is a compiler option with extra steps.
+    // This guard now pins the deletion instead of the ordering, so the step
+    // cannot quietly come back without this test noticing.
     const workflow = readRepoFile(".github/workflows/ci.yml");
     const job = jobBlock(workflow, "verify");
     expect(job, "ci.yml has no verify job").not.toBe("");
-    const typecheck = job.indexOf("- name: Typecheck");
-    const ratchet = job.indexOf("- name: noUncheckedIndexedAccess ratchet");
-    expect(typecheck, "the verify job has no Typecheck step").toBeGreaterThan(-1);
     expect(
-      ratchet,
-      "the verify job no longer runs the noUncheckedIndexedAccess ratchet (#2799)"
-    ).toBeGreaterThan(-1);
-    expect(
-      ratchet,
-      "the noUncheckedIndexedAccess ratchet step must stay BELOW Typecheck in verify: " +
-        "it attributes every diagnostic to the flag only because the plain project is " +
-        "already green, so above Typecheck it reports pre-existing type errors as new debt"
-    ).toBeGreaterThan(typecheck);
-    // On the SAME step: the command, so a renamed script cannot leave a step
-    // that satisfies the ordering while running nothing.
-    expect(stepBlock(job, "noUncheckedIndexedAccess ratchet")).toContain(
-      "run: npm run typecheck:nuia"
-    );
+      job,
+      "the noUncheckedIndexedAccess ratchet step should stay removed (#2802): " +
+        "the compiler now enforces the flag directly in tsconfig.json"
+    ).not.toContain("noUncheckedIndexedAccess ratchet");
+    expect(job).not.toContain("typecheck:nuia");
   });
 
   it("wraps age-up membership upgrades and token issuance in a transaction", () => {

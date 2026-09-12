@@ -221,131 +221,64 @@ they were before #2693. The tree has some eighty `Error` subclasses that
 declare fields and assign them after `super()`; flipping the pin is a runtime
 change to decide separately, not a tidy-up.
 
-## The noUncheckedIndexedAccess ratchet
+## `noUncheckedIndexedAccess`
 
 Plain English: TypeScript can be told that looking something up by index or by
-key — `rows[0]`, `byId[memberId]` — might find nothing. The repository wants
-that rule (`noUncheckedIndexedAccess`) on, because a lookup that quietly
-pretends to have found a value is how a missing tier becomes a silent zero.
-Turning it on today would raise about a thousand compile errors, so it is being
-adopted in stages (programme #2694): the errors are recorded, the record may
-only shrink, and each stage pays a slice of it down. This is stage 4 (#2801).
+key — `rows[0]`, `byId[memberId]` — might find nothing. That rule
+(`noUncheckedIndexedAccess`) is permanently on in `tsconfig.json`, because a
+lookup that quietly pretends to have found a value is how a missing tier
+becomes a silent zero. It got there in stages (programme #2694, issues
+#2799-#2802): the errors were recorded behind a temporary ratchet, paid down a
+slice at a time, and the ratchet was deleted once the count reached zero — a
+ratchet whose baseline is empty is a compiler option with extra steps. From
+here it is an ordinary compiler error like any other, caught by
+`npm run typecheck` and in the editor.
 
-Precisely: `npm run typecheck:nuia` runs the real `tsc` over `tsconfig.json`
-with `--noUncheckedIndexedAccess` forced on and compares what it reports against
-`scripts/ci/noUncheckedIndexedAccess.baseline.txt`. The `verify` job runs it
-directly after `Typecheck`, which is what lets it attribute every diagnostic to
-the flag: the plain project is green, so anything the flagged run adds is the
-flag's. It runs `next typegen` first so the project lists the same generated
-route types CI's does. It fails on either of two conditions:
+`tsconfig.test.json` and `tsconfig.e2e.json` both extend `tsconfig.json` and
+explicitly turn the flag back off (see the comment on each). Programme #2694
+was scoped to `tsconfig.json` throughout — "application code before tests" —
+and forcing the flag on across the other two surfaces roughly 4,000 (Vitest)
+and 77 (Playwright) pre-existing diagnostics that stage never measured or
+budgeted. That is a separate, much larger piece of work than #2802 activated;
+until it is taken on deliberately, new test code is not held to this rule.
 
-- **NEW** — the compiler reports a diagnostic the baseline does not hold. Fix
-  the site (below), never the list.
-- **STALE** — the baseline holds a diagnostic the compiler no longer produces.
-  That is debt paid, and the file must say so: re-record with
-  `npm run typecheck:nuia -- --record` (on PowerShell, which drops npm's `--`,
-  `npx tsx scripts/ci/check-nuia-ratchet.ts --record`) and commit the smaller
-  file. A stale line is failed rather than tolerated because it could otherwise
-  pay for a fresh diagnostic with the same text in the same file.
+**What counts as a fix**, for new code that trips this. A batch with a
+meaningful count of new `!` non-null assertions is a failed batch, not a
+finding to negotiate; the same goes for casts, broad `any`, and suppression
+comments — they spend the effort and buy nothing. A lookup that cannot miss is
+restructured so the type says so:
 
-Each baseline line is `file:TScode:message` with the line and column deliberately
-dropped — positions churn on every edit above a site, and a file every lane
-rewrote would conflict on every merge (the lesson of the retired file-size
-baseline, #2979). The same key can occur several times in a file, so the file is
-a multiset and both directions compare counts. The one thing the key cannot
-survive is a message change: a type renamed by an unrelated refactor reads as one
-stale line plus one new one, the run names both, and `--record` is the answer.
-The baseline is a snapshot, never a list lanes append to — nothing is ever
-added to it by hand. It is not, however, rewritten only by this programme: any
-lane that clears a diagnostic incidentally — deleting a listed file, removing
-dead code, renaming a type so the message text changes — trips STALE and
-re-records. That is expected and is the tool working, not a sign the lane broke
-something; commit the smaller file with the change that earned it. The decision
-logic is `scripts/lib/nuia-ratchet.ts`, unit-tested in
-`scripts/__tests__/nuia-ratchet.test.ts`; the compiler-facing half is
-`scripts/ci/check-nuia-ratchet.ts`.
-
-**What counts as a fix.** The owner's rule on #2694 is the whole point of the
-exercise: a batch with a meaningful count of new `!` non-null assertions is a
-failed batch, not a finding to negotiate. A lookup that cannot miss is
-restructured so the type says so — read the first element once and let its
-absence be the emptiness check, walk adjacent pairs instead of indexing `i + 1`,
-iterate `slice(0, n)` instead of counting to `n`, carry a value alongside the
-object it belongs to instead of in a parallel array read back by position (all
-four are how stage 2 cleared `src/lib/policies/**` and `src/lib/capacity.ts`,
-with zero assertions, casts or `any`). A lookup that can miss is handled the way
-the domain says: a missing tier is a policy error to surface, a missing capacity
-row means the lodge has no capacity. Where a newly explicit missing state is
-genuinely reachable, a test pins the chosen behaviour; where it is unreachable,
-a comment says why in terms a reviewer can check. Generated suppressions, broad
-`any`, mass casts and regex ignore lists are all refused for the same reason:
-they spend the effort and buy nothing.
-
-Stage 4 (`src/app`) added four more shapes worth knowing, because routes and
-pages produce them repeatedly:
-
-- **the code's own condition, said as the value it was protecting.** Most sites
-  already answered their missing case a line or two away — a `length === 0`
-  early return, a `length === 1` branch, a bounds check. Read the value once and
-  let its presence be that condition (`const [first] = xs; if (!first) …`), so
-  there is one condition with one answer. Adding a second refusal beside a check
-  that already owns the condition is the mistake to avoid;
-- **`entries()` instead of a counting loop**, wherever the index was only ever
+- read the first element once and let its absence be the emptiness check
+  (`const [first] = xs; if (!first) …`) instead of a separate `length` check
+  followed by an index;
+- `entries()` instead of a counting loop, wherever the index was only ever
   wanted for a row number or a `sortOrder`;
-- **a fixed `slice` where the string's shape is already validated.** `YYYY-MM`
-  and `yyyy-MM-dd` were repeatedly `split("-")` and destructured; reading them
-  at fixed offsets gives a `string` with no new refusal, and a malformed value
-  still becomes `NaN` exactly as before. The same applies to a regex's mandatory
-  capture group: destructure it and let its absence be the pattern's own
-  rejection;
-- **`as const` on a table of `[key, label]` rows.** A `string[][]` literal
+- walk adjacent pairs instead of indexing `i + 1`, and iterate `slice(0, n)`
+  instead of counting to `n`;
+- carry a value alongside the object it belongs to instead of in a parallel
+  array read back by position — one array of records instead of two arrays
+  correlated by index;
+- a fixed `slice` (or destructure) where the string's shape is already
+  validated — `YYYY-MM`, `yyyy-MM-dd` — gives a plain `string` with no new
+  refusal, and a malformed value still becomes `NaN` exactly as before;
+- a regex's mandatory capture group: destructure it and let its absence be the
+  pattern's own rejection, rather than indexing the match array;
+- `as const` on a table of `[key, label]` rows — a `string[][]` literal
   destructures to `string | undefined`, which a computed property name
   (`{ [key]: … }`, TS2464) and a form lookup both reject; the tuple form also
-  retires the `as keyof typeof form` and `as boolean` casts around it.
+  retires the casts often built up around it.
 
-Where the type genuinely cannot carry the proof, the shared guard is `must` in
+A lookup that can genuinely miss is handled the way the domain says: a missing
+tier is a policy error to surface, a missing capacity row means the lodge has
+no capacity. Where it is genuinely reachable, a test pins the chosen behaviour;
+where it is unreachable, a comment says why in terms a reviewer can check.
+
+Where the type truly cannot carry the proof, the shared guard is `must` in
 `src/lib/indexed-access.ts` — a named throw at the point the invariant is
 assumed, not a fallback value. It is for a lookup the surrounding code already
-guarantees (a fixed-size colour scale, a step whose id type is derived from the
-step list); a lookup that can really miss is still handled the way the domain
-says.
-
-**Inventory for the next stage.** Measured on the epic head after #2693 and
-re-measured after each stage, application project (`tsconfig.json`) only. Stage
-4 (#2801) is delivered as two tranches on one issue — `src/app` and
-`src/components` — because the risk is not evenly spread; its scope widened to
-include `src/components` on 7 Sep 2026 so the final activation stage stays
-small, which is the reason that stage exists at all.
-
-| Area | At the start of #2799 | After #2799 | After #2800 | After the #2801 `src/app` tranche | Owner |
-| --- | --- | ---: | ---: | ---: | --- |
-| `src/lib` | 831 | 818 | 0 | 0 | #2800 (done) |
-| `src/app` | 120 | 120 | 117 | **0** | #2801 (done) |
-| `src/components` | 86 | 86 | 86 | 86 | #2801, sibling tranche |
-| `scripts` | 27 | 27 | 27 | 27 | #2802 |
-| `prisma` | 25 | 25 | 25 | 25 | #2802 |
-| **Total** | **1,089** | **1,076** | **255** | **138** | |
-
-`src/app` reads 117 after #2800 rather than the 120 measured at the start of
-#2799. Three went while `src/lib` was being cleared and no `src/app` file was
-touched — a message key that changed text, or a diagnostic that a widened
-library type stopped producing, is the ordinary way the count moves under
-somebody else's lane (see STALE above). Stage 4 measured and cleared what was
-there, not what an older table said.
-
-Stage 2's 13 were the whole of `src/lib/policies/**` (`age-tier.ts` 9,
-`pricing.ts` 2, `adult-member-hosting.ts` 1) and `src/lib/capacity.ts` (1).
-`npm run typecheck:nuia -- --report` prints the current per-file inventory and
-then still performs the check, so on a tree with unrecorded debt it prints the
-report and exits 1; the baseline file *is* the per-file record, one line per
-diagnostic. The test and E2E projects are outside the ratchet by decision
-("application code before tests"); their counts are recorded on the stage-2
-pull request as evidence only.
-
-The ratchet is temporary by design. Stage #2802 sets the flag in
-`tsconfig.json`, deletes the script, the baseline and the `verify` step
-together, and removes this section: a ratchet whose baseline is empty is a
-compiler option with extra steps.
+guarantees (a fixed-size colour scale, a loop's own bound, a `length === 1`
+check just above it) — reach for it sparingly, after the restructures above
+have been ruled out, and say at the call site why the miss cannot happen.
 
 ## The frozen test clock
 
