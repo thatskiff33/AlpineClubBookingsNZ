@@ -969,9 +969,9 @@ export async function approveSchoolBookingRequest(input: {
         OWN, and from this release it is the invoiced and contacted party.
 
         Resolved or created HERE, inside the approval transaction and under the
-        locks it already holds. The global `pg_advisory_xact_lock(1)` taken at
-        the top of this transaction is the unique-name claim: two admins
-        approving two requests for one school are serialised by it, so the
+        locks it already holds. The canonical GLOBAL advisory lock taken at the
+        top of this transaction is the unique-name claim: two admins approving
+        two requests for one school are serialised by it, so the
         read-then-create inside `resolveOrCreateSchoolOrganisation` cannot
         interleave and mint two schools for one name. A repeat school resolves to
         the record it already has, and therefore to the Xero customer it already

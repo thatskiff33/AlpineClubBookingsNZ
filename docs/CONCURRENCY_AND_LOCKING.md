@@ -3926,6 +3926,91 @@ writer only ever ADDS active coverage, whose worst case (coverage above the
 target) suppresses further enqueues and is now reported as drift, never
 compounded by this repair.
 
+## One Xero contact, one local home: the contact-home key (#3367)
+
+**Audience: developer.** The rule this key enforces is `INV-INT-018`
+([`invariants/integrations.md`](invariants/integrations.md)); this section is
+the lock topology only.
+
+### The invariant and why a key was needed
+
+Since [#3366](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3366)
+two columns can hold one Xero contact id: `Member.xeroContactId` and
+`Organisation.xeroContactId`. Each is `@unique` within its own table, and **no
+database constraint spans two tables that way**, so exclusivity has to be
+enforced by the writers.
+
+The enforcement is a read — "does the other table already claim this id?" — and
+a read cannot see an uncommitted concurrent link. Neither record's own key helps:
+the member writer holds a member key, the organisation writer holds an
+organisation key, and they never collide. The invariant is a property of the
+CONTACT, so the serialisation point has to be keyed on the contact. Same
+reasoning that gave `lockBookingMemberNights` its own family.
+
+### The keys
+
+| Key | Minted in | Taken by |
+| --- | --- | --- |
+| `pg_advisory_xact_lock(hashtext('xero-contact-home:<contactId>'))` | `src/lib/xero-contact-home.ts` (`lockXeroContactHome`) | all three contact-linking writers |
+| `pg_advisory_xact_lock(hashtext('xero-organisation-contact:<organisationId>'))` | `src/lib/organisation-xero-contacts.ts` | the organisation resolve only |
+
+Both are domain-keyed `hashtext` locks in their own namespaces. Neither joins the
+global lock(1) cohort and neither is a capacity key, so `INV-LOCK-001`'s tier
+question is answered "neither tier": they serialise an identity claim, not a
+status transition and not a bed.
+
+### Acquisition order (`INV-LOCK-002`)
+
+**Entity key first, contact-home key last, always.** The three writers:
+
+| Writer | Order |
+| --- | --- |
+| `findOrCreateXeroContact` phase 2 (`xero-contacts.ts`) | `hashtext(<memberId>)` → member row `FOR UPDATE` → `xero-contact-home:<contactId>` |
+| `commitManualXeroContactLink` (`xero-manual-contact-link.ts`) | member `FOR UPDATE` fence → `xero-contact-home:<contactId>` |
+| `findOrCreateXeroContactForOrganisation` phase 2 | `xero-organisation-contact:<organisationId>` → `xero-contact-home:<contactId>` |
+
+Because every participant acquires entity-then-contact and nothing else is taken
+while the contact key is held, the wait graph has no cycle. Only ONE contact key
+is ever taken per transaction, so the sorted-key discipline the member families
+need does not apply here.
+
+### What is inside the transaction, and what is not
+
+**No provider call, on any of the three paths.** The organisation resolve copies
+`findOrCreateXeroContact`'s three-phase shape for exactly that reason (F7,
+[#1355](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/1355)): every
+Xero call — authentication, the search, the create and its retry sleeps — happens
+in phase 1 outside any transaction, and phase 2 is a short locked transaction
+doing local reads and one local write. Holding a lock across the provider call is
+the failure that restructure removed and must not be reintroduced here.
+
+Concurrent duplicate CREATES are prevented by the organisation-scoped Xero
+idempotency key, not by the lock — the lock is only about which local record ends
+up holding the resulting id.
+
+### Counterpart writers, and the one that does not take it
+
+Every writer of `Member.xeroContactId` and `Organisation.xeroContactId` was
+enumerated for this change. Three take the key and the refusal. One does not:
+
+- **`xero-member-import.ts`** links members onto pre-existing Xero contacts in
+  bulk, walking mapped contact GROUPS. It is deliberately outside this protocol.
+  A school's organisation contact reaches it only if an operator puts that contact
+  into a membership group, bulk contact seeding is
+  [#2939](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/2939)'s
+  subject, and the import's shape — many writes across one long pass — is not the
+  short-transaction shape this key assumes. Stated rather than left to be found,
+  and pinned by the reader census in
+  `src/lib/__tests__/organisation-reader-contract.test.ts`.
+
+### This is bounded
+
+[#3369](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3369) removes
+the invented school member, which is the other home. The overlap opens when
+[#3367](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3367) first
+links an organisation and closes there. When it does, both keys can go with it —
+but not before, and not by assumption.
+
 ## Rules of thumb when working here
 
 - **Adding a capacity claim?** Take `acquireLodgeCapacityLock(tx, lodgeId)` on
