@@ -13,6 +13,12 @@ import {
 import { applyPaymentAdjustments } from "@/lib/booking-modify-settlement";
 import type { LoadedBookingForModify } from "@/lib/booking-modify-validation";
 
+// `booking-modify-settlement` reaches `@/lib/cancellation`, which constructs the
+// Prisma adapter at import time and therefore needs a `DATABASE_URL`. Nothing
+// under test here touches a client — `applyPaymentAdjustments` is handed a stub
+// transaction — so the module is stubbed rather than the environment faked.
+vi.mock("@/lib/prisma", () => ({ prisma: {} }));
+
 /*
   #3340 — the arithmetic behind an additional-payment ask.
 
