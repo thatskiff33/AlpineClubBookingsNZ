@@ -51,6 +51,11 @@ pushed to 1420 while they were sharing a heading. Nothing was reworded to fit:
 compacting an owner-decided rule is a compaction-wave job on #2789, not
 something a conflict resolution should do. The fifth sync added `INV-MONEY-029`
 the same way, at 667 words: #3276's promo build-up rule, also written on `main`.
+The sixth added two more from #3340 — `INV-PAY-047` at 1211 and `INV-ADDPAY-023`
+at 598 — and the pattern is now established enough to state plainly: a long-lived
+epic branch inherits every oversize entry `main` writes while it is open, because
+`main` has no register to measure them against. That is not debt this branch
+created and it is not this branch's to pay down.
 
 **And a row can GROW, which the "may only shrink" rule above forbids and which
 this one nonetheless did.** `INV-MOD-005` went 351 to 381 on that same sync. It
@@ -81,6 +86,7 @@ file; the checker treats an absent register as "no exceptions, no debt".
 | `INV-HOST-053` | 1434 |
 | `INV-CONFIG-004` | 1304 |
 | `INV-OPS-012` | 1219 |
+| `INV-PAY-047` | 1211 |
 | `INV-SSOT-003` | 1161 |
 | `INV-MOD-055` | 1157 |
 | `INV-ADDPAY-036` | 1137 |
@@ -105,6 +111,7 @@ file; the checker treats an absent register as "no exceptions, no debt".
 | `INV-PRIV-013` | 627 |
 | `INV-MOD-006` | 623 |
 | `INV-HOST-042` | 607 |
+| `INV-ADDPAY-023` | 598 |
 | `INV-LOCK-002` | 589 |
 | `INV-CONFIG-003` | 578 |
 | `INV-LIFE-042` | 562 |

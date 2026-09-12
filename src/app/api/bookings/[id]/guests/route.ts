@@ -62,6 +62,7 @@ import {
   EditFinancialReviewPendingError,
 } from "@/lib/edit-financial-review";
 import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
+import { sizeAdditionalAskCents } from "@/lib/additional-payment-ask";
 import { createModificationAdditionalPaymentIntent } from "@/lib/booking-modification-settlement";
 import logger from "@/lib/logger";
 import { requiredNightPriceCents } from "@/lib/required-price-cents";
@@ -985,7 +986,43 @@ export async function POST(
         hasSettledPayment && booking.payment?.source === PaymentSource.STRIPE;
       const hasIssuedXeroInvoice = hasIssuedPrimaryXeroInvoice(booking);
 
-      if ((hasSucceededPayment || hasIssuedXeroInvoice) && priceDiffCents > 0) {
+      /**
+       * #3340: THE FIFTH ASK-SIZING DOOR, and the one the first round missed.
+       *
+       * The other four reach `sizeAdditionalAskCents` through
+       * `applyPaymentAdjustments`; this door settles for itself, so it calls the
+       * one home directly rather than restating a bare delta (`INV-SSOT-001`).
+       * It is fully wired into the same machinery -
+       * `createModificationAdditionalPaymentIntent` below mints through
+       * `queueSupersededAdditionalIntentCancellations`, which RETIRES every other
+       * outstanding ADDITIONAL intent on this payment - so a delta-sized ask here
+       * deletes the unpaid balance of the ask it replaces. A $130 booking paid,
+       * edited +$70 unpaid, then a guest added at +$70 asked for $70 and left $70
+       * owed by nobody: byte-for-byte the #3340 leak, at a door the fix had not
+       * reached. `isBookingFullyPaidForGuestNameEdits` returns false while an ask
+       * is outstanding, so nothing upstream refuses the sequence.
+       *
+       * The two arms stay separate, exactly as `applyPaymentAdjustments` keeps
+       * them. The STRIPE ask folds the superseded balance in because minting
+       * retires it; the Xero arm sizes a SUPPLEMENTARY INVOICE for THIS edit,
+       * which supersedes nothing and is collected alongside whatever came before
+       * it - folding a Stripe balance into that figure would invoice the same
+       * money twice. Stripe wins where both are true, which is the order
+       * `applyPaymentAdjustments` already uses.
+       *
+       * The payment read here is the post-lock re-read (`pg_advisory_xact_lock(1)`
+       * plus the per-lodge key, above), so the ask being superseded is read under
+       * the same locks that serialise every counterpart writer in this route.
+       */
+      if (hasSucceededPayment && priceDiffCents > 0) {
+        additionalAmountCents = sizeAdditionalAskCents({
+          priceDiffCents,
+          // A guest add never charges one; the route passes 0 to the Xero
+          // settlement and to the member's email for the same reason.
+          changeFeeCents: 0,
+          payment: booking.payment,
+        });
+      } else if (hasIssuedXeroInvoice && priceDiffCents > 0) {
         additionalAmountCents = priceDiffCents;
       }
 

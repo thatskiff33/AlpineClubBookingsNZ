@@ -50,6 +50,7 @@ import type {
   BumpEventSnapshot,
 } from "@/lib/booking-events";
 import { isDuplicateCaptureRefundEvent } from "@/lib/duplicate-capture-refund-event";
+import { isSupersededAdditionalRefundEvent } from "@/lib/superseded-additional-refund-event";
 import { isManualSettlementMarkerEvent } from "@/lib/manual-settlement-reversal-event";
 import {
   FINANCIAL_REVIEW_NOTHING_MOVED,
@@ -356,11 +357,15 @@ function buildCancelledNarrative(
     // leaves the booking's own settlement untouched. It must NEVER be picked up
     // here as this cancellation's settlement clause (that would falsely claim
     // the member was refunded), so it is excluded from the settlement finder.
+    // #3340 is the second member of that class, excluded for the same reason: a
+    // capture against an intent a later edit had already replaced, refunded by
+    // the recovery queue, leaving the settlement untouched.
     const settlementEvent = events.find(
       (e) =>
         (e.type === BookingEventType.REFUNDED ||
           e.type === BookingEventType.CREDITED) &&
-        !isDuplicateCaptureRefundEvent(e)
+        !isDuplicateCaptureRefundEvent(e) &&
+        !isSupersededAdditionalRefundEvent(e)
     );
     return buildCancelledPostPaymentNarrative(
       paidEvent,

@@ -103,6 +103,9 @@ export const ALWAYS_BOOKING_SCOPED_TEMPLATE_NAMES: ReadonlySet<string> =
     // it has retired an unusable saved card. Same sender module, same
     // `{ bookingId, recipientMemberId }` context.
     "saved-card-charge-failed",
+    // #3340: the supersede-refund notice the recovery queue sends. Same sender
+    // module and same `{ bookingId, recipientMemberId }` context as its siblings.
+    "superseded-payment-refunded",
     // src/lib/email/waitlist.ts — a waitlist entry IS a booking row
     "waitlist-confirmation",
     "waitlist-offer",

@@ -122,6 +122,7 @@ export const REGISTRY_KEY_RENDERERS: Record<string, string> = {
   "bulk-communication": "bulkCommunicationTemplate",
   "notice-published": "noticePublishedTemplate",
   "refund-request-approved": "refundRequestApprovedTemplate",
+  "superseded-payment-refunded": "supersededPaymentRefundedTemplate",
   "refund-request-declined": "refundRequestDeclinedTemplate",
   "website-contact": "websiteContactTemplate",
   // account
@@ -155,6 +156,7 @@ export const REGISTRY_KEY_RENDERERS: Record<string, string> = {
   // admin-alerts-finance
   "admin-credit-sync-drift": "adminCreditSyncDriftTemplate",
   "admin-duplicate-capture-refund": "adminDuplicateCaptureRefundTemplate",
+  "admin-superseded-payment-refund": "adminSupersededPaymentRefundTemplate",
   "admin-late-capture-auto-refund": "adminLateCaptureAutoRefundTemplate",
   "admin-late-capture-hand-back-conflict": "adminLateCaptureHandBackConflictTemplate",
   "admin-manual-refund-task": "adminManualRefundTaskTemplate",
