@@ -441,6 +441,25 @@ enum SchoolCateringOption {
   NON_CATERED
 }
 
+// Programme #2912 stage 1 (#3366). What kind of body an Organisation is.
+// SCHOOL is the only value this release implements, and the only one any
+// writer will produce; the model is deliberately organisation-capable so a
+// later scout-group or corporate-booker use case is a value here rather than a
+// second model. INERT IN THIS RELEASE: nothing constructs an Organisation yet.
+enum OrganisationKind {
+  SCHOOL
+}
+
+// How a person is attached to an Organisation. TEACHER is a person who travels
+// with the party; CONTACT is a person the club corresponds with. Deliberately
+// NOT `Member.role` and NOT `AccessRole.ORG`: those two say what a person may
+// do in this system, and this says which organisation a person speaks for.
+// `Role.SCHOOL` and `AccessRole.ORG` keep their current meanings untouched.
+enum OrganisationContactRole {
+  TEACHER
+  CONTACT
+}
+
 enum AgeRestriction {
   ANY
   ADULTS_ONLY
@@ -742,6 +761,11 @@ model Member {
   // completing/dismissing the manual-refund tasks a cash cancellation raises.
   paymentsManuallyMarkedPaid                 Payment[]                                  @relation("PaymentManualPaidBy")
   manualRefundTasksCompleted                 ManualRefundTask[]                         @relation("ManualRefundTaskCompletedBy")
+  // #3366: organisations this person is a teacher or contact for. INERT in
+  // this release — no writer creates one. Member merge classifies the owning
+  // side (`OrganisationContact.member`) as `resolve`, because the association
+  // is unique per (organisation, person).
+  organisationContacts                       OrganisationContact[]                      @relation("OrganisationContactMember")
 
   // Member profile photo (MP1). Outbound scalar FK, so it is part of the
   // additive master-wins field merge (not a re-pointed inbound relation); the
@@ -1844,10 +1868,30 @@ model Booking {
   // FK is Restrict, exactly like BookingRequest.otherLodgeId: an OtherLodge
   // cited by a priced booking cannot be deleted out from under it.
   otherLodgeId                 String?
+
+  // Organisation this booking belongs to (programme #2912, stage 1 — #3366).
+  //
+  // OPTIONAL, AND THAT IS THE POINT. It is added here as an expand-only column
+  // so the currently deployed release keeps reading this table unchanged: it
+  // never selects the column and its inserts omit it, which a nullable column
+  // accepts. INERT IN THIS RELEASE — no writer sets it and no reader names it,
+  // pinned by `organisation-record-inert-contract.test.ts`.
+  //
+  // `memberId` above stays REQUIRED and keeps its present meaning. Making it
+  // optional is stage 4 (#3369) and is a windowed migration; doing it here
+  // would break the draining colour before any reader knows what an
+  // Organisation is.
+  //
+  // FK is Restrict, like `otherLodgeId` and `lodgeId`: once a booking cites an
+  // organisation, that organisation cannot be deleted out from under it. Not
+  // SetNull, because from stage 4 this column is the booking's OWNER and
+  // silently nulling an owner is the one failure a deletion must not cause.
+  organisationId               String?
   createdAt                 DateTime           @default(now())
   updatedAt                 DateTime           @updatedAt
 
   member                      Member                          @relation(fields: [memberId], references: [id], onDelete: Restrict)
+  organisation                Organisation?                   @relation(fields: [organisationId], references: [id], onDelete: Restrict)
   lodge                       Lodge                           @relation(fields: [lodgeId], references: [id], onDelete: Restrict)
   otherLodge                  OtherLodge?                     @relation(fields: [otherLodgeId], references: [id], onDelete: Restrict)
   waitlistOfferedLodge        Lodge?                          @relation("BookingWaitlistOfferedLodge", fields: [waitlistOfferedLodgeId], references: [id], onDelete: SetNull)
@@ -1918,6 +1962,7 @@ model Booking {
   @@index([parentBookingId])
   @@index([lodgeId])
   @@index([otherLodgeId])
+  @@index([organisationId])
 }
 
 // Durable booking-lifecycle event store (issue #740). One row per transition
@@ -2335,6 +2380,19 @@ model BookingRequest {
   // adults are copied into BookingGuest.memberId on hold/acceptance.
   linkedGuestMembers Json?
 
+  // Organisation this request is made on behalf of (programme #2912, stage 1 —
+  // #3366). SCHOOL variant in this release.
+  //
+  // OPTIONAL and expand-only, for the same reason as `Booking.organisationId`:
+  // the draining colour neither selects nor inserts it. INERT IN THIS RELEASE —
+  // no writer sets it and no reader names it.
+  //
+  // It does NOT replace `schoolName` above, which stays exactly as it is: that
+  // column is the free text the public form captured, and it remains the record
+  // of what the requester typed. From stage 2 the organisation is what the club
+  // resolves that text to; nothing in this stage resolves anything.
+  organisationId     String?
+
   // Lodge the stay is requested at (lodge-scoping contract, audited
   // 2026-07-03). Null rows predate the column and mean the club's default
   // lodge; readers resolve request.lodgeId ?? default. New requests always
@@ -2405,6 +2463,7 @@ model BookingRequest {
   version Int @default(0)
 
   lodge            Lodge?                @relation(fields: [lodgeId], references: [id], onDelete: Restrict)
+  organisation     Organisation?         @relation(fields: [organisationId], references: [id], onDelete: Restrict)
   otherLodge       OtherLodge?           @relation(fields: [otherLodgeId], references: [id], onDelete: Restrict)
   requestedByMember Member?              @relation("BookingRequestRequester", fields: [requestedByMemberId], references: [id], onDelete: SetNull)
   convertedBooking Booking?              @relation("BookingRequestConvertedBooking", fields: [convertedBookingId], references: [id], onDelete: SetNull)
@@ -2425,6 +2484,7 @@ model BookingRequest {
   // #2263: "My requests" reads by member, and the open-request cap counts a
   // member's non-terminal rows — both are (member, status) lookups.
   @@index([requestedByMemberId, status])
+  @@index([organisationId])
 }
 
 // Versioned public booking request quotes. The raw response token is emailed
@@ -7599,4 +7659,126 @@ model XeroSandboxContactContainment {
   /// the club's real books", and answering it with the most recent re-check
   /// would date the damage to whenever the copy last ran anything at all.
   rewrittenAt DateTime?
+}
+
+// ---------------------------------------------------------------------------
+// Organisations (programme #2912, stage 1 — issue #3366)
+//
+// A school is a thing, not a person. Today the club records one by INVENTING a
+// member: first name holds the school's name, surname is empty, and that
+// invented person owns the booking, holds the Xero contact and is the subject
+// of every audit row. Nothing in the database says "this is an organisation",
+// so nothing can hold a school's identity across years, across bookings or
+// across a change of teacher — and Xero, which expects a person in a person
+// contact, gets a surnameless one it cannot match.
+//
+// These two models are where that identity is going to live. THEY ARE INERT IN
+// THIS RELEASE, deliberately and completely: no writer creates a row, no reader
+// names a column, and the invented member stays exactly as it is. That is what
+// makes this stage safe to ship on its own — every existing path keeps working
+// because nothing it reads has changed, and no new value can be empty where
+// something already looks.
+//
+// What the later stages do with them, so a reader of this file is not left
+// guessing why an empty table exists:
+//
+//   stage 2 (#3367)  the Organisation becomes the invoiced and contacted party,
+//                    with its OWN Xero customer created as an organisation.
+//   stage 3 (#3368)  "who owns this booking" gets one home instead of 510
+//                    direct reads of `Booking.memberId`.
+//   stage 4 (#3369)  `Booking.memberId` becomes optional, under a windowed
+//                    migration with an owner-run classification census.
+//
+// Deliberately NOT done here, and each was considered:
+//
+//   * `name` carries no UNIQUE constraint. Nothing writes these tables yet, so
+//     a constraint would police an empty set, and the rule about when two
+//     spellings are the same school is the binding classification rule on
+//     #2912 — owned by the stage that actually mints rows, with the owner
+//     resolving every ambiguous identity by hand. Asserting a machine answer
+//     here would prejudge that.
+//   * `Member.role = SCHOOL` and `AccessRole.ORG` are UNTOUCHED. They keep
+//     their current meanings and their current writers; this stage adds no
+//     writer that produces either. Retiring the school-as-person path is
+//     stage 4, and the enum value can only be removed in a release AFTER the
+//     epic merges (blue/green: nothing has drained inside one deploy).
+// ---------------------------------------------------------------------------
+
+// A body the club deals with as an entity in its own right: in this release, a
+// school. Club-wide, never lodge-scoped — see
+// `docs/multi-lodge/lodge-scoping-contract.md`, updated before this model was
+// added — because a school is a counterparty of the club rather than one of its
+// buildings, and the stay's lodge already lives on the booking that points here.
+model Organisation {
+  id   String           @id @default(cuid())
+  kind OrganisationKind @default(SCHOOL)
+
+  // The organisation's own name, as the club records it. Free text: what counts
+  // as a school name varies by country and by club, so nothing here encodes a
+  // format (INV-CONFIG-001).
+  name String @db.VarChar(200)
+
+  // The organisation's OWN durable Xero customer. Unique, exactly like
+  // `Member.xeroContactId`, so one provider contact can never be claimed twice.
+  //
+  // THIS IS THE WHOLE POINT OF THE PROGRAMME'S XERO HALF: the link lives on the
+  // organisation, not on a person, so a person's personal Xero contact is never
+  // renamed or reused as the school. Stage 2 (#3367) is what creates it, as a
+  // Xero ORGANISATION contact; this release only reserves the column.
+  xeroContactId String? @unique
+
+  // How the club reaches the organisation itself, as distinct from any person
+  // at it. Nullable because a school may only ever be reachable through a
+  // named teacher, and inventing an address to fill a column is the class of
+  // thing this programme exists to stop.
+  email String? @db.VarChar(200)
+  phone String? @db.VarChar(30)
+
+  // Officer-facing free text. Never rendered on a public page.
+  notes String? @db.VarChar(2000)
+
+  // Soft retirement. A school that stops coming keeps its booking history and
+  // its Xero link; it simply stops being offered. Deletion is blocked by the
+  // Restrict FKs on the booking side while any booking still cites it.
+  archivedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  contacts        OrganisationContact[]
+  bookings        Booking[]
+  bookingRequests BookingRequest[]
+
+  @@index([kind, name])
+  @@index([archivedAt])
+}
+
+// A person speaking for an organisation — its teacher, or the person the club
+// corresponds with. The person is still a plain `Member`; this row says which
+// organisation they act for and in what capacity, which is a fact about the
+// relationship and not about the person.
+//
+// One row per (organisation, person): the capacity lives in `role` rather than
+// in a second row, so "is this person attached to that school" has exactly one
+// answer. Member merge therefore classifies this relation `resolve` (keep the
+// master's row, drop the loser's colliding one) in
+// `MEMBER_MERGE_RELATION_SPECS`, keyed on `organisationId`.
+model OrganisationContact {
+  id             String                  @id @default(cuid())
+  organisationId String
+  memberId       String
+  role           OrganisationContactRole @default(CONTACT)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Cascade on both sides: this row is pure association. It carries no history
+  // of its own, so when either end goes the association is simply no longer
+  // true — unlike a booking or an audit row, which must survive its member.
+  organisation Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  member       Member       @relation("OrganisationContactMember", fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@unique([organisationId, memberId])
+  @@index([memberId])
+  @@index([organisationId, role])
 }
