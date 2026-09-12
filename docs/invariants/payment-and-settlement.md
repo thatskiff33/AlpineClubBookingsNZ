@@ -293,6 +293,95 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   matching exactly what the settle wrote), while a not-covered settle has
   nothing about the extra to restore.
 
+  **The mirror is net of refunds, carries the change fee, and is what SIZES an
+  ask (#3340).** Three things the #2397 statement above left implicit, each of
+  which was a live defect:
+
+  - **Net, never gross.** `paidAmountCents = amountCents - refundedAmountCents`.
+    The manual-settle path was made net-correct in July 2026; the edit path and
+    the payments board were not. `/admin/payments` rendered gross beside a
+    "Partially refunded" chip, so a $130 capture with $65 refunded read as "paid
+    $130" and a booking officer sized the balance at `430 - 130 = 300` when the
+    true figure was `430 - 65 = 365`. Both wrong numbers agreed with each other,
+    which is why nobody caught it.
+  - **`Payment.changeFeeCents` is a term.** A change fee is charged through an
+    ask but is never added to `Booking.finalPriceCents`, so the mirror holds only
+    as `finalPrice + changeFee = net paid + credit + uncollected ask`.
+  - **An ask is sized so the mirror still holds after it.** Minting a replacement
+    ADDITIONAL PaymentIntent RETIRES every other outstanding ask on the payment
+    (`queueSupersededAdditionalIntentCancellations`), so an ask sized on one
+    edit's own delta deletes the unpaid balance of the ask it replaces. Two
+    consecutive +$70 edits on a $130 paid booking asked $70 and lost $70,
+    permanently and silently: once the mis-sized ask was paid the booking page
+    stopped rendering the payment card and the reminder cron stopped, so the
+    shortfall became unreachable from every member- and officer-facing surface.
+    The ask is therefore the edit's own net PLUS the unpaid balance of the ask it
+    supersedes, which is `sizeAdditionalAskCents` in
+    `src/lib/additional-payment-ask.ts` — the one home for all of this
+    arithmetic, and the module the census guard and the operator SQL are both
+    folded from.
+
+  **WHY THE ASK IS NOT READ STRAIGHT OFF THE PRICE.** `finalPriceCents - net paid
+  - creditAppliedCents` is the same figure wherever the ledger is clean, and the
+  tests assert that agreement rather than asserting it in prose. It stops being
+  the same figure in exactly the cases where the club legitimately holds money
+  that is NOT the booking's price, and there it gives that money back: after a
+  policy-tiered reduction the retained slice ([INV-MOD-011]) is a CHARGE, not a
+  prepayment, and after a reduction settled as account credit `amountCents` is
+  untouched while the member holds `MemberCredit` — so a price-derived ask would
+  discount the member's next increase by the retention. It would also fold any
+  pre-existing under-collection into the next ask, which is the retro-correction
+  the owner ruled out (#3340, 8 Sep 2026); the affected members were invoiced by
+  hand instead.
+
+  **THE PROJECTION STAYS A PROJECTION (#3340 scope item 2, decided).**
+  `reconcilePaymentAggregates` goes on writing
+  `additionalAmountCents: latestAdditional?.amountCents ?? 0` — the latest
+  ADDITIONAL transaction's amount — and is NOT changed to recompute an
+  outstanding from `Booking.finalPriceCents`. Three reasons, in order of weight.
+  It is a pure ledger projection: every other column it writes derives from the
+  `PaymentTransaction` rows, and giving one column a second, disagreeing source
+  of truth is the defect this whole entry is about. It would collide with the
+  manual-settle path, which deliberately RE-ASSERTS these columns behind a fence
+  and would find them rewritten underneath it. And post-#3267/#3268 the function
+  has already learned to preserve the Payment's own intent pointer and card
+  column rather than always following the latest transaction
+  ([INV-PAY-054], [INV-PAY-055]), so the direction of travel is toward respecting
+  what other writers own, not away from it. The cost of leaving it is that a
+  future mis-size would still be permanent; the compensating control is the
+  census below, which makes one visible instead of silent.
+
+  **THE CENSUS IS A REPORT, NOT A REPAIR.** `bookingLedgerCensusSql` lists every
+  live booking with a captured payment whose residual is not zero, and
+  `npm run payments:audit-booking-ledger` runs it read-only. A POSITIVE residual
+  is money the price says is owed that no ask is collecting; a NEGATIVE one is
+  the club holding more than the price, which is the expected shape after a
+  policy-retained or credit-settled reduction. Nothing repairs either
+  automatically — the owner's 8 Sep 2026 decision, for a population of two rows
+  already handled by hand.
+
+  **An Internet Banking price increase is an EXPECTED positive**, because it is
+  billed on a supplementary Xero invoice and raises no ADDITIONAL
+  `PaymentTransaction` for the ask term to see. Invoicing one by hand would bill
+  the member twice. A term reading the Xero outbox was considered and rejected:
+  it would make this identity depend on an external queue's state, where
+  "queued", "failed" and "sent" are three different answers to "is the club
+  asking for this?" that only a person can weigh. The operator guide
+  ([`MAINTENANCE.md`](../MAINTENANCE.md)) says so at the point of use.
+
+  **WHAT THE CI HALF GUARDS, EXACTLY** (`src/lib/__tests__/booking-ledger-census.test.ts`).
+  It is two guards, and conflating them overstates both. The ARITHMETIC guard
+  replays booking edits through the production sizing function and fails on any
+  positive residual, naming this id — it proves the sizing RULE, reads no fixture
+  and no seed data, and is blind by construction to any door that never calls
+  that function. One such door was open when it was written. The CALL-SITE census
+  is the half that can see a door: it scans the source tree for every file that
+  mints an ADDITIONAL PaymentIntent, pins the module that sizes each one, and
+  fails on a new door or on an exemption that has quietly stopped being true.
+  Neither reads production data; "fails CI if any booking's arithmetic does not
+  balance" would be a claim about rows, and rows are what the OPERATOR census
+  above is for.
+
 ## INV-PAY-048
 
 - A stored, unconsumed credit election (#2265) on the booking is never

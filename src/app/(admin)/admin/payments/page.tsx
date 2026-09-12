@@ -774,7 +774,7 @@ export default function PaymentsPage() {
   if (amountExact) {
     filterChips.push({
       key: "amountExact",
-      label: "Amount exact",
+      label: "Gross amount exact",
       value: amountExact,
       onRemove: () => { setAmountExact(""); resetPage(); },
     });
@@ -782,7 +782,7 @@ export default function PaymentsPage() {
   if (amountMin) {
     filterChips.push({
       key: "amountMin",
-      label: "Amount min",
+      label: "Gross amount min",
       value: amountMin,
       onRemove: () => { setAmountMin(""); resetPage(); },
     });
@@ -790,7 +790,7 @@ export default function PaymentsPage() {
   if (amountMax) {
     filterChips.push({
       key: "amountMax",
-      label: "Amount max",
+      label: "Gross amount max",
       value: amountMax,
       onRemove: () => { setAmountMax(""); resetPage(); },
     });
@@ -929,7 +929,7 @@ export default function PaymentsPage() {
             <div className="space-y-1">
               <div className="flex flex-wrap items-end gap-3">
                 <div className="space-y-1">
-                  <Label className="text-xs" htmlFor="payment-amount-exact">Amount exact</Label>
+                  <Label className="text-xs" htmlFor="payment-amount-exact">Gross amount exact</Label>
                   <Input
                     id="payment-amount-exact"
                     inputMode="decimal"
@@ -943,7 +943,7 @@ export default function PaymentsPage() {
                   />
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-xs" htmlFor="payment-amount-min">Amount min</Label>
+                  <Label className="text-xs" htmlFor="payment-amount-min">Gross amount min</Label>
                   <Input
                     id="payment-amount-min"
                     inputMode="decimal"
@@ -957,7 +957,7 @@ export default function PaymentsPage() {
                   />
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-xs" htmlFor="payment-amount-max">Amount max</Label>
+                  <Label className="text-xs" htmlFor="payment-amount-max">Gross amount max</Label>
                   <Input
                     id="payment-amount-max"
                     inputMode="decimal"
@@ -972,7 +972,8 @@ export default function PaymentsPage() {
                 </div>
               </div>
               <FieldHint id={PAYMENT_AMOUNT_HINT_ID}>
-                Amounts in dollars. Example: 125.00
+                Amounts in dollars, matched against the gross amount captured —
+                before any refund. Example: 125.00
               </FieldHint>
               {/* The refusal sits with the boxes that cause it, not in a banner
                   at the top of a long screen, and is announced rather than only
@@ -1051,7 +1052,13 @@ export default function PaymentsPage() {
             <PaymentSortHeader column="checkIn">Check In</PaymentSortHeader>
             <PaymentSortHeader column="member">Member</PaymentSortHeader>
             <PaymentSortHeader column="booking">Booking</PaymentSortHeader>
-            <PaymentSortHeader column="amount" align="right">Amount</PaymentSortHeader>
+            {/* #3340 fix round: the column renders NET of refunds, so the header
+                says so. The filter boxes beside it search the GROSS capture -
+                a database column, which a net expression cannot be - and they
+                are labelled "Gross amount" for the same reason. An officer
+                reading $65.00 here and typing it into a box labelled "Amount"
+                found nothing, and nothing on the screen explained why. */}
+            <PaymentSortHeader column="amount" align="right">Amount (net)</PaymentSortHeader>
             <PaymentSortHeader column="status">Status</PaymentSortHeader>
             <PaymentSortHeader column="stripe">Stripe</PaymentSortHeader>
             <PaymentSortHeader column="xeroInvoice">Xero Invoice</PaymentSortHeader>
@@ -1124,7 +1131,21 @@ export default function PaymentsPage() {
                       View
                     </Link>
                   </TableCell>
-                  <TableCell className="text-right text-sm font-medium tabular-nums">{formatCents(p.amountCents)}</TableCell>
+                  {/* #3340 (`INV-PAY-047`) - NET OF REFUNDS: the cash the club
+                      actually holds. Rendering GROSS beside a "Partially
+                      refunded" chip made a $130 capture with $65 refunded read as
+                      "paid $130", so an officer sized the balance at 430-130=$300
+                      when it was 430-65=$365 - the ask-sizing bug's own error,
+                      rendered rather than arithmetized. Gross and refund print
+                      underneath, so only the headline figure changed. */}
+                  <TableCell className="text-right text-sm font-medium tabular-nums">
+                    {formatCents(p.amountCents - p.refundedAmountCents)}
+                    {p.refundedAmountCents > 0 && (
+                      <div className="text-xs font-normal text-muted-foreground">
+                        {formatCents(p.amountCents)} paid, {formatCents(p.refundedAmountCents)} refunded
+                      </div>
+                    )}
+                  </TableCell>
                   <TableCell>
                     <div className="space-y-1">
                       <Link
@@ -1170,7 +1191,7 @@ export default function PaymentsPage() {
                           available to this admin. */}
                       <DiagnosticsRecordButton
                         recordId={p.id}
-                        subject={`the ${formatCents(p.amountCents)} payment for ${p.booking.member.firstName} ${p.booking.member.lastName}`}
+                        subject={`the ${formatCents(p.amountCents - p.refundedAmountCents)} payment for ${p.booking.member.firstName} ${p.booking.member.lastName}`}
                       />
                     </div>
                   </TableCell>
