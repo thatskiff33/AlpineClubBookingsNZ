@@ -78,8 +78,7 @@ function scanSuppressions(file: string): {
     return { any, eslintDisable };
   }
   const lines = body.split("\n");
-  for (let i = 0; i < lines.length; i += 1) {
-    const line = lines[i];
+  for (const [i, line] of lines.entries()) {
     for (const { kind, pattern } of ANY_PATTERNS) {
       if (pattern.test(line)) {
         any.push({
@@ -104,15 +103,20 @@ function scanSuppressions(file: string): {
 
 function renderTable(rows: string[][], headers: string[]): string {
   if (rows.length === 0) return "_No entries._";
-  const widths = headers.map((h, i) =>
-    Math.max(h.length, ...rows.map((r) => (r[i] ?? "").length)),
-  );
+  // Each header carries its own computed width rather than the two travelling
+  // as parallel arrays read back by position — under `noUncheckedIndexedAccess`
+  // a bare `widths[i]` reads as possibly missing even though it is built from
+  // `headers` itself; this way there is no separate array to fall out of step.
+  const columns = headers.map((header, i) => ({
+    header,
+    width: Math.max(header.length, ...rows.map((r) => (r[i] ?? "").length)),
+  }));
   const pad = (cell: string, w: number) => cell.padEnd(w);
   const lines = [
-    `| ${headers.map((h, i) => pad(h, widths[i])).join(" | ")} |`,
-    `| ${widths.map((w) => "-".repeat(w)).join(" | ")} |`,
+    `| ${columns.map((c) => pad(c.header, c.width)).join(" | ")} |`,
+    `| ${columns.map((c) => "-".repeat(c.width)).join(" | ")} |`,
     ...rows.map(
-      (row) => `| ${row.map((c, i) => pad(c ?? "", widths[i])).join(" | ")} |`,
+      (row) => `| ${columns.map((c, i) => pad(row[i] ?? "", c.width)).join(" | ")} |`,
     ),
   ];
   return lines.join("\n");
