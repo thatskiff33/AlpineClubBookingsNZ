@@ -19,16 +19,17 @@ const centsFormatter = new Intl.NumberFormat(APP_LOCALE, {
  * exact count is recorded once, in the pull request, not restated here where
  * it would only go stale again.
  *
- * The Internet Banking hold-clearing report (`ib-hold-clearing-audit.ts`) is
- * a named, docblocked exception: it hard-codes `NZ$` rather than the club's
- * configured currency, deliberately unchanged pending #3325. Do not read the
- * sentence above as covering it, or the roughly thirty other inline
- * `(cents / 100).toFixed(...)` expressions across the tree that this issue's
- * comparison did not touch because none of them share a definition with this
- * one — `formatCents` is the concept "one home for THIS helper's copies", not
- * a claim that no other file ever divides cents by 100. #3302's own review
- * found and fixed several more of the same class; whatever the count is by
- * the time you read this, it is stated in the pull request, once.
+ * The Internet Banking messages that used to hard-code `NZ$` (the hold-clearing
+ * report, the cancel and hold-expiry narratives, the orphaned-credit backfill
+ * audit line) render through here too since #3325 decided that prefix was
+ * drift, not a deliberate country choice. Do not read the sentence above as
+ * covering the roughly thirty other inline `(cents / 100).toFixed(...)`
+ * expressions across the tree that #3302's comparison did not touch because
+ * none of them share a definition with this one — `formatCents` is the
+ * concept "one home for THIS helper's copies", not a claim that no other file
+ * ever divides cents by 100. #3302's own review found and fixed several more
+ * of the same class; whatever the count is by the time you read this, it is
+ * stated in the pull request, once.
  *
  * Guards negative zero (`-0`): a caller that rounds a small negative to zero
  * (`Math.round(-0.4)` is `-0`) must not see `-$0.00` — `formatSignedCents`
@@ -48,12 +49,12 @@ export function formatCents(cents: number): string {
 
 /**
  * The bare two-decimal rendering `formatCents` deliberately does not do: no
- * currency symbol, no thousands grouping. For an editable dollars input (the
- * AI assistant and AI Diagnostics spend-cap boxes, which show `"10.00"` not
- * `"$10.00"`) and for a report line that already reads as a delta (the Xero
- * refund-note repair report, and the Internet Banking backfill audit line,
- * which prepends its own `NZ$` — see #3325). Pinned by each caller's own
- * fixture.
+ * currency symbol, no thousands grouping. For seeding an editable dollars
+ * input (`"10.00"`, not `"$10.00"` — nobody types a symbol into an amount box)
+ * and for a report line that already reads as a delta. Callers are not listed
+ * here — a list drifts the first time one is added; the cents-display lint arm
+ * in `eslint.config.mjs` (#3302) is what polices who renders cents, and each
+ * caller pins its own rendering.
  *
  * A separate named function rather than an option on `formatCents` (#3302
  * review): the wrong rendering is then a different import a reviewer sees at

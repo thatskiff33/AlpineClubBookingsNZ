@@ -5,7 +5,7 @@ import {
   formatClubDate,
 } from "@/lib/club-time";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
-import { APP_CURRENCY } from "@/config/operational";
+import { formatCents } from "@/lib/utils";
 import { normalizeCancellationRule } from "@/lib/cancellation-rules";
 import { resolvePolicyRowsForLodge } from "@/lib/lodges";
 import {
@@ -83,13 +83,7 @@ export type PublicCancellationPolicy = {
 type PublicCancellationRuleInput = Parameters<typeof normalizeCancellationRule>[0];
 
 function money(amountCents: number): PublicMoney {
-  return {
-    amountCents,
-    label: new Intl.NumberFormat("en-NZ", {
-      style: "currency",
-      currency: APP_CURRENCY,
-    }).format(amountCents / 100),
-  };
+  return { amountCents, label: formatCents(amountCents) };
 }
 
 type PublicContentGate = "membershipTypes" | "entranceFees" | "hutFees" | "annualFees" | "bookingPolicySummary" | "cancellationPolicy";

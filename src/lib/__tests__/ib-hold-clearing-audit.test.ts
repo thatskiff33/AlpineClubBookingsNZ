@@ -317,14 +317,12 @@ describe("auditCardAppliedCreditDoublePays (#1641 card scan)", () => {
   });
 });
 
-describe("formatIbHoldClearingAuditReport (#3302)", () => {
-  // This report's cents formatter is deliberately kept as its own hard-coded
-  // "NZ$" + toFixed(2) helper rather than the shared, currency-aware
-  // `formatCents` (see the PR description) — Internet Banking is NZ-specific
-  // regardless of a deployment's configured display currency. Nothing
-  // previously pinned that choice; this locks it so a future edit here is a
-  // deliberate decision rather than an accidental drift.
-  it("renders the total open delta with the fixed NZ$ prefix, not the club's configured currency", () => {
+describe("formatIbHoldClearingAuditReport (#3302, #3325)", () => {
+  // This report's amounts render through the shared `formatCents` (#3325);
+  // under the default configuration (en-NZ, NZD) that is a plain "$". Pinned
+  // so a future edit back to a hand-rolled prefix is a deliberate decision
+  // rather than accidental drift.
+  it("renders the total open delta in the club's configured currency", () => {
     const report = formatIbHoldClearingAuditReport({
       scannedReleasedHolds: 0,
       invoiceBearingHolds: 0,
@@ -333,18 +331,16 @@ describe("formatIbHoldClearingAuditReport (#3302)", () => {
       totalDeltaCents: 0,
     });
 
-    expect(report).toContain("Total open delta:              NZ$0.00");
+    expect(report).toContain("Total open delta:              $0.00");
     expect(report).toContain("No under-cleared invoices. Nothing to repair.");
   });
 
   // #3302 review (equivalence lens F6): the zero-cents fixture above cannot
-  // distinguish the current rendering from two mutations that would change a
-  // real line — adding thousands grouping, and moving the sign inside the
-  // prefix — because both render identically to "NZ$0.00" at zero. A price in
-  // the thousands plus a negative delta catches all three mutations the
-  // reviewer tried: swapping the body for the shared `formatCents` (grouping
-  // AND a currency-symbol change), adding grouping alone, and moving the sign.
-  it("keeps a >=$1,000 price ungrouped and puts a negative delta's sign before NZ$", () => {
+  // distinguish the current rendering from mutations that would change a real
+  // line — dropping thousands grouping, re-adding a hard-coded prefix, or
+  // moving the sign — because all render identically to "$0.00" at zero. A
+  // price in the thousands plus a negative delta catches each of them.
+  it("groups a >=$1,000 price and puts a negative delta's sign before the currency symbol", () => {
     const finding = {
       bookingId: "booking_1",
       paymentId: "pay_1",
@@ -372,14 +368,14 @@ describe("formatIbHoldClearingAuditReport (#3302)", () => {
       totalDeltaCents: 122956,
     });
 
-    // No thousands grouping: catches a swap to the shared, currency-aware
-    // `formatCents` (which would group as "NZ$1,234.56") and catches adding
-    // grouping to this formatter alone.
-    expect(report).toContain("final price:      NZ$1234.56");
-    // The sign sits BEFORE "NZ$", not inside it: catches a mutation that
-    // moved the minus to "NZ-$5.00" or dropped it from the absolute value.
-    expect(report).toContain("change fee:       -NZ$5.00");
-    expect(report).not.toContain("NZ$1,234.56");
-    expect(report).not.toContain("NZ-$");
+    // Thousands grouping, as `formatCents` renders it everywhere else: catches
+    // a swap back to a hand-rolled `toFixed(2)` (which would print "$1234.56").
+    expect(report).toContain("final price:      $1,234.56");
+    // The sign sits BEFORE the symbol: catches a mutation that dropped it or
+    // rendered the absolute value.
+    expect(report).toContain("change fee:       -$5.00");
+    // The hard-coded prefix #3325 removed must not come back.
+    expect(report).not.toContain("NZ$");
+    expect(report).not.toContain("$1234.56");
   });
 });

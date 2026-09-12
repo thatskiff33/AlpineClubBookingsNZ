@@ -8,6 +8,7 @@
 // no Xero calls.
 
 import { useEffect, useRef, useState } from "react"
+import { formatCents } from "@/lib/utils"
 
 export interface JoiningFeePreviewResult {
   defaultAmountCents: number | null
@@ -32,10 +33,6 @@ export interface JoiningFeePreviewInputs {
   membershipTypeKey?: string
   ageTier?: string
   dateOfBirth?: string // YYYY-MM-DD
-}
-
-export function formatJoiningFeeDollars(cents: number): string {
-  return new Intl.NumberFormat("en-NZ", { style: "currency", currency: "NZD" }).format(cents / 100)
 }
 
 const IDLE: JoiningFeePreviewState = { loading: false, loaded: false, error: null, preview: null }
@@ -111,7 +108,7 @@ export function JoiningFeePreviewHint({ state }: { state: JoiningFeePreviewState
   }
   return (
     <p className="text-xs text-muted-foreground">
-      Default: <span className="font-medium">{formatJoiningFeeDollars(preview.defaultAmountCents)}</span> ·
+      Default: <span className="font-medium">{formatCents(preview.defaultAmountCents)}</span> ·
       narration “{preview.defaultNarration}”. Leave the fields as prefilled to use the default, or edit to override.
     </p>
   )
