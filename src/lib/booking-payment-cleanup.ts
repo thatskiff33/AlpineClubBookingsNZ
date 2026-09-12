@@ -146,16 +146,44 @@ export async function queueSupersededAdditionalIntentCancellations(options: {
     // The durable row above is the guarantee; this is latency only (#3340).
     // `runPaymentRecoveryOperationNow` never throws, so a Stripe failure here
     // leaves precisely the pre-#3340 arrangement.
-    await runPaymentRecoveryOperationNow(operation.id).catch((err) =>
-      logger.error(
-        {
-          err,
-          bookingId: options.bookingId,
-          paymentIntentId: transaction.stripePaymentIntentId,
-        },
-        "Immediate cancellation of a superseded additional PaymentIntent did not run; the queued recovery operation stands",
-      ),
+    const immediate = await runPaymentRecoveryOperationNow(operation.id).catch(
+      (err) => {
+        logger.error(
+          {
+            err,
+            bookingId: options.bookingId,
+            paymentIntentId: transaction.stripePaymentIntentId,
+          },
+          "Immediate cancellation of a superseded additional PaymentIntent did not run; the queued recovery operation stands",
+        );
+        return "failed" as const;
+      },
     );
+    if (immediate !== "succeeded") {
+      /*
+        #3340 fix round: SAY SO WHEN THE FAST PATH DECLINES.
+
+        The headline claim of this change is that a superseded intent is dead
+        before the replacement's secret is returned, and `not-claimed` is the
+        outcome where that does not hold - most often because a FIRST cancel
+        attempt failed and left this same row in a five-minute retry backoff,
+        which the claim's `nextRetryAt <= now` cannot match. The old intent then
+        stays confirmable for the rest of that window. The queued row still
+        finishes the job; this is the record that the window was open, so a
+        member charged inside it can be explained rather than investigated from
+        scratch.
+      */
+      logger.warn(
+        {
+          bookingId: options.bookingId,
+          paymentId: options.paymentId,
+          paymentIntentId: transaction.stripePaymentIntentId,
+          operationId: operation.id,
+          outcome: immediate,
+        },
+        "A superseded additional PaymentIntent was not cancelled immediately; it stays confirmable until the queued recovery operation runs",
+      );
+    }
   }
 
   return queued;

@@ -1,6 +1,6 @@
 import { BookingEventType, Prisma } from "@prisma/client";
 
-import { outstandingAdditionalAskCents } from "@/lib/additional-payment-ask";
+import { bookingOutstandingCents } from "@/lib/additional-payment-ask";
 import { logAudit } from "@/lib/audit";
 import { recordBookingEvent } from "@/lib/booking-events";
 import { sendAdminSupersededPaymentRefundAlert } from "@/lib/email/admin-alerts-finance";
@@ -44,12 +44,23 @@ import {
  * row, the same arrangement `recordAutomaticLateCaptureRefund` uses and for the
  * same reasons.
  *
- * THE AMOUNT OWING IS READ, NOT DERIVED HERE. It comes from
- * `outstandingAdditionalAskCents` over the reconciled `Payment` row, so the
- * member's mail, the admin's alert and the booking page cannot quote three
- * different numbers at each other (`INV-SSOT-001`). The caller reconciles the
- * payment aggregates BEFORE calling this, which is what makes the figure the
- * post-refund one.
+ * THE AMOUNT OWING IS THE BOOKING'S WHOLE OUTSTANDING, not just its ask. It
+ * comes from `bookingOutstandingCents`, which is `INV-PAY-047` rearranged, so
+ * the member's mail, the admin's alert and the census cannot quote different
+ * numbers at each other (`INV-SSOT-001`). The caller reconciles the payment
+ * aggregates BEFORE calling this, which is what makes the figure the post-refund
+ * one.
+ *
+ * The ask alone is NOT enough, and the shape that proves it is the one this
+ * epilogue was nearly shipped with (#3340 fix round). `REFUND_SUPERSEDED_PAYMENT`
+ * is not additional-only: `processCancelPaymentIntentOperation` also processes
+ * the rows `queueSupersededPrimaryIntentCancellations` writes for the #1041 /
+ * #1161 stale-tab protection. So a PAYMENT_PENDING booking edited from $130 to
+ * $195, whose stale tab confirms the $130 PRIMARY and has it refunded, carries
+ * NO ask at all - and the member would have been emailed "Nothing further is
+ * owing on this booking" while the entire $195 was owed. On the ordinary
+ * ADDITIONAL shape the two figures are arithmetically the same, which is what
+ * keeps that case's number unchanged.
  */
 export async function reportSupersededPaymentRefund(params: {
   bookingId: string;
@@ -76,11 +87,18 @@ export async function reportSupersededPaymentRefund(params: {
         checkIn: true,
         checkOut: true,
         lodgeId: true,
+        finalPriceCents: true,
         member: {
           select: { id: true, email: true, firstName: true, lastName: true },
         },
+        // Every term of `INV-PAY-047`, because the figure below is the whole
+        // outstanding and not just the ask - see the note above the assignment.
         payment: {
           select: {
+            changeFeeCents: true,
+            amountCents: true,
+            refundedAmountCents: true,
+            creditAppliedCents: true,
             additionalAmountCents: true,
             additionalPaymentStatus: true,
           },
@@ -95,7 +113,12 @@ export async function reportSupersededPaymentRefund(params: {
         checkIn: booking.checkIn,
         checkOut: booking.checkOut,
         lodgeId: booking.lodgeId ?? null,
-        amountOwingCents: outstandingAdditionalAskCents(booking.payment),
+        amountOwingCents: booking.payment
+          ? bookingOutstandingCents({
+              finalPriceCents: booking.finalPriceCents,
+              ...booking.payment,
+            })
+          : booking.finalPriceCents,
       };
     }
   } catch (err) {

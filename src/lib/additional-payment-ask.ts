@@ -208,6 +208,38 @@ export function bookingLedgerResidualCents(
 }
 
 /**
+ * EVERYTHING THE BOOKING STILL OWES, in integer cents - the ask included, and
+ * whatever the price says is owed beyond it.
+ *
+ * `outstandingAdditionalAskCents` above answers a narrower question: how much is
+ * unpaid on the ONE ask the payment currently carries. That is the right figure
+ * wherever an ask is the only thing outstanding, and it is 0 on a booking whose
+ * WHOLE price is still owed as a PRIMARY payment - which is why a member on that
+ * booking must never be told "nothing further is owing" from it (#3340 fix
+ * round). The supersede-refund notice is reached from the PRIMARY supersede path
+ * as well as the ADDITIONAL one, and that is the shape it hits.
+ *
+ * Built from `BOOKING_LEDGER_IDENTITY_TERMS`, so it is `INV-PAY-047` rearranged
+ * rather than a second opinion: the residual is what is owed BEYOND the ask, and
+ * adding the ask back gives the whole. On a balanced ledger it therefore equals
+ * the ask exactly, which is what keeps the ordinary case's figure unchanged.
+ *
+ * Floored at zero. A NEGATIVE residual is the club legitimately holding more
+ * than the price (a policy-tiered reduction's retained slice, a reduction
+ * settled as account credit), and "the club owes the member" is not a sentence
+ * this figure is allowed to imply - the refund it accompanies has its own
+ * amount.
+ */
+export function bookingOutstandingCents(
+  row: BookingLedgerIdentityRow,
+): number {
+  return Math.max(
+    bookingLedgerResidualCents(row) + outstandingAdditionalAskCents(row),
+    0,
+  );
+}
+
+/**
  * What a residual MEANS, named once so the guard, the operator census and the
  * docs cannot describe the same number three different ways.
  *

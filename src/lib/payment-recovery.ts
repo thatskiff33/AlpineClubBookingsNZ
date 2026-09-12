@@ -1060,7 +1060,19 @@ async function enqueueSupersededPaymentRefundRecovery({
  * handoff) legitimately close PENDING/FAILED rows whose work verifiably
  * finished, so fencing to PROCESSING-only would break them.
  */
-async function completePaymentRecoveryOperation(operationId: string) {
+/**
+ * Close a recovery operation, and say whether THIS call is the one that closed
+ * it.
+ *
+ * The `updateMany` is already fenced on `status != SUCCEEDED`, so exactly one
+ * concurrent or repeated attempt can match. Returning that verdict lets a caller
+ * hang a once-only epilogue off the same claim rather than off a re-derived
+ * condition that a partially-applied replay can make true twice (#3340 fix
+ * round).
+ */
+async function completePaymentRecoveryOperation(
+  operationId: string,
+): Promise<boolean> {
   const closed = await prisma.paymentRecoveryOperation.updateMany({
     where: {
       id: operationId,
@@ -1080,6 +1092,7 @@ async function completePaymentRecoveryOperation(operationId: string) {
       "Payment recovery completion matched no live operation (already succeeded, or deleted by a manual mark-paid reversal); nothing was resurrected"
     );
   }
+  return closed.count === 1;
 }
 
 async function alertPaymentRecoveryFailure(
@@ -1841,19 +1854,45 @@ async function processRefundSupersededPaymentOperation(
 
   await reconcilePaymentAggregates({ paymentId: operation.paymentId });
 
-  // #3340: the club's own record of the refund, and the member's explanation.
-  // AFTER the reconcile, so the "still owing" figure it quotes is the post-refund
-  // one; BEFORE the completion, because an operation that closes without its
-  // notice going out is the silence this exists to end. It never throws - see its
-  // own docblock - so it cannot cost the operation its terminal transition.
+  /**
+   * #3340: the club's own record of the refund, and the member's explanation.
+   *
+   * AFTER the reconcile, so the "still owing" figure it quotes is the
+   * post-refund one. It never throws - see its own docblock - so it cannot cost
+   * the operation its terminal transition.
+   *
+   * FENCED ON THE COMPLETION CLAIM (#3340 fix round), which is why it now runs
+   * after it rather than before. The `outstandingCents <= 0` short-circuit above
+   * is NOT an idempotence gate: it only becomes true once the transaction row's
+   * `refundedAmountCents` has been written, and a failure between the ledger
+   * entry and that write re-enters with the refund already made. Stripe answers
+   * the replay with the same refund and the ledger dedupes on the refund id, so
+   * the MONEY is safe - but the epilogue would run a second time, sending the
+   * member a second "we have refunded you" email and the admins a second alert,
+   * on a change whose entire point is not confusing members about card movement.
+   * `completePaymentRecoveryOperation`'s `updateMany` is fenced on
+   * `status != SUCCEEDED`, so exactly one attempt can win it, and that attempt
+   * is the one that speaks.
+   */
+  const closed = await completePaymentRecoveryOperation(operation.id);
+  if (!closed) {
+    logger.warn(
+      {
+        operationId: operation.id,
+        bookingId: operation.bookingId,
+        paymentIntentId: operation.paymentIntentId,
+      },
+      "Superseded-payment refund replayed against an operation that was already closed; the refund is idempotent and the notices were sent by the attempt that closed it",
+    );
+    return;
+  }
+
   await reportSupersededPaymentRefund({
     bookingId: operation.bookingId,
     paymentId: operation.paymentId,
     paymentIntentId: operation.paymentIntentId,
     refundedAmountCents: outstandingCents,
   });
-
-  await completePaymentRecoveryOperation(operation.id);
 }
 
 /** Parse a persisted allocation plan (#1097); null when absent or malformed. */
@@ -2926,7 +2965,27 @@ export async function runPaymentRecoveryOperationNow(
       return null;
     },
   );
-  if (!operation) return "not-claimed";
+  if (!operation) {
+    /**
+     * #3340 fix round: NOT-CLAIMED USED TO BE SILENT, and the case that makes
+     * that expensive is the second supersede.
+     *
+     * `enqueuePaymentIntentCancellationRecovery` upserts on its idempotency key
+     * and its UPDATE branch deliberately does not reset `status` or
+     * `nextRetryAt`. So when a first cancel attempt has failed, the row sits
+     * FAILED with a `nextRetryAt` five minutes out, and the claim below - which
+     * requires `nextRetryAt <= now` - cannot match. The immediate attempt this
+     * function exists to make does not happen, and the superseded intent stays
+     * confirmable for the remainder of that backoff: precisely the window the
+     * live incident was measured in. The durable row still finishes the job, but
+     * nothing recorded that the fast path had declined.
+     */
+    logger.warn(
+      { operationId },
+      "Immediate payment recovery did not claim the operation (already terminal, already processing, out of attempts, or still in retry backoff); only the queued row will act",
+    );
+    return "not-claimed";
+  }
 
   try {
     await processPaymentRecoveryOperation(operation);

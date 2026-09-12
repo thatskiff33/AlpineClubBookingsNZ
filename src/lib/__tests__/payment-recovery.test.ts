@@ -35,6 +35,7 @@ const {
   mockFindWaitingSupplementaryOpForIntent,
   mockExecuteGroupSettlementRefundPlan,
   mockRecordDuplicateCaptureRefundEvent,
+  mockReportSupersededPaymentRefund,
   mockSyncEditFinancialReviewChargeRequest,
   mockBookingModificationFindUnique,
   mockCompleteDeferredSupplementaryInvoice,
@@ -84,6 +85,10 @@ const {
     .fn()
     .mockResolvedValue({ outcome: "refunded", mirroredChildren: 1 }),
   mockRecordDuplicateCaptureRefundEvent: vi.fn().mockResolvedValue(undefined),
+  // #3340: the supersede-refund epilogue - one audit row, one booking event, one
+  // member email, one admin alert. Mocked so a REPLAY can be asked whether it
+  // spoke a second time.
+  mockReportSupersededPaymentRefund: vi.fn().mockResolvedValue(undefined),
   mockSyncEditFinancialReviewChargeRequest: vi.fn(),
   // #3181: the edit whose additional payment is being recovered, read back for
   // the SIGNED components its deferred supplementary invoice bills.
@@ -234,6 +239,11 @@ vi.mock("@/lib/email", () => ({
 vi.mock("@/lib/booking-events", () => ({
   recordDuplicateCaptureRefundEvent: (...args: unknown[]) =>
     mockRecordDuplicateCaptureRefundEvent(...args),
+}));
+
+vi.mock("@/lib/superseded-additional-refund", () => ({
+  reportSupersededPaymentRefund: (...args: unknown[]) =>
+    mockReportSupersededPaymentRefund(...args),
 }));
 
 vi.mock("@/lib/logger", () => ({
@@ -731,6 +741,74 @@ describe("payment recovery worker", () => {
       data: expect.objectContaining({
         refundedAmountCents: 3000,
       }),
+    });
+  });
+
+  /*
+    #3340 fix round (concurrency lens F4) - THE EPILOGUE SPEAKS ONCE.
+
+    `outstandingCents <= 0` is not an idempotence gate. It only becomes true
+    after the transaction row's `refundedAmountCents` has been written, so a
+    failure between the ledger entry and that write re-enters with the refund
+    already made: Stripe answers the replay with the same refund under the same
+    key and the ledger dedupes on the refund id, so the MONEY is safe - but the
+    epilogue used to run again, sending a second "we have refunded you" email and
+    a second admin alert on a change whose whole point is not confusing members
+    about card movement.
+
+    The fence is `completePaymentRecoveryOperation`'s own `updateMany`, which is
+    already scoped to `status != SUCCEEDED`: exactly one attempt can win it, and
+    that attempt is the one that speaks.
+  */
+  describe("the supersede-refund epilogue is fenced on the completion claim", () => {
+    beforeEach(() => {
+      mockPaymentRecoveryFindUnique.mockResolvedValue(
+        makeOperation({
+          type: PaymentRecoveryOperationType.REFUND_SUPERSEDED_PAYMENT,
+        }),
+      );
+      mockPaymentTransactionFindUnique.mockResolvedValue({
+        id: "txn-1",
+        paymentId: "payment-1",
+        stripePaymentIntentId: "pi_superseded",
+        amountCents: 6000,
+        refundedAmountCents: 0,
+        status: PaymentStatus.SUCCEEDED,
+      });
+      mockProcessRefund.mockResolvedValue({
+        id: "re_1",
+        amount: 6000,
+        currency: "nzd",
+        status: "succeeded",
+        payment_intent: "pi_superseded",
+      });
+      mockSumRecordedRefundsForTransaction.mockResolvedValue(6000);
+    });
+
+    it("reports the refund on the attempt that closes the operation", async () => {
+      await processPaymentRecoveryOperations({ limit: 1 });
+
+      expect(mockReportSupersededPaymentRefund).toHaveBeenCalledWith({
+        bookingId: "booking-1",
+        paymentId: "payment-1",
+        paymentIntentId: "pi_superseded",
+        refundedAmountCents: 6000,
+      });
+    });
+
+    it("says nothing on a replay whose completion claim was already won", async () => {
+      // The completion `updateMany` matches nothing: another attempt closed this
+      // operation, and with it sent the notices.
+      mockPaymentRecoveryUpdateMany.mockImplementation(
+        (args: { data?: { status?: string } }) =>
+          Promise.resolve({
+            count: args?.data?.status === "SUCCEEDED" ? 0 : 1,
+          }),
+      );
+
+      await processPaymentRecoveryOperations({ limit: 1 });
+
+      expect(mockReportSupersededPaymentRefund).not.toHaveBeenCalled();
     });
   });
 

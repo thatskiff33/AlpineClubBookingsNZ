@@ -45,20 +45,50 @@ import {
 const CHECK_IN = new Date("2026-08-01T00:00:00.000Z");
 const CHECK_OUT = new Date("2026-08-03T00:00:00.000Z");
 
+/**
+ * A booking whose ledger BALANCES, parameterised on the ask.
+ *
+ * `finalPriceCents` and the captured total move together with the ask, because
+ * the figure under test is the booking's WHOLE outstanding (`INV-PAY-047`
+ * rearranged) rather than the ask alone - and on a balanced ledger the two are
+ * the same number, which is the property that keeps the ordinary case's member
+ * email unchanged.
+ */
 function bookingRow(
-  payment: { additionalAmountCents: number; additionalPaymentStatus: string | null } | null,
+  payment:
+    | {
+        additionalAmountCents: number;
+        additionalPaymentStatus: string | null;
+        finalPriceCents?: number;
+        changeFeeCents?: number;
+        amountCents?: number;
+        refundedAmountCents?: number;
+        creditAppliedCents?: number;
+      }
+    | null,
 ) {
   return {
     checkIn: CHECK_IN,
     checkOut: CHECK_OUT,
     lodgeId: "lodge_1",
+    // Price = captured + the uncollected ask, so the residual is zero.
+    finalPriceCents:
+      payment?.finalPriceCents ?? 13000 + (payment?.additionalAmountCents ?? 0),
     member: {
       id: "member_1",
       email: "member@example.test",
       firstName: "Ada",
       lastName: "Lovelace",
     },
-    payment,
+    payment: payment
+      ? {
+          changeFeeCents: 0,
+          amountCents: 13000,
+          refundedAmountCents: 0,
+          creditAppliedCents: 0,
+          ...payment,
+        }
+      : null,
   };
 }
 
@@ -129,6 +159,72 @@ describe("reportSupersededPaymentRefund", () => {
   it("reports nothing owing as a real answer, not as a missing one", async () => {
     mocks.findBooking.mockResolvedValue(
       bookingRow({ additionalAmountCents: 0, additionalPaymentStatus: null }),
+    );
+
+    await reportSupersededPaymentRefund({
+      bookingId: "booking_1",
+      paymentId: "payment_1",
+      paymentIntentId: "pi_superseded",
+      refundedAmountCents: 6500,
+    });
+
+    expect(mocks.sendMemberEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ amountOwingCents: 0 }),
+    );
+  });
+
+  /*
+    #3340 fix round (money lens F4) - THE WHOLE OUTSTANDING, NOT JUST THE ASK.
+
+    `REFUND_SUPERSEDED_PAYMENT` is not additional-only: the same processor
+    handles the rows `queueSupersededPrimaryIntentCancellations` writes for the
+    stale-tab protection (#1041 / #1161). A PAYMENT_PENDING booking edited from
+    $130 to $195, whose stale tab confirms the $130 PRIMARY and has it refunded,
+    carries no ask at all - and was told "Nothing further is owing on this
+    booking" while the entire $195 was owed.
+  */
+  it("quotes the whole price when the refund was the booking's only payment", async () => {
+    mocks.findBooking.mockResolvedValue(
+      bookingRow({
+        additionalAmountCents: 0,
+        additionalPaymentStatus: null,
+        finalPriceCents: 19500,
+        // The primary was captured and has just been refunded in full.
+        amountCents: 13000,
+        refundedAmountCents: 13000,
+      }),
+    );
+
+    await reportSupersededPaymentRefund({
+      bookingId: "booking_1",
+      paymentId: "payment_1",
+      paymentIntentId: "pi_superseded",
+      refundedAmountCents: 13000,
+    });
+
+    expect(mocks.sendMemberEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ amountOwingCents: 19500 }),
+    );
+    expect(mocks.sendAdminAlert).toHaveBeenCalledWith(
+      expect.objectContaining({ amountOwingCents: 19500 }),
+    );
+  });
+
+  /*
+    A policy-tiered reduction leaves the club holding more than the price
+    (`INV-MOD-011`), which makes the identity's residual NEGATIVE. "The club owes
+    you" is not a sentence this figure is allowed to imply - the refund it
+    accompanies has its own amount - so it floors at zero.
+  */
+  it("never reports a negative amount owing when the club retains a slice", async () => {
+    mocks.findBooking.mockResolvedValue(
+      bookingRow({
+        additionalAmountCents: 0,
+        additionalPaymentStatus: null,
+        finalPriceCents: 10000,
+        amountCents: 13000,
+        refundedAmountCents: 0,
+      }),
     );
 
     await reportSupersededPaymentRefund({
