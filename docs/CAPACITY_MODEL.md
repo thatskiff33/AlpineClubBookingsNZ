@@ -184,12 +184,12 @@ is listed last for exactly that reason.)
 
 | Surface | Terms 1-3 | Whole-lodge hold (term 4) | Why |
 |---|---|---|---|
-| `checkCapacity` | **Yes** | `occupiedBeds` pinned to `lodgeCapacity`, `availableBeds` pinned to 0 | A member reading this payload (#155) must not be able to tell a held night from a genuinely full one (decision 6) |
+| `checkCapacity` | **Yes** | `occupiedBeds` pinned to a full lodge — the hold's represented beds plus the custodian beds it excludes (`INV-CAP-035`) — and `availableBeds` pinned to 0 | A member reading this payload (#155) must not be able to tell a held night from a genuinely full one (decision 6). Composed from the two disjoint sets rather than written as `lodgeCapacity`, so a hold that re-claimed the custodian's bed would break the contract instead of hiding inside it |
 | `checkCapacityForGuestRanges` | **Yes** | `availableBeds` pinned to 0; `occupiedBeds` **not** pinned | Its `occupiedBeds` is existing occupancy *plus the proposal being tested*; pinning would discard the proposal. Every consumer reads `availableBeds` / `wholeLodgeHeld` |
 | `checkCapacityForPartnerSharedAdmission` | **Yes** | `availableBeds` pinned to 0 and surfaced as a refusal `reason` | A hold is not bypassable by any admin override (decision 5) |
-| `getMonthAvailability` | **Yes** | Reported as a full lodge | A held-but-not-full night on the public calendar would otherwise leak the hold |
+| `getMonthAvailability` | **Yes** | Reported as a full lodge, composed the same way | A held-but-not-full night on the public calendar would otherwise leak the hold |
 | Capacity-warnings cron | **Yes** | Reported as a full lodge, so the warning fires | An exclusive hold leaves no bookable bed, however small the holding group is |
-| Custodian bed-hold write path (`validateCustodianBedHold`) | **Yes** | **Deliberately not pinned** | Policy, not arithmetic: a hold and a custodian bed do not block each other in either direction (see "Whole-lodge holds and custodian beds do not block each other" below). Pinning would refuse a hut leader a bed the club intends them to occupy |
+| Custodian bed-hold write path (`validateCustodianBedHold`) | **Yes** | **Deliberately not pinned** | Arithmetic since #2698, not bare policy: a hold does not represent a custodian-held bed-night (`INV-CAP-035`, see "The custodian's bed sits outside the held pool" below), so holding a bed on a held night moves one bed between two disjoint sets and tips nothing over. Pinning would refuse a hut leader a bed the club intends them to occupy |
 | Admin reports `occupancyByDate` | **Term 1 only** | Not counted | Utilisation measures how much the lodge was *booked*; see the custodian table below |
 
 The nightly capacity-warnings cron is the surface this inventory exists for. It
@@ -325,32 +325,58 @@ the last row, the admin utilisation report, still reads the population directly.
    out of that room for the whole season. This is conservative and correct — an
    unrelated adult really does sleep there.
 
-**Whole-lodge holds and custodian beds do not block each other.** This is a
-deliberate policy, and it is worth being exact about *why*, because the obvious
-explanation is wrong.
+**The custodian's bed sits outside the held pool (#2698, `INV-CAP-035`).** A
+whole-lodge hold represents every bed of its lodge **except** the bed-nights a
+custodian holds, night by night.
 
-The custodian's bed is **not** outside the held pool. `getLodgeCapacityStatus`
-resolves capacity from every active bed, the custodian's included — the whole
-#2286 design counts the custodian as an occupant of a capacity bed rather than
-as a smaller ceiling — and `wholeLodgeHoldOccupiedBedNightsForPlanner` (#2317)
-expands a hold across every active bed too, so on the planner the same bed-night
-carries both.
+That sentence was in this document for a long time before it was true. Until
+#2698 the code did the opposite: `wholeLodgeHoldOccupiedBedNightsForPlanner`
+(#2317) expanded a hold across every active bed, so the custodian's bed-night
+was claimed twice — once by the held group and once by the custodian — and PR
+#2696 corrected this page to say so. The owner's answer (9 Aug 2026) was to fix
+the code rather than keep the correction: the two really should not contend, so
+the exclusion is now structural and the original sentence is accurate.
 
-What is true is that neither refuses the other. Setting a hold never lists a
-custodian as a conflict, and a custodian hold can be created over held nights
-and vice versa. On a held night the ADR-001 pin still presents a full lodge to
-every member-facing surface; on the hold's own admission path the group's
-headcount is checked *with* the custodian counted, so an over-size group
-surfaces as over-capacity for explicit admin confirmation instead of silently
-displacing them.
+**What this does and does not change.** It changes who a bed-night belongs to,
+never how many beds there are. The lodge is still full on a held night: the hold
+represents `capacity − custodian beds` and the custodian occupies the rest, so
+every member-facing surface still sees a full lodge (ADR-001 decision 6) and
+`occupiedBeds + availableBeds === lodgeCapacity` still holds on every night (the
+#155 payload contract). It also changes nothing about admission — a held night
+is still hard-blocked at zero beds for everyone else. What it removes is the
+double claim, and with it the contention this section used to describe.
 
-**The gap that leaves, stated rather than implied:** creating a custodian bed
-hold over a night that is already exclusively held raises **no** warning, because
-`validateCustodianBedHold` compares `occupancy + 1` against capacity and the
-holding group's own headcount may be small. The officer is not told the lodge is
-exclusively held for those nights. #2681 did not introduce this and did not
-change it; whether that confirmation should mention held nights is an owner
-decision.
+**Whole-lodge flat pricing is untouched.** `priceWholeLodgeFlat`
+(`src/lib/policies/pricing.ts`) sums a flat per-night season rate and never
+reads a bed count, so a hold whose represented set narrows costs the holding
+group exactly what it did.
+
+**Setting a hold over an existing custodian bed needs no warning.** The
+exclusion is derived at read time from the live custodian holds, so a hold set
+over nights a custodian already covers is correct by construction — it simply
+never represented that bed. `admin-exclusive-hold-controls` is unchanged.
+
+**The other direction is an officer decision, and is asked.** A custodian bed
+hold created or changed over nights an existing whole-lodge hold already covers
+NARROWS somebody else's sole occupancy. That is never done silently: the
+hut-leaders routes return a `409 CUSTODIAN_OVERLAPS_WHOLE_LODGE_HOLD` naming
+the affected nights and the holding bookings, and the officer either accepts —
+re-sending `amendOverlappingHolds: true`, which writes the assignment and the
+audited acceptance in one transaction under the global cohort key then the
+lodge capacity key — or cancels, in which case nothing on either side changes.
+Because coverage is derived rather than stored, the audited acceptance IS the
+amendment; there is no bed set on the hold row to edit, and no existing hold is
+migrated.
+
+Removing a custodian hold is the mirror image: it widens every overlapping
+hold's represented set, so the hut-leader DELETE takes the lodge capacity key
+too.
+
+The over-capacity confirmation in `validateCustodianBedHold` still does not pin
+the hold flag, and since #2698 the reason is arithmetic rather than policy:
+holding a bed on a held night moves one bed from the group's set to the
+custodian's and changes the lodge's occupancy by nothing, so there is nothing
+over capacity to confirm.
 
 ### With the bed-allocation module OFF (#2286 review M11)
 

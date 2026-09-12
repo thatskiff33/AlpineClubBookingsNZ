@@ -2184,7 +2184,9 @@ the booking has an adult on-site that night.
 Two occupancies with no booking behind them feed this invariant as
 attribution-less rows and so are covered by that last clause: a **custodian bed
 hold** (#2286) and, since #2317, an **exclusive whole-lodge hold** — every
-active bed of the held lodge on every held night. Both are tierless, so both
+active bed of the held lodge on every held night, less the bed-nights a
+custodian holds (`INV-CAP-035`, #2698), so the two sets are disjoint and a
+bed-night is claimed exactly once. Both are tierless, so both
 read as an adult: another booking's unaccompanied minors are kept out of the
 rooms, and no name, booking id or age tier of the held group ever reaches the
 planner. Neither can be displaced: neither has a row to move, and — because a
@@ -2610,7 +2612,16 @@ the custodian bed hold (#2286): it stays a stateless dated record whose
 Upcoming / Active / Past reading is derived from `startDate`/`endDate` against
 today. Adding, changing or clearing its optional `bedId` is a plain field edit —
 the held bed is computed from the row on every query, so shortening, extending
-or deleting the assignment returns the bed with nothing to reconcile.
+or deleting the assignment returns the bed with nothing to reconcile. The same
+is true of the whole-lodge-hold exclusion #2698 added: a hold's represented bed
+set is derived from the live custodian holds at read time and stored nowhere, so
+adding or removing a bed hold moves a bed-night between the two sets with no
+state to migrate. What #2698 does add is a WRITE-time question, not a state: a
+bed hold created or changed over nights an existing whole-lodge hold covers is
+refused with `409 CUSTODIAN_OVERLAPS_WHOLE_LODGE_HOLD` until the officer accepts
+it explicitly, and the acceptance and the assignment commit together. Deleting
+an assignment now runs under the lodge capacity key, because it widens every
+overlapping hold's represented set.
 
 ## Membership Cancellation, Archive, And Delete Lifecycle
 

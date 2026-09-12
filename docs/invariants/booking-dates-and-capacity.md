@@ -1637,7 +1637,8 @@ move, never a capacity or double-booking violation.
   (ADR-001 amendment, #2285, resolved by #2317):** a whole-lodge hold's nights
   are synthesised into both bed-allocation planners as **unattributed,
   non-displaceable** occupancy — every active bed of that lodge, every held
-  night — while the hold still owns no `BedAllocation` row anywhere. The rows
+  night, less the bed-nights a custodian holds (`INV-CAP-035`, #2698) — while
+  the hold still owns no `BedAllocation` row anywhere. The rows
   carry a null booking and a null guest (#1768 "unknown occupant" shape,
   exactly like a custodian bed hold), which is what makes them unattributed (no
   name, no booking id, no age tier — a hold can begin life as a public school
@@ -1934,6 +1935,67 @@ move, never a capacity or double-booking violation.
     indirect argument objects and an explicit `undefined`, `null` or `void`
     value. Required types catch ordinary aliases/wrappers and the runtime guard
     catches unchecked JavaScript or `any` callers.
+
+### INV-CAP-035
+
+- **A whole-lodge hold excludes custodian-held bed-nights, per overlapping
+  night (#2698, owner decision 9 Aug 2026):** an exclusive hold represents every
+  bed of its lodge EXCEPT one a custodian holds that night. The two sets are
+  disjoint and together are the lodge, so a held night is still a full lodge to
+  every member-facing surface (ADR-001 decision 6) and
+  `occupiedBeds + availableBeds === lodgeCapacity` still holds; what the rule
+  removes is the double claim, where the same bed-night was occupied by the held
+  group AND by the custodian. Nothing about admission changes — a held night
+  remains hard-blocked at zero beds for everyone else (`INV-CAP-021`).
+  **Whole-lodge flat per-night pricing does not change because a represented bed
+  set narrows** (`priceWholeLodgeFlat` sums a flat season rate and never reads a
+  bed count).
+  The rule lives in ONE predicate, `isCustodianHeldBedNight`
+  (`src/lib/custodian-occupancy.ts`), and both consumers of "what does this hold
+  cover" subtract through it: the planner expansion
+  (`wholeLodgeHoldOccupiedBedNightsForPlanner`, whose custodian-hold argument is
+  REQUIRED so a caller cannot forget it) per bed-night, and the custodian write
+  path's ordering check (`findWholeLodgeHoldAmendments`). The capacity engines
+  work in per-night counts and subtract the same loaded holds in their count
+  shape through `wholeLodgeHoldRepresentedBeds` (`src/lib/capacity.ts`), which
+  every held-night pin composes with the custodian count reported beside the
+  flag. One source, two views; never a second inventory of which beds a
+  custodian has.
+  **Coverage is DERIVED at read time, never stored.** No hold row carries a bed
+  set, so nothing is migrated and no existing hold is rewritten — "new and
+  amended holds only" is true by construction rather than by a backfill that was
+  skipped.
+  **Direction matters, and only one direction asks a question.** Setting a
+  whole-lodge hold over nights a custodian already holds is correct by
+  construction and raises nothing. Creating or changing a CUSTODIAN bed hold
+  over nights an existing hold already covers narrows that booking's sole
+  occupancy, so `POST /api/admin/hut-leaders` and
+  `PUT /api/admin/hut-leaders/[id]` refuse it with
+  `409 CUSTODIAN_OVERLAPS_WHOLE_LODGE_HOLD`, naming the affected nights and the
+  holding bookings and nothing else about them (`INV-PRIV`), until the officer
+  re-sends `amendOverlappingHolds: true`. That acceptance and the assignment are
+  written in ONE transaction — accept commits both, decline or failure commits
+  neither — and because coverage is derived, the audited acceptance
+  (`booking.wholeLodgeHold.custodianAmended`, category `booking`, matching the
+  exclusive-hold writer) IS the amendment. A bed-night this same assignment
+  already holds is not re-asked: it left the hold's set when it was first
+  created.
+  **Lock order (`INV-LOCK-002`).** The accept path takes the global cohort key
+  `pg_advisory_xact_lock(1)` and THEN `acquireLodgeCapacityLock`, in that order,
+  decided from the request before any lock is taken so the order cannot invert.
+  The global key is needed because the hold RELEASE path (booking cancel's
+  `RELEASE_WHOLE_LODGE_HOLD_UPDATE`) serialises on the club-wide key and never
+  on this lodge's. The detect-and-refuse path writes nothing and keeps the
+  narrower per-lodge topology. `DELETE /api/admin/hut-leaders/[id]` takes the
+  lodge capacity key too, because removing a custodian hold WIDENS every
+  overlapping hold's represented set; it creates no overlap, so it still runs no
+  overlap read. All three hut-leader writers audit under category `lodge`.
+  Guards: the exclusion and the engine/planner parity in
+  `src/lib/__tests__/exclusive-hold-planner-occupancy.test.ts`, the ordering
+  case in `src/lib/__tests__/custodian-assignment-validation.test.ts` and
+  `src/lib/__tests__/custodian-hut-leaders-route.test.ts`, the lock sites in
+  `src/lib/__tests__/lodge-admission-lock-contract.test.ts`. Full narrative:
+  `docs/CAPACITY_MODEL.md`, "The custodian's bed sits outside the held pool".
 
 ### INV-LIFE-062
 
