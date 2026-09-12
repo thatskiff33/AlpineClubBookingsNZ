@@ -1115,6 +1115,75 @@ transaction):
 DATABASE_URL=<non-prod copy> npm run payments:backfill-orphaned-credits -- --apply
 ```
 
+### Census the booking ledger identity (#3340)
+
+`scripts/audit-booking-ledger-residual.ts` is a READ-ONLY census of
+[`INV-PAY-047`](invariants/payment-and-settlement.md). It never writes, never
+repairs and never calls a live provider — that is the owner's decision of 8 Sep
+2026, taken for a population of two rows that had already been handled by hand.
+It reports; a person decides.
+
+For every live booking with a captured payment it asks whether the money adds up:
+
+```
+finalPrice + changeFees - (captured - refunded) - credit - uncollected ask
+```
+
+- **Zero** — the books balance.
+- **Positive** — money the price says is owed that nothing is asking for. This is
+  the #3340 class, and it is what a delta-sized ask produced when it superseded
+  an unpaid one: minting the replacement retired the first extra, so its unpaid
+  balance simply stopped being owed. Investigate each one and invoice by hand —
+  **but read the Internet Banking caveat below first.**
+- **Negative** — the club holds more than the price. Normal after a policy-tiered
+  reduction (the retained slice is a charge, not a prepayment) or a reduction
+  settled as account credit. Worth a glance, rarely worth an action.
+
+**AN INTERNET BANKING BOOKING'S PRICE INCREASE IS AN EXPECTED POSITIVE, AND
+INVOICING IT BY HAND WOULD BILL THE MEMBER TWICE.** The identity's "uncollected
+ask" term reads the Stripe ask columns. An Internet Banking edit does not raise
+one: it bills through a SUPPLEMENTARY XERO INVOICE, which lives in the Xero
+outbox and leaves no ADDITIONAL `PaymentTransaction` behind. So an IB booking
+with a paid primary that takes a +$70 edit gains $70 of price, no captured cash
+and no ask — and the census reports +7000 as `unasked`, when the club is already
+asking for it on an invoice. **Before acting on any positive residual, check the
+booking's payment source and its Xero supplementary invoices.** A card booking's
+positive residual is the real thing; an IB one almost never is.
+
+That gap is not closed in the arithmetic on purpose. A term reading the Xero
+outbox would make the identity depend on an external system's queue state, and a
+queued-but-unsent invoice, a failed one and a sent one are three different
+answers to "is the club asking for this?" that only a person can weigh. The
+census is a report; this is one of the things the person reading it has to know.
+
+```bash
+DATABASE_URL=<non-prod copy> npm run payments:audit-booking-ledger
+DATABASE_URL=<non-prod copy> npm run payments:audit-booking-ledger -- --sql
+DATABASE_URL=<non-prod copy> npm run payments:audit-booking-ledger -- --json
+```
+
+The script itself reads TYPED, through Prisma, and does the arithmetic with the
+same function the CI census guard calls — so the operator's answer and the
+guard's answer are one implementation rather than two, and no raw statement of
+its own ships (`INV-OPS-001`, "lock raw, read typed"). `--sql` prints the
+EQUIVALENT `SELECT` for an operator who would rather run it against a read-only
+replica; that statement is not written by hand either, but folded from
+`BOOKING_LEDGER_IDENTITY_TERMS` in `src/lib/additional-payment-ask.ts`.
+
+**Be precise about what that shared term table does and does not guarantee**
+(`INV-SSOT-001`). Both forms are folded from the SAME LIST, so a term cannot be
+added to one and forgotten in the other — that part is structural and is pinned
+by `src/lib/__tests__/booking-ledger-census.test.ts`. Each term's BODY is still
+two expressions: a TypeScript closure and a SQL string. Five of the six read one
+column each and cannot meaningfully diverge; the sixth is a real translation —
+`isAdditionalAmountUncollected` against `CASE WHEN … IS DISTINCT FROM
+'SUCCEEDED'` — and its SQL is pinned character for character by that same file,
+which also asserts the TypeScript half still answers the four cases the pin
+claims for it. What no offline test can check is that PostgreSQL EVALUATES the
+statement to the same numbers. Nothing an operator relies on depends on that:
+the run above reads typed through Prisma, and `--sql` is a convenience for
+somebody who would rather query a replica by hand.
+
 ### Audit IB hold-expiry invoice under-clears (#1597)
 
 `scripts/audit-ib-hold-clearing.ts` is a READ-ONLY audit — it never writes and

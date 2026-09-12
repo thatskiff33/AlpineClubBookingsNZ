@@ -16,6 +16,7 @@ import {
   type Role,
 } from "@prisma/client";
 
+import { isAdditionalAmountUncollected } from "@/lib/additional-payment-chase";
 import { ApiError } from "@/lib/api-error";
 import type { EditFinancialReviewOccurrence } from "@/lib/edit-financial-review-context";
 import {
@@ -230,14 +231,17 @@ const FULLY_PAID_BOOKING_STATUSES = new Set<BookingStatus | string>([
   BookingStatus.COMPLETED,
 ]);
 
+/**
+ * #3340 (`INV-SSOT-001`): this was a third hand-written copy of the money half
+ * of the owed test (`additionalAmountCents > 0 && status !== "SUCCEEDED"`). It
+ * now CALLS `isAdditionalAmountUncollected`, the one predicate, so a change to
+ * what "still owed" means cannot leave this door disagreeing with the chase, the
+ * ask sizing and the ledger census.
+ */
 export function hasOutstandingAdditionalPayment(
   payment: BookingGuestNameEditPayment,
 ) {
-  return Boolean(
-    payment &&
-      payment.additionalAmountCents > 0 &&
-      payment.additionalPaymentStatus !== "SUCCEEDED",
-  );
+  return isAdditionalAmountUncollected(payment);
 }
 
 export function isBookingFullyPaidForGuestNameEdits(booking: {

@@ -206,7 +206,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-044` | Cancelling a manually settled booking yields a durable `ManualRefundTask`, never a card refund |
 | `INV-PAY-045` | Reversal is permitted only while nothing has happened that it could not undo |
 | `INV-PAY-046` | An outstanding upward-modification delta is asked about, never silently absorbed or left behind |
-| `INV-PAY-047` | The generalised ledger mirror: every cent is collected, paid with credit, or still owed |
+| `INV-PAY-047` | The generalised ledger mirror, net of refunds and carrying the change fee: every cent is collected, paid with credit, or still owed as an ask sized to keep it true |
 | `INV-PAY-048` | A stored unconsumed credit election is cleared, recorded and reported, never stranded |
 | `INV-PAY-049` | Both directions are audited with the acting admin and the previous status |
 | `INV-PAY-050` | Xero Stripe refund notes cover provider-backed cash evidence, never the refunded-amount mirror |
@@ -539,7 +539,7 @@ Prefix `INV-ADDPAY`.
 | ID | Covers |
 | --- | --- |
 | `INV-ADDPAY-001` | Who is owed an additional payment, tested on booking status and amount together |
-| `INV-ADDPAY-023` | Who may pay one: every member surface excludes CANCELLED and BUMPED |
+| `INV-ADDPAY-023` | A retired obligation is never collectable: every member surface excludes CANCELLED and BUMPED, and a superseded intent is cancelled at mint, best-effort, with a queued recovery as the guarantee |
 | `INV-ADDPAY-024` | At most two reminders per obligation, and the chase stops at check-out |
 | `INV-ADDPAY-025` | Nothing raised before the derived cron cutover is chased; a read failure sends nothing |
 | `INV-ADDPAY-026` | Guarded stamps claim before each send, read and fenced relative to the current episode |

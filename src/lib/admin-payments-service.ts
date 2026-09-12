@@ -295,7 +295,13 @@ function sortValue(payment: EnrichedPaymentCandidate, sortBy: z.infer<typeof sor
     case "booking":
       return payment.bookingId;
     case "amount":
-      return payment.amountCents;
+      // #3340 fix round: NET, because that is what the column renders. Sorting a
+      // visibly-net column by its gross figure puts rows in an order the officer
+      // can see is wrong wherever a refund exists - the "Amount (net)" header and
+      // this expression are one decision. The Amount FILTER stays gross: it is a
+      // `where` on a database column, which a net expression cannot be, and the
+      // boxes say "Gross amount" for exactly that reason.
+      return payment.amountCents - payment.refundedAmountCents;
     case "status":
       return payment.status;
     case "stripe":

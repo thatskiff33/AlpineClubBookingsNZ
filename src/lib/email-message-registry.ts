@@ -741,6 +741,19 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
     frequency:
       "Once per booking, when the confirm-pending cron gives up on that card",
   },
+  // #3340: a member paid a charge a later booking edit had already replaced, the
+  // recovery queue refunded it, and this tells them so.
+  "superseded-payment-refunded": {
+    triggerSummary:
+      "A payment made against a charge that a later booking change had already replaced was captured and automatically refunded in full; the member is told what came back and what is still owing",
+    frequency:
+      "Once per refunded supersede capture - rare, and only when the member confirmed the old charge before it was cancelled",
+  },
+  "admin-superseded-payment-refund": {
+    triggerSummary:
+      "The operator copy of the same event: money left the club with nobody deciding it should, so it is reported with the corrected amount owing beside it",
+    frequency: "Once per refunded supersede capture, alongside the member notice",
+  },
   "admin-booking-change-request": {
     triggerSummary: "Locked booking change request submitted",
     frequency: "Per member/admin request submission",
@@ -1621,6 +1634,16 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "adminNotesLine",
   "amountRecordedNote",
   "amount",
+  // #3340: what is still owed on the booking AFTER a supersede refund, on both
+  // the member notice and the operator alert. Deliberately its own token rather
+  // than a second use of {{amount}}: the two figures appear in the same body and
+  // an override that confused them would tell a member the wrong balance.
+  "amountOwing",
+  // #3340 fix round: the same fact as {{amountOwing}}, composed into a SENTENCE
+  // by `supersededRefundOwingSentence`, because zero is a real answer that reads
+  // as reassurance rather than as an empty row. The editable default carries the
+  // sentence so a club's rewrite cannot send "Still owing: $0.00".
+  "owingSentence",
   // #2307: the delegate-answered notice's three composed blocks — the heading
   // names who answered and who they answered for, the sentence says what they
   // said, and the note says what to do if that is not what the reader expected.
