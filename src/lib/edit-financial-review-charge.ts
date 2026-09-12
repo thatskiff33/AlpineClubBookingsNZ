@@ -6,10 +6,7 @@ import {
   PaymentTransactionKind,
 } from "@prisma/client";
 
-import {
-  raiseReviewChargeAsk,
-  sizeReviewChargeAsk,
-} from "@/lib/additional-payment-ask";
+import { raiseReviewChargeAsk, sizeReviewChargeAsk } from "@/lib/additional-payment-ask";
 import { hasCapturedPayment } from "@/lib/booking-payment-state";
 import {
   REVIEW_CHARGE_ANCHOR_MISSING_MESSAGE,
@@ -18,10 +15,10 @@ import {
   REVIEW_CHARGE_REQUEST_CLOSED_MESSAGE,
 } from "@/lib/edit-financial-review-charge-refusals";
 import { createModificationAdditionalPaymentIntent } from "@/lib/booking-modification-settlement";
+import { recordCarriedEditReviewChargeBalance } from "@/lib/edit-financial-review-carried-balance";
 import {
   findEditReviewChargeRequest,
   hasIssuedSupplementaryInvoice,
-  recordCarriedEditReviewChargeBalance,
   recordUncollectedEditReviewChargeShare,
   sumEditReviewChargeSharesCents,
   type EditReviewChargeStore,
@@ -93,22 +90,14 @@ import { updatePaymentIntentAmount } from "@/lib/stripe";
  *     `syncEditFinancialReviewChargeRequest` for why neither of them can lose a
  *     share either.
  *
- * ## AND IT CARRIES WHAT ITS MINT RETIRES (owner decision, #3371, 13 Sep 2026)
+ * ## AND IT CARRIES WHAT ITS MINT RETIRES (#3371, owner decision 13 Sep 2026)
  *
- * The bullets above are about two shares of ONE edit, which is the only case
- * #3170 considered. A booking can also carry an unpaid ask raised by a DIFFERENT
- * edit - an ordinary price increase, or an earlier parked review priced days ago
- * - and minting this edit's request cancels it. Until #3371 the mint passed the
- * bare share sum, so that other ask simply ceased to be owed: $260 priced across
- * two parked edits, $60 collected, and nothing anywhere reporting the $200.
- *
- * The ask is now the share sum PLUS the unpaid balance of the ask it supersedes -
- * the same rule the ordinary edit path has used since #3340, which is why it is
- * built by the same module rather than by a second arithmetic here. The carried
- * part is stored on the ledger row (`PaymentTransaction.carriedAskCents`) and
- * stays OUT of the derived sum, so the sum is still monotone and the
- * compare-and-set below still needs no lock. `INV-PAY-098` is the rule, and it
- * is not restated here.
+ * Those bullets cover two shares of ONE edit, the only case #3170 saw. A booking
+ * can also carry an unpaid ask raised by a DIFFERENT edit, and minting this one
+ * cancels it - which is how $260 across two parked edits collected $60. The ask
+ * is now the share sum PLUS that balance, built by the same module the ordinary
+ * path has used since #3340 and stored beside the sum, never inside it.
+ * `INV-PAY-098` is the rule and is not restated here.
  *
  * ## What it is NOT
  *
@@ -167,19 +156,12 @@ export type EditReviewChargeSyncOutcome =
 export type EditReviewChargeSyncResult = {
   outcome: EditReviewChargeSyncOutcome;
   paymentIntentId: string | null;
-  /**
-   * THIS EDIT'S OWN MONEY - the sum of the shares settled against it, and
-   * nothing else. The Xero leg bills this figure on one invoice per edit
-   * (`INV-PAY-070`), so a balance carried in from ANOTHER edit must never reach
-   * it: that other edit has its own invoice, and adding it here would bill the
-   * same money twice (#3371).
-   */
+  /** THIS EDIT'S OWN MONEY - its settled shares, nothing else. The Xero leg
+   * bills it, one invoice per edit (`INV-PAY-070`), so another edit's carried
+   * balance must never reach it or the club invoices that money twice. */
   totalCents: number;
-  /**
-   * #3371: how much of another edit's unpaid ask this request absorbed when it
-   * was minted. A PART of what the member is asked for, never an addition to
-   * `totalCents`. The card ask is `totalCents + carriedCents`.
-   */
+  /** #3371: the carried part of what the member is asked for, which is
+   * `totalCents + carriedCents`. */
   carriedCents: number;
 };
 
@@ -424,11 +406,8 @@ export async function syncEditFinancialReviewChargeRequest({
   if (totalCents <= 0) {
     // No settled share to ask for. Reachable only from a recovery replay of an
     // operation whose task was never claimed; minting for zero would be the
-    // magic-value failure this epic exists to remove.
-    //
-    // #3371: nothing is minted here, so nothing is superseded and nothing is
-    // carried. That is why the fix is safe to leave out of this arm rather than
-    // needing an "and carry nothing" branch.
+    // magic-value failure this epic exists to remove. Nothing is minted, so
+    // nothing is superseded and nothing carried (#3371).
     return {
       outcome: "nothing-owed",
       paymentIntentId: null,
@@ -471,32 +450,22 @@ export async function syncEditFinancialReviewChargeRequest({
         memberId: member?.id ?? null,
         derivedTotalCents: totalCents,
         requestedTotalCents: existing.amountCents,
-        // #3371: the shortfall is measured against what this EDIT was asked
-        // for, so a balance carried in from another edit is taken back out
-        // first. Left in, the record would understate the money the club is
-        // short by exactly the carried amount.
+        // #3371: so the shortfall is measured against what this EDIT was asked
+        // for. Left in, the record understates it by the carried amount.
         carriedAskCents: existing.carriedAskCents,
       });
       return {
         outcome: "already-paid",
         paymentIntentId: existing.stripePaymentIntentId,
-        // #3371: the SHARE part of what was asked for. On every request minted
-        // before this change `carriedAskCents` is 0 and this is unchanged; where
-        // it is not, the Xero leg must not be handed another edit's money.
+        // #3371: the SHARE part alone; unchanged where nothing was carried.
         totalCents: existing.amountCents - existing.carriedAskCents,
         carriedCents: existing.carriedAskCents,
       };
     }
-    // #3371: what the request must ask for is this edit's shares PLUS whatever
-    // the original mint absorbed - read back off the row, never re-derived from
-    // the payment, which by now mirrors this very request. Monotone by
-    // construction: the share sum only grows and the carried part is fixed at
-    // the mint, which is what keeps the compare-and-set below correct without an
-    // advisory lock across the Stripe call.
-    const raised = raiseReviewChargeAsk({
-      shareTotalCents: totalCents,
-      request: existing,
-    });
+    // #3371: shares PLUS whatever the mint absorbed, read back off the ROW -
+    // never from the payment, which by now mirrors this request. Monotone,
+    // which is what keeps the compare-and-set below lock-free.
+    const raised = raiseReviewChargeAsk({ shareTotalCents: totalCents, request: existing });
     if (raised.amountCents <= existing.amountCents) {
       // Either an exact replay (equal), which must change nothing at all, or a
       // stale, smaller total, which must never lower a live ask. Either way the
@@ -513,18 +482,13 @@ export async function syncEditFinancialReviewChargeRequest({
     // asking for more. Nothing is minted, so nothing is superseded, so
     // `queueSupersededAdditionalIntentCancellations` never fires between two
     // shares of one edit.
-    await updatePaymentIntentAmount(
-      existing.stripePaymentIntentId,
-      raised.amountCents,
-    );
+    await updatePaymentIntentAmount(existing.stripePaymentIntentId, raised.amountCents);
     await upsertPaymentIntentTransaction({
       paymentId,
       kind: PaymentTransactionKind.ADDITIONAL,
       paymentIntentId: existing.stripePaymentIntentId,
       amountCents: raised.amountCents,
-      // Re-stated rather than left alone, so the row and the amount are written
-      // from the ONE value that computed both (#3371). It is the same figure
-      // that is already there - `raiseReviewChargeAsk` read it off this row.
+      // Re-stated from the ONE value that computed both (#3371).
       carriedAskCents: raised.carriedCents,
       status: PaymentStatus.PENDING,
       reason,
@@ -552,34 +516,16 @@ export async function syncEditFinancialReviewChargeRequest({
       refundedAmountCents: true,
       source: true,
       stripeCustomerId: true,
-      // #3371: the two columns that say whether this payment carries an ask the
-      // mint below is about to retire. `reconcilePaymentAggregates` mirrors the
-      // latest ADDITIONAL transaction into them, so together they ARE the one
-      // live ask - and `existing` being null above is what proves it belongs to
-      // some OTHER edit rather than to this one.
+      // #3371: the live ask the mint below retires. `existing` being null
+      // above is what proves it belongs to another edit.
       additionalAmountCents: true,
       additionalPaymentStatus: true,
     },
   });
-  /**
-   * THE FIX (#3371, `INV-PAY-098`). Minting retires every other live ADDITIONAL
-   * intent on this payment, and until now this call passed the bare share total
-   * - so a review charge raised while an earlier change's extra was unpaid
-   * DELETED that extra. Two parked edits priced at $200 and $60 collected $60 and
-   * nothing reported the missing $200.
-   *
-   * `sizeReviewChargeAsk` is the same rule the ordinary edit path already uses
-   * (`sizeAdditionalAsk`, #3340): the ask is this edit's own figure PLUS the
-   * unpaid balance of the ask it supersedes. One rule in two places.
-   *
-   * The carried part stays OUT of `totalCents` and is stored beside it. That is
-   * load-bearing rather than tidy: `syncEditFinancialReviewChargeRequest` refuses
-   * to lower a recorded request, which is safe only because the share sum never
-   * decreases. Folding a carried balance into the sum would break exactly the
-   * monotonicity that lets this path run its compare-and-set with no advisory
-   * lock across the Stripe round trip - and `docs/CONCURRENCY_AND_LOCKING.md`
-   * forbids holding one there.
-   */
+  // THE FIX (#3371, `INV-PAY-098`). This used to pass the bare share total, so a
+  // review charge raised while an earlier change's extra was unpaid DELETED it.
+  // `sizeReviewChargeAsk` is the rule the ordinary path already uses
+  // (`sizeAdditionalAsk`, #3340) over this path's own figure.
   const ask = sizeReviewChargeAsk({ shareTotalCents: totalCents, payment });
   const minted = await createModificationAdditionalPaymentIntent({
     bookingId,
@@ -644,10 +590,8 @@ export async function syncEditFinancialReviewChargeRequest({
         buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey(
           bookingModificationId,
         ),
-      // Advisory only, exactly as in `executeEditReviewCharge`: the replay
-      // re-derives the total from the settled shares - and, because the mint
-      // failed and therefore retired nothing, re-reads the carried balance off
-      // the payment, which is still the ask it was (#3371).
+      // Advisory only: the replay re-derives the total, and re-reads the
+      // carried balance off a payment the failed mint never touched (#3371).
       amountCents: ask.amountCents,
       stripeIdempotencyKey:
         buildEditFinancialReviewAdditionalIntentStripeKey(bookingModificationId),
@@ -655,17 +599,10 @@ export async function syncEditFinancialReviewChargeRequest({
       // edit had an invoice to supplement at all.
       hadIssuedXeroInvoice: hasIssuedXeroInvoice,
     });
-    return {
-      outcome: "not-raised",
-      paymentIntentId: null,
-      totalCents,
-      carriedCents: 0,
-    };
+    return { outcome: "not-raised", paymentIntentId: null, totalCents, carriedCents: 0 };
   }
   if (ask.carriedCents > 0) {
-    // Written only after the mint SUCCEEDED, because only then has the earlier
-    // ask actually been retired. A failed mint carries nothing: the balance is
-    // still live on the payment and the replay reads it again.
+    // Only after a SUCCESSFUL mint: a failed one retired nothing.
     await recordCarriedEditReviewChargeBalance({
       bookingId,
       bookingModificationId,
