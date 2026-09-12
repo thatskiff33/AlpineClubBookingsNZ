@@ -74,7 +74,7 @@ reason: the proposal envelope reads both ends of its night list and each added
   freezing a party the officer would approve blind.
 
 file: src/lib/payment-recovery.ts
-lines: 2939
+lines: 3135
 reason: twelve lines. The retry schedule's clamped step carries NO numeric
   fallback: a zero would be an immediate retry, the worst wait this function
   could invent, and any other number would be a backoff nobody configured. The

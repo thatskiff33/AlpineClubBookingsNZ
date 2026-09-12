@@ -12,12 +12,11 @@
  * This module is pure: it reads only the facts handed to it (no database, no
  * `now()` it cannot override, and no timezone it reads for itself) so it is
  * trivially testable and produces the same wording wherever it runs. That
- * purity is load-bearing rather than stylistic: `payment-link-context.ts` is
- * one of the two callers, and until #2956 split it out it sat inside
- * `payment-link.ts`, which is reachable from `src/instrumentation.node.ts`, so
- * `server-only` — which is what reading the persisted zone here would drag in —
- * would have killed it at import. The split moved that caller and kept its
- * outside-request reader; changing which client reads the club's zone is an
+ * purity is load-bearing rather than stylistic: caller
+ * `payment-link-context.ts` sat inside `payment-link.ts` until #2956 split it
+ * out, and that is reachable from `src/instrumentation.node.ts` — so the
+ * `server-only` that reading the persisted zone here would drag in would have
+ * killed it at import. Which client reads the club's zone is an
  * `INV-CONFIG-002` decision, not a refactor, so this module stays pure.
  *
  * ## Two kinds of date, in the same sentence (#3123)
@@ -139,9 +138,8 @@ export interface ResolveBookingNarrativeInput {
    * ARRIVES AS DATA, like `club` above, and for the same load-bearing reason:
    * this module is pure and was reachable from `src/instrumentation.node.ts`
    * through `payment-link.ts` (now `payment-link-context.ts`, #2956), so reading
-   * it from the database here would drag `server-only` in and kill the module
-   * at import. The caller reads it with
-   * `bookingHasOpenFinancialReview` and hands the answer over.
+   * it here would drag `server-only` in and kill the module at import. The
+   * caller reads it with `bookingHasOpenFinancialReview` and hands it over.
    *
    * Defaults to false, so a caller that does not know stays on the wording it
    * has always produced rather than making a claim about money it has not

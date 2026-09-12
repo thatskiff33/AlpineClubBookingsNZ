@@ -418,13 +418,25 @@ describe("booking detail write-surface gates (issue #1313 + option A2)", () => {
 // ---------------------------------------------------------------------------
 describe("outstanding additional payment panel visibility (#2350)", () => {
   // #2958: both render sites live in the page's payment-cards section.
+  //
+  // CODE ONLY, through the canonical stripper, for the same reason the
+  // bed-allocation describe below gives: the assertions here match a chain of
+  // clauses across a bounded window, and a comment sitting between two of them
+  // spends that window without changing any code. One did — a four-line note
+  // explaining #3340's predicate pushed the two ends more than 200 characters
+  // apart and reddened this test while the rule it pins was perfectly intact.
+  // Stripping also makes the negative assertion below honest: it forbids a
+  // RESTATEMENT of the rule, and prose quoting the old two-clause form is not
+  // one.
   const bookingPageSource = () =>
-    fs.readFileSync(
-      path.join(
-        process.cwd(),
-        "src/app/(authenticated)/bookings/[id]/_components/booking-payment-cards.tsx",
+    stripComments(
+      fs.readFileSync(
+        path.join(
+          process.cwd(),
+          "src/app/(authenticated)/bookings/[id]/_components/booking-payment-cards.tsx",
+        ),
+        "utf8",
       ),
-      "utf8",
     );
 
   const canSeePanel = (accessRoles: AppAccessRole[], isBookingOwner = false) =>
