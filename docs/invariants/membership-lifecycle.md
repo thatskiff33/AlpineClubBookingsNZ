@@ -737,6 +737,14 @@ direct parent/dependant pair in either orientation**, through either
 symmetric: every partner writer checks direct parentage, and every writer that
 adds a parent to an existing member checks every partner status. Candidate
 lists are a usability aid only; the under-lock write guard is authoritative.
+`MemberParentPartnerExclusion` is the FK-less, internal database backstop for
+this cross-table invariant: source-table statement triggers maintain canonical
+unordered-pair parent and partner counts, and the pair primary key serializes
+application writers with direct SQL. A pair may have either count positive but
+never both. The table is derived state only; code does not use it as a second
+source of relationship truth. Application writers take lifecycle locks where
+required, then sorted member-partner advisory locks, then sorted pair rows, and
+re-read the source `Member` and `MemberPartnerLink` facts before writing.
 Consent is required from the other member unless (a) an admin
 assigns the link directly (`assignedByAdminId` recorded, CONFIRMED
 immediately; both members are then emailed unless the assigning admin chose
@@ -1655,6 +1663,11 @@ and is hard-deleted at the end. The merge is **additive and master-wins**:
   - **cascade** — the loser's auth identity and ephemeral tokens
     (password-reset / email-verification / email-change tokens, all 2FA rows,
     partner-invite tokens) are never moved; they die with `member.delete(loser)`.
+  - **derived** — `MemberParentPartnerExclusion.memberAId/memberBId` are
+    FK-less internal pair endpoints maintained from `Member` parent fields and
+    `MemberPartnerLink` rows by statement triggers. Merge never snapshots or
+    directly moves them: its source-edge writes produce the exact net deltas,
+    and the deferred cleanup removes empty loser pairs.
   - **snapshot** — FK-less scalar member-id columns
     (`MemberLifecycleActionRequest.memberId`, `BookingModification.memberId`,
     `MemberApplication` nominator/reviewer ids, `NominationToken`,

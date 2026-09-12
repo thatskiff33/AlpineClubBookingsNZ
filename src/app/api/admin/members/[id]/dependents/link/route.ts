@@ -36,6 +36,11 @@ import {
 import logger from "@/lib/logger";
 import { acquireMemberLifecycleLocks } from "@/lib/member-lifecycle-lock";
 import { acquireMemberPartnerLinkLocks } from "@/lib/member-partner-lock";
+import {
+  MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+  acquireMemberParentPartnerPairLocks,
+  isMemberParentPartnerExclusionViolation,
+} from "@/lib/member-parent-partner-exclusivity";
 
 const linkDependentSchema = z.object({
   memberId: z.string().min(1, "Member is required"),
@@ -127,6 +132,15 @@ export async function POST(
       // first read below only after both pairs of locks are held.
       await acquireMemberLifecycleLocks(tx, [parentId, data.memberId]);
       await acquireMemberPartnerLinkLocks(tx, [parentId, data.memberId]);
+      // The established eligibility predicate below owns the specific 422 for
+      // self-linking. A self pair has no valid database serialization row, so
+      // do not replace that response with the helper's fail-closed programmer
+      // error before the predicate can run.
+      if (parentId !== data.memberId) {
+        await acquireMemberParentPartnerPairLocks(tx, [
+          [parentId, data.memberId],
+        ]);
+      }
 
       const parent = await tx.member.findUnique({
         where: { id: parentId },
@@ -431,6 +445,13 @@ export async function POST(
 
     return NextResponse.json({ member: linkedMember });
   } catch (error) {
+    if (isMemberParentPartnerExclusionViolation(error)) {
+      return NextResponse.json(
+        { error: MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE },
+        { status: 409 },
+      );
+    }
+
     if (error instanceof LinkDependentError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
     }

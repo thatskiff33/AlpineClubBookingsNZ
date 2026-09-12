@@ -21,6 +21,7 @@ import { acquireMemberPartnerLinkLocks } from "@/lib/member-partner-lock";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import {
   MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+  acquireMemberParentPartnerPairLocks,
   hasDirectParentRelationship,
   isMemberParentPartnerExclusionViolation,
   notDirectParentWithMemberWhere,
@@ -174,8 +175,12 @@ function notifyAdminsOfDissolveSweep(
  * in sorted id order so two transactions locking the same pair cannot
  * deadlock; pg_advisory_xact_lock releases automatically at commit/rollback.
  */
-async function lockPartnerMembers(tx: TransactionClient, memberIds: string[]) {
+async function lockPartnerMembers(
+  tx: TransactionClient,
+  memberIds: readonly [string, string],
+) {
   await acquireMemberPartnerLinkLocks(tx, memberIds);
+  await acquireMemberParentPartnerPairLocks(tx, [memberIds]);
 }
 
 async function memberHasConfirmedPartner(

@@ -41,7 +41,9 @@ import { acquireMemberPartnerLinkLocks } from "@/lib/member-partner-lock";
 import {
   MEMBER_PARTNER_RELATIONSHIP_SELECT,
   MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+  acquireMemberParentPartnerPairLocks,
   hasAnyPartnerRelationship,
+  isMemberParentPartnerExclusionViolation,
   memberHasPartnerRelationshipWith,
 } from "@/lib/member-parent-partner-exclusivity";
 
@@ -58,7 +60,7 @@ const CHILD_REQUEST_AGE_TIERS: AgeTier[] = ["INFANT", "CHILD", "YOUTH"];
 class ReviewRequestError extends Error {
   constructor(
     message: string,
-    public readonly status: 404 | 422 = 422
+    public readonly status: 404 | 409 | 422 = 422
   ) {
     super(message);
   }
@@ -862,6 +864,9 @@ export async function reviewAdminFamilyGroupRequest(params: {
         ]);
         if (parentLinkMemberIds.length > 0) {
           await acquireMemberPartnerLinkLocks(tx, parentLinkMemberIds);
+          await acquireMemberParentPartnerPairLocks(tx, [
+            [parentLinkMemberIds[0], parentLinkMemberIds[1]],
+          ]);
 
           // The preflight selected the candidate for user feedback, but the
           // relationship decision is made again through this transaction only
@@ -1118,6 +1123,12 @@ export async function reviewAdminFamilyGroupRequest(params: {
         });
       });
     } catch (error) {
+      if (isMemberParentPartnerExclusionViolation(error)) {
+        return jsonResult(
+          { error: MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE },
+          { status: 409 },
+        );
+      }
       if (error instanceof ReviewRequestError) {
         return jsonResult({ error: error.message }, { status: error.status });
       }

@@ -18,6 +18,10 @@ export const MEMBER_PARENT_PARTNER_EXCLUSION_CONSTRAINT =
   "MemberParentPartnerExclusion_no_overlap";
 export const MEMBER_PARENT_PARTNER_EXCLUSION_DATABASE_MESSAGE =
   "member_parent_partner_exclusion_conflict";
+export const MEMBER_PARENT_PARTNER_EXCLUSION_STATE_CONSTRAINT =
+  "MemberParentPartnerExclusion_pair_canonical";
+export const MEMBER_PARENT_PARTNER_EXCLUSION_STATE_MESSAGE =
+  "member_parent_partner_exclusion_state_invalid";
 
 export type DirectParentMember = {
   id: string;
@@ -170,6 +174,60 @@ export function isMemberParentPartnerExclusionViolation(error: unknown) {
   );
 }
 
+export type MemberParentPartnerPairEndpoints = readonly [
+  memberOneId: string,
+  memberTwoId: string,
+];
+
+type PairStateLocker = Pick<Prisma.TransactionClient, "$executeRaw">;
+
+/**
+ * Lock the database serialization row for every prospective relationship pair.
+ *
+ * Callers pass raw endpoints, never canonical keys. This seam canonicalizes,
+ * rejects self-pairs, deduplicates and sorts with the same ordering as partner
+ * storage before issuing the no-op UPSERT. `DO UPDATE` is load-bearing: unlike
+ * `DO NOTHING`, it locks an existing row until this transaction completes.
+ * Application advisory locks are always acquired before this helper
+ * (INV-LOCK-002/004); source-table triggers never acquire advisory locks.
+ */
+export async function acquireMemberParentPartnerPairLocks(
+  tx: PairStateLocker,
+  endpointPairs: readonly MemberParentPartnerPairEndpoints[],
+): Promise<void> {
+  const pairsByKey = new Map<
+    string,
+    ReturnType<typeof canonicalPartnerPair>
+  >();
+
+  for (const [memberOneId, memberTwoId] of endpointPairs) {
+    if (!memberOneId || !memberTwoId || memberOneId === memberTwoId) {
+      throw new Error("Parent/partner pair locks require two distinct member ids.");
+    }
+    const pair = canonicalPartnerPair(memberOneId, memberTwoId);
+    pairsByKey.set(`${pair.memberAId}\u0000${pair.memberBId}`, pair);
+  }
+
+  const pairs = [...pairsByKey.values()].sort(
+    (left, right) =>
+      compareMemberIds(left.memberAId, right.memberAId) ||
+      compareMemberIds(left.memberBId, right.memberBId),
+  );
+
+  for (const pair of pairs) {
+    await tx.$executeRaw`
+      INSERT INTO "MemberParentPartnerExclusion" (
+        "memberAId",
+        "memberBId",
+        "parentLinkCount",
+        "partnerLinkCount"
+      ) VALUES (${pair.memberAId}, ${pair.memberBId}, 0, 0)
+      ON CONFLICT ("memberAId", "memberBId") DO UPDATE
+      SET "parentLinkCount" = "MemberParentPartnerExclusion"."parentLinkCount"
+    `;
+  }
+}
+
 type MergeTopologyReader = Pick<Prisma.TransactionClient, "member">;
 
 export type MemberMergePartnerTopologyLink = {
@@ -179,6 +237,7 @@ export type MemberMergePartnerTopologyLink = {
 
 export type MemberMergeExclusivityTopology = {
   participantIds: string[];
+  prospectivePairs: MemberParentPartnerPairEndpoints[];
   conflictingPairCount: number;
 };
 
@@ -213,6 +272,18 @@ export async function loadMemberMergeExclusivityTopology(
   });
 
   const participants = new Set<string>([masterId, duplicateId]);
+  const prospectivePairsByKey = new Map<
+    string,
+    MemberParentPartnerPairEndpoints
+  >();
+  const recordProspectivePair = (memberOneId: string, memberTwoId: string) => {
+    if (memberOneId === memberTwoId) return;
+    const pair = canonicalPartnerPair(memberOneId, memberTwoId);
+    prospectivePairsByKey.set(pairKey(memberOneId, memberTwoId), [
+      pair.memberAId,
+      pair.memberBId,
+    ]);
+  };
   const finalId = (memberId: string) =>
     memberId === duplicateId ? masterId : memberId;
   const parentPairs = new Set<string>();
@@ -220,17 +291,24 @@ export async function loadMemberMergeExclusivityTopology(
     participants.add(member.id);
     if (member.parentMemberId) participants.add(member.parentMemberId);
     if (member.secondaryParentId) participants.add(member.secondaryParentId);
+    const currentParentIds = [
+      member.parentMemberId,
+      member.secondaryParentId,
+    ];
+    for (const parentId of currentParentIds) {
+      if (parentId) recordProspectivePair(member.id, parentId);
+    }
     // The duplicate row is deleted; its own outbound parent pointers do not
     // move onto the master (the established master-wins merge rule).
     if (member.id === duplicateId) continue;
     const childId = finalId(member.id);
-    for (const parentIdBefore of [
-      member.parentMemberId,
-      member.secondaryParentId,
-    ]) {
+    for (const parentIdBefore of currentParentIds) {
       if (!parentIdBefore) continue;
       const parentId = finalId(parentIdBefore);
-      if (parentId !== childId) parentPairs.add(pairKey(childId, parentId));
+      if (parentId !== childId) {
+        parentPairs.add(pairKey(childId, parentId));
+        recordProspectivePair(childId, parentId);
+      }
     }
   }
 
@@ -241,11 +319,13 @@ export async function loadMemberMergeExclusivityTopology(
   for (const link of currentPartnerLinks) {
     participants.add(link.memberAId);
     participants.add(link.memberBId);
+    recordProspectivePair(link.memberAId, link.memberBId);
   }
 
   const partnerPairs = new Set<string>();
   for (const link of projectedPartnerLinks) {
     partnerPairs.add(pairKey(link.memberAId, link.memberBId));
+    recordProspectivePair(link.memberAId, link.memberBId);
   }
 
   let conflictingPairCount = 0;
@@ -255,6 +335,11 @@ export async function loadMemberMergeExclusivityTopology(
 
   return {
     participantIds: [...participants].sort(compareMemberIds),
+    prospectivePairs: [...prospectivePairsByKey.values()].sort(
+      (left, right) =>
+        compareMemberIds(left[0], right[0]) ||
+        compareMemberIds(left[1], right[1]),
+    ),
     conflictingPairCount,
   };
 }

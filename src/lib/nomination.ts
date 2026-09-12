@@ -90,7 +90,9 @@ import { acquireMemberLifecycleLocks } from "@/lib/member-lifecycle-lock";
 import { acquireMemberPartnerLinkLocks } from "@/lib/member-partner-lock";
 import {
   MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+  acquireMemberParentPartnerPairLocks,
   hasAnyPartnerRelationship,
+  isMemberParentPartnerExclusionViolation,
 } from "@/lib/member-parent-partner-exclusivity";
 
 const maxStr = (len: number) => z.string().max(len).optional().nullable();
@@ -1459,6 +1461,18 @@ export async function approveMemberApplication(
   const applicantDecision = decisions[0].decision;
   const applicantMapped = applicantDecision.mode === "MAP";
   const applicantMapTargetId = applicantMapped ? applicantDecision.memberId : null;
+  // A newly-created applicant id cannot be referenced by any concurrent
+  // relationship writer. When the applicant is mapped to an existing member,
+  // however, every existing mapped family target is a prospective parent pair
+  // even if the under-lock recompute later decides not to write it. Lock the
+  // superset once, in canonical order, before that recompute.
+  const prospectiveMappedParentPairs = applicantMapTargetId
+    ? decisions.slice(1).flatMap(({ decision }) =>
+        decision.mode === "MAP" && decision.memberId !== applicantMapTargetId
+          ? ([[applicantMapTargetId, decision.memberId]] as const)
+          : [],
+      )
+    : [];
 
   const applicantPasswordHash = await hash(randomBytes(32).toString("hex"), 13);
   const passwordSetupToken = buildResetToken();
@@ -1485,6 +1499,10 @@ export async function approveMemberApplication(
     // member's parent. Acquire the complete set once, in the canonical order,
     // after lifecycle locks so no per-person loop can invert the tiers.
     await acquireMemberPartnerLinkLocks(tx, mapTargetIds);
+    await acquireMemberParentPartnerPairLocks(
+      tx,
+      prospectiveMappedParentPairs,
+    );
 
     const lockedApplication = await tx.memberApplication.findUnique({
       where: { id: applicationId },
@@ -2219,6 +2237,14 @@ export async function approveMemberApplication(
       entranceFeeQueue,
       entranceFeeQueueFailed,
     };
+  }).catch((error) => {
+    if (isMemberParentPartnerExclusionViolation(error)) {
+      throw new MembershipApplicationError(
+        MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+        409,
+      );
+    }
+    throw error;
   });
 
   // E10: Xero contact sync + subscription billing run over the union of created
