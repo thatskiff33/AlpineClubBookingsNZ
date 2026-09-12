@@ -585,6 +585,23 @@ new ADR:
   belongs to one building. If a club ever wants a per-lodge board — a
   Whakapapa-only noticeboard — that is a new ADR and not a widening of this
   model, because the shared half would still have nowhere to put the lodge.
+- Organisations (`Organisation`, `OrganisationContact`, the `OrganisationKind`
+  and `OrganisationContactRole` enums): a school — and any later kind of
+  organisation — is a **counterparty of the club**, not one of its buildings.
+  The same school books Whakapapa one winter and a second lodge the next, and
+  the record that has to survive that is its identity and its Xero customer
+  link, neither of which a lodge qualifies. The stay's lodge already lives on
+  the `Booking` and the `BookingRequest` that point at the organisation, so a
+  `lodgeId` here would be a second, staler copy of an answer those rows already
+  carry — the duplication `Booking.lodgeId` exists to avoid rather than to
+  spread. `OrganisationContact` joins a person to an organisation as its
+  teacher or contact and follows its parent, exactly as `MemberLodgeAccess`
+  joins a person to a lodge and `Member` itself stays club-wide. Recorded for
+  stage 1 of programme #2912 (issue #3366) **before** the schema changed, per
+  the routing table in `AGENTS.md`. A per-lodge organisation — a school
+  registered at one building only — would be a new ADR, and would still not put
+  a lodge on this row: it would be a restriction junction in the shape of
+  `PromoCodeLodge` above.
 
 ## Known Not-Yet-Scoped Surfaces (open)
 
