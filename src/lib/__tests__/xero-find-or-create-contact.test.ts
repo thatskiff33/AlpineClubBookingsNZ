@@ -20,7 +20,11 @@ const mocks = vi.hoisted(() => {
     // already holds — the two-homes rule. `null` is the ordinary answer, and a
     // missing delegate is an undefined-property throw before anything this
     // suite asserts.
-    organisation: { findFirst: vi.fn(async () => null) },
+    organisation: {
+      findFirst: vi.fn<
+        (...args: unknown[]) => Promise<{ id: string; name: string } | null>
+      >(async () => null),
+    },
   };
 
   const prisma = {

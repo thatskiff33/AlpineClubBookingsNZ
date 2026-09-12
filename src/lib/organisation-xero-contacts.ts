@@ -130,6 +130,7 @@ import {
 import {
   assertXeroContactHasNoOtherHome,
   lockXeroContactHome,
+  XeroContactTwoHomesError,
 } from "@/lib/xero-contact-home";
 import { isPlaceholderContactEmail } from "@/lib/placeholder-contact-email";
 
@@ -156,6 +157,61 @@ export class OrganisationXeroContactError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "OrganisationXeroContactError";
+  }
+}
+
+/**
+ * THE RETURNING SCHOOL. This is the one outcome stage 2 cannot fix on its own,
+ * and it is common rather than exotic, so it is a named error rather than a
+ * generic failure.
+ *
+ * A school that has booked before already has a Xero contact — a person-shaped
+ * one, carrying the school's name in the first-name position, held by the
+ * invented school member of that earlier booking. Xero enforces unique contact
+ * names, so creating the organisation's own contact under the same name is
+ * refused by the provider; the duplicate-name recovery then finds that very
+ * contact, and the two-homes refusal (`INV-INT-018`) stops the organisation
+ * adopting a contact a member still holds.
+ *
+ * THAT REFUSAL IS CORRECT AND MUST NOT BE SOFTENED. Moving the link from the
+ * member to the organisation would strand the earlier booking — its credit
+ * notes and supplementary invoices still resolve a Xero contact through that
+ * member — and deciding which local record owns a historical contact is
+ * precisely the classification stage 4 (#3369) runs a census for, with a
+ * requirement of zero ambiguous rows. Guessing it here is the thing #2912
+ * forbids.
+ *
+ * So the invoice is raised against the contact the school already has, exactly
+ * as it was before this stage, and this error carries what an officer needs to
+ * act: which school, and which contact. A school with NO prior Xero contact —
+ * the case #2939 and #2936 are waiting on — is unaffected and gets its own
+ * organisation contact.
+ */
+export class OrganisationXeroContactHeldByMemberError extends Error {
+  readonly organisationId: string;
+  readonly organisationName: string;
+  readonly xeroContactId: string;
+
+  constructor(input: {
+    organisationId: string;
+    organisationName: string;
+    xeroContactId: string;
+    cause: unknown;
+  }) {
+    super(
+      `Xero already holds a contact named "${input.organisationName}" and a ` +
+        "member record still owns it, so this school cannot be given its own " +
+        "organisation contact yet. This is the expected outcome for a school " +
+        "that has booked before: its Xero customer was created against the " +
+        "invented school member of an earlier booking, and deciding which " +
+        "record should own it is the classification #3369 runs. The invoice " +
+        "is raised against the contact the school already has (INV-INT-018).",
+      { cause: input.cause },
+    );
+    this.name = "OrganisationXeroContactHeldByMemberError";
+    this.organisationId = input.organisationId;
+    this.organisationName = input.organisationName;
+    this.xeroContactId = input.xeroContactId;
   }
 }
 
@@ -459,10 +515,29 @@ export async function findOrCreateXeroContactForInvoicedParty(
   },
 ): Promise<string> {
   if (booking.organisationId) {
-    return findOrCreateXeroContactForOrganisation(
-      booking.organisationId,
-      options,
-    );
+    try {
+      return await findOrCreateXeroContactForOrganisation(
+        booking.organisationId,
+        options,
+      );
+    } catch (error) {
+      // THE ONE FALLBACK, and it is narrow on purpose: exactly the returning
+      // school, and nothing else. Every other failure propagates, because an
+      // invoice raised against the wrong customer is worse than an invoice that
+      // did not get raised. See OrganisationXeroContactHeldByMemberError for
+      // why this outcome is expected rather than broken.
+      if (!(error instanceof OrganisationXeroContactHeldByMemberError)) throw error;
+      logger.warn(
+        {
+          organisationId: booking.organisationId,
+          memberId: booking.memberId,
+          xeroContactId: error.xeroContactId,
+        },
+        "This school already has a Xero customer under a member record, so the " +
+          "invoice is raised against it rather than a new organisation contact " +
+          "(#3367; classification is #3369)",
+      );
+    }
   }
   return findOrCreateXeroContact(booking.memberId, options);
 }
@@ -684,6 +759,38 @@ export async function findOrCreateXeroContactForOrganisation(
       return { contactId: finalResolved.contactId, wonWrite: true };
     });
   } catch (linkError) {
+    if (linkError instanceof XeroContactTwoHomesError) {
+      /*
+        The returning school. Nothing was created in Xero on this path — the
+        provider refused the duplicate name before creating anything — so there
+        is no orphan contact to clean up, and abandoning here leaves the club's
+        accounting exactly as it was.
+
+        CANCELLED with a populated reason, not FAILED: this is the loud-skip
+        shape (#1765) the booking-invoice path already uses for "no work is
+        expected here". A FAILED row would join the active-failure overview and
+        the repeated-failure alerting once per invoice for as long as the school
+        keeps booking, which would train an operator to ignore it.
+      */
+      await completeXeroSyncOperation(operation.id, {
+        status: "CANCELLED",
+        responsePayload: {
+          skipped: true,
+          reason:
+            `Xero already holds a contact named "${organisation.name}" and a ` +
+            "member record still owns it, so this school keeps the Xero " +
+            "customer it already has. Classifying that contact as the " +
+            "school's is #3369's census (INV-INT-018).",
+          resolvedContactId: finalResolved.contactId,
+        },
+      });
+      throw new OrganisationXeroContactHeldByMemberError({
+        organisationId,
+        organisationName: organisation.name,
+        xeroContactId: finalResolved.contactId,
+        cause: linkError,
+      });
+    }
     await failXeroSyncOperation(operation.id, linkError, {
       phase: "local_link_after_xero_resolution",
       resolvedContactId: finalResolved.contactId,
