@@ -79,6 +79,7 @@ import {
 } from "@/lib/email-templates/admin-booking";
 import {
   adminDuplicateCaptureRefundTemplate,
+  adminSupersededPaymentRefundTemplate,
   adminLateCaptureAutoRefundTemplate,
   adminLateCaptureHandBackConflictTemplate,
   adminManualRefundTaskTemplate,
@@ -122,6 +123,7 @@ import {
   bookingPendingTemplate,
   setupIntentFailedTemplate,
   savedCardChargeFailedTemplate,
+  supersededPaymentRefundedTemplate,
   splitGuestPortionCancelledTemplate,
 } from "@/lib/email-templates/booking";
 import {
@@ -682,6 +684,8 @@ const GENERATED_CASES: EmailRenderCase[] = [
     adminOwnerSubstitutionTemplate({ requestId: "requestId-1", bookingId: "bookingId-2", intendedMemberId: "intendedMemberId-3", intendedMemberName: "intendedMemberName-4", substituteMemberId: "substituteMemberId-5", substituteMemberName: "substituteMemberName-6", reason: "reason-7", requesterName: "requesterName-8", requesterEmail: "requesterEmail-9", checkIn: new Date("2026-03-11T00:00:00.000Z"), checkOut: new Date("2026-03-12T00:00:00.000Z") }) },
   { id: "adminPaymentFailureTemplate:minimal", fn: "adminPaymentFailureTemplate", render: () =>
     adminPaymentFailureTemplate({ memberName: "memberName-1", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), amountCents: 104, errorMessage: "errorMessage-5", paymentIntentId: "paymentIntentId-6" }) },
+  { id: "adminSupersededPaymentRefundTemplate:only", fn: "adminSupersededPaymentRefundTemplate", render: () =>
+    adminSupersededPaymentRefundTemplate({ memberName: "memberName-1", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), refundedAmountCents: 6500, amountOwingCents: 36500, paymentIntentId: "paymentIntentId-5", bookingUrl: "bookingUrl-6" }) },
   { id: "adminDuplicateCaptureRefundTemplate:minimal", fn: "adminDuplicateCaptureRefundTemplate", render: () =>
     adminDuplicateCaptureRefundTemplate({ memberName: "memberName-1", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), amountCents: 104, paymentIntentId: "paymentIntentId-5", settledPaymentIntentId: "settledPaymentIntentId-6", operationReference: "operationReference-7", reviewUrl: "reviewUrl-8", refundFailed: true }) },
   { id: "adminDuplicateCaptureRefundTemplate:full", fn: "adminDuplicateCaptureRefundTemplate", render: () =>
@@ -856,6 +860,10 @@ const GENERATED_CASES: EmailRenderCase[] = [
     adminWaitlistOfferTemplate({ memberName: "memberName-1", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), guestCount: 104, position: 105 }) },
   { id: "setupIntentFailedTemplate:minimal", fn: "setupIntentFailedTemplate", render: () =>
     setupIntentFailedTemplate({ firstName: "firstName-1", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z") }) },
+  { id: "supersededPaymentRefundedTemplate:owing", fn: "supersededPaymentRefundedTemplate", render: () =>
+    supersededPaymentRefundedTemplate({ bookingId: "bookingId-1", firstName: "firstName-2", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), refundedAmountCents: 6500, amountOwingCents: 36500 }) },
+  { id: "supersededPaymentRefundedTemplate:settled", fn: "supersededPaymentRefundedTemplate", render: () =>
+    supersededPaymentRefundedTemplate({ bookingId: "bookingId-1", firstName: "firstName-2", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), refundedAmountCents: 6500, amountOwingCents: 0 }) },
   { id: "savedCardChargeFailedTemplate:minimal", fn: "savedCardChargeFailedTemplate", render: () =>
     savedCardChargeFailedTemplate({ bookingId: "bookingId-1", firstName: "firstName-2", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z") }) },
   { id: "adminRefundRequestTemplate:minimal", fn: "adminRefundRequestTemplate", render: () =>

@@ -1634,6 +1634,11 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "adminNotesLine",
   "amountRecordedNote",
   "amount",
+  // #3340: what is still owed on the booking AFTER a supersede refund, on both
+  // the member notice and the operator alert. Deliberately its own token rather
+  // than a second use of {{amount}}: the two figures appear in the same body and
+  // an override that confused them would tell a member the wrong balance.
+  "amountOwing",
   // #2307: the delegate-answered notice's three composed blocks — the heading
   // names who answered and who they answered for, the sentence says what they
   // said, and the note says what to do if that is not what the reader expected.
