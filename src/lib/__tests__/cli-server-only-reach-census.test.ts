@@ -540,20 +540,18 @@ describe("CLI entrypoints and the `server-only` boundary", () => {
     // script stripped of its flag passed.
     // No `.yml` here: every workflow runs its tooling through `npm run`, so
     // there is genuinely no direct `tsx` line in one today. Same for the
-    // container definitions and the changelog fragments. They are all still
-    // swept, so the day one appears it is judged like any other.
-    //
-    // `.mjs` IS here (#3186). It is the class this sweep was blind to while a
-    // hand-corrected line in `measurement/phase2/bin/self-test.mjs` was the
-    // only thing keeping a raw seed command out of the tree, and a reviewer
-    // reverted that line with this census staying green.
-    for (const suffix of [
-      "package.json",
-      "prisma.config.ts",
-      ".sh",
-      ".md",
-      ".mjs",
-    ]) {
+    // container definitions, the changelog fragments and (since #3382)
+    // `.mjs`: `.mjs` joined this floor at #3186 because a hand-corrected line
+    // in `measurement/phase2/bin/self-test.mjs` was the ONLY thing keeping a
+    // raw seed command out of the tree, and a reviewer reverted that line
+    // with this census staying green — but that file, and every other `.mjs`
+    // this repository ever had a real example in, was removed with the rest
+    // of the harness. `filesUnder("scripts", ".mjs")` in `invocationSources`
+    // above is still swept for it; only the non-vacuity floor for a
+    // currently-empty class comes out, the same way it always has for
+    // `.yml`. They are all still swept, so the day one appears it is judged
+    // like any other.
+    for (const suffix of ["package.json", "prisma.config.ts", ".sh", ".md"]) {
       expect(
         INVOCATIONS.filter((invocation) => invocation.source.endsWith(suffix)),
         `the sweep found no tsx invocation in any \`${suffix}\` file, so that ` +
