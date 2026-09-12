@@ -11,9 +11,7 @@ import {
   type BookingStayRange,
 } from "@/lib/booking-guest-stay-ranges";
 import type { BookingGuestNightPriceSource } from "@prisma/client";
-import {
-  storedNightPriceDetailsByKey,
-} from "@/lib/stored-night-price-write";
+import { storedNightPriceDetailsByKey } from "@/lib/stored-night-price-write";
 
 /**
  * #3031 (epic #2797): can this guest strand's stored history price an edit
@@ -83,9 +81,7 @@ export type HeldNightPrice = {
   priceCents: number | null | undefined;
   priceSource?: BookingGuestNightPriceSource;
 };
-
 export type StoredSoldPriceGrain = "WHOLE_GUEST" | "INDIVIDUAL_NIGHT";
-
 /**
  * The verdict on one guest strand.
  *
@@ -147,7 +143,6 @@ export function classifyStoredSoldPriceEvidence(
       nightPrices: evidence,
     };
   }
-
   if (
     grain === "INDIVIDUAL_NIGHT" &&
     heldNights.some(
@@ -161,7 +156,6 @@ export function classifyStoredSoldPriceEvidence(
       nightPrices: evidence,
     };
   }
-
   if (heldNights.length === 0 && guestTotalCents !== 0) {
     // Nothing to reconcile against, and money on the strand. Named as the
     // absence it is rather than as a mismatch: there are no rows to disagree
@@ -404,24 +398,6 @@ export function storedSoldPriceEvidenceForGuest(
   );
 }
 
-/**
- * What is stored against each night a guest already holds, by lodge-night key.
- *
- * `null` means the night carries NO USABLE STORED PRICE: no row, a row loaded
- * without its price, or a row whose value is not non-negative integer cents. The
- * three are one thing to every reader of this map, and the distinction from a
- * stored ZERO is the whole point of the null — zero is a real sold price (a
- * comped night), absence is not a price at all.
- *
- * KEYED THROUGH THE SAME CANONICAL HELPER that builds the night keys, one entry
- * at a time, rather than by re-deriving the key here. A price keyed even
- * slightly differently from its night would never match it, and the failure
- * would be silent — the night would quietly price at today's rate, which is the
- * defect INV-DATE-020 exists for.
- *
- * ONE PROJECTION (`INV-SSOT`). The planner and the removal path both need it and
- * had written it twice, already normalising differently.
- */
 /**
  * One existing guest strand as an edit to a NOT-YET-STARTED booking proposes to
  * leave it (#3166, epic #2797).

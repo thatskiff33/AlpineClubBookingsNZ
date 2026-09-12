@@ -68,7 +68,7 @@ import {
   type BookingMoneyBuildUpSelection,
   readBookingMoneyBuildUp,
   selectLoadedBookingMoneyBuildUp,
-} from "@/lib/night-adjustment-write";
+} from "@/lib/booking-money-build-up";
 
 // #1765 — the aggregate Payment statuses that prove cash was captured at some
 // point. Settlement gating must pair one of these with a positive NET capture

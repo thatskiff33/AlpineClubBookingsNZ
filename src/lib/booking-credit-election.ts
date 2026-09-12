@@ -11,7 +11,7 @@ import {
   readBookingMoneyBuildUp,
   selectLoadedBookingMoneyBuildUp,
   type BookingMoneyBuildUpHistoryMetadata,
-} from "@/lib/night-adjustment-write";
+} from "@/lib/booking-money-build-up";
 import {
   queueSupersededPrimaryIntentCancellations,
   type SupersededPrimaryPaymentIntent,

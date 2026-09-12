@@ -5,7 +5,7 @@ import {
   readBookingMoneyBuildUp,
   selectBookingMoneyBuildUp,
   type BookingMoneyBuildUpRow,
-} from "@/lib/night-adjustment-write";
+} from "@/lib/booking-money-build-up";
 
 const BOOKER = "member-booker";
 
