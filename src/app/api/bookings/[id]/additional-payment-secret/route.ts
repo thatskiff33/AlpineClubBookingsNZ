@@ -74,9 +74,18 @@ export async function GET(
       );
     }
 
+    // #3340: the amount is THE INTENT'S OWN, not the Payment column's mirror of
+    // it, and the intent's id ships beside it. The page renders what this
+    // response says and confirms the secret this response carries, so the figure
+    // a member reads and the figure Stripe charges are the same intent's amount
+    // BY CONSTRUCTION - there is no second source for the two to drift between.
+    // Before this, a second edit re-rendered the card from a fresh server prop
+    // while the browser still held the first edit's secret, and a member was
+    // charged $65 against a page reading $300.
     return NextResponse.json({
       clientSecret: pi.client_secret,
-      amountCents: payment.additionalAmountCents,
+      amountCents: pi.amount,
+      paymentIntentId: pi.id,
     });
   } catch (err) {
     // #1888 — never echo an unexpected error's message to the client; the raw

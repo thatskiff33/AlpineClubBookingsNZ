@@ -1124,7 +1124,24 @@ export default function PaymentsPage() {
                       View
                     </Link>
                   </TableCell>
-                  <TableCell className="text-right text-sm font-medium tabular-nums">{formatCents(p.amountCents)}</TableCell>
+                  {/* #3340 - NET OF REFUNDS, which is the cash the club actually
+                      holds (`INV-PAY`, 31 Jul 2026). This column rendered GROSS
+                      beside a "Partially refunded" chip, so a $130 capture with
+                      $65 refunded read as "paid $130" and an officer sized the
+                      outstanding balance at 430 - 130 = $300 when the true figure
+                      was 430 - 65 = $365. That is the same gross-versus-net error
+                      as the ask-sizing bug, rendered rather than arithmetized, and
+                      the two wrong numbers agreed with each other. The gross and
+                      the refund are printed underneath whenever they differ, so
+                      nothing is hidden - only the headline figure changed. */}
+                  <TableCell className="text-right text-sm font-medium tabular-nums">
+                    {formatCents(p.amountCents - p.refundedAmountCents)}
+                    {p.refundedAmountCents > 0 && (
+                      <div className="text-xs font-normal text-muted-foreground">
+                        {formatCents(p.amountCents)} paid, {formatCents(p.refundedAmountCents)} refunded
+                      </div>
+                    )}
+                  </TableCell>
                   <TableCell>
                     <div className="space-y-1">
                       <Link

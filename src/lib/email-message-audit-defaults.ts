@@ -87,6 +87,10 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
     "defaultSubject": "Your Saved Card Needs Replacing - {{CLUB_LODGE_NAME}}",
     "defaultBody": "We Couldn't Charge Your Saved Card\n\nHi {{firstName}},\n\nWe couldn't charge the card saved for your booking ({{checkIn}} – {{checkOut}}). It has been removed from the booking; please log in and save a new card so we can confirm your booking.\n\nYour booking is still held for now.\n\nSave a New Card: {{BASE_URL}}/bookings\n\nIf you need help, contact the club at {{SUPPORT_EMAIL}}."
   },
+  "superseded-payment-refunded": {
+    "defaultSubject": "Payment Refunded - {{CLUB_LODGE_NAME}}",
+    "defaultBody": "We've Refunded a Payment\n\nHi {{firstName}},\n\nWe have refunded {{refundedAmount}} to your card. That payment was made against an earlier charge for your booking ({{checkIn}} \u2013 {{checkOut}}) that a later change to the booking had already replaced, so it should not have been taken.\n\nYou are not out of pocket: the money is on its way back to the card you used, and your booking is unaffected.\n\nStill owing on this booking: {{amountOwing}}\n\nView Booking: {{BASE_URL}}/bookings\n\nIf anything about this looks wrong, please contact the club at {{SUPPORT_EMAIL}}."
+  },
   "waitlist-confirmation": {
     "defaultSubject": "Waitlist Confirmation - {{CLUB_LODGE_NAME}}",
     "defaultBody": "You're on the Waitlist\n\nHi {{firstName}}, the lodge is currently fully booked for your requested dates, but you've been added to the waitlist.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nWaitlist Position: #{{position}}\n\nWe'll email you as soon as a spot opens up. You'll have 48 hours to confirm your booking.\n\nView Booking: {{BASE_URL}}/bookings\n\nYou can cancel your waitlist entry at any time from your booking page."
@@ -270,6 +274,10 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
   "admin-duplicate-capture-refund": {
     "defaultSubject": "Duplicate capture auto-refunded: {{memberName}}",
     "defaultBody": "Duplicate Card Capture Auto-Refunded\n\n{{refundOutcomeNote}}\n\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nAmount refunded: {{amount}}\nDuplicate Stripe PI: {{paymentIntentId}}\nRecovery operation: {{operation}}\n\nView Payments: {{reviewUrl}}"
+  },
+  "admin-superseded-payment-refund": {
+    "defaultSubject": "Superseded payment auto-refunded: {{memberName}}",
+    "defaultBody": "Superseded Payment Auto-Refunded\n\nA member paid a charge that a later booking change had already replaced. The capture has been refunded in full automatically - no action is needed unless the amount owing below looks wrong.\n\nThe member has been emailed an explanation naming the refund and the corrected amount owing.\n\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nAmount refunded: {{refundedAmount}}\nStill owing: {{amountOwing}}\nSuperseded Stripe PI: {{paymentIntentId}}\n\nOpen Booking: {{bookingUrl}}"
   },
   "admin-manual-settlement-conflict": {
     "defaultSubject": "Cash settlement vs Xero payment — reconcile: {{memberName}}",

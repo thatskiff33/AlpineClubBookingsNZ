@@ -12,6 +12,7 @@ import {
   bookingGuestsCancelledTemplate, bookingModifiedTemplate, bookingPendingTemplate,
   setupIntentFailedTemplate,
   savedCardChargeFailedTemplate,
+  supersededPaymentRefundedTemplate,
   splitGuestPortionCancelledTemplate,
 } from "@/lib/email-templates/booking";
 import {
@@ -1575,6 +1576,43 @@ export async function sendSetupIntentFailedEmail(params: {
  * booking-owner context so the per-booking "No emails" switch applies, same
  * date tokens, same lodge identity.
  */
+/**
+ * #3340 — tells the member about a supersede refund the recovery queue made on
+ * its own. Booking-scoped like its siblings, so the per-booking "No emails"
+ * switch applies; the operator alert beside it is admin-audience and is not
+ * silenceable, which is the standing split for money notifications.
+ */
+export async function sendSupersededPaymentRefundedEmail(params: {
+  bookingId: string;
+  recipientMemberId: string;
+  email: string;
+  firstName: string;
+  checkIn: Date;
+  checkOut: Date;
+  refundedAmountCents: number;
+  amountOwingCents: number;
+  lodgeId?: string | null;
+}) {
+  await sendEmail({
+    to: params.email,
+    subject: `Payment Refunded - ${EMAIL_DEFAULT_LODGE_NAME}`,
+    html: await renderEmailHtml(() => supersededPaymentRefundedTemplate(params)),
+    bookingContext: bookingOwnerEmailContext(
+      params.bookingId,
+      params.recipientMemberId,
+    ),
+    templateName: "superseded-payment-refunded",
+    templateData: {
+      firstName: params.firstName,
+      checkIn: emailCalendarDay(params.checkIn),
+      checkOut: emailCalendarDay(params.checkOut),
+      refundedAmount: formatMoneyCents(params.refundedAmountCents),
+      amountOwing: formatMoneyCents(params.amountOwingCents),
+    },
+    lodgeId: params.lodgeId,
+  });
+}
+
 export async function sendSavedCardChargeFailedEmail(params: {
   bookingId: string;
   recipientMemberId: string;

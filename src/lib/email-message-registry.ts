@@ -741,6 +741,19 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
     frequency:
       "Once per booking, when the confirm-pending cron gives up on that card",
   },
+  // #3340: a member paid a charge a later booking edit had already replaced, the
+  // recovery queue refunded it, and this tells them so.
+  "superseded-payment-refunded": {
+    triggerSummary:
+      "A payment made against a charge that a later booking change had already replaced was captured and automatically refunded in full; the member is told what came back and what is still owing",
+    frequency:
+      "Once per refunded supersede capture - rare, and only when the member confirmed the old charge before it was cancelled",
+  },
+  "admin-superseded-payment-refund": {
+    triggerSummary:
+      "The operator copy of the same event: money left the club with nobody deciding it should, so it is reported with the corrected amount owing beside it",
+    frequency: "Once per refunded supersede capture, alongside the member notice",
+  },
   "admin-booking-change-request": {
     triggerSummary: "Locked booking change request submitted",
     frequency: "Per member/admin request submission",

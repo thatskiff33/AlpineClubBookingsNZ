@@ -10,6 +10,7 @@ import {
   type Prisma,
 } from "@prisma/client";
 
+import { sizeAdditionalAskCents } from "@/lib/additional-payment-ask";
 import { BookingModificationSettlementMethodRequiredError } from "@/lib/booking-modify-settlement-required";
 import type { CalendarDate } from "@/lib/club-time";
 import {
@@ -244,8 +245,29 @@ export async function applyPaymentAdjustments(
       );
       pendingRefundAmountCents = hasSucceededPayment ? refundAmountCents : 0;
     } else if (netAmountCents > 0) {
+      // #3340 (`INV-PAY-047`, `INV-ADDPAY-023`). A bare `netAmountCents` here is
+      // the money leak: minting the new ADDITIONAL intent retires every other
+      // outstanding ask on this payment
+      // (`queueSupersededAdditionalIntentCancellations`), so a delta-sized ask
+      // DELETES the unpaid balance of the one it replaces. Two +$70 edits on a
+      // $130 paid booking asked $70 and lost $70, permanently and silently.
+      //
+      // `sizeAdditionalAskCents` is the one home for the arithmetic and the one
+      // place its reasoning is written down. `booking.payment` is the POST-LOCK
+      // re-read in every production caller (each re-reads the booking with
+      // `payment: true` after `pg_advisory_xact_lock(1)` + the per-lodge key), so
+      // the ask about to be superseded is read under the same locks that serialise
+      // every counterpart writer.
+      //
+      // The Xero arm below is deliberately untouched: `xeroAdditionalAmountCents`
+      // sizes a SUPPLEMENTARY INVOICE for THIS edit, which supersedes nothing and
+      // is collected alongside whatever came before it.
       additionalAmountCents = hasSucceededPayment
-        ? netAmountCents
+        ? sizeAdditionalAskCents({
+            priceDiffCents,
+            changeFeeCents,
+            payment: booking.payment,
+          })
         : xeroAdditionalAmountCents;
     }
 

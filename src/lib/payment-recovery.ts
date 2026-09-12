@@ -32,6 +32,7 @@ import {
 } from "@/lib/xero-operation-outbox";
 import { sendAdminPaymentFailureAlert } from "@/lib/email";
 import { recordDuplicateCaptureRefundEvent } from "@/lib/booking-events";
+import { reportSupersededPaymentRefund } from "@/lib/superseded-additional-refund";
 import logger from "@/lib/logger";
 import { createAuditLog } from "@/lib/audit";
 import { MAX_PAYMENT_RECOVERY_ATTEMPTS } from "@/lib/payment-recovery-constants";
@@ -1838,6 +1839,19 @@ async function processRefundSupersededPaymentOperation(
   });
 
   await reconcilePaymentAggregates({ paymentId: operation.paymentId });
+
+  // #3340: the club's own record of the refund, and the member's explanation.
+  // AFTER the reconcile, so the "still owing" figure it quotes is the post-refund
+  // one; BEFORE the completion, because an operation that closes without its
+  // notice going out is the silence this exists to end. It never throws - see its
+  // own docblock - so it cannot cost the operation its terminal transition.
+  await reportSupersededPaymentRefund({
+    bookingId: operation.bookingId,
+    paymentId: operation.paymentId,
+    paymentIntentId: operation.paymentIntentId,
+    refundedAmountCents: outstandingCents,
+  });
+
   await completePaymentRecoveryOperation(operation.id);
 }
 
@@ -2803,6 +2817,62 @@ async function alertStalePaymentRecoveryQueueIfNeeded() {
       "Failed to send stale payment recovery queue alert",
     ),
   );
+}
+
+/**
+ * Run ONE already-enqueued recovery operation right now, best-effort (#3340).
+ *
+ * WHY THIS EXISTS. A superseded ADDITIONAL PaymentIntent used to stay
+ * confirmable until the five-minute recovery cron reached it. In the live case
+ * that window was 4 minutes 5 seconds, and a member holding the old client
+ * secret confirmed a $65 charge while the page read "Total: $300". The mint site
+ * therefore drains its own cancellation before it hands the new client secret
+ * back, so the old secret is dead by the time anything can be confirmed against
+ * it.
+ *
+ * IT REUSES THE PROCESSOR RATHER THAN DUPLICATING IT. Cancelling a Stripe intent
+ * has a genuinely hard case - Stripe can move the intent from cancellable to
+ * `succeeded` between the retrieve and the cancel, which has to hand off to a
+ * refund instead of marking the transaction FAILED - and that logic already
+ * lives in `processCancelPaymentIntentOperation`. A second copy at the mint site
+ * is the class of defect this repository keeps re-finding, so this claims the
+ * row and runs the same processor (`INV-SSOT-001`).
+ *
+ * IT NEVER THROWS, and it is never the durable guarantee. The enqueued row is,
+ * and it is written BEFORE this runs: a claim that loses (another worker got
+ * there first), a Stripe outage, or a failure of any kind leaves the row for the
+ * cron exactly as before #3340. The only thing this changes is latency.
+ */
+export async function runPaymentRecoveryOperationNow(
+  operationId: string,
+): Promise<"succeeded" | "not-claimed" | "failed"> {
+  const operation = await claimPaymentRecoveryOperation(operationId).catch(
+    (err) => {
+      logger.error(
+        { err, operationId },
+        "Could not claim a payment recovery operation for immediate processing; the queued row stands",
+      );
+      return null;
+    },
+  );
+  if (!operation) return "not-claimed";
+
+  try {
+    await processPaymentRecoveryOperation(operation);
+    return "succeeded";
+  } catch (error) {
+    logger.error(
+      { err: error, operationId, type: operation.type },
+      "Immediate payment recovery attempt failed; the durable queued operation remains",
+    );
+    await failPaymentRecoveryOperation(operation, error).catch((markErr) =>
+      logger.error(
+        { err: markErr, operationId },
+        "Could not record the failed immediate payment recovery attempt",
+      ),
+    );
+    return "failed";
+  }
 }
 
 export async function processPaymentRecoveryOperations(options?: {

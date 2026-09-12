@@ -155,6 +155,7 @@ export const REGISTRY_KEY_RENDERERS: Record<string, string> = {
   // admin-alerts-finance
   "admin-credit-sync-drift": "adminCreditSyncDriftTemplate",
   "admin-duplicate-capture-refund": "adminDuplicateCaptureRefundTemplate",
+  "admin-superseded-payment-refund": "adminSupersededPaymentRefundTemplate",
   "admin-late-capture-auto-refund": "adminLateCaptureAutoRefundTemplate",
   "admin-late-capture-hand-back-conflict": "adminLateCaptureHandBackConflictTemplate",
   "admin-manual-refund-task": "adminManualRefundTaskTemplate",
@@ -195,6 +196,7 @@ export const REGISTRY_KEY_RENDERERS: Record<string, string> = {
   "pre-arrival-reminder": "preArrivalReminderTemplate",
   "setup-intent-failed": "setupIntentFailedTemplate",
   "saved-card-charge-failed": "savedCardChargeFailedTemplate",
+  "superseded-payment-refunded": "supersededPaymentRefundedTemplate",
   "split-guest-portion-cancelled": "splitGuestPortionCancelledTemplate",
   "whole-lodge-guest-names-reminder": "wholeLodgeGuestNamesReminderTemplate",
   // booking-requests
