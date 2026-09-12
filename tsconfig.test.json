@@ -5,14 +5,18 @@
     // #2802: tsconfig.json turns `noUncheckedIndexedAccess` on as the
     // permanent rule for application code. Programme #2694 (the ratchet that
     // reached zero) was scoped to `tsconfig.json` throughout — "application
-    // code before tests" — and forcing the flag on here surfaces 4,260
+    // code before tests" — and forcing the flag on here surfaces thousands of
     // pre-existing diagnostics scattered across hundreds of test files, none
-    // of which #2694 ever measured or budgeted. Measured, not estimated: the
-    // e2e project is a further 77 (#3363 carries both figures and the plan).
-    // That is four times the whole migration this programme just finished, so
-    // widening the flag to tests is a separate programme rather than the tail
-    // of this stage; turning it back off here keeps that decision explicit
-    // instead of silent, and keeps `npm run typecheck` green in the meantime.
+    // of which #2694 ever measured or budgeted. It is several times the whole
+    // migration this programme just finished, so widening the flag to tests is
+    // a separate programme rather than the tail of this stage; turning it back
+    // off here keeps that decision explicit instead of silent, and keeps
+    // `npm run typecheck` green in the meantime.
+    //
+    // #3363 IS THE ONE HOME for how many, and for the plan. The counts are
+    // measurements rather than facts about the design, so a second copy of them
+    // goes stale silently and nobody can tell which copy is wrong — which is
+    // why neither this comment nor docs/TESTING.md restates them.
     "noUncheckedIndexedAccess": false
   },
   // Every Vitest test under the configured src/ and scripts/ collection roots.

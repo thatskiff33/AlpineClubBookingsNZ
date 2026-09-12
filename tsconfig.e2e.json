@@ -14,8 +14,8 @@
     "types": ["node"],
     // #2802: see tsconfig.test.json for why this stays off here for now —
     // the same "application code before tests" scoping applies to the
-    // Playwright suite (measured at 77 forced-on diagnostics, none of them
-    // part of programme #2694's tracked inventory).
+    // Playwright suite, and none of its diagnostics were part of programme
+    // #2694's tracked inventory. #3363 is the one home for how many there are.
     "noUncheckedIndexedAccess": false
   },
   "include": ["e2e/**/*.ts", "playwright.config.ts"],

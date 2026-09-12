@@ -237,10 +237,15 @@ here it is an ordinary compiler error like any other, caught by
 `tsconfig.test.json` and `tsconfig.e2e.json` both extend `tsconfig.json` and
 explicitly turn the flag back off (see the comment on each). Programme #2694
 was scoped to `tsconfig.json` throughout — "application code before tests" —
-and forcing the flag on across the other two surfaces roughly 4,000 (Vitest)
-and 77 (Playwright) pre-existing diagnostics that stage never measured or
-budgeted. That is a separate, much larger piece of work than #2802 activated;
-until it is taken on deliberately, new test code is not held to this rule.
+and forcing the flag on across the other two surfaces a large number of
+pre-existing diagnostics that stage never measured or budgeted. That is a
+separate, much larger piece of work than #2802 activated; until it is taken on
+deliberately, new test code is not held to this rule.
+
+**#3363 is the one home for how many.** The counts are measurements rather than
+facts about the design, so a second copy goes stale silently and nobody can tell
+which copy is wrong — this page deliberately does not restate them, and neither
+should anything else.
 
 **What counts as a fix**, for new code that trips this. A batch with a
 meaningful count of new `!` non-null assertions is a failed batch, not a
