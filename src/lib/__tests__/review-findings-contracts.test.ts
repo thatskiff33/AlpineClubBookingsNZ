@@ -1296,6 +1296,20 @@ describe("review finding source/schema contracts", () => {
         "the compiler now enforces the flag directly in tsconfig.json"
     ).not.toContain("noUncheckedIndexedAccess ratchet");
     expect(job).not.toContain("typecheck:nuia");
+
+    // The step this one replaced also asserted, incidentally, that `verify`
+    // RUNS Typecheck at all — and that was the only assertion in the tree doing
+    // so. Kept, because losing it here is how it would go unnoticed: `next
+    // build` type-checks the app project on its own (no `ignoreBuildErrors`),
+    // so deleting this step would still fail on an app error. What would vanish
+    // silently is `tsconfig.test.json` and `tsconfig.e2e.json`, the two
+    // projects the build never reads — which is precisely the gap #2875 was
+    // filed about.
+    expect(
+      job,
+      "the verify job must still run Typecheck (#2875): it is the only gate that " +
+        "reads the test and e2e projects, which `next build` never compiles"
+    ).toContain("- name: Typecheck");
   });
 
   it("wraps age-up membership upgrades and token issuance in a transaction", () => {
