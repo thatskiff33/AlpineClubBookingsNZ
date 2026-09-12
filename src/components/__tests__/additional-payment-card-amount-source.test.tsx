@@ -170,4 +170,69 @@ describe("AdditionalPaymentCard amount source", () => {
     expect(screen.queryByTestId("elements")).toBeNull();
     expect(screen.queryByTestId("pay-button")).toBeNull();
   });
+
+  /*
+    #3340 fix round — WHAT THE MEMBER SEES WHILE THE REFETCH IS IN FLIGHT.
+
+    `setLoading(true)` alone left `clientSecret` and `askAmountCents` holding the
+    PREVIOUS edit's values, and the render gates do not consult `loading`. So
+    between a second edit's re-render and its response the member saw the old
+    amount above a mounted, interactive PaymentElement bound to the intent that
+    edit had just cancelled: bounded, because the confirm fails and no money
+    moves, but it is precisely the state this change exists to remove, and the
+    error path already cleared them.
+  */
+  it("drops the previous binding the moment a refetch starts", async () => {
+    fetchMock.mockResolvedValueOnce(
+      secretResponse({
+        clientSecret: "pi_first_secret",
+        amountCents: 6500,
+        paymentIntentId: "pi_first",
+      }),
+    );
+    const view = render(
+      <AdditionalPaymentCard bookingId="booking_1" additionalAmountCents={6500} />,
+    );
+    await waitFor(() => expect(screen.getByTestId("elements")).toBeVisible());
+
+    // A response that never settles: the card is left in exactly the in-flight
+    // state the member would see.
+    fetchMock.mockImplementationOnce(() => new Promise(() => {}));
+    view.rerender(
+      <AdditionalPaymentCard bookingId="booking_1" additionalAmountCents={36500} />,
+    );
+
+    await waitFor(() => expect(screen.queryByTestId("elements")).toBeNull());
+    expect(screen.queryByTestId("pay-button")).toBeNull();
+    // …and no figure at all, rather than the superseded one.
+    expect(screen.queryByText(/\$65\.00/)).toBeNull();
+  });
+
+  /*
+    #3340 fix round (money lens F10) — THE EXPLANATION SURVIVES A FAILED FETCH.
+
+    The sentence naming the amount is gated on the RESPONSE's figure, so a 404 -
+    the state a failed mint leaves behind - showed a bare red error where the
+    explanation used to be, and a member had no idea what the card was for. The
+    fallback names the SERVER's figure and says so; it is safe precisely because
+    there is no intent here for it to disagree with.
+  */
+  it("still explains itself when the secret fetch fails outright", async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      json: async () => ({ error: "No pending additional payment" }),
+    });
+
+    render(
+      <AdditionalPaymentCard bookingId="booking_1" additionalAmountCents={36500} />,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByText("No pending additional payment")).toBeVisible(),
+    );
+    expect(screen.getByText(/according to our records/)).toBeVisible();
+    expect(screen.getByText(/\$365\.00/)).toBeVisible();
+    // Still no instrument: an explanation is not an offer to charge.
+    expect(screen.queryByTestId("elements")).toBeNull();
+  });
 });

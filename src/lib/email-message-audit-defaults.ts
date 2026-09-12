@@ -89,7 +89,7 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
   },
   "superseded-payment-refunded": {
     "defaultSubject": "Payment Refunded - {{CLUB_LODGE_NAME}}",
-    "defaultBody": "We've Refunded a Payment\n\nHi {{firstName}},\n\nWe have refunded {{refundedAmount}} to your card. That payment was made against an earlier charge for your booking ({{checkIn}} \u2013 {{checkOut}}) that a later change to the booking had already replaced, so it should not have been taken.\n\nYou are not out of pocket: the money is on its way back to the card you used, and your booking is unaffected.\n\nStill owing on this booking: {{amountOwing}}\n\nView Booking: {{BASE_URL}}/bookings\n\nIf anything about this looks wrong, please contact the club at {{SUPPORT_EMAIL}}."
+    "defaultBody": "We've Refunded a Payment\n\nHi {{firstName}},\n\nWe have refunded {{refundedAmount}} to your card. That payment was made against an earlier charge for your booking ({{checkIn}} \u2013 {{checkOut}}) that a later change to the booking had already replaced, so it should not have been taken.\n\nYou are not out of pocket: the money is on its way back to the card you used, and your booking is unaffected.\n\n{{owingSentence}}\n\nView Booking: {{BASE_URL}}/bookings\n\nIf anything about this looks wrong, please contact the club at {{SUPPORT_EMAIL}}."
   },
   "waitlist-confirmation": {
     "defaultSubject": "Waitlist Confirmation - {{CLUB_LODGE_NAME}}",

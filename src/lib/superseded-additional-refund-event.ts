@@ -22,6 +22,8 @@
  */
 import { BookingEventType } from "@prisma/client";
 
+import { formatCents } from "@/lib/utils";
+
 /** Snapshot discriminator marking a REFUNDED event as a #3340 supersede refund. */
 export const SUPERSEDED_ADDITIONAL_REFUND_EVENT_KIND =
   "superseded_payment_refund" as const;
@@ -32,6 +34,25 @@ export const SUPERSEDED_ADDITIONAL_REFUND_EVENT_KIND =
  */
 export const SUPERSEDED_ADDITIONAL_REFUND_EVENT_REASON =
   "A payment taken against a charge a later booking change had already replaced was refunded in full.";
+
+/**
+ * WHAT IS STILL OWING AFTER THE REFUND, AS ONE SENTENCE — because zero is a real
+ * and reassuring answer, not an empty row (#3340).
+ *
+ * It lives HERE, with the event's own copy, rather than inside the coded email
+ * template, because it is sent to the editor as a composed `{{owingSentence}}`
+ * token as well as rendered (#3340 fix round). The editable default a club can
+ * rewrite used to read "Still owing on this booking: {{amountOwing}}"
+ * unconditionally, so a club that touched the editor sent "Still owing on this
+ * booking: $0.00" on what is meant to be a reassurance email - the coded
+ * template and the editor's copy disagreeing about one fact, which is the shape
+ * `INV-SSOT-001` exists to prevent. One function, both surfaces.
+ */
+export function supersededRefundOwingSentence(amountOwingCents: number): string {
+  return amountOwingCents > 0
+    ? `There is still ${formatCents(amountOwingCents)} to pay on this booking. You can pay it from your booking page.`
+    : "Nothing further is owing on this booking.";
+}
 
 /** Frozen facts stored on the supersede-refund BookingEvent snapshot. */
 export interface SupersededAdditionalRefundEventSnapshot {

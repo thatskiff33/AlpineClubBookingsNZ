@@ -1639,6 +1639,11 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   // than a second use of {{amount}}: the two figures appear in the same body and
   // an override that confused them would tell a member the wrong balance.
   "amountOwing",
+  // #3340 fix round: the same fact as {{amountOwing}}, composed into a SENTENCE
+  // by `supersededRefundOwingSentence`, because zero is a real answer that reads
+  // as reassurance rather than as an empty row. The editable default carries the
+  // sentence so a club's rewrite cannot send "Still owing: $0.00".
+  "owingSentence",
   // #2307: the delegate-answered notice's three composed blocks — the heading
   // names who answered and who they answered for, the sentence says what they
   // said, and the note says what to do if that is not what the reader expected.

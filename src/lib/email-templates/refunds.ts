@@ -13,6 +13,8 @@
  * sender does live in `src/lib/email/booking.ts` — booking-scoped, so the
  * per-booking "No emails" switch withholds it.
  */
+import { supersededRefundOwingSentence } from "@/lib/superseded-additional-refund-event";
+
 import { escapeHtml } from "./escape";
 import {
   alertBox,
@@ -112,10 +114,7 @@ export function supersededPaymentRefundedTemplate(data: {
   amountOwingCents: number;
 }): string {
   const dates = `${emailCalendarDay(data.checkIn)} – ${emailCalendarDay(data.checkOut)}`;
-  const owingLine =
-    data.amountOwingCents > 0
-      ? `There is still ${formatCents(data.amountOwingCents)} to pay on this booking. You can pay it from your booking page.`
-      : "Nothing further is owing on this booking.";
+  const owingLine = supersededRefundOwingSentence(data.amountOwingCents);
   return layout(`
     ${heading("We've Refunded a Payment")}
     ${paragraph("Hi " + escapeHtml(data.firstName) + ",")}

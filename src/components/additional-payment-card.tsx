@@ -70,7 +70,20 @@ export function AdditionalPaymentCard({
         if (active) setLoading(false);
       }
     }
+    /*
+      #3340 fix round: THE OLD BINDING DIES BEFORE THE NEW ONE IS ASKED FOR.
+
+      `setLoading(true)` alone left `clientSecret` and `askAmountCents` holding
+      the PREVIOUS edit's values, and the render gates below do not consult
+      `loading` - so between a second edit's re-render and its response, the
+      member saw the old amount above a mounted, interactive PaymentElement bound
+      to the intent that edit had just cancelled. Bounded (the confirm fails, no
+      money moves) but it is the exact state this change exists to remove, and
+      the error path already cleared them.
+    */
     setLoading(true);
+    setClientSecret(null);
+    setAskAmountCents(null);
     fetchSecret();
     return () => {
       active = false;
@@ -111,7 +124,7 @@ export function AdditionalPaymentCard({
           </div>
         ) : (
           <>
-            {askAmountCents !== null && (
+            {askAmountCents !== null ? (
               // #3340: the response's figure, never the server prop, so the
               // sentence a member reads names the amount of the very intent the
               // button below will confirm. Nothing is stated at all until the
@@ -123,6 +136,27 @@ export function AdditionalPaymentCard({
                 this booking. Please complete payment to finalise the
                 modification.
               </p>
+            ) : (
+              error && (
+                /*
+                  #3340 fix round: THE EXPLANATION SURVIVES A FAILED FETCH.
+
+                  The paragraph above is gated on the response's figure, so a 404
+                  - "No pending additional payment", which is exactly the state a
+                  failed mint leaves behind - showed a bare red error where the
+                  sentence used to be, and a member had no idea what the card was
+                  for. This one names the SERVER'S figure and says so, which is
+                  safe precisely because there is no intent here to disagree with:
+                  the form below renders only when a secret arrived.
+                */
+                <p className="text-sm text-warning-11 mb-4">
+                  A recent booking modification means{" "}
+                  <strong>{formatCents(additionalAmountCents)}</strong> is still
+                  owing on this booking according to our records. We could not
+                  load the payment form just now — please try again shortly, or
+                  contact the club if it keeps happening.
+                </p>
+              )
             )}
 
             {loading && (
