@@ -69,7 +69,7 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 vi.mock("@/lib/capacity", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/capacity")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/capacity");
   return { ...actual, checkCapacityForGuestRanges: h.checkCapacityForGuestRanges };
 });
 vi.mock("@/lib/booking-member-night-conflicts", () => ({
@@ -89,7 +89,7 @@ vi.mock("@/lib/lodges", () => ({
 // file died before a single test ran. `importOriginal` keeps every other export
 // real, so the next widening cannot break it the same way (docs/TESTING.md).
 vi.mock("@/lib/lodge-capacity", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/lodge-capacity")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/lodge-capacity");
   return { ...actual, getLodgeCapacity: h.getLodgeCapacity };
 });
 vi.mock("@/lib/membership-type-policy", () => ({
@@ -112,9 +112,7 @@ vi.mock("@/lib/membership-type-policy", () => ({
 vi.mock("@/lib/booking-modify", async () => {
   // The REAL beneficiary resolver (MED-4): id binding is the behaviour under
   // test, so it must not be stubbed away.
-  const { resolvePromoBeneficiarySelection } = await vi.importActual<
-    typeof import("@/lib/booking-modify-plan")
-  >("@/lib/booking-modify-plan");
+  const { resolvePromoBeneficiarySelection } = (await vi.importActual("@/lib/booking-modify-plan")) as typeof import("@/lib/booking-modify-plan");
   return {
     isQuotePricedBooking: vi.fn().mockResolvedValue(false),
     // #2337: no link in these fixtures, so both new gate collaborators are inert.
@@ -168,7 +166,7 @@ vi.mock("@/lib/change-fee", () => ({ calculateChangeFee: h.calculateChangeFee })
 // the real module underneath means a future export cannot break this suite for a
 // reason that has nothing to do with what it tests.
 vi.mock("@/lib/module-settings", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/module-settings")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/module-settings");
   return { ...actual, loadEffectiveModuleFlags: h.loadModuleFlags };
 });
 vi.mock("@/lib/xero-token-store", () => ({
@@ -176,7 +174,7 @@ vi.mock("@/lib/xero-token-store", () => ({
 }));
 vi.mock("@/lib/xero-organisation", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("@/lib/xero-organisation")>();
+    (await importOriginal()) as typeof import("@/lib/xero-organisation");
   return { ...actual, getXeroLockDates: h.getXeroLockDates };
 });
 vi.mock("@/lib/booking-policies", () => ({

@@ -74,9 +74,7 @@ const { loadEffectiveModuleFlagsMock, queueXeroInvoiceForPaidBookingMock } = vi.
 }));
 // Partial-mock so the module's other exports stay intact for transitive imports.
 vi.mock("@/lib/module-settings", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/module-settings")>(
-    "@/lib/module-settings"
-  );
+  const actual = (await vi.importActual("@/lib/module-settings")) as typeof import("@/lib/module-settings");
   return { ...actual, loadEffectiveModuleFlags: loadEffectiveModuleFlagsMock };
 });
 

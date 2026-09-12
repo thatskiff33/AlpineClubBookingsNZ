@@ -34,16 +34,16 @@ import { pathToFileURL } from "node:url";
  * gate. Addition is not: the list is a versioned file, so an entry added in
  * the same commit passes, and what holds the line there is review. Saying the
  * list "only shrinks" would be a claim the code does not back - and it cannot
- * be made true by refusing additions outright, because 4 of the current
- * entries are the string-literal ampersand, which has no safe rewrite. The
+ * be made true by refusing additions outright, because every entry that
+ * remains is the string-literal ampersand, which has no safe rewrite. The
  * honest guarantee is that it never grows SILENTLY.
  *
  * THE ALLOWLIST IS ALSO THE CANARY, and this is the property that makes the
  * gate hard to fool rather than merely strict. A report only passes if it names
  * EXACTLY those files as partially parsed and clears the scanned-file floor.
  * A broken, truncated or forged scan cannot satisfy both: too few files fails
- * the floor, and any report that does not reproduce the precise 169-file set
- * fails from one side or the other — a missing entry reads as stale, an extra
+ * the floor, and any report that does not reproduce the allowlist's exact file
+ * set fails from one side or the other — a missing entry reads as stale, an extra
  * one as newly unparsed. #2842's security review attacked exactly this, forging
  * reports that clear the floor with no failures, and could not construct one.
  *
@@ -129,6 +129,14 @@ export function normalisePath(path) {
 /**
  * Reduces a Semgrep JSON report to the coverage facts this gate decides on.
  *
+ * WHAT IT DOES NOT SEE, and this is pre-existing (#2842) rather than something
+ * #3318 or #3345 changed: it reads `errors` and `paths.scanned` only, and the
+ * report's `paths` object carries no `skipped` key at all. A target above
+ * Semgrep's default `--max-target-bytes` is therefore neither scanned nor an
+ * error — it costs exactly 1 against `minimumScannedFiles`, which is a coarse
+ * floor with roughly 290 files of slack (4,293 measured against a committed
+ * 4,000). One oversized file drops out silently; a directory's worth does not.
+ *
  * @param {{ errors?: ReadonlyArray<Record<string, unknown>>, paths?: { scanned?: ReadonlyArray<string> } }} report
  */
 export function summariseCoverage(report) {
@@ -173,8 +181,8 @@ export function summariseCoverage(report) {
 }
 
 /**
- * @param {{ files?: unknown }} allowlist
- * @returns {string[]}
+ * @param {{ minimumScannedFiles?: unknown }} allowlist
+ * @returns {number}
  */
 export function readMinimumScannedFiles(allowlist) {
   const floor = allowlist?.minimumScannedFiles;
@@ -186,47 +194,112 @@ export function readMinimumScannedFiles(allowlist) {
   return floor;
 }
 
+/**
+ * The allowlisted paths, with every entry's REASON structurally required.
+ *
+ * #3318 changed the entry shape from a bare path string to
+ * `{ file, reason }`. Until then the reasons lived in this file's `//` prose as
+ * a composition summary - "165 carry a generic call, the remaining 4 are the
+ * string-literal ampersand" - and both halves of that sentence were wrong by
+ * the time anybody read it: the generic-call population has been rewritten away
+ * entirely, and the ampersand count was FOUR in the prose and THREE in this
+ * script, because one of the four was unparsed for the call shape and its own
+ * `&` never tripped anything. A summary of a list is a second statement of the
+ * list, and it drifted exactly as `INV-SSOT-001` says it will.
+ *
+ * So the reason now sits on the entry it explains and cannot be omitted. That
+ * is the whole point: an entry signs part of a real file off as unscanned, and
+ * the only legitimate ground for one is that there is genuinely no rewrite.
+ * Everything that HAD a rewrite is gone, and the lint rule
+ * `scan/no-semgrep-unparsable-import-type` is what stops it coming back.
+ */
 export function readAllowlistFiles(allowlist) {
   if (!Array.isArray(allowlist?.files)) {
     throw new Error(
-      "Allowlist is malformed: expected a `files` array of repository-relative paths.",
+      "Allowlist is malformed: expected a `files` array of `{ file, reason }` entries.",
     );
   }
+  const paths = [];
   for (const entry of allowlist.files) {
-    if (typeof entry !== "string" || entry.length === 0) {
+    if (
+      typeof entry !== "object" ||
+      entry === null ||
+      Array.isArray(entry) ||
+      typeof entry.file !== "string" ||
+      entry.file.length === 0
+    ) {
       throw new Error(
-        `Allowlist is malformed: every \`files\` entry must be a non-empty string, found ${JSON.stringify(entry)}.`,
+        `Allowlist is malformed: every \`files\` entry must be an object with a non-empty \`file\`, found ${JSON.stringify(entry)}.`,
       );
     }
+    if (typeof entry.reason !== "string" || entry.reason.trim().length === 0) {
+      throw new Error(
+        `Allowlist is malformed: \`${entry.file}\` carries no \`reason\`. Every entry signs part of a file off as unscanned, so it has to say why there is no rewrite - and after #3318 emptied this list of everything that had one, an entry without a reason is almost certainly a shape the lint rule should have caught instead.`,
+      );
+    }
+    paths.push(normalisePath(entry.file));
   }
-  return allowlist.files.map(normalisePath);
+  return paths;
 }
 
 /**
- * What Semgrep's TypeScript parser actually chokes on here (#2842), stated as
- * the RULE rather than as a spelling.
+ * What Semgrep's TypeScript parser actually chokes on here, stated as the RULE
+ * rather than as a spelling. This text is what a contributor is HANDED when the
+ * gate fires, so being wrong here sends them the wrong way - and it has now
+ * been wrong three times, each time by describing the fault more narrowly than
+ * it is:
  *
- * Saying "the two constructs are `importOriginal<...>()` and a bare `&`" was
- * measurably wrong twice over, and this text is what a contributor is HANDED
- * when the gate fires, so being wrong here sends them the wrong way:
+ *  - "the construct is `importOriginal<...>()`" missed the 22 files spelling it
+ *    `vi.importActual` or a destructured `importActual`. Someone hitting the
+ *    gate on the idiomatic spelling greps for `importOriginal`, finds none,
+ *    decides the gate is confused, and takes the allowlist escape;
+ *  - "it is the EMPTY argument list" (#2842's correction, measured on a
+ *    single-line repro) missed the TRAILING COMMA, which breaks it just as
+ *    reliably: it appeared at 12 call sites, and for 10 of the 169 entries it
+ *    was the only cause - a formatter split a long argument list across lines
+ *    and added the comma with the reflow. Nobody wrote that spelling
+ *    deliberately, which is why a description keyed on the empty parens went on
+ *    missing it;
+ *  - and both of those described only a CALL. One allowlisted file carried no
+ *    call shape at all: its fault was an `import()` type in a function
+ *    PARAMETER annotation, and its entry read as unexplained for as long as the
+ *    description named only the call (#3318).
  *
- *  - 22 of the allowlisted files use `vi.importActual<typeof import(...)>()`
- *    or `importActual<typeof import(...)>()`, not `importOriginal`. Someone
- *    hitting the gate on the idiomatic `vi.importActual` spelling greps for
- *    `importOriginal`, finds none, decides the gate is confused, and takes the
- *    allowlist escape instead of the one-line fix;
- *  - and it is the EMPTY argument list that breaks it, measured with a minimal
- *    repro: `f<typeof import("x")>()` fails and `f<typeof import("x")>("x")`
- *    parses. Ten files here carry the same generic WITH an argument and are
- *    correctly not allowlisted, so a rule stated without that qualifier sends
- *    somebody to rewrite code that was never broken;
- *  - the `&amp;` remedy is only correct in JSX TEXT. Three allowlisted files
- *    carry the `&` inside a STRING - `href="/admin/bookings?sortBy=member&sortDir=asc"`,
- *    one of them asserted with `toHaveAttribute` - where rewriting it changes
- *    the value the test asserts.
+ * The `&amp;` remedy has been wrong once too, in the other direction: it is
+ * correct in JSX TEXT only. The same fault fires on a `&` inside a STRING
+ * literal, where rewriting it changes the value - one of the entries below is
+ * asserted with `toHaveAttribute` - so those have no rewrite and are the only
+ * legitimate entries left.
+ *
+ * AND THE FOURTH CORRECTION, #3345: "three shapes defeat the parser" was itself
+ * too narrow, and so was the claim that two of them "cannot come back". #3318
+ * had measured the parameter POSITION and generalised from it. Re-measured on
+ * the same pinned image against minimal single-construct files, roughly a dozen
+ * further positions fail - a type alias, an interface property, a return
+ * annotation, a class property, a generic constraint or default, a nested type
+ * argument, an `extends` or `implements` clause, `keyof`, a parenthesised
+ * qualified type - and #3318's rule was silent on every one. Worse, the remedy
+ * it printed ("give the type a name") produces `type P = import("x").A<null>`,
+ * which is one of the failing forms: the guard was handing out an instruction
+ * that opened the region it exists to protect. Two members of the CALL class
+ * were silent too - a bare instantiation expression `f<typeof import("x")>`
+ * with no call, and `f<typeof import("x")>?.()`, where the type arguments hang
+ * off the callee.
+ *
+ * WHAT LINT NOW BANS, and what it does not. Since #3345,
+ * `scan/no-semgrep-unparsable-import-type` reports the call class including
+ * both instantiation shapes, every DECORATED `import()` type wherever it
+ * appears, and an undecorated one in a parameter position; it autofixes the
+ * call form. That removes the growth at source for those positions, and THIS
+ * GATE REMAINS THE BACKSTOP FOR THE REST - a parse fault in a shape the rule
+ * does not reach still lands here, which is the arrangement rather than a
+ * failure of it. So a partial parse of a shape the rule DOES reach means the
+ * rule was bypassed or the file is outside its globs, and that is what to fix;
+ * a partial parse of anything else is a real finding, and the honest response
+ * is to measure the construct and widen the rule.
  */
 const KNOWN_CONSTRUCTS =
-  'Two shapes defeat the parser, and both are valid TypeScript the build accepts. (1) A GENERIC CALL WITH AN EMPTY ARGUMENT LIST whose type argument contains an `import()` type - `f<typeof import("...")>()`, for any `f`; the spellings measured here are `importOriginal`, `vi.importActual` and `importActual`. The EMPTY parens are the fault: `f<typeof import("...")>("...")` parses clean, which is why many files use the same generic and are correctly absent from the allowlist. Move the type out of the call: `(await f()) as typeof import("...")`. (2) A BARE `&` IN JSX TEXT - `<h1>Rooms & Beds</h1>` - which becomes `&amp;`. That remedy applies to JSX TEXT ONLY: the same parser fault fires on a `&` inside a string literal, such as a URL query, and rewriting it there would change the value, so those belong on the allowlist instead.'
+  'Three FAMILIES defeat the parser, all of them valid TypeScript the build accepts. Do not read the lists inside them as closed - #3318 stated them narrower than they are and #3345 re-measured; if your construct is not below, measure it before adding an entry. (1) A CALL whose type argument contains an `import()` type - `f<typeof import("...")>(...)`, for any `f`; the spellings measured here are `importOriginal`, `vi.importActual` and `importActual`. It fails with an EMPTY argument list (`>()` was unexpected), with a TRAILING COMMA, which is what a formatter adds on reflowing a long call (`,` was unexpected), with a SECOND type argument even given an argument, as a bare instantiation `f<typeof import("...")>` with no call, and as `f<typeof import("...")>?.()`. It parses with one type argument and a non-empty argument list, as `f?.<typeof import("...")>()`, as a tagged template, and under `new` in every argument-list variant. Move the type out of the call: `(await f()) as typeof import("...")`. (2) A DECORATED `import()` type - one carrying a type-argument list, an indexed access, a `keyof`, or a wrapping parenthesis - in almost any type position: a parameter, a return, a variable, a TYPE ALIAS, an interface property, a class property, a generic constraint or default, a nested type argument, an `extends` or `implements` clause. THE REMEDY IS A TOP-LEVEL TYPE-ONLY IMPORT, not an alias: `type P = import("x").A<null>;` also fails, which is what #3318 wrongly told people to write. Use `import type { A } from "x";` and then `A<null>["k"]`, or root the type at `typeof` - `typeof import("x").k` and `(typeof import("x"))["k"]` parse everywhere outside a call. The boundary inside this family is incoherent: `import("x").A<null>["k"]` parses in an alias while deleting the index makes it fail, and `keyof import("x")` fails while `keyof typeof import("x")` parses, which is why the lint rule reports the whole decoration rather than the failing spelling. Families (1) and (2) are banned by `scan/no-semgrep-unparsable-import-type`, so a partial parse of one means the rule was bypassed - but the rule bans the positions listed here and not a closed set, and this gate is the backstop for anything it does not reach. (3) A BARE `&` IN JSX TEXT - `<h1>Rooms & Beds</h1>` - which becomes `&amp;`. That remedy applies to JSX TEXT ONLY: the same parser fault fires on a `&` inside a string literal, such as a URL query, and rewriting it there would change the value, so those are the entries this allowlist legitimately holds.'
 
 
 /**

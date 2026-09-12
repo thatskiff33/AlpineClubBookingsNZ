@@ -18,6 +18,16 @@ export {
   validateAgeTierPartition,
 } from "./policies/age-tier";
 export type { AgeTierSettingData } from "./policies/age-tier";
+
+/**
+ * The one Prisma delegate method the strict read needs from a caller's
+ * transaction client, named because an `import()` type written inline in a
+ * PARAMETER annotation is one of the two shapes Semgrep cannot parse (#3318).
+ * The module is still imported dynamically below, so nothing about the runtime
+ * import graph changes.
+ */
+type AgeTierSettingFindMany =
+  typeof import("./prisma").prisma.ageTierSetting.findMany;
 // AgeTierPartitionRow and AgeTierPartitionResult used to be re-exported here
 // too, but every consumer (config-transfer/categories/age-tier.ts,
 // induction-baseline.ts) already imports them straight from
@@ -86,7 +96,7 @@ export async function getAgeTierSettingsStrict(
    * A caller inside a bounded read-only transaction MUST pass it, so the read sits
    * under that transaction's snapshot and statement timeout.
    */
-  db?: { ageTierSetting: { findMany: typeof import("./prisma").prisma.ageTierSetting.findMany } },
+  db?: { ageTierSetting: { findMany: AgeTierSettingFindMany } },
 ): Promise<AgeTierSettingData[]> {
   const client = db ?? (await import("./prisma")).prisma;
   const rows = await client.ageTierSetting.findMany({

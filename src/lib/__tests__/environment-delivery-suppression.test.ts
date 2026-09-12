@@ -69,7 +69,7 @@ vi.mock("@/lib/email/admin-alerts-shared", () => ({
   used instead, and the cases at the end of this file exercise both sides of it.
 */
 vi.mock("@/lib/email/internal", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/email/internal")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/email/internal");
   return { ...actual, getEmailTransporter: mocks.getEmailTransporter };
 });
 

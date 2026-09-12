@@ -68,7 +68,7 @@ const moduleFlagOverrides = vi.hoisted(() => ({ off: new Set<ModuleKey>() }));
 
 vi.mock("@/lib/module-settings", async (importOriginal) => {
   const original =
-    await importOriginal<typeof import("@/lib/module-settings")>();
+    (await importOriginal()) as typeof import("@/lib/module-settings");
   const { MODULE_KEYS: keys } = await import("@/config/modules");
 
   return {

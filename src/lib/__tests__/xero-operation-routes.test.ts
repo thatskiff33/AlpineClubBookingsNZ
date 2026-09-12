@@ -22,7 +22,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("next/server", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("next/server")>();
+  const actual = (await importOriginal()) as typeof import("next/server");
 
   return {
     ...actual,

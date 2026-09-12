@@ -628,9 +628,7 @@ describe("financial year-end month: single flight + retry caps (#2283)", () => {
    * afterwards — the cooldown is process-global and would otherwise leak.
    */
   async function stubLiveClientThroughRealRetry() {
-    const real = await vi.importActual<typeof import("@/lib/xero-api-client")>(
-      "@/lib/xero-api-client",
-    );
+    const real = (await vi.importActual("@/lib/xero-api-client")) as typeof import("@/lib/xero-api-client");
     real.resetXeroRateLimitStateForTests();
     live.getAuthenticatedXeroClient.mockResolvedValue({
       xero: { accountingApi: { getOrganisations: live.getOrganisations } },

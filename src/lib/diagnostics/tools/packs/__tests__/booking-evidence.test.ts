@@ -215,11 +215,11 @@ vi.mock("@/lib/membership-type-policy", () => ({
 // hidden the whole point of the strict seams, which is that a failed read reaches
 // the caller.
 vi.mock("@/lib/age-tier", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/age-tier")>()),
+  ...((await importOriginal()) as typeof import("@/lib/age-tier")),
   getAgeTierSettingsStrict: getAgeTierSettingsMock,
 }));
 vi.mock("@/lib/member-subscription-eligibility", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/member-subscription-eligibility")>()),
+  ...((await importOriginal()) as typeof import("@/lib/member-subscription-eligibility")),
   peekSubscriptionLockoutModeStrict: peekSubscriptionLockoutModeMock,
 }));
 

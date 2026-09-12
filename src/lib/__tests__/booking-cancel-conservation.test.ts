@@ -75,9 +75,7 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 vi.mock("@/lib/cancellation", async () => {
-  const policies = await vi.importActual<
-    typeof import("@/lib/policies/cancellation")
-  >("@/lib/policies/cancellation");
+  const policies = (await vi.importActual("@/lib/policies/cancellation")) as typeof import("@/lib/policies/cancellation");
   return {
     calculateRefundAmount: policies.calculateRefundAmount,
     daysUntilDate: mocks.daysUntilDate,
