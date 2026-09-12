@@ -1,12 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
-import { isDateOnlyString, parseDateOnly } from "@/lib/date-only";
+import { formatDateOnly, isDateOnlyString, parseDateOnly } from "@/lib/date-only";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import logger from "@/lib/logger";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
+import { createAuditLog, getAuditRequestContext } from "@/lib/audit";
 import { findHutLeaderOverlapRefusal } from "@/lib/hut-leader-overlap-guard";
-import { validateCustodianBedHold } from "@/lib/custodian-assignment";
+import {
+  CustodianOverlapsWholeLodgeHoldError,
+  findWholeLodgeHoldAmendments,
+  recordWholeLodgeHoldAmendment,
+  validateCustodianBedHold,
+  wholeLodgeHoldAmendmentNights,
+} from "@/lib/custodian-assignment";
 import { custodianBedHoldErrorResponse } from "@/lib/custodian-assignment-routes";
 import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
 
@@ -25,6 +32,11 @@ const updateSchema = z.object({
   bedId: z.string().min(1).nullable().optional(),
   // #1668-style explicit override of the over-capacity warning.
   confirmOverCapacity: z.boolean().optional(),
+  // #2698 ordering case: the officer's EXPLICIT acceptance that holding this
+  // bed narrows an existing whole-lodge hold's represented bed set. Absent is
+  // decline-by-default — 409 CUSTODIAN_OVERLAPS_WHOLE_LODGE_HOLD, nothing
+  // written on either side.
+  amendOverlappingHolds: z.boolean().optional(),
 });
 
 /**
@@ -39,6 +51,7 @@ export async function PUT(
     permission: { area: "lodge", level: "edit" },
   });
   if (!guard.ok) return guard.response;
+  const session = guard.session;
   const { id } = await params;
 
   let body: unknown;
@@ -144,6 +157,11 @@ export async function PUT(
     );
   }
 
+  const auditRequest = getAuditRequestContext(req);
+  // #2698: decided BEFORE any lock, because it decides WHICH locks are taken
+  // (INV-LOCK-002: global then lodge, never the other order).
+  const amendRequested = parsed.data.amendOverlappingHolds === true;
+
   try {
     /*
       EVERY edit runs under the target lodge's capacity key (#2887), not just a
@@ -152,6 +170,13 @@ export async function PUT(
       this route also decides, which a bedless edit breaks by MOVING DATES.
     */
     const refusal = await prisma.$transaction(async (tx) => {
+      // #2698 amend path only: the global cohort key first, because the hold
+      // RELEASE path (booking cancel) serialises on the club-wide key and not
+      // on this lodge's, so the lodge key alone cannot exclude it. The
+      // detect-and-refuse path writes nothing and keeps the narrower topology.
+      if (amendRequested) {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      }
       await acquireLodgeCapacityLock(tx, intendedLodgeId);
 
       // The authoritative row. Everything the decision rests on comes from
@@ -190,6 +215,9 @@ export async function PUT(
       });
       if (overlap) return { status: 409, error: overlap.error };
 
+      let amendments: Awaited<
+        ReturnType<typeof findWholeLodgeHoldAmendments>
+      > = [];
       if (nextBedId) {
         await validateCustodianBedHold({
           bedId: nextBedId,
@@ -200,8 +228,78 @@ export async function PUT(
           confirmOverCapacity: parsed.data.confirmOverCapacity,
           db: tx,
         });
+        // #2698 ordering case, re-read UNDER the locks against the LOCKED row's
+        // final bed and dates. `assignmentId` is what keeps "new and amended
+        // holds only" true: nights this assignment already holds on this bed
+        // are already outside the overlapping hold's set, so an unrelated edit
+        // does not re-ask a question the officer has already answered.
+        amendments = await findWholeLodgeHoldAmendments({
+          bedId: nextBedId,
+          lodgeId: finalLodgeId,
+          startDate: finalStart,
+          endDate: finalEnd,
+          assignmentId: id,
+          db: tx,
+        });
+        if (amendments.length > 0 && !amendRequested) {
+          // Throwing rolls the transaction back, so neither the assignment
+          // edit nor any amendment record exists.
+          throw new CustodianOverlapsWholeLodgeHoldError(
+            amendments,
+            wholeLodgeHoldAmendmentNights(amendments),
+          );
+        }
       }
       await tx.hutLeaderAssignment.update({ where: { id }, data: updateData });
+
+      await createAuditLog(
+        {
+          action: "lodge.hut-leader-assignment.updated",
+          memberId: session.user.id,
+          actorMemberId: session.user.id,
+          subjectMemberId: locked.memberId,
+          targetId: id,
+          entityType: "HutLeaderAssignment",
+          entityId: id,
+          // docs/guides/audit-log.md, the `lodge` row: rosters and all bed
+          // allocation. A hut-leader assignment is the lodge roster, and the
+          // bed it holds is a bed-allocation fact.
+          category: "lodge",
+          severity: nextBedId || locked.bedId ? "important" : "info",
+          outcome: "success",
+          summary: "Hut leader assignment updated",
+          details:
+            "An officer changed a hut-leader assignment's dates, lodge or held bed. A bed that was released is bookable again from the moment this committed.",
+          metadata: {
+            lodgeId: finalLodgeId,
+            previousLodgeId: locked.lodgeId,
+            startDate: formatDateOnly(finalStart),
+            endDate: formatDateOnly(finalEnd),
+            previousStartDate: formatDateOnly(locked.startDate),
+            previousEndDate: formatDateOnly(locked.endDate),
+            bedId: nextBedId ?? null,
+            previousBedId: locked.bedId,
+          },
+          requestId: auditRequest?.id,
+          ipAddress: auditRequest?.ipAddress,
+          userAgent: auditRequest?.userAgent,
+        },
+        tx,
+      );
+
+      if (nextBedId && amendments.length > 0) {
+        // Same transaction as the edit: accept writes both facts or neither.
+        await recordWholeLodgeHoldAmendment(tx, {
+          actorMemberId: session.user.id,
+          assignmentId: id,
+          lodgeId: finalLodgeId,
+          bedId: nextBedId,
+          amendments,
+          requestId: auditRequest?.id,
+          ipAddress: auditRequest?.ipAddress,
+          userAgent: auditRequest?.userAgent,
+        });
+      }
       return null;
     });
 
@@ -223,24 +321,92 @@ export async function PUT(
 /**
  * DELETE /api/admin/hut-leaders/[id]
  * Delete a hut leader assignment.
+ *
+ * Under the lodge capacity key since #2698, and the reason is the mirror of the
+ * rest of this issue: removing a custodian bed hold WIDENS the represented bed
+ * set of every whole-lodge hold that overlaps it (`INV-CAP-035`), because the
+ * exclusion is derived from the live holds at read time. That is a capacity
+ * move — the same one the create and the edit take the key for — and it ran
+ * here on the base client outside any transaction, so a delete could commit
+ * between a planner's read and its write. It creates no overlap, so it still
+ * runs no overlap read; it takes the key, re-reads the row under it, and
+ * deletes and audits in one transaction. The response contract is unchanged.
  */
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const guard = await requireAdmin({
     permission: { area: "lodge", level: "edit" },
   });
   if (!guard.ok) return guard.response;
+  const session = guard.session;
   const { id } = await params;
 
+  // The cheap 404 and the lock KEY. Every fact the delete records comes from
+  // the re-read under the key (#2887's rule, applied here too).
   const existing = await prisma.hutLeaderAssignment.findUnique({ where: { id } });
   if (!existing) {
     return NextResponse.json({ error: "Assignment not found" }, { status: 404 });
   }
+  const auditRequest = getAuditRequestContext(req);
 
   try {
-    await prisma.hutLeaderAssignment.delete({ where: { id } });
+    const refusal = await prisma.$transaction(async (tx) => {
+      await acquireLodgeCapacityLock(tx, existing.lodgeId);
+      const locked = await tx.hutLeaderAssignment.findUnique({ where: { id } });
+      // Already gone, or moved to another lodge while we waited — in either
+      // case the key we hold does not govern it. 404 rather than delete a row
+      // whose lodge was never serialised against this transaction.
+      if (!locked) return { status: 404, error: "Assignment not found" };
+      if (locked.lodgeId !== existing.lodgeId) {
+        return {
+          status: 409,
+          error:
+            "This assignment moved to a different lodge while you were deleting it. Reload and try again.",
+        };
+      }
+
+      await tx.hutLeaderAssignment.delete({ where: { id } });
+      await createAuditLog(
+        {
+          action: "lodge.hut-leader-assignment.deleted",
+          memberId: session.user.id,
+          actorMemberId: session.user.id,
+          subjectMemberId: locked.memberId,
+          targetId: id,
+          entityType: "HutLeaderAssignment",
+          entityId: id,
+          // docs/guides/audit-log.md, the `lodge` row: rosters and all bed
+          // allocation.
+          category: "lodge",
+          severity: locked.bedId ? "important" : "info",
+          outcome: "success",
+          summary: "Hut leader assignment deleted",
+          details: locked.bedId
+            ? "An officer deleted a hut-leader assignment that was holding a bed; that bed is bookable again, and any overlapping whole-lodge hold covers it again from the moment this committed."
+            : "An officer deleted a hut-leader assignment that held no bed (a role only, with no capacity effect).",
+          metadata: {
+            lodgeId: locked.lodgeId,
+            startDate: formatDateOnly(locked.startDate),
+            endDate: formatDateOnly(locked.endDate),
+            bedId: locked.bedId,
+          },
+          requestId: auditRequest?.id,
+          ipAddress: auditRequest?.ipAddress,
+          userAgent: auditRequest?.userAgent,
+        },
+        tx,
+      );
+      return null;
+    });
+
+    if (refusal) {
+      return NextResponse.json(
+        { error: refusal.error },
+        { status: refusal.status },
+      );
+    }
     logger.info({ assignmentId: id }, "Hut leader assignment deleted");
     return NextResponse.json({ success: true });
   } catch (err) {

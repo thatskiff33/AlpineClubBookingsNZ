@@ -133,6 +133,52 @@ export function holdCoversNight(
 }
 
 /**
+ * Is this bed-night held by a custodian? (`INV-CAP-035`, #2698.)
+ *
+ * THE predicate a whole-lodge hold subtracts through. ADR-001 says an
+ * exclusive hold gives its group the whole lodge, and until #2698 that was
+ * taken literally: the hold's represented bed set was *every* active bed,
+ * including the one a custodian is sleeping in, so the same bed-night was
+ * claimed twice — once by the hold and once by the custodian term. The owner's
+ * rule (9 Aug 2026) is that the hold's set **excludes** custodian-held
+ * bed-nights for each overlapping night, which makes the two disjoint and
+ * makes `docs/CAPACITY_MODEL.md`'s long-standing claim that the custodian's
+ * bed sits outside the held pool true instead of false.
+ *
+ * The rule is written once, here, and reached from both places that decide
+ * what a hold covers:
+ *
+ * - the bed-allocation planners, through
+ *   `wholeLodgeHoldOccupiedBedNightsForPlanner`
+ *   (`src/lib/exclusive-hold-occupancy.ts`), which skips a bed-night this
+ *   returns true for rather than emitting a hold row for it;
+ * - the custodian write path's ordering-case check
+ *   (`findWholeLodgeHoldAmendments`, `src/lib/custodian-assignment.ts`), which
+ *   asks which nights a NEW custodian hold would take out of an existing
+ *   hold's set — and does not re-ask for a bed-night the same assignment
+ *   already holds, because that one left the set when it was first created.
+ *
+ * The capacity engines work in per-night COUNTS rather than bed sets, so they
+ * subtract the same fact through the same loaded holds in its count shape —
+ * `buildCustodianNightIndex` / `buildLodgeCustodianNightCounter` above, fed to
+ * `wholeLodgeHoldRepresentedBeds` in `capacity.ts`. One source
+ * (`findCustodianBedHolds` + {@link holdCoversNight}), two views of it; never a
+ * second inventory of which beds a custodian has.
+ *
+ * No lodge argument: a bed belongs to exactly one lodge and `bedId` is unique,
+ * so a matching bed id IS a matching lodge. Scoping is the loaders' job.
+ */
+export function isCustodianHeldBedNight(
+  holds: readonly CustodianBedHold[],
+  bedId: string,
+  nightKey: string,
+): boolean {
+  return holds.some(
+    (hold) => hold.bedId === bedId && holdCoversNight(hold, nightKey),
+  );
+}
+
+/**
  * Load the custodian bed holds overlapping a half-open date window.
  *
  * `toExclusive` is EXCLUSIVE so callers can pass the booking-shaped

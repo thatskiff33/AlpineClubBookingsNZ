@@ -1,6 +1,9 @@
 import { prisma } from "./prisma";
 import { sendAdminCapacityWarningAlert } from "./email";
-import { computeNightOccupancy } from "./capacity";
+import {
+  computeNightOccupancy,
+  wholeLodgeHeldNightOccupiedBeds,
+} from "./capacity";
 import { getLodgeCapacity } from "./lodge-capacity";
 import { addDaysDateOnly, eachDateOnlyInRange } from "./date-only";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
@@ -86,8 +89,13 @@ export async function checkCapacityWarnings(): Promise<{ alertedDays: number }> 
       // lodge's ceiling, exactly as checkCapacity pins it (ADR-001 decision 6):
       // an exclusive hold leaves no bookable bed, so the warning must fire even
       // when the holding booking's own headcount is small.
+      //
+      // Composed from the hold's represented beds plus the custodian beds it
+      // excludes (INV-CAP-035, #2698), which is the same full lodge — the
+      // warning's threshold is unchanged by the exclusion, and pinning it this
+      // way is what keeps that true by construction rather than by inspection.
       const occupiedBeds = reading.wholeLodgeHeld
-        ? lodgeCapacity
+        ? wholeLodgeHeldNightOccupiedBeds(lodgeCapacity, reading.custodianBeds)
         : reading.occupiedBeds;
 
       const availableBeds = lodgeCapacity - occupiedBeds;

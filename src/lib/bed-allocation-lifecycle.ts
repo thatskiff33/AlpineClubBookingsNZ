@@ -926,10 +926,14 @@ async function autoAllocateMissingBedNights({
       // this only ever stops ANOTHER booking's guests from being auto-placed
       // onto beds the held group is physically using — those guest-nights come
       // back as NO_BED_AVAILABLE for the officer instead.
+      // #2698 (INV-CAP-035): the SAME hold set the custodian expansion above
+      // was built from, so the hold's represented beds exclude the bed-nights a
+      // custodian holds and no bed-night is claimed twice.
       ...wholeLodgeHoldOccupiedBedNightsForPlanner(
         blockingWholeLodgeHolds,
         rooms,
         envelopeNights,
+        custodianHolds,
       ),
       ...existingAllocations.map((allocation) => ({
         bedId: allocation.bedId,

@@ -115,6 +115,36 @@ describe("lodge admission and assignment lock topology (#2701)", () => {
     expect(put).not.toContain("await prisma.hutLeaderAssignment.update(");
     expect(put).not.toContain("await prisma.hutLeaderAssignment.findMany(");
 
+    // #2698: the DELETE is behind the key too. Removing a custodian bed hold
+    // WIDENS the represented bed set of every overlapping whole-lodge hold
+    // (INV-CAP-035), because that exclusion is derived from the live holds at
+    // read time — so a delete is a capacity move and ran, until #2698, on the
+    // base client outside any transaction.
+    expectOrdered(put.slice(put.indexOf("export async function DELETE(")), [
+      "await prisma.$transaction(async (tx) => {",
+      "await acquireLodgeCapacityLock(tx, existing.lodgeId);",
+      "const locked = await tx.hutLeaderAssignment.findUnique(",
+      "await tx.hutLeaderAssignment.delete(",
+    ]);
+    expect(put).not.toContain("await prisma.hutLeaderAssignment.delete(");
+
+    // #2698 amend path: the global cohort key is taken BEFORE the per-lodge
+    // key (INV-LOCK-002) and only when the officer has accepted, decided from
+    // the request before any lock is taken so the order can never invert.
+    for (const route of [
+      "src/app/api/admin/hut-leaders/route.ts",
+      "src/app/api/admin/hut-leaders/[id]/route.ts",
+    ]) {
+      const body = source(route);
+      expectOrdered(body, [
+        "const amendRequested = parsed.data.amendOverlappingHolds === true;",
+        "if (amendRequested) {",
+        "await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;",
+        "await acquireLodgeCapacityLock(tx,",
+        "await findWholeLodgeHoldAmendments({",
+      ]);
+    }
+
     const cron = source("src/lib/cron-hut-leader-auto-assign.ts");
     expectOrdered(cron, [
       "await prisma.$transaction(async (tx) => {",
@@ -184,7 +214,10 @@ describe("lodge admission and assignment lock topology (#2701)", () => {
     expect(found.sort()).toEqual([
       // Decide overlap -> must hold the key and re-read under it.
       "src/app/api/admin/hut-leaders/[id]/route.ts", // PUT
-      "src/app/api/admin/hut-leaders/[id]/route.ts", // DELETE (removes only)
+      // DELETE: removes only, so it still runs no overlap read — but since
+      // #2698 it holds the lodge key, because removing a custodian hold
+      // widens every overlapping whole-lodge hold's represented bed set.
+      "src/app/api/admin/hut-leaders/[id]/route.ts", // DELETE
       "src/app/api/admin/hut-leaders/[id]/pin/route.ts", // PIN rotate only
       "src/app/api/admin/hut-leaders/route.ts", // POST
       "src/lib/cron-hut-leader-auto-assign.ts",
