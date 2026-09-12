@@ -30,6 +30,7 @@ import {
   BookingRequestType,
   BookingStatus,
   HutLeaderAssignmentSource,
+  OrganisationContactRole,
   PaymentSource,
   PaymentStatus,
   Prisma,
@@ -37,6 +38,10 @@ import {
 } from "@prisma/client";
 import { z } from "zod";
 import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
+import {
+  resolveOrCreateSchoolOrganisation,
+  type ResolvedSchoolOrganisation,
+} from "@/lib/school-organisations";
 import { issueActionToken } from "@/lib/action-tokens";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
@@ -757,6 +762,9 @@ export async function approveSchoolBookingRequest(input: {
     bookingId: string;
     lodgeId: string;
     schoolMemberId: string;
+    // #3367: the school this approval resolved or created. Null only on the
+    // idempotent replay path, which writes nothing and owes no correspondence.
+    organisation: ResolvedSchoolOrganisation | null;
     teacherAssignments: Array<{
       memberId: string;
       assignmentId: string;
@@ -829,6 +837,9 @@ export async function approveSchoolBookingRequest(input: {
           bookingId: committedConversion.convertedBookingId,
           lodgeId: bookingLodgeId,
           schoolMemberId: committedConversion.convertedMemberId,
+          // A replay wrote no rows; the first approval already linked the
+          // school and queued its invoice.
+          organisation: null,
           teacherAssignments: [],
           ownerSubstitution: null,
           alreadyConverted: true as const,
@@ -953,6 +964,35 @@ export async function approveSchoolBookingRequest(input: {
         heldBookingId: request.heldBookingId ?? null,
       });
 
+      /*
+        #3367 (stage 2 of programme #2912) — THE SCHOOL BECOMES A RECORD OF ITS
+        OWN, and from this release it is the invoiced and contacted party.
+
+        Resolved or created HERE, inside the approval transaction and under the
+        locks it already holds. The global `pg_advisory_xact_lock(1)` taken at
+        the top of this transaction is the unique-name claim: two admins
+        approving two requests for one school are serialised by it, so the
+        read-then-create inside `resolveOrCreateSchoolOrganisation` cannot
+        interleave and mint two schools for one name. A repeat school resolves to
+        the record it already has, and therefore to the Xero customer it already
+        has, which is what stops a returning school spawning a duplicate contact.
+
+        NO PROVIDER CALL HAPPENS HERE. The Xero customer for this organisation is
+        created lazily by the invoice path after this transaction commits, the
+        same way a member's always has been — an F7 (#1355) property that must
+        survive.
+
+        The invented school MEMBER is still created below and still owns the
+        booking. That is deliberate: stage 4 (#3369) removes it, together with the
+        `Role.SCHOOL` literal the teachers below still carry. Stage 2 adds the
+        organisation and the association and changes neither.
+      */
+      const organisation = await resolveOrCreateSchoolOrganisation(tx, {
+        name: schoolName,
+        email: request.contactEmail,
+        phone: request.contactPhone,
+      });
+
       let booking: { id: string };
       let schoolMember: { id: string };
       // MG4-D-b (#2309): collected in whichever branch runs, dispatched after
@@ -1058,6 +1098,9 @@ export async function approveSchoolBookingRequest(input: {
             // no-substitution path this rewrites the same id (a no-op); bed
             // allocations live on guest rows and are unaffected by ownership.
             memberId: ownerId,
+            // #3367: the school this booking is for. The member link above is
+            // untouched — stage 4 (#3369) is where it becomes optional.
+            organisationId: organisation.id,
             // Exclusive whole-lodge hold when the request asked for it (#121).
             ...exclusiveHoldData,
           },
@@ -1126,6 +1169,9 @@ export async function approveSchoolBookingRequest(input: {
         const createdBooking = await tx.booking.create({
           data: {
             memberId: schoolMember.id,
+            // #3367: the school this booking is for. The member link above is
+            // untouched — stage 4 (#3369) is where it becomes optional.
+            organisationId: organisation.id,
             lodgeId: bookingLodgeId,
             checkIn: request.checkIn,
             checkOut: request.checkOut,
@@ -1303,6 +1349,48 @@ export async function approveSchoolBookingRequest(input: {
           select: { id: true },
         });
 
+        /*
+          #3367: the REAL TEACHER, recorded against the school as a person
+          rather than the school being invented as a person.
+
+          This is the row the school's Xero contact reads to name a contact
+          person on it (owner decision, 13 September 2026) — so a treasurer can
+          see who to talk to without leaving Xero. When a school's teacher
+          changes, the next approval writes a new row here and the next Xero
+          contact resolution pushes it; `organisation-xero-contacts.ts` holds the
+          full answer.
+
+          `upsert`, not `create`: the same teacher returning with the same school
+          is the ordinary case, and `@@unique([organisationId, memberId])` would
+          otherwise abort an approval over an association that is already true.
+          A teacher member is created fresh per approval today, so in practice
+          this inserts; the upsert is what keeps that an implementation detail
+          rather than a constraint this code depends on.
+
+          THE TEACHER STILL CARRIES `Role.SCHOOL` above. That is not an oversight
+          and a reader who notices it deserves the reason: the owner declined
+          changing it in this stage (13 September 2026, choice B) because a
+          teacher's `HutLeaderAssignment` is tied to this area and the schema
+          warns that reclassifying a member can silently remove a live
+          assignment. Stage 4 (#3369) retires the role vocabulary in one step,
+          together with the invented school member. A Xero contact person is a
+          name and an address, not a role, so the two facts do not conflict.
+        */
+        await tx.organisationContact.upsert({
+          where: {
+            organisationId_memberId: {
+              organisationId: organisation.id,
+              memberId: teacherMember.id,
+            },
+          },
+          create: {
+            organisationId: organisation.id,
+            memberId: teacherMember.id,
+            role: OrganisationContactRole.TEACHER,
+          },
+          update: { role: OrganisationContactRole.TEACHER },
+        });
+
         teacherAssignments.push({
           memberId: teacherMember.id,
           assignmentId: teacherAssignment.id,
@@ -1318,6 +1406,9 @@ export async function approveSchoolBookingRequest(input: {
           status: BookingRequestStatus.CONVERTED,
           convertedBookingId: booking.id,
           convertedMemberId: schoolMember.id,
+          // #3367: the request keeps the school it converted into, so #2936's
+          // request editing and stage 4's census both read one answer.
+          organisationId: organisation.id,
           version: { increment: 1 },
           // Keep the request snapshot consistent with what was actually booked
           // when the admin varied the quantity.
@@ -1331,6 +1422,7 @@ export async function approveSchoolBookingRequest(input: {
         bookingId: booking.id,
         lodgeId: bookingLodgeId,
         schoolMemberId: schoolMember.id,
+        organisation,
         teacherAssignments,
         ownerSubstitution,
         alreadyConverted: false as const,
@@ -1445,15 +1537,22 @@ export async function approveSchoolBookingRequest(input: {
       // mapped), which can differ from the raw request school/contact. On the
       // non-mapped path the owner's name/email equal schoolName/contactEmail, so
       // this resolves to the same values (no behaviour change).
+      //
+      // #3367: where an ORGANISATION is linked, IT is the invoiced party, so the
+      // officer is told to invoice the school by its own recorded name rather
+      // than by whatever the invented member row happens to be called. This is
+      // the manual half of the same change the Xero path makes by resolving the
+      // organisation's contact; a booking with no organisation is unchanged.
       const invoiceOwner = await prisma.member.findUnique({
         where: { id: conversion.schoolMemberId },
         select: { firstName: true, lastName: true, email: true },
       });
-      const invoiceName =
+      const ownerName =
         [invoiceOwner?.firstName, invoiceOwner?.lastName]
           .filter(Boolean)
           .join(" ")
           .trim() || schoolName;
+      const invoiceName = conversion.organisation?.name ?? ownerName;
       const invoiceEmail = invoiceOwner?.email ?? request.contactEmail;
       sendAdminSchoolManualInvoiceEmail({
         schoolName: invoiceName,
@@ -1485,6 +1584,10 @@ export async function approveSchoolBookingRequest(input: {
         schoolName,
         bookingId: conversion.bookingId,
         schoolMemberId: conversion.schoolMemberId,
+        // #3367: which school record this booking was attached to, and whether
+        // this approval was the one that created it.
+        organisationId: conversion.organisation?.id ?? null,
+        organisationCreated: conversion.organisation?.created ?? false,
         priceCents: totalPriceCents,
         guestCount: guests.length,
         teacherCount: conversion.teacherAssignments.length,
