@@ -18,6 +18,10 @@ export const MEMBER_PARENT_PARTNER_EXCLUSION_CONSTRAINT =
   "MemberParentPartnerExclusion_no_overlap";
 export const MEMBER_PARENT_PARTNER_EXCLUSION_DATABASE_MESSAGE =
   "member_parent_partner_exclusion_conflict";
+export const MEMBER_PARENT_PARTNER_EXCLUSION_STATE_CONSTRAINT =
+  "MemberParentPartnerExclusion_pair_canonical";
+export const MEMBER_PARENT_PARTNER_EXCLUSION_STATE_MESSAGE =
+  "member_parent_partner_exclusion_state_invalid";
 
 export type DirectParentMember = {
   id: string;

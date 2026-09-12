@@ -17,6 +17,10 @@ import {
   ADULT_MEMBER_HOSTING_POLICY_SET_LOCK_KEY,
   lockAdultMemberHostingPolicySet,
 } from "@/lib/adult-member-hosting-policy-set";
+import {
+  MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+  MEMBER_PARENT_PARTNER_EXCLUSION_DATABASE_MESSAGE,
+} from "@/lib/member-parent-partner-exclusivity";
 
 const MASTER_ID = "master-1";
 const LOSER_ID = "loser-1";
@@ -3056,6 +3060,39 @@ describe("refused member merges are audited (#2498)", () => {
     expectRefusedAudit(
       (auditLog as { create: ReturnType<typeof vi.fn> }).create,
       "preview_drift",
+    );
+  });
+
+  it("maps a database backstop race to an audited 409 without merge effects", async () => {
+    const { client, member, auditLog } = makeClient();
+    (client as { $transaction: ReturnType<typeof vi.fn> }).$transaction = vi
+      .fn()
+      .mockRejectedValue({
+        cause: {
+          originalMessage: MEMBER_PARENT_PARTNER_EXCLUSION_DATABASE_MESSAGE,
+        },
+      });
+
+    await expect(
+      executeMemberMerge({
+        masterId: MASTER_ID,
+        loserId: LOSER_ID,
+        actorMemberId: ACTOR_ID,
+        previewToken: validToken(),
+        confirmationText: "MERGE Dup Person",
+        db: client as never,
+      }),
+    ).rejects.toMatchObject({
+      message: MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+      statusCode: 409,
+      code: "parent_partner_overlap",
+    });
+
+    expect((member as { update: ReturnType<typeof vi.fn> }).update).not.toHaveBeenCalled();
+    expect((member as { delete: ReturnType<typeof vi.fn> }).delete).not.toHaveBeenCalled();
+    expectRefusedAudit(
+      (auditLog as { create: ReturnType<typeof vi.fn> }).create,
+      "parent_partner_overlap",
     );
   });
 

@@ -617,11 +617,11 @@ and nomination. There is no ordering that keeps both versions working.
    Prisma.
 
    9(a) **Validate.** Name every pending migration's `migration.sql`. For this
-   release the complete ordered set is six migrations; do not validate only the two
+   release the complete ordered set is eight migrations; do not validate only the
    windowed rows:
     ```bash
     ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1 \
-    BLUE_GREEN_MIGRATION_OVERRIDE_REASON="#2543 + #2520 + #2596 windowed maintenance window <DATE>: public traffic removed, web and all workers stopped, no old connections, fresh verified backup taken, pre-migration checks recorded" \
+    BLUE_GREEN_MIGRATION_OVERRIDE_REASON="#2543 + #2520 + #2596 + #3271 windowed maintenance window <DATE>: public traffic removed, web and all workers stopped, no old connections, fresh verified backup taken, private repair and zero-conflict census passed, pre-migration checks recorded" \
     BLUE_GREEN_OLD_APP_AND_WORKERS_STOPPED=1 \
    ./scripts/validate-blue-green-migrations.sh \
      prisma/migrations/20260803010000_contract_subscription_lockout_drop_enabled/migration.sql \
@@ -629,7 +629,9 @@ and nomination. There is no ordering that keeps both versions working.
      prisma/migrations/20260803030000_contract_drop_family_group_member_role/migration.sql \
      prisma/migrations/20260803070000_add_hosting_coverage_incidents/migration.sql \
      prisma/migrations/20260806000000_add_hosting_notification_delivery_claim/migration.sql \
-     prisma/migrations/20260806010000_fence_hosting_coverage_delivery_claims/migration.sql
+     prisma/migrations/20260806010000_fence_hosting_coverage_delivery_claims/migration.sql \
+     prisma/migrations/20260913010000_add_booking_guest_night_adjustment/migration.sql \
+     prisma/migrations/20260914010000_add_member_parent_partner_exclusion/migration.sql
    ```
    Expect exit 0 with the override reason echoed back as a `WARNING:` line. It
    exits 1 without all three acknowledgements, and exits 1 regardless if `rollback.sql` is
@@ -852,7 +854,8 @@ private repair, not merely before `prisma migrate deploy`.
    it returns zero. If the approved row changed or any additional pair appears,
    stop: return those rows privately for individual owner decisions. Do not widen
    or automate the repair.
-7. Run `scripts/validate-blue-green-migrations.sh` with
+7. Run the exact eight-file `scripts/validate-blue-green-migrations.sh` command
+   in §2.4.1 step 9(a) with
    `ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1`, a non-empty
    `BLUE_GREEN_MIGRATION_OVERRIDE_REASON` naming the #3271 window, and the stopped
    runtime acknowledgement. Then run the normal compose migration service. The
@@ -860,17 +863,144 @@ private repair, not merely before `prisma migrate deploy`.
    `SHARE ROW EXCLUSIVE` mode, repeats the zero-overlap preflight, backfills the
    derived pair rows, installs the triggers, and commits atomically. A conflict
    aborts without leaving the table, functions, or triggers behind.
-8. Verify the migration-history row, pair-state counts, trigger/function presence,
-   and a sanitized conflicting-write refusal. The refusal must contain only the
-   pinned message/constraint contract and no member identifiers, counts, `DETAIL`,
-   or `HINT`. Start only the epic runtime and its workers, run the affected member,
-   family, partner, nomination, and merge smoke checks, inspect logs, and then
-   restore traffic.
+8. Verify the migration before starting any runtime. Run these read-only checks as
+   the migration role; each query returns counts only, never member identifiers:
+
+   ```sql
+   -- expect one finished row, one applied step, and no rollback marker
+   SELECT COUNT(*) AS applied_rows
+   FROM "_prisma_migrations"
+   WHERE migration_name = '20260914010000_add_member_parent_partner_exclusion'
+     AND finished_at IS NOT NULL
+     AND applied_steps_count = 1
+     AND rolled_back_at IS NULL;
+
+   -- expect the table name, 7 triggers, and 4 functions
+   SELECT to_regclass('"MemberParentPartnerExclusion"') AS pair_table;
+   SELECT COUNT(*) AS installed_triggers
+   FROM pg_trigger
+   WHERE NOT tgisinternal
+     AND tgname IN (
+       'Member_parent_partner_exclusion_insert',
+       'Member_parent_partner_exclusion_update',
+       'Member_parent_partner_exclusion_delete',
+       'MemberPartnerLink_parent_partner_exclusion_insert',
+       'MemberPartnerLink_parent_partner_exclusion_update',
+       'MemberPartnerLink_parent_partner_exclusion_delete',
+       'MemberParentPartnerExclusion_cleanup_zero_pair'
+     );
+   SELECT COUNT(*) AS installed_functions
+   FROM pg_proc
+   WHERE proname IN (
+     'member_parent_partner_apply_delta',
+     'member_parent_partner_member_edges_changed',
+     'member_parent_partner_partner_edges_changed',
+     'member_parent_partner_cleanup_zero_pair'
+   );
+   ```
+
+   Reconcile the derived rows to both source tables. This must return
+   `mismatched_pairs = 0` and `overlapping_pairs = 0`:
+
+   ```sql
+   WITH relationship_edges AS (
+     SELECT LEAST(m."id" COLLATE "C", m."parentMemberId" COLLATE "C") AS member_a_id,
+            GREATEST(m."id" COLLATE "C", m."parentMemberId" COLLATE "C") AS member_b_id,
+            1::INTEGER AS parent_delta, 0::INTEGER AS partner_delta
+     FROM "Member" m WHERE m."parentMemberId" IS NOT NULL
+     UNION ALL
+     SELECT LEAST(m."id" COLLATE "C", m."secondaryParentId" COLLATE "C"),
+            GREATEST(m."id" COLLATE "C", m."secondaryParentId" COLLATE "C"),
+            1::INTEGER, 0::INTEGER
+     FROM "Member" m WHERE m."secondaryParentId" IS NOT NULL
+     UNION ALL
+     SELECT LEAST(p."memberAId" COLLATE "C", p."memberBId" COLLATE "C"),
+            GREATEST(p."memberAId" COLLATE "C", p."memberBId" COLLATE "C"),
+            0::INTEGER, 1::INTEGER
+     FROM "MemberPartnerLink" p
+   ), expected AS (
+     SELECT member_a_id, member_b_id,
+            SUM(parent_delta)::INTEGER AS parent_count,
+            SUM(partner_delta)::INTEGER AS partner_count
+     FROM relationship_edges GROUP BY member_a_id, member_b_id
+   ), compared AS (
+     SELECT expected.member_a_id AS expected_a, actual."memberAId" AS actual_a,
+            expected.parent_count, actual."parentLinkCount",
+            expected.partner_count, actual."partnerLinkCount"
+     FROM expected
+     FULL JOIN "MemberParentPartnerExclusion" actual
+       ON actual."memberAId" = expected.member_a_id
+      AND actual."memberBId" = expected.member_b_id
+   )
+   SELECT COUNT(*) FILTER (
+            WHERE expected_a IS NULL OR actual_a IS NULL
+               OR parent_count <> "parentLinkCount"
+               OR partner_count <> "partnerLinkCount"
+          ) AS mismatched_pairs,
+          COUNT(*) FILTER (
+            WHERE "parentLinkCount" > 0 AND "partnerLinkCount" > 0
+          ) AS overlapping_pairs
+   FROM compared;
+   ```
+
+   Finally run the rollback-wrapped synthetic probe below. It creates only two
+   `example.invalid` members inside a transaction, catches the expected refusal,
+   verifies the complete non-PII error contract, and rolls every probe row back.
+   Use `psql -v ON_ERROR_STOP=1`; retain only the PASS result, not database logs:
+
+   ```sql
+   BEGIN;
+   INSERT INTO "Member" ("id", "email", "passwordHash", "firstName", "lastName", "updatedAt")
+   VALUES
+     ('ops-parent-partner-probe-a-3292', 'ops-parent-partner-probe-a-3292@example.invalid', 'probe-only', 'Probe', 'A', NOW()),
+     ('ops-parent-partner-probe-b-3292', 'ops-parent-partner-probe-b-3292@example.invalid', 'probe-only', 'Probe', 'B', NOW());
+   INSERT INTO "MemberPartnerLink" ("id", "memberAId", "memberBId", "status", "updatedAt")
+   VALUES ('ops-parent-partner-link-3292', 'ops-parent-partner-probe-a-3292', 'ops-parent-partner-probe-b-3292', 'PENDING', NOW());
+   DO $probe$
+   DECLARE
+     caught_message TEXT;
+     caught_constraint TEXT;
+     caught_detail TEXT;
+     caught_hint TEXT;
+   BEGIN
+     BEGIN
+       UPDATE "Member"
+       SET "parentMemberId" = 'ops-parent-partner-probe-a-3292'
+       WHERE "id" = 'ops-parent-partner-probe-b-3292';
+       RAISE EXCEPTION 'parent/partner exclusion probe unexpectedly committed';
+     EXCEPTION WHEN check_violation THEN
+       GET STACKED DIAGNOSTICS
+         caught_message = MESSAGE_TEXT,
+         caught_constraint = CONSTRAINT_NAME,
+         caught_detail = PG_EXCEPTION_DETAIL,
+         caught_hint = PG_EXCEPTION_HINT;
+       IF caught_message <> 'member_parent_partner_exclusion_conflict'
+          OR caught_constraint <> 'MemberParentPartnerExclusion_no_overlap'
+          OR COALESCE(caught_detail, '') <> ''
+          OR COALESCE(caught_hint, '') <> '' THEN
+         RAISE EXCEPTION 'parent/partner exclusion probe returned an unsafe contract';
+       END IF;
+     END;
+   END
+   $probe$;
+   ROLLBACK;
+
+   -- expect zero; proves no synthetic probe row survived
+   SELECT COUNT(*) AS surviving_probe_members
+   FROM "Member" WHERE "id" LIKE 'ops-parent-partner-probe-%-3292';
+   ```
+
+   Record all results in §8. Start only the epic runtime and its workers, run the
+   affected member, family, partner, nomination, and merge smoke checks, inspect
+   logs, and then restore traffic.
 
 **Rollback boundary.** Before any post-cutover source relationship write, keep
-traffic removed, stop the replacement runtime, run this migration's
-`rollback.sql`, verify the seven triggers, four functions, and pair table are gone,
-then start the previous runtime. The reverse changes no `Member` or
+traffic removed and stop the replacement runtime. If this migration shared the
+window with any other `windowed` migration, complete the entire reverse sequence
+in §2.4 before starting any previous-runtime process; reversing this migration
+alone does not restore old-runtime compatibility. Run this migration's
+`rollback.sql` first and verify the seven triggers, four functions, and pair table
+are gone. The reverse changes no `Member` or
 `MemberPartnerLink` row. Roll forward by reapplying the exact `migration.sql` by
 hand because Prisma history still records it as applied. Once the epic runtime or
 an operator has written a source relationship after cutover, `rollback.sql` alone
@@ -1562,6 +1692,13 @@ Fill this in live during the production window.
 | Windowed migration: pre-migration check output (§2.4.1 step 8) | _<paste 8(a) row count, 8(b) distinct role values + counts, 8(c) column shape, 8(d) replacement-client scalars>_ |
 | Windowed migration: per-row role dump (§2.4.1 step 8(e), REQUIRED) | _<host filename + the durable location it was moved to, beside the backup>_ |
 | Windowed migration: override reason used (§2.4.1 step 9a) | _<the exact BLUE_GREEN_MIGRATION_OVERRIDE_REASON string>_ |
+| #3271 stopped-runtime connection proof (§2.4.2 step 3) | _<PASS + timestamp; no connection details or identifiers>_ |
+| #3271 private repair and repeated zero-conflict census (§2.4.2 steps 5-6) | _<PASS only; never paste identifiers or private SQL>_ |
+| #3271 exact migration / rollback / roll-forward rehearsal (§2.4.2 step 2) | _<PASS + transcript artifact reference>_ |
+| #3271 migration row and artifact counts (§2.4.2 step 8) | _<1 row; table present; 7 triggers; 4 functions>_ |
+| #3271 source-to-pair reconciliation (§2.4.2 step 8) | _<0 mismatched pairs; 0 overlapping pairs>_ |
+| #3271 sanitized rollback-wrapped conflict probe (§2.4.2 step 8) | _<PASS; stable contract and 0 surviving probe members>_ |
+| #3271 rollback boundary acknowledged | _<roll forward, full shared-window reverse, or backup recovery; owner + time>_ |
 | AgeTier plan (quiet window / deferred backfill) | _<...>_ |
 | Cutover time (step 17) | _<HH:MM TZ>_ |
 | Modules re-enabled | _<list>_ |

@@ -13,6 +13,13 @@ export type MeasuredMemberParentWriterSite = {
   persistence: MemberParentWriterPersistence;
 };
 
+export type MeasuredMemberPartnerWriterSite = {
+  file: string;
+  site: string;
+  persistence: MemberParentWriterPersistence;
+  operation: "create-or-move" | "remove";
+};
+
 type RawSite = Omit<MeasuredMemberParentWriterSite, "site"> & {
   baseSite: string;
   position: number;
@@ -29,6 +36,11 @@ const MEMBER_WRITE_METHODS = new Set([
   "update",
   "upsert",
   "updateMany",
+]);
+const PRISMA_WRITE_METHODS = new Set([
+  ...MEMBER_WRITE_METHODS,
+  "delete",
+  "deleteMany",
 ]);
 
 function propertyName(node: ts.PropertyName | undefined): string | null {
@@ -61,15 +73,109 @@ function scopeName(node: ts.Node): string {
   return "module";
 }
 
-function memberWriteMethod(call: ts.CallExpression): string | null {
+function writeCall(
+  sourceFile: ts.SourceFile,
+  call: ts.CallExpression,
+): { method: string; delegate: string | null } | null {
   if (!ts.isPropertyAccessExpression(call.expression)) return null;
   const method = call.expression.name.text;
-  if (!MEMBER_WRITE_METHODS.has(method)) return null;
-  const delegate = call.expression.expression;
-  if (!ts.isPropertyAccessExpression(delegate) || delegate.name.text !== "member") {
-    return null;
+  if (!PRISMA_WRITE_METHODS.has(method)) return null;
+
+  const resolveDelegate = (
+    expression: ts.Expression,
+    seen = new Set<string>(),
+  ): string | null => {
+    const current = unwrapExpression(expression);
+    if (ts.isPropertyAccessExpression(current)) return current.name.text;
+    if (!ts.isIdentifier(current) || seen.has(current.text)) return null;
+    seen.add(current.text);
+    const resolved = new Set(
+      identifierWrites(sourceFile, current.text)
+        .map((written) => resolveDelegate(written, seen))
+        .filter((name): name is string => name !== null),
+    );
+    return resolved.size === 1 ? [...resolved][0] : null;
+  };
+
+  return {
+    method,
+    delegate: resolveDelegate(call.expression.expression),
+  };
+}
+
+function expressionContainsParentShape(expression: ts.Expression): boolean {
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (
+      (ts.isPropertyAssignment(node) || ts.isShorthandPropertyAssignment(node)) &&
+      PARENT_COLUMNS.has(propertyName(node.name) ?? "")
+    ) {
+      found = true;
+      return;
+    }
+    const name =
+      ts.isPropertyAssignment(node) || ts.isShorthandPropertyAssignment(node)
+        ? propertyName(node.name)
+        : null;
+    if (name && PARENT_RELATIONS.has(name)) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(expression);
+  return found;
+}
+
+function expressionContainsNestedPartnerWrite(expression: ts.Expression): boolean {
+  let hasEndpoint = false;
+  let hasPartnerRelation = false;
+  const visit = (node: ts.Node): void => {
+    if (ts.isPropertyAssignment(node) || ts.isShorthandPropertyAssignment(node)) {
+      const name = propertyName(node.name);
+      if (name === "memberAId" || name === "memberBId") hasEndpoint = true;
+      if (
+        name === "partnerLinksAsMemberA" ||
+        name === "partnerLinksAsMemberB" ||
+        name === "memberPartnerLink"
+      ) {
+        hasPartnerRelation = true;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(expression);
+  return hasEndpoint || hasPartnerRelation;
+}
+
+function resolvedExpressionContains(
+  sourceFile: ts.SourceFile,
+  expression: ts.Expression,
+  predicate: (expression: ts.Expression) => boolean,
+  seen = new Set<number>(),
+): boolean {
+  const current = unwrapExpression(expression);
+  if (seen.has(current.pos)) return false;
+  seen.add(current.pos);
+  if (predicate(current)) return true;
+  if (!ts.isIdentifier(current)) return false;
+  return identifierWrites(sourceFile, current.text).some((written) =>
+    resolvedExpressionContains(sourceFile, written, predicate, seen),
+  );
+}
+
+function sqlText(node: ts.Node): string | null {
+  if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
+    return node.text;
   }
-  return method;
+  if (ts.isTemplateExpression(node)) {
+    return [
+      node.head.text,
+      ...node.templateSpans.flatMap((span) => ["__EXPRESSION__", span.literal.text]),
+    ].join("");
+  }
+  return null;
 }
 
 function propertyAssignment(
@@ -327,24 +433,53 @@ function collectRawSqlParentWrites(
   found: RawSite[],
 ): void {
   const visit = (node: ts.Node): void => {
-    if (ts.isStringLiteralLike(node)) {
+    const source = sqlText(node);
+    if (source !== null) {
       const updatePattern =
         /UPDATE\s+"Member"\s+SET([\s\S]*?)(?:\bWHERE\b|\bRETURNING\b|;)/gi;
-      for (const update of node.text.matchAll(updatePattern)) {
+      for (const update of source.matchAll(updatePattern)) {
         const assignments = update[1] ?? "";
         const columnPattern =
-          /"(parentMemberId|secondaryParentId)"\s*=\s*([^,;\r\n]+)/gi;
+          /(?:"(parentMemberId|secondaryParentId)"|"?__EXPRESSION__"?)\s*=\s*([^,;\r\n]+)/gi;
         for (const assignment of assignments.matchAll(columnPattern)) {
           const value = (assignment[2] ?? "").trim();
           if (/^NULL(?:\b|::)/i.test(value)) continue;
+          const column = assignment[1] ?? "dynamic-parent-column";
           found.push({
             file,
-            baseSite: `${scopeName(node)}/raw-sql-update:${assignment[1]}`,
+            baseSite: `${scopeName(node)}/raw-sql-update:${column}`,
             persistence,
             position:
               node.getStart() + (update.index ?? 0) + (assignment.index ?? 0),
           });
         }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+}
+
+function collectRawSqlPartnerWrites(
+  sourceFile: ts.SourceFile,
+  file: string,
+  persistence: MemberParentWriterPersistence,
+  found: Array<MeasuredMemberPartnerWriterSite & { position: number }>,
+): void {
+  const visit = (node: ts.Node): void => {
+    const source = sqlText(node);
+    if (source !== null) {
+      for (const match of source.matchAll(
+        /\b(INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+"MemberPartnerLink"/gi,
+      )) {
+        const verb = (match[1] ?? "").toUpperCase();
+        found.push({
+          file,
+          site: `${scopeName(node)}/raw-sql-${verb.startsWith("DELETE") ? "delete" : verb.startsWith("INSERT") ? "insert" : "update"}`,
+          persistence,
+          operation: verb.startsWith("DELETE") ? "remove" : "create-or-move",
+          position: node.getStart() + (match.index ?? 0),
+        });
       }
     }
     ts.forEachChild(node, visit);
@@ -469,18 +604,28 @@ export function scanMemberParentWriterSources(
     const persistence = fixturePersistence(file);
     const visit = (node: ts.Node): void => {
       if (ts.isCallExpression(node)) {
-        const method = memberWriteMethod(node);
-        if (method && node.arguments[0]) {
+        const write = writeCall(sourceFile, node);
+        if (write && MEMBER_WRITE_METHODS.has(write.method) && node.arguments[0]) {
           for (const args of resolveObjectLiterals(
             sourceFile,
             node.arguments[0],
           )) {
-            const dataExpressions = memberWriteDataExpressions(args, method);
+            const dataExpressions = memberWriteDataExpressions(args, write.method);
             for (const data of dataExpressions) {
+              if (
+                write.delegate !== "member" &&
+                !resolvedExpressionContains(
+                  sourceFile,
+                  data,
+                  expressionContainsParentShape,
+                )
+              ) {
+                continue;
+              }
               collectResolvedParentShapes(
                 sourceFile,
                 data,
-                { file, method, persistence },
+                { file, method: write.method, persistence },
                 found,
               );
             }
@@ -526,6 +671,87 @@ export function scanMemberParentWriterSources(
         (totals.get(key) ?? 0) > 1
           ? `${rawSite.baseSite}#${ordinal}`
           : rawSite.baseSite,
+    };
+  });
+}
+
+/**
+ * Closed-world inventory of MemberPartnerLink persistence. Direct and aliased
+ * delegates are resolved, nested writes are conservatively recognized from
+ * their endpoint/relation shape, and interpolated tagged SQL is reconstructed
+ * with opaque placeholders before matching.
+ */
+export function scanMemberPartnerWriterSources(
+  sources: ReadonlyMap<string, string>,
+): MeasuredMemberPartnerWriterSite[] {
+  const found: Array<MeasuredMemberPartnerWriterSite & { position: number }> = [];
+
+  for (const [file, source] of sources) {
+    const sourceFile = ts.createSourceFile(
+      file,
+      stripComments(source),
+      ts.ScriptTarget.Latest,
+      true,
+      file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+    );
+    const persistence = fixturePersistence(file);
+    const visit = (node: ts.Node): void => {
+      if (ts.isCallExpression(node)) {
+        const write = writeCall(sourceFile, node);
+        if (write && node.arguments[0]) {
+          const argsObjects = resolveObjectLiterals(sourceFile, node.arguments[0]);
+          const nestedPartnerWrite = argsObjects.some((args) =>
+            memberWriteDataExpressions(args, write.method).some(
+              (data) =>
+                resolvedExpressionContains(
+                  sourceFile,
+                  data,
+                  expressionContainsNestedPartnerWrite,
+                ),
+            ),
+          );
+          if (write.delegate === "memberPartnerLink" || nestedPartnerWrite) {
+            found.push({
+              file,
+              site: `${scopeName(node)}/memberPartnerLink.${write.method}`,
+              persistence,
+              operation:
+                write.method === "delete" || write.method === "deleteMany"
+                  ? "remove"
+                  : "create-or-move",
+              position: node.getStart(),
+            });
+          }
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sourceFile);
+    collectRawSqlPartnerWrites(sourceFile, file, persistence, found);
+  }
+
+  const ordered = found.sort(
+    (left, right) =>
+      left.file.localeCompare(right.file) || left.position - right.position,
+  );
+  const totals = new Map<string, number>();
+  for (const site of ordered) {
+    const key = `${site.file}\0${site.site}`;
+    totals.set(key, (totals.get(key) ?? 0) + 1);
+  }
+  const seen = new Map<string, number>();
+  return ordered.map((rawSite) => {
+    const key = `${rawSite.file}\0${rawSite.site}`;
+    const ordinal = (seen.get(key) ?? 0) + 1;
+    seen.set(key, ordinal);
+    return {
+      file: rawSite.file,
+      persistence: rawSite.persistence,
+      operation: rawSite.operation,
+      site:
+        (totals.get(key) ?? 0) > 1
+          ? `${rawSite.site}#${ordinal}`
+          : rawSite.site,
     };
   });
 }

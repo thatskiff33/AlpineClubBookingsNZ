@@ -5,7 +5,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   scanMemberParentWriterSources,
+  scanMemberPartnerWriterSources,
   type MeasuredMemberParentWriterSite,
+  type MeasuredMemberPartnerWriterSite,
 } from "./support/member-parent-writer-census";
 
 type Classification =
@@ -16,6 +18,17 @@ type Classification =
 
 type ReviewedSite = MeasuredMemberParentWriterSite & {
   classification: Classification;
+  note: string;
+};
+
+type PartnerClassification =
+  | "guarded-existing-id"
+  | "new-id-only"
+  | "removal-only"
+  | "demo-test-only";
+
+type ReviewedPartnerSite = MeasuredMemberPartnerWriterSite & {
+  classification: PartnerClassification;
   note: string;
 };
 
@@ -51,6 +64,32 @@ const REVIEWED_PARENT_WRITER_MANIFEST: readonly ReviewedSite[] = [
     persistence: "demo-test-fixture",
     classification: "demo-test-only",
     note: "Sanitized migration-verification fixture, not an application writer.",
+  })),
+  {
+    file:
+      "prisma/migration-verification/20260914010000_add_member_parent_partner_exclusion.ts",
+    site:
+      "preExistingOverlapCase/raw-sql-update:dynamic-parent-column",
+    persistence: "demo-test-fixture",
+    classification: "demo-test-only",
+    note:
+      "The typed parent-column interpolation expands sanitized migration-verification fixtures only; it is not an application writer.",
+  },
+  ...[
+    "parentMemberId#1",
+    "secondaryParentId#1",
+    "parentMemberId#2",
+    "secondaryParentId#2",
+    "parentMemberId#3",
+    "secondaryParentId#3",
+  ].map((site): ReviewedSite => ({
+    file:
+      "prisma/migration-verification/20260914010000_add_member_parent_partner_exclusion.ts",
+    site: `module/raw-sql-update:${site}`,
+    persistence: "demo-test-fixture",
+    classification: "demo-test-only",
+    note:
+      "Sanitized migration-verification seed/mutant SQL for a disposable database; not an application writer.",
   })),
   {
     file: "scripts/audit-access-role-membership-cleanup.ts",
@@ -162,6 +201,111 @@ const REVIEWED_PARENT_WRITER_MANIFEST: readonly ReviewedSite[] = [
   },
 ];
 
+const REVIEWED_PARTNER_WRITER_MANIFEST: readonly ReviewedPartnerSite[] = [
+  ...[
+    "preExistingOverlapCase/raw-sql-insert",
+    "module/raw-sql-insert",
+  ].map((site): ReviewedPartnerSite => ({
+    file:
+      "prisma/migration-verification/20260914010000_add_member_parent_partner_exclusion.ts",
+    site,
+    persistence: "demo-test-fixture",
+    operation: "create-or-move",
+    classification: "demo-test-only",
+    note:
+      "Sanitized migration-verification seed SQL for a disposable database; not an application writer.",
+  })),
+  {
+    file: "src/lib/member-merge.ts",
+    site: "resolvePartnerLinks/memberPartnerLink.deleteMany",
+    persistence: "member-persistence",
+    operation: "remove",
+    classification: "removal-only",
+    note: "Merge deletes discarded links under its complete topology lock set.",
+  },
+  {
+    file: "src/lib/member-merge.ts",
+    site: "resolvePartnerLinks/memberPartnerLink.update",
+    persistence: "member-persistence",
+    operation: "create-or-move",
+    classification: "guarded-existing-id",
+    note:
+      "Merge re-points endpoints only after lifecycle, partner, and pair-row locks plus the authoritative topology re-read.",
+  },
+  {
+    file: "src/lib/member-partner-link.ts",
+    site: "pruneOtherPendingLinks/memberPartnerLink.deleteMany",
+    persistence: "member-persistence",
+    operation: "remove",
+    classification: "removal-only",
+    note: "Pending-link pruning removes relationship edges and cannot create an overlap.",
+  },
+  {
+    file: "src/lib/member-partner-link.ts",
+    site: "requestPartnerLink/memberPartnerLink.create",
+    persistence: "member-persistence",
+    operation: "create-or-move",
+    classification: "guarded-existing-id",
+    note: "Request creation runs through lockPartnerMembers and the direct-parent re-read.",
+  },
+  {
+    file: "src/lib/member-partner-link.ts",
+    site: "respondToPartnerLink/memberPartnerLink.deleteMany",
+    persistence: "member-persistence",
+    operation: "remove",
+    classification: "removal-only",
+    note: "Decline/removal deletes the pending relationship and cannot create an overlap.",
+  },
+  {
+    file: "src/lib/member-partner-link.ts",
+    site: "respondToPartnerLink/memberPartnerLink.updateMany",
+    persistence: "member-persistence",
+    operation: "create-or-move",
+    classification: "guarded-existing-id",
+    note: "Confirmation re-reads direct parentage after the pair's locks are held.",
+  },
+  {
+    file: "src/lib/member-partner-link.ts",
+    site: "removeOwnPartnerLink/memberPartnerLink.deleteMany",
+    persistence: "member-persistence",
+    operation: "remove",
+    classification: "removal-only",
+    note: "Member dissolution removes the relationship under the existing partner locks.",
+  },
+  ...[
+    "adminAssignPartnerLink/memberPartnerLink.update",
+    "adminAssignPartnerLink/memberPartnerLink.create",
+  ].map((site): ReviewedPartnerSite => ({
+    file: "src/lib/member-partner-link.ts",
+    site,
+    persistence: "member-persistence",
+    operation: "create-or-move",
+    classification: "guarded-existing-id",
+    note:
+      "Admin assignment locks the pair and re-reads direct parentage before promotion or creation.",
+  })),
+  {
+    file: "src/lib/member-partner-link.ts",
+    site: "adminRemovePartnerLink/memberPartnerLink.deleteMany",
+    persistence: "member-persistence",
+    operation: "remove",
+    classification: "removal-only",
+    note: "Admin removal deletes the relationship under the existing partner locks.",
+  },
+  ...[
+    "formPartnerLinkOnClaim/memberPartnerLink.update",
+    "formPartnerLinkOnClaim/memberPartnerLink.create",
+  ].map((site): ReviewedPartnerSite => ({
+    file: "src/lib/member-partner-link.ts",
+    site,
+    persistence: "member-persistence",
+    operation: "create-or-move",
+    classification: "guarded-existing-id",
+    note:
+      "Invite-token claim locks the pair and re-reads direct parentage before its optional partner write.",
+  })),
+];
+
 const REPO_ROOT = process.cwd();
 const SOURCE_ROOTS = ["src", "prisma", "scripts"] as const;
 
@@ -200,6 +344,16 @@ function classifiedKey(
   return `${key(site)}\t${site.classification}`;
 }
 
+function partnerKey(site: MeasuredMemberPartnerWriterSite): string {
+  return `${site.file}\t${site.site}\t${site.persistence}\t${site.operation}`;
+}
+
+function classifiedPartnerKey(
+  site: MeasuredMemberPartnerWriterSite & { classification: string },
+): string {
+  return `${partnerKey(site)}\t${site.classification}`;
+}
+
 describe("member parent writer closed-world census", () => {
   it("equals the reviewed (file, site, classification) inventory", () => {
     const measured = scanMemberParentWriterSources(repositorySources());
@@ -220,6 +374,13 @@ describe("member parent writer closed-world census", () => {
   it("recognises scalar, nested-connect, computed merge, and non-runtime forms", () => {
     const measured = scanMemberParentWriterSources(
       new Map([
+        [
+          "src/aliased-delegate.ts",
+          `async function aliasedDelegate(tx: any, parentMemberId: string) {
+             const members = tx.member;
+             await members.update({ data: { parentMemberId } });
+           }`,
+        ],
         [
           "src/scalar.ts",
           `async function scalar(tx: any) {
@@ -267,11 +428,46 @@ describe("member parent writer closed-world census", () => {
            }`,
         ],
         [
+          "src/nested-member.ts",
+          `async function nestedMember(tx: any, parentMemberId: string) {
+             await tx.familyGroupMember.update({
+               data: { member: { update: { parentMemberId } } },
+             });
+           }`,
+        ],
+        [
+          "src/nested-indirect.ts",
+          `async function nestedIndirect(tx: any, parentMemberId: string) {
+             const nestedData = { member: { update: { parentMemberId } } };
+             await tx.familyGroupMember.update({ data: nestedData });
+           }`,
+        ],
+        [
           "src/raw.ts",
           `function rawSql() {
              return String.raw\`UPDATE "Member"
                SET "secondaryParentId" = 'parent', "updatedAt" = CURRENT_TIMESTAMP
                WHERE "id" = 'child';\`;
+           }`,
+        ],
+        [
+          "src/raw-tagged.ts",
+          `async function taggedRaw(tx: any, parentMemberId: string) {
+             await tx.$executeRaw\`UPDATE "Member"
+               SET "parentMemberId" = \${parentMemberId}
+               WHERE "id" = 'child'\`;
+           }`,
+        ],
+        [
+          "src/raw-dynamic-column.ts",
+          `async function rawDynamicColumn(
+             tx: any,
+             column: "parentMemberId" | "secondaryParentId",
+             value: string,
+           ) {
+             await tx.$executeRaw\`UPDATE "Member"
+               SET "\${column}" = \${value}
+               WHERE "id" = 'child'\`;
            }`,
         ],
         [
@@ -318,6 +514,11 @@ describe("member parent writer closed-world census", () => {
         persistence: "demo-test-fixture",
       },
       {
+        file: "src/aliased-delegate.ts",
+        site: "aliasedDelegate/member.update/scalar-shorthand:parentMemberId",
+        persistence: "member-persistence",
+      },
+      {
         file: "src/assigned.ts",
         site: "assigned/member.update/scalar:secondaryParentId",
         persistence: "member-persistence",
@@ -345,8 +546,28 @@ describe("member parent writer closed-world census", () => {
         persistence: "runtime-representation",
       },
       {
+        file: "src/nested-indirect.ts",
+        site: "nestedIndirect/member.update/scalar-shorthand:parentMemberId",
+        persistence: "member-persistence",
+      },
+      {
+        file: "src/nested-member.ts",
+        site: "nestedMember/member.update/scalar-shorthand:parentMemberId",
+        persistence: "member-persistence",
+      },
+      {
         file: "src/nested.ts",
         site: "nested/member.update/relation:secondaryParent.connect:secondaryParentId",
+        persistence: "member-persistence",
+      },
+      {
+        file: "src/raw-dynamic-column.ts",
+        site: "rawDynamicColumn/raw-sql-update:dynamic-parent-column",
+        persistence: "member-persistence",
+      },
+      {
+        file: "src/raw-tagged.ts",
+        site: "taggedRaw/raw-sql-update:parentMemberId",
         persistence: "member-persistence",
       },
       {
@@ -418,5 +639,118 @@ describe("member parent writer closed-world census", () => {
     );
 
     expect(measured).toEqual([]);
+  });
+});
+
+describe("member partner writer closed-world census", () => {
+  it("equals the reviewed runtime/test and operation inventory", () => {
+    const measured = scanMemberPartnerWriterSources(repositorySources());
+    const reviewByMeasuredSite = new Map(
+      REVIEWED_PARTNER_WRITER_MANIFEST.map((site) => [partnerKey(site), site]),
+    );
+    const classified = measured.map((site) => ({
+      ...site,
+      classification:
+        reviewByMeasuredSite.get(partnerKey(site))?.classification ??
+        "UNREVIEWED",
+      note:
+        reviewByMeasuredSite.get(partnerKey(site))?.note ?? "UNREVIEWED",
+    }));
+    expect(classified.map(classifiedPartnerKey)).toEqual(
+      REVIEWED_PARTNER_WRITER_MANIFEST.map(classifiedPartnerKey),
+    );
+  }, 30_000);
+
+  it("recognises direct, aliased, nested, interpolated SQL, and removal forms", () => {
+    const measured = scanMemberPartnerWriterSources(
+      new Map([
+        [
+          "src/aliased.ts",
+          `async function aliased(tx: any) {
+             const links = tx.memberPartnerLink;
+             await links.create({ data: { memberAId: "a", memberBId: "b" } });
+           }`,
+        ],
+        [
+          "src/direct.ts",
+          `async function direct(tx: any) {
+             await tx.memberPartnerLink.update({
+               where: { id: "link" },
+               data: { status: "CONFIRMED" },
+             });
+           }`,
+        ],
+        [
+          "src/nested.ts",
+          `async function nested(tx: any) {
+             await tx.member.update({
+               where: { id: "a" },
+               data: { partnerLinksAsMemberA: { create: { memberBId: "b" } } },
+             });
+           }`,
+        ],
+        [
+          "src/nested-indirect.ts",
+          `async function nestedIndirect(tx: any) {
+             const nestedData = {
+               partnerLinksAsMemberA: { create: { memberBId: "b" } },
+             };
+             await tx.member.update({ data: nestedData });
+           }`,
+        ],
+        [
+          "src/raw.ts",
+          `async function raw(tx: any, memberAId: string, memberBId: string) {
+             await tx.$executeRaw\`INSERT INTO "MemberPartnerLink"
+               ("memberAId", "memberBId") VALUES (\${memberAId}, \${memberBId})\`;
+           }`,
+        ],
+        [
+          "src/remove.ts",
+          `async function remove(tx: any) {
+             await tx.memberPartnerLink.deleteMany({ where: { memberAId: "a" } });
+           }`,
+        ],
+      ]),
+    );
+
+    expect(measured).toEqual([
+      {
+        file: "src/aliased.ts",
+        site: "aliased/memberPartnerLink.create",
+        persistence: "member-persistence",
+        operation: "create-or-move",
+      },
+      {
+        file: "src/direct.ts",
+        site: "direct/memberPartnerLink.update",
+        persistence: "member-persistence",
+        operation: "create-or-move",
+      },
+      {
+        file: "src/nested-indirect.ts",
+        site: "nestedIndirect/memberPartnerLink.update",
+        persistence: "member-persistence",
+        operation: "create-or-move",
+      },
+      {
+        file: "src/nested.ts",
+        site: "nested/memberPartnerLink.update",
+        persistence: "member-persistence",
+        operation: "create-or-move",
+      },
+      {
+        file: "src/raw.ts",
+        site: "raw/raw-sql-insert",
+        persistence: "member-persistence",
+        operation: "create-or-move",
+      },
+      {
+        file: "src/remove.ts",
+        site: "remove/memberPartnerLink.deleteMany",
+        persistence: "member-persistence",
+        operation: "remove",
+      },
+    ]);
   });
 });

@@ -7,6 +7,8 @@ import { jobBlock, stepBlock } from "./helpers/ci-workflow";
 import {
   MEMBER_PARENT_PARTNER_EXCLUSION_CONSTRAINT,
   MEMBER_PARENT_PARTNER_EXCLUSION_DATABASE_MESSAGE,
+  MEMBER_PARENT_PARTNER_EXCLUSION_STATE_CONSTRAINT,
+  MEMBER_PARENT_PARTNER_EXCLUSION_STATE_MESSAGE,
 } from "@/lib/member-parent-partner-exclusivity";
 
 const root = process.cwd();
@@ -32,6 +34,12 @@ describe("parent/partner database backstop contract (#3292)", () => {
     const sql = read(MIGRATION);
     expect(sql).toContain(`MESSAGE = '${MEMBER_PARENT_PARTNER_EXCLUSION_DATABASE_MESSAGE}'`);
     expect(sql).toContain(`CONSTRAINT = '${MEMBER_PARENT_PARTNER_EXCLUSION_CONSTRAINT}'`);
+    expect(sql).toContain(
+      `MESSAGE = '${MEMBER_PARENT_PARTNER_EXCLUSION_STATE_MESSAGE}'`,
+    );
+    expect(sql).toContain(
+      `CONSTRAINT = '${MEMBER_PARENT_PARTNER_EXCLUSION_STATE_CONSTRAINT}'`,
+    );
     expect(sql).toContain('COLLATE "C"');
     expect(sql).not.toContain("pg_advisory");
   });
@@ -77,6 +85,35 @@ describe("parent/partner database backstop contract (#3292)", () => {
     }
     expect(rollback).toContain('DROP TABLE "MemberParentPartnerExclusion";');
     expect(rollback.trimEnd().endsWith("COMMIT;")).toBe(true);
+  });
+
+  it("keeps the windowed validator and shared rollback boundary operator-visible", () => {
+    const runbook = read("docs/PRODUCTION_UPGRADE_RUNBOOK.md");
+    expectOrdered(runbook.slice(runbook.indexOf("9(a) **Validate.**")), [
+      "20260803010000_contract_subscription_lockout_drop_enabled/migration.sql",
+      "20260803020000_add_adult_member_hosting_enforced_and_host_scopes/migration.sql",
+      "20260803030000_contract_drop_family_group_member_role/migration.sql",
+      "20260803070000_add_hosting_coverage_incidents/migration.sql",
+      "20260806000000_add_hosting_notification_delivery_claim/migration.sql",
+      "20260806010000_fence_hosting_coverage_delivery_claims/migration.sql",
+      "20260913010000_add_booking_guest_night_adjustment/migration.sql",
+      "20260914010000_add_member_parent_partner_exclusion/migration.sql",
+    ]);
+    expect(runbook).toContain(
+      "#2543 + #2520 + #2596 + #3271 windowed maintenance window",
+    );
+    expect(runbook).toContain("reversing this migration");
+    expect(runbook).toContain(
+      "alone does not restore old-runtime compatibility",
+    );
+
+    const deployment = read("DEPLOYMENT.md");
+    expect(deployment).toContain("Pass all eight pending migration files");
+    expect(deployment).toContain("`20260913010000` and `20260914010000`");
+
+    const rollback = read(ROLLBACK);
+    expect(rollback).toContain("every other windowed");
+    expect(rollback).toContain("same maintenance window");
   });
 
   it("routes every existing-id writer through pair rows after advisory locks", () => {
@@ -136,7 +173,9 @@ describe("parent/partner database backstop contract (#3292)", () => {
     );
     expect(job).toContain("image: postgres:16-alpine");
     expect(step).toContain('RUN_CONCURRENCY_RACE_TESTS: "1"');
-    expect(step).toContain("CONCURRENCY_RACE_DATABASE_URL:");
+    expect(step).toContain(
+      "CONCURRENCY_RACE_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:55442/concurrency_race_1881",
+    );
     expect(step).toContain(
       "npx vitest run src/lib/__tests__/concurrency-lock-races.realdb.test.ts",
     );
@@ -148,6 +187,17 @@ describe("parent/partner database backstop contract (#3292)", () => {
     );
     const races = read(
       "src/lib/__tests__/member-parent-partner-exclusion-races.realdb.test.ts",
+    );
+    expect(races).toContain(
+      'const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";',
+    );
+    expect(races).toContain(
+      'const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";',
+    );
+    expect(races).toContain('const PREFIX = "race-3292-";');
+    expect(races).toContain("(RUN ? describe : describe.skip)(");
+    expect(races).toContain(
+      'assertSafeRaceDbUrl(RACE_DB_URL, "parent/partner exclusion");',
     );
     for (const name of [
       "lets exactly one application relationship type commit",

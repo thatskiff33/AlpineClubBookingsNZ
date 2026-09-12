@@ -4,7 +4,9 @@
 -- removed and every old/new web process, worker, scheduler and database
 -- connection is stopped. It removes only derived state and trigger machinery;
 -- it never changes Member or MemberPartnerLink source relationships. After it
--- commits, restore the pre-epic runtime before returning traffic. If source
+-- commits, restore the pre-epic runtime only after every other windowed
+-- migration applied in the same maintenance window has completed its reverse
+-- sequence from PRODUCTION_UPGRADE_RUNBOOK.md section 2.4. If source
 -- relationships changed after cutover, use the verified backup and owner-led
 -- recovery instead of assuming this schema-only reverse is a release rollback.
 

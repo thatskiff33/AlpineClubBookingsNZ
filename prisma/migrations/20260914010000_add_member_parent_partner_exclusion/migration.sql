@@ -23,6 +23,22 @@ LOCK TABLE "Member", "MemberPartnerLink" IN SHARE ROW EXCLUSIVE MODE;
 
 DO $member_parent_partner_preflight$
 BEGIN
+  -- A legacy self-parent pointer cannot form a canonical unordered pair. Catch
+  -- it before CREATE TABLE/backfill so PostgreSQL never emits a native failing-
+  -- row DETAIL containing the member id. This is a stop condition, not repair.
+  IF EXISTS (
+    SELECT 1
+    FROM "Member" m
+    WHERE m."id" = m."parentMemberId"
+       OR m."id" = m."secondaryParentId"
+    LIMIT 1
+  ) THEN
+    RAISE EXCEPTION USING
+      ERRCODE = '23514',
+      MESSAGE = 'member_parent_partner_exclusion_state_invalid',
+      CONSTRAINT = 'MemberParentPartnerExclusion_pair_canonical';
+  END IF;
+
   IF EXISTS (
     WITH parent_pairs AS (
       SELECT

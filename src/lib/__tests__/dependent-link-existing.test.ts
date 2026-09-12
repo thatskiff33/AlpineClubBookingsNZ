@@ -22,6 +22,7 @@ vi.mock("@/lib/logger", () => ({
 
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
+import logger from "@/lib/logger";
 import { POST } from "@/app/api/admin/members/[id]/dependents/link/route";
 import {
   LAST_FULL_ADMIN_GUARD_MESSAGE,
@@ -32,7 +33,10 @@ import {
   dependentLinkBlockers,
 } from "@/lib/dependent-link-eligibility";
 import { NO_INHERITABLE_EMAIL_SOURCE_MESSAGE } from "@/lib/member-parent-links";
-import { MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE } from "@/lib/member-parent-partner-exclusivity";
+import {
+  MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+  MEMBER_PARENT_PARTNER_EXCLUSION_DATABASE_MESSAGE,
+} from "@/lib/member-parent-partner-exclusivity";
 
 type MockAccessRole = { role: string | null; roleDefinitionId?: string | null; roleDefinition?: unknown };
 
@@ -755,6 +759,30 @@ describe("POST /api/admin/members/[id]/dependents/link", () => {
         expect(lockTexts[4]).toContain("MemberParentPartnerExclusion");
       },
     );
+
+    it("maps a database backstop race to a clean 409 without success effects or error logging", async () => {
+      const tx = setupTransaction([makeParent(), makeMember()]);
+      tx.member.update.mockRejectedValueOnce({
+        cause: {
+          originalMessage: MEMBER_PARENT_PARTNER_EXCLUSION_DATABASE_MESSAGE,
+        },
+      });
+
+      const res = await linkDependent({
+        memberId: "target-1",
+        inheritEmail: true,
+        disableLogin: true,
+        addToFamilyGroupIds: ["fg-1"],
+      });
+
+      expect(res.status).toBe(409);
+      expect(await res.json()).toEqual({
+        error: MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+      });
+      expect(tx.familyGroupMember.upsert).not.toHaveBeenCalled();
+      expect(tx.auditLog.create).not.toHaveBeenCalled();
+      expect(logger.error).not.toHaveBeenCalled();
+    });
 
     it("rejects the parent as their own dependant", async () => {
       const tx = setupTransaction([makeParent()]);

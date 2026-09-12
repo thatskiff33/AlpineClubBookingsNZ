@@ -4,10 +4,13 @@
  * unless the guarded disposable race database is explicitly enabled.
  */
 import type { Prisma, PrismaClient } from "@prisma/client";
+import { Client as PgClient } from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
+import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
 import { assertSafeRaceDbUrl } from "@/lib/__tests__/support/race-db-url";
 import {
+  MEMBER_PARENT_PARTNER_EXCLUSION_CONSTRAINT,
   MEMBER_PARENT_PARTNER_EXCLUSION_DATABASE_MESSAGE,
   acquireMemberParentPartnerPairLocks,
   hasAnyPartnerRelationship,
@@ -21,12 +24,51 @@ const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
 const PREFIX = "race-3292-";
 const TIMEOUT_MS = 45_000;
+const LOCK_POLL_TIMEOUT_MS = 5_000;
+const CLIENT_A_NAME = "race-3292-a";
+const CLIENT_B_NAME = "race-3292-b";
+const HOLDER_NAME = "race-3292-holder";
 
 let prisma: typeof import("@/lib/prisma")["prisma"];
 let clientA: PrismaClient;
 let clientB: PrismaClient;
+let holderClient: PrismaClient;
+let rawClient: PgClient;
 
 const id = (suffix: string) => `${PREFIX}${suffix}`;
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+async function waitForBlockedBy(
+  waitingApplicationName: string,
+  blockingApplicationName: string,
+) {
+  const startedAt = process.hrtime.bigint();
+  while (realElapsedMs(startedAt) < LOCK_POLL_TIMEOUT_MS) {
+    const [row] = await prisma.$queryRaw<Array<{ blocked: boolean }>>`
+      SELECT EXISTS (
+        SELECT 1
+        FROM pg_stat_activity waiter
+        INNER JOIN pg_stat_activity blocker
+          ON blocker.pid = ANY(pg_blocking_pids(waiter.pid))
+        WHERE waiter.application_name = ${waitingApplicationName}
+          AND waiter.wait_event_type = 'Lock'
+          AND blocker.application_name = ${blockingApplicationName}
+      ) AS blocked
+    `;
+    if (row?.blocked) return;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  throw new Error(
+    `${waitingApplicationName} did not block behind ${blockingApplicationName}`,
+  );
+}
 
 function memberRow(suffix: string) {
   return {
@@ -56,11 +98,13 @@ async function appParentWrite(
   client: PrismaClient,
   parentId: string,
   childId: string,
+  afterPairLocks?: () => Promise<void>,
 ): Promise<boolean> {
   try {
     return await client.$transaction(async (tx) => {
       await acquireMemberPartnerLinkLocks(tx, [parentId, childId]);
       await acquireMemberParentPartnerPairLocks(tx, [[parentId, childId]]);
+      await afterPairLocks?.();
       if (await hasAnyPartnerRelationship(tx, parentId, childId)) return false;
       await tx.member.update({
         where: { id: childId },
@@ -236,9 +280,16 @@ async function assertExactlyOneRelationship(
           adapter: createPrismaPgAdapter(url.toString()),
         });
       };
-      clientA = createClient("race-3292-a");
-      clientB = createClient("race-3292-b");
-      await Promise.all([clientA.$connect(), clientB.$connect()]);
+      clientA = createClient(CLIENT_A_NAME);
+      clientB = createClient(CLIENT_B_NAME);
+      holderClient = createClient(HOLDER_NAME);
+      rawClient = new PgClient({ connectionString: RACE_DB_URL });
+      await Promise.all([
+        clientA.$connect(),
+        clientB.$connect(),
+        holderClient.$connect(),
+        rawClient.connect(),
+      ]);
     });
 
     beforeEach(async () => {
@@ -284,7 +335,12 @@ async function assertExactlyOneRelationship(
           ],
         },
       });
-      await Promise.all([clientA?.$disconnect(), clientB?.$disconnect()]);
+      await Promise.all([
+        clientA?.$disconnect(),
+        clientB?.$disconnect(),
+        holderClient?.$disconnect(),
+        rawClient?.end(),
+      ]);
     });
 
     it("nets inserts, endpoint updates, statuses, both parent columns, and deletes", async () => {
@@ -380,6 +436,31 @@ async function assertExactlyOneRelationship(
         expect(serialized).not.toContain(memberBId);
         expect(serialized).not.toContain("Failing row contains");
       }
+
+      const rawMemberAId = id("primary-forward-a");
+      const rawMemberBId = id("primary-forward-b");
+      let rawError: Record<string, unknown> | undefined;
+      try {
+        await rawClient.query(
+          `UPDATE "Member" SET "parentMemberId" = $1 WHERE "id" = $2`,
+          [rawMemberAId, rawMemberBId],
+        );
+      } catch (error) {
+        rawError = error as Record<string, unknown>;
+      }
+      expect(rawError).toMatchObject({
+        code: "23514",
+        message: MEMBER_PARENT_PARTNER_EXCLUSION_DATABASE_MESSAGE,
+        constraint: MEMBER_PARENT_PARTNER_EXCLUSION_CONSTRAINT,
+      });
+      expect(rawError?.detail).toBeUndefined();
+      expect(rawError?.hint).toBeUndefined();
+      expect(
+        [rawError?.message, rawError?.detail, rawError?.hint].join("\n"),
+      ).not.toContain(rawMemberAId);
+      expect(
+        [rawError?.message, rawError?.detail, rawError?.hint].join("\n"),
+      ).not.toContain(rawMemberBId);
     });
 
     it("rejects partner inserts and endpoint updates when parentage wins first", async () => {
@@ -505,10 +586,34 @@ async function assertExactlyOneRelationship(
 
     it("lets exactly one application relationship type commit", async () => {
       await seedMembers("app-a", "app-b");
-      const results = await Promise.all([
-        appParentWrite(clientA, id("app-a"), id("app-b")),
-        appPartnerWrite(clientB, id("app-a"), id("app-b"), id("app-link")),
-      ]);
+      const firstWriterReachedPair = deferred();
+      const releaseFirstWriter = deferred();
+      const parentWrite = appParentWrite(
+        clientA,
+        id("app-a"),
+        id("app-b"),
+        async () => {
+          firstWriterReachedPair.resolve();
+          await releaseFirstWriter.promise;
+        },
+      );
+      await firstWriterReachedPair.promise;
+      const partnerWrite = appPartnerWrite(
+        clientB,
+        id("app-a"),
+        id("app-b"),
+        id("app-link"),
+      );
+      let contentionError: unknown;
+      try {
+        await waitForBlockedBy(CLIENT_B_NAME, CLIENT_A_NAME);
+      } catch (error) {
+        contentionError = error;
+      } finally {
+        releaseFirstWriter.resolve();
+      }
+      const results = await Promise.all([parentWrite, partnerWrite]);
+      if (contentionError) throw contentionError;
       await assertExactlyOneRelationship(id("app-a"), id("app-b"), results);
     });
 
@@ -560,26 +665,53 @@ async function assertExactlyOneRelationship(
 
     it("serializes opposing multi-row source statements in canonical pair order", async () => {
       await seedMembers("multi-a", "multi-b", "multi-c", "multi-d");
-      const results = await Promise.all([
-        directMultiParentWrite(
-          clientA,
-          id("multi-a"),
-          id("multi-b"),
-          id("multi-c"),
-          id("multi-d"),
-        ),
-        // Present the partner pairs in the opposite order. Both statement
-        // triggers must still acquire their derived pair rows in C order.
-        directMultiPartnerWrite(
-          clientB,
-          id("multi-c"),
-          id("multi-d"),
-          id("multi-link-cd"),
-          id("multi-a"),
-          id("multi-b"),
-          id("multi-link-ab"),
-        ),
+      const firstPairHeld = deferred();
+      const releaseFirstPair = deferred();
+      const holder = holderClient.$transaction(async (tx) => {
+        await acquireMemberParentPartnerPairLocks(tx, [
+          [id("multi-a"), id("multi-b")],
+        ]);
+        firstPairHeld.resolve();
+        await releaseFirstPair.promise;
+      });
+      await firstPairHeld.promise;
+
+      const parentWrite = directMultiParentWrite(
+        clientA,
+        id("multi-a"),
+        id("multi-b"),
+        id("multi-c"),
+        id("multi-d"),
+      );
+      // Present the partner pairs in the opposite order. Both statement
+      // triggers must still queue on the held first canonical pair before the
+      // holder releases it; otherwise the reversed writer can take C/D first
+      // and deadlock with the A/B-first writer after release.
+      const partnerWrite = directMultiPartnerWrite(
+        clientB,
+        id("multi-c"),
+        id("multi-d"),
+        id("multi-link-cd"),
+        id("multi-a"),
+        id("multi-b"),
+        id("multi-link-ab"),
+      );
+      let contentionError: unknown;
+      try {
+        await Promise.all([
+          waitForBlockedBy(CLIENT_A_NAME, HOLDER_NAME),
+          waitForBlockedBy(CLIENT_B_NAME, HOLDER_NAME),
+        ]);
+      } catch (error) {
+        contentionError = error;
+      } finally {
+        releaseFirstPair.resolve();
+      }
+      const [results] = await Promise.all([
+        Promise.all([parentWrite, partnerWrite]),
+        holder,
       ]);
+      if (contentionError) throw contentionError;
 
       expect(results.filter(Boolean)).toHaveLength(1);
       const children = await prisma.member.findMany({
@@ -617,22 +749,60 @@ async function assertExactlyOneRelationship(
 
     it("locks opposing raw pair lists in one canonical order without deadlock", async () => {
       await seedMembers("order-a", "order-b", "order-c", "order-d");
-      const result = await Promise.all([
-        clientA.$transaction(async (tx) => {
-          await acquireMemberParentPartnerPairLocks(tx, [
-            [id("order-d"), id("order-c")],
-            [id("order-b"), id("order-a")],
-          ]);
-          return "a";
-        }),
-        clientB.$transaction(async (tx) => {
-          await acquireMemberParentPartnerPairLocks(tx, [
-            [id("order-a"), id("order-b")],
-            [id("order-c"), id("order-d")],
-          ]);
-          return "b";
-        }),
+      // Keep the later C/D pair materialized so a NOWAIT row lock can prove
+      // neither contender reached it while both are queued on held A/B.
+      await prisma.member.update({
+        where: { id: id("order-d") },
+        data: { parentMemberId: id("order-c") },
+      });
+      const firstPairHeld = deferred();
+      const releaseFirstPair = deferred();
+      const holder = holderClient.$transaction(async (tx) => {
+        await acquireMemberParentPartnerPairLocks(tx, [
+          [id("order-a"), id("order-b")],
+        ]);
+        firstPairHeld.resolve();
+        await releaseFirstPair.promise;
+      });
+      await firstPairHeld.promise;
+
+      const writerA = clientA.$transaction(async (tx) => {
+        await acquireMemberParentPartnerPairLocks(tx, [
+          [id("order-d"), id("order-c")],
+          [id("order-b"), id("order-a")],
+        ]);
+        return "a";
+      });
+      const writerB = clientB.$transaction(async (tx) => {
+        await acquireMemberParentPartnerPairLocks(tx, [
+          [id("order-a"), id("order-b")],
+          [id("order-c"), id("order-d")],
+        ]);
+        return "b";
+      });
+      let contentionError: unknown;
+      try {
+        await Promise.all([
+          waitForBlockedBy(CLIENT_A_NAME, HOLDER_NAME),
+          waitForBlockedBy(CLIENT_B_NAME, HOLDER_NAME),
+        ]);
+        await prisma.$transaction((tx) => tx.$queryRaw`
+          SELECT "memberAId"
+          FROM "MemberParentPartnerExclusion"
+          WHERE "memberAId" = ${id("order-c")}
+            AND "memberBId" = ${id("order-d")}
+          FOR UPDATE NOWAIT
+        `);
+      } catch (error) {
+        contentionError = error;
+      } finally {
+        releaseFirstPair.resolve();
+      }
+      const [result] = await Promise.all([
+        Promise.all([writerA, writerB]),
+        holder,
       ]);
+      if (contentionError) throw contentionError;
       expect(result).toEqual(["a", "b"]);
     });
   },

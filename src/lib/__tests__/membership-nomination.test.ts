@@ -103,6 +103,7 @@ vi.mock("bcryptjs", () => ({
 }));
 
 import { prisma } from "@/lib/prisma";
+import logger from "@/lib/logger";
 import {
   approveMemberApplication,
   confirmNomination,
@@ -131,6 +132,10 @@ import {
 import { logAudit } from "@/lib/audit";
 import { hashActionToken } from "@/lib/action-tokens";
 import { FAMILY_LINK_GENERATION_LIMIT_ERROR } from "@/lib/member-family-link-depth";
+import {
+  MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+  MEMBER_PARENT_PARTNER_EXCLUSION_DATABASE_MESSAGE,
+} from "@/lib/member-parent-partner-exclusivity";
 
 describe("membership nomination workflow", () => {
   beforeEach(() => {
@@ -848,6 +853,48 @@ describe("membership nomination workflow", () => {
       memberIds: ["member-1", "member-2"],
       approvedByMemberId: "admin-1",
     });
+  });
+
+  it("maps an approval database backstop race to a clean 409 before post-commit effects", async () => {
+    vi.mocked(prisma.memberApplication.findUnique).mockResolvedValue({
+      id: "app-db-race",
+      applicantFirstName: "Jane",
+      applicantLastName: "Doe",
+      applicantEmail: "jane@test.com",
+      applicantDateOfBirth: new Date("1990-05-01T00:00:00.000Z"),
+      applicantPhone: "64 21 5551234",
+      applicantAddress: null,
+      familyMembers: [],
+      nominator1Email: "nominator1@test.com",
+      nominator2Email: "nominator2@test.com",
+      nominator1Id: "nom-1",
+      nominator2Id: "nom-2",
+      nominator1ConfirmedAt: new Date("2026-04-12T01:00:00.000Z"),
+      nominator2ConfirmedAt: new Date("2026-04-12T02:00:00.000Z"),
+      status: "PENDING_ADMIN",
+      adminNotes: null,
+      reviewedBy: null,
+      reviewedAt: null,
+      createdAt: new Date("2026-04-12T00:00:00.000Z"),
+      updatedAt: new Date("2026-04-12T00:00:00.000Z"),
+    } as never);
+    vi.mocked(prisma.$transaction).mockRejectedValue({
+      cause: { originalMessage: MEMBER_PARENT_PARTNER_EXCLUSION_DATABASE_MESSAGE },
+    } as never);
+
+    await expect(
+      approveMemberApplication("app-db-race", "admin-1"),
+    ).rejects.toMatchObject({
+      message: MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+      status: 409,
+    });
+
+    expect(sendMembershipApplicationApprovedEmail).not.toHaveBeenCalled();
+    expect(findOrCreateXeroContact).not.toHaveBeenCalled();
+    expect(enqueueXeroEntranceFeeInvoiceOperation).not.toHaveBeenCalled();
+    expect(subscriptionBillingMock.queueApprovedMembershipSubscriptionCharges).not.toHaveBeenCalled();
+    expect(logAudit).not.toHaveBeenCalled();
+    expect(logger.error).not.toHaveBeenCalled();
   });
 
   /**

@@ -53,6 +53,7 @@ vi.mock("@/lib/email", () => ({
 
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import logger from "@/lib/logger";
 import { logAudit } from "@/lib/audit";
 import {
   sendChildRequestApprovedEmail,
@@ -60,7 +61,10 @@ import {
   sendGroupCreateApprovedEmail,
   sendGroupCreateRejectedEmail,
 } from "@/lib/email";
-import { MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE } from "@/lib/member-parent-partner-exclusivity";
+import {
+  MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+  MEMBER_PARENT_PARTNER_EXCLUSION_DATABASE_MESSAGE,
+} from "@/lib/member-parent-partner-exclusivity";
 import {
   reviewAdminFamilyGroupRequest,
   REVIEWED_REQUEST_TYPES,
@@ -927,6 +931,58 @@ describe("reviewAdminFamilyGroupRequest — CHILD_REQUEST memberless-group guard
       expect(sendChildRequestApprovedEmail).not.toHaveBeenCalled();
     },
   );
+
+  it("maps a database backstop race to 409 without approval side effects or error logging", async () => {
+    mockedPrisma.familyGroupJoinRequest.findUnique.mockResolvedValue(
+      childRequest() as any,
+    );
+    mockedPrisma.familyGroupMember.count.mockResolvedValue(1);
+    mockedPrisma.member.findUnique.mockResolvedValue({
+      id: "child-1", active: true, archivedAt: null, ageTier: "CHILD",
+      canLogin: false, parentMemberId: null, secondaryParentId: null,
+      inheritEmailFromId: null, parent: null, secondaryParent: null,
+      dependents: [], secondaryDependents: [],
+    } as any);
+
+    const txMemberUpdate = vi.fn().mockRejectedValue({
+      cause: { originalMessage: MEMBER_PARENT_PARTNER_EXCLUSION_DATABASE_MESSAGE },
+    });
+    const txMembershipUpsert = vi.fn();
+    const txRequestUpdate = vi.fn();
+    mockedPrisma.$transaction.mockImplementation(async (fn: any) => fn({
+      $executeRaw: vi.fn().mockResolvedValue(undefined),
+      member: {
+        findUnique: vi.fn(async ({ where }: { where: { id: string } }) =>
+          where.id === "member-1"
+            ? { id: "member-1", active: true, archivedAt: null, ageTier: "ADULT",
+                email: "member-1@test.com", inheritEmailFromId: null,
+                inheritEmailChoiceId: null }
+            : { id: "child-1", active: true, archivedAt: null, ageTier: "CHILD",
+                canLogin: false, parentMemberId: null, secondaryParentId: null,
+                inheritEmailFromId: null, inheritEmailChoiceId: null,
+                parent: null, secondaryParent: null }),
+        findMany: vi.fn().mockResolvedValue([]),
+        update: txMemberUpdate,
+      },
+      memberPartnerLink: { findUnique: vi.fn().mockResolvedValue(null) },
+      familyGroupMember: { upsert: txMembershipUpsert },
+      familyGroupJoinRequest: { update: txRequestUpdate },
+    }));
+
+    const result = await reviewAdminFamilyGroupRequest({
+      adminMemberId: ADMIN_ID,
+      data: { requestId: "req-child", action: "approve", linkedMemberId: "child-1" },
+    });
+
+    expect(result.init?.status).toBe(409);
+    expect(result.body).toEqual({ error: MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE });
+    expect(txMemberUpdate).toHaveBeenCalledTimes(1);
+    expect(txMembershipUpsert).not.toHaveBeenCalled();
+    expect(txRequestUpdate).not.toHaveBeenCalled();
+    expect(logAudit).not.toHaveBeenCalled();
+    expect(sendChildRequestApprovedEmail).not.toHaveBeenCalled();
+    expect(logger.error).not.toHaveBeenCalled();
+  });
 
   /**
    * THE REQUESTER-ADULT GATE ON APPROVAL (#2282 review).
