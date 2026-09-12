@@ -2026,7 +2026,9 @@ move, never a capacity or double-booking violation.
   token would be the fix if that ever stops being true.
   **Lock order (`INV-LOCK-002`).** The accept path takes the global cohort key
   `pg_advisory_xact_lock(1)` and THEN `acquireLodgeCapacityLock`, in that order,
-  decided from the request before any lock is taken so the order cannot invert.
+  decided from the request — and from whether a bed is involved at all, since a
+  bedless write can narrow nothing and must not join the cancel/settlement
+  cohort — before any lock is taken, so the order cannot invert.
   The global key is needed because the hold RELEASE path (booking cancel's
   `RELEASE_WHOLE_LODGE_HOLD_UPDATE`) serialises on the club-wide key and never
   on this lodge's. The detect-and-refuse path writes nothing and keeps the
