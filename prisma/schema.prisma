@@ -2985,6 +2985,13 @@ model PaymentTransaction {
   xeroInvoiceNumber     String?
   reference             String?
   amountCents           Int
+  /// #3371: how much of `amountCents` was ABSORBED from an ask this mint retired,
+  /// rather than derived from this edit's own figures. Minting an ADDITIONAL
+  /// PaymentIntent cancels every other live one on the payment, so the new ask
+  /// carries the unpaid balance of the one it supersedes (INV-PAY-047); once the
+  /// earlier row is cancelled, what it was owed for is not derivable from
+  /// anything, so it is recorded here. 0 on every row that carried nothing.
+  carriedAskCents       Int                    @default(0)
   refundedAmountCents   Int                    @default(0)
   status                PaymentStatus          @default(PENDING)
   paymentMethodId       String?
