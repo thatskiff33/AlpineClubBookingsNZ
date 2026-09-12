@@ -20,35 +20,25 @@ import { storedNightPriceDetailsByKey } from "@/lib/stored-night-price-write";
  * ## What a stored `BookingGuestNight.priceCents` is, and is not
  *
  * It is the only per-night money this system keeps. Since #3275 each row also
- * records its origin, but this stage deliberately does not use that fact to
- * change a verdict: stage 3 of programme #3272 owns that reader decision.
- * Three historical migrations populated the table with even splits:
- * `20260614090000_add_booking_guest_night` (#713) created the table and divided
- * every existing guest total across its nights;
- * `20260704150000_backfill_booking_guest_nights` (#1098) divided
- * `BookingGuest.priceCents` by the night count for guests with no rows, and
- * `20260810010000_backfill_booking_request_guest_nights` (#2739) did the same
- * for request-derived bookings — its own header says it "deliberately does NOT
- * reprice anything: it reads the stored total and divides it". The new source
- * column distinguishes those migration-authored averages, but stage 1 records
- * that fact without changing a reader decision. This module therefore still
- * tests RECONCILIATION only; stage 3 of programme #3272 owns the deliberate
- * switch to provenance-aware evidence. That is what epic #2797 asks for in as many
- * words — "a deliberate negotiated-flat initial allocation remains valid once
- * stored", and "if required historical amount is missing/unusable or rows do
- * not reconcile … the financial adjustment becomes explicit pending admin
- * review":
+ * records its origin. Stage 3 of programme #3272 uses that origin at the grain
+ * of the operation: reconciliation can prove a whole guest's stored total, but
+ * an individual night is exact only when its row is `SOLD` or
+ * `OFFICER_PRICED`. The two backfill migrations that divided stored guest
+ * totals across nights (`20260704150000`, #1098, and `20260810010000`, #2739)
+ * are therefore distinguishable from live quotes. Their `EVEN_SPLIT` rows may
+ * support a reconciling whole-guest total and never prove one night's sold
+ * price. `UNKNOWN` is treated the same way at individual-night grain and is
+ * never re-derived from the amount, rate table, timestamp, or surrounding
+ * data.
  *
  * > A guest strand is EXACTLY priced when every night it holds carries a stored
  * > non-negative integer price and those prices sum to `BookingGuest.priceCents`
  * > to the cent. Anything else is `financial_review_required`.
  *
- * The visible consequence is deliberate: an evenly-split backfilled booking
- * reconciles, so it prices as exact. The alternative would be refusing to edit
- * a large share of historical bookings, which nothing in the epic asks for. What
- * the rule does buy is that no amount is ever RECONSTRUCTED — every cent this
- * module blesses was read from a row, and a strand whose rows do not add up is
- * handed to a person instead of to arithmetic.
+ * The visible consequence is deliberate: removing an entire evenly-split
+ * guest may use the reconciling guest total, while giving back one of those
+ * nights parks for a person. No amount is reconstructed, and a strand whose
+ * rows do not add up is also handed to a person instead of to arithmetic.
  *
  * ## Why "unusable" rather than "missing"
  *
@@ -116,7 +106,7 @@ export type StoredSoldPriceEvidence =
 export function classifyStoredSoldPriceEvidence(
   heldNights: readonly HeldNightPrice[],
   guestTotalCents: number,
-  grain: StoredSoldPriceGrain = "WHOLE_GUEST",
+  grain: StoredSoldPriceGrain,
 ): StoredSoldPriceEvidence {
   const usable: Array<{ date: CalendarDate; priceCents: number }> = [];
   const evidence: StoredNightPriceEvidence[] = [];
@@ -379,7 +369,7 @@ export function storedSoldPriceEvidenceForGuest(
     }> | null;
   },
   booking: BookingStayRange,
-  grain: StoredSoldPriceGrain = "WHOLE_GUEST",
+  grain: StoredSoldPriceGrain,
 ): StoredSoldPriceEvidence {
   const detailsByKey = storedNightPriceDetailsByKey(
     guest.nights?.map((night) => ({

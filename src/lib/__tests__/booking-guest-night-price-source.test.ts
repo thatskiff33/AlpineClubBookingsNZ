@@ -120,6 +120,7 @@ describe("BookingGuestNight price provenance", () => {
         ],
       },
       booking,
+      "WHOLE_GUEST",
     );
 
     expect(result).toEqual({

@@ -1,14 +1,11 @@
 import type { Prisma } from "@prisma/client";
 
-import {
-  deriveNightAdjustmentState,
-  NIGHT_ADJUSTMENT_INVARIANT,
-} from "@/lib/night-adjustment-write";
+import { deriveNightAdjustmentState } from "@/lib/night-adjustment-write";
 
-export { NIGHT_ADJUSTMENT_INVARIANT };
+export const BOOKING_MONEY_BUILD_UP_INVARIANT = "INV-MONEY-030";
 
 function refuse(message: string): never {
-  throw new Error(`${NIGHT_ADJUSTMENT_INVARIANT}: ${message}`);
+  throw new Error(`${BOOKING_MONEY_BUILD_UP_INVARIANT}: ${message}`);
 }
 
 /**

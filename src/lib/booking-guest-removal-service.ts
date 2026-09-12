@@ -581,7 +581,7 @@ export async function removeBookingGuestInTransaction({
     )
     .map((guest) => ({
       guest,
-      evidence: storedSoldPriceEvidenceForGuest(guest, booking),
+      evidence: storedSoldPriceEvidenceForGuest(guest, booking, "WHOLE_GUEST"),
     }));
   /**
    * Is this removal's money unknowable from the booking's own history?

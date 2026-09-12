@@ -6,11 +6,9 @@ import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 import { recalculateBookingPromo } from "@/lib/booking-guest-removal-service";
 import type { CalendarDate } from "@/lib/club-time";
 import { isNonNegativeIntegerCents } from "@/lib/edit-financial-review-context";
+import { recordBookingNightAdjustments } from "@/lib/night-adjustment-write";
 import {
-  NIGHT_ADJUSTMENT_INVARIANT,
-  recordBookingNightAdjustments,
-} from "@/lib/night-adjustment-write";
-import {
+  BOOKING_MONEY_BUILD_UP_INVARIANT,
   readBookingMoneyBuildUp,
   selectLoadedBookingMoneyBuildUp,
   type BookingMoneyBuildUpSelection,
@@ -524,7 +522,7 @@ export async function rebaseBookingPriceFromStrands({
   );
   if (moneyBuildUpSelection.source === "BASE_EVIDENCE_UNKNOWN") {
     throw new Error(
-      `${NIGHT_ADJUSTMENT_INVARIANT}: the review re-base lost exact base evidence after recording its build-up`,
+      `${BOOKING_MONEY_BUILD_UP_INVARIANT}: the review re-base lost exact base evidence after recording its build-up`,
     );
   }
 

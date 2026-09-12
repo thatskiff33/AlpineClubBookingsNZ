@@ -122,7 +122,9 @@ describe("#3031 a removal's credit is the departing guest's own stored price", (
     );
 
     // The gate this all rests on: their evidence is exact.
-    expect(storedSoldPriceEvidenceForGuest(guest, BOOKING_RANGE).kind).toBe("exact");
+    expect(
+      storedSoldPriceEvidenceForGuest(guest, BOOKING_RANGE, "WHOLE_GUEST").kind,
+    ).toBe("exact");
 
     const breakdown = calculateBookingPrice(
       D(NIGHTS[0]),
@@ -177,6 +179,7 @@ describe("#3031 a removal's credit is the departing guest's own stored price", (
       storedSoldPriceEvidenceForGuest(
         { ...base, priceCents: 12000, nights: [] },
         BOOKING_RANGE,
+        "WHOLE_GUEST",
       ),
     ).toMatchObject({ kind: "unusable", cause: "NO_STORED_NIGHT_PRICES" });
 
@@ -194,6 +197,7 @@ describe("#3031 a removal's credit is the departing guest's own stored price", (
           ],
         },
         BOOKING_RANGE,
+        "WHOLE_GUEST",
       ),
     ).toMatchObject({ kind: "unusable", cause: "PARTIAL_STORED_NIGHT_PRICES" });
 
@@ -210,6 +214,7 @@ describe("#3031 a removal's credit is the departing guest's own stored price", (
           })),
         },
         BOOKING_RANGE,
+        "WHOLE_GUEST",
       ),
     ).toMatchObject({ kind: "unusable", cause: "STORED_TOTAL_MISMATCH" });
 
@@ -226,6 +231,7 @@ describe("#3031 a removal's credit is the departing guest's own stored price", (
           })),
         },
         BOOKING_RANGE,
+        "WHOLE_GUEST",
       ),
     ).toMatchObject({ kind: "unusable", cause: "NO_STORED_NIGHT_PRICES" });
 
@@ -243,6 +249,7 @@ describe("#3031 a removal's credit is the departing guest's own stored price", (
           })),
         },
         BOOKING_RANGE,
+        "WHOLE_GUEST",
       ),
     ).toMatchObject({ kind: "exact", totalCents: 12000 });
   });
@@ -258,6 +265,7 @@ describe("#3031 a removal's credit is the departing guest's own stored price", (
     const verdict = storedSoldPriceEvidenceForGuest(
       { stayStart: null, stayEnd: null, priceCents: 0, nights: [] },
       BOOKING_RANGE,
+      "WHOLE_GUEST",
     );
 
     expect(verdict).toMatchObject({
@@ -289,6 +297,7 @@ describe("#3031 a removal's credit is the departing guest's own stored price", (
         ],
       },
       BOOKING_RANGE,
+      "WHOLE_GUEST",
     );
 
     expect(comped).toMatchObject({ kind: "exact", totalCents: 8000 });

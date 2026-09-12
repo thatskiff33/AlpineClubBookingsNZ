@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  NIGHT_ADJUSTMENT_INVARIANT,
+  BOOKING_MONEY_BUILD_UP_INVARIANT,
   readBookingMoneyBuildUp,
   selectBookingMoneyBuildUp,
   type BookingMoneyBuildUpRow,
@@ -167,7 +167,7 @@ describe("#3277 canonical D3 build-up selection", () => {
         ...knownRows([-2_000]),
         derivedCents: 17_999,
       }),
-    ).toThrow(new RegExp(`${NIGHT_ADJUSTMENT_INVARIANT}.*without a classified`));
+    ).toThrow(new RegExp(`${BOOKING_MONEY_BUILD_UP_INVARIANT}.*without a classified`));
   });
 
   it("keeps the Xero result at one aggregate signed promo amount", () => {

@@ -95,7 +95,8 @@ File: [`invariants/money.md`](invariants/money.md). Prefix `INV-MONEY`.
 | `INV-MONEY-026` | TRAP: the in-memory allocation list is not benefit-filtered; filter it yourself |
 | `INV-MONEY-027` | A `SET_PRICE` application netting to exactly zero counts as no use |
 | `INV-MONEY-028` | Each stored guest-night price records its origin; even splits are not evidence |
-| `INV-MONEY-029` | Promo adjustment rows reconcile to recorded totals; operation-aware readers use stored money only when byte-identical, and unknown is never zero |
+| `INV-MONEY-029` | Promo adjustment rows reconcile to the promo total; unknown is never zero |
+| `INV-MONEY-030` | Stored money readers preserve current amounts and record their source |
 | `INV-MONEY-006` | Refunds, credits, Stripe and Xero amounts reconcile back to cent-based ledger records |
 | `INV-MONEY-007` | Admin adjustments need audit, approval, and a visible business reason |
 | `INV-MONEY-008` | A confirmed subscription charge is immutable; only delivery, status, Xero metadata advance |
@@ -379,7 +380,7 @@ Prefix `INV-MOD`.
 | `INV-MOD-022` | The admin exemption is not one predicate, and is stated per path |
 | `INV-MOD-023` | Advisory surfaces report the same facts and gate nothing; nothing persisted |
 | `INV-MOD-024` | Minimum-stay policy administration is versioned; a stale version is refused, not overwritten |
-| `INV-MOD-028` | Historical money needs exact stored evidence at the operation's grain; else `NULL` and parked review |
+| `INV-MOD-028` | Historical nights value only from sold-price rows; else `NULL` and parked review |
 | `INV-MOD-036` | A blank is filled only by a person, on four conditions |
 | `INV-MOD-037` | The repair is optional, and four things it deliberately does not repair |
 | `INV-MOD-038` | Three consumers read a re-based strand total; none restates a billed amount |
@@ -400,6 +401,7 @@ Prefix `INV-MOD`.
 | `INV-MOD-053` | Where the removal park and the second act are pinned |
 | `INV-MOD-054` | Where the settle-time repair is pinned |
 | `INV-MOD-055` | Closing a parked review re-prices the booking from its strands, or declines |
+| `INV-MOD-056` | Operation-grain provenance governs edits and review re-bases |
 
 ### Adult-member hosting
 
