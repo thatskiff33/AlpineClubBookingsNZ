@@ -433,6 +433,17 @@ type ModelReading = {
  * differing by one field does not (both verified against the real 6,853-line
  * schema before this was relied on).
  *
+ * It ALSO re-flows BLOCK comments, which was not known until #3366 tried to
+ * rehearse with one in the schema: the bare continuation line between two
+ * paragraphs is dropped from the emitted copy. One such line in the whole
+ * 7,600-line schema made every rehearsal refuse to run, reporting the client as
+ * "NOT the base ref's client" when the CLI had just printed the scratch schema
+ * path it had loaded. So a line that is empty once a block-comment continuation
+ * marker is removed is dropped on both sides, exactly as a blank line already
+ * is. That cannot mask a real difference, because such a line is never a
+ * declaration; comment PROSE is still compared, so this widens the blank-line
+ * rule rather than stopping the comparison from seeing comments at all.
+ *
  * Note this deliberately does NOT run `prisma format` on anything — AGENTS.md
  * forbids that, and the reformatting here is Prisma's own, inside a throwaway
  * copy under `node_modules/.cache/`.
@@ -441,7 +452,9 @@ export function normaliseSchemaForComparison(schema: string): string {
   return schema
     .split(/\r?\n/)
     .map((line) => line.trim().replace(/\s+/g, " "))
-    .filter((line) => line.length > 0)
+    // Blank, and blank-inside-a-block-comment, carry no declaration: Prisma
+    // re-flows block comments and drops the bare continuation line (#3366).
+    .filter((line) => line.length > 0 && line !== "*")
     .sort()
     .join("\n");
 }
