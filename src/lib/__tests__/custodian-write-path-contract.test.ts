@@ -623,6 +623,80 @@ describe("custodian write-path contract (#2286)", () => {
     }
   });
 
+  it("feeds BOTH planner expansions the same custodian hold list (#2698)", () => {
+    /*
+      `INV-CAP-035` makes the whole-lodge hold expansion DROP a bed-night the
+      custodian expansion is expected to EMIT. That is a partition only while
+      both feeds in a planner call read the same custodian holds.
+
+      The required fourth argument already makes OMISSION a compile error, which
+      is the right shape for the cheap half. It cannot see the dangerous half: a
+      WIDER list handed to the hold expansion than to the custodian expansion
+      drops a bed-night nothing then supplies, leaving it with no occupancy row
+      and auto-placeable. Unreachable today — both sites pass one identifier to
+      both feeds — and the #2286 write-time re-filter would still refuse the
+      write. Pinned here, by reading the call sites, because that is what this
+      file already does for the class and because "both sites pass the same
+      variable" is exactly the kind of fact a refactor breaks silently.
+    */
+    const SHARED_CUSTODIAN_FEEDS: ReadonlyArray<{
+      file: string;
+      holds: string;
+      nights: string;
+    }> = [
+      {
+        file: "src/lib/bed-allocation-board.ts",
+        holds: "custodianBedHolds",
+        nights: "rangeNights",
+      },
+      {
+        file: "src/lib/bed-allocation-lifecycle.ts",
+        holds: "custodianHolds",
+        nights: "envelopeNights",
+      },
+    ];
+
+    for (const feed of SHARED_CUSTODIAN_FEEDS) {
+      const source = readRepoFile(feed.file);
+      const custodianAt = source.indexOf(
+        "custodianOccupiedBedNightsForPlanner(",
+      );
+      expect(
+        custodianAt,
+        `${feed.file} no longer expands custodian holds for the planner`,
+      ).toBeGreaterThanOrEqual(0);
+      const holdAt = source.indexOf(
+        "wholeLodgeHoldOccupiedBedNightsForPlanner(",
+      );
+      expect(
+        holdAt,
+        `${feed.file} no longer expands whole-lodge holds for the planner`,
+      ).toBeGreaterThanOrEqual(0);
+
+      const custodianCall = balancedFrom(
+        source,
+        source.indexOf("(", custodianAt),
+        "(",
+        ")",
+      );
+      const holdCall = balancedFrom(source, source.indexOf("(", holdAt), "(", ")");
+
+      for (const [label, call] of [
+        ["custodian expansion", custodianCall],
+        ["whole-lodge hold expansion", holdCall],
+      ] as const) {
+        expect(
+          containsEvidence(call, feed.holds),
+          `${feed.file}: the ${label} must be fed \`${feed.holds}\` — INV-CAP-035 is a partition only while both feeds read the SAME custodian holds, and a wider list here leaves a bed-night with no occupancy row at all`,
+        ).toBe(true);
+        expect(
+          containsEvidence(call, feed.nights),
+          `${feed.file}: the ${label} must be fed \`${feed.nights}\` — the same night window, for the same reason`,
+        ).toBe(true);
+      }
+    }
+  });
+
   it("keeps the lodge lock key derived in exactly the declared modules", () => {
     // `resolveBedLodgeIdForLock` is the OUTSIDE-the-transaction read that mints
     // the per-lodge key. A third module calling it is a third writer deriving a
