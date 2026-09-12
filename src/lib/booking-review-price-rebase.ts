@@ -8,11 +8,13 @@ import type { CalendarDate } from "@/lib/club-time";
 import { isNonNegativeIntegerCents } from "@/lib/edit-financial-review-context";
 import {
   NIGHT_ADJUSTMENT_INVARIANT,
-  readBookingMoneyBuildUp,
   recordBookingNightAdjustments,
+} from "@/lib/night-adjustment-write";
+import {
+  readBookingMoneyBuildUp,
   selectLoadedBookingMoneyBuildUp,
   type BookingMoneyBuildUpSelection,
-} from "@/lib/night-adjustment-write";
+} from "@/lib/booking-money-build-up";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
 
 /**
@@ -670,57 +672,4 @@ export function rebaseDivergesFromIssuedInvoice({
  * movement therefore lives in `newData`, which only the booking's own history
  * narrative reads.
  */
-export async function recordBookingPriceRebaseHistory({
-  bookingId,
-  actingMemberId,
-  taskId,
-  resolution,
-  rebase,
-  moneyBuildUpSelection,
-  xeroInvoiceDiverged,
-  store,
-}: {
-  bookingId: string;
-  actingMemberId: string;
-  taskId: string;
-  resolution: "completed" | "dismissed";
-  rebase: BookingPriceRebase;
-  moneyBuildUpSelection: BookingMoneyBuildUpSelection;
-  xeroInvoiceDiverged: boolean;
-  store: Prisma.TransactionClient;
-}): Promise<void> {
-  await store.bookingModification.create({
-    data: {
-      bookingId,
-      memberId: actingMemberId,
-      modificationType: "PRICE_REBASE",
-      previousData: {
-        totalPriceCents: rebase.previousTotalPriceCents,
-        discountCents: rebase.previousDiscountCents,
-        promoAdjustmentCents: rebase.previousPromoAdjustmentCents,
-        finalPriceCents: rebase.previousFinalPriceCents,
-      },
-      newData: {
-        totalPriceCents: rebase.newTotalPriceCents,
-        discountCents: rebase.newDiscountCents,
-        promoAdjustmentCents: rebase.newPromoAdjustmentCents,
-        finalPriceCents: rebase.newFinalPriceCents,
-        promoRemoved: rebase.promoRemoved,
-        xeroInvoiceDiverged,
-        financialReviewTaskId: taskId,
-        financialReviewResolution: resolution,
-        // The signed movement of the booking's final price, kept HERE rather
-        // than on `priceDiffCents` - see the docblock. Nothing that decides
-        // whether money is owed reads `newData`.
-        rebasedPriceMovementCents:
-          rebase.newFinalPriceCents - rebase.previousFinalPriceCents,
-        ...moneyBuildUpSelection.historyMetadata,
-      },
-      // NOT a settlement: no money is moved by this row, and the review's own
-      // task carries what was settled. Both components stay 0 so no money
-      // reader can mistake the re-base for an unbilled ask (docblock above).
-      priceDiffCents: 0,
-      changeFeeCents: 0,
-    },
-  });
-}
+export { recordBookingPriceRebaseHistory } from "@/lib/booking-review-price-rebase-history";

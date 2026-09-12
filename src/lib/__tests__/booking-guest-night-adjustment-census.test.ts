@@ -199,10 +199,8 @@ const MODULE_IMPORTERS = new Set([
   // Type-only: the build-up travels through the application result.
   "src/lib/promo.ts",
   "src/lib/booking-create-promo.ts",
-  // #3277 Stage 3 named readers. Their exact call shapes are pinned by
-  // booking-money-build-up-reader-census.test.ts.
-  "src/lib/booking-credit-election.ts",
-  "src/lib/xero-booking-invoices.ts",
+  // Stage 3's one reader/projection consumes the derived state from this module.
+  "src/lib/booking-money-build-up.ts",
 ]);
 
 const SOURCE = sourceFiles();
