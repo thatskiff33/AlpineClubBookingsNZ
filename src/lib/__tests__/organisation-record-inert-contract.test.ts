@@ -265,9 +265,13 @@ describe("#3366: the organisation records exist and are reachable", () => {
     // the school-as-person path is stage 4 (#3369), and an enum value can only
     // be REMOVED in a release after the epic merges, because nothing drains
     // inside one deploy — so both values must still be here. Read from the
-    // schema text: the runtime DMMF this client ships is trimmed and reports
-    // `datamodel.enums` as empty, which would make an assertion over it pass
-    // vacuously for every value anyone cared to name.
+    // SCHEMA TEXT rather than the runtime DMMF, and the reason is measured:
+    // the DMMF this client ships is trimmed and reports `datamodel.enums` as
+    // an EMPTY list. A `toContain` over it would therefore FAIL loudly, not
+    // pass vacuously — only a `.some()`-shaped assertion would pass vacuously
+    // — but either way that DMMF cannot answer the question. The same trimming
+    // is why `declaredType()` above reads optionality off the schema: the
+    // shipped field shape carries no `isRequired` and no `isList` either.
     expect(enumValues("Role")).toContain("SCHOOL");
     expect(enumValues("AccessRole")).toContain("ORG");
   });
@@ -359,6 +363,25 @@ const DECLARED_FILES: Record<string, string> = {
  * the long-standing `UserType` value of that name (`src/lib/access-roles.ts`)
  * and with the Xero ORGANISATION the finance code talks to, and neither of
  * those is this record.
+ *
+ * WHAT THE DELEGATE PATTERN DOES AND DOES NOT REACH. It is anchored on a word
+ * boundary, not on a leading dot, so it catches the ALIASED DESTRUCTURE
+ * (`const { organisation } = prisma` and then `organisation.findMany()`) as
+ * well as `prisma.organisation.findMany()`. That shape is called out because
+ * the very file this census borrows its walker from
+ * (`support/booking-guest-night-writer-scan.ts`) counts aliased delegates with
+ * a syntax tree precisely because the shape occurs in this repository.
+ *
+ * Four forms remain out of reach, and all four are STATED LIMITS rather than
+ * gaps worth more regex: a bracket delegate (`prisma["organisation"]`), a
+ * delegate resolved through a variable, a raw `$queryRaw` naming the table (the
+ * bare token is deliberately unscanned, for the collision reason above — though
+ * raw SQL naming the COLUMN is caught, because pattern 1 is a bare substring),
+ * and a property read on an already-fetched row (`booking.organisation?.name`).
+ * The last of those is only reachable AFTER one of the caught forms fetched the
+ * data, and none of them is the real compatibility guarantee: that is the
+ * nullable column plus Prisma naming its columns explicitly, which this census
+ * supports rather than replaces.
  */
 const NEW_IDENTIFIERS: readonly { label: string; pattern: RegExp }[] = [
   { label: "the organisationId column", pattern: /organisationId/ },
@@ -370,7 +393,7 @@ const NEW_IDENTIFIERS: readonly { label: string; pattern: RegExp }[] = [
   {
     label: "a Prisma delegate reach for an organisation record",
     pattern:
-      /\.organisation[A-Za-z]*\s*\.\s*(?:findUnique|findUniqueOrThrow|findFirst|findFirstOrThrow|findMany|create|createMany|update|updateMany|upsert|delete|deleteMany|count|aggregate|groupBy)\b/,
+      /\borganisation[A-Za-z]*\s*\.\s*(?:findUnique|findUniqueOrThrow|findFirst|findFirstOrThrow|findMany|create|createMany|update|updateMany|upsert|delete|deleteMany|count|aggregate|groupBy)\b/,
   },
   {
     label: "an organisation relation in a select, include or nested write",
@@ -420,6 +443,23 @@ describe("#3366: nothing reads or writes the new links yet", () => {
       .filter((path) => !(path in DECLARED_FILES));
 
     expect(hits).toEqual(["src/lib/some-new-reader.ts"]);
+  });
+
+  it("FAILS on an ALIASED delegate, not only on `prisma.organisation.…` (fixture proof)", () => {
+    // The walker this census borrows counts aliased delegates with a syntax
+    // tree because the shape is real here, so the regex is anchored on a word
+    // boundary rather than on a leading dot. Both forms must be caught, and a
+    // near-miss that is NOT a delegate reach must not be.
+    const delegate = NEW_IDENTIFIERS.find(({ label }) =>
+      label.includes("Prisma delegate"),
+    )!.pattern;
+
+    expect(delegate.test("const { organisation } = prisma;\norganisation.findMany();")).toBe(true);
+    expect(delegate.test("await prisma.organisation.findUnique({ where });")).toBe(true);
+    expect(delegate.test("await prisma.organisationContact.create({ data });")).toBe(true);
+    // The boundary really is a boundary: a longer identifier that merely ENDS
+    // in the word is not a delegate reach for this record.
+    expect(delegate.test("const rows = await suborganisation.findMany();")).toBe(false);
   });
 
   it("keeps the declared files genuinely declared", () => {
