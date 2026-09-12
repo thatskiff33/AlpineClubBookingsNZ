@@ -89,14 +89,28 @@ export function restrictPerNightRatesToWindow(
   window: WorkPartyNightWindow,
   nightDates?: ReadonlyArray<Date> | null
 ): number[] {
-  // Filtered rather than mapped by index (#2800): the kept positions come from
-  // this array's own length, so an index read cannot miss -- but only the
-  // FILTER says so in the type, and it reads each rate from the array instead
-  // of looking it up.
-  const keep = new Set(
-    inWindowNightIndexes(perNightRates.length, firstNight, window, nightDates)
+  // Mapped over the kept positions, and NOT `filter` (#3374 review). The two
+  // agree on every dense input, and `filter` reads better — but it skips holes,
+  // so a sparse `perNightRates` silently yields a SHORTER vector rather than
+  // one that still lines up with the nights it was taken from. This function is
+  // exported and reads like a live API, so it should not hand a future caller
+  // the shape that `promo.ts` had to fix: there, the same `filter` form could
+  // shift a discount onto the wrong night.
+  //
+  // A kept index always exists, because the positions come from this array's
+  // own length — so the refusal below is unreachable rather than defensive, and
+  // it says which invariant it rests on instead of asserting the value away.
+  return inWindowNightIndexes(perNightRates.length, firstNight, window, nightDates).map(
+    (index) => {
+      const rate = perNightRates[index];
+      if (rate === undefined) {
+        throw new Error(
+          `Work-party window kept night index ${index}, which is inside the rate vector's own length but holds no rate (#3276).`,
+        );
+      }
+      return rate;
+    }
   );
-  return perNightRates.filter((_rate, index) => keep.has(index));
 }
 
 /**
