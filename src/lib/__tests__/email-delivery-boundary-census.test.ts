@@ -49,19 +49,20 @@ import {
  * in this file. Measured free to add: none of those roots names `createTransport`,
  * `sendMail` or `emailInvoice` today.
  *
- * `measurement/` was the remaining gap, and it is a real one rather than a
- * theoretical one: that tree stands up its own application stack with its own
- * mail configuration (`measurement/stack/docker-compose.measure.yml` sets
- * `EMAIL_SERVER_HOST: mailpit`) and it holds executable `.mjs` under
- * `measurement/phase2/bin/`, so a transport built there would have been invisible
- * to every case in this file. It was hand-verified clean when the gap was
- * reported, which this scan now keeps true rather than re-establishing by hand.
+ * `measurement/` was a fifth root, added for the same reason: that tree stood
+ * up its own application stack with its own mail configuration
+ * (`measurement/stack/docker-compose.measure.yml` set `EMAIL_SERVER_HOST:
+ * mailpit`) and held executable `.mjs` under `measurement/phase2/bin/`, so a
+ * transport built there would have been invisible to every case in this file.
+ * It was hand-verified clean when the gap was reported, and stayed clean for
+ * the rest of its life; the tree was removed whole by #3382, so the root came
+ * out with it rather than being scanned for nothing.
  *
- * Nothing beyond these five is scanned, which is the stated limit — a transport
+ * Nothing beyond these four is scanned, which is the stated limit — a transport
  * built inside `node_modules` or generated code is not something this census can
  * see, and the clearance TYPE is what covers that case.
  */
-const SCAN_ROOTS = ["src", "scripts", "prisma", "e2e", "measurement"]
+const SCAN_ROOTS = ["src", "scripts", "prisma", "e2e"]
   .map((dir) => path.resolve(process.cwd(), dir))
   .filter((dir) => existsSync(dir));
 const SRC = path.resolve(process.cwd(), "src");
@@ -338,8 +339,8 @@ describe("email delivery boundary census (INV-CONFIG-004)", () => {
       ".env.staging.example",
       // One writer, three callers, since #3221 — it was two copied workflow
       // heredocs whose values were byte-identical while their comments had
-      // already drifted.
-      "measurement/stack/docker-compose.measure.yml -> app",
+      // already drifted. A fourth block named here, the measurement stack's
+      // own Compose file, was removed whole by #3382.
       'scripts/ci/write-e2e-staging-env.sh -> "$OUT" #1',
     ]);
 
