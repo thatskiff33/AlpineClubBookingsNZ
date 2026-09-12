@@ -8,7 +8,7 @@
  *
  * A residual of **zero** is the books balancing. A **positive** residual is the
  * #3340 class - money the price says is owed that nothing is asking for, which is
- * what a delta-sized ask used to produce when it superseded an unpaid one. A
+ * what a delta-sized ask produced when it superseded an unpaid one. A
  * **negative** residual is the club holding more than the price, which is normal
  * after a policy-tiered reduction (`INV-MOD-011` keeps a slice) or a reduction
  * settled as account credit.
@@ -18,10 +18,13 @@
  * by hand, and repair code for it would be risk with no benefit. This reports;
  * a person decides.
  *
- * The SQL is not written here. It is generated from
- * `BOOKING_LEDGER_IDENTITY_TERMS`, the same signed term table the CI census
- * guard folds, so the operator's query and the guard cannot say different things
- * (`INV-SSOT-001`).
+ * IT READS TYPED, NOT RAW (`INV-OPS-001`, "lock raw, read typed"). The arithmetic
+ * is `bookingLedgerResidualCents`, the same function the CI census guard calls, so
+ * the operator's answer and the guard's answer are one implementation rather than
+ * two. `--sql` prints the EQUIVALENT statement for an operator who would rather
+ * run it against a read-only replica; that statement is not written by hand
+ * either - it is folded from `BOOKING_LEDGER_IDENTITY_TERMS`, the same signed
+ * term table (`INV-SSOT-001`).
  *
  * SAFE USAGE - run against a NON-PRODUCTION copy:
  *
@@ -30,47 +33,89 @@
  */
 import "dotenv/config";
 import process from "node:process";
-import { z } from "zod";
 
 import {
+  BOOKING_LEDGER_CENSUS_CAPTURED_PAYMENT_STATUSES,
+  BOOKING_LEDGER_CENSUS_EXCLUDED_BOOKING_STATUSES,
   bookingLedgerCensusSql,
+  bookingLedgerResidualCents,
   bookingLedgerVerdict,
+  type BookingLedgerIdentityRow,
 } from "../src/lib/additional-payment-ask";
 import { prisma } from "../src/lib/prisma";
-import { decodeRawRows, rawIntColumn } from "../src/lib/raw-sql-rows";
 import { formatCents } from "../src/lib/utils";
-
-/**
- * `INV-OPS-001`: the row shape is VALIDATED, never asserted by a cast. Raw SQL
- * hands back physical column names and a wrong belief about them arrives as
- * `undefined`, which is falsy in exactly the comparisons that guard money.
- */
-const CENSUS_ROW = z.object({
-  bookingId: z.string(),
-  bookingStatus: z.string(),
-  finalPriceCents: rawIntColumn,
-  changeFeeCents: rawIntColumn,
-  amountCents: rawIntColumn,
-  refundedAmountCents: rawIntColumn,
-  creditAppliedCents: rawIntColumn,
-  additionalAmountCents: rawIntColumn,
-  additionalPaymentStatus: z.string().nullable(),
-  residualCents: rawIntColumn,
-});
 
 function printUsage() {
   console.log(`Usage:
   npm run payments:audit-booking-ledger            # read-only census (default)
-  npm run payments:audit-booking-ledger -- --sql   # print the SQL and exit
+  npm run payments:audit-booking-ledger -- --sql   # print the equivalent SQL and exit
   npm run payments:audit-booking-ledger -- --json  # also emit machine-readable JSON
 
 This census is read-only. It never writes and never calls Xero/Stripe/SES.
 
 Options:
-  --sql           Print the generated SELECT (to run by hand) and exit.
+  --sql           Print the equivalent SELECT, to run against a read-only replica.
   --json          Emit machine-readable JSON alongside the human report.
   --help, -h      Show this help.
 `);
+}
+
+interface CensusRow extends BookingLedgerIdentityRow {
+  bookingId: string;
+  bookingStatus: string;
+  residualCents: number;
+}
+
+async function loadCensus(): Promise<CensusRow[]> {
+  const bookings = await prisma.booking.findMany({
+    where: {
+      deletedAt: null,
+      status: {
+        notIn: [...BOOKING_LEDGER_CENSUS_EXCLUDED_BOOKING_STATUSES],
+      },
+      payment: {
+        status: { in: [...BOOKING_LEDGER_CENSUS_CAPTURED_PAYMENT_STATUSES] },
+      },
+    },
+    select: {
+      id: true,
+      status: true,
+      finalPriceCents: true,
+      payment: {
+        select: {
+          changeFeeCents: true,
+          amountCents: true,
+          refundedAmountCents: true,
+          creditAppliedCents: true,
+          additionalAmountCents: true,
+          additionalPaymentStatus: true,
+        },
+      },
+    },
+  });
+
+  const rows: CensusRow[] = [];
+  for (const booking of bookings) {
+    if (!booking.payment) continue;
+    const row: CensusRow = {
+      bookingId: booking.id,
+      bookingStatus: booking.status,
+      finalPriceCents: booking.finalPriceCents,
+      changeFeeCents: booking.payment.changeFeeCents,
+      amountCents: booking.payment.amountCents,
+      refundedAmountCents: booking.payment.refundedAmountCents,
+      creditAppliedCents: booking.payment.creditAppliedCents,
+      additionalAmountCents: booking.payment.additionalAmountCents,
+      additionalPaymentStatus: booking.payment.additionalPaymentStatus,
+      residualCents: 0,
+    };
+    row.residualCents = bookingLedgerResidualCents(row);
+    if (row.residualCents !== 0) rows.push(row);
+  }
+  return rows.sort(
+    (a, b) =>
+      b.residualCents - a.residualCents || a.bookingId.localeCompare(b.bookingId),
+  );
 }
 
 async function main() {
@@ -84,9 +129,7 @@ async function main() {
     return;
   }
 
-  const returned = await prisma.$queryRawUnsafe(bookingLedgerCensusSql());
-  const rows = decodeRawRows(returned, CENSUS_ROW, "booking ledger census");
-
+  const rows = await loadCensus();
   const unasked = rows.filter(
     (row) => bookingLedgerVerdict(row.residualCents) === "unasked",
   );

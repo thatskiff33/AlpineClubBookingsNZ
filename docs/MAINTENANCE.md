@@ -1144,11 +1144,15 @@ DATABASE_URL=<non-prod copy> npm run payments:audit-booking-ledger -- --sql
 DATABASE_URL=<non-prod copy> npm run payments:audit-booking-ledger -- --json
 ```
 
-`--sql` prints the generated `SELECT` so it can be run by hand against a
-read-only replica. The statement is not written in the script: it is folded from
-`BOOKING_LEDGER_IDENTITY_TERMS` in `src/lib/additional-payment-ask.ts`, the same
-term table the CI census guard folds, so the operator's query and the guard
-cannot say different things.
+The script itself reads TYPED, through Prisma, and does the arithmetic with the
+same function the CI census guard calls — so the operator's answer and the
+guard's answer are one implementation rather than two, and no raw statement of
+its own ships (`INV-OPS-001`, "lock raw, read typed"). `--sql` prints the
+EQUIVALENT `SELECT` for an operator who would rather run it against a read-only
+replica; that statement is not written by hand either, but folded from
+`BOOKING_LEDGER_IDENTITY_TERMS` in `src/lib/additional-payment-ask.ts` — the same
+signed term table both the TypeScript and the SQL forms come from, so the two
+cannot say different things (`INV-SSOT-001`).
 
 ### Audit IB hold-expiry invoice under-clears (#1597)
 
