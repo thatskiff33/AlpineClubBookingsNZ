@@ -562,6 +562,12 @@ describe("the synthesised rows are unattributed and non-displaceable", () => {
      * `INV-CAP-035` work in different shapes — a count and a bed set — and this
      * is what stops one of them being changed without the other.
      *
+     * CONDITIONAL, and the case below records on what: the engine counts
+     * EFFECTIVE CAPACITY and the planner walks BED STOCK, so the identity holds
+     * where the two are equal — `lodgeCapacity` is fixed to `ROOM.beds.length`
+     * here for exactly that reason. A capped lodge is the documented exception
+     * (`INV-CAP-035`), not a failure of this assertion.
+     *
      * Mutation-verified: deleting the `isCustodianHeldBedNight` guard from the
      * planner makes the planner emit 2 where the engine says 1, and deleting
      * the subtraction from `wholeLodgeHoldRepresentedBeds` makes the engine say
@@ -592,6 +598,66 @@ describe("the synthesised rows are unattributed and non-displaceable", () => {
           wholeLodgeHeldNightOccupiedBeds(lodgeCapacity, custodianBeds),
         ).toBe(lodgeCapacity);
       }
+    });
+
+    /**
+     * The condition the identity above needs, recorded as a case rather than
+     * left to be discovered (#2698 review L1-F2 / L2-F1, found independently by
+     * two lenses).
+     *
+     * Effective lodge capacity is `min(explicit override, active bed count)` —
+     * the #1653 licence cap, `source: "capped_beds"` in `lodge-capacity.ts`.
+     * The capacity engine counts CAPPED CAPACITY; the planner walks BED STOCK.
+     * So in a lodge whose licence cap is below its bed count the two figures
+     * are not equal and never were, with or without a custodian: the test above
+     * fixes `lodgeCapacity` to the bed count, which is the only world in which
+     * it can hold.
+     *
+     * **This is not a regression and not a number that moved.** Both sides
+     * shift by the same custodian count, and the engine's own held-night pin
+     * stays identically `cap` either way — asserted below, because that is the
+     * fact the #155 payload contract and ADR-001 decision 6 rest on. What #2698
+     * added is a guard and an invariant sentence that read as more general than
+     * the identity is, so the narrower claim is written down here and qualified
+     * in `INV-CAP-035`.
+     *
+     * A historic hold on a since-deactivated bed diverges the same way and for
+     * the same reason: the planner's stock shrank, the recorded capacity did
+     * not.
+     */
+    it("records that engine and planner DIVERGE in a capped-capacity lodge", () => {
+      // 2 active beds, licence cap 1 — `capped_beds`.
+      const cappedCapacity = ROOM.beds.length - 1;
+      const holds = [
+        custodianHold({ bedId: "bed-a1", startDate: "2026-07-01", endDate: "2026-07-01" }),
+      ];
+      const night = parseDateOnly("2026-07-01");
+      const custodianBeds =
+        buildCustodianNightIndex(holds, [night]).get("2026-07-01") ?? 0;
+      const plannerRows = wholeLodgeHoldOccupiedBedNightsForPlanner(
+        toWholeLodgeHoldSpans([holdBooking()]),
+        [ROOM],
+        [night],
+        holds,
+      );
+
+      // The planner emits one row (bed-a2, the bed the custodian does not
+      // hold); the engine says the hold represents zero of its one capped bed.
+      expect(plannerRows.map((row) => row.bedId)).toEqual(["bed-a2"]);
+      expect(wholeLodgeHoldRepresentedBeds(cappedCapacity, custodianBeds)).toBe(0);
+      expect(
+        plannerRows.length,
+        "INV-CAP-035's parity identity is conditional on capacity equalling bed stock; a capped lodge is expected to differ here, and this case exists so that stays a recorded fact rather than a surprise",
+      ).not.toBe(wholeLodgeHoldRepresentedBeds(cappedCapacity, custodianBeds));
+
+      // The number a member or an engine can SEE is unchanged: a held night is
+      // still pinned to exactly the lodge's capacity, custodian or not.
+      expect(
+        wholeLodgeHeldNightOccupiedBeds(cappedCapacity, custodianBeds),
+      ).toBe(cappedCapacity);
+      expect(wholeLodgeHeldNightOccupiedBeds(cappedCapacity, 0)).toBe(
+        cappedCapacity,
+      );
     });
   });
 

@@ -1941,12 +1941,27 @@ move, never a capacity or double-booking violation.
 - **A whole-lodge hold excludes custodian-held bed-nights, per overlapping
   night (#2698, owner decision 9 Aug 2026):** an exclusive hold represents every
   bed of its lodge EXCEPT one a custodian holds that night. The two sets are
-  disjoint and together are the lodge, so a held night is still a full lodge to
-  every member-facing surface (ADR-001 decision 6) and
+  disjoint and together are the lodge's capacity for that night, so a held night
+  is still a full lodge to every member-facing surface (ADR-001 decision 6) and
   `occupiedBeds + availableBeds === lodgeCapacity` still holds; what the rule
   removes is the double claim, where the same bed-night was occupied by the held
   group AND by the custodian. Nothing about admission changes — a held night
   remains hard-blocked at zero beds for everyone else (`INV-CAP-021`).
+  **NO CAPACITY NUMBER CHANGES, AND THAT IS THE RULE — not a half-built version
+  of it** (owner confirmation, 12 Sep 2026). Read literally, "the hold stops
+  covering the custodian's bed" would lower a held night's pinned occupancy from
+  `lodgeCapacity` to `lodgeCapacity - 1`; that is the WRONG reading and this
+  invariant deliberately does not implement it. A held night reporting fewer
+  occupied beds than the lodge has would break
+  `occupiedBeds + availableBeds === lodgeCapacity` (#155) and would let a member
+  tell a held night apart from a genuinely full one, which ADR-001 decision 6
+  forbids. Every figure `checkCapacity`, `getMonthAvailability` and the capacity
+  cron produce is therefore byte-identical to the pre-#2698 code, by
+  construction rather than by luck: `wholeLodgeHeldNightOccupiedBeds` is
+  identically `lodgeCapacity` for every input. What the rule delivers is the
+  officer prompt, the audit rows, the locked delete, and a bed-night claimed
+  ONCE instead of twice. A future change that makes a held night's numbers move
+  is a change to this invariant, not an implementation of it.
   **Whole-lodge flat per-night pricing does not change because a represented bed
   set narrows** (`priceWholeLodgeFlat` sums a flat season rate and never reads a
   bed count).
@@ -1961,6 +1976,24 @@ move, never a capacity or double-booking violation.
   every held-night pin composes with the custodian count reported beside the
   flag. One source, two views; never a second inventory of which beds a
   custodian has.
+  **The two views agree bed-for-bed only where effective capacity equals active
+  bed stock**, which is the ordinary lodge and the condition the parity guard
+  fixes. Effective capacity is `min(explicit override, active bed count)` — the
+  #1653 licence cap — so a club whose licence cap sits below its bed count makes
+  the count view smaller than the set view by exactly the difference, with or
+  without a custodian; a historic hold on a since-deactivated bed diverges the
+  same way. Neither is a defect and neither moves a number: the engine's pin is
+  `lodgeCapacity` in both worlds. The capped case is recorded as its own case in
+  `exclusive-hold-planner-occupancy.test.ts` so the inequality is a written fact
+  rather than a surprise.
+  **The night-level write-time re-checks are deliberately OUT of scope.**
+  `dropRowsOnWholeLodgeHeldNights` (`bed-allocation-write-rechecks.ts`) and the
+  auto-allocate equivalent drop every candidate row on a held NIGHT, the
+  custodian's bed included — stricter than this exclusion, and correctly so:
+  nothing may be auto-placed on a custodian-held bed anyway, and the sibling
+  custodian re-check drops those rows too. They are refusals to write, not a
+  view of what a hold covers, so they do not subtract through the predicate and
+  must not be "fixed" into doing so.
   **Coverage is DERIVED at read time, never stored.** No hold row carries a bed
   set, so nothing is migrated and no existing hold is rewritten — "new and
   amended holds only" is true by construction rather than by a backfill that was
@@ -1980,6 +2013,17 @@ move, never a capacity or double-booking violation.
   exclusive-hold writer) IS the amendment. A bed-night this same assignment
   already holds is not re-asked: it left the hold's set when it was first
   created.
+  **The acceptance is a boolean, not a fingerprint of what the officer was
+  shown — a STATED LIMIT, accepted deliberately.** The 409 names specific
+  nights and bookings; the re-send carries only `amendOverlappingHolds: true`,
+  and the accept narrows whatever the locked read then finds. A hold created
+  between the two requests would therefore be narrowed without having been on
+  the screen. It is left as-is because the accept holds the global cohort key
+  and the lodge key, so the window needs a hold written on the same lodge and
+  nights in between; because the audit row records what was ACTUALLY narrowed
+  rather than what was offered; and because it is the same shape as the
+  `confirmOverCapacity` flag beside it on the same route (#1668). A confirm
+  token would be the fix if that ever stops being true.
   **Lock order (`INV-LOCK-002`).** The accept path takes the global cohort key
   `pg_advisory_xact_lock(1)` and THEN `acquireLodgeCapacityLock`, in that order,
   decided from the request before any lock is taken so the order cannot invert.
