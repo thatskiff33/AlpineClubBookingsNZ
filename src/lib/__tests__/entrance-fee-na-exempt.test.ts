@@ -20,7 +20,7 @@ vi.mock("@/lib/prisma", () => ({
 
 const mockCompleteXeroSyncOperation = vi.fn();
 vi.mock("@/lib/xero-sync", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/xero-sync")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/xero-sync");
   return {
     ...actual,
     completeXeroSyncOperation: (...args: unknown[]) =>
@@ -30,7 +30,7 @@ vi.mock("@/lib/xero-sync", async (importOriginal) => {
 });
 
 vi.mock("@/lib/xero-api-client", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/xero-api-client")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/xero-api-client");
   return {
     ...actual,
     getAuthenticatedXeroClient: vi.fn().mockRejectedValue(

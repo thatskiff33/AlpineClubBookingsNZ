@@ -383,29 +383,99 @@ read has looked exactly like a file the scanner read and cleared.
 
 Measured for #2842 on the same pinned image: 177 of 4,219 scanned files carried
 a parse error behind a green gate, and **three were whole-file failures where no
-rule ran at all**. Two parser faults caused every one of them, and both fire on
-valid TypeScript that `tsc` and the build accept.
+rule ran at all**. **Three families** of parser fault cause all of them, and
+every one fires on valid TypeScript that `tsc` and the build accept.
 
-Those two are stated once, as the rule rather than as a spelling, in
+Those three families are stated once, as the rule rather than as a spelling, in
 `KNOWN_CONSTRUCTS` in `scripts/ci/check-semgrep-coverage.mjs` — which is also
 the text the gate hands you when it fires, so it is the copy that has to be
 right. They are deliberately not restated here.
 
-Two traps worth knowing before you reach for a remedy, both measured:
+**Two of the three are banned by lint, for the positions the rule reaches — and
+that qualifier is the whole point.** #3318 added
+`scan/no-semgrep-unparsable-import-type` to `eslint.config.mjs`, rewrote the 307
+call sites that carried the first, named the five types that carried the second,
+and took the allowlist from 169 entries to 3. **This paragraph is the one home
+for those four numbers.** They are measurements taken at that change rather than
+facts about the design, so a second copy goes stale silently and nobody notices
+which copy is wrong — `INV-SSOT-004`. The rule's own comments and its guard suite
+therefore describe the rewrite without counting it, and a later change
+re-measures here rather than stating a number of its own. It then said the two shapes
+"cannot come back", which #3345 measured as false: roughly a dozen further
+positions fail and the rule was silent on every one, including two members of
+the call family. The rule is now wider — the whole call family including the
+instantiation shapes, every **decorated** `import()` type wherever it appears,
+and an undecorated one in a parameter position — and the claim is narrower.
+**The gate remains the backstop for anything the rule does not reach**, which
+is the arrangement rather than a failure of it. So a partial parse of a shape
+the rule DOES reach means the rule was bypassed or the file is outside its
+globs; a partial parse of anything else is a real finding, and the response is
+to measure the construct and widen the rule rather than to add an entry.
 
-- the generic-call fault is about the SHAPE, not the name. 143 of the
-  allowlisted files spell it `importOriginal`, but 22 spell it
-  `vi.importActual` or `importActual`, and grepping for the first name finds
-  nothing in those. It is also specifically the EMPTY argument list — measured
-  with a minimal repro, `f<typeof import("x")>()` fails and
-  `f<typeof import("x")>("x")` parses — so ten files here carry the same
-  generic with an argument and are correctly *not* allowlisted. A rule stated
-  without that qualifier sends somebody to rewrite code that was never broken;
-- the `&amp;` remedy is for JSX **text** only. The same fault fires on a `&`
+The description of those faults has now been wrong four times, each time by
+being narrower than the fault, and each correction cost somebody a wrong turn.
+Worth knowing before you reach for a remedy, all measured:
+
+- **the call fault is about the SHAPE, not the name.** 143 files spelled it
+  `importOriginal`, 22 spelled it `vi.importActual` or a destructured
+  `importActual`, and grepping for the first name finds nothing in those;
+- **and it is not only the empty argument list.** #2842 corrected the
+  description to "an EMPTY argument list", measured on a single-line repro:
+  `f<typeof import("x")>()` fails and `f<typeof import("x")>("x")` parses. That
+  correction is also incomplete — a **trailing comma** breaks it just as
+  reliably: the multi-line form, with a comma after the last argument, fails
+  with "`,` was unexpected". It appeared at 12 call sites, and for 10 of the
+  169 entries it was the only cause: a formatter split a long argument list
+  across lines and added the comma with the reflow. So which side of the line a
+  call sits on is decided by **print width**, which is why
+  #3318's rule reports the whole class: 23 files held the "parses today"
+  spelling and every one of them was one rename away from an entry of its own;
+- **a third fault exists that neither description reached**: a **decorated**
+  `import()` type — one carrying a type-argument list, an indexed access, a
+  `keyof` or a wrapping parenthesis. One allowlisted file carried this and no
+  call shape at all, so its entry read as unexplained for as long as the
+  description named only the call;
+- **and #3318 described that third fault as a PARAMETER fault, which was the
+  fourth time the description was too narrow.** It measured
+  `(i: import("x").A<null>)` and generalised from the position. Re-measured for
+  #3345, the position is nearly irrelevant: the same type fails in a type alias,
+  an interface property, a return annotation, a class property, a generic
+  constraint or default, a nested type argument and an `extends` or `implements`
+  clause. The boundary INSIDE the family is incoherent, which is why the rule
+  reports the decoration rather than a spelling —
+  `import("x").A<null>["k"]` parses in an alias and deleting the index makes it
+  fail, `keyof import("x")` fails while `keyof typeof import("x")` parses,
+  `(import("x").A)` fails while `(typeof import("x"))` parses, and `x as
+  import("x").A<null>` parses;
+- **the remedy for that third fault is a top-level `import type`, not a named
+  alias**, and getting this wrong is what #3345 was filed to fix. #3318's rule
+  printed "give the type a name and use the name", which produces
+  `type P = import("x").A<null>;` — measured to FAIL, with the rule silent on
+  it. A guard printing an instruction that creates the hole it exists to close
+  is the worst failure mode available to one. Use
+  `import type { A } from "@/lib/x";` and then `A<null>["k"]`, or root the type
+  at `typeof`: `typeof import("@/lib/x").k` and `(typeof import("@/lib/x"))["k"]`
+  parse everywhere outside a call. A type-only import is erased at compile time,
+  so a dynamically-loaded module stays dynamically loaded;
+- **two members of the CALL family were silent too** (#3345): a bare
+  instantiation expression `f<typeof import("x")>` with no call, and
+  `f<typeof import("x")>?.()`, where the type arguments hang off the callee
+  rather than the optional call. A second type argument also fails even with an
+  ordinary argument list. `new`, by contrast, is genuinely unaffected — every
+  argument-list variant of `new K<typeof import("x")>` parses, including the
+  trailing-comma reflow, which is why the rule leaves it alone;
+- **the `&amp;` remedy is for JSX text only.** The same fault fires on a `&`
   inside a string literal — a URL query such as
   `href="/admin/bookings?sortBy=member&sortDir=asc"` — where rewriting it
-  changes the value, and in one case the value a test asserts. Those four files
-  are on the allowlist precisely because they have no safe rewrite.
+  changes the value, and in one case the value a test asserts. The **three**
+  files left on the allowlist are there precisely because they have no safe
+  rewrite. It was reported here as four until #3318 re-measured it: the fourth
+  was unparsed for the call shape, and its own `&` never tripped anything.
+
+Each surviving entry carries its own `reason`, and the gate **refuses** an entry
+without one. The reasons used to sit in a composition summary beside the list,
+and both of that summary's clauses had gone false — a summary of a list is a
+second statement of the list (`INV-SSOT-001`).
 
 #### The coverage gate
 
@@ -442,9 +512,12 @@ floor catches the accident, not the intent.
 
 Every entry in the allowlist is a **test file**: the production files and all
 three whole-file failures the measurement found were fixed rather than listed.
-The file itself is the count — it is not restated here, because the gate exists
-to drive it down and a copied number would be wrong on the first success. Run it
-locally against a scan you produced yourself:
+The file itself is the count — the numbers above are dated facts about what
+#3318 removed, not a running total, because the gate exists to drive the list
+down and a copied total is wrong on the first success. Run it locally against a
+scan you produced yourself, and note that the scan reads the whole worktree:
+a stray `.ts` file under `.artifacts/` is scanned and will be reported as a new
+unparsed region, which is not something CI can see.
 
 ```bash
 docker run --rm -v "$PWD:/src:ro" -v "$PWD/.semgrep-out:/out" -w /src \
@@ -483,12 +556,14 @@ Two consequences worth holding on to.
   gate for the first list and `semgrep-suppression-census.test.ts` for the
   second, and each caught its regrowth on the very first merge that produced
   one, before any human read the diff.
-- **The recurrence is what [#3318](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3318)
-  is for.** An ESLint rule banning the unparseable shape at the source removes
-  the first list's growth entirely rather than catching it after the fact,
-  which is the structural fix `INV-SSOT-001` prefers over a policed one. Until
-  that lands, expect to rewrite a handful of files after each `main` sync, and
-  prefer the parsing form when you write a new partial mock.
+- **The first list's recurrence is closed, and the second's is not.**
+  [#3318](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3318)
+  banned both call-site shapes with `scan/no-semgrep-unparsable-import-type`,
+  which removes that growth at the source rather than catching it after the
+  fact — the structural fix `INV-SSOT-001` prefers over a policed one. Write a
+  new partial mock as `(await importOriginal()) as typeof import("@/lib/x")` and
+  lint will tell you if you forget. The **suppression census** has no equivalent
+  and still regrows on merges, so expect to prune it after a sync.
 
 ### Break-glass: a new CRITICAL image finding with no code change
 

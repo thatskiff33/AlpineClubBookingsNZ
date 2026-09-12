@@ -120,7 +120,7 @@ vi.mock("@/lib/prisma", () => {
 // acquireLodgeCapacityLock (it runs through the mocked tx.$executeRaw, so the
 // advisory-lock accounting and the "two raw statements" assertion stay honest).
 vi.mock("@/lib/capacity", async (importActual) => {
-  const actual = await importActual<typeof import("@/lib/capacity")>();
+  const actual = (await importActual()) as typeof import("@/lib/capacity");
   return {
     ...actual,
     checkCapacityForGuestRanges: (...a: unknown[]) => mocks.checkCapacity(...a),
@@ -145,7 +145,7 @@ vi.mock("@/lib/adult-member-hosting-proposed", () => ({
 vi.mock("@/lib/booking-guests", async (importActual) => {
   // Partial: the real error CLASSES stay real, because the refusal path is what
   // these tests assert and an instanceof check has to mean something.
-  const actual = await importActual<typeof import("@/lib/booking-guests")>();
+  const actual = (await importActual()) as typeof import("@/lib/booking-guests");
   return {
     ...actual,
     resolveLinkedBookingMembersWithBoundary: (...a: unknown[]) =>

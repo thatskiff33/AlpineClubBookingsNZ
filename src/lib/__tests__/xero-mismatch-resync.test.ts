@@ -19,7 +19,7 @@ vi.mock("@/lib/xero-token-store", () => ({
 
 const mockGetAuthenticatedXeroClient = vi.fn();
 vi.mock("@/lib/xero-api-client", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/xero-api-client")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/xero-api-client");
   return {
     ...actual,
     getAuthenticatedXeroClient: (...args: unknown[]) =>

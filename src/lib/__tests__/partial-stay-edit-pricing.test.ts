@@ -200,7 +200,7 @@ vi.mock("@/lib/booking-events", () => ({
 const shortenPricing = vi.hoisted(() => ({ guestIndex: null as number | null }));
 vi.mock("@/lib/membership-type-policy", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("@/lib/membership-type-policy")>();
+    (await importOriginal()) as typeof import("@/lib/membership-type-policy");
   return {
     ...actual,
     priceBookingGuestsWithMembershipTypePolicy: async (

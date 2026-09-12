@@ -67,9 +67,7 @@ vi.mock("next/navigation", () => ({
   "No ... export is defined on the ... mock" before a single test runs.
 */
 vi.mock("@/hooks/use-admin-area-edit-access", async (importOriginal) => ({
-  ...(await importOriginal<
-    typeof import("@/hooks/use-admin-area-edit-access")
-  >()),
+  ...((await importOriginal()) as typeof import("@/hooks/use-admin-area-edit-access")),
   useAdminAreaEditAccess: () => true,
 }));
 

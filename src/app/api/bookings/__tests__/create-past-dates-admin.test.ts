@@ -217,9 +217,7 @@ vi.mock("@/lib/xero-organisation", () => ({
 vi.mock("@/lib/booking-create", async () => {
   // Re-export the REAL constant (the factory is hoisted, so it cannot see the
   // top-level import): the route must enforce the same value the test asserts.
-  const { RETROACTIVE_BOOKING_MAX_LOOKBACK_DAYS } = await vi.importActual<
-    typeof import("@/lib/booking-create-types")
-  >("@/lib/booking-create-types");
+  const { RETROACTIVE_BOOKING_MAX_LOOKBACK_DAYS } = (await vi.importActual("@/lib/booking-create-types")) as typeof import("@/lib/booking-create-types");
   return {
     createConfirmedBooking: h.createConfirmedBooking,
     createDraftBooking: h.createDraftBooking,

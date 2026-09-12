@@ -25,7 +25,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../provider", async () => {
-  const actual = await vi.importActual<typeof import("../provider")>("../provider");
+  const actual = (await vi.importActual("../provider")) as typeof import("../provider");
   return { ...actual, runDiagnosticsProviderRound: mocks.runRound };
 });
 vi.mock("../../tools/invoke", () => ({ invokeDiagnosticsTool: mocks.invoke }));
@@ -33,9 +33,7 @@ vi.mock("../../tools/definitions", () => ({
   listDiagnosticsToolDefinitions: mocks.listDefinitions,
 }));
 vi.mock("@/lib/ai-diagnostics-usage", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/ai-diagnostics-usage")>(
-    "@/lib/ai-diagnostics-usage",
-  );
+  const actual = (await vi.importActual("@/lib/ai-diagnostics-usage")) as typeof import("@/lib/ai-diagnostics-usage");
   return {
     ...actual,
     reserveDiagnosticsBudget: mocks.reserve,

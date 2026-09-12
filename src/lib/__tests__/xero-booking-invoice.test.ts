@@ -185,7 +185,7 @@ vi.mock("@/lib/xero-links", () => ({
 }));
 
 vi.mock("@/lib/xero-sync", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/xero-sync")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/xero-sync");
 
   return {
     ...actual,
@@ -207,7 +207,7 @@ vi.mock("@/lib/xero-applied-credit-allocation", () => ({
 // token-encryption key from a stub so the token round-trips below need no
 // integration-credential DB rows.
 vi.mock("@/lib/xero-config", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/xero-config")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/xero-config");
   return {
     ...actual,
     getOperationalXeroConfig: vi.fn().mockResolvedValue({

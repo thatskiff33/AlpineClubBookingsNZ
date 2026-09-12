@@ -145,7 +145,7 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 vi.mock("@/lib/capacity", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/capacity")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/capacity");
   return {
     ...actual,
     checkCapacityForGuestRanges: h.checkCapacityForGuestRanges,
@@ -202,11 +202,11 @@ vi.mock("@/lib/cancellation", () => ({
 }));
 vi.mock("@/lib/policies/booking-route-decisions", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("@/lib/policies/booking-route-decisions")>();
+    (await importOriginal()) as typeof import("@/lib/policies/booking-route-decisions");
   return { ...actual, calculateBookingHoldDecision: vi.fn() };
 });
 vi.mock("@/lib/booking-modify", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/booking-modify")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/booking-modify");
   return { ...actual, assertBookingNotQuotePriced: h.assertNotQuotePriced };
 });
 vi.mock("@/lib/booking-modification-settlement", () => ({
@@ -225,9 +225,7 @@ vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), warn: vi.fn(), info: vi.fn() },
 }));
 vi.mock("@/lib/adult-member-hosting-review", async (importOriginal) => {
-  const actual = await importOriginal<
-    typeof import("@/lib/adult-member-hosting-review")
-  >();
+  const actual = (await importOriginal()) as typeof import("@/lib/adult-member-hosting-review");
   return {
     ...actual,
     reconcileAdultMemberHostingReviewWithSiblings: h.reconcileHosting,

@@ -16,7 +16,7 @@ const lodgeOptions = {
 };
 
 vi.mock("@/components/lodge-select", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/components/lodge-select")>();
+  const actual = (await importOriginal()) as typeof import("@/components/lodge-select");
   const React = await import("react");
   return {
     ...actual,

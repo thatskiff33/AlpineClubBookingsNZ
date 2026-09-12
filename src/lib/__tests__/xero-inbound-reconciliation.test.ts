@@ -168,7 +168,7 @@ vi.mock("@/lib/email", () => ({
 }));
 
 vi.mock("@/lib/capacity", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/capacity")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/capacity");
 
   return {
     ...actual,
@@ -178,7 +178,7 @@ vi.mock("@/lib/capacity", async (importOriginal) => {
 });
 
 vi.mock("@/lib/waitlist", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/waitlist")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/waitlist");
 
   return {
     ...actual,
@@ -207,7 +207,7 @@ vi.mock("@/lib/adult-member-hosting-coverage-drain", () => ({
 }));
 
 vi.mock("@/lib/bed-allocation-lifecycle", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/bed-allocation-lifecycle")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/bed-allocation-lifecycle");
 
   return {
     ...actual,
@@ -218,7 +218,7 @@ vi.mock("@/lib/bed-allocation-lifecycle", async (importOriginal) => {
 });
 
 vi.mock("@/lib/booking-events", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/booking-events")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/booking-events");
 
   return {
     ...actual,
@@ -227,7 +227,7 @@ vi.mock("@/lib/booking-events", async (importOriginal) => {
 });
 
 vi.mock("@/lib/xero-sync", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/xero-sync")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/xero-sync");
 
   return {
     ...actual,
@@ -239,7 +239,7 @@ vi.mock("@/lib/xero-sync", async (importOriginal) => {
 });
 
 vi.mock("@/lib/xero-links", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/xero-links")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/xero-links");
 
   return {
     ...actual,
@@ -249,7 +249,7 @@ vi.mock("@/lib/xero-links", async (importOriginal) => {
 });
 
 vi.mock("@/lib/xero", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/xero")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/xero");
 
   return {
     ...actual,
@@ -276,7 +276,7 @@ vi.mock("@/lib/xero", async (importOriginal) => {
 // those modules. The (now-inert) facade mock above is left as-is; real
 // callXeroApi / XeroDailyLimitError from xero-api-client are preserved.
 vi.mock("@/lib/xero-api-client", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/xero-api-client")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/xero-api-client");
 
   return {
     ...actual,
@@ -285,7 +285,7 @@ vi.mock("@/lib/xero-api-client", async (importOriginal) => {
 });
 
 vi.mock("@/lib/xero-membership-sync", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/xero-membership-sync")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/xero-membership-sync");
 
   return {
     ...actual,
@@ -302,7 +302,7 @@ vi.mock("@/lib/xero-membership-sync", async (importOriginal) => {
 });
 
 vi.mock("@/lib/xero-contact-cache", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/xero-contact-cache")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/xero-contact-cache");
 
   return {
     ...actual,
@@ -311,7 +311,7 @@ vi.mock("@/lib/xero-contact-cache", async (importOriginal) => {
 });
 
 vi.mock("@/lib/xero-bulk-contact-sync", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/xero-bulk-contact-sync")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/xero-bulk-contact-sync");
 
   return {
     ...actual,
@@ -876,9 +876,7 @@ describe("processStoredXeroInboundEvents", () => {
   // audit rows and triggers no per-member checkMembershipStatus refresh. Uses
   // the REAL hasStrongSubscriptionInvoiceMatch with union options.
   it("does not treat a union-only inbound invoice as a subscription (no audit rows, no member refresh)", async () => {
-    const { hasStrongSubscriptionInvoiceMatch } = await vi.importActual<
-      typeof import("@/lib/xero-membership-sync")
-    >("@/lib/xero-membership-sync");
+    const { hasStrongSubscriptionInvoiceMatch } = (await vi.importActual("@/lib/xero-membership-sync")) as typeof import("@/lib/xero-membership-sync");
     mocks.hasStrongSubscriptionInvoiceMatch.mockImplementation(
       hasStrongSubscriptionInvoiceMatch,
     );
@@ -947,9 +945,7 @@ describe("processStoredXeroInboundEvents", () => {
   // #2109 FIX-3: an account-203 invoice IS a strong match, so it still writes the
   // SUBSCRIPTION_INVOICE audit link and refreshes the member as before.
   it("still treats an account-203 inbound invoice as a subscription (links + member refresh)", async () => {
-    const { hasStrongSubscriptionInvoiceMatch } = await vi.importActual<
-      typeof import("@/lib/xero-membership-sync")
-    >("@/lib/xero-membership-sync");
+    const { hasStrongSubscriptionInvoiceMatch } = (await vi.importActual("@/lib/xero-membership-sync")) as typeof import("@/lib/xero-membership-sync");
     mocks.hasStrongSubscriptionInvoiceMatch.mockImplementation(
       hasStrongSubscriptionInvoiceMatch,
     );

@@ -21,9 +21,7 @@ vi.mock("@/lib/module-settings", () => ({
 }));
 
 vi.mock("@/lib/internet-banking-settings", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/internet-banking-settings")>(
-    "@/lib/internet-banking-settings",
-  );
+  const actual = (await vi.importActual("@/lib/internet-banking-settings")) as typeof import("@/lib/internet-banking-settings");
   return {
     ...actual,
     loadInternetBankingPaymentSettings:
