@@ -662,6 +662,113 @@ describe("findOrCreateXeroContact", () => {
       { store: mocks.tx },
     );
   });
+
+  it("REFUSES to link a contact a school's Organisation already holds (#3367, INV-INT-018)", async () => {
+    /*
+      THE DETERMINISTIC HALF of the two-homes hazard, and the reason the refusal
+      is symmetric rather than sitting only on the organisation writer.
+
+      A school's organisation contact carries the school's contact email —
+      which is the SAME address the invented school member carries, because both
+      come from the booking request's contact field. This function asks Xero
+      `EmailAddress="…"` first. So a credit note or supplementary invoice on a
+      school booking, none of which stage 2 moves onto the organisation, would
+      find the ORGANISATION's contact here and quietly link it to the member,
+      leaving two local records claiming one Xero customer and whichever path
+      runs next deciding which wins.
+
+      It REFUSES rather than choosing: a person's Xero contact is never renamed,
+      reused or repurposed as the school (settled on #2912), and this is that
+      same rule seen from the database side.
+    */
+    mocks.tx.member.findUnique.mockResolvedValue({
+      id: "mem_school",
+      firstName: "New Plymouth Primary School",
+      lastName: "",
+      email: "office@school.test",
+      xeroContactId: null,
+      dateOfBirth: null,
+      phoneCountryCode: "",
+      phoneAreaCode: "",
+      phoneNumber: "",
+      streetAddressLine1: "",
+      postalAddressLine1: "",
+    });
+    mocks.prisma.xeroToken.findFirst.mockResolvedValue({
+      id: "token_1",
+      accessToken: await encryptToken("access"),
+      refreshToken: await encryptToken("refresh"),
+      expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+      tenantId: "tenant_1",
+    });
+    // Xero answers the email search with the SCHOOL's own organisation contact.
+    mocks.xeroClientInstance.accountingApi.getContacts.mockResolvedValue({
+      body: {
+        contacts: [
+          {
+            contactID: "xero_school_org_contact",
+            name: "New Plymouth Primary School",
+          },
+        ],
+      },
+    });
+    mocks.tx.organisation.findFirst.mockResolvedValue({
+      id: "org_1",
+      name: "New Plymouth Primary School",
+    });
+
+    await expect(findOrCreateXeroContact("mem_school")).rejects.toThrow(
+      /already the Xero customer for organisation New Plymouth Primary School/,
+    );
+
+    // Nothing was linked, and the refusal happened under the contact-home lock.
+    expect(mocks.tx.member.update).not.toHaveBeenCalled();
+    expect(mocks.tx.$executeRaw).toHaveBeenCalled();
+  });
+
+  it("links an email match normally when no organisation holds the contact", async () => {
+    // The other half of the mutation pair: the refusal must DISCRIMINATE. With
+    // no organisation holding it, the same fixture links exactly as before.
+    mocks.tx.member.findUnique.mockResolvedValue({
+      id: "mem_school",
+      firstName: "New Plymouth Primary School",
+      lastName: "",
+      email: "office@school.test",
+      xeroContactId: null,
+      dateOfBirth: null,
+      phoneCountryCode: "",
+      phoneAreaCode: "",
+      phoneNumber: "",
+      streetAddressLine1: "",
+      postalAddressLine1: "",
+    });
+    mocks.prisma.xeroToken.findFirst.mockResolvedValue({
+      id: "token_1",
+      accessToken: await encryptToken("access"),
+      refreshToken: await encryptToken("refresh"),
+      expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+      tenantId: "tenant_1",
+    });
+    mocks.xeroClientInstance.accountingApi.getContacts.mockResolvedValue({
+      body: {
+        contacts: [
+          {
+            contactID: "xero_school_org_contact",
+            name: "New Plymouth Primary School",
+          },
+        ],
+      },
+    });
+    mocks.tx.organisation.findFirst.mockResolvedValue(null);
+
+    await expect(findOrCreateXeroContact("mem_school")).resolves.toBe(
+      "xero_school_org_contact",
+    );
+    expect(mocks.tx.member.update).toHaveBeenCalledWith({
+      where: { id: "mem_school" },
+      data: { xeroContactId: "xero_school_org_contact" },
+    });
+  });
 });
 
 /**
