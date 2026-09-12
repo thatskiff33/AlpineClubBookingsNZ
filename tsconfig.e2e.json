@@ -11,7 +11,12 @@
   // `docs/AUTHORITATIVE_FEES.md` relies on for `e2e/setup/seed-second-lodge.ts`.
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "types": ["node"]
+    "types": ["node"],
+    // #2802: see tsconfig.test.json for why this stays off here for now —
+    // the same "application code before tests" scoping applies to the
+    // Playwright suite (measured at 77 forced-on diagnostics, none of them
+    // part of programme #2694's tracked inventory).
+    "noUncheckedIndexedAccess": false
   },
   "include": ["e2e/**/*.ts", "playwright.config.ts"],
   "exclude": ["node_modules"]
