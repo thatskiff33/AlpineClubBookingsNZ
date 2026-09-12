@@ -180,6 +180,212 @@ export function deriveNightAdjustmentState(params: {
     : "NOT_KNOWN";
 }
 
+/**
+ * Stage 3's named money readers. The operation is part of the input because a
+ * booking-wide amount and a whole-guest removal do not consume the recorded
+ * rows at the same grain.
+ */
+export type BookingMoneyBuildUpOperation =
+  | "GUEST_REMOVAL"
+  | "REVIEW_REBASE"
+  | "CREDIT_ELECTION"
+  | "XERO_PROMO_LINE";
+
+export type BookingMoneyBaseEvidence =
+  | { kind: "EXACT"; amountCents: number }
+  | {
+      kind: "UNKNOWN";
+      reason:
+        | "NO_STORED_NIGHT_PRICES"
+        | "PARTIAL_STORED_NIGHT_PRICES"
+        | "INEXACT_STORED_NIGHT_PRICES"
+        | "STORED_TOTAL_MISMATCH";
+    };
+
+export type BookingMoneyCompatibilityClassification =
+  | "STORED_SIDE_DEFECT"
+  | "DERIVATION_DEFECT"
+  | "LEGITIMATE_DIVERGENCE";
+
+export type BookingMoneyBuildUpHistoryMetadata = {
+  moneyBuildUpOperation: BookingMoneyBuildUpOperation;
+  moneyBuildUpSource:
+    | "STORED"
+    | "DERIVED_COMPATIBILITY_FALLBACK"
+    | "BASE_EVIDENCE_UNKNOWN";
+  moneyBuildUpReason: string;
+  moneyBuildUpStoredCents: number | null;
+  moneyBuildUpDerivedCents: number;
+  moneyBuildUpFallbackClassification: BookingMoneyCompatibilityClassification | null;
+};
+
+export type BookingMoneyBuildUpSelection =
+  | {
+      source: "STORED";
+      reason: "STORED_MATCHES_DERIVED";
+      storedCents: number;
+      derivedCents: number;
+      selectedCents: number;
+      historyMetadata: BookingMoneyBuildUpHistoryMetadata;
+    }
+  | {
+      source: "DERIVED_COMPATIBILITY_FALLBACK";
+      reason: "ADJUSTMENT_BUILDUP_NOT_KNOWN" | "STORED_DERIVED_MISMATCH";
+      storedCents: number | null;
+      derivedCents: number;
+      selectedCents: number;
+      fallbackClassification: BookingMoneyCompatibilityClassification;
+      historyMetadata: BookingMoneyBuildUpHistoryMetadata;
+    }
+  | {
+      source: "BASE_EVIDENCE_UNKNOWN";
+      reason: Extract<BookingMoneyBaseEvidence, { kind: "UNKNOWN" }>["reason"];
+      storedCents: null;
+      derivedCents: number;
+      historyMetadata: BookingMoneyBuildUpHistoryMetadata;
+    };
+
+export type BookingMoneyBuildUpRow = {
+  bookingGuestId: string;
+  beneficiaryMemberId: string;
+  amountCents: number | null;
+};
+
+function buildUpHistoryMetadata(args: {
+  operation: BookingMoneyBuildUpOperation;
+  source: BookingMoneyBuildUpHistoryMetadata["moneyBuildUpSource"];
+  reason: string;
+  storedCents: number | null;
+  derivedCents: number;
+  classification?: BookingMoneyCompatibilityClassification | null;
+}): BookingMoneyBuildUpHistoryMetadata {
+  return {
+    moneyBuildUpOperation: args.operation,
+    moneyBuildUpSource: args.source,
+    moneyBuildUpReason: args.reason,
+    moneyBuildUpStoredCents: args.storedCents,
+    moneyBuildUpDerivedCents: args.derivedCents,
+    moneyBuildUpFallbackClassification: args.classification ?? null,
+  };
+}
+
+/**
+ * Compare the recorded build-up with today's calculation without ever changing
+ * a member-visible amount. A mismatch has no default classification: callers
+ * must name why the compatibility fallback is being taken, which is the
+ * mutation-resistant guard against a silent `?? headline` path.
+ */
+export function selectBookingMoneyBuildUp(args: {
+  operation: BookingMoneyBuildUpOperation;
+  baseEvidence: BookingMoneyBaseEvidence;
+  rows: ReadonlyArray<BookingMoneyBuildUpRow>;
+  redemption: {
+    priceAdjustmentCents: number;
+    allocations: ReadonlyArray<{ memberId: string; priceAdjustmentCents: number }>;
+  } | null;
+  derivedCents: number;
+  bookingGuestId?: string;
+  mismatchClassification?: BookingMoneyCompatibilityClassification;
+}): BookingMoneyBuildUpSelection {
+  if (!Number.isInteger(args.derivedCents)) {
+    refuse(`${args.operation}: today's result is not integer cents (${args.derivedCents})`);
+  }
+  if (args.baseEvidence.kind === "UNKNOWN") {
+    const reason = args.baseEvidence.reason;
+    return {
+      source: "BASE_EVIDENCE_UNKNOWN",
+      reason,
+      storedCents: null,
+      derivedCents: args.derivedCents,
+      historyMetadata: buildUpHistoryMetadata({
+        operation: args.operation,
+        source: "BASE_EVIDENCE_UNKNOWN",
+        reason,
+        storedCents: null,
+        derivedCents: args.derivedCents,
+      }),
+    };
+  }
+
+  const adjustmentState = deriveNightAdjustmentState({
+    rows: args.rows,
+    redemption: args.redemption,
+  });
+  if (adjustmentState === "NOT_KNOWN") {
+    const reason = "ADJUSTMENT_BUILDUP_NOT_KNOWN" as const;
+    const fallbackClassification = "STORED_SIDE_DEFECT" as const;
+    return {
+      source: "DERIVED_COMPATIBILITY_FALLBACK",
+      reason,
+      storedCents: null,
+      derivedCents: args.derivedCents,
+      selectedCents: args.derivedCents,
+      fallbackClassification,
+      historyMetadata: buildUpHistoryMetadata({
+        operation: args.operation,
+        source: "DERIVED_COMPATIBILITY_FALLBACK",
+        reason,
+        storedCents: null,
+        derivedCents: args.derivedCents,
+        classification: fallbackClassification,
+      }),
+    };
+  }
+
+  const operationRows =
+    args.operation === "GUEST_REMOVAL"
+      ? args.rows.filter((row) => row.bookingGuestId === args.bookingGuestId)
+      : args.rows;
+  const adjustmentCents = operationRows.reduce((sum, row) => sum + (row.amountCents ?? 0), 0);
+  const storedCents =
+    args.operation === "GUEST_REMOVAL"
+      ? -(args.baseEvidence.amountCents + adjustmentCents)
+      : args.operation === "XERO_PROMO_LINE"
+        ? adjustmentCents
+        : args.baseEvidence.amountCents + adjustmentCents;
+
+  if (storedCents === args.derivedCents) {
+    const reason = "STORED_MATCHES_DERIVED" as const;
+    return {
+      source: "STORED",
+      reason,
+      storedCents,
+      derivedCents: args.derivedCents,
+      selectedCents: storedCents,
+      historyMetadata: buildUpHistoryMetadata({
+        operation: args.operation,
+        source: "STORED",
+        reason,
+        storedCents,
+        derivedCents: args.derivedCents,
+      }),
+    };
+  }
+
+  if (!args.mismatchClassification) {
+    refuse(
+      `${args.operation}: stored ${storedCents} cents differs from today's ${args.derivedCents} cents without a classified compatibility fallback`,
+    );
+  }
+  const reason = "STORED_DERIVED_MISMATCH" as const;
+  return {
+    source: "DERIVED_COMPATIBILITY_FALLBACK",
+    reason,
+    storedCents,
+    derivedCents: args.derivedCents,
+    selectedCents: args.derivedCents,
+    fallbackClassification: args.mismatchClassification,
+    historyMetadata: buildUpHistoryMetadata({
+      operation: args.operation,
+      source: "DERIVED_COMPATIBILITY_FALLBACK",
+      reason,
+      storedCents,
+      derivedCents: args.derivedCents,
+      classification: args.mismatchClassification,
+    }),
+  };
+}
+
 type ResolvedTarget = {
   scope: "night" | "guest";
   bookingGuestId: string;
