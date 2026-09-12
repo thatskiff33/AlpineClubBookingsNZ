@@ -86,9 +86,14 @@ export type OversizedFileStat = FileStat & Budget & { overBy: number };
  * there was policed by nothing at all — not the ratchet, not the lint rules,
  * not tsc.
  *
- * Widening this set is zero churn today — tracked `src/` is 2500 `.ts`, 874
- * `.tsx`, 2 `.css`, 1 `.md`, 1 `.json` — but the set is still a list, and a
- * list rots. `findUnclassifiedFiles` is what stops it rotting: any tracked
+ * Widening this set is zero churn today — tracked `src/` is 3065 `.ts`, 1003
+ * `.tsx`, 2 `.css`, 1 `.txt`, 1 `.md`, 1 `.json` — but the set is still a list,
+ * and a list rots. Those numbers were 2500/874 and omitted the `.txt`
+ * altogether; they were already stale on `main` and this sentence was rewritten
+ * once without re-measuring the one beside it. Re-measure with
+ * `git ls-files 'src/**' | sed 's/.*\.//' | sort | uniq -c` rather than
+ * trusting them, because they are the evidence for the "zero churn" claim and
+ * being 20% low makes that claim wrong in the direction that matters. `findUnclassifiedFiles` is what stops it rotting: any tracked
  * `src/` file whose extension appears in neither this set nor
  * `NON_SOURCE_EXTENSIONS` fails the gate rather than slipping silently out of
  * scope.
