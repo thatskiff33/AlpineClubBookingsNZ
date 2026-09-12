@@ -287,7 +287,7 @@ function completeHostingGuestRows<
       // what every route in this file assumes when it reprices the full party.
       stayStart,
       stayEnd,
-      // #3031: and a per-night SOLD PRICE that reconciles to the guest's stored
+      // #3031: and a per-night stored price that reconciles to the guest's
       // total. `[]` used to be the default, and it was the pre-#713 row shape -
       // legitimate then, and the unpriceable case now: an edit that gives a
       // night back reads what it was sold for off these rows and refuses to
@@ -300,7 +300,7 @@ function completeHostingGuestRows<
       consentStatus: null as string | null,
       ...guest,
       nights: (
-        guest.nights ?? syntheticSoldNightRows(stayStart, stayEnd, guest.priceCents)
+        guest.nights ?? syntheticEvenSplitNightRows(stayStart, stayEnd, guest.priceCents)
       ).map((night) => ({
         priceSource: "UNKNOWN" as const,
         ...night,
@@ -329,12 +329,12 @@ function completeHostingGuestRows<
  * these rows reconcile, and the invariant says in as many words that an evenly
  * split backfilled strand prices as exact.
  *
- * What matters here is that the rows reconcile to the stored total, because that
- * is the test an edit applies before it will price anything. A guest with no
- * stored total gets no rows - there is nothing to allocate - and that fixture is
- * then deliberately in the unpriceable case.
+ * At whole-guest grain these rows can reconcile to the stored total. At
+ * individual-night grain #3277 keeps their provenance inexact; a fixture that
+ * exercises a quote-authored night must opt into `SOLD` explicitly. A guest
+ * with no stored total gets no rows and remains deliberately unpriceable.
  */
-function syntheticSoldNightRows(
+function syntheticEvenSplitNightRows(
   stayStart: Date,
   stayEnd: Date,
   priceCents: number | undefined,
@@ -360,6 +360,16 @@ function syntheticSoldNightRows(
     priceCents: base + (index === 0 ? remainder : 0),
     priceSource: "EVEN_SPLIT",
   }));
+}
+
+function withSoldNightProvenance(booking: ReturnType<typeof makeBooking>) {
+  return {
+    ...booking,
+    guests: booking.guests.map((guest) => ({
+      ...guest,
+      nights: guest.nights.map((night) => ({ ...night, priceSource: "SOLD" as const })),
+    })),
+  };
 }
 
 // Helper to make a booking object
@@ -804,7 +814,7 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
 
   it("successfully modifies dates with price recalculation", async () => {
     mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
-    const booking = makeBooking();
+    const booking = withSoldNightProvenance(makeBooking());
     const tx = makeTx(booking);
     mockTransaction.mockImplementation((fn: any) => fn(tx));
     mockedCheckCapacity.mockResolvedValue({ available: true, minAvailable: 10, nightDetails: [] });
@@ -842,7 +852,7 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
     // here on, so what lands here is what the NEXT edit reads back as evidence
     // (INV-MOD-028).
     mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
-    const booking = makeBooking();
+    const booking = withSoldNightProvenance(makeBooking());
     const tx = makeTx(booking);
     mockTransaction.mockImplementation((fn: any) => fn(tx));
     mockedCheckCapacity.mockResolvedValue({ available: true, minAvailable: 10, nightDetails: [] });
@@ -889,7 +899,7 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
     // nothing. Refusing is the only answer that neither invents money nor
     // silently loses it. Nothing must be committed either.
     mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
-    const booking = makeBooking();
+    const booking = withSoldNightProvenance(makeBooking());
     const tx = makeTx(booking);
     mockTransaction.mockImplementation((fn: any) => fn(tx));
     mockedCheckCapacity.mockResolvedValue({ available: true, minAvailable: 10, nightDetails: [] });

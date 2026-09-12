@@ -666,7 +666,7 @@ export async function removeBookingGuestInTransaction({
   // itself is the pre-removal record.
   const recordedMoneyBuildUp = await readBookingMoneyBuildUp(tx, {
     bookingId,
-    operation: "GUEST_REMOVAL",
+    purpose: "GUEST_REMOVAL",
     bookingGuestId: guestId,
   });
 

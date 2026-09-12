@@ -493,7 +493,7 @@ export async function createXeroInvoiceForBooking(
   if (booking.promoAdjustmentCents) {
     const recordedMoneyBuildUp = await readBookingMoneyBuildUp(prisma, {
       bookingId,
-      operation: "XERO_PROMO_LINE",
+      purpose: "XERO_PROMO_LINE",
     });
     promoMoneyBuildUpSelection = selectLoadedBookingMoneyBuildUp(recordedMoneyBuildUp, {
       derivedCents: booking.promoAdjustmentCents,

@@ -819,6 +819,7 @@ describe("#3030 reviewContext parser - a blob it cannot vouch for is not read", 
       "NO_STORED_NIGHT_PRICES",
       "PARTIAL_STORED_NIGHT_PRICES",
       "STORED_TOTAL_MISMATCH",
+      "INEXACT_STORED_NIGHT_PRICES",
       // #3032: this strand's own rows are exact; a DIFFERENT strand on the same
       // booking is not, and the edit parked as a whole. It exists so a parked
       // removal can record the departing guest's money instead of discarding it
