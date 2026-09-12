@@ -320,6 +320,37 @@ describe("normaliseSchemaForComparison", () => {
     const changed = schema.replace("email String?", "emailAddress String?");
     expect(normaliseSchemaForComparison(changed)).not.toBe(normaliseSchemaForComparison(schema));
   });
+
+  // #3366. Prisma also RE-FLOWS block comments in the copy it emits beside a
+  // generated client: the bare continuation line between two paragraphs is
+  // dropped. Exactly one such line exists in this repository's 7,600-line
+  // schema, and it was enough to make every rehearsal refuse to run and report
+  // the base client as "NOT the base ref's client" — which it was. Measured on
+  // Prisma 7.10.0 against the real schema before this rule was added.
+  const commented = [
+    "/**",
+    " * Why this model exists.",
+    " *",
+    " * A second paragraph.",
+    " */",
+    schema,
+  ].join("\n");
+
+  it("is unchanged when Prisma drops a block comment's blank continuation line", () => {
+    const reflowed = commented
+      .split("\n")
+      .filter((l) => l.trim() !== "*")
+      .join("\n");
+    expect(reflowed).not.toBe(commented);
+    expect(normaliseSchemaForComparison(reflowed)).toBe(normaliseSchemaForComparison(commented));
+  });
+
+  it("still detects a difference in the comment PROSE itself", () => {
+    const changed = commented.replace("A second paragraph.", "A different paragraph.");
+    expect(normaliseSchemaForComparison(changed)).not.toBe(
+      normaliseSchemaForComparison(commented),
+    );
+  });
 });
 
 describe("summariseReadError", () => {
