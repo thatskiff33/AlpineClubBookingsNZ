@@ -12,7 +12,6 @@ import {
   bookingGuestsCancelledTemplate, bookingModifiedTemplate, bookingPendingTemplate,
   setupIntentFailedTemplate,
   savedCardChargeFailedTemplate,
-  supersededPaymentRefundedTemplate,
   splitGuestPortionCancelledTemplate,
 } from "@/lib/email-templates/booking";
 import {
@@ -51,6 +50,7 @@ import {
 import { CLUB_NAME } from "@/config/club-identity";
 import { EMAIL_DEFAULT_LODGE_NAME } from "@/lib/email-message-settings";
 import { financialReviewNote } from "@/lib/booking-financial-review-copy";
+import { supersededPaymentRefundedTemplate } from "@/lib/email-templates/refunds";
 import { formatCents as formatMoneyCents } from "@/lib/utils";
 import { loadEmailMessageSettingsForLodge } from "@/lib/email-message-settings";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";

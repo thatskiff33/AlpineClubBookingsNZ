@@ -1115,6 +1115,41 @@ transaction):
 DATABASE_URL=<non-prod copy> npm run payments:backfill-orphaned-credits -- --apply
 ```
 
+### Census the booking ledger identity (#3340)
+
+`scripts/audit-booking-ledger-residual.ts` is a READ-ONLY census of
+[`INV-PAY-047`](invariants/payment-and-settlement.md). It never writes, never
+repairs and never calls a live provider — that is the owner's decision of 8 Sep
+2026, taken for a population of two rows that had already been handled by hand.
+It reports; a person decides.
+
+For every live booking with a captured payment it asks whether the money adds up:
+
+```
+finalPrice + changeFees - (captured - refunded) - credit - uncollected ask
+```
+
+- **Zero** — the books balance.
+- **Positive** — money the price says is owed that nothing is asking for. This is
+  the #3340 class, and it is what a delta-sized ask produced when it superseded
+  an unpaid one: minting the replacement retired the first extra, so its unpaid
+  balance simply stopped being owed. Investigate each one and invoice by hand.
+- **Negative** — the club holds more than the price. Normal after a policy-tiered
+  reduction (the retained slice is a charge, not a prepayment) or a reduction
+  settled as account credit. Worth a glance, rarely worth an action.
+
+```bash
+DATABASE_URL=<non-prod copy> npm run payments:audit-booking-ledger
+DATABASE_URL=<non-prod copy> npm run payments:audit-booking-ledger -- --sql
+DATABASE_URL=<non-prod copy> npm run payments:audit-booking-ledger -- --json
+```
+
+`--sql` prints the generated `SELECT` so it can be run by hand against a
+read-only replica. The statement is not written in the script: it is folded from
+`BOOKING_LEDGER_IDENTITY_TERMS` in `src/lib/additional-payment-ask.ts`, the same
+term table the CI census guard folds, so the operator's query and the guard
+cannot say different things.
+
 ### Audit IB hold-expiry invoice under-clears (#1597)
 
 `scripts/audit-ib-hold-clearing.ts` is a READ-ONLY audit — it never writes and

@@ -122,6 +122,7 @@ export const REGISTRY_KEY_RENDERERS: Record<string, string> = {
   "bulk-communication": "bulkCommunicationTemplate",
   "notice-published": "noticePublishedTemplate",
   "refund-request-approved": "refundRequestApprovedTemplate",
+  "superseded-payment-refunded": "supersededPaymentRefundedTemplate",
   "refund-request-declined": "refundRequestDeclinedTemplate",
   "website-contact": "websiteContactTemplate",
   // account
@@ -196,7 +197,6 @@ export const REGISTRY_KEY_RENDERERS: Record<string, string> = {
   "pre-arrival-reminder": "preArrivalReminderTemplate",
   "setup-intent-failed": "setupIntentFailedTemplate",
   "saved-card-charge-failed": "savedCardChargeFailedTemplate",
-  "superseded-payment-refunded": "supersededPaymentRefundedTemplate",
   "split-guest-portion-cancelled": "splitGuestPortionCancelledTemplate",
   "whole-lodge-guest-names-reminder": "wholeLodgeGuestNamesReminderTemplate",
   // booking-requests

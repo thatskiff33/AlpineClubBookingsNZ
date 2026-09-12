@@ -123,7 +123,6 @@ import {
   bookingPendingTemplate,
   setupIntentFailedTemplate,
   savedCardChargeFailedTemplate,
-  supersededPaymentRefundedTemplate,
   splitGuestPortionCancelledTemplate,
 } from "@/lib/email-templates/booking";
 import {
@@ -238,6 +237,7 @@ import {
 import {
   refundRequestApprovedTemplate,
   refundRequestDeclinedTemplate,
+  supersededPaymentRefundedTemplate,
 } from "@/lib/email-templates/refunds";
 import {
   waitlistConfirmationTemplate,

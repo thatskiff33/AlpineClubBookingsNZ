@@ -60,6 +60,34 @@ admin surface showed one. These rules now hold:
   backstop (#1350) auto-refunded and alerted, but the member had still been
   charged for a booking that no longer existed.
 
+  **The rule is about a RETIRED OBLIGATION, of which a cancelled booking is one
+  case and a SUPERSEDED ask is the other (#3340).** A booking edit that raises a
+  new extra retires the extra before it: minting the replacement ADDITIONAL
+  PaymentIntent queues every other outstanding one on that payment for
+  cancellation. Until #3340 the cancellation was only *enqueued* for the
+  five-minute recovery cron, so the retired intent stayed confirmable — measured
+  at 4 minutes 5 seconds in the live case, and a member's card confirm landed
+  inside it. The same shape as a cancelled booking, and the same harm: a member
+  charged against an obligation the club had already withdrawn.
+
+  Three things close it, and all three are needed because each alone leaves the
+  charge possible. The cancellation is attempted SYNCHRONOUSLY at mint, before
+  the new client secret is returned, with the enqueued operation kept as the
+  durable backstop for a provider failure. The secret route returns the
+  INTENT'S own amount and id, so the figure a member reads and the intent the
+  button confirms cannot come from different places. And `<Elements>` is keyed on
+  the client secret, because Stripe treats `options.clientSecret` as immutable
+  after mount — without the key a changed secret rebinds nothing and the mounted
+  form goes on confirming the intent it was born with.
+
+  When a capture does land on a retired intent anyway, the refund that follows is
+  no longer silent: it writes a `booking.payment.superseded_payment_refunded`
+  audit row and a REFUNDED `BookingEvent` (discriminated so the cancellation
+  narrative can never read it as a settlement clause), emails the member naming
+  what came back and what is still owing, and alerts admins. Before #3340 Stripe's
+  own receipt was the entire notice, and a member's query about one is the only
+  reason the money leak underneath ([INV-PAY-047]) was ever found.
+
 ### INV-ADDPAY-024
 
 - **What the member is told.** While the stay is still ahead, the member is

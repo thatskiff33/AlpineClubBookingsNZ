@@ -639,51 +639,6 @@ export function savedCardChargeFailedTemplate(data: {
 }
 
 /**
- * #3340 — a payment the member made against a charge a later booking edit had
- * already replaced was captured and has been refunded in full.
- *
- * WHY IT EXISTS. Until #3340 the supersede refund sent NOTHING: Stripe's own
- * receipt was the only notice the member got, with no explanation of what had
- * been charged, why it came back, or what was still owing. A member in the live
- * case wrote in asking, and was right to.
- *
- * WHAT IT MUST SAY, and in this order: the money is back, nobody is out of
- * pocket, and here is what is still owing now. `amountOwingCents` is the figure
- * as at the refund — zero is a real and reassuring answer, and it gets its own
- * sentence rather than an empty row.
- */
-export function supersededPaymentRefundedTemplate(data: {
-  bookingId: string;
-  firstName: string;
-  checkIn: Date;
-  checkOut: Date;
-  refundedAmountCents: number;
-  amountOwingCents: number;
-}): string {
-  const dates = `${emailCalendarDay(data.checkIn)} – ${emailCalendarDay(data.checkOut)}`;
-  const owingLine =
-    data.amountOwingCents > 0
-      ? `There is still ${formatCents(data.amountOwingCents)} to pay on this booking. You can pay it from your booking page.`
-      : "Nothing further is owing on this booking.";
-  return layout(`
-    ${heading("We've Refunded a Payment")}
-    ${paragraph("Hi " + escapeHtml(data.firstName) + ",")}
-    ${alertBox(
-      "We have refunded " +
-        formatCents(data.refundedAmountCents) +
-        " to your card. That payment was made against an earlier charge for your booking (" +
-        dates +
-        ") that a later change to the booking had already replaced, so it should not have been taken.",
-      "info"
-    )}
-    ${paragraph("You are not out of pocket: the money is on its way back to the card you used, and your booking is unaffected.")}
-    ${paragraph(owingLine)}
-    ${button("View Booking", BASE_URL + "/bookings/" + data.bookingId)}
-    ${supportContactSentence("If anything about this looks wrong, please contact the club at ")}
-  `);
-}
-
-/**
  * #1993 Part A — member-facing notice that the provisional non-member guest
  * portion of their stay was auto-cancelled because it stayed unpaid up to the
  * check-in day. Reassures that nothing was ever charged for the guest portion
