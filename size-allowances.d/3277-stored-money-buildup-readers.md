@@ -7,7 +7,7 @@ reason: the operation grain is decided beside the existing surrendered and
   from the only calculation that proves whether the whole strand moved.
 
 file: src/lib/booking-guest-removal-service.ts
-lines: 1401
+lines: 1402
 reason: the canonical input must be loaded inside this writer's existing locks
   before its destructive guest delete, while selection must remain beside the
   established derived amount; extracting either half would obscure that

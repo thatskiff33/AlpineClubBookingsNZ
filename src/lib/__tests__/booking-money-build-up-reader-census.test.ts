@@ -106,6 +106,29 @@ describe("#3277 canonical stored-money reader census", () => {
     expect(rebase).toMatch(/newFinalPriceCents,/);
   });
 
+  it("pins each reader on the safe side of its mutation or provider boundary", () => {
+    const before = (code: string, first: string, second: string) => {
+      expect(code.indexOf(first), `${first} must exist`).toBeGreaterThanOrEqual(0);
+      expect(code.indexOf(second), `${second} must exist`).toBeGreaterThanOrEqual(0);
+      expect(code.indexOf(first), `${first} must precede ${second}`).toBeLessThan(
+        code.indexOf(second),
+      );
+    };
+
+    const removal = productionCode("src/lib/booking-guest-removal-service.ts");
+    before(removal, "const recordedMoneyBuildUp", "removeGuestChoreAssignments(tx, guestId)");
+    before(removal, "const moneyBuildUpSelection", "await tx.bookingGuest.delete");
+
+    const credit = productionCode("src/lib/booking-credit-election.ts");
+    before(credit, "const moneyBuildUpSelection", "await tx.booking.updateMany");
+
+    const xero = productionCode("src/lib/xero-booking-invoices.ts");
+    before(xero, "readBookingMoneyBuildUp(prisma", "getAuthenticatedXeroClient()");
+
+    const rebase = productionCode("src/lib/booking-review-price-rebase.ts");
+    before(rebase, "const freshlyRecordedMoneyBuildUp", "store.booking.updateMany");
+  });
+
   it("mutation-proves that dropping loader, selection, classification, or history is caught", () => {
     const site: ReaderSite = {
       reads: 1,

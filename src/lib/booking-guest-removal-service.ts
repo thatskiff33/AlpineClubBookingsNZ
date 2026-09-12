@@ -670,10 +670,6 @@ export async function removeBookingGuestInTransaction({
     bookingGuestId: guestId,
   });
 
-  const choreWarnings = await removeGuestChoreAssignments(tx, guestId);
-
-  await tx.bookingGuest.delete({ where: { id: guestId } });
-
   const remainingGuests = booking.guests.filter((guest) => guest.id !== guestId);
   const seasonRateData = await loadSeasonRateData(tx, bookingLodgeId);
 
@@ -928,6 +924,11 @@ export async function removeBookingGuestInTransaction({
         // or redistributed. D3 keeps today's existing result in that case.
         mismatchClassification: "LEGITIMATE_DIVERGENCE",
       });
+
+  // The canonical decision is complete while the departing guest and all of
+  // its targets still exist. Only now may the destructive half start.
+  const choreWarnings = await removeGuestChoreAssignments(tx, guestId);
+  await tx.bookingGuest.delete({ where: { id: guestId } });
   const priceDiffCents =
     moneyBuildUpSelection.source === "BASE_EVIDENCE_UNKNOWN"
       ? derivedPriceDiffCents
