@@ -64,6 +64,21 @@ export type EditReviewChargeRequest = {
   paymentTransactionId: string;
   stripePaymentIntentId: string | null;
   amountCents: number;
+  /**
+   * #3371: how much of `amountCents` this request ABSORBED from an ask its mint
+   * retired - another edit's unpaid extra, or another edit's unpaid review
+   * charge. It is a PART of `amountCents`, never an addition to it.
+   *
+   * Read back rather than re-derived, and that is the whole design. At the mint
+   * the figure is the payment's live ask; a moment later the payment's ask column
+   * mirrors THIS request, so re-reading it would fold the request into itself.
+   * `raiseReviewChargeAsk` takes this row for exactly that reason.
+   *
+   * Subtracting it from `amountCents` gives the part that came from this edit's
+   * own settled shares, which is the figure the Xero leg bills and the only one
+   * a shortfall may be measured against.
+   */
+  carriedAskCents: number;
   status: PaymentStatus;
 };
 
@@ -98,6 +113,7 @@ export async function findEditReviewChargeRequest({
       id: true,
       stripePaymentIntentId: true,
       amountCents: true,
+      carriedAskCents: true,
       status: true,
     },
   });
@@ -106,6 +122,7 @@ export async function findEditReviewChargeRequest({
     paymentTransactionId: row.id,
     stripePaymentIntentId: row.stripePaymentIntentId,
     amountCents: row.amountCents,
+    carriedAskCents: row.carriedAskCents,
     status: row.status,
   };
 }
@@ -532,6 +549,74 @@ async function recordSecondEditReviewChargeInvoice({
 }
 
 /**
+ * THE DURABLE RECORD THAT THIS CHARGE ABSORBED ANOTHER CHANGE'S UNPAID EXTRA
+ * (#3371, `INV-PAY-098`).
+ *
+ * Minting this edit's request retires every other live ADDITIONAL intent on the
+ * payment, so the request is sized to carry whatever was still unpaid on the one
+ * it superseded. **After the mint, what that money was owed for is not derivable
+ * from anything**: the earlier row is cancelled and the amounts have merged. The
+ * ledger row keeps the FIGURE (`PaymentTransaction.carriedAskCents`); this keeps
+ * the STORY, in the place an officer already looks for a booking's money
+ * decisions.
+ *
+ * It matters to a person, not only to a reconciliation. An officer opening the
+ * earlier change finds its ask gone and no explanation on it; a member sees one
+ * larger figure where they were expecting two. This entry is what answers both.
+ *
+ * `info` and `success`: nothing is owed outside the system, nothing was lost, and
+ * nobody has to act - which is exactly why it must not be `important`, or the
+ * queue of things that DO need acting on stops being readable. Best-effort and
+ * never rethrown, like every other record on this path: the request is already
+ * raised and an audit insert failing must not undo it.
+ */
+export async function recordCarriedEditReviewChargeBalance({
+  bookingId,
+  bookingModificationId,
+  memberId,
+  shareTotalCents,
+  carriedCents,
+}: {
+  bookingId: string;
+  bookingModificationId: string;
+  memberId: string | null;
+  /** This edit's own settled shares - the part that is genuinely this change's. */
+  shareTotalCents: number;
+  /** The other change's unpaid balance, now folded into the same request. */
+  carriedCents: number;
+}) {
+  logger.info(
+    { bookingId, bookingModificationId, shareTotalCents, carriedCents },
+    "An edit-financial-review charge carried the unpaid balance of an ask its mint retired",
+  );
+  try {
+    await createAuditLog({
+      action: "booking.editFinancialReview.chargeCarriedUnpaidBalance",
+      subjectMemberId: memberId,
+      targetId: bookingId,
+      entityType: "Booking",
+      entityId: bookingId,
+      category: "payment",
+      severity: "info",
+      outcome: "success",
+      summary: `This booking change's payment request carried ${formatCents(carriedCents)} still unpaid from an earlier change`,
+      details: `An admin settled a booking-change review as money the member owes the club, and the reviews for that change come to ${formatCents(shareTotalCents)}. The member already had ${formatCents(carriedCents)} outstanding from an earlier change on this booking, and raising a new request cancels the old one - so the new request asks for both together, ${formatCents(shareTotalCents + carriedCents)}. Nothing has been written off and nothing needs collecting by hand. The earlier change's own request no longer appears against it, which is expected: the money moved onto this one rather than disappearing.`,
+      metadata: {
+        bookingModificationId,
+        shareTotalCents,
+        carriedCents,
+        askedTotalCents: shareTotalCents + carriedCents,
+      },
+    });
+  } catch (err) {
+    logger.error(
+      { err, bookingId, bookingModificationId },
+      "Failed to record the audit trace for a carried unpaid balance on an edit-financial-review charge",
+    );
+  }
+}
+
+/**
  * The durable, officer-findable record that a settled share could not be added to
  * this edit's request.
  *
@@ -563,6 +648,7 @@ export async function recordUncollectedEditReviewChargeShare({
   memberId,
   derivedTotalCents,
   requestedTotalCents,
+  carriedAskCents = 0,
 }: {
   leg: UncollectedEditReviewChargeLeg;
   /**
@@ -595,11 +681,31 @@ export async function recordUncollectedEditReviewChargeShare({
    * state" rather than inventing one.
    */
   requestedTotalCents: number | null;
+  /**
+   * #3371: how much of `requestedTotalCents` was money CARRIED IN from another
+   * edit's ask that this request's mint retired. It is a part of that figure, so
+   * a shortfall measured against the whole would understate itself by exactly
+   * this much - the member was asked for more than this edit's shares, and only
+   * the shares part answers them.
+   *
+   * Defaulted to 0 rather than required, and this is the one place in this
+   * module where a default is right: it is 0 on the Xero leg, where nothing is
+   * ever superseded, and 0 on every request minted before the column existed.
+   * The CARD leg passes the row's own figure.
+   */
+  carriedAskCents?: number;
 }) {
+  const requestedForThisEditCents =
+    requestedTotalCents === null ? null : requestedTotalCents - carriedAskCents;
   const shortfallCents =
-    requestedTotalCents === null
+    requestedForThisEditCents === null
       ? null
-      : Math.max(derivedTotalCents - requestedTotalCents, 0);
+      : Math.max(derivedTotalCents - requestedForThisEditCents, 0);
+  // Only said where it is true, so the ordinary record reads exactly as it did.
+  const carriedSentence =
+    carriedAskCents > 0
+      ? ` Note that ${formatCents(requestedTotalCents ?? 0)} was asked for in total, because ${formatCents(carriedAskCents)} of an earlier change's unpaid extra was carried into this request when it was raised. That carried money is not part of this change's reviews and is not part of the amount above.`
+      : "";
   const invoiceNeverRaised = leg === "xero-invoice" && cause === "ask-not-raised";
   const invoiceOwedUnknown =
     leg === "xero-invoice" && cause === "ask-owed-unknown";
@@ -628,6 +734,7 @@ export async function recordUncollectedEditReviewChargeShare({
       bookingModificationId,
       derivedTotalCents,
       requestedTotalCents,
+      carriedAskCents,
     },
     leg === "payment-request"
       ? "Edit-financial-review charge request was paid before its combined total could be raised - the remaining share must be collected by hand"
@@ -661,7 +768,7 @@ export async function recordUncollectedEditReviewChargeShare({
                 : `This booking change's Xero invoice could not be raised to the settled total of ${formatCents(derivedTotalCents)}`,
       details:
         leg === "payment-request"
-          ? `An admin settled a booking-change review as money the member owes the club, but the request for that change had already been paid, so ${formatCents(shortfallCents ?? derivedTotalCents)} was not added to it. The reviews settled to ${formatCents(derivedTotalCents)} in total and the member was asked for ${formatCents(requestedTotalCents ?? 0)}. Collect the difference another way and record what was collected.`
+          ? `An admin settled a booking-change review as money the member owes the club, but the request for that change had already been paid, so ${formatCents(shortfallCents ?? derivedTotalCents)} was not added to it. The reviews settled to ${formatCents(derivedTotalCents)} in total and the member was asked for ${formatCents(requestedForThisEditCents ?? 0)} of it.${carriedSentence} Collect the difference another way and record what was collected.`
           : invoiceOwedUnknown
             ? `An admin settled a booking-change review as money the member owes the club, and the reviews for that change now total ${formatCents(derivedTotalCents)}. The member has been asked for it. Whether a Xero supplementary invoice was owed for the charge was never recorded, so none was raised - and one may not have been needed: if the booking's main Xero invoice had not yet been sent when the change was made, that invoice bills this charge itself, and adding a supplementary invoice on top would bill the member twice. Do not raise one by hand on the strength of this note. Run the booking-vs-Xero repair for this booking, which compares the booking against Xero and will say whether an invoice is actually missing, and record what was done.`
             : invoiceNeverRaised
@@ -676,6 +783,7 @@ export async function recordUncollectedEditReviewChargeShare({
         bookingModificationId,
         derivedTotalCents,
         requestedTotalCents,
+        carriedAskCents,
         uncollectedCents: shortfallCents,
       },
     });

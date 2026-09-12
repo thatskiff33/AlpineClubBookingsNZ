@@ -321,6 +321,10 @@ function chargeRequestRow(overrides: Record<string, unknown> = {}) {
     id: "ptx-additional-1",
     stripePaymentIntentId: "pi_additional_1",
     amountCents: 20000,
+    // #3371: nothing carried in, which is every request this fixture stands for
+    // and every request minted before the column existed. The carrying shapes
+    // have their own fixtures at the bottom of this file.
+    carriedAskCents: 0,
     status: PaymentStatus.PENDING,
     ...overrides,
   };
@@ -447,7 +451,8 @@ describe("a completed review that asks the member for money (#3170)", () => {
     const call =
       mocks.createModificationAdditionalPaymentIntent.mock.calls[0][0];
     expect(call.bookingId).toBe("booking-1");
-    expect(call.result.additionalAmountCents).toBe(20000);
+    expect(call.result.additionalAsk.amountCents).toBe(20000);
+    expect(call.result.additionalAsk.carriedCents).toBe(0);
     expect(call.result.paymentId).toBe("payment-1");
     expect(call.result.bookingModificationId).toBe("mod-1");
     // The refund half of that context is inert: a charge returns nothing.
@@ -950,7 +955,7 @@ describe("two shares of one booking edit (#3170 combined request)", () => {
 
     const call =
       mocks.createModificationAdditionalPaymentIntent.mock.calls[0][0];
-    expect(call.result.additionalAmountCents).toBe(23000);
+    expect(call.result.additionalAsk.amountCents).toBe(23000);
     const xero = mocks.queueXeroBookingEditSettlement.mock.calls[0][0];
     expect(xero.priceDiffCents).toBe(23000);
   });
@@ -1147,6 +1152,7 @@ describe("what the sync reports, and the trace it leaves (#3170 fix round)", () 
       outcome: "not-raised",
       paymentIntentId: null,
       totalCents: 23000,
+      carriedCents: 0,
     });
 
     // The debt is durable under the EDIT-scoped recovery key, so the cron replays
@@ -1212,6 +1218,7 @@ describe("what the sync reports, and the trace it leaves (#3170 fix round)", () 
       outcome: "raised",
       paymentIntentId: "pi_additional_9",
       totalCents: 23000,
+      carriedCents: 0,
     });
     expect(mocks.enqueueAdditionalPaymentIntentRecovery).not.toHaveBeenCalled();
   });
@@ -1232,6 +1239,7 @@ describe("what the sync reports, and the trace it leaves (#3170 fix round)", () 
       outcome: "already-paid",
       paymentIntentId: "pi_additional_1",
       totalCents: 20000,
+      carriedCents: 0,
     });
 
     // Nothing was restated on a paid ask...
@@ -1294,6 +1302,7 @@ describe("what the sync reports, and the trace it leaves (#3170 fix round)", () 
       outcome: "nothing-owed",
       paymentIntentId: null,
       totalCents: 0,
+      carriedCents: 0,
     });
     expect(
       mocks.createModificationAdditionalPaymentIntent,
@@ -1680,5 +1689,354 @@ describe("a share that could not join the Xero invoice (#3170 fix round, F2)", (
         action: "booking.editFinancialReview.chargeShareUncollected",
       }),
     );
+  });
+});
+
+
+/*
+  #3371 - A REVIEW CHARGE RAISED WHILE ANOTHER CHANGE'S EXTRA IS STILL UNPAID.
+
+  ENFORCES `INV-PAY-098` (and `INV-PAY-047`, which is the ledger identity it
+  keeps true).
+
+  THE PROVED SEQUENCE, from the reachability proof on #3371:
+
+    1. a member extends their stay; the edit cannot be priced, so it PARKS;
+    2. an officer prices that review at $200 and settles it as a charge;
+    3. the member does not pay - this is collected on their own pay link, so the
+       window is days;
+    4. a second money-affecting edit parks and raises its own review. The only
+       fence checks for an OPEN review task, and settling step 2 closed it;
+    5. the officer prices that review at $60 and settles it;
+    6. minting the $60 request RETIRED the $200 one.
+
+  $260 priced, $60 collected, and no member- or officer-facing surface reported
+  the missing $200. Both review tasks read as completed with their amounts
+  recorded; the member's pay page simply showed the newer, smaller figure.
+
+  The owner's decision of 13 Sep 2026 is that the new charge CARRIES that unpaid
+  balance, and that the carried amount is recorded as its OWN fact rather than
+  folded invisibly into the share total - because the share total staying
+  monotone is what lets this path run its compare-and-set with no advisory lock
+  across the Stripe call.
+
+  Clock: every figure here is integer cents; the frozen clock is inherited and
+  never consulted.
+*/
+describe("#3371: a review charge carries the unpaid ask its mint retires", () => {
+  /** The other change's live, unpaid $200 ask, as the payment records it. */
+  function paymentCarrying(
+    additionalAmountCents: number,
+    additionalPaymentStatus: string | null,
+  ) {
+    return {
+      id: "payment-1",
+      status: PaymentStatus.SUCCEEDED,
+      amountCents: 15000,
+      refundedAmountCents: 0,
+      source: PaymentSource.STRIPE,
+      stripeCustomerId: "cus_1",
+      additionalAmountCents,
+      additionalPaymentStatus,
+    };
+  }
+
+  beforeEach(() => {
+    // Step 5: this edit's own review settles at $60, and it is the only share
+    // against THIS edit.
+    mocks.manualRefundTaskFindMany.mockResolvedValue([
+      settledShare({ amountCents: 6000 }),
+    ]);
+    // No request for THIS edit yet - which is exactly what proves the $200 on
+    // the payment belongs to a DIFFERENT one.
+    mocks.paymentTransactionFindFirst.mockResolvedValue(null);
+    mocks.paymentFindUnique.mockResolvedValue(
+      paymentCarrying(20000, PaymentStatus.PENDING),
+    );
+  });
+
+  it("asks for $260, not $60 - the exact sequence the proof exhibited", async () => {
+    await charge({ confirmedAmountCents: 6000 });
+
+    const call =
+      mocks.createModificationAdditionalPaymentIntent.mock.calls[0][0];
+    // Before the fix this was 6000 and the $200 simply ceased to be owed.
+    expect(call.result.additionalAsk.amountCents).toBe(26000);
+    expect(call.result.additionalAsk.carriedCents).toBe(20000);
+  });
+
+  it("keeps the carried money OUT of this edit's Xero invoice", async () => {
+    // The accounting leg bills one invoice per edit (`INV-PAY-070`). The earlier
+    // change has its own invoice for its own $200, so putting it on this one
+    // would bill the member twice for the same money - the exact failure this
+    // change exists to prevent, in the other direction.
+    await charge({ confirmedAmountCents: 6000 });
+    await flushDispatch();
+
+    const xero = mocks.queueXeroBookingEditSettlement.mock.calls[0][0];
+    expect(xero.priceDiffCents).toBe(6000);
+  });
+
+  it("records what it absorbed where an officer can find it", async () => {
+    await charge({ confirmedAmountCents: 6000 });
+
+    const entry = mocks.createAuditLog.mock.calls
+      .map((args) => args[0])
+      .find(
+        (arg) =>
+          arg.action === "booking.editFinancialReview.chargeCarriedUnpaidBalance",
+      );
+    expect(
+      entry,
+      "INV-PAY-098: once the earlier ask is cancelled, what it was owed for is " +
+        "not derivable from anything. The audit row is the story; the ledger " +
+        "column is the figure.",
+    ).toBeDefined();
+    expect(entry.category).toBe("payment");
+    expect(entry.metadata).toMatchObject({
+      bookingModificationId: "mod-1",
+      shareTotalCents: 6000,
+      carriedCents: 20000,
+      askedTotalCents: 26000,
+    });
+    // The prose carries the figures, because an officer reads the list rather
+    // than the metadata blob.
+    expect(entry.summary).toContain("$200.00");
+    expect(entry.details).toContain("$260.00");
+  });
+
+  it("carries nothing, and says nothing, when no other ask was outstanding", async () => {
+    mocks.paymentFindUnique.mockResolvedValue(paymentCarrying(0, null));
+
+    await charge({ confirmedAmountCents: 6000 });
+
+    const call =
+      mocks.createModificationAdditionalPaymentIntent.mock.calls[0][0];
+    expect(call.result.additionalAsk.amountCents).toBe(6000);
+    expect(call.result.additionalAsk.carriedCents).toBe(0);
+    expect(mocks.createAuditLog).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "booking.editFinancialReview.chargeCarriedUnpaidBalance",
+      }),
+    );
+  });
+
+  it("carries nothing when the other change's extra has already been PAID", async () => {
+    mocks.paymentFindUnique.mockResolvedValue(
+      paymentCarrying(20000, PaymentStatus.SUCCEEDED),
+    );
+
+    await charge({ confirmedAmountCents: 6000 });
+
+    const call =
+      mocks.createModificationAdditionalPaymentIntent.mock.calls[0][0];
+    expect(call.result.additionalAsk.amountCents).toBe(6000);
+    expect(call.result.additionalAsk.carriedCents).toBe(0);
+  });
+
+  it("carries an extra the member's card DECLINED, which is still owed", async () => {
+    mocks.paymentFindUnique.mockResolvedValue(
+      paymentCarrying(7000, PaymentStatus.FAILED),
+    );
+
+    await charge({ confirmedAmountCents: 6000 });
+
+    const call =
+      mocks.createModificationAdditionalPaymentIntent.mock.calls[0][0];
+    expect(call.result.additionalAsk.amountCents).toBe(13000);
+    expect(call.result.additionalAsk.carriedCents).toBe(7000);
+  });
+
+  it("records NOTHING as carried when the mint produced no intent", async () => {
+    // A failed mint retires nothing - the other change's ask is still live, and
+    // the replay reads it again. Writing the provenance here would claim an
+    // absorption that never happened.
+    mocks.createModificationAdditionalPaymentIntent.mockResolvedValue({
+      additionalPaymentClientSecret: undefined,
+      additionalPaymentIntentId: undefined,
+    });
+
+    await charge({ confirmedAmountCents: 6000 });
+
+    expect(mocks.createAuditLog).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "booking.editFinancialReview.chargeCarriedUnpaidBalance",
+      }),
+    );
+  });
+});
+
+/*
+  #3371 - THE RE-DERIVATION, ONCE A CARRIED BALANCE IS IN THE ROW.
+
+  This is the half the earlier negative proof said could not work. It works
+  because the carried part is stored SEPARATELY from the share total: the sum is
+  re-derived from the settled shares as it always was, the carried part is read
+  back off the row, and the request asks for both. The sum only grows and the
+  carried part never moves, so the figure is monotone and the refuse-to-lower
+  rule stays correct.
+*/
+describe("#3371: a later share joins a request that carried a balance", () => {
+  /** The $260 request the mint above wrote: $60 of shares, $200 carried. */
+  function carryingRequest(overrides: Record<string, unknown> = {}) {
+    return chargeRequestRow({
+      amountCents: 26000,
+      carriedAskCents: 20000,
+      ...overrides,
+    });
+  }
+
+  beforeEach(() => {
+    mocks.paymentTransactionFindFirst.mockResolvedValue(carryingRequest());
+  });
+
+  it("raises to shares-plus-carried, never to the shares alone", async () => {
+    // A second task of the SAME edit settles for another $40: $100 of shares.
+    mocks.manualRefundTaskFindMany.mockResolvedValue([
+      settledShare({ amountCents: 6000 }),
+      settledShare({ id: "task-2", amountCents: 4000 }),
+    ]);
+
+    await charge({ confirmedAmountCents: 4000 });
+
+    expect(mocks.updatePaymentIntentAmount).toHaveBeenCalledWith(
+      "pi_additional_1",
+      30000,
+    );
+    expect(mocks.upsertPaymentIntentTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        paymentIntentId: "pi_additional_1",
+        amountCents: 30000,
+        // Restated from the same value that sized the amount, and unchanged: a
+        // raise supersedes nothing, so it absorbs nothing new.
+        carriedAskCents: 20000,
+      }),
+    );
+  });
+
+  it("re-reads the carried figure off the ROW, never off the payment", async () => {
+    // THE TRAP. By now `Payment.additionalAmountCents` mirrors THIS request's
+    // own $260. Re-deriving the carried part from it would fold the request into
+    // itself and ask for $360 against $300 of real debt.
+    mocks.paymentFindUnique.mockResolvedValue({
+      id: "payment-1",
+      status: PaymentStatus.SUCCEEDED,
+      amountCents: 15000,
+      refundedAmountCents: 0,
+      source: PaymentSource.STRIPE,
+      stripeCustomerId: "cus_1",
+      additionalAmountCents: 26000,
+      additionalPaymentStatus: PaymentStatus.PENDING,
+    });
+    mocks.manualRefundTaskFindMany.mockResolvedValue([
+      settledShare({ amountCents: 6000 }),
+      settledShare({ id: "task-2", amountCents: 4000 }),
+    ]);
+
+    await charge({ confirmedAmountCents: 4000 });
+
+    expect(mocks.updatePaymentIntentAmount).toHaveBeenCalledWith(
+      "pi_additional_1",
+      30000,
+    );
+    expect(mocks.updatePaymentIntentAmount).not.toHaveBeenCalledWith(
+      "pi_additional_1",
+      36000,
+    );
+  });
+
+  it("still bills the Xero leg this edit's shares alone", async () => {
+    mocks.manualRefundTaskFindMany.mockResolvedValue([
+      settledShare({ amountCents: 6000 }),
+      settledShare({ id: "task-2", amountCents: 4000 }),
+    ]);
+    mocks.restatePendingSupplementaryInvoiceAmount.mockResolvedValue({
+      restated: 1,
+      alreadyCovering: 0,
+    });
+
+    await charge({ confirmedAmountCents: 4000 });
+    await flushDispatch();
+
+    expect(mocks.restatePendingSupplementaryInvoiceAmount).toHaveBeenCalledWith({
+      bookingModificationId: "mod-1",
+      priceDiffCents: 10000,
+      changeFeeCents: 0,
+    });
+  });
+
+  it("a STALE run still cannot lower the request", async () => {
+    // Shares of $60 against a request that already asks $260. Without the
+    // carried part in the comparison this would read as a $200 over-ask and
+    // LOWER a live intent to $60 - handing the member back the very money the
+    // fix exists to collect.
+    mocks.manualRefundTaskFindMany.mockResolvedValue([
+      settledShare({ amountCents: 6000 }),
+    ]);
+
+    await charge({ confirmedAmountCents: 6000 });
+
+    expect(mocks.updatePaymentIntentAmount).not.toHaveBeenCalled();
+    expect(mocks.upsertPaymentIntentTransaction).not.toHaveBeenCalled();
+  });
+
+  it("measures a shortfall against this edit's shares, not the carried total", async () => {
+    // The member paid the $260 before a further $40 share could join it. The
+    // club is short $40, not short nothing: without taking the carried $200 back
+    // out, `derived - requested` would be 10000 - 26000 and floor at zero, and
+    // the record would say the money was collected.
+    //
+    // The SYNC is entered directly, exactly as the #3170 fix-round test of this
+    // same race does: the pre-claim refusal is the ordinary guard for a paid
+    // request, and this is the window behind it.
+    mocks.paymentTransactionFindFirst.mockResolvedValue(
+      carryingRequest({ status: PaymentStatus.SUCCEEDED }),
+    );
+    mocks.manualRefundTaskFindMany.mockResolvedValue([
+      settledShare({ amountCents: 6000 }),
+      settledShare({ id: "task-2", amountCents: 4000 }),
+    ]);
+
+    await expect(
+      syncEditFinancialReviewChargeRequest({
+        bookingId: "booking-1",
+        bookingModificationId: "mod-1",
+        paymentId: "payment-1",
+        member: {
+          id: "member-1",
+          email: "grace@example.test",
+          name: "Grace Hopper",
+          stripeCustomerId: "cus_1",
+        },
+        hasIssuedXeroInvoice: true,
+      }),
+    ).resolves.toEqual({
+      outcome: "already-paid",
+      paymentIntentId: "pi_additional_1",
+      // The SHARE part of what was asked for - never the $260, which the Xero
+      // leg would then bill this edit for.
+      totalCents: 6000,
+      carriedCents: 20000,
+    });
+
+    const entry = mocks.createAuditLog.mock.calls
+      .map((args) => args[0])
+      .find(
+        (arg) =>
+          arg.action === "booking.editFinancialReview.chargeShareUncollected",
+      );
+    expect(entry).toBeDefined();
+    expect(entry.metadata).toMatchObject({
+      leg: "payment-request",
+      derivedTotalCents: 10000,
+      requestedTotalCents: 26000,
+      carriedAskCents: 20000,
+      uncollectedCents: 4000,
+    });
+    expect(entry.summary).toContain("$40.00");
+    // And the prose says WHY the member was asked for more than this change's
+    // reviews come to, so the two figures do not read as a contradiction.
+    expect(entry.details).toContain("$260.00");
+    expect(entry.details).toContain("carried into this request");
   });
 });

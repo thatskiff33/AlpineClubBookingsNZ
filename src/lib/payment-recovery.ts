@@ -30,7 +30,7 @@ import {
   // Type-only, so it adds nothing to this module's runtime import graph.
   type XeroSupplementaryInvoiceEnqueueOutcome,
 } from "@/lib/xero-operation-outbox";
-import { sizeAdditionalAskCents } from "@/lib/additional-payment-ask";
+import { sizeAdditionalAsk } from "@/lib/additional-payment-ask";
 import { sendAdminPaymentFailureAlert } from "@/lib/email";
 import { recordDuplicateCaptureRefundEvent } from "@/lib/booking-events";
 import { reportSupersededPaymentRefund } from "@/lib/superseded-additional-refund";
@@ -2712,14 +2712,20 @@ async function processCreateAdditionalPaymentIntentOperation(
       "Additional intent recovery could not re-derive the ask (the modification's net is not positive); replaying the frozen amount",
     );
   }
-  const askCents =
+  const ask =
     modificationToBill && editNetCents > 0
-      ? sizeAdditionalAskCents({
+      ? sizeAdditionalAsk({
           priceDiffCents: modificationToBill.priceDiffCents,
           changeFeeCents: modificationToBill.changeFeeCents,
           payment,
         })
-      : operation.amountCents;
+      : // #3371: the frozen fallback carried nothing that this replay can name.
+        // The row records an amount and no provenance, and inventing one here
+        // would be worse than recording none - a 0 says "nothing known to have
+        // been absorbed", which is the truth about a figure frozen before this
+        // column existed.
+        { amountCents: operation.amountCents, carriedCents: 0 };
+  const askCents = ask.amountCents;
 
   /**
    * The Stripe key still pins a replay of the SAME ask to the same intent, and
@@ -2756,6 +2762,9 @@ async function processCreateAdditionalPaymentIntentOperation(
     kind: PaymentTransactionKind.ADDITIONAL,
     paymentIntentId: pi.id,
     amountCents: askCents,
+    // #3371: the same value that sized the amount says what it absorbed, so the
+    // replay's row carries the provenance the inline mint would have written.
+    carriedAskCents: ask.carriedCents,
     status: PaymentStatus.PENDING,
     reason: "modification_additional_recovery",
     stripeCustomerId: customerId,

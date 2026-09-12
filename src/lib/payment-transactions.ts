@@ -535,6 +535,7 @@ export async function upsertPaymentIntentTransaction({
   kind,
   paymentIntentId,
   amountCents,
+  carriedAskCents,
   status,
   paymentMethodId,
   reason,
@@ -545,6 +546,15 @@ export async function upsertPaymentIntentTransaction({
   kind: PaymentTransactionKind;
   paymentIntentId: string;
   amountCents: number;
+  /**
+   * #3371: how much of `amountCents` was absorbed from an ask the same mint
+   * retired. Supplied ONLY by the sites that mint or raise an ADDITIONAL
+   * request, which get it from an `AdditionalAsk` and cannot get it any other
+   * way; every other caller here (webhook status writes, PRIMARY rows, refund
+   * bookkeeping) omits it and MUST, because omitting it leaves the stored
+   * provenance alone rather than resetting a real carried balance to zero.
+   */
+  carriedAskCents?: number;
   status: PaymentStatus;
   paymentMethodId?: string | null;
   reason?: string;
@@ -562,6 +572,7 @@ export async function upsertPaymentIntentTransaction({
       status,
       paymentMethodId: paymentMethodId ?? undefined,
       reason,
+      ...(carriedAskCents !== undefined ? { carriedAskCents } : {}),
     },
     update: {
       paymentId,
@@ -573,6 +584,7 @@ export async function upsertPaymentIntentTransaction({
         ? { paymentMethodId: paymentMethodId ?? null }
         : {}),
       ...(reason !== undefined ? { reason } : {}),
+      ...(carriedAskCents !== undefined ? { carriedAskCents } : {}),
     },
   });
 

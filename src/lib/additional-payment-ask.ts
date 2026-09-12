@@ -15,7 +15,7 @@
  *    predicate rather than restating it, so the chase, the admin panel and the
  *    sizing below cannot drift apart about whether money is owed.
  *
- * 2. **How big is the ask a price increase raises?** `sizeAdditionalAskCents`.
+ * 2. **How big is the ask a price increase raises?** `sizeAdditionalAsk`.
  *    Minting an ADDITIONAL PaymentIntent retires every other outstanding ask on
  *    the payment (`queueSupersededAdditionalIntentCancellations`), so an ask
  *    sized on this edit's delta alone DELETES the unpaid balance of the ask it
@@ -24,6 +24,11 @@
  *    extra simply ceased to be owed. The ask is therefore the edit's own net
  *    (price delta plus change fee) PLUS the unpaid balance of the ask it
  *    supersedes - everything the member still owes once this edit lands.
+ *
+ *    **And it says how much of itself it absorbed** (#3371). See `AdditionalAsk`
+ *    below: the figure and its carried part are ONE value that only this module
+ *    can build, so a mint cannot record the total while forgetting the
+ *    provenance, and the two can never be sized from different inputs.
  *
  * 3. **What must a settled booking's ledger add up to?**
  *    `bookingLedgerResidualCents` and `BOOKING_LEDGER_IDENTITY_TERMS` -
@@ -90,6 +95,78 @@ export function outstandingAdditionalAskCents(
 }
 
 /**
+ * AN ASK, AND WHAT IT ABSORBED - one value, and the only thing the shared minter
+ * will accept (#3371).
+ *
+ * ## Why this is a type rather than two numbers
+ *
+ * Minting an ADDITIONAL PaymentIntent retires every other live one on the
+ * payment. The new ask therefore has to carry the unpaid balance of the one it
+ * supersedes, and - because once that row is cancelled what it was owed for is
+ * **not derivable from anything** - it has to RECORD what it carried, in
+ * `PaymentTransaction.carriedAskCents`.
+ *
+ * That is a permanent obligation on every future writer, and the owner's 13 Sep
+ * 2026 decision on #3371 is that it must be **structurally hard to omit rather
+ * than merely required**. So:
+ *
+ *   * the two numbers travel as ONE value, built in ONE place, from the same
+ *     inputs - a mint cannot fold the balance in and forget to say so, or say so
+ *     and forget to fold it in;
+ *   * the brand below is a module-private `unique symbol`, so no code outside
+ *     this file can write the property key and therefore no code outside this
+ *     file can construct one. There is no cast that helps: the symbol is not
+ *     exported;
+ *   * every constructor that can return a POSITIVE ask takes the thing that
+ *     decides the carried figure - the `Payment` whose live ask the mint will
+ *     retire, or the stored request row a raise reads it back off. The one
+ *     constructor that takes neither, `NO_ADDITIONAL_ASK`, is zero, and a zero
+ *     ask never reaches the mint at all (`createModificationAdditionalPaymentIntent`
+ *     returns before minting), so it can retire nothing and has nothing to carry.
+ *
+ * `carriedCents` is a PART OF `amountCents`, never an addition to it. Reading it
+ * as a second amount would double-count the money.
+ */
+declare const additionalAskBrand: unique symbol;
+
+export type AdditionalAsk = {
+  /** What the member is asked for, in integer cents. */
+  readonly amountCents: number;
+  /**
+   * How much of `amountCents` was absorbed from an ask this mint will retire,
+   * rather than derived from this edit's own figures. Zero when the mint
+   * supersedes nothing.
+   */
+  readonly carriedCents: number;
+  readonly [additionalAskBrand]: true;
+};
+
+/** The only place an `AdditionalAsk` comes into existence. */
+function buildAdditionalAsk(params: {
+  ownCents: number;
+  carriedCents: number;
+}): AdditionalAsk {
+  return {
+    amountCents: params.ownCents + params.carriedCents,
+    carriedCents: params.carriedCents,
+  } as AdditionalAsk;
+}
+
+/**
+ * NOTHING IS BEING ASKED FOR through this instrument.
+ *
+ * Every edit path builds an ask, including the ones that turn out to owe the
+ * member money or to bill through Xero instead, because the minter's parameter
+ * is required. Those paths pass this. It is safe by construction rather than by
+ * convention: the minter returns before minting on a non-positive amount, so a
+ * zero ask supersedes nothing and there is nothing for it to carry.
+ */
+export const NO_ADDITIONAL_ASK: AdditionalAsk = buildAdditionalAsk({
+  ownCents: 0,
+  carriedCents: 0,
+});
+
+/**
  * The ask a price-increasing edit raises against a captured card payment: the
  * edit's own net (delta plus change fee) plus the unpaid balance of whatever ask
  * the mint is about to supersede. Never a bare delta - see the module docblock.
@@ -99,7 +176,7 @@ export function outstandingAdditionalAskCents(
  * something else in. The result is meaningful only where the caller has
  * established that the edit's net is positive; this is not a refund calculator.
  */
-export function sizeAdditionalAskCents({
+export function sizeAdditionalAsk({
   priceDiffCents,
   changeFeeCents,
   payment,
@@ -107,8 +184,71 @@ export function sizeAdditionalAskCents({
   priceDiffCents: number;
   changeFeeCents: number;
   payment: AdditionalAskPayment | null | undefined;
-}): number {
-  return priceDiffCents + changeFeeCents + outstandingAdditionalAskCents(payment);
+}): AdditionalAsk {
+  return buildAdditionalAsk({
+    ownCents: priceDiffCents + changeFeeCents,
+    carriedCents: outstandingAdditionalAskCents(payment),
+  });
+}
+
+/** The stored ADDITIONAL row a review charge's later share reads back. */
+export interface CarriedAskRecord {
+  carriedAskCents: number;
+}
+
+/**
+ * THE FIRST charge raised by a settled booking-change financial review (#3371).
+ *
+ * Same rule as `sizeAdditionalAsk`, different "own" figure: a review charge's
+ * own amount is the SUM of the shares settled against this one edit
+ * (`INV-PAY-062`), not a price delta. Everything else is identical, and that is
+ * the point - #3340's fix for the ordinary edit and this one are one rule in two
+ * places, not two rules for one fact.
+ *
+ * The carried part is read off the payment because that is the ask this mint is
+ * about to retire. It is only correct HERE, at the mint: by the time a later
+ * share settles, the payment's own ask column mirrors this review's intent, so
+ * re-reading it there would double-count. That later call is
+ * `raiseReviewChargeAsk`, which reads the figure back off the row instead.
+ */
+export function sizeReviewChargeAsk({
+  shareTotalCents,
+  payment,
+}: {
+  shareTotalCents: number;
+  payment: AdditionalAskPayment | null | undefined;
+}): AdditionalAsk {
+  return buildAdditionalAsk({
+    ownCents: shareTotalCents,
+    carriedCents: outstandingAdditionalAskCents(payment),
+  });
+}
+
+/**
+ * A LATER share joining a review charge that already exists (#3371).
+ *
+ * Nothing is minted and nothing is superseded, so nothing new is carried: the
+ * figure comes back off the row the first mint wrote. Taking the ROW rather than
+ * a number is the point - a caller cannot supply a fresh 0 and quietly write the
+ * carried balance out of the ask.
+ *
+ * This is what keeps the compare-and-set safe. `shareTotalCents` only ever grows
+ * (a settled share is terminal) and `carriedAskCents` is fixed at the mint, so
+ * the amount this returns is MONOTONE, and the refuse-to-lower rule in
+ * `syncEditFinancialReviewChargeRequest` stays correct without an advisory lock
+ * across the provider call - which `docs/CONCURRENCY_AND_LOCKING.md` forbids.
+ */
+export function raiseReviewChargeAsk({
+  shareTotalCents,
+  request,
+}: {
+  shareTotalCents: number;
+  request: CarriedAskRecord;
+}): AdditionalAsk {
+  return buildAdditionalAsk({
+    ownCents: shareTotalCents,
+    carriedCents: request.carriedAskCents,
+  });
 }
 
 /**
