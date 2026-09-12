@@ -584,10 +584,10 @@ land.
 manifest moving with it. The numbers this page was written against:
 
 ```
-row-producing sites:  468
+row-producing sites:  470
 uncategorised:        0
-category values: admin 104, booking 102, xero 34, family 35, payment 42,
-                 lodge 65, account 19, security 22, privacy 19,
+category values: admin 104, booking 103, xero 34, family 35, payment 42,
+                 lodge 66, account 19, security 22, privacy 19,
                  communication 21, system 4
 ```
 
@@ -661,6 +661,20 @@ is the figure above, and it was taken from `npm run audit:census` on the merged
 tree rather than by adding one branch's delta to the other's total. The category
 values sum to 463 rather than 464 because one site forwards its category rather
 than naming one.
+
+Since then #2698 added two writers carrying four actions, taking 468 -> 470. One is a SHARED writer for the hut-leader
+assignment create, update and delete (`lodge` 65 -> 66), which recorded nothing
+at all before: an officer could hold a bed for a custodian, move it or hand it
+back, and the only trace was the row itself. It is `lodge` because a
+hut-leader assignment IS the lodge roster, and everyone who can write one
+already holds lodge access, so nobody gains a read. The second is
+`booking.wholeLodgeHold.custodianAmended` (`booking` 102 -> 103): the officer's
+explicit acceptance that holding a bed narrows an existing whole-lodge hold's
+sole occupancy. It is `booking` rather than `lodge` because what narrowed is a
+BOOKING's sole occupancy, matching `booking.exclusiveHold.set` beside it, and
+because whole-lodge hold coverage is derived rather than stored that row IS the
+amendment rather than a note about one. It carries booking ids, dates and
+nights only — no party data.
 
 Since then #3220 added the refused stranded-intent record (`payment` 41 -> 42,
 467 -> 468 - taken from `npm run audit:census` on the merged tree, not from this

@@ -1288,7 +1288,7 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // at the site and named in none of the four per-site maps, so both land
     // unpinned. 468 sites MEASURED on the merged tree with `npm run audit:census`
     // minus 127 pinned; `pinned` is unchanged, so no existing classification moved.
-    ).toEqual({ pinned: 127, unpinned: 341 });
+    ).toEqual({ pinned: 127, unpinned: 343 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {
