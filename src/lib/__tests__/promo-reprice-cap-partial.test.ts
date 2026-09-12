@@ -1125,6 +1125,7 @@ const GUEST_NIGHT_RATES = [ANN, BOB, CAL].map((memberId, index) => ({
   memberId,
   isMember: true,
   perNightRates: [5000, 5000],
+  nightDates: [new Date("2026-08-01T00:00:00Z"), new Date("2026-08-02T00:00:00Z")],
 }));
 
 describe("path 1 — batch modification reprice (booking-modify-plan)", () => {

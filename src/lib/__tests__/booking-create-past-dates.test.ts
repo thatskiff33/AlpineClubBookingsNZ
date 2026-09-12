@@ -211,6 +211,17 @@ const tx = {
     findUnique: (...a: unknown[]) => h.lodgeFindUnique(...a),
   },
   bookingGuest: { findMany: (...a: unknown[]) => h.bookingGuestFindMany(...a) },
+  // #3276: the night adjustment build-up writer reads and rewrites these.
+  bookingGuestNightAdjustment: {
+    deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+    createMany: vi.fn().mockResolvedValue({ count: 0 }),
+    findMany: vi.fn().mockResolvedValue([]),
+  },
+  bookingGuestNight: {
+    findMany: vi.fn().mockResolvedValue([]),
+    updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+  },
+  promoRedemption: { findUnique: vi.fn().mockResolvedValue(null) },
   memberLodgeAccess: {
     findMany: (...a: unknown[]) => h.memberLodgeAccessFindMany(...a),
   },

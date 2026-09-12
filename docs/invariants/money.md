@@ -293,6 +293,67 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   writer classifiers (including zero and null amounts) and every predicate that
   admits a draining-colour officer-repair audit.
 
+## INV-MONEY-029
+
+- **What a promotion took off each night or guest is recorded beside it, at
+  the grain the pricing engine decided it; the rows reconcile to the recorded
+  promo totals; and whether a booking's build-up can be trusted is DERIVED from
+  that reconciliation, never stored** (#3276, stage 2 of programme #3272; D1
+  on #3272 as refined 8 Sep 2026; owner decision 10 Sep 2026 on derived
+  validity). `BookingGuestNightAdjustment` holds one row per adjustment per
+  target: the NIGHT for a percentage, free-night or fixed-nightly promotion,
+  whose arithmetic is per night; the GUEST for a fixed-amount promotion, which
+  is `min(value, guest total)` with no per-night rule. The amount is the
+  engine's own figure — the very term its totals were summed from — never
+  translated to a finer grain by a rule. It is a signed delta in integer cents
+  like `priceAdjustmentCents`: negative for a discount, positive where a
+  `SET_PRICE` code raised a night, and `0` where it set a night to exactly its
+  rate, which is a real value. A row's beneficiary is decided in the same
+  function and branch that decides the allocation it decomposes
+  (`calculatePromoDiscountForGuestRates`), so the two can never name different
+  people. **The identity:** the rows of one redemption sum, per beneficiary, to
+  that member's `PromoRedemptionAllocation.priceAdjustmentCents` (an absent
+  allocation row means the member received nothing, per `INV-MONEY-005`) and,
+  overall, to `PromoRedemption.priceAdjustmentCents`. The one writer of an
+  AMOUNT, `recordBookingNightAdjustments` in `night-adjustment-write.ts`
+  (a member merge only moves or deletes rows and never invents one), enforces
+  it at write time and REFUSES BEFORE IT MUTATES — every read and every check
+  precedes its first write, so a refusal leaves the transaction as it found it
+  and the edit rolls back; the waitlist reprice, whose own catch degrades to
+  the stored snapshot instead of rolling back, therefore calls the recorder
+  outside that catch, where a refusal fails the sweep like any other error.
+  `amountCents = NULL` means NOT KNOWN and is written only where the engine
+  genuinely has no per-target figure — the per-member safety-cap rescale;
+  unknown rows are excluded from the sums they would make meaningless, and
+  `?? 0` on the column is prohibited exactly as it is on
+  `BookingGuestNight.priceCents`. **A reader asks `deriveNightAdjustmentState`
+  — the one home — and runs the same sum:** a booking with no redemption had
+  nothing taken off (`NO_PROMOTION`); rows that reconcile are `KNOWN`; anything
+  else — rows missing, rows that do not sum, a NULL amount — is `NOT_KNOWN`. No
+  column stores that answer, because a flag could be left asserting a state a
+  draining colour or a rollback had since made false, and a sum cannot. So a
+  night an officer priced, an even split and a parked edit need no special
+  state: their bookings have no rows, or rows that no longer sum, and derive
+  as not known; when the settle re-base re-runs the promotion over an
+  officer-priced strand it records the engine's figure over those stored
+  prices and the booking derives as known again. Stated limit, accepted by the
+  owner: an old-colour officer price repair that changes a night's rate
+  without touching the promotion is not detected, and the row is arguably
+  still right in that case. A mechanical rewrite that moves no money (a
+  name-only correction, an in-progress extension, an admin date shift)
+  carries the recorded rows across by guest and stay date byte for byte, and
+  where it cannot, leaves the booking's rows absent rather than guess. A member
+  merge that drops a duplicate's colliding allocation deletes that duplicate's
+  rows on the same redemption in the same step, so each surviving allocation
+  still matches its rows per beneficiary — but the redemption total still
+  carries the dropped share, so that booking derives as not known until the
+  next engine run rewrites it, which is the honest answer. **Account credit is
+  not in this table**: it has
+  one home, the `MemberCredit` ledger entry with its booking link, and is
+  composed from there, never split across nights. No reader changes and no
+  figure a member sees changes in this stage (D3), pinned by
+  `promo-money-byte-identical.test.ts`.
+
 ## INV-MONEY-006
 
 **Related: `INV-MONEY-001`** (money is held as integer cents) and

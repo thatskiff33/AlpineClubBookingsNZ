@@ -40,6 +40,16 @@ const store = {
   bookingModification: {
     create: (...a: unknown[]) => mocks.bookingModificationCreate(...a),
   },
+  // #3276: the re-base records the promotion build-up over the strands' nights.
+  bookingGuestNightAdjustment: {
+    deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+    createMany: vi.fn().mockResolvedValue({ count: 0 }),
+  },
+  promoRedemption: { findUnique: vi.fn().mockResolvedValue(null) },
+  bookingGuestNight: {
+    findMany: vi.fn().mockResolvedValue([]),
+    updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+  },
 } as never;
 
 const TODAY = requireCalendarDate("2026-07-01");
@@ -94,6 +104,8 @@ beforeEach(() => {
   mocks.bookingModificationCreate.mockResolvedValue({ id: "mod-1" });
   // The honest answer for the worked case: 75% of the $100.00 that is left.
   mocks.recalculateBookingPromo.mockResolvedValue({
+    adjustmentTargets: [],
+    discount: null,
     newDiscountCents: 7_500,
     newPromoAdjustmentCents: -7_500,
     promoRemoved: false,
@@ -180,6 +192,8 @@ describe("re-pricing a booking from its strands (#3219)", () => {
 
   it("carries NOTHING through: a promotion the recompute removes is written as removed", async () => {
     mocks.recalculateBookingPromo.mockResolvedValue({
+    adjustmentTargets: [],
+    discount: null,
       newDiscountCents: 0,
       newPromoAdjustmentCents: 0,
       promoRemoved: true,
@@ -208,6 +222,8 @@ describe("re-pricing a booking from its strands (#3219)", () => {
       refund cap and the reconciliation law would both read as nonsense.
     */
     mocks.recalculateBookingPromo.mockResolvedValue({
+    adjustmentTargets: [],
+    discount: null,
       newDiscountCents: 15_000,
       newPromoAdjustmentCents: -15_000,
       promoRemoved: false,
@@ -227,6 +243,8 @@ describe("re-pricing a booking from its strands (#3219)", () => {
 
   it("EXACTLY ZERO IS ALLOWED, because a promotion that covers the whole stay is a real shape", async () => {
     mocks.recalculateBookingPromo.mockResolvedValue({
+    adjustmentTargets: [],
+    discount: null,
       newDiscountCents: 10_000,
       newPromoAdjustmentCents: -10_000,
       promoRemoved: false,
