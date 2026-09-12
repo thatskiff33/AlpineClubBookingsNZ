@@ -14,9 +14,9 @@ const read = (relativePath: string) =>
   readFileSync(path.join(root, relativePath), "utf8");
 
 const MIGRATION =
-  "prisma/migrations/20260912010000_add_member_parent_partner_exclusion/migration.sql";
+  "prisma/migrations/20260914010000_add_member_parent_partner_exclusion/migration.sql";
 const ROLLBACK =
-  "prisma/migrations/20260912010000_add_member_parent_partner_exclusion/rollback.sql";
+  "prisma/migrations/20260914010000_add_member_parent_partner_exclusion/rollback.sql";
 
 function expectOrdered(source: string, fragments: readonly string[]) {
   let cursor = -1;
@@ -153,6 +153,7 @@ describe("parent/partner database backstop contract (#3292)", () => {
       "lets exactly one application relationship type commit",
       "lets exactly one type commit against direct-SQL bypasses in both directions",
       "makes two direct-SQL writers serialize through the pair primary key",
+      "serializes opposing multi-row source statements in canonical pair order",
       "locks opposing raw pair lists in one canonical order without deadlock",
     ]) {
       expect(races).toContain(`it("${name}"`);
@@ -172,7 +173,7 @@ describe("parent/partner database backstop contract (#3292)", () => {
     expect(runner).toContain("await caseClient.query(version)");
     expect(runner).not.toContain("sqlInsideVerificationTransaction");
     const fixture = read(
-      "prisma/migration-verification/20260912010000_add_member_parent_partner_exclusion.ts",
+      "prisma/migration-verification/20260914010000_add_member_parent_partner_exclusion.ts",
     );
     expect(fixture).toContain('executionMode: "isolated_database"');
     expect(fixture).toContain("noDetailOrHint: true");

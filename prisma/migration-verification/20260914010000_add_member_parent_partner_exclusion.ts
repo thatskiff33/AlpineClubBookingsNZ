@@ -17,7 +17,7 @@ const MEMBER_VALUES = (rows: string) => `
 `;
 
 const verification: DataMigrationVerification = {
-  migration: "20260912010000_add_member_parent_partner_exclusion",
+  migration: "20260914010000_add_member_parent_partner_exclusion",
   intent:
     "Refuse pre-existing direct-parent/partner overlap without leaking pair values, otherwise backfill both parent columns and every partner status into exact canonical pair counts before installing the trigger backstop.",
   executionMode: "isolated_database",
@@ -166,9 +166,7 @@ const verification: DataMigrationVerification = {
               'MemberParentPartnerExclusion_cleanup_zero_pair'
             )
           `,
-          rows: [
-            { pairTable: null, applyFunction: null, triggerCount: 0 },
-          ],
+          rows: [{ pairTable: null, applyFunction: null, triggerCount: 0 }],
         },
       ],
     },
@@ -176,8 +174,7 @@ const verification: DataMigrationVerification = {
   mutants: [
     {
       name: "omit primary-parent backfill",
-      harm:
-        "Existing primary parent edges have no serialization state, so a later partner write can bypass the intended cross-table pair row.",
+      harm: "Existing primary parent edges have no serialization state, so a later partner write can bypass the intended cross-table pair row.",
       find: `  FROM "Member" m
   WHERE m."parentMemberId" IS NOT NULL
 
@@ -195,8 +192,7 @@ const verification: DataMigrationVerification = {
     },
     {
       name: "omit secondary-parent backfill",
-      harm:
-        "Existing secondary parent edges are absent from derived state and can overlap a partner row after deployment.",
+      harm: "Existing secondary parent edges are absent from derived state and can overlap a partner row after deployment.",
       find: `  FROM "Member" m
   WHERE m."secondaryParentId" IS NOT NULL
 
@@ -214,8 +210,7 @@ const verification: DataMigrationVerification = {
     },
     {
       name: "omit pending partner links from backfill",
-      harm:
-        "A pending partner request remains invisible to the database backstop even though direct parentage must conflict with both statuses.",
+      harm: "A pending partner request remains invisible to the database backstop even though direct parentage must conflict with both statuses.",
       find: `  FROM "MemberPartnerLink" p
 ), pair_counts AS (`,
       replace: `  FROM "MemberPartnerLink" p
@@ -224,8 +219,7 @@ const verification: DataMigrationVerification = {
     },
     {
       name: "omit the pair-state backfill insert",
-      harm:
-        "The schema and triggers install over clean existing relationships but their initial counters are empty, so later deletes underflow or overlaps evade serialization.",
+      harm: "The schema and triggers install over clean existing relationships but their initial counters are empty, so later deletes underflow or overlaps evade serialization.",
       find: `FROM pair_counts
 ORDER BY member_a_id COLLATE "C", member_b_id COLLATE "C";`,
       replace: `FROM pair_counts

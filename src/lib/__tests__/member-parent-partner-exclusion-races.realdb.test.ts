@@ -146,6 +146,54 @@ async function directPartnerWrite(
   }
 }
 
+async function directMultiParentWrite(
+  client: PrismaClient,
+  firstParentId: string,
+  firstChildId: string,
+  secondParentId: string,
+  secondChildId: string,
+): Promise<boolean> {
+  try {
+    await client.$executeRaw`
+      UPDATE "Member"
+      SET "parentMemberId" = CASE
+        WHEN "id" = ${firstChildId} THEN ${firstParentId}
+        WHEN "id" = ${secondChildId} THEN ${secondParentId}
+        ELSE "parentMemberId"
+      END
+      WHERE "id" IN (${firstChildId}, ${secondChildId})
+    `;
+    return true;
+  } catch (error) {
+    if (isMemberParentPartnerExclusionViolation(error)) return false;
+    throw error;
+  }
+}
+
+async function directMultiPartnerWrite(
+  client: PrismaClient,
+  firstMemberAId: string,
+  firstMemberBId: string,
+  firstLinkId: string,
+  secondMemberAId: string,
+  secondMemberBId: string,
+  secondLinkId: string,
+): Promise<boolean> {
+  try {
+    await client.$executeRaw`
+      INSERT INTO "MemberPartnerLink" (
+        "id", "memberAId", "memberBId", "status", "updatedAt"
+      ) VALUES
+        (${firstLinkId}, ${firstMemberAId}, ${firstMemberBId}, 'PENDING', now()),
+        (${secondLinkId}, ${secondMemberAId}, ${secondMemberBId}, 'CONFIRMED', now())
+    `;
+    return true;
+  } catch (error) {
+    if (isMemberParentPartnerExclusionViolation(error)) return false;
+    throw error;
+  }
+}
+
 async function assertExactlyOneRelationship(
   parentId: string,
   childId: string,
@@ -508,6 +556,63 @@ async function assertExactlyOneRelationship(
         ),
       ]);
       await assertExactlyOneRelationship(id("direct-a"), id("direct-b"), results);
+    });
+
+    it("serializes opposing multi-row source statements in canonical pair order", async () => {
+      await seedMembers("multi-a", "multi-b", "multi-c", "multi-d");
+      const results = await Promise.all([
+        directMultiParentWrite(
+          clientA,
+          id("multi-a"),
+          id("multi-b"),
+          id("multi-c"),
+          id("multi-d"),
+        ),
+        // Present the partner pairs in the opposite order. Both statement
+        // triggers must still acquire their derived pair rows in C order.
+        directMultiPartnerWrite(
+          clientB,
+          id("multi-c"),
+          id("multi-d"),
+          id("multi-link-cd"),
+          id("multi-a"),
+          id("multi-b"),
+          id("multi-link-ab"),
+        ),
+      ]);
+
+      expect(results.filter(Boolean)).toHaveLength(1);
+      const children = await prisma.member.findMany({
+        where: { id: { in: [id("multi-b"), id("multi-d")] } },
+        orderBy: { id: "asc" },
+        select: { id: true, parentMemberId: true },
+      });
+      const partnerCount = await prisma.memberPartnerLink.count({
+        where: { id: { in: [id("multi-link-ab"), id("multi-link-cd")] } },
+      });
+      if (results[0]) {
+        expect(children).toEqual([
+          { id: id("multi-b"), parentMemberId: id("multi-a") },
+          { id: id("multi-d"), parentMemberId: id("multi-c") },
+        ]);
+        expect(partnerCount).toBe(0);
+      } else {
+        expect(children).toEqual([
+          { id: id("multi-b"), parentMemberId: null },
+          { id: id("multi-d"), parentMemberId: null },
+        ]);
+        expect(partnerCount).toBe(2);
+      }
+      for (const [memberAId, memberBId] of [
+        [id("multi-a"), id("multi-b")],
+        [id("multi-c"), id("multi-d")],
+      ] as const) {
+        expect(await pairState(memberAId, memberBId)).toMatchObject(
+          results[0]
+            ? { parentLinkCount: 1, partnerLinkCount: 0 }
+            : { parentLinkCount: 0, partnerLinkCount: 1 },
+        );
+      }
     });
 
     it("locks opposing raw pair lists in one canonical order without deadlock", async () => {

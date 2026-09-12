@@ -316,7 +316,7 @@ in that class:
 - `20260806010000_fence_hosting_coverage_delivery_claims` (#2596) — additive DDL,
   but an old hosting worker ignores the new tokens and can process a new worker's
   live claim, so mixed old/new workers are forbidden.
-- `20260912010000_add_member_parent_partner_exclusion` (#3271 / #3292) — additive
+- `20260914010000_add_member_parent_partner_exclusion` (#3271 / #3292) — additive
   DDL with a deliberately incompatible write protocol. The previous runtime can
   attempt an overlap that the new triggers reject and cannot decode the new safe
   database error. Its private repair and public deploy sequence are in
@@ -824,7 +824,7 @@ Both directions were rehearsed against a production-shaped database before merge
 #### 2.4.2 #3271: parent/partner exclusivity backstop
 
 Use this sequence when
-`20260912010000_add_member_parent_partner_exclusion` is pending. The migration is
+`20260914010000_add_member_parent_partner_exclusion` is pending. The migration is
 additive, but it is **not** safe for mixed old-runtime/new-schema traffic: old
 parent and partner writers do not all use the canonical pair-row protocol and do
 not decode its stable database refusal. The maintenance window starts before the
@@ -1019,7 +1019,7 @@ migrations in that class. Check for all five:
   token-fenced claim. It ships a no-op `rollback.sql`; old/new worker overlap is
   forbidden in both deploy and rollback directions. Pending windowed migrations
   share **one** window.
-- `20260912010000_add_member_parent_partner_exclusion` (#3271 / #3292) is
+- `20260914010000_add_member_parent_partner_exclusion` (#3271 / #3292) is
   `windowed` because the previous runtime can attempt writes rejected by the new
   trigger and cannot decode that safe refusal. Use [§2.4.2](#242-3271-parentpartner-exclusivity-backstop):
   stop every old process before the private repair, preserve the quiet-point

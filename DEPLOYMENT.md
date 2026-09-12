@@ -729,7 +729,7 @@ sequence below is run once, not once per migration.
   not: an old hosting worker ignores the token/expiry fields and can take, email and
   complete work that a new worker already owns. The old web colour and **every** old
   worker must therefore be stopped before migrate, and only new workers may start.
-- `20260912010000_add_member_parent_partner_exclusion` (#3271 / #3292). Its
+- `20260914010000_add_member_parent_partner_exclusion` (#3271 / #3292). Its
   additive pair-state table and triggers reject a direct-parent/partner overlap
   that the previous runtime can still attempt, and that runtime does not decode
   the new database error. Stop every old runtime and database-capable worker before
@@ -775,7 +775,7 @@ says which governs when:
    **host** path and then move somewhere durable — a `\copy` through
    `docker compose exec postgres psql` writes inside that container's writable layer,
    which the deploy recreates. After migrate those values are unrecoverable.
-   For `20260912010000`, complete the privately approved repair, repeat the full
+   For `20260914010000`, complete the privately approved repair, repeat the full
    read-only overlap census, and record only that the deployment prerequisite
    passed. Any changed row or additional pair stops the release for an individual
    owner decision.
@@ -860,7 +860,7 @@ stop every new worker and start the old-only release.
 
 **When all four windowed migrations were applied in one window, keep traffic
 removed and stop every new app/worker, then reverse them in application order.**
-Run `20260912010000/rollback.sql` first while no relationship writer is active;
+Run `20260914010000/rollback.sql` first while no relationship writer is active;
 verify its pair table, functions, and triggers are gone without changing either
 source table. Then follow `20260806010000/rollback.sql`'s no-op operational
 boundary and leave its nullable columns plus migration history intact. Finally

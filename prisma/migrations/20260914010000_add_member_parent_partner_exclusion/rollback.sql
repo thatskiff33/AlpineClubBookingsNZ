@@ -1,4 +1,4 @@
--- Reverse 20260912010000_add_member_parent_partner_exclusion (#3271/#3292).
+-- Reverse 20260914010000_add_member_parent_partner_exclusion (#3271/#3292).
 --
 -- This migration is windowed. Use this script only while traffic remains
 -- removed and every old/new web process, worker, scheduler and database
