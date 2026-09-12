@@ -16,6 +16,11 @@ const mocks = vi.hoisted(() => {
       findMany: vi.fn(),
       updateMany: vi.fn(),
     },
+    // #3367 (INV-INT-018): phase 2 refuses to link a contact an ORGANISATION
+    // already holds — the two-homes rule. `null` is the ordinary answer, and a
+    // missing delegate is an undefined-property throw before anything this
+    // suite asserts.
+    organisation: { findFirst: vi.fn(async () => null) },
   };
 
   const prisma = {

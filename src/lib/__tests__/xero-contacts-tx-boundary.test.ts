@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   txXeroOperationUpdateMany: vi.fn(),
   txExecuteRaw: vi.fn(),
   txQueryRaw: vi.fn(),
+  organisationFindFirst: vi.fn(),
   transaction: vi.fn(),
   getContacts: vi.fn(),
   createContacts: vi.fn(),
@@ -51,6 +52,11 @@ vi.mock("@/lib/prisma", () => ({
     member: {
       findUnique: mocks.memberFindUnique,
     },
+    // #3367 (INV-INT-018): phase 2 refuses to link a contact an ORGANISATION
+    // already holds — the two-homes rule. A missing delegate here is an
+    // undefined-property throw before the boundary this suite is about; `null`
+    // is the ordinary answer, which is "no organisation holds it".
+    organisation: { findFirst: mocks.organisationFindFirst },
     $transaction: mocks.transaction,
     // #3034/#3036: the funnel asks which installation this is before it does
     // anything. A MISSING delegate is an UNREADABLE override, which resolves
@@ -172,6 +178,10 @@ describe("findOrCreateXeroContact transaction boundary (#1355)", () => {
             findMany: mocks.txXeroOperationFindMany,
             updateMany: mocks.txXeroOperationUpdateMany,
           },
+          // #3367 (INV-INT-018): phase 2 refuses a contact an ORGANISATION
+          // already holds, so the tx double needs the delegate or it throws
+          // before the boundary this suite is about.
+          organisation: { findFirst: mocks.organisationFindFirst },
         })
     );
   });
@@ -264,6 +274,10 @@ describe("findOrCreateXeroContact transaction boundary (#1355)", () => {
             findMany: mocks.txXeroOperationFindMany,
             updateMany: mocks.txXeroOperationUpdateMany,
           },
+          // #3367 (INV-INT-018): phase 2 refuses a contact an ORGANISATION
+          // already holds, so the tx double needs the delegate or it throws
+          // before the boundary this suite is about.
+          organisation: { findFirst: mocks.organisationFindFirst },
         }),
       )
       .mockRejectedValueOnce(new Error("transaction aborted"));
@@ -326,6 +340,10 @@ describe("findOrCreateXeroContact transaction boundary (#1355)", () => {
             findMany: mocks.txXeroOperationFindMany,
             updateMany: mocks.txXeroOperationUpdateMany,
           },
+          // #3367 (INV-INT-018): phase 2 refuses a contact an ORGANISATION
+          // already holds, so the tx double needs the delegate or it throws
+          // before the boundary this suite is about.
+          organisation: { findFirst: mocks.organisationFindFirst },
         }),
       )
       .mockRejectedValueOnce(new Error("transaction aborted"));

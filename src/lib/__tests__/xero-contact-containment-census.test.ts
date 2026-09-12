@@ -61,6 +61,46 @@ const CONTAINMENT_MODULE = "src/lib/xero-contact-containment.ts";
 */
 const CONTAINMENT_PROOF_MODULE = "src/lib/xero-contact-containment-proof.ts";
 const SANDBOX_MODULE = "src/lib/xero-sandbox-contact-email.ts";
+/*
+  #3367 (stage 2 of programme #2912). A school is now a first-class
+  `Organisation` with its OWN Xero customer, created as an organisation rather
+  than as a surnameless person, and that needed a second contact-create path.
+
+  A new payload builder that did not join this census is exactly the first hole
+  the docblock above names — a brand-new `createContacts` with no type standing
+  in its way — so both halves of the new work are censused here rather than
+  trusted:
+
+  - ORGANISATION_CONTACT_MODULE writes contacts (create, and the contact-person
+    refresh), so it joins the writer list and must resolve the policy in its own
+    entry point.
+  - CONTACT_SHAPE_MODULE is where the object literal carrying `emailAddress`
+    now lives, for the person payload and the organisation payload alike. It
+    cannot mint a policy and cannot be called without one; the assignment scan
+    below follows the literal there rather than asserting about a file that no
+    longer holds it.
+*/
+const ORGANISATION_CONTACT_MODULE = "src/lib/organisation-xero-contacts.ts";
+const CONTACT_SHAPE_MODULE = "src/lib/xero-contact-shape.ts";
+
+/**
+ * Every module that builds a Xero contact payload carrying an email address.
+ *
+ * The count below is per-module and deliberately exact in both directions: a
+ * pattern that stopped matching cannot pass by finding nothing, and a new
+ * assignment cannot appear without somebody updating the number and thinking
+ * about it.
+ */
+const EMAIL_CARRYING_PAYLOAD_ASSIGNMENTS: ReadonlyArray<
+  [module: string, assignments: number, what: string]
+> = [
+  [
+    CONTACT_SHAPE_MODULE,
+    2,
+    "the contact's own address, and one per contact person on an organisation",
+  ],
+  [CONTACTS_MODULE, 1, "the update payload"],
+];
 
 /**
  * The other two modules that write a Xero contact, and what makes them safe.
@@ -142,7 +182,7 @@ describe("Xero contact containment census (INV-CONFIG-005)", () => {
     );
   });
 
-  it("writes a Xero contact from exactly three modules", () => {
+  it("writes a Xero contact from exactly the declared modules", () => {
     /*
       Bare method names on ANY receiver, the widening #3035's review measured as
       necessary: `const api = xero.accountingApi; api.updateContact(...)`,
@@ -166,6 +206,7 @@ describe("Xero contact containment census (INV-CONFIG-005)", () => {
       [
         CONTAINMENT_PROOF_MODULE,
         CONTACTS_MODULE,
+        ORGANISATION_CONTACT_MODULE,
         ...NO_EMAIL_CONTACT_WRITERS,
       ].sort(),
     );
@@ -216,37 +257,111 @@ describe("Xero contact containment census (INV-CONFIG-005)", () => {
   });
 
   it("puts an email address into a Xero contact payload only through the policy", () => {
-    const source = stripComments(readModule(CONTACTS_MODULE));
-    const assignments = [...source.matchAll(/emailAddress:\s*([^\n]*)/g)];
-    // Anti-vacuity in BOTH directions: the file really does hold the two
-    // assignments this case is about (the create payload and the update
-    // payload), so a pattern that stopped matching cannot pass by finding
-    // nothing.
-    expect(
-      assignments.length,
-      `${CONTACTS_MODULE} must still build the two contact payloads that carry ` +
-        "an email address",
-    ).toBe(2);
-    for (const [, value] of assignments) {
+    for (const [module, expected, what] of EMAIL_CARRYING_PAYLOAD_ASSIGNMENTS) {
+      const source = stripComments(readModule(module));
+      const assignments = [...source.matchAll(/emailAddress:\s*([^\n]*)/g)];
+      // Anti-vacuity in BOTH directions: the file really does hold the
+      // assignments this case is about, so a pattern that stopped matching
+      // cannot pass by finding nothing.
       expect(
-        value,
-        "Every email address written into a Xero contact payload must go " +
-          "through applyXeroContactEmailPolicy, which is the identity function " +
-          "on the club's live site and the containment transform on a copy " +
-          "(INV-CONFIG-005).",
-      ).toContain("applyXeroContactEmailPolicy(");
+        assignments.length,
+        `${module} must still build ${what}`,
+      ).toBe(expected);
+      for (const [, value] of assignments) {
+        expect(
+          value,
+          "Every email address written into a Xero contact payload must go " +
+            "through applyXeroContactEmailPolicy, which is the identity " +
+            "function on the club's live site and the containment transform " +
+            "on a copy (INV-CONFIG-005).",
+        ).toContain("applyXeroContactEmailPolicy(");
+      }
     }
   });
 
-  it("resolves the policy in every function that builds a contact payload", () => {
-    const source = stripComments(readModule(CONTACTS_MODULE));
-    for (const fn of [
-      "export async function findOrCreateXeroContact(",
-      "export async function createXeroContactForMember(",
-      "export async function updateXeroContact(",
+  it("composes an email address in NO contact writer but the declared ones", () => {
+    /*
+      #3367. The per-module counts above judge only the two files they name, so
+      they say nothing about the OTHER modules on the writer list — and it is a
+      writer that can put an address in front of Xero. This case closes the
+      arithmetic: take every module the writer census admits, and require each
+      composed `emailAddress:` in it to be accounted for.
+
+      Four things are not a composition and are skipped, each because it cannot
+      carry a NEW address to the provider: a type annotation (`emailAddress:
+      string`), a Prisma selection (`emailAddress: true`), a straight copy of a
+      property read — the same carve-out the two no-email writers already get —
+      and a value that went through the policy. Anything else is either a
+      declared exception below or a failure.
+
+      SCOPED TO THE WRITERS, not to the tree: `xero-duplicate-contacts.ts` and
+      the admin report types legitimately reshape an address Xero RETURNED into
+      a local object, and a census that failed on those would be a guard that
+      fails on correct files.
+    */
+    const TYPE_OR_SELECTION = /^\s*(?:string|number|boolean|true|false|unknown)\b/;
+    const COPIED_FROM_A_READ = /^\s*[A-Za-z_$][\w$]*(?:\.[\w$]+)*\.emailAddress\b/;
+    /** Compositions that are correct without the policy, each with its reason. */
+    const DECLARED_EXCEPTIONS: Record<string, string> = {
+      "src/lib/xero-contact-containment-proof.ts: emailAddress: contained },":
+        "the containment write itself: `contained` IS the policy's output, " +
+        "read back off the provider and transformed by the one contained-form " +
+        "helper, so routing it through the policy a second time would contain " +
+        "an already-contained address",
+    };
+    const counted: string[] = [];
+    const offenders: string[] = [];
+    for (const module of [
+      CONTAINMENT_PROOF_MODULE,
+      CONTACTS_MODULE,
+      ORGANISATION_CONTACT_MODULE,
+      CONTACT_SHAPE_MODULE,
+      ...NO_EMAIL_CONTACT_WRITERS,
     ]) {
+      const source = stripComments(readModule(module));
+      for (const [, value] of source.matchAll(/emailAddress:\s*([^\n]*)/g)) {
+        counted.push(`${module}: emailAddress: ${value.trim()}`);
+        if (TYPE_OR_SELECTION.test(value)) continue;
+        if (COPIED_FROM_A_READ.test(value)) continue;
+        if (value.includes("applyXeroContactEmailPolicy(")) continue;
+        const site = `${module}: emailAddress: ${value.trim()}`;
+        if (site in DECLARED_EXCEPTIONS) continue;
+        offenders.push(site);
+      }
+    }
+    // Anti-vacuity: the scan really did look at something, and really did look
+    // at the module this issue added.
+    expect(counted.length, "the writer scan judged nothing").toBeGreaterThan(5);
+    expect(counted.some((site) => site.startsWith(CONTACT_SHAPE_MODULE))).toBe(
+      true,
+    );
+    expect(
+      offenders,
+      "A Xero contact WRITER is composing an email address without the " +
+        "containment policy. On a copy that address goes to the provider " +
+        "verbatim and Xero's own invoice reminders reach a real member. Pass " +
+        "it through applyXeroContactEmailPolicy, or declare the site with its " +
+        "reason (INV-CONFIG-005).",
+    ).toEqual([]);
+  });
+
+  it("resolves the policy in every function that builds a contact payload", () => {
+    const ENTRY_POINTS: ReadonlyArray<[module: string, signature: string]> = [
+      [CONTACTS_MODULE, "export async function findOrCreateXeroContact("],
+      [CONTACTS_MODULE, "export async function createXeroContactForMember("],
+      [CONTACTS_MODULE, "export async function updateXeroContact("],
+      // #3367: the organisation's own resolve asks the same first question, for
+      // the same reason — it creates a contact carrying an email address, so an
+      // undeclared installation must not reach the provider at all.
+      [
+        ORGANISATION_CONTACT_MODULE,
+        "export async function findOrCreateXeroContactForOrganisation(",
+      ],
+    ];
+    for (const [module, fn] of ENTRY_POINTS) {
+      const source = stripComments(readModule(module));
       const start = source.indexOf(fn);
-      expect(start, `${fn} must still exist in ${CONTACTS_MODULE}`).toBeGreaterThan(-1);
+      expect(start, `${fn} must still exist in ${module}`).toBeGreaterThan(-1);
       const rest = source.slice(start);
       const end = rest.indexOf("\n}\n");
       expect(end, `${fn} must have a closing brace`).toBeGreaterThan(0);

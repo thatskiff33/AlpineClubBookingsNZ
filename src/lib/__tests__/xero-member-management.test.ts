@@ -22,6 +22,11 @@ vi.mock("@/lib/prisma", () => ({
       findMany: vi.fn(),
       updateMany: vi.fn(),
     },
+    // #3367 (INV-INT-018): a contact may have only ONE local home, so every
+    // path that links one refuses a contact an ORGANISATION already holds.
+    // `null` is the ordinary answer; a missing delegate is an
+    // undefined-property throw before anything below is reached.
+    organisation: { findFirst: vi.fn().mockResolvedValue(null) },
     $executeRaw: vi.fn(),
     familyGroup: { findMany: vi.fn() },
     $transaction: vi.fn(),

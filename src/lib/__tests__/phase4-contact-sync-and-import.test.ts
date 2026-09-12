@@ -94,6 +94,10 @@ const mocks = vi.hoisted(() => {
         update: vi.fn(),
         create: vi.fn(),
       },
+      // #3367 (INV-INT-018): a contact may have only ONE local home, so the
+      // contact-link transaction refuses one an ORGANISATION already holds.
+      // `null` is the ordinary answer; a missing delegate throws first.
+      organisation: { findFirst: vi.fn().mockResolvedValue(null) },
       passwordResetToken: {
         create: vi.fn(),
       },
