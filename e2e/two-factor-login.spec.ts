@@ -78,8 +78,11 @@ test("recovery code completes the challenge and is single-use", async ({
   page,
 }) => {
   const stored = readStoredTwoFactor(enrollee.email);
-  expect(stored, "enrollment spec must have stored recovery codes").toBeTruthy();
-  const recoveryCode = stored!.recoveryCodes[0];
+  if (!stored) throw new Error("enrollment spec must have stored recovery codes");
+  const [recoveryCode] = stored.recoveryCodes;
+  if (!recoveryCode) {
+    throw new Error("enrollment spec must have stored at least one recovery code");
+  }
 
   await submitLoginForm(page, enrollee.email);
   await expect(page).toHaveURL(/\/login\/verify/);

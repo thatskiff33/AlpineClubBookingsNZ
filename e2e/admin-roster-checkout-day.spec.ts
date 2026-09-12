@@ -186,11 +186,13 @@ test("rosters a mixed turnover day with both sides of midday", async ({ page }) 
   // a departing guest who is NOT already the current assignee.
   await page.getByRole("button", { name: "Edit roster" }).click();
   const firstSelect = page.getByRole("combobox").first();
-  const departingLabel = `${departing[0].firstName} ${departing[0].lastName} (departing today)`;
+  const [firstDeparting] = departing;
+  if (!firstDeparting) throw new Error("the turnover day must list a departing guest");
+  const departingLabel = `${firstDeparting.firstName} ${firstDeparting.lastName} (departing today)`;
   await expect(firstSelect.locator("option", { hasText: departingLabel })).toHaveCount(1);
   const currentValue = await firstSelect.inputValue();
   const chosenDeparting =
-    departing.find((guest) => guest.id !== currentValue) ?? departing[0];
+    departing.find((guest) => guest.id !== currentValue) ?? firstDeparting;
   expect(chosenDeparting.id, "need a departing guest not already assigned here").not.toBe(
     currentValue,
   );

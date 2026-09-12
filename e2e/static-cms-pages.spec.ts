@@ -48,7 +48,7 @@ const CMS_PAGE = "/about";
  */
 function directive(response: APIResponse, name: string): string {
   const policy = response.headers()["content-security-policy"];
-  expect(policy, "every response must carry a CSP").toBeTruthy();
+  if (!policy) throw new Error("every response must carry a CSP");
 
   const found = policy
     .split(";")
@@ -70,7 +70,7 @@ function unnoncedInlineScripts(html: string): string[] {
   const offenders: string[] = [];
 
   for (const match of html.matchAll(/<script\b([^>]*)>/gi)) {
-    const attributes = match[1];
+    const attributes = match[1] ?? "";
     if (/\bsrc\s*=/i.test(attributes)) continue;
     if (/\btype\s*=\s*["']?application\/(?:ld\+)?json/i.test(attributes)) continue;
     if (/\bnonce\s*=\s*(?:"[^"]+"|'[^']+'|[^\s"'>]+)/i.test(attributes)) continue;

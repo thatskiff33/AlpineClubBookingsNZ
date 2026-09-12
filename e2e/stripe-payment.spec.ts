@@ -85,6 +85,10 @@ test("test-mode card payment succeeds and confirms the booking", async ({
   // booking PAID and claims capacity in the success callback just after, so poll
   // instead of sampling instantly.
   for (const night of window.nights) {
+    const before = occupiedBefore[night];
+    if (before === undefined) {
+      throw new Error(`no occupied-bed reading for ${night} before payment`);
+    }
     await expect
       .poll(
         async () => (await fetchOccupiedBeds(page, window.nights))[night],
@@ -93,7 +97,7 @@ test("test-mode card payment succeeds and confirms the booking", async ({
           timeout: 20_000,
         },
       )
-      .toBe(occupiedBefore[night] + 1);
+      .toBe(before + 1);
   }
 
   // The booking reaches a confirmed state for the member.

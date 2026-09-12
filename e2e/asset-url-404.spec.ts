@@ -37,7 +37,7 @@ function unnoncedInlineScripts(html: string) {
   const offenders: string[] = [];
 
   for (const match of html.matchAll(/<script\b([^>]*)>/gi)) {
-    const attributes = match[1];
+    const attributes = match[1] ?? "";
     if (/\bsrc\s*=/i.test(attributes)) continue;
     if (/\btype\s*=\s*["']?application\/(ld\+)?json/i.test(attributes)) continue;
     if (/\bnonce\s*=\s*(?:"[^"]+"|'[^']+'|[^\s"'>]+)/i.test(attributes)) continue;
@@ -104,8 +104,8 @@ test("a missing asset URL is answered with nothing, not the 404 document", async
     //    own `default-src 'none'` is what ships there. That case is asserted
     //    exactly, below the loop, so the route's headers stay pinned.
     const csp = response.headers()["content-security-policy"];
+    if (!csp) throw new Error(`${url} must carry a policy from the app`);
 
-    expect(csp, `${url} must carry a policy from the app`).toBeTruthy();
     expect(
       csp === TERMINAL_CSP || csp.includes("'nonce-"),
       `${url} must carry either the terminal policy or a nonced page policy, got: ${csp}`,

@@ -198,7 +198,8 @@ test("pointer, keyboard and menu moves share reviewed scopes and preserve origin
   const kensAllocations = payload.allocations
     .filter((allocation) => allocation.guestName.includes("Ken"))
     .sort((left, right) => left.stayDate.localeCompare(right.stayDate));
-  expect(kensAllocations.length).toBeGreaterThan(0);
+  const [firstKenAllocation] = kensAllocations;
+  if (!firstKenAllocation) throw new Error("Ken must hold at least one bed allocation");
   const originalDates = kensAllocations.map(
     (allocation) => allocation.stayDate,
   );
@@ -220,7 +221,7 @@ test("pointer, keyboard and menu moves share reviewed scopes and preserve origin
     .find(
       (bed) =>
         bed.active &&
-        bed.id !== kensAllocations[0].bedId &&
+        bed.id !== firstKenAllocation.bedId &&
         originalDates.every(
           (night) =>
             !occupiedKeys.has(`${bed.id}:${night}`) &&
@@ -444,8 +445,13 @@ test("pointer, keyboard and menu moves share reviewed scopes and preserve origin
     ).toBeVisible();
     await moveDialog.getByRole("button", { name: "Confirm move" }).click();
     await expect(moveDialog).toBeHidden({ timeout: 30_000 });
-    expect(moveRequests).toHaveLength(1);
-    expect(moveRequests[0]).toMatchObject({
+    const [moveRequest] = moveRequests;
+    if (!moveRequest || moveRequests.length !== 1) {
+      throw new Error(
+        `Confirm move must issue exactly one Apply request, saw ${moveRequests.length}`,
+      );
+    }
+    expect(moveRequest).toMatchObject({
       destinationBedId: destination!.id,
       scope: "BOOKING_GUEST",
     });
@@ -453,9 +459,9 @@ test("pointer, keyboard and menu moves share reviewed scopes and preserve origin
     // digest — NEVER a target date. `toMatchObject` above permits extra
     // properties, so this is the assertion that would fail if the hovered date
     // column ever leaked back into the payload.
-    expect(moveRequests[0]).not.toHaveProperty("stayDate");
-    expect(allocationIds).toContain(moveRequests[0].anchorAllocationId);
-    expect(moveRequests[0].previewDigest).toMatch(/^v1:[0-9a-f]{64}$/);
+    expect(moveRequest).not.toHaveProperty("stayDate");
+    expect(allocationIds).toContain(moveRequest.anchorAllocationId);
+    expect(moveRequest.previewDigest).toMatch(/^v1:[0-9a-f]{64}$/);
 
     const readPersisted = async () => {
       const response = await adminContext.request.get(dashboardPath);

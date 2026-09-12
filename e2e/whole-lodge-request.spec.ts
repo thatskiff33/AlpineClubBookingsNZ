@@ -17,7 +17,7 @@ import {
   WAITLIST_FULL_WINDOW,
   WAITLISTER,
 } from "./helpers/fixtures";
-import { stayWindow } from "./helpers/stay-dates";
+import { monthKeyParts, stayWindow } from "./helpers/stay-dates";
 import { overrideModules, setModuleSettings, type ModuleSettings } from "./helpers/modules";
 
 /*
@@ -181,7 +181,7 @@ async function memberOccupiedBeds(
   const occupied: Record<string, number> = {};
   const payloads: unknown[] = [];
   for (const month of new Set(nights.map((night) => night.slice(0, 7)))) {
-    const [year, monthNumber] = month.split("-").map(Number);
+    const { year, month: monthNumber } = monthKeyParts(month);
     const response = await context.request.get(
       `/api/availability?year=${year}&month=${monthNumber - 1}`,
     );
@@ -196,7 +196,11 @@ async function memberOccupiedBeds(
     payloads.push(body);
     for (const night of nights) {
       if (night.slice(0, 7) !== month) continue;
-      occupied[night] = body.availability[night];
+      const count = body.availability[night];
+      if (count === undefined) {
+        throw new Error(`/api/availability for ${month} gave no answer for ${night}`);
+      }
+      occupied[night] = count;
     }
   }
   return { occupied, payloads };
