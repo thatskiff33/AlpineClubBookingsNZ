@@ -78,6 +78,11 @@ import {
 } from "@/lib/booking-credit-election";
 import type { PromoCoverageNotice } from "@/lib/promo-cap-coverage";
 import {
+  recordBookingNightAdjustments,
+  restoreBookingNightAdjustments,
+  snapshotBookingNightAdjustments,
+} from "@/lib/night-adjustment-write";
+import {
   describePromoChangeNotApplied,
   type PromoChangeNotAppliedNotice,
 } from "@/lib/promo-change-not-applied";
@@ -1382,7 +1387,9 @@ export async function modifyBookingBatch({
           // `PromoChangeResult` is what forces this literal to answer the same
           // question the function does, so the notice below cannot be built off
           // a predicate that knows about only one of the two stubs.
-          promoEngineRan: false,
+          // `as const` keeps the literal narrow so the union on
+          // `PromoChangeResult` discriminates: no build-up exists on this arm.
+          promoEngineRan: false as const,
         }
       : await applyPromoCodeChanges(tx, {
           booking,
@@ -1516,6 +1523,16 @@ export async function modifyBookingBatch({
       throw new BookingModificationSettlementMethodRequiredError();
     }
 
+    // #3276: when the promotion engine did NOT run and the edit is still
+    // priced — a name-only correction, an in-progress extension — no money
+    // moved, so the recorded build-up is carried across the night rewrite
+    // below byte for byte. A PARKED edit carries nothing: its nights wait for
+    // a person and stay UNKNOWN.
+    const carriedAdjustments =
+      !promo.promoEngineRan && pricingResult.kind === "priced"
+        ? await snapshotBookingNightAdjustments(tx, bookingId)
+        : null;
+
     const { createdGuests } = await applyGuestChanges(tx, {
       bookingId,
       newCheckIn: dates.newCheckIn,
@@ -1559,6 +1576,32 @@ export async function modifyBookingBatch({
           ? pricingResult.otherLodgeRatedGuestIds
           : new Set<string>(),
     });
+
+    // #3276: AFTER `applyGuestChanges`, which is the last night write — the
+    // promotion itself was written above, before the nights it attaches to
+    // existed. Guest identity follows the engine's own list: a remaining guest
+    // by its id, an added guest by its position among the rows just created.
+    if (promo.promoEngineRan) {
+      if (pricingResult.kind !== "priced") {
+        throw new Error(
+          "INV-MONEY-029: the promotion engine ran on a modification that priced nothing",
+        );
+      }
+      let created = 0;
+      await recordBookingNightAdjustments(tx, {
+        bookingId,
+        guestIds: pricingResult.guestNightRates.map(
+          (guest) => guest.bookingGuestId ?? createdGuests[created++]?.id ?? null,
+        ),
+        targets: promo.adjustmentTargets,
+        writer: "the booking modification",
+      });
+    } else if (carriedAdjustments) {
+      await restoreBookingNightAdjustments(tx, {
+        snapshot: carriedAdjustments,
+        writer: "the booking modification",
+      });
+    }
 
     const choreWarnings = await applyChoreCleanup(tx, {
       bookingId,

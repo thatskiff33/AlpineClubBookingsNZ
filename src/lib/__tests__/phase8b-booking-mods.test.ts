@@ -13,7 +13,7 @@ const mockFindMany = vi.fn();
 const mockMemberCount = vi.fn();
 const mockValidateAndCalculatePromoDiscount = vi.hoisted(() =>
   vi.fn().mockResolvedValue({
-    discount: { discountCents: 0, priceAdjustmentCents: 0, freeNightsUsed: 0, eligibleGuestCount: 0, allocations: [] },
+    discount: { adjustmentTargets: [], discountCents: 0, priceAdjustmentCents: 0, freeNightsUsed: 0, eligibleGuestCount: 0, allocations: [] },
     beneficiaryMemberIds: [],
   })
 );
@@ -69,7 +69,7 @@ vi.mock("@/lib/prisma", () => ({
     },
     bookingModification: { create: mockCreate },
     bookingRequest: { findFirst: vi.fn().mockResolvedValue(null) },
-    promoRedemption: { delete: mockDelete },
+    promoRedemption: { findUnique: vi.fn().mockResolvedValue(null), delete: mockDelete },
     promoCode: { update: mockUpdate },
     choreAssignment: { findMany: mockFindMany, delete: mockDelete, deleteMany: mockDeleteMany },
     season: { findMany: mockFindMany },
@@ -452,7 +452,15 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
     groupDiscountSetting: {
       findUnique: vi.fn().mockResolvedValue(null),
     },
+    // #3276: the night adjustment build-up writer reads and rewrites these.
+    bookingGuestNightAdjustment: {
+      deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+      createMany: vi.fn().mockResolvedValue({ count: 0 }),
+      findMany: vi.fn().mockResolvedValue([]),
+    },
     bookingGuestNight: {
+      findMany: vi.fn().mockResolvedValue([]),
+      updateMany: vi.fn().mockResolvedValue({ count: 0 }),
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
       createMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
@@ -530,6 +538,7 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
       }]),
     },
     promoRedemption: {
+      findUnique: vi.fn().mockResolvedValue(null),
       delete: vi.fn().mockResolvedValue({}),
       update: vi.fn().mockResolvedValue({}),
     },
@@ -2679,6 +2688,7 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
     } as any);
     mockValidateAndCalculatePromoDiscount.mockResolvedValueOnce({
       discount: {
+        adjustmentTargets: [],
         discountCents: 0,
         priceAdjustmentCents: -10000,
         freeNightsUsed: 0,

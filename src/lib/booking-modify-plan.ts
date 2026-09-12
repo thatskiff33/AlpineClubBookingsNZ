@@ -76,6 +76,7 @@ import {
   shouldPersistPromoRedemption,
   validateAndCalculatePromoDiscount,
 } from "@/lib/promo";
+import type { PromoAdjustmentTarget } from "@/lib/night-adjustment-write";
 import {
   describePromoCapCoverage,
   type PromoCoverageNotice,
@@ -1318,7 +1319,8 @@ export type PricedModification = {
     memberId: string | null;
     isMember: boolean;
     perNightRates: number[];
-    nightDates?: Date[];
+    /** #3276: REQUIRED, so an adjustment row can be attributed to a night by date. */
+    nightDates: Date[];
   }>;
   /**
    * The existing guests pricing ACTUALLY resolved to the other-lodge member rate
@@ -2079,8 +2081,24 @@ export type PromoChangeResult = {
    * honour a promo change flips this flag at the same time, and the notice
    * disappears on its own.
    */
-  promoEngineRan: boolean;
-};
+} & (
+  | {
+      promoEngineRan: true;
+      /**
+       * #3276: what the promotion took off each night or guest of the
+       * `guestNightRates` this ran over — `[]` when the engine ran and no
+       * promotion remains. The batch service records these AFTER
+       * `applyGuestChanges` has rewritten the night rows, which is the only
+       * order in which they can be attached.
+       */
+      adjustmentTargets: PromoAdjustmentTarget[];
+    }
+  | {
+      promoEngineRan: false;
+      /** The engine did not run, so there is no build-up to record: the caller carries the stored rows across. */
+      adjustmentTargets?: undefined;
+    }
+);
 
 /**
  * Resolve a request's promo beneficiaries to positional indexes over the
@@ -2175,6 +2193,8 @@ export async function applyPromoCodeChanges(
       memberId: string | null;
       isMember: boolean;
       perNightRates: number[];
+      /** #3276: REQUIRED, so an adjustment row can be attributed to a night by date. */
+      nightDates: Date[];
     }>;
     /**
      * The club's own calendar day (#3123, `INV-CONFIG-002`), resolved by the
@@ -2212,6 +2232,7 @@ export async function applyPromoCodeChanges(
   let promoRemoved = false;
   let promoChanged = false;
   let promoCoverage: PromoCoverageNotice | null = null;
+  let adjustmentTargets: PromoAdjustmentTarget[] = [];
   const bookingLodgeId = booking.lodgeId ?? (await getDefaultLodgeId(tx));
 
   // Row-lock every promo code whose usage caps this transaction may charge or
@@ -2299,6 +2320,7 @@ export async function applyPromoCodeChanges(
     const promoResult = application.discount;
     newDiscountCents = promoResult.discountCents;
     newPromoAdjustmentCents = promoResult.priceAdjustmentCents;
+    adjustmentTargets = promoResult.adjustmentTargets;
 
     if (shouldPersistPromoRedemption(promoResult)) {
       await redeemPromoCode(
@@ -2370,6 +2392,7 @@ export async function applyPromoCodeChanges(
       const promoResult = application.discount;
       newDiscountCents = promoResult.discountCents;
       newPromoAdjustmentCents = promoResult.priceAdjustmentCents;
+      adjustmentTargets = promoResult.adjustmentTargets;
       promoCoverage = await describePromoCapCoverage(tx, {
         promoCode: promo.code,
         capCoverage: application.capCoverage,
@@ -2398,6 +2421,7 @@ export async function applyPromoCodeChanges(
     promoChanged,
     promoCoverage,
     promoEngineRan: true,
+    adjustmentTargets,
   };
 }
 

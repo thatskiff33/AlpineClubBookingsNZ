@@ -18,6 +18,10 @@ import {
   validateAndCalculatePromoDiscount,
 } from "@/lib/promo";
 import {
+  recordBookingNightAdjustments,
+  type PromoAdjustmentTarget,
+} from "@/lib/night-adjustment-write";
+import {
   describePromoCapCoverage,
   type PromoCoverageNotice,
 } from "@/lib/promo-cap-coverage";
@@ -783,6 +787,7 @@ export async function removeBookingGuestInTransaction({
     newPromoAdjustmentCents: booking.promoAdjustmentCents,
     promoRemoved: false,
     promoCoverage: null,
+    adjustmentTargets: [],
   };
 
   if (!parkedFinancialReview) {
@@ -862,6 +867,15 @@ export async function removeBookingGuestInTransaction({
       newTotalPriceCents,
       guestNightRates,
       todayAtClub,
+    });
+    // #3276: the remaining guests' nights are untouched by a removal, so only
+    // the build-up is rewritten — from the engine's fresh decision over exactly
+    // those guests. A PARKED removal re-ran nothing and records nothing.
+    await recordBookingNightAdjustments(tx, {
+      bookingId,
+      guestIds: guestsForPricing.map((guest) => guest.bookingGuestId),
+      targets: promoResult.adjustmentTargets,
+      writer: "guest removal",
     });
   }
 
@@ -1266,6 +1280,8 @@ export async function recalculateBookingPromo({
     memberId: string | null;
     isMember: boolean;
     perNightRates: number[];
+    /** #3276: REQUIRED, so an adjustment row can be attributed to a night by date. */
+    nightDates: Date[];
     firstNight?: Date | null;
   }>;
   /**
@@ -1283,6 +1299,7 @@ export async function recalculateBookingPromo({
   let newPromoAdjustmentCents = 0;
   let promoRemoved = false;
   let promoCoverage: PromoCoverageNotice | null = null;
+  let adjustmentTargets: PromoAdjustmentTarget[] = [];
 
   if (booking.promoRedemption?.promoCode) {
     // Row-lock the promo code and re-read its usage counter before the caps are
@@ -1330,6 +1347,7 @@ export async function recalculateBookingPromo({
       const discount = application.discount;
       newDiscountCents = discount.discountCents;
       newPromoAdjustmentCents = discount.priceAdjustmentCents;
+      adjustmentTargets = discount.adjustmentTargets;
       promoCoverage = await describePromoCapCoverage(tx, {
         promoCode: promo.code,
         capCoverage: application.capCoverage,
@@ -1351,5 +1369,12 @@ export async function recalculateBookingPromo({
     }
   }
 
-  return { newDiscountCents, newPromoAdjustmentCents, promoRemoved, promoCoverage };
+  return {
+    newDiscountCents,
+    newPromoAdjustmentCents,
+    promoRemoved,
+    promoCoverage,
+    // #3276: what the engine took off each night or guest of `guestNightRates`.
+    adjustmentTargets,
+  };
 }

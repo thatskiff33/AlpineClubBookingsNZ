@@ -107,7 +107,9 @@ onto the full new range (the batch-path policy) and re-syncs their
 gets night rows at creation so later edits honour the prices they joined at.
 The waitlist offer reprice is the other deliberate exception: an offer re-bases
 the whole booking at current rates before the member confirms, and the offer
-email states that price. Legacy guests without stored night rows price at
+email states that price. A failure inside that reprice degrades to the stored
+snapshot; the one step outside its degrade block is the promotion build-up
+recorder (`INV-MONEY-029`), whose refusal fails the sweep transaction instead. Legacy guests without stored night rows price at
 current rates; a one-off backfill migration (#1098) synthesised rows for
 pre-#713 guests on live, non-quote-priced bookings (stored price split evenly
 across the stay envelope, integer cents, remainder on the first night), so
