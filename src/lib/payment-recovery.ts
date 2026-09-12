@@ -30,6 +30,7 @@ import {
   // Type-only, so it adds nothing to this module's runtime import graph.
   type XeroSupplementaryInvoiceEnqueueOutcome,
 } from "@/lib/xero-operation-outbox";
+import { sizeAdditionalAskCents } from "@/lib/additional-payment-ask";
 import { sendAdminPaymentFailureAlert } from "@/lib/email";
 import { recordDuplicateCaptureRefundEvent } from "@/lib/booking-events";
 import { reportSupersededPaymentRefund } from "@/lib/superseded-additional-refund";
@@ -2621,9 +2622,75 @@ async function processCreateAdditionalPaymentIntentOperation(
     customerId = customer.id;
   }
 
-  const stripeIdempotencyKey = operation.paymentIntentId;
+  /**
+   * #3340 fix round: THE ASK IS RE-DERIVED HERE, NOT REPLAYED FROM THE ROW.
+   *
+   * `operation.amountCents` was frozen when the mint failed, and since #3340 the
+   * ask is no longer a fact about an edit (a delta, which never goes stale) but
+   * a fact about a MOMENT - the edit's net plus whatever was still unpaid on the
+   * ask it supersedes. A frozen moment can OVERCHARGE: edit 1 raises $70 and is
+   * not cancelled because the mint that would have superseded it failed, the
+   * member pays that $70 while edit 2's recovery row sits frozen at $140, and
+   * the replay then asks for $140 against $70 genuinely outstanding.
+   *
+   * Re-deriving against the Payment as it stands now gives $70 in that case and
+   * the identical $140 when nothing was paid in between, so the correction only
+   * ever removes an over-ask. `modificationToBill` is the edit's own signed
+   * components, already read above the mint for #3181's reasons; with no
+   * modification to read from - or a modification whose own net is not positive,
+   * which an ordinary edit's row should never be - there is nothing better than
+   * the frozen figure, and the frozen figure is what runs.
+   *
+   * The `EDIT_FINANCIAL_REVIEW` fork returns far above this, so the components
+   * read here are always the ordinary edit's own. A review charge's debt is the
+   * sum of its settled shares and is re-derived by its own sync function.
+   */
+  const editNetCents = modificationToBill
+    ? modificationToBill.priceDiffCents + modificationToBill.changeFeeCents
+    : 0;
+  if (modificationToBill && editNetCents <= 0) {
+    // Belt and braces, and deliberately NOT a completion. An ordinary edit only
+    // reaches this processor because its own net was positive, so a
+    // non-positive net here means the modification row and the frozen figure
+    // disagree - and completing on that reading would retire a real debt for an
+    // arithmetic reason nobody has checked. Fall back to exactly the pre-fix
+    // behaviour, which never loses money, and say so.
+    logger.warn(
+      {
+        operationId: operation.id,
+        bookingId: operation.bookingId,
+        editNetCents,
+        frozenAmountCents: operation.amountCents,
+      },
+      "Additional intent recovery could not re-derive the ask (the modification's net is not positive); replaying the frozen amount",
+    );
+  }
+  const askCents =
+    modificationToBill && editNetCents > 0
+      ? sizeAdditionalAskCents({
+          priceDiffCents: modificationToBill.priceDiffCents,
+          changeFeeCents: modificationToBill.changeFeeCents,
+          payment,
+        })
+      : operation.amountCents;
+
+  /**
+   * The Stripe key still pins a replay of the SAME ask to the same intent, and
+   * gains the amount only when the re-derivation moved. Stripe refuses a key
+   * reused with different parameters, so a bare `operation.paymentIntentId`
+   * would turn a re-derived amount into a permanent `idempotency_error` on every
+   * remaining attempt. A changed amount is a different request and gets a
+   * different key; the intent the previous attempt minted carries no
+   * `PaymentTransaction` row (this attempt is only here because the last one
+   * died before writing one), so it was never reachable by anybody and expires
+   * at Stripe.
+   */
+  const stripeIdempotencyKey =
+    askCents === operation.amountCents
+      ? operation.paymentIntentId
+      : `${operation.paymentIntentId}_${askCents}`;
   const pi = await createPaymentIntent({
-    amountCents: operation.amountCents,
+    amountCents: askCents,
     customerId,
     metadata: {
       bookingId: operation.bookingId,
@@ -2631,6 +2698,20 @@ async function processCreateAdditionalPaymentIntentOperation(
       reason: "modification_additional_recovery",
     },
     idempotencyKey: stripeIdempotencyKey,
+  });
+
+  // The new intent's row FIRST, then the supersede - see the same ordering and
+  // the same reasoning in `createModificationAdditionalPaymentIntent` (#3340
+  // fix round). A cancel reconciles the payment, and a reconcile run before this
+  // row exists mirrors the intent being retired back over the Payment.
+  await upsertPaymentIntentTransaction({
+    paymentId: operation.paymentId,
+    kind: PaymentTransactionKind.ADDITIONAL,
+    paymentIntentId: pi.id,
+    amountCents: askCents,
+    status: PaymentStatus.PENDING,
+    reason: "modification_additional_recovery",
+    stripeCustomerId: customerId,
   });
 
   // Dynamic import: booking-payment-cleanup imports this module.
@@ -2647,16 +2728,6 @@ async function processCreateAdditionalPaymentIntentOperation(
       "Failed to queue superseded additional intent cancellations during recovery",
     ),
   );
-
-  await upsertPaymentIntentTransaction({
-    paymentId: operation.paymentId,
-    kind: PaymentTransactionKind.ADDITIONAL,
-    paymentIntentId: pi.id,
-    amountCents: operation.amountCents,
-    status: PaymentStatus.PENDING,
-    reason: "modification_additional_recovery",
-    stripeCustomerId: customerId,
-  });
 
   // A supplementary Xero invoice op enqueued at modification time waited on
   // an intent that never existed; point it at the recovered one so the

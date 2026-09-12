@@ -1969,6 +1969,120 @@ describe("payment recovery worker", () => {
       );
     });
 
+    /*
+      #3340 fix round — THE ASK IS RE-DERIVED HERE, NOT REPLAYED.
+
+      Before #3340 the ask was a delta: a fact about an edit, which never goes
+      stale, so freezing it on the recovery row was exactly right. Since #3340 it
+      is the edit's net PLUS whatever is still unpaid on the ask it supersedes -
+      a fact about a MOMENT - and a frozen moment can OVERCHARGE.
+
+      The shape: edit 1 raises $70 and is NOT cancelled, because the mint that
+      would have superseded it is the one that failed. Edit 2 sizes $140 and
+      freezes it. The member's page still renders edit 1's live secret and they
+      pay that $70. The cron then replays $140 against $70 genuinely outstanding.
+    */
+    function paymentWithAsk(
+      additionalAmountCents: number,
+      additionalPaymentStatus: string,
+    ) {
+      return {
+        id: "payment-1",
+        stripeCustomerId: "cus_123",
+        stripePaymentIntentId: "pi_original",
+        additionalAmountCents,
+        additionalPaymentStatus,
+        transactions: [
+          {
+            id: "txn-1",
+            kind: "PRIMARY",
+            stripePaymentIntentId: "pi_original",
+            amountCents: 10000,
+            refundedAmountCents: 0,
+            status: PaymentStatus.SUCCEEDED,
+            createdAt: new Date("2026-05-01T00:00:00.000Z"),
+          },
+        ],
+        booking: {
+          id: "booking-1",
+          memberId: "m1",
+          member: {
+            id: "m1",
+            email: "alice@test.com",
+            firstName: "Alice",
+            lastName: "Smith",
+          },
+        },
+      };
+    }
+
+    it("re-derives a smaller ask when the superseded one was paid in the meantime", async () => {
+      primeQueue(additionalIntentOperation({ amountCents: 10000 }));
+      // $70 was outstanding when edit 2 sized its $100 ask; the member has since
+      // paid it, so only the edit's own $30 is still owed.
+      mockPaymentFindUnique.mockResolvedValue(
+        paymentWithAsk(7000, PaymentStatus.SUCCEEDED),
+      );
+
+      const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+      expect(result.succeeded).toBe(1);
+      expect(mockCreatePaymentIntent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          amountCents: 3000,
+          // A changed amount is a different request. Stripe refuses a key reused
+          // with different parameters, so replaying the stored key here would be
+          // a permanent idempotency_error on every remaining attempt.
+          idempotencyKey: "mod_guest_bk1_mod-9_3000",
+        }),
+      );
+      expect(mockUpsertPaymentIntentTransaction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          paymentIntentId: "pi_recovered",
+          amountCents: 3000,
+        }),
+      );
+    });
+
+    it("keeps the stored Stripe key when the re-derivation lands on the frozen figure", async () => {
+      primeQueue(additionalIntentOperation({ amountCents: 10000 }));
+      // Nothing was paid in between: the superseded $70 is still outstanding, so
+      // the ask is the same $100 the row froze.
+      mockPaymentFindUnique.mockResolvedValue(
+        paymentWithAsk(7000, PaymentStatus.PENDING),
+      );
+
+      const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+      expect(result.succeeded).toBe(1);
+      expect(mockCreatePaymentIntent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          amountCents: 10000,
+          idempotencyKey: "mod_guest_bk1_mod-9",
+        }),
+      );
+    });
+
+    /*
+      #3340 fix round — the replay writes the NEW intent's row before retiring
+      the old one, for the reason spelled out in
+      `superseded-additional-mint-ordering.test.ts`: the cancel reconciles the
+      payment aggregates, and a reconcile run before this row exists mirrors the
+      intent being retired back over the Payment.
+    */
+    it("writes the recovered intent's ADDITIONAL row before queueing the supersede", async () => {
+      primeQueue(additionalIntentOperation());
+
+      await processPaymentRecoveryOperations({ limit: 1 });
+
+      expect(
+        mockUpsertPaymentIntentTransaction.mock.invocationCallOrder[0],
+      ).toBeLessThan(
+        mockQueueSupersededAdditionalIntentCancellations.mock
+          .invocationCallOrder[0],
+      );
+    });
+
     it("completes without creating when a later edit already minted a newer additional intent", async () => {
       primeQueue(additionalIntentOperation());
       mockPaymentFindUnique.mockResolvedValue({
