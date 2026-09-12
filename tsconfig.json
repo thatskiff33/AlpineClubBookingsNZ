@@ -19,6 +19,14 @@
     "allowJs": false,
     "skipLibCheck": true,
     "strict": true,
+    // #2694/#2802: a lookup by index or by key (`rows[0]`, `byId[id]`) is typed
+    // as possibly missing, so a genuine absence has to be handled instead of
+    // silently becoming `undefined` flowing into later logic. Adopted in
+    // stages behind a temporary ratchet (docs/TESTING.md's git history has
+    // the mechanics); this is the permanent rule now that the tree is at
+    // zero. tsconfig.test.json and tsconfig.e2e.json extend this file and
+    // deliberately turn the flag back off for now — see the comment there.
+    "noUncheckedIndexedAccess": true,
     // #2693: dead-code hygiene the compiler owns. An unused local or import is
     // removed; a parameter a signature must keep is prefixed `_`, which is the
     // repository's existing convention (`_label`, `_request`, ...); a member

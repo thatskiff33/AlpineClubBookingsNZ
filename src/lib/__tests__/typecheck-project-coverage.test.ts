@@ -269,6 +269,38 @@ describe("typecheck project coverage", () => {
     }
   });
 
+  // #2802: after programme #2694, ONE line in tsconfig.json is the whole
+  // enforcement of 1,089 fixes across five stages — and turning it off can only
+  // REMOVE diagnostics, so the flip is invisible. `typecheck`, the unit suite,
+  // knip, the build and every required check stay green. The ratchet this
+  // replaced was itself guarded by a script, a unit test, a workflow step and a
+  // contract pinning that step; the compiler option arrived guarded by nothing.
+  //
+  // The realistic way it reverts is not malice: a later lane meets a wall of
+  // diagnostics, sees `false` one file away in tsconfig.test.json with a
+  // fully-reasoned comment beside it, and copies the pattern up. This is what
+  // makes that a red test instead of a silent regression.
+  it("keeps noUncheckedIndexedAccess on for application code, and off only where #3363 says", () => {
+    expect(
+      app.options.noUncheckedIndexedAccess,
+      "tsconfig.json must keep noUncheckedIndexedAccess ON — it is the entire enforcement of programme #2694, and switching it off only removes diagnostics, so nothing else in this repository would notice",
+    ).toBe(true);
+
+    // The other two are off deliberately, not by omission, and #3363 owns the
+    // measurement and the plan. Pinned so that turning either ON is also a
+    // decision somebody makes on purpose: it would put thousands of
+    // pre-existing diagnostics into `npm run typecheck` at once.
+    for (const [name, project] of [
+      ["tsconfig.test.json", test],
+      ["tsconfig.e2e.json", e2e],
+    ] as const) {
+      expect(
+        project.options.noUncheckedIndexedAccess,
+        `${name} opts out of noUncheckedIndexedAccess on purpose (#2802, measured in #3363); change it there and here together`,
+      ).toBe(false);
+    }
+  });
+
   it("puts every supported TypeScript Vitest extension in the test project only", () => {
     const testFiles = vitestTests.filter((file) =>
       TYPESCRIPT_EXTENSIONS.has(path.extname(file)),
