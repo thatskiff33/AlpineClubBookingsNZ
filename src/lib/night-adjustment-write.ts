@@ -273,6 +273,7 @@ function exactBaseAmount(
       id: string;
       priceCents: number;
       nights: Array<{
+        id: string;
         priceCents: number | null;
         priceSource: "SOLD" | "OFFICER_PRICED" | "EVEN_SPLIT" | "UNKNOWN";
       }>;
@@ -340,7 +341,7 @@ export async function readBookingMoneyBuildUp(
         select: {
           id: true,
           priceCents: true,
-          nights: { select: { priceCents: true, priceSource: true } },
+          nights: { select: { id: true, priceCents: true, priceSource: true } },
         },
       },
       promoRedemption: {
@@ -352,9 +353,9 @@ export async function readBookingMoneyBuildUp(
       nightAdjustments: {
         select: {
           bookingGuestId: true,
+          bookingGuestNightId: true,
           beneficiaryMemberId: true,
           amountCents: true,
-          bookingGuestNight: { select: { bookingGuestId: true } },
         },
       },
     },
@@ -362,8 +363,15 @@ export async function readBookingMoneyBuildUp(
   if (!booking) {
     refuse(`${args.operation}: booking ${args.bookingId} does not exist`);
   }
+  const guestIdByNightId = new Map(
+    booking.guests.flatMap((guest) => guest.nights.map((night) => [night.id, guest.id] as const)),
+  );
   const rows = booking.nightAdjustments.map((row) => {
-    const bookingGuestId = row.bookingGuestId ?? row.bookingGuestNight?.bookingGuestId;
+    const bookingGuestId =
+      row.bookingGuestId ??
+      (row.bookingGuestNightId
+        ? guestIdByNightId.get(row.bookingGuestNightId)
+        : undefined);
     if (!bookingGuestId) {
       refuse(`${args.operation}: an adjustment row is attached to neither a guest nor a night`);
     }

@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   NIGHT_ADJUSTMENT_INVARIANT,
+  readBookingMoneyBuildUp,
   selectBookingMoneyBuildUp,
   type BookingMoneyBuildUpRow,
 } from "@/lib/night-adjustment-write";
@@ -82,6 +83,27 @@ describe("#3277 canonical D3 build-up selection", () => {
     });
   });
 
+  it.each([
+    "STORED_SIDE_DEFECT",
+    "DERIVATION_DEFECT",
+    "LEGITIMATE_DIVERGENCE",
+  ] as const)("keeps D3's derived amount for every %s disagreement", (classification) => {
+    const result = selectBookingMoneyBuildUp({
+      operation: "CREDIT_ELECTION",
+      baseEvidence: { kind: "EXACT", amountCents: 20_000 },
+      ...knownRows([-2_000]),
+      derivedCents: 17_999,
+      mismatchClassification: classification,
+    });
+    expect(result).toMatchObject({
+      source: "DERIVED_COMPATIBILITY_FALLBACK",
+      storedCents: 18_000,
+      derivedCents: 17_999,
+      selectedCents: 17_999,
+      fallbackClassification: classification,
+    });
+  });
+
   it("classifies an expired old-colour promotion with no recorded rows as a stored-side fallback", () => {
     const result = selectBookingMoneyBuildUp({
       operation: "XERO_PROMO_LINE",
@@ -156,5 +178,105 @@ describe("#3277 canonical D3 build-up selection", () => {
       derivedCents: -550,
     });
     expect(result).toMatchObject({ source: "STORED", selectedCents: -550 });
+  });
+
+  it("loads base evidence at the operation's grain", async () => {
+    const store = {
+      booking: {
+        findUnique: vi.fn().mockResolvedValue({
+          totalPriceCents: 10_001,
+          guests: [
+            {
+              id: "departing",
+              priceCents: 10_001,
+              nights: [
+                { id: "night-1", priceCents: 5_000, priceSource: "EVEN_SPLIT" },
+                { id: "night-2", priceCents: 5_001, priceSource: "EVEN_SPLIT" },
+              ],
+            },
+          ],
+          promoRedemption: null,
+          nightAdjustments: [],
+        }),
+      },
+    };
+
+    await expect(
+      readBookingMoneyBuildUp(store as never, {
+        bookingId: "booking-1",
+        bookingGuestId: "departing",
+        operation: "GUEST_REMOVAL",
+      }),
+    ).resolves.toMatchObject({
+      baseEvidence: { kind: "EXACT", amountCents: 10_001 },
+    });
+    await expect(
+      readBookingMoneyBuildUp(store as never, {
+        bookingId: "booking-1",
+        operation: "REVIEW_REBASE",
+      }),
+    ).resolves.toMatchObject({
+      baseEvidence: { kind: "UNKNOWN", reason: "INEXACT_STORED_NIGHT_PRICES" },
+    });
+    for (const operation of ["CREDIT_ELECTION", "XERO_PROMO_LINE"] as const) {
+      await expect(
+        readBookingMoneyBuildUp(store as never, {
+          bookingId: "booking-1",
+          operation,
+        }),
+      ).resolves.toMatchObject({
+        baseEvidence: { kind: "EXACT", amountCents: 10_001 },
+      });
+    }
+  });
+
+  it("projects both direct guest and night-anchored adjustment targets", async () => {
+    const store = {
+      booking: {
+        findUnique: vi.fn().mockResolvedValue({
+          totalPriceCents: 20_000,
+          promoRedemption: null,
+          nightAdjustments: [
+            {
+              bookingGuestId: "guest-direct",
+              beneficiaryMemberId: BOOKER,
+              amountCents: -500,
+              bookingGuestNightId: null,
+            },
+            {
+              bookingGuestId: null,
+              beneficiaryMemberId: BOOKER,
+              amountCents: 250,
+              bookingGuestNightId: "night-target",
+            },
+          ],
+          guests: [
+            {
+              id: "guest-night",
+              priceCents: 20_000,
+              nights: [
+                { id: "night-target", priceCents: 20_000, priceSource: "SOLD" },
+              ],
+            },
+          ],
+        }),
+      },
+    };
+    const loaded = await readBookingMoneyBuildUp(store as never, {
+      bookingId: "booking-1",
+      operation: "XERO_PROMO_LINE",
+    });
+    expect(loaded.rows).toEqual([
+      {
+        bookingGuestId: "guest-direct",
+        beneficiaryMemberId: BOOKER,
+        amountCents: -500,
+      },
+      {
+        bookingGuestId: "guest-night",
+        beneficiaryMemberId: BOOKER,
+        amountCents: 250,
+      },
+    ]);
   });
 });

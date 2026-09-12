@@ -1,0 +1,131 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
+import { describe, expect, it } from "vitest";
+
+import {
+  relativeSource,
+  sourceFiles,
+} from "@/lib/__tests__/support/booking-guest-night-writer-scan";
+import { stripComments } from "@/lib/__tests__/support/strip-comments";
+
+/**
+ * #3277 (INV-MONEY-029, INV-SSOT-001): every Stage 3 money reader is named,
+ * loads through the canonical projection, selects through the D3 discriminator,
+ * and records the discriminator on an existing atomic history seam.
+ *
+ * This source census is intentionally exact. Adding a reader, duplicating a
+ * call in an existing file, or replacing selection with `stored ?? headline`
+ * fails until the new shape is reviewed and declared here.
+ */
+
+const REPO = process.cwd();
+const READ = /(?<!function\s)\breadBookingMoneyBuildUp\s*\(/g;
+const SELECT = /\bselectLoadedBookingMoneyBuildUp\s*\(/g;
+
+type ReaderSite = {
+  reads: number;
+  selections: number;
+  operation: string;
+  historySink: RegExp;
+};
+
+const NAMED_READERS: Record<string, ReaderSite> = {
+  "src/lib/booking-guest-removal-service.ts": {
+    reads: 1,
+    selections: 1,
+    operation: "GUEST_REMOVAL",
+    historySink: /\.\.\.moneyBuildUpSelection\.historyMetadata/,
+  },
+  "src/lib/booking-review-price-rebase.ts": {
+    reads: 2,
+    selections: 2,
+    operation: "REVIEW_REBASE",
+    historySink: /\.\.\.(?:outcome\.)?moneyBuildUpSelection\.historyMetadata/,
+  },
+  "src/lib/booking-credit-election.ts": {
+    reads: 1,
+    selections: 1,
+    operation: "CREDIT_ELECTION",
+    historySink: /moneyBuildUp:\s*moneyBuildUpSelection\.historyMetadata/,
+  },
+  "src/lib/xero-booking-invoices.ts": {
+    reads: 1,
+    selections: 1,
+    operation: "XERO_PROMO_LINE",
+    historySink: /moneyBuildUp:\s*promoMoneyBuildUpSelection\?\.historyMetadata/,
+  },
+};
+
+function productionCode(file: string): string {
+  return stripComments(readFileSync(join(REPO, file), "utf8"));
+}
+
+export function canonicalReaderShape(code: string, site: ReaderSite): boolean {
+  return (
+    [...code.matchAll(READ)].length === site.reads &&
+    [...code.matchAll(SELECT)].length === site.selections &&
+    code.includes(`operation: "${site.operation}"`) &&
+    code.includes("mismatchClassification:") &&
+    site.historySink.test(code)
+  );
+}
+
+describe("#3277 canonical stored-money reader census", () => {
+  it("declares every production call to the canonical loader", () => {
+    const discovered = sourceFiles()
+      .filter((file) => [...stripComments(readFileSync(file, "utf8")).matchAll(READ)].length > 0)
+      .map(relativeSource)
+      .sort();
+    expect(discovered).toEqual(Object.keys(NAMED_READERS).sort());
+  });
+
+  it("requires every named reader to select, classify disagreement, and record history", () => {
+    for (const [file, site] of Object.entries(NAMED_READERS)) {
+      expect(
+        canonicalReaderShape(productionCode(file), site),
+        `INV-MONEY-029: ${file} must use the canonical ${site.operation} result and its existing atomic history seam`,
+      ).toBe(true);
+    }
+  });
+
+  it("pins D3 at each member-visible path: an unknown base or mismatch keeps today's amount", () => {
+    const removal = productionCode("src/lib/booking-guest-removal-service.ts");
+    expect(removal).toMatch(/source === "BASE_EVIDENCE_UNKNOWN"[\s\S]{0,120}\? derivedPriceDiffCents/);
+
+    const credit = productionCode("src/lib/booking-credit-election.ts");
+    expect(credit).toMatch(/source === "BASE_EVIDENCE_UNKNOWN"[\s\S]{0,120}\? booking\.finalPriceCents/);
+    expect(credit).toMatch(/verifiedFinalPriceCents - alreadyAppliedCents/);
+
+    const xero = productionCode("src/lib/xero-booking-invoices.ts");
+    expect(xero).toMatch(/source === "BASE_EVIDENCE_UNKNOWN"[\s\S]{0,120}\? booking\.promoAdjustmentCents/);
+    expect(xero).toMatch(/unitAmount: xeroPromoAdjustmentCents \/ 100/);
+
+    const rebase = productionCode("src/lib/booking-review-price-rebase.ts");
+    expect(rebase).toMatch(/derivedCents: newFinalPriceCents/);
+    expect(rebase).toMatch(/newFinalPriceCents,/);
+  });
+
+  it("mutation-proves that dropping loader, selection, classification, or history is caught", () => {
+    const site: ReaderSite = {
+      reads: 1,
+      selections: 1,
+      operation: "CREDIT_ELECTION",
+      historySink: /moneyBuildUp:\s*selection\.historyMetadata/,
+    };
+    const complete = `
+      readBookingMoneyBuildUp(tx, { operation: "CREDIT_ELECTION" });
+      selectLoadedBookingMoneyBuildUp(loaded, { mismatchClassification: "STORED_SIDE_DEFECT" });
+      return { moneyBuildUp: selection.historyMetadata };
+    `;
+    expect(canonicalReaderShape(complete, site)).toBe(true);
+    for (const token of [
+      "readBookingMoneyBuildUp",
+      "selectLoadedBookingMoneyBuildUp",
+      "mismatchClassification:",
+      "moneyBuildUp: selection.historyMetadata",
+    ]) {
+      expect(canonicalReaderShape(complete.replace(token, "dropped"), site)).toBe(false);
+    }
+  });
+});
