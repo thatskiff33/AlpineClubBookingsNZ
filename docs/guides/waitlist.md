@@ -152,6 +152,14 @@ Force-confirming any of these skips the email choice, as described above.
 | Confirming warns about overbooking | The lodge is full for those nights | Use **Confirm Anyway (Overbook)** only when you intend to overbook; it is audited |
 | "Unpaid finished stay created" after confirming | The confirmed stay is in the past and unpaid | Chase it from the **Unpaid Finished Stays** queue on the [Bookings](bookings.md) list |
 | A member says their free waitlist confirmation "did nothing", and the booking is not on this queue | The confirmation got half-way and could not undo itself | Open the booking from **Admin → Bookings** and press **Return to waitlist** in the Admin tools card — see [above](#return-a-stranded-free-confirm-to-the-waitlist) |
+- **No offer is being issued for some dates, and the log shows
+  `INV-MONEY-029`** — the offer-time reprice recorded a promotion build-up that
+  did not reconcile to the promotion's stored totals. That check runs after the
+  reprice's usual "offer at the stored snapshot" fallback and deliberately fails
+  the whole hand-out for those dates rather than issuing an offer with a
+  build-up that lies. It can only happen through a code defect; report it with
+  the booking id from the log entry.
+
 
 ## Related links
 

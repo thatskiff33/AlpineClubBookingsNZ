@@ -8,6 +8,7 @@
 import { PromoCodeType, type FixedNightlyMode, type BookingGuest } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import type { CalendarDate } from "@/lib/club-time";
+import type { PromoAdjustmentTarget } from "@/lib/night-adjustment-write";
 import {
   shouldPersistPromoRedemption,
   validateAndCalculatePromoDiscount,
@@ -23,6 +24,8 @@ export interface ResolvedPromo {
   promoFreeNightsUsed: number;
   promoEligibleGuestCount: number;
   promoAllocations: PromoBeneficiaryAllocation[];
+  /** #3276: what the promotion took off each night or guest, by guest index. */
+  promoAdjustmentTargets: PromoAdjustmentTarget[];
   promoSelectedGuestIndexes?: number[];
   promoShouldPersist: boolean;
   promoCodeRecord:
@@ -93,7 +96,8 @@ export async function resolvePromoInTransaction(
     guests: BookingGuestInput[];
     totalPriceCents: number;
     perNightCentsByGuest: number[][];
-    nightDatesByGuest?: Date[][];
+    /** #3276: REQUIRED, so an adjustment row can be attributed to a night by date. */
+    nightDatesByGuest: Date[][];
     promoGuestIndexes?: number[];
     allowInternal?: boolean;
     lodgeId: string;
@@ -206,7 +210,7 @@ export async function resolvePromoInTransaction(
     isMember: guest.isMember,
     perNightRates: perNightCentsByGuest[index],
     firstNight: guest.stayStart ?? checkIn,
-    nightDates: nightDatesByGuest?.[index],
+    nightDates: nightDatesByGuest[index],
   }));
   const application = await validateAndCalculatePromoDiscount(
     promoCode ? { ...promoCode, lodges: promoLodges } : null,
@@ -230,6 +234,7 @@ export async function resolvePromoInTransaction(
     promoFreeNightsUsed: promoResult.freeNightsUsed,
     promoEligibleGuestCount: promoResult.eligibleGuestCount,
     promoAllocations: promoResult.allocations,
+    promoAdjustmentTargets: promoResult.adjustmentTargets,
     promoSelectedGuestIndexes: application.selectedGuestIndexes,
     promoShouldPersist: shouldPersistPromoRedemption(promoResult),
     promoCodeRecord: promoCode,
