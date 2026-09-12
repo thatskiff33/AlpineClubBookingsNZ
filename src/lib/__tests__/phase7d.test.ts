@@ -42,6 +42,11 @@ findUnique: vi.fn(),
     findFirst: vi.fn(),
     findUnique: vi.fn(),
   },
+  // #2698: the three hut-leader write routes audit themselves now (category
+  // `lodge` — the roster row of docs/guides/audit-log.md), and the real
+  // `createAuditLog` runs against this double, so the table has to exist here
+  // or every create, edit and delete 500s.
+  auditLog: { create: vi.fn(async () => ({ id: "audit-1" })) },
   // #2887: creating a hut-leader assignment is now ALWAYS a locked write —
   // the role-only path shares the per-lodge capacity key with the bed-holding
   // path so both serialize the same overlap predicate. The interactive
@@ -500,7 +505,16 @@ describe("F8: Hut Leader Role Assignment", () => {
         user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }], email: "support@example.org" },
       });
 
-      mockPrisma.hutLeaderAssignment.findUnique.mockResolvedValue({ id: "assign-1" });
+      // #2698: the delete runs under the lodge capacity key, so the row has to
+      // name the lodge it belongs to — that id IS the key.
+      mockPrisma.hutLeaderAssignment.findUnique.mockResolvedValue({
+        id: "assign-1",
+        memberId: "member-1",
+        lodgeId: "lodge-1",
+        bedId: null,
+        startDate: new Date("2026-07-10"),
+        endDate: new Date("2026-07-17"),
+      });
       mockPrisma.hutLeaderAssignment.delete.mockResolvedValue({});
 
       const { DELETE } = await import(

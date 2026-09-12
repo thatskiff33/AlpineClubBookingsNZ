@@ -302,4 +302,79 @@ describe("custodian bed hold controls (#2286)", () => {
     fireEvent.click(await screen.findByRole("button", { name: /change bed/i }));
     expect(await screen.findByTestId("bed-picker-a1")).toBeInTheDocument();
   });
+
+  /*
+   * #2698 — the ordering case. Holding this bed narrows an existing
+   * whole-lodge hold, so the officer is asked rather than told afterwards.
+   * Announced and focused for the same reason as the over-capacity card, and
+   * the Cancel path is the decision itself: sending nothing IS the decline.
+   */
+  const HOLD_AMENDMENT_BODY = {
+    error:
+      "The lodge is exclusively held for another booking on at least one of those nights.",
+    code: "CUSTODIAN_OVERLAPS_WHOLE_LODGE_HOLD",
+    nights: ["2099-07-11", "2099-07-12"],
+    amendments: [
+      { bookingId: "booking-hold", nights: ["2099-07-11", "2099-07-12"] },
+    ],
+  };
+
+  it("announces the whole-lodge-hold amendment question and accepts it explicitly", async () => {
+    const calls = stubWithAssignment({ ok: false, body: HOLD_AMENDMENT_BODY });
+    const HutLeadersPage = (await import("@/app/(admin)/admin/hut-leaders/page"))
+      .default;
+    render(<HutLeadersPage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /release bed/i }));
+
+    const card = await screen.findByTestId("custodian-hold-amendment-confirm");
+    expect(card).toHaveAttribute("role", "alert");
+    await waitFor(() => {
+      expect(card).toHaveFocus();
+    });
+    // The nights are named, so the officer knows exactly what narrows.
+    expect(card).toHaveTextContent("2099-07-11");
+    expect(card).toHaveTextContent("2099-07-12");
+    // And nothing about who is staying reaches the screen (INV-PRIV) — the
+    // server sends booking ids and dates only.
+    expect(card).not.toHaveTextContent("Pat Payer");
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /accept and hold the bed/i }),
+    );
+    await waitFor(() => {
+      expect(
+        calls.filter(
+          (call) =>
+            call.method === "PUT" &&
+            (call.body as { amendOverlappingHolds?: boolean })
+              ?.amendOverlappingHolds === true,
+        ),
+      ).toHaveLength(1);
+    });
+  });
+
+  it("sends nothing at all when the officer declines the amendment", async () => {
+    const calls = stubWithAssignment({ ok: false, body: HOLD_AMENDMENT_BODY });
+    const HutLeadersPage = (await import("@/app/(admin)/admin/hut-leaders/page"))
+      .default;
+    render(<HutLeadersPage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /release bed/i }));
+    await screen.findByTestId("custodian-hold-amendment-confirm");
+    const putsBefore = calls.filter((call) => call.method === "PUT").length;
+
+    fireEvent.click(screen.getByRole("button", { name: /^cancel$/i }));
+
+    await waitFor(() => {
+      expect(
+        screen.queryByTestId("custodian-hold-amendment-confirm"),
+      ).not.toBeInTheDocument();
+    });
+    // Decline is the absence of a request, not a second request carrying a
+    // "no" — neither the assignment nor the other booking moved.
+    expect(calls.filter((call) => call.method === "PUT")).toHaveLength(
+      putsBefore,
+    );
+  });
 });

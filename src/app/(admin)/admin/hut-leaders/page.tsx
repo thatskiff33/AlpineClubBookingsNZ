@@ -158,6 +158,26 @@ export default function HutLeadersPage() {
     }>;
     confirm: () => void;
   } | null>(null);
+  // Set when the server answered CUSTODIAN_OVERLAPS_WHOLE_LODGE_HOLD (#2698).
+  //
+  // The ordering case: the bed being held sits inside nights an EXISTING
+  // whole-lodge hold already covers, so holding it narrows somebody else's sole
+  // occupancy. The owner's rule is that this is never done silently — the
+  // officer sees the nights and chooses. Accept re-sends with
+  // `amendOverlappingHolds: true` and the server writes both facts in one
+  // transaction; Cancel sends nothing at all, so neither state changes.
+  //
+  // `amendments` names only the holding bookings' ids and the nights: the
+  // officer is deciding about bed-nights, and nothing about who is staying
+  // leaves the server (INV-PRIV).
+  //
+  // Shared by the create form and the inline bed change, exactly like the
+  // over-capacity card above — both POST and PUT can answer this.
+  const [holdAmendment, setHoldAmendment] = useState<{
+    nights: string[];
+    amendments: Array<{ bookingId: string; nights: string[] }>;
+    accept: () => void;
+  } | null>(null);
   // Which assignment's bed is being changed inline in the table (#2286 review
   // M7). One at a time: the picker re-reads availability for that row's dates.
   const [bedEditAssignmentId, setBedEditAssignmentId] = useState<string | null>(
@@ -217,6 +237,14 @@ export default function HutLeadersPage() {
   useEffect(() => {
     if (overCapacity) overCapacityCardRef.current?.focus();
   }, [overCapacity]);
+
+  // #2698: the same treatment for the whole-lodge-hold amendment question. It
+  // arrives the same way (a save the server declined to complete) and must be
+  // announced and focused for the same reason.
+  const holdAmendmentCardRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (holdAmendment) holdAmendmentCardRef.current?.focus();
+  }, [holdAmendment]);
 
   const clubTime = useClubTime();
   const [visibleMonthKey, setVisibleMonthKey] = useState(() =>
@@ -420,7 +448,10 @@ export default function HutLeadersPage() {
     setError(null);
   }
 
-  async function handleConfirm(confirmOverCapacity = false) {
+  async function handleConfirm(
+    confirmOverCapacity = false,
+    amendOverlappingHolds = false,
+  ) {
     if (!target || !selection.startDate || !selection.endDate) return;
     // #2701: the Confirm button is already disabled in this state; this is the
     // defence behind it, because a pending over-capacity card re-invokes this
@@ -442,6 +473,10 @@ export default function HutLeadersPage() {
           // is byte-for-byte what it was before this feature.
           ...(selectedBedId ? { bedId: selectedBedId } : {}),
           ...(confirmOverCapacity ? { confirmOverCapacity: true } : {}),
+          // #2698: sent ONLY after the officer has accepted on the card below.
+          // Its absence is the decline, which is why it is omitted rather than
+          // sent as false.
+          ...(amendOverlappingHolds ? { amendOverlappingHolds: true } : {}),
         }),
       });
       if (activeLodgeIdRef.current !== requestedLodgeId) return;
@@ -462,7 +497,17 @@ export default function HutLeadersPage() {
             bookings: Array.isArray(data.nonHoldingBookings)
               ? data.nonHoldingBookings
               : [],
-            confirm: () => void handleConfirm(true),
+            confirm: () => void handleConfirm(true, amendOverlappingHolds),
+          });
+          return;
+        }
+        // #2698 ordering case: also a question, not a failure. Keep the form as
+        // it is and show which nights leave the existing hold's sole occupancy.
+        if (data.code === "CUSTODIAN_OVERLAPS_WHOLE_LODGE_HOLD") {
+          setHoldAmendment({
+            nights: data.nights ?? [],
+            amendments: Array.isArray(data.amendments) ? data.amendments : [],
+            accept: () => void handleConfirm(confirmOverCapacity, true),
           });
           return;
         }
@@ -481,6 +526,7 @@ export default function HutLeadersPage() {
       setTarget(null);
       setSelectedBedId(null);
       setOverCapacity(null);
+      setHoldAmendment(null);
       fetchAssignments();
       fetchUnassignedDates();
       refreshOverlay(visibleMonthKey);
@@ -503,6 +549,7 @@ export default function HutLeadersPage() {
     assignment: HutLeaderAssignment,
     bedId: string | null,
     confirmOverCapacity = false,
+    amendOverlappingHolds = false,
   ) {
     if (!scopedLodgeId) return;
     const requestedLodgeId = scopedLodgeId;
@@ -518,6 +565,8 @@ export default function HutLeadersPage() {
         body: JSON.stringify({
           bedId,
           ...(confirmOverCapacity ? { confirmOverCapacity: true } : {}),
+          // #2698: sent only after an explicit acceptance; absent is decline.
+          ...(amendOverlappingHolds ? { amendOverlappingHolds: true } : {}),
         }),
       });
       if (activeLodgeIdRef.current !== requestedLodgeId) return;
@@ -533,7 +582,27 @@ export default function HutLeadersPage() {
             bookings: Array.isArray(data.nonHoldingBookings)
               ? data.nonHoldingBookings
               : [],
-            confirm: () => void handleSetBed(assignment, bedId, true),
+            confirm: () =>
+              void handleSetBed(
+                assignment,
+                bedId,
+                true,
+                amendOverlappingHolds,
+              ),
+          });
+          return;
+        }
+        if (data?.code === "CUSTODIAN_OVERLAPS_WHOLE_LODGE_HOLD") {
+          setHoldAmendment({
+            nights: data.nights ?? [],
+            amendments: Array.isArray(data.amendments) ? data.amendments : [],
+            accept: () =>
+              void handleSetBed(
+                assignment,
+                bedId,
+                confirmOverCapacity,
+                true,
+              ),
           });
           return;
         }
@@ -545,6 +614,7 @@ export default function HutLeadersPage() {
       }
       setBedEditAssignmentId(null);
       setOverCapacity(null);
+      setHoldAmendment(null);
       fetchAssignments();
       refreshOverlay(visibleMonthKey);
     } finally {
@@ -956,6 +1026,76 @@ export default function HutLeadersPage() {
                 type="button"
                 variant="outline"
                 onClick={() => setOverCapacity(null)}
+              >
+                Cancel
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {holdAmendment && holdAmendment.nights.length > 0 && (
+        /*
+          #2698 — the ordering case. A custodian bed hold over nights an
+          existing whole-lodge hold already covers narrows that booking's sole
+          occupancy, and the owner's rule (9 Aug 2026) is that this is never
+          done silently: the officer is shown the nights and chooses.
+
+          Announced and focused for the same reason as the over-capacity card
+          above: it appears after a save the server declined to complete, so a
+          keyboard or screen-reader admin must not be left wondering why
+          nothing happened.
+        */
+        <Card
+          className="border-warning/20 bg-warning-muted"
+          role="alert"
+          aria-live="assertive"
+          tabIndex={-1}
+          ref={holdAmendmentCardRef}
+          data-testid="custodian-hold-amendment-confirm"
+        >
+          <CardContent className="space-y-3 p-4">
+            <p className="text-sm font-medium text-warning">
+              The lodge is exclusively held on some of those nights
+            </p>
+            <p className="text-sm text-foreground">
+              Another booking has the whole lodge to itself on the nights below.
+              Holding this bed for the {hutLeaderLabel.toLowerCase()} takes that
+              one bed out of their sole occupancy on those nights — every other
+              bed, their dates and what they pay stay exactly as they are.
+            </p>
+            <ul className="space-y-1 text-sm text-foreground">
+              {holdAmendment.nights.map((night) => (
+                <li key={night}>{night}</li>
+              ))}
+            </ul>
+            <p className="text-xs text-muted-foreground">
+              Accept and both changes are made together, as one recorded action.
+              Cancel and nothing changes at all — neither the assignment nor the
+              other booking.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {/*
+                Defence in depth, exactly as the over-capacity card: the write
+                route enforces lodge:edit and this card is only reachable from a
+                save a view-only admin cannot start, but every write control on
+                this page goes through ViewOnlyActionButton.
+              */}
+              <ViewOnlyActionButton
+                canEdit={canEdit}
+                describeReason={false}
+                type="button"
+                onClick={holdAmendment.accept}
+                disabled={creating || savingBedForId !== null}
+              >
+                {creating || savingBedForId
+                  ? "Saving..."
+                  : "Accept and hold the bed"}
+              </ViewOnlyActionButton>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setHoldAmendment(null)}
               >
                 Cancel
               </Button>
