@@ -572,6 +572,16 @@ describe("the synthesised rows are unattributed and non-displaceable", () => {
      * planner makes the planner emit 2 where the engine says 1, and deleting
      * the subtraction from `wholeLodgeHoldRepresentedBeds` makes the engine say
      * 2 where the planner emits 1. Either direction fails here.
+     *
+     * The two arms are not equally strong, and saying so is the honest version
+     * (#2698 review L2-F2). The PLANNER arm discriminates reachable behaviour.
+     * The ENGINE arm does not: `wholeLodgeHoldRepresentedBeds` has exactly one
+     * production caller, `wholeLodgeHeldNightOccupiedBeds`, which adds the
+     * subtraction straight back — so deleting it changes no production output
+     * and fails only this test. That is by design (`capacity.ts` concedes it in
+     * the same words) and it is why this assertion exists at all: the composed
+     * pin is what stops a future change re-claiming the custodian's bed, and
+     * nothing else would notice.
      */
     it("agrees bed-for-bed with the capacity engine's represented-bed count", () => {
       const lodgeCapacity = ROOM.beds.length;

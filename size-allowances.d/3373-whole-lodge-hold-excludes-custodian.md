@@ -24,7 +24,7 @@ beside the rule it qualifies; and the admin page gained the second of two
 deliberately identical cards.
 
 file: src/app/api/admin/hut-leaders/route.ts
-lines: 390
+lines: 398
 reason: the create's half of the #2698 ordering case — the amendment detection
   (through the service helper the edit shares), the decline-by-default refusal,
   the conditional global cohort key ahead of the lodge key, and the audit row
@@ -34,7 +34,9 @@ reason: the create's half of the #2698 ordering case — the amendment detection
   meaningfully; and the lock ORDER is asserted over this handler's own body by
   `lodge-admission-lock-contract.test.ts`, which is where a reader should find
   it. About a third of the growth is the comments saying which counterpart each
-  key excludes, which is the part a future reader cannot infer.
+  key excludes, which is the part a future reader cannot infer. The review
+  round added the conjunct that keeps a bedless request out of the club-wide
+  cohort, with the reason at the gate.
 
 file: src/lib/capacity.ts
 lines: 1126
@@ -57,7 +59,7 @@ reason: four lines. The planner feed gains the custodian-hold argument the
   property that makes no bed-night claimed twice true rather than coincidental.
 
 file: src/app/(admin)/admin/hut-leaders/page.tsx
-lines: 1319
+lines: 1350
 reason: the officer's Accept/Decline card for the ordering case, its state, its
   focus effect, and the two request paths that can raise it (the create form's
   POST and the inline bed change's PUT). It is written beside the existing
@@ -67,4 +69,6 @@ reason: the officer's Accept/Decline card for the ordering case, its state, its
   put the second of two visually and behaviourally identical cards somewhere
   else, which makes the page harder to read, not easier, and neither card can
   move into `assignment-form.tsx`: that component is presentational and does not
-  see the PUT path at all.
+  see the PUT path at all. The review round added the delete's refusal message,
+  which had been silent, and the two lines that dismiss whichever card the other
+  replaces.
