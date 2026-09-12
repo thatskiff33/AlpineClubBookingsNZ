@@ -155,7 +155,20 @@ export async function PUT(
   const auditRequest = getAuditRequestContext(req);
   // #2698: decided BEFORE any lock, because it decides WHICH locks are taken
   // (INV-LOCK-002: global then lodge, never the other order).
-  const amendRequested = parsed.data.amendOverlappingHolds === true;
+  //
+  // AND a bed has to be involved (#2698 review A-3): an edit that ends with no
+  // bed held can narrow no hold, so it must not hold the club-wide key that
+  // serialises cancel, capture, settle, refund and credit-restore. The bed is
+  // already derived above for the module gate, so this costs no read.
+  //
+  // `requestedBedId` comes from the pre-lock row, which a concurrent write can
+  // make stale. That is safe in the only direction it can go: if the locked row
+  // turns out to hold a bed this request did not know about, `amendAccepted` is
+  // false, the ordering check THROWS, and the transaction rolls back with
+  // nothing written on either side. A stale read here costs the officer a
+  // retry, never a write taken under the wrong keys.
+  const amendRequested =
+    parsed.data.amendOverlappingHolds === true && Boolean(requestedBedId);
 
   try {
     // Everything from here runs under the lodge capacity key, and the #2698

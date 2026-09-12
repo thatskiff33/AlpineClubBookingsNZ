@@ -152,13 +152,27 @@ describe("lodge admission and assignment lock topology (#2701)", () => {
     // (INV-LOCK-002) and only when the officer has accepted. Whether it is
     // taken is decided in the ROUTE, from the request, before any transaction
     // opens — which is what makes the order impossible to invert.
-    for (const route of [
-      "src/app/api/admin/hut-leaders/route.ts",
-      "src/app/api/admin/hut-leaders/[id]/route.ts",
-    ]) {
-      expect(source(route)).toContain(
-        "const amendRequested = parsed.data.amendOverlappingHolds === true;",
-      );
+    //
+    // And only when a BED is involved (#2698 review A-3). The club-wide key
+    // serialises cancel, capture, settle, refund and credit-restore; a bedless
+    // assignment narrows no hold, so it must not be able to take it just by
+    // asserting a flag. Both conjuncts are pinned as the literal expression,
+    // because dropping either one is a one-token edit that changes no test
+    // outcome anywhere else.
+    for (const [route, gate] of [
+      [
+        "src/app/api/admin/hut-leaders/route.ts",
+        "parsed.data.amendOverlappingHolds === true && bedId !== null;",
+      ],
+      [
+        "src/app/api/admin/hut-leaders/[id]/route.ts",
+        "parsed.data.amendOverlappingHolds === true && Boolean(requestedBedId);",
+      ],
+    ] as const) {
+      expect(
+        source(route),
+        `${route}: the global cohort key must be gated on the officer's acceptance AND on a bed being involved (INV-LOCK-002, INV-CAP-035)`,
+      ).toContain(gate);
     }
     expectOrdered(source("src/app/api/admin/hut-leaders/route.ts"), [
       "if (amendRequested) {",

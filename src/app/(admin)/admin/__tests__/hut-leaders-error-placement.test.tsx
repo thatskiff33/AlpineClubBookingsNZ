@@ -187,9 +187,23 @@ describe("custodian bed hold controls (#2286)", () => {
     ],
   };
 
+  /**
+   * `putResponse` may be a QUEUE: the nth PUT gets the nth entry and the last
+   * entry repeats. That is what lets a case drive the real two-step sequence —
+   * over-capacity 409, confirm, then the ordering 409 — rather than asserting
+   * each card in isolation and never seeing them together.
+   */
   function stubWithAssignment(
-    putResponse: { ok: boolean; body: unknown } = { ok: true, body: {} },
+    putResponse:
+      | { ok: boolean; body: unknown }
+      | Array<{ ok: boolean; body: unknown }> = { ok: true, body: {} },
+    deleteResponse: { ok: boolean; status?: number; body: unknown } = {
+      ok: true,
+      body: {},
+    },
   ) {
+    const putQueue = Array.isArray(putResponse) ? putResponse : [putResponse];
+    let putCount = 0;
     const calls: Array<{ url: string; method: string; body: unknown }> = [];
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -212,10 +226,20 @@ describe("custodian bed hold controls (#2286)", () => {
         return { ok: true, json: async () => ({ unassignedDates: [] }) };
       }
       if (url === "/api/admin/hut-leaders/a1" && method === "PUT") {
+        const next = putQueue[Math.min(putCount, putQueue.length - 1)];
+        putCount += 1;
         return {
-          ok: putResponse.ok,
-          status: putResponse.ok ? 200 : 409,
-          json: async () => putResponse.body,
+          ok: next.ok,
+          status: next.ok ? 200 : 409,
+          json: async () => next.body,
+        };
+      }
+      if (url === "/api/admin/hut-leaders/a1" && method === "DELETE") {
+        return {
+          ok: deleteResponse.ok,
+          status:
+            deleteResponse.status ?? (deleteResponse.ok ? 200 : 409),
+          json: async () => deleteResponse.body,
         };
       }
       if (url.startsWith("/api/admin/hut-leaders?lodgeId=")) {
@@ -351,6 +375,68 @@ describe("custodian bed hold controls (#2286)", () => {
               ?.amendOverlappingHolds === true,
         ),
       ).toHaveLength(1);
+    });
+  });
+
+  it("replaces the over-capacity card rather than stacking a second alert on it", async () => {
+    // #2698 review L1-F4. The server checks capacity BEFORE the ordering
+    // question, so the only way to reach the amendment card is through the
+    // over-capacity one — and until this fix the first card stayed rendered
+    // underneath. Two live `role="alert"` regions is two assertive
+    // announcements at once, and the stale card's primary button re-sends the
+    // request that has just failed.
+    const calls = stubWithAssignment([
+      { ok: false, body: OVER_CAPACITY_BODY },
+      { ok: false, body: HOLD_AMENDMENT_BODY },
+    ]);
+    const HutLeadersPage = (await import("@/app/(admin)/admin/hut-leaders/page"))
+      .default;
+    render(<HutLeadersPage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /release bed/i }));
+    await screen.findByTestId("custodian-over-capacity-confirm");
+
+    fireEvent.click(screen.getByRole("button", { name: /confirm anyway/i }));
+    await screen.findByTestId("custodian-hold-amendment-confirm");
+
+    await waitFor(() => {
+      expect(
+        screen.queryByTestId("custodian-over-capacity-confirm"),
+      ).not.toBeInTheDocument();
+    });
+    // The second request did carry the override, so the card was dismissed
+    // because it was ANSWERED, not because the flow lost it.
+    expect(
+      calls.filter(
+        (call) =>
+          call.method === "PUT" &&
+          (call.body as { confirmOverCapacity?: boolean })
+            ?.confirmOverCapacity === true,
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("says out loud when the DELETE is refused, instead of doing nothing", async () => {
+    // #2698 review A-2. The delete gained a 409 — the row moved lodges while
+    // the per-lodge key was being taken — and the handler surfaced only 403, so
+    // the officer clicked Delete, the row stayed, and the page said nothing.
+    const REFUSAL =
+      "This assignment moved to a different lodge while you were deleting it. Reload and try again.";
+    stubWithAssignment(
+      { ok: true, body: {} },
+      { ok: false, status: 409, body: { error: REFUSAL } },
+    );
+    vi.stubGlobal("confirm", () => true);
+    const HutLeadersPage = (await import("@/app/(admin)/admin/hut-leaders/page"))
+      .default;
+    render(<HutLeadersPage />);
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: /delete assignment/i }),
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent(REFUSAL);
     });
   });
 

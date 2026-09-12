@@ -206,7 +206,15 @@ export async function POST(req: NextRequest) {
   // request will narrow somebody else's whole-lodge hold. Decided BEFORE any
   // lock is taken, because it decides WHICH locks are taken (INV-LOCK-002:
   // global then lodge, never the other order).
-  const amendRequested = parsed.data.amendOverlappingHolds === true;
+  //
+  // AND a bed has to be involved (#2698 review A-3). Without that conjunct any
+  // `lodge:edit` admin could send `{bedId: null, amendOverlappingHolds: true}`
+  // and hold the club-wide key that serialises cancel, capture, settle, refund
+  // and credit-restore — while no amendment is possible at all, because a
+  // bedless assignment narrows nothing. The bed is already derived above, so
+  // this costs no read.
+  const amendRequested =
+    parsed.data.amendOverlappingHolds === true && bedId !== null;
 
   try {
     const pin = generateHutLeaderPin();

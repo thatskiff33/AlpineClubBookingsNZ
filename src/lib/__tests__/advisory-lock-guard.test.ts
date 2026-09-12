@@ -160,14 +160,14 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     site: "POST /api/admin/hut-leaders#1",
     tier: "GLOBAL",
     reason:
-      "#2698 ACCEPT path only: a custodian bed hold the officer has explicitly accepted narrows an existing whole-lodge hold's represented bed set (INV-CAP-035), so the amendment must exclude that hold's RELEASE — booking cancel's RELEASE_WHOLE_LODGE_HOLD_UPDATE, which serialises on this key and never on the lodge key — before taking acquireLodgeCapacityLock. Taken only when `amendOverlappingHolds` is in the request, decided before any lock so the order cannot invert; the detect-and-refuse path writes nothing and stays on the lodge key alone.",
+      "#2698 ACCEPT path only: a custodian bed hold the officer has explicitly accepted narrows an existing whole-lodge hold's represented bed set (INV-CAP-035), so the amendment must exclude that hold's RELEASE — booking cancel's RELEASE_WHOLE_LODGE_HOLD_UPDATE, which serialises on this key and never on the lodge key — before taking acquireLodgeCapacityLock. Taken only when `amendOverlappingHolds` is in the request AND the write actually involves a bed — a bedless assignment can narrow no hold, so it never joins this cohort — decided before any lock so the order cannot invert; the detect-and-refuse path writes nothing and stays on the lodge key alone.",
     invariant: "INV-LOCK-002",
   },
   {
     site: "applyHutLeaderAssignmentEditUnderLocks#1",
     tier: "GLOBAL",
     reason:
-      "#2698 ACCEPT path only, the edit counterpart of the create above: setting or moving a custodian bed hold onto nights an existing whole-lodge hold covers narrows that hold, so the accepted amendment excludes the hold-release cohort before taking the lodge key. Same request-decided gate, same order — `amendAccepted` is settled by PUT /api/admin/hut-leaders/[id] from the request, before this function opens a transaction, so the order cannot invert.",
+      "#2698 ACCEPT path only, the edit counterpart of the create above: setting or moving a custodian bed hold onto nights an existing whole-lodge hold covers narrows that hold, so the accepted amendment excludes the hold-release cohort before taking the lodge key. Same request-decided gate, same order — `amendAccepted` is settled by PUT /api/admin/hut-leaders/[id] from the request AND from whether the edit leaves a bed held, before this function opens a transaction, so the order cannot invert. An edit that ends bedless narrows nothing and never takes this key.",
     invariant: "INV-LOCK-002",
   },
   {

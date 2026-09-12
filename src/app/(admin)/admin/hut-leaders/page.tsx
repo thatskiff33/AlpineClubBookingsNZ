@@ -492,6 +492,10 @@ export default function HutLeadersPage() {
         // #2286 warn-and-confirm: not a failure, a question. Keep the form
         // exactly as it is and show the nights so the admin decides.
         if (data.code === "CUSTODIAN_OVER_CAPACITY_CONFIRM_REQUIRED") {
+          // One question on screen at a time (#2698 review L1-F4): two live
+          // `role="alert"` cards is two assertive announcements, and the stale
+          // one's primary button re-sends the request that just failed.
+          setHoldAmendment(null);
           setOverCapacity({
             nights: data.nightDetails ?? [],
             bookings: Array.isArray(data.nonHoldingBookings)
@@ -504,6 +508,10 @@ export default function HutLeadersPage() {
         // #2698 ordering case: also a question, not a failure. Keep the form as
         // it is and show which nights leave the existing hold's sole occupancy.
         if (data.code === "CUSTODIAN_OVERLAPS_WHOLE_LODGE_HOLD") {
+          // The over-capacity card is the one this replaces: the server checks
+          // capacity first, so accepting it is what lets the request reach the
+          // ordering question at all (#2698 review L1-F4).
+          setOverCapacity(null);
           setHoldAmendment({
             nights: data.nights ?? [],
             amendments: Array.isArray(data.amendments) ? data.amendments : [],
@@ -577,6 +585,8 @@ export default function HutLeadersPage() {
         }
         const data = await res.json().catch(() => null);
         if (data?.code === "CUSTODIAN_OVER_CAPACITY_CONFIRM_REQUIRED") {
+          // One question on screen at a time (#2698 review L1-F4).
+          setHoldAmendment(null);
           setOverCapacity({
             nights: data.nightDetails ?? [],
             bookings: Array.isArray(data.nonHoldingBookings)
@@ -593,6 +603,10 @@ export default function HutLeadersPage() {
           return;
         }
         if (data?.code === "CUSTODIAN_OVERLAPS_WHOLE_LODGE_HOLD") {
+          // Dismiss the over-capacity card this one replaces (#2698 review
+          // L1-F4): it was already accepted to get here, and its button would
+          // re-send the request that just failed.
+          setOverCapacity(null);
           setHoldAmendment({
             nights: data.nights ?? [],
             amendments: Array.isArray(data.amendments) ? data.amendments : [],
@@ -631,12 +645,29 @@ export default function HutLeadersPage() {
     const res = await fetch(`/api/admin/hut-leaders/${id}`, { method: "DELETE" });
     if (activeLodgeIdRef.current !== requestedLodgeId) return;
     if (res.ok) {
+      setError(null);
       fetchAssignments();
       fetchUnassignedDates();
       refreshOverlay(visibleMonthKey);
-    } else if (res.status === 403) {
-      setError({ message: ADMIN_FORBIDDEN_SAVE_REASON, memberId: null });
+      return;
     }
+    if (res.status === 403) {
+      setError({ message: ADMIN_FORBIDDEN_SAVE_REASON, memberId: null });
+      return;
+    }
+    // Every other refusal, said out loud (#2698 review A-2). The delete gained
+    // a 409 — the row moved lodges while the key was being taken — and this
+    // handler used to fall off the end for anything that was not 403, so the
+    // officer clicked Delete, the row stayed, and nothing on the page said why.
+    // The server's own sentence is preferred; the fallback covers a body that
+    // is missing or unparseable.
+    const data = await res.json().catch(() => null);
+    setError({
+      message:
+        data?.error ||
+        `Failed to delete this ${hutLeaderLabel.toLowerCase()} assignment. Reload and try again.`,
+      memberId: null,
+    });
   }
 
   async function handleResetPin(assignment: HutLeaderAssignment) {
