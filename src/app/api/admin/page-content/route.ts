@@ -502,14 +502,11 @@ export async function PATCH(request: NextRequest) {
  *
  * **Route shape (D-B7(a)).** `DELETE` on the collection with the id in the body,
  * not a new `[id]/route.ts`. Both mutating methods here already address a page
- * that way, and it keeps this route's deliberate 401-shaped forbidden response,
- * which the admin panel already handles. At the time this was also what let the
- * MC-03D measurement harness's structural producer watch THIS file for a
- * DELETE export without a sibling file going invisible to it; that harness was
- * removed whole by #3382, so that reason no longer applies, but the shape
- * itself was never only about the harness and stays as shipped. The
- * REST-shaped alternative still reads better and remains a legitimate future
- * preference.
+ * that way; it keeps this route's deliberate 401-shaped forbidden response,
+ * which the admin panel already handles. It also once let the MC-03D
+ * measurement harness watch THIS file alone for a DELETE export; that harness
+ * is gone (#3382) but the shape was never only about it. The REST-shaped
+ * alternative reads better and is still a legitimate future preference.
  *
  * **References are reported, not blocking (D-B4(a)).** In-content links are free
  * text an officer can spell any number of ways, so a substring check that refused
