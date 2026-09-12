@@ -1,0 +1,60 @@
+{
+  "//": [
+    "Files Semgrep cannot fully parse (#2842, emptied of everything rewritable by",
+    "#3318). Every entry is a file the blocking scan reads only in part, so part of",
+    "it is NOT covered by any rule. Every one is a test file.",
+    "",
+    "This list is a RATCHET enforced by scripts/ci/check-semgrep-coverage.mjs: a",
+    "file that becomes partly unparsed and is not listed fails the build, and a",
+    "listed file that starts parsing fully ALSO fails the build. Deletion is",
+    "forced by the gate; an addition only has to survive review, so the",
+    "guarantee is that this list never grows SILENTLY, not that it never grows.",
+    "",
+    "WHAT MAY BE ADDED HERE IS NOW ALMOST NOTHING. Two of the three parser faults",
+    "are banned by `scan/no-semgrep-unparsable-import-type` in eslint.config.mjs:",
+    "an `import()` type in a call's type argument, and one in a function parameter",
+    "annotation. Both have a remedy available everywhere and changing no",
+    "behaviour, so a partial parse of either shape means the lint rule was",
+    "bypassed rather than that an entry is warranted. The three faults are stated",
+    "once, as the rule rather than as a spelling, in KNOWN_CONSTRUCTS in that",
+    "script - which is also the text the gate hands you when it fires. They are",
+    "NOT restated here.",
+    "",
+    "NO COMPOSITION SUMMARY LIVES HERE ANY MORE, deliberately. The one that did",
+    "said '165 carry a generic call whose type argument contains an import() type,",
+    "and the remaining 4 are the string-literal ampersand'. The first clause is",
+    "gone entirely (#3318 rewrote all 165), and the second was wrong when written:",
+    "it counted four ampersand files where the gate's own message said three,",
+    "because one of the four was unparsed for the CALL shape and its own `&` never",
+    "tripped anything. A summary of a list is a second statement of the list, and",
+    "it drifted exactly as INV-SSOT-001 says it will. Each entry now carries its",
+    "own `reason`, which the gate REQUIRES - an entry with no reason is refused.",
+    "",
+    "minimumScannedFiles is a coarse tripwire, NOT a ratchet: it catches a whole",
+    "directory falling out of scope through a new --exclude or .semgrepignore",
+    "entry, which the file list above cannot see. It is not a guarantee — a change",
+    "that excludes a directory and lowers the floor together passes everything, and",
+    "review holds that direction just as it holds an addition to this list.",
+    "",
+    "This list doubles as the gate's canary: the only report that passes must name",
+    "exactly these files as partially parsed AND clear the floor, which a broken or",
+    "forged scan cannot do from either side.",
+    "",
+    "Background: docs/MAINTENANCE.md -> \"Semgrep parse coverage\"."
+  ],
+  "minimumScannedFiles": 4000,
+  "files": [
+    {
+      "file": "src/app/(admin)/admin/xero/_components/__tests__/contact-sync-panel-hosting-retry.test.tsx",
+      "reason": "A bare `&` inside a STRING literal, not JSX text: the prop value `currentXeroPath=\"/admin/xero?section=contactSync&view=failed\"`. `&amp;` is the remedy for JSX text only - writing it here would change the value the component receives, and the query string is the point of the case."
+    },
+    {
+      "file": "src/app/(finance)/finance/_components/__tests__/finance-dashboard-client.test.tsx",
+      "reason": "The same fault, in a long URL query built as a string constant and passed as `currentSearch`. Every `&` in it separates two parameters the dashboard has to read back, so escaping any of them would change what is under test."
+    },
+    {
+      "file": "src/components/admin/__tests__/sort-header.test.tsx",
+      "reason": "The same fault, and the one that proves the remedy is unavailable: `href=\"/admin/bookings?sortBy=total&sortDir=desc\"` is asserted with `toHaveAttribute` against that exact string, so rewriting the `&` changes the value the test asserts rather than only the source."
+    }
+  ]
+}

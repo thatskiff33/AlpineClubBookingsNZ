@@ -373,12 +373,18 @@ export function buildInitialRequestSelections(
   const nextSelections: Record<string, string> = {};
 
   for (const request of requests) {
-    if (current[request.id]) {
-      nextSelections[request.id] = current[request.id];
+    const existingSelection = current[request.id];
+    if (existingSelection) {
+      nextSelections[request.id] = existingSelection;
       continue;
     }
-    if (request.type === "CHILD_REQUEST" && request.matchingMembers.length === 1) {
-      nextSelections[request.id] = request.matchingMembers[0].id;
+    const [onlyMatchingMember] = request.matchingMembers;
+    if (
+      request.type === "CHILD_REQUEST" &&
+      request.matchingMembers.length === 1 &&
+      onlyMatchingMember
+    ) {
+      nextSelections[request.id] = onlyMatchingMember.id;
     }
     if (
       request.type === "CHILD_REQUEST" &&

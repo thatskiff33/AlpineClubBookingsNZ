@@ -52,6 +52,7 @@ import {
 } from "@/lib/club-theme-schema";
 import { buildThemeSubstrate } from "@/lib/theme/theme-substrate";
 import { buildAppThemeTokens } from "@/lib/theme/app-tokens";
+import { must } from "@/lib/indexed-access";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
   AdminForbiddenSaveNotice,
@@ -164,10 +165,33 @@ type SeedAdjustment = {
 
 function seedAdjustments(values: ClubThemeValues): SeedAdjustment[] {
   const light = buildThemeSubstrate(themeSeedsFromValues(values), "light");
+  // The generator always builds these two hue scales and a 12-step neutral
+  // ramp, and `ThemeSubstrate` types them as an open record and plain arrays,
+  // so the guarantee lives in the builder rather than the type. `must` names
+  // the assumption at the point it is made, the way `theme/app-tokens.ts`
+  // reads the same three values (#2800, `INV-SSOT`) — a substrate short of a
+  // scale would otherwise put the string "undefined" in a swatch.
+  const accentScale = must(
+    light.scales.accent,
+    "seedAdjustments: the light substrate has no accent scale",
+  );
+  const supportScale = must(
+    light.scales.support,
+    "seedAdjustments: the light substrate has no support scale",
+  );
   const shipped: Record<ClubThemeColourKey, string> = {
-    brandGold: light.scales.accent.hex[8],
-    brandSafety: light.scales.support.hex[8],
-    brandDeep: light.neutralHex[11],
+    brandGold: must(
+      accentScale.hex[8],
+      "seedAdjustments: the light accent scale has no step 9",
+    ),
+    brandSafety: must(
+      supportScale.hex[8],
+      "seedAdjustments: the light support scale has no step 9",
+    ),
+    brandDeep: must(
+      light.neutralHex[11],
+      "seedAdjustments: the light neutral ramp has no step 12",
+    ),
   };
   const differs = (a: string, b: string) => a.toLowerCase() !== b.toLowerCase();
   return CLUB_THEME_COLOUR_FIELDS.filter((field) =>
@@ -390,8 +414,11 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
 
   async function goNext() {
     const saved = await save(false);
-    if (saved && stepIndex < steps.length - 1) {
-      setStep(steps[stepIndex + 1].id);
+    // The next step IS the "there is a step after this one" check the length
+    // arithmetic was expressing — read once (#2801).
+    const nextStep = steps[stepIndex + 1];
+    if (saved && nextStep) {
+      setStep(nextStep.id);
     }
   }
 
@@ -473,7 +500,14 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
     }
   }
 
-  const activeStep = steps[stepIndex];
+  // `StepId` is derived FROM `steps`, so the wizard's current step always has a
+  // definition; `must` says that at the point it is assumed rather than letting
+  // an impossible `undefined` reach a heading (#2801).
+  const activeStep = must(
+    steps.find((item) => item.id === step),
+    `site-style wizard: no step definition for "${step}"`,
+  );
+  const previousStep = stepIndex > 0 ? steps[stepIndex - 1] : undefined;
   const ActiveStepIcon = activeStep.icon;
   const hasFieldErrors = Object.values(fieldErrors).some(
     (messages) => messages && messages.length > 0,
@@ -980,8 +1014,10 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
               <Button
                 type="button"
                 variant="outline"
-                onClick={() => setStep(steps[Math.max(0, stepIndex - 1)].id)}
-                disabled={stepIndex === 0 || saving}
+                onClick={() => {
+                  if (previousStep) setStep(previousStep.id);
+                }}
+                disabled={!previousStep || saving}
               >
                 Back
               </Button>

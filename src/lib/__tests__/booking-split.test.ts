@@ -49,7 +49,7 @@ vi.mock("@/lib/capacity", () => ({
 }));
 
 vi.mock("@/lib/policies/booking-route-decisions", async (importActual) => {
-  const actual = await importActual<typeof import("@/lib/policies/booking-route-decisions")>();
+  const actual = (await importActual()) as typeof import("@/lib/policies/booking-route-decisions");
   return {
     ...actual,
     // Deterministic $50/guest pricing so member/child bookings price above $0

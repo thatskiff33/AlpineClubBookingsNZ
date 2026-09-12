@@ -93,9 +93,7 @@ vi.mock("@/lib/membership-cancellation-invoice-blockers", () => ({
 // read is stubbed — the notice builders stay real, so these tests exercise the
 // same wording and the same blocks-approval decision the review queue renders.
 vi.mock("@/lib/membership-cancellation-subscription-credit", async (importOriginal) => ({
-  ...(await importOriginal<
-    typeof import("@/lib/membership-cancellation-subscription-credit")
-  >()),
+  ...((await importOriginal()) as typeof import("@/lib/membership-cancellation-subscription-credit")),
   loadMembershipCancellationSubscriptionCreditPlansByMemberId:
     mocks.loadCreditPlans,
 }));

@@ -23,9 +23,7 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 vi.mock("@/lib/payment-reconciliation", async () => {
-  const actual = await vi.importActual<
-    typeof import("@/lib/payment-reconciliation")
-  >("@/lib/payment-reconciliation");
+  const actual = (await vi.importActual("@/lib/payment-reconciliation")) as typeof import("@/lib/payment-reconciliation");
   return {
     ManualBookingPaymentError: actual.ManualBookingPaymentError,
     markBookingPaymentManuallySettled: (...a: unknown[]) =>

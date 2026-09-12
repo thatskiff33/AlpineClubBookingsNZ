@@ -111,8 +111,12 @@ function stableDigest(value: unknown): string {
  *  - `[X, Y…]` -> the canonical-sorted array (a genuinely new 2+-tier shape).
  */
 function fingerprintAgeTiers(ageTiers: AgeTier[]): AgeTier | AgeTier[] | null {
-  if (ageTiers.length === 0) return null;
-  if (ageTiers.length === 1) return ageTiers[0];
+  // The scalar back-map reads the single tier itself, so "exactly one" is a
+  // first with no rest rather than a count that licenses a later read; the
+  // three fingerprint shapes are unchanged (#2800).
+  const [firstTier, ...laterTiers] = ageTiers;
+  if (firstTier === undefined) return null;
+  if (laterTiers.length === 0) return firstTier;
   // Deliberate lexicographic sort (not CANONICAL_AGE_TIER_ORDER): it only needs
   // to be deterministic, and it is harmless — this branch is reached only by a
   // genuinely-new 2+-tier rule, which has no historical scalar fingerprint to

@@ -28,6 +28,7 @@ import {
   ensureMemberAccessRolesFromCompatibilityFields,
 } from "../src/lib/member-access-role-writes";
 import { backfillCurrentSeasonMembershipAssignments } from "../src/lib/membership-types";
+import { must } from "../src/lib/indexed-access";
 import { getDefaultLodgeId } from "../src/lib/lodges";
 import { createPrismaPgAdapter } from "../src/lib/prisma-adapter";
 import {
@@ -71,6 +72,18 @@ const SEASON_YEAR = 2026;
 // Date-only helper (schema uses @db.Date for most date columns).
 function d(s: string): Date {
   return new Date(`${s}T00:00:00.000Z`);
+}
+
+// The part of a demo fixture's email before "@", used as its login username.
+// `email.split("@")[0]` reads as `string | undefined` under
+// `noUncheckedIndexedAccess` because `split` returns `string[]`, not a tuple,
+// even though every demo fixture email genuinely contains "@". Finding the
+// separator directly avoids indexing into that array at all; an email with no
+// "@" (which none of the fixtures below are) falls back to the whole string
+// rather than throwing during a seed run.
+function emailLocalPart(email: string): string {
+  const at = email.indexOf("@");
+  return at === -1 ? email : email.slice(0, at);
 }
 // Nights actually slept = [checkIn, checkOut) — checkout day is not a night.
 function nightsBetween(checkIn: string, checkOut: string): string[] {
@@ -386,17 +399,25 @@ async function main() {
   // -------------------------------------------------------------------------
   // Member applications — every ApplicationStatus.
   // -------------------------------------------------------------------------
-  const appStatuses: Array<"PENDING_NOMINATORS" | "PENDING_ADMIN" | "APPROVED" | "REJECTED"> = [
-    "PENDING_NOMINATORS",
-    "PENDING_ADMIN",
-    "APPROVED",
-    "REJECTED",
+  // One record per fixture, not parallel arrays correlated by index — under
+  // `noUncheckedIndexedAccess` a bare `names[i]` reads as `string | undefined`
+  // no matter how the two arrays' lengths line up, and there is nothing left
+  // to prove once the name travels with its own status.
+  const demoApplications: Array<{
+    status: "PENDING_NOMINATORS" | "PENDING_ADMIN" | "APPROVED" | "REJECTED";
+    firstName: string;
+    lastName: string;
+  }> = [
+    { status: "PENDING_NOMINATORS", firstName: "Nina", lastName: "Newman" },
+    { status: "PENDING_ADMIN", firstName: "Olive", lastName: "Owens" },
+    { status: "APPROVED", firstName: "Peter", lastName: "Price" },
+    { status: "REJECTED", firstName: "Rita", lastName: "Reed" },
   ];
-  for (const [i, status] of appStatuses.entries()) {
+  for (const [i, { status, firstName, lastName }] of demoApplications.entries()) {
     await prisma.memberApplication.create({
       data: {
-        applicantFirstName: ["Nina", "Olive", "Peter", "Rita"][i],
-        applicantLastName: ["Newman", "Owens", "Price", "Reed"][i],
+        applicantFirstName: firstName,
+        applicantLastName: lastName,
         applicantEmail: `applicant${i}@${DEMO_DOMAIN}`,
         applicantDateOfBirth: d("1990-06-15"),
         nominator1Email: alice.email,
@@ -521,8 +542,12 @@ async function main() {
   const daveGuest = await addGuest(bConfirmed.id, { firstName: "Dave", lastName: "Davis", ageTier: "ADULT", isMember: true, memberId: dave.id }, W.daveConfirmed.checkIn, W.daveConfirmed.checkOut, NIGHTLY);
   const confirmedPayment = await prisma.payment.create({ data: { bookingId: bConfirmed.id, amountCents: bConfirmed.finalPriceCents, source: "INTERNET_BANKING", reference: "BANK-REF-7781", status: "SUCCEEDED", xeroInvoiceNumber: "INV-2201" } });
   await prisma.paymentTransaction.create({ data: { paymentId: confirmedPayment.id, kind: "PRIMARY", source: "INTERNET_BANKING", amountCents: bConfirmed.finalPriceCents, status: "SUCCEEDED", reference: "BANK-REF-7781" } });
+  // bedsA holds 6 beds (the fixed loop above) and daveConfirmed is a fixed
+  // 3-night demo window (prisma/e2e-fixtures.ts), so this index is always
+  // in range; `must` names that instead of widening bedId to `string | undefined`.
   for (const [i, night] of nightsBetween(W.daveConfirmed.checkIn, W.daveConfirmed.checkOut).entries()) {
-    await prisma.bedAllocation.create({ data: { bookingId: bConfirmed.id, bookingGuestId: daveGuest.id, roomId: roomA.id, bedId: bedsA[i].id, stayDate: d(night), source: "AUTO" } });
+    const bed = must(bedsA[i], `demo seed: bedsA has no bed at index ${i} for daveConfirmed's window`);
+    await prisma.bedAllocation.create({ data: { bookingId: bConfirmed.id, bookingGuestId: daveGuest.id, roomId: roomA.id, bedId: bed.id, stayDate: d(night), source: "AUTO" } });
   }
   await prisma.bookingEvent.create({ data: { bookingId: bConfirmed.id, type: "CREATED", actorMemberId: dave.id } });
   await prisma.bookingEvent.create({ data: { bookingId: bConfirmed.id, type: "MEMBER_PAID", actorMemberId: dave.id, amountCents: bConfirmed.finalPriceCents } });
@@ -729,10 +754,23 @@ async function main() {
   // Chores (every ChoreStatus) + hut leader roster + issue reports.
   // -------------------------------------------------------------------------
   const choreTemplates = await prisma.choreTemplate.findMany({ take: 3, orderBy: { sortOrder: "asc" } });
-  if (choreTemplates.length > 0) {
-    await prisma.choreAssignment.create({ data: { choreTemplateId: choreTemplates[0].id, bookingId: bCompleted.id, bookingGuestId: heidiGuest.id, date: d(W.heidiCompleted.nights[1]), status: "COMPLETED", completedAt: d(W.heidiCompleted.nights[1]), completedVia: "KIOSK" } });
-    await prisma.choreAssignment.create({ data: { choreTemplateId: choreTemplates[Math.min(1, choreTemplates.length - 1)].id, bookingId: bConfirmed.id, bookingGuestId: daveGuest.id, date: d(W.daveConfirmed.nights[1]), status: "CONFIRMED" } });
-    await prisma.choreAssignment.create({ data: { choreTemplateId: choreTemplates[Math.min(2, choreTemplates.length - 1)].id, bookingId: bConfirmed.id, date: d(W.daveConfirmed.nights[2]), status: "SUGGESTED" } });
+  // Read the first template once and let its presence be the "any templates
+  // exist" check the old `length > 0` guard stood for; the second and third
+  // fall back to the nearest earlier one exactly as `Math.min(n, length - 1)`
+  // did when fewer than 3 templates come back.
+  const [choreTemplate0, choreTemplate1, choreTemplate2] = choreTemplates;
+  if (choreTemplate0) {
+    const secondTemplateId = (choreTemplate1 ?? choreTemplate0).id;
+    const thirdTemplateId = (choreTemplate2 ?? choreTemplate1 ?? choreTemplate0).id;
+    // heidiCompleted and daveConfirmed are both fixed 3-night demo windows
+    // (prisma/e2e-fixtures.ts), so nights[1]/[2] always exist; `nights` is
+    // typed `string[]` rather than a tuple, which is what `must` is naming.
+    const heidiCompletedNight1 = must(W.heidiCompleted.nights[1], "demo seed: heidiCompleted window has no second night");
+    const daveConfirmedNight1 = must(W.daveConfirmed.nights[1], "demo seed: daveConfirmed window has no second night");
+    const daveConfirmedNight2 = must(W.daveConfirmed.nights[2], "demo seed: daveConfirmed window has no third night");
+    await prisma.choreAssignment.create({ data: { choreTemplateId: choreTemplate0.id, bookingId: bCompleted.id, bookingGuestId: heidiGuest.id, date: d(heidiCompletedNight1), status: "COMPLETED", completedAt: d(heidiCompletedNight1), completedVia: "KIOSK" } });
+    await prisma.choreAssignment.create({ data: { choreTemplateId: secondTemplateId, bookingId: bConfirmed.id, bookingGuestId: daveGuest.id, date: d(daveConfirmedNight1), status: "CONFIRMED" } });
+    await prisma.choreAssignment.create({ data: { choreTemplateId: thirdTemplateId, bookingId: bConfirmed.id, date: d(daveConfirmedNight2), status: "SUGGESTED" } });
   }
 
   await prisma.hutLeaderAssignment.create({ data: { memberId: dave.id, startDate: d(W.daveConfirmed.checkIn), endDate: d(W.daveConfirmed.checkOut), hutLeaderPin: "4821" } });
@@ -827,7 +865,7 @@ async function main() {
   // admin-member-detail spec's clicks; alice deliberately keeps that gate).
   const roleProfileConfirmedAt = new Date();
   for (const [role, persona] of Object.entries(ROLE_PERSONAS)) {
-    const scoped = await makeMember(persona.email.split("@")[0], persona.firstName, persona.lastName, {
+    const scoped = await makeMember(emailLocalPart(persona.email), persona.firstName, persona.lastName, {
       dateOfBirth: d("1984-03-03"),
       phoneCountryCode: "64",
       phoneAreaCode: "21",
@@ -859,7 +897,7 @@ async function main() {
 
   // A full ADMIN with a known password (the base seed admin forces a password
   // change), for approving applications and toggling modules from specs.
-  await makeMember(E2E_ADMIN.email.split("@")[0], E2E_ADMIN.firstName, E2E_ADMIN.lastName, {
+  await makeMember(emailLocalPart(E2E_ADMIN.email), E2E_ADMIN.firstName, E2E_ADMIN.lastName, {
     role: "ADMIN",
   });
 
@@ -922,7 +960,7 @@ async function main() {
   // Complete-profile driver: owns the waitlist + Internet Banking bookings and
   // acts as nomination #1 — all member-page journeys that must not hit the modal.
   const wanda = await seedConfirmedPaidMember(
-    WAITLISTER.email.split("@")[0],
+    emailLocalPart(WAITLISTER.email),
     WAITLISTER.firstName,
     WAITLISTER.lastName,
     "1988-06-06",
@@ -934,7 +972,7 @@ async function main() {
   // refuses them their own booking while an admin can still book on their
   // behalf and they can still pay for what the admin saved.
   await seedConfirmedPaidMember(
-    LOCKED_OUT_MEMBER.email.split("@")[0],
+    emailLocalPart(LOCKED_OUT_MEMBER.email),
     LOCKED_OUT_MEMBER.firstName,
     LOCKED_OUT_MEMBER.lastName,
     "1983-02-14",
@@ -945,7 +983,7 @@ async function main() {
   // Second paid-up nominator (nomination #2), also complete-profile so its
   // /nominations page is not blocked by the onboarding modal.
   const nadia = await seedConfirmedPaidMember(
-    NOMINATOR_TWO.email.split("@")[0],
+    emailLocalPart(NOMINATOR_TWO.email),
     NOMINATOR_TWO.firstName,
     NOMINATOR_TWO.lastName,
     "1979-11-03",
@@ -956,7 +994,7 @@ async function main() {
   // profile, so the dual-hat booking spec can create a real self-booking
   // through the member /book wizard under full member rules (#1442).
   const dana = await seedConfirmedPaidMember(
-    DUAL_HAT_ADMIN.email.split("@")[0],
+    emailLocalPart(DUAL_HAT_ADMIN.email),
     DUAL_HAT_ADMIN.firstName,
     DUAL_HAT_ADMIN.lastName,
     "1986-09-09",
@@ -973,7 +1011,7 @@ async function main() {
   // (e2e/two-factor-email.spec.ts) drives the EMAIL method end-to-end. Kept
   // separate from bob so it never collides with the TOTP spec.
   await makeMember(
-    EMAIL_2FA_ENROLLEE.email.split("@")[0],
+    emailLocalPart(EMAIL_2FA_ENROLLEE.email),
     EMAIL_2FA_ENROLLEE.firstName,
     EMAIL_2FA_ENROLLEE.lastName,
   );
@@ -981,7 +1019,7 @@ async function main() {
   // Waitlist spec: fill a September window to capacity (lodge capacity is 20)
   // so a fresh booking there is refused and can be waitlisted.
   const fillOwner = await makeMember(
-    LODGE_FILL_OWNER.email.split("@")[0],
+    emailLocalPart(LODGE_FILL_OWNER.email),
     LODGE_FILL_OWNER.firstName,
     LODGE_FILL_OWNER.lastName,
     { canLogin: false },
@@ -1195,7 +1233,7 @@ async function main() {
   // straight to PENDING_ADMIN (nominators pre-confirmed) so the spec needs no
   // extra nomination tokens.
   await makeMember(
-    MAPPING_APPLICANT.email.split("@")[0],
+    emailLocalPart(MAPPING_APPLICANT.email),
     MAPPING_APPLICANT.firstName,
     MAPPING_APPLICANT.lastName,
     { id: MAPPING_TARGET_MEMBER_ID, canLogin: false },

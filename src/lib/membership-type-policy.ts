@@ -413,7 +413,11 @@ export async function resolveMembershipTypePolicyForMember(
 function buildMembershipTypeBookingPolicyMessage(
   blocks: MembershipTypeBookingPolicyBlock[],
 ) {
-  if (blocks.length === 0) {
+  // Reading the first block is what says there is a block to describe; it is
+  // also the block the closing sentence names its season from, so the empty
+  // case is answered once rather than checked twice (#2800).
+  const [firstBlock] = blocks;
+  if (firstBlock === undefined) {
     return "Membership type booking policy blocks this booking.";
   }
 
@@ -438,11 +442,12 @@ function buildMembershipTypeBookingPolicyMessage(
   }
 
   const guestBlocks = blocks.filter((block) => block.scope === "MEMBER_GUEST");
-  if (guestBlocks.length === blocks.length) {
-    return `The following member guests cannot be booked for the ${formatSeasonDisplay(guestBlocks[0].seasonYear)} season: ${guestBlocks.map((block) => block.name).join(", ")}.`;
+  const firstGuestBlock = guestBlocks[0];
+  if (firstGuestBlock !== undefined && guestBlocks.length === blocks.length) {
+    return `The following member guests cannot be booked for the ${formatSeasonDisplay(firstGuestBlock.seasonYear)} season: ${guestBlocks.map((block) => block.name).join(", ")}.`;
   }
 
-  return `One or more members cannot be booked for the ${formatSeasonDisplay(blocks[0].seasonYear)} season under their membership type policy.`;
+  return `One or more members cannot be booked for the ${formatSeasonDisplay(firstBlock.seasonYear)} season under their membership type policy.`;
 }
 
 /**

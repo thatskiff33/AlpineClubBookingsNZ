@@ -837,9 +837,12 @@ export async function checkMembershipStatus(
             context: `getOnlineInvoice(${matchedInvoiceId})`,
           }
         );
-        const onlineInvoices = onlineRes.body.onlineInvoices;
-        if (onlineInvoices && onlineInvoices.length > 0) {
-          onlineInvoiceUrl = onlineInvoices[0].onlineInvoiceUrl ?? null;
+        // Reading the first online invoice is what says the response carried
+        // one; an empty list leaves the URL unset, as the length check did
+        // (#2800).
+        const firstOnlineInvoice = onlineRes.body.onlineInvoices?.[0];
+        if (firstOnlineInvoice) {
+          onlineInvoiceUrl = firstOnlineInvoice.onlineInvoiceUrl ?? null;
         }
       } catch {
         // Non-critical — continue without online URL
@@ -1267,8 +1270,15 @@ export function findSubscriptionInvoice(
   seasonYear: number,
   options: SubscriptionInvoiceMatchOptions
 ): Invoice | null {
-  const matches = collectSubscriptionInvoiceMatches(invoices, seasonYear, options);
-  if (matches.length === 0) return null;
+  // The first match is read here rather than after the code-set branch: it is
+  // both the legacy single-code answer and the ranking's starting point, so
+  // reading it once is what says there is a match at all (#2800).
+  const [firstMatch, ...laterMatches] = collectSubscriptionInvoiceMatches(
+    invoices,
+    seasonYear,
+    options
+  );
+  if (firstMatch === undefined) return null;
 
   // Look-through is ON only when the item-code set carries codes BEYOND the
   // single flat primary. With an off (single-code) set, reproduce the legacy
@@ -1277,10 +1287,10 @@ export function findSubscriptionInvoice(
     (options.itemCodes ?? []).filter((code): code is string => Boolean(code))
   );
   if (options.primaryItemCode) unionCodes.delete(options.primaryItemCode);
-  if (unionCodes.size === 0) return matches[0].invoice;
+  if (unionCodes.size === 0) return firstMatch.invoice;
 
-  let best = matches[0];
-  for (const candidate of matches.slice(1)) {
+  let best = firstMatch;
+  for (const candidate of laterMatches) {
     // (1) strong-first: a strong match always outranks a union-only one,
     // regardless of paid status.
     if (candidate.isStrong !== best.isStrong) {
@@ -1647,8 +1657,7 @@ export async function refreshAllMembershipStatuses(
   const errorDetails: Array<{ member: string; error: string }> = [];
   const nextRetryMemberIds: string[] = [];
 
-  for (let index = 0; index < affectedMembersList.length; index += 1) {
-    const member = affectedMembersList[index];
+  for (const [index, member] of affectedMembersList.entries()) {
     try {
       const before = await prisma.memberSubscription.findFirst({
         where: { memberId: member.id, seasonYear: year },

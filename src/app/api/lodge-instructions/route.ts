@@ -55,7 +55,13 @@ async function resolveMemberInstructionLodgeId(
   memberId: string,
 ): Promise<string | null> {
   const lodgeIds = await getMemberInstructionLodgeIds(memberId);
-  return lodgeIds.size === 1 ? [...lodgeIds][0] : null;
+  // "Exactly one distinct lodge" said as a first with nothing after it: no
+  // lodge and more than one lodge both mean the club-wide documents, which is
+  // the same condition `size === 1` expressed so the returned id is a `string`
+  // rather than a lookup (#2801).
+  const [onlyLodgeId, ...otherLodgeIds] = lodgeIds;
+  if (onlyLodgeId === undefined || otherLodgeIds.length > 0) return null;
+  return onlyLodgeId;
 }
 
 /**

@@ -1158,8 +1158,8 @@ function audienceForTemplate(key: EmailAuditTemplateName): EmailTemplateAudience
 function extractTokensFromDefaults(...values: string[]): string[] {
   return values.flatMap((value) =>
     Array.from(value.matchAll(/\{\{([^{}]+)\}\}/g), (match) =>
-      match[1].trim(),
-    ).filter(Boolean),
+      match[1]?.trim(),
+    ).filter((token): token is string => Boolean(token)),
   );
 }
 

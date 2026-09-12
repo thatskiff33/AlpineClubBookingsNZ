@@ -21,7 +21,7 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 vi.mock("@/lib/lodge-capacity", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/lodge-capacity")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/lodge-capacity");
   return { ...actual, getLodgeCapacity: mocks.getLodgeCapacity };
 });
 

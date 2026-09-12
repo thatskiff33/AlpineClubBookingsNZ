@@ -73,7 +73,11 @@ function isAuthenticatedBookingDetailUrl(candidate: string): boolean {
     if (pathname === "/bookings") return true;
     if (!pathname.startsWith("/bookings/")) return false;
 
-    const firstSegment = pathname.slice("/bookings/".length).split("/", 1)[0];
+    // `split` with a limit of one always yields a first element, even for the
+    // empty string; an absent one is an empty segment, which is not `consent`
+    // and so stays an authenticated detail path (#2800).
+    const firstSegment =
+      pathname.slice("/bookings/".length).split("/", 1)[0] ?? "";
     try {
       // Next decodes each route segment once. Mirror that single decode so an
       // encoded `consent` segment remains a bearer action, without treating a

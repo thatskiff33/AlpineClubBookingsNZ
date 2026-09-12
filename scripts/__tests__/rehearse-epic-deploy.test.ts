@@ -69,10 +69,8 @@ function newRepo(): {
   const addMigration = (name: string, file = "migration.sql") => {
     // Test fixture: joins the fixture repo's own migrations directory with a
     // test-controlled name; no user input.
-    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
     const dir = path.join(root, "prisma", "migrations", name);
     mkdirSync(dir, { recursive: true });
-    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
     writeFileSync(path.join(dir, file), "SELECT 1;\n", "utf8");
   };
 

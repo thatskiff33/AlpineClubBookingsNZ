@@ -402,7 +402,6 @@ async function applyMigrationSql(
     try {
       // Rehearsal harness: replays this repository's own committed migration SQL
       // against a scratch database it created. No user input reaches here.
-      // nosemgrep: javascript.express.db.pg-express.pg-express
       await client.query(statement);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
@@ -505,7 +504,6 @@ function generateBaseClient(
 
   const clientDir = path.join(scratchDir, "client");
   // Test fixture path: a directory this function just created.
-  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
   const emitted = readFileSync(path.join(clientDir, "schema.prisma"), "utf8");
   if (normaliseSchemaForComparison(emitted) !== normaliseSchemaForComparison(withOutput)) {
     throw new Error(
@@ -743,7 +741,6 @@ export async function run(root: string, argv: readonly string[]): Promise<number
     }
 
     // Rehearsal harness: a name this script generated from crypto bytes.
-    // nosemgrep: javascript.express.db.pg-express.pg-express
     await admin.query(`CREATE DATABASE "${scratchDatabase}"`);
     console.log(`\nScratch      : ${scratchDatabase} (created; dropped on exit)`);
 
@@ -834,7 +831,6 @@ export async function run(root: string, argv: readonly string[]): Promise<number
     } else {
       try {
         // Rehearsal harness: drops the database this script created above.
-        // nosemgrep: javascript.express.db.pg-express.pg-express
         await admin.query(`DROP DATABASE IF EXISTS "${scratchDatabase}" WITH (FORCE)`);
       } catch {
         console.error(`Could not drop scratch database ${scratchDatabase}; drop it by hand.`);
@@ -850,7 +846,6 @@ export async function run(root: string, argv: readonly string[]): Promise<number
 function readMigrationSql(root: string, migration: string): string {
   // Rehearsal harness: joins this repository's own migrations directory with a
   // folder name git reported from that same directory.
-  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
   return readFileSync(path.join(root, "prisma", "migrations", migration, "migration.sql"), "utf8");
 }
 

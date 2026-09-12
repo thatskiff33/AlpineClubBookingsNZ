@@ -1456,8 +1456,18 @@ export default function AdminMembershipTypesPage() {
       return;
     }
 
+    // `index` itself was never bounded — only `targetIndex` was. A negative
+    // `index` makes `splice` remove from the END, and an `index` past the end
+    // removes nothing and would then insert `undefined` into the order about
+    // to be persisted. Both refuse rather than reorder the wrong row (#2801).
+    if (index < 0) {
+      return;
+    }
     const next = [...sortedTypes];
     const [item] = next.splice(index, 1);
+    if (item === undefined) {
+      return;
+    }
     next.splice(targetIndex, 0, item);
     void reorder(next);
   }

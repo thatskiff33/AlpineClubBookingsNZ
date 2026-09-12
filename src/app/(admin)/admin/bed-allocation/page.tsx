@@ -1098,6 +1098,12 @@ export default function AdminBedAllocationPage() {
   function openRangeForGuest(group: BucketGuestGroup) {
     if (!canEditBookings || allocationLockReason) return;
     const stay = guestStayWindow(group.bookingId, group.bookingGuestId);
+    // The group's last stay night, read once. The line below already falls
+    // back to the board window when the group carries no dates at all; this
+    // gives the other end the same answer, instead of handing `undefined` to
+    // `requireCalendarDate` and getting an opaque throw out of opening a
+    // dialog (#2801).
+    const lastStayDate = group.stayDates[group.stayDates.length - 1];
     setRangeTarget({
       bookingGuestId: group.bookingGuestId,
       bookingId: group.bookingId,
@@ -1107,7 +1113,7 @@ export default function AdminBedAllocationPage() {
       fromDate: stay?.fromDate ?? group.stayDates[0] ?? fromDate,
       toDate:
         stay?.toDate ??
-        nightAfter(group.stayDates[group.stayDates.length - 1]),
+        (lastStayDate === undefined ? toDate : nightAfter(lastStayDate)),
     });
     setRangeDialogOpen(true);
   }

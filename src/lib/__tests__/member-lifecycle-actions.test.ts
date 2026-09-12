@@ -80,7 +80,7 @@ const mockPrisma = vi.hoisted(() => {
 });
 
 vi.mock("@prisma/client", async () => {
-  const actual = await vi.importActual<typeof import("@prisma/client")>("@prisma/client");
+  const actual = (await vi.importActual("@prisma/client")) as typeof import("@prisma/client");
 
   return {
     ...actual,

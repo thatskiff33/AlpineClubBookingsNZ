@@ -40,9 +40,10 @@ const ESCAPE_IN_TEXT = /\\(u\{[0-9a-fA-F]+\}|u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2}|[nt
 
 /**
  * Every extension that can carry JSX in this repository, not only `.tsx`.
- * Next serves `.js`/`.jsx` by default and `tsconfig` sets `allowJs`, so a `.jsx`
- * file renders the same garbled label a `.tsx` one would — and would have been
- * invisible to this guard. Kept in step with `scripts/lib/file-size-budget.ts`.
+ * Next's default `pageExtensions` serve `.js`/`.jsx` whatever `tsconfig` says
+ * (`allowJs` has been off since #2693), so a `.jsx` file renders the same
+ * garbled label a `.tsx` one would — and would have been invisible to this
+ * guard. Kept in step with `scripts/lib/file-size-budget.ts`.
  */
 const JSX_CAPABLE_EXTENSIONS = /\.(?:[cm]?[jt]sx?)$/;
 

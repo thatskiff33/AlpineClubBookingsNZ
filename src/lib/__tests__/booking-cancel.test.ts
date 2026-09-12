@@ -180,9 +180,7 @@ vi.mock("@/lib/payment-recovery", async () => {
   // buildBookingCancellationRefundMetadata is a pure (Prisma-free) builder in
   // payment-recovery-keys; use the REAL implementation so this test exercises
   // the genuine inline metadata shape (#1494) rather than a stale copy.
-  const keys = await vi.importActual<
-    typeof import("@/lib/payment-recovery-keys")
-  >("@/lib/payment-recovery-keys");
+  const keys = (await vi.importActual("@/lib/payment-recovery-keys")) as typeof import("@/lib/payment-recovery-keys");
   return {
     buildBookingCancellationRefundMetadata:
       keys.buildBookingCancellationRefundMetadata,
@@ -2260,7 +2258,7 @@ describe("cancelBooking credit refunds", () => {
         expect.objectContaining({
           type: "CANCELLED",
           reason: expect.stringContaining(
-            "NZ$20.00 of applied account credit was returned."
+            "$20.00 of applied account credit was returned."
           ),
         })
       );

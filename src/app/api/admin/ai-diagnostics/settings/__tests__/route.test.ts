@@ -26,7 +26,7 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 vi.mock("@/lib/ai-diagnostics-usage", async (importActual) => {
-  const actual = await importActual<typeof import("@/lib/ai-diagnostics-usage")>();
+  const actual = (await importActual()) as typeof import("@/lib/ai-diagnostics-usage");
   return { ...actual, getDiagnosticsUsageSummary: mocks.usageSummary };
 });
 

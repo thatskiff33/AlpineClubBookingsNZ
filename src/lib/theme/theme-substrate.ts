@@ -26,6 +26,7 @@
  */
 import Color from "colorjs.io";
 import { generateRadixColors, type Appearance } from "./generate-radix-colors";
+import { must } from "./index-guards";
 
 export interface ThemeSeeds {
   /** Primary accent (the club brand colour). */
@@ -90,14 +91,15 @@ export const oklch = (hex: string): [number, number, number] => {
 export const fromOklch = (L: number, C: number, H: number): string =>
   new Color("oklch", [L, C, isNaN(H) ? 0 : H]).to("srgb").toString({ format: "hex" });
 
+// A missing ("none") sRGB channel counts as 0 per CSS Color 4; a hex colour
+// never has one, so this only satisfies the colorjs >= 0.6 coordinate type.
+function relLumChannel(coord: number | null | undefined): number {
+  const c = Math.min(1, Math.max(0, coord ?? 0));
+  return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+}
 function relLum(hex: string): number {
-  const [r, g, b] = new Color(hex).to("srgb").coords.map((coord) => {
-    // A missing ("none") sRGB channel counts as 0 per CSS Color 4; a hex colour
-    // never has one, so this only satisfies the colorjs >= 0.6 coordinate type.
-    const c = Math.min(1, Math.max(0, coord ?? 0));
-    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
-  });
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  const [r, g, b] = new Color(hex).to("srgb").coords;
+  return 0.2126 * relLumChannel(r) + 0.7152 * relLumChannel(g) + 0.0722 * relLumChannel(b);
 }
 
 /** WCAG relative-luminance contrast ratio between two opaque sRGB hexes. */
@@ -212,8 +214,11 @@ export function deriveGrayAndBg(neutralSource: string): {
 function bandScale(hex12: string[], bandL: number[]): string[] {
   return hex12.map((hex, i) => {
     if (!PINS.bandSteps.includes(i)) return hex;
+    // `bandL` is the neutral ramp's per-step lightness, always built with one
+    // entry per step of `hex12` (both are always the generator's 12 steps).
+    const l = must(bandL[i], `bandScale: no band-source lightness at index ${i}`);
     const [, C, H] = oklch(hex);
-    return fromOklch(bandL[i], C, H);
+    return fromOklch(l, C, H);
   });
 }
 
@@ -278,7 +283,7 @@ export function buildKioskTheme(): { theme: BuiltTheme; lightNeutral12: string }
   const bandL = neutralDark.grayScale.map((h) => oklch(h)[0]);
   const lightBg = fromOklch(0.985, 0.004, oklch(graySeed)[2]);
   const neutralLight = generateRadixColors({ appearance: "light", accent: graySeed, gray: graySeed, background: lightBg });
-  const lightNeutral12 = neutralLight.grayScale[11];
+  const lightNeutral12 = must(neutralLight.grayScale[11], "buildKioskTheme: light neutral ramp has no step 12");
   const c = generateRadixColors({ appearance: "dark", accent, gray: graySeed, background });
   const scales: Record<string, BuiltScale> = {
     neutral: { hex: neutralDark.grayScale, hexRaw: neutralDark.grayScale, alpha: neutralDark.grayScaleAlpha, generatorContrast: null },
@@ -312,8 +317,9 @@ export interface A4Result {
 export function a4SolidForeground(fillHex: string, genPick: string, lightNeutral12: string): A4Result {
   const genRatio = contrast(genPick, fillHex);
   if (genRatio >= 4.5) return { pick: genPick, ratio: r2(genRatio), source: "generator", passAA: true };
+  const white: [string, A4Result["source"]] = ["#ffffff", "white"];
   const ladder: Array<[string, A4Result["source"]]> = [
-    ["#ffffff", "white"],
+    white,
     [lightNeutral12, "light-neutral-12"],
     ["#000000", "black"],
   ];
@@ -321,7 +327,9 @@ export function a4SolidForeground(fillHex: string, genPick: string, lightNeutral
     const cr = contrast(cand, fillHex);
     if (cr >= 4.5) return { pick: cand, ratio: r2(cr), source, passAA: true };
   }
-  let best = ladder[0][0];
+  // `white` is a literal 2-tuple, so its first element is never missing —
+  // this is the ladder's own known-safe starting best, walked below.
+  let best = white[0];
   let bestR = contrast(best, fillHex);
   for (const [cand] of ladder) {
     const cr = contrast(cand, fillHex);
@@ -339,10 +347,11 @@ export function a4SolidForeground(fillHex: string, genPick: string, lightNeutral
  * --input/--ring to neutral-10 uniformly (J1), it does NOT consume this pick.
  */
 export function a2ComputedPick(neutralHex: string[]): { step: number; idx: number; hex: string; min: number } | null {
-  const surfaces = [neutralHex[0], neutralHex[1], neutralHex[2]];
+  const surfaces = neutralHex.slice(0, 3);
   for (let idx = 7; idx <= 11; idx++) {
-    const min = Math.min(...surfaces.map((s) => contrast(neutralHex[idx], s)));
-    if (min >= 3) return { step: idx + 1, idx, hex: neutralHex[idx], min: r2(min) };
+    const hex = must(neutralHex[idx], `a2ComputedPick: no neutral step at index ${idx}`);
+    const min = Math.min(...surfaces.map((s) => contrast(hex, s)));
+    if (min >= 3) return { step: idx + 1, idx, hex, min: r2(min) };
   }
   return null;
 }

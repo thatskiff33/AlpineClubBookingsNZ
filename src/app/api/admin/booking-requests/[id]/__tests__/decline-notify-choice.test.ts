@@ -27,7 +27,7 @@ vi.mock("@/lib/booking-request", () => {
   class BookingRequestDeclineCommittedError extends BookingRequestError {
     holdReleasePending: boolean;
     holdReleaseStatusUnconfirmed: boolean;
-    cause: unknown;
+    override cause: unknown;
     constructor(input: {
       message: string;
       status: number;

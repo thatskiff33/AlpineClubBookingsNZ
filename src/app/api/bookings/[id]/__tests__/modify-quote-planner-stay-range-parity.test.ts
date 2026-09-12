@@ -109,7 +109,7 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 vi.mock("@/lib/capacity", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/capacity")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/capacity");
   return { ...actual, checkCapacityForGuestRanges: h.checkCapacityForGuestRanges };
 });
 // Both halves: the route reads conflicts, `prepareGuestPlan` asserts them.
@@ -128,7 +128,7 @@ vi.mock("@/lib/lodges", () => ({
 // Partial: the REAL `@/lib/booking-modify` barrel pulls the email templates in,
 // which read `FALLBACK_LODGE_CAPACITY` from this module at import time.
 vi.mock("@/lib/lodge-capacity", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/lodge-capacity")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/lodge-capacity");
   return { ...actual, getLodgeCapacity: h.getLodgeCapacity };
 });
 vi.mock("@/lib/membership-type-policy", () => ({
@@ -149,7 +149,7 @@ vi.mock("@/lib/membership-type-policy", () => ({
 // comparison. Only the settlement read (a Xero/payment surface irrelevant to
 // stay ranges) is stubbed.
 vi.mock("@/lib/booking-modify", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/booking-modify")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/booking-modify");
   return {
     ...actual,
     calculateModificationSettlementOptions: vi.fn().mockResolvedValue(null),
@@ -158,7 +158,7 @@ vi.mock("@/lib/booking-modify", async (importOriginal) => {
 // Partial: `normalizeBookingGuestInputs` stays REAL because the parity claim for
 // added guests rests on it preserving input order and length.
 vi.mock("@/lib/booking-guests", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/booking-guests")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/booking-guests");
   return {
     ...actual,
     resolveLinkedBookingMembersWithBoundary:
@@ -167,9 +167,7 @@ vi.mock("@/lib/booking-guests", async (importOriginal) => {
   };
 });
 vi.mock("@/lib/booking-member-guest-subscriptions", async (importOriginal) => {
-  const actual = await importOriginal<
-    typeof import("@/lib/booking-member-guest-subscriptions")
-  >();
+  const actual = (await importOriginal()) as typeof import("@/lib/booking-member-guest-subscriptions");
   return { ...actual, findUnpaidMemberGuestNames: h.findUnpaidMemberGuestNames };
 });
 vi.mock("@/lib/cancellation", () => ({
@@ -178,12 +176,12 @@ vi.mock("@/lib/cancellation", () => ({
 }));
 vi.mock("@/lib/change-fee", () => ({ calculateChangeFee: h.calculateChangeFee }));
 vi.mock("@/lib/module-settings", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/module-settings")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/module-settings");
   return { ...actual, loadEffectiveModuleFlags: h.loadModuleFlags };
 });
 vi.mock("@/lib/xero-token-store", () => ({ isXeroConnected: h.isXeroConnected }));
 vi.mock("@/lib/xero-organisation", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/xero-organisation")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/xero-organisation");
   return { ...actual, getXeroLockDates: h.getXeroLockDates };
 });
 vi.mock("@/lib/booking-policies", () => ({

@@ -35,9 +35,7 @@ vi.mock("@/lib/audit", () => ({
   createAuditLog: (...args: unknown[]) => mockCreateAuditLog(...args),
 }));
 vi.mock("@/lib/bed-allocation-range-assign", async () => {
-  const actual = await vi.importActual<
-    typeof import("@/lib/bed-allocation-range-assign")
-  >("@/lib/bed-allocation-range-assign");
+  const actual = (await vi.importActual("@/lib/bed-allocation-range-assign")) as typeof import("@/lib/bed-allocation-range-assign");
   return {
     ...actual,
     assignBedRange: (...args: unknown[]) => mockAssignBedRange(...args),

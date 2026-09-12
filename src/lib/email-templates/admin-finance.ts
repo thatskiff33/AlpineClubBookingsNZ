@@ -576,10 +576,10 @@ export function adminRefundRequestTemplate(data: {
       { label: "Member", value: escapeHtml(data.memberName) },
       { label: "Check-in", value: emailCalendarDay(data.checkIn) },
       { label: "Check-out", value: emailCalendarDay(data.checkOut) },
-      { label: "Paid", value: "$" + (data.paidAmountCents / 100).toFixed(2) },
-      { label: "Already Refunded", value: "$" + (data.refundedAmountCents / 100).toFixed(2) },
-      { label: "Remaining", value: "$" + (remaining / 100).toFixed(2) },
-      ...(data.requestedAmountCents ? [{ label: "Requested", value: "$" + (data.requestedAmountCents / 100).toFixed(2) }] : []),
+      { label: "Paid", value: formatCents(data.paidAmountCents) },
+      { label: "Already Refunded", value: formatCents(data.refundedAmountCents) },
+      { label: "Remaining", value: formatCents(remaining) },
+      ...(data.requestedAmountCents ? [{ label: "Requested", value: formatCents(data.requestedAmountCents) }] : []),
     ])}
     ${alertBox(escapeHtml(data.reason), "info")}
     ${button("Review Appeal", BASE_URL + "/admin/refund-requests")}

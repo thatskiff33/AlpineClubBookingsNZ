@@ -1278,22 +1278,27 @@ export default function KioskPage() {
                     <div className="space-y-2">
                       {/* Group by chore template */}
                       {Object.values(
-                        group.assignments.reduce(
-                          (acc, a) => {
-                            if (!acc[a.choreTemplateId]) {
-                              acc[a.choreTemplateId] = {
-                                name: a.choreTemplateName,
-                                assignments: [],
-                              };
-                            }
-                            acc[a.choreTemplateId].assignments.push(a);
-                            return acc;
-                          },
-                          {} as Record<
+                        group.assignments.reduce<
+                          Record<
                             string,
                             { name: string; assignments: Assignment[] }
                           >
-                        )
+                        >((acc, a) => {
+                          // ONE read of the chore's bucket, then either grow
+                          // it or start it — rather than a presence test
+                          // followed by a second lookup the compiler cannot
+                          // tie to it (#2801). Also drops the seed cast.
+                          const chore = acc[a.choreTemplateId];
+                          if (chore) {
+                            chore.assignments.push(a);
+                          } else {
+                            acc[a.choreTemplateId] = {
+                              name: a.choreTemplateName,
+                              assignments: [a],
+                            };
+                          }
+                          return acc;
+                        }, {})
                       ).map((chore) => (
                         <div
                           key={chore.name}
