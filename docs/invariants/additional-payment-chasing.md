@@ -80,6 +80,15 @@ admin surface showed one. These rules now hold:
   after mount — without the key a changed secret rebinds nothing and the mounted
   form goes on confirming the intent it was born with.
 
+  **"Cancelled at mint" is BEST-EFFORT, and the queued operation is the durable
+  guarantee.** The immediate attempt cannot run when the recovery row is not
+  claimable — most often because a FIRST cancel attempt failed and left it in a
+  five-minute backoff, which is the window the live incident was measured in. The
+  retired intent then stays confirmable until the cron reaches it, and a capture
+  landing in that window is caught by the compensating refund below rather than
+  prevented. Every declined immediate attempt is logged with the intent it left
+  live, so such a charge can be explained rather than investigated from scratch.
+
   When a capture does land on a retired intent anyway, the refund that follows is
   no longer silent: it writes a `booking.payment.superseded_payment_refunded`
   audit row and a REFUNDED `BookingEvent` (discriminated so the cancellation

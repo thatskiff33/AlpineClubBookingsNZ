@@ -358,9 +358,29 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   the club holding more than the price, which is the expected shape after a
   policy-retained or credit-settled reduction. Nothing repairs either
   automatically — the owner's 8 Sep 2026 decision, for a population of two rows
-  already handled by hand. `src/lib/__tests__/booking-ledger-census.test.ts` is
-  the CI half: it replays edits through the production sizing function and fails
-  on any positive residual, naming this id.
+  already handled by hand.
+
+  **An Internet Banking price increase is an EXPECTED positive**, because it is
+  billed on a supplementary Xero invoice and raises no ADDITIONAL
+  `PaymentTransaction` for the ask term to see. Invoicing one by hand would bill
+  the member twice. A term reading the Xero outbox was considered and rejected:
+  it would make this identity depend on an external queue's state, where
+  "queued", "failed" and "sent" are three different answers to "is the club
+  asking for this?" that only a person can weigh. The operator guide
+  ([`MAINTENANCE.md`](../MAINTENANCE.md)) says so at the point of use.
+
+  **WHAT THE CI HALF GUARDS, EXACTLY** (`src/lib/__tests__/booking-ledger-census.test.ts`).
+  It is two guards, and conflating them overstates both. The ARITHMETIC guard
+  replays booking edits through the production sizing function and fails on any
+  positive residual, naming this id — it proves the sizing RULE, reads no fixture
+  and no seed data, and is blind by construction to any door that never calls
+  that function. One such door was open when it was written. The CALL-SITE census
+  is the half that can see a door: it scans the source tree for every file that
+  mints an ADDITIONAL PaymentIntent, pins the module that sizes each one, and
+  fails on a new door or on an exemption that has quietly stopped being true.
+  Neither reads production data; "fails CI if any booking's arithmetic does not
+  balance" would be a claim about rows, and rows are what the OPERATOR census
+  above is for.
 
 ## INV-PAY-048
 

@@ -68,6 +68,7 @@
  * it.
  */
 import { isAdditionalAmountUncollected } from "@/lib/additional-payment-chase";
+import { CAPTURED_PAYMENT_STATUS_LIST } from "@/lib/booking-payment-state";
 
 /** The two `Payment` columns that record the one live ask. */
 export interface AdditionalAskPayment {
@@ -308,11 +309,11 @@ export const BOOKING_LEDGER_CENSUS_EXCLUDED_BOOKING_STATUSES = [
   "BUMPED",
 ] as const;
 
-export const BOOKING_LEDGER_CENSUS_CAPTURED_PAYMENT_STATUSES = [
-  "SUCCEEDED",
-  "PARTIALLY_REFUNDED",
-  "REFUNDED",
-] as const;
+// #3340 fix round (`INV-SSOT-001`): re-exported, never restated. A third copy of
+// this list was added HERE by the change that exists to stop facts having two
+// homes, which is the finding. `booking-payment-state.ts` is the one home.
+export const BOOKING_LEDGER_CENSUS_CAPTURED_PAYMENT_STATUSES =
+  CAPTURED_PAYMENT_STATUS_LIST;
 
 /**
  * The whole operator-run census as a single read-only SELECT: every live booking

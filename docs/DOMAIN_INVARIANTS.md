@@ -539,7 +539,7 @@ Prefix `INV-ADDPAY`.
 | ID | Covers |
 | --- | --- |
 | `INV-ADDPAY-001` | Who is owed an additional payment, tested on booking status and amount together |
-| `INV-ADDPAY-023` | A retired obligation is never collectable: every member surface excludes CANCELLED and BUMPED, and a superseded intent is killed at mint |
+| `INV-ADDPAY-023` | A retired obligation is never collectable: every member surface excludes CANCELLED and BUMPED, and a superseded intent is cancelled at mint, best-effort, with a queued recovery as the guarantee |
 | `INV-ADDPAY-024` | At most two reminders per obligation, and the chase stops at check-out |
 | `INV-ADDPAY-025` | Nothing raised before the derived cron cutover is chased; a read failure sends nothing |
 | `INV-ADDPAY-026` | Guarded stamps claim before each send, read and fenced relative to the current episode |

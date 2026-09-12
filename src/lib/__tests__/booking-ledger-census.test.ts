@@ -4,7 +4,12 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  BOOKING_LEDGER_CENSUS_CAPTURED_PAYMENT_STATUSES,
+  BOOKING_LEDGER_CENSUS_EXCLUDED_BOOKING_STATUSES,
+  BOOKING_LEDGER_IDENTITY_TERMS,
+  bookingLedgerCensusSql,
   bookingLedgerResidualCents,
+  bookingLedgerResidualSql,
   bookingLedgerVerdict,
   describeBookingLedgerResidual,
   sizeAdditionalAskCents,
@@ -433,5 +438,88 @@ describe("every ask-minting door routes through the sizing rule (INV-PAY-047)", 
       redefined,
       `INV-SSOT-001: ${SIZING_FUNCTION} is defined outside its one home.`,
     ).toEqual([]);
+  });
+});
+
+/*
+  #3340 fix round — THE SQL TWIN IS PINNED.
+
+  `docs/MAINTENANCE.md` claimed the typed census and the operator SQL "cannot say
+  different things" because both are folded from `BOOKING_LEDGER_IDENTITY_TERMS`.
+  That is true of the term LIST — add a term and both grow — and it was false of
+  each term's BODY, which is a `ts` closure and an independently written `sql`
+  string with nothing holding them together. Nothing asserted anything about
+  either SQL builder at all.
+
+  What can honestly be checked offline is pinned here: the shape of the folded
+  expression, one operand per term with the right sign, the filters coming from
+  the same two exported lists the typed census uses, and the exact body of the
+  one term whose two forms are genuinely a translation rather than a field read —
+  the twin of `isAdditionalAmountUncollected`. What CANNOT be checked here is
+  that PostgreSQL evaluates it to the same numbers; that needs a database, and
+  the operator script does not depend on it either way, because the script reads
+  TYPED through Prisma and only `--sql` prints this statement.
+*/
+/** A ledger that balances, for varying one column at a time. */
+const BALANCED_ROW: BookingLedgerIdentityRow = {
+  finalPriceCents: 13000,
+  changeFeeCents: 0,
+  amountCents: 13000,
+  refundedAmountCents: 0,
+  creditAppliedCents: 0,
+  additionalAmountCents: 0,
+  additionalPaymentStatus: null,
+};
+
+describe("the operator SQL is folded from the same terms (INV-PAY-047, INV-SSOT-001)", () => {
+  it("emits one signed operand per term, in order", () => {
+    const sql = bookingLedgerResidualSql();
+    for (const term of BOOKING_LEDGER_IDENTITY_TERMS) {
+      const operand = term.sql.startsWith("CASE") ? `(${term.sql})` : term.sql;
+      expect(
+        sql,
+        `INV-SSOT-001: the residual SQL no longer carries the term "${term.label}".`,
+      ).toContain(operand);
+    }
+    // The first term is positive and unprefixed; every other term carries its
+    // own sign, so the operator count is one less than the term count.
+    const signs = sql.match(/(^|\s)[+-]\s/g) ?? [];
+    expect(signs).toHaveLength(BOOKING_LEDGER_IDENTITY_TERMS.length - 1);
+  });
+
+  it("pins the SQL twin of isAdditionalAmountUncollected", () => {
+    const askTerm = BOOKING_LEDGER_IDENTITY_TERMS.find(
+      (term) => term.label === "the uncollected ask",
+    );
+    expect(askTerm).toBeDefined();
+    expect(
+      askTerm?.sql,
+      "INV-PAY-047: the SQL twin of `isAdditionalAmountUncollected` changed. Both " +
+        "halves are load-bearing: a positive amount, AND a status that is anything " +
+        "but SUCCEEDED. `IS DISTINCT FROM` rather than `<>` because a legacy row's " +
+        "NULL status counts as uncollected and `<>` would drop it.",
+    ).toBe(
+      `CASE WHEN p."additionalAmountCents" > 0 AND p."additionalPaymentStatus" IS DISTINCT FROM 'SUCCEEDED' THEN p."additionalAmountCents" ELSE 0 END`,
+    );
+    // …and the TypeScript half still answers the same two questions, so the pin
+    // above is a translation of something live rather than a frozen literal.
+    expect(askTerm?.ts({ ...BALANCED_ROW, additionalAmountCents: 7000, additionalPaymentStatus: "PENDING" })).toBe(7000);
+    expect(askTerm?.ts({ ...BALANCED_ROW, additionalAmountCents: 7000, additionalPaymentStatus: null })).toBe(7000);
+    expect(askTerm?.ts({ ...BALANCED_ROW, additionalAmountCents: 7000, additionalPaymentStatus: "SUCCEEDED" })).toBe(0);
+    expect(askTerm?.ts({ ...BALANCED_ROW, additionalAmountCents: 0, additionalPaymentStatus: "PENDING" })).toBe(0);
+  });
+
+  it("takes its population filters from the same lists the typed census uses", () => {
+    const sql = bookingLedgerCensusSql();
+    for (const status of BOOKING_LEDGER_CENSUS_EXCLUDED_BOOKING_STATUSES) {
+      expect(sql).toContain(`'${status}'`);
+    }
+    for (const status of BOOKING_LEDGER_CENSUS_CAPTURED_PAYMENT_STATUSES) {
+      expect(sql).toContain(`'${status}'`);
+    }
+    expect(sql).toContain('b."deletedAt" IS NULL');
+    // Report only: no write verb may ever appear in it.
+    expect(sql).toMatch(/^SELECT\b/);
+    expect(sql).not.toMatch(/\b(INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE)\b/i);
   });
 });
