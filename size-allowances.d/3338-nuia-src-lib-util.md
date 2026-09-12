@@ -114,7 +114,7 @@ reason: the largest of this tranche's guards -- one array of
   its own.
 
 file: src/lib/promo.ts
-lines: 1824
+lines: 1899
 reason: one call-site type predicate proving what filterGuestsByIndexes'
   `.filter(Boolean)` already guarantees at runtime, fixed here because the
   shared helper in promo-guest-scope.ts is outside this tranche.

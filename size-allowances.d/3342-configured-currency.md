@@ -4,8 +4,10 @@ One already-oversized component grows by exactly one line, for the same reason
 #3326 recorded for four files: a hard-coded currency folded into the club's
 configuration. Nothing else in the file moved.
 
-file: src/components/admin/booking-requests/public-booking-requests-panel.tsx
-lines: 2240
-reason: the "Total (NZD)" price label now renders the configured currency
-  code, `Total ({APP_CURRENCY})`. +1 line (the import); the label edit itself
-  nets to the same count.
+## The panel's length is recorded in #3350's fragment, not here
+
+`public-booking-requests-panel.tsx` grew in two epic children at once: this one,
+and #3350's type-safety stage. One file, one allowance — so the entry lives in
+`3350-nuia-src-components.md`, which states both causes and carries the length
+measured off the merged tree. Nothing about this change's own reasoning moves
+with it; only the number, so that two entries cannot describe half a file each.

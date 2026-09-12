@@ -48,14 +48,14 @@ reason: each existing strand now carries its own sold-price map instead of a
   stated in this file already.
 
 file: src/lib/member-merge.ts
-lines: 2816
+lines: 2875
 reason: ten inline `as unknown as Record<string, …>` delegate lookups collapse
   into one `mergeDelegate` with the reasoning for its refusal stated once
   (`INV-SSOT`); four `Promise.all` result arrays now carry their spec. Net of
   the ten deleted inline casts this is a small addition for a real consolidation.
 
 file: src/lib/booking-modify-plan.ts
-lines: 2988
+lines: 3012
 reason: three write loops iterate `entries()`, and the two places a position
   then indexes the price breakdown refuse rather than default. The refusal
   belongs beside the #3031 comment block that already states the rule for the
@@ -81,12 +81,12 @@ reason: twelve lines. The retry schedule's clamped step carries NO numeric
   schedule's length is asserted at module load, so an empty one cannot ship.
 
 file: src/lib/booking-batch-modification-service.ts
-lines: 2451
+lines: 2494
 reason: five lines. Each guest carries its own echoed nights, so the rate vector
   and its dates cannot drift from the guest they describe.
 
 file: src/lib/booking-date-modification-service.ts
-lines: 2180
+lines: 2213
 reason: the guest's priced row is read once at the top of the write loop and
   reused by the four places that had each indexed the breakdown again, and the
   refusal sits ABOVE the parked condition rather than inside it. The parked
@@ -108,7 +108,7 @@ reason: two lines. Both hold loads read both ends of the changed nights, and the
   destination's sole occupant is destructured rather than indexed twice.
 
 file: src/lib/booking-create.ts
-lines: 1990
+lines: 2038
 reason: eleven lines. Promo evaluation reads each guest's priced row once and
   refuses an unpriced guest, which is #3167's rule stated where the money leaves
   the breakdown.
@@ -120,7 +120,7 @@ reason: sixteen lines across the party window, the frozen guest's stay range and
   there.
 
 file: src/lib/booking-guest-removal-service.ts
-lines: 1355
+lines: 1380
 reason: twenty lines. The reprice and the per-guest write each read that guest's
   breakdown row once and refuse when it is absent, under #3031.
 
@@ -151,7 +151,7 @@ reason: five lines. The refusal message reads its first block where the no-block
   from a value the function holds.
 
 file: src/lib/waitlist.ts
-lines: 1441
+lines: 1463
 reason: eighteen lines. The offer reprice pairs each booking guest with its
   priced row and its night rows in one pass, keeping the "built first, before
   any write" ordering this function's own comment says is load-bearing.

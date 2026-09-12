@@ -41,7 +41,7 @@ reason: one line net. groupTrailAreas was rewritten from an offset-indexing
   shorter than the original.
 
 file: src/components/admin/booking-requests/public-booking-requests-panel.tsx
-lines: 2255
+lines: 2256
 reason: sixteen lines net, and thirteen of them are comment. The tranche
   ESCALATED this file rather than fixing it, because one of its three
   diagnostics sits where an officer's typed dollar string becomes a quote's
@@ -55,4 +55,9 @@ reason: sixteen lines net, and thirteen of them are comment. The tranche
   anywhere but at the accessor, because the accessor is what the next person
   will "simplify". A third lookup was DELETED rather than guarded once a
   mutation probe proved it dead, so the file is shorter than a guard-everything
-  fix would have left it.
+  fix would have left it. **This entry is also the single home for #3342's growth
+  of the same file**, which rendered its Internet Banking amounts in the
+  configured currency rather than a hard-coded `NZ$`: two epic children grew this
+  panel, one file takes one allowance, and 2256 is the length measured off the
+  tree that holds both. #3342's own fragment carries its reasoning and points
+  here for the number.
