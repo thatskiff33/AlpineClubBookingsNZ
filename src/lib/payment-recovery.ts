@@ -1059,16 +1059,12 @@ async function enqueueSupersededPaymentRefundRecovery({
  * (completeCanceledSupersededPaymentIntentRecovery and the succeeded-intent
  * handoff) legitimately close PENDING/FAILED rows whose work verifiably
  * finished, so fencing to PROCESSING-only would break them.
- */
-/**
- * Close a recovery operation, and say whether THIS call is the one that closed
- * it.
  *
- * The `updateMany` is already fenced on `status != SUCCEEDED`, so exactly one
- * concurrent or repeated attempt can match. Returning that verdict lets a caller
- * hang a once-only epilogue off the same claim rather than off a re-derived
- * condition that a partially-applied replay can make true twice (#3340 fix
- * round).
+ * IT RETURNS WHETHER THIS CALL IS THE ONE THAT CLOSED IT (#3340 fix round).
+ * Because the fence lets exactly one concurrent or repeated attempt match, that
+ * verdict is a claim a caller can hang a once-only epilogue off - rather than
+ * off a re-derived condition that a partially-applied replay can make true
+ * twice.
  */
 async function completePaymentRecoveryOperation(
   operationId: string,

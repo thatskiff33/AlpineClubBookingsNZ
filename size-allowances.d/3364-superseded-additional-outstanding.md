@@ -5,8 +5,9 @@ and in every case the split that would avoid the growth is worse than the growth
 
 ## `src/lib/payment-recovery.ts`
 
-Two hundred lines: `runPaymentRecoveryOperationNow`, the call that makes a
-supersede refund visible, and the fix round's three corrections to this file.
+A hundred and ninety-six lines: `runPaymentRecoveryOperationNow`, the call that
+makes a supersede refund visible, and the fix round's three corrections to this
+file.
 
 The runner exists because a superseded `PaymentIntent` used to stay confirmable
 until the five-minute recovery cron reached it — measured at 4 minutes 5 seconds
@@ -48,8 +49,9 @@ silently. Every one of those lines is beside the processor whose behaviour it
 changes; none of it is a unit anything else could import.
 
 file: src/lib/payment-recovery.ts
-lines: 3127
-reason: two hundred lines on a 2927-line module that is not restructured here.
+lines: 3123
+reason: a hundred and ninety-six lines on a 2927-line module that is not
+  restructured here.
   Seventy are `runPaymentRecoveryOperationNow`, which lets the ask-minting path
   cancel a superseded PaymentIntent synchronously instead of leaving it
   confirmable for up to five minutes; it has to live beside the processor it
