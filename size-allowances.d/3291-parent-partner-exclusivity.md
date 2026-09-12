@@ -30,7 +30,7 @@ reason: the mapping preview already owns every blocker attached to a selected
   so preview-token hashing and operator feedback cannot drift.
 
 file: src/lib/member-merge.ts
-lines: 2898
+lines: 2951
 reason: merge owns its ordered multi-tier transaction and refusal audit; its
   complete prospective pair-row set and under-lock topology comparison must stay
   visible beside the relation moves they fence.
