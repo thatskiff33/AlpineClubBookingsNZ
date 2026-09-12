@@ -21,6 +21,7 @@ const mockValidateAndCalculatePromoDiscount = vi.fn(async () => {
   const discount = mockCalculatePromoDiscountForGuestRates();
   return {
     discount: {
+      adjustmentTargets: [],
       discountCents: discount?.discountCents ?? 0,
       priceAdjustmentCents:
         discount?.priceAdjustmentCents ?? -(discount?.discountCents ?? 0),
@@ -461,7 +462,15 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
       delete: vi.fn().mockResolvedValue(undefined),
     },
     // Per-night stay rows (issue #713) re-synced on every guest write.
+    // #3276: the night adjustment build-up writer reads and rewrites these.
+    bookingGuestNightAdjustment: {
+      deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+      createMany: vi.fn().mockResolvedValue({ count: 0 }),
+      findMany: vi.fn().mockResolvedValue([]),
+    },
     bookingGuestNight: {
+      findMany: vi.fn().mockResolvedValue([]),
+      updateMany: vi.fn().mockResolvedValue({ count: 0 }),
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
       createMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
@@ -491,6 +500,7 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
       findFirst: vi.fn().mockResolvedValue(null),
     },
     promoRedemption: {
+      findUnique: vi.fn().mockResolvedValue(null),
       delete: vi.fn().mockResolvedValue(undefined),
       update: vi.fn().mockResolvedValue(undefined),
     },

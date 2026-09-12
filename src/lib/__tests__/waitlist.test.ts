@@ -128,7 +128,16 @@ const mockTx = {
   },
   // #3031: the offer-time reprice now writes the per-night rows it prices, so
   // the rows and the guest total agree afterwards (INV-MOD-028).
+  // #3276: the night adjustment build-up writer reads and rewrites these.
+  bookingGuestNightAdjustment: {
+    deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+    createMany: vi.fn().mockResolvedValue({ count: 0 }),
+    findMany: vi.fn().mockResolvedValue([]),
+  },
+  promoRedemption: { findUnique: vi.fn().mockResolvedValue(null) },
   bookingGuestNight: {
+    findMany: vi.fn().mockResolvedValue([]),
+    updateMany: vi.fn().mockResolvedValue({ count: 0 }),
     deleteMany: vi.fn(),
     createMany: vi.fn(),
   },
@@ -329,6 +338,9 @@ beforeEach(() => {
     newDiscountCents: 0,
     newPromoAdjustmentCents: 0,
     promoRemoved: false,
+    // #3276: no promotion, so nothing to attribute and no engine result.
+    adjustmentTargets: [],
+    discount: null,
   });
 });
 
@@ -926,6 +938,8 @@ describe("processWaitlistForDates", () => {
       newDiscountCents: 0,
       newPromoAdjustmentCents: 0,
       promoRemoved: true,
+      adjustmentTargets: [],
+      discount: null,
     });
 
     await processWaitlistForDates({
@@ -944,6 +958,97 @@ describe("processWaitlistForDates", () => {
         }),
       })
     );
+  });
+
+  it("a build-up recorder refusal fails the sweep instead of degrading to the snapshot, because the recorder sits outside the degrade block (#3276, INV-MONEY-029)", async () => {
+    const { processWaitlistForDates } = await import("@/lib/waitlist");
+    const { checkCapacityForGuestRanges: mockCheckCapacity } = await import("@/lib/capacity");
+
+    const candidate = {
+      id: "booking1",
+      memberId: "m1",
+      checkIn: new Date("2026-07-01"),
+      checkOut: new Date("2026-07-03"),
+      createdAt: new Date("2026-04-01"),
+      totalPriceCents: 20000,
+      finalPriceCents: 20000,
+      guests: [{ id: "g1", ageTier: "ADULT", isMember: true, memberId: "m1", nights: [] }],
+      member: { id: "m1", email: "test@test.com", firstName: "John", lastName: "Doe" },
+      promoRedemption: null,
+    };
+    mockTxBookingFindMany.mockResolvedValue([candidate]);
+    (mockCheckCapacity as ReturnType<typeof vi.fn>).mockResolvedValue({ available: true });
+    mockTx.booking.update.mockResolvedValue({});
+    mockTx.booking.count.mockResolvedValue(0);
+    mockPriceWithPolicy.mockResolvedValue({
+      totalPriceCents: 24000,
+      guests: [{ priceCents: 24000, perNightCents: [12000, 12000], nightDates: [] }],
+    });
+    // The wiring defect the recorder exists to catch: a stored redemption whose
+    // recorded total nothing in the engine's (empty) build-up accounts for.
+    mockTx.promoRedemption.findUnique.mockResolvedValueOnce({
+      id: "pr-stale",
+      promoCodeId: "pc1",
+      priceAdjustmentCents: -500,
+      allocations: [{ memberId: "m1", priceAdjustmentCents: -500 }],
+    });
+
+    const logger = (await import("@/lib/logger")).default;
+    const { sendWaitlistOfferEmail } = await import("@/lib/email");
+    const result = await processWaitlistForDates({
+      checkIn: new Date("2026-07-01"),
+      checkOut: new Date("2026-07-05"),
+    });
+
+    // The reprice itself completed inside its degrade block; the recorder that
+    // follows sits OUTSIDE it, so its refusal is not swallowed into "offer at the
+    // stored snapshot": it fails the sweep's transaction, no offer issues for
+    // these dates, and the outer catch logs the invariant by name. That is the
+    // documented contract (docs/guides/waitlist.md -> Troubleshooting).
+    expect(result).toEqual({ offeredBookingId: null });
+    expect(sendWaitlistOfferEmail).not.toHaveBeenCalled();
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        err: expect.objectContaining({ message: expect.stringMatching(/INV-MONEY-029/) }),
+      }),
+      "Failed to process waitlist for dates",
+    );
+    // Refuse-before-mutate: the recorder wrote nothing before it refused.
+    expect(mockTx.bookingGuestNightAdjustment.deleteMany).not.toHaveBeenCalled();
+    expect(mockTx.bookingGuestNightAdjustment.createMany).not.toHaveBeenCalled();
+  });
+
+  it("when the pricing itself fails, the recorder is never reached and the stored snapshot is offered (#3276)", async () => {
+    const { processWaitlistForDates } = await import("@/lib/waitlist");
+    const { checkCapacityForGuestRanges: mockCheckCapacity } = await import("@/lib/capacity");
+
+    const candidate = {
+      id: "booking1",
+      memberId: "m1",
+      checkIn: new Date("2026-07-01"),
+      checkOut: new Date("2026-07-03"),
+      createdAt: new Date("2026-04-01"),
+      totalPriceCents: 20000,
+      finalPriceCents: 20000,
+      guests: [{ id: "g1", ageTier: "ADULT", isMember: true, memberId: "m1", nights: [] }],
+      member: { id: "m1", email: "test@test.com", firstName: "John", lastName: "Doe" },
+      promoRedemption: null,
+    };
+    mockTxBookingFindMany.mockResolvedValue([candidate]);
+    (mockCheckCapacity as ReturnType<typeof vi.fn>).mockResolvedValue({ available: true });
+    mockTx.booking.update.mockResolvedValue({});
+    mockTx.booking.count.mockResolvedValue(0);
+    mockPriceWithPolicy.mockRejectedValue(new Error("no season rate for tier"));
+
+    const result = await processWaitlistForDates({
+      checkIn: new Date("2026-07-01"),
+      checkOut: new Date("2026-07-05"),
+    });
+
+    expect(result.offeredBookingId).toBe("booking1");
+    expect(mockTx.promoRedemption.findUnique).not.toHaveBeenCalled();
+    expect(mockTx.bookingGuestNightAdjustment.deleteMany).not.toHaveBeenCalled();
+    expect(mockTx.bookingGuestNightAdjustment.createMany).not.toHaveBeenCalled();
   });
 
   it("falls back to the stored snapshot when repricing fails (#1035)", async () => {

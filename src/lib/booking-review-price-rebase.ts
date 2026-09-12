@@ -6,6 +6,7 @@ import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 import { recalculateBookingPromo } from "@/lib/booking-guest-removal-service";
 import type { CalendarDate } from "@/lib/club-time";
 import { isNonNegativeIntegerCents } from "@/lib/edit-financial-review-context";
+import { recordBookingNightAdjustments } from "@/lib/night-adjustment-write";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
 
 /**
@@ -443,6 +444,17 @@ export async function rebaseBookingPriceFromStrands({
       firstNight: booking.checkIn,
     })),
     todayAtClub,
+  });
+  // #3276: the engine just re-decided the promotion over the strands' STORED
+  // nights, so what it took off each of them is recorded here — the night rows
+  // themselves were written by the repair before this ran, and nothing rewrites
+  // them after it. The officer's prices stay OFFICER_PRICED; the build-up on
+  // top of them is the engine's own figure and is RECORDED.
+  await recordBookingNightAdjustments(store, {
+    bookingId,
+    guestIds: strandNights.map((strand) => strand.bookingGuestId),
+    targets: promo.adjustmentTargets,
+    writer: "the review price re-base",
   });
 
   const newFinalPriceCents = bookingFinalPriceCents({
