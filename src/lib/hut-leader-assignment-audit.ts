@@ -60,15 +60,49 @@ const SUMMARIES: Record<HutLeaderAssignmentAuditEvent, string> = {
   deleted: "Hut leader assignment deleted",
 };
 
-const DETAILS: Record<HutLeaderAssignmentAuditEvent, (heldBed: boolean) => string> = {
-  created: (heldBed) =>
-    heldBed
+/**
+ * Which way an edit moved capacity, from the bed on each side of it.
+ *
+ * The `updated` sentence used to be one string saying a bed "was released",
+ * whichever way the edit went. That is backwards on the path #2698 cares about
+ * most: the inline bed picker on a role-only assignment TAKES a bed out of the
+ * bookable pool, and it is the write the amendment accept runs through — so the
+ * PR's most consequential capacity event was recorded as its own opposite in
+ * the trail an operator reconstructs capacity from. Both bed ids are already in
+ * scope at both call sites, so nothing has to be read to say it correctly.
+ */
+type HutLeaderAuditBeds = {
+  /** The bed held AFTER this write; null for a role-only assignment. */
+  bedId: string | null;
+  /** The bed held BEFORE it; null on a create, and on an edit that had none. */
+  previousBedId: string | null;
+};
+
+const DETAILS: Record<
+  HutLeaderAssignmentAuditEvent,
+  (beds: HutLeaderAuditBeds) => string
+> = {
+  created: ({ bedId }) =>
+    bedId
       ? "An officer created a hut-leader assignment holding a bed for the custodian; that bed is out of the bookable pool for the covered nights."
       : "An officer created a hut-leader assignment with no bed held (a role only, with no capacity effect).",
-  updated: () =>
-    "An officer changed a hut-leader assignment's dates, lodge or held bed. A bed that was released is bookable again from the moment this committed.",
-  deleted: (heldBed) =>
-    heldBed
+  updated: ({ bedId, previousBedId }) => {
+    if (bedId && !previousBedId) {
+      return "An officer changed a hut-leader assignment and held a bed for the custodian that it was not holding before; that bed is out of the bookable pool for the covered nights, and it leaves the represented bed set of any booking holding the whole lodge on those nights, from the moment this committed.";
+    }
+    if (!bedId && previousBedId) {
+      return "An officer changed a hut-leader assignment and released the bed it was holding; that bed is bookable again, and any booking holding the whole lodge on those nights covers it again from the moment this committed.";
+    }
+    if (bedId && previousBedId && bedId !== previousBedId) {
+      return "An officer moved the bed a hut-leader assignment holds. The bed it left is bookable again and the bed it took is out of the bookable pool for the covered nights, both from the moment this committed.";
+    }
+    if (bedId) {
+      return "An officer changed a hut-leader assignment's dates or lodge while it went on holding the same bed; the covered dates recorded here and the previous ones say which bed-nights moved into and out of the bookable pool.";
+    }
+    return "An officer changed a hut-leader assignment's dates or lodge. It held no bed before or after, so nothing moved into or out of the bookable pool.";
+  },
+  deleted: ({ bedId, previousBedId }) =>
+    (bedId ?? previousBedId)
       ? "An officer deleted a hut-leader assignment that was holding a bed; that bed is bookable again, and any booking holding the whole lodge on those nights covers it again from the moment this committed."
       : "An officer deleted a hut-leader assignment that held no bed (a role only, with no capacity effect).",
 };
@@ -109,7 +143,11 @@ export async function recordHutLeaderAssignmentAudit(
 ): Promise<void> {
   // A bed on either side of the write makes this a capacity event rather than a
   // roster note, including the edit that RELEASED one.
-  const heldBed = Boolean(input.bedId ?? input.previous?.bedId);
+  const beds = {
+    bedId: input.bedId,
+    previousBedId: input.previous?.bedId ?? null,
+  };
+  const heldBed = Boolean(beds.bedId ?? beds.previousBedId);
   await createAuditLog(
     {
       action: `lodge.hut-leader-assignment.${input.event}`,
@@ -123,7 +161,7 @@ export async function recordHutLeaderAssignmentAudit(
       severity: heldBed ? "important" : "info",
       outcome: "success",
       summary: SUMMARIES[input.event],
-      details: DETAILS[input.event](heldBed),
+      details: DETAILS[input.event](beds),
       metadata: {
         lodgeId: input.lodgeId,
         startDate: formatDateOnly(input.startDate),
