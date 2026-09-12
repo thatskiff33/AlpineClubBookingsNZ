@@ -29,7 +29,7 @@ The recurring shapes, each costing a line or two of code and a sentence:
   amount — a money path has no default that is not invented money.
 
 file: src/app/api/bookings/[id]/guests/route.ts
-lines: 1488
+lines: 1525
 reason: the largest entry, and the only structural one. The created
   `BookingGuest`, the normalized input it came from and the breakdown row that
   priced it are now carried together through one pass, so the promo-allocation

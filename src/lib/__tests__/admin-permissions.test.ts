@@ -418,13 +418,25 @@ describe("booking detail write-surface gates (issue #1313 + option A2)", () => {
 // ---------------------------------------------------------------------------
 describe("outstanding additional payment panel visibility (#2350)", () => {
   // #2958: both render sites live in the page's payment-cards section.
+  //
+  // CODE ONLY, through the canonical stripper, for the same reason the
+  // bed-allocation describe below gives: the assertions here match a chain of
+  // clauses across a bounded window, and a comment sitting between two of them
+  // spends that window without changing any code. One did — a four-line note
+  // explaining #3340's predicate pushed the two ends more than 200 characters
+  // apart and reddened this test while the rule it pins was perfectly intact.
+  // Stripping also makes the negative assertion below honest: it forbids a
+  // RESTATEMENT of the rule, and prose quoting the old two-clause form is not
+  // one.
   const bookingPageSource = () =>
-    fs.readFileSync(
-      path.join(
-        process.cwd(),
-        "src/app/(authenticated)/bookings/[id]/_components/booking-payment-cards.tsx",
+    stripComments(
+      fs.readFileSync(
+        path.join(
+          process.cwd(),
+          "src/app/(authenticated)/bookings/[id]/_components/booking-payment-cards.tsx",
+        ),
+        "utf8",
       ),
-      "utf8",
     );
 
   const canSeePanel = (accessRoles: AppAccessRole[], isBookingOwner = false) =>
@@ -490,12 +502,25 @@ describe("outstanding additional payment panel visibility (#2350)", () => {
     offering a cancelled booking's owner a payment form (see
     src/components/__tests__/additional-payment-card-gate.test.ts). The owner
     gate itself is unchanged, which is what this pin is for.
+
+    #3340 replaced the trailing "is there an uncollected ask" pair with a CALL to
+    `isAdditionalAmountUncollected`, the one predicate that answers it - a
+    behaviour-identical refactor (`payment.additionalAmountCents > 0 &&
+    payment.additionalPaymentStatus !== "SUCCEEDED"`, which is what that function
+    is). This pin follows it rather than holding the restated form in place: what
+    it is for is the OWNER half of the condition, and pinning a copy of a rule
+    that has just been given one home would be asking for the copy back.
   */
   it("leaves the member's own owner-only card exactly where it was (#1303)", () => {
     const source = bookingPageSource();
 
     expect(source).toMatch(
-      /booking\.payment &&\s*isBookingOwner &&\s*!isDeleted &&\s*isAdditionalPayableBookingStatus\(booking\.status\) &&\s*booking\.payment\.additionalAmountCents > 0 &&\s*booking\.payment\.additionalPaymentStatus !== "SUCCEEDED" && \(\s*<AdditionalPaymentCard/,
+      /booking\.payment &&\s*isBookingOwner &&\s*!isDeleted &&\s*isAdditionalPayableBookingStatus\(booking\.status\) &&[\s\S]{0,200}?isAdditionalAmountUncollected\(booking\.payment\) && \(\s*<AdditionalPaymentCard/,
+    );
+    // The ask half is a CALL, never a restatement: a second copy of the rule on
+    // this page is what #3340 removed (`INV-SSOT-001`).
+    expect(source).not.toMatch(
+      /isBookingOwner[\s\S]{0,400}additionalPaymentStatus !== "SUCCEEDED"/,
     );
   });
 });

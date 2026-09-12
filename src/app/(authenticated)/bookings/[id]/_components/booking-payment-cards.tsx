@@ -7,6 +7,7 @@ import { AdditionalPaymentCard } from "@/components/additional-payment-card";
 import { BookingAdditionalPaymentPanel } from "@/components/admin/booking-additional-payment-panel";
 import {
   additionalPaymentEpisodeStartedAt,
+  isAdditionalAmountUncollected,
   isAdditionalPayableBookingStatus,
 } from "@/lib/additional-payment-chase";
 import { ConfirmDraftButton } from "@/components/confirm-draft-button";
@@ -398,8 +399,11 @@ export function BookingPaymentCards({
         isBookingOwner &&
         !isDeleted &&
         isAdditionalPayableBookingStatus(booking.status) &&
-        booking.payment.additionalAmountCents > 0 &&
-        booking.payment.additionalPaymentStatus !== "SUCCEEDED" && (
+        // #3340: the ONE uncollected predicate, called not restated
+        // (`INV-SSOT-001`). Arrived from `main`, where it replaced these two
+        // clauses in the pre-split page; re-homed here because #2958 moved this
+        // gate into the section that renders it.
+        isAdditionalAmountUncollected(booking.payment) && (
           <AdditionalPaymentCard
             bookingId={booking.id}
             additionalAmountCents={booking.payment.additionalAmountCents}
