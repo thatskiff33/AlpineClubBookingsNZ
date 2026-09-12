@@ -66,7 +66,7 @@ export function canonicalReaderShape(code: string, site: ReaderSite): boolean {
   return (
     [...code.matchAll(READ)].length === site.reads &&
     [...code.matchAll(SELECT)].length === site.selections &&
-    code.includes(`operation: "${site.operation}"`) &&
+    code.includes(`purpose: "${site.operation}"`) &&
     code.includes("mismatchClassification:") &&
     site.historySink.test(code)
   );
@@ -141,7 +141,7 @@ describe("#3277 canonical stored-money reader census", () => {
       historySink: /moneyBuildUp:\s*selection\.historyMetadata/,
     };
     const complete = `
-      readBookingMoneyBuildUp(tx, { operation: "CREDIT_ELECTION" });
+      readBookingMoneyBuildUp(tx, { purpose: "CREDIT_ELECTION" });
       selectLoadedBookingMoneyBuildUp(loaded, { mismatchClassification: "STORED_SIDE_DEFECT" });
       return { moneyBuildUp: selection.historyMetadata };
     `;

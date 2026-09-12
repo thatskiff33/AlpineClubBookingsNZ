@@ -153,7 +153,7 @@ export async function consumeStoredCreditElection(
 
   const recordedMoneyBuildUp = await readBookingMoneyBuildUp(tx, {
     bookingId,
-    operation: "CREDIT_ELECTION",
+    purpose: "CREDIT_ELECTION",
   });
   const moneyBuildUpSelection = selectLoadedBookingMoneyBuildUp(
     recordedMoneyBuildUp,

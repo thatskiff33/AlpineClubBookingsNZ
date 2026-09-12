@@ -205,7 +205,7 @@ describe("#3277 canonical D3 build-up selection", () => {
       readBookingMoneyBuildUp(store as never, {
         bookingId: "booking-1",
         bookingGuestId: "departing",
-        operation: "GUEST_REMOVAL",
+        purpose: "GUEST_REMOVAL",
       }),
     ).resolves.toMatchObject({
       baseEvidence: { kind: "EXACT", amountCents: 10_001 },
@@ -213,7 +213,7 @@ describe("#3277 canonical D3 build-up selection", () => {
     await expect(
       readBookingMoneyBuildUp(store as never, {
         bookingId: "booking-1",
-        operation: "REVIEW_REBASE",
+        purpose: "REVIEW_REBASE",
       }),
     ).resolves.toMatchObject({
       baseEvidence: { kind: "UNKNOWN", reason: "INEXACT_STORED_NIGHT_PRICES" },
@@ -222,7 +222,7 @@ describe("#3277 canonical D3 build-up selection", () => {
       await expect(
         readBookingMoneyBuildUp(store as never, {
           bookingId: "booking-1",
-          operation,
+          purpose: operation,
         }),
       ).resolves.toMatchObject({
         baseEvidence: { kind: "EXACT", amountCents: 10_001 },
@@ -264,7 +264,7 @@ describe("#3277 canonical D3 build-up selection", () => {
     };
     const loaded = await readBookingMoneyBuildUp(store as never, {
       bookingId: "booking-1",
-      operation: "XERO_PROMO_LINE",
+      purpose: "XERO_PROMO_LINE",
     });
     expect(loaded.rows).toEqual([
       {

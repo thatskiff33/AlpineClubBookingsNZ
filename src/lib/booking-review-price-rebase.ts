@@ -428,7 +428,7 @@ export async function rebaseBookingPriceFromStrands({
   // reader deliberately uses a broader grain in the same canonical projection.
   const recordedMoneyBuildUp = await readBookingMoneyBuildUp(store, {
     bookingId,
-    operation: "REVIEW_REBASE",
+    purpose: "REVIEW_REBASE",
   });
   const currentMoneyBuildUpSelection = selectLoadedBookingMoneyBuildUp(
     recordedMoneyBuildUp,
@@ -511,7 +511,7 @@ export async function rebaseBookingPriceFromStrands({
 
   const freshlyRecordedMoneyBuildUp = await readBookingMoneyBuildUp(store, {
     bookingId,
-    operation: "REVIEW_REBASE",
+    purpose: "REVIEW_REBASE",
   });
   const moneyBuildUpSelection = selectLoadedBookingMoneyBuildUp(
     freshlyRecordedMoneyBuildUp,

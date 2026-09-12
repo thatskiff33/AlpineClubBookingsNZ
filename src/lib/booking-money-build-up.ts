@@ -157,7 +157,7 @@ export async function readBookingMoneyBuildUp(
   store: BookingMoneyBuildUpStore,
   args: {
     bookingId: string;
-    operation: BookingMoneyBuildUpOperation;
+    purpose: BookingMoneyBuildUpOperation;
     bookingGuestId?: string;
   },
 ): Promise<LoadedBookingMoneyBuildUp> {
@@ -189,19 +189,33 @@ export async function readBookingMoneyBuildUp(
     },
   });
   if (!booking) {
-    refuse(`${args.operation}: booking ${args.bookingId} does not exist`);
+    refuse(`${args.purpose}: booking ${args.bookingId} does not exist`);
   }
+  // Prisma always materialises selected to-many relations as arrays. Older
+  // unit fixtures often return only the fields their original consumer read;
+  // an omitted additive relation means the fixture has no recorded Stage 2
+  // evidence, which must take D3's compatibility fallback rather than crash.
+  const guests = booking.guests ?? [];
+  const nightAdjustments = booking.nightAdjustments ?? [];
+  const redemption = booking.promoRedemption
+    ? {
+        ...booking.promoRedemption,
+        allocations: booking.promoRedemption.allocations ?? [],
+      }
+    : null;
   const guestIdByNightId = new Map(
-    booking.guests.flatMap((guest) => guest.nights.map((night) => [night.id, guest.id] as const)),
+    guests.flatMap((guest) =>
+      (guest.nights ?? []).map((night) => [night.id, guest.id] as const),
+    ),
   );
-  const rows = booking.nightAdjustments.map((row) => {
+  const rows = nightAdjustments.map((row) => {
     const bookingGuestId =
       row.bookingGuestId ??
       (row.bookingGuestNightId
         ? guestIdByNightId.get(row.bookingGuestNightId)
         : undefined);
     if (!bookingGuestId) {
-      refuse(`${args.operation}: an adjustment row is attached to neither a guest nor a night`);
+      refuse(`${args.purpose}: an adjustment row is attached to neither a guest nor a night`);
     }
     return {
       bookingGuestId,
@@ -210,11 +224,15 @@ export async function readBookingMoneyBuildUp(
     };
   });
   return {
-    operation: args.operation,
+    operation: args.purpose,
     ...(args.bookingGuestId ? { bookingGuestId: args.bookingGuestId } : {}),
-    baseEvidence: exactBaseAmount(args.operation, booking, args.bookingGuestId),
+    baseEvidence: exactBaseAmount(
+      args.purpose,
+      { ...booking, guests },
+      args.bookingGuestId,
+    ),
     rows,
-    redemption: booking.promoRedemption,
+    redemption,
   };
 }
 
