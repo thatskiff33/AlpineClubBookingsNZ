@@ -31,6 +31,7 @@ import {
   type BookingPriceRebase,
 } from "@/lib/booking-review-price-rebase";
 import { requireCalendarDate } from "@/lib/club-time";
+import { selectBookingMoneyBuildUp } from "@/lib/night-adjustment-write";
 
 const store = {
   booking: {
@@ -80,10 +81,15 @@ function bookingWithStrands(
     promoAdjustmentCents: -15_000,
     finalPriceCents: 5_000,
     promoRedemption: null,
+    nightAdjustments: [],
     guests: guests.map((guest) => ({
       memberId: null,
       isMember: false,
       ...guest,
+      nights: guest.nights.map((night) => ({
+        ...night,
+        priceSource: "SOLD" as const,
+      })),
     })),
     ...overrides,
   };
@@ -97,6 +103,14 @@ const SURVIVING_STRAND = {
     { stayDate: AUG_2, priceCents: 5_000 },
   ],
 };
+
+const STORED_MONEY_SELECTION = selectBookingMoneyBuildUp({
+  operation: "REVIEW_REBASE",
+  baseEvidence: { kind: "EXACT", amountCents: 24_000 },
+  rows: [],
+  redemption: null,
+  derivedCents: 24_000,
+});
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -138,6 +152,12 @@ describe("re-pricing a booking from its strands (#3219)", () => {
         newFinalPriceCents: 2_500,
         promoRemoved: false,
       },
+      moneyBuildUpSelection: expect.objectContaining({
+        source: "DERIVED_COMPATIBILITY_FALLBACK",
+        derivedCents: 2_500,
+        selectedCents: 2_500,
+        fallbackClassification: "STORED_SIDE_DEFECT",
+      }),
     });
     expect(mocks.bookingUpdateMany).toHaveBeenCalledWith({
       where: {
@@ -348,9 +368,10 @@ describe("what the re-price will not price from (#3219, INV-MOD-028)", () => {
         store,
       });
 
-      expect(outcome).toEqual({
+      expect(outcome).toMatchObject({
         rebased: false,
         reason: "strand-evidence-unreadable",
+        moneyBuildUpSelection: { source: "BASE_EVIDENCE_UNKNOWN" },
       });
       expect(mocks.recalculateBookingPromo).not.toHaveBeenCalled();
       expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
@@ -516,7 +537,11 @@ describe("the strand-on-this-booking guard (#3219)", () => {
       store,
     });
 
-    expect(outcome).toEqual({ rebased: false, reason: "no-surviving-strands" });
+    expect(outcome).toMatchObject({
+      rebased: false,
+      reason: "no-surviving-strands",
+      moneyBuildUpSelection: { source: "BASE_EVIDENCE_UNKNOWN" },
+    });
     expect(mocks.recalculateBookingPromo).not.toHaveBeenCalled();
     expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
   });
@@ -605,6 +630,7 @@ describe("D1's two consequences, surfaced rather than shipped blind (#3219)", ()
       taskId: "task-1",
       resolution: "dismissed",
       rebase,
+      moneyBuildUpSelection: STORED_MONEY_SELECTION,
       xeroInvoiceDiverged: true,
       store,
     });
@@ -621,6 +647,10 @@ describe("D1's two consequences, surfaced rather than shipped blind (#3219)", ()
           xeroInvoiceDiverged: true,
           financialReviewTaskId: "task-1",
           financialReviewResolution: "dismissed",
+          moneyBuildUpOperation: "REVIEW_REBASE",
+          moneyBuildUpSource: "STORED",
+          moneyBuildUpStoredCents: 24_000,
+          moneyBuildUpDerivedCents: 24_000,
         }),
       }),
     });
@@ -651,6 +681,7 @@ describe("D1's two consequences, surfaced rather than shipped blind (#3219)", ()
         taskId: "task-1",
         resolution: "completed",
         rebase: { ...rebase, ...overrides },
+        moneyBuildUpSelection: STORED_MONEY_SELECTION,
         xeroInvoiceDiverged: false,
         store,
       });

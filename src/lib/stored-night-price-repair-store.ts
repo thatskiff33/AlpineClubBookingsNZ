@@ -411,6 +411,7 @@ export async function recordReviewClosurePricing({
       taskId: task.id,
       resolution,
       rebase,
+      moneyBuildUpSelection: outcome.moneyBuildUpSelection,
       xeroInvoiceDiverged,
       store,
     });

@@ -388,6 +388,7 @@ describe("createXeroInvoiceForBooking", () => {
         id: "booking_1",
         memberId: "mem_1",
         member: { id: "mem_1" },
+        totalPriceCents: 10000,
         checkIn: "2026-07-31T00:00:00.000Z",
         checkOut: "2026-08-02T00:00:00.000Z",
         createdAt: "2026-05-15T10:30:00.000Z",
@@ -395,11 +396,13 @@ describe("createXeroInvoiceForBooking", () => {
         promoAdjustmentCents: 0,
         guests: [
           {
+            id: "guest_1",
             firstName: "Jordan",
             lastName: "Hartley-Smith",
             ageTier: "ADULT",
             isMember: true,
             priceCents: 10000,
+            nights: [],
           },
         ],
         payment: cardPayment(paymentOverrides),
@@ -1410,17 +1413,20 @@ describe("createXeroInvoiceForBooking", () => {
         id: "booking_1",
         memberId: "mem_1",
         member: { id: "mem_1" },
+        totalPriceCents: 10000,
         checkIn: "2026-07-31T00:00:00.000Z",
         checkOut: "2026-08-02T00:00:00.000Z",
         createdAt: "2026-05-15T10:30:00.000Z",
         discountCents: 0,
         guests: [
           {
+            id: "guest_1",
             firstName: "Jordan",
             lastName: "Hartley-Smith",
             ageTier: "ADULT",
             isMember: true,
             priceCents: 10000,
+            nights: [],
           },
         ],
         payment: {
@@ -1481,6 +1487,7 @@ describe("createXeroInvoiceForBooking", () => {
         id: "booking_1",
         memberId: "mem_1",
         member: { id: "mem_1" },
+        totalPriceCents: 10000,
         checkIn: "2026-07-31T00:00:00.000Z",
         checkOut: "2026-08-02T00:00:00.000Z",
         createdAt: "2026-05-15T10:30:00.000Z",
@@ -1488,11 +1495,13 @@ describe("createXeroInvoiceForBooking", () => {
         promoAdjustmentCents: -5000,
         guests: [
           {
+            id: "guest_1",
             firstName: "Jordan",
             lastName: "Hartley-Smith",
             ageTier: "ADULT",
             isMember: true,
             priceCents: 10000,
+            nights: [],
           },
         ],
         payment: {
@@ -1503,7 +1512,23 @@ describe("createXeroInvoiceForBooking", () => {
           xeroInvoiceId: null,
           xeroInvoiceNumber: null,
         },
-        promoRedemption: promo ? { promoCode: promo } : null,
+        promoRedemption: promo
+          ? {
+              promoCode: promo,
+              priceAdjustmentCents: -5000,
+              allocations: [
+                { memberId: "mem_1", priceAdjustmentCents: -5000 },
+              ],
+            }
+          : null,
+        nightAdjustments: [
+          {
+            bookingGuestId: "guest_1",
+            beneficiaryMemberId: "mem_1",
+            amountCents: -5000,
+            bookingGuestNight: null,
+          },
+        ],
       };
     }
 
@@ -1531,6 +1556,18 @@ describe("createXeroInvoiceForBooking", () => {
       expect(discount?.itemCode).toBe("PROMO-DISC");
       expect(discount?.accountCode).toBeUndefined();
       expect(discount?.unitAmount).toBe(-50);
+      expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          requestPayload: expect.objectContaining({
+            moneyBuildUp: expect.objectContaining({
+              moneyBuildUpOperation: "XERO_PROMO_LINE",
+              moneyBuildUpSource: "STORED",
+              moneyBuildUpStoredCents: -5000,
+              moneyBuildUpDerivedCents: -5000,
+            }),
+          }),
+        }),
+      );
     });
 
     it("posts the promo adjustment line to the promo's xeroAccountCode when only an account code is set", async () => {

@@ -64,6 +64,11 @@ import {
   getBookingInvoiceIssueDate,
 } from "./xero-invoice-helpers";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
+import {
+  type BookingMoneyBuildUpSelection,
+  readBookingMoneyBuildUp,
+  selectLoadedBookingMoneyBuildUp,
+} from "@/lib/night-adjustment-write";
 
 // #1765 — the aggregate Payment statuses that prove cash was captured at some
 // point. Settlement gating must pair one of these with a positive NET capture
@@ -477,6 +482,29 @@ export async function createXeroInvoiceForBooking(
     return null;
   }
 
+  // #3277: verify the single aggregate promo line from the stored build-up
+  // before authentication or any provider call. A mismatch remains today's
+  // headline under D3 and its classified fallback is persisted on the uniquely
+  // anchored sync operation below.
+  let promoMoneyBuildUpSelection: BookingMoneyBuildUpSelection | null = null;
+  let xeroPromoAdjustmentCents = booking.promoAdjustmentCents;
+  // There is no aggregate promo line to source when the headline is zero. The
+  // non-zero branch is the named Stage 3 reader and always records its verdict.
+  if (booking.promoAdjustmentCents) {
+    const recordedMoneyBuildUp = await readBookingMoneyBuildUp(prisma, {
+      bookingId,
+      operation: "XERO_PROMO_LINE",
+    });
+    promoMoneyBuildUpSelection = selectLoadedBookingMoneyBuildUp(recordedMoneyBuildUp, {
+      derivedCents: booking.promoAdjustmentCents,
+      mismatchClassification: "STORED_SIDE_DEFECT",
+    });
+    xeroPromoAdjustmentCents =
+      promoMoneyBuildUpSelection.source === "BASE_EVIDENCE_UNKNOWN"
+        ? booking.promoAdjustmentCents
+        : promoMoneyBuildUpSelection.selectedCents;
+  }
+
   const { xero, tenantId } = await getAuthenticatedXeroClient();
 
   // Ensure the member has a Xero contact
@@ -544,7 +572,7 @@ export async function createXeroInvoiceForBooking(
 
   // Add signed promo adjustment line if applicable. Negative values behave
   // like discounts; positive values are extra revenue.
-  if (booking.promoAdjustmentCents !== 0) {
+  if (xeroPromoAdjustmentCents !== 0) {
     const promo = booking.promoRedemption?.promoCode ?? null;
     const firstGuest = booking.guests[0];
 
@@ -563,7 +591,7 @@ export async function createXeroInvoiceForBooking(
     const discountLineItem: LineItem = {
       description: promo ? `Promo adjustment - ${promo.code}` : "Promo adjustment",
       quantity: 1,
-      unitAmount: booking.promoAdjustmentCents / 100,
+      unitAmount: xeroPromoAdjustmentCents / 100,
       taxType: "OUTPUT2",
     };
     if (discountItemCode) {
@@ -598,7 +626,10 @@ export async function createXeroInvoiceForBooking(
     "v1"
   );
   let operationId = options?.syncOperationId ?? null;
-  const requestPayload = { invoices: [buildInvoice(contactId)] };
+  const requestPayload = {
+    invoices: [buildInvoice(contactId)],
+    moneyBuildUp: promoMoneyBuildUpSelection?.historyMetadata ?? null,
+  };
 
   if (operationId) {
     await prisma.xeroSyncOperation.update({

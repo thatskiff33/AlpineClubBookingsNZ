@@ -208,7 +208,11 @@ const SEASONS = [
 ];
 
 function night(day: string, priceCents: number) {
-  return { stayDate: new Date(`2026-11-0${day}T00:00:00.000Z`), priceCents };
+  return {
+    stayDate: new Date(`2026-11-0${day}T00:00:00.000Z`),
+    priceCents,
+    priceSource: "SOLD" as const,
+  };
 }
 
 type ConsentStatus = "PENDING" | "CONFIRMED" | "DECLINED" | "EXPIRED" | null;
@@ -304,6 +308,7 @@ function makeBooking(options: {
     payment: null,
     member: { id: OWNER, email: "owner@example.com", firstName: "Ophelia", lastName: "Owner" },
     promoRedemption: null,
+    nightAdjustments: [],
   };
 }
 
@@ -828,6 +833,13 @@ describe("an unpriceable removal parks its money instead of inventing it (#3032,
     expect(result.additionalAmountCents).toBe(0);
     expect(result.xeroRefundAmountCents).toBe(0);
     expect(result.xeroAdditionalAmountCents).toBe(0);
+    expect(
+      tx.bookingModification.create.mock.calls[0][0].data.newData,
+    ).toMatchObject({
+      moneyBuildUpOperation: "GUEST_REMOVAL",
+      moneyBuildUpSource: "BASE_EVIDENCE_UNKNOWN",
+      moneyBuildUpDerivedCents: 0,
+    });
 
     // The task is RAISED WITH NO AMOUNT. Null is "not yet known"; a zero here
     // would be a financial statement the club has not made (epic #2797).

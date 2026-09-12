@@ -422,7 +422,8 @@ export async function applyCreditToBooking(
   memberId: string,
   amountCents: number,
   bookingId: string,
-  tx: Prisma.TransactionClient
+  tx: Prisma.TransactionClient,
+  options?: { description?: string },
 ): Promise<void> {
   validateCreditApplicationAmount(amountCents);
 
@@ -436,7 +437,8 @@ export async function applyCreditToBooking(
       memberId,
       amountCents: calculateAppliedCreditAmount(amountCents),
       type: CreditType.BOOKING_APPLIED,
-      description: `Applied to booking ${bookingId.slice(0, 8)}`,
+      description:
+        options?.description ?? `Applied to booking ${bookingId.slice(0, 8)}`,
       appliedToBookingId: bookingId,
     },
   });

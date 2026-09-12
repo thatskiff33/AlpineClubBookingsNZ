@@ -83,9 +83,17 @@ function makeTx({
 }) {
   const rows: LedgerRow[] = [...ledger];
   const bookingRow = {
+    id: BOOKING_ID,
     memberId: MEMBER_ID,
     status: BookingStatus.PAYMENT_PENDING,
     ...booking,
+    // Real-shaped Stage 2 stored-money projection. Credit election verifies
+    // the booking-wide headline/component relation, not individual-night
+    // provenance, so an empty adjustment build-up means total === final.
+    totalPriceCents: booking.finalPriceCents,
+    guests: [],
+    promoRedemption: null,
+    nightAdjustments: [],
   };
   const bookingUpdates: Array<Record<string, unknown>> = [];
   const paymentUpserts: Array<Record<string, unknown>> = [];
@@ -264,6 +272,17 @@ describe("#2265 consumeStoredCreditElection", () => {
       shortfallCents: 0,
       shortfallReason: "none",
       fullyCovered: false,
+      moneyBuildUp: {
+        moneyBuildUpOperation: "CREDIT_ELECTION",
+        moneyBuildUpSource: "STORED",
+        moneyBuildUpStoredCents: 10_000,
+        moneyBuildUpDerivedCents: 10_000,
+      },
+    });
+    expect(fixture.tx.memberCredit.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        description: expect.stringContaining("price source STORED"),
+      }),
     });
     expect(appliedTotal(fixture.rows)).toBe(8_650);
     expect(balance(fixture.rows)).toBe(11_350);

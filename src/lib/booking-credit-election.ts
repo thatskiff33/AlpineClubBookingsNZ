@@ -8,6 +8,11 @@ import {
 } from "@/lib/member-credit";
 import { calculateBookingCreditApplication } from "@/lib/policies/booking-route-decisions";
 import {
+  readBookingMoneyBuildUp,
+  selectLoadedBookingMoneyBuildUp,
+  type BookingMoneyBuildUpHistoryMetadata,
+} from "@/lib/night-adjustment-write";
+import {
   queueSupersededPrimaryIntentCancellations,
   type SupersededPrimaryPaymentIntent,
 } from "@/lib/booking-payment-cleanup";
@@ -78,6 +83,8 @@ export type StoredCreditElectionOutcome = {
    * Stripe intent (Stripe rejects zero-amount intents).
    */
   fullyCovered: boolean;
+  /** #3277: the component check recorded with this atomic credit application. */
+  moneyBuildUp: BookingMoneyBuildUpHistoryMetadata;
 };
 
 /**
@@ -144,6 +151,22 @@ export async function consumeStoredCreditElection(
   // a DRAFT or AWAITING_REVIEW booking keeps its election stored and untouched.
   if (booking.status !== BookingStatus.PAYMENT_PENDING) return null;
 
+  const recordedMoneyBuildUp = await readBookingMoneyBuildUp(tx, {
+    bookingId,
+    operation: "CREDIT_ELECTION",
+  });
+  const moneyBuildUpSelection = selectLoadedBookingMoneyBuildUp(
+    recordedMoneyBuildUp,
+    {
+      derivedCents: booking.finalPriceCents,
+      mismatchClassification: "STORED_SIDE_DEFECT",
+    },
+  );
+  const verifiedFinalPriceCents =
+    moneyBuildUpSelection.source === "BASE_EVIDENCE_UNKNOWN"
+      ? booking.finalPriceCents
+      : moneyBuildUpSelection.selectedCents;
+
   const requestedCents = booking.creditElectionCents;
 
   // Guarded claim (#2265). Matching on the status AND the exact amount read
@@ -170,7 +193,7 @@ export async function consumeStoredCreditElection(
   const alreadyAppliedCents = await deriveBookingAppliedCreditCents(bookingId, tx);
   const outstandingPriceCents = Math.max(
     0,
-    booking.finalPriceCents - alreadyAppliedCents,
+    verifiedFinalPriceCents - alreadyAppliedCents,
   );
 
   // Which bound ACTUALLY bound? A bound only counts when it is below the
@@ -207,6 +230,9 @@ export async function consumeStoredCreditElection(
       creditAppliedCents,
       bookingId,
       tx,
+      {
+        description: `Applied to booking ${bookingId.slice(0, 8)}; price source ${moneyBuildUpSelection.source} (${moneyBuildUpSelection.reason})`,
+      },
     );
   }
 
@@ -227,8 +253,9 @@ export async function consumeStoredCreditElection(
     shortfallReason,
     availableBalanceCents,
     fullyCovered:
-      booking.finalPriceCents > 0 &&
-      alreadyAppliedCents + creditAppliedCents >= booking.finalPriceCents,
+      verifiedFinalPriceCents > 0 &&
+      alreadyAppliedCents + creditAppliedCents >= verifiedFinalPriceCents,
+    moneyBuildUp: moneyBuildUpSelection.historyMetadata,
   };
 }
 
