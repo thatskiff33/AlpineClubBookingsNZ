@@ -183,6 +183,14 @@ export async function executeBookingModificationRefund({
  * how $230 of debt became a $30 ask. `payment-recovery-keys.ts` holds the full
  * reasoning and both builders.
  *
+ * IT TAKES AN `AdditionalAsk`, NOT A NUMBER (#3371). Because minting retires
+ * every other live ADDITIONAL intent on the payment, the figure has to include
+ * their unpaid balance AND say how much of itself that balance is - this row is
+ * the only place that fact survives, since the intents it came from are about to
+ * be cancelled. Pairing the two in one value that only
+ * `@/lib/additional-payment-ask` can build is what stops a future caller doing
+ * one and not the other. `INV-PAY-098` is the rule.
+ *
  * THE CALLER READS THE RESULT, and must. This function swallows a provider
  * failure by design - the ordinary edit path has to return the member's saved
  * change, and the recovery row it writes is the retry. A caller for whom

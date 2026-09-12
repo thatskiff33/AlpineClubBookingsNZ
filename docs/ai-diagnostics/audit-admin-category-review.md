@@ -584,9 +584,9 @@ land.
 manifest moving with it. The numbers this page was written against:
 
 ```
-row-producing sites:  470
+row-producing sites:  471
 uncategorised:        0
-category values: admin 104, booking 102, xero 34, family 35, payment 44,
+category values: admin 104, booking 102, xero 34, family 35, payment 45,
                  lodge 65, account 19, security 22, privacy 19,
                  communication 21, system 4
 ```
@@ -672,6 +672,18 @@ what had happened, and that query is the only reason the money leak underneath i
 was found. `payment` for the same audience reason as every row beside it: money
 left the club with nobody deciding it should, and the person who answers for that
 is the one who reconciles the club's money.
+
+#3371 then added one more (`payment` 44 -> 45, 470 -> 471, MEASURED with
+`npm run audit:census` on that branch rather than added to the literal): the
+record that a booking change's payment request absorbed another change's unpaid
+extra, because raising the new request cancels the old one. Once that earlier row
+is cancelled, what it was owed for is not derivable from anything, so the figure
+lives on the ledger row and the story lives here. It is `info`/`success` rather
+than `important`/`failure`, deliberately - nothing is owed outside the system and
+nobody has to act - but an officer opening the earlier change finds its request
+gone with no explanation on it, and a member sees one larger figure where they
+expected two. `payment` for the same audience reason as the review-charge rows
+beside it.
 
 Since then #3220 added the refused stranded-intent record (`payment` 41 -> 42,
 467 -> 468 - taken from `npm run audit:census` on the merged tree, not from this

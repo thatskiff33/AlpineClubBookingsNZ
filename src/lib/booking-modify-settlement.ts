@@ -270,7 +270,7 @@ export async function applyPaymentAdjustments(
       // DELETES the unpaid balance of the one it replaces. Two +$70 edits on a
       // $130 paid booking asked $70 and lost $70, permanently and silently.
       //
-      // `sizeAdditionalAskCents` is the one home for the arithmetic and the one
+      // `sizeAdditionalAsk` is the one home for the arithmetic and the one
       // place its reasoning is written down. `booking.payment` is the POST-LOCK
       // re-read in every production caller (each re-reads the booking with
       // `payment: true` after `pg_advisory_xact_lock(1)` + the per-lodge key).

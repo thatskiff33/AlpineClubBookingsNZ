@@ -414,7 +414,16 @@ export const AUDIT_CENSUS_TOTALS = {
   // Both are `payment`, both are categorised at the site, so neither joins
   // `UNCATEGORISED_AUDIT_WRITERS`. Re-MEASURED with `npm run audit:census` on
   // this branch (470 sites), never by adding two to the literal.
-  writeSites: 470,
+  // 470 -> 471 (#3371): `booking.editFinancialReview.chargeCarriedUnpaidBalance`,
+  // the record that a review charge absorbed another change's unpaid extra when
+  // its mint retired that change's ask. It is provenance rather than a queue -
+  // nothing is owed outside the system and nobody has to act - but an officer
+  // opening the earlier change finds its ask gone with no explanation on it, and
+  // this is what answers them. Categorised `payment` at the site, so it does not
+  // join `UNCATEGORISED_AUDIT_WRITERS` below. Measured by RUNNING
+  // `npm run audit:census` on this tree (471 sites, 2318 files scanned), not by
+  // adding one to the literal.
+  writeSites: 471,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -512,7 +521,10 @@ export const AUDIT_CENSUS_TOTALS = {
     // not be withdrawn from Stripe. #3214 landed on `main` first, so this
     // branch's own delta was 120 -> 121 before the merge and is 121 -> 122
     // after it - re-measured, never re-derived by arithmetic.
-    createAuditLog: { total: 122, uncategorised: 0 },
+    // 122 -> 123 (#3371): the carried-unpaid-balance record in
+    // `edit-financial-review-charge-request.ts`, beside the two review-charge
+    // writers it belongs with and awaited the same best-effort way.
+    createAuditLog: { total: 123, uncategorised: 0 },
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -644,7 +656,12 @@ export const AUDIT_CENSUS_TOTALS = {
     // escalation. Money left the club with nobody deciding it should, and the
     // person who reconciles that is the one who reconciles the club's money -
     // the same audience, for the same reason, as every row above it.
-    payment: 44,
+    // 44 -> 45 (#3371): the carried-unpaid-balance record. `payment` for the
+    // same reason as the two review-charge writers beside it - the person who
+    // needs to know that one change's ask now rides on another's is the one
+    // reconciling the club's money. It widens nobody's access: `payment` is the
+    // category those siblings already use.
+    payment: 45,
     // 27 -> 34 (#2581 child 2): the five family-group writers and the two
     // dependants writers. Both dependants writers also moved off a hand-built
     // Prisma literal and onto the audit boundary in the same change.

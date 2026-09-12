@@ -93,6 +93,23 @@ import { updatePaymentIntentAmount } from "@/lib/stripe";
  *     `syncEditFinancialReviewChargeRequest` for why neither of them can lose a
  *     share either.
  *
+ * ## AND IT CARRIES WHAT ITS MINT RETIRES (owner decision, #3371, 13 Sep 2026)
+ *
+ * The bullets above are about two shares of ONE edit, which is the only case
+ * #3170 considered. A booking can also carry an unpaid ask raised by a DIFFERENT
+ * edit - an ordinary price increase, or an earlier parked review priced days ago
+ * - and minting this edit's request cancels it. Until #3371 the mint passed the
+ * bare share sum, so that other ask simply ceased to be owed: $260 priced across
+ * two parked edits, $60 collected, and nothing anywhere reporting the $200.
+ *
+ * The ask is now the share sum PLUS the unpaid balance of the ask it supersedes -
+ * the same rule the ordinary edit path has used since #3340, which is why it is
+ * built by the same module rather than by a second arithmetic here. The carried
+ * part is stored on the ledger row (`PaymentTransaction.carriedAskCents`) and
+ * stays OUT of the derived sum, so the sum is still monotone and the
+ * compare-and-set below still needs no lock. `INV-PAY-098` is the rule, and it
+ * is not restated here.
+ *
  * ## What it is NOT
  *
  * It is not a fourth settlement mechanism, which the epic forbids outright.

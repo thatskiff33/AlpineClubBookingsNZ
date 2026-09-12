@@ -250,7 +250,7 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
     stopped rendering the payment card and the reminder cron stopped, so the
     shortfall became unreachable from every member- and officer-facing surface.
     The ask is therefore the edit's own net PLUS the unpaid balance of the ask it
-    supersedes, which is `sizeAdditionalAskCents` in
+    supersedes, which is `sizeAdditionalAsk` in
     `src/lib/additional-payment-ask.ts` — the one home for all of this
     arithmetic, and the module the census guard and the operator SQL are both
     folded from.
@@ -1234,9 +1234,43 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
     wrote; whichever completion commits LAST derives the true total, and
     **neither leg may LOWER what is recorded**. On the Stripe leg that is a
     compare-and-set on the request, which is why it needs no advisory lock.
+    A balance CARRIED IN from another edit ([INV-PAY-098]) is stored apart from
+    this total and never joins the sum, which is what keeps the sum monotone and
+    the compare-and-set correct.
   - **A share may not be added to a request the member has already paid, or to
     one whose supplementary invoice has already been issued.** Both are REFUSED
     before the claim with the task left OPEN. The Xero leg is `INV-PAY-070`.
+
+## INV-PAY-098
+
+- **A REPLACEMENT ASK CARRIES THE UNPAID BALANCE OF THE ONE IT RETIRES, AND
+  RECORDS WHAT IT CARRIED** (#3371, owner decision 13 Sep 2026). Minting an
+  ADDITIONAL PaymentIntent cancels every other live one on the payment
+  ([INV-ADDPAY-023]). [INV-PAY-047] sizes an ordinary edit's ask accordingly; a
+  settled financial review's charge is the SAME rule over a different own figure
+  — that edit's settled shares ([INV-PAY-062]) — and until #3371 it passed the
+  bare sum, so a review charge deleted an earlier change's unpaid extra.
+  - **The carried amount is its own stored fact**,
+    `PaymentTransaction.carriedAskCents`, and is a PART of `amountCents`, never
+    an addition to it. Once the retired row is cancelled it is derivable from
+    nothing, so recording it is provenance, not duplication.
+  - **It never joins the derived share total.** [INV-PAY-062]'s refuse-to-lower
+    rule is safe only because that sum never decreases, and that monotonicity is
+    what lets this path compare-and-set with no lock across a provider call
+    ([`CONCURRENCY_AND_LOCKING.md`](../CONCURRENCY_AND_LOCKING.md)).
+  - **A later share reads it back off the row, never off the payment**, whose ask
+    columns mirror this request by then.
+  - **The accounting leg never sees it.** [INV-PAY-070] bills one invoice per
+    edit and the carried money belongs to another edit with its own invoice, so
+    every figure handed to that leg has the carried part taken out.
+  - **The obligation is structural.** `AdditionalAsk`
+    (`src/lib/additional-payment-ask.ts`) pairs amount and carried part behind a
+    module-private brand, every constructor of a positive ask takes the payment
+    being retired or the row being raised, and it is what the shared minter
+    accepts — so no writer can pass a bare figure or omit the provenance. The
+    call-site census is the backstop, not the mechanism.
+  - **A FAILED mint carries nothing**: it retired nothing, the earlier ask is
+    still live, and the replay reads it again.
 
 ## INV-PAY-070
 

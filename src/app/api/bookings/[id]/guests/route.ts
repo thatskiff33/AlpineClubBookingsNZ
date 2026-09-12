@@ -997,7 +997,7 @@ export async function POST(
       /**
        * #3340: THE FIFTH ASK-SIZING DOOR, and the one the first round missed.
        *
-       * The other four reach `sizeAdditionalAskCents` through
+       * The other four reach `sizeAdditionalAsk` through
        * `applyPaymentAdjustments`; this door settles for itself, so it calls the
        * one home directly rather than restating a bare delta (`INV-SSOT-001`).
        * It is fully wired into the same machinery -

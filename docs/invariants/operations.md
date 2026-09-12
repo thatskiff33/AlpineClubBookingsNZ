@@ -533,7 +533,7 @@ rules first written here. #2765 extended it with the measured-audience half.
   by `audit-writer-census.test.ts` so this figure and the copy of it in
   `bed-allocation-audit-category-backfill.test.ts` cannot go stale again —
   deliberately, because pinning all of them would make every feature that records
-  something edit a 400-line literal — so for the other 343 there is no baseline
+  something edit a 400-line literal — so for the other 344 there is no baseline
   a check could compare against, and the category distribution alone cannot see a
   reclassification that another one compensates for. The two `verify` gates that
   can read a pull request parse its BODY, not its diff. So outside the pinned
