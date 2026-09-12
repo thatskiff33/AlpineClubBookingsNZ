@@ -608,8 +608,24 @@ export const AUDIT_CENSUS_TOTALS = {
     // 102 -> 103 (#2698): `booking.wholeLodgeHold.custodianAmended`, the
     // officer's acceptance that a custodian bed leaves an existing hold's
     // represented set. `booking` rather than `lodge` because what narrowed is
-    // a BOOKING's sole occupancy, matching `booking.exclusiveHold.set`, and it
-    // widens nobody's access — the same support + bookings reads.
+    // a BOOKING's sole occupancy, matching `booking.exclusiveHold.set`. It
+    // widens no ADMIN's access — the same support + bookings reads.
+    //
+    // WHICH WAY IT MOVED FOR A MEMBER, since this census asks that of every
+    // row rather than only of admins (#2698 review A-6). `booking` IS in
+    // `MEMBER_VISIBLE_AUDIT_CATEGORIES` and the writer sets
+    // `memberId: actorMemberId`, so this row DOES appear on one member's own
+    // activity list: the officer who accepted. That is a widening, and it is
+    // safe for the member it is about. The officer sees a record of their own
+    // deliberate action, already on their screen a moment earlier. Nobody else
+    // reaches it: `targetId` is a HutLeaderAssignment cuid, so no other
+    // member's timeline matches, and the hut leader the assignment is FOR is
+    // not named as the subject of this row (the roster rows carry that, under
+    // `lodge`, which is not member-visible). And the member projection
+    // suppresses `metadata` entirely, so `amendedBookingIds`, `nights` and the
+    // per-booking breakdown never reach a member surface — what is left is a
+    // `details` sentence naming no booking, no nights and no party
+    // (`INV-PRIV`).
     booking: 103,
     // 16 -> 33 (#2581 child 2): the seventeen money writers — subscription
     // billing, member credit, fee configuration, saved-card charges and the five

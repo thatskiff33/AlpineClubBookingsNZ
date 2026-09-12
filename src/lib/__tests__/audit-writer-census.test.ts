@@ -1288,6 +1288,20 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // at the site and named in none of the four per-site maps, so both land
     // unpinned. 468 sites MEASURED on the merged tree with `npm run audit:census`
     // minus 127 pinned; `pinned` is unchanged, so no existing classification moved.
+    // 341 -> 343 (#2698): TWO new writers, for FOUR new actions.
+    // `recordHutLeaderAssignmentAudit` is one shared writer covering the
+    // hut-leader assignment create, update and delete — which recorded nothing
+    // at all before — under category `lodge`, the audit guide's roster row.
+    // `recordWholeLodgeHoldAmendment` records the officer's explicit acceptance
+    // that a custodian bed leaves an existing whole-lodge hold's represented
+    // set (INV-CAP-035), under `booking` to match the exclusive-hold writer it
+    // answers. Both are categorised at the site and named in none of the four
+    // per-site maps, so both land unpinned. 470 sites MEASURED with
+    // `npm run audit:census` minus 127 pinned; `pinned` is unchanged, so no
+    // existing classification moved. Both figures were RE-MEASURED, never
+    // incremented — the round before this one moved the assertion and left the
+    // arithmetic above it stale, which is the drift these bump lines exist to
+    // prevent and which a review caught here rather than CI.
     ).toEqual({ pinned: 127, unpinned: 343 });
   });
 
