@@ -71,9 +71,14 @@ const SANDBOX_MODULE = "src/lib/xero-sandbox-contact-email.ts";
   in its way — so both halves of the new work are censused here rather than
   trusted:
 
-  - ORGANISATION_CONTACT_MODULE writes contacts (create, and the contact-person
-    refresh), so it joins the writer list and must resolve the policy in its own
-    entry point.
+  - ORGANISATION_CONTACT_MODULE creates the school's contact, so it joins the
+    writer list and must resolve the policy in its own entry point.
+  - ORGANISATION_CONTACT_PERSONS_MODULE is its other half, split out for the
+    file-size budget: it derives the people named on that contact and pushes
+    them with `updateContact`, so it is a contact writer too. It takes the
+    policy as an ARGUMENT rather than resolving one — the entry point above has
+    already asked the question, and a second resolve inside the same workflow
+    would be a second answer, not a second guarantee.
   - CONTACT_SHAPE_MODULE is where the object literal carrying `emailAddress`
     now lives, for the person payload and the organisation payload alike. It
     cannot mint a policy and cannot be called without one; the assignment scan
@@ -81,6 +86,8 @@ const SANDBOX_MODULE = "src/lib/xero-sandbox-contact-email.ts";
     longer holds it.
 */
 const ORGANISATION_CONTACT_MODULE = "src/lib/organisation-xero-contacts.ts";
+const ORGANISATION_CONTACT_PERSONS_MODULE =
+  "src/lib/organisation-xero-contact-persons.ts";
 const CONTACT_SHAPE_MODULE = "src/lib/xero-contact-shape.ts";
 
 /**
@@ -207,6 +214,7 @@ describe("Xero contact containment census (INV-CONFIG-005)", () => {
         CONTAINMENT_PROOF_MODULE,
         CONTACTS_MODULE,
         ORGANISATION_CONTACT_MODULE,
+        ORGANISATION_CONTACT_PERSONS_MODULE,
         ...NO_EMAIL_CONTACT_WRITERS,
       ].sort(),
     );
@@ -311,20 +319,21 @@ describe("Xero contact containment census (INV-CONFIG-005)", () => {
     };
     const counted: string[] = [];
     const offenders: string[] = [];
-    for (const module of [
+    for (const writer of [
       CONTAINMENT_PROOF_MODULE,
       CONTACTS_MODULE,
       ORGANISATION_CONTACT_MODULE,
+      ORGANISATION_CONTACT_PERSONS_MODULE,
       CONTACT_SHAPE_MODULE,
       ...NO_EMAIL_CONTACT_WRITERS,
     ]) {
-      const source = stripComments(readModule(module));
+      const source = stripComments(readModule(writer));
       for (const [, value] of source.matchAll(/emailAddress:\s*([^\n]*)/g)) {
-        counted.push(`${module}: emailAddress: ${value.trim()}`);
+        const site = `${writer}: emailAddress: ${value.trim()}`;
+        counted.push(site);
         if (TYPE_OR_SELECTION.test(value)) continue;
         if (COPIED_FROM_A_READ.test(value)) continue;
         if (value.includes("applyXeroContactEmailPolicy(")) continue;
-        const site = `${module}: emailAddress: ${value.trim()}`;
         if (site in DECLARED_EXCEPTIONS) continue;
         offenders.push(site);
       }
@@ -346,7 +355,7 @@ describe("Xero contact containment census (INV-CONFIG-005)", () => {
   });
 
   it("resolves the policy in every function that builds a contact payload", () => {
-    const ENTRY_POINTS: ReadonlyArray<[module: string, signature: string]> = [
+    const ENTRY_POINTS: ReadonlyArray<[home: string, signature: string]> = [
       [CONTACTS_MODULE, "export async function findOrCreateXeroContact("],
       [CONTACTS_MODULE, "export async function createXeroContactForMember("],
       [CONTACTS_MODULE, "export async function updateXeroContact("],
@@ -358,10 +367,10 @@ describe("Xero contact containment census (INV-CONFIG-005)", () => {
         "export async function findOrCreateXeroContactForOrganisation(",
       ],
     ];
-    for (const [module, fn] of ENTRY_POINTS) {
-      const source = stripComments(readModule(module));
+    for (const [home, fn] of ENTRY_POINTS) {
+      const source = stripComments(readModule(home));
       const start = source.indexOf(fn);
-      expect(start, `${fn} must still exist in ${module}`).toBeGreaterThan(-1);
+      expect(start, `${fn} must still exist in ${home}`).toBeGreaterThan(-1);
       const rest = source.slice(start);
       const end = rest.indexOf("\n}\n");
       expect(end, `${fn} must have a closing brace`).toBeGreaterThan(0);

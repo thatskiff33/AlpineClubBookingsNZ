@@ -179,6 +179,36 @@ Rules and guarantees:
 
 ## Notes & guardrails
 
+- **A school is an ORGANISATION contact, and it is not a member**
+  (`INV-INT-018`, #3367). From stage 2 of programme #2912 an approved school
+  booking creates a Xero contact for the SCHOOL — the school's name with no
+  first or last name, and the teacher underneath as a contact person — linked to
+  the club's own `Organisation` record rather than to a `Member`. Nothing in
+  this runbook groups it: contact groups are keyed on membership type and
+  age tier, which a school has neither of, and the managed-group sync is a
+  member-scoped path the organisation resolve never calls.
+- **Do not put a school's contact into a mapped membership group.** The member
+  import walks mapped contact GROUPS and creates a `Member` from each contact it
+  finds there, so a school contact sitting in one would be imported as a person
+  — and would then hold a contact id the school's own record also claims, which
+  is the two-homes hazard `INV-INT-018` exists to stop. That import is the one
+  contact-linking path that does not take the refusal, deliberately, because
+  bulk contact seeding is #2939's subject.
+- **A school's teacher is refreshed, its name is not.** The contact person on a
+  school's contact is re-sent whenever the club's recorded teacher for that
+  school changes — in practice at the school's next approval, since that is what
+  records the teacher and then raises the invoice. The contact's NAME is never
+  rewritten by this application, because Xero requires contact names to be
+  unique and renaming an existing contact is what #2912 forbids. Rename a school
+  in Xero by hand if it really has changed its name.
+- **A school that booked before #3367 keeps the contact it has.** Its Xero
+  customer was created against the invented school member of the earlier
+  booking, and this application will not move that link onto the school record
+  by itself — classifying historical contacts is #3369's owner-run census, which
+  requires zero ambiguous rows. Until then a returning school's invoices go
+  where they always went, and the sync operation that tried records a
+  `CANCELLED` row naming the school rather than a failure.
+
 - **Mode/rule changes never auto-resync.** Switching the mode, or adding,
   editing, deactivating, or deleting a rule, does not re-group anyone
   immediately. Members re-group on their next trigger (age-tier change,

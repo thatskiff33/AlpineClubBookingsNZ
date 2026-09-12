@@ -388,6 +388,9 @@ const DECLARED_FILES: Record<string, string> = {
   "src/lib/organisation-xero-contacts.ts":
     "the organisation-keyed Xero contact resolve, and the decision that an " +
     "Organisation-linked booking is invoiced as the Organisation",
+  "src/lib/organisation-xero-contact-persons.ts":
+    "its other half: derives the people named on that contact from the " +
+    "organisation's contact rows, and keeps them honest",
   "src/lib/xero-contact-home.ts":
     "the two-homes refusal (INV-INT-018): reads the Organisation holding a " +
     "Xero contact id so a member cannot claim it as well",
@@ -568,6 +571,17 @@ describe("#3367: each declared reader still plays its declared part", () => {
       )
       .map(({ path }) => path);
     expect(callers).toEqual(["src/lib/school-booking-request.ts"]);
+  });
+
+  it("derives the named people from the organisation's own contact rows", () => {
+    // The reason the split half is declared: it is the reader of
+    // `OrganisationContact`, and what it reads is what reaches Xero.
+    const source = read("src/lib/organisation-xero-contact-persons.ts");
+    expect(source).toContain("db.organisation.findUnique(");
+    expect(source).toContain("contacts: {");
+    // Derived on every resolve, never from a snapshot taken at create time —
+    // that is what makes "the next approval refreshes it" true.
+    expect(source).toContain("contactPersonsFingerprint");
   });
 
   it("the organisation is the invoiced party, and the member is the fallback", () => {

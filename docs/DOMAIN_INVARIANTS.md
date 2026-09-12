@@ -731,6 +731,7 @@ File: [`invariants/integrations.md`](invariants/integrations.md). Prefix
 | `INV-INT-015` | The bulk re-sync is admin-triggered, dry-run-first, chunked, resumable, and never moves the watermark |
 | `INV-INT-016` | `GET /api/bookings/rooms` keeps its no-`lodgeId` mode for FORKED/EXTERNAL consumers, excluding archived lodges; no `src/` client may use it |
 | `INV-INT-017` | The Xero NZBN field carries the date of birth through ONE shared codec; never blank it, never overwrite what the decoder cannot read as a day, never write without an observed cache row, and the inbound direction only fills a gap |
+| `INV-INT-018` | A Xero contact id has at most ONE local home: every writer that links one refuses a contact the other table already holds, under a contact-scoped advisory lock taken last |
 
 ## Operations
 

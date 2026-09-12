@@ -253,3 +253,60 @@ than only patching the route. Removing rows from a published response is a
 visible change for an external consumer, and it was taken as a compatibility
 note rather than a breaking change on the ground that no consumer can
 legitimately depend on being offered an out-of-service lodge.
+
+### INV-INT-018
+
+- **A Xero contact id has at most ONE local home.** Since
+  [#3366](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3366) two
+  columns can hold one: `Member.xeroContactId` and
+  `Organisation.xeroContactId`. Each is unique within its own table and nothing
+  can express "at most one of the two", because no database constraint spans two
+  tables that way. If both hold it the club's books say a school and a person
+  are the same customer, and whichever path runs next decides which one wins.
+- **Every writer that links a contact id refuses rather than guesses.** Before
+  writing the link it establishes that the OTHER table has no claim on that id,
+  and throws `XeroContactTwoHomesError` naming the record that holds it —
+  `src/lib/xero-contact-home.ts` is the one home for both the check and the lock.
+  The three writers are `findOrCreateXeroContact`'s phase-2 link,
+  `commitManualXeroContactLink`, and the organisation-keyed resolve.
+- **It is reachable on purpose, not only under concurrency.** A school's
+  organisation contact carries the school's contact email, which is the same
+  address the invented school member carries, and the member resolve asks Xero
+  `EmailAddress="…"` FIRST. So a credit note or supplementary invoice on a school
+  booking — paths that still read the booking's member — would deterministically
+  find the organisation's contact and link it to the member. That is why the
+  refusal is symmetric rather than sitting only on the organisation writer.
+- **A contact-scoped advisory lock closes the concurrent half.** Key
+  `hashtext('xero-contact-home:<contactId>')`, a domain-keyed lock in its own
+  keyspace, joining neither the global lock(1) cohort nor the per-lodge capacity
+  key. It is always acquired LAST — the writer's own entity key first
+  (`INV-LOCK-002`) — and no provider call runs inside the transaction holding it.
+- **The organisation resolve never searches Xero by email.** Its only adoption
+  path is a contact Xero itself refused to duplicate because the NAME is taken,
+  and even that is subject to the refusal above. A school's recorded address is
+  routinely a teacher's own, so an email search would adopt that person's
+  personal contact — the one thing
+  [#2912](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/2912)
+  settled must never happen.
+- **The returning school is an expected outcome, not a failure.** A school that
+  has booked before already has a person-shaped contact under its own name, so
+  the create is refused by Xero for the duplicate name and the adoption is
+  refused here. The organisation stays unlinked, the sync operation is closed
+  `CANCELLED` with a populated reason rather than `FAILED`, and the invoice is
+  raised against the contact the school already has. Classifying that contact as
+  the school's is
+  [#3369](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3369)'s
+  census, which requires zero ambiguous rows.
+- **This is bounded.** #3369 removes the invented school member, which is the
+  other home. The overlap opens when
+  [#3367](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3367) first
+  links an organisation and closes there. Nothing here is meant to be permanent;
+  what it must be is real while it lasts.
+- **What is NOT guarded, and why.** `xero-member-import.ts` links members onto
+  pre-existing Xero contacts in bulk from mapped contact GROUPS, and does not
+  take this refusal. A school's organisation contact reaches it only if an
+  operator puts that contact into a membership group, and bulk contact seeding is
+  [#2939](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/2939)'s
+  subject. Stated here rather than left to be discovered, and pinned by the
+  reader census in
+  `src/lib/__tests__/organisation-reader-contract.test.ts`.
