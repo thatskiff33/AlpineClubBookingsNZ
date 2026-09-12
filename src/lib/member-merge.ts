@@ -1137,6 +1137,9 @@ const GENERIC_KEYED_RESOLVERS: readonly {
   { spec: "NotificationPreference.member", delegate: "notificationPreference", memberColumn: "memberId", keys: [[]] },
   { spec: "NoticeReadReceipt.member", delegate: "noticeReadReceipt", memberColumn: "memberId", keys: [["noticeId"]] },
   { spec: "ClubPostReport.reporter", delegate: "clubPostReport", memberColumn: "reporterMemberId", keys: [["postId"]] },
+  // #3366: one association row per (organisation, person), so two people merged
+  // into one keep the master's attachment to a school they were both listed on.
+  { spec: "OrganisationContact.member", delegate: "organisationContact", memberColumn: "memberId", keys: [["organisationId"]] },
 ];
 
 /**

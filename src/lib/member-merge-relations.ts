@@ -327,4 +327,25 @@ export const MEMBER_MERGE_RELATION_SPECS: readonly MemberMergeRelationSpec[] = [
   spec("ClubPostReport", "reporter", "reporterMemberId", "resolve", {
     note: "@@unique(postId,reporterMemberId); keep master's report on collision",
   }),
+
+  // --- Organisations (#3366, stage 1 of programme #2912) ---
+  // A person's attachment to a school, as its teacher or its contact. The row
+  // is @@unique(organisationId,memberId), so if BOTH members were listed as
+  // contacts of the SAME organisation a naive move collides: keep the master's
+  // association and drop the loser's, via the generic keyed resolver.
+  //
+  // Classified here because it MUST be: the DMMF/schema completeness test fails
+  // CI on any Member relation with no bucket, which is exactly what stops a new
+  // relation escaping merge handling. Stage 1 writes no rows, so the resolver
+  // runs over an empty table until stage 2 (#3367) starts creating them — this
+  // is the classification arriving with the relation rather than a release
+  // behind it.
+  //
+  // `role` is deliberately not consulted. The master's own row wins whichever
+  // capacity each held: a merge decides which PERSON survives, and resolving a
+  // TEACHER against a CONTACT would be this file inventing a seniority rule
+  // that nothing else in the system has.
+  spec("OrganisationContact", "member", "memberId", "resolve", {
+    note: "@@unique(organisationId,memberId); keep master's association on collision",
+  }),
 ];
