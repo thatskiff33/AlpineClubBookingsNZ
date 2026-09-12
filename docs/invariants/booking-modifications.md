@@ -1225,9 +1225,13 @@ rule already had — an absent row, a negative row, a non-integer row — as an
 ABSENCE of usable evidence. It is never a zero: a stored `0` is a real sold price
 (a comped night) and reconciles like any other. So the definition above does not
 change shape, and that is why it can be restated in one sentence: **a strand
-holding a `NULL` night is not exact, and goes to a person.** An evenly-split
-backfilled strand carries an integer on every night, so it still reconciles and
-still prices as exact — the consequence this rule was written to preserve.
+holding a `NULL` night is not exact, and goes to a person.** Grain matters
+(#3277): an evenly-split backfilled strand can reconcile as a whole-guest total,
+so removing that entire guest may value the one stored total exactly; its
+`EVEN_SPLIT` or `UNKNOWN` rows are not evidence of what any individual night
+sold for, so a partial-night surrender or review re-base that consumes those
+nights parks or declines with `INEXACT_STORED_NIGHT_PRICES`. A broader
+whole-guest or booking-wide check never makes a partial-night edit actionable.
 
 Only a PARKED edit writes a `NULL`, and only for a night it cannot value: one the
 strand already held whose row carried no usable money, or one the edit newly puts
@@ -1732,6 +1736,14 @@ Five things about that re-price are load-bearing:
   $75 off $100 and a stored price of $25. A non-negative stored price is
   therefore structural rather than policed, and the assertion beside the write
   exists only because this is the one column shown able to go negative;
+- **the re-base records a fresh build-up and compares it before the headline
+  write** (#3277). `SOLD` and `OFFICER_PRICED` night rows are exact inputs;
+  `EVEN_SPLIT`, `UNKNOWN`, absent, partial, or non-reconciling rows make the
+  re-base decline without moving any of the four columns. A recorded build-up
+  may govern only when it is byte-identical to the recomputed result. Otherwise
+  the existing recomputed result wins under a classified compatibility fallback,
+  and the source, reason and both cents figures are copied into the existing
+  audit metadata and any `PRICE_REBASE` history row;
 - **the recomputed price GOVERNS EVERYWHERE** (owner decision D1, 5 September
   2026), including the cancellation refund cap, Internet-Banking reconciliation's
   amount law, the unpaid-invoice clearing credit note, per-night revenue

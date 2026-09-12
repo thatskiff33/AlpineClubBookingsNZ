@@ -350,9 +350,46 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   next engine run rewrites it, which is the honest answer. **Account credit is
   not in this table**: it has
   one home, the `MemberCredit` ledger entry with its booking link, and is
-  composed from there, never split across nights. No reader changes and no
-  figure a member sees changes in this stage (D3), pinned by
+  composed from there, never split across nights. Stage 2 added the record and
+  changed no reader or member-visible figure (D3), pinned by
   `promo-money-byte-identical.test.ts`.
+
+- **Stage 3 reads that build-up through one operation-aware projection and one
+  pure discriminator; it still changes no member-visible amount** (#3277,
+  programme #3272; owner decision D3, 12 September 2026).
+  `readBookingMoneyBuildUp` selects the stored guest totals, per-night amounts
+  and provenance, promotion allocation, and adjustment targets. The caller names
+  its operation because the required base grain differs: a whole-guest removal
+  may use a reconciling guest total even where its constituent nights are
+  `EVEN_SPLIT`, while a review re-base that prices individual nights requires
+  `SOLD` or `OFFICER_PRICED` rows. Credit election verifies the booking-wide
+  total/headline relationship, and Xero verifies only the booking-wide signed
+  promotion aggregate; neither is blocked by an irrelevant individual-night
+  provenance gap.
+
+  `selectBookingMoneyBuildUp` returns exactly one of `STORED`,
+  `DERIVED_COMPATIBILITY_FALLBACK`, or `BASE_EVIDENCE_UNKNOWN`, with an explicit
+  reason, stored and current cents where known, and history metadata. `STORED`
+  is selectable only when it is byte-identical to the existing calculation. A
+  known disagreement must name one of `STORED_SIDE_DEFECT`,
+  `DERIVATION_DEFECT`, or `LEGITIMATE_DIVERGENCE`, and still selects today's
+  existing amount. No differing stored amount is approved to win. Missing
+  historical adjustment rows are classified in the published stored-side bucket
+  as `ADJUSTMENT_BUILDUP_NOT_KNOWN`; that reason means the history was not
+  recorded, not that the surviving stored row is necessarily corrupt.
+
+  Unknown or inexact base evidence has no selectable amount and parks wherever
+  the operation needs that grain; it is never re-derived or defaulted to zero.
+  Guest removal loads and decides the result before its destructive write can
+  erase targets, then records it atomically on the existing
+  `BookingModification`. Review closure recomputes and writes a fresh build-up
+  and records the result in its existing audit and
+  `PRICE_REBASE` history. Credit election preserves its headline, clamp,
+  shortfall and credit-ledger arithmetic and records the component verdict with
+  the existing atomic credit result. A per-booking Xero invoice keeps gross
+  stored guest/night lines plus one booking-level promotion line, and records
+  that aggregate line's source on the existing Xero operation. Group-settlement
+  totals and their existing omission of a child promotion line do not change.
 
 ## INV-MONEY-006
 
