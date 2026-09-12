@@ -270,18 +270,21 @@ So the child covers exactly those, and nothing else:
 2. **Every conflict resolution the orchestrator wrote**, with each sync's diff as
    the evidence and a differential proof wherever a resolution changed
    behaviour-bearing code rather than only its shape.
-3. **The full disk-scanning census suite, run by name with
-   `npm run test:named`.** That is the class the module graph cannot reach — so
-   `vitest related` never selects it — and the class that catches a disarmed
-   guard.
+3. **Every census or contract suite that reads the tree from disk, run by
+   name with `npm run test:named`.** Select them per
+   [`TESTING.md`](../TESTING.md) → "Selecting the censuses a change can reach",
+   over the epic's whole diff against `main`, never from memory: that is the
+   class the module graph cannot reach — so `vitest related` never selects
+   it — and the class that catches a disarmed guard.
 
-**It is deliberately not a re-review of the epic diff.** Nobody reads 751
-files, and a review that claims to have is worse than a scoped one that says
-what it covered.
+**It is deliberately not a re-review of the epic diff.** Nobody reads a
+751-file diff — MEP #2680's size — and a review that claims to have is worse
+than a scoped one that says what it covered.
 
 **Timing is part of the contract.** It runs *after* the final `main` sync and
 *before* the epic's pull request is marked ready. A review approves the commit
-it read: a sync landing afterwards re-opens the child over the delta only — the
+it read (`AGENTS.md` → "Wave Orchestration Playbook" §3): a sync landing
+afterwards re-opens the child over the delta only — the
 new sync's resolutions and any census the sync re-measured — never a fresh pass
 over the whole branch.
 
