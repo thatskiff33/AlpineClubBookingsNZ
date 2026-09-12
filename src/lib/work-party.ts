@@ -89,16 +89,38 @@ export function restrictPerNightRatesToWindow(
   window: WorkPartyNightWindow,
   nightDates?: ReadonlyArray<Date> | null
 ): number[] {
+  return inWindowNightIndexes(perNightRates.length, firstNight, window, nightDates).map(
+    (index) => perNightRates[index]
+  );
+}
+
+/**
+ * The positions, among `nightCount` nights, that fall inside the event window
+ * (#3276) — the ONE statement of the window rule, which
+ * `restrictPerNightRatesToWindow` narrows to rates. `promo.ts` needs the
+ * positions themselves so it can keep a guest's `nightDates` parallel to the
+ * rates it filters: an adjustment row is attributed to a night by DATE, and a
+ * rate vector filtered without its dates would attribute the discount to the
+ * wrong nights on any stay the window only partly covers.
+ */
+export function inWindowNightIndexes(
+  nightCount: number,
+  firstNight: Date,
+  window: WorkPartyNightWindow,
+  nightDates?: ReadonlyArray<Date> | null
+): number[] {
   const startKey = formatDateOnly(window.startDate);
   const endKey = formatDateOnly(window.endDate);
-  return perNightRates.filter((_, index) => {
+  const kept: number[] = [];
+  for (let index = 0; index < nightCount; index += 1) {
     const nightDate =
       nightDates && nightDates[index]
         ? nightDates[index]
         : addDaysDateOnly(firstNight, index);
     const nightKey = formatDateOnly(nightDate);
-    return nightKey >= startKey && nightKey <= endKey;
-  });
+    if (nightKey >= startKey && nightKey <= endKey) kept.push(index);
+  }
+  return kept;
 }
 
 /**

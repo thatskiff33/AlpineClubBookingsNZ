@@ -228,6 +228,16 @@ const tx = {
   bookingModification: {
     create: (...a: unknown[]) => mocks.bookingModificationCreate(...a),
   },
+  // #3276: the re-base records the promotion build-up over the strands' nights.
+  bookingGuestNightAdjustment: {
+    deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+    createMany: vi.fn().mockResolvedValue({ count: 0 }),
+  },
+  promoRedemption: { findUnique: vi.fn().mockResolvedValue(null) },
+  bookingGuestNight: {
+    findMany: vi.fn().mockResolvedValue([]),
+    updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+  },
 };
 
 function reviewContext(overrides: Record<string, unknown> = {}) {

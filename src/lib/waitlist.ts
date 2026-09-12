@@ -51,6 +51,10 @@ import { formatMissingPaidUpAdultWaitlistRefusal } from "@/lib/policies/subscrip
 import { formatAdultMemberHostingWaitlistRefusal } from "@/lib/policies/adult-member-hosting";
 import { requiredNightPriceCents } from "@/lib/required-price-cents";
 import { carriesUnvaluedStoredNight } from "@/lib/stored-night-price-write";
+import {
+  recordBookingNightAdjustments,
+  type PromoAdjustmentTarget,
+} from "@/lib/night-adjustment-write";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 
 export const WAITLIST_OFFER_HOURS =
@@ -188,6 +192,15 @@ async function repriceWaitlistCandidate(
     return candidate.finalPriceCents;
   }
 
+  // #3276 (INV-MONEY-029): the recorder runs AFTER this try/catch, not inside
+  // it. The catch below degrades to the stored snapshot instead of rolling
+  // back, so a refusal raised inside it after the night rewrite would commit a
+  // half-reprice. Outside it, a refusal fails the sweep transaction like any
+  // other post-mutation error, and the recorder itself refuses before it writes.
+  let repriced: {
+    newFinalPriceCents: number;
+    adjustmentTargets: PromoAdjustmentTarget[];
+  } | null = null;
   try {
     const seasonRateData = await loadSeasonRateData(tx, lodgeId);
     const groupDiscountSetting = await tx.groupDiscountSetting.findUnique({
@@ -336,7 +349,7 @@ async function repriceWaitlistCandidate(
       );
     }
 
-    return newFinalPriceCents;
+    repriced = { newFinalPriceCents, adjustmentTargets: promoResult.adjustmentTargets };
   } catch (err) {
     logger.error(
       { err, bookingId: candidate.id },
@@ -344,6 +357,15 @@ async function repriceWaitlistCandidate(
     );
     return candidate.finalPriceCents;
   }
+  // #3276: after the last night write and the promotion write, and outside the
+  // degrade path above (see the comment at the top of the try).
+  await recordBookingNightAdjustments(tx, {
+    bookingId: candidate.id,
+    guestIds: candidate.guests.map((guest) => guest.id),
+    targets: repriced.adjustmentTargets,
+    writer: "the waitlist offer reprice",
+  });
+  return repriced.newFinalPriceCents;
 }
 
 /**

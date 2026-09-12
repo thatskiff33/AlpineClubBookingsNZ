@@ -3143,3 +3143,100 @@ describe("MemberMergeError", () => {
     expect(err.details).toEqual({ a: 1 });
   });
 });
+
+describe("promo adjustment rows follow their allocation through a merge (#3276, INV-MONEY-029)", () => {
+  function allocationDelegate(config: {
+    loserRows: Array<Record<string, unknown>>;
+    masterRows: Array<Record<string, unknown>>;
+  }) {
+    return {
+      ...defaultDelegate(),
+      findMany: vi.fn(({ where }: { where: { memberId?: string } }) => {
+        if (where.memberId === LOSER_ID) return Promise.resolve(config.loserRows);
+        if (where.memberId === MASTER_ID) return Promise.resolve(config.masterRows);
+        return Promise.resolve([]);
+      }),
+      deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+    };
+  }
+
+  it("deletes the loser's rows on the redemption whose allocation is dropped, BEFORE dropping it, and moves the rest", async () => {
+    const promoRedemptionAllocation = allocationDelegate({
+      // R1 collides with the master's allocation; R2 is the loser's alone.
+      loserRows: [
+        { id: "LA1", memberId: LOSER_ID, promoRedemptionId: "R1", promoCodeId: "P1", bookingId: "B1" },
+        { id: "LA2", memberId: LOSER_ID, promoRedemptionId: "R2", promoCodeId: "P1", bookingId: "B2" },
+      ],
+      masterRows: [
+        { id: "MA1", memberId: MASTER_ID, promoRedemptionId: "R1", promoCodeId: "P1", bookingId: "B1" },
+      ],
+    });
+    const bookingGuestNightAdjustment = {
+      ...defaultDelegate(),
+      deleteMany: vi.fn().mockResolvedValue({ count: 2 }),
+      updateMany: vi.fn().mockResolvedValue({ count: 3 }),
+    };
+    const { client } = makeClient({ promoRedemptionAllocation, bookingGuestNightAdjustment });
+
+    await executeMemberMerge({
+      masterId: MASTER_ID,
+      loserId: LOSER_ID,
+      actorMemberId: ACTOR_ID,
+      previewToken: validToken(),
+      confirmationText: "MERGE Dup Person",
+      db: client as never,
+    });
+
+    // The loser's rows on R1 go with the loser's R1 allocation — and only those:
+    // the master's own R1 rows are selected by neither the member nor the key.
+    expect(bookingGuestNightAdjustment.deleteMany).toHaveBeenCalledWith({
+      where: { beneficiaryMemberId: LOSER_ID, promoRedemptionId: { in: ["R1"] } },
+    });
+    expect(promoRedemptionAllocation.deleteMany).toHaveBeenCalledWith({
+      where: { id: { in: ["LA1"] } },
+    });
+    const rowsDeletedAt = bookingGuestNightAdjustment.deleteMany.mock.invocationCallOrder[0];
+    const allocationDroppedAt = promoRedemptionAllocation.deleteMany.mock.invocationCallOrder[0];
+    expect(rowsDeletedAt).toBeLessThan(allocationDroppedAt);
+    // The surviving rows (R2) then move with their allocation, after the drop.
+    expect(bookingGuestNightAdjustment.updateMany).toHaveBeenCalledWith({
+      where: { beneficiaryMemberId: LOSER_ID },
+      data: { beneficiaryMemberId: MASTER_ID },
+    });
+    expect(bookingGuestNightAdjustment.updateMany.mock.invocationCallOrder[0]).toBeGreaterThan(
+      allocationDroppedAt,
+    );
+  });
+
+  it("deletes no adjustment rows when nothing collides: the rows simply move with their allocation", async () => {
+    const promoRedemptionAllocation = allocationDelegate({
+      loserRows: [
+        { id: "LA2", memberId: LOSER_ID, promoRedemptionId: "R2", promoCodeId: "P1", bookingId: "B2" },
+      ],
+      masterRows: [],
+    });
+    const bookingGuestNightAdjustment = {
+      ...defaultDelegate(),
+      deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+    };
+    const { client } = makeClient({ promoRedemptionAllocation, bookingGuestNightAdjustment });
+
+    await executeMemberMerge({
+      masterId: MASTER_ID,
+      loserId: LOSER_ID,
+      actorMemberId: ACTOR_ID,
+      previewToken: validToken(),
+      confirmationText: "MERGE Dup Person",
+      db: client as never,
+    });
+
+    expect(bookingGuestNightAdjustment.deleteMany).not.toHaveBeenCalled();
+    expect(promoRedemptionAllocation.deleteMany).not.toHaveBeenCalled();
+    expect(bookingGuestNightAdjustment.updateMany).toHaveBeenCalledWith({
+      where: { beneficiaryMemberId: LOSER_ID },
+      data: { beneficiaryMemberId: MASTER_ID },
+    });
+  });
+});
