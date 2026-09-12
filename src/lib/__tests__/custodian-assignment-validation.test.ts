@@ -25,6 +25,10 @@ const mocks = vi.hoisted(() => ({
   // spot). Its own spy, dispatched on the `capacityOverriddenAt` filter, so the
   // capacity-holding population stays exactly what each case sets.
   overriddenBookingFindMany: vi.fn(),
+  // #2698: the whole-lodge hold read behind `findWholeLodgeHoldAmendments`,
+  // dispatched on its own `wholeLodgeHold` filter so the occupancy population
+  // each case sets stays exactly what it was.
+  holdBookingFindMany: vi.fn(),
   getLodgeCapacity: vi.fn(),
 }));
 
@@ -37,7 +41,9 @@ import {
   custodianAssignmentNights,
   CustodianBedHoldError,
   CustodianOverCapacityConfirmationRequiredError,
+  findWholeLodgeHoldAmendments,
   validateCustodianBedHold,
+  wholeLodgeHoldAmendmentNights,
 } from "@/lib/custodian-assignment";
 
 const LODGE = "lodge-a";
@@ -49,10 +55,15 @@ function db() {
     lodgeBed: { findUnique: mocks.lodgeBedFindUnique },
     bedAllocation: { findMany: mocks.bedAllocationFindMany },
     booking: {
-      findMany: (args: { where?: Record<string, unknown> }) =>
-        args?.where && "capacityOverriddenAt" in args.where
-          ? mocks.overriddenBookingFindMany(args)
-          : mocks.bookingFindMany(args),
+      findMany: (args: { where?: Record<string, unknown> }) => {
+        if (args?.where && "capacityOverriddenAt" in args.where) {
+          return mocks.overriddenBookingFindMany(args);
+        }
+        if (args?.where && "wholeLodgeHold" in args.where) {
+          return mocks.holdBookingFindMany(args);
+        }
+        return mocks.bookingFindMany(args);
+      },
     },
   } as never;
 }
@@ -331,5 +342,176 @@ describe("validateCustodianBedHold", () => {
     await expect(validate()).rejects.toBeInstanceOf(
       CustodianOverCapacityConfirmationRequiredError,
     );
+  });
+});
+
+/**
+ * #2698 — which existing whole-lodge holds a custodian bed hold would narrow.
+ *
+ * Two date conventions meet here and neither is converted by hand: a custodian
+ * assignment bands inclusive-inclusive covered DAYS, a whole-lodge hold spans
+ * the half-open booking envelope `[checkIn, checkOut)` because a `checkOut` is
+ * a departure morning. Each side's own predicate applies its own convention,
+ * so the boundary cases below are the real test of that rather than of
+ * arithmetic written twice.
+ */
+describe("findWholeLodgeHoldAmendments (#2698)", () => {
+  /** A capacity-holding whole-lodge hold, as `booking.findMany` returns it. */
+  function holdRow(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "booking-hold",
+      status: "PAID",
+      checkIn: parseDateOnly("2026-07-01"),
+      checkOut: parseDateOnly("2026-07-06"),
+      lodgeId: LODGE,
+      wholeLodgeHold: true,
+      originBookingRequest: null,
+      adminCapacityHoldAt: null,
+      ...overrides,
+    };
+  }
+
+  /** This assignment's OWN custodian hold, as `findCustodianBedHolds` reads it. */
+  function ownHoldRow(startDate: string, endDate: string) {
+    return {
+      id: "assignment-1",
+      memberId: "member-1",
+      lodgeId: LODGE,
+      bedId: "bed-1",
+      startDate: parseDateOnly(startDate),
+      endDate: parseDateOnly(endDate),
+      member: { firstName: "Sam", lastName: "Leader", ageTier: "ADULT" },
+      bed: {
+        id: "bed-1",
+        name: "A1",
+        roomId: "room-1",
+        room: { id: "room-1", name: "Kea" },
+      },
+    };
+  }
+
+  function findAmendments(overrides: Record<string, unknown> = {}) {
+    return findWholeLodgeHoldAmendments({
+      bedId: "bed-1",
+      lodgeId: LODGE,
+      startDate: parseDateOnly("2026-07-02"),
+      endDate: parseDateOnly("2026-07-04"),
+      db: db(),
+      ...overrides,
+    });
+  }
+
+  beforeEach(() => {
+    mocks.hutLeaderAssignmentFindMany.mockResolvedValue([]);
+    mocks.holdBookingFindMany.mockResolvedValue([]);
+  });
+
+  it("returns nothing when no whole-lodge hold overlaps", async () => {
+    await expect(findAmendments()).resolves.toEqual([]);
+  });
+
+  it("names every night the bed would leave the hold's represented set", async () => {
+    mocks.holdBookingFindMany.mockResolvedValue([holdRow()]);
+    await expect(findAmendments()).resolves.toEqual([
+      {
+        bookingId: "booking-hold",
+        nights: ["2026-07-02", "2026-07-03", "2026-07-04"],
+      },
+    ]);
+  });
+
+  it("stops at the hold's departure morning, which is not a held night", async () => {
+    // checkOut 07-03 means the group's last NIGHT is 07-02. A custodian taking
+    // the bed on 07-03 and 07-04 narrows nothing.
+    mocks.holdBookingFindMany.mockResolvedValue([
+      holdRow({ checkOut: parseDateOnly("2026-07-03") }),
+    ]);
+    await expect(findAmendments()).resolves.toEqual([
+      { bookingId: "booking-hold", nights: ["2026-07-02"] },
+    ]);
+  });
+
+  it("reports each overlapping hold separately, with only its own nights", async () => {
+    mocks.holdBookingFindMany.mockResolvedValue([
+      holdRow({
+        id: "booking-early",
+        checkIn: parseDateOnly("2026-07-01"),
+        checkOut: parseDateOnly("2026-07-03"),
+      }),
+      holdRow({
+        id: "booking-late",
+        checkIn: parseDateOnly("2026-07-04"),
+        checkOut: parseDateOnly("2026-07-08"),
+      }),
+    ]);
+    await expect(findAmendments()).resolves.toEqual([
+      { bookingId: "booking-early", nights: ["2026-07-02"] },
+      { bookingId: "booking-late", nights: ["2026-07-04"] },
+    ]);
+  });
+
+  it("ignores a hold on a booking that no longer holds capacity", async () => {
+    // The blocking predicate is the capacity engine's own, so a hold flag on a
+    // cancelled booking narrows nothing — it was blocking nothing either.
+    mocks.holdBookingFindMany.mockResolvedValue([
+      holdRow({ status: "CANCELLED" }),
+    ]);
+    await expect(findAmendments()).resolves.toEqual([]);
+  });
+
+  it("does not re-ask about nights this assignment already holds", async () => {
+    // "New and amended holds only" (owner, 9 Aug 2026). 07-02 and 07-03 left
+    // the hold's set when this assignment was created and accepted; only the
+    // NEW night 07-04 is a fresh amendment.
+    mocks.holdBookingFindMany.mockResolvedValue([holdRow()]);
+    mocks.hutLeaderAssignmentFindMany.mockResolvedValue([
+      ownHoldRow("2026-07-02", "2026-07-03"),
+    ]);
+    await expect(
+      findAmendments({ assignmentId: "assignment-1" }),
+    ).resolves.toEqual([
+      { bookingId: "booking-hold", nights: ["2026-07-04"] },
+    ]);
+  });
+
+  it("asks nothing at all when the edit adds no new custodian night", async () => {
+    mocks.holdBookingFindMany.mockResolvedValue([holdRow()]);
+    mocks.hutLeaderAssignmentFindMany.mockResolvedValue([
+      ownHoldRow("2026-07-01", "2026-07-31"),
+    ]);
+    await expect(
+      findAmendments({ assignmentId: "assignment-1" }),
+    ).resolves.toEqual([]);
+  });
+
+  it("counts ANOTHER assignment's hold on the same bed as a fresh amendment", async () => {
+    // Only this assignment's own coverage is already outside the hold's set.
+    // A different assignment's row is not this write, so it is not subtracted —
+    // and `validateCustodianBedHold` refuses that overlap before this is ever
+    // reached, so it is a belt-and-braces direction, not a live case.
+    mocks.holdBookingFindMany.mockResolvedValue([holdRow()]);
+    mocks.hutLeaderAssignmentFindMany.mockResolvedValue([
+      { ...ownHoldRow("2026-07-02", "2026-07-04"), id: "assignment-other" },
+    ]);
+    await expect(
+      findAmendments({ assignmentId: "assignment-1" }),
+    ).resolves.toEqual([
+      {
+        bookingId: "booking-hold",
+        nights: ["2026-07-02", "2026-07-03", "2026-07-04"],
+      },
+    ]);
+  });
+});
+
+/** The one-line night list the 409 and the audit row both carry. */
+describe("wholeLodgeHoldAmendmentNights", () => {
+  it("de-duplicates and sorts across every affected hold", () => {
+    expect(
+      wholeLodgeHoldAmendmentNights([
+        { bookingId: "b1", nights: ["2026-07-03", "2026-07-02"] },
+        { bookingId: "b2", nights: ["2026-07-03", "2026-07-05"] },
+      ]),
+    ).toEqual(["2026-07-02", "2026-07-03", "2026-07-05"]);
   });
 });
