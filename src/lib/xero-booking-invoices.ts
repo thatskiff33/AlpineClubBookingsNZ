@@ -51,10 +51,10 @@ import {
   getResolvedAccountMapping,
 } from "./xero-mappings";
 import {
-  findOrCreateXeroContact,
   retryXeroWriteWithContactRepair,
   type FindOrCreateXeroContactOptions,
 } from "./xero-contacts";
+import { findOrCreateXeroContactForInvoicedParty } from "@/lib/organisation-xero-contacts";
 import { formatDateOnly } from "@/lib/date-only";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
@@ -479,10 +479,16 @@ export async function createXeroInvoiceForBooking(
 
   const { xero, tenantId } = await getAuthenticatedXeroClient();
 
-  // Ensure the member has a Xero contact
+  // Ensure the invoiced party has a Xero contact.
+  // #3367: where this booking is linked to an Organisation — a school — the
+  // ORGANISATION is the invoiced party and its own organisation-shaped Xero
+  // customer is used. Where it is not, this is byte-for-byte today's behaviour:
+  // the booking's member. The invoice payload below carries only a contact
+  // reference and no name, so this one line is the whole of "the organisation
+  // becomes the invoiced party" for the invoice builder.
   // #3036 review P1-12: this client was built two lines up, so hand it to the
   // containment verification rather than making it authenticate a second time.
-  const contactId = await findOrCreateXeroContact(booking.memberId, {
+  const contactId = await findOrCreateXeroContactForInvoicedParty(booking, {
     ...options,
     xero,
     tenantId,

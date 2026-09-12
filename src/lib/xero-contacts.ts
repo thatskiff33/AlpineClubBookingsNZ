@@ -10,7 +10,6 @@
  */
 
 import {
-  Address,
   Contact,
   Phone,
   type XeroClient,
@@ -46,6 +45,14 @@ import {
   type XeroContactEmailPolicy,
 } from "@/lib/xero-contact-containment";
 import { ensureXeroContactContained } from "@/lib/xero-contact-containment-proof";
+import {
+  buildXeroAddresses,
+  buildXeroContactShape,
+} from "@/lib/xero-contact-shape";
+import {
+  assertXeroContactHasNoOtherHome,
+  lockXeroContactHome,
+} from "@/lib/xero-contact-home";
 import {
   ambiguousMemberContactCreateReservationWhere,
   assertMemberAvailableForXeroContactChange,
@@ -366,7 +373,13 @@ export function namesLookSimilarForPotentialMatch(
   return matchedTokens >= requiredMatches;
 }
 
-function isDuplicateActiveXeroContactNameError(error: unknown): boolean {
+/**
+ * Exported for the organisation-keyed resolve (#3367), which meets the same
+ * Xero rule — contact names are unique — and must adopt the existing contact
+ * rather than mint a second one. Shared rather than copied so the two paths
+ * cannot drift on which provider error means "the name is taken".
+ */
+export function isDuplicateActiveXeroContactNameError(error: unknown): boolean {
   const text = getXeroErrorSearchText(error);
   return (
     text.includes("already assigned to another contact") ||
@@ -378,45 +391,8 @@ function isDuplicateActiveXeroContactNameError(error: unknown): boolean {
 // Address builders / validation
 // ---------------------------------------------------------------------------
 
-function buildXeroAddresses(member: {
-  streetAddressLine1?: string | null;
-  streetAddressLine2?: string | null;
-  streetCity?: string | null;
-  streetRegion?: string | null;
-  streetPostalCode?: string | null;
-  streetCountry?: string | null;
-  postalAddressLine1?: string | null;
-  postalAddressLine2?: string | null;
-  postalCity?: string | null;
-  postalRegion?: string | null;
-  postalPostalCode?: string | null;
-  postalCountry?: string | null;
-}): Address[] {
-  const addresses: Address[] = [];
-  if (member.streetAddressLine1) {
-    addresses.push({
-      addressType: Address.AddressTypeEnum.STREET,
-      addressLine1: member.streetAddressLine1,
-      addressLine2: member.streetAddressLine2 || "",
-      city: member.streetCity || "",
-      region: member.streetRegion || "",
-      postalCode: member.streetPostalCode || "",
-      country: member.streetCountry || "",
-    });
-  }
-  if (member.postalAddressLine1) {
-    addresses.push({
-      addressType: Address.AddressTypeEnum.POBOX,
-      addressLine1: member.postalAddressLine1,
-      addressLine2: member.postalAddressLine2 || "",
-      city: member.postalCity || "",
-      region: member.postalRegion || "",
-      postalCode: member.postalPostalCode || "",
-      country: member.postalCountry || "",
-    });
-  }
-  return addresses;
-}
+// `buildXeroAddresses` moved to `xero-contact-shape.ts` in #3367, unchanged, so
+// the person and organisation payload builders share one copy rather than two.
 
 // Server-side create gate (#2089). Xero's contact-create API requires only a
 // unique contact name; this app additionally keeps email required because Xero
@@ -465,7 +441,9 @@ export function getMissingFieldsForXeroContactCreate(member: {
  * the invoice and credit-note writers, and this must be a no-op for their
  * payloads.
  */
-function stripPersonNameFromStoredContactPayload(payload: unknown): unknown {
+export function stripPersonNameFromStoredContactPayload(
+  payload: unknown,
+): unknown {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     return payload;
   }
@@ -498,6 +476,14 @@ function stripPersonNameFromStoredContactPayload(payload: unknown): unknown {
   site `applyXeroContactEmailPolicy` is the identity function, so the payload
   below — and therefore its stored request payload and its idempotency key — is
   byte-identical to what it was before that issue.
+
+  #3367 moved the object literal itself into `buildXeroContactShape`, which the
+  ORGANISATION payload builder shares rather than copying (INV-SSOT). This
+  function keeps the two things that are genuinely person-specific: the create
+  gate, and composing Xero's required `name` out of a first and last name. The
+  shape module pins the KEY ORDER, which is load-bearing because
+  `buildXeroPayloadHash` hashes the outbound object into an idempotency key —
+  the payload this produces is byte-identical to the one it produced before.
 */
 function buildMemberXeroContactCreatePayload(
   member: LockedMemberContactCreateSnapshot,
@@ -508,38 +494,24 @@ function buildMemberXeroContactCreatePayload(
     throw new XeroContactValidationError(missingFields);
   }
 
-  const hasAnyPhonePart = Boolean(
-    member.phoneCountryCode?.trim() ||
-      member.phoneAreaCode?.trim() ||
-      member.phoneNumber?.trim(),
-  );
-  return {
+  return buildXeroContactShape(policy, {
     name: `${member.firstName} ${member.lastName}`,
-    firstName: member.firstName,
-    lastName: member.lastName,
-    emailAddress: applyXeroContactEmailPolicy(
-      policy,
-      isPlaceholderContactEmail(member.email) ? "" : member.email,
-    ),
+    person: { firstName: member.firstName, lastName: member.lastName },
+    email: isPlaceholderContactEmail(member.email) ? "" : member.email,
     // #2859: the member's date of birth, in the `dd/mm/yyyy` shape the import
     // side has always read back out of this field. `null` — an EXPLICIT "the
     // field is known to be empty" — because this payload creates the contact,
     // so there is nothing in Xero to clobber. Omitting the argument would mean
     // "nothing is known", which the guard refuses to write into. A member with
     // no date of birth contributes no key at all.
-    ...buildXeroContactCompanyNumberPatch(member.dateOfBirth, null),
-    phones: hasAnyPhonePart
-      ? [
-          {
-            phoneType: Phone.PhoneTypeEnum.MOBILE,
-            phoneCountryCode: member.phoneCountryCode || "",
-            phoneAreaCode: member.phoneAreaCode || "",
-            phoneNumber: member.phoneNumber || "",
-          },
-        ]
-      : [],
-    addresses: buildXeroAddresses(member),
-  };
+    extraFields: buildXeroContactCompanyNumberPatch(member.dateOfBirth, null),
+    phone: {
+      countryCode: member.phoneCountryCode,
+      areaCode: member.phoneAreaCode,
+      number: member.phoneNumber,
+    },
+    addresses: member,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -607,7 +579,13 @@ async function linkMatchedXeroContact(
   );
 }
 
-async function findExistingXeroContactByExactName(input: {
+/**
+ * Exported for the organisation-keyed resolve (#3367), which uses it as its ONE
+ * adoption path — a school's contact may only ever be matched by its exact
+ * name, never by email. Shared rather than copied so both paths normalise and
+ * compare a contact name identically.
+ */
+export async function findExistingXeroContactByExactName(input: {
   xero: XeroClient;
   tenantId: string;
   fullName: string;
@@ -1019,6 +997,31 @@ export async function findOrCreateXeroContact(
       ) {
         return { contactId: fresh.xeroContactId, wonWrite: false };
       }
+
+      /*
+        INV-INT-018 (#3367) — the two-homes refusal, from the MEMBER side.
+
+        Since stage 1 (#3366) a Xero contact id has two possible local homes, and
+        this is the one that is reachable WITHOUT a race: a school's organisation
+        contact carries the school's contact email, which is the same address the
+        invented school member carries, and the email search above asks Xero for
+        exactly that. So a credit note or supplementary invoice on a school
+        booking — none of which stage 2 moves onto the organisation — would find
+        the ORGANISATION's contact and quietly link it to the member, leaving two
+        local records claiming one Xero customer.
+
+        The lock is taken here, after the member key and before the check, so a
+        concurrent organisation resolve cannot pass its own check at the same
+        moment (INV-LOCK-002: entity key first, contact-home key last). The
+        refusal throws rather than choosing a winner — the settled rule on #2912
+        is that a person's contact is never reused as the school, and picking
+        one silently is that rule broken from the database side.
+      */
+      await lockXeroContactHome(tx, finalResolved.contactId);
+      await assertXeroContactHasNoOtherHome(tx, {
+        xeroContactId: finalResolved.contactId,
+        home: { kind: "MEMBER", id: memberId },
+      });
 
       if (finalResolved.kind === "matched") {
         await linkMatchedXeroContact(tx, {
