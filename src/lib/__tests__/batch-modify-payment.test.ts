@@ -418,14 +418,14 @@ function reconcilingNightRows<G extends Record<string, unknown>>(
   });
 }
 
-function withSoldNightProvenance(booking: ReturnType<typeof makeBooking>) {
-  return {
-    ...booking,
-    guests: booking.guests.map((guest) => ({
-      ...guest,
-      nights: guest.nights.map((night) => ({ ...night, priceSource: "SOLD" as const })),
-    })),
-  };
+function withSoldNightProvenance<T>(booking: T): T {
+  const guests = (booking as {
+    guests: Array<{ nights: Array<{ priceSource: string }> }>;
+  }).guests;
+  for (const guest of guests) {
+    for (const night of guest.nights) night.priceSource = "SOLD";
+  }
+  return booking;
 }
 
 function makeTx(booking: ReturnType<typeof makeBooking>) {
