@@ -29,7 +29,7 @@ vi.mock("@/lib/club-identity-settings", () => ({
     },
   })),
 }));
-vi.mock("@/config/operational", () => ({ APP_CURRENCY: "NZD" }));
+vi.mock("@/config/operational", () => ({ APP_CURRENCY: "NZD", APP_STRIPE_CURRENCY: "nzd", APP_TIME_ZONE: "Pacific/Auckland", APP_LOCALE: "en-NZ" }));
 vi.mock("@/lib/lodge-capacity", () => ({
   getLodgeCapacity: vi.fn(async () => 42),
 }));

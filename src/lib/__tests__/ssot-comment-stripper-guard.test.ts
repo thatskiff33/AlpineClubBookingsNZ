@@ -61,8 +61,10 @@ const POPULATION_PUBLISHERS = [
 // import". The middle clause is what #2975's helper forced: the KIND of importer
 // changed, not just the count, and a regex that only reached the number would
 // have gone on matching a sentence that had become false.
+// #3276 added a second helper (the shared night-writer scanner), so the clause
+// counts helpers too — still exact: "two test helpers", nothing looser.
 const PUBLISHED_POPULATION =
-  /(\d+)\s+test files,\s+(?:a|one)\s+test\s+helper and\s+one CI script import\b/;
+  /(\d+)\s+test files,\s+(?:a|one|two)\s+test\s+helpers? and\s+one CI script import\b/;
 
 /*
   HOW AN IMPORTER IS COUNTED, because every previous count of this got it wrong
@@ -562,6 +564,12 @@ describe("INV-SSOT-004: the published importer count is measured, not inherited"
       // on being false while every number in it stayed right.
       "scripts/ci/check-website-render-modes.mjs",
       "src/lib/__tests__/helpers/admin-route-explicit-permissions.ts",
+      // #3276: the ONE AST scanner for BookingGuestNight writers, shared by the
+      // stage-1 (INV-MONEY-028) and stage-2 (INV-MONEY-029) censuses so a new
+      // night writer cannot be added without the second census asking how it
+      // records. It strips comments before its raw-SQL scan, like the censuses
+      // it was lifted out of.
+      "src/lib/__tests__/support/booking-guest-night-writer-scan.ts",
     ]);
 
     for (const publisher of POPULATION_PUBLISHERS) {

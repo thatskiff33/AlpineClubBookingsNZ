@@ -107,6 +107,12 @@ import {
   validateAndCalculatePromoDiscount,
 } from "@/lib/promo";
 import {
+  recordBookingNightAdjustments,
+  restoreBookingNightAdjustments,
+  snapshotBookingNightAdjustments,
+  type PromoAdjustmentTarget,
+} from "@/lib/night-adjustment-write";
+import {
   describePromoCapCoverage,
   type PromoCoverageNotice,
 } from "@/lib/promo-cap-coverage";
@@ -743,6 +749,9 @@ export async function modifyBookingDates({
     let newPromoAdjustmentCents = 0;
     let promoRemoved = false;
     let promoCoverage: PromoCoverageNotice | null = null;
+    // #3276: what the promotion took off each night or guest; empty when the
+    // booking carries none.
+    let adjustmentTargets: PromoAdjustmentTarget[] = [];
 
     if (parked) {
       // #3166: the booking's stored promotion figures, written back untouched.
@@ -797,6 +806,7 @@ export async function modifyBookingDates({
         const promoResult = application.discount;
         newDiscountCents = promoResult.discountCents;
         newPromoAdjustmentCents = promoResult.priceAdjustmentCents;
+        adjustmentTargets = promoResult.adjustmentTargets;
         promoCoverage = await describePromoCapCoverage(tx, {
           promoCode: promo.code,
           capCoverage: application.capCoverage,
@@ -1161,6 +1171,18 @@ export async function modifyBookingDates({
         }
       }),
     );
+
+    // #3276: after the last night write and the promotion write. A PARKED
+    // date change re-ran nothing and wrote what it could preserve of the
+    // stored prices; its nights stay UNKNOWN for the reviewer.
+    if (!parked) {
+      await recordBookingNightAdjustments(tx, {
+        bookingId,
+        guestIds: guestsForPricing.map((guest) => guest.bookingGuestId),
+        targets: adjustmentTargets,
+        writer: "the booking date modification",
+      });
+    }
 
     const oldCheckIn = new Date(booking.checkIn);
     const oldCheckOut = new Date(booking.checkOut);
@@ -1896,6 +1918,11 @@ export async function adminShiftBookingDates({
       today: clubTodayDateOnly,
     });
 
+    // #3276: a shift moves every night by the same delta and no money moves, so
+    // the recorded build-up moves with it — captured before the rewrite below
+    // cascades it away, re-attached by (guest, date + delta) afterwards.
+    const carriedAdjustments = await snapshotBookingNightAdjustments(tx, bookingId);
+
     // Writes: translate each guest's envelope and rebuild its night rows at the
     // shifted dates with the SAME priceCents. Guest priceCents is untouched.
     for (const entry of translatedGuests) {
@@ -1917,6 +1944,12 @@ export async function adminShiftBookingDates({
         });
       }
     }
+
+    await restoreBookingNightAdjustments(tx, {
+      snapshot: carriedAdjustments,
+      shiftDays: deltaDays,
+      writer: "the admin date shift",
+    });
 
     // Non-member hold recalculation, mirroring modifyBookingDates: the hold
     // window and the PENDING → PAYMENT_PENDING release both key off the new

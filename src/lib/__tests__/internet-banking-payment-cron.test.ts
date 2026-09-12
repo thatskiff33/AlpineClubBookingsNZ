@@ -299,7 +299,7 @@ describe("releaseExpiredInternetBankingHolds credit-note durability (#1357)", ()
       expect.objectContaining({
         type: "CANCELLED",
         reason: expect.stringContaining(
-          "NZ$20.00 of applied account credit was returned.",
+          "$20.00 of applied account credit was returned.",
         ),
         snapshot: expect.objectContaining({ creditRestoredCents: 2000 }),
       }),

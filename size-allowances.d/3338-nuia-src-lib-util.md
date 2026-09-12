@@ -114,13 +114,11 @@ reason: the largest of this tranche's guards -- one array of
   its own.
 
 file: src/lib/promo.ts
-lines: 1824
+lines: 1899
 reason: one call-site type predicate proving what filterGuestsByIndexes'
   `.filter(Boolean)` already guarantees at runtime, fixed here because the
   shared helper in promo-guest-scope.ts is outside this tranche.
 
-file: src/lib/public-page-content-tokens.ts
-lines: 771
-reason: the public cancellation-rules description builder's previous-tier
-  lookup is guarded by the same loop-index check that already decides
-  whether a previous element should exist.
+<!-- src/lib/public-page-content-tokens.ts was declared here at 771 LOC until
+#3325 routed its money label through `formatCents` and the file fell back
+under its ceiling; the ratchet refuses an allowance a change no longer needs. -->

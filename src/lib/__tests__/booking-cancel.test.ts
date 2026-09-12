@@ -2258,7 +2258,7 @@ describe("cancelBooking credit refunds", () => {
         expect.objectContaining({
           type: "CANCELLED",
           reason: expect.stringContaining(
-            "NZ$20.00 of applied account credit was returned."
+            "$20.00 of applied account credit was returned."
           ),
         })
       );

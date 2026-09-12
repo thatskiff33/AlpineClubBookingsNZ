@@ -49,7 +49,17 @@ and therefore never measured against a budget. The sync gave it its own id
 rather than leaving it stacked under `INV-MOD-038`, whose own 263 words it had
 pushed to 1420 while they were sharing a heading. Nothing was reworded to fit:
 compacting an owner-decided rule is a compaction-wave job on #2789, not
-something a conflict resolution should do. When the last row goes,
+something a conflict resolution should do. The fifth sync added `INV-MONEY-029`
+the same way, at 667 words: #3276's promo build-up rule, also written on `main`.
+
+**And a row can GROW, which the "may only shrink" rule above forbids and which
+this one nonetheless did.** `INV-MOD-005` went 351 to 381 on that same sync. It
+is not a regression by this epic: the entry here is byte-identical to `main`'s,
+so `main` grew it where no register was watching, and the merge took that side
+cleanly without a conflict. The number is therefore re-measured rather than
+enforced downward, for the same reason nothing was reworded to fit above. What
+the shrink-only rule protects is this branch's own edits, and it still does:
+every row an epic child touches may only go down. When the last row goes,
 delete this section — and when the exceptions table is also empty, delete this
 file; the checker treats an absent register as "no exceptions, no debt".
 
@@ -89,6 +99,7 @@ file; the checker treats an absent register as "no exceptions, no debt".
 | `INV-HOST-049` | 715 |
 | `INV-HOST-029` | 707 |
 | `INV-MOD-021` | 672 |
+| `INV-MONEY-029` | 667 |
 | `INV-LIFE-062` | 645 |
 | `INV-ADDPAY-017` | 637 |
 | `INV-PRIV-013` | 627 |
@@ -117,12 +128,12 @@ file; the checker treats an absent register as "no exceptions, no debt".
 | `INV-ADDPAY-011` | 395 |
 | `INV-REQ-007` | 391 |
 | `INV-LIFE-078` | 387 |
+| `INV-MOD-005` | 381 |
 | `INV-CAP-023` | 365 |
 | `INV-PAY-058` | 363 |
 | `INV-LIFE-050` | 359 |
 | `INV-LIFE-085` | 352 |
 | `INV-CAP-031` | 351 |
-| `INV-MOD-005` | 351 |
 | `INV-DATE-024` | 350 |
 | `INV-HOST-023` | 348 |
 | `INV-MONEY-024` | 348 |

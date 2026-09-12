@@ -370,6 +370,58 @@ export const CENTS_DISPLAY_GUARD_ARM = CENTS_DISPLAY_RESTRICTIONS.map(
   (entry) => entry.selector,
 );
 
+// INV-CONFIG-001 (#3325) — the locale and currency are the club's
+// configuration. `new Intl.NumberFormat("en-NZ", { style: "currency", ... })`
+// was found in three files at the merge base (the fee sections, the joining
+// fee preview, the public content tokens) that #3302's toFixed arm above
+// structurally cannot see (there is no division to match), and two of them
+// sat on that arm's editable-input exemption. This is therefore its OWN
+// group, on the mandatory set, so
+// `srcRestrictedSyntaxWithout(CENTS_DISPLAY_RESTRICTIONS, ...)` does not lift
+// it: an exemption written for seeding an input's plain value never excused a
+// hard-coded locale. The two homes (`@/lib/utils`, `@/lib/finance-format`)
+// pass `APP_LOCALE` and `APP_CURRENCY`, both Identifiers, so they pass without
+// an exemption list — which is the point: there is no legitimate literal
+// locale or currency code in `src/`.
+//
+// Two arms, each with the shape it does and does not see stated in
+// `cents-display-guard.test.ts`. Both match `Intl.NumberFormat` whether or not
+// it is spelled with `new`. The FIRST fires on a string-literal LOCALE on a
+// currency formatter; the SECOND on a string-literal CURRENCY code whatever
+// the locale argument is. Neither sees a template-literal or array locale, an
+// aliased constructor, `Intl["NumberFormat"]`, or `toLocaleString(...)` — the
+// guard is a structural check on the one shape this codebase has actually
+// written, not a proof that no other shape exists.
+const CURRENCY_LOCALE_MESSAGE =
+  "INV-CONFIG-001 / #3325: do not construct `Intl.NumberFormat(<literal locale>, { style: \"currency\" })` — the locale is the club's configuration, not this codebase's. Render an integer-cent amount with formatCents / formatSignedCents from @/lib/utils, or a whole-dollar dashboard figure with formatDollarsDisplay from @/lib/finance-format; both read APP_LOCALE and APP_CURRENCY. A genuinely new rendering shape is added to one of those two modules, built from APP_LOCALE, never as another Intl instance. There is no exemption list for this rule and no eslint-disable.";
+
+const CURRENCY_CODE_MESSAGE =
+  "INV-CONFIG-001 / #3325: do not pass a literal currency code (`currency: \"NZD\"`) to Intl.NumberFormat — the currency is the club's configuration (APP_CURRENCY), not this codebase's. Use formatCents / formatSignedCents from @/lib/utils or formatDollarsDisplay from @/lib/finance-format, which read it; a formatter in a foreign currency (a Xero invoice's own) takes that currency as a variable, never a literal. There is no exemption list for this rule and no eslint-disable.";
+
+const INTL_NUMBER_FORMAT =
+  ':matches(NewExpression, CallExpression)[callee.object.name="Intl"][callee.property.name="NumberFormat"]';
+
+const CURRENCY_LOCALE_RESTRICTIONS = [
+  {
+    selector: `${INTL_NUMBER_FORMAT}[arguments.0.type="Literal"]:has(Property[key.name="style"][value.value="currency"])`,
+    message: CURRENCY_LOCALE_MESSAGE,
+  },
+  {
+    selector: `${INTL_NUMBER_FORMAT}:has(Property[key.name="currency"][value.type="Literal"])`,
+    message: CURRENCY_CODE_MESSAGE,
+  },
+];
+
+/**
+ * Bare selectors, for `cents-display-guard.test.ts` — the same mirror
+ * `CENTS_DISPLAY_GUARD_ARM` provides above: the suite resolves the REAL config
+ * at an ordinary file AND at every toFixed-exempted file and checks each still
+ * carries every selector here, so an edit that drops or lifts one fails.
+ */
+export const CURRENCY_LOCALE_GUARD_ARM = CURRENCY_LOCALE_RESTRICTIONS.map(
+  (entry) => entry.selector,
+);
+
 /**
  * THE ESCAPE HATCH for `CENTS_DISPLAY_RESTRICTIONS`, same rule as
  * `MONEY_GUARD_EXEMPTIONS`: every entry names the file(s) and states in
@@ -408,15 +460,6 @@ export const CENTS_DISPLAY_EXEMPTIONS = [
       "A raw numeric export cell (a CSV row, a JSON report row) that must carry no currency symbol — the export-format counterpart of the editable-input exclusion above, same reasoning.",
   },
   {
-    files: [
-      "src/lib/booking-cancel.ts",
-      "src/lib/internet-banking-payment-cron.ts",
-      "src/lib/ib-hold-clearing-audit.ts",
-    ],
-    reason:
-      "Hard-codes an NZ$ prefix rather than the club's configured currency, matching this codebase's other Internet-Banking-specific messages. Whether that should change is open on #3325, not a decision this rule makes — see each file's own docblock. Delete the file from this list the moment #3325 resolves and its arithmetic is folded into formatCents/formatCentsPlain; this exemption is the worklist for that day, not a permanent grant.",
-  },
-  {
     files: ["src/lib/membership-cancellation-blocker-messages.ts"],
     reason:
       "Formats an amount in a Xero invoice's OWN currency, which the club's configured formatCents structurally cannot do — the currency varies per call and is deliberately not APP_CURRENCY (see formatBlockerAmount's own docblock).",
@@ -427,9 +470,9 @@ export const CENTS_DISPLAY_EXEMPTIONS = [
  * Which `CENTS_DISPLAY_EXEMPTIONS` files are ALSO `MONEY_DOMAIN_MODULES`
  * members (declared below) — `finance-legacy-dashboard-export.ts`
  * (`finance-*`), `promo-redemptions-csv.ts` (`*promo*`),
- * `membership-cancellation-blocker-messages.ts`
- * (`membership-cancellation-*`), and `internet-banking-payment-cron.ts`
- * (`*payment*`). Those four already take the broader
+ * and `membership-cancellation-blocker-messages.ts`
+ * (`membership-cancellation-*`); `internet-banking-payment-cron.ts` left the
+ * list with #3325. Those three already take the broader
  * `MONEY_MODULE_RESTRICTIONS` arm instead of the narrow one, so the block that
  * lifts `CENTS_DISPLAY_RESTRICTIONS` for them has to replicate that swap
  * rather than the ordinary exemption block's plain
@@ -437,14 +480,13 @@ export const CENTS_DISPLAY_EXEMPTIONS = [
  * glob family against a literal path is a real pattern match, not a Set
  * lookup, so this list is hand-verified against `MONEY_DOMAIN_MODULES` rather
  * than computed; `cents-display-guard.test.ts` checks the resolved config at
- * each of these four paths carries the money-MODULE arm, not the narrow one,
+ * each of these three paths carries the money-MODULE arm, not the narrow one,
  * precisely so a hand-verified list cannot go stale silently.
  */
 const CENTS_DISPLAY_MONEY_DOMAIN_OVERLAP = [
   "src/lib/finance-legacy-dashboard-export.ts",
   "src/lib/promo-redemptions-csv.ts",
   "src/lib/membership-cancellation-blocker-messages.ts",
-  "src/lib/internet-banking-payment-cron.ts",
 ];
 
 /**
@@ -2462,6 +2504,7 @@ const ALWAYS_RESTRICTED_IN_SRC = [
   ...DATE_FNS_RESTRICTIONS,
   ...MONEY_CENTS_RESTRICTIONS,
   ...CENTS_DISPLAY_RESTRICTIONS,
+  ...CURRENCY_LOCALE_RESTRICTIONS,
   ...AUTHORITY_DEFAULT_RESTRICTIONS,
 ];
 
@@ -2966,13 +3009,13 @@ const eslintConfig = defineConfig([
     },
   },
   {
-    // #3302 — `CENTS_DISPLAY_MONEY_DOMAIN_OVERLAP`: the four exempted files
+    // #3302 — `CENTS_DISPLAY_MONEY_DOMAIN_OVERLAP`: the three exempted files
     // that are ALSO `MONEY_DOMAIN_MODULES` members (`finance-*`, `*promo*`,
-    // `membership-cancellation-*`, `*payment*` respectively), so they already
+    // `membership-cancellation-*` respectively), so they already
     // take the broader `MONEY_MODULE_RESTRICTIONS` arm instead of the narrow
     // one. Replicated here rather than re-derived, because flat config
     // replaces a matching block's rule wholesale and this block must win for
-    // these four paths without silently reverting them to the narrow money
+    // these three paths without silently reverting them to the narrow money
     // arm the block above would otherwise leave them with.
     files: CENTS_DISPLAY_MONEY_DOMAIN_OVERLAP,
     rules: {

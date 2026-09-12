@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { APP_CURRENCY } from "@/config/operational";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
@@ -1718,7 +1719,7 @@ export function PublicBookingRequestsPanel({
                                 <div className="mt-2 flex flex-wrap items-end gap-3">
                                   <div className="space-y-1">
                                     <Label htmlFor={`price-${request.id}-${optionId}`}>
-                                      Total (NZD)
+                                      Total ({APP_CURRENCY})
                                     </Label>
                                     <Input
                                       id={`price-${request.id}-${optionId}`}

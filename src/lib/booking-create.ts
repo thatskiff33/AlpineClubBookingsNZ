@@ -55,6 +55,10 @@ import {
   validateAndCalculatePromoDiscount,
   type PromoBeneficiaryAllocation,
 } from "@/lib/promo";
+import {
+  recordBookingNightAdjustments,
+  type PromoAdjustmentTarget,
+} from "@/lib/night-adjustment-write";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import {
   sendAdminNewBookingAlert,
@@ -358,6 +362,7 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
     let promoFreeNightsUsed = 0;
     let promoEligibleGuestCount = 0;
     let promoAllocations: PromoBeneficiaryAllocation[] = [];
+    let promoAdjustmentTargets: PromoAdjustmentTarget[] = [];
     let promoSelectedGuestIndexes: number[] | undefined;
     let promoShouldPersist = false;
     let promoCodeRecord: ResolvedPromo["promoCodeRecord"] = null;
@@ -387,6 +392,7 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
       promoFreeNightsUsed = resolved.promoFreeNightsUsed;
       promoEligibleGuestCount = resolved.promoEligibleGuestCount;
       promoAllocations = resolved.promoAllocations;
+      promoAdjustmentTargets = resolved.promoAdjustmentTargets;
       promoSelectedGuestIndexes = resolved.promoSelectedGuestIndexes;
       promoShouldPersist = resolved.promoShouldPersist;
       promoCodeRecord = resolved.promoCodeRecord;
@@ -462,6 +468,16 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
         bookingLodgeId,
       );
     }
+
+    // #3276: the build-up of every night this booking was just sold, after the
+    // last night write and the redemption write. With no promotion the targets
+    // are empty and RECORDED says exactly that: nothing was taken off.
+    await recordBookingNightAdjustments(tx, {
+      bookingId: createdBooking.id,
+      guestIds: createdBooking.guests.map((guest) => guest.id),
+      targets: promoAdjustmentTargets,
+      writer: "booking creation",
+    });
 
     await reconcileBedAllocationsForBookingWithGlobalLockHeld({
       bookingId: createdBooking.id,
@@ -893,6 +909,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
       let promoFreeNightsUsed = 0;
       let promoEligibleGuestCount = 0;
       let promoAllocations: PromoBeneficiaryAllocation[] = [];
+      let promoAdjustmentTargets: PromoAdjustmentTarget[] = [];
       let promoSelectedGuestIndexes: number[] | undefined;
       let promoShouldPersist = false;
       let promoCodeRecord: ResolvedPromo["promoCodeRecord"] = null;
@@ -922,6 +939,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
         promoFreeNightsUsed = resolved.promoFreeNightsUsed;
         promoEligibleGuestCount = resolved.promoEligibleGuestCount;
         promoAllocations = resolved.promoAllocations;
+        promoAdjustmentTargets = resolved.promoAdjustmentTargets;
         promoSelectedGuestIndexes = resolved.promoSelectedGuestIndexes;
         promoShouldPersist = resolved.promoShouldPersist;
         promoCodeRecord = resolved.promoCodeRecord;
@@ -1072,6 +1090,16 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
           bookingLodgeId,
         );
       }
+
+      // #3276: the build-up of every night this booking was just sold, after the
+      // last night write and the redemption write. With no promotion the targets
+      // are empty and RECORDED says exactly that: nothing was taken off.
+      await recordBookingNightAdjustments(tx, {
+        bookingId: newBooking.id,
+        guestIds: newBooking.guests.map((guest) => guest.id),
+        targets: promoAdjustmentTargets,
+        writer: "booking creation",
+      });
 
       if (creditAppliedCents > 0) {
         await applyCreditToBooking(effectiveMemberId, creditAppliedCents, newBooking.id, tx);
@@ -1315,6 +1343,14 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
             },
           },
           include: { guests: true },
+        });
+        // #3276: the split child carries no promotion (one redemption per party,
+        // on the member booking), so its nights record that nothing came off.
+        await recordBookingNightAdjustments(tx, {
+          bookingId: childBooking.id,
+          guestIds: childBooking.guests.map((guest) => guest.id),
+          targets: [],
+          writer: "booking creation (split child)",
         });
         await reconcileBedAllocationsForBookingWithGlobalLockHeld({
           bookingId: childBooking.id,
@@ -1733,6 +1769,7 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
   let promoFreeNightsUsed = 0;
   let promoEligibleGuestCount = 0;
   let promoAllocations: PromoBeneficiaryAllocation[] = [];
+  let promoAdjustmentTargets: PromoAdjustmentTarget[] = [];
   let promoSelectedGuestIndexes: number[] | undefined;
   let promoShouldPersist = false;
   let promoCodeRecord: ResolvedPromo["promoCodeRecord"] = null;
@@ -1802,6 +1839,7 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
     promoFreeNightsUsed = promoResult.freeNightsUsed;
     promoEligibleGuestCount = promoResult.eligibleGuestCount;
     promoAllocations = promoResult.allocations;
+    promoAdjustmentTargets = promoResult.adjustmentTargets;
     promoSelectedGuestIndexes = application.selectedGuestIndexes;
     promoShouldPersist = shouldPersistPromoRedemption(promoResult);
     promoCodeRecord = promoCode;
@@ -1888,6 +1926,16 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
         waitlistLodgeId,
       );
     }
+
+    // #3276: the build-up of every night this booking was just sold, after the
+    // last night write and the redemption write. With no promotion the targets
+    // are empty and RECORDED says exactly that: nothing was taken off.
+    await recordBookingNightAdjustments(tx, {
+      bookingId: createdBooking.id,
+      guestIds: createdBooking.guests.map((guest) => guest.id),
+      targets: promoAdjustmentTargets,
+      writer: "waitlist booking creation",
+    });
 
     if (alternateLodgeIds.length > 0) {
       await tx.bookingWaitlistAlternateLodge.createMany({

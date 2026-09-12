@@ -1,5 +1,6 @@
 import { PromoCodeType, type FixedNightlyMode } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import type { PromoAdjustmentTarget } from "@/lib/night-adjustment-write";
 import {
   calculatePromoDiscount,
   type PromoCodeInput,
@@ -16,7 +17,7 @@ import {
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import {
   getWorkPartyNightWindowForPromo,
-  restrictPerNightRatesToWindow,
+  inWindowNightIndexes,
 } from "@/lib/work-party";
 import { ApiError } from "@/lib/api-error";
 import {
@@ -122,11 +123,12 @@ export interface AssignedPromoCodeSummary extends AvailablePromoCode {
  */
 interface PromoDiscountGuestWithNights extends PromoDiscountGuest {
   firstNight?: Date | null;
-  // Actual dates of each entry in perNightRates (issue #713), parallel to that
-  // array. Used to restrict an internal work-party promo to its night window
-  // correctly when the guest stays non-contiguous nights. Falls back to
-  // positional dates from firstNight when omitted.
-  nightDates?: Date[] | null;
+  // `nightDates` — the actual date of each entry in perNightRates, parallel to
+  // it (issue #713) — is declared once, on `PromoDiscountGuest` in
+  // `pricing.ts` (#3276). It restricts an internal work-party promo to its
+  // night window correctly on a non-contiguous stay, and it is what an
+  // adjustment row is attributed by. Positional dates from `firstNight` are the
+  // fallback for the window only, never for attribution.
 }
 
 export interface BookingDetailsForPromo {
@@ -178,11 +180,22 @@ export interface PromoCapCoverage {
   excludedMemberIds: string[];
 }
 
+/**
+ * The engine's result with, beside it, what it took off each night or guest of
+ * `bookingDetails.guests` by position in THAT list (#3276). Bundled so that a
+ * discount without its build-up cannot be represented: a writer reads
+ * `discount.adjustmentTargets` and hands it to `recordBookingNightAdjustments`
+ * after its last night write.
+ */
+export type PromoApplicationDiscount = PromoDiscountResult & {
+  adjustmentTargets: PromoAdjustmentTarget[];
+};
+
 export interface PromoApplicationResult {
   error?: string;
   requiresGuestSelection?: boolean;
   selectableGuestIndexes?: number[];
-  discount?: PromoDiscountResult;
+  discount?: PromoApplicationDiscount;
   beneficiaryMemberIds: string[];
   remainingFreeNights?: number;
   remainingFreeNightsByMemberId?: Record<string, number>;
@@ -334,6 +347,12 @@ export function calculatePromoDiscountForGuestRates(
       result.priceAdjustmentCents,
       result.freeNightsUsed
     ),
+    // #3276: the rows follow the allocation they decompose, decided HERE and
+    // nowhere else — the same branch, the same member (INV-MONEY-029).
+    targets: result.targets.map((target) => ({
+      ...target,
+      beneficiaryMemberId: bookingMemberId,
+    })),
   };
 }
 
@@ -997,17 +1016,31 @@ export async function validateAndCalculatePromoDiscount(
   if (promoCode.internal) {
     const nightWindow = await getWorkPartyNightWindowForPromo(db, promoCode.id);
     if (nightWindow) {
-      detailGuests = bookingDetails.guests.map((guest) => ({
-        ...guest,
-        perNightRates: guest.firstNight
-          ? restrictPerNightRatesToWindow(
-              guest.perNightRates,
-              guest.firstNight,
-              nightWindow,
-              guest.nightDates
-            )
-          : [],
-      }));
+      detailGuests = bookingDetails.guests.map((guest) => {
+        if (!guest.firstNight) return { ...guest, perNightRates: [], nightDates: [] };
+        // Rates AND dates filtered by the same positions (#3276): an adjustment
+        // row is attributed to a night by date, so the two vectors must stay
+        // parallel through the window.
+        const kept = inWindowNightIndexes(
+          guest.perNightRates.length,
+          guest.firstNight,
+          nightWindow,
+          guest.nightDates
+        );
+        // Both vectors filtered by the SAME position set, which is what keeps
+        // them parallel -- the property the comment above requires. Filtering
+        // the arrays rather than mapping their indexes also removes the
+        // non-null assertion this needed on `nightDates` (#2800), and makes the
+        // parallelism structural instead of two index maps that have to agree.
+        const keep = new Set(kept);
+        return {
+          ...guest,
+          perNightRates: guest.perNightRates.filter((_rate, index) => keep.has(index)),
+          nightDates: guest.nightDates
+            ? guest.nightDates.filter((_date, index) => keep.has(index))
+            : guest.nightDates,
+        };
+      });
     }
   }
 
@@ -1385,13 +1418,55 @@ export async function validateAndCalculatePromoDiscount(
   // rewritten by a cap that has since moved. (In practice a guest-targeted code
   // scopes its cap to the booker, so this branch and the trim rarely meet.)
   return {
-    discount,
+    discount: {
+      ...discount,
+      adjustmentTargets: promoAdjustmentTargetsFor({ discount, guests: detailGuests }),
+    },
     beneficiaryMemberIds: coveredBeneficiaryMemberIds,
     remainingFreeNights,
     remainingFreeNightsByMemberId,
     selectedGuestIndexes: requiresGuestSelection ? selectedGuestIndexes.indexes : undefined,
     capCoverage,
   };
+}
+
+/**
+ * Resolve the engine's per-target detail to the caller's guest list (#3276).
+ *
+ * The engine names each target by the GUEST OBJECT it was handed; every filter
+ * between `guests` and the engine (`filterGuestsByIndexes`,
+ * `scopeGuestsForAssignedMembers`, `selectPromoDiscountGuests`) passes the same
+ * objects through, so identity maps a target back to its position in `guests`
+ * — which is the position a writer resolves to a `BookingGuest.id`. Nothing
+ * about the money is decided here: the beneficiary arrives already stamped by
+ * `calculatePromoDiscountForGuestRates`, the one place that decides it for the
+ * allocations too.
+ */
+export function promoAdjustmentTargetsFor(params: {
+  discount: PromoDiscountResult;
+  guests: ReadonlyArray<PromoDiscountGuest>;
+}): PromoAdjustmentTarget[] {
+  const { discount, guests } = params;
+  return discount.targets.map((target) => {
+    const guestIndex = guests.indexOf(target.guest);
+    if (guestIndex < 0) {
+      throw new Error(
+        "INV-MONEY-029: the promotion engine attributed an adjustment to a guest that is not on the priced list",
+      );
+    }
+    if (!target.beneficiaryMemberId) {
+      throw new Error(
+        "INV-MONEY-029: an assigned-scoped promotion attributed an adjustment to a guest with no linked member",
+      );
+    }
+    return {
+      guestIndex,
+      scope: target.scope,
+      stayDate: target.scope === "night" ? target.stayDate : null,
+      beneficiaryMemberId: target.beneficiaryMemberId,
+      amountCents: target.amountCents,
+    };
+  });
 }
 
 /**

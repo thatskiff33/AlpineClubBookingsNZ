@@ -25,22 +25,17 @@
   a currency string. Both are pinned by existing test fixtures and are
   byte-identical to before.
 
-  Two report-only formatters compose from the shared helper for their
-  dollar arithmetic but keep their own local decoration, because each is a
-  genuine rendering difference no fixture pinned away: the Xero invoice
-  rounding audit's compound `"$1.50 (+150c)"` line (the dollar half now
-  groups thousands like every other screen; only the parenthesised
-  raw-cents suffix is local) and the Internet Banking hold-clearing audit
-  and backfill report's hard-coded `"NZ$"` prefix (left exactly as it was,
-  pending #3325's currency decision). A club's configured currency now
-  formats consistently everywhere this issue reached; whether Internet
-  Banking amounts should always read NZD regardless of that configuration
-  is the one open question, tracked at #3325.
+  One report-only formatter composes from the shared helper for its dollar
+  arithmetic but keeps its own local decoration, because it is a genuine
+  rendering difference no fixture pinned away: the Xero invoice rounding
+  audit's compound `"$1.50 (+150c)"` line (the dollar half now groups
+  thousands like every other screen; only the parenthesised raw-cents
+  suffix is local). A club's configured currency now formats consistently
+  everywhere this issue reached.
 
   **The instrument the issue asked for:** a new lint rule bans hand-rolling
   `(cents / 100).toFixed(n)` anywhere in `src/`, so a future twelfth copy of
   this formatter fails the build instead of quietly regrowing — the pattern
   three separate merges in this same epic have already shown regrows without
   one. A short, reasoned exemption list covers the genuinely different cases
-  (an editable input's plain value, a raw numeric export cell, and the two
-  Internet-Banking sites above).
+  (an editable input's plain value and a raw numeric export cell).
