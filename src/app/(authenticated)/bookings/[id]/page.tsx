@@ -20,6 +20,7 @@ import { AdditionalPaymentCard } from "@/components/additional-payment-card";
 import { BookingAdditionalPaymentPanel } from "@/components/admin/booking-additional-payment-panel";
 import {
   additionalPaymentEpisodeStartedAt,
+  isAdditionalAmountUncollected,
   isAdditionalPayableBookingStatus,
 } from "@/lib/additional-payment-chase";
 import { ConfirmDraftButton } from "@/components/confirm-draft-button";
@@ -2542,8 +2543,8 @@ export default async function BookingDetailPage({
         isBookingOwner &&
         !isDeleted &&
         isAdditionalPayableBookingStatus(booking.status) &&
-        booking.payment.additionalAmountCents > 0 &&
-        booking.payment.additionalPaymentStatus !== "SUCCEEDED" && (
+        // #3340: the ONE uncollected predicate, called not restated (`INV-SSOT-001`).
+        isAdditionalAmountUncollected(booking.payment) && (
           <AdditionalPaymentCard
             bookingId={booking.id}
             additionalAmountCents={booking.payment.additionalAmountCents}

@@ -1184,7 +1184,7 @@ export default function PaymentsPage() {
                           available to this admin. */}
                       <DiagnosticsRecordButton
                         recordId={p.id}
-                        subject={`the ${formatCents(p.amountCents)} payment for ${p.booking.member.firstName} ${p.booking.member.lastName}`}
+                        subject={`the ${formatCents(p.amountCents - p.refundedAmountCents)} payment for ${p.booking.member.firstName} ${p.booking.member.lastName}`}
                       />
                     </div>
                   </TableCell>

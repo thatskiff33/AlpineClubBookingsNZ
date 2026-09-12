@@ -1,6 +1,6 @@
 # File-size allowances for #3364 (issue #3340 — the superseded extra)
 
-Four already-over-budget modules grow here. None is restructured by this change,
+Five already-over-budget modules grow here. None is restructured by this change,
 and in every case the split that would avoid the growth is worse than the growth.
 
 ## `src/lib/payment-recovery.ts`
@@ -125,3 +125,28 @@ reason: eighteen lines on a 2054-line registry that is not restructured here —
   editor's validator classify from, so an entry has nowhere else to go. The
   separate `{{amountOwing}}` token keeps the refund and the remaining balance from
   collapsing into one figure in an admin's override.
+
+## `src/app/(authenticated)/bookings/[id]/page.tsx`
+
+One line, and it is a line that REMOVES a duplicate rule.
+
+The member's payment-card gate carried its own hand-written copy of the money
+half of the owed test (`additionalAmountCents > 0 && additionalPaymentStatus !==
+"SUCCEEDED"`). #3340 is a defect about one figure being decided in more than one
+place, so leaving a fourth copy of the predicate that decides whether an extra is
+still owed — on the very door the ask opens — would be shipping the fix and its
+own counter-example together. The gate now calls
+`isAdditionalAmountUncollected`, the one predicate
+(`src/lib/additional-payment-chase.ts`), which is what the chase, the ask sizing
+and the ledger census all call.
+
+The net change is the import: two hand-written conditions became one call plus a
+one-line comment. This 2792-line page is not restructured here, and splitting it
+is an unrelated job.
+
+file: src/app/(authenticated)/bookings/[id]/page.tsx
+lines: 2793
+reason: one line on a 2792-line page that is not restructured here. It replaces a
+  hand-written copy of the "is this extra still uncollected" test with a call to
+  the one predicate that defines it — the duplication class #3340 is about —
+  which costs an import line and saves a condition.
