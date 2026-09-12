@@ -98,7 +98,7 @@ describe("BookingGuestNight price provenance", () => {
     ).toThrow(/loaded without price provenance/);
   });
 
-  it("does not change the stage-1 sold-evidence verdict because of provenance", () => {
+  it("keeps a reconciled whole-guest total exact while making inexact individual nights non-actionable", () => {
     const booking = {
       checkIn: D("2026-08-01"),
       checkOut: D("2026-08-03"),
@@ -129,6 +129,30 @@ describe("BookingGuestNight price provenance", () => {
         { date: "2026-08-02", priceCents: 3_000 },
       ],
       totalCents: 6_001,
+    });
+    expect(
+      storedSoldPriceEvidenceForGuest(
+        {
+          priceCents: 6_001,
+          nights: [
+            {
+              stayDate: D("2026-08-01"),
+              priceCents: 3_001,
+              priceSource: "EVEN_SPLIT",
+            },
+            {
+              stayDate: D("2026-08-02"),
+              priceCents: 3_000,
+              priceSource: "UNKNOWN",
+            },
+          ],
+        },
+        booking,
+        "INDIVIDUAL_NIGHT",
+      ),
+    ).toMatchObject({
+      kind: "unusable",
+      cause: "INEXACT_STORED_NIGHT_PRICES",
     });
   });
 });

@@ -199,6 +199,10 @@ const MODULE_IMPORTERS = new Set([
   // Type-only: the build-up travels through the application result.
   "src/lib/promo.ts",
   "src/lib/booking-create-promo.ts",
+  // #3277 Stage 3 named readers. Their exact call shapes are pinned by
+  // booking-money-build-up-reader-census.test.ts.
+  "src/lib/booking-credit-election.ts",
+  "src/lib/xero-booking-invoices.ts",
 ]);
 
 const SOURCE = sourceFiles();
@@ -313,7 +317,7 @@ describe("INV-MONEY-029 night adjustment build-up census", () => {
     expect(discovered.length).toBeGreaterThanOrEqual(8);
   });
 
-  it("allows the writer module to be imported only by the paired writers and the two type-only carriers", () => {
+  it("allows the module to be imported only by paired writers, type carriers, and named readers", () => {
     const importers: string[] = [];
     for (const file of SOURCE) {
       const relative = relativeSource(file);
