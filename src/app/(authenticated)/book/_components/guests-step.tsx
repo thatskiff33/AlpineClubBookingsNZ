@@ -367,7 +367,13 @@ export function GuestsStep({
             const idx = g.nightDates.findIndex(
               (d) => d.slice(0, 10) === nightKey,
             );
-            return idx >= 0 ? g.perNightCents[idx] : null;
+            // `null` is this callback's own "no price to show" answer, and it
+            // is the right one for a per-night vector shorter than the night
+            // list too: the quote's two halves carry no declared length
+            // relation, and a holed vector has already reached this system
+            // once (#2800). Showing nothing beats showing somebody else's
+            // night's price (#2801).
+            return idx >= 0 ? (g.perNightCents[idx] ?? null) : null;
           }}
         />
         {memberSwitchSuggestions.length > 0 && (

@@ -229,7 +229,7 @@ that rule (`noUncheckedIndexedAccess`) on, because a lookup that quietly
 pretends to have found a value is how a missing tier becomes a silent zero.
 Turning it on today would raise about a thousand compile errors, so it is being
 adopted in stages (programme #2694): the errors are recorded, the record may
-only shrink, and each stage pays a slice of it down. This is stage 2 (#2799).
+only shrink, and each stage pays a slice of it down. This is stage 4 (#2801).
 
 Precisely: `npm run typecheck:nuia` runs the real `tsc` over `tsconfig.json`
 with `--noUncheckedIndexedAccess` forced on and compares what it reports against
@@ -281,31 +281,64 @@ a comment says why in terms a reviewer can check. Generated suppressions, broad
 `any`, mass casts and regex ignore lists are all refused for the same reason:
 they spend the effort and buy nothing.
 
+Stage 4 (`src/app`) added four more shapes worth knowing, because routes and
+pages produce them repeatedly:
+
+- **the code's own condition, said as the value it was protecting.** Most sites
+  already answered their missing case a line or two away — a `length === 0`
+  early return, a `length === 1` branch, a bounds check. Read the value once and
+  let its presence be that condition (`const [first] = xs; if (!first) …`), so
+  there is one condition with one answer. Adding a second refusal beside a check
+  that already owns the condition is the mistake to avoid;
+- **`entries()` instead of a counting loop**, wherever the index was only ever
+  wanted for a row number or a `sortOrder`;
+- **a fixed `slice` where the string's shape is already validated.** `YYYY-MM`
+  and `yyyy-MM-dd` were repeatedly `split("-")` and destructured; reading them
+  at fixed offsets gives a `string` with no new refusal, and a malformed value
+  still becomes `NaN` exactly as before. The same applies to a regex's mandatory
+  capture group: destructure it and let its absence be the pattern's own
+  rejection;
+- **`as const` on a table of `[key, label]` rows.** A `string[][]` literal
+  destructures to `string | undefined`, which a computed property name
+  (`{ [key]: … }`, TS2464) and a form lookup both reject; the tuple form also
+  retires the `as keyof typeof form` and `as boolean` casts around it.
+
+Where the type genuinely cannot carry the proof, the shared guard is `must` in
+`src/lib/indexed-access.ts` — a named throw at the point the invariant is
+assumed, not a fallback value. It is for a lookup the surrounding code already
+guarantees (a fixed-size colour scale, a step whose id type is derived from the
+step list); a lookup that can really miss is still handled the way the domain
+says.
+
 **Inventory for the next stage.** Measured on the epic head after #2693 and
-re-measured after stage 2, application project (`tsconfig.json`) only:
+re-measured after each stage, application project (`tsconfig.json`) only. Stage
+4 (#2801) is delivered as two tranches on one issue — `src/app` and
+`src/components` — because the risk is not evenly spread; its scope widened to
+include `src/components` on 7 Sep 2026 so the final activation stage stays
+small, which is the reason that stage exists at all.
 
-| Area | At the start of #2799 | After #2799 | Owner |
-| --- | --- | --- | --- |
-| `src/lib` | 831 | 818 | #2800 |
-| `src/app` | 120 | 120 | #2801 |
-| `src/components` | 86 | 86 | #2802 |
-| `scripts` | 27 | 27 | #2802 |
-| `prisma` | 25 | 25 | #2802 |
-| **Total** | **1,089** | **1,076** | |
+| Area | At the start of #2799 | After #2799 | After #2800 | After the #2801 `src/app` tranche | Owner |
+| --- | --- | ---: | ---: | ---: | --- |
+| `src/lib` | 831 | 818 | 0 | 0 | #2800 (done) |
+| `src/app` | 120 | 120 | 117 | **0** | #2801 (done) |
+| `src/components` | 86 | 86 | 86 | 86 | #2801, sibling tranche |
+| `scripts` | 27 | 27 | 27 | 27 | #2802 |
+| `prisma` | 25 | 25 | 25 | 25 | #2802 |
+| **Total** | **1,089** | **1,076** | **255** | **138** | |
 
-The 13 cleared were the whole of `src/lib/policies/**` (`age-tier.ts` 9,
+`src/app` reads 117 after #2800 rather than the 120 measured at the start of
+#2799. Three went while `src/lib` was being cleared and no `src/app` file was
+touched — a message key that changed text, or a diagnostic that a widened
+library type stopped producing, is the ordinary way the count moves under
+somebody else's lane (see STALE above). Stage 4 measured and cleared what was
+there, not what an older table said.
+
+Stage 2's 13 were the whole of `src/lib/policies/**` (`age-tier.ts` 9,
 `pricing.ts` 2, `adult-member-hosting.ts` 1) and `src/lib/capacity.ts` (1).
 `npm run typecheck:nuia -- --report` prints the current per-file inventory and
 then still performs the check, so on a tree with unrecorded debt it prints the
 report and exits 1; the baseline file *is* the per-file record, one line per
-diagnostic. The heaviest `src/lib` files #2800 inherits, in order:
-`bed-allocation.ts` (70), `booking-modify-plan.ts` (36),
-`theme/app-tokens.ts` (29), `xero-inbound/credit-note-repairs.ts` (26),
-`theme/kiosk-tokens.ts` (24), `member-merge.ts` (22),
-`theme/generate-radix-colors.ts` (21),
-`xero-applied-credit-allocation-repair.ts` (21), `image-metadata.ts` (20),
-`booking-edit-guest-ranges.ts` (19), `guest-name-similarity.ts` (19) — 146
-files in all. The test and E2E projects are outside the ratchet by decision
+diagnostic. The test and E2E projects are outside the ratchet by decision
 ("application code before tests"); their counts are recorded on the stage-2
 pull request as evidence only.
 

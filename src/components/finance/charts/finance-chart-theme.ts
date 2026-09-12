@@ -45,9 +45,22 @@ function buildFinanceMixColors(): readonly string[] {
     themeSeedsFromValues(DEFAULT_CLUB_THEME_VALUES),
     "light",
   );
-  return CHART_FINANCE_8SLOT.map(
-    ({ scale, step }) => light.scales[scale].hex[step - 1],
-  );
+  return CHART_FINANCE_8SLOT.map(({ scale, step }) => {
+    const hex = light.scales[scale]?.hex[step - 1];
+    if (hex === undefined) {
+      // Every CHART_FINANCE_8SLOT entry names a real categorical scale and a
+      // real step that buildThemeSubstrate always populates (12 hexes per
+      // scale; CHART_FINANCE_8SLOT only ever asks for step 7 or 9). `scale`
+      // is typed as plain `string`, so the type can't see that closed-set
+      // fact — but this runs once at module load, so a contract break here
+      // fails loudly at startup rather than shipping a silently wrong chart
+      // colour.
+      throw new Error(
+        `finance-chart-theme: no built colour for scale "${scale}" step ${step}`,
+      );
+    }
+    return hex;
+  });
 }
 
 export const FINANCE_MIX_COLORS = buildFinanceMixColors();

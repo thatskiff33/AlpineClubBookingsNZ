@@ -139,8 +139,11 @@ export default function AgeTierSettingsPage() {
         .filter((setting) => setting.tier !== tier)
         .sort((a, b) => a.sortOrder - b.sortOrder)
         .map((setting, index) => ({ ...setting, sortOrder: index }));
-      if (remaining.length > 0) {
-        remaining[0] = { ...remaining[0], minAge: 0 };
+      // The youngest remaining tier, read once — its presence IS the "anything
+      // left to re-tile" check (#2801).
+      const [youngest] = remaining;
+      if (youngest) {
+        remaining[0] = { ...youngest, minAge: 0 };
       }
       return remaining;
     });

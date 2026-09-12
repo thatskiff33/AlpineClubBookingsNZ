@@ -103,7 +103,14 @@ export async function GET(req: NextRequest) {
     email: string;
     hutLeaderEligible: boolean;
     hutLeaderEligibleAt: Date | null;
-    bookings: MemberStay[];
+    /**
+     * Non-empty by construction, and typed so: every entry in this map is
+     * created with the stay that discovered the member and only ever grows by
+     * `push`. Saying that in the type is what lets the span reduce below read
+     * `bookings[0]` as its seed without an assertion or a refusal for a state
+     * that cannot occur (#2801).
+     */
+    bookings: [MemberStay, ...MemberStay[]];
   }>();
 
   for (const g of guests) {
@@ -278,24 +285,27 @@ export async function GET(req: NextRequest) {
         (a, b) => a.getTime() - b.getTime(),
       );
 
+      // The first uncovered night, read once, with the rest of the run behind
+      // it. Its absence IS "fully covered" — the same one condition the count
+      // expressed, now in a form the compiler can follow (#2801).
       const uncoveredNights = stayNights.filter((d) => !isNightCovered(d));
+      const [firstUncoveredNight, ...laterUncoveredNights] = uncoveredNights;
       const uncoveredNightCount = uncoveredNights.length;
-      const fullyCovered = uncoveredNightCount === 0;
+      const fullyCovered = firstUncoveredNight === undefined;
 
       // Suggested range = the first contiguous run of uncovered nights. If the
       // member is fully covered, fall back to their overall stay span (fields
       // stay present; the UI disables Confirm for fully-covered members).
       let suggestedStart = earliestCheckIn;
       let suggestedEnd = latestCheckOut;
-      if (!fullyCovered) {
-        suggestedStart = uncoveredNights[0];
-        suggestedEnd = uncoveredNights[0];
-        for (let i = 1; i < uncoveredNights.length; i++) {
-          if (uncoveredNights[i].getTime() === addDaysDateOnly(suggestedEnd, 1).getTime()) {
-            suggestedEnd = uncoveredNights[i];
-          } else {
+      if (firstUncoveredNight !== undefined) {
+        suggestedStart = firstUncoveredNight;
+        suggestedEnd = firstUncoveredNight;
+        for (const night of laterUncoveredNights) {
+          if (night.getTime() !== addDaysDateOnly(suggestedEnd, 1).getTime()) {
             break;
           }
+          suggestedEnd = night;
         }
       }
 

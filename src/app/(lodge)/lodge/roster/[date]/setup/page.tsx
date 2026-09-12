@@ -346,7 +346,11 @@ export default function RosterSetupWizard() {
     if (!template) return;
 
     const eligibleGuests = getEligibleGuests(choreTemplateId);
-    if (eligibleGuests.length === 0) return;
+    // The first eligible guest IS the "nobody is eligible" check, and is also
+    // the fallback when everyone eligible is already assigned to this chore —
+    // one condition, read once (#2801).
+    const [firstEligibleGuest] = eligibleGuests;
+    if (firstEligibleGuest === undefined) return;
 
     const assignedGuestIds = new Set(
       allocations
@@ -355,7 +359,7 @@ export default function RosterSetupWizard() {
     );
     const guest =
       eligibleGuests.find((candidate) => !assignedGuestIds.has(candidate.id)) ??
-      eligibleGuests[0];
+      firstEligibleGuest;
 
     setAllocations((prev) => [
       ...prev,
@@ -860,22 +864,24 @@ export default function RosterSetupWizard() {
                       {group.label}
                     </h3>
                     {Object.values(
-                      group.allocations.reduce(
-                        (acc, a) => {
-                          if (!acc[a.choreTemplateId]) {
-                            acc[a.choreTemplateId] = {
-                              name: a.choreTemplateName,
-                              guests: [],
-                            };
-                          }
-                          acc[a.choreTemplateId].guests.push(a.guestName);
-                          return acc;
-                        },
-                        {} as Record<
-                          string,
-                          { name: string; guests: string[] }
-                        >
-                      )
+                      group.allocations.reduce<
+                        Record<string, { name: string; guests: string[] }>
+                      >((acc, a) => {
+                        // ONE read of the chore's bucket, then either grow it
+                        // or start it — rather than a presence test followed by
+                        // a second lookup the compiler cannot tie to it
+                        // (#2801). Also drops the seed cast.
+                        const chore = acc[a.choreTemplateId];
+                        if (chore) {
+                          chore.guests.push(a.guestName);
+                        } else {
+                          acc[a.choreTemplateId] = {
+                            name: a.choreTemplateName,
+                            guests: [a.guestName],
+                          };
+                        }
+                        return acc;
+                      }, {})
                     ).map((chore) => (
                       <div
                         key={chore.name}

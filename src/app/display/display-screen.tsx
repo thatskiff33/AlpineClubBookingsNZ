@@ -190,7 +190,8 @@ function Region({
   const panel = panels[index % panels.length];
   return (
     <div className={`display-region display-region-${region.key}`}>
-      <Panel panel={panel} state={state} />
+      {/* In range for the non-empty list checked above; an empty region rather than a throw, because a wall is unattended (LTV-030) (#2801). */}
+      {panel ? <Panel panel={panel} state={state} /> : null}
     </div>
   );
 }
@@ -355,8 +356,8 @@ function RotatorArea({
     return () => clearInterval(timer);
   }, [eligible.length, area.rotateSeconds]);
 
-  if (eligible.length === 0) return null;
   const child = eligible[index % eligible.length];
+  if (!child) return null; // `index % 0` is NaN: absent IS "no children" (#2801)
   return (
     <SlotRender content={slotContent[`${area.key}/${child.key}`]} state={state} />
   );
@@ -517,7 +518,7 @@ function LayoutScreen({
 // serve-time validation, so no layoutRender shipped).
 // ---------------------------------------------------------------------------
 
-const FALLBACK_TEMPLATE: DisplayTemplateDefinition =
+const FALLBACK_TEMPLATE: DisplayTemplateDefinition | undefined =
   listBuiltInDisplayTemplates().find(
     (template) => template.key === DEFAULT_DISPLAY_TEMPLATE_KEY
   ) ?? listBuiltInDisplayTemplates()[0];
@@ -538,6 +539,8 @@ function FallbackBoard({
   // renders after mount, downstream of an error/flag, so there is no SSR of it).
   const isPreview =
     typeof window !== "undefined" && readPreviewState().isPreview;
+  // Only an EMPTY built-in registry: no known-good board exists to show (#2801).
+  if (!FALLBACK_TEMPLATE) return null;
   return (
     <div
       className="display-screen display-fallback-board"

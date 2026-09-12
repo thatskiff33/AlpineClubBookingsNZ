@@ -49,19 +49,40 @@ function nextDateOnly(date: string): string {
   return shiftDateOnly(date, 1);
 }
 
+/** One contiguous run of nights, carrying its own first/last night alongside
+ * the run so callers never index back into it to recover either end. */
+interface NightRun {
+  nights: string[];
+  first: string;
+  last: string;
+}
+
 /**
  * Split sorted night keys into contiguous runs. `["10","12","13"]` → two runs.
+ *
+ * Walks the sorted nights once, tracking the last night seen (`lastNight`)
+ * alongside the run under construction instead of reading it back out of the
+ * run array — the array holds the same value, but recovering it by indexing
+ * `run[run.length - 1]` is exactly the pattern `noUncheckedIndexedAccess`
+ * exists to catch, since nothing statically proves the run is non-empty at
+ * the read site.
  */
-function contiguousNightRuns(nights: readonly string[]): string[][] {
+function contiguousNightRuns(nights: readonly string[]): NightRun[] {
   const sorted = [...nights].sort();
-  const runs: string[][] = [];
+  const runs: NightRun[] = [];
+  let lastNight: string | undefined;
   for (const night of sorted) {
-    const current = runs[runs.length - 1];
-    if (current && shiftDateOnly(current[current.length - 1], 1) === night) {
-      current.push(night);
-    } else if (!current || current[current.length - 1] !== night) {
-      runs.push([night]);
+    if (night === lastNight) {
+      continue; // duplicate night key: already counted in the current run
     }
+    const current = runs[runs.length - 1];
+    if (current && lastNight !== undefined && shiftDateOnly(lastNight, 1) === night) {
+      current.nights.push(night);
+      current.last = night;
+    } else {
+      runs.push({ nights: [night], first: night, last: night });
+    }
+    lastNight = night;
   }
   return runs;
 }
@@ -83,8 +104,8 @@ export function computeBarSegments(
 ): BarSegment[] {
   const ranges = row.nights
     ? contiguousNightRuns(row.nights).map((run) => ({
-        stayStart: run[0],
-        stayEnd: nextDateOnly(run[run.length - 1]),
+        stayStart: run.first,
+        stayEnd: nextDateOnly(run.last),
       }))
     : [{ stayStart: row.stayStart, stayEnd: row.stayEnd }];
   return ranges.flatMap((range) => {
@@ -106,26 +127,30 @@ export function computeBarLayout(
   row: { stayStart: string; stayEnd: string },
   windowDates: string[]
 ): BarLayout | null {
-  if (windowDates.length === 0) return null;
-  const first = windowDates[0];
-  const last = windowDates[windowDates.length - 1];
+  // `.at()` is how an empty array is told apart from a non-empty one here:
+  // both ends come back `undefined` together, and that undefined case is
+  // exactly the "no nights in window" return below, so no length check is
+  // duplicated above it.
+  const first = windowDates.at(0);
+  const last = windowDates.at(-1);
+  if (first === undefined || last === undefined) return null;
   // No nights in window: checked out on/before the first day, or arrives
   // after the last day.
   if (row.stayEnd <= first || row.stayStart > last) return null;
 
   const startIndex = windowDates.findIndex((date) => date >= row.stayStart);
   const clampedStart = startIndex === -1 ? 0 : startIndex;
-  let endIndex = clampedStart;
-  for (let i = windowDates.length - 1; i >= clampedStart; i--) {
-    if (windowDates[i] < row.stayEnd) {
-      endIndex = i;
-      break;
-    }
-  }
+  // Count window dates from the clamped start that fall before the
+  // check-out — the run is contiguous and ascending, so this count is the
+  // span directly, with no need to walk backward and index the array to
+  // find where it stops.
+  const nightsInWindow = windowDates
+    .slice(clampedStart)
+    .filter((date) => date < row.stayEnd).length;
 
   return {
     startColumn: clampedStart + 1,
-    spanColumns: Math.max(1, endIndex - clampedStart + 1),
+    spanColumns: Math.max(1, nightsInWindow),
     startsBeforeWindow: row.stayStart < first,
     // Checkout after the last window date → the stay runs past the board
     // (mock "out Mon 6 →" on a Fri–Sun window).
@@ -168,8 +193,16 @@ export function barNames(
     : row.guests;
   const guests = inSegment.length > 0 ? inSegment : row.guests;
   if (leadOnly) {
+    const [firstGuest] = guests;
+    if (firstGuest === undefined) {
+      // Unreachable: `guests` is either `inSegment` (just checked non-empty)
+      // or `row.guests`, which the early return above already guaranteed is
+      // non-empty. Falling back to the row's own label keeps this branch
+      // honest rather than asserting a value the type can't prove.
+      return { names: [row.label], overflow: 0 };
+    }
     return {
-      names: [guests[0].label],
+      names: [firstGuest.label],
       overflow: Math.max(0, guests.length - 1),
     };
   }
@@ -232,7 +265,14 @@ export function barMeta(segment: BarSegment): string {
 export function splitRoomName(name: string): { tag: string | null; label: string } {
   const match = /^([A-Za-z0-9]{1,3})\s*[-–·:]\s+(.+)$/.exec(name.trim());
   if (!match) return { tag: null, label: name };
-  return { tag: match[1], label: match[2] };
+  const [, tag, label] = match;
+  if (tag === undefined || label === undefined) {
+    // Unreachable: both capture groups are mandatory (no `?`), so a
+    // successful match always populates both. Falls back to the untagged
+    // reading rather than asserting a value the type can't prove.
+    return { tag: null, label: name };
+  }
+  return { tag, label };
 }
 
 export function ArrivalsBoard({

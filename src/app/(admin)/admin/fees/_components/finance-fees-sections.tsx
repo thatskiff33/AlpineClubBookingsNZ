@@ -295,8 +295,10 @@ export function FinanceFeesSections({ financeCanEdit }: { financeCanEdit?: boole
     let components: Array<{ label: string; amountCents: number; prorate: boolean; xeroAccountCode: string | null; xeroItemCode: string | null; sortOrder: number }> = [];
     if (billingBasis !== "NO_INVOICE") {
       const built: typeof components = [];
-      for (let index = 0; index < componentRows.length; index += 1) {
-        const row = componentRows[index];
+      // `entries()` rather than a counting loop: the index is only the
+      // component's `sortOrder`, and iterating hands the row over rather than
+      // looking it up (#2801).
+      for (const [index, row] of componentRows.entries()) {
         const rowCents = componentRows.length === 1 ? amountCents : parseDecimalDollarsToCents(row.amount);
         if (rowCents == null) { setError("Enter a valid NZD amount for each fee component."); return; }
         built.push({

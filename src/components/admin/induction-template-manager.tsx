@@ -241,7 +241,12 @@ export function InductionTemplateManager() {
     setDraft((prev) => {
       if (!prev) return prev;
       const sections = [...prev.sections];
-      sections[index] = { ...sections[index], ...patch };
+      const target = sections[index];
+      // `index` is always the position the caller just rendered this section
+      // at, but a section can be removed between render and a stale click
+      // reaching a now-shifted index — a no-op edit rather than a crash.
+      if (!target) return prev;
+      sections[index] = { ...target, ...patch };
       return { ...prev, sections };
     });
   }
@@ -250,9 +255,13 @@ export function InductionTemplateManager() {
     setDraft((prev) => {
       if (!prev) return prev;
       const sections = [...prev.sections];
-      const items = [...sections[sIdx].items];
-      items[iIdx] = { ...items[iIdx], ...patch };
-      sections[sIdx] = { ...sections[sIdx], items };
+      const section = sections[sIdx];
+      if (!section) return prev; // see patchSection's note above
+      const items = [...section.items];
+      const item = items[iIdx];
+      if (!item) return prev; // same reasoning, one level deeper
+      items[iIdx] = { ...item, ...patch };
+      sections[sIdx] = { ...section, items };
       return { ...prev, sections };
     });
   }
@@ -260,7 +269,7 @@ export function InductionTemplateManager() {
   function addItem(sIdx: number) {
     patchSection(sIdx, {
       items: [
-        ...(draft?.sections[sIdx].items ?? []),
+        ...(draft?.sections[sIdx]?.items ?? []),
         {
           label: "",
           competencyPrompt: "",
@@ -274,8 +283,10 @@ export function InductionTemplateManager() {
 
   function removeItem(sIdx: number, iIdx: number) {
     if (!draft) return;
+    const section = draft.sections[sIdx];
+    if (!section) return; // see patchSection's note above
     patchSection(sIdx, {
-      items: draft.sections[sIdx].items.filter((_, i) => i !== iIdx),
+      items: section.items.filter((_, i) => i !== iIdx),
     });
   }
 

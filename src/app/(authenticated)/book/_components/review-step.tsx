@@ -704,8 +704,15 @@ export function ReviewStep({
                       setAppliedPromo((current) =>
                         current?.workPartyEvent ? null : current
                       );
-                    } else if (activeWorkPartyEvents.length === 1) {
-                      setSelectedWorkPartyEventId(activeWorkPartyEvents[0].id);
+                    } else {
+                      // "Exactly one event to attend" said as a first with
+                      // nothing after it, so the event that gets selected is
+                      // the one the condition tested for (#2801).
+                      const [onlyEvent, ...otherEvents] =
+                        activeWorkPartyEvents;
+                      if (onlyEvent && otherEvents.length === 0) {
+                        setSelectedWorkPartyEventId(onlyEvent.id);
+                      }
                     }
                   }}
                   className="rounded border-input"

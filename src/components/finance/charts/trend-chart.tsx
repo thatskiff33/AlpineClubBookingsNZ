@@ -61,7 +61,13 @@ export function TrendChart({
     );
   }
 
-  const axisValueType = series[0].valueType;
+  const [firstSeries] = series;
+  // Unreachable: the length check above already returned for an empty
+  // `series`, so this can only be undefined if that guarantee is violated.
+  // "count" is the same fallback formatFinanceValue/formatFinanceAxisTick
+  // already use for an unrecognised valueType (their own `default` case),
+  // not a new invented choice.
+  const axisValueType = firstSeries?.valueType ?? "count";
   const seriesByKey = new Map(series.map((entry) => [entry.key, entry]));
 
   const renderTooltip = ({

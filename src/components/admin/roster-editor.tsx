@@ -125,6 +125,10 @@ function assignmentsEqual(a: DraftAssignment[], b: DraftAssignment[]) {
   if (a.length !== b.length) return false
   return a.every((assignment, index) => {
     const other = b[index]
+    // The length check above guarantees `other` exists for every `index` a
+    // reaches, but that fact lives at the call site, not the read — so this
+    // is the one place the type needs telling.
+    if (!other) return false
     return assignment.rowKey === other.rowKey &&
       assignment.assignmentId === other.assignmentId &&
       assignment.choreTemplateId === other.choreTemplateId &&

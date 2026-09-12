@@ -306,7 +306,7 @@ export async function POST(
   }
 
   const ip =
-    request.headers.get("x-forwarded-for")?.split(",")[0].trim() ?? "unknown";
+    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
   let completedBookingCancellations = 0;
   let memberAnonymised = false;
 

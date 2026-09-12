@@ -438,9 +438,11 @@ function HutFeeTable({
       {isEditingMappings ? (
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={() => {
-            if (items.length === 0) return
+            // The first item IS the "there is anything to copy" check (#2801).
+            const [firstItem] = items
+            if (!firstItem) return
             const filled: HutFeeMap = {}
-            for (const key of allHutFeeCellKeys(rateTypes, tierValues)) filled[key] = { itemCode: items[0].code }
+            for (const key of allHutFeeCellKeys(rateTypes, tierValues)) filled[key] = { itemCode: firstItem.code }
             setCodes(filled)
           }}>Copy first item to all</Button>
           <Button variant="outline" size="sm" onClick={() => setCodes({})}>Clear all</Button>
