@@ -297,7 +297,7 @@ describe("the placement guard", () => {
 });
 
 /**
- * THE whole-lodge-hold exclusion predicate (#2698, INV-CAP-035). The planner
+ * THE whole-lodge-hold exclusion predicate (#2698, INV-CAP-038). The planner
  * expansion and the custodian write path's ordering check both subtract
  * through this one function, so its boundaries are the rule's boundaries.
  */

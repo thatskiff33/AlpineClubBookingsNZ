@@ -160,7 +160,7 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     site: "POST /api/admin/hut-leaders#1",
     tier: "GLOBAL",
     reason:
-      "#2698 ACCEPT path only: a custodian bed hold the officer has explicitly accepted narrows an existing whole-lodge hold's represented bed set (INV-CAP-035), so the amendment must exclude that hold's RELEASE — booking cancel's RELEASE_WHOLE_LODGE_HOLD_UPDATE, which serialises on this key and never on the lodge key — before taking acquireLodgeCapacityLock. Taken only when `amendOverlappingHolds` is in the request AND the write actually involves a bed — a bedless assignment can narrow no hold, so it never joins this cohort — decided before any lock so the order cannot invert; the detect-and-refuse path writes nothing and stays on the lodge key alone.",
+      "#2698 ACCEPT path only: a custodian bed hold the officer has explicitly accepted narrows an existing whole-lodge hold's represented bed set (INV-CAP-038), so the amendment must exclude that hold's RELEASE — booking cancel's RELEASE_WHOLE_LODGE_HOLD_UPDATE, which serialises on this key and never on the lodge key — before taking acquireLodgeCapacityLock. Taken only when `amendOverlappingHolds` is in the request AND the write actually involves a bed — a bedless assignment can narrow no hold, so it never joins this cohort — decided before any lock so the order cannot invert; the detect-and-refuse path writes nothing and stays on the lodge key alone.",
     invariant: "INV-LOCK-002",
   },
   {

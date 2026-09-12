@@ -59,7 +59,7 @@ vi.mock("@/lib/prisma", () => ({
 // Keep the real stores/parsers; swap only the two engine entry points.
 vi.mock("@/lib/booking-exception-execution", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("@/lib/booking-exception-execution")>();
+    (await importOriginal()) as typeof import("@/lib/booking-exception-execution");
   return {
     ...actual,
     approveAndExecutePolicyExceptionRequest: (...a: unknown[]) => mocks.approve(...a),
@@ -69,7 +69,7 @@ vi.mock("@/lib/booking-exception-execution", async (importOriginal) => {
 });
 vi.mock("@/lib/booking-exception-approval", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("@/lib/booking-exception-approval")>();
+    (await importOriginal()) as typeof import("@/lib/booking-exception-approval");
   return {
     ...actual,
     buildPolicyExceptionApprovalHooks: (...a: unknown[]) => mocks.buildHooks(...a),

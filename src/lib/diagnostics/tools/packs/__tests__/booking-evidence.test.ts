@@ -215,11 +215,11 @@ vi.mock("@/lib/membership-type-policy", () => ({
 // hidden the whole point of the strict seams, which is that a failed read reaches
 // the caller.
 vi.mock("@/lib/age-tier", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/age-tier")>()),
+  ...((await importOriginal()) as typeof import("@/lib/age-tier")),
   getAgeTierSettingsStrict: getAgeTierSettingsMock,
 }));
 vi.mock("@/lib/member-subscription-eligibility", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/member-subscription-eligibility")>()),
+  ...((await importOriginal()) as typeof import("@/lib/member-subscription-eligibility")),
   peekSubscriptionLockoutModeStrict: peekSubscriptionLockoutModeMock,
 }));
 
@@ -228,7 +228,6 @@ import {
   DIAGNOSTICS_READ_ONLY_TRANSACTION_TIMEOUT_MS,
   resolveReadOnlyMaxWaitMs,
 } from "../../read-only-transaction";
-import { DIAGNOSTICS_TOOL_BOUNDS } from "../../types";
 import {
   AID6B_BOOKING_GUEST_CEILING,
   AID6B_CAPACITY_NIGHT_CEILING,

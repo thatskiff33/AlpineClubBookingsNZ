@@ -398,7 +398,13 @@ export async function findBookingMemberNightConflicts(
   }
 
   return conflicts.sort((a, b) => {
-    const byNight = a.conflictingNights[0].localeCompare(b.conflictingNights[0]);
+    // Earliest clashing night first. A conflict with no night sorts to the
+    // front rather than throwing inside a comparator — this list becomes 409
+    // copy, and an exception here would replace a refusal the member can act on
+    // with a 500 (#2800).
+    const byNight = (a.conflictingNights[0] ?? "").localeCompare(
+      b.conflictingNights[0] ?? "",
+    );
     if (byNight !== 0) return byNight;
     return a.memberName.localeCompare(b.memberName);
   });

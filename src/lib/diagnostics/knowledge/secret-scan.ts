@@ -43,6 +43,8 @@
  * PR #2817's `docker-image-security`, 13 Aug 2026).
  */
 
+import { must } from "@/lib/indexed-access";
+
 export interface SecretFinding {
   /** Which rule matched (stable identifier, safe to log). */
   rule: string;
@@ -285,7 +287,7 @@ export function scanForSecrets(content: string): SecretFinding[] {
   const findings: SecretFinding[] = [];
   const lines = content.split("\n");
   for (let i = 0; i < lines.length; i += 1) {
-    const line = lines[i];
+    const line = must(lines[i], `scanForSecrets: no line at index ${i} within lines.length`);
     for (const rule of SECRET_RULES) {
       const match = rule.pattern.exec(line);
       if (!match) continue;

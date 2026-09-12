@@ -116,8 +116,11 @@ export async function resolvePaymentIdsByInvoiceTargets(
   const resolvedPaymentIds = new Map<string, string>();
   for (const invoiceId of uniqueInvoiceIds) {
     const paymentIds = paymentIdsByInvoiceId.get(invoiceId);
-    if (paymentIds?.size === 1) {
-      resolvedPaymentIds.set(invoiceId, Array.from(paymentIds)[0]);
+    // "Exactly one payment" said as a first with no rest, so the id the
+    // resolution stores is a value this branch already holds (#2800).
+    const [onlyPaymentId, ...extraPaymentIds] = paymentIds ?? [];
+    if (onlyPaymentId !== undefined && extraPaymentIds.length === 0) {
+      resolvedPaymentIds.set(invoiceId, onlyPaymentId);
       continue;
     }
 
@@ -725,7 +728,12 @@ export async function repairAccountCreditAllocationBusinessState(
       },
     });
 
-    if (paymentCandidates.length !== 1) {
+    // "Exactly one local payment" said as a first with no rest: the repair
+    // below then holds the payment itself rather than a count that licenses a
+    // later read. A no-match and a multi-match are both skipped, exactly as
+    // the length check skipped them (#2800).
+    const [payment, ...extraPaymentCandidates] = paymentCandidates;
+    if (payment === undefined || extraPaymentCandidates.length > 0) {
       skippedAllocations += 1;
       logger.warn(
         {
@@ -739,7 +747,6 @@ export async function repairAccountCreditAllocationBusinessState(
     }
 
     matchedPayments += 1;
-    const payment = paymentCandidates[0];
     const expectedAmountCents = -target.amountCents;
     const expectedDescription = buildBookingAppliedCreditDescription(
       payment.bookingId
@@ -786,8 +793,11 @@ export async function repairAccountCreditAllocationBusinessState(
         (credit) => credit.xeroCreditNoteId === creditNoteId
       );
 
-      if (linkedAppliedCredits.length === 1) {
-        const appliedCredit = linkedAppliedCredits[0];
+      // One linked row is a first with no rest; the two multi-row branches
+      // below are unchanged (#2800).
+      const [onlyLinkedCredit, ...extraLinkedCredits] = linkedAppliedCredits;
+      if (onlyLinkedCredit !== undefined && extraLinkedCredits.length === 0) {
+        const appliedCredit = onlyLinkedCredit;
         const updates: {
           description?: string;
         } = {};
@@ -805,7 +815,7 @@ export async function repairAccountCreditAllocationBusinessState(
           });
           updatedAppliedCredits += 1;
         }
-      } else if (linkedAppliedCredits.length > 1) {
+      } else if (extraLinkedCredits.length > 0) {
         // Historical negative rows plus later positive/negative offsets are an
         // intentional append-only record. The precise slice reconciler below,
         // not destructive rewrites of those rows, determines provider truth.
@@ -826,10 +836,12 @@ export async function repairAccountCreditAllocationBusinessState(
             credit.amountCents === expectedAmountCents
         );
 
-        if (unlinkedExactCredits.length === 1) {
+        const [onlyUnlinkedCredit, ...extraUnlinkedCredits] =
+          unlinkedExactCredits;
+        if (onlyUnlinkedCredit !== undefined && extraUnlinkedCredits.length === 0) {
           await tx.memberCredit.update({
             where: {
-              id: unlinkedExactCredits[0].id,
+              id: onlyUnlinkedCredit.id,
             },
             data: {
               xeroCreditNoteId: creditNoteId,
@@ -837,7 +849,7 @@ export async function repairAccountCreditAllocationBusinessState(
             },
           });
           updatedAppliedCredits += 1;
-        } else if (unlinkedExactCredits.length > 1) {
+        } else if (extraUnlinkedCredits.length > 0) {
           skippedAllocations += 1;
           logger.warn(
             {

@@ -103,7 +103,15 @@ export async function runBookingXeroRepair(options?: {
     }
   }
 
-  const finalPass = passes[passes.length - 1];
+  // `maxPasses` is at least one, so the loop above always recorded a pass. A
+  // report with no pass would have no scan to summarise and no findings to
+  // count, and there is nothing to put in its place (#2800).
+  const finalPass = passes.at(-1);
+  if (finalPass === undefined) {
+    throw new Error(
+      "Booking Xero repair produced no pass report; the pass budget must be at least one.",
+    );
+  }
   const finalBookingsWithFindings = finalPass.bookings.filter(
     (booking) => booking.findings.length > 0
   );

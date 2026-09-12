@@ -4,8 +4,8 @@
  * A `/pay` link stays valid to the END OF THE CHECK-IN DAY, inclusive, and four
  * separate decisions are bound to that single moment:
  *
- * 1. what `PaymentLink.expiresAt` is minted as — `payment-link.ts`,
- *    `booking-request.ts` and `group-booking.ts`;
+ * 1. what `PaymentLink.expiresAt` is minted as — `payment-link-reissue.ts`,
+ *    `payment-link-split-guest.ts`, `booking-request.ts` and `group-booking.ts`;
  * 2. whether a fresh mint would be born expired and must therefore not happen;
  * 3. the request-hold TERMINAL CANCEL in `cron-confirm-pending.ts` (#2012),
  *    which releases real capacity;
@@ -56,4 +56,16 @@ export function paymentLinkExpiryForCheckIn(
   zone: ClubTimeZone,
 ): Instant {
   return endOfClubDayInclusive(calendarDateOfDateOnlyInstant(checkIn), zone);
+}
+
+/**
+ * Decision 2 above, as one function: a link whose expiry is at or before `now`
+ * would be born expired and must not be minted. `<=`, at every mint site
+ * (#2956). Before this the re-issue path wrote `<` and the split-guest path
+ * `<=` — two definitions of one fact, differing by the single millisecond of
+ * the equal instant. Unifying on `<=` tightens the re-issue refusal by exactly
+ * that millisecond.
+ */
+export function isBornExpired(expiresAt: Instant, now: Instant): boolean {
+  return expiresAt.getTime() <= now.getTime();
 }

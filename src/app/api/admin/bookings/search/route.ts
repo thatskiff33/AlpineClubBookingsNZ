@@ -24,9 +24,11 @@ function getBookingIdSearchTerms(query: string) {
 
   terms.add(lowerQuery);
 
-  const referenceMatch = query.match(bookingReferencePattern);
-  if (referenceMatch) {
-    const referenceTerm = referenceMatch[1];
+  // The captured reference itself is the condition: the group is mandatory in
+  // the pattern, so it is present exactly when the pattern matched, and reading
+  // it out of the destructure keeps that one condition with one answer (#2801).
+  const [, referenceTerm] = query.match(bookingReferencePattern) ?? [];
+  if (referenceTerm !== undefined) {
     terms.add(referenceTerm);
     terms.add(referenceTerm.toLowerCase());
   }

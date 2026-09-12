@@ -48,6 +48,7 @@ import {
 } from "@/lib/member-credit";
 import { calculateRestoredCreditAmount } from "@/lib/policies/member-credit";
 import { paymentHasCaptureEvidence } from "@/lib/cancel-flattened-payment-backfill";
+import { formatCents } from "@/lib/utils";
 
 // The full client, not a nested TransactionClient: the heal path opens its own
 // per-booking $transaction, so it must not run inside another one.
@@ -273,7 +274,8 @@ export async function healOrphanedAppliedCredits(options?: {
           severity: "critical",
           outcome: "success",
           summary: "Orphaned applied credit restored by backfill",
-          details: `Restored NZ$${(restoredCents / 100).toFixed(2)} of applied account credit orphaned by a pre-#1547 cancellation`,
+          // The club's configured currency, through the one formatter (#3325).
+          details: `Restored ${formatCents(restoredCents)} of applied account credit orphaned by a pre-#1547 cancellation`,
           metadata: { restoredCents, appliedRowCount: recheck.appliedRowCount },
         },
         tx

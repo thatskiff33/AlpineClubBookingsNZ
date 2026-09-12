@@ -43,7 +43,7 @@ vi.mock("@/lib/xero-error-shape", () => ({
 }));
 
 vi.mock("@/lib/xero-links", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/xero-links")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/xero-links");
 
   return {
     ...actual,

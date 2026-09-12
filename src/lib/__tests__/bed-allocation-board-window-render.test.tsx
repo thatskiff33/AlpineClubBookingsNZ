@@ -45,7 +45,7 @@ vi.mock("sonner", () => ({
 
 vi.mock("@/hooks/use-admin-area-edit-access", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("@/hooks/use-admin-area-edit-access")>();
+    (await importOriginal()) as typeof import("@/hooks/use-admin-area-edit-access");
   return { ...actual, useAdminAreaEditAccess: () => editAccessMock() };
 });
 
@@ -58,7 +58,7 @@ vi.mock("@/components/club-identity-provider", () => ({
 // constant, so replacing the whole module breaks it at import.
 vi.mock("@/components/lodge-select", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("@/components/lodge-select")>();
+    (await importOriginal()) as typeof import("@/components/lodge-select");
   return {
     ...actual,
     LodgeSelect: ({ onChange }: { onChange: (value: string) => void }) => {

@@ -144,7 +144,7 @@ vi.mock("@/lib/xero-error-alert", () => ({
 // operation carries the key production would carry — which is what the
 // idempotency analysis on #2834 turns on.
 vi.mock("@/lib/xero-sync", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/xero-sync")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/xero-sync");
   return {
     ...actual,
     startXeroSyncOperation: mocks.startXeroSyncOperation,
@@ -162,7 +162,7 @@ vi.mock("@/lib/xero-api-client", () => ({
 }));
 
 vi.mock("@/lib/xero-mappings", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/xero-mappings")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/xero-mappings");
   return {
     ...actual,
     getResolvedAccountMapping: mocks.getResolvedAccountMapping,

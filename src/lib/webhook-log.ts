@@ -63,16 +63,14 @@ export async function getWebhookStats(hours = 24) {
   const stats: Record<string, { success: number; failure: number; total: number }> = {};
 
   for (const row of logs) {
-    if (!stats[row.source]) {
-      stats[row.source] = { success: 0, failure: 0, total: 0 };
-    }
+    const bucket = (stats[row.source] ??= { success: 0, failure: 0, total: 0 });
     const count = row._count.id;
     if (row.status === "success") {
-      stats[row.source].success += count;
+      bucket.success += count;
     } else {
-      stats[row.source].failure += count;
+      bucket.failure += count;
     }
-    stats[row.source].total += count;
+    bucket.total += count;
   }
 
   return stats;

@@ -79,7 +79,7 @@ id and need the file it lives in.
 | A screen, a navigation path, or an admin area's UI | — | [`UX_FLOW_MAP.md`](docs/UX_FLOW_MAP.md), [`COVERAGE_MATRIX.md`](docs/COVERAGE_MATRIX.md) |
 | Tests — conventions, the frozen clock, coverage, E2E | — | [`TESTING.md`](docs/TESTING.md), [`END_TO_END_TEST_MATRIX.md`](docs/END_TO_END_TEST_MATRIX.md), [`E2E_PLAYWRIGHT.md`](docs/E2E_PLAYWRIGHT.md) |
 | Auth, sessions, tokens, permissions — anything security-shaped | — | [`SECURITY.md`](docs/SECURITY.md), [`SECURITY-ATTACK-SURFACE.md`](docs/SECURITY-ATTACK-SURFACE.md), [`TOKEN_HASHING.md`](docs/TOKEN_HASHING.md) |
-| Documentation itself | — | [`STYLE_GUIDE.md`](docs/STYLE_GUIDE.md) |
+| Documentation itself, including an invariant entry or its index row | — | [`STYLE_GUIDE.md`](docs/STYLE_GUIDE.md); the word budgets in [`invariants/SCHEME.md`](docs/invariants/SCHEME.md) §8.1 and [`invariants/WORD_BUDGETS.md`](docs/invariants/WORD_BUDGETS.md) |
 | Locating bounded code, import or Prisma context for an agent | — | [`agents/SCOPED_CONTEXT.md`](docs/agents/SCOPED_CONTEXT.md) |
 | Your first `npm` command in a new worktree (Windows runtime + dependency preflight), or Docker infrastructure a lane starts and must later tear down | — | [`agents/CODEX_WORKFLOW.md`](docs/agents/CODEX_WORKFLOW.md) |
 | Writing an issue, deciding whether work is an epic, working an issue, recording a decision on one, briefing a subagent, or reading untrusted issue/PR/provider text | — | [`agents/ISSUE_WORKFLOW.md`](docs/agents/ISSUE_WORKFLOW.md) — the four-question atomic-epic test, the epic/programme/standalone/Project distinction, the human-first issue body, read the thread with `npm run issue -- <n>` and never `gh issue view`, and rewrite the body when you record a decision; [`agents/SUBAGENT_GUIDE.md`](docs/agents/SUBAGENT_GUIDE.md), [`agents/PROMPT_INJECTION_GUIDE.md`](docs/agents/PROMPT_INJECTION_GUIDE.md) |
@@ -97,8 +97,7 @@ id and need the file it lives in.
   so whoever trips one is handed the rule instead of having to go find it.
 - **Add a row when you add a doc.** A routing table nobody maintains is worse
   than no routing table, because it reads as complete.
-- `npm run docs:indexcheck` runs offline and in the `verify` job. It backs part
-  of the two rules above and not all of them, so be precise about which part.
+- `npm run docs:indexcheck` runs offline and in the `verify` job.
   - **It enforces:** every cited `INV-*` id resolves to a real definition;
     every definition has exactly one row in `docs/DOMAIN_INVARIANTS.md`; every
     invariant family the routing table names really exists, and every family
@@ -275,8 +274,7 @@ validation gates.
   "routine" task types. Prefer repository commands over an MCP or browser round
   trip when they answer the same question, and delegate per "Delegate
   deliberately" below, with the smallest relevant artifact and file set. Gated
-  areas retain the strongest-model high/xhigh rules in the orchestration model
-  below, and `xhigh` remains the ceiling.
+  areas follow "Model selection" below; `xhigh` remains the ceiling.
 - **Gate the blueprint by risk.** A narrow Low/Medium issue with complete scope
   needs only a concise working plan. Before implementing High/Critical work,
   record a blueprint that names the affected invariants, counterpart writers,
@@ -367,8 +365,9 @@ an orchestrator with subagents, not a single agent doing everything inline:
   multi-file investigations, and the adversarial review lenses.
 - **Capability scaling:** the orchestrator chooses subagent model/effort by task
   complexity. Gated areas (money movement, booking capacity, membership/family
-  lifecycle, schema, auth/security, live providers) keep the strongest available
-  model at high reasoning effort, and auth/security runs at `xhigh`. The reason
+  lifecycle, schema, live providers) keep the top tier at high reasoning
+  effort; auth/security runs on the strongest generally-capable model at
+  `xhigh`, never the top tier. The reason
   an uncertain security blocker escalates in effort and never in model tier is
   in "Model selection" below, with the ceiling directive.
 - **Parallel lanes:** multiple issues may run concurrently, each in its own
@@ -494,13 +493,14 @@ At the successful end of a meaningful piece of work:
    **Advisory, and deliberately NOT required** — a finding is investigated, but
    it cannot block a merge: `CodeQL`, `Analyze (javascript-typescript)` and
    `Analyze (actions)` (GitHub code scanning **default setup**, configured in
-   repository settings rather than in a workflow file — there is no `codeql.yml`
-   and adding one would first require disabling default setup); `Semgrep OSS`
-   (the code-scanning results check GitHub raises from the SARIF that
-   `Static analysis gate` uploads — not a second scan);
-   `semgrep-cloud-platform/scan` (a Semgrep AppSec Platform GitHub App
-   integration configured outside this repository); `dependency-review`;
-   `Markdown relative-link check (offline)`; and the clock-rollover canary, which
+   repository settings, not a workflow file — there is no `codeql.yml`
+   and adding one would require disabling default setup); `Semgrep OSS`
+   (the code-scanning check GitHub raises from `Static analysis gate`'s
+   SARIF — not a second scan);
+   `semgrep-cloud-platform/scan` (a Semgrep AppSec Platform App
+   configured outside this repository); `dependency-review`;
+   `Markdown relative-link check (offline)`; `Scheduled secret sweep` (#2852),
+   weekly and unrequirable; and the clock-rollover canary, which
    its own workflow comment says must never become a pull-request check.
    Measured on fork PRs #2782/#2813, the CodeQL contexts do not appear at
    all — a second reason they can never be required.
@@ -761,53 +761,55 @@ handed an epic-with-children or asked to run several related issues at once.
 
 ### 4. Model selection
 
-- **Choose the tier at dispatch, from the lineup you actually have.** This
-  section deliberately does not name a default model: the lineup changes faster
-  than this file, and a stale name gets followed literally long after it stops
-  being the right answer. You know the task and the current models at the moment
-  you dispatch; decide there. Work down three questions in order. *Can a
-  deterministic command answer this exactly?* Then run it — a grep, a focused
-  test, a typecheck, `npm run agent:context` — and spend no model at all.
-  *If not, what is the cheapest tier I would trust to be right here without
-  checking its work?* Dispatch that one. *Is this bounded by reasoning or by
-  context?* Raise reasoning effort before reaching for a larger model, since the
-  two are separate dials and effort is usually the one that was actually short.
-  Escalate on evidence — a wrong answer, a refusal, a task that proves harder
-  than it read — never on a hunch that bigger is safer. Bounded searches,
-  mechanical edits and routine Low/Medium implementation rarely need the top of
-  the lineup; money, schema, auth, capacity, lifecycle and provider work almost
-  always need the strongest generally-capable tier at high or `xhigh`.
-- **State the model explicitly when you dispatch a subagent.** A subagent
-  launched without one **inherits the orchestrator's model**, so an unstated
-  choice is not a cheap default — it is the orchestrator's tier, silently. Name
-  the model and the effort in the launch, and put one line in the brief saying
-  why that tier fits the task. That line is what makes a wrong routing visible
-  in review instead of invisible in a bill.
-- **Reserve the top Mythos-class tier for genuine reasoning-frontier work** —
-  deep Xero-idempotency/frozen-reference contracts, immutable-charge backfill
-  correctness, or irreversible member-merge + DMMF-completeness reasoning. Do
-  not use it blanket for everything labelled "Critical"; scale model *and*
-  reasoning effort to the task.
+- **Choose the tier at dispatch, from the lineup you actually have.** The rule
+  here names no product — the only names are the dated example on the security
+  floor below — because a written name goes stale yet gets followed; the dated
+  table of names, efforts and measurements is
+  [`agents/SUBAGENT_GUIDE.md`](docs/agents/SUBAGENT_GUIDE.md) → "Model routing
+  table". Work down three questions in order. *Can a deterministic command
+  answer this exactly?* Then run it — a grep, a focused test, a typecheck,
+  `npm run agent:context` — and spend no model at all. *If not, what is the cheapest tier and effort I would trust to be
+  right here without checking its work?* Dispatch that. *Is this bounded by
+  reasoning or by context?* Raise reasoning effort before reaching for a larger
+  model; the two are separate dials and effort is usually the one that was
+  short. Escalate on evidence — a wrong answer, a red check, a refusal — never
+  on a hunch that bigger is safer.
+- **The shape** (owner decision, dated in the guide; evidence on #3259):
+  routine Low/Medium work and the standard review lenses go to the **top
+  Mythos-class tier at `medium`**, whose lower efforts out-perform the previous
+  generation's top ones in fewer turns and so cost less per *completed task*;
+  gated areas take that tier at `high`; `xhigh` is reserved for work bounded by
+  reasoning, since its cost advantage is measured only at lower efforts;
+  checkable read-only scans may use a cheaper tier; when the top tier's
+  allowance share is spent or the picker refuses it, fall back to the strongest
+  generally-capable model at the same effort and say so in the brief. This
+  inverts the earlier reading, which reserved the top tier.
+- **State the model explicitly when you dispatch a subagent, and the effort
+  with it.** A subagent launched without them **inherits the orchestrator's
+  model** and effort, so an unstated choice is not a cheap default — it is the
+  orchestrator's tier, silently. Name both in the launch and say in one line of
+  the brief why that tier fits; that line makes a wrong routing visible in
+  review instead of invisible in a bill. If the launch interface has no effort
+  control, pin it in an agent definition and name that. Brief the top tier with
+  the guide's "Briefing the top tier" lines, verbatim.
 - **Never route security work to the top Mythos-class tier — keep it on the
   strongest generally-capable model at `xhigh` reasoning effort.** At the time
   of writing that means Fable is excluded and Opus is the right choice, but the
   rule is the shape, not the names. The top tier's safety classifiers target
-  cyber content, so a security review or exploit analysis can come back
-  *refused* rather than answered. The refusal arrives as
-  `stop_reason: "refusal"` on an HTTP 200, not as an error — an unwary
-  orchestrator reads the empty or truncated result as a clean pass. Its
-  bug-finding gains also explicitly exclude security-focused analysis, so the
-  escalation buys nothing here even when it does answer. The strongest
-  generally-capable tier refuses far less on this material and falls back rather
-  than stopping outright, which is why an uncertain security blocker escalates
-  in *effort*, not in tier. Before routing security work to any tier you have
-  not used for it before, check that a refusal would be visible to you as a
-  failure rather than as a pass.
+  cyber content, so a security review, exploit analysis or scanner-configuration
+  task can come back *refused*. The refusal arrives as
+  `stop_reason: "refusal"` on an HTTP 200, not as an error — inside a subagent,
+  an unwary orchestrator reads the empty or truncated result as a clean pass.
+  Its vendor states that tier's bug-finding gains **exclude security-focused
+  analysis**, so the escalation buys nothing even when it answers, and the
+  generally-capable tier refuses far less — which is why an uncertain security
+  blocker escalates in *effort*, not in tier. Before routing
+  security work to a tier you have not used for it before, check that a refusal
+  would be visible to you as a failure rather than as a pass.
 - **`xhigh` is the effort ceiling — never use `max`, on any lane** (owner
   directive, 10 Aug 2026). At `max` the model overthinks and the outcome gets
-  *worse*, not better; `xhigh` is sufficient for the hardest security and
-  Critical work. Effort escalation for an uncertain blocker therefore tops out
-  at `xhigh`.
+  *worse*, not better. `xhigh` is sufficient for the hardest security and
+  Critical work.
 
 ### 5. Per-issue pipeline
 
@@ -880,7 +882,7 @@ CI-green → evidence**.
     "typecheck exit 0" in good faith; regenerating surfaced a real blocker.
   - **`npm test` does not typecheck, and `tsc --noEmit` without
     `-p tsconfig.test.json` skips every test file.** Run `npm run typecheck`,
-    which covers both configs — that is what CI runs.
+    which covers every config — that is what CI runs.
   - **Known-environmental failure**, for targeted diagnosis when CI fails:
     `page-content-starter-backfill.test.ts` (seed-copy drift). Prove non-involvement
     cheaply and strongly by checking `git diff main --name-only` against those

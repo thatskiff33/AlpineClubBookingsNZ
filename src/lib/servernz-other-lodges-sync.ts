@@ -83,14 +83,15 @@ export async function uploadOtherClubsToServer(): Promise<UploadSummary> {
   );
   const accepted = lodges.filter((l) => !skippedNames.has(l.name));
 
-  if (accepted.length > 0) {
+  const [firstAccepted] = accepted;
+  if (accepted.length > 0 && firstAccepted) {
     const oldestSkipped = lodges
       .filter((l) => skippedNames.has(l.name))
       .reduce<Date | null>((min, l) => (!min || l.updatedAt < min ? l.updatedAt : min), null);
 
     let watermark = accepted.reduce(
       (max, l) => (l.updatedAt > max ? l.updatedAt : max),
-      accepted[0].updatedAt,
+      firstAccepted.updatedAt,
     );
     // Never step over a rejected row, even when a newer row was accepted.
     if (oldestSkipped && watermark >= oldestSkipped) {

@@ -132,7 +132,7 @@ are the literal `1`.
 
 | Lock | Key | Helper / where | Tier | Serialises |
 | --- | --- | --- | --- | --- |
-| **Global booking / money** | `1` (literal) | inline `tx.$executeRaw` | 2 | Booking-status + money side effects that must exclude across the whole booking regardless of lodge: cancel, capture/settle, hold-release, group-settlement reaper/settle/refund/organiser-cancel, refunds, credit restore; plus bed-allocation inventory/placement/move/range/auto/approval/removal writers that must serialize with lifecycle prune; and, since #2698, the hut-leader ACCEPT path only — a custodian bed hold the officer has explicitly accepted narrowing an existing whole-lodge hold, which must exclude that hold's release (`INV-CAP-035`). Gated on the acceptance AND on a bed being involved, so a bedless write cannot take the club-wide key by asserting a flag. The hut-leader routes are otherwise not in this cohort: the detect-and-refuse path writes nothing and takes the per-lodge key alone. Member merge is the one bed-allocation writer that deliberately does NOT take this key — see "Merge joins the bed-allocation cohort" (#2595). |
+| **Global booking / money** | `1` (literal) | inline `tx.$executeRaw` | 2 | Booking-status + money side effects that must exclude across the whole booking regardless of lodge: cancel, capture/settle, hold-release, group-settlement reaper/settle/refund/organiser-cancel, refunds, credit restore; plus bed-allocation inventory/placement/move/range/auto/approval/removal writers that must serialize with lifecycle prune; and, since #2698, the hut-leader ACCEPT path only — a custodian bed hold the officer has explicitly accepted narrowing an existing whole-lodge hold, which must exclude that hold's release (`INV-CAP-038`). Gated on the acceptance AND on a bed being involved, so a bedless write cannot take the club-wide key by asserting a flag. The hut-leader routes are otherwise not in this cohort: the detect-and-refuse path writes nothing and takes the per-lodge key alone. Member merge is the one bed-allocation writer that deliberately does NOT take this key — see "Merge joins the bed-allocation cohort" (#2595). |
 | **Per-lodge capacity** | `hashtextextended(<lodgeId>, 0)` | `acquireLodgeCapacityLock(tx, lodgeId)` (`lodge-capacity-lock.ts`, re-exported by `capacity.ts`) | 1 | Capacity claims/checks and bed-allocation mutations for one lodge; booking admission versus lodge deactivation; hut-leader overlap, optional bed-hold writes and assignment DELETE (#2698: removing a custodian hold widens every overlapping whole-lodge hold's represented set); roster eligibility snapshots; and direct or config-transfer chore-template changes, which serialize active-template validation for that lodge. |
 | **Per-member night footprint** | `hashtext("booking-member-night"), hashtext(<memberId>)` | `lockBookingMemberNights(tx, guests)` (`booking-member-night-conflicts.ts`) | cross-lodge | Serialises the person-night guard ACROSS lodges (see below). |
 | **Per-trip hosting coverage** | `hashtext("hosting-coverage-group"), hashtext(<GroupBooking.id>)` | `lockHostingCoverageGroup` / `lockHostingCoverageGroups`, with `tryLockHostingCoverageGroup(s)` tried first (`adult-member-hosting-coverage-lock.ts`) | cross-account | Serialises `SAME_GROUP_TRIP` coverage (#3039, epic #2943). The owner key cannot do this job: it is `Booking.memberId`, the DEPENDENT's own account, while every Group Trip source belongs to somebody else — so two writers changing two bookings in one trip hold two DIFFERENT owner keys and are not serialised at all. Not the lodge key either: one lodge holds many unrelated trips. Taken immediately BEFORE the sorted owner keys, because the trip's membership is what decides which owners the reconciliation fan-out will name. Several trips are taken in sorted order, and EVERY acquisition is tried with `pg_try_advisory_xact_lock` before the blocking form — one transaction can discover two trip keys (a booking in one trip whose same-owner dependent sits in another), so sorting within a call cannot order keys discovered in two, and a conflict rolls the whole outer transaction back with the stable `HOSTING_COVERAGE_PARTICIPANT_RETRY` 409 rather than waiting inside a booking transaction. Taken only where the lodge has `SAME_GROUP_TRIP` enabled AND the booking is in a trip. |
@@ -203,7 +203,7 @@ that holds only for as long as all three keep deciding under the key:
 - `POST /api/admin/hut-leaders` — role-only and bed-holding alike. Member,
   overlap and optional bed-availability checks all re-run under the key. A
   bed-holding write additionally asks, under the key, which existing whole-lodge
-  holds the bed would narrow (`INV-CAP-035`, #2698) and refuses with
+  holds the bed would narrow (`INV-CAP-038`, #2698) and refuses with
   `409 CUSTODIAN_OVERLAPS_WHOLE_LODGE_HOLD` unless the officer has accepted.
 - `PUT /api/admin/hut-leaders/[id]` — including an edit that clears the bed or
   never had one. #2887 corrected this: #2286 had locked only the bed-holding
@@ -266,7 +266,7 @@ The other three writers, and why the guarantee is worded the way it is:
 - `[id]/route.ts`'s DELETE removes a row, so it cannot create an overlap either
   and still runs no overlap read. It **does** hold the per-lodge key since
   #2698, for a different reason: removing a custodian bed hold WIDENS the
-  represented bed set of every overlapping whole-lodge hold (`INV-CAP-035`),
+  represented bed set of every overlapping whole-lodge hold (`INV-CAP-038`),
   because that exclusion is derived from the live holds at read time. That is a
   capacity move, and it ran on the base client outside any transaction until
   then. It now takes the key from the pre-lock row's `lodgeId`, re-reads the row
@@ -1153,7 +1153,8 @@ inside a transaction was that nobody had.
 The same rule again, and the one place it decides whether a member keeps a bed.
 A payment link expires at the end of the check-in day in the club's **persisted**
 timezone (`INV-CONFIG-002`), and four decisions read that one boundary: the mint
-in `payment-link.ts` / `booking-request.ts` / `group-booking.ts`, the refusal to
+in `payment-link-reissue.ts` / `payment-link-split-guest.ts` /
+`booking-request.ts` / `group-booking.ts`, the refusal to
 mint a link that would be born expired, and the two capacity-releasing
 `PENDING -> CANCELLED` terminal cancels in `cron-confirm-pending.ts`. Three of
 those sites are inside a `prisma.$transaction` already holding

@@ -78,7 +78,7 @@ vi.mock("@/lib/session-guards", () => ({
 // is only worth anything if it compares against the config the route will
 // actually run with, not against a shape re-typed in this file.
 vi.mock("@/lib/rate-limit", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/rate-limit")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/rate-limit");
   return { ...actual, applyRateLimit: h.applyRateLimit };
 });
 vi.mock("@/lib/admin-modules", () => ({

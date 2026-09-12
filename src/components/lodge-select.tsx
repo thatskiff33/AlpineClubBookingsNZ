@@ -98,7 +98,10 @@ export function LodgeSelect({
       value === ALL_LODGES ||
       !lodges.some((lodge) => lodge.id === value)
     ) {
-      onChange(lodges[0].id, "auto");
+      // `lodges.length < 2` already returned above, so there are at least
+      // two lodges here — the guard is for the type only.
+      const [firstLodge] = lodges;
+      if (firstLodge) onChange(firstLodge.id, "auto");
     }
   }, [lodges, value, onChange, loading, allowAllLodges, deferDefaultSelection]);
 

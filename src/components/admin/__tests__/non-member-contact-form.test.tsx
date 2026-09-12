@@ -74,8 +74,7 @@ describe("NonMemberContactForm — reuse-by-pick contract (#1935)", () => {
       isPlaceholderEmail: false,
     };
 
-    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
-      const url = typeof input === "string" ? input : input.toString();
+    const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
       const method = init?.method ?? "GET";
       // GET = suggestions; POST = create/reuse.
       if (method === "GET") {

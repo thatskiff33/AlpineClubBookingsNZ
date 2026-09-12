@@ -11,6 +11,7 @@ import { markPaymentIntentTransactionFailed } from "@/lib/payment-transactions";
 import { prisma } from "@/lib/prisma";
 import { cancelPaymentIntentIfCancellableWithResult } from "@/lib/stripe";
 import { reconcileBedAllocationsForBookingWithGlobalLockHeld } from "@/lib/bed-allocation-lifecycle";
+import { formatCents } from "@/lib/utils";
 
 type BookingDeleteDb = Prisma.TransactionClient | typeof prisma;
 
@@ -590,7 +591,7 @@ async function getCancelledBookingDeleteBlockers(
     "member_credit",
     `Member credit history exists (${memberCreditRows.length} row${
       memberCreditRows.length === 1 ? "" : "s"
-    }, net ${formatNetCents(creditNetCents)})`,
+    }, net ${formatCents(creditNetCents)})`,
     memberCreditRows.length > 0 && !creditFullyRestored ? memberCreditRows.length : 0
   );
   addBlocker(
@@ -678,13 +679,6 @@ function hasCapturedOrCreditedPayment(
     (payment.creditAppliedCents > 0 && !creditFullyRestored) ||
     payment.additionalPaymentStatus === "SUCCEEDED"
   );
-}
-
-// #1547: render a signed net-cents figure for the member_credit blocker label,
-// e.g. -$5.00 / $0.00. Money stays in integer cents internally.
-function formatNetCents(cents: number): string {
-  const sign = cents < 0 ? "-" : "";
-  return `${sign}$${(Math.abs(cents) / 100).toFixed(2)}`;
 }
 
 function hasXeroPaymentReference(payment: BookingForDelete["payment"]): boolean {

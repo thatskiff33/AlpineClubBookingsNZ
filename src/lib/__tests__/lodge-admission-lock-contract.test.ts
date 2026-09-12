@@ -133,7 +133,7 @@ describe("lodge admission and assignment lock topology (#2701)", () => {
 
     // #2698: the DELETE is behind the key too. Removing a custodian bed hold
     // WIDENS the represented bed set of every overlapping whole-lodge hold
-    // (INV-CAP-035), because that exclusion is derived from the live holds at
+    // (INV-CAP-038), because that exclusion is derived from the live holds at
     // read time — so a delete is a capacity move and ran, until #2698, on the
     // base client outside any transaction.
     expectOrdered(
@@ -171,7 +171,7 @@ describe("lodge admission and assignment lock topology (#2701)", () => {
     ] as const) {
       expect(
         source(route),
-        `${route}: the global cohort key must be gated on the officer's acceptance AND on a bed being involved (INV-LOCK-002, INV-CAP-035)`,
+        `${route}: the global cohort key must be gated on the officer's acceptance AND on a bed being involved (INV-LOCK-002, INV-CAP-038)`,
       ).toContain(gate);
     }
     expectOrdered(source("src/app/api/admin/hut-leaders/route.ts"), [

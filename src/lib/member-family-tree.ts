@@ -560,19 +560,19 @@ function bloodRelation(
 
   const upToB = aDepths.get(bId);
   if (upToB !== undefined && upToB < ANCESTOR_LABELS.length) {
-    return {
-      label: ANCESTOR_LABELS[upToB],
-      sharedParentIds: [],
-      incompleteParentRecordFor: null,
-    };
+    const label = ANCESTOR_LABELS[upToB];
+    // Unreachable: `upToB < ANCESTOR_LABELS.length` is checked just above.
+    if (label !== undefined) {
+      return { label, sharedParentIds: [], incompleteParentRecordFor: null };
+    }
   }
   const downToB = bDepths.get(aId);
   if (downToB !== undefined && downToB < DESCENDANT_LABELS.length) {
-    return {
-      label: DESCENDANT_LABELS[downToB],
-      sharedParentIds: [],
-      incompleteParentRecordFor: null,
-    };
+    const label = DESCENDANT_LABELS[downToB];
+    // Unreachable: `downToB < DESCENDANT_LABELS.length` is checked just above.
+    if (label !== undefined) {
+      return { label, sharedParentIds: [], incompleteParentRecordFor: null };
+    }
   }
 
   // Closest common ancestor: minimise total distance, then the distance on the

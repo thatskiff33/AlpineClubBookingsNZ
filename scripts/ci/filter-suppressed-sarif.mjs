@@ -16,6 +16,16 @@ import { pathToFileURL } from "node:url";
  * GitHub's SARIF ingest does not act on the `suppressions` field, so it files
  * them as open alerts that can never be closed. Re-scanning re-opens them.
  *
+ * SINCE #2842 A THIRD RESULT IS WITHHELD, and it is not a raw-SQL one, so say
+ * it plainly: `react-dangerouslysetinnerhtml` at
+ * `src/components/club-post-editor.tsx`. That is #2842's own headline
+ * correction — the measurement proved the blocking gate DOES emit that rule,
+ * where the earlier note had it down as cloud-only. It is suppressed for the
+ * reason given at the call site (the seed is sanitised through the board
+ * allowlist), so it is filtered here like the other two. A reader of this
+ * docblock should not have to discover from a diff that a
+ * `dangerouslySetInnerHTML` alert is being kept off the Security tab.
+ *
  * Why that is worth a build step rather than two dismissals. `INV-OPS-014`'s own
  * failure message INSTRUCTS a contributor to add a `nosemgrep` comment when the
  * exemption is justified. So every justified exemption mints an un-closable
@@ -40,8 +50,15 @@ import { pathToFileURL } from "node:url";
  * absent status defaults to `accepted`. Semgrep emits no `status` at all today,
  * so this branch is about not being wrong if that changes rather than about
  * current output.
+ *
+ * `underReview` is listed for exactly that reason. It means the suppression has
+ * NOT been accepted — the decision is still open — so honouring it would
+ * withhold a result nobody has yet agreed to suppress, which is the only path
+ * #2842's security review could find by which this filter withholds something
+ * that is not actually suppressed. Unreachable today; the docblock's whole
+ * argument is about not being wrong when it stops being unreachable.
  */
-const INACTIVE_SUPPRESSION_STATUSES = new Set(["rejected"]);
+const INACTIVE_SUPPRESSION_STATUSES = new Set(["rejected", "underReview"]);
 
 /**
  * `suppressions[].kind` values this filter acts on. `inSource` means the

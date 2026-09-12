@@ -220,6 +220,12 @@ vi.mock("@/lib/booking-payment-state", () => ({
   hasCapturedPayment: vi.fn(),
   hasIssuedPrimaryXeroInvoice: vi.fn(),
   isSettledBookingStatus: vi.fn(),
+  // #3340 widened this module's graph: `booking-modify-settlement` now reaches
+  // `additional-payment-ask`, which reads the one home of the captured-payment
+  // status list AT IMPORT TIME. A factory missing it throws before a single test
+  // runs, so the real value is handed back rather than a stub - nothing here
+  // exercises it, and a wrong list would be a silently different population.
+  CAPTURED_PAYMENT_STATUS_LIST: ["SUCCEEDED", "PARTIALLY_REFUNDED", "REFUNDED"],
 }));
 vi.mock("@/lib/policies/booking-route-decisions", () => ({
   calculateBookingHoldDecision: vi.fn(),

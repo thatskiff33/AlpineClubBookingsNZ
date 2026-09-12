@@ -436,7 +436,14 @@ export function ClubPostEditor({
           // Set once, uncontrolled thereafter: rewriting innerHTML on every
           // keystroke would move the caret to the start of the field on every
           // character typed.
-          /* Member HTML, but the seed is sanitised through the board allowlist above, and today's only caller passes the empty string. */
+          // Member HTML, but the seed is sanitised through the board allowlist
+          // above, and today's only caller passes the empty string.
+          //
+          // The `nosemgrep` below is LIVE and measured (#2842): re-running the
+          // blocking invocation with `--disable-nosem` on semgrep/semgrep:1.161.0
+          // reports this line, and it is the only `react-dangerouslysetinnerhtml`
+          // finding in the repository. The other five call sites carried the same
+          // annotation and suppressed nothing, so #2842 deleted theirs.
           dangerouslySetInnerHTML={{ __html: safeSeed }} /* nosemgrep: typescript.react.security.audit.react-dangerouslysetinnerhtml.react-dangerouslysetinnerhtml */
         />
       </div>

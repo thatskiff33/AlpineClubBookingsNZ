@@ -133,7 +133,7 @@ export function holdCoversNight(
 }
 
 /**
- * Is this bed-night held by a custodian? (`INV-CAP-035`, #2698.)
+ * Is this bed-night held by a custodian? (`INV-CAP-038`, #2698.)
  *
  * THE predicate a whole-lodge hold subtracts through. ADR-001 says an
  * exclusive hold gives its group the whole lodge, and until #2698 that was

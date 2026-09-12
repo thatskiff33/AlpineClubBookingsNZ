@@ -18,9 +18,7 @@ vi.mock("@/lib/session-guards", () => ({
 
 vi.mock("@/lib/admin-family-group-requests-service", async (importActual) => {
   const actual =
-    await importActual<
-      typeof import("@/lib/admin-family-group-requests-service")
-    >();
+    (await importActual()) as typeof import("@/lib/admin-family-group-requests-service");
   return {
     ...actual,
     reviewAdminFamilyGroupRequest: h.reviewAdminFamilyGroupRequest,

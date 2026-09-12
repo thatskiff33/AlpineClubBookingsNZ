@@ -29,6 +29,7 @@ import type { DiagnosticCaseSummary } from "../case/case";
 import type { DiagnosticsEvidenceState } from "../case/states";
 import { diagnosticsToolRequiresProviderCheck } from "../tools/registry";
 import type { DiagnosticsAskProvenance, DiagnosticsAskSource } from "./contract";
+import { must } from "@/lib/indexed-access";
 
 /**
  * States that mean the evidence a source returned is INCOMPLETE rather than absent or
@@ -163,9 +164,10 @@ export function buildDiagnosticsProvenance(
         : "No live data could be read for this answer",
     );
   } else {
+    // `read.length === 0` was handled in the branch above, so element 0 exists.
     const latest = read.reduce(
       (newest, source) => (source.observedAt > newest ? source.observedAt : newest),
-      read[0].observedAt,
+      must(read[0], "provenance: read is non-empty but has no element 0").observedAt,
     );
     const labels = [...new Set(read.map((source) => source.label))];
     // At most two names, then a count. A narrow column is D10's whole premise, and a

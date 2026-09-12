@@ -289,7 +289,12 @@ async function main() {
     take: 2,
   });
   let seedLodgeId: string;
-  if (existingLodges.length === 0) {
+  // Read the first (and, for the rename branch, the only) lodge once rather
+  // than re-checking `.length` against index 0 each time — `firstLodge`'s
+  // absence is the "no lodge exists yet" case, and `secondLodge`'s absence
+  // together with a present first is "exactly one lodge exists".
+  const [firstLodge, secondLodge] = existingLodges;
+  if (!firstLodge) {
     const createdLodge = await prisma.lodge.create({
       data: {
         name: clubLodgeName,
@@ -306,12 +311,9 @@ async function main() {
     });
     seedLodgeId = createdLodge.id;
     console.log(`Lodge seeded: ${clubLodgeName}`);
-  } else if (
-    existingLodges.length === 1 &&
-    existingLodges[0].name === "Lodge"
-  ) {
+  } else if (!secondLodge && firstLodge.name === "Lodge") {
     const updatedLodge = await prisma.lodge.update({
-      where: { id: existingLodges[0].id },
+      where: { id: firstLodge.id },
       data: {
         name: clubLodgeName,
         slug: slugifyLodgeName(clubLodgeName),
@@ -320,7 +322,7 @@ async function main() {
     seedLodgeId = updatedLodge.id;
     console.log(`Lodge placeholder renamed to: ${clubLodgeName}`);
   } else {
-    seedLodgeId = existingLodges[0].id;
+    seedLodgeId = firstLodge.id;
   }
 
   // DB-first club identity singleton (E3 #1929): seed the club.json values so a

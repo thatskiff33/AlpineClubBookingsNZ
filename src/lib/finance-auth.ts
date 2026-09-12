@@ -4,11 +4,10 @@ import { auth } from "@/lib/auth";
 import {
   hasLodgeAccess,
   type AccessRoleAssignmentInput,
-  type AccessRoleInput,
 } from "@/lib/access-roles";
 import {
-  hasFinanceManagerAccess as hasFinanceManagerMatrixAccess,
-  hasFinanceViewerAccess as hasFinanceViewerMatrixAccess,
+  hasFinanceManagerAccess,
+  hasFinanceViewerAccess,
 } from "@/lib/admin-permissions";
 import { MEMBER_ACCESS_ROLE_SELECT } from "@/lib/access-role-definitions";
 import { buildLoginPath } from "@/lib/auth-redirect";
@@ -30,20 +29,11 @@ export type FinanceAccessMember = {
   twoFactorEnabled: boolean;
 };
 
-/**
- * Finance portal access derives from the merged finance area level of the
- * admin permission matrix (view => viewer, edit => manager), so any role —
- * seeded Treasurer/Finance Viewer, Full Admin, or a custom definition with
- * finance access — participates. Requires the member's accessRoles rows to
- * be selected with MEMBER_ACCESS_ROLE_SELECT so definitions resolve.
- */
-export function hasFinanceViewerAccess(input: AccessRoleInput) {
-  return hasFinanceViewerMatrixAccess(input);
-}
-
-export function hasFinanceManagerAccess(input: AccessRoleInput) {
-  return hasFinanceManagerMatrixAccess(input);
-}
+// `hasFinanceViewerAccess` / `hasFinanceManagerAccess` are defined once, in
+// `@/lib/admin-permissions`, and imported from there everywhere. This module
+// used to wrap them (#3264), which gave the same guard two import paths.
+// Requires the member's accessRoles rows to be selected with
+// MEMBER_ACCESS_ROLE_SELECT so definitions resolve.
 
 export async function loadFinanceAccessMember(
   memberId: string

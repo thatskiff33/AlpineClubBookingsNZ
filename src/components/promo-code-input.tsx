@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { formatSignedCents } from "@/lib/utils";
 
 export interface PromoResult {
   // Null when the discount comes from a work party event's internal promo
@@ -150,12 +151,6 @@ export function PromoCodeInput({
     } finally {
       setValidating(false);
     }
-  }
-
-  function formatSignedCents(cents: number) {
-    if (cents === 0) return "$0.00";
-    const prefix = cents > 0 ? "+$" : "-$";
-    return `${prefix}${(Math.abs(cents) / 100).toFixed(2)}`;
   }
 
   function handleRemove() {

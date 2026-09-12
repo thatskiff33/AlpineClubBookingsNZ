@@ -822,7 +822,7 @@ describe("#2698 whole-lodge hold amendment — the ordering case", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ success: true });
     // Removing a custodian hold WIDENS every overlapping whole-lodge hold's
-    // represented bed set (INV-CAP-035), so it is a capacity move and belongs
+    // represented bed set (INV-CAP-038), so it is a capacity move and belongs
     // under the same key as the create and the edit. It ran unlocked, on the
     // base client, before #2698.
     expect(callOrder).toEqual([

@@ -14,7 +14,7 @@ import { recordHutLeaderAssignmentAudit } from "@/lib/hut-leader-assignment-audi
  * Before this, `updated` was one fixed sentence claiming "a bed that was
  * released is bookable again" on every edit — including the edit that does the
  * opposite. The inline bed picker on a role-only assignment TAKES a bed out of
- * the bookable pool, and it is the write the `INV-CAP-035` amendment accept
+ * the bookable pool, and it is the write the `INV-CAP-038` amendment accept
  * runs through, so the PR's most consequential new capacity event was recorded
  * as its own opposite. `created` and `deleted` already branched; only `updated`
  * took the argument and ignored it.

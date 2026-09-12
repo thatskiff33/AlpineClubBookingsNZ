@@ -6,6 +6,7 @@
  */
 
 import { shiftMonthKey } from "@/lib/finance-monthly-facts";
+import { must } from "@/lib/indexed-access";
 
 export const FINANCE_RATIO_TOTAL_INCOME_ID = "total-income";
 export const FINANCE_RATIO_TOTAL_EXPENSES_ID = "total-expenses";
@@ -43,7 +44,11 @@ function financialYearStartMonth(
   monthKey: string,
   yearEndMonth: number
 ): string {
-  const [year, month] = monthKey.split("-").map(Number);
+  // Month keys are always the internal "YYYY-MM" form, so a split on "-"
+  // always yields both parts.
+  const parts = monthKey.split("-");
+  const year = Number(must(parts[0], `financialYearStartMonth: malformed month key "${monthKey}"`));
+  const month = Number(must(parts[1], `financialYearStartMonth: malformed month key "${monthKey}"`));
   const startMonth = (yearEndMonth % 12) + 1;
   const startYear = month >= startMonth ? year : year - 1;
   return `${startYear}-${String(startMonth).padStart(2, "0")}`;
@@ -55,18 +60,27 @@ function financialYearName(fyStartMonth: string): string {
 
 /**
  * The three financial-year buckets the committee compares: this FY (to date),
- * last FY, and the FY before.
+ * last FY, and the FY before. Always exactly these three, in this order — a
+ * fixed triple rather than an open-ended array, so a caller reading
+ * `buckets[0]`/`[1]`/`[2]` (this FY / last FY / the FY before) never has to
+ * guard against a missing bucket.
  */
+export type FinanceFinancialYearBucketTriple = readonly [
+  FinanceFinancialYearBucket,
+  FinanceFinancialYearBucket,
+  FinanceFinancialYearBucket,
+];
+
 export function financeFinancialYearBuckets(input: {
   currentMonth: string;
   financialYearEndMonth: number;
-}): FinanceFinancialYearBucket[] {
+}): FinanceFinancialYearBucketTriple {
   const thisFyStart = financialYearStartMonth(
     input.currentMonth,
     input.financialYearEndMonth
   );
 
-  return [0, 1, 2].map((yearsBack) => {
+  const bucketFor = (yearsBack: 0 | 1 | 2): FinanceFinancialYearBucket => {
     const fromMonth = shiftMonthKey(thisFyStart, -12 * yearsBack);
     const toMonth =
       yearsBack === 0 ? input.currentMonth : shiftMonthKey(fromMonth, 11);
@@ -79,7 +93,9 @@ export function financeFinancialYearBuckets(input: {
       toMonth,
       isYearToDate: yearsBack === 0,
     };
-  });
+  };
+
+  return [bucketFor(0), bucketFor(1), bucketFor(2)];
 }
 
 /**

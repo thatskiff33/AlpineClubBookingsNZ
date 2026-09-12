@@ -240,8 +240,11 @@ export function reduceName(
   switch (granularity) {
     case "FULL_NAME":
       return [first, last].filter(Boolean).join(" ");
-    case "FIRST_NAME_SURNAME_INITIAL":
-      return last ? `${first} ${last[0].toUpperCase()}` : first;
+    case "FIRST_NAME_SURNAME_INITIAL": {
+      // `last` truthy means non-empty, so its first character always exists.
+      const initial = last[0];
+      return initial ? `${first} ${initial.toUpperCase()}` : first;
+    }
     case "FIRST_NAME_ONLY":
       return first;
     case "COUNTS_ONLY":
