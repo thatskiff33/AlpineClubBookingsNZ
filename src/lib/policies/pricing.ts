@@ -141,6 +141,16 @@ export interface PromoDiscountGuest {
   memberId: string | null;
   isMember: boolean;
   perNightRates: number[];
+  /**
+   * The calendar day of each entry in `perNightRates`, parallel to it (issue
+   * #713, #3276). The one home of that field: `promo.ts` used to redeclare it on
+   * its own extension. A writer recording what a promotion took off a night
+   * needs the night's DATE, not its position — a work-party window filters by
+   * date, and a non-contiguous stay has no positional rule. Optional only so a
+   * pure calculation can still be run without dates; a writer handed a
+   * night-scope target with no date refuses (INV-MONEY-029).
+   */
+  nightDates?: ReadonlyArray<Date> | null;
 }
 
 export interface CalculatePromoDiscountOptions {
@@ -584,7 +594,43 @@ export interface PromoDiscountResult {
   freeNightsUsed: number;
   eligibleGuestCount: number;
   allocations: PromoDiscountAllocation[];
+  /**
+   * What this application took off each target, at the grain the engine decided
+   * it (#3276): the very terms the totals above are summed from, so they
+   * reconcile to `allocations` and `priceAdjustmentCents` exactly. The grain,
+   * the signed-cents amount and its NULL-means-not-known rule are stated once,
+   * as INV-MONEY-029 in `docs/invariants/money.md`; `null` is emitted only by
+   * `targetsAfterCap`, when the safety cap rescaled the allocations.
+   */
+  targets: PromoDiscountTarget[];
 }
+
+/**
+ * One adjustment the engine decided for one target (#3276). `guest` is the very
+ * object from the caller's `guests` list, so a caller can map it back to the
+ * booking guest it built the entry for; `nightIndex` indexes that guest's
+ * `perNightRates`, and `stayDate` is the matching `nightDates` entry when the
+ * caller supplied dates. `beneficiaryMemberId` is the member whose allocation
+ * this row decomposes — here always the guest's own member, exactly as
+ * `addPromoAllocation` keys the allocation; `calculatePromoDiscountForGuestRates`
+ * redirects both to the booker for an unassigned code in the one branch that
+ * decides that, so a row and its allocation can never name different people.
+ */
+export type PromoDiscountTarget =
+  | {
+      scope: "night";
+      guest: PromoDiscountGuest;
+      nightIndex: number;
+      stayDate: Date | null;
+      beneficiaryMemberId: string | null;
+      amountCents: number | null;
+    }
+  | {
+      scope: "guest";
+      guest: PromoDiscountGuest;
+      beneficiaryMemberId: string | null;
+      amountCents: number | null;
+    };
 
 export interface PromoDiscountAllocation {
   memberId: string;
@@ -704,6 +750,37 @@ function capPromoDiscountAcrossAllocations(
   return cappedCents;
 }
 
+function nightTarget(
+  guest: PromoDiscountGuest,
+  nightIndex: number,
+  amountCents: number,
+): PromoDiscountTarget {
+  return {
+    scope: "night",
+    guest,
+    nightIndex,
+    stayDate: guest.nightDates?.[nightIndex] ?? null,
+    beneficiaryMemberId: guest.memberId,
+    amountCents,
+  };
+}
+
+/**
+ * When the safety cap in `capPromoDiscountAcrossAllocations` bound, the members'
+ * allocations were rescaled and the per-night terms no longer describe what was
+ * charged. Every target of the application then says NOT KNOWN (#3276): the
+ * rescale is per member by largest remainder, and translating it back to nights
+ * would be exactly the invented rule D1 rules out.
+ */
+function targetsAfterCap(
+  targets: PromoDiscountTarget[],
+  uncappedDiscountCents: number,
+  cappedDiscountCents: number,
+): PromoDiscountTarget[] {
+  if (cappedDiscountCents >= uncappedDiscountCents) return targets;
+  return targets.map((target) => ({ ...target, amountCents: null }));
+}
+
 /**
  * Apply a promo code discount to a booking. All promo types are applied
  * per eligible guest.
@@ -741,6 +818,7 @@ export function calculatePromoDiscount(
     freeNightsUsed: 0,
     eligibleGuestCount: 0,
     allocations: [],
+    targets: [],
   };
 
   const selected = selectPromoDiscountGuests(promo, guests);
@@ -752,15 +830,17 @@ export function calculatePromoDiscount(
       if (pct <= 0) return empty;
       let discount = 0;
       const allocations = new Map<string, PromoDiscountAllocation>();
+      const targets: PromoDiscountTarget[] = [];
       for (const { guest } of selected) {
         let guestDiscount = 0;
-        for (const rate of guest.perNightRates) {
+        guest.perNightRates.forEach((rate, nightIndex) => {
           const raw = Math.round((rate * pct) / 100);
           const capped = promo.maxNightlyValueCents != null
             ? Math.min(raw, promo.maxNightlyValueCents)
             : raw;
           guestDiscount += capped;
-        }
+          targets.push(nightTarget(guest, nightIndex, -capped));
+        });
         discount += guestDiscount;
         addPromoAllocation(allocations, guest.memberId, guestDiscount, -guestDiscount, 0);
       }
@@ -772,6 +852,7 @@ export function calculatePromoDiscount(
         freeNightsUsed: 0,
         eligibleGuestCount: selected.length,
         allocations: [...allocations.values()],
+        targets: targetsAfterCap(targets, discount, discountCents),
       };
     }
 
@@ -780,11 +861,20 @@ export function calculatePromoDiscount(
       if (perGuest <= 0) return empty;
       let discount = 0;
       const allocations = new Map<string, PromoDiscountAllocation>();
+      const targets: PromoDiscountTarget[] = [];
       for (const { guest } of selected) {
         const guestTotal = guest.perNightRates.reduce((s, r) => s + r, 0);
         const guestDiscount = Math.min(perGuest, guestTotal);
         discount += guestDiscount;
         addPromoAllocation(allocations, guest.memberId, guestDiscount, -guestDiscount, 0);
+        // Decided per GUEST: there is no per-night rule for a fixed amount, so
+        // the target is the guest (D1 on #3272, refined 8 Sep 2026).
+        targets.push({
+          scope: "guest",
+          guest,
+          beneficiaryMemberId: guest.memberId,
+          amountCents: -guestDiscount,
+        });
       }
       const discountCents = capPromoDiscountAcrossAllocations(allocations, discount, totalPriceCents);
       return {
@@ -793,6 +883,7 @@ export function calculatePromoDiscount(
         freeNightsUsed: 0,
         eligibleGuestCount: selected.length,
         allocations: [...allocations.values()],
+        targets: targetsAfterCap(targets, discount, discountCents),
       };
     }
 
@@ -809,11 +900,21 @@ export function calculatePromoDiscount(
 
       // Collect candidate nights from each selected guest: each guest contributes
       // up to perIndividual of their most expensive nights.
-      const candidates: { rate: number; memberId: string | null }[] = [];
+      // Each candidate remembers WHICH night it is (#3276). Both sorts are
+      // stable, so among equal rates the earlier night is the one freed —
+      // deterministic, and the totals are unchanged whichever is picked.
+      const candidates: {
+        rate: number;
+        memberId: string | null;
+        guest: PromoDiscountGuest;
+        nightIndex: number;
+      }[] = [];
       for (const { guest } of selected) {
-        const sortedDesc = [...guest.perNightRates].sort((a, b) => b - a);
-        for (const rate of sortedDesc.slice(0, perIndividual)) {
-          candidates.push({ rate, memberId: guest.memberId });
+        const sortedDesc = guest.perNightRates
+          .map((rate, nightIndex) => ({ rate, nightIndex }))
+          .sort((a, b) => b.rate - a.rate);
+        for (const { rate, nightIndex } of sortedDesc.slice(0, perIndividual)) {
+          candidates.push({ rate, memberId: guest.memberId, guest, nightIndex });
         }
       }
       if (candidates.length === 0) return empty;
@@ -827,8 +928,9 @@ export function calculatePromoDiscount(
       let freeNightsUsed = 0;
       const usedByMemberId = new Map<string, number>();
       const allocations = new Map<string, PromoDiscountAllocation>();
+      const targets: PromoDiscountTarget[] = [];
       for (let i = 0; i < usedCount; i++) {
-        const { rate, memberId } = candidates[i];
+        const { rate, memberId, guest, nightIndex } = candidates[i];
 
         if (remainingFreeNightsByMemberId) {
           if (!memberId) continue;
@@ -847,6 +949,7 @@ export function calculatePromoDiscount(
         discount += capped;
         freeNightsUsed += 1;
         addPromoAllocation(allocations, memberId, capped, -capped, 1);
+        targets.push(nightTarget(guest, nightIndex, -capped));
       }
       const discountCents = capPromoDiscountAcrossAllocations(allocations, discount, totalPriceCents);
       return {
@@ -855,6 +958,7 @@ export function calculatePromoDiscount(
         freeNightsUsed,
         eligibleGuestCount: selected.length,
         allocations: [...allocations.values()],
+        targets: targetsAfterCap(targets, discount, discountCents),
       };
     }
 
@@ -866,20 +970,27 @@ export function calculatePromoDiscount(
       let totalAdjustment = 0;
       let effectiveGuestCount = 0;
       const allocations = new Map<string, PromoDiscountAllocation>();
+      const targets: PromoDiscountTarget[] = [];
 
       for (const { guest } of selected) {
         let guestAdjustment = 0;
         let cappedNightCount = 0;
+        // Collected per guest and kept only when the guest counts as a
+        // beneficiary below, so the rows agree with the allocation about who
+        // was re-priced. Under SET_PRICE a night already at the fixed price is
+        // a real `0` row: it was set, to exactly what it cost.
+        const guestTargets: PromoDiscountTarget[] = [];
 
-        for (const rate of guest.perNightRates) {
+        guest.perNightRates.forEach((rate, nightIndex) => {
           if (mode === "CAP_ONLY") {
-            if (rate <= fixedNightlyPriceCents) continue;
+            if (rate <= fixedNightlyPriceCents) return;
             guestAdjustment += fixedNightlyPriceCents - rate;
             cappedNightCount += 1;
           } else {
             guestAdjustment += fixedNightlyPriceCents - rate;
           }
-        }
+          guestTargets.push(nightTarget(guest, nightIndex, fixedNightlyPriceCents - rate));
+        });
 
         const countsAsBeneficiary =
           mode === "SET_PRICE"
@@ -905,6 +1016,7 @@ export function calculatePromoDiscount(
           0,
           mode === "SET_PRICE"
         );
+        targets.push(...guestTargets);
       }
 
       return {
@@ -913,6 +1025,7 @@ export function calculatePromoDiscount(
         freeNightsUsed: 0,
         eligibleGuestCount: effectiveGuestCount,
         allocations: [...allocations.values()],
+        targets,
       };
     }
 

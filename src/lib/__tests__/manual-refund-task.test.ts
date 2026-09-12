@@ -130,7 +130,14 @@ const tx = {
   },
   bookingGuestNight: {
     updateMany: (...a: unknown[]) => mocks.bookingGuestNightUpdateMany(...a),
+    findMany: vi.fn().mockResolvedValue([]),
   },
+  // #3276: the re-base records the promotion build-up over the strands' nights.
+  bookingGuestNightAdjustment: {
+    deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+    createMany: vi.fn().mockResolvedValue({ count: 0 }),
+  },
+  promoRedemption: { findUnique: vi.fn().mockResolvedValue(null) },
   // #3219: the booking whose four money columns move with the strands.
   booking: {
     findUnique: (...a: unknown[]) => mocks.bookingFindUnique(...a),
@@ -1576,7 +1583,13 @@ describe("recording per-night amounts while settling (#3191)", () => {
       recordedNightPrices: null,
     });
 
-    expect(mocks.bookingGuestNightUpdateMany).not.toHaveBeenCalled();
+    // #3276: the re-base that follows records the promotion build-up as
+    // adjustment rows, not as a night write. No call here may write priceCents.
+    expect(
+      mocks.bookingGuestNightUpdateMany.mock.calls.filter(
+        ([args]) => "priceCents" in ((args as { data?: object }).data ?? {}),
+      ),
+    ).toEqual([]);
     expect(mocks.bookingGuestUpdateMany).not.toHaveBeenCalled();
     /*
       #3257 (owner, 7 September 2026) INVERTED THE SECOND HALF OF THIS TEST. It
@@ -2025,7 +2038,13 @@ describe("re-basing the booking's headline totals while settling (#3219)", () =>
     });
 
     // Nothing was priced - there was no strand left to price.
-    expect(mocks.bookingGuestNightUpdateMany).not.toHaveBeenCalled();
+    // #3276: the re-base that follows records the promotion build-up as
+    // adjustment rows, not as a night write. No call here may write priceCents.
+    expect(
+      mocks.bookingGuestNightUpdateMany.mock.calls.filter(
+        ([args]) => "priceCents" in ((args as { data?: object }).data ?? {}),
+      ),
+    ).toEqual([]);
     // And the headline stops counting the deleted guest: $80.00, not $240.00.
     expect(mocks.bookingUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({

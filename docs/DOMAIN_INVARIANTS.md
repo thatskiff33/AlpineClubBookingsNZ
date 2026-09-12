@@ -94,6 +94,7 @@ File: [`invariants/money.md`](invariants/money.md). Prefix `INV-MONEY`.
 | `INV-MONEY-026` | TRAP: the in-memory allocation list is not benefit-filtered; filter it yourself |
 | `INV-MONEY-027` | A `SET_PRICE` application netting to exactly zero counts as no use |
 | `INV-MONEY-028` | Every stored guest-night price records its origin; an even split is not sold-price evidence |
+| `INV-MONEY-029` | Promo adjustment rows per night or guest reconcile to the recorded promo totals; unknown is never zero |
 | `INV-MONEY-006` | Refunds, credits, Stripe and Xero amounts reconcile back to cent-based ledger records |
 | `INV-MONEY-007` | Admin adjustments need audit, approval, and a visible business reason |
 | `INV-MONEY-008` | A confirmed subscription charge is immutable; only delivery, status and Xero metadata advance |

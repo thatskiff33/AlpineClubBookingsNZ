@@ -107,7 +107,9 @@ onto the full new range (the batch-path policy) and re-syncs their
 gets night rows at creation so later edits honour the prices they joined at.
 The waitlist offer reprice is the other deliberate exception: an offer re-bases
 the whole booking at current rates before the member confirms, and the offer
-email states that price. Legacy guests without stored night rows price at
+email states that price. A failure inside that reprice degrades to the stored
+snapshot; the one step outside its degrade block is the promotion build-up
+recorder (`INV-MONEY-029`), whose refusal fails the sweep transaction instead. Legacy guests without stored night rows price at
 current rates; a one-off backfill migration (#1098) synthesised rows for
 pre-#713 guests on live, non-quote-priced bookings (stored price split evenly
 across the stay envelope, integer cents, remainder on the first night), so
@@ -1648,7 +1650,12 @@ missing a writer is worse than no enumeration:
   `src/lib/waitlist.ts`) re-bases the whole stay at current rates, passing no
   locked prices and rewriting every night row. It is fenced (#3166): a booking
   carrying a night with no known sold price is offered at its stored snapshot
-  instead, and the reprice is declined rather than attempted. It was REACHABLE —
+  instead, and the reprice is declined rather than attempted. Every other
+  failure inside the reprice degrades to that snapshot too, with ONE step
+  outside the degrade block: the promotion build-up recorder
+  (`recordBookingNightAdjustments`, `INV-MONEY-029`) runs after the catch, so a
+  refusal there — reachable only through a wiring defect — fails the sweep
+  transaction rather than committing a half-recorded reprice. It was REACHABLE —
   `ADMIN_FUTURE_EDIT_STATUSES` includes `WAITLISTED`, so an admin edit could park
   a waitlisted booking and this sweep would then convert its `NULL`s into
   guesses while the review task that wrote them was still open.
@@ -1678,7 +1685,9 @@ rule rather than exceptions to it, because neither values a historical night:
   design (the offer is a new price the member has not yet accepted) and, since
   #3031, writes the per-night rows it prices so the next edit reads real
   evidence. It values no historical night, so this rule does not reach it — but
-  it IS bound by the blank clause above, and is fenced accordingly (#3166).
+  it IS bound by the blank clause above, and is fenced accordingly (#3166). Its
+  degrade-to-snapshot catch covers the pricing and the night rewrite; the
+  build-up recorder that follows sits outside it (`INV-MONEY-029`).
 
 ### Three limits this rule does NOT close, named rather than left to be found
 

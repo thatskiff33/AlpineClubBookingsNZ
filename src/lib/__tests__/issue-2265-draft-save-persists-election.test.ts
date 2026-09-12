@@ -24,6 +24,17 @@ const tx = {
   // just wrote. `findUnique` answering undefined is the "booking not found"
   // branch, which writes nothing — right for a double that models one create.
   booking: { create: mocks.bookingCreate, findUnique: vi.fn() },
+  // #3276: the night adjustment build-up writer reads and rewrites these.
+  bookingGuestNightAdjustment: {
+    deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+    createMany: vi.fn().mockResolvedValue({ count: 0 }),
+    findMany: vi.fn().mockResolvedValue([]),
+  },
+  bookingGuestNight: {
+    findMany: vi.fn().mockResolvedValue([]),
+    updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+  },
+  promoRedemption: { findUnique: vi.fn().mockResolvedValue(null) },
   adultMemberHostingPolicy: { findMany: vi.fn().mockResolvedValue([]) },
   season: { findMany: vi.fn().mockResolvedValue([]) },
   memberCredit: { create: mocks.memberCreditCreate, aggregate: vi.fn() },

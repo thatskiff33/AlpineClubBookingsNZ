@@ -203,6 +203,16 @@ export const MEMBER_MERGE_RELATION_SPECS: readonly MemberMergeRelationSpec[] = [
   spec("PromoCodeAssignment", "member", "memberId", "resolve", {
     note: "@@unique(promoCodeId,memberId)",
   }),
+  // #3276: the per-night / per-guest decomposition of a promo allocation. No
+  // unique on the member column, so it moves with the person — EXCEPT where
+  // the keep-master resolver above drops the loser's colliding allocation: that
+  // resolver step deletes the loser's rows on the same redemption first
+  // (`dependents` on the PromoRedemptionAllocation resolver in
+  // `member-merge.ts`), so each surviving allocation still matches its rows per
+  // beneficiary; the redemption total still carries the dropped share, so that
+  // booking derives as not known until its promotion is next recomputed
+  // (INV-MONEY-029). Rows whose allocation moved move with it.
+  spec("BookingGuestNightAdjustment", "beneficiaryMember", "beneficiaryMemberId", "move"),
 
   // --- Credits / refunds ---
   spec("MemberCredit", "member", "memberId", "move"),

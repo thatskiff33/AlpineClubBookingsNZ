@@ -90,7 +90,16 @@ const tx = {
   $executeRaw: h.executeRaw,
   booking: { findUnique: h.txBookingFindUnique, update: h.txBookingUpdate },
   bookingGuest: { update: h.txGuestUpdate },
+  // #3276: the night adjustment build-up writer reads and rewrites these.
+  bookingGuestNightAdjustment: {
+    deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+    createMany: vi.fn().mockResolvedValue({ count: 0 }),
+    findMany: vi.fn().mockResolvedValue([]),
+  },
+  promoRedemption: { findUnique: vi.fn().mockResolvedValue(null) },
   bookingGuestNight: {
+    findMany: vi.fn().mockResolvedValue([]),
+    updateMany: vi.fn().mockResolvedValue({ count: 0 }),
     deleteMany: h.txGuestNightDeleteMany,
     createMany: h.txGuestNightCreateMany,
   },
