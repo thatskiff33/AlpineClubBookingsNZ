@@ -361,9 +361,11 @@ const CLI_ROOTS = cliRoots();
  * those is the reason the sweep exists at all — the acceptance bar for #2850
  * was that a runbook line copied during a money-repair incident must work.
  *
- * `measurement/**` is swept for its shell runners even though it is
- * deliberately outside CI: it seeds a real database the same way `scripts/`
- * does, so a broken command there costs the same diagnosis.
+ * `measurement/**` used to be swept here too, for its shell runners, even
+ * though it was deliberately outside CI: it seeded a real database the same
+ * way `scripts/` does, so a broken command there cost the same diagnosis. The
+ * tree was removed whole by #3382, so the sweep of it went too rather than
+ * scanning a directory that no longer exists.
  *
  * **The CLI roots themselves are swept too, and that half is new (#2850).** A
  * script publishes commands in its own source: the `--help` text it prints at
@@ -381,14 +383,12 @@ function invocationSources(): string[] {
   return [
     ...CLI_ROOTS,
     ...filesUnder("scripts", ".sh"),
-    ...filesUnder("measurement", ".sh"),
     // `.mjs`, which publishes commands exactly as a shell script does and was
     // NOT swept until #3186. The proof it needed to be: this pull request
-    // hand-corrected `npx tsx prisma/seed.ts` to the flagged form in
-    // `measurement/phase2/bin/self-test.mjs`, and a reviewer put that one line
-    // back with the census staying green.
+    // hand-corrected `npx tsx prisma/seed.ts` to the flagged form in the
+    // now-removed `measurement/phase2/bin/self-test.mjs`, and a reviewer put
+    // that one line back with the census staying green.
     ...filesUnder("scripts", ".mjs").filter((file) => !TEST_FILE.test(file)),
-    ...filesUnder("measurement", ".mjs").filter((file) => !TEST_FILE.test(file)),
     // Recursively, and both spellings of the extension. The workflows are flat
     // and all `.yml` today; a composite action lives under `.github/actions`,
     // and a `.yaml` file or a nested directory would otherwise join the tree
@@ -398,7 +398,6 @@ function invocationSources(): string[] {
     ...filesUnder(".github/actions", ".yml"),
     ...filesUnder(".github/actions", ".yaml"),
     ...filesNamed(".", CONTAINER_FILE),
-    ...filesNamed("measurement", CONTAINER_FILE),
     ...filesIn(".", ".md"),
     ...filesIn(".github", ".md"),
     ...filesUnder("docs", ".md"),
