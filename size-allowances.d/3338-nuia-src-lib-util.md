@@ -114,10 +114,18 @@ reason: the largest of this tranche's guards -- one array of
   its own.
 
 file: src/lib/promo.ts
-lines: 1899
+lines: 1938
 reason: one call-site type predicate proving what filterGuestsByIndexes'
   `.filter(Boolean)` already guarantees at runtime, fixed here because the
-  shared helper in promo-guest-scope.ts is outside this tranche.
+  shared helper in promo-guest-scope.ts is outside this tranche. Grew a further
+  39 lines at the epic's final review, and roughly half of that is the comment
+  that pays for the rest: the work-party window filter had been rewritten to
+  `Array.filter`, which SKIPS HOLES, so a sparse night-dates vector came back
+  shorter than its rates vector and shifted by one — attributing a discount to
+  a night it was not taken off, where the previous code produced a refusal. It
+  is rebuilt by position, and the comment states why `filter` is wrong here and
+  why setting `length` last is load-bearing, because both are exactly the kind
+  of thing a later reader tidies away.
 
 <!-- src/lib/public-page-content-tokens.ts was declared here at 771 LOC until
 #3325 routed its money label through `formatCents` and the file fell back
