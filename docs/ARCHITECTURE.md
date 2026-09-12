@@ -1779,6 +1779,58 @@ The source of truth is `prisma/schema.prisma`. Key domains are:
 - `SiteBanner` records: admin-managed plain-text notices with
   `URGENT`/`WARNING`/`NOTIFY` priority and an inclusive NZ date-only display
   window, rendered above the public and member site headers.
+- Organisations: `Organisation` and `OrganisationContact`, the records a
+  school's identity lives in. Added and linked but read by nothing yet — see
+  "Organisations, and the school that is currently a person" below.
+
+### Organisations, and the school that is currently a person
+
+**What happens today.** A school is not a thing in this system. When a school's
+booking request is approved, the code invents a member: first name holds the
+school's name, surname is blank, and the email is whoever sent the request. That
+invented person owns the booking, holds the Xero contact, receives the invoices
+and is the name on every audit row. The real teacher becomes a second invented
+member, attached as hut leader. Nothing records that the school is an
+organisation, so nothing can hold a school's identity across years, across
+bookings, or across a change of teacher — and Xero, which expects a person in a
+person contact, is handed a surnameless one it cannot match reliably.
+
+**What the records mean.** Programme #2912 moves that identity onto records of
+its own, and stage 1 (#3366) adds them:
+
+- **`Organisation`** is the body itself. It holds the name the club records, its
+  own contact details, an archive stamp, and — the point of the Xero half — its
+  **own** `xeroContactId`, unique the way `Member.xeroContactId` is. The link
+  living here rather than on a person is what makes the rule "a person's personal
+  Xero contact is never renamed or reused as the school" expressible at all.
+  `kind` is `SCHOOL` in this release; the model is organisation-capable so a
+  later scout-group or corporate booker is a value rather than a second model.
+- **`OrganisationContact`** joins a person to an organisation as its `TEACHER`
+  or its `CONTACT`. The person stays a plain `Member`: `Member.role` is never
+  overloaded as organisation identity, and `Role.SCHOOL` / `AccessRole.ORG` keep
+  exactly the meanings and writers they have today. One row per
+  (organisation, person), so "is this person attached to that school" has one
+  answer; member merge classifies the relation `resolve` and keeps the survivor's
+  association.
+- **`Booking.organisationId` and `BookingRequest.organisationId`** are the
+  optional links. `BookingRequest.schoolName` is unchanged and stays the free
+  text the public form captured — from stage 2 the organisation is what the club
+  resolves that text to.
+
+Both models are **club-wide, never lodge-scoped**: a school is a counterparty of
+the club rather than one of its buildings, and the stay's lodge already lives on
+the booking that points at the organisation. The reasoning is recorded in
+[`multi-lodge/lodge-scoping-contract.md`](multi-lodge/lodge-scoping-contract.md).
+
+**Nothing reads them yet, and that is deliberate.** Stage 1 creates the records
+and links them; no writer populates a link, no reader names a column, and the
+invented member is untouched, so no existing behaviour changes and no new value
+can be empty where something already looks. The stages after it make the
+organisation the invoiced and contacted party (#3367, where the Xero defect is
+fixed), give "who owns this booking" one home instead of 510 direct reads of
+`Booking.memberId` (#3368), and finally make that member link optional under a
+windowed migration with an owner-run classification census (#3369). Until #3369
+lands, `Booking.memberId` is required and means what it always meant.
 
 ### Reading a unique-constraint failure (P2002) — measured, not assumed
 
