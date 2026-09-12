@@ -316,6 +316,7 @@ function makeBooking(overrides: Record<string, unknown> = {}) {
     status: "PAID",
     totalPriceCents: 30000,
     discountCents: 0,
+    promoAdjustmentCents: 0,
     finalPriceCents: 30000,
     hasNonMembers: false,
     nonMemberHoldUntil: null,
@@ -387,6 +388,7 @@ function makeBooking(overrides: Record<string, unknown> = {}) {
     },
     member: { id: "m1", email: "alice@test.com", firstName: "Alice", lastName: "Smith" },
     promoRedemption: null,
+    nightAdjustments: [],
     ...overrides,
   };
 }
@@ -761,6 +763,12 @@ describe("guest removal prices remaining guests over their stored nights (#1093)
 
     const modification = tx.bookingModification.create.mock.calls[0][0].data;
     expect(modification.priceDiffCents).toBe(-20000);
+    expect(modification.newData).toMatchObject({
+      moneyBuildUpOperation: "GUEST_REMOVAL",
+      moneyBuildUpSource: "STORED",
+      moneyBuildUpStoredCents: -20000,
+      moneyBuildUpDerivedCents: -20000,
+    });
   });
 });
 

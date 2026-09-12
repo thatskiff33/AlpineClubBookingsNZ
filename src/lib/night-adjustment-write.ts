@@ -199,7 +199,8 @@ export type BookingMoneyBaseEvidence =
         | "NO_STORED_NIGHT_PRICES"
         | "PARTIAL_STORED_NIGHT_PRICES"
         | "INEXACT_STORED_NIGHT_PRICES"
-        | "STORED_TOTAL_MISMATCH";
+        | "STORED_TOTAL_MISMATCH"
+        | "COUNTERPART_STRAND_UNREADABLE";
     };
 
 export type BookingMoneyCompatibilityClassification =
@@ -250,6 +251,152 @@ export type BookingMoneyBuildUpRow = {
   beneficiaryMemberId: string;
   amountCents: number | null;
 };
+
+export type LoadedBookingMoneyBuildUp = {
+  operation: BookingMoneyBuildUpOperation;
+  bookingGuestId?: string;
+  baseEvidence: BookingMoneyBaseEvidence;
+  rows: BookingMoneyBuildUpRow[];
+  redemption: {
+    priceAdjustmentCents: number;
+    allocations: Array<{ memberId: string; priceAdjustmentCents: number }>;
+  } | null;
+};
+
+type BookingMoneyBuildUpStore = Pick<Prisma.TransactionClient, "booking">;
+
+function exactBaseAmount(
+  operation: BookingMoneyBuildUpOperation,
+  booking: {
+    totalPriceCents: number;
+    guests: Array<{
+      id: string;
+      priceCents: number;
+      nights: Array<{
+        priceCents: number | null;
+        priceSource: "SOLD" | "OFFICER_PRICED" | "EVEN_SPLIT" | "UNKNOWN";
+      }>;
+    }>;
+  },
+  bookingGuestId?: string,
+): BookingMoneyBaseEvidence {
+  if (operation === "GUEST_REMOVAL") {
+    const guest = booking.guests.find((candidate) => candidate.id === bookingGuestId);
+    return guest && Number.isInteger(guest.priceCents) && guest.priceCents >= 0
+      ? { kind: "EXACT", amountCents: guest.priceCents }
+      : { kind: "UNKNOWN", reason: "NO_STORED_NIGHT_PRICES" };
+  }
+  if (operation === "CREDIT_ELECTION" || operation === "XERO_PROMO_LINE") {
+    return Number.isInteger(booking.totalPriceCents) && booking.totalPriceCents >= 0
+      ? { kind: "EXACT", amountCents: booking.totalPriceCents }
+      : { kind: "UNKNOWN", reason: "STORED_TOTAL_MISMATCH" };
+  }
+
+  if (booking.guests.length === 0) {
+    return { kind: "UNKNOWN", reason: "NO_STORED_NIGHT_PRICES" };
+  }
+  let totalCents = 0;
+  for (const guest of booking.guests) {
+    if (guest.nights.length === 0) {
+      return { kind: "UNKNOWN", reason: "NO_STORED_NIGHT_PRICES" };
+    }
+    if (guest.nights.some((night) => night.priceCents === null)) {
+      return { kind: "UNKNOWN", reason: "PARTIAL_STORED_NIGHT_PRICES" };
+    }
+    if (
+      guest.nights.some(
+        (night) => night.priceSource === "EVEN_SPLIT" || night.priceSource === "UNKNOWN",
+      )
+    ) {
+      return { kind: "UNKNOWN", reason: "INEXACT_STORED_NIGHT_PRICES" };
+    }
+    const nightTotal = guest.nights.reduce((sum, night) => sum + night.priceCents!, 0);
+    if (nightTotal !== guest.priceCents) {
+      return { kind: "UNKNOWN", reason: "STORED_TOTAL_MISMATCH" };
+    }
+    totalCents += guest.priceCents;
+  }
+  return { kind: "EXACT", amountCents: totalCents };
+}
+
+/**
+ * The one database projection for Stage 3 money readers. A transaction-owning
+ * caller passes its transaction client; Xero passes the module client before
+ * any provider call. No ambient client is imported here.
+ */
+export async function readBookingMoneyBuildUp(
+  store: BookingMoneyBuildUpStore,
+  args: {
+    bookingId: string;
+    operation: BookingMoneyBuildUpOperation;
+    bookingGuestId?: string;
+  },
+): Promise<LoadedBookingMoneyBuildUp> {
+  const booking = await store.booking.findUnique({
+    where: { id: args.bookingId },
+    select: {
+      totalPriceCents: true,
+      guests: {
+        select: {
+          id: true,
+          priceCents: true,
+          nights: { select: { priceCents: true, priceSource: true } },
+        },
+      },
+      promoRedemption: {
+        select: {
+          priceAdjustmentCents: true,
+          allocations: { select: { memberId: true, priceAdjustmentCents: true } },
+        },
+      },
+      nightAdjustments: {
+        select: {
+          bookingGuestId: true,
+          beneficiaryMemberId: true,
+          amountCents: true,
+          bookingGuestNight: { select: { bookingGuestId: true } },
+        },
+      },
+    },
+  });
+  if (!booking) {
+    refuse(`${args.operation}: booking ${args.bookingId} does not exist`);
+  }
+  const rows = booking.nightAdjustments.map((row) => {
+    const bookingGuestId = row.bookingGuestId ?? row.bookingGuestNight?.bookingGuestId;
+    if (!bookingGuestId) {
+      refuse(`${args.operation}: an adjustment row is attached to neither a guest nor a night`);
+    }
+    return {
+      bookingGuestId,
+      beneficiaryMemberId: row.beneficiaryMemberId,
+      amountCents: row.amountCents,
+    };
+  });
+  return {
+    operation: args.operation,
+    ...(args.bookingGuestId ? { bookingGuestId: args.bookingGuestId } : {}),
+    baseEvidence: exactBaseAmount(args.operation, booking, args.bookingGuestId),
+    rows,
+    redemption: booking.promoRedemption,
+  };
+}
+
+export function selectLoadedBookingMoneyBuildUp(
+  loaded: LoadedBookingMoneyBuildUp,
+  args: {
+    derivedCents: number;
+    mismatchClassification?: BookingMoneyCompatibilityClassification;
+  },
+): BookingMoneyBuildUpSelection {
+  return selectBookingMoneyBuildUp({
+    ...loaded,
+    derivedCents: args.derivedCents,
+    ...(args.mismatchClassification
+      ? { mismatchClassification: args.mismatchClassification }
+      : {}),
+  });
+}
 
 function buildUpHistoryMetadata(args: {
   operation: BookingMoneyBuildUpOperation;

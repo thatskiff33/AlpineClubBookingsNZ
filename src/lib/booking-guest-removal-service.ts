@@ -18,7 +18,10 @@ import {
   validateAndCalculatePromoDiscount,
 } from "@/lib/promo";
 import {
+  readBookingMoneyBuildUp,
   recordBookingNightAdjustments,
+  selectBookingMoneyBuildUp,
+  selectLoadedBookingMoneyBuildUp,
   type PromoAdjustmentTarget,
 } from "@/lib/night-adjustment-write";
 import {
@@ -655,6 +658,16 @@ export async function removeBookingGuestInTransaction({
         ];
       });
 
+  // #3277: capture the build-up under the existing global -> lodge locks and
+  // before the chore/guest deletes below can cascade any of its target rows.
+  // Selection waits until today's existing calculation is available; the input
+  // itself is the pre-removal record.
+  const recordedMoneyBuildUp = await readBookingMoneyBuildUp(tx, {
+    bookingId,
+    operation: "GUEST_REMOVAL",
+    bookingGuestId: guestId,
+  });
+
   const choreWarnings = await removeGuestChoreAssignments(tx, guestId);
 
   await tx.bookingGuest.delete({ where: { id: guestId } });
@@ -891,7 +904,32 @@ export async function removeBookingGuestInTransaction({
         totalPriceCents: newTotalPriceCents,
         promoAdjustmentCents: promoResult.newPromoAdjustmentCents,
       });
-  const priceDiffCents = newFinalPriceCents - booking.finalPriceCents;
+  const derivedPriceDiffCents = newFinalPriceCents - booking.finalPriceCents;
+  const firstUnusableEvidence = strandEvidence.find(
+    (strand) => strand.evidence.kind === "unusable",
+  )?.evidence;
+  const moneyBuildUpSelection = parkedFinancialReview
+    ? selectBookingMoneyBuildUp({
+        ...recordedMoneyBuildUp,
+        baseEvidence: {
+          kind: "UNKNOWN",
+          reason:
+            firstUnusableEvidence?.kind === "unusable"
+              ? firstUnusableEvidence.cause
+              : "STORED_TOTAL_MISMATCH",
+        },
+        derivedCents: derivedPriceDiffCents,
+      })
+    : selectLoadedBookingMoneyBuildUp(recordedMoneyBuildUp, {
+        derivedCents: derivedPriceDiffCents,
+        // A valid old build-up can differ when the surviving promo is re-capped
+        // or redistributed. D3 keeps today's existing result in that case.
+        mismatchClassification: "LEGITIMATE_DIVERGENCE",
+      });
+  const priceDiffCents =
+    moneyBuildUpSelection.source === "BASE_EVIDENCE_UNKNOWN"
+      ? derivedPriceDiffCents
+      : moneyBuildUpSelection.selectedCents;
   // Owner rule (#1100): a booking left with only non-adults must go through
   // admin approval, even if it was previously paid and approved for a
   // different composition. The self-removing guest is never blocked — the
@@ -1071,6 +1109,7 @@ export async function removeBookingGuestInTransaction({
         ...(promoResult.promoCoverage
           ? { promoCoverageNote: promoResult.promoCoverage.message }
           : {}),
+        ...moneyBuildUpSelection.historyMetadata,
       },
       priceDiffCents,
       changeFeeCents: 0,

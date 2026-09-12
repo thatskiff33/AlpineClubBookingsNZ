@@ -13,7 +13,6 @@ import {
 import type { BookingGuestNightPriceSource } from "@prisma/client";
 import {
   storedNightPriceDetailsByKey,
-  storedNightPricesByKey,
 } from "@/lib/stored-night-price-write";
 
 /**
@@ -82,7 +81,10 @@ import {
 export type HeldNightPrice = {
   date: CalendarDate;
   priceCents: number | null | undefined;
+  priceSource?: BookingGuestNightPriceSource;
 };
+
+export type StoredSoldPriceGrain = "WHOLE_GUEST" | "INDIVIDUAL_NIGHT";
 
 /**
  * The verdict on one guest strand.
@@ -118,6 +120,7 @@ export type StoredSoldPriceEvidence =
 export function classifyStoredSoldPriceEvidence(
   heldNights: readonly HeldNightPrice[],
   guestTotalCents: number,
+  grain: StoredSoldPriceGrain = "WHOLE_GUEST",
 ): StoredSoldPriceEvidence {
   const usable: Array<{ date: CalendarDate; priceCents: number }> = [];
   const evidence: StoredNightPriceEvidence[] = [];
@@ -141,6 +144,20 @@ export function classifyStoredSoldPriceEvidence(
         usable.length === 0
           ? "NO_STORED_NIGHT_PRICES"
           : "PARTIAL_STORED_NIGHT_PRICES",
+      nightPrices: evidence,
+    };
+  }
+
+  if (
+    grain === "INDIVIDUAL_NIGHT" &&
+    heldNights.some(
+      (night) =>
+        night.priceSource === "EVEN_SPLIT" || night.priceSource === "UNKNOWN",
+    )
+  ) {
+    return {
+      kind: "unusable",
+      cause: "INEXACT_STORED_NIGHT_PRICES",
       nightPrices: evidence,
     };
   }
@@ -368,14 +385,22 @@ export function storedSoldPriceEvidenceForGuest(
     }> | null;
   },
   booking: BookingStayRange,
+  grain: StoredSoldPriceGrain = "WHOLE_GUEST",
 ): StoredSoldPriceEvidence {
-  const priceByKey = storedNightPricesByKey(guest.nights);
+  const detailsByKey = storedNightPriceDetailsByKey(
+    guest.nights?.map((night) => ({
+      ...night,
+      priceSource: night.priceSource ?? "UNKNOWN",
+    })),
+  );
   return classifyStoredSoldPriceEvidence(
     getGuestBedNightKeys(guest, booking).map((key) => ({
       date: requireCalendarDate(key),
-      priceCents: priceByKey.get(key) ?? null,
+      priceCents: detailsByKey.get(key)?.priceCents ?? null,
+      priceSource: detailsByKey.get(key)?.priceSource,
     })),
     guest.priceCents,
+    grain,
   );
 }
 
@@ -523,6 +548,10 @@ export function preCheckInEditEvidence(args: {
         nights: strand.nights,
       },
       args.booking,
+      surrenderedNightDates.length === heldKeys.length &&
+        addedNightDates.length === 0
+        ? "WHOLE_GUEST"
+        : "INDIVIDUAL_NIGHT",
     );
     storedNightPriceByGuestId.set(
       strand.bookingGuestId,
