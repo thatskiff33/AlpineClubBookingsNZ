@@ -223,8 +223,8 @@ lines: 998
 reason: one line: the `bookingOwner` import this domain module needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out.
 
 file: src/lib/xero-credit-notes.ts
-lines: 959
-reason: one line: the `bookingOwner` import this domain module needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out.
+lines: 989
+reason: thirty lines, and twenty-four of them are comment. Two contact resolutions move from `findOrCreateXeroContact(memberId)` to `findOrCreateXeroContactForInvoicedParty(booking)` and two retries gain `invoicedPartyContactRepair`, which is #3367's leftover — a returning school's earlier credit note resolved through a member that no longer holds a Xero contact link and was refused. The comments carry why, because the mechanism is invisible at the call site: the failure is a provider refusal on a school that has booked before, and a reader who does not know that will read the change as a rename. There is no seam to split here — both halves belong to the credit note they raise.
 
 file: src/lib/xero-inbound/credit-note-repairs.ts
 lines: 993
@@ -237,3 +237,7 @@ reason: one line: the `bookingOwner` import this domain module needs to ask who 
 file: src/lib/xero-record-activity.ts
 lines: 839
 reason: one line: the `bookingOwner` import this domain module needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out.
+
+file: src/app/(admin)/admin/waitlist/page.tsx
+lines: 1016
+reason: one line: the `bookingOwner` import. A waitlist entry in this product IS a booking row in a `WAITLIST_*` status — the table links its own id to `/admin/bookings/<id>` — so its owner is a booking's owner and the link to the member's record is read through the one accessor like every other. Splitting a route page shell for one import line is the worse answer; the page's own size debt predates this change and is untouched by it.

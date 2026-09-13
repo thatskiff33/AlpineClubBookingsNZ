@@ -8,7 +8,7 @@ genuinely the worse answer. Three of them, and the growth in the other two,
 come from the adversarial review round rather than from the first build.
 
 file: src/lib/school-booking-request.ts
-lines: 2735
+lines: 2736
 reason: The school approval transaction gains the resolve-or-create of the
   school's own `Organisation`, the link from the booking and the request, and
   the teacher association. Every one of those writes has to happen INSIDE the
