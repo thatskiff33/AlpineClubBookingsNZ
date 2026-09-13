@@ -1,5 +1,3 @@
-### Changed
-
 - A school booked with the club is now recorded as a school, and it is the party
   the invoice belongs to. Approving a school request creates the school's own
   record, attaches the booking and the request to it, and records the real
@@ -28,8 +26,6 @@
   written or left off — because that is exactly how Xero itself matched the
   contact back to the school in the first place.
 - A booking that is not a school's is unaffected in every respect.
-
-### Fixed
 
 - A Xero customer can no longer end up claimed by two different local records at
   once. Every path that links one now refuses, and says which record already
