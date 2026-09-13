@@ -5,8 +5,8 @@
  * GET is the dry run and is read-only in the strongest sense available here —
  * it is a GET, it needs only `finance:view`, and the engine it calls writes
  * nothing at all. POST is the run: `finance:edit`, an explicit confirmation,
- * and the reviewed member ids, which the engine intersects with a freshly
- * recomputed pushable set before it touches anybody.
+ * the reviewed member ids, and the DIGEST of the plan those ids were reviewed
+ * against, which the engine re-computes and compares before it touches anybody.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
@@ -16,9 +16,9 @@ import { requireAdmin } from "@/lib/session-guards";
 import { isXeroConnected } from "@/lib/xero-token-store";
 import { XeroContactEnvironmentUnknownError } from "@/lib/xero-environment-write-gate";
 import {
-  DEFAULT_SEEDING_CHUNK,
   getXeroMissingContactSnapshot,
   runXeroMissingContactSeedingChunk,
+  SeedingPlanChangedError,
 } from "@/lib/xero-missing-contact-seeding";
 
 /** Rows returned per bucket. The counts are always the full population. */
@@ -66,8 +66,19 @@ const postSchema = z.object({
   */
   confirmReviewed: z.literal(true),
   memberIds: z.array(z.string().min(1)).min(1).max(5000),
-  // Capped low: each member costs up to two Xero calls, and a small chunk is
-  // what lets an operator stop a run that is going wrong.
+  /*
+    The digest of the plan those ids were reviewed against. It is what closes
+    the door `memberIds` cannot: a member can stay pushable while what would
+    HAPPEN to them changes — the operator approves "link Jane to the contact
+    Xero already has", the contact sync archives it underneath them, and the
+    member is still pushable, now as a create. Required, because a client that
+    omitted it would be asking for exactly the unguarded run this field exists
+    to prevent.
+  */
+  plannedDigest: z.string().min(1),
+  // Capped low: each member costs two to four Xero calls depending on whether
+  // contact grouping is on, and a small chunk is what lets an operator stop a
+  // run that is going wrong. Omitted, the engine derives it from that cost.
   limit: z.number().int().min(1).max(100).optional(),
 });
 
@@ -98,10 +109,19 @@ export async function POST(request: NextRequest) {
   try {
     result = await runXeroMissingContactSeedingChunk({
       reviewedMemberIds: parsed.data.memberIds,
-      limit: parsed.data.limit ?? DEFAULT_SEEDING_CHUNK,
+      reviewedPlannedDigest: parsed.data.plannedDigest,
+      limit: parsed.data.limit,
       createdByMemberId: session.user.id,
     });
   } catch (error) {
+    /*
+      The reviewed plan no longer matches, so nothing was done. 409 rather than
+      400: the request was well formed and the SERVER's state moved, which is
+      the same answer the sibling grouping re-sync gives for `plan_changed`.
+    */
+    if (error instanceof SeedingPlanChangedError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
+    }
     /*
       The undeclared-installation refusal (#2986, INV-CONFIG-005). It is raised
       before anything reaches Xero, and its message is written for an operator —
@@ -135,10 +155,17 @@ export async function POST(request: NextRequest) {
       resolvedUnlabelled: result.resolvedUnlabelled,
       failed: result.failed,
       failureKinds: result.failures.map((failure) => failure.kind),
-      skippedNoLongerPushable: result.skippedNoLongerPushable.length,
+      skippedAlreadyDone: result.skipped.filter(
+        (row) => row.reason === "ALREADY_DONE",
+      ).length,
+      skippedNoLongerPushable: result.skipped.filter(
+        (row) => row.reason === "NO_LONGER_PUSHABLE",
+      ).length,
       remaining: result.remaining,
+      outstandingPushable: result.outstandingPushable,
       done: result.done,
       haltedByDailyLimit: result.haltedByDailyLimit,
+      haltedByTimeBudget: result.haltedByTimeBudget,
     }),
   });
 
