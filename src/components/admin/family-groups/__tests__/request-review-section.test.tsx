@@ -562,6 +562,57 @@ describe("FamilyGroupRequestReviewSection - handleRequest", () => {
     );
   });
 
+  it("blocks an unknown member id before opening the notification dialog", async () => {
+    const fetchMock = stubFetch({ ok: true, body: { success: true } });
+    render(
+      <FamilyGroupRequestReviewSection
+        requests={[buildChildRequest({ matchingMembers: [buildMatch()] })]}
+        onReviewed={vi.fn()}
+        canEdit={true}
+      />
+    );
+
+    fireEvent.change(screen.getByTestId("select-req-child"), {
+      target: { value: "hidden-member" },
+    });
+    fireEvent.click(screen.getByTestId("approve-req-child"));
+
+    expect(screen.getByTestId("error-req-child").textContent).toContain(
+      "Choose the member record to link",
+    );
+    expect(
+      screen.queryByText("Email the member about this approval?"),
+    ).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rechecks the selected member after the notification dialog opens", async () => {
+    const fetchMock = stubFetch({ ok: true, body: { success: true } });
+    render(
+      <FamilyGroupRequestReviewSection
+        requests={[buildChildRequest({ matchingMembers: [buildMatch()] })]}
+        onReviewed={vi.fn()}
+        canEdit={true}
+      />
+    );
+
+    fireEvent.click(screen.getByTestId("approve-req-child"));
+    await waitFor(() =>
+      expect(screen.getByText("Email the member about this approval?")).toBeTruthy()
+    );
+    fireEvent.change(screen.getByTestId("select-req-child"), {
+      target: { value: "hidden-member" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Approve and email member" })
+    );
+
+    expect(screen.getByTestId("error-req-child").textContent).toContain(
+      "Choose the member record to link",
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("approves a CHILD_REQUEST with the linked member and inherited email; calls onReviewed once", async () => {
     const onReviewed = vi.fn();
     const fetchMock = stubFetch({ ok: true, body: { success: true } });

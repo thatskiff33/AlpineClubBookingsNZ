@@ -780,7 +780,7 @@ and confirmed removal emails both unless suppressed. The one-step no-login path
 emails the target. Token claim and stale confirmation revalidate both parties,
 including inviter login standing. Declined, withdrawn, and dissolved rows are
 hard-deleted (history remains in audit), so a pair may later re-form. Either
-partner may dissolve a confirmed link. Confirmation prunes every other pending
+partner may dissolve, emailing the other. Confirmation prunes every other pending
 request involving either member in the same transaction; each member may have
 only one outgoing pending request. Member-facing request privacy and token-claim
 conflict behavior are `INV-LIFE-090`.
