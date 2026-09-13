@@ -191,13 +191,22 @@ Rules and guarantees:
   import walks mapped contact GROUPS and creates a `Member` from each contact it
   finds there, so a school contact sitting in one would be imported as a person
   — and would then hold a contact id the school's own record also claims, which
-  is the two-homes hazard `INV-INT-018` exists to stop. That import is the one
-  contact-linking path that does not take the refusal, deliberately, because
-  bulk contact seeding is #2939's subject.
-- **A school's teacher is refreshed, its name is not.** The contact person on a
-  school's contact is re-sent whenever the club's recorded teacher for that
-  school changes — in practice at the school's next approval, since that is what
-  records the teacher and then raises the invoice. The contact's NAME is never
+  is the two-homes hazard `INV-INT-018` exists to stop. That import is one of
+  two contact-linking paths that do not take the refusal, deliberately: bulk
+  contact seeding is #2939's subject. The other is the inbound patch that links
+  a member from a Xero contact webhook. **The single-contact import screen DOES
+  take the refusal** — a school's contact can appear in its list of unlinked
+  contacts once the school record holds it, and importing one there is answered
+  with a refusal naming the school.
+- **A school's teacher is refreshed, its name is not.** Approving a school
+  booking makes that booking's teachers the school's current contact people —
+  replacing the ones it named rather than adding to them — and the contact person
+  on the Xero contact is re-sent whenever that set changes. In practice this
+  happens at the school's next approval, since that is what records the teacher
+  and then raises the invoice. One gap worth knowing: if a teacher leaves and the
+  next request names nobody, nothing is sent, because clearing the list on a
+  contact the club adopted would delete contact people a treasurer may have
+  entered by hand. The contact's NAME is never
   rewritten by this application, because Xero requires contact names to be
   unique and renaming an existing contact is what #2912 forbids. Rename a school
   in Xero by hand if it really has changed its name.
@@ -206,9 +215,14 @@ Rules and guarantees:
   invented school member of the earlier booking; the first time the club raises
   something against that school, the school's own record claims that contact and
   the member's link is released, with an audit entry recording the hand-over.
-  **Nothing changes in Xero**: the contact keeps its id, its history and every
-  invoice already raised against it, so a returning school's invoices still go to
-  the customer the treasurer already knows. Where a genuine duplicate does turn
+  **Nothing of the contact's accounting identity changes in Xero**: it keeps its
+  id, its history and every invoice already raised against it, so a returning
+  school's invoices still go to the customer the treasurer already knows. Its
+  SHAPE does change — the invented first name and blank surname are cleared, so
+  the contact reads as an organisation like every new school's does. That
+  correction is best-effort: if Xero refuses it the invoice is still raised and
+  the club retries on the next resolve, so a school contact still showing as a
+  person after a booking is worth reporting but is not blocking anything. Where a genuine duplicate does turn
   up, merge the two contacts in Xero's own interface — the API has no merge
   endpoint, so this application cannot and will not do it for you.
 

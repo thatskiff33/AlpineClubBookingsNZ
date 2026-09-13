@@ -399,8 +399,20 @@ against the school and then raises the invoice, and raising the invoice is what
 pushes the current teacher to Xero. If nothing has changed, nothing is sent.
 
 So a school whose teacher left is corrected by its next booking, and needs no
-action from you. If you need it corrected sooner than that, edit the contact
-person in Xero directly; the club will not overwrite it again until the recorded
+action from you. Approving a booking makes **that booking's teachers** the
+school's current contact people — the ones it names are replaced, not added to —
+which is what stops a school that has been coming for years from naming five
+people who have all moved on.
+
+**One case it does not cover, so you know where the edge is.** If a teacher
+leaves and the next request names *nobody* in their place, nothing is sent: the
+club will not tell Xero "this school has no contact person", because on a
+contact the club adopted rather than created that would wipe out anyone a
+treasurer had entered by hand. A departure with a replacement — the ordinary
+case — is corrected as described.
+
+If you need it corrected sooner than the next booking, edit the contact person
+in Xero directly; the club will not overwrite it again until the recorded
 teacher actually changes.
 
 The school's **name** is never rewritten in Xero. Xero requires contact names to
@@ -424,11 +436,19 @@ under the old arrangement where a school was recorded as a person. The first tim
 the club raises something against that school after the change, **the school's
 own record takes that same contact over**.
 
-Nothing happens in Xero when it does. It is the same contact, with the same
-history and the same invoices on it; all that changes is which of the club's own
-records says "this customer is mine". You will see it recorded in the audit log.
-A returning school's invoices therefore keep going to the customer you already
-know, and no second contact is created for it.
+Almost nothing happens in Xero when it does. It is the same contact, with the
+same history and the same invoices on it; all that changes is which of the
+club's own records says "this customer is mine". You will see it recorded in the
+audit log. A returning school's invoices therefore keep going to the customer you
+already know, and no second contact is created for it.
+
+The one visible change is that the contact **stops looking like a person**. It
+was created under the old arrangement with the school's name in the first-name
+box and the surname blank, and the club clears those so it reads as an
+organisation like every new school does. If that correction cannot be made for
+any reason, the invoice still goes out and the club tries again next time — so
+a contact that still looks like a person after a booking is worth mentioning to
+support, but it is not stopping anything.
 
 If a school does somehow end up with two contacts in Xero — an old one and a new
 one — **merge them in Xero**. Xero can merge two contacts and this application
