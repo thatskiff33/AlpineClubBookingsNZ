@@ -79,7 +79,12 @@ ceiling bump:
 - **Resolution:** `getLodgePartnerSharedCapacityStatus`
   (`src/lib/lodge-capacity.ts`) returns the base status plus
   `activeDoubleBedCount` and `partnerSharedHeadroom`. It is a separate
-  resolver so ordinary availability checks pay no extra query.
+  resolver so ordinary availability checks pay no extra query. The formula
+  itself is `resolvePartnerSharedHeadroom` in
+  `src/lib/lodge-effective-capacity.ts` (#2724), beside the effective-capacity
+  rule it is a second reading of; the admin capacity field previews it from
+  there so it can tell an officer what a typed capacity costs or buys in
+  partner spots.
 
 Per-night admission rule (owner decision, #1745): admit if a base slot is
 free, OR the guest is an eligible partner-sharer **and**
@@ -250,6 +255,37 @@ mechanism exists to prevent.
 Only an **explicit** per-lodge capacity acts as a ceiling. The unconfigured
 fallback (0) is never a ceiling, so enabling Bed Allocation on a lodge keeps
 using the bed count unless a capacity is set.
+
+**Where the arithmetic lives (#2724).** The three steps above are one pure
+function, `resolveEffectiveLodgeCapacity` in
+`src/lib/lodge-effective-capacity.ts` — deliberately free of Prisma, config and
+React imports so both sides can read it (`INV-SSOT-001`). The partner-shared
+headroom formula below is the same capacity-versus-beds relationship and lives
+there too, as `resolvePartnerSharedHeadroom`, alongside the save bounds
+(`parseConfiguredLodgeCapacity`). `getLodgeCapacityStatus` and
+`getLodgePartnerSharedCapacityStatus` resolve the real figures through them,
+`/api/admin/lodge-settings` validates against the same bounds — as do both
+screens that edit the field, the lodge configuration hub and the **Setup**
+screen's lodge settings card — and the admin lodge configuration screen
+(`/admin/lodges/[id]`) previews all three against a capacity the admin has
+typed but not yet saved. That is what stops the
+explanation on screen drifting from what the server will do; an import census
+in `src/lib/__tests__/lodge-effective-capacity.test.ts` records the readers —
+in every import form, and stating plainly that it cannot see a hand
+re-derivation even inside a file it lists.
+
+**Capacity above the bed count is allowed, and explained (#2724).** An admin
+may deliberately set a capacity higher than the beds installed so far, meaning
+to install the rest later. The save is accepted — blocking it would remove a
+useful configuration, and rewriting it would lose the intent — and the screen
+names the figures instead: the configured capacity, the active bed count, the
+effective capacity that governs until more beds are activated, **and the
+partner spots the surplus allows straight away**. Step 1 above is what makes
+accepting it safe: with beds present, no configured value can ever resolve
+above them. The surplus is not inert while the beds are awaited — see the
+ceiling interplay above, and "Admin surface" for what the screen says. The
+existing below-the-beds capping warning is unchanged apart from naming the same
+partner consequence.
 
 ## Scenario table
 
@@ -457,10 +493,34 @@ read custodian rows as orphans and silently delete them.
 On the lodge admin page (`/admin/lodges/[id]`) the **Capacity** card shows the
 resolved figure and its `source` — with any partner-shared headroom broken
 out (`"10 beds + up to 1 partner spot"`, plus a short partner-only
-explainer; #1745) — and the capacity field warns live when the value entered
-is below the active bed count (it will cap the lodge). The allocation board
-still shows all physical beds; a capped lodge simply leaves some beds
-unbooked.
+explainer; #1745). The allocation board still shows all physical beds; a
+capped lodge simply leaves some beds unbooked.
+
+The capacity field itself explains what the value being typed will mean, in
+figures, through the same resolvers the server uses. Two mutually exclusive
+notices, neither of them a validation error (#1653, #2724):
+
+- **Below the active bed count:** it will cap the lodge, and the surplus beds
+  stay allocatable but unbookable. Where the lodge has shareable doubles the
+  notice also says the cap leaves no room for partner spots — a `capped_beds`
+  lodge gets **no** headroom at all.
+- **Above the active bed count:** the save is accepted, only the active beds
+  can be booked for now, and activating more raises the effective capacity up
+  to the configured figure. **The surplus is not inert in the meantime**, and
+  the notice says so: it is the gap the partner-shared headroom is measured
+  against, so it names the partner spots the figure allows and warns that
+  lowering the capacity to the bed count would leave none. Without that
+  sentence the notice reads as "this does nothing until beds arrive", and an
+  officer who lowers the figure to clear it silently zeroes every
+  partner-shared slot the card above is displaying.
+
+A figure outside the save bounds (a whole number from 1 to 100,000) is refused
+by `/api/admin/lodge-settings`; both editors of the field carry the same bounds
+as `min`/`max`, and the notice names the range rather than predicting a save
+that would fail.
+The notice is attached to the field with `aria-describedby` rather than being a
+live region, so it is announced on focus — including to a view-only officer,
+who cannot type at all — and never announces a half-typed figure's sentence.
 
 ## Exceeding the ceiling (admin overbook overrides)
 

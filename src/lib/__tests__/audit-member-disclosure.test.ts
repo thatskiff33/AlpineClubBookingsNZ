@@ -156,10 +156,12 @@ describe("audit member-disclosure write boundary (#2695)", () => {
 
   it("keeps the declared text when the site's own metadata blows the JSON budget", () => {
     // THE SECOND FORM OF THE HOLE THIS ISSUE CLOSED. `sanitizeAuditMetadata`
-    // swaps an over-budget payload for a `{_truncated, preview}` stub. Merge the
-    // declared text in BEFORE that and a large admin payload silently deletes
-    // what the member reads — an audience decided by a length, which is the
-    // same defect as the shape test in a different disguise.
+    // reduces an over-budget payload to the fields that fit (#2704 — before
+    // that it swapped the whole payload for a `{_truncated, preview}` stub).
+    // Merge the declared text in BEFORE that and a large admin payload still
+    // deletes what the member reads whenever the sentence is too long to slot
+    // into the room the kept fields leave — an audience decided by a length,
+    // which is the same defect as the shape test in a different disguise.
     // Each string is clipped at 1000 characters first, so one giant value does
     // not reach the JSON budget — it takes many of them.
     const huge = Object.fromEntries(
