@@ -11,8 +11,12 @@ import {
 import { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ADMIN_VIEW_ONLY_SECTION_HEADING } from "@/components/admin/view-only-action";
+import { MODULE_DISABLED_ERROR_CODE } from "@/lib/api-error-message";
 import {
   ALLOCATION_PREFERENCES_MODULE_OFF_REASON,
+  ALLOCATION_PREFERENCES_NOT_FOUND_REASON,
+  ALLOCATION_PREFERENCES_SIGNED_OUT_REASON,
+  ALLOCATION_PREFERENCES_VIEW_FORBIDDEN_REASON,
   AllocationPreferencesSection,
 } from "../allocation-preferences-section";
 
@@ -458,10 +462,11 @@ describe("AllocationPreferencesSection", () => {
   /**
    * #2931 — the save body is the route's write contract and nothing else.
    *
-   * The sibling assertions above check the three VALUES; this one checks that
-   * there is no fourth key, which is the half that actually broke. The PUT
-   * schema is `.strict()`, so one stray field from the loaded payload is the
-   * difference between a save and a 400.
+   * The sibling assertions above already compare the whole parsed body with
+   * `toEqual`, so a fourth key fails them too. What this one adds is the
+   * contract stated as a NAMED key set: if a sibling is ever loosened to
+   * `toMatchObject`, or a new one is written that way, the key set is still
+   * pinned here and the `.strict()` PUT schema still has a local counterpart.
    */
   it("PUTs exactly the three fields of the write contract", async () => {
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) =>
@@ -490,10 +495,14 @@ describe("AllocationPreferencesSection", () => {
   });
 
   /**
-   * #2931 — a failed save says WHY. Each row is a state an admin has to be able
-   * to tell apart, and the last two are the ones that must never leak: a body
-   * that is not our JSON refusal falls back to the section's own sentence
-   * rather than putting a proxy's HTML or a blank alert on the screen.
+   * #2931 — a failed save says WHY, and the refusals are told apart by what the
+   * BODY says, never by the status alone.
+   *
+   * The module row is the one that matters most. `/api/admin/bed-allocation` is
+   * module-gated, so 404 is also what an anonymous caller gets
+   * (`moduleGatedNotFoundResponse` in `src/lib/session-guards.ts`) — the two
+   * 404 rows below carry the same status and must produce different sentences,
+   * which is only possible because the route names its module refusal.
    */
   it.each([
     [
@@ -502,9 +511,30 @@ describe("AllocationPreferencesSection", () => {
       /your admin role can view this area but cannot make changes/,
     ],
     [
+      "a 403 the guard explained itself",
+      new Response(
+        JSON.stringify({ error: "Two-factor verification required" }),
+        { status: 403 },
+      ),
+      /^Two-factor verification required$/,
+    ],
+    [
       "the module being switched off",
+      new Response(
+        JSON.stringify({ error: "Not found", code: MODULE_DISABLED_ERROR_CODE }),
+        { status: 404 },
+      ),
+      new RegExp(`^${ALLOCATION_PREFERENCES_MODULE_OFF_REASON}$`),
+    ],
+    [
+      "a 404 that names no module — an expired sign-in, not a module to switch on",
       new Response(JSON.stringify({ error: "Not found" }), { status: 404 }),
-      new RegExp(ALLOCATION_PREFERENCES_MODULE_OFF_REASON.slice(0, 60)),
+      new RegExp(`^${ALLOCATION_PREFERENCES_NOT_FOUND_REASON}$`),
+    ],
+    [
+      "an expired session",
+      new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401 }),
+      new RegExp(`^${ALLOCATION_PREFERENCES_SIGNED_OUT_REASON}$`),
     ],
     [
       "the server's own sentence",
@@ -537,6 +567,11 @@ describe("AllocationPreferencesSection", () => {
       new Response(JSON.stringify({ error: "   " }), { status: 500 }),
       /^Failed to save allocation preferences$/,
     ],
+    [
+      "a 200 whose body is not the shape this screen was promised",
+      new Response(JSON.stringify({ ok: true }), { status: 200 }),
+      /^Allocation preferences may have been saved, but the reply could not be read/,
+    ],
   ])("reports %s when the save fails", async (_case, failure, expected) => {
     vi.stubGlobal(
       "fetch",
@@ -553,20 +588,73 @@ describe("AllocationPreferencesSection", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     const alert = await screen.findByText(expected);
-    expect(alert.textContent ?? "").not.toMatch(/<html|fieldErrors|Bad Gateway/);
+    expect(alert.textContent ?? "").not.toMatch(
+      /<html|fieldErrors|Bad Gateway|TypeError|undefined/,
+    );
     // The refusal leaves the admin in edit mode with the draft they staged, so
-    // the fix is one click away rather than a re-stage.
+    // the fix is one click away rather than a re-stage. Behaviour of
+    // `useSectionEditState`, pinned here rather than introduced here.
     expect(screen.getByRole("button", { name: "Cancel" })).toBeTruthy();
   });
 
-  it("names the switched-off module when the load 404s", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(
-        async () =>
-          new Response(JSON.stringify({ error: "Not found" }), { status: 404 }),
+  /**
+   * #2931 — the same states on the LOAD, which had no 403, no 401 and no guard
+   * against a 200 of the wrong shape. Each row previously rendered either a
+   * bare API word ("Forbidden", "Unauthorized") or, for the last one, a raw
+   * `TypeError` from projecting `undefined`.
+   */
+  it.each([
+    [
+      "a switched-off module",
+      new Response(
+        JSON.stringify({ error: "Not found", code: MODULE_DISABLED_ERROR_CODE }),
+        { status: 404 },
       ),
-    );
+      new RegExp(`^${ALLOCATION_PREFERENCES_MODULE_OFF_REASON}$`),
+    ],
+    [
+      "a 404 that names no module",
+      new Response(JSON.stringify({ error: "Not found" }), { status: 404 }),
+      new RegExp(`^${ALLOCATION_PREFERENCES_NOT_FOUND_REASON}$`),
+    ],
+    [
+      "a role that cannot view bookings",
+      new Response(JSON.stringify({ error: "Forbidden" }), { status: 403 }),
+      new RegExp(`^${ALLOCATION_PREFERENCES_VIEW_FORBIDDEN_REASON}$`),
+    ],
+    [
+      "a 403 the guard explained itself",
+      new Response(JSON.stringify({ error: "Account is deactivated" }), {
+        status: 403,
+      }),
+      /^Account is deactivated$/,
+    ],
+    [
+      "an expired session",
+      new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401 }),
+      new RegExp(`^${ALLOCATION_PREFERENCES_SIGNED_OUT_REASON}$`),
+    ],
+    [
+      "the server's own sentence",
+      new Response(JSON.stringify({ error: "A lodgeId is required." }), {
+        status: 400,
+      }),
+      /^A lodgeId is required.$/,
+    ],
+    [
+      "a 200 carrying no settings",
+      new Response(JSON.stringify({}), { status: 200 }),
+      /^Failed to load allocation preferences$/,
+    ],
+    [
+      "a 200 whose settings are the wrong shape",
+      new Response(JSON.stringify({ settings: { autoAllocationEnabled: "yes" } }), {
+        status: 200,
+      }),
+      /^Failed to load allocation preferences$/,
+    ],
+  ])("explains %s when the load fails", async (_case, failure, expected) => {
+    vi.stubGlobal("fetch", vi.fn(async () => failure));
     render(
       <AllocationPreferencesSection
         lodgeId="lodge-1"
@@ -575,10 +663,21 @@ describe("AllocationPreferencesSection", () => {
       />,
     );
 
-    expect(
-      await screen.findByText(
-        new RegExp(ALLOCATION_PREFERENCES_MODULE_OFF_REASON.slice(0, 60)),
-      ),
-    ).toBeTruthy();
+    const alert = await screen.findByText(expected);
+    expect(alert.textContent ?? "").not.toMatch(/TypeError|undefined|\bNot found\b/);
+    // Nothing loaded, so the card offers the retry rather than an editor.
+    expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
+  });
+
+  /**
+   * The module-off sentence must not send a bookings officer somewhere only a
+   * `support` role can go. The repository already settled this wording on
+   * `diagnostics-readiness-tiers.ts`; this pins that this card follows it.
+   */
+  it("names who can switch the module on, rather than ordering the reader to", () => {
+    expect(ALLOCATION_PREFERENCES_MODULE_OFF_REASON).toMatch(
+      /Someone who can manage Feature modules can turn it on/,
+    );
+    expect(ALLOCATION_PREFERENCES_MODULE_OFF_REASON).not.toMatch(/first\.$/);
   });
 });
