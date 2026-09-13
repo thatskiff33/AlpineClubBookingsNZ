@@ -3,9 +3,25 @@
  * person's written name with another's (`INV-SSOT-001`).
  *
  * The normalisation is deliberately the dullest one the project already used:
- * **trim, lowercase, collapse internal whitespace**. Nothing phonetic, nothing
- * partial, no accent folding, no nickname table. Two names are "the same" here
- * only when they are the same characters typed with different spacing or case.
+ * **trim, lowercase, collapse internal whitespace** — plus **Unicode canonical
+ * composition (NFC)**, which is what makes that promise true rather than nearly
+ * true. Nothing phonetic, nothing partial, no accent folding, no nickname
+ * table. Two names are "the same" here only when they are the same characters
+ * typed with different spacing or case.
+ *
+ * WHY NFC IS PART OF "THE SAME CHARACTERS" AND NOT A WIDENING. `"Ngāti"` can be
+ * stored two ways that render identically and compare unequal: one code point
+ * for `ā` (U+0101), or `a` followed by a combining macron (U+0304). Which one a
+ * name arrives as depends on the keyboard, the operating system and the paste
+ * buffer, not on who the person is — a macron typed on an iOS te reo keyboard
+ * and the same macron typed on Windows are the same letter. Without this the
+ * guard asked a parent nothing at all and put their child on the bumpable guest
+ * split, which is the exact defect #2721 exists to stop, and it did it *only*
+ * for macronised names. NFC is canonical equivalence: it never merges two
+ * characters a reader would call different. It is deliberately NOT NFKC, which
+ * is compatibility folding — that WOULD merge different characters (a ligature
+ * with its letters, a full-width letter with its narrow twin) and is the fuzzy
+ * matching the owner rule prohibits.
  *
  * WHY IT IS A MODULE RATHER THAN A LOCAL HELPER. It was a private
  * `normalizeNamePart` inside `guest-name-similarity.ts` when #2721 needed the
@@ -45,7 +61,10 @@ export function normalizePersonNamePart(
   value: string | null | undefined,
 ): string {
   if (typeof value !== "string") return "";
-  return value.trim().toLowerCase().replace(/\s+/g, " ");
+  // NFC LAST, so it also re-composes anything `toLowerCase` decomposed (U+0130
+  // lowercases to `i` + a combining dot, for instance). Composing first and
+  // lowercasing after would leave that case dependent on the input's spelling.
+  return value.trim().toLowerCase().replace(/\s+/g, " ").normalize("NFC");
 }
 
 /**

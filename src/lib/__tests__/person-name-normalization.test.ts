@@ -37,6 +37,83 @@ describe("normalizePersonNamePart", () => {
   it("returns empty for a value that is only whitespace", () => {
     expect(normalizePersonNamePart("   ")).toBe("");
   });
+
+  /*
+    THE MACRON CASE (#2721 review). A name with a macron has two spellings that
+    render identically — one code point, or the base letter plus a combining
+    macron — and which one arrives depends on the keyboard, not the person. The
+    guard reads the dependant's name from the database and the guest's name from
+    a form; those are two different keyboards by construction. Before NFC these
+    compared unequal, so no question was asked and the child went onto the
+    bumpable non-member split: the exact defect, reachable only for macronised
+    names.
+  */
+  describe("canonically-equivalent spellings of the same characters (NFC)", () => {
+    const COMPOSED_NGATI = "Ngāti"; // the macron as ONE code point
+    const DECOMPOSED_NGATI = "Ngāti"; // a + a COMBINING macron
+
+    it("the two spellings are genuinely different input", () => {
+      expect(COMPOSED_NGATI).not.toBe(DECOMPOSED_NGATI);
+    });
+
+    it("normalises both spellings of a macron to the same key", () => {
+      expect(normalizePersonNamePart(DECOMPOSED_NGATI)).toBe(
+        normalizePersonNamePart(COMPOSED_NGATI),
+      );
+      expect(
+        normalizePersonFullName(DECOMPOSED_NGATI, "Whānau"),
+      ).toBe(normalizePersonFullName(COMPOSED_NGATI, "Whānau"));
+    });
+
+    it("still refuses to fold the macron away altogether", () => {
+      // Canonical equivalence, not accent folding: "Ngāti" and "Ngati" are
+      // different names and stay different.
+      expect(normalizePersonNamePart(DECOMPOSED_NGATI)).not.toBe(
+        normalizePersonNamePart("Ngati"),
+      );
+    });
+
+    it("is NFC and not NFKC — compatibility folding stays out", () => {
+      // NFKC would make these equal. They are different characters, and folding
+      // them is the fuzzy matching the owner rule on #2721 prohibits.
+      expect(normalizePersonNamePart("ﬁona")).not.toBe( // fi ligature
+        normalizePersonNamePart("fiona"),
+      );
+      expect(normalizePersonNamePart("Ｓam")).not.toBe( // full-width S
+        normalizePersonNamePart("Sam"),
+      );
+    });
+  });
+
+  /*
+    ACCEPTED LIMITS, pinned deliberately so nobody "fixes" one without a
+    decision. Each of these is a near-miss that a human would call the same
+    person, and in every case the rule answers "different name" — so NO question
+    is asked and the row proceeds down the guest path. That is the SAME
+    direction the defect ran in, which is why they are limits worth naming
+    rather than harmless conservatism; closing them means fuzzy matching, which
+    the owner rule prohibits, and every widening also makes a genuine different
+    person harder to book.
+  */
+  describe("near misses this rule deliberately does not close", () => {
+    it("a curly apostrophe is a different name from a straight one", () => {
+      expect(normalizePersonNamePart("O’Brien")).not.toBe(
+        normalizePersonNamePart("O'Brien"),
+      );
+    });
+
+    it("a hyphen is a different name from a space", () => {
+      expect(normalizePersonNamePart("Smith-Jones")).not.toBe(
+        normalizePersonNamePart("Smith Jones"),
+      );
+    });
+
+    it("a middle name on one side is a different name", () => {
+      expect(normalizePersonFullName("Sam James", "Smith")).not.toBe(
+        normalizePersonFullName("Sam", "Smith"),
+      );
+    });
+  });
 });
 
 describe("normalizePersonFullName", () => {
