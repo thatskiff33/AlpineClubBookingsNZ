@@ -370,9 +370,12 @@ night as a full night, so both refusals carry the same list. It is the mirror of
 override may never reach one: never negotiable, and never distinguishable. The
 comparison `availableBeds < 0` was written out in ELEVEN non-test files when the
 defect was found — four byte-identical definitions of this helper reached from
-eight call sites, six more inline under no name at all (three admin overbook
-routes, group settlement, the booking-edit quote's night list and the edit
-panel's over-capacity list), and `overCapacityNights` itself. That is how one
+eight call sites, six more inline under no name at all (the three admin
+overbook routes, group settlement, the member price-summary card's shortfall
+list and the edit panel's over-capacity list), and `overCapacityNights` itself.
+The booking-edit quote route is not among the eleven and never spelled the
+comparison: it leaked by PROJECTING every night's bed numbers and letting that
+card do the filtering. That is how one
 mistake reached every refusal path at once. Two definitions now remain, this one
 and `overCapacityNights`, held there by a census test (`INV-SSOT-001`) that
 matches the comparison rather than the name.

@@ -90,13 +90,38 @@ describe("getCapacityFullNights — a held night is a full night (#2930)", () =>
     }
   });
 
-  it("treats an absent flag as not held, so a narrowed row shape is no worse than before", () => {
-    expect(
-      getCapacityFullNights([
-        { date: parseDateOnly("2026-08-02"), availableBeds: 0 },
-        { date: parseDateOnly("2026-08-03"), availableBeds: -1 },
-      ]),
-    ).toEqual(["2026-08-03"]);
+  /**
+   * The fix round's guard, and it lives in the TYPE rather than in an
+   * assertion (`INV-SSOT-001`, "prefer unrepresentable over policed").
+   *
+   * `wholeLodgeHeld` was optional here, on the stated belief that three
+   * historic call sites passed a narrowed row. None does — all ten production
+   * call sites hand over `NightAvailability` rows from the capacity engine. So
+   * the only caller the optional arm ever served was a test written because the
+   * field was optional, while the arm itself kept the leak reachable: narrow the
+   * row to `date` and `availableBeds` and the call compiled, read absent as "not
+   * held", and returned the pre-#2930 list with every held night dropped.
+   *
+   * This line fails CI in BOTH directions. Put the `?` back and the error
+   * disappears, which makes this an UNUSED `@ts-expect-error` — an error of its
+   * own. There is no edit to `capacity-full-nights.ts` or to
+   * `NightAvailability` that leaves this file compiling and the mandate gone.
+   */
+  it("refuses a narrowed row that has lost the held flag — at the type layer", () => {
+    const narrowed = [
+      { date: parseDateOnly("2026-08-02"), availableBeds: 0 },
+      { date: parseDateOnly("2026-08-03"), availableBeds: -1 },
+    ];
+
+    // @ts-expect-error - `wholeLodgeHeld` is required, precisely so a row that
+    // cannot answer "is this night held?" cannot reach the predicate at all.
+    const named = getCapacityFullNights(narrowed);
+
+    // Types are erased, so this records what such a caller WOULD get if one
+    // reached here through JavaScript or a cast: the held night at exactly zero
+    // silently dropped, which is the leak. The compiler is the guard; this is
+    // the reason it has to be.
+    expect(named).toEqual(["2026-08-03"]);
   });
 });
 
@@ -116,8 +141,11 @@ describe("getCapacityFullNights — a held night is a full night (#2930)", () =>
  *   `school-booking-request.ts` three times, importing the third definition
  *   rather than holding a fifth);
  * - SIX inline re-spellings under no name at all — the three admin overbook
- *   routes, `group-settlement.ts`, the booking-edit quote's own night list and
- *   the edit panel's over-capacity list;
+ *   routes, `group-settlement.ts`, the member `price-summary-card.tsx`
+ *   shortfall list and the edit panel's over-capacity list. The booking-edit
+ *   QUOTE route is not one of them: it projected the bed numbers and let the
+ *   card compare them, which is why a census over this comparison alone would
+ *   not have found that half of the leak;
  * - and ONE that is a different rule with the same shape,
  *   `overCapacityNights` in `over-capacity-confirmation.ts`, which adds
  *   `&& !night.wholeLodgeHeld`.
@@ -129,7 +157,7 @@ describe("getCapacityFullNights — a held night is a full night (#2930)", () =>
  * the class `npm run test:related` is blind to, and why this file is in
  * `test:named` territory.
  */
-describe("the capacity refusal predicate is defined in exactly two places (#2930)", () => {
+describe("the capacity refusal is spelled in exactly two files — TEXT scan of src, scripts and e2e, blind to a renamed field or a runtime-built copy (#2930)", () => {
   /** Every tracked TypeScript tree a copy could hide in. */
   const TREES = ["src", "scripts", "e2e"];
 
@@ -181,7 +209,7 @@ describe("the capacity refusal predicate is defined in exactly two places (#2930
    * above and in the modules themselves can quote the defect without tripping
    * the guard that catches it.
    */
-  it("no other module compares availableBeds against zero", () => {
+  it("no other module compares availableBeds against zero BY THAT SPELLING", () => {
     const offenders = sourceFiles().filter((file) => {
       if (CANONICAL.some((canonical) => file.endsWith(canonical))) return false;
       return /availableBeds\s*[<>]=?\s*0/.test(
@@ -215,7 +243,7 @@ describe("the capacity refusal predicate is defined in exactly two places (#2930
    * `getCapacityFullNights(n) { return []; }` both fail it now, where both
    * passed the name-only predecessor.
    */
-  it("nothing re-declares getCapacityFullNights under that name", () => {
+  it("nothing re-declares getCapacityFullNights under that name, in any declaration form this scan knows", () => {
     const DECLARATION =
       /(?:function\s+getCapacityFullNights\s*[(<]|(?:const|let|var)\s+getCapacityFullNights\s*(?::[^=]+)?=|^\s*(?:async\s+)?getCapacityFullNights\s*[(<])/m;
 

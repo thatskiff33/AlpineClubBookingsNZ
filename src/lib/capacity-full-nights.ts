@@ -10,9 +10,12 @@ import { formatDateOnly } from "@/lib/date-only";
  * `booking-request-shared.ts`, `group-booking.ts` — reached from EIGHT call
  * sites across five modules, `school-booking-request.ts` importing the third
  * rather than holding a fifth. SIX more were inline, under no name at all: the
- * three admin overbook routes, `group-settlement.ts`, the booking-edit quote's
- * night list and the edit panel's over-capacity list. The eleventh is
- * `overCapacityNights`, a deliberately different rule (see below).
+ * three admin overbook routes, `group-settlement.ts`, the member
+ * `price-summary-card.tsx` shortfall list and the edit panel's over-capacity
+ * list. The eleventh is `overCapacityNights`, a deliberately different rule
+ * (see below). The booking-edit quote route is NOT one of the eleven — it never
+ * spelled the comparison, it projected every night's bed numbers and let that
+ * card apply it, which is the same leak arriving by a different route.
  *
  * Every one of the ten carried the same defect.
  * They filtered `availableBeds < 0` alone, and a whole-lodge-held night's
@@ -62,12 +65,26 @@ export function getCapacityFullNights(
     date: Date;
     availableBeds: number;
     /**
-     * Optional because three of the historic call sites pass a narrowed row
-     * shape. Absent is read as "not held", which is the pre-#2930 behaviour —
-     * so a caller that has the flag gains the privacy property and one that
-     * does not is no worse off than it was.
+     * REQUIRED, and that is the guard (`INV-SSOT-001`, "prefer unrepresentable
+     * over policed").
+     *
+     * It was optional in the first draft, on the belief that three historic
+     * call sites passed a narrowed row. Re-measured: none does — every one of
+     * the ten production call sites hands over `NightAvailability` rows from
+     * the capacity engine, which carries the flag on every night it builds. So
+     * the back-compat arm was dead code, and what it really did was leave the
+     * leak reachable: a future caller narrowing the row to `date` and
+     * `availableBeds` would have compiled, read absent as "not held", and
+     * silently returned the pre-#2930 list — held nights dropped, a hold-only
+     * refusal an empty list where genuine fullness is a populated one.
+     * `NightAvailability.wholeLodgeHeld` was made required in the same change,
+     * so there is no longer a row shape in the tree that can lose it.
+     *
+     * Types are erased, so this binds compiled callers only. It is sufficient
+     * here because the flag has exactly one producer — the capacity engine —
+     * and no path reaches this helper with a hand-built night.
      */
-    wholeLodgeHeld?: boolean;
+    wholeLodgeHeld: boolean;
   }>,
 ): string[] {
   return nightDetails
