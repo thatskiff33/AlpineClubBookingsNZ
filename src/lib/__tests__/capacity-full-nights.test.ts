@@ -107,6 +107,15 @@ describe("getCapacityFullNights — a held night is a full night (#2930)", () =>
  * see a sixth copy reappearing beside it, because a copy has no import edge to
  * the thing it copies — which is exactly the class `npm run test:related` is
  * blind to and this file is therefore in `test:named` territory.
+ *
+ * WHAT IT DOES NOT CATCH, stated because a guard described more strongly than it
+ * holds is worse than no guard: it matches the NAME. A copy of the same
+ * arithmetic under a different name — `fullNightsFor`, `capacityShortNights` —
+ * passes this, and so does an inline `.filter((n) => n.availableBeds < 0)` at a
+ * call site. Mutation-verified both ways: a `getCapacityFullNights2` and a
+ * renamed probe both slipped through, and only an exact re-declaration failed
+ * it. It is a ratchet against the specific regression that happened here, not a
+ * proof that the predicate exists in one place.
  */
 describe("there is exactly one definition of the capacity full-night list", () => {
   it("no module re-declares it", () => {
