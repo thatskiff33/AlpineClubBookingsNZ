@@ -192,3 +192,37 @@ describe("goodwill credit applied to an Internet Banking booking (#2717)", () =>
     expect(line.taxType).toBe("OUTPUT2");
   });
 });
+
+/**
+ * The other half of the owner's decision: ordinary hut-fee refunds — money a
+ * member actually paid, handed back — are NOT goodwill and stay where they are.
+ *
+ * This reads the writers from disk because the rule is about which mapping key
+ * each one NAMES, which is a static fact no behavioural test states as plainly.
+ * The regression it exists to catch is a later change routing every credit note
+ * through the new mapping "for consistency", which would put real refunds into
+ * an expense account and overstate both revenue and costs.
+ */
+describe("INV-INT-021 / INV-PAY-023: ordinary refunds stay on hutFeeRefunds", () => {
+  const REFUND_WRITERS = [
+    "src/lib/xero-credit-notes.ts",
+    "src/lib/xero-modification-credit-notes.ts",
+    "src/lib/xero-supplementary-invoices.ts",
+  ];
+
+  it.each(REFUND_WRITERS)("%s resolves hutFeeRefunds and never goodwill", async (file) => {
+    const { readFileSync } = await import("node:fs");
+    const { resolve } = await import("node:path");
+    const source = readFileSync(resolve(file), "utf-8");
+    expect(
+      source.includes('getResolvedAccountMapping("hutFeeRefunds")'),
+      `${file} no longer resolves the hutFeeRefunds mapping (INV-PAY-023)`,
+    ).toBe(true);
+    expect(
+      source.includes("goodwillWriteOffs"),
+      `${file} is an ordinary refund writer and must not post to the goodwill ` +
+        "expense mapping (INV-INT-021): a refund reduces what the club billed, " +
+        "it is not a cost the club chose to bear",
+    ).toBe(false);
+  });
+});
