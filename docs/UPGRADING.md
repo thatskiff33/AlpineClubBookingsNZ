@@ -1210,16 +1210,28 @@ deployment moves, by category:
 
 | Category | Entries | Event types, in brief |
 | --- | --- | --- |
-| Admin | 702 | notification-preference changes, the two bulk member actions, the retired committee roster |
+| Account | 656 | the two bulk member actions (632 — see below), membership applications |
 | Security | 540 | setup invitations and password-reset emails sent |
 | Bookings | 190 | booking lifecycle, promotions, seasons, booking policies and periods, age tiers |
 | Xero | 163 | links, pushes, retries, mappings, grouping rules |
 | Family | 150 | family groups, dependants, login-holder swaps |
 | Payments | 71 | booking payments, refund requests, fee configuration, subscription billing |
+| Admin | 70 | notification-preference changes, the retired committee roster |
 | Lodge | 40 | display templates, layouts and devices, the lodge record |
-| Account | 24 | membership applications |
 | Privacy | 4 | deletion requests, issue reports |
 | Communication | 1 | an email suppression cleared |
+
+**One pair is deliberately NOT what its current code records.** `member.bulk-deactivate`
+(300) and `member.bulk-reactivate` (332) are filed **Account**, although the bulk
+screen has recorded **Admin** for them since #2755. The reason is the member's
+own activity page (next section): these entries are on the deactivated member's
+page today, `admin` would remove them, and the club's owner refused exactly that
+withdrawal for the same actions' already-categorised entries on #2763 (10 August
+2026). `account` is the category the very same event carried before #2755, so by
+the owner's decision of 13 September 2026 the pre-release bulk history reads as
+one thing. The operator-side split #2763 accepted remains: bulk entries recorded
+after #2755 are Admin, those before are Account. `member.bulk-set-role` had no
+uncategorised entries and is not touched.
 
 **Four entries had a category that was not a recognised value** — `EMAIL` on two
 `EMAIL_SUPPRESSION_CLEARED` entries and `membership` on one
@@ -1249,7 +1261,11 @@ is a retention decision the club takes separately, if at all.
   Support and Finance, Account/Family/Privacy/Communication need Support and
   Membership, Lodge needs Support and Lodge, and Admin and Security need Support
   alone. That is the same gate each event type's *new* entries already sit
-  behind, now applied to the older ones too.
+  behind, now applied to the older ones too — except the bulk pair above, whose
+  older entries are read by the **membership** tool (Support and Membership)
+  while its newer entries are read by the **system** tool (Support alone). On
+  the measured deployment 610 entries become readable with Support alone
+  (Security 540, Admin 70) and 1,275 behind Support plus a domain permission.
 - **Admin → Audit Log.** Nothing changes in what anyone can *see* — it is a
   Support surface with no category gate. What changes is where the Category
   filter *places* these entries: the stored category now wins over the guess, so
@@ -1257,17 +1273,14 @@ is a retention decision the club takes separately, if at all.
   `XERO_INVOICE_GENERATED` to **Xero** rather than Payments *and* Xero.
 - **A member's own activity page.** An entry with no category appears there
   today only if the guess from its event name lands on a member-visible
-  category; once categorised, visibility follows the stored category. For 56 of
-  the 83 event types nothing changes in either direction. For **27 event types
-  (841 entries on the measured deployment) it does**, and the repository's rule
+  category; once categorised, visibility follows the stored category. For 58 of
+  the 83 event types nothing changes in either direction — including the 632
+  bulk entries, *because* they were filed Account. For **25 event types (209
+  entries on the measured deployment) it does**, and the repository's rule
   (`INV-OPS-012`) makes that the club owner's decision rather than the
-  migration's. Those 27 sit in a **separate block of the migration** that can be
-  removed whole or by group:
-  - **632 entries leave a member's page:** `member.bulk-deactivate` and
-    `member.bulk-reactivate` are on the deactivated member's own page today via
-    the guess and record `admin` today, which is not member-visible. The owner
-    declined this same withdrawal for these actions' already-categorised twins on
-    #2763.
+  migration's. **The owner decided every one on 13 September 2026, and all are
+  applied**; they sit in a separate, labelled block of the migration so the
+  crossing population stays legible:
   - **3 entries leave the acting officer's own page only:** two Xero invoice
     actions, visible today only because the guess reads "INVOICE" as Payments.
   - **206 entries appear on a page — almost always only the acting officer's
@@ -1280,8 +1293,8 @@ is a retention decision the club takes separately, if at all.
     member-visible categories: one reaches the replacement nominator it names;
     the other three reach only the acting officer.
 
-  The release notes record which of those groups the owner accepted. A withheld
-  group stays uncategorised with everything the guide says about such entries.
+  The direction is always disclosure to the person concerned; **no older entry
+  leaves a member's own page.** Nothing is withheld.
 
 **How to see what was changed.** The migration writes one
 `AUDIT_CATEGORY_BACKFILLED` entry with no actor, filed under **Admin**. Find it
@@ -1302,13 +1315,13 @@ the rewrite: `nullBefore` (entries with no category, table-wide),
 `unmappedNullRemaining` (entries with no category that were on no list),
 `emailAfter` and `membershipAfter`, computed from the measurements. On the
 measured deployment expect `nullBefore` 1885, `rewritten` 1885, `nullAfter` 0,
-`unmappedNullRemaining` 0 and both corrections 2 — **if a block was withheld,
-`nullAfter` equals that block's entry count instead**, and that is correct.
+`unmappedNullRemaining` 0 and both corrections 2; `rewrittenByCategory` should
+match the table above.
 
 **Verify it yourself** — the postflight the issue asks for, read-only:
 
 ```sql
--- Entries still without a category, by event name (expect only withheld or unlisted ones).
+-- Entries still without a category, by event name (expect none, or only unlisted event types).
 SELECT "action", count(*) FROM "AuditLog"
 WHERE "category" IS NULL GROUP BY 1 ORDER BY 2 DESC;
 
@@ -1346,11 +1359,11 @@ pre-migration backup is the only way back, and the club's own record of what
 happened is the audit entry above.
 
 **Should the column now be made `NOT NULL`?** Assessed, and **no, not in this
-release.** Three reasons, each of which alone would settle it: a deployment
+release.** Two reasons, each of which alone would settle it: a deployment
 whose history differs from the measured one may hold an event type on no list,
-and those entries stay null by design; any block the owner withholds stays null;
-and forcing the constraint would require inventing a category for those entries,
-which is the one thing #2581 refused to do. A constraint remains a separate,
+and those entries stay null by design; and forcing the constraint would require
+inventing a category for those entries, which is the one thing #2581 refused to
+do. A constraint remains a separate,
 later decision under the blue/green expand/contract policy, taken after this
 release has run and its `unmappedNullRemaining` has been read on real
 deployments.

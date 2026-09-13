@@ -479,9 +479,11 @@ export const DIAGNOSTICS_LODGE_CORRELATION_TOOL_ID =
  * THE ABSENT CATEGORY IS THE SAME FAIL-CLOSED DEFAULT, ONE STEP FURTHER OUT, and it is
  * not hypothetical: no production writer omits a category any more (#2581 child 2), and
  * the rows written before that runtime deployed were given one by #2581's third child
- * (`20260923010000_backfill_historical_audit_categories`, exact-action list only) —
- * but a row whose action was on no list, or one the owner withheld at the
- * member-timeline boundary, is still null and still unreachable here. The admin
+ * (`20260923010000_backfill_historical_audit_categories`, exact-action list only;
+ * the pre-#2755 bulk deactivate/reactivate rows went to `account`, so the
+ * membership entry reads them while this system entry reads the post-#2755
+ * `admin` ones — the date split #2763 accepted) — but a row whose action was on
+ * no list is still null and still unreachable here. The admin
  * audit-log screen already treats the null case as ordinary — `audit-query.ts` infers a
  * category from the action for display (`inferAuditCategoryFromAction`) and its category
  * filter matches `{ category: null }` against a table of legacy action patterns

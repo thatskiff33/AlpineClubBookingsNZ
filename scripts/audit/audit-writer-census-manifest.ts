@@ -1264,11 +1264,27 @@ export const REVIEWED_ADMIN_CATEGORIES_2730: Readonly<Record<string, string>> = 
  *                      `git show` it; the test asserts no current site writes
  *                      the action, so a resurrected writer with a different
  *                      answer is a named failure rather than a silent split.
+ *  - `superseded-writer`  the tree STILL writes the action, at `site`, with a
+ *                      DIFFERENT category (`currentCategory`) — and the owner
+ *                      decided the historical rows take the category the same
+ *                      exact action carried BEFORE `commit` changed the writer.
+ *                      The only member of this kind is the bulk deactivate /
+ *                      reactivate pair (owner decision on #2581, 13 Sep 2026,
+ *                      following #2763). The test asserts the site exists and
+ *                      records `currentCategory`, so the divergence is pinned
+ *                      rather than assumed.
  */
 type HistoricalNullActionEvidence =
   | { kind: "current-writer" }
   | { kind: "current-writer-dynamic"; site: string }
-  | { kind: "history"; commit: string; note: string };
+  | { kind: "history"; commit: string; note: string }
+  | {
+      kind: "superseded-writer";
+      site: string;
+      currentCategory: Exclude<ProposedCategory, "split">;
+      commit: string;
+      note: string;
+    };
 
 /**
  * One reviewed exact-action mapping for the rows written with no category
@@ -1321,9 +1337,12 @@ export type HistoricalNullActionMapping = {
  * "exact, reviewed mapping; no fuzzy prefix/substr/file-name inference"):
  *
  *  1. The CURRENT WRITER of the same exact action carries an explicit category
- *     (`scanAuditWriterCensus()`, never a grep). 80 of the 83 resolve this way,
- *     including the four families written from a `(dynamic)` site whose
- *     literals the census names.
+ *     (`scanAuditWriterCensus()`, never a grep). 78 of the 83 resolve this way,
+ *     including the families written from a `(dynamic)` site whose literals
+ *     the census or the site's own file names. Two more — the bulk
+ *     deactivate/reactivate pair — take the category the same exact action
+ *     carried BEFORE #2755, by owner decision (13 Sep 2026): see
+ *     `superseded-writer`.
  *  2. The corrected runtime has ALREADY WRITTEN that exact action with a
  *     category on the reference deployment (28 of the 83; the read-only
  *     preflight on the issue, section F). Every one of the 28 agrees with (1).
@@ -1337,30 +1356,34 @@ export type HistoricalNullActionMapping = {
  * `admin`/`system`. Every `admin` row below is `admin` because its current or
  * successor writer says so.
  *
- * THE MEMBER-BOUNDARY COLUMN IS THE PART THE OWNER DECIDES. 27 of the 83
- * actions cross the member self-timeline boundary in one direction or the
- * other (841 of the 1,885 rows). `INV-OPS-012` reserves that crossing to the
- * owner, so the migration carries those 27 in a physically separate block
- * (`member_boundary_crossings`) that can be removed without touching the other
- * 56, and this map marks them `loses`/`gains`. If the owner declines a group,
- * its entries move to `WITHHELD_HISTORICAL_NULL_ACTIONS_2581` below and out of
- * the migration's second block; the contract test holds the two sides equal.
+ * THE MEMBER-BOUNDARY COLUMN WAS THE OWNER'S DECISION, AND IT IS DECIDED
+ * (#2581, 13 Sep 2026). `INV-OPS-012` reserves a crossing of the member
+ * self-timeline boundary to the owner, so the lane measured it per action —
+ * `memberBoundary` below, derived from the real filters by the contract test —
+ * and put the crossings in a physically separate arm of the migration
+ * (`member_boundary_crossings`). The owner decided every one:
  *
- * WHAT "LOSES" MEANS HERE, because 632 of the 841 rows are one case.
- * `member.bulk-deactivate` / `member.bulk-reactivate` are on the deactivated
- * member's own timeline TODAY through the legacy `member.` -> `account` guess,
- * and their current writer is `admin` (#2755). Categorising them withdraws a
- * member's sight of their own deactivation — the exact withdrawal the owner
- * declined for these actions' `account`/`security` twins on #2763 (10 Aug 2026,
- * "leave the stored rows alone"). It is listed, not decided.
+ *  - The bulk deactivate/reactivate pair (632 rows) does NOT go to `admin`,
+ *    which would have withdrawn the deactivated member's sight of their own
+ *    deactivation — the withdrawal the owner already refused for these actions'
+ *    stored `account`/`security` twins on #2763 (10 Aug 2026). It goes to
+ *    `account`, the category the same exact action carried before #2755, so the
+ *    pre-release bulk history reads as one thing and crosses nothing. The
+ *    operator-side date split #2763 accepted remains (rows written after #2755
+ *    are `admin`).
+ *  - The 203 rows that GAIN a place only on the acting officer's own timeline
+ *    (booking rules and promotions -> `booking`; fee configuration and
+ *    subscription billing -> `payment`; three Xero invoice rows leaving the
+ *    legacy Payments guess for `xero`) are applied as mapped.
+ *  - The six rows that become visible to a member OTHER than the acting officer
+ *    — `fee-configuration.set_member_billing_family` x3 (the billed member),
+ *    `issue.reported` x2 (the reporter), and the `nominator_replaced`
+ *    correction (the replacement nominator) — are applied as mapped: disclosure
+ *    to the subject, never withdrawal.
  *
- * WHAT "GAINS" MOSTLY MEANS: the ACTING OFFICER. Most gaining rows are
- * booking-rule and fee-configuration settings whose writer passes
- * `memberId: <officer>` and a non-member `targetId`, so the only timeline they
- * reach is the officer's own. Three actions publish to somebody else:
- * `fee-configuration.set_member_billing_family` (targetId is the billed
- * member — the writer's own comment accepts this for NEW rows), and
- * `issue.reported` (the reporter). Both are noted per row.
+ * So 58 actions cross nothing and 25 (209 rows) cross by decision;
+ * `WITHHELD_HISTORICAL_NULL_ACTIONS_2581` stays empty. `whoIsAffected` is kept
+ * on every crossing row so a reviewer can see whose timeline it is.
  */
 export const HISTORICAL_NULL_CATEGORY_MAP_2581: Readonly<
   Record<string, HistoricalNullActionMapping>
@@ -1377,6 +1400,41 @@ export const HISTORICAL_NULL_CATEGORY_MAP_2581: Readonly<
   "MEMBERSHIP_APPLICATION_NOMINATION_CONFIRMED": {
     category: "account", rowsMeasured: 12,
     evidence: { kind: "current-writer" }, memberBoundary: "none",
+  },
+  // ─── account: the bulk deactivate/reactivate pair (owner decision, 13 Sep) ──
+  // The current writer (`member.bulk-${action}`, bulk-update route) files
+  // `admin` since #2755 (672e67919). These historical rows are on the
+  // deactivated member's own timeline TODAY through the legacy `member.` ->
+  // `account` guess, and `admin` would withdraw that sight — which the owner
+  // refused for the same actions' stored `account`/`security` twins on #2763
+  // (10 Aug 2026, "leave the stored rows alone"). The owner therefore decided
+  // on #2581 (13 Sep 2026) that they take `account`: the category this exact
+  // action carried before #2755 (`category: "account"` at 844cf45a8, the
+  // deactivate/reactivate branch), and the one #2763 left on that era's stored
+  // rows. Visible before and after, so no crossing. The writer's `memberId` is
+  // the officer and `targetId` the member. `member.bulk-set-role` had NO null
+  // rows in the preflight and is not mapped.
+  "member.bulk-deactivate": {
+    category: "account", rowsMeasured: 300,
+    evidence: {
+      kind: "superseded-writer",
+      site: "src/app/api/admin/members/bulk-update/route.ts::POST#0",
+      currentCategory: "admin",
+      commit: "672e67919",
+      note: "wrote `account` until #2755 (672e67919) moved the bulk screen to `admin`; historical rows keep `account` by owner decision 13 Sep 2026, following #2763",
+    },
+    memberBoundary: "none",
+  },
+  "member.bulk-reactivate": {
+    category: "account", rowsMeasured: 332,
+    evidence: {
+      kind: "superseded-writer",
+      site: "src/app/api/admin/members/bulk-update/route.ts::POST#0",
+      currentCategory: "admin",
+      commit: "672e67919",
+      note: "wrote `account` until #2755 (672e67919) moved the bulk screen to `admin`; historical rows keep `account` by owner decision 13 Sep 2026, following #2763",
+    },
+    memberBoundary: "none",
   },
 
   // ─── admin ──────────────────────────────────────────────────────────────────
@@ -1649,34 +1707,13 @@ export const HISTORICAL_NULL_CATEGORY_MAP_2581: Readonly<
     evidence: { kind: "current-writer" }, memberBoundary: "none",
   },
 
-  // ═══ MEMBER-BOUNDARY CROSSINGS — the owner's decision, INV-OPS-012 ═════════
-  // Everything below this line is in the migration's SEPARATE
-  // `member_boundary_crossings` block. Each group can be declined on its own.
-
-  // ─── B1. Bulk member-record actions → `admin` — LOSES, 632 rows ─────────────
-  // Writer: `member.bulk-${action}` at the bulk-update route, `admin` (#2755),
-  // `memberId: <officer>`, `targetId: <member>`. On the deactivated member's own
-  // timeline today via the legacy `member.` guess; `admin` withdraws it. The
-  // owner declined this same withdrawal for the `account`/`security` twins on
-  // #2763.
-  "member.bulk-deactivate": {
-    category: "admin", rowsMeasured: 300,
-    evidence: {
-      kind: "current-writer-dynamic",
-      site: "src/app/api/admin/members/bulk-update/route.ts::POST#0",
-    },
-    memberBoundary: "loses",
-    whoIsAffected: "the deactivated member (targetId) and the acting officer",
-  },
-  "member.bulk-reactivate": {
-    category: "admin", rowsMeasured: 332,
-    evidence: {
-      kind: "current-writer-dynamic",
-      site: "src/app/api/admin/members/bulk-update/route.ts::POST#0",
-    },
-    memberBoundary: "loses",
-    whoIsAffected: "the reactivated member (targetId) and the acting officer",
-  },
+  // ═══ MEMBER-BOUNDARY CROSSINGS — owner-decided 13 Sep 2026, ALL APPLIED ════
+  // Everything below this line is in the migration's separate
+  // `member_boundary_crossings` arm, kept as a documented structure so the
+  // crossing population stays legible. Every group was put to the owner and
+  // every group is applied (#2581, comment of 13 Sep 2026). The former B1
+  // (bulk deactivate/reactivate) is no longer a crossing: it went to `account`
+  // and sits in the account section above.
 
   // ─── B2. Two Xero invoice actions → `xero` — LOSES, 3 rows ──────────────────
   // Visible today only because the legacy `payment` guess matches "INVOICE";
@@ -1833,11 +1870,12 @@ export const HISTORICAL_NULL_CATEGORY_MAP_2581: Readonly<
 /**
  * Actions from the 13 September 2026 census that the owner has decided must
  * STAY NULL — a declined member-boundary crossing, or an action whose category
- * could not be proven. Empty at the time of writing: every one of the 83 has
- * proven evidence, and the 27 crossings are listed in the map above pending
- * the owner's answer. An entry here has no row in the migration, keeps its
- * legacy action-name fallback in Admin > Audit Log, and stays invisible to
- * every Diagnostics correlation entry — which the guide discloses.
+ * could not be proven. EMPTY, and decided empty: every one of the 83 has proven
+ * evidence, and the owner decided every crossing on 13 Sep 2026 (all applied;
+ * the bulk pair rerouted to `account` rather than withheld). An entry here
+ * would have no row in the migration, keep its legacy action-name fallback in
+ * Admin > Audit Log, and stay invisible to every Diagnostics correlation entry
+ * — which the guide discloses for the fork-only case of an unlisted action.
  */
 export const WITHHELD_HISTORICAL_NULL_ACTIONS_2581: Readonly<
   Record<string, { rowsMeasured: number; reason: string }>
@@ -2021,6 +2059,11 @@ export const MEMBER_RECORD_ACTION_LITERAL_FILES_2755: readonly string[] = [
   "scripts/audit/audit-writer-census-manifest.ts",
   "src/app/api/admin/members/bulk-update/route.ts",
   "src/lib/admin-member-detail-service.ts",
+  // #2581 child 3's verification fixture seeds a post-#2755 `admin` bulk
+  // deactivation to prove the historical backfill leaves it alone. It mentions
+  // the name as seed DATA in a fixture the realdb runner executes; it writes no
+  // production audit row.
+  "prisma/migration-verification/20260923010000_backfill_historical_audit_categories.ts",
 ];
 
 /**

@@ -18,11 +18,13 @@
 -- source of truth is `HISTORICAL_NULL_CATEGORY_MAP_2581` in
 -- `scripts/audit/audit-writer-census-manifest.ts`, one row per action with the
 -- evidence that proves it: the CURRENT WRITER of the same exact action carries
--- that category in the tree (80 of 83, measured by `scanAuditWriterCensus()`),
+-- that category in the tree (78 of 83, measured by `scanAuditWriterCensus()`),
 -- corroborated where the corrected runtime has already written the same action
 -- WITH a category on the reference deployment (28 of 83, and all 28 agree);
--- and repository history for the three `COMMITTEE_MEMBER_*` actions nothing
--- writes any more. `src/lib/__tests__/historical-audit-category-backfill.test.ts`
+-- repository history for the three `COMMITTEE_MEMBER_*` actions nothing writes
+-- any more; and, for `member.bulk-deactivate`/`-reactivate`, the category the
+-- same exact action carried BEFORE #2755 — `account` — by owner decision (see
+-- below). `src/lib/__tests__/historical-audit-category-backfill.test.ts`
 -- parses the `VALUES` list below and fails if it and that map ever disagree in
 -- either direction, or if any pair names a category outside the taxonomy.
 -- Nothing here is `admin` or `system` as a fallback: every `admin` pair is
@@ -66,7 +68,14 @@
 --     `payment`/`xero` support+finance, `account`/`family`/`privacy`/
 --     `communication` support+membership, `lodge` support+lodge, and
 --     `admin`/`security` support alone. That is the same gate each action's
---     NEW rows already sit behind; it is applied to the older rows too.
+--     NEW rows already sit behind, applied to the older rows too — with ONE
+--     deliberate exception: the 632 bulk deactivate/reactivate rows land on
+--     `account` (support + membership), not on the `admin` their post-#2755
+--     writer files (support alone), so the older bulk history is read by the
+--     membership entry while the newer is read by the system entry — the
+--     operator-side date split #2763 accepted. On the reference deployment
+--     610 rows land on support alone (`security` 540, `admin` 70) and 1,275
+--     behind support plus a domain area.
 --   * Admin > Audit Log: unchanged in what anyone can SEE (it is a `support`
 --     surface with no category gate), changed in where the Category filter
 --     PLACES these rows — the stored category now wins over the legacy guess,
@@ -75,23 +84,27 @@
 --     Xero.
 --   * The member's own activity timeline: see the second block.
 --
--- TWO BLOCKS, BECAUSE INV-OPS-012 DRAWS A LINE THROUGH THE MAP. A null row is on
--- a member's own timeline today only through the legacy action-name leg of
+-- TWO BLOCKS, BECAUSE INV-OPS-012 DRAWS A LINE THROUGH THE MAP — AND THE OWNER
+-- HAS DECIDED EVERY CROSSING (#2581, 13 September 2026). A null row is on a
+-- member's own timeline today only through the legacy action-name leg of
 -- `buildMemberVisibleAuditLogWhere`; once categorised, visibility follows the
--- stored category. For 56 of the 83 actions nothing crosses that line in
--- either direction (block 1, `base`). For 27 it does (block 2,
--- `member_boundary_crossings`): 632 `member.bulk-deactivate`/`-reactivate`
--- rows LEAVE the deactivated member's timeline on their way to `admin` — the
--- withdrawal the owner declined for these actions' `account`/`security` twins
--- on #2763 — three Xero rows leave the acting officer's own timeline, and 206
--- booking-rule, fee-configuration, subscription-billing and issue-report rows
--- APPEAR on a timeline, almost always only the acting officer's own (the two
--- exceptions are `fee-configuration.set_member_billing_family`, whose target is
--- the billed member, and `issue.reported`, whose actor is the reporter). That
--- crossing is the owner's decision, not this migration's, so block 2 is a
--- separate `VALUES` list that can be removed whole or by group without touching
--- block 1; `HISTORICAL_NULL_CATEGORY_MAP_2581` marks the same 27 `loses`/`gains`
--- and the contract test keeps the two blocks and the map equal.
+-- stored category. For 58 of the 83 actions nothing crosses that line in
+-- either direction (block 1, `base`). For 25 it does (block 2,
+-- `member_boundary_crossings`, 209 rows): three Xero rows leave the acting
+-- officer's own timeline, and 206 booking-rule, fee-configuration,
+-- subscription-billing and issue-report rows APPEAR on a timeline, almost
+-- always only the acting officer's own — the exceptions being
+-- `fee-configuration.set_member_billing_family` (the billed member) and
+-- `issue.reported` (the reporter). The owner applied all of them: disclosure to
+-- the subject, never withdrawal. The bulk deactivate/reactivate pair (632 rows)
+-- is NOT in block 2 because the owner rerouted it: its current writer files
+-- `admin` (#2755), which would have withdrawn the deactivated member's sight of
+-- their own deactivation — the withdrawal already refused for these actions'
+-- stored `account`/`security` twins on #2763 (10 Aug 2026) — so these rows
+-- take `account`, the category the same exact action carried before #2755,
+-- and cross nothing. Block 2 is kept as a documented structure: the contract
+-- test derives each action's crossing from the real filters and holds the
+-- arms and `HISTORICAL_NULL_CATEGORY_MAP_2581` equal.
 --
 -- THE FOUR-ROW EXCEPTION TO DECISION 6 (owner decision on #2581, 13 September
 -- 2026). Four rows carry a category string OUTSIDE the taxonomy, written before
@@ -106,10 +119,11 @@
 --
 -- ROWS THIS DOES NOT TOUCH, deliberately: any null row whose action is not in
 -- the list (none were measured on the reference deployment, but a fork may
--- hold one, and an action withheld by the owner stays here) keeps its legacy
--- action-name fallback in Admin > Audit Log and stays outside Diagnostics —
--- which the guide discloses. Any row already carrying a canonical category is
--- untouched even when its action is in the list.
+-- hold one) keeps its legacy action-name fallback in Admin > Audit Log and
+-- stays outside Diagnostics — which the guide discloses. Any row already
+-- carrying a canonical category is untouched even when its action is in the
+-- list — including every bulk deactivate/reactivate row the post-#2755 runtime
+-- wrote as `admin`, which the fixture seeds and proves.
 --
 -- IDEMPOTENT. Each predicate is the state its statement destroys: after one
 -- run no row matches `"category" IS NULL AND "action" = <mapped>`, and none
@@ -142,12 +156,16 @@
 -- `AUDIT_CATEGORY_BACKFILLED` row below.
 
 WITH mapping ("action", "category") AS (
-  -- BLOCK 1 — `base`: the 56 actions that cross no member-visibility line.
+  -- BLOCK 1 — `base`: the 58 actions that cross no member-visibility line.
   -- Ordered by category, then action, to read against the manifest.
   SELECT * FROM (VALUES
     ('MEMBERSHIP_APPLICATION_APPROVED', 'account'),
     ('MEMBERSHIP_APPLICATION_CREATED', 'account'),
     ('MEMBERSHIP_APPLICATION_NOMINATION_CONFIRMED', 'account'),
+    -- `account`, NOT the `admin` the post-#2755 writer files: owner decision
+    -- on #2581, 13 Sep 2026, following #2763 (see header).
+    ('member.bulk-deactivate', 'account'),
+    ('member.bulk-reactivate', 'account'),
     ('ADMIN_NOTIFICATION_PREFERENCES_UPDATED', 'admin'),
     ('COMMITTEE_MEMBER_CREATED', 'admin'),
     ('COMMITTEE_MEMBER_DELETED', 'admin'),
@@ -203,15 +221,12 @@ WITH mapping ("action", "category") AS (
     ('xero_item_code_mappings_updated', 'xero')
   ) AS base ("action", "category")
   UNION ALL
-  -- BLOCK 2 — `member_boundary_crossings`: the 27 actions whose categorisation
+  -- BLOCK 2 — `member_boundary_crossings`: the 25 actions whose categorisation
   -- moves rows across the member self-timeline boundary (INV-OPS-012 reserves
-  -- this to the owner). REMOVE THIS WHOLE `UNION ALL` ARM, OR A GROUP WITHIN
-  -- IT, TO WITHHOLD THOSE ROWS; they then stay null and are listed in
-  -- `WITHHELD_HISTORICAL_NULL_ACTIONS_2581`.
+  -- this to the owner). EVERY GROUP HERE IS OWNER-DECIDED AND APPLIED (#2581,
+  -- 13 Sep 2026); the arm is kept separate so the crossing population stays
+  -- legible, not because anything is pending.
   SELECT * FROM (VALUES
-    -- B1: LOSES — the deactivated/reactivated member's own timeline (632 rows; cf. #2763)
-    ('member.bulk-deactivate', 'admin'),
-    ('member.bulk-reactivate', 'admin'),
     -- B2: LOSES — the acting officer's own timeline only (3 rows)
     ('XERO_INVOICE_GENERATED', 'xero'),
     ('XERO_TRIGGER_MISSING_INVOICES', 'xero'),

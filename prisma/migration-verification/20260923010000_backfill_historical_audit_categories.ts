@@ -32,8 +32,9 @@ import type { DataMigrationVerification } from "./types";
  *  - an install with nothing to move records nothing (the post-cutover replay).
  *
  * THE SEEDS ARE DERIVED FROM `HISTORICAL_NULL_CATEGORY_MAP_2581`, not typed out
- * again: the map is the reviewed decision, and if the owner withholds a group
- * the map moves and this fixture follows, while the contract test
+ * again: the map is the reviewed decision (every crossing owner-decided on 13
+ * Sep 2026, the bulk pair rerouted to `account`), and if the map ever moves
+ * this fixture follows, while the contract test
  * (`src/lib/__tests__/historical-audit-category-backfill.test.ts`) holds the
  * migration's own literal list equal to the map. The mutants below edit the
  * SQL, never the map, so a map/SQL disagreement is caught there and a broken
@@ -87,9 +88,19 @@ const expectedByCategory = MAPPED.reduce<Record<string, number>>(
  *                            them;
  *  - `seed-email-other`      the exception action carrying a canonical value,
  *                            which the `= 'EMAIL'` predicate must not touch;
- *  - `seed-membership-other` `membership` on an action the owner did NOT name.
+ *  - `seed-membership-other` `membership` on an action the owner did NOT name;
+ *  - `seed-bulk-post-2755`   a bulk deactivation the post-#2755 runtime wrote
+ *                            as `admin`. The historical NULL twins go to
+ *                            `account` by owner decision (13 Sep 2026); this
+ *                            row must stay `admin` — the operator-side date
+ *                            split #2763 accepted, preserved rather than
+ *                            unified by a rewrite nobody decided.
  */
 const untouchableRows = `(
+    'seed-bulk-post-2755', 'member.bulk-deactivate', 'admin',
+    TIMESTAMP '2026-08-20 09:00:00'
+  ),
+  (
     'seed-same-canonical', 'booking.cancel', 'booking',
     TIMESTAMP '2026-06-10 09:00:00'
   ),
@@ -182,14 +193,16 @@ const verification: DataMigrationVerification = {
         },
         {
           claim:
-            "every row that must not move still holds exactly what it was written with: a mapped action already canonical (same value and a different one), a null row of an unlisted action, two prefix look-alikes, the exception action under a canonical value, and `membership` on an action the owner did not name",
+            "every row that must not move still holds exactly what it was written with: a mapped action already canonical (same value and a different one), a post-#2755 bulk deactivation already `admin`, a null row of an unlisted action, two prefix look-alikes, the exception action under a canonical value, and `membership` on an action the owner did not name",
           sql: `SELECT "id", "category" FROM "AuditLog"
                  WHERE "id" IN ('seed-same-canonical', 'seed-other-canonical',
+                                'seed-bulk-post-2755',
                                 'seed-unmapped-null', 'seed-lookalike-null',
                                 'seed-lookalike-null-2', 'seed-email-other',
                                 'seed-membership-other')
                  ORDER BY "id"`,
           rows: [
+            { id: "seed-bulk-post-2755", category: "admin" },
             { id: "seed-email-other", category: "admin" },
             { id: "seed-lookalike-null", category: null },
             { id: "seed-lookalike-null-2", category: null },

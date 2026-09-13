@@ -31,18 +31,25 @@
   than Account, for example). In **AI Diagnostics** the older entries are now
   correlated by the tool for their category, behind the same permission as new
   entries of that event type — which is more than before, when they were
-  correlated by nobody. Whether any older entry appears on, or leaves, a member's
-  own activity page as a result is the club owner's decision under the
-  repository's rule for it: the 27 event types where that happens sit in a
-  separate, removable block of the upgrade, and the upgrade notes list them by
-  group with who is affected.
+  correlated by nobody. Whether an older entry appears on, or leaves, a member's
+  own activity page as a result was the club owner's decision under the
+  repository's rule for it, taken on 13 September 2026: **no older entry leaves a
+  member's page.** A bulk deactivation or reactivation recorded before the
+  category became mandatory is filed under **Account** — the category that event
+  carried at the time — rather than the **Admin** the bulk screen records today,
+  so the member keeps sight of their own deactivation, exactly as the owner had
+  already decided for that era's categorised entries. A small number of older
+  entries appear on a page for the first time, almost all only on the acting
+  officer's own; three billing-family selections, two issue reports and one
+  nomination replacement become visible to the member they concern. The upgrade
+  notes list every group.
 
   **You will see the upgrade record itself.** One new entry under **Admin**
   carries how many entries had no category before, how many were given one (by
-  category and by event type), the four corrections, and how many were left. Any
-  event type the owner withheld, or that a differently-historied deployment holds,
-  stays without a category — still listed on the Audit Log screen, still outside
-  Diagnostics, and disclosed as such. The upgrade runbook asks whoever performs the
+  category and by event type), the four corrections, and how many were left. An
+  event type that only a differently-historied deployment holds stays without a
+  category — still listed on the Audit Log screen, still outside Diagnostics, and
+  disclosed as such. The upgrade runbook asks whoever performs the
   upgrade to run the statement once more after cutover, which picks up anything the
   previous version recorded during the upgrade window; on a deployment already
   running the mandatory-category runtime it finds nothing. The column stays

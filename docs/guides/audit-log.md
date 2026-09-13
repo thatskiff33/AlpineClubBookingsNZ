@@ -398,15 +398,26 @@ filter or tool could find them under those names. The club's owner decided they
 are corrected in the same upgrade to the value their event type records today,
 named individually; no other entry that already had a category is touched.
 
-**Which older entries still have no category.** Two kinds. An event type that is
-not on the list — which can only happen on a deployment whose history differs
-from the one the list was measured on — is left exactly as it was. And an event
-type the club's owner decided to *withhold* from the fill-in is left as it was
-too, on purpose. Whether any older entries appear on, or leave, a member's own
-activity page as a result of gaining a category is a separate decision the owner
-takes for this upgrade; the release notes for it say what was decided. For any
-entry left without a category, everything in the next two paragraphs still
-applies.
+**Which older entries still have no category.** Only an event type that is not
+on the list — which can only happen on a deployment whose history differs from
+the one the list was measured on — is left exactly as it was. For such an entry,
+everything in the next two paragraphs still applies.
+
+**Members' own activity pages.** Giving an entry a category can move it onto,
+or off, the page a member sees about their own account, and the repository
+treats that as the club owner's decision rather than the upgrade's. The owner
+decided it on 13 September 2026: **no older entry leaves a member's page.** In
+particular, a bulk deactivation or reactivation recorded before the category
+became mandatory stays on the deactivated member's own page — it is filed under
+**Account**, the category that event carried at the time, rather than the
+**Admin** it is filed under today — so a member keeps sight of their own
+deactivation, exactly as the owner decided for the already-categorised entries of
+that era. A small number of older entries *appear* on a page for the first time:
+almost all on the acting officer's own page (the club's booking-rule, promotion,
+fee and billing settings they changed), plus three billing-family selections now
+visible to the member they were about, two issue reports visible to the member
+who reported them, and one nomination replacement visible to the replacement
+nominator. Disclosure to the person concerned, never withdrawal.
 
 **On this screen every uncategorised entry is still listed**, and the Category
 filter tries to place it: when you pick a category it also matches uncategorised
@@ -438,8 +449,8 @@ corrections, and how many were left. The upgrade notes explain how to read it.
 **Why the column stays optional.** With the fill-in done, the database could in
 principle refuse an entry with no category. It does not, and that is deliberate:
 any deployment whose history holds an event type not on the list still has
-entries with no category, an event type the owner withheld still does, and
-refusing them would mean inventing a category for evidence that has none — which
+entries with no category, and refusing them would mean inventing a category for
+evidence that has none — which
 is the one thing this whole change refused to do. A constraint stays a separate
 decision for after this release has run and its record has been read.
 

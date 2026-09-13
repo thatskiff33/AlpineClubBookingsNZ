@@ -264,11 +264,15 @@ every correlation entry. `20260923010000_backfill_historical_audit_categories` (
 third child) gives those rows the category their exact action records today, from the
 reviewed list in `HISTORICAL_NULL_CATEGORY_MAP_2581` — 83 actions, 1,885 rows on the
 measured deployment — so they are now returned by the entry for that category, behind that
-entry's areas, exactly as new rows of the same action are. What stays null, and therefore
-stays outside every entry: a row whose action is on no list (a fork whose history differs
-from the measured one), and any action the owner withheld because categorising it would
-move rows across the member-timeline boundary (`INV-OPS-012`). The disclosure below
-therefore stays, scoped to that residual rather than to the whole pre-#2581 history.
+entry's areas, exactly as new rows of the same action are — with one owner-decided
+exception (13 Sep 2026): the 632 pre-#2755 `member.bulk-deactivate`/`-reactivate` rows go
+to `account`, the category that exact action carried at the time, not the `admin` the bulk
+screen files now, so a member keeps sight of their own deactivation (#2763). Those older
+rows are therefore read by the **membership** entry while the newer ones are read by the
+**system** entry — the operator-side date split #2763 accepted. What stays null, and
+therefore stays outside every entry: a row whose action is on no list (a fork whose history
+differs from the measured one). Nothing was withheld. The disclosure below therefore
+stays, scoped to that residual rather than to the whole pre-#2581 history.
 
 Those figures used to be quoted here as "81 of about 350", which was a hand count and was
 stale. They are measured on every CI run now, and a **new** uncategorised audit writer

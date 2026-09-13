@@ -329,15 +329,13 @@ describe("the #2581 historical null-category backfill (INV-OPS-012, INV-PRIV-012
           );
           // A dynamic site names the literal in its action expression, or — when
           // the census reports only a variable (`(dynamic) auditAction`) — the
-          // literal is assigned in the same file; or it is one of the two
-          // template families whose closed input set is checked below.
+          // literal is assigned in the same file; or it is the fee-configuration
+          // template family whose closed input set is checked below.
           const namesIt = actionNamesWrittenAt(site!).includes(action);
           const fileNamesIt = readFileSync(path.join(process.cwd(), site!.file), "utf8").includes(
             `"${action}"`,
           );
-          const templateFamily =
-            action.startsWith("fee-configuration.") ||
-            MEMBER_RECORD_ADMIN_ACTIONS_2755.includes(action);
+          const templateFamily = action.startsWith("fee-configuration.");
           expect(
             namesIt || fileNamesIt || templateFamily,
             `${site!.id} neither names "${action}" (in its action expression or its file) nor belongs to a template family this test verifies`,
@@ -357,6 +355,31 @@ describe("the #2581 historical null-category backfill (INV-OPS-012, INV-PRIV-012
               "Re-derive the mapping from the new writer and change the evidence kind.",
           ).toEqual([]);
           expect(evidence.commit).toMatch(/^[0-9a-f]{40}$/);
+          break;
+        }
+        case "superseded-writer": {
+          // The one kind where the map DISAGREES with the current writer on
+          // purpose: the owner decided (13 Sep 2026) that the historical bulk
+          // deactivate/reactivate rows take the `account` the exact action
+          // carried before #2755, not the `admin` the writer files now. Pin the
+          // divergence rather than assume it: the site must exist, must record
+          // exactly the category the map says it records, and the mapped
+          // category must differ from it — if the writer ever moves back to
+          // `account`, this entry becomes a plain `current-writer` and must say so.
+          const site = sites.find((candidate) => candidate.id === evidence.site);
+          expect(site, `${action}: evidence names site ${evidence.site}, which the census does not find`).toBeDefined();
+          expect(literalCategory(site!), `${site!.id} no longer records ${evidence.currentCategory}`).toBe(
+            evidence.currentCategory,
+          );
+          expect(mapping.category, `${action}: a superseded-writer entry whose category equals the writer's is a current-writer entry`).not.toBe(
+            evidence.currentCategory,
+          );
+          expect(evidence.commit).toMatch(/^[0-9a-f]{7,40}$/);
+          expect(evidence.note).toMatch(/#2763/);
+          // Only the bulk pair may use this kind; anything else is a new
+          // divergence between map and writer that needs its own owner decision.
+          expect(MEMBER_RECORD_ADMIN_ACTIONS_2755, `${action} is not a #2755 bulk action`).toContain(action);
+          expect(["member.bulk-deactivate", "member.bulk-reactivate"]).toContain(action);
           break;
         }
       }
@@ -381,11 +404,17 @@ describe("the #2581 historical null-category backfill (INV-OPS-012, INV-PRIV-012
     expect(fromRoute.length).toBeGreaterThan(0);
     expect(fromMap, "the map's fee-configuration.* actions are not the route's literals").toEqual(fromRoute);
 
-    // The bulk-member template family is pinned by #2755's action list.
+    // The bulk-member pair: owner decision of 13 Sep 2026 (#2581, following
+    // #2763) — `account`, the pre-#2755 category, NOT the writer's `admin`; and
+    // `member.bulk-set-role` had no null rows and is not mapped.
     for (const action of ["member.bulk-deactivate", "member.bulk-reactivate"]) {
       expect(MEMBER_RECORD_ADMIN_ACTIONS_2755).toContain(action);
-      expect(HISTORICAL_NULL_CATEGORY_MAP_2581[action]?.category).toBe("admin");
+      expect(HISTORICAL_NULL_CATEGORY_MAP_2581[action]?.category).toBe("account");
+      expect(HISTORICAL_NULL_CATEGORY_MAP_2581[action]?.evidence.kind).toBe("superseded-writer");
+      expect(HISTORICAL_NULL_CATEGORY_MAP_2581[action]?.memberBoundary).toBe("none");
     }
+    expect(HISTORICAL_NULL_CATEGORY_MAP_2581["member.bulk-set-role"]).toBeUndefined();
+    expect(sqlWithoutComments).not.toContain("member.bulk-set-role");
   });
 
   it("derives the member-boundary column from the real timeline filter, not from prose", () => {
