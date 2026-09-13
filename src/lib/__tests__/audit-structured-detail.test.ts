@@ -380,6 +380,8 @@ describe("reducing a payload that will not fit (#2704)", () => {
 
 describe("who the recovered detail reaches (#2704 with #2695)", () => {
   const CLIPPED = `${representativePayload(400).slice(0, 1000)}${AUDIT_TRUNCATION_SUFFIX}`;
+  /** Long enough that it cannot slot into the room a reduced payload leaves. */
+  const LONG_SENTENCE = `Credit of $25.00 added to your account. Reason: ${"goodwill, ".repeat(90)}thank you`;
 
   it("renders a legacy clipped payload as fields, and keeps the raw record beside them", async () => {
     const entry = await timelineEntry(rowOf({ details: CLIPPED }), "admin");
@@ -421,10 +423,17 @@ describe("who the recovered detail reaches (#2704 with #2695)", () => {
     // #2695's ORDERING is what makes this safe, and this change had to not
     // break it: the caller's metadata is sanitised — now reduced — FIRST, and
     // the declared sentence is attached on top of the result afterwards. Were
-    // the two ever merged into one step, a large admin payload would silently
-    // delete the one sentence the member reads, on their timeline AND in their
-    // data export. That is the defect #2695's docblock warns the next
-    // simplifier about, and it is this rule's reduction that would cause it.
+    // the two ever merged into one step, a large admin payload would eat the
+    // budget and the one sentence the member reads would be clipped or
+    // dropped, on their timeline AND in their data export. That is the defect
+    // #2695's docblock warns the next simplifier about, and this rule's
+    // reduction is what would make it bite.
+    //
+    // THE SENTENCE IS LONG ON PURPOSE, and that is the whole discrimination.
+    // Written with a SHORT one this test passed against the merged ordering —
+    // measured — because the reduction takes every field that fits and a short
+    // pair slots into the room the big fields left behind. Only a sentence too
+    // long to slot in tells the two orderings apart.
     const wide: Record<string, string> = {};
     for (let i = 0; i < 40; i += 1) {
       wide[`filler${i}`] = "f".repeat(900);
@@ -435,17 +444,12 @@ describe("who the recovered detail reaches (#2704 with #2695)", () => {
       actor: { memberId: ACTOR },
       subject: { memberId: SUBJECT },
       metadata: wide,
-      memberDisclosure: {
-        visibility: "member-facing",
-        text: "Credit of $25.00 added to your account. Reason: goodwill",
-      },
+      memberDisclosure: { visibility: "member-facing", text: LONG_SENTENCE },
     });
 
     const stored = args.data.metadata as Record<string, unknown>;
     expect(stored[REDUCED_DETAIL_KEYS.truncated]).toBe(true);
-    expect(readDeclaredMemberText(stored)).toBe(
-      "Credit of $25.00 added to your account. Reason: goodwill",
-    );
+    expect(readDeclaredMemberText(stored)).toBe(LONG_SENTENCE);
 
     // And the member reads that sentence and nothing from the reduced payload.
     const entry = await timelineEntry(
@@ -456,9 +460,7 @@ describe("who the recovered detail reaches (#2704 with #2695)", () => {
       }),
       "member",
     );
-    expect(entry.description).toBe(
-      "Credit of $25.00 added to your account. Reason: goodwill",
-    );
+    expect(entry.description).toBe(LONG_SENTENCE);
     expect(entry.metadata).toBeNull();
     expect(entry.details).toBeNull();
   });
