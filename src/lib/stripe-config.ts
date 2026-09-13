@@ -111,6 +111,9 @@ export async function recordStripeWebhookVerified(
       provider: STRIPE_PROVIDER,
       key: STRIPE_WEBHOOK_VERIFIED_KEY,
       value: when.toISOString(),
+      actor: { kind: "system", actor: "stripe-webhook-verify" },
+      // Latest-wins by design, and this is the marker's only writer (#2723).
+      expect: { expect: "any" },
     });
   } catch {
     // Never let marker persistence affect the webhook response.
@@ -119,7 +122,14 @@ export async function recordStripeWebhookVerified(
 
 /** Drop the webhook-verified marker (verify-reset on any Stripe credential write). */
 export async function clearStripeWebhookVerified(): Promise<void> {
-  await deleteIntegrationCredential(STRIPE_PROVIDER, STRIPE_WEBHOOK_VERIFIED_KEY);
+  await deleteIntegrationCredential({
+    provider: STRIPE_PROVIDER,
+    key: STRIPE_WEBHOOK_VERIFIED_KEY,
+    actor: { kind: "system", actor: "stripe-verify-reset" },
+    // As for Google: the credential the marker attested to has changed, so a
+    // marker re-stamped meanwhile must go too.
+    expect: { expect: "any" },
+  });
 }
 
 export interface StripeSetupState {

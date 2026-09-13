@@ -110,6 +110,11 @@ export async function recordGoogleVerified(
       provider: GOOGLE_PROVIDER,
       key: GOOGLE_VERIFIED_KEY,
       value: when.toISOString(),
+      actor: { kind: "system", actor: "google-verify-callback" },
+      // The marker's whole purpose is to record the LATEST successful
+      // round-trip, and this is its only writer, so there is nothing to be
+      // stale against (#2723).
+      expect: { expect: "any" },
     });
   } catch {
     // Never let marker persistence affect the verify round-trip response.
@@ -118,7 +123,15 @@ export async function recordGoogleVerified(
 
 /** Drop the verified marker (verify-reset on any Google credential write). */
 export async function clearGoogleVerified(): Promise<void> {
-  await deleteIntegrationCredential(GOOGLE_PROVIDER, GOOGLE_VERIFIED_KEY);
+  await deleteIntegrationCredential({
+    provider: GOOGLE_PROVIDER,
+    key: GOOGLE_VERIFIED_KEY,
+    actor: { kind: "system", actor: "google-verify-reset" },
+    // Verify-reset drops whatever marker is there; a concurrent re-verify that
+    // re-stamped it should also be dropped, because the credential it attested
+    // to has just changed.
+    expect: { expect: "any" },
+  });
 }
 
 export interface GoogleSetupState {

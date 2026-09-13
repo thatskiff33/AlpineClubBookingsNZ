@@ -208,6 +208,7 @@ export async function getOperationalXeroEncryptionKey(): Promise<
     key: XERO_CREDENTIAL_KEYS.tokenKey,
     label: XERO_TOKEN_KEY_LABEL,
     generate: () => randomBytes(32).toString("hex"),
+    actor: { kind: "system", actor: "xero-token-key-generation" },
   });
   return value ?? undefined;
 }

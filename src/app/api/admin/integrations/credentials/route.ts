@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { parseJsonRequestBody } from "@/lib/api-json";
-import { createAuditLog, getAuditRequestContext } from "@/lib/audit";
+import { getAuditRequestContext } from "@/lib/audit";
 import { isFullAdmin } from "@/lib/access-roles";
 import { requireAdmin } from "@/lib/session-guards";
 import { setIntegrationCredential } from "@/lib/integration-credentials";
@@ -227,11 +227,19 @@ export async function POST(request: Request) {
 
   let result;
   try {
+    // The store writes the audit row itself, inside the same transaction as the
+    // secret (#2723) — this route used to write it two awaits later, so a crash
+    // in between left a rewritten credential with no evidence of who did it.
+    // The request context travels in so the row keeps its id, IP and user agent.
     result = await setIntegrationCredential({
       provider,
       key,
       value,
-      updatedByUserId: guard.memberId,
+      actor: { kind: "admin", memberId: guard.memberId },
+      // The form posts the value it wants stored; there is no read-modify-write
+      // here for a second Full Admin to make stale.
+      expect: { expect: "any" },
+      request: getAuditRequestContext(request),
     });
   } catch (error) {
     if (error instanceof WeakAuthSecretError) {
@@ -250,33 +258,6 @@ export async function POST(request: Request) {
   }
 
   await applyVerifyReset(provider, key);
-
-  // Metadata-only audit (no value, no body, no before/after). createAuditLog
-  // additionally sanitises metadata as defence in depth.
-  await createAuditLog({
-    action: "integration.credential.set",
-    category: "security",
-    severity: "important",
-    outcome: "success",
-    memberId: guard.memberId,
-    entityType: "IntegrationCredential",
-    entityId: `${provider}:${key}`,
-    summary: `Set ${provider} credential "${key}"`,
-    metadata: {
-      provider,
-      key,
-      secretSource: result.secretSource,
-      labelVersion: result.labelVersion,
-    },
-    ...(() => {
-      const ctx = getAuditRequestContext(request);
-      return {
-        requestId: ctx?.id ?? undefined,
-        ipAddress: ctx?.ipAddress ?? undefined,
-        userAgent: ctx?.userAgent ?? undefined,
-      };
-    })(),
-  });
 
   // Response confirms metadata only — the value is never returned.
   return NextResponse.json({
