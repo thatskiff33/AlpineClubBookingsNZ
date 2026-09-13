@@ -23,8 +23,9 @@ import { prisma } from "@/lib/prisma";
 
 const updateSchema = z
   .object({
-    // NZD integer cents. 0 disables all paid diagnostics calls (hard-off, the
-    // ship default); DIAGNOSTICS_MAX_MONTHLY_BUDGET_CENTS is the fat-finger guard.
+    // Integer cents of the club's configured currency (#3354). 0 disables all
+    // paid diagnostics calls (hard-off, the ship default);
+    // DIAGNOSTICS_MAX_MONTHLY_BUDGET_CENTS is the fat-finger guard.
     monthlyBudgetCents: z
       .number()
       .int()
