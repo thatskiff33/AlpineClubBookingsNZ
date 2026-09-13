@@ -19,6 +19,14 @@
  * a float — it multiplies two integers and takes an exact integer ceiling.
  */
 
+/**
+ * The currency both AI price tables are written in (`ai-assistant-usage.ts`,
+ * `ai-diagnostics-usage.ts`). `loadAiSpendCurrency` compares `APP_CURRENCY`
+ * against THIS constant to decide that no conversion applies, so the table
+ * currency and the identity check cannot drift apart.
+ */
+export const AI_PRICE_TABLE_CURRENCY = "NZD";
+
 /** Parts per million: the fixed point of the stored rate. */
 export const MICROS_PER_CLUB_UNIT = 1_000_000;
 
@@ -40,11 +48,25 @@ export const MAX_RATE_MICROS = 1_000 * MICROS_PER_CLUB_UNIT;
 const RATE_GRAMMAR = /^(0|[1-9]\d*)(?:\.(\d{1,6}))?$/;
 
 /**
+ * The rule `RATE_GRAMMAR` enforces, in the words an administrator reads. The
+ * ONE sentence the route's 400 message and the card's error and hint all
+ * render, so the copy cannot disagree with the parser or with itself.
+ */
+export const RATE_INPUT_RULE =
+  "start with a digit, for example 0.92; more than zero, up to six decimal places, no symbol or thousands separator";
+
+/** The full instruction for entering a rate, naming the club's currency. */
+export function describeRateInputRule(clubCurrency: string): string {
+  return `Enter how many ${clubCurrency} one New Zealand dollar buys — ${RATE_INPUT_RULE}.`;
+}
+
+/**
  * Parse the decimal an administrator typed (for example `"0.92"`) into micros,
  * or `null` when it is not a usable rate. Exact: the integer and fraction digit
  * groups are combined with integer arithmetic, never through a float. Refuses a
  * blank, a sign, a currency symbol, a thousands separator, a leading zero
- * (`"007"`), more than six decimals, NaN/Infinity by construction (the grammar
+ * (`"007"`), a fraction with no leading digit (`".92"`), a trailing point
+ * (`"1."`), more than six decimals, NaN/Infinity by construction (the grammar
  * admits only digits), ZERO (a zero rate would price every call at nothing and
  * disarm both caps) and anything above `MAX_RATE_MICROS`.
  */

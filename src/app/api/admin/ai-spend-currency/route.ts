@@ -5,7 +5,9 @@ import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
 } from "@/lib/audit";
+import { APP_CURRENCY } from "@/config/operational";
 import {
+  describeRateInputRule,
   formatClubUnitsPerNzd,
   parseClubUnitsPerNzdToMicros,
   type AiSpendCurrency,
@@ -97,8 +99,7 @@ export async function PUT(request: Request) {
   if (micros === null) {
     return NextResponse.json(
       {
-        error:
-          "Enter how many units of the club's currency one New Zealand dollar buys, for example 0.92 — more than zero, up to six decimal places, no symbol or thousands separator.",
+        error: describeRateInputRule(APP_CURRENCY),
       },
       { status: 400 },
     );

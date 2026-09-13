@@ -8,6 +8,7 @@
 import { APP_CURRENCY } from "@/config/operational";
 import { prisma } from "@/lib/prisma";
 import {
+  AI_PRICE_TABLE_CURRENCY,
   IDENTITY_RATE_MICROS,
   isValidRateMicros,
   type AiSpendCurrency,
@@ -33,29 +34,36 @@ type AiSpendCurrencyRow = {
   rateSetByMemberId: string | null;
 };
 
-const IDENTITY: AiSpendCurrency = {
+// Returned by reference to every caller, so frozen: a caller that mutated it
+// would re-price every later call in the process.
+const IDENTITY: Readonly<AiSpendCurrency> = Object.freeze({
   clubCurrency: APP_CURRENCY,
-  isNzd: APP_CURRENCY === "NZD",
+  isNzd: APP_CURRENCY === AI_PRICE_TABLE_CURRENCY,
   clubUnitsPerNzdMicros: IDENTITY_RATE_MICROS,
   rateSetAt: null,
   rateSetByMemberId: null,
   isConfigured: false,
-};
+});
 
 /**
  * The rate in force, read ONCE per call or roundtrip alongside the settings
  * read — never per token.
  *
- *  - `APP_CURRENCY === "NZD"`: the identity rate, `isNzd: true`, and the table
- *    is never read (a New Zealand club has nothing to convert).
+ *  - `APP_CURRENCY === AI_PRICE_TABLE_CURRENCY`: the identity rate,
+ *    `isNzd: true`, and the table is never read (a New Zealand club has nothing
+ *    to convert).
  *  - Otherwise the singleton row; when none is stored, identity with
  *    `isConfigured: false` — which is how spend was priced before #3354, so no
  *    existing deployment changes behaviour until an administrator sets a rate.
  *  - A missing delegate (an old-colour client through a blue/green drain) or a
  *    stored value outside the parser's bounds falls back to identity the same
- *    way `loadDiagnosticsBudgetCents` falls back to its default. A DATABASE
- *    ERROR propagates: every caller sits behind a fail-closed catch that
- *    denies the spend, and a rate we could not read is not a rate to price at.
+ *    way `loadDiagnosticsBudgetCents` falls back to its default. That fallback
+ *    is NOT fail-closed — identity under-counts a non-NZD club's spend rather
+ *    than denying it — and is safe only because no released code can reach
+ *    either path: the delegate is generated with the table, and the one writer
+ *    refuses a value the parser refuses. A DATABASE ERROR propagates: every
+ *    caller sits behind a fail-closed catch that denies the spend, and a rate
+ *    we could not read is not a rate to price at.
  *
  * Pass a transaction client as `db` to read inside an existing transaction
  * (the diagnostics reserve and settle do, so the rate and the budget come from

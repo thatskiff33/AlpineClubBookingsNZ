@@ -14,6 +14,8 @@ import {
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import {
+  RATE_INPUT_RULE,
+  describeRateInputRule,
   formatClubUnitsPerNzd,
   parseClubUnitsPerNzdToMicros,
 } from "@/lib/ai-spend-currency";
@@ -177,9 +179,7 @@ export function AiSpendCurrencyCard() {
 
   const save = async () => {
     if (draftMicros === null) {
-      setError(
-        `Enter how many ${data.clubCurrency} one New Zealand dollar buys, for example 0.92 — more than zero, up to six decimal places, no symbol or thousands separator.`,
-      );
+      setError(describeRateInputRule(data.clubCurrency));
       return;
     }
     setSaving(true);
@@ -275,7 +275,7 @@ export function AiSpendCurrencyCard() {
               />
               <p id={hintId} className="text-xs text-muted-foreground">
                 For example 0.92 means one New Zealand dollar buys 0.92{" "}
-                {data.clubCurrency}. More than zero, up to six decimal places.
+                {data.clubCurrency}. The rate must {RATE_INPUT_RULE}.
               </p>
             </div>
             <div className="flex flex-wrap gap-2">

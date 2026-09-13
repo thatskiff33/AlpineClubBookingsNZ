@@ -15,7 +15,11 @@
  *    (docs/CONCURRENCY_AND_LOCKING.md): read live reservations + settled spend,
  *    check the sum against the budget, and insert the reservation — all atomic
  *    against every other reserver, so N concurrent reserves can never push
- *    `settled + reserved` over the budget. A denied reserve runs NO side effect.
+ *    `settled + reserved` over the budget at a fixed rate. The rate is read per
+ *    transaction (#3354), so an administrator changing it between one
+ *    roundtrip's reserve and its settle can overshoot by that one roundtrip
+ *    scaled by the change; nothing else can. A denied reserve runs NO side
+ *    effect.
  *  - The multi-tool loop is BOUNDED by DIAGNOSTICS_MAX_TOOL_ROUNDS, so a single
  *    session's worst-case spend is bounded (rounds x worst-case roundtrip) and the
  *    monthly budget bounds the sum across all sessions.
@@ -77,9 +81,11 @@ const WARNING_THRESHOLDS = [0.7, 0.85, 0.95] as const;
 export const DIAGNOSTICS_RESERVATION_TTL_MS = 5 * 60 * 1000;
 
 /**
- * NZD integer cents per MILLION tokens, per model. Derived from Anthropic's USD
- * list prices multiplied by a deliberately conservative FX of 1.8 NZD/USD (same
- * FX as page-help `ai-assistant-usage.ts`), so the estimate over-counts the true
+ * NZD integer cents per MILLION tokens, per model — `AI_PRICE_TABLE_CURRENCY`
+ * in `ai-spend-currency.ts`, the constant the club's currency is compared
+ * against to decide that no conversion applies (#3354). Derived from
+ * Anthropic's USD list prices multiplied by a deliberately conservative FX of
+ * 1.8 NZD/USD (same FX as page-help `ai-assistant-usage.ts`), so the estimate over-counts the true
  * bill and the cap trips early. UPDATE THIS TABLE whenever Anthropic changes
  * prices or the FX drifts materially.
  *

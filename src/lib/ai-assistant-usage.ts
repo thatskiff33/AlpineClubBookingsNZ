@@ -38,10 +38,13 @@ export const DEFAULT_MONTHLY_BUDGET_CENTS = AI_ASSISTANT_DEFAULT_MONTHLY_BUDGET_
 const WARNING_THRESHOLDS = [0.7, 0.85, 0.95] as const;
 
 /**
- * NZD integer cents per MILLION tokens, per model. Derived from Anthropic's USD
- * list prices multiplied by a deliberately conservative FX of 1.8 NZD/USD, so
- * the estimate over-counts the true bill and the cap trips early. UPDATE THIS
- * TABLE whenever Anthropic changes prices (or the FX drifts materially).
+ * NZD integer cents per MILLION tokens, per model — `AI_PRICE_TABLE_CURRENCY`
+ * in `ai-spend-currency.ts`, which is what the club's currency is compared
+ * against to decide that no conversion applies (#3354). Derived from
+ * Anthropic's USD list prices multiplied by a deliberately conservative FX of
+ * 1.8 NZD/USD, so the estimate over-counts the true bill and the cap trips
+ * early. UPDATE THIS TABLE whenever Anthropic changes prices (or the FX drifts
+ * materially).
  *
  * claude-haiku-4-5 USD list: input $1.00, output $5.00, cache-write $1.25
  * (1.25x input), cache-read $0.10 (0.1x input) per MTok.
