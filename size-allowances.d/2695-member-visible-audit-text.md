@@ -1,6 +1,9 @@
 # File-size allowances for #2695 — member-visible audit text is declared
 
-Six already-over-budget files grow. **One split was taken rather than allowed
+Five already-over-budget files grow. (`audit.ts` and `audit-query.ts` were
+here too; #2704 grew both further and its own fragment now carries them, so the
+gate sees one live allowance per file. The split note below still applies to
+them.) **One split was taken rather than allowed
 for:** the declaration's vocabulary, its reserved-key rules and the reasoning
 for all of it are a new module, `src/lib/audit-member-disclosure.ts`, well
 inside its own budget — so `audit.ts` and `audit-query.ts` gain the mechanism's
@@ -15,32 +18,6 @@ The four routes' growth is irreducible in the same way at each: the declaration
 is three lines of code that MUST sit on the event object, at the write site,
 because that is the whole point of the change — a declaration lifted into a
 helper is a declaration a reviewer cannot see beside the text it governs.
-
-file: src/lib/audit.ts
-lines: 837
-reason: the two write boundaries route their metadata through one new builder,
-  and the docblock on it is the deliverable rather than decoration — the ORDER
-  it imposes is load-bearing and invisible from the code. The caller's metadata
-  is sanitised first and the declared member text attached afterwards, because
-  merging the text in first would let an over-budget payload silently delete
-  what the member reads. That is the same defect as the shape test this issue
-  removed, in a second disguise, and the next person to "simplify" the two steps
-  into one will reintroduce it. The rest is the optional `memberDisclosure`
-  field on both writer param types, said once and re-exported.
-
-file: src/lib/audit-query.ts
-lines: 1282
-reason: `projectFreeTextForAudience` answers every free-text field for both
-  audiences in one exhaustive place, replacing three ternaries spread through
-  the serializer, and `storedSummary` beside it is the single fallback rule the
-  two audiences' row titles share — written twice with two different emptiness
-  tests, it showed a member a blank row title where an officer saw the derived
-  one. It cannot move to the new module: it composes `getSummary`,
-  `getDescription` and the legacy-metadata parse, all of which live here, so
-  lifting it out means either a circular import or four callbacks passed in to
-  reach the same result. Its docblock carries why the audience must be answered
-  in one place at all — `INV-PRIV-012` records a guard on this surface that was
-  measured to survive deletion with the word left behind in a comment.
 
 file: src/lib/member-credit.ts
 lines: 947

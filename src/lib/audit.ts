@@ -18,6 +18,13 @@ import {
   withoutDeclaredMemberText,
   type AuditMemberDisclosure,
 } from "./audit-member-disclosure";
+import {
+  AUDIT_TRUNCATED_KEYS_FLAG,
+  AUDIT_TRUNCATION_MARKER,
+  AUDIT_TRUNCATION_SUFFIX,
+  parseStructuredDetail,
+  reduceStructuredDetail,
+} from "./audit-structured-detail";
 // test seam
 export { buildMemberAuditLogWhere } from "./audit-query";
 
@@ -167,7 +174,11 @@ export type AuditLogClient = Pick<PrismaClient, "auditLog">;
 const REDACTED = "[REDACTED]";
 const REDACTED_CARD = "[REDACTED_CARD]";
 const REDACTED_LONG_HTML = "[REDACTED_LONG_HTML]";
-const TRUNCATED = "[TRUNCATED]";
+/**
+ * One spelling, owned by `audit-structured-detail.ts` because the READ side has
+ * to recognise exactly what this one writes (#2704, `INV-SSOT-001`).
+ */
+const TRUNCATED = AUDIT_TRUNCATION_MARKER;
 const MAX_METADATA_DEPTH = 6;
 const MAX_METADATA_ARRAY_ITEMS = 50;
 const MAX_METADATA_OBJECT_KEYS = 75;
@@ -230,19 +241,79 @@ function metadataJsonLimit(options?: AuditMetadataOptions): number {
   // per character is what JSON escaping costs at worst for ORDINARY text — a
   // value that is entirely newlines, quotes or backslashes. A value stuffed
   // with C0 control characters escapes to six bytes each and could still
-  // overflow; that falls back to the {_truncated, preview} stub, which is
-  // degraded but never wrong, and no email template body reaches this shape.
+  // overflow; that is reduced to the fields that fit, with the rest dropped by
+  // name (#2704) — degraded but never wrong, and no email template body reaches
+  // this shape.
   return archived === undefined
     ? MAX_METADATA_JSON_LENGTH
     : MAX_METADATA_JSON_LENGTH + archived * 2;
 }
 
+/**
+ * The `details` column, sanitised — and, when the caller stored a JSON payload
+ * too big for the column, REDUCED rather than clipped (#2704).
+ *
+ * Why clipping a payload at a character offset is not merely untidy, and the
+ * measured `"amountCents":1` case: `audit-structured-detail.ts`, which owns the
+ * rule. What is decided HERE is the two boundaries around it. A payload that
+ * FITS takes the text rule unchanged, byte for byte, so no row whose meaning
+ * anybody already relies on moves — a design choice of this change, not
+ * `INV-OPS-012`, which an earlier draft cited for it and which is about
+ * reclassifying a stored `category`. And on the over-budget path
+ * the payload is re-sanitised as METADATA rather than as text.
+ *
+ * WHAT THAT SECOND BOUNDARY REALLY DOES, because the first draft of this
+ * comment claimed the metadata rule "redacts strictly more" and that is FALSE.
+ * The two rules are incomparable. The metadata rule replaces sensitive KEY
+ * NAMES wholesale and redacts each string VALUE on its own; the text rule
+ * matched its patterns anywhere in the serialised characters — including inside
+ * a key name, and across the punctuation between two values. Measured: a card
+ * number used as a KEY NAME is redacted by the text rule and survives the
+ * metadata rule verbatim. Nothing in the tree writes a key name like that (every
+ * payload writer uses literal identifiers), and this issue's contract keeps
+ * redaction a separate audit responsibility, so the gap is RECORDED here rather
+ * than closed here.
+ *
+ * What does hold unconditionally is the guard above: this path is reached only
+ * when the text rule returned a CLIPPED result. A payload the text rule would
+ * have swallowed whole — `SECRET_VALUE_PATTERN` matching anywhere replaces the
+ * entire field with `[REDACTED]` — never gets here, because that output does
+ * not end in the marker and is returned untouched.
+ */
 function sanitizeAuditDetails(value?: string | null): string | undefined {
   if (value === undefined || value === null) {
     return undefined;
   }
 
-  return sanitizeAuditArchiveText(value) ?? undefined;
+  const sanitized = sanitizeAuditArchiveText(value);
+  if (sanitized === null) {
+    return undefined;
+  }
+  if (!sanitized.endsWith(AUDIT_TRUNCATION_SUFFIX)) {
+    return sanitized;
+  }
+
+  const parsed = parseStructuredDetail(value);
+  if (parsed === null) {
+    // Prose, an array or a scalar. A clipped sentence ending in the marker is
+    // honest about being short, so the text rule is already the right answer.
+    return sanitized;
+  }
+
+  // ONE reduction, not two (#2704 review). Going through `sanitizeAuditMetadata`
+  // ran ITS envelope reduction at 24,000 characters first, and the reduction
+  // below then measured that intermediate: a 54,814-character payload recorded
+  // `_originalLength` 23,879 — the length of a document nobody ever wrote — and
+  // named six dropped fields while fifty-two more vanished with no name
+  // anywhere, because the second pass strips the reserved keys and re-mints
+  // them. The VALUE sanitiser is the half this path wants (redaction, depth,
+  // per-string limits); the envelope belongs to the other column.
+  const sanitizedPayload = sanitizeMetadataValue(parsed, 0, new WeakSet<object>());
+  const reduced = reduceStructuredDetail(
+    sanitizedPayload,
+    MAX_METADATA_STRING_LENGTH
+  );
+  return reduced?.text ?? sanitized;
 }
 
 /**
@@ -460,7 +531,10 @@ function sanitizeMetadataValue(
   }
 
   if (Object.keys(value).length > MAX_METADATA_OBJECT_KEYS) {
-    sanitizedObject._truncatedKeys = true;
+    // One spelling, owned by `audit-structured-detail.ts`, which has to filter
+    // this key from an officer's description and strip it from a recovered
+    // legacy row (#2704, `INV-SSOT-001`).
+    sanitizedObject[AUDIT_TRUNCATED_KEYS_FLAG] = true;
   }
 
   return sanitizedObject;
@@ -481,14 +555,28 @@ export function sanitizeAuditMetadata(
   }
 
   const serialized = JSON.stringify(sanitized);
-  if (serialized.length <= metadataJsonLimit(options)) {
+  const limit = metadataJsonLimit(options);
+  if (serialized.length <= limit) {
     return sanitized;
   }
 
+  // OVER THE ENVELOPE: keep the fields that fit, not the first 1000 characters
+  // of the document (#2704). `preview` was `serialized.slice(0, 1000)` — the
+  // same character cut the `details` column had, in the sibling column, and it
+  // threw away every field an officer came to the row for. `_truncated` and
+  // `_originalLength` keep their meaning, so nothing reading them changes.
+  const reduced = reduceStructuredDetail(sanitized, limit);
+  if (reduced !== null) {
+    return JSON.parse(reduced.text) as Prisma.InputJsonValue;
+  }
+
+  // An array or a scalar at the top level has no fields to keep. No production
+  // writer passes one; the clip stays as the answer for a shape that cannot be
+  // reduced, and it is marked.
   return {
     _truncated: true,
     _originalLength: serialized.length,
-    preview: serialized.slice(0, MAX_METADATA_STRING_LENGTH),
+    preview: `${serialized.slice(0, MAX_METADATA_STRING_LENGTH)}${AUDIT_TRUNCATION_SUFFIX}`,
   };
 }
 
@@ -633,12 +721,15 @@ function assertCanonicalAuditCategory(
  *
  * The ORDER here is load-bearing, and it is the second half of the hole #2695
  * closed. The caller's own metadata is stripped of the reserved key and
- * sanitised FIRST — so `sanitizeAuditMetadata`'s over-budget
- * `{_truncated, preview}` stub, if it fires, has already fired — and the
- * declared member text is attached on top of the result. Merge the text in
- * first and a large admin payload would silently delete what the member reads,
- * which is the same class of defect as the shape test this replaced: an
- * audience decided by a length.
+ * sanitised FIRST — so `sanitizeAuditMetadata`'s over-budget reduction, if it
+ * fires, has already fired — and the declared member text is attached on top of
+ * the result. Merge the text in first and a large admin payload would silently
+ * delete what the member reads, which is the same class of defect as the shape
+ * test this replaced: an audience decided by a length. Since #2704 that
+ * reduction keeps whole fields rather than swapping the payload for a
+ * `{_truncated, preview}` stub, which makes the hazard SMALLER and not gone: a
+ * declared sentence too long to slot into the room the kept fields leave is
+ * still dropped if it is merged in first.
  */
 function buildStoredMetadata(params: {
   action: string;

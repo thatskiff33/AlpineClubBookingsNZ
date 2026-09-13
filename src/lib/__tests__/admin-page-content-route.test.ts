@@ -966,7 +966,8 @@ describe("DELETE /api/admin/page-content", () => {
     };
 
     // The whole point of the sum: the snapshot survives intact rather than
-    // collapsing to the {_truncated, preview} stub, and neither field is clipped.
+    // being dropped by the over-budget reduction (#2704), and neither field is
+    // clipped.
     expect(sanitized._truncated).toBeUndefined();
     expect(sanitized.before?.contentHtml).toBe(maximalRow.contentHtml);
     expect(sanitized.before?.headerText).toBe(maximalRow.headerText);

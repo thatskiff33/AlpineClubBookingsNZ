@@ -212,3 +212,30 @@ describe("LodgeCapacityCard lodge-switch response ownership (#2701)", () => {
     expect(screen.queryByText("Lodge settings saved.")).not.toBeInTheDocument();
   });
 });
+
+describe("LodgeCapacityCard reads the shared capacity bounds (#2724)", () => {
+  it("refuses a figure above the server's maximum instead of sending it", async () => {
+    // This card writes the SAME `LodgeSettings.capacity` through the SAME
+    // route as the lodge configuration screen's capacity field, and it carried
+    // its own copy of the rule with no upper bound at all: a figure above the
+    // schema's 100,000 passed here and came back a bare "Invalid input".
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "PUT") throw new Error("PUT must not be attempted");
+      return response(200, settings(22));
+    }) as unknown as typeof fetch;
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<LodgeCapacityCard />);
+    const field = await screen.findByLabelText("Capacity (beds/guests)");
+    expect(field).toHaveAttribute("max", "100000");
+
+    fireEvent.change(field, { target: { value: "100001" } });
+    fireEvent.click(screen.getByRole("button", { name: /Save/ }));
+
+    expect(
+      await screen.findByText(
+        "Enter a whole number from 1 to 100,000, or clear it to fall back.",
+      ),
+    ).toBeInTheDocument();
+  });
+});
