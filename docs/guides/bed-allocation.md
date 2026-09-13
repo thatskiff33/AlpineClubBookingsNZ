@@ -101,6 +101,15 @@ year in one go).
 4. Click **Save**. It is disabled until something changed. **Cancel** restores
    the saved snapshot. A successful save reloads the board because its header
    mode and suggestions may both have changed.
+
+   **If a save is refused, the card says why** and keeps your staged changes in
+   edit mode, so you can correct the problem and click **Save** again. It
+   repeats the club system's own explanation — for example that the lodge is no
+   longer active. Two refusals have their own wording: an admin role that can
+   view bookings but not change them is told its role cannot make changes, and a
+   club with the Bed Allocation module switched off is told the module is off.
+   If the reply cannot be read at all, the card falls back to "Failed to save
+   allocation preferences" rather than showing raw technical output.
 5. In the separate **Board drag controls** card, optionally tick
    **Single-night drag mode**. This remains browser-only and is not saved: when
    on, dragging a guest allocates only the night you drop on; when off, dropping

@@ -46,6 +46,16 @@ optimistic callbacks. A view-only role sees one section banner and disabled
 Edit/Save affordances; the API independently enforces `bookings:view` on GET and
 `bookings:edit` on PUT.
 
+A refused save keeps three states distinct and surfaces no internal detail
+(#2931): 403 keeps the shared permission sentence, 404 says the bedAllocation
+module is off rather than repeating the route's bare "Not found", and every
+other non-OK reply shows the server's own non-empty `{ error }` sentence — read
+as JSON and projected to that one field, so a zod `details`, a Prisma `meta` or
+a proxy's HTML error page can never reach the screen. An unreadable or blank
+reply falls back to the card's own wording. The write body is the route's
+three-field contract, never a spread of the loaded settings, whose read-only
+provenance fields the `.strict()` schema refuses.
+
 ## Reviewed bed-allocation removal (#2594)
 
 All removal triggers share one **Remove bed allocations** dialog: a chip menu,
