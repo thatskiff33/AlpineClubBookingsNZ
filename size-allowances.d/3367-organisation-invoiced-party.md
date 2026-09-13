@@ -25,7 +25,7 @@ reason: The school approval transaction gains the resolve-or-create of the
   reads anyway.
 
 file: src/lib/xero-contacts.ts
-lines: 1920
+lines: 2046
 reason: Three lines net. The member payload builder's object literal MOVED OUT
   to `xero-contact-shape.ts`, which the organisation builder shares, so the
   single-source-of-truth direction of this change is a reduction. What is added
@@ -34,6 +34,22 @@ reason: Three lines net. The member payload builder's object literal MOVED OUT
   deterministically rather than by a race — plus two export keywords and their
   docblocks, so the organisation path can share this module's name search and
   duplicate-name predicate rather than copying them.
+  #2939 then added a hundred and twenty-six more lines, ninety-one of them
+  comment: `requireAuthoritativeMatch`, which lets a BULK caller say "if the
+  provider cannot be asked authoritatively, do nothing for this member". It
+  turns a failed Xero search and a name-uniqueness refusal from fall-throughs
+  into refusals, at the two places this function otherwise proceeds on an answer
+  it does not have. The comment weight is the point: the DEFAULTS are right for
+  every existing caller and invert only for a bulk run, so each refusal site
+  carries which trade it is making, or the next reader "fixes" the option away.
+  It cannot live anywhere else — an option that changes what this function does
+  at two specific branches has to be read at those branches, and a wrapper would
+  have to re-implement the search and the recovery to intercept them, which is
+  the duplicate resolution path `INV-SSOT` exists to prevent. The number here is
+  the file's real length rather than a second entry the gate cannot choose
+  between — one file, one allowance, and every fragment in this diff is live
+  because the size gate always judges against `origin/main`, where none of them
+  has merged.
 
 file: src/lib/xero-booking-invoices.ts
 lines: 1429

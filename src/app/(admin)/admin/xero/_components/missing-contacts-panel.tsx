@@ -41,7 +41,7 @@ import type {
   MissingContactExclusion,
   SeedingFailureKind,
   SeedingSkipReason,
-} from "@/lib/xero-missing-contact-seeding"
+} from "@/lib/xero-missing-contact-seeding-shape"
 import { fetchJson, postJson } from "./api"
 import { SectionCard, type ToggleSection } from "./shared"
 
@@ -240,10 +240,19 @@ export function MissingContactsPanel({
   const [error, setError] = useState("")
   const [result, setResult] = useState<RunResult | null>(null)
 
-  const runDryRun = async () => {
+  /*
+    `keepResult` exists because the run ends by re-running the dry run — the
+    population has changed, so leaving a confirm button pointing at the old rows
+    would offer a second push of members that are already done. But a plain
+    refresh also cleared `result`, which is the per-member report of what just
+    happened: who was created, who was linked, to WHICH Xero contact, and who
+    failed with what to do about it. Wiping that is wiping the only record the
+    operator has, half a second after they got it.
+  */
+  const runDryRun = async (options?: { keepResult?: boolean }) => {
     setBusy("dry-run")
     setError("")
-    setResult(null)
+    if (!options?.keepResult) setResult(null)
     try {
       const data = await fetchJson<{ snapshot: Snapshot; notReadyMessage: string | null }>(
         "/api/admin/xero/missing-contacts",
@@ -315,8 +324,9 @@ export function MissingContactsPanel({
       )
       onRefreshOperations()
       // The population has changed, so the reviewed list on screen is now stale:
-      // replace it rather than leaving a confirm button pointing at old rows.
-      await runDryRun()
+      // replace it rather than leaving a confirm button pointing at old rows —
+      // while KEEPING the report of what this run just did.
+      await runDryRun({ keepResult: true })
     } catch (err) {
       setError(err instanceof Error ? err.message : "The contacts could not be created")
     } finally {

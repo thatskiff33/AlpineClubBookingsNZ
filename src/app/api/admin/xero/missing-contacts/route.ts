@@ -1,6 +1,8 @@
 /**
  * The missing-Xero-contact census, and the bounded run that acts on it (#2939).
- * `INV-INT-022`. Engine: `src/lib/xero-missing-contact-seeding.ts`.
+ * `INV-INT-022`. The census is `src/lib/xero-missing-contact-seeding.ts`, the
+ * run `src/lib/xero-missing-contact-seeding-run.ts`, and the shape they return
+ * `src/lib/xero-missing-contact-seeding-shape.ts`.
  *
  * GET is the dry run and is read-only in the strongest sense available here —
  * it is a GET, it needs only `finance:view`, and the engine it calls writes
@@ -15,11 +17,9 @@ import { logAudit } from "@/lib/audit";
 import { requireAdmin } from "@/lib/session-guards";
 import { isXeroConnected } from "@/lib/xero-token-store";
 import { XeroContactEnvironmentUnknownError } from "@/lib/xero-environment-write-gate";
-import {
-  getXeroMissingContactSnapshot,
-  runXeroMissingContactSeedingChunk,
-  SeedingPlanChangedError,
-} from "@/lib/xero-missing-contact-seeding";
+import { getXeroMissingContactSnapshot } from "@/lib/xero-missing-contact-seeding";
+import { runXeroMissingContactSeedingChunk } from "@/lib/xero-missing-contact-seeding-run";
+import { SeedingPlanChangedError } from "@/lib/xero-missing-contact-seeding-shape";
 
 /** Rows returned per bucket. The counts are always the full population. */
 const DEFAULT_ROW_LIMIT = 500;

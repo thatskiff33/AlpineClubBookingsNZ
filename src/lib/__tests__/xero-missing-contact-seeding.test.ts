@@ -71,13 +71,13 @@ import {
   XeroContactCreatePartialSuccessError,
   XeroContactProviderAnswerUnavailableError,
 } from "@/lib/xero-contacts";
+import { getXeroMissingContactSnapshot } from "@/lib/xero-missing-contact-seeding";
+import { runXeroMissingContactSeedingChunk } from "@/lib/xero-missing-contact-seeding-run";
 import {
   DEFAULT_SEEDING_CHUNK,
   DEFAULT_SEEDING_CHUNK_WITH_GROUPING,
-  getXeroMissingContactSnapshot,
-  runXeroMissingContactSeedingChunk,
   SeedingPlanChangedError,
-} from "@/lib/xero-missing-contact-seeding";
+} from "@/lib/xero-missing-contact-seeding-shape";
 
 const SYNCED_AT = new Date("2026-06-01T00:00:00.000Z");
 
