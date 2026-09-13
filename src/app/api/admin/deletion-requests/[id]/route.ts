@@ -607,16 +607,13 @@ export async function POST(
         entityType: "Member",
         entityId: member.id,
         details: body.note ? `Note: ${body.note}` : "No note",
-        // #2695 — DECLARED INTERNAL, owner decision of 9 August 2026. The note
-        // above is what an administrator types into the rejection form, on the
-        // same screen as the "do not notify the member" tick at `:607`. Until
-        // this declaration existed the member read it on their own activity
-        // timeline whenever it was prose rather than JSON, which made that tick
-        // mean the opposite of what the administrator ticking it believes: no
-        // email, and the note published anyway. The member still sees that their
-        // request was declined — this row stays `privacy` and stays on their
-        // timeline — and the reason reaches them through the rejection email, or
-        // deliberately does not.
+        // #2695 (`INV-PRIV-017`) — DECLARED INTERNAL, owner decision of 9 August
+        // 2026. This note is typed on the same form as the "do not notify the
+        // member" tick below, and the member used to read it on their own
+        // timeline whenever it was prose rather than JSON — so the tick meant
+        // the opposite of what the administrator ticking it believes. They still
+        // see that their request was declined; the reason reaches them by email,
+        // or deliberately does not.
         memberDisclosure: { visibility: "internal" },
         ipAddress: ip,
         ...(Object.keys(rejectAuditMetadata).length > 0
@@ -1199,11 +1196,8 @@ export async function POST(
       entityType: "Member",
       entityId: member.id,
       details: `Account anonymised. Cancelled ${cancelledBookingIds.length} future bookings.${body.note ? ` Note: ${body.note}` : ""}`,
-      // #2695 - DECLARED INTERNAL, for the same reason its rejection sibling at
-      // `:592` is. The note is the administrator's, typed on the same form,
-      // and the default is already deny - this says so out loud so the pair
-      // reads as one decision rather than as one writer somebody thought about
-      // and another they did not.
+      // #2695 - DECLARED INTERNAL, like its rejection sibling above. The default
+      // already denies it; saying so keeps the pair one decision.
       memberDisclosure: { visibility: "internal" },
       ipAddress: ip,
       metadata: {

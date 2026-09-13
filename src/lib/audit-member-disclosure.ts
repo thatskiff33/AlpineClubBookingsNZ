@@ -77,17 +77,13 @@ import type { Prisma } from "@prisma/client";
  */
 export const MEMBER_FACING_AUDIT_TEXT_KEY = "memberFacingText";
 
-/** The two things a writer may say about what its subject member reads. */
-export const AUDIT_MEMBER_DISCLOSURE_VISIBILITIES = [
-  "internal",
-  "member-facing",
-] as const;
-
-export type AuditMemberDisclosureVisibility =
-  (typeof AUDIT_MEMBER_DISCLOSURE_VISIBILITIES)[number];
-
 /**
  * A writer's declaration, written as an object LITERAL at the call site.
+ *
+ * The two visibilities live HERE, in the union, and nowhere else. An exported
+ * array of the same two strings was written first and deleted: nothing read it,
+ * and a second spelling of a two-member vocabulary is the drift `INV-SSOT-001`
+ * exists to prevent rather than a convenience.
  *
  * Deliberately not built by a helper function. The audit-writer census reads
  * these from the syntax tree, and a literal `{ visibility: "member-facing" }` is

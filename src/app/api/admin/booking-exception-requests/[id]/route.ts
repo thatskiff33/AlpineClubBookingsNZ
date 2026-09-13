@@ -444,14 +444,10 @@ export async function PATCH(
       outcome: "success",
       summary: "Booking-policy exception request refused",
       details: adminNotes,
-      // #2695 - DECLARED MEMBER-FACING, and this preserves what the member
-      // reads today rather than widening it. `adminNotes` is #2562's
-      // MEMBER-FACING half of a deliberate pair: it is already emailed to the
-      // member on this decision, while `internalNotes` "reaches no member
-      // surface" and is kept out of this row entirely - only
-      // `internalNoteRecorded` says one exists. Without the declaration the
-      // default-deny reader would take the officer's explanation off the
-      // member's own timeline, which is the blunt outcome #2695 refused.
+      // #2695 (`INV-PRIV-017`) - member-facing, which PRESERVES what the member
+      // reads today rather than widening it: `adminNotes` is #2562's member-facing
+      // half, already emailed to them with this decision, while `internalNotes`
+      // reaches no member surface and is not in this row at all.
       memberDisclosure: adminNotes
         ? { visibility: "member-facing", text: adminNotes }
         : { visibility: "internal" },
@@ -688,14 +684,10 @@ export async function PATCH(
         outcome: "success",
         summary: "Booking-policy exception request approved and executed",
         details: adminNotes ?? reviewedReasonCodes.join(", "),
-        // #2695 - DECLARED MEMBER-FACING, and this preserves what the member
-        // reads today rather than widening it. `adminNotes` is #2562's
-        // MEMBER-FACING half of a deliberate pair: it is already emailed to the
-        // member on this decision, while `internalNotes` "reaches no member
-        // surface" and is kept out of this row entirely - only
-        // `internalNoteRecorded` says one exists. Without the declaration the
-        // default-deny reader would take the officer's explanation off the
-        // member's own timeline, which is the blunt outcome #2695 refused.
+        // #2695 (`INV-PRIV-017`) - member-facing, which PRESERVES what the member
+        // reads today rather than widening it: `adminNotes` is #2562's member-facing
+        // half, already emailed to them with this decision, while `internalNotes`
+        // reaches no member surface and is not in this row at all.
         memberDisclosure: adminNotes ?? (reviewedReasonCodes.join(", ") || null)
           ? { visibility: "member-facing", text: adminNotes ?? reviewedReasonCodes.join(", ") }
           : { visibility: "internal" },
