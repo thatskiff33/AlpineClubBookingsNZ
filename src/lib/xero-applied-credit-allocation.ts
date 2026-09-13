@@ -31,7 +31,7 @@ import {
   startXeroSyncOperation,
 } from "@/lib/xero-sync";
 import { callXeroApi, getAuthenticatedXeroClient } from "./xero-api-client";
-import { getResolvedAccountMapping } from "./xero-mappings";
+import { getResolvedAccountMappingWithFallback } from "./xero-mappings";
 import {
   findOrCreateXeroContact,
   retryXeroWriteWithContactRepair,
@@ -215,11 +215,21 @@ async function unallocatedAppliedCents(
  * remainder that has no existing floating note. Idempotent: reuses an existing
  * `APPLIED_CREDIT_REMAINDER_NOTE` link for the payment. Returns the note id.
  *
- * ACCOUNTING-POLICY FLAG (#1620): the minted note uses the shared hutFeeRefunds
- * account mapping. Whether admin-granted / goodwill credit applied to an IB
- * booking should post to a distinct goodwill/write-off account is an open
- * accounting-policy question for the owner (see PR body); it does not change the
- * money math (the note is fully allocated to the invoice immediately).
+ * ACCOUNTING POLICY, SETTLED (#2717; owner, 10 Aug 2026): this note covers
+ * NOTELESS credit — an admin adjustment, or #1547-restored credit whose funding
+ * note a prior cancel consumed. That is discretionary goodwill, a cost the club
+ * chose to bear, not a reduction of what it billed: revenue stays at the billed
+ * figure and the goodwill shows as its own expense line, so a committee can say
+ * at year end that it billed one amount and chose not to collect another. It
+ * therefore posts to the `goodwillWriteOffs` mapping, which the admin picker
+ * offers EXPENSE accounts for. Ordinary hut-fee refunds — money a member
+ * actually paid, handed back — stay on `hutFeeRefunds` and are untouched.
+ *
+ * While `goodwillWriteOffs` is unset the resolver returns the `hutFeeRefunds`
+ * mapping verbatim (`INV-INT-021`), so a club that upgrades and does nothing
+ * posts exactly where it posted before — same code, same item code, same
+ * line-coding decision below. None of this changes the money math: the note is
+ * fully allocated to the invoice immediately, in integer cents.
  */
 async function mintAppliedCreditRemainderNote(params: {
   bookingId: string;
@@ -247,8 +257,9 @@ async function mintAppliedCreditRemainderNote(params: {
 
   const { xero, tenantId } = await getAuthenticatedXeroClient();
   const contactId = await findOrCreateXeroContact(memberId, { createdByMemberId });
-  const refundMapping = await getResolvedAccountMapping("hutFeeRefunds");
-  const accountCode = refundMapping.code ?? "200";
+  const goodwillMapping =
+    await getResolvedAccountMappingWithFallback("goodwillWriteOffs");
+  const accountCode = goodwillMapping.code ?? "200";
 
   const lineItem: LineItem = {
     description: `Account credit applied to booking ${bookingId.slice(0, 8)}`,
@@ -256,13 +267,13 @@ async function mintAppliedCreditRemainderNote(params: {
     unitAmount: amountCents / 100,
     taxType: "OUTPUT2",
   };
-  if (refundMapping.itemCode) {
-    lineItem.itemCode = refundMapping.itemCode;
+  if (goodwillMapping.itemCode) {
+    lineItem.itemCode = goodwillMapping.itemCode;
   }
   if (
-    !refundMapping.itemCode ||
+    !goodwillMapping.itemCode ||
     accountCode !== "200" ||
-    refundMapping.codeExplicitlyConfigured
+    goodwillMapping.codeExplicitlyConfigured
   ) {
     lineItem.accountCode = accountCode;
   }

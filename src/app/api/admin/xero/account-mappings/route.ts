@@ -4,16 +4,51 @@ import { requireAdmin } from "@/lib/session-guards";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
+import { isCodeExplicitlyConfigured } from "@/lib/xero-mappings";
+import {
+  XERO_MAPPING_WRITABLE_KEYS,
+  type XeroMappingWritableKey,
+} from "@/lib/xero-account-mapping-keys";
 
-// entranceFeeAmountCents is intentionally absent (#1931, E5): the legacy flat
-// joining-fee amount is no longer read at runtime (amounts are authoritative
-// in the JoiningFee schedule, migrated on upgrade), so exposing it as a
-// writable mapping would accept edits that silently have no effect. The
+// The writable key set comes from the ONE registry (#2717): adding a mapping
+// key used to mean editing this allowlist, this zod schema, the admin picker's
+// key list and the runtime defaults, with nothing failing if you edited three.
+// entranceFeeAmountCents is deliberately absent from that registry (#1931, E5):
+// the legacy flat joining-fee amount is no longer read at runtime (amounts are
+// authoritative in the JoiningFee schedule, migrated on upgrade), so exposing
+// it as a writable mapping would accept edits that silently have no effect. The
 // stored row (if any) is retained untouched for provenance until E13.
-const VALID_KEYS = [
-  "hutFeesIncome", "hutFeeRefunds", "stripeBankAccount", "stripeFees", "subscriptionIncome",
-  "membershipCancellationCredit", "hutFeeItem", "hutFeeRefundItem", "entranceFeeItem",
-] as const;
+const VALID_KEYS = XERO_MAPPING_WRITABLE_KEYS;
+
+type SerialisedMapping = {
+  code: string | null;
+  itemCode: string | null;
+  /**
+   * Derived, never written (#2717, `INV-INT-021`): whether this club CHOSE the
+   * code, as opposed to inheriting an application default or another mapping's
+   * fallback. The Xero setup screen drives its "falling back to ..." notice off
+   * this canonical flag rather than inferring configuredness from a null code.
+   */
+  codeExplicitlyConfigured: boolean;
+};
+
+/** Every writable key, present whether or not a row exists for it. */
+function serialiseMappings(
+  rows: Array<{ key: string; code: string | null; itemCode: string | null }>,
+): Record<string, SerialisedMapping> {
+  const result: Record<string, SerialisedMapping> = {};
+  for (const key of VALID_KEYS) {
+    result[key] = { code: null, itemCode: null, codeExplicitlyConfigured: false };
+  }
+  for (const row of rows) {
+    result[row.key] = {
+      code: row.code,
+      itemCode: row.itemCode,
+      codeExplicitlyConfigured: isCodeExplicitlyConfigured(row),
+    };
+  }
+  return result;
+}
 
 /**
  * GET /api/admin/xero/account-mappings
@@ -29,16 +64,7 @@ export async function GET() {
       select: { key: true, code: true, itemCode: true },
     });
 
-    // Return as a key→{code, itemCode} object for easy consumption
-    const result: Record<string, { code: string | null; itemCode: string | null }> = {};
-    for (const key of VALID_KEYS) {
-      result[key] = { code: null, itemCode: null };
-    }
-    for (const m of mappings) {
-      result[m.key] = { code: m.code, itemCode: m.itemCode };
-    }
-
-    return NextResponse.json(result);
+    return NextResponse.json(serialiseMappings(mappings));
   } catch (error) {
     logger.error({ err: error }, "Failed to fetch account mappings");
     return NextResponse.json({ error: "Failed to fetch account mappings" }, { status: 500 });
@@ -48,19 +74,18 @@ export async function GET() {
 const MappingValueSchema = z.object({
   code: z.string().nullable().optional(),
   itemCode: z.string().nullable().optional(),
+  // Accepted and IGNORED: the GET response carries this derived flag, so the
+  // settings panel round-trips it on save. Declaring it here keeps that
+  // round-trip deliberate rather than relying on zod silently stripping it —
+  // the write below reads `code` and `itemCode` only.
+  codeExplicitlyConfigured: z.boolean().optional(),
 });
 
-const UpdateMappingsSchema = z.object({
-  hutFeesIncome: MappingValueSchema.optional(),
-  hutFeeRefunds: MappingValueSchema.optional(),
-  stripeBankAccount: MappingValueSchema.optional(),
-  stripeFees: MappingValueSchema.optional(),
-  subscriptionIncome: MappingValueSchema.optional(),
-  membershipCancellationCredit: MappingValueSchema.optional(),
-  hutFeeItem: MappingValueSchema.optional(),
-  hutFeeRefundItem: MappingValueSchema.optional(),
-  entranceFeeItem: MappingValueSchema.optional(),
-});
+const UpdateMappingsSchema = z.object(
+  Object.fromEntries(
+    VALID_KEYS.map((key) => [key, MappingValueSchema.optional()]),
+  ) as Record<XeroMappingWritableKey, z.ZodOptional<typeof MappingValueSchema>>,
+);
 
 /**
  * PUT /api/admin/xero/account-mappings
@@ -88,7 +113,7 @@ export async function PUT(request: NextRequest) {
 
   try {
     type MappingValue = { code?: string | null; itemCode?: string | null };
-    const ops = (Object.entries(updates) as [typeof VALID_KEYS[number], MappingValue | undefined][])
+    const ops = (Object.entries(updates) as [XeroMappingWritableKey, MappingValue | undefined][])
       .filter(([, val]) => val !== undefined)
       .map(([key, val]) => {
         const updateData: { code?: string | null; itemCode?: string | null } = {};
@@ -114,15 +139,8 @@ export async function PUT(request: NextRequest) {
     const all = await prisma.xeroAccountMapping.findMany({
       select: { key: true, code: true, itemCode: true },
     });
-    const result: Record<string, { code: string | null; itemCode: string | null }> = {};
-    for (const key of VALID_KEYS) {
-      result[key] = { code: null, itemCode: null };
-    }
-    for (const m of all) {
-      result[m.key] = { code: m.code, itemCode: m.itemCode };
-    }
 
-    return NextResponse.json(result);
+    return NextResponse.json(serialiseMappings(all));
   } catch (error) {
     logger.error({ err: error }, "Failed to update account mappings");
     return NextResponse.json({ error: "Failed to update account mappings" }, { status: 500 });

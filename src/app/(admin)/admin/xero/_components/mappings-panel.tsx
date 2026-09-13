@@ -25,16 +25,19 @@ import {
 import { useClubTime } from "@/components/club-time-provider"
 import {
   ACCOUNT_MAPPING_KEYS,
-  CREDIT_ITEM_MAPPING_KEYS,
-  formatReferenceCacheLabel,
   MAPPING_DESCRIPTIONS,
   MAPPING_LABELS,
   MAPPING_TYPE_FILTER,
+  resolveAccountMappingSource,
+  type AccountMappingKey,
+} from "@/lib/xero-account-mapping-keys"
+import {
+  CREDIT_ITEM_MAPPING_KEYS,
+  formatReferenceCacheLabel,
   SectionCard,
   type ToggleSection,
 } from "./shared"
 import type {
-  AccountMappingKey,
   AccountMappings,
   CreditItemMappingKey,
   EntranceFeeMap,
@@ -339,6 +342,17 @@ function AccountMappingRow({
   const filtered = accounts.filter((account) => account.type === typeFilter)
   const currentCode = mappings[mappingKey]?.code
   const matchedAccount = filtered.find((account) => account.code === currentCode)
+  // INV-INT-021: while a mapping with a registered fallback is unset, say so
+  // here and name where its entries are going. Driven by the API's canonical
+  // `codeExplicitlyConfigured` flag — the panel never decides "configured?" for
+  // itself from a null code — and by the same resolver the runtime path uses,
+  // so the notice cannot claim a destination the server would not pick.
+  const { sourceKey, usingFallback } = resolveAccountMappingSource(
+    mappingKey,
+    mappings[mappingKey]?.codeExplicitlyConfigured ?? false,
+  )
+  const fallbackCode = usingFallback ? mappings[sourceKey]?.code : null
+  const fallbackAccount = accounts.find((account) => account.code === fallbackCode)
   return (
     <div className="grid grid-cols-3 items-start gap-4">
       <div>
@@ -358,6 +372,16 @@ function AccountMappingRow({
         ) : (
           <p className="rounded-md border border-border bg-muted px-3 py-2 text-sm">{matchedAccount ? `${matchedAccount.code} - ${matchedAccount.name}` : currentCode || <span className="text-muted-foreground">Not configured (using default)</span>}</p>
         )}
+        {usingFallback ? (
+          <p className="mt-1 text-xs text-muted-foreground">
+            Not set, so entries keep posting to the{" "}
+            <span className="font-medium">{MAPPING_LABELS[sourceKey]}</span> mapping
+            {fallbackAccount ? ` (${fallbackAccount.code} - ${fallbackAccount.name})` : fallbackCode ? ` (${fallbackCode})` : ""}
+            , exactly as they did before this setting existed. Choosing a{" "}
+            {typeFilter.toLowerCase()} account here changes where new entries post; entries
+            already in Xero are never reclassified.
+          </p>
+        ) : null}
       </div>
     </div>
   )

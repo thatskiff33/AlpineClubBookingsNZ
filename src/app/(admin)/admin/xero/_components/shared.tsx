@@ -25,7 +25,6 @@ import { formatRedactedJson } from "@/lib/redact-sensitive-json"
 import { cn } from "@/lib/utils"
 import { CHIP_TONE_CLASSES, type SemanticTone } from "@/lib/chip-tones"
 import type {
-  AccountMappingKey,
   CreditItemMappingKey,
   SectionKey,
   SyncReport,
@@ -317,46 +316,12 @@ export function formatReferenceCacheLabel(clubTime: BoundClubTime, label: string
   return `${label}: ${sourceLabel}, refreshed ${formatCacheStamp(clubTime, cache.lastRefreshedAt)}, expires ${formatCacheStamp(clubTime, cache.expiresAt)}`
 }
 
-export const ACCOUNT_MAPPING_KEYS: AccountMappingKey[] = [
-  "hutFeesIncome",
-  "hutFeeRefunds",
-  "stripeBankAccount",
-  "stripeFees",
-  "subscriptionIncome",
-  "membershipCancellationCredit",
-]
-
+// The account-mapping key list, labels, descriptions and account-type filters
+// moved to `@/lib/xero-account-mapping-keys` (#2717) — one registry the API
+// route, the runtime resolver, the seed and this picker all read, so a new
+// mapping key cannot land in three of the four. This list is the picker's own
+// ordering of the item-code rows and stays here.
 export const CREDIT_ITEM_MAPPING_KEYS: CreditItemMappingKey[] = ["hutFeeRefundItem", "membershipCancellationCredit"]
-
-export const MAPPING_LABELS: Record<string, string> = {
-  hutFeesIncome: "Hut Fees Income",
-  hutFeeRefunds: "Hut Fee Refunds",
-  stripeBankAccount: "Stripe Bank Account",
-  stripeFees: "Stripe Fees",
-  subscriptionIncome: "Subscription Income",
-  membershipCancellationCredit: "Membership Cancellation Credits",
-  hutFeeRefundItem: "Hut Fee Refund Item",
-}
-
-export const MAPPING_DESCRIPTIONS: Record<string, string> = {
-  hutFeesIncome: "Sales account for booking income line items",
-  hutFeeRefunds: "Account for refund credit notes",
-  stripeBankAccount: "Bank account used to record Stripe payments",
-  stripeFees: "Expense account for Stripe transaction fees (optional)",
-  subscriptionIncome: "Account code used to detect Annual Membership Fee invoices",
-  membershipCancellationCredit:
-    "Credit note account and item used to reverse unpaid Annual Membership Fee invoices when membership cancellation is approved",
-  hutFeeRefundItem: "Xero Item for refund credit note line items",
-}
-
-export const MAPPING_TYPE_FILTER: Record<AccountMappingKey, string> = {
-  hutFeesIncome: "REVENUE",
-  hutFeeRefunds: "REVENUE",
-  stripeBankAccount: "BANK",
-  stripeFees: "EXPENSE",
-  subscriptionIncome: "REVENUE",
-  membershipCancellationCredit: "REVENUE",
-}
 
 function SyncReportSection({
   title,
