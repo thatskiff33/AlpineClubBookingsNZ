@@ -3067,7 +3067,7 @@ path whose whole point is that the row is what the member's pay page shows. Doin
 it properly means claiming BEFORE the provider call and reconciling the provider
 afterwards, which buys a new failure mode (a claim recorded against an intent the
 provider then refused to raise) and is a design change to a gated money path.
-It is carried forward as its own issue rather than widened into #3371.
+It is carried forward as #3402 rather than widened into #3371.
 
 The contrast is instructive and it is one paragraph down: the refund leg's
 `applyLocalRefundAllocation` on this same lockless path IS a real compare-and-set,

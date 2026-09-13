@@ -26,6 +26,6 @@
   invoice naming it. The booking-versus-Xero repair report is what finds those:
   it flags the change as missing its invoice and offers to raise it. This is not
   new — the same is true of ordinary changes since the September fix — and it is
-  tracked separately rather than folded in here, because putting the earlier
-  change's money on the later change's invoice would double-bill every booking
-  whose earlier invoice HAD been issued.
+  tracked separately as #3403 rather than folded in here, because putting the
+  earlier change's money on the later change's invoice would double-bill every
+  booking whose earlier invoice HAD been issued.
