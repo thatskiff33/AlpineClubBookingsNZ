@@ -95,10 +95,8 @@ export default function LodgeConfigurationHubPage() {
   // Partner-shared double-bed slots on top of the base figure (#1745), shown
   // broken out so an admin can see the extra is partner-only.
   const [partnerSharedHeadroom, setPartnerSharedHeadroom] = useState(0);
-  // The shareable inventory those slots come from. The saved headroom above is
-  // the figure for the SAVED capacity; the guidance beside the field needs the
-  // double-bed count so it can preview the headroom for a capacity still being
-  // typed (#2724) through the same rule the server resolves with.
+  // The shareable inventory those slots come from: the headroom above is the
+  // SAVED capacity's, and the guidance previews an unsaved one (#2724).
   const [activeDoubleBedCount, setActiveDoubleBedCount] = useState(0);
   const [capacityOverride, setCapacityOverride] = useState("");
   const [savedCapacityOverride, setSavedCapacityOverride] = useState("");
@@ -494,12 +492,9 @@ export default function LodgeConfigurationHubPage() {
                 type="number"
                 min={MIN_CONFIGURED_LODGE_CAPACITY}
                 max={MAX_CONFIGURED_LODGE_CAPACITY}
-                // Both the fallback hint and the live guidance describe this
-                // field, so both are announced when an officer reaches it —
-                // including one who tabs back without typing, and a view-only
-                // officer who never types at all (#2724). The guidance is a
-                // description rather than a live region on purpose: see
-                // LodgeCapacityGuidance.
+                // Both notes describe this field, so both are announced on
+                // focus — why a description and not a live region is on
+                // LodgeCapacityGuidance (#2724).
                 aria-describedby="lodge-capacity-fallback-hint lodge-capacity-guidance"
                 value={capacityOverride}
                 onChange={(e) => setCapacityOverride(e.target.value)}
