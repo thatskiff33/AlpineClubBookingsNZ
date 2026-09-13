@@ -409,11 +409,12 @@ export const adminSetupAndConfigurationHelpEntries: HelpEntry[] = [
     "/admin/rooms-beds",
     help(
       "Rooms & Beds",
-      "Rooms & Beds configures lodge room and bed inventory used by capacity and bed allocation.",
+      "Rooms & Beds configures lodge room and bed inventory used by capacity and bed allocation, plus that lodge's allocation preferences.",
       [
         "Create or edit rooms and beds to match the physical lodge layout.",
         "Import from config only when you intend to align database beds to configured defaults.",
         "Deactivate beds rather than deleting history where existing allocations may refer to them.",
+        "Allocation preferences at the foot of the page apply to the lodge chosen at the top, and only when one lodge is chosen. Switching lodge discards an unsaved preference edit rather than carrying it across.",
       ],
       [
         {

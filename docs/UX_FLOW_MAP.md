@@ -18,21 +18,30 @@ unauthorized delivery copy is sanitized. Booking-page actions such as `#consent`
 and bearer consent routes keep their exact target. A rolled-back pre-#2362 retry
 worker cannot see new-version booking retry bodies.
 
-## Bed-allocation preferences (#2593)
+## Bed-allocation preferences (#2593, relocated #2937)
 
-A bookings-view admin opens `/admin/bed-allocation`, selects a lodge, and can
-read that lodge's **Allocation preferences** above the drag controls. The board
-settles on a real lodge before it shows anything (#2701), so this card is never
-read against a club-wide board: with **All lodges** selected it says preferences
-are per-lodge and asks for one, and if `/api/admin/lodges` failed it says so
-rather than asking for a choice there is nothing to make. A
-bookings-edit admin clicks **Edit**, stages the auto-allocation switch and the
+A bookings-view admin opens **Bookings Setup → Rooms & Beds**
+(`/admin/rooms-beds`), chooses a lodge at the top of the page, and reads that
+lodge's **Allocation preferences** at the foot of it — beside the rooms and beds
+the preferences order guests into. The Bed Allocation board no longer hosts the
+editor; it carries a link to this page, pre-pointed at the board's own lodge
+when it has one and plain when it does not, because a board with no settled
+lodge must not invent one for a link any more than for a write.
+
+The card takes the page's whole settled lodge scope rather than a lodge id, so
+only one of its six states is a write target. `lodge` loads, edits and saves
+that lodge alone. `all`, `loading`, `failed`, `forbidden` and a club with no
+active lodge are visible and read-only: each says which it is, requests nothing,
+and offers no edit path — `failed` points at the page's one **Try again** rather
+than growing a second retry. Switching lodge discards an unsaved draft, and the
+draft carries the lodge it was LOADED from, so even a host that dropped the
+per-lodge key could not write one lodge's edits onto another.
+
+A bookings-edit admin clicks **Edit**, stages the auto-allocation switch and the
 ordered priorities (drag or arrow movement, Enable/Disable), then chooses
-**Save** or **Cancel**. Save remains disabled while pristine and, after a
-successful write, reloads the complete lodge/date dashboard because both the
-header mode and suggestions can change. If that recompute fails after the write,
-the settings card reports the successful save while the board clears and offers
-**Try again**; it never presents the previous lodge's board as current.
+**Save** or **Cancel**. Save remains disabled while pristine. Saving changes what
+is proposed from the next allocation run onwards; it never rearranges or
+re-approves allocations that already exist.
 
 The enabled values are compared top-to-bottom: keep the booking together, keep
 each guest in the same room/bed, honour the requested room, and keep directly
@@ -42,9 +51,10 @@ holds, and approval/displacement rules always outrank them. Copy must describe
 this as a bounded deterministic heuristic, not a globally optimal arrangement,
 and must say that saving affects future suggestions/reconciliation only rather
 than moving existing guests. Lodge changes abort or ignore stale reads and stale
-optimistic callbacks. A view-only role sees one section banner and disabled
-Edit/Save affordances; the API independently enforces `bookings:view` on GET and
-`bookings:edit` on PUT.
+optimistic callbacks. A view-only role sees the card's own section banner and
+disabled Edit/Save affordances; the API independently enforces `bookings:view`
+on GET and `bookings:edit` on PUT. Neither the permission, the storage, nor the
+route changed when the editor moved.
 
 A refused load or save keeps its states distinct and surfaces no internal detail
 (#2931). They are told apart by what the BODY says, never by the status alone:
@@ -57,9 +67,9 @@ card reads the name:
 
 - `MODULE_DISABLED` — the module is off, and the copy names the `support` role
   that can turn it on rather than telling a bookings officer to do it. Only
-  reachable by switching the module off while the board is open: the
-  `/admin/bed-allocation` page is itself feature-gated, so with the module
-  already off the whole board is a 404 page and this card never renders.
+  reachable by switching the module off while the page is open: `/admin/rooms-beds`
+  is itself feature-gated on `bedAllocation`, so with the module already off the
+  whole page is a 404 and this card never renders.
 - 404 without that code, and 401 — the sign-in behind the tab has expired.
 - 403 — permission-specific. The save keeps `ADMIN_FORBIDDEN_SAVE_REASON`; the
   load has its own read-shaped sentence, since "this change was not saved" is

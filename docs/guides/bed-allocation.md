@@ -86,45 +86,26 @@ year in one go).
    **If the club has no active lodge**, the board says that instead of loading,
    with a link to Lodge settings.
 
-   ![Bed Allocation board: the date controls, allocation preferences, the "Bookings approved, awaiting allocation" pool with Run Auto Allocation, and the room-by-night Allocation Board](../images/admin/admin-bed-allocation.png)
+   ![Bed Allocation board: the date controls, the "Bookings approved, awaiting allocation" pool with Run Auto Allocation, and the room-by-night Allocation Board](../images/admin/admin-bed-allocation.png)
 
-### Set this lodge's allocation preferences
+### Where this lodge's allocation preferences are set
 
-1. Choose the lodge whose board you want to work on. Preferences never cross
-   lodge boundaries, including in a single-lodge club.
-2. In **Allocation preferences**, click **Edit**. Tick **Auto allocation
-   enabled** if the board and booking lifecycle should propose placements for
-   this lodge.
-3. Put the enabled preferences in the order you want them compared. Drag a row
-   or use its up/down buttons; **Disable** removes it from the comparison and
-   **Enable** adds it back at the bottom.
-4. Click **Save**. It is disabled until something changed. **Cancel** restores
-   the saved snapshot. A successful save reloads the board because its header
-   mode and suggestions may both have changed.
+Auto allocation and the order the preferences are compared in are **not** edited
+on this board. They are configuration an operator revisits rarely, so they live
+beside the rooms and beds they order guests into: **Bookings Setup → Rooms &
+Beds** (`/admin/rooms-beds`), at the bottom of the page. The board carries a link
+to it, already pointed at the lodge you are looking at, and the step-by-step is
+in [Rooms & Beds](rooms-beds.md#set-this-lodges-allocation-preferences).
 
-   **If a save is refused, the card says why**, and your staged changes stay in
-   edit mode so you can correct the problem and click **Save** again. It repeats
-   the club system's own explanation — for example that the lodge is no longer
-   active. Four refusals have their own wording:
+Changes made there apply to the next allocation run on this board. They never
+rearrange or re-approve allocations that already exist.
 
-   - An admin role that can view bookings but not change them is told its role
-     cannot make changes. On a failed **load**, a role that cannot even view
-     bookings is told that instead.
-   - If your sign-in has expired while this page sat open, the card says so and
-     tells you to sign in again — in another tab is fine — rather than blaming
-     anything about the club's settings.
-   - If somebody switches **Bed Allocation** off while you have the board open,
-     the card says the module is switched off and that someone who can manage
-     Feature modules can turn it on. This is the only way you can see that
-     message: the whole Bed Allocation area is hidden while the module is off,
-     so with it already off this page is simply not there to open.
-   - If the reply cannot be read at all — a gateway error page rather than an
-     answer from the club system — the card falls back to "Failed to save
-     allocation preferences" rather than showing raw technical output.
-5. In the separate **Board drag controls** card, optionally tick
+1. In the separate **Board drag controls** card, optionally tick
    **Single-night drag mode**. This remains browser-only and is not saved: when
    on, dragging a guest allocates only the night you drop on; when off, dropping
    allocates the guest's visible stay.
+
+### How the preferences are compared
 
 The shipped preference order is:
 
@@ -395,11 +376,9 @@ that booking, so the booking's own **Audit log** link finds it.
 | Date In / Date Out | The night range shown on the board | today to today + 7 | NZ date-only; window capped at 31 nights and refused (not shortened) if longer |
 | ‹ / › month steppers | Move the whole board window one calendar month | — | Window is trimmed back to 31 nights when a month change widens it, and says so |
 | Assign range… | Place one guest in one bed across a stay of any length | — | Up to 366 nights; all-or-nothing, then an explicit free-nights option; auto-approves the beds |
-| Auto allocation enabled | Let the board and booking lifecycle propose bed placements for the selected lodge | on | Saved per lodge; enables Run Auto Allocation |
-| Allocation preference order | Compare feasible layouts from top to bottom | booking cohesion → stay continuity → requested room → direct-family cohesion | Drag or use up/down while editing; each item can be disabled |
 | Single-night drag mode | Drag allocates one night vs the whole stay | off | Client-side only, not saved |
 | Move an existing chip | Review a bed change while preserving original nights | — | Choose this allocation night or every existing night for this person on the booking (including off-screen rows, up to 366); hovered date is ignored; changed approved rows become Manual drafts; all-noop confirmation is audit-free |
-| Edit / Save / Cancel | Stage, persist, or discard this lodge's allocation preferences | — | Needs bookings edit; Save is dirty-gated |
+| Allocation preferences link | Opens this lodge's auto-allocation switch and preference order in Bookings Setup → Rooms & Beds | — | Carries the board's lodge when it has one; a plain link when it does not. Editing needs bookings edit ([Rooms & Beds](rooms-beds.md#set-this-lodges-allocation-preferences)) |
 | Run Auto Allocation | Apply suggested placements | — | Needs auto-allocation on, suggestions available, and a single lodge selected |
 | Approve Visible | Approve the visible draft allocations | — | Disabled when nothing is unapproved, or while All lodges is selected (#2701) |
 | Reset allocations… | Review removal of selected categories in this lodge's visible window | — | Requires a preview; never includes off-screen nights and never runs automatic allocation afterwards; needs a single lodge selected |
