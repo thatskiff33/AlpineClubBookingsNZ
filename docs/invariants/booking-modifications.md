@@ -434,8 +434,12 @@ the engine prefers an exact tier row and falls back to the flat row. The rate
 resolver classifies every guest as `OWN_TYPE` (a `MEMBER_RATE` member on their
 own rows), `NON_MEMBER_DEFAULT` (a true non-member on the `NON_MEMBER` rows), or
 `TYPE_POLICY_FORCED` (a member whose type forces the non-member rate, priced on
-the `NON_MEMBER` rows). A missing rate for a type × active season is a hard
-throw at pricing plus a setup-readiness warning. The group discount no longer
+the `NON_MEMBER` rows). A missing rate for a type × in-scope season is a hard
+throw at pricing, plus an early warning on the Hut Fees section of Admin > Fees
+and on setup readiness — warnings only: neither invents a rate, substitutes zero
+or inherits another type's amount. Which types owe rows is asked in exactly one
+place, `membership-type-rate-coverage.ts`; a re-spelling elsewhere fails
+`rate-bearing-membership-type-census.test.ts` (#2933). The group discount no longer
 flips a boolean: it substitutes `GroupDiscountSetting.rateMembershipTypeId`
 (seeded to `FULL`) **only** for `NON_MEMBER_DEFAULT` guests, so members keep
 their own type's rate and `TYPE_POLICY_FORCED` members are excluded — the two

@@ -30,6 +30,20 @@ executes that seeder under `E2E_MULTI_LODGE=1`, so the required **E2E
 multi-lodge** branch-protection check would fail at seed time. Do not
 reintroduce a boolean member/non-member rate key.
 
+**Which types owe rate rows is asked in exactly one place**, and since #2933 that
+place is `src/lib/membership-type-rate-coverage.ts`. The rule has one exception —
+`NON_MEMBER` carries `NON_MEMBER_RATE` like `ASSOCIATE` and `SCHOOL` do and is
+nonetheless the rate holder — and a reader who drops the exception writes a rule
+that is right about every type except the one an ordinary public booking hits.
+The same module computes which required rates are MISSING, tier by tier and
+including the flat-row fallback. Two surfaces render that one result: the Hut
+Fees section of **Admin > Fees** flags each affected season while the officer is
+setting rates, and setup readiness lists them on the Seasons And Rates step. Both
+are early warnings and neither is a price — no zero is assumed, no other type's
+rate is inherited, and pricing still hard-throws at runtime when a required row
+is absent. `rate-bearing-membership-type-census.test.ts` fails any second
+spelling of the rule under `src/`.
+
 E7 (#1933) added the grouped public presentation and token grammar on top of
 this source, not a re-key. Xero
 hut-fee item codes re-key the same way via `XeroItemCodeMapping.membershipTypeId`
