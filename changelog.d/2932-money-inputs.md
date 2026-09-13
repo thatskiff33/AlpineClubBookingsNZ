@@ -11,7 +11,19 @@
   refused with a message instead of vanishing. Counts, percentages and durations
   are unchanged and still numeric. The refund approval screen's prefilled amount
   is also now worked out in whole cents rather than in dollars-and-fractions.
+- **The refund review screen no longer offers a refund it cannot pay.** The
+  "Max refundable" figure was worked out on the screen instead of by the rule
+  the approve step actually applies, so a booking whose payment never went
+  through still showed an amount, and opening a review for a booking with no
+  payment left the previous member's amount sitting in the box. Both now come
+  from the one rule, and the box is empty when there is nothing to refund.
+- **Four more dollar boxes now say so the same way as the rest** — the AI
+  assistant's monthly cap and all three gross-amount filters on the payments
+  screen. They already behaved correctly; they spelled it by hand, which is how
+  the other seven were missed. Nothing about them changes on screen.
 - **A new test stops this returning.** It reads every numeric box in the admin
   tree, works out from the field itself whether it holds money, and fails the
   build if a money one is a browser number input — while deliberately leaving
-  the eighty-odd legitimate count, percentage and duration boxes alone.
+  the 73 legitimate count, percentage and duration boxes alone. It is checked
+  against the tree as it was BEFORE this change too, so it is proved to catch
+  all seven of the boxes fixed here rather than only to be quiet today.

@@ -1127,6 +1127,40 @@ route directory and asserts the guard on every site it finds, with a vacuity
 check so an empty scan fails rather than passes. A count is not the only thing a
 merge or a move can quietly disarm; a hard-coded path is the other.
 
+### A worked example of binding the walk: the money-box guard
+
+[`money-number-input-guard.test.ts`](../src/lib/__tests__/money-number-input-guard.test.ts)
+is in this family and is worth knowing about **before** you trip it, because it
+polices markup rather than a call site. `INV-MONEY-003` says a box someone types
+dollars into is `type="text"` with `inputMode="decimal"` — `MONEY_INPUT_PROPS`
+from [`money-input.ts`](../src/lib/money-input.ts) — never `type="number"`, and
+this guard is the mechanical half of that rule. It walks every non-test `.tsx`
+under `src/` with the TypeScript parser, decides from each `type="number"`
+control's own `id`, `value`, `placeholder` and bound label whether it holds
+money, and fails naming the file and line. The seventy-three legitimate count,
+percentage and duration boxes stay numeric; that discrimination, not the
+detection, is the deliverable.
+
+Two things it does differently from the censuses above, both deliberate:
+
+- **It binds the walk by NAME, not by a total.** `jsxSourceFiles()` reaching
+  "more than 200 files" was true of a walk that had stopped reading two thirds
+  of a 627-file tree, and one directory name added to the scanner's skip list is
+  all that takes. The suite instead asserts the walk reached every subtree in
+  `REQUIRED_SCANNED_SUBTREES`, so a skipped one fails saying which. That is
+  strictly stronger than a total against the mutation that matters, and it does
+  not have to be re-measured by every lane that adds an admin page — which a
+  pinned control count would, making it exactly the merge hazard above.
+- **It proves itself against the tree BEFORE the change that added it.** The
+  seven boxes #2932 converted are in the suite verbatim as they stood, and each
+  must still be flagged after every helper, state variable and prop name in it
+  has been renamed away. A guard that only shows the tree is quiet today cannot
+  tell you whether it would have caught the defect it was written for.
+
+Like every disk-scanning test here it has no import edge to the `.tsx` files it
+reads, so `npm run test:related` cannot select it from a diff. Run it by name
+when a change adds or edits a numeric input.
+
 ## Mocking `requireAdmin`: reference the helper, never wrap it
 
 A fourth convention in the same family — written the obvious way, a suite that
