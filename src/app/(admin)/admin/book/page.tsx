@@ -1460,16 +1460,19 @@ export default function AdminBookPage() {
                   created either way; by default they are <strong>not</strong>{" "}
                   emailed. Choose to send the standard confirmation / hold email
                   to {selectedMember?.firstName ?? "them"} only if you want to —
-                  your choice is recorded in the audit log. A Xero invoice email
-                  (Internet Banking) is still sent regardless of this choice.
+                  your choice is recorded in the audit log. Choosing not to email
+                  also stops Xero emailing the invoice for this booking (Internet
+                  Banking). The invoice is still created, and you can send it from
+                  Xero later.
                 </>
               ) : (
                 <>
                   The booking will be created either way. Choose whether{" "}
                   {selectedMember?.firstName ?? "the member"} receives the
                   standard confirmation / hold email — your choice is recorded in
-                  the audit log. A Xero invoice email (Internet Banking) is still
-                  sent regardless of this choice.
+                  the audit log. Choosing not to email also stops Xero emailing
+                  the invoice for this booking (Internet Banking). The invoice is
+                  still created, and you can send it from Xero later.
                 </>
               )}
             </DialogDescription>
