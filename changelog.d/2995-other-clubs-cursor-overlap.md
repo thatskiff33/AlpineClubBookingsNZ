@@ -15,3 +15,9 @@
   an entry your club edited more recently is still never overwritten by the
   older copy the server holds. Nothing changes about the first download after
   you connect, and nothing changes about what your club uploads.
+
+  The re-ask needs the central server to mark its place with a timestamp, which
+  is what the Alpine Central Server does. A server that marks its place with a
+  reference of its own instead gets no overlap — there is no way to ask for "a
+  minute before" a reference — and the application log now says so on each such
+  download, because the summary looks identical either way.
