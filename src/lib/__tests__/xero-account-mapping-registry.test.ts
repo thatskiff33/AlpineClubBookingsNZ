@@ -31,6 +31,7 @@ import {
   ACCOUNT_MAPPING_DEFAULTS,
   ACCOUNT_MAPPING_FALLBACK_KEYS,
   ACCOUNT_MAPPING_KEYS,
+  accountsForMappingKey,
   MAPPING_DESCRIPTIONS,
   MAPPING_LABELS,
   MAPPING_TYPE_FILTER,
@@ -109,6 +110,22 @@ describe("goodwillWriteOffs — the owner's 10 Aug 2026 decision, pinned", () =>
   it("falls back to hutFeeRefunds and ships with no default code of its own", () => {
     expect(ACCOUNT_MAPPING_FALLBACK_KEYS.goodwillWriteOffs).toBe("hutFeeRefunds");
     expect(ACCOUNT_MAPPING_DEFAULTS.goodwillWriteOffs).toBeNull();
+  });
+
+  it("offers the picker EXPENSE accounts only, and never a revenue or bank one", () => {
+    const chartOfAccounts = [
+      { code: "200", name: "Hut Fees", type: "REVENUE" },
+      { code: "404", name: "Goodwill", type: "EXPENSE" },
+      { code: "477", name: "Donations Made", type: "EXPENSE" },
+      { code: "606", name: "Business Bank Account", type: "BANK" },
+    ];
+    expect(
+      accountsForMappingKey("goodwillWriteOffs", chartOfAccounts).map((a) => a.code),
+    ).toEqual(["404", "477"]);
+    // The refund mapping is unchanged and still offers revenue accounts.
+    expect(
+      accountsForMappingKey("hutFeeRefunds", chartOfAccounts).map((a) => a.code),
+    ).toEqual(["200"]);
   });
 
   it("is offered in the setup screen, so the unset state is discoverable", () => {

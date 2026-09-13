@@ -25,6 +25,7 @@ import {
 import { useClubTime } from "@/components/club-time-provider"
 import {
   ACCOUNT_MAPPING_KEYS,
+  accountsForMappingKey,
   MAPPING_DESCRIPTIONS,
   MAPPING_LABELS,
   MAPPING_TYPE_FILTER,
@@ -339,7 +340,9 @@ function AccountMappingRow({
   isEditingMappings: boolean
 }) {
   const typeFilter = MAPPING_TYPE_FILTER[mappingKey]
-  const filtered = accounts.filter((account) => account.type === typeFilter)
+  // INV-INT-021: the offered accounts come from the registry's filter, so this
+  // picker cannot offer a type the key did not declare.
+  const filtered = accountsForMappingKey(mappingKey, accounts)
   const currentCode = mappings[mappingKey]?.code
   const matchedAccount = filtered.find((account) => account.code === currentCode)
   // INV-INT-021: while a mapping with a registered fallback is unset, say so

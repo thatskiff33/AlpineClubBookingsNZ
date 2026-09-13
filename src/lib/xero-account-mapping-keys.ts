@@ -189,6 +189,21 @@ export const ACCOUNT_MAPPING_FALLBACK_KEYS: Readonly<
   ).map((definition) => [definition.key, definition.fallbackKey]),
 );
 
+/**
+ * The accounts a key's picker may offer (`INV-INT-021`).
+ *
+ * The filter lives here rather than inline in the picker so "goodwill offers
+ * expense accounts only" is a fact one unit test can hold, and so a picker
+ * cannot come to filter on anything other than the key's declared type.
+ */
+export function accountsForMappingKey<Account extends { type: string }>(
+  key: AccountMappingKey,
+  accounts: readonly Account[],
+): Account[] {
+  const accountType = MAPPING_TYPE_FILTER[key];
+  return accounts.filter((account) => account.type === accountType);
+}
+
 export function isAccountMappingKey(key: string): key is AccountMappingKey {
   return (ACCOUNT_MAPPING_KEYS as readonly string[]).includes(key);
 }
