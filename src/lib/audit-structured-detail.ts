@@ -222,6 +222,16 @@ export function reduceStructuredDetail(
   const entries = Object.entries(source);
   const originalLength = JSON.stringify(source).length;
 
+  // ALREADY FITS, so say nothing. Reachable because the caller decides to come
+  // here from the length of the RAW text, while this measures the SANITISED
+  // value — and sanitising can shorten a payload a long way, replacing a
+  // sensitive key's value with `[REDACTED]` or clipping a long string. Marking
+  // such a row `_truncated` would be a claim about it that is not true, which
+  // is the one thing this module exists not to do.
+  if (originalLength <= budget) {
+    return { text: JSON.stringify(source), droppedKeys: [] };
+  }
+
   const kept = new Map<string, unknown>();
   const skipped: Array<[string, unknown]> = [];
   // `{}` is two characters; each pair adds its own cost on top.

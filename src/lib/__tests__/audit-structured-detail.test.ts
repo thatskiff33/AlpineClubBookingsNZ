@@ -53,6 +53,7 @@ import {
   buildStructuredAuditLogCreateArgs,
   sanitizeAuditMetadata,
 } from "@/lib/audit";
+import { readDeclaredMemberText } from "@/lib/audit-member-disclosure";
 import {
   AUDIT_TRUNCATION_SUFFIX,
   REDUCED_DETAIL_KEYS,
@@ -333,6 +334,27 @@ describe("reducing a payload that will not fit (#2704)", () => {
     expect(storedDetails(small)).toBe(small);
   });
 
+  it("does not claim truncation when sanitising made the payload fit", () => {
+    // The over-budget path is entered from the length of the RAW text, but the
+    // reduction measures the SANITISED value — and redaction can shorten a
+    // payload a long way. A row marked `_truncated` that was not truncated is a
+    // false claim, which is the one thing this rule exists not to make.
+    const stored =
+      storedDetails(
+        JSON.stringify({
+          bookingId: "bkg_1",
+          // Redacted wholesale by key name, taking 1100 characters with it.
+          password: "p".repeat(1100),
+        }),
+      ) ?? "";
+    const parsed = JSON.parse(stored) as Record<string, unknown>;
+
+    expect(parsed.bookingId).toBe("bkg_1");
+    expect(parsed.password).toBe("[REDACTED]");
+    expect(parsed[REDUCED_DETAIL_KEYS.truncated]).toBeUndefined();
+    expect(parsed[REDUCED_DETAIL_KEYS.droppedKeys]).toBeUndefined();
+  });
+
   it("leaves prose over the limit on the honest text clip", () => {
     const prose = `Rejected. ${"because ".repeat(300)}`;
     const stored = storedDetails(prose) ?? "";
@@ -393,6 +415,52 @@ describe("who the recovered detail reaches (#2704 with #2695)", () => {
     expect(parses.details).toBeNull();
     expect(parses.description).toBeNull();
     expect(parses.metadata).toBeNull();
+  });
+
+  it("cannot drop the member's declared sentence by reducing the payload", async () => {
+    // #2695's ORDERING is what makes this safe, and this change had to not
+    // break it: the caller's metadata is sanitised — now reduced — FIRST, and
+    // the declared sentence is attached on top of the result afterwards. Were
+    // the two ever merged into one step, a large admin payload would silently
+    // delete the one sentence the member reads, on their timeline AND in their
+    // data export. That is the defect #2695's docblock warns the next
+    // simplifier about, and it is this rule's reduction that would cause it.
+    const wide: Record<string, string> = {};
+    for (let i = 0; i < 40; i += 1) {
+      wide[`filler${i}`] = "f".repeat(900);
+    }
+    const args = buildStructuredAuditLogCreateArgs({
+      action: "member.credit.adjustment.approve",
+      category: "payment",
+      actor: { memberId: ACTOR },
+      subject: { memberId: SUBJECT },
+      metadata: wide,
+      memberDisclosure: {
+        visibility: "member-facing",
+        text: "Credit of $25.00 added to your account. Reason: goodwill",
+      },
+    });
+
+    const stored = args.data.metadata as Record<string, unknown>;
+    expect(stored[REDUCED_DETAIL_KEYS.truncated]).toBe(true);
+    expect(readDeclaredMemberText(stored)).toBe(
+      "Credit of $25.00 added to your account. Reason: goodwill",
+    );
+
+    // And the member reads that sentence and nothing from the reduced payload.
+    const entry = await timelineEntry(
+      rowOf({
+        action: "member.credit.adjustment.approve",
+        category: "payment",
+        metadata: stored,
+      }),
+      "member",
+    );
+    expect(entry.description).toBe(
+      "Credit of $25.00 added to your account. Reason: goodwill",
+    );
+    expect(entry.metadata).toBeNull();
+    expect(entry.details).toBeNull();
   });
 
   it("does not let a bookkeeping key become the officer's description", async () => {
