@@ -2857,6 +2857,12 @@ export function serializeBookingRequestForAdmin(
     id: request.id,
     type: request.type,
     status: request.status,
+    // #2936: the optimistic-concurrency counter, so the officer's correction
+    // form can send back the version it was showing and have the service refuse
+    // a correction written over a request a quote-accept or a decline has moved
+    // underneath it. Read-only to every client; the server never trusts it as
+    // anything but a fence.
+    version: request.version,
     // Null lodgeId means the club's default lodge (pre-multi-lodge rows and
     // single-lodge submissions); lodgeName is only present when the caller
     // included the lodge relation.
