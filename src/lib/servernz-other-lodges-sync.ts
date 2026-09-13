@@ -105,6 +105,57 @@ export async function uploadOtherClubsToServer(): Promise<UploadSummary> {
   return { ...result, sent: lodges.length };
 }
 
+/**
+ * How far BEFORE the stored cursor each subsequent pull deliberately re-asks.
+ *
+ * DO NOT REMOVE THIS AS REDUNDANT. It looks like wasted work — the server is
+ * being asked again for rows we have already applied — and it is not. Database
+ * transactions do not become visible in timestamp order: a slow transaction can
+ * take an earlier `updatedAt` and commit AFTER a faster one that took a later
+ * one. If the cursor advances to the faster row's timestamp in the window
+ * before the slow row commits, every later "strictly newer than the cursor"
+ * request steps straight over the slow row — permanently, because its
+ * `updatedAt` never moves again unless somebody happens to edit that club by
+ * hand. Sync keeps reporting success while one club's booking officer stays
+ * wrong forever (#2995).
+ *
+ * Re-asking for a bounded window before the cursor covers that race for any
+ * commit lag shorter than the window. Sixty seconds is the starting value and
+ * is a measurement, not a product rule: engineering may widen it on evidence of
+ * longer commit lag. The repeated rows cost nothing, because the merge below is
+ * idempotent — an identical row is counted `unchanged` and not written, and an
+ * older remote row loses to a newer local one.
+ *
+ * This applies to the REQUEST only. The durable watermark still advances only
+ * to the cursor the server returned on a successful pass; the overlapped value
+ * is never persisted.
+ */
+const PULL_CURSOR_OVERLAP_MS = 60_000;
+
+/**
+ * An ISO-8601 instant, which is the only cursor shape the overlap can do
+ * arithmetic on. The cursor is contractually OPAQUE (`ServerNzSettings.
+ * otherLodgesCursor`), so a server free to return an id, an opaque token or a
+ * sequence number must keep working: anything not matching this shape is passed
+ * through untouched rather than guessed at. `Date.parse` alone is not enough —
+ * it happily reads a bare `"12345"` as a year, which would turn an opaque
+ * numeric cursor into a date in the distant future.
+ */
+const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+
+/**
+ * The cursor value to REQUEST, given the stored one: one overlap earlier when
+ * the stored cursor is a timestamp, unchanged otherwise, and `null` when there
+ * is no stored cursor at all — so an initial/full sync is untouched.
+ */
+function overlappedRequestCursor(stored: string | null): string | null {
+  if (!stored) return null;
+  if (!ISO_INSTANT.test(stored)) return stored;
+  const parsed = Date.parse(stored);
+  if (Number.isNaN(parsed)) return stored;
+  return new Date(parsed - PULL_CURSOR_OVERLAP_MS).toISOString();
+}
+
 export interface DownloadSummary {
   fetched: number;
   created: number;
@@ -120,9 +171,10 @@ export interface DownloadSummary {
 /**
  * Pull the distributed Other Clubs set and merge it into the local registry.
  * Incremental in two ways: the stored cursor means only entries the server
- * changed since last time are fetched, and a fetched row is only written when
- * its data actually differs from the local copy — so an unchanged row keeps its
- * `updatedAt` and is never needlessly re-uploaded. Keyed by unique lodge name.
+ * changed since last time are fetched — deliberately overlapped backwards by
+ * `PULL_CURSOR_OVERLAP_MS`, read that first — and a fetched row is only written
+ * when its data actually differs from the local copy, so an unchanged row keeps
+ * its `updatedAt` and is never needlessly re-uploaded. Keyed by unique lodge name.
  *
  * TWO rules keep `updatedAt` honest as a sync signal, because the upload
  * watermark is derived from it:
@@ -144,7 +196,10 @@ export interface DownloadSummary {
  */
 export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
   const settings = await loadServerNzSettings();
-  const pull = await pullOtherLodges(settings.otherLodgesCursor);
+  // Ask from one overlap BEFORE the stored cursor — see
+  // `PULL_CURSOR_OVERLAP_MS` for why the repeat is deliberate and why removing
+  // it re-opens a permanent skip. The stored cursor itself is untouched here.
+  const pull = await pullOtherLodges(overlappedRequestCursor(settings.otherLodgesCursor));
 
   let created = 0;
   let updated = 0;
@@ -221,6 +276,10 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
     updated++;
   }
 
+  // The durable watermark is the SERVER's returned cursor, never the overlapped
+  // value we requested with: the overlap exists to widen the question, not to
+  // move the answer backwards. Reached only after every row above merged, so a
+  // throw part-way leaves the old cursor standing and the next run re-fetches.
   await recordOtherLodgesDownload(pull.cursor);
   return {
     fetched: pull.count,
