@@ -805,9 +805,9 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   FAILED allocation op has no auto FAILED→PENDING reaper; recovery runs through
   the Xero outbox retry stack (`xero-operation-retry.ts`). Cancellation is
   UNCHANGED and still conserves: the 100% restore + `finalPrice − allocated`
-  clearing note void the invoice while returning the credit LOCALLY; after a cancel of an allocated-credit booking the restored credit is local-only (its funding note was consumed by the cancelled invoice); the local ledger is the source of truth and Xero catches up when the credit is next used, via the noteless mint-fresh branch. ACCOUNTING-POLICY flag (open): the minted remainder note
-  posts to the shared `hutFeeRefunds` mapping; a distinct write-off account is
-  an owner call.
+  clearing note void the invoice while returning the credit LOCALLY; after a cancel of an allocated-credit booking the restored credit is local-only (its funding note was consumed by the cancelled invoice); the local ledger is the source of truth and Xero catches up when the credit is next used, via the noteless mint-fresh branch. Goodwill, settled (#2717): the remainder note posts to
+  `goodwillWriteOffs`, an EXPENSE mapping falling back to `hutFeeRefunds`
+  while unset (`INV-INT-021`).
 
 ## INV-PAY-024
 

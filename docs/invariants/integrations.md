@@ -334,3 +334,34 @@ legitimately depend on being offered an out-of-service lodge.
   resolving to a different existing `Organisation`. An unresolvable name is
   ambiguity, not evidence, and must not out-vote history that positively
   resolves. Pinned by `organisation-reader-contract.test.ts`.
+
+## Xero account mapping keys (#2717)
+
+### INV-INT-021
+
+- **A new Xero account mapping key ships with three things, always** (owner,
+  10 Aug 2026, #2717): an explicit account-TYPE filter, a documented fallback
+  for while it is unset, and a prompt in the Xero setup screen saying so. Never
+  a hard failure on upgrade, never a silent default. Every existing club and
+  every fork lands unconfigured the moment a key ships, so refusing to post
+  until an admin acts breaks a working flow for all of them.
+- **The type filter is structural, not policed.** `accountType` is a REQUIRED
+  field of every definition in `src/lib/xero-account-mapping-keys.ts` — the one
+  registry the admin picker, the API allowlist, the runtime resolver and the
+  seed all derive from — so a key with no filter cannot be written down. The
+  key set was spelled out in four places before #2717, and nothing failed if
+  you edited three.
+- **The fallback is ONE hop, and verbatim.** While a key with a registered
+  fallback is unset, `getResolvedAccountMappingWithFallback` returns the
+  fallback key's resolution unchanged — code, item code and
+  `codeExplicitlyConfigured` alike — so a club that upgrades and does nothing
+  posts exactly where it posted before, down to the line-coding decision. A
+  fallback key may not declare a fallback of its own; a chain would make "where
+  are my entries going?" unanswerable from one row of the setup screen.
+- **"Configured" means the club CHOSE a code**, which is
+  `isCodeExplicitlyConfigured` and nothing else. The setup screen's fallback
+  notice is driven by that flag, through the same resolver the runtime path
+  uses, never by the panel deciding for itself that a null code means unset.
+- **`goodwillWriteOffs` is the first instance**: EXPENSE-filtered, falling back
+  to `hutFeeRefunds`, and it reclassifies nothing already in Xero. Pinned by
+  `xero-account-mapping-registry.test.ts` and `goodwill-write-off-account.test.ts`.

@@ -6483,7 +6483,7 @@ model NotificationPreference {
 
 model XeroAccountMapping {
   id        String   @id @default(cuid())
-  key       String   @unique // hutFeesIncome | hutFeeRefunds | stripeBankAccount | stripeFees | subscriptionIncome | membershipCancellationCredit | hutFeeItem | hutFeeRefundItem | entranceFeeItem | entranceFeeAmountCents
+  key       String   @unique // hutFeesIncome | hutFeeRefunds | goodwillWriteOffs | stripeBankAccount | stripeFees | subscriptionIncome | membershipCancellationCredit | hutFeeItem | hutFeeRefundItem | entranceFeeItem | entranceFeeAmountCents
   code      String? // null = not configured, use application default (GL account code or amount string)
   itemCode  String? // Xero Item Code — when set, Xero auto-fills account from Item config
   createdAt DateTime @default(now())

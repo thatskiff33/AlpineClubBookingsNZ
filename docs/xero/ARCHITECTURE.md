@@ -399,7 +399,8 @@ this (#1208). Shared JSON-guard micro-helpers (`asRecord`/`readString`/
 | `xero-entrance-fee-invoices` | One-off entrance-fee invoices per age tier. |
 | `xero-group-settlement-invoices` | Combined ORGANISER_PAYS internet-banking invoice across joiner bookings. |
 | `xero-invoice-helpers` | Shared date/allocation helpers for the six modules above. |
-| `xero-mappings` | Account-code / item-code resolution from `XeroAccountMapping`/`XeroItemCodeMapping` (with legacy fallbacks), entrance-fee categorisation and idempotency keys. |
+| `xero-account-mapping-keys` | Leaf, pure data: the ONE registry of account mapping keys (#2717) — label, description, required account-TYPE filter, default code and registered fallback. The admin picker, the API allowlist, `xero-mappings` and the seed all derive from it, which is what makes `INV-INT-021`'s type filter structural rather than policed. |
+| `xero-mappings` | Account-code / item-code resolution from `XeroAccountMapping`/`XeroItemCodeMapping` (with legacy fallbacks), entrance-fee categorisation and idempotency keys. `getResolvedAccountMappingWithFallback` applies a key's registered one-hop fallback (`INV-INT-021`), and `isCodeExplicitlyConfigured` is the one definition of a club having CHOSEN a code. |
 
 ### Contacts and membership
 

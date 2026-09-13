@@ -171,7 +171,13 @@ emails enabled unless your club has a replacement operational process.
 For Xero-backed deployments, complete the operational Xero mappings before
 using membership cancellation in production. In `/admin/xero`, set the
 `membershipCancellationCredit` account/item mapping and configure the cancelled
-member contact groups under `/admin/setup`. Cancellation approval only disables
+member contact groups under `/admin/setup`. The same screen offers a
+**Goodwill & Write-Offs** expense account (#2717): admin-granted credit applied
+to an Internet Banking booking posts there, so the accounts show what the club
+billed and what it chose not to collect rather than netting the two together.
+Leaving it unset is safe — those entries keep going to the hut-fee-refund
+account, and the screen says so — and nothing already in Xero is reclassified
+when you do set it. Cancellation approval only disables
 the local member and queues Xero operations; archive and hard delete do not
 remove Xero contacts.
 
