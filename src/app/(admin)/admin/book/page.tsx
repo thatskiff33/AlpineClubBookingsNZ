@@ -174,30 +174,24 @@ export default function AdminBookPage() {
   // the create route hard-400s a party above the resolved value (#1767).
   const [resolvedCapacity, setResolvedCapacity] = useState(lodgeCapacity);
   /**
-   * The most guests this wizard will let an officer ADD, or null for no ceiling
-   * (#2930 second fix round) — the same rule the member wizard's
-   * `partySizeCeiling` applies, for the same reason.
+   * The party ceiling, or null for none — the member wizard's `partySizeCeiling`
+   * rule, applied to the surface that kept opting out of it (#2930).
    *
-   * ZERO IS NOT A CEILING OF ZERO. A lodge with no configured capacity resolves
-   * to 0 beds by design (`getLodgeCapacityStatus`, source `unconfigured_lodge`)
-   * so that it can never be overbooked before somebody configures it. Read as a
-   * ceiling, that disabled every add-guest control at zero guests and headed the
-   * form "Guests (0/0 max)" — the officer could not add the first guest, and
-   * this surface has no waitlist to fall through to. It is the dead end #2930
-   * removed for members, standing on the admin side of the same shared form.
+   * ZERO IS NOT A CEILING OF ZERO. An unconfigured lodge resolves to 0 beds by
+   * design (`getLodgeCapacityStatus`, source `unconfigured_lodge`) so it cannot
+   * be overbooked first. Read as a ceiling, that disabled every add-guest
+   * control at zero guests under a "Guests (0/0 max)" heading — the same dead
+   * end #2930 removed for members, on the one surface with no waitlist to fall
+   * through to. Withdrawn ONLY at zero: a positive capacity caps the party
+   * exactly as before, and over-capacity stays warn-and-confirm (#1695/#1767)
+   * with an exclusive hold still unbypassable.
    *
-   * The ceiling is the only thing withdrawn, and ONLY at zero. A positive
-   * capacity still caps the party exactly as before, so every configured lodge
-   * is unaffected; an on-behalf create over the beds remains warn-and-confirm
-   * rather than a refusal (#1695/#1767) and an exclusive hold remains
-   * unbypassable. The server still decides.
-   *
-   * WHAT THIS DOES NOT FIX, deliberately: `POST /api/bookings` refuses any party
-   * larger than the lodge's capacity, so at zero the create still fails — with
-   * "A booking cannot exceed 0 guests", which at least names the cause an
-   * officer can act on. Whether an unconfigured lodge should be bookable or
-   * waitlistable at all is a capacity product decision this issue's settled
-   * contract does not answer, and it is the same refusal the member path meets.
+   * IT DOES NOT MAKE SUCH A LODGE BOOKABLE. `POST /api/bookings` refuses any
+   * party above the lodge's capacity before the waitlist fallback, so at zero
+   * the create still fails — with "a booking cannot exceed 0 guests", which at
+   * least names the cause. Whether such a lodge should be bookable at all is a
+   * product question this issue does not settle; the member path meets the same
+   * refusal.
    */
   const partySizeCeiling = resolvedCapacity > 0 ? resolvedCapacity : null;
   /** Derived once, so the three add-guest affordances cannot disagree. */

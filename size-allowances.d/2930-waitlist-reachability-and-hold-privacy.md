@@ -1,6 +1,6 @@
 # File-size allowances for #2930 (waitlist reachability and hold privacy)
 
-Five already-over-budget files grow: three in the member booking wizard, and two
+Six already-over-budget files grow: three in the member booking wizard, and two
 that the fix round reached when it closed the same hold leak on the two other
 member-facing capacity refusals. **Three seams that did exist were taken first**,
 and they are why this list is five files and not eight:
@@ -23,10 +23,12 @@ and they are why this list is five files and not eight:
   `page.tsx`, which is why that file's entry below shrinks rather than grows.
 
 All three new modules are comfortably inside their own budgets. What is left is
-growth that has nowhere else to go.
+growth that has nowhere else to go. The sixth file is the admin book-on-behalf
+page, which the second fix round reached: it was the one caller still opting out
+of the shared guest form's absent-ceiling shape.
 
 file: src/app/(authenticated)/book/_hooks/use-booking-wizard.ts
-lines: 2067
+lines: 2112
 reason: the hook is the wizard's single state machine, and this change alters
   what that machine decides rather than adding a feature beside it — the
   advisory replaces a hard stop, `waitlistOnly` becomes an input to
@@ -40,10 +42,19 @@ reason: the hook is the wizard's single state machine, and this change alters
   bearing: the comment on the removed capacity stop is the only record of WHY
   a client-side refusal there was the defect rather than a safeguard, and the
   comment on `showPaymentMethodChoice` is the only statement of the owner's
-  contract point 5 anywhere in the code that implements it.
+  contract point 5 anywhere in the code that implements it. The second fix round
+  added forty-five: one more per-lodge clear in `handleLodgeChange`, for the
+  cross-lodge waitlist opt-in the first round moved onto the review step, where
+  nothing was emptying it; and a `useEffect` that closes the 409 refusal prompt
+  once that review-step door opens, since the prompt is drawn above a step that
+  stays mounted and both could show the same checkboxes and the same primary
+  action at once. The rest is the docblock on each, plus the correction to
+  `partySizeCeiling`'s, which claimed the server "refuses and offers the
+  waitlist" at an unconfigured lodge when it refuses the party size outright,
+  before the waitlist fallback, and offers nothing.
 
 file: src/app/(authenticated)/book/_components/review-step.tsx
-lines: 1035
+lines: 1065
 reason: the waitlist-only arm has to be here, because it is a fork in this
   step's PRIMARY ACTION — Join Waitlist in place of Confirm Booking — and the
   button it replaces sits at the end of a single return block alongside Back and
@@ -58,7 +69,13 @@ reason: the waitlist-only arm has to be here, because it is a fork in this
   single `ReactNode` prop and is rendered beside the waitlist action, with the
   docblock saying why it is a node rather than three props — the lodge list and
   the opt-in state belong to the wizard hook, and this component is
-  presentational.
+  presentational. The second fix round added thirty more, and twenty of them are
+  the comment: the credit control renders on the waitlist branch too — it must,
+  because the post can still create a real booking and carries the credit — but
+  the sentence beneath it promised "no card payment needed" on a branch that
+  delivers a waitlist PLACE, which holds no credit at all. The comment is the
+  only record of why the control stays and the promise goes, and of the refuted
+  fix — suppressing the control — that would have zeroed the applied credit.
 
 file: src/app/(authenticated)/book/page.tsx
 lines: 687
@@ -97,3 +114,22 @@ reason: one line of code and eight of comment. The refusal's night list now
   rather than a date-only string, so this single refusal put an instant on the
   wire where every other one emits a lodge night. A reader who does not know
   both will re-inline it.
+
+file: src/app/(admin)/admin/book/page.tsx
+lines: 1506
+reason: twenty-three lines, and eighteen of them are one docblock. The code is
+  three lines — the lodge's resolved capacity read as a ceiling only when it is
+  positive, and the derived "is the party already there", replacing the same
+  comparison spelled out at three add-guest affordances. The shared `GuestForm`
+  took an absent ceiling in the first fix round and this page was the caller
+  that did not follow, so at a lodge with no configured capacity an officer got
+  every control disabled at zero guests and a "0/0 max" heading — the dead end
+  the issue removed for members, on the surface with no waitlist behind it.
+  Splitting a 1500-line route shell to hold two derived constants would put the
+  ceiling rule in a different file from the three controls that read it, which
+  is the drift this change removes. The docblock is load-bearing twice over: it
+  is the only statement that 0 means "unconfigured" rather than "no beds
+  allowed", and the only record that this does NOT make such a lodge bookable —
+  `POST /api/bookings` still refuses the party size before any waitlist
+  fallback, so the honest gain is a usable form and a refusal that names its
+  cause. Without that sentence the next reader concludes the dead end is gone.
