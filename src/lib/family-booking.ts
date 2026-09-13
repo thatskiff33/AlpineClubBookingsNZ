@@ -51,7 +51,17 @@ export type NonMemberHoldPolicyState = "applies" | "conditional" | "none";
 // guest" actually means, so the choice is informed rather than a surprise at
 // check-in. Used by messages that do NOT already mention adding as a non-member
 // guest (so the phrase appears exactly once).
-function provisionalHoldConsequence(state: NonMemberHoldPolicyState): string {
+//
+// EXPORTED for #2721's own-dependant panel, which asks the same question about
+// the same consequence. It stated the provisional hold as unconditional fact,
+// which is wrong in both directions: the hold is a per-period, per-deployment
+// setting, so the panel asserted the consequence where it does not apply — and
+// the conditioned version was already here, returning "" for exactly that case.
+// A panel designed to avoid pressure toward the wrong answer must not overstate
+// what the other answer costs.
+export function provisionalHoldConsequence(
+  state: NonMemberHoldPolicyState,
+): string {
   if (state === "applies") {
     return " If you add them as a non-member guest, they'll be held provisionally — no bed is reserved for them until the booking is confirmed and paid closer to your stay, and members have priority if the lodge fills up.";
   }

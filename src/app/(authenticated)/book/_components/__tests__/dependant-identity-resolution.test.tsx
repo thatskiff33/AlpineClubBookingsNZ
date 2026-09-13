@@ -49,6 +49,9 @@ function renderResolution(
     declaredDependantMemberIds: [],
     familyMembers: [SAM_AS_FAMILY_MEMBER],
     partyMemberIds: [],
+    // #2721 review: the default is the tri-state's "we cannot tell yet", which
+    // is what the guests step reports until a non-member is in the party.
+    holdPolicy: "conditional",
     onBookAsDependant: vi.fn(),
     onDeclareDifferentPerson: vi.fn(),
     onWithdrawDeclaration: vi.fn(),
@@ -64,7 +67,7 @@ describe("DependantIdentityResolution (#2721)", () => {
   });
 
   it("offers both answers, and says what the guest path would cost the dependant", () => {
-    renderResolution();
+    renderResolution({ holdPolicy: "applies" });
 
     expect(
       screen.getByRole("button", {
@@ -76,9 +79,82 @@ describe("DependantIdentityResolution (#2721)", () => {
         name: /different person with the same name/i,
       }),
     ).toBeInTheDocument();
-    // The consequence is stated, not implied: no bed held, and bumpable.
-    expect(screen.getByText(/hold no bed for them/i)).toBeInTheDocument();
-    expect(screen.getByText(/bumped/i)).toBeInTheDocument();
+    // The consequence is stated, not implied: no bed held, and members first.
+    expect(
+      screen.getByText(/no bed is reserved for them/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/members have priority if the lodge fills up/i),
+    ).toBeInTheDocument();
+  });
+
+  /*
+    #2721 review — THE CONSEQUENCE IS CONFIGURATION, NOT FACT.
+
+    The provisional hold on a non-member is a per-period, per-deployment
+    setting. This panel asserted it unconditionally, which is pressure toward
+    the wrong answer in exactly the place the component's own docblock says it
+    is designed to avoid: a parent told their child will be bumped picks "this
+    is my dependant" whether or not it is true. The conditioned sentence already
+    existed one module away, and returns nothing at all when the hold does not
+    apply.
+  */
+  describe("the provisional-hold sentence follows the club's setting", () => {
+    it("says nothing about a hold when the hold does not apply to this stay", () => {
+      renderResolution({ holdPolicy: "none" });
+      expect(screen.queryByText(/no bed is reserved/i)).toBeNull();
+      expect(screen.queryByText(/held provisionally/i)).toBeNull();
+      // The question itself is unchanged — only the consequence is dropped.
+      expect(
+        screen.getByText(/we will not guess which person you mean/i),
+      ).toBeInTheDocument();
+    });
+
+    it("hedges when the quote cannot yet say", () => {
+      renderResolution({ holdPolicy: "conditional" });
+      expect(
+        screen.getByText(/may be held provisionally depending on how far out/i),
+      ).toBeInTheDocument();
+    });
+
+    it("states it plainly when the hold does apply", () => {
+      renderResolution({ holdPolicy: "applies" });
+      expect(
+        screen.getByText(/they'll be held provisionally/i),
+      ).toBeInTheDocument();
+    });
+  });
+
+  /*
+    #2721 review — A DEPENDANT THE PROFILE CANNOT FIX.
+
+    Family-group membership and the parent link are different columns, and
+    divergence is the DEFAULT: linking a dependant defaults to no shared group.
+    The copy used to send that parent to their profile to "add them to your
+    family group", where the options are create a group, request to join one,
+    invite an existing member by email, and request a child — which mints a NEW
+    member, a duplicate of the child the club already knows. No available "yes",
+    so the only way to book was to assert a different person.
+  */
+  describe("a dependant who is not in the booker's family list", () => {
+    it("points at the club, not at a profile screen that cannot do it", () => {
+      renderResolution({ familyMembers: [] });
+      expect(
+        screen.getByText(/ask the club to put them in your family group/i),
+      ).toBeInTheDocument();
+      expect(screen.queryByText(/Open Family Group in your profile/i)).toBeNull();
+    });
+
+    it("still keeps the profile link for a block the profile CAN clear", () => {
+      renderResolution({
+        familyMembers: [
+          { ...SAM_AS_FAMILY_MEMBER, canBeBooked: false, canCurrentUserConfirmDetails: true },
+        ],
+      });
+      expect(
+        screen.getByText(/Open Family Group in your profile/i),
+      ).toBeInTheDocument();
+    });
   });
 
   it("hands the member path the NORMALISED NAME, never a party index", () => {
@@ -161,9 +237,10 @@ describe("DependantIdentityResolution (#2721)", () => {
       expect(
         screen.queryByRole("button", { name: /book them as a member/i }),
       ).not.toBeInTheDocument();
-      expect(screen.getByText(/add them to your family group/i)).toBeInTheDocument();
+      // What has to happen, and who can do it — see the dedicated describe
+      // below for why this is the club rather than the member's own profile.
       expect(
-        screen.getByRole("link", { name: /open family group/i }),
+        screen.getByText(/ask the club to put them in your family group/i),
       ).toBeInTheDocument();
       // The other answer stays available — the question still has two sides.
       expect(

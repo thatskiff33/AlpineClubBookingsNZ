@@ -218,31 +218,35 @@ export function GuestsStep({
   const dependantCollisionNames = new Set(
     dependantIdentityCollisions.map((collision) => collision.normalizedName),
   );
+  //
+  // BOTH comparisons below go through `normalizePersonFullName` (#2721 review).
+  // The soft suggestion used to compare the two names by hand, four lines under
+  // the canonical call that suppresses it — and it worked only because the
+  // canonical rule happened to be LOOSER. Narrow or reshape that rule (fold a
+  // curly apostrophe, stop collapsing whitespace) and the hard question and the
+  // soft suggestion start answering different questions about the same two
+  // names, with nothing failing: a name could draw both affordances at once,
+  // which is exactly what rule 4 exists to prevent.
   const memberSwitchSuggestions = guests
-    .map((guest, index) => ({ guest, index }))
-    .filter(({ guest }) => {
+    .map((guest, index) => ({
+      guest,
+      index,
+      key: normalizePersonFullName(guest.firstName, guest.lastName),
+    }))
+    .filter(({ guest, key }) => {
       if (guest.isMember || guest.memberId) return false;
-      const first = guest.firstName.trim().toLowerCase();
-      const last = guest.lastName.trim().toLowerCase();
-      if (!first || !last) return false;
-      if (
-        dependantCollisionNames.has(
-          normalizePersonFullName(guest.firstName, guest.lastName),
-        )
-      ) {
-        return false;
-      }
-      return true;
+      // `normalizePersonFullName` mints no key for a half-typed row, which is
+      // the same "not enough name to compare" test the two hand-written parts
+      // used to make separately.
+      if (!key) return false;
+      return !dependantCollisionNames.has(key);
     })
-    .map(({ guest, index }) => {
-      const first = guest.firstName.trim().toLowerCase();
-      const last = guest.lastName.trim().toLowerCase();
+    .map(({ guest, index, key }) => {
       const match = familyMembers.find(
         (fm) =>
           fm.canBeBooked !== false &&
           !guests.some((g) => g.memberId === fm.id) &&
-          fm.firstName.trim().toLowerCase() === first &&
-          fm.lastName.trim().toLowerCase() === last,
+          normalizePersonFullName(fm.firstName, fm.lastName) === key,
       );
       return match ? { index, guest, match } : null;
     })
@@ -459,6 +463,7 @@ export function GuestsStep({
           partyMemberIds={guests
             .map((guest) => guest.memberId)
             .filter((memberId): memberId is string => Boolean(memberId))}
+          holdPolicy={holdPolicy}
           onBookAsDependant={bookCollidingGuestAsDependant}
           onDeclareDifferentPerson={declareDependantDifferentPerson}
           onWithdrawDeclaration={withdrawDependantDeclaration}

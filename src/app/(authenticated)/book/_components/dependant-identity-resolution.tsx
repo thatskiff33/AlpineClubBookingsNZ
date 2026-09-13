@@ -2,7 +2,11 @@
 
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { getFamilyMemberBookingBlockMessage } from "@/lib/family-booking";
+import {
+  getFamilyMemberBookingBlockMessage,
+  provisionalHoldConsequence,
+  type NonMemberHoldPolicyState,
+} from "@/lib/family-booking";
 import type { OwnDependantCollision } from "@/lib/booking-dependant-identity";
 import {
   PROFILE_FAMILY_GROUP_RETURN_TO_BOOK,
@@ -32,9 +36,13 @@ import {
  * screen. A parent link is recorded independently of family-group membership and
  * of a completed profile, so a dependant can be recorded and still not be
  * addable here. In that case the answer is not hidden and it is not a dead
- * button: it says what has to happen first and links to the place it happens.
- * Hiding it would leave the booker looking at a question with one answer, which
- * reads as the app pushing them toward the declaration.
+ * button: it says what has to happen first, and links to the place it happens
+ * WHEN there is one. Hiding it would leave the booker looking at a question with
+ * one answer, which reads as the app pushing them toward the declaration —
+ * which is also why {@link notInFamilyListMessage} exists: the commonest reason
+ * a recorded dependant is unbookable here is one the profile cannot fix, and
+ * sending a parent there to do something the screen does not offer leaves them
+ * with no available "yes" either.
  *
  * "This is a different person with the same name" is always available and is
  * always per-dependant. Two dependants whose names normalise alike are two
@@ -55,6 +63,18 @@ export interface DependantIdentityResolutionProps {
   familyMembers: FamilyMember[];
   /** Member ids already on the party, so an added dependant is not offered twice. */
   partyMemberIds: string[];
+  /**
+   * Whether the non-member provisional hold would apply to THIS stay (#2721
+   * review), computed once by the guests step and shared with the quick-add
+   * list so the two cannot say different things about the same booking.
+   *
+   * The panel used to assert the hold as fact in its headline and omit it from
+   * the per-dependant block — stating a per-deployment, per-period setting as
+   * unconditional in one place and leaving it out in the other. Both now come
+   * from the same tri-state, whose helper returns nothing at all when the hold
+   * does not apply.
+   */
+  holdPolicy: NonMemberHoldPolicyState;
   onBookAsDependant: (
     normalizedName: string,
     familyMember: FamilyMember,
@@ -74,6 +94,7 @@ export function DependantIdentityResolution({
   declaredDependantMemberIds,
   familyMembers,
   partyMemberIds,
+  holdPolicy,
   onBookAsDependant,
   onDeclareDifferentPerson,
   onWithdrawDeclaration,
@@ -89,9 +110,8 @@ export function DependantIdentityResolution({
         <p className="text-sm text-warning-11">
           A guest you have typed has exactly the same name as somebody the club
           records as your dependant. We will not guess which person you mean, so
-          please say. Booking your own dependant as a guest would hold no bed for
-          them until the booking is confirmed and paid, and could see them bumped
-          if the lodge fills up.
+          please say.
+          {provisionalHoldConsequence(holdPolicy)}
         </p>
       </div>
 
@@ -172,16 +192,18 @@ export function DependantIdentityResolution({
                             : (familyMember
                                 ? getFamilyMemberBookingBlockMessage(
                                     familyMember,
+                                    { holdPolicy },
                                   )
-                                : null) ??
-                              `${dependant.firstName} cannot be added from this screen yet. Add them to your family group in your profile, then come back.`}
+                                : null) ?? notInFamilyListMessage(dependant)}
                         </p>
-                        <Link
-                          href={PROFILE_FAMILY_GROUP_RETURN_TO_BOOK}
-                          className="font-medium underline underline-offset-4"
-                        >
-                          Open Family Group in your profile
-                        </Link>
+                        {familyMember ? (
+                          <Link
+                            href={PROFILE_FAMILY_GROUP_RETURN_TO_BOOK}
+                            className="font-medium underline underline-offset-4"
+                          >
+                            Open Family Group in your profile
+                          </Link>
+                        ) : null}
                       </div>
                     )}
                     <Button
@@ -203,4 +225,26 @@ export function DependantIdentityResolution({
       ))}
     </div>
   );
+}
+
+/**
+ * What a dependant who is recorded as yours but is NOT in your family list is
+ * told (#2721 review).
+ *
+ * The two lists come from different columns — family-group membership versus the
+ * parent link — and divergence is the DEFAULT, not an edge case: linking a
+ * dependant defaults to no shared group, and refuses any group the parent is not
+ * already in. This used to say "add them to your family group in your profile",
+ * and no affordance there does that. The profile offers: create a group, request
+ * to join one, invite an existing member by email, and request a child — which
+ * mints a NEW member, a duplicate of the child the club already knows. So a
+ * parent whose own child the club already has on file had no available "yes",
+ * and the only way to book them was to assert they are a different person: the
+ * exact answer this panel exists to stop being the easy one.
+ *
+ * The club can put them in the group, so the copy points there and the profile
+ * link is not drawn at all for this case.
+ */
+function notInFamilyListMessage(dependant: { firstName: string }): string {
+  return `${dependant.firstName} is recorded as your dependant but is not in your family group, so they cannot be added from this screen. Ask the club to put them in your family group, then come back.`;
 }
