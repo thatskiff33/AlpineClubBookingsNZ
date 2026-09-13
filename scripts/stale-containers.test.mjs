@@ -186,13 +186,19 @@ describe("classifyOwnership", () => {
     }
   });
 
-  it("keeps #2663's measurement stack out of the debris list", () => {
-    // The regression that would break the very thing this issue exists to
-    // unblock: reporting the measurement stack as removable.
+  it("reports #2663's former measurement stack as unowned, never as debris", () => {
+    // `tacbookings-measure` was a reserved project here until #3382 removed
+    // the `measurement/` tree it named and the reservation with it — that
+    // Compose project can never exist again. Nothing about removing the
+    // reservation may turn this name into removable debris: the container
+    // name carries no issue-shaped digits anywhere, so it falls out of
+    // `extractIssueNumber` as "no-issue-in-name" and lands on "unowned" the
+    // same way any container the naming convention does not cover does.
     const result = classifyOwnership(
       container({ name: "tacbookings-measure-postgres-1", project: "tacbookings-measure" }),
     );
-    expect(result.ownership).toBe("shared");
+    expect(result.ownership).toBe("unowned");
+    expect(result.issue).toBeNull();
   });
 
   it("honours an explicit shared label on a container whose name carries a number", () => {
@@ -256,7 +262,7 @@ describe("classifyOwnership", () => {
       E2E_COMPOSE_PROJECT: "clubstack-e2e",
     });
     expect(reserved.has("clubstack-prod")).toBe(true);
-    expect(reserved.has("tacbookings-measure")).toBe(true);
+    expect(reserved.has("tacbookings-staging")).toBe(true);
 
     const result = classifyOwnership(
       container({ name: "clubstack-prod-postgres-1", project: "clubstack-prod" }),
@@ -612,7 +618,15 @@ describe("buildReport", () => {
         container({ name: "tacbookings-e2e2595-mailpit-1", project: "tacbookings-e2e2595", state: "running" }),
         container({ name: "tacbookings-e2e2595-postgres-1", project: "tacbookings-e2e2595", state: "running" }),
         container({ name: "drift-2597" }),
-        // Present as a control: the measurement stack must survive the report.
+        // Present as a control: this container must survive the report,
+        // whatever its classification. It really was on the host that day —
+        // the measurement stack's `tacbookings-measure` Compose project was a
+        // reserved name at the time (#2663), so it classified "shared" then.
+        // #3382 removed the `measurement/` tree the project belonged to and
+        // the reservation with it; the fixture keeps the real container so
+        // the regression this guards — reporting it as removable debris —
+        // stays covered, and the expected classification below moved to
+        // "unknown" to match the reservation's removal.
         container({ name: "tacbookings-measure-postgres-1", project: "tacbookings-measure" }),
       ],
       resolveIssueState: resolverFor({
@@ -626,8 +640,8 @@ describe("buildReport", () => {
     });
 
     expect(report.entries.filter((entry) => entry.classification === "stale")).toHaveLength(9);
-    expect(report.entries.filter((entry) => entry.classification === "shared")).toHaveLength(1);
-    expect(report.entries.filter((entry) => entry.classification === "unknown")).toHaveLength(0);
+    expect(report.entries.filter((entry) => entry.classification === "shared")).toHaveLength(0);
+    expect(report.entries.filter((entry) => entry.classification === "unknown")).toHaveLength(1);
     expect(report.groups.map((group) => group.key).sort()).toEqual([
       "drift-2597",
       "pg-2376",
