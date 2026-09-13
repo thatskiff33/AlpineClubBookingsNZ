@@ -4,8 +4,9 @@
   end-to-end suite. Every place a browser test reached into a list or a keyed
   lookup without proving the entry existed was rewritten to fail loudly when it
   is missing, and three small date and stay-window helpers were added to
-  `e2e/helpers/stay-dates.ts` so six copies of the same date-splitting code
-  became one.
+  `e2e/helpers/stay-dates.ts` so seven copies of the same date-splitting code
+  became one, derived from the application's own calendar-date rules rather
+  than restating them.
 
   Nothing a member or administrator uses changed. The unit-test project stays
   outside this rule by an owner decision recorded on #3363.

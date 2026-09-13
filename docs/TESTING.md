@@ -235,7 +235,8 @@ here it is an ordinary compiler error like any other, caught by
 `npm run typecheck` and in the editor.
 
 The Playwright project (`tsconfig.e2e.json`) inherits the flag and has been
-held to it since #3363, so a spec or `e2e/helpers/` module that indexes into
+held to it since #3363, so anything that project includes (`e2e/**`, including
+`e2e/setup` and `e2e/tools`, and `playwright.config.ts`) that indexes into
 an array or a keyed record must prove the element is there the same way
 application code does. Only `tsconfig.test.json` — the Vitest project — still
 extends `tsconfig.json` and explicitly turns the flag back off (see the comment
