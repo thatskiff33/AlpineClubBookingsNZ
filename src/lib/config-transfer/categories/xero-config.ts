@@ -2,7 +2,7 @@ import { strToU8, strFromU8 } from "fflate";
 import { z } from "zod";
 
 import type { BundleEntry } from "../bundle";
-import { isRateBearingMembershipType } from "@/lib/membership-type-rate-coverage";
+import { holdsHutRateRows } from "@/lib/membership-type-rate-coverage";
 import { serialiseCsv } from "../csv";
 import { registerEntity } from "../registry";
 import type { CategoryExporter, ExportContext } from "../export-types";
@@ -222,11 +222,13 @@ function parseItemRow(
 
   // D2 invariant + shape validation for HUT_FEE rows (#1930, E4), blocking
   // errors exactly like an unknown membership type: item codes may only key a
-  // rate-bearing type (MEMBER_RATE, or the built-in NON_MEMBER rate holder),
-  // and the row's ageTier must match the type's ageGroupsApply shape.
+  // type that owns rate rows — MEMBER_RATE, or one of the two built-ins the
+  // engine resolves by key (NON_MEMBER, FULL), whose rows are read whatever the
+  // row itself says (`holdsHutRateRows`, #2933) — and the row's ageTier must
+  // match the type's ageGroupsApply shape.
   if (category === "HUT_FEE" && membershipTypeKey !== null && membershipType) {
     if (
-      !isRateBearingMembershipType({
+      !holdsHutRateRows({
         key: membershipTypeKey,
         bookingBehavior: membershipType.bookingBehavior,
       })
