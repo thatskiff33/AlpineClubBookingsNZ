@@ -116,15 +116,6 @@ vi.mock("@/app/(admin)/admin/bed-allocation/_components/bucket-board", () => ({
 vi.mock("@/components/admin/bed-range-assign-dialog", () => ({
   BedRangeAssignDialog: () => null,
 }));
-// Its own suite covers it; here it would only add a second endpoint to fake.
-vi.mock(
-  "@/components/admin/allocation-preferences-section",
-  () => ({
-    AllocationPreferencesSection: () => (
-      <div data-testid="allocation-preferences" />
-    ),
-  }),
-);
 
 import AdminBedAllocationPage from "@/app/(admin)/admin/bed-allocation/page";
 
@@ -409,6 +400,46 @@ describe("bed-allocation board — a direct visit settles on a real lodge (#2701
       ),
     ).toBe(true);
     expect(screen.getByText("River Lodge")).toBeInTheDocument();
+  });
+});
+
+/*
+  #2937: the preferences EDITOR is no longer on this board — it lives in Bookings
+  Setup -> Rooms & Beds. What the board owes is a signpost, and the signpost owes
+  the same discipline as every other lodge-dependent thing here: carry the lodge
+  when there is one, and invent nothing when there is not.
+*/
+describe("bed-allocation board — the allocation preferences signpost (#2937)", () => {
+  function preferencesLink(): HTMLAnchorElement {
+    return screen.getByRole("link", {
+      name: /Bookings Setup . Rooms & Beds/,
+    }) as HTMLAnchorElement;
+  }
+
+  it("carries the board's own lodge to the editor's permanent home", async () => {
+    search.current = "from=2026-07-01&to=2026-07-08&lodgeId=lodge-2";
+    installFakeServer();
+
+    render(<AdminBedAllocationPage />);
+    await screen.findByTestId("room-table");
+
+    expect(preferencesLink().getAttribute("href")).toBe(
+      "/admin/rooms-beds?lodgeId=lodge-2",
+    );
+    // The board no longer edits preferences itself.
+    expect(
+      screen.queryByRole("checkbox", { name: "Auto allocation enabled" }),
+    ).toBeNull();
+  });
+
+  it("links without a lodge rather than naming one it does not have", async () => {
+    search.current = "from=2026-07-01&to=2026-07-08";
+    installFakeServer({ lodges: [] });
+
+    render(<AdminBedAllocationPage />);
+    await screen.findByText("No active lodge");
+
+    expect(preferencesLink().getAttribute("href")).toBe("/admin/rooms-beds");
   });
 });
 

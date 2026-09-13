@@ -150,14 +150,6 @@ vi.mock("@/components/admin/bed-allocation-move-dialog", () => ({
 vi.mock("@/components/admin/bed-range-assign-dialog", () => ({
   BedRangeAssignDialog: () => null,
 }));
-vi.mock(
-  "@/components/admin/allocation-preferences-section",
-  () => ({
-    AllocationPreferencesSection: () => (
-      <div data-testid="allocation-preferences" />
-    ),
-  }),
-);
 
 import AdminBedAllocationPage from "@/app/(admin)/admin/bed-allocation/page";
 

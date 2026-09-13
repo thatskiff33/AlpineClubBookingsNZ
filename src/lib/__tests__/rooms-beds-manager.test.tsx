@@ -34,6 +34,30 @@ vi.mock("@/components/lodge-select", () => ({
   initialLodgeIdFromLocation: () => "lodge-1",
 }));
 
+/*
+  #2937: the allocation-preferences card now sits at the bottom of this page. It
+  has its own two suites, and left real it would add a second endpoint to fake
+  here and a second permanently-mounted `role="alert"` region to every query in
+  this file. The seam records what the manager HANDS it, which is the only part
+  of it that is this file's business.
+*/
+vi.mock("@/components/admin/allocation-preferences-section", () => ({
+  AllocationPreferencesPanel: ({
+    scope,
+    canEdit,
+  }: {
+    scope: { kind: string; lodgeId?: string };
+    canEdit: boolean | undefined;
+  }) => (
+    <div
+      data-testid="allocation-preferences-panel"
+      data-scope={scope.kind}
+      data-lodge={scope.lodgeId ?? ""}
+      data-can-edit={String(canEdit)}
+    />
+  ),
+}));
+
 import { RoomsBedsManager } from "@/components/admin/rooms-beds-manager";
 
 const ROOMS_PAYLOAD = {
@@ -1011,5 +1035,37 @@ describe("RoomsBedsManager — bunk-group suggestions (#1702)", () => {
         .getByLabelText("Bunk group")
         .getAttribute("list"),
     ).toBe("bunk-groups-room-2");
+  });
+});
+
+describe("RoomsBedsManager — allocation preferences live here (#2937)", () => {
+  it("hands the panel this page's own settled lodge scope and bookings edit access", async () => {
+    stubFetch();
+    render(
+      <RoomsBedsManager
+        permissionMatrix={matrix({ lodge: "edit", bookings: "edit" })}
+      />,
+    );
+
+    const panel = await screen.findByTestId("allocation-preferences-panel");
+    // One lodge selector on the page, one derivation of the scope, and the
+    // preferences card reads the SAME one the rooms inventory does — which is
+    // the whole reason this is the editor's home rather than a second page with
+    // a second selector.
+    expect(panel.getAttribute("data-scope")).toBe("lodge");
+    expect(panel.getAttribute("data-lodge")).toBe("lodge-1");
+    expect(panel.getAttribute("data-can-edit")).toBe("true");
+  });
+
+  it("offers no edit path to a view-only bookings role", async () => {
+    stubFetch();
+    render(
+      <RoomsBedsManager
+        permissionMatrix={matrix({ lodge: "edit", bookings: "view" })}
+      />,
+    );
+
+    const panel = await screen.findByTestId("allocation-preferences-panel");
+    expect(panel.getAttribute("data-can-edit")).toBe("false");
   });
 });
