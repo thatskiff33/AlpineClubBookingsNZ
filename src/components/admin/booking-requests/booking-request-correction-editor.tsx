@@ -121,10 +121,27 @@ export function BookingRequestCorrectionEditor(props: {
   const [reason, setReason] = useState("");
   const [schoolRecord, setSchoolRecord] = useState<SchoolRecord | null>(null);
   const [schoolRecordConfirmed, setSchoolRecordConfirmed] = useState(false);
+  /**
+   * The row version the fields below were SEEDED from — not the one the panel
+   * happens to be holding when Save is pressed.
+   *
+   * The whole point of the fence is "refuse a correction written over a request
+   * something else has moved", and the fields are a snapshot taken when the
+   * form opened. This card lives inside a queue that refetches on ANY action
+   * anywhere in it, so `request.version` advances underneath an open form
+   * routinely. Reading it at save time handed the server the NEW version with
+   * the OLD fields, which passes every fence there is and silently clobbers
+   * whatever moved the row — including a second officer's correction.
+   */
+  const [seededVersion, setSeededVersion] = useState(request.version);
+  const [lookupFailed, setLookupFailed] = useState(false);
+  const [lookupAttempt, setLookupAttempt] = useState(0);
   const nameLookup = useRef(0);
 
   /** Re-seed every field from the request the server last gave us. */
   const reset = useCallback(() => {
+    setSeededVersion(request.version);
+    setLookupFailed(false);
     setCheckIn(dateOnlyFromIsoString(request.checkIn));
     setCheckOut(dateOnlyFromIsoString(request.checkOut));
     setContact({
@@ -157,6 +174,7 @@ export function BookingRequestCorrectionEditor(props: {
     if (!open || !isSchool) return;
     const typed = schoolName.trim();
     setSchoolRecordConfirmed(false);
+    setLookupFailed(false);
     if (!typed) {
       setSchoolRecord(null);
       return;
@@ -169,19 +187,30 @@ export function BookingRequestCorrectionEditor(props: {
         );
         const data = await response.json().catch(() => ({}));
         if (token !== nameLookup.current) return;
-        setSchoolRecord(response.ok ? (data.schoolRecord as SchoolRecord) : null);
+        // A lookup that FAILED is not a lookup still running. Without this the
+        // card said "Checking which school this is…" for ever, with Save
+        // disabled and nothing to press — and the officer's only way out was to
+        // reload the queue.
+        if (!response.ok) {
+          setSchoolRecord(null);
+          setLookupFailed(true);
+          return;
+        }
+        setSchoolRecord(data.schoolRecord as SchoolRecord);
       } catch {
-        if (token === nameLookup.current) setSchoolRecord(null);
+        if (token !== nameLookup.current) return;
+        setSchoolRecord(null);
+        setLookupFailed(true);
       }
     }, 350);
     return () => clearTimeout(timer);
-  }, [open, isSchool, schoolName, request.id]);
+  }, [open, isSchool, schoolName, request.id, lookupAttempt]);
 
   async function save() {
     setSaving(true);
     try {
       const body: Record<string, unknown> = {
-        expectedVersion: request.version,
+        expectedVersion: seededVersion,
         reason,
         checkIn,
         checkOut,
@@ -302,9 +331,9 @@ export function BookingRequestCorrectionEditor(props: {
       <div>
         <p className="font-medium">Correct this request</p>
         <p className="text-xs text-muted-foreground">
-          Saving re-opens the request: any quote already sent is withdrawn, the
-          price is cleared and any beds held for the old details are released.
-          Re-price and re-quote from the corrected details.
+          Saving re-opens the request: any quote already sent is withdrawn and
+          the price is cleared. Re-price and re-quote from the corrected
+          details.
         </p>
       </div>
 
@@ -340,6 +369,9 @@ export function BookingRequestCorrectionEditor(props: {
             />
             <SchoolRecordNotice
               record={schoolRecord}
+              failed={lookupFailed}
+              nameEntered={Boolean(schoolName.trim())}
+              onRetry={() => setLookupAttempt((attempt) => attempt + 1)}
               confirmed={schoolRecordConfirmed}
               onConfirm={setSchoolRecordConfirmed}
               requestId={request.id}
@@ -350,8 +382,9 @@ export function BookingRequestCorrectionEditor(props: {
             <Label>Teachers and parent helpers</Label>
             <p className="text-xs text-muted-foreground">
               Approving this booking makes these people the school&apos;s current
-              contacts — the ones your accounting system shows for it. Anyone the
-              school no longer sends should come off the list here.
+              contacts, and the school&apos;s accounting record is refreshed from
+              them — it names the most recently recorded few. Anyone the school
+              no longer sends should come off the list here.
             </p>
             {teachers.map((teacher, index) => (
               <div key={index} className="grid gap-2 sm:grid-cols-4">
@@ -418,6 +451,14 @@ export function BookingRequestCorrectionEditor(props: {
             </Button>
           </div>
 
+          <div className="space-y-1">
+            <Label>Children attending</Label>
+            <p className="text-xs text-muted-foreground">
+              These change the request itself — what the school asked for. The
+              &ldquo;Adjust group numbers&rdquo; boxes further down change only
+              the booking you are about to quote or approve.
+            </p>
+          </div>
           <div className="flex flex-wrap items-end gap-3">
             {CHILD_TIERS.map((tier) => (
               <div key={tier} className="space-y-1">
@@ -605,13 +646,19 @@ export function BookingRequestCorrectionEditor(props: {
         </p>
       ) : null}
 
+      {/* The ONE place this card talks about the beds, and it is conditional in
+          both directions: only a request that HOLDS beds has any to lose, and
+          only a school request has the catering preference that would keep
+          them — a public request has no catering control at all, so offering
+          that escape hatch there points at a field that does not exist. */}
       {request.heldBookingId ? (
         <p className="rounded-md border border-warning-6 bg-warning-2 p-2 text-xs">
           This request is holding beds for the details as they stand. Saving a
           correction releases them, and the requester&apos;s existing quote link
-          stops working — so send a fresh quote afterwards. Changing only the
-          catering preference keeps the beds: it is the one detail a hold is not
-          built from.
+          stops working — so send a fresh quote afterwards.
+          {isSchool
+            ? " Changing only the catering preference keeps the beds: it is the one detail a hold is not built from."
+            : ""}
         </p>
       ) : null}
 
@@ -644,11 +691,38 @@ export function BookingRequestCorrectionEditor(props: {
  */
 function SchoolRecordNotice(props: {
   record: SchoolRecord | null;
+  /** The lookup came back an error, or never came back at all. */
+  failed: boolean;
+  /** There is a name in the box to look up. */
+  nameEntered: boolean;
+  onRetry: () => void;
   confirmed: boolean;
   onConfirm: (value: boolean) => void;
   requestId: string;
 }) {
   const { record } = props;
+  if (!props.nameEntered) {
+    return (
+      <p className="text-xs text-muted-foreground">
+        Type the school&apos;s name and we will tell you which school on record
+        it is.
+      </p>
+    );
+  }
+  if (props.failed) {
+    return (
+      <div className="space-y-2 rounded-md border border-warning-6 bg-warning-2 p-2 text-xs">
+        <p>
+          We could not check which school this is, so saving is held until we
+          can — the name decides which school gets invoiced, and that is not a
+          question to answer blind.
+        </p>
+        <Button type="button" size="sm" variant="outline" onClick={props.onRetry}>
+          Try again
+        </Button>
+      </div>
+    );
+  }
   if (!record) {
     return (
       <p className="text-xs text-muted-foreground">
@@ -672,9 +746,12 @@ function SchoolRecordNotice(props: {
           </p>
           {record.currentContactNames.length > 0 ? (
             <p>
-              Its contacts today are {record.currentContactNames.join(", ")}
-              {record.currentContactNamesTruncated ? " and others" : ""} —
-              approving will replace them with the teachers above.
+              The people it names today are{" "}
+              {record.currentContactNames.join(", ")}
+              {record.currentContactNamesTruncated
+                ? ", and more it has recorded but does not name"
+                : ""}{" "}
+              — approving will replace them with the teachers above.
             </p>
           ) : null}
         </>

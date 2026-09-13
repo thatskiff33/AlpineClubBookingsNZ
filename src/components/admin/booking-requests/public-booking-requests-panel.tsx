@@ -1711,11 +1711,20 @@ export function PublicBookingRequestsPanel({
                               </div>
                             ))}
                           </div>
+                          {/* #2936: this said "Decline and ask the school to
+                              resubmit" — the destructive instruction the
+                              correction editor above exists to retire, sitting
+                              directly beneath it and contradicting the guide
+                              added with it. It also left two child-count
+                              controls on one card with very different
+                              consequences and nothing to tell them apart, so
+                              each now says what it changes. */}
                           <p className="text-xs text-muted-foreground">
                             {request.teachers.length} teachers &amp; helpers + children ={" "}
-                            {plannedGuestTotal(request)} total. Teachers &amp; parent helpers
-                            can&apos;t be changed here. Decline and ask the school to resubmit if
-                            those change.
+                            {plannedGuestTotal(request)} total. These boxes change only the
+                            booking you are about to quote or approve, not what the school
+                            asked for. To change the request itself — its dates, its teachers
+                            or its catering — use &ldquo;Correct this request&rdquo; above.
                           </p>
                           {plannedGuestTotal(request) > request.schoolGroupSoftCap ? (
                             <p className="rounded-md border border-warning-6 bg-warning-3 px-3 py-2 text-xs text-warning-11">

@@ -56,6 +56,10 @@
 
 import { OrganisationContactRole, type Prisma } from "@prisma/client";
 
+import {
+  MAX_XERO_ORGANISATION_CONTACT_PERSONS,
+  organisationContactPersonIdentity,
+} from "@/lib/organisation-xero-contact-persons";
 import type { prisma } from "@/lib/prisma";
 import {
   MAX_ORGANISATION_NAME_LENGTH,
@@ -63,8 +67,20 @@ import {
   schoolOrganisationNameClaim,
 } from "@/lib/school-organisations";
 
-/** How many current contact people a preview will name before it stops. */
-const CONTACT_PREVIEW_LIMIT = 10;
+/**
+ * How many current contact people a preview will name before it stops, and why
+ * it is the PROVIDER's cap rather than a number of this module's own.
+ *
+ * The preview answers "who would approving displace?", and the only place an
+ * officer ever sees those people is the school's accounting contact — which
+ * `readOrganisationForXeroContact` derives NEWEST first, de-duplicated, and
+ * capped at this many. A preview with its own larger cap and its own opposite
+ * ordering showed precisely the names that cap has already dropped: the oldest
+ * associations, which are the ones the provider never names. So the preview
+ * borrows the cap, the ordering and the de-duplication rather than inventing
+ * three of its own (`INV-SSOT`).
+ */
+const CONTACT_PREVIEW_LIMIT = MAX_XERO_ORGANISATION_CONTACT_PERSONS;
 
 /** Either client answers this module's questions; both only ever read. */
 type SchoolRecordReader = Prisma.TransactionClient | typeof prisma;
@@ -172,10 +188,17 @@ export async function previewSchoolRecordForName(
       xeroContactId: true,
       contacts: {
         where: { role: OrganisationContactRole.TEACHER },
-        // One more than the limit, so "there are more" is a fact and not a guess.
-        take: CONTACT_PREVIEW_LIMIT + 1,
-        orderBy: { createdAt: "asc" },
-        select: { member: { select: { firstName: true, lastName: true } } },
+        // NEWEST first, the provider's own ordering and for the provider's own
+        // reason: a returning teacher is minted as a fresh Member on every
+        // approval, so oldest-first would freeze the list on people who have
+        // long gone. Unbounded rather than `take`: the cap has to apply AFTER
+        // de-duplication or one human recorded three times eats three places.
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        select: {
+          member: {
+            select: { firstName: true, lastName: true, email: true },
+          },
+        },
       },
     },
   });
@@ -193,9 +216,18 @@ export async function previewSchoolRecordForName(
     };
   }
 
-  const names = existing.contacts.map(({ member }) =>
-    `${member.firstName} ${member.lastName}`.trim(),
-  );
+  // De-duplicated on the provider's own identity, so a teacher the club has
+  // recorded once per visit is one name here as they are one contact person
+  // there.
+  const seen = new Set<string>();
+  const names: string[] = [];
+  for (const { member } of existing.contacts) {
+    const identity = organisationContactPersonIdentity(member);
+    if (seen.has(identity)) continue;
+    seen.add(identity);
+    const name = `${member.firstName} ${member.lastName}`.trim();
+    if (name) names.push(name);
+  }
   return {
     normalisedName,
     known: true,

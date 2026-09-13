@@ -95,8 +95,8 @@ describe("previewing the record a name claims", () => {
       archivedAt: new Date("2026-01-01T00:00:00.000Z"),
       xeroContactId: "xero-7",
       contacts: [
-        { member: { firstName: "Bill", lastName: "Carter" } },
-        { member: { firstName: "Dana", lastName: "Ellis" } },
+        { member: { firstName: "Bill", lastName: "Carter", email: null } },
+        { member: { firstName: "Dana", lastName: "Ellis", email: null } },
       ],
     });
     const preview = await previewSchoolRecordForName(db, "tokoroa primary school");
@@ -119,12 +119,63 @@ describe("previewing the record a name claims", () => {
       archivedAt: null,
       xeroContactId: null,
       contacts: Array.from({ length: 11 }, (_, index) => ({
-        member: { firstName: "Teacher", lastName: String(index + 1) },
+        member: {
+          firstName: "Teacher",
+          lastName: String(index + 1),
+          email: null,
+        },
       })),
     });
     const preview = await previewSchoolRecordForName(db, "Big School");
-    expect(preview.currentContactNames).toHaveLength(10);
+    // The PROVIDER's cap, not one of this module's own: these are the people an
+    // officer would actually see on the school's accounting contact.
+    expect(preview.currentContactNames).toHaveLength(5);
     expect(preview.currentContactNamesTruncated).toBe(true);
+  });
+
+  it("names the people the accounting contact really shows, newest first", async () => {
+    // The defect this pins: the preview used to ask for the OLDEST ten while
+    // the provider takes the NEWEST five. So the officer was shown precisely
+    // the associations the cap had already dropped — told that approving would
+    // displace people the treasurer has never seen, and not told about the ones
+    // it actually would.
+    const { db, findFirst } = reader({
+      id: "org-7",
+      name: "Big School",
+      archivedAt: null,
+      xeroContactId: null,
+      contacts: [
+        { member: { firstName: "New", lastName: "Teacher", email: null } },
+        { member: { firstName: "Old", lastName: "Teacher", email: null } },
+      ],
+    });
+    const preview = await previewSchoolRecordForName(db, "Big School");
+    expect(findFirst.mock.calls[0][0].select.contacts.orderBy).toEqual([
+      { createdAt: "desc" },
+      { id: "desc" },
+    ]);
+    expect(preview.currentContactNames).toEqual(["New Teacher", "Old Teacher"]);
+  });
+
+  it("collapses one human recorded twice, as the provider does", async () => {
+    // A returning teacher is minted as a fresh Member on every approval, so the
+    // same person appearing two or three times is an ordinary state. Counting
+    // them separately would spend the cap on one human and claim the school has
+    // more contacts than it has.
+    const { db } = reader({
+      id: "org-7",
+      name: "Big School",
+      archivedAt: null,
+      xeroContactId: null,
+      contacts: [
+        { member: { firstName: "Ann", lastName: "Baker", email: "A@x.test" } },
+        { member: { firstName: " ann ", lastName: "baker", email: "a@x.test" } },
+        { member: { firstName: "Bea", lastName: "Cole", email: null } },
+      ],
+    });
+    const preview = await previewSchoolRecordForName(db, "Big School");
+    expect(preview.currentContactNames).toEqual(["Ann Baker", "Bea Cole"]);
+    expect(preview.currentContactNamesTruncated).toBe(false);
   });
 });
 

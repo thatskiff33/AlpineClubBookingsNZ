@@ -119,6 +119,31 @@ export const ORGANISATION_LOCAL_MODEL = "Organisation";
  * talk to" this data has.
  */
 export const MAX_XERO_ORGANISATION_CONTACT_PERSONS = 5;
+/**
+ * The identity two contact rows are collapsed on: the trimmed, case-folded name
+ * and address together, which is all this data has. Deliberately not a fuzzy
+ * match.
+ *
+ * JSON rather than a joined string: a separator character can appear inside a
+ * name, and "Ana Marie / T" would then collapse into "Ana / Marie T".
+ *
+ * Exported (#2936) because the officer's pre-correction preview has to answer
+ * "who would approving displace?" with the SAME set the provider is shown. Two
+ * de-duplications computed from two slightly different rules is how a preview
+ * comes to name people the treasurer never sees (`INV-SSOT`).
+ */
+export function organisationContactPersonIdentity(person: {
+  firstName: string;
+  lastName: string;
+  email: string | null;
+}): string {
+  return JSON.stringify([
+    person.firstName.trim().toLowerCase(),
+    person.lastName.trim().toLowerCase(),
+    (person.email ?? "").trim().toLowerCase(),
+  ]);
+}
+
 export class OrganisationXeroContactError extends Error {
   constructor(message: string) {
     super(message);
@@ -242,13 +267,7 @@ export async function readOrganisationForXeroContact(
         ? ""
         : row.member.email,
     };
-    // JSON rather than a joined string: a separator character can appear inside
-    // a name, and "Ana Marie / T" would then collapse into "Ana / Marie T".
-    const identity = JSON.stringify([
-      person.firstName.toLowerCase(),
-      person.lastName.toLowerCase(),
-      person.email.toLowerCase(),
-    ]);
+    const identity = organisationContactPersonIdentity(person);
     if (seen.has(identity)) continue;
     seen.add(identity);
     contactPersons.push(person);

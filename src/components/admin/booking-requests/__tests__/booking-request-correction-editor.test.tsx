@@ -374,3 +374,130 @@ describe("member links keyed to the party", () => {
     expect(screen.queryByText(/linked to a club member/i)).not.toBeInTheDocument();
   });
 });
+
+describe("the version fence is only a fence if it is the version you were shown", () => {
+  it("sends the version the FIELDS were seeded from, not the one that arrived later", async () => {
+    // The defect: this card sits in a queue that refetches on any action
+    // anywhere in it, so `request.version` advances underneath an open form as
+    // a matter of routine. Reading it at save time handed the server the NEW
+    // version with the OLD fields — which passes every fence there is, and
+    // silently clobbers whatever moved the row, including a second officer's
+    // correction.
+    const onCorrected = vi.fn();
+    const { rerender } = renderEditor(schoolRequest, { onCorrected });
+    await openForm();
+    fireEvent.change(screen.getByLabelText("Why are you correcting it?"), {
+      target: { value: "The school rang about the dates." },
+    });
+    await waitFor(() => expect(screen.getByRole("checkbox")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("checkbox"));
+
+    // Something else in the queue moved the request while this form was open.
+    rerender(
+      <BookingRequestCorrectionEditor
+        request={{ ...schoolRequest, version: 9 }}
+        disabled={false}
+        onCorrected={onCorrected}
+        onError={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Save correction" }));
+
+    await waitFor(() => expect(onCorrected).toHaveBeenCalled());
+    const post = fetchMock.mock.calls.find(
+      ([, init]) => (init as RequestInit | undefined)?.method === "POST",
+    )!;
+    const body = JSON.parse(String((post[1] as RequestInit).body));
+    expect(body.expectedVersion).toBe(4);
+  });
+});
+
+describe("what the card promises about the beds", () => {
+  it("does not promise a bed release in the paragraph that cannot know", async () => {
+    // The header used to say, unconditionally, that saving releases any beds
+    // held — while the paragraph below it explained that a catering-only
+    // correction keeps them. Two contradictory statements on one screen.
+    renderEditor();
+    await openForm();
+    expect(
+      screen.getByText(/any quote already sent is withdrawn/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/beds held for the old details are released/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("offers the catering escape hatch only where a catering control exists", async () => {
+    // A public request has no catering preference at all, so telling its
+    // officer that changing only the catering keeps the beds points at a field
+    // that is not on the screen.
+    renderEditor({
+      ...schoolRequest,
+      type: "GENERAL",
+      schoolName: null,
+      teachers: [],
+      cateringPreference: null,
+      heldBookingId: "held-1",
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Correct this request" }));
+    await waitFor(() =>
+      expect(screen.getByLabelText("Guest 1 first name")).toBeInTheDocument(),
+    );
+    expect(screen.getByText(/This request is holding beds/i)).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Changing only the catering preference/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps the catering escape hatch on a school request that holds beds", async () => {
+    renderEditor({ ...schoolRequest, heldBookingId: "held-1" });
+    await openForm();
+    expect(
+      screen.getByText(/Changing only the catering preference keeps the beds/i),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("when the school lookup cannot answer", () => {
+  it("says so and offers a retry instead of checking for ever", async () => {
+    // The defect: any lookup error left the card saying "Checking which school
+    // this is…" permanently, with Save disabled and nothing to press. The only
+    // way out was to reload the whole queue.
+    let attempts = 0;
+    fetchMock.mockImplementation(async (url: string) => {
+      if (String(url).includes("/school-record")) {
+        attempts += 1;
+        if (attempts === 1) return { ok: false, json: async () => ({}) };
+        return { ok: true, json: async () => ({ schoolRecord: knownRecord }) };
+      }
+      return { ok: true, json: async () => ({}) };
+    });
+    renderEditor();
+    await openForm();
+    await waitFor(() =>
+      expect(screen.getByText(/could not check which school this is/i)).toBeInTheDocument(),
+    );
+    expect(screen.getByRole("button", { name: "Save correction" })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await waitFor(() =>
+      expect(screen.getByText("Yes, this is that school.")).toBeInTheDocument(),
+    );
+  });
+
+  it("does not claim to be checking when there is no name to check", async () => {
+    renderEditor();
+    await openForm();
+    fireEvent.change(screen.getByLabelText("School name"), {
+      target: { value: "  " },
+    });
+    await waitFor(() =>
+      expect(
+        screen.getByText(/Type the school's name and we will tell you/i),
+      ).toBeInTheDocument(),
+    );
+    expect(
+      screen.queryByText(/Checking which school this is/i),
+    ).not.toBeInTheDocument();
+  });
+});
