@@ -12,6 +12,12 @@ import { prisma } from "./prisma";
 import type { Prisma, PrismaClient } from "@prisma/client";
 import logger from "@/lib/logger";
 import { isAuditCategory, type AuditCategory } from "./audit-categories";
+import {
+  resolveDeclaredMemberText,
+  withDeclaredMemberText,
+  withoutDeclaredMemberText,
+  type AuditMemberDisclosure,
+} from "./audit-member-disclosure";
 // test seam
 export { buildMemberAuditLogWhere } from "./audit-query";
 
@@ -33,6 +39,14 @@ export { buildMemberAuditLogWhere } from "./audit-query";
  * category's evidence sits behind.
  */
 export type { AuditCategory };
+
+/**
+ * The member-disclosure declaration (#2695), re-exported beside `AuditCategory`
+ * so a write site names one module. The vocabulary, the default-deny rule and
+ * the reason a helper function was NOT used live in
+ * `src/lib/audit-member-disclosure.ts`.
+ */
+export type { AuditMemberDisclosure };
 
 export type AuditSeverity = "info" | "important" | "critical";
 // The auth-bounce diagnostics (#1669) store their classification reason in
@@ -93,6 +107,14 @@ export type AuditLogParams = {
   expiresAt?: Date | null;
   archivedAt?: Date | null;
   incidentPreserved?: boolean | null;
+  /**
+   * What the SUBJECT MEMBER may read off this row, declared here rather than
+   * inferred from the shape of anything (#2695). Omitting it means the member
+   * reads no free text from this event — default-deny is the safety property,
+   * which is why this is optional where `category` is mandatory. The vocabulary
+   * and the reasoning: `src/lib/audit-member-disclosure.ts`.
+   */
+  memberDisclosure?: AuditMemberDisclosure;
 };
 
 export type StructuredAuditEvent = {
@@ -121,6 +143,14 @@ export type StructuredAuditEvent = {
   retentionClass?: AuditRetentionClass | null;
   expiresAt?: Date | null;
   incidentPreserved?: boolean | null;
+  /**
+   * What the SUBJECT MEMBER may read off this row, declared here rather than
+   * inferred from the shape of anything (#2695). Omitting it means the member
+   * reads no free text from this event — default-deny is the safety property,
+   * which is why this is optional where `category` is mandatory. The vocabulary
+   * and the reasoning: `src/lib/audit-member-disclosure.ts`.
+   */
+  memberDisclosure?: AuditMemberDisclosure;
 };
 
 /**
@@ -596,6 +626,44 @@ function assertCanonicalAuditCategory(
   }
 }
 
+/**
+ * The metadata actually stored, with the member-disclosure declaration applied
+ * (#2695). BOTH builders call it, which is what makes the rule complete: every
+ * one of the four approved write boundaries funnels through one of the two.
+ *
+ * The ORDER here is load-bearing, and it is the second half of the hole #2695
+ * closed. The caller's own metadata is stripped of the reserved key and
+ * sanitised FIRST — so `sanitizeAuditMetadata`'s over-budget
+ * `{_truncated, preview}` stub, if it fires, has already fired — and the
+ * declared member text is attached on top of the result. Merge the text in
+ * first and a large admin payload would silently delete what the member reads,
+ * which is the same class of defect as the shape test this replaced: an
+ * audience decided by a length.
+ */
+function buildStoredMetadata(params: {
+  action: string;
+  metadata: unknown;
+  memberDisclosure?: AuditMemberDisclosure;
+  options?: AuditMetadataOptions;
+}): Prisma.InputJsonValue | undefined {
+  const declaredMemberText = resolveDeclaredMemberText(
+    params.action,
+    params.memberDisclosure,
+    sanitizeAuditArchiveText,
+  );
+  const callerMetadata =
+    params.metadata === undefined
+      ? undefined
+      : sanitizeAuditMetadata(
+          withoutDeclaredMemberText(params.metadata),
+          params.options,
+        );
+
+  return declaredMemberText === null
+    ? callerMetadata
+    : withDeclaredMemberText(params.action, callerMetadata, declaredMemberText);
+}
+
 function buildAuditLogCreateData(
   params: AuditLogParams
 ): Prisma.AuditLogUncheckedCreateInput {
@@ -608,10 +676,11 @@ function buildAuditLogCreateData(
   // kept forever. With a category always present the gate can never be false,
   // so it is removed rather than left as a branch that reads as if it can.
   const retentionClass = classifyAuditRetention(params);
-  const metadata =
-    params.metadata === undefined
-      ? undefined
-      : sanitizeAuditMetadata(params.metadata);
+  const metadata = buildStoredMetadata({
+    action: params.action,
+    metadata: params.metadata,
+    memberDisclosure: params.memberDisclosure,
+  });
 
   return compactCreateData({
     action: params.action,
@@ -626,7 +695,11 @@ function buildAuditLogCreateData(
     category: params.category,
     severity: params.severity ?? undefined,
     outcome: params.outcome ?? undefined,
-    summary: params.summary ?? undefined,
+    // Sanitised on the same terms as `details` (#2695). It used to be stored
+    // raw — the one free-text column that skipped the secret, card-number and
+    // length rules — while being the column a member's own timeline shows for
+    // every row. Nothing about a short title makes it safe to exempt.
+    summary: sanitizeAuditDetails(params.summary),
     metadata,
     requestId: params.requestId ?? undefined,
     userAgent: params.userAgent ?? undefined,
@@ -672,8 +745,17 @@ function buildStructuredAuditLogCreateData(
     category: event.category,
     severity: event.severity ?? undefined,
     outcome: event.outcome ?? "success",
-    summary: event.summary ?? undefined,
-    metadata: sanitizeAuditMetadata(event.metadata, options),
+    // Sanitised on the same terms as `details` (#2695). It used to be stored
+    // raw — the one free-text column that skipped the secret, card-number and
+    // length rules — while being the column a member's own timeline shows for
+    // every row. Nothing about a short title makes it safe to exempt.
+    summary: sanitizeAuditDetails(event.summary),
+    metadata: buildStoredMetadata({
+      action: event.action,
+      metadata: event.metadata,
+      memberDisclosure: event.memberDisclosure,
+      options,
+    }),
     requestId: event.request?.id ?? undefined,
     userAgent: event.request?.userAgent ?? undefined,
     retentionClass,

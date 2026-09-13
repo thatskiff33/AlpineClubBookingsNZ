@@ -11,6 +11,7 @@ import { recordBookingEvent } from "./booking-events";
 import { isPrismaUniqueConstraintError } from "./prisma-errors";
 import { applyLocalRefundAllocation } from "./payment-transactions";
 import logger from "@/lib/logger";
+import { formatCents } from "@/lib/utils";
 import { buildXeroIdempotencyKey, startXeroSyncOperation } from "@/lib/xero-sync";
 import { XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE } from "@/lib/xero-operation-outbox-payload";
 import { repairLegacyAppliedCreditNoteAllocationsForBooking } from "@/lib/xero-applied-credit-allocation-repair";
@@ -893,6 +894,30 @@ export async function reviewAdminAdjustmentRequest(
         memberId: adminId,
         targetId: memberId,
         details: `Approved admin credit adjustment ${request.id} as credit ${credit.id}: ${formatAdjustmentAmount(request.amountCents)}. Requested by ${request.requestedById}. Reason: ${request.description}`,
+        // #2695 (`INV-PRIV-017`) — DECLARED MEMBER-FACING, owner decision of
+        // 9 August 2026. The only explanation a member ever gets for why their
+        // credit balance moved, which is why both fixes the issue originally
+        // sketched were refused: each would have taken it away.
+        //
+        // Written out rather than reusing `details` above, and that is the
+        // point: `details` is the officers' record. It names the credit row and
+        // the member who asked for the adjustment, and NEITHER reaches any
+        // member surface (`INV-PRIV-012`). And `formatAdjustmentAmount` renders
+        // raw cents (`+2500 cents`) for an operator; a member reads money, so
+        // the direction is a word and the amount unsigned.
+        //
+        // The claim is the free text only, on purpose: the adjustment REQUEST's
+        // id is this row's `entityId`, which the timeline returns to both
+        // audiences, so that one identifier does cross — as an opaque handle on
+        // the member's own request, not as an explanation. Withholding it is a
+        // change to every row on the timeline rather than to this sentence.
+        memberDisclosure: {
+          visibility: "member-facing",
+          text:
+            request.amountCents >= 0
+              ? `Credit of ${formatCents(request.amountCents)} added to your account. Reason: ${request.description}`
+              : `Credit of ${formatCents(Math.abs(request.amountCents))} deducted from your account. Reason: ${request.description}`,
+        },
         ipAddress,
       },
       tx

@@ -452,6 +452,26 @@ export const AUDIT_CENSUS_TOTALS = {
    * backlog item to be worked off — it is a regression.
    */
   uncategorised: 0,
+  /**
+   * Of those, sites publishing a purpose-written sentence to the subject member
+   * (#2695). `MEMBER_FACING_AUDIT_WRITERS_2695` pins WHICH; this is the count,
+   * so a swap between two sites cannot hide inside an unchanged total.
+   *
+   * 0 -> 6 (#2695): the credit adjustment approval the owner decided on, plus
+   * the five #2562 `adminNotes` writers whose text a member reads TODAY and
+   * would have lost to the new default. Before this issue no site declared
+   * anything, because there was nothing to declare with: what a member read was
+   * decided by whether the `details` column happened to parse as JSON.
+   */
+  memberFacingSites: 6,
+  /**
+   * Of those, sites whose declaration the census cannot read, pinned per site in
+   * `APPROVED_FORWARDED_MEMBER_DISCLOSURE_SITES_2695` with the reason each is
+   * safe. Unlike an unreadable category, an unreadable disclosure cannot leak —
+   * the reader's default is to publish nothing — so this bounds the
+   * measurement's claim rather than holding a gate shut.
+   */
+  memberDisclosureForwarded: 7,
   /** Per-sink totals, so a shift between forms cannot cancel out in the total. */
   bySink: {
     // 238 -> 239 (#2623): the waitlist-confirm recovery marker, fire-and-forget
@@ -1941,6 +1961,130 @@ export const APPROVED_MIGRATION_AUDIT_SQL: Readonly<Record<string, string>> = {
     "The #2751 backfill: rewrites `category` from `admin` to `lodge` on the bed-allocation and lodge-display rows written before #2730 moved their writers, matched by an EXACT literal list of the 18 action names those 22 sites write (never a prefix). It is the only column in the SET clause, so severity, retentionClass, expiresAt, createdAt, details, metadata and every actor column keep the bytes they were written with — and retention cannot move, because prune and archive select on the stored retentionClass/expiresAt and never read `category`. Pinned against `REVIEWED_ADMIN_CATEGORIES_2730` by src/lib/__tests__/bed-allocation-audit-category-backfill.test.ts and executed against a real PostgreSQL by its verification fixture.",
   "prisma/migrations/20260810020000_backfill_bed_allocation_audit_category/migration.sql::insert#0":
     "The same backfill's record of itself: one AUDIT_CATEGORY_BACKFILLED row carrying the before/after counts decision B asked for, written only when rows actually moved so a replay appends nothing. Names `\"category\"` and writes `admin` — the support-only category, on purpose, so the operator who just lost these rows from their system correlation entry can see in that entry why — plus an explicit severity, retentionClass and expiresAt.",
+};
+
+/**
+ * Every write site that publishes a purpose-written sentence to the SUBJECT
+ * MEMBER (#2695). Site id to the action it writes.
+ *
+ * WHY THIS IS PINNED AND ITS OPPOSITE IS NOT. A member reads an audit row's
+ * free text only where the writing site declared
+ * `memberDisclosure: { visibility: "member-facing", text }`; everything else —
+ * an `{ visibility: "internal" }` declaration and, far more commonly, no
+ * declaration at all — is denied by the reader. So DELETING a declaration can
+ * only narrow what a member sees, and needs no gate. ADDING one widens it, and
+ * `INV-PRIV-012` reserves a widening of member readership to the owner. This
+ * map is where that shows up: a second member-facing site is a named CI failure
+ * naming the action it would publish, not a quiet line in a route.
+ *
+ * SIX ENTRIES, in two groups, and the split is the thing to read before adding
+ * a seventh. ONE is the owner's decision of 9 August 2026: the credit
+ * adjustment approval, the only explanation a member ever gets for why their
+ * balance moved, which is why both fixes #2695 originally sketched were
+ * refused — each would have taken it away along with everything else. The
+ * other FIVE are #2562's `adminNotes` writers, which are not new disclosures at
+ * all: a member reads that note today, and the five declarations are what keep
+ * it when the reader turned default-deny.
+ *
+ * EACH ENTRY SAYS WHAT ITS SITE PUBLISHES, in the comment above it, because the
+ * pinned VALUE can only be the action — it is measured from the tree and
+ * compared literally. "Which action" and "what text a member ends up reading"
+ * are different questions, and only the second one is the readership.
+ *
+ * MEASURED FROM THE TREE, so editing the route fails this and not only the
+ * table. The entry pins the ACTION as well as the site because the identity is
+ * symbol-keyed: a new writer earlier in the same symbol renumbers the ordinal
+ * after it, and the action is what says whether the site moved or the meaning
+ * did.
+ */
+export const MEMBER_FACING_AUDIT_WRITERS_2695: Readonly<
+  Record<string, string>
+> = {
+  // ─── The owner's decision of 9 August 2026 ──────────────────────────────────
+  // PUBLISHES: a sentence written for the member — the direction in words, the
+  // amount as money, and the officer's `description` of why. Not the row's
+  // `details`, which is the officers' record and names the credit row and the
+  // member who requested the adjustment.
+  //
+  // The only explanation a member ever gets for why their credit balance moved.
+  // Nothing else on any member surface carries it, which is exactly why both
+  // fixes #2695 originally sketched were refused: each would have removed it.
+  "src/lib/member-credit.ts::reviewAdminAdjustmentRequest.result#1":
+    "member.credit.adjustment.approve",
+
+  // ─── #2562's member-facing note, preserved rather than widened ──────────────
+  // These five wrote an officer's `adminNotes` into `details` and the member
+  // read it, because prose does not parse as JSON. That accident is gone; the
+  // declaration is what keeps the text, and it is NOT a new disclosure. #2562
+  // built `adminNotes`/`internalNotes` as a deliberate pair — the private half
+  // "reaches no member surface" and is kept out of the audit row entirely, with
+  // only `internalNoteRecorded` recording that one exists — and the
+  // member-facing half is already emailed to the member on the same decision.
+  // Denying it here would have taken an officer's explanation off the member's
+  // own timeline while leaving it in their inbox.
+  // PUBLISHES: the officer's `adminNotes` on the decision, and nothing when
+  // there is none. One site, two actions: the census records the conditional
+  // verbatim, which is what makes an edit to either branch a visible diff here.
+  "src/app/api/admin/booking-change-requests/[id]/route.ts::PATCH#0":
+    "(dynamic) parsed.data.status === \"APPROVED\" ? \"booking-change-request.approve\" : \"booking-change-request.reject\"",
+  // PUBLISHES: `adminNotes`, which a refusal cannot omit — the route rejects a
+  // refusal without one — and which `notifyMemberOfRefusal` emails as well.
+  "src/app/api/admin/booking-exception-requests/[id]/route.ts::PATCH#0":
+    "booking-policy-exception-request.reject",
+  // PUBLISHES: `adminNotes` ONLY. This site's `details` falls back to the
+  // reviewed policy codes when an officer approves without writing anything,
+  // and those are internal identifiers for the rule that was waived rather than
+  // text written for a member, so that branch declares internal.
+  "src/app/api/admin/booking-exception-requests/[id]/route.ts::PATCH#2":
+    "booking-policy-exception-request.approve",
+  // PUBLISHES: `adminNotes`, which is also stored as the booking's
+  // `adminReviewNotes` and shown to the member on their own booking page. The
+  // email can be suppressed here by "do not notify"; the booking page cannot,
+  // which is why declaring it is preservation rather than widening.
+  "src/app/api/admin/bookings/[id]/review/route.ts::PATCH#0":
+    "booking.review.approve",
+  // PUBLISHES: the same, for the rejection. A rejection cannot omit the note —
+  // the route's schema requires one.
+  "src/app/api/admin/bookings/[id]/review/route.ts::PATCH#1":
+    "booking.review.reject",
+};
+
+/**
+ * Row-producing sites whose member-disclosure declaration the census cannot
+ * read, each with the reason it is nonetheless safe (#2695).
+ *
+ * Unreadable is not the same as dangerous HERE, and the asymmetry is the whole
+ * reason this list can stay short. An unreadable CATEGORY is a hazard because
+ * the safe answer (a canonical value) is the one that has to be supplied. An
+ * unreadable DISCLOSURE is not, because the safe answer is the ABSENT one: the
+ * reader publishes nothing unless it finds a declared sentence on the stored
+ * row, so a site the scanner cannot read still cannot leak — it can only fail
+ * to publish something it meant to.
+ *
+ * So this list exists to keep the measurement honest rather than to hold a gate
+ * shut: it records that seven sites are outside the census's sight, so
+ * "one member-facing site" is a claim with a stated boundary instead of a
+ * completeness assertion the scanner cannot support. Six are an opaque spread
+ * of a conditional object into the event; the seventh forwards a whole event
+ * object through a wrapper.
+ */
+export const APPROVED_FORWARDED_MEMBER_DISCLOSURE_SITES_2695: Readonly<
+  Record<string, string>
+> = {
+  "src/app/api/admin/backups/config/route.ts::POST#0":
+    "Spreads a conditional object into the event, so the census fails closed on the whole key set. Declares nothing, so the member reads nothing.",
+  "src/app/api/admin/backups/restore/route.ts::POST#0":
+    "Same spread shape; declares nothing.",
+  "src/app/api/admin/backups/restore/route.ts::POST#1":
+    "Same spread shape; declares nothing.",
+  "src/app/api/admin/backups/restore/route.ts::POST#2":
+    "Same spread shape; declares nothing.",
+  "src/app/api/admin/backups/run/route.ts::POST#0":
+    "Same spread shape; declares nothing.",
+  "src/app/api/admin/integrations/credentials/route.ts::POST#0":
+    "Same spread shape; declares nothing.",
+  "src/lib/google-oauth.ts::auditGoogleLink#0":
+    "Forwards a caller-supplied StructuredAuditEvent. `memberDisclosure` is optional on that type and none of its five callers sets one, so the member reads nothing.",
 };
 
 /**

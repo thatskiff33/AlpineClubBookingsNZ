@@ -444,6 +444,13 @@ export async function PATCH(
       outcome: "success",
       summary: "Booking-policy exception request refused",
       details: adminNotes,
+      // #2695 (`INV-PRIV-017`) - member-facing, which PRESERVES what the member
+      // reads today rather than widening it: `adminNotes` is #2562's member-facing
+      // half, already emailed to them with this decision, while `internalNotes`
+      // reaches no member surface and is not in this row at all.
+      memberDisclosure: adminNotes
+        ? { visibility: "member-facing", text: adminNotes }
+        : { visibility: "internal" },
       metadata: {
         source,
         requestId: id,
@@ -677,6 +684,21 @@ export async function PATCH(
         outcome: "success",
         summary: "Booking-policy exception request approved and executed",
         details: adminNotes ?? reviewedReasonCodes.join(", "),
+        // #2695 (`INV-PRIV-017`) - `adminNotes` ONLY, which preserves what the
+        // member reads today rather than widening it: it is #2562's
+        // member-facing half, already emailed to them with this decision, while
+        // `internalNotes` reaches no member surface and is not in this row.
+        //
+        // The `details` fallback beside it is deliberately NOT published. When
+        // an officer approves without writing anything, `details` records the
+        // reviewed policy codes — `ADULT_MEMBER_HOSTING_REQUIRED` and its
+        // siblings — which are internal identifiers for the rule that was
+        // waived, not a sentence written for the member. A declaration is a
+        // promise that somebody wrote this FOR them, so a code declares
+        // internal and the member reads nothing from this row.
+        memberDisclosure: adminNotes
+          ? { visibility: "member-facing", text: adminNotes }
+          : { visibility: "internal" },
         metadata: {
           source,
           requestId: id,

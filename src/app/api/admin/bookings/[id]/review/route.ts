@@ -177,6 +177,16 @@ export async function PATCH(
       outcome: "success",
       summary: "Admin approved booking awaiting review",
       details: parsed.data.adminNotes,
+      // #2695 (`INV-PRIV-017`) - member-facing, which PRESERVES what the member
+      // reads rather than widening it: `adminNotes` is stored as
+      // `adminReviewNotes` above and shown to them on their own booking page as the
+      // "Admin note". NOT because it was emailed — `notifyMember: false` suppresses
+      // that on this very route, so a reader who checked that reason and found it
+      // false could reasonably withdraw the declaration. `internalNotes` reaches no
+      // member surface and is not in this row at all.
+      memberDisclosure: parsed.data.adminNotes
+        ? { visibility: "member-facing", text: parsed.data.adminNotes }
+        : { visibility: "internal" },
       metadata: { decision: "APPROVED", ...notifyAuditFields },
       ipAddress,
     });
@@ -322,6 +332,16 @@ export async function PATCH(
     outcome: "success",
     summary: "Admin rejected booking awaiting review",
     details: parsed.data.adminNotes,
+    // #2695 (`INV-PRIV-017`) - member-facing, which PRESERVES what the member
+    // reads rather than widening it: `adminNotes` is stored as
+    // `adminReviewNotes` above and shown to them on their own booking page as the
+    // "Admin note". NOT because it was emailed — `notifyMember: false` suppresses
+    // that on this very route, so a reader who checked that reason and found it
+    // false could reasonably withdraw the declaration. `internalNotes` reaches no
+    // member surface and is not in this row at all.
+    memberDisclosure: parsed.data.adminNotes
+      ? { visibility: "member-facing", text: parsed.data.adminNotes }
+      : { visibility: "internal" },
     metadata: { decision: "REJECTED", ...notifyAuditFields },
     ipAddress,
   });

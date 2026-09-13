@@ -682,6 +682,7 @@ Prefix `INV-PRIV`.
 | `INV-PRIV-014` | Diagnostics filters and typed search reach the provider ungated |
 | `INV-PRIV-015` | A hut leader's PIN session: ten minutes' inactivity, twelve-hour ceiling, Lock control |
 | `INV-PRIV-016` | Kiosk Group Trip disclosure by tier: linkage ordinal only; never `joinCode` |
+| `INV-PRIV-017` | Member-visible audit text: declared at the write site, denied by default |
 
 ## Membership Lifecycle
 
