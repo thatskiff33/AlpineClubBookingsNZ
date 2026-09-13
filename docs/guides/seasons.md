@@ -30,10 +30,14 @@ inspect the windows but not change them. Dates are NZ date-only lodge nights.
 
 1. Go to `/admin/seasons` (from **Fees → Hut Fees**). The page lists each
    season as a card with its type badge (WINTER/SUMMER), an Active/Inactive
-   badge, and its date range, **in date order, earliest first** — the schedule
-   as it actually runs.
+   badge, and its date range.
 
    ![Seasons page: Summer 2026-27 and Winter 2026 season cards with type and Active badges, and the "add seasons in Fees → Hut Fees" notice](../images/admin/admin-seasons.png)
+
+   The cards are in **date order, earliest first** — the schedule as it actually
+   runs. *The screenshot above was captured before that ordering and before the
+   gap warnings described below, so it shows neither; it will be refreshed with
+   the next capture run.*
 
 2. If the club runs more than one lodge, use the lodge selector to switch which
    lodge's seasons you see.
@@ -46,10 +50,18 @@ the previous one ends — 1 October following a season that ends on 30 September
 leaves nothing uncovered.
 
 If any nights in between are left over, the page says so where they fall,
-between the two seasons either side of them, and counts them above the list:
+between the two seasons either side of them, and counts them above the list.
+For example, a club whose winter ends on 30 September and whose next season does
+not start until 1 December would see this between those two cards, with its own
+two season names where the italics are:
 
-> **No season covers 1 Oct 2026 to 30 Nov 2026 — 61 nights.** Winter 2026 ends
-> the day before, and Summer 2026-27 starts the day after.
+> **No season covers 1 Oct 2026 to 30 Nov 2026 — 61 nights**
+>
+> *The season before it* ends the day before, and *the season after it* starts
+> the day after. A booking for one of these nights is refused because nothing
+> prices it — nothing is charged at zero and no neighbouring season's rates are
+> used instead. Extend one of the two windows, or add a season to cover the
+> nights.
 
 Those nights cannot be booked: nothing prices them, so a member's booking that
 includes one is refused. **The page only tells you — it never fills the hole
@@ -67,6 +79,13 @@ Two things worth knowing:
 - **Gaps that are entirely in the past are not reported**, and neither is the
   open-ended stretch after your last season — every club has one of those, and
   it is the end of the schedule rather than a mistake in it.
+- **A newly set-up club sees one of these before it has configured anything,
+  and that is correct.** First-run setup creates two sample seasons — a winter
+  running June to September and a summer running November to March — with
+  October deliberately left between them. So the very first visit to this page
+  reports October as uncovered, which is true: nothing prices those nights.
+  Replace the sample windows with your club's real ones (or extend one to meet
+  the other) and the warning goes with them.
 
 ### Edit a season window
 

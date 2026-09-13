@@ -34,7 +34,10 @@ date-only.
    ![Fees console: Hut fees seasons with per-age-tier rates, plus the Joining fees, Annual membership fees, and Family billing members sections](../images/admin/admin-fees.png)
 
    Seasons are listed **in date order, earliest first**, so the list reads as
-   the schedule actually runs.
+   the schedule actually runs. *The screenshot above was captured before that
+   ordering, before the gap warnings and before the **New season from this**
+   button described below, so it shows none of them; it will be refreshed with
+   the next capture run.*
 
 2. Click **Add season** (or **Edit** on a season) to set the **Season Name**,
    **Type** (Winter/Summer), **Start/End Date**, and the **Nightly Rates** for each
@@ -100,8 +103,9 @@ date-only.
 
    The screen only tells you; it never fills a gap in, charges zero, or borrows
    a neighbouring season's rates. A deactivated season does not count as cover.
-   The [Seasons](seasons.md) guide covers this in full, and either screen can
-   close the gap.
+   The [Seasons](seasons.md) guide covers this in full — including why a newly
+   set-up club sees one of these warnings before it has configured anything —
+   and either screen can close the gap.
 
 6. Optionally set a **Flat whole-lodge night rate** for the season — a single
    price per night for the whole building, regardless of how many people come.
