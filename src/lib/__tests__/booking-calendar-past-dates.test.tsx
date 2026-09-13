@@ -10,9 +10,15 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { APP_LOCALE } from "@/config/operational";
 
-vi.mock("@/components/club-identity-provider", () => ({
-  useClubIdentity: () => ({ lodgeCapacity: 20 }),
-}));
+/*
+  #2930: the calendar no longer reads the club-identity bed count. That figure is
+  ONE lodge's capacity used as the denominator for every lodge, so at a capped or
+  secondary lodge every free-bed count on this grid was computed against the
+  wrong ceiling. The selected lodge's own effective capacity now arrives with the
+  month's availability (`INV-CAP-001`, `INV-CAP-003`), which is why every stub
+  below states `lodgeCapacity` — and why a stub that omits it renders "availability
+  not loaded" rather than silently borrowing another lodge's number.
+*/
 
 import { BookingCalendar } from "@/components/booking-calendar";
 import { bindClubTime, requireClubTimeZone } from "@/lib/club-time";
@@ -81,7 +87,7 @@ beforeEach(() => {
     "fetch",
     vi.fn(async () => ({
       ok: true,
-      json: async () => ({ availability: {}, seasons: {} }),
+      json: async () => ({ lodgeCapacity: 20, availability: {}, seasons: {} }),
     })),
   );
 });
@@ -135,20 +141,31 @@ describe("BookingCalendar full future days (#1767)", () => {
       "fetch",
       vi.fn(async () => ({
         ok: true,
-        json: async () => ({ availability: { [fullDayStr]: 20 }, seasons: {} }),
+        json: async () => ({ lodgeCapacity: 20, availability: { [fullDayStr]: 20 }, seasons: {} }),
       })),
     );
   });
 
-  it("keeps a full future day disabled by default (member flow pin)", async () => {
+  it("keeps a full future day SELECTABLE for a member, as the waitlist door (#2930)", async () => {
+    // THIS TEST IS THE INVERSE OF THE ONE IT REPLACES, deliberately.
+    //
+    // It used to pin "a full future day stays disabled in the member flow", and
+    // that pin was the defect: the waitlist offer arrives with the server's 409,
+    // so a member who cannot select a full night cannot produce the request that
+    // produces the offer. #2930's settled owner contract point 1 is that full
+    // future nights remain selectable and are styled waitlist-only. The admin
+    // `allowFullDates` wording below is untouched, which is what keeps the
+    // book-on-behalf boundary where it was.
     render(<BookingCalendar onDateSelect={() => {}} />);
     await goForwardOneMonth();
 
     await waitFor(() =>
-      expect(dayButton(-1, 15).hasAttribute("disabled")).toBe(true),
+      expect(dayButton(-1, 15).hasAttribute("disabled")).toBe(false),
     );
     const label = dayButton(-1, 15).getAttribute("aria-label");
     expect(label).toContain("full");
+    expect(label).toContain("waitlist only");
+    // The member is never told the admin mechanism.
     expect(label).not.toContain("selectable for over-capacity booking");
   });
 
