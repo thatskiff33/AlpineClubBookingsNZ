@@ -84,7 +84,12 @@ const db = vi.hoisted(() => {
     groupDiscountSetting: { findUnique: nothing },
     membershipCancellationSetting: { findUnique: nothing },
     xeroToken: { findFirst: nothing },
-    xeroAccountMapping: { count: none },
+    // #2717 added a READ of the mapping rows to this snapshot, so the step can
+    // name a fallback-bearing key that is unset. This case is about rate
+    // coverage and asserts nothing about mappings, so an empty list is the
+    // honest stand-in — but the delegate has to exist, or the whole file dies
+    // at the first call rather than failing an assertion.
+    xeroAccountMapping: { count: none, findMany: async () => [] },
     xeroItemCodeMapping: { count: none },
     clubIdentitySettings: { findUnique: nothing },
     emailMessageSetting: { findUnique: nothing },
