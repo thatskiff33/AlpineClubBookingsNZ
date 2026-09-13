@@ -14,6 +14,11 @@ const mocks = vi.hoisted(() => ({
   xeroSyncCursorFindUnique: vi.fn(),
   memberFindMany: vi.fn(),
   memberFindUnique: vi.fn(),
+  // #2939: `applyInboundMemberContactPatch` now takes the contact-home lock and
+  // asks the OTHER table whether this Xero contact is already a school's
+  // customer before it claims the link (INV-INT-018). Default: nobody else
+  // holds it, which is the ordinary inbound case.
+  organisationFindFirst: vi.fn().mockResolvedValue(null),
   memberUpdate: vi.fn(),
   memberCreditAggregate: vi.fn(),
   memberCreditCreate: vi.fn(),
@@ -428,6 +433,9 @@ describe("processStoredXeroInboundEvents", () => {
         },
         xeroSyncOperation: {
           findMany: mocks.txOperationFindMany,
+        },
+        organisation: {
+          findFirst: mocks.organisationFindFirst,
         },
         member: {
           findUnique: mocks.memberFindUnique,

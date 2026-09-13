@@ -17,6 +17,14 @@ const mocks = vi.hoisted(() => ({
     familyGroupMember: { findFirst: vi.fn(), create: vi.fn(), createMany: vi.fn() },
     passwordResetToken: { create: vi.fn() },
     auditLog: { create: vi.fn() },
+    // #2939: the import's create transactions now take the contact-home
+    // advisory lock and then ask the OTHER table whether this Xero contact is
+    // already a school's customer (INV-INT-018). Both are real calls on the
+    // transaction client, so the mock carries them rather than stubbing the
+    // guard out — a mock that hid the guard would leave every assertion below
+    // passing whether or not the refusal is wired up.
+    organisation: { findFirst: vi.fn() },
+    $executeRaw: vi.fn(),
     $transaction: vi.fn(),
   },
   logger: { error: vi.fn(), info: vi.fn(), warn: vi.fn(), debug: vi.fn() },
@@ -119,6 +127,10 @@ beforeEach(() => {
   mocks.prisma.member.findFirst.mockResolvedValue(null);
   mocks.prisma.member.create.mockResolvedValue({ id: "member_new", email: "new@example.com" });
   mocks.prisma.member.update.mockResolvedValue({});
+  // No other local record holds the contact: the ordinary case, in which the
+  // refusal reads the organisation table and returns.
+  mocks.prisma.organisation.findFirst.mockResolvedValue(null);
+  mocks.prisma.$executeRaw.mockResolvedValue(1);
   mocks.prisma.$transaction.mockImplementation(async (callback) =>
     callback(mocks.prisma),
   );

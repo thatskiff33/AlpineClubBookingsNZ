@@ -104,6 +104,10 @@ import {
   applyInboundMemberContactPatch,
   type InboundMemberContactPatch,
 } from "./xero-contact-create-recovery";
+import {
+  assertXeroContactHasNoOtherHome,
+  lockXeroContactHome,
+} from "@/lib/xero-contact-home";
 import { buildXeroContactUrl } from "./xero-links";
 import { isXeroSandboxContactEmail } from "@/lib/xero-sandbox-contact-email";
 import { upsertXeroObjectLink } from "./xero-sync";
@@ -799,6 +803,9 @@ export async function importMembersFromXeroGroups(
           );
 
           const newFamilyMember = await prisma.$transaction(async (tx) => {
+            // INV-INT-018 (#2939): the contact-home key, taken before the row
+            // this transaction is about to create. See the refusal below.
+            await lockXeroContactHome(tx, contact.contactId);
             const created = await tx.member.create({
             data: {
               email,
@@ -843,6 +850,18 @@ export async function importMembersFromXeroGroups(
               inheritEmailChoiceId: inheritEmailFromId,
             },
           });
+            /*
+              INV-INT-018 (#2939): the two-homes refusal, AFTER the create and
+              inside the same transaction, so a contact an `Organisation`
+              already holds takes the new member row down with it rather than
+              leaving a person claiming a school's Xero customer. It reads the
+              other table for a holder, so it needs no id until one exists —
+              which is why it runs here rather than before the insert.
+            */
+            await assertXeroContactHasNoOtherHome(tx, {
+              xeroContactId: contact.contactId,
+              home: { kind: "MEMBER", id: created.id },
+            });
             await upsertXeroObjectLink(
               {
                 localModel: "Member",
@@ -933,6 +952,8 @@ export async function importMembersFromXeroGroups(
         });
 
         const member = await prisma.$transaction(async (tx) => {
+          // INV-INT-018 (#2939): as on the dependant path above.
+          await lockXeroContactHome(tx, contact.contactId);
           const created = await tx.member.create({
           data: {
             email,
@@ -961,6 +982,10 @@ export async function importMembersFromXeroGroups(
             emailVerified: true,
           },
         });
+          await assertXeroContactHasNoOtherHome(tx, {
+            xeroContactId: contact.contactId,
+            home: { kind: "MEMBER", id: created.id },
+          });
           await upsertXeroObjectLink(
             {
               localModel: "Member",
