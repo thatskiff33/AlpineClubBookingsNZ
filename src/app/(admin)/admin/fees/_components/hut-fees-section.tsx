@@ -32,10 +32,6 @@ import {
   type RateCells,
 } from "@/lib/season-rate-grid";
 import {
-  buildSeasonTimeline,
-  type TimelineSeason,
-} from "@/lib/season-timeline";
-import {
   SeasonCoverageGapNotice,
   SeasonCoverageGapSummary,
 } from "@/components/admin/season-coverage-warning";
@@ -57,6 +53,7 @@ import {
   calendarDayFromPayload,
   formatPayloadCalendarDay,
 } from "../../_lib/calendar-day";
+import { readSeasonSchedule } from "../../_lib/season-schedule";
 import { MissingHutRatesNotice } from "./missing-hut-rates-notice";
 
 // The Hut Fees section of the consolidated /admin/fees console (#1933, E7):
@@ -181,6 +178,29 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const sectionRef = useRef<HTMLDivElement>(null);
   const { scrollToTop } = useScrollToFeedback();
+  /*
+    #2938 review — which season the open form was pre-filled from, and a
+    counter so copying twice from the same one re-announces it.
+
+    `null` means "this form was not pre-filled": a fresh Add season, an Edit, or
+    a closed form. Only the name is held, because the name is the ONLY thing the
+    officer needs back — everything else about the copy is in the boxes in front
+    of them, and deliberately not the source's identity.
+  */
+  const [copiedFrom, setCopiedFrom] = useState<string | null>(null);
+  const [copyAttention, setCopyAttention] = useState(0);
+  const copyNoticeRef = useRef<HTMLParagraphElement>(null);
+  /*
+    A PASSIVE effect, for the reason `FocusedActionError` writes out in full:
+    focus has to land strictly AFTER the commit that puts the paragraph in the
+    DOM, or there is nothing to focus. `copyAttention` is in the dependency list
+    so a second copy from the SAME season re-announces rather than sitting
+    silent because the name did not change.
+  */
+  useEffect(() => {
+    if (copiedFrom === null) return;
+    copyNoticeRef.current?.focus({ preventScroll: true });
+  }, [copiedFrom, copyAttention]);
   const {
     lodges,
     loading: lodgesLoading,
@@ -380,46 +400,14 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
     they fall.
 
     Seasons arrive from the API in whatever order the query returned, which is
-    not chronological and is not stable between refreshes. `buildSeasonTimeline`
-    sorts them totally and interleaves each coverage gap immediately before the
-    season that resumes cover; the rules — inclusive-both-edges windows, only
-    ACTIVE seasons counting as cover, a running sweep so a long season swallowing
-    a short one raises no phantom hole — all live in `@/lib/season-timeline`.
-
-    A season whose edges this screen cannot decode is not evidence of anything.
-    It is kept out of the gap analysis and listed after the timeline, the same
-    way the missing-rates panel says nothing about a season whose scope it
-    cannot read.
+    not chronological and is not stable between refreshes. The decode-and-order
+    policy is `readSeasonSchedule`, shared with the Seasons page because both
+    screens answer the same question from the same payload and a rule typed
+    twice drifts; the date arithmetic under it lives in `@/lib/season-timeline`.
   */
-  const { timeline, undatedSeasons } = useMemo(() => {
-    const dated: Array<TimelineSeason & { season: Season }> = [];
-    const undated: Season[] = [];
-    for (const season of seasons) {
-      const startDate = calendarDayFromPayload(season.startDate);
-      const endDate = calendarDayFromPayload(season.endDate);
-      if (startDate === null || endDate === null) {
-        undated.push(season);
-        continue;
-      }
-      dated.push({
-        id: season.id,
-        name: season.name,
-        active: season.active,
-        startDate,
-        endDate,
-        season,
-      });
-    }
-    return {
-      timeline: buildSeasonTimeline({ seasons: dated, notBefore: clubToday }),
-      undatedSeasons: undated,
-    };
-  }, [clubToday, seasons]);
-
-  /** Every hole the timeline found, for the count above the list. */
-  const coverageGaps = useMemo(
-    () => timeline.flatMap((entry) => (entry.kind === "gap" ? [entry.gap] : [])),
-    [timeline],
+  const { timeline, coverageGaps, undatedSeasons } = useMemo(
+    () => readSeasonSchedule({ seasons, today: clubToday }),
+    [clubToday, seasons],
   );
 
   /** The club's own label for an age tier, falling back to the tier's name. */
@@ -430,6 +418,7 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
   );
 
   function resetForm() {
+    setCopiedFrom(null);
     setName("");
     setType("WINTER");
     setStartDate("");
@@ -453,6 +442,7 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
 
   function startEdit(season: Season) {
     if (!lodgeScopeReady) return;
+    setCopiedFrom(null);
     setEditingId(season.id);
     setName(season.name);
     setType(season.type);
@@ -471,6 +461,7 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
 
   function startCreate() {
     if (!lodgeScopeReady) return;
+    setCopiedFrom(null);
     setRates(emptyRates(rateTypes, ageTiers));
     clearAmountDrafts();
     setFlatWholeLodgeCents(null);
@@ -514,6 +505,11 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
     setFlatWholeLodgeCents(copied.flatWholeLodgeNightCents);
     setShowForm(true);
     setError("");
+    // What was copied, and from what — said on screen and taken to by focus,
+    // because the copy carries no name or dates and so confirms itself nowhere
+    // else. The effect above does the focusing; see the paragraph it focuses.
+    setCopiedFrom(season.name);
+    setCopyAttention((version) => version + 1);
     // Same reason as `startEdit`: the button is at the bottom of the list and
     // the form it opens renders at the top of the section.
     scrollToTop(sectionRef);
@@ -721,7 +717,9 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
         <CardHeader>
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-3">
-              <CardTitle className="text-xl">{season.name}</CardTitle>
+              <CardTitle headingLevel={3} className="text-xl">
+                {season.name}
+              </CardTitle>
               <Badge variant={season.type === "WINTER" ? "default" : "secondary"}>{season.type}</Badge>
               <Badge variant={season.active ? "default" : "outline"}>{season.active ? "Active" : "Inactive"}</Badge>
               {gapsBySeason.has(season.id) && (
@@ -730,10 +728,22 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
             </div>
             {canEdit && (
               <div className="flex space-x-2">
-                <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="outline" size="sm" onClick={() => handleToggleActive(season)}>
+                {/*
+                  #2938 review — every one of these names its SEASON.
+
+                  Four identically-named buttons per card means a club with five
+                  seasons offers a screen reader five entries reading "New season
+                  from this", with nothing to tell them apart; the same holds for
+                  a voice-control user saying the label out loud. Each accessible
+                  name still STARTS with the visible text, so the visible label
+                  remains a valid way to address the control (WCAG 2.5.3).
+                  `ViewOnlyActionButton` spreads its caller's props onto `Button`
+                  first, so `aria-label` reaches the element untouched.
+                */}
+                <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="outline" size="sm" aria-label={`${season.active ? "Deactivate" : "Activate"} ${season.name}`} onClick={() => handleToggleActive(season)}>
                   {season.active ? "Deactivate" : "Activate"}
                 </ViewOnlyActionButton>
-                <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="outline" size="sm" onClick={() => startEdit(season)}>
+                <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="outline" size="sm" aria-label={`Edit ${season.name}`} onClick={() => startEdit(season)}>
                   Edit
                 </ViewOnlyActionButton>
                 {/* #2938: the label says what it MAKES — a new season — rather
@@ -744,11 +754,12 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
                   describeReason={false}
                   variant="outline"
                   size="sm"
+                  aria-label={`New season from this: ${season.name}`}
                   onClick={() => startCopyFrom(season)}
                 >
                   New season from this
                 </ViewOnlyActionButton>
-                <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="destructive" size="sm" onClick={() => handleDelete(season.id)}>
+                <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="destructive" size="sm" aria-label={`Delete ${season.name}`} onClick={() => handleDelete(season.id)}>
                   Delete
                 </ViewOnlyActionButton>
               </div>
@@ -855,7 +866,18 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
     <Card ref={sectionRef}>
       <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div className="space-y-1">
-          <CardTitle>Hut fees</CardTitle>
+          {/*
+            #2938: the page's <h1> is "Fees" (`AdminPageHeader` in
+            `fees-page-client.tsx`), so this section is level 2 and everything
+            this card renders below — the season form, every season card — is
+            level 3. Levels are said at the CALL SITE and never skipped;
+            `docs/ARCHITECTURE.md` -> "Card titles and heading semantics (#2796)"
+            is the convention and is not restated here. Without them the whole
+            schedule is a headingless run of cards with note blocks interleaved,
+            which removes one of the two ways an assistive-technology user
+            navigates it.
+          */}
+          <CardTitle headingLevel={2}>Hut fees</CardTitle>
           <CardDescription>
             Nightly hut rates per lodge, season, membership type, and age tier. Season windows
             (dates/active) are also editable on <Link href="/admin/seasons" className="underline">Seasons</Link>.
@@ -918,10 +940,51 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
             {showForm && canEdit && (
               <Card>
                 <CardHeader>
-                  <CardTitle>{editingId ? "Edit Season" : "New Season"}</CardTitle>
+                  <CardTitle headingLevel={3}>
+                    {editingId ? "Edit Season" : "New Season"}
+                  </CardTitle>
                   <CardDescription>
                     Configure the season period and set rates for each membership type
                   </CardDescription>
+                  {copiedFrom !== null && editingId === null && (
+                    /*
+                      #2938 review — what a copy carried, said where the officer
+                      can act on it.
+
+                      The heading above says "New Season" and nothing else on
+                      the screen says it was pre-filled, from WHICH season, or
+                      what did and did not cross. That matters most for the
+                      officer who cannot see the list: the copy deliberately
+                      carries no name and no dates — which is what stops it
+                      overwriting its source — so without this line there is no
+                      confirmation of which season was copied, and picking the
+                      wrong button produces a season carrying last summer's
+                      rates under a name the officer types themselves.
+
+                      It takes FOCUS rather than a live region. Opening the form
+                      scrolled the section, which moves no focus and speaks
+                      nothing, leaving a keyboard user on the button at the
+                      bottom of the list; a Tab from there lands on the next
+                      season's card, not in the form that just opened. Focusing
+                      this paragraph announces it, puts the caret at the top of
+                      the form, and makes the next Tab reach Season Name — the
+                      one field the officer must fill in. A live region ON TOP
+                      of that would announce the same sentence twice.
+                    */
+                    <p
+                      ref={copyNoticeRef}
+                      tabIndex={-1}
+                      className="rounded-md border border-border bg-muted px-3 py-2 text-sm text-muted-foreground outline-none"
+                    >
+                      Pre-filled from <strong>{copiedFrom}</strong>. Its type,
+                      Active setting, flat whole-lodge rate and every nightly
+                      rate came across exactly as they stand. Its name and dates
+                      did not — give this season its own below. A rate{" "}
+                      {copiedFrom} does not set arrives blank here rather than as
+                      0.00. Saving creates a new season and does not change{" "}
+                      {copiedFrom}.
+                    </p>
+                  )}
                 </CardHeader>
                 <CardContent>
                   <form onSubmit={handleSubmit} className="space-y-6">
@@ -1079,12 +1142,16 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
                           id="flat-whole-lodge-rate"
                           {...MONEY_INPUT_PROPS}
                           className="pl-7"
-                          value={
-                            flatWholeLodgeDraft ??
-                            (flatWholeLodgeCents != null
-                              ? (flatWholeLodgeCents / 100).toFixed(2)
-                              : "")
-                          }
+                          // The same absence-versus-zero display rule the rate
+                          // boxes above use, from its one home: a draft wins,
+                          // absent cents render as an EMPTY box, and a stored
+                          // zero renders as "0.00" (#2938 review). `??
+                          // undefined` only bridges this field's `string |
+                          // null` draft to the shared `string | undefined`.
+                          value={amountFieldValue(
+                            flatWholeLodgeDraft ?? undefined,
+                            flatWholeLodgeCents,
+                          )}
                           onChange={(e) => handleFlatWholeLodgeChange(e.target.value)}
                           aria-invalid={flatWholeLodgeError ? true : undefined}
                           aria-describedby={describedByFieldHint(
@@ -1166,7 +1233,7 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
                       gap={entry.gap}
                     />
                   ) : (
-                    renderSeasonCard(entry.season.season)
+                    renderSeasonCard(entry.season)
                   ),
                 )}
                 {/* Dates this screen could not read: listed, never judged. */}
