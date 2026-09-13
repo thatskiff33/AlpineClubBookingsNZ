@@ -27,6 +27,10 @@ import { Label } from "@/components/ui/label";
 import { BackLink } from "@/components/admin/back-link";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
+  configuredCapacityExceedsActiveBeds,
+  resolveEffectiveLodgeCapacity,
+} from "@/lib/lodge-effective-capacity";
+import {
   ADMIN_FORBIDDEN_SAVE_REASON,
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
@@ -290,6 +294,37 @@ export default function LodgeConfigurationHubPage() {
 
   const bedAllocationOn = modules.bedAllocation === true;
 
+  // The capacity typed into the field, as a number, or null when the field is
+  // blank or holds something `saveCapacityOverride` would refuse. A value that
+  // cannot be saved gets no prediction: the old check accepted any finite
+  // number, so "0" was explained as capping the lodge at zero when the save
+  // would in fact reject it.
+  const trimmedCapacityOverride = capacityOverride.trim();
+  const parsedCapacityOverride = Number(trimmedCapacityOverride);
+  const typedCapacity =
+    trimmedCapacityOverride !== "" &&
+    Number.isInteger(parsedCapacityOverride) &&
+    parsedCapacityOverride > 0
+      ? parsedCapacityOverride
+      : null;
+  // Predict the effective limit through the SAME rule the server resolves
+  // with (`lodge-effective-capacity.ts`, #2724), so what this screen explains
+  // can never drift from what the save will do. activeBedCount is only > 0
+  // when Bed Allocation is on with beds (getLodgeCapacityStatus), so it is
+  // the authoritative signal here — the separate module flag can lag on this
+  // page.
+  const capacityPreviewInput = {
+    configuredCapacity: typedCapacity,
+    activeBedCount: activeBedCount ?? 0,
+  };
+  const previewedCapacity = resolveEffectiveLodgeCapacity(capacityPreviewInput);
+  // Capacity below the installed beds caps the lodge (#1653); capacity above
+  // them is allowed and simply does not bind yet (#2724). Both are guidance,
+  // never a validation error, and they are mutually exclusive by construction.
+  const capacityCapsBeds = previewedCapacity.source === "capped_beds";
+  const capacityAboveBeds =
+    configuredCapacityExceedsActiveBeds(capacityPreviewInput);
+
   const areas = [
     {
       key: "rooms",
@@ -500,26 +535,38 @@ export default function LodgeConfigurationHubPage() {
               Leave blank to fall back to the club default (default lodge) or
               zero (additional lodges).
             </p>
-            {/* activeBedCount is only > 0 when Bed Allocation is on with beds
-                (getLodgeCapacityStatus), so it is the authoritative signal here
-                — the separate module flag can lag on this page. */}
-            {activeBedCount !== null &&
-              activeBedCount > 0 &&
-              capacityOverride.trim() !== "" &&
-              Number.isFinite(Number(capacityOverride)) &&
-              Number(capacityOverride) < activeBedCount && (
-                <p
-                  className="rounded-md bg-warning-3 p-2 text-xs text-warning-11"
-                  role="status"
-                >
-                  This is below the {activeBedCount} active bed
-                  {activeBedCount === 1 ? "" : "s"} configured for this lodge, so
-                  it will cap the lodge at {Number(capacityOverride)} — the extra{" "}
-                  {activeBedCount - Number(capacityOverride)} bed
-                  {activeBedCount - Number(capacityOverride) === 1 ? "" : "s"}{" "}
-                  stay available for allocation but cannot be booked into.
-                </p>
-              )}
+            {capacityCapsBeds && activeBedCount !== null && (
+              <p
+                className="rounded-md bg-warning-3 p-2 text-xs text-warning-11"
+                role="status"
+              >
+                This is below the {activeBedCount} active bed
+                {activeBedCount === 1 ? "" : "s"} configured for this lodge, so
+                it will cap the lodge at {previewedCapacity.capacity} — the
+                extra {activeBedCount - previewedCapacity.capacity} bed
+                {activeBedCount - previewedCapacity.capacity === 1 ? "" : "s"}{" "}
+                stay available for allocation but cannot be booked into.
+              </p>
+            )}
+            {/* #2724: configuring a capacity above the beds installed so far is
+                a legitimate intent (more beds are coming), so it saves — but
+                the beds are what binds until then, and the admin is told so in
+                the figures rather than left to infer it. */}
+            {capacityAboveBeds && typedCapacity !== null && activeBedCount !== null && (
+              <p
+                className="rounded-md bg-warning-3 p-2 text-xs text-warning-11"
+                role="status"
+              >
+                This is above the {activeBedCount} active bed
+                {activeBedCount === 1 ? "" : "s"} configured for this lodge.
+                Capacity is the lower of the two, so saving {typedCapacity} is
+                allowed but only {previewedCapacity.capacity} place
+                {previewedCapacity.capacity === 1 ? "" : "s"} can be booked
+                right now. Activating {typedCapacity - activeBedCount} more bed
+                {typedCapacity - activeBedCount === 1 ? "" : "s"} raises the
+                effective capacity, up to {typedCapacity}.
+              </p>
+            )}
           </div>
           {capacityMessage && (
             <div
