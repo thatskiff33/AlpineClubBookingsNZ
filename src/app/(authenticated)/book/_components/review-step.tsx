@@ -25,6 +25,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { CapacityShortNotice } from "./capacity-short-notice";
 import { type LodgeOption } from "@/components/lodge-select";
 import { formatMissingPaidUpAdultRefusal } from "@/lib/policies/subscription-lockout-pricing";
 import { sumDeferredGuestPortionCents } from "@/lib/deferred-guest-portion";
@@ -966,24 +967,16 @@ export function ReviewStep({
       ) : null}
 
       {waitlistOnly ? (
-        <div
-          className="rounded-md border border-warning/20 bg-warning-muted p-4 text-sm text-warning"
-          role="status"
+        <CapacityShortNotice
+          headline="This stay can only go on the waitlist."
+          message={capacityShortMessage ?? ""}
+          shortNights={capacityShortNights}
         >
-          <p>
-            <strong>This stay can only go on the waitlist.</strong>{" "}
-            {capacityShortMessage}
-          </p>
-          {capacityShortNights.length > 1 ? (
-            <p className="mt-2">Full nights: {capacityShortNights.join(", ")}.</p>
-          ) : null}
-          <p className="mt-2">
-            The price above is what your stay would cost and is held for you. No
-            bed is reserved and nothing is charged now, so we are not asking how
-            you want to pay yet &mdash; we will do that if a place opens up and
-            we can confirm your booking.
-          </p>
-        </div>
+          The price above is what your stay would cost and is held for you. No
+          bed is reserved and nothing is charged now, so we are not asking how
+          you want to pay yet &mdash; we will do that if a place opens up and we
+          can confirm your booking.
+        </CapacityShortNotice>
       ) : null}
 
       <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-between">

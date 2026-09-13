@@ -26,6 +26,8 @@ function renderGuestsStep(
       familyMembers={[]}
       guests={[]}
       lodgeCapacity={8}
+      capacityShortNights={[]}
+      capacityShortMessage={null}
       addFamilyMemberAsGuest={vi.fn()}
       showInviteFamilyGroupMembersLink={false}
       handleGuestsChange={vi.fn()}
@@ -83,6 +85,8 @@ describe("GuestsStep", () => {
         memberGuestOpenSearchEnabled={false}
         addMemberGuest={vi.fn()}
         memberGuestAddError={null}
+        capacityShortNights={[]}
+        capacityShortMessage={null}
         showInviteFamilyGroupMembersLink={false}
         handleGuestsChange={vi.fn()}
         perGuestDatesEnabled={false}

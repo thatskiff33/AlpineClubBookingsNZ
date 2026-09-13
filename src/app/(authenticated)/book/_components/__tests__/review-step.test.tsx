@@ -73,6 +73,11 @@ function renderReview(
       selectedLodge={null}
       reviewGuestPayload={guests}
       bookingDateStrings={{ checkIn: "2026-07-20", checkOut: "2026-07-22" }}
+      waitlistOnly={false}
+      capacityShortMessage={null}
+      capacityShortNights={[]}
+      handleJoinWaitlist={vi.fn()}
+      joiningWaitlist={false}
       perGuestDatesEnabled={false}
       appliedPromo={null}
       setAppliedPromo={vi.fn()}

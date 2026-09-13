@@ -17,6 +17,7 @@ import {
   describeMemberGuestWizardHelper,
   memberGuestConsentPreviewColumns,
 } from "./member-guest-preview";
+import { CapacityShortNotice } from "./capacity-short-notice";
 import {
   PROFILE_FAMILY_GROUP_RETURN_TO_BOOK,
   type FamilyMember,
@@ -464,27 +465,14 @@ export function GuestsStep({
           </div>
         )}
         {capacityShortMessage ? (
-          <div
-            className="rounded-md border border-warning/20 bg-warning-muted p-4 text-sm text-warning"
-            // Announced rather than silently appearing, because it changes as
-            // guests are added and a member who cannot see the panel would
-            // otherwise only discover the shortfall at submit.
-            role="status"
+          <CapacityShortNotice
+            headline="These dates are full for a party this size."
+            message={capacityShortMessage}
+            shortNights={capacityShortNights}
           >
-            <p>
-              <strong>These dates are full for a party this size.</strong>{" "}
-              {capacityShortMessage}
-            </p>
-            {capacityShortNights.length > 1 ? (
-              <p className="mt-2">
-                Full nights: {capacityShortNights.join(", ")}.
-              </p>
-            ) : null}
-            <p className="mt-2">
-              Nothing is booked or charged by continuing, and no payment method
-              is needed for a waitlist place.
-            </p>
-          </div>
+            Nothing is booked or charged by continuing, and no payment method is
+            needed for a waitlist place.
+          </CapacityShortNotice>
         ) : null}
         <div className="flex justify-between pt-4">
           <Button variant="outline" onClick={() => setStep("dates")}>

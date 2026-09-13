@@ -38,6 +38,11 @@ import {
 } from "@/lib/booking-exception-offer";
 import type { ExceptionRequestSubmitResult } from "@/components/booking/request-officer-approval-card";
 import {
+  formatCapacityShortMessage,
+  getCapacityShortNights,
+  type AdvisoryNight,
+} from "../_lib/capacity-advisory";
+import {
   type AvailablePromoCode,
   type BookingPaymentMethod,
   type BookingWizardStep,
@@ -85,11 +90,6 @@ interface BookingMemberNightConflict {
   bookingCheckIn?: string;
   bookingCheckOut?: string;
   guestId?: string;
-}
-
-interface AvailabilityNightDetail {
-  date: string;
-  availableBeds: number;
 }
 
 interface SubscriptionStatus {
@@ -327,7 +327,7 @@ export function useBookingWizard() {
    * before the guests step it gates can be reached.
    */
   const [resolvedLodgeCapacity, setResolvedLodgeCapacity] = useState(lodgeCapacity);
-  const [availabilityNightDetails, setAvailabilityNightDetails] = useState<AvailabilityNightDetail[]>([]);
+  const [availabilityNightDetails, setAvailabilityNightDetails] = useState<AdvisoryNight[]>([]);
   const [perGuestDatesEnabled, setPerGuestDatesEnabled] = useState(false);
   // Issue #713 — per-guest non-contiguous night grid.
   const [multiDateRangesEnabled, setMultiDateRangesEnabled] = useState(false);
@@ -527,63 +527,6 @@ export function useBookingWizard() {
     }
 
     return null;
-  }
-
-  /**
-   * The nights this party will not fit on, per the server's own per-night
-   * figures — ADVISORY SINCE #2930, never a client stop.
-   *
-   * It used to block `handleGuestsDone`, and that block is what made the
-   * waitlist unreachable. The refusal it raised was purely client-side, so a
-   * member whose dates were full never reached the server, never got the 409
-   * that carries `canWaitlist`, and therefore never saw the waitlist prompt the
-   * product has had all along — the one door out of a full lodge was shut by
-   * the screen in front of it. The server remains the authority on capacity
-   * (that is the whole shape of the chosen approach); this tells the member
-   * what to expect on the way there.
-   *
-   * A HELD NIGHT LOOKS EXACTLY LIKE A FULL ONE HERE, and cannot look like
-   * anything else: `/api/availability/check` pins a held night to zero
-   * available beds and sends no hold flag (`INV-CAP-021`, `INV-CAP-038`,
-   * ADR-001 decision 6), so this arithmetic has nothing to tell apart.
-   */
-  function getCapacityShortNights(guestList: GuestData[]): string[] {
-    const dateStrings = getBookingDateStrings();
-    if (!dateStrings) {
-      return [];
-    }
-    if (availabilityNightDetails.length === 0) {
-      // No per-night figures — the check failed or has not answered. Say
-      // nothing rather than guess: an advisory built on absent data would
-      // either invent a shortfall or hide a real one, and the server decides
-      // either way.
-      return [];
-    }
-
-    return availabilityNightDetails
-      .filter((night) => {
-        const activeGuests = guestList.filter((guest) => {
-          const stayStart = guest.stayStart ?? dateStrings.checkIn;
-          const stayEnd = guest.stayEnd ?? dateStrings.checkOut;
-          return stayStart <= night.date && night.date < stayEnd;
-        }).length;
-        return activeGuests > night.availableBeds;
-      })
-      .map((night) => night.date);
-  }
-
-  /**
-   * What the member is told about a party that will not fit. Deliberately the
-   * same sentence whatever the reason — a lodge full of bookings and a lodge
-   * held for one group are both "no beds", and naming the difference is the one
-   * thing decision 6 forbids.
-   */
-  function formatCapacityShortMessage(shortNights: string[]) {
-    if (shortNights.length === 1) {
-      return `${lodgeLabel} is full on ${shortNights[0]}. You can still continue and join the waitlist.`;
-    }
-
-    return `${lodgeLabel} is full on ${shortNights.length} of your nights. You can still continue and join the waitlist.`;
   }
 
   useEffect(() => {
@@ -1799,7 +1742,11 @@ export function useBookingWizard() {
    * (#2930). Empty whenever the server's per-night figures are unavailable, so
    * an unknown capacity never presents itself as a known refusal.
    */
-  const capacityShortNights = getCapacityShortNights(guests);
+  const capacityShortNights = getCapacityShortNights(
+    availabilityNightDetails,
+    guests,
+    getBookingDateStrings(),
+  );
   /**
    * The stay cannot be confirmed as it stands, so the realistic outcome of
    * pressing the button is a waitlist place rather than a booking.
@@ -1811,7 +1758,7 @@ export function useBookingWizard() {
    */
   const waitlistOnly = capacityShortNights.length > 0;
   const capacityShortMessage = waitlistOnly
-    ? formatCapacityShortMessage(capacityShortNights)
+    ? formatCapacityShortMessage(lodgeLabel, capacityShortNights)
     : null;
 
   /**
