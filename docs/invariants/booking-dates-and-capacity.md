@@ -1248,8 +1248,11 @@ capacity or double-booking violation.
   further capacity from any admission path — the night's `availableBeds` is
   hard-blocked at 0, never negative, so it cannot be bypassed by the admin
   over-capacity override (#1668). To non-admins the held lodge presents
-  exactly as an ordinary full lodge (decision 6); only admin surfaces are told
-  a hold is in effect. Full scenario table in `docs/CAPACITY_MODEL.md`,
+  exactly as an ordinary full lodge (decision 6) — in the wording, in the
+  nights a refusal names, and in the payload shape those reach the member
+  through (#2930) — while a member may join the waitlist over held nights and
+  is never promoted while the hold applies; only admin surfaces are told a hold
+  is in effect. Full scenario table in `docs/CAPACITY_MODEL.md`,
   "Exclusive whole-lodge hold — a non-bypassable block".
 
 ### INV-CAP-022

@@ -107,9 +107,9 @@ import {
   resolveEffectivePromoSource,
   resolvePromoInTransaction,
 } from "./booking-create-promo";
+import { getCapacityFullNights } from "@/lib/capacity-full-nights";
 import {
   buildGuestCreateData,
-  getCapacityFullNights,
   getCapacityGuestRanges,
   resolveAdminReviewFields,
   resolveAdultMemberHostingDecision,

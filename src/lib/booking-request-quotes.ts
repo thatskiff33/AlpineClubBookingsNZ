@@ -63,7 +63,7 @@ import { resolveGuestRateMembershipTypes } from "@/lib/membership-type-policy";
 import { prisma } from "@/lib/prisma";
 import { approveSchoolBookingRequest } from "@/lib/school-booking-request";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
-import { formatDateOnly } from "@/lib/date-only";
+import { getCapacityFullNights } from "@/lib/capacity-full-nights";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -1260,14 +1260,6 @@ export async function respondToBookingRequestQuote(input: {
     priceCents: option.totalCents,
     type: quote.bookingRequest.type,
   };
-}
-
-function getCapacityFullNights(
-  nightDetails: Array<{ date: Date; availableBeds: number }>
-): string[] {
-  return nightDetails
-    .filter((night) => night.availableBeds < 0)
-    .map((night) => formatDateOnly(night.date));
 }
 
 export async function holdBookingRequestSlots(input: {

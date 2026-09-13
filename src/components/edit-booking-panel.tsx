@@ -1627,11 +1627,11 @@ export function EditBookingPanel({
   // stale-quote apply 409 (saveOverCapacityNights).
   const overCapacityConfirmActive =
     Boolean(quote?.overCapacityConfirmRequired) || Boolean(saveOverCapacityNights);
-  const overCapacityNightList = (
-    quote?.overCapacityConfirmRequired
-      ? quote.nightDetails ?? []
-      : saveOverCapacityNights ?? []
-  ).filter((night) => night.availableBeds < 0);
+  // #2930: no client re-filter — both sources ARE `overCapacityNights()` output
+  // already, and that one home is what excludes held nights (`INV-SSOT-001`).
+  const overCapacityNightList = quote?.overCapacityConfirmRequired
+    ? quote.nightDetails ?? []
+    : saveOverCapacityNights ?? [];
   const capacityOk = quote
     ? overCapacityConfirmActive
       ? confirmOverCapacity
