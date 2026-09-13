@@ -264,7 +264,9 @@ legitimately depend on being offered an out-of-service lodge.
   `XeroContactTwoHomesError` naming the holder. `xero-contact-home.ts` holds the
   check, the lock and the transfer. Guarded writers: `findOrCreateXeroContact`
   phase 2, `commitManualXeroContactLink`, the organisation resolve,
-  `POST /api/admin/xero/import-member-contact`.
+  `POST /api/admin/xero/import-member-contact`, `applyInboundMemberContactPatch`
+  and the bulk member import's two member creates (#2939). Every linker in the
+  tree, with no exception but `INV-INT-020`.
 - **The refusal is SYMMETRIC**: the member resolve searches Xero by email and a
   school's contact carries its invented member's address, so a collision needs
   no race.
@@ -301,10 +303,11 @@ legitimately depend on being offered an out-of-service lodge.
   contact-person refresh and the organisation-shape correction record `FAILED`
   and retry on the next resolve; neither throws into the invoice, because a
   contact that already works must not be held hostage to its own shape.
-- **NOT guarded by the refusal:** the bulk member import, which links members
-  onto contacts from mapped contact GROUPS (bulk seeding is #2939's subject), and
-  `applyInboundMemberContactPatch`, which links a member from an inbound Xero
-  contact. `createXeroContactForMember` needs no guard: a contact Xero minted a
+- **The two paths this rule once exempted are guarded (#2939).**
+  `applyInboundMemberContactPatch` and the bulk member import now take the key
+  and the refusal — the inbound one only where it CLAIMS a link, since a
+  backfill onto the holder claims nothing.
+  `createXeroContactForMember` still needs no guard: a contact Xero minted a
   moment ago can have no other home. Pinned by
   `src/lib/__tests__/organisation-reader-contract.test.ts`.
 
@@ -369,3 +372,37 @@ legitimately depend on being offered an out-of-service lodge.
   routes to it; a member's own money stays on `hutFeeRefunds` even with no note
   yet (`INV-PAY-023`). Pinned by `xero-account-mapping-registry.test.ts`,
   `goodwill-write-off-account.test.ts`.
+
+## Bulk person-contact seeding (#2939)
+
+### INV-INT-022
+
+- **Bulk seeding of members' missing Xero contacts RESOLVES NOTHING ITSELF.**
+  Every contact comes from calling `findOrCreateXeroContact` once per member, so
+  link-before-create against the provider, the member-scoped idempotency key, the `INV-INT-018` refusal, the undeclared-installation
+  refusal (`INV-CONFIG-005`) and email containment come from that funnel rather
+  than a second copy of each. It is therefore NOT the bulk path `INV-INT-019`
+  once exempted: it holds no transaction across contacts, so the contact-home
+  key is taken and released once per member, as for a single invoice.
+- **The dry run writes nothing** — no `Member` row, no operation, no outbox
+  entry, no audit — and REFUSES while the Xero contact cache has never been
+  refreshed: every member then looks like "no contact in Xero", the one answer
+  that produces duplicates.
+- **A run touches the INTERSECTION** of the ids the operator reviewed with a
+  pushable set recomputed server-side at execution time. The reviewed half
+  excludes anybody eligible only since the review; the recomputed half is the
+  revalidation of every row, so a stale or forged id is absent. No persisted
+  plan and no single-use claim: every write is idempotent by member, so a
+  replayed confirmation converges.
+- **Schools leave the population; ambiguity is handed back, never guessed.**
+  `Role.SCHOOL` and any member invented as a school's booking contact — both
+  generations of the tie, as `INV-INT-020` reads them — are excluded, with
+  anonymised accounts, `.invalid` addresses and whoever the create gate
+  refuses. A member whose address matches a school's customer, another
+  member's contact, several contacts, a differently-named contact, or a second
+  unlinked member goes back to an operator.
+- **Bounded and non-blocking.** Chunks default to 25; a failure is recorded and
+  the chunk continues, the funnel having already left that operation `FAILED`
+  and replayable (`INV-INT-019`); a daily limit halts the run. Pinned by
+  `xero-missing-contact-seeding.test.ts` and
+  `organisation-reader-contract.test.ts`.
