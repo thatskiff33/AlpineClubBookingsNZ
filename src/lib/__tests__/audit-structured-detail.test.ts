@@ -8,24 +8,44 @@
  * THE CENTRAL TEST IS THE PROPERTY, NOT THE WORKED EXAMPLE. One example proves
  * nothing about the cut offsets the example did not land on, and the offset is
  * the whole hazard: the old rule was correct-looking at almost every position
- * and catastrophic at the ones that fell inside a number. "no cut position of a
- * representative payload can produce a field that disagrees with the payload"
- * sweeps every position there is.
+ * and catastrophic at the ones that fell inside a number. The sweep below cuts
+ * a payload at every offset there is and demands that whatever comes back is a
+ * byte-identical subset of what the writer wrote.
  *
- * WHAT THE MUTATION PROBES HERE ARE FOR. Each of these was applied to the
- * source, run, seen to fail the NAMED test below, and restored:
+ * WHAT THE SWEEP DOES AND DOES NOT DISCRIMINATE, measured rather than assumed,
+ * because this repository has shipped tests that passed for the wrong reason.
+ * It proves the OUTPUT is never wrong — no invented field, no altered value, at
+ * any cut. It does NOT discriminate the boundary SEARCH: moving the scan to the
+ * wrong token leaves the reconstructed document unbalanced, so the final
+ * `JSON.parse` refuses it and the sweep sees a null it is entitled to skip.
+ * That is the division of labour worth knowing when changing this code — the
+ * parse is the safety net, and the `depth === 1` scan is only what makes
+ * recovery find anything at all. The scan therefore needs its own named tests,
+ * and has them.
  *
- *  - letting `recoverTruncatedStructuredDetail` close at the last top-level
- *    COLON instead of the last top-level comma — so a half-written value is
- *    admitted — fails "no cut position can produce a field that disagrees with
- *    the payload", naming the offset and the two values;
- *  - dropping the `depth === 1` test on the comma scan, so a comma inside a
- *    nested object or array counts as a pair boundary, fails the same test;
+ * WHAT THE MUTATION PROBES SHOWED. Each was applied to the source, run,
+ * restored, and the tree proved clean with `git diff`. The failing test named
+ * here is what actually failed, not what was expected to:
+ *
+ *  - closing at the last top-level COLON instead of the last comma, so a
+ *    half-written value is admitted, fails four named tests — "keeps whole pairs
+ *    from before the cut", "does not mistake a comma inside a nested value",
+ *    "cannot be handed a forged recovery marker", and "renders a legacy clipped
+ *    payload as fields". Not the sweep, per the paragraph above;
+ *  - dropping the `depth === 1` test on the comma scan fails exactly one:
+ *    "does not mistake a comma inside a nested value for a pair boundary". It
+ *    was expected to fail the sweep too and does not, even against a payload
+ *    whose last field is a nested object — which is why that limit is written
+ *    down above instead of left as an assumption;
  *  - reverting `sanitizeAuditDetails` to the plain text clip fails "stores a
- *    payload that still parses, with no fragment of a number in it";
- *  - deleting the `hasStructuredDetails` argument to `getDescription` — putting
- *    the raw clipped blob back in the sentence slot — fails "renders a legacy
- *    clipped payload as fields, and keeps the raw record beside them".
+ *    payload that still parses, with no fragment of a number in it" and
+ *    "shortens a long string behind the marker rather than dropping it";
+ *  - putting the raw clipped blob back in the sentence slot, by re-deriving the
+ *    parse inside `getDescription` instead of taking `hasStructuredDetails`,
+ *    fails "renders a legacy clipped payload as fields, and keeps the raw
+ *    record beside them";
+ *  - dropping the reserved-key filter from the description fallback fails "does
+ *    not let a bookkeeping key become the officer's description".
  */
 import { describe, expect, it } from "vitest";
 
@@ -137,9 +157,28 @@ describe("recovering a character-clipped payload (#2704)", () => {
    * This is what "truncation cannot produce misleading structured evidence"
    * means when it is stated as something a machine can check.
    */
-  it("no cut position can produce a field that disagrees with the payload", () => {
-    const payload = representativePayload(3);
+  it.each([
+    ["a long free value last", representativePayload(3)],
+    // A NESTED OBJECT LAST, and this variant is not decoration. With the
+    // trailing field a string, a wrongly-admitted boundary inside a nested value
+    // almost always leaves the outer object unclosed, so the parse throws and
+    // the sweep sees a null it is entitled to skip. With a nested object last,
+    // closing at an inner comma yields a document that PARSES — and whose
+    // `before` is missing a key nobody said was missing. That is the shape a
+    // sweep has to include to be able to see the class at all; measured, the
+    // first payload alone does not discriminate the `depth === 1` guard.
+    [
+      "a nested object last",
+      JSON.stringify({
+        bookingId: "bkg_01HQ8Z",
+        amountCents: 1234567,
+        note: "Officer note. detail detail detail",
+        before: { status: "PENDING", nights: 2, lodgeId: "lodge_1" },
+      }),
+    ],
+  ])("no cut position can produce a field that disagrees with the payload — %s", (_label, payload) => {
     const original = JSON.parse(payload) as Record<string, unknown>;
+    let recoveries = 0;
 
     for (let cut = 1; cut < payload.length; cut += 1) {
       const clipped = `${payload.slice(0, cut)}${AUDIT_TRUNCATION_SUFFIX}`;
@@ -147,6 +186,7 @@ describe("recovering a character-clipped payload (#2704)", () => {
       if (recovered === null) {
         continue;
       }
+      recoveries += 1;
 
       for (const [key, value] of Object.entries(recovered)) {
         if (key === REDUCED_DETAIL_KEYS.recovered) {
@@ -158,6 +198,10 @@ describe("recovering a character-clipped payload (#2704)", () => {
         ).toEqual({ cut, key, value: original[key] });
       }
     }
+
+    // A sweep that recovered nothing anywhere would pass vacuously, which is
+    // the failure mode this repository has shipped before.
+    expect(recoveries).toBeGreaterThan(10);
   });
 
   it("never returns a half-written value, at any cut inside one", () => {
