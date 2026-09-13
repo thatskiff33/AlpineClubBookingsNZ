@@ -197,7 +197,7 @@ describe("the effective-capacity rule has one home (INV-SSOT-001)", () => {
   const SRC_ROOT = join(process.cwd(), "src");
 
   const EXPECTED_IMPORTERS = [
-    "src/app/(admin)/admin/lodges/[id]/page.tsx",
+    "src/components/admin/lodge-capacity-guidance.tsx",
     "src/lib/lodge-capacity.ts",
   ] as const;
 
