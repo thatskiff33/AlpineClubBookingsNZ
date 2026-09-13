@@ -35,14 +35,24 @@ place is `src/lib/membership-type-rate-coverage.ts`. The rule has one exception 
 `NON_MEMBER` carries `NON_MEMBER_RATE` like `ASSOCIATE` and `SCHOOL` do and is
 nonetheless the rate holder — and a reader who drops the exception writes a rule
 that is right about every type except the one an ordinary public booking hits.
+Archiving does not
+excuse a type from the rule where archiving does not excuse it from PRICING: the
+engine resolves `NON_MEMBER` and `FULL` by key with no active filter, so an
+archived one still prices and still owes rows. A club's own retired type is
+reached only through a member's assignment and is out of scope.
+
 The same module computes which required rates are MISSING, tier by tier and
-including the flat-row fallback. Two surfaces render that one result: the Hut
-Fees section of **Admin > Fees** flags each affected season while the officer is
-setting rates, and setup readiness lists them on the Seasons And Rates step. Both
-are early warnings and neither is a price — no zero is assumed, no other type's
-rate is inherited, and pricing still hard-throws at runtime when a required row
-is absent. `rate-bearing-membership-type-census.test.ts` fails any second
-spelling of the rule under `src/`.
+including the flat-row fallback, and which seasons are in scope — active, or not
+yet ended against the CLUB's today (`INV-DATE-019`), which a database query
+encodes as the UTC midnight a `@db.Date` column round-trips through rather than
+comparing against the current instant. Two surfaces render that one result: the
+Hut Fees section of **Admin > Fees** flags each affected season while the officer
+is setting rates, and setup readiness lists them on the Seasons And Rates step.
+Both are early warnings and neither is a price — no zero is assumed, no other
+type's rate is inherited, no write surface saves a zero-cent row for a rate
+nobody entered, and pricing still hard-throws at runtime when a required row is
+absent. `rate-bearing-membership-type-census.test.ts` fails any second spelling
+of the rule under `src/`.
 
 E7 (#1933) added the grouped public presentation and token grammar on top of
 this source, not a re-key. Xero

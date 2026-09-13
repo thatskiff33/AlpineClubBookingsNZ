@@ -38,6 +38,13 @@ date-only.
    membership type and age tier, then **Create Season** / **Update Season**. Season
    *windows* can also be adjusted on the [Seasons](seasons.md) page.
 
+   **An empty rate box means there is no rate for that cell, not a rate of
+   zero.** Leaving one blank, or clearing one you had set, leaves that membership
+   type unpriced for the season — a booking that needs it is refused rather than
+   charged nothing — and the season is then flagged below. If you really do want
+   a cell to cost nothing, type `0.00`; it is kept and shown as `0.00`. At least
+   one rate is required, so a season with every box empty is refused.
+
 3. Watch for **Missing nightly rates**. A season that cannot price every guest
    is flagged in three places: a count above the season list, a **Missing rates**
    badge on the season, and a panel inside it naming each membership type and the
@@ -46,11 +53,14 @@ date-only.
    type's rate is used instead. It is most often a membership type added after
    the season was created, so it needs its rates filled in on every season.
 
-   Only seasons that are active or have not yet ended are flagged, and only
-   membership types that carry their own rates. A type that prices from the
-   Non-Member rates, or one that cannot book the lodge, is never flagged, because
-   a rate set for it would never be read. A tier a club does not run is never
-   asked for either. Where a type prices from a single flat all-ages rate, that
+   Only seasons that are active or have not yet ended are flagged — a season
+   whose last night is today counts all day — and only membership types that
+   carry their own rates. A type that prices from the Non-Member rates, or one
+   that cannot book the lodge, is never flagged, because a rate set for it would
+   never be read. A tier a club does not run is never asked for either. An
+   archived membership type is left alone, with two exceptions: the built-in
+   **Non-Member** and **Full** types keep pricing even while archived, so they
+   stay in the grid and in the warning and can still be given rates. Where a type prices from a single flat all-ages rate, that
    amount is shown against every tier, marked *(flat rate)*, because that is what
    the club actually charges.
 
@@ -120,6 +130,7 @@ date-only.
 | The component Account/Item dropdowns are empty and show an amber notice | Xero is not connected, so the live account/item lists cannot be loaded | Type the account/item codes manually for now; reconnect Xero (see [Xero](xero.md)) to pick from the live lists |
 | A season shows **Missing rates** | A membership type that carries its own nightly rates has none for that season — usually a type added after the season was created | Edit the season and fill in the rates the panel names. Nothing prices until you do; the booking is refused rather than charged a guessed amount |
 | A member's booking is refused with a pricing error | The season it falls in is missing that member's nightly rate | Check the Hut fees section for a **Missing rates** badge on that season and set the rate it names |
+| A season will not save: "Set at least one nightly rate" | Every rate box is empty, and a season has to price somebody | Enter at least one rate. An empty box is "no rate", so clearing them all would leave the season unable to price anyone |
 | A per-family fee can't be invoiced | The club bills members individually, but a schedule still uses the per-family basis | Change that schedule to per-member or no-invoice (see [Subscriptions](subscriptions.md)) |
 | A family has no billing member | No invoice recipient is set | Set the family's billing member (here or on the member's detail Family card) |
 

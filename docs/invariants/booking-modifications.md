@@ -437,9 +437,14 @@ own rows), `NON_MEMBER_DEFAULT` (a true non-member on the `NON_MEMBER` rows), or
 the `NON_MEMBER` rows). A missing rate for a type × in-scope season is a hard
 throw at pricing, plus an early warning on the Hut Fees section of Admin > Fees
 and on setup readiness — warnings only: neither invents a rate, substitutes zero
-or inherits another type's amount. Which types owe rows is asked in exactly one
-place, `membership-type-rate-coverage.ts`; a re-spelling elsewhere fails
-`rate-bearing-membership-type-census.test.ts` (#2933). The group discount no longer
+or inherits another type's amount, and no write surface saves a zero-cent row
+nobody entered. Which types owe rows, and which seasons are in scope, are asked
+in one place, `membership-type-rate-coverage.ts`; a re-spelling elsewhere fails
+`rate-bearing-membership-type-census.test.ts` (#2933). Archived types are out of
+scope except `NON_MEMBER` and `FULL`, which the engine resolves by key with no
+active filter and which therefore still price and still owe rows. Season scope
+compares calendar dates against the club's today (`INV-DATE-019`), never the
+current instant. The group discount no longer
 flips a boolean: it substitutes `GroupDiscountSetting.rateMembershipTypeId`
 (seeded to `FULL`) **only** for `NON_MEMBER_DEFAULT` guests, so members keep
 their own type's rate and `TYPE_POLICY_FORCED` members are excluded — the two
