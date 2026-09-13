@@ -58,8 +58,20 @@
  * address, so asking Xero `EmailAddress="…"` would find and adopt that person's
  * personal contact — which is exactly what #2912 settled must never happen. The
  * only contact this module will ever adopt is one Xero itself refused to let us
- * duplicate because the NAME is already taken, and even then the two-homes
- * refusal (`INV-INT-018`) must pass first.
+ * duplicate because the NAME is already taken, and even then `INV-INT-018` must
+ * pass first.
+ *
+ * ## The returning school takes its own contact with it
+ *
+ * A school that has booked before already has a Xero contact under its own
+ * name, held by the invented school member of that earlier booking. Xero
+ * refuses the duplicate name, the recovery above finds that very contact, and
+ * the organisation TAKES it — the member's link is released in the same
+ * transaction, and the hand-over is audited. Owner decision, 13 September 2026.
+ * Nothing changes at Xero: the contact keeps its id, its history and every
+ * invoice already raised against it. `xero-contact-home.ts` holds the rule, the
+ * four legs that establish the member is this school's own, and the refusal
+ * that still fires for anybody else.
  */
 import type { XeroClient } from "xero-node";
 import type { Prisma } from "@prisma/client";
@@ -106,66 +118,13 @@ import {
 import {
   assertXeroContactHasNoOtherHome,
   lockXeroContactHome,
-  XeroContactTwoHomesError,
+  takeXeroContactFromSchoolsOwnMember,
+  type XeroContactTransferFromMember,
 } from "@/lib/xero-contact-home";
 import { isPlaceholderContactEmail } from "@/lib/placeholder-contact-email";
 /** The advisory-lock keyspace for one organisation's contact link. */
 export function organisationXeroContactLockKey(organisationId: string): string {
   return `xero-organisation-contact:${organisationId}`;
-}
-/**
- * THE RETURNING SCHOOL. This is the one outcome stage 2 cannot fix on its own,
- * and it is common rather than exotic, so it is a named error rather than a
- * generic failure.
- *
- * A school that has booked before already has a Xero contact — a person-shaped
- * one, carrying the school's name in the first-name position, held by the
- * invented school member of that earlier booking. Xero enforces unique contact
- * names, so creating the organisation's own contact under the same name is
- * refused by the provider; the duplicate-name recovery then finds that very
- * contact, and the two-homes refusal (`INV-INT-018`) stops the organisation
- * adopting a contact a member still holds.
- *
- * THAT REFUSAL IS CORRECT AND MUST NOT BE SOFTENED. Moving the link from the
- * member to the organisation would strand the earlier booking — its credit
- * notes and supplementary invoices still resolve a Xero contact through that
- * member — and deciding which local record owns a historical contact is
- * precisely the classification stage 4 (#3369) runs a census for, with a
- * requirement of zero ambiguous rows. Guessing it here is the thing #2912
- * forbids.
- *
- * So the invoice is raised against the contact the school already has, exactly
- * as it was before this stage, and this error carries what an officer needs to
- * act: which school, and which contact. A school with NO prior Xero contact —
- * the case #2939 and #2936 are waiting on — is unaffected and gets its own
- * organisation contact.
- */
-export class OrganisationXeroContactHeldByMemberError extends Error {
-  readonly organisationId: string;
-  readonly organisationName: string;
-  readonly xeroContactId: string;
-
-  constructor(input: {
-    organisationId: string;
-    organisationName: string;
-    xeroContactId: string;
-    cause: unknown;
-  }) {
-    super(
-      `Xero already holds a contact named "${input.organisationName}" and a ` +
-        "member record still owns it, so this school cannot be given its own " +
-        "organisation contact yet. This is the expected outcome for a school " +
-        "that has booked before: its Xero customer was created against the " +
-        "invented school member of an earlier booking, and deciding which " +
-        "record should own it is the classification #3369 runs. The invoice " +
-        "is raised against the contact the school already has (INV-INT-018).",
-      { cause: input.cause },
-    );
-    this.name = "OrganisationXeroContactHeldByMemberError";
-    this.organisationId = input.organisationId;
-    this.organisationName = input.organisationName;
-    this.xeroContactId = input.xeroContactId;
-  }
 }
 /**
  * WHO A BOOKING IS INVOICED AS (#3367).
@@ -187,29 +146,17 @@ export async function findOrCreateXeroContactForInvoicedParty(
   },
 ): Promise<string> {
   if (booking.organisationId) {
-    try {
-      return await findOrCreateXeroContactForOrganisation(
-        booking.organisationId,
-        options,
-      );
-    } catch (error) {
-      // THE ONE FALLBACK, and it is narrow on purpose: exactly the returning
-      // school, and nothing else. Every other failure propagates, because an
-      // invoice raised against the wrong customer is worse than an invoice that
-      // did not get raised. See OrganisationXeroContactHeldByMemberError for
-      // why this outcome is expected rather than broken.
-      if (!(error instanceof OrganisationXeroContactHeldByMemberError)) throw error;
-      logger.warn(
-        {
-          organisationId: booking.organisationId,
-          memberId: booking.memberId,
-          xeroContactId: error.xeroContactId,
-        },
-        "This school already has a Xero customer under a member record, so the " +
-          "invoice is raised against it rather than a new organisation contact " +
-          "(#3367; classification is #3369)",
-      );
-    }
+    // NO FALLBACK TO THE MEMBER, on purpose (owner, 13 September 2026). A
+    // returning school's existing contact is TAKEN by the organisation rather
+    // than invoiced through the member that holds it, so there is nothing left
+    // for a fallback to catch that is not a genuine failure — and a provider
+    // operation that cannot resolve while this programme is mid-build must fail
+    // loudly and stay replayable rather than succeed quietly against the wrong
+    // customer.
+    return findOrCreateXeroContactForOrganisation(
+      booking.organisationId,
+      options,
+    );
   }
   return findOrCreateXeroContact(booking.memberId, options);
 }
@@ -381,7 +328,14 @@ export async function findOrCreateXeroContactForOrganisation(
   // ── Phase 2: SHORT advisory-locked transaction, re-check then write ─
   // Locks in the fixed order of INV-LOCK-002: this organisation's own key, then
   // the contact-home key. No provider call runs inside it.
-  let linkOutcome: { contactId: string; wonWrite: boolean };
+  let linkOutcome: {
+    contactId: string;
+    wonWrite: boolean;
+    // Set when the organisation took the contact off its own invented member.
+    // Returned OUT of the transaction rather than assigned to an outer variable,
+    // so what the op-log records below is what actually committed.
+    transferredFrom: XeroContactTransferFromMember | null;
+  };
   try {
     linkOutcome = await prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${organisationXeroContactLockKey(organisationId)}))`;
@@ -398,13 +352,35 @@ export async function findOrCreateXeroContactForOrganisation(
       }
       if (fresh.xeroContactId && fresh.xeroContactId !== finalResolved.contactId) {
         // First writer wins, exactly as the member path does.
-        return { contactId: fresh.xeroContactId, wonWrite: false };
+        return {
+          contactId: fresh.xeroContactId,
+          wonWrite: false,
+          transferredFrom: null,
+        };
       }
 
-      // INV-INT-018 — the two-homes refusal. Establish that no MEMBER still
-      // holds this contact id, and refuse rather than guess which record should
-      // own it. See xero-contact-home.ts for why this is reachable rather than
-      // hypothetical.
+      /*
+        INV-INT-018, in the order that makes the refusal safe.
+
+        FIRST the one transfer: where the contact is held by this school's OWN
+        invented member — the record an earlier booking of this same school
+        resolves to — the organisation takes it, and the member's link is
+        released in this same transaction. That is the returning school, which
+        is the common case rather than an exotic one, and the owner settled on
+        13 September 2026 that it is taken now rather than refused.
+
+        THEN the refusal, unweakened and unchanged. It runs on every path,
+        including this one: once a legitimate holder has been released no member
+        holds the id, so it passes; for any OTHER member it throws exactly as it
+        did before. Composed this way a transfer that fails to fire can only
+        produce a refusal, never a wrong adoption.
+      */
+      const transferredFrom = await takeXeroContactFromSchoolsOwnMember(tx, {
+        organisationId,
+        organisationName: organisation.name,
+        xeroContactId: finalResolved.contactId,
+        actorMemberId: options?.createdByMemberId ?? null,
+      });
       await assertXeroContactHasNoOtherHome(tx, {
         xeroContactId: finalResolved.contactId,
         home: { kind: "ORGANISATION", id: organisationId },
@@ -428,41 +404,15 @@ export async function findOrCreateXeroContactForOrganisation(
         },
         tx,
       );
-      return { contactId: finalResolved.contactId, wonWrite: true };
+      return { contactId: finalResolved.contactId, wonWrite: true, transferredFrom };
     });
   } catch (linkError) {
-    if (linkError instanceof XeroContactTwoHomesError) {
-      /*
-        The returning school. Nothing was created in Xero on this path — the
-        provider refused the duplicate name before creating anything — so there
-        is no orphan contact to clean up, and abandoning here leaves the club's
-        accounting exactly as it was.
-
-        CANCELLED with a populated reason, not FAILED: this is the loud-skip
-        shape (#1765) the booking-invoice path already uses for "no work is
-        expected here". A FAILED row would join the active-failure overview and
-        the repeated-failure alerting once per invoice for as long as the school
-        keeps booking, which would train an operator to ignore it.
-      */
-      await completeXeroSyncOperation(operation.id, {
-        status: "CANCELLED",
-        responsePayload: {
-          skipped: true,
-          reason:
-            `Xero already holds a contact named "${organisation.name}" and a ` +
-            "member record still owns it, so this school keeps the Xero " +
-            "customer it already has. Classifying that contact as the " +
-            "school's is #3369's census (INV-INT-018).",
-          resolvedContactId: finalResolved.contactId,
-        },
-      });
-      throw new OrganisationXeroContactHeldByMemberError({
-        organisationId,
-        organisationName: organisation.name,
-        xeroContactId: finalResolved.contactId,
-        cause: linkError,
-      });
-    }
+    // FAILED and replayable, including for the two-homes refusal. There is no
+    // quiet close here: a contact this organisation cannot be given is a real
+    // unresolved provider operation, it keeps its idempotency key so a retry
+    // converges on the same contact rather than minting a second, and the
+    // caller's invoice fails rather than being raised against a customer
+    // nobody chose.
     await failXeroSyncOperation(operation.id, linkError, {
       phase: "local_link_after_xero_resolution",
       resolvedContactId: finalResolved.contactId,
@@ -474,8 +424,22 @@ export async function findOrCreateXeroContactForOrganisation(
   // Post-commit op-log close: SUCCEEDED is recorded only for work that
   // committed (F7 task 3).
   if (linkOutcome.wonWrite) {
+    const { transferredFrom } = linkOutcome;
+    if (transferredFrom) {
+      logger.warn(
+        {
+          organisationId,
+          xeroContactId: transferredFrom.xeroContactId,
+          fromMemberId: transferredFrom.fromMemberId,
+        },
+        "This school's Xero customer moved from its own invented member record " +
+          "to the school (#3367, INV-INT-018). Nothing changed in Xero.",
+      );
+    }
     await completeXeroSyncOperation(operation.id, {
-      responsePayload: completionPayload,
+      responsePayload: transferredFrom
+        ? { ...(completionPayload as object), transferredFrom }
+        : completionPayload,
       xeroObjectType: "CONTACT",
       xeroObjectId: finalResolved.contactId,
       xeroObjectUrl: buildXeroContactUrl(finalResolved.contactId),
