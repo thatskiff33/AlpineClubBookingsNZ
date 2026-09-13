@@ -406,8 +406,11 @@ everything in the next two paragraphs still applies.
 **Members' own activity pages.** Giving an entry a category can move it onto,
 or off, the page a member sees about their own account, and the repository
 treats that as the club owner's decision rather than the upgrade's. The owner
-decided it on 13 September 2026: **no older entry leaves a member's page.** In
-particular, a bulk deactivation or reactivation recorded before the category
+decided it on 13 September 2026: **no older entry leaves the page of any member
+other than the officer who acted** — the only entries that leave a page are
+three Xero invoice runs that leave the acting officer's own page (they were there
+only because the guess read "INVOICE" as Payments). In particular, a bulk
+deactivation or reactivation recorded before the category
 became mandatory stays on the deactivated member's own page — it is filed under
 **Account**, the category that event carried at the time, rather than the
 **Admin** it is filed under today — so a member keeps sight of their own
@@ -417,7 +420,8 @@ almost all on the acting officer's own page (the club's booking-rule, promotion,
 fee and billing settings they changed), plus three billing-family selections now
 visible to the member they were about, two issue reports visible to the member
 who reported them, and one nomination replacement visible to the replacement
-nominator. Disclosure to the person concerned, never withdrawal.
+nominator. Disclosure to the person concerned, and no withdrawal from anyone but
+the acting officer.
 
 **On this screen every uncategorised entry is still listed**, and the Category
 filter tries to place it: when you pick a category it also matches uncategorised
@@ -463,7 +467,9 @@ longest class the platform has, and the same one a booking or payment entry
 already gets. Two things follow: nothing is deleted sooner than seven years from
 now because of this, and **the older entries are still untouched on retention** —
 giving them a category (above) deliberately did *not* give them an expiry, so
-they remain kept indefinitely until the club decides otherwise, separately. If
+each keeps whatever retention it was recorded with (none, for every one of those
+writers, so they remain kept indefinitely) until the club decides otherwise,
+separately; the upgrade notes give a query that shows the actual figures. If
 your club needs some of these kept beyond seven years, say so before that
 horizon; it is a setting, not a law.
 

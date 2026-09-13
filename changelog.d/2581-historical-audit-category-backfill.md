@@ -15,8 +15,10 @@
   that did. It changes **one field** on each entry: the date, who did it, who it
   was about, the summary, the stored details and the retention fields are exactly
   as they were — and the retention fields are deliberately left as they were,
-  which means these older entries are still kept indefinitely; giving them an
-  expiry is a separate decision.
+  so each older entry keeps whatever retention it was recorded with (for the
+  writers concerned, none: kept indefinitely); giving them an expiry is a
+  separate decision, and the upgrade notes include a query that shows the
+  actual figures.
 
   **Four entries had a category that was not a recognised value** (`EMAIL` on two,
   `membership` on two). No filter or tool could find them. By the owner's decision

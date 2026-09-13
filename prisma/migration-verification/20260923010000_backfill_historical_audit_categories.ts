@@ -89,6 +89,9 @@ const expectedByCategory = MAPPED.reduce<Record<string, number>>(
  *  - `seed-email-other`      the exception action carrying a canonical value,
  *                            which the `= 'EMAIL'` predicate must not touch;
  *  - `seed-membership-other` `membership` on an action the owner did NOT name;
+ *  - `seed-email-unnamed`    `EMAIL` on an action the owner did NOT name — the
+ *                            symmetric case, so the `= 'EMAIL'` correction is
+ *                            proven exact-action too;
  *  - `seed-bulk-post-2755`   a bulk deactivation the post-#2755 runtime wrote
  *                            as `admin`. The historical NULL twins go to
  *                            `account` by owner decision (13 Sep 2026); this
@@ -127,6 +130,10 @@ const untouchableRows = `(
   (
     'seed-membership-other', 'membership_application.created_by_admin', 'membership',
     TIMESTAMP '2026-06-16 09:00:00'
+  ),
+  (
+    'seed-email-unnamed', 'EMAIL_TEMPLATE_OVERRIDE_UPDATED', 'EMAIL',
+    TIMESTAMP '2026-06-17 09:00:00'
   )`;
 
 /** The four rows the owner named, seeded with the non-canonical string each carried. */
@@ -199,11 +206,12 @@ const verification: DataMigrationVerification = {
                                 'seed-bulk-post-2755',
                                 'seed-unmapped-null', 'seed-lookalike-null',
                                 'seed-lookalike-null-2', 'seed-email-other',
-                                'seed-membership-other')
+                                'seed-email-unnamed', 'seed-membership-other')
                  ORDER BY "id"`,
           rows: [
             { id: "seed-bulk-post-2755", category: "admin" },
             { id: "seed-email-other", category: "admin" },
+            { id: "seed-email-unnamed", category: "EMAIL" },
             { id: "seed-lookalike-null", category: null },
             { id: "seed-lookalike-null-2", category: null },
             { id: "seed-membership-other", category: "membership" },
@@ -221,11 +229,11 @@ const verification: DataMigrationVerification = {
         },
         {
           claim:
-            "no row anywhere still carries a category string outside the taxonomy on the named actions, and the one on an unnamed action is untouched — decision 6 stands except for the listed four",
+            "no row still carries a category string outside the taxonomy on the named actions, and the one `EMAIL` and one `membership` row on UNNAMED actions are untouched — decision 6 stands except for the listed four",
           sql: `SELECT count(*) FILTER (WHERE "category" = 'EMAIL')::int AS "emailLeft",
                        count(*) FILTER (WHERE "category" = 'membership')::int AS "membershipLeft"
                   FROM "AuditLog"`,
-          rows: [{ emailLeft: 0, membershipLeft: 1 }],
+          rows: [{ emailLeft: 1, membershipLeft: 1 }],
         },
         {
           claim:
@@ -287,7 +295,7 @@ const verification: DataMigrationVerification = {
         },
         {
           claim:
-            "the DERIVED figures match an independently measured post-state: the three unlisted null rows are all that is left null, and nothing is left on `EMAIL` or on the named `membership` rows",
+            "the DERIVED figures match an independently measured post-state: the three unlisted null rows are all that is left null, and nothing is left on `EMAIL` or `membership` for the NAMED actions (the record counts only what it corrected; the two unnamed-action rows are measured below)",
           sql: `SELECT
                     (log."metadata" -> 'derived' ->> 'nullAfter')::int AS "loggedNullAfter",
                     (log."metadata" -> 'derived' ->> 'unmappedNullRemaining')::int AS "loggedUnmappedRemaining",
@@ -309,12 +317,13 @@ const verification: DataMigrationVerification = {
             {
               loggedNullAfter: UNMAPPED_NULL_SEEDS,
               loggedUnmappedRemaining: UNMAPPED_NULL_SEEDS,
-              loggedEmailAfter: 0,
-              // The record counts the `membership` rows it CORRECTED; the one
-              // on an unnamed action was never counted and is measured below.
+              // `emailBefore`/`membershipBefore` are table-wide counts and the
+              // record subtracts what it CORRECTED, so each derived figure is
+              // exactly the unnamed-action row it deliberately left alone.
+              loggedEmailAfter: 1,
               loggedMembershipAfter: 1,
               nullAfter: UNMAPPED_NULL_SEEDS,
-              emailAfter: 0,
+              emailAfter: 1,
               membershipAfter: 1,
             },
           ],
@@ -461,6 +470,14 @@ const verification: DataMigrationVerification = {
       find: `  WHERE "category" = 'EMAIL'
     AND "action" = 'EMAIL_SUPPRESSION_CLEARED'`,
       replace: `  WHERE "action" = 'EMAIL_SUPPRESSION_CLEARED'`,
+    },
+    {
+      name: "correct every `EMAIL` row, not only the named EMAIL_SUPPRESSION_CLEARED",
+      harm:
+        "The symmetric widening: an `EMAIL` row on an action the owner never named (an email-template override, say) is rewritten to `communication` — member-visible and membership-gated — on the strength of a decision that listed two rows by exact action.",
+      find: `  WHERE "category" = 'EMAIL'
+    AND "action" = 'EMAIL_SUPPRESSION_CLEARED'`,
+      replace: `  WHERE "category" = 'EMAIL'`,
     },
     {
       name: "correct every `membership` row, not only the two named actions",

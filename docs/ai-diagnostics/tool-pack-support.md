@@ -333,11 +333,12 @@ and no `retentionClass`, and the writer derives a retention class only when one 
 three is present. So every one of those rows was stored with **no expiry at all** — never
 archived, never pruned. Giving them a category was therefore also a retention change, not
 a metadata tidy-up: all 82 write paths now classify `critical`, which is a **seven-year**
-expiry measured from the event. Rows already written keep their `NULL` retention class:
-#2581's third child gave them a category and deliberately derived **no** expiry from it,
-so nothing that existed before either change becomes deletable because of it. Stamping a
-retention class onto those historical rows is a separate decision, if the club ever takes
-it.
+expiry measured from the event. Rows already written keep whatever retention they were
+written with — `NULL`, for every one of those writers: #2581's third child gave them a
+category and deliberately derived **no** expiry from it, so nothing that existed before
+either change becomes deletable because of it (the operator notes carry a postflight
+query that reads the stored figures rather than inferring them). Stamping a retention
+class onto those historical rows is a separate decision, if the club ever takes it.
 
 The shared statement filters on `"category" = ANY (…)`, which is NULL — not true — for a
 row with no category, so **such a row is returned by none of the five entries.** It is not

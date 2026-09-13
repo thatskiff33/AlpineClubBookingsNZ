@@ -1084,12 +1084,18 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
       #2751's bed-allocation backfill.
 
       RE-MEASURED, 13 September 2026 (#2581 third child). The read-only preflight
-      found exactly TWO stored `membership` rows (and two `EMAIL`), and the owner
+      found exactly TWO stored `membership` rows on the reference deployment (and
+      two `EMAIL`), on two of the three pre-#2581 nomination actions, and the owner
       decided they are corrected to their writers' canonical value (`account`) as a
-      listed exception to decision 6 — so after
-      `20260923010000_backfill_historical_audit_categories` runs, NO stored row
-      carries `membership`, and re-introducing the string as a category would widen
-      nothing retroactively. The stored-row half of #2777's cost is therefore gone;
+      listed exception to decision 6. The UPDATE covers exactly those two actions
+      (`membership_application.nominator_replaced`,
+      `membership_application.nomination_workflow_refreshed`); the third writer,
+      `MEMBER_APPLICATION_MAPPED_TO_EXISTING` (`src/lib/nomination.ts`), had ZERO
+      `membership` rows there and is NOT covered, so a fork that holds one keeps
+      it. On the measured deployment, then, no stored row carries `membership`
+      after `20260923010000_backfill_historical_audit_categories` runs, and
+      re-introducing the string as a category would widen nothing retroactively
+      THERE. The stored-row half of #2777's cost is therefore gone on that deployment;
       what remains is that `membership` is the name of a permission AREA and a
       correlation DOMAIN here, so reusing it as a category would read as the
       partition it is not (INV-PRIV-013). #2777 stands as decided (the lockers stay

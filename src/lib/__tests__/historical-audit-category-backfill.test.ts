@@ -55,6 +55,7 @@ import {
   buildMemberVisibleAuditLogWhere,
 } from "../audit-query";
 import {
+  literalActionNamesAt,
   scanAuditWriterCensus,
   type AuditWriteSite,
   type AuditWriterCensus,
@@ -65,6 +66,7 @@ import {
   MEMBER_RECORD_ADMIN_ACTIONS_2755,
   WITHHELD_HISTORICAL_NULL_ACTIONS_2581,
 } from "../../../scripts/audit/audit-writer-census-manifest";
+import { stripSqlComments } from "../../../prisma/migration-verification/split-statements";
 
 const BACKFILL_MIGRATION = "20260923010000_backfill_historical_audit_categories";
 
@@ -76,11 +78,11 @@ const migrationSql = readFileSync(
   "utf8",
 );
 
-/** The SQL with `--` line comments removed, so prose cannot read as a pair. */
-const sqlWithoutComments = migrationSql
-  .split(/\r?\n/)
-  .map((line) => line.replace(/--.*$/, ""))
-  .join("\n");
+/**
+ * The SQL with comments blanked, so header prose cannot read as a pair. The
+ * same stripper the census uses (`INV-SSOT`), not a per-line regex.
+ */
+const sqlWithoutComments = stripSqlComments(migrationSql);
 
 type Pair = { action: string; category: string };
 
@@ -133,10 +135,14 @@ function pairsTheMigrationRewrites(): Record<string, Pair[]> {
 
 const byAction = (a: Pair, b: Pair) => (a.action < b.action ? -1 : a.action > b.action ? 1 : 0);
 
-/** Every literal action a census site can write, including a dynamic site's literals. */
+/**
+ * Every literal action a census site can write. This test SCANS all 480-odd
+ * sites for corroboration, and a dynamic site that names no literal
+ * (`(dynamic) auditAction`) simply cannot corroborate anything — so it asks the
+ * shared helper for `empty` rather than the default throw, deliberately.
+ */
 function actionNamesWrittenAt(site: AuditWriteSite): string[] {
-  if (!site.action.startsWith("(dynamic)")) return [site.action];
-  return [...site.action.matchAll(/"([A-Za-z0-9_.\-]+)"/g)].map((match) => match[1]);
+  return literalActionNamesAt(site, { onNone: "empty" });
 }
 
 function literalCategory(site: AuditWriteSite): string | null {
@@ -382,9 +388,74 @@ describe("the #2581 historical null-category backfill (INV-OPS-012, INV-PRIV-012
           expect(["member.bulk-deactivate", "member.bulk-reactivate"]).toContain(action);
           break;
         }
+        default: {
+          const _exhaustive: never = evidence;
+          throw new Error(`unhandled evidence kind for ${action}: ${JSON.stringify(_exhaustive)}`);
+        }
       }
     }
+
+    // The evidence tally the prose used to carry by hand, pinned here instead
+    // so it is measured on every run and quoted from nowhere else.
+    const tally = mapEntries.reduce<Record<string, number>>((counts, [, mapping]) => {
+      counts[mapping.evidence.kind] = (counts[mapping.evidence.kind] ?? 0) + 1;
+      return counts;
+    }, {});
+    expect(tally).toEqual({
+      "current-writer": 66,
+      "current-writer-dynamic": 12,
+      history: 3,
+      "superseded-writer": 2,
+    });
   }, 180_000);
+
+  it("partitions the crossing rows the way the owner decided them", () => {
+    // 13 Sep 2026: 3 officer-only LOSES (Xero), 206 GAINS of which 5 reach a
+    // member other than the acting officer (set_member_billing_family x3,
+    // issue.reported x2). The four corrected rows are counted SEPARATELY by the
+    // migration and are outside these figures.
+    const crossing = mapEntries.filter(([, m]) => m.memberBoundary !== "none");
+    const rows = (entries: typeof crossing) =>
+      entries.reduce((sum, [, m]) => sum + m.rowsMeasured, 0);
+    const loses = crossing.filter(([, m]) => m.memberBoundary === "loses");
+    const gains = crossing.filter(([, m]) => m.memberBoundary === "gains");
+    const subjectGains = gains.filter(
+      ([action]) => action === "fee-configuration.set_member_billing_family" || action === "issue.reported",
+    );
+    expect(crossing).toHaveLength(25);
+    expect(rows(crossing)).toBe(209);
+    expect(rows(loses)).toBe(3);
+    expect(rows(gains)).toBe(206);
+    expect(rows(subjectGains)).toBe(5);
+    for (const [, m] of loses) expect(m.whoIsAffected).toMatch(/officer only/);
+    for (const [action, m] of gains) {
+      if (subjectGains.some(([a]) => a === action)) expect(m.whoIsAffected).not.toMatch(/only/);
+      else expect(m.whoIsAffected).toMatch(/only/);
+    }
+    expect(
+      HISTORICAL_NON_CANONICAL_CATEGORY_CORRECTIONS_2581.reduce((sum, c) => sum + c.rowsMeasured, 0),
+    ).toBe(4);
+  });
+
+  it("keeps the UPGRADING postflight query's category list equal to the taxonomy", () => {
+    // docs/UPGRADING.md → "One-off categorisation of older activity entries
+    // with no category (#2581)" → "Verify it yourself" retypes the eleven
+    // canonical values in a NOT IN (...) literal, because SQL has no table to
+    // join them from. A twelfth category added to AUDIT_CATEGORIES would make
+    // that query report every row of it as "outside the taxonomy" — so the copy
+    // is pinned to the source here (`INV-SSOT`).
+    const upgrading = readFileSync(path.join(process.cwd(), "docs", "UPGRADING.md"), "utf8");
+    const list = upgrading.match(
+      /-- Nothing left on a value outside the taxonomy[\s\S]*?NOT IN \(([^)]*)\)/,
+    );
+    expect(list, "docs/UPGRADING.md: the postflight NOT IN query was not found").toBeTruthy();
+    const docCategories = [...list![1].matchAll(/'([a-z]+)'/g)].map((m) => m[1]).sort();
+    expect(
+      docCategories,
+      "docs/UPGRADING.md (#2581 section, 'Verify it yourself'): the NOT IN list of " +
+        "canonical categories no longer equals AUDIT_CATEGORIES. Update the doc query.",
+    ).toEqual([...AUDIT_CATEGORIES].sort());
+  });
 
   it("maps the fee-configuration template family from the route's own closed input set", () => {
     // The writer is `fee-configuration.${parsed.data.action.toLowerCase()}` over

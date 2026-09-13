@@ -1199,14 +1199,16 @@ by **exact event name**, and on nothing else. The list is one literal table in
 the migration — 83 (event name, category) pairs — and the reviewed decision
 behind each pair, with its evidence, is `HISTORICAL_NULL_CATEGORY_MAP_2581` in
 `scripts/audit/audit-writer-census-manifest.ts`; a test holds the two equal in
-both directions. Every pair was proven one of three ways: the code that records
-that exact event type today carries that category (80 of 83), corroborated where
-the corrected runtime had already recorded the same event type *with* a category
-on the measured deployment (28 of 83, all agreeing); or, for the three
-`COMMITTEE_MEMBER_*` event types nothing records any more, the repository history
-of the code that did. **Nothing is matched by prefix or pattern, and nothing
-falls back to Admin or System** because it was hard to place. What the measured
-deployment moves, by category:
+both directions. Every pair was proven one of three ways, and the map records
+which for each: the code that records that exact event type today carries that
+category (most of them), corroborated where the corrected runtime had already
+recorded the same event type *with* a category on the measured deployment (28 of
+83, all agreeing); for the three `COMMITTEE_MEMBER_*` event types nothing
+records any more, the code that replaced them; and for the two bulk member
+actions, the category the event carried before #2755, by the owner's decision
+below. **Nothing is matched by prefix or pattern, and nothing falls back to
+Admin or System** because it was hard to place. What the measured deployment
+moves, by category:
 
 | Category | Entries | Event types, in brief |
 | --- | --- | --- |
@@ -1247,11 +1249,14 @@ migration's verification proves no other categorised entry moves.
 `category` is **the only column in every `SET` clause**. The date, the actor, who
 it was about, the summary, the stored details, the IP address, `retentionClass`
 and `expiresAt` all keep the bytes they were written with. **On retention that
-means these entries keep having none**: an entry written with no category was
-also written with no retention class and no expiry, so it is kept indefinitely,
-and this migration deliberately does *not* derive the seven-year `critical`
-expiry from the new category — stamping an expiry onto 1,885 historical entries
-is a retention decision the club takes separately, if at all.
+means each entry keeps whatever it was recorded with.** For every writer that
+recorded entries without a category that is *nothing* — no retention class and
+no expiry, so the entry is kept indefinitely — and this migration deliberately
+does *not* derive the seven-year `critical` expiry from the new category;
+stamping an expiry onto 1,885 historical entries is a retention decision the
+club takes separately, if at all. That is a statement about the code that wrote
+them, not a measurement of your rows: the postflight below reads the actual
+figures.
 
 **Who can see what afterwards.** This *is* a readership change, in three places:
 
@@ -1283,18 +1288,20 @@ is a retention decision the club takes separately, if at all.
   crossing population stays legible:
   - **3 entries leave the acting officer's own page only:** two Xero invoice
     actions, visible today only because the guess reads "INVOICE" as Payments.
-  - **206 entries appear on a page — almost always only the acting officer's
-    own:** booking rules and promotions (147), fee configuration and
-    subscription billing (57), and issue reports (2). The exceptions that reach
-    somebody else: `fee-configuration.set_member_billing_family` (3 entries; the
-    billed member) and `issue.reported` (the reporter, who the writer's own
-    comment says is meant to see it).
-  - The four corrected entries are member-invisible today and land on
-    member-visible categories: one reaches the replacement nominator it names;
-    the other three reach only the acting officer.
+  - **206 entries appear on a page — 201 only on the acting officer's own:**
+    booking rules and promotions (147), fee configuration and subscription
+    billing (57), and issue reports (2). The **5** that reach somebody else:
+    `fee-configuration.set_member_billing_family` (3 entries; the billed member)
+    and `issue.reported` (2; the reporter, who the writer's own comment says is
+    meant to see it).
+  - **Plus the four corrected entries**, counted separately from those 209:
+    member-invisible today, they land on member-visible categories — one reaches
+    the replacement nominator it names; the other three (two `EMAIL`, one
+    `membership`) reach only the acting officer.
 
-  The direction is always disclosure to the person concerned; **no older entry
-  leaves a member's own page.** Nothing is withheld.
+  The direction is disclosure to the person concerned; **no older entry leaves
+  the page of any member other than the acting officer**, and three leave the
+  acting officer's own. Nothing is withheld.
 
 **How to see what was changed.** The migration writes one
 `AUDIT_CATEGORY_BACKFILLED` entry with no actor, filed under **Admin**. Find it
@@ -1325,12 +1332,33 @@ match the table above.
 SELECT "action", count(*) FROM "AuditLog"
 WHERE "category" IS NULL GROUP BY 1 ORDER BY 2 DESC;
 
--- Nothing left on a value outside the taxonomy (expect no rows).
+-- Nothing left on a value outside the taxonomy (expect no rows). A test pins this
+-- list to the platform's canonical categories, so it cannot silently go stale.
 SELECT "category", count(*) FROM "AuditLog"
 WHERE "category" IS NOT NULL
   AND "category" NOT IN ('account','booking','payment','family','admin',
                          'security','lodge','xero','communication','privacy','system')
 GROUP BY 1;
+
+-- Retention on the entries the backfill categorised: what they were recorded with.
+-- Expect every row to have neither a retention class nor an expiry (kept
+-- indefinitely); a non-zero "withClass" or "withExpiry" is worth reading, not alarming.
+SELECT count(*)                                              AS "backfilled",
+       count(*) FILTER (WHERE "retentionClass" IS NULL)      AS "noClass",
+       count(*) FILTER (WHERE "retentionClass" IS NOT NULL)  AS "withClass",
+       count(*) FILTER (WHERE "expiresAt" IS NOT NULL)       AS "withExpiry"
+FROM "AuditLog"
+WHERE "action" IN (
+  SELECT jsonb_object_keys("metadata" -> 'measured' -> 'rewrittenByAction')
+  FROM "AuditLog"
+  WHERE "action" = 'AUDIT_CATEGORY_BACKFILLED'
+    AND "metadata" ->> 'source' LIKE 'migration:20260923010000%'
+)
+  AND "createdAt" < (
+  SELECT min("createdAt") FROM "AuditLog"
+  WHERE "action" = 'AUDIT_CATEGORY_BACKFILLED'
+    AND "metadata" ->> 'source' LIKE 'migration:20260923010000%'
+);
 ```
 
 **Re-running is safe.** Every predicate is the state its statement destroys, so a

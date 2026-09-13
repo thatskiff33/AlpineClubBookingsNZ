@@ -46,11 +46,13 @@
  * second child classified all 82 at the source, so the census now reads 472 write
  * sites and ZERO uncategorised: no NEW row is born invisible to these five entries.
  *
- * THE GAP HAS NOT CLOSED, IT HAS STOPPED GROWING, and the distinction is the whole
- * reason the declarations below stay. Every row written BEFORE that runtime deployed
- * still carries `category = NULL`, and `WHERE "category" = ANY ($1)` is NULL for such
- * a row, so it is returned by NONE of the five entries. The historical backfill is
- * #2581's third child and has not run. The containment argument is unharmed (a row
+ * THE GAP STOPPED GROWING WITH CHILD 2 AND CHILD 3 CLOSED THE MEASURED PART, and the
+ * declarations below stay for what is left. `WHERE "category" = ANY ($1)` is NULL for
+ * a `category = NULL` row, so such a row is returned by NONE of the five entries. The
+ * historical backfill (`20260923010000_backfill_historical_audit_categories`, #2581's
+ * third child) gave the pre-runtime rows the category their exact action records, from
+ * a reviewed list; a row whose action was on no list (a fork whose history differs
+ * from the measured one) is still null. The containment argument is unharmed (a row
  * nobody can reach is not a way around a denial); what is harmed is any reading of an
  * empty result as an absence, which is why every `evidenceScope` and every description
  * still names this gap in as many words. See `DIAGNOSTICS_CORRELATION_CATEGORY_SETS`
@@ -391,9 +393,10 @@ function defineCorrelationTool(input: {
     //    `DIAGNOSTICS_CORRELATION_CATEGORY_SETS`), so a membership question can
     //    legitimately return nothing here while the events sit in another entry's set.
     //  - ABSENT. A row written with no category at all is matched by no entry's filter.
-    //    No production writer does that any more (#2581 child 2 closed all 82), but
-    //    every row written before that runtime deployed still does, and the historical
-    //    backfill is #2581's third child. Naming it is the fail-closed remedy:
+    //    No production writer does that any more (#2581 child 2 closed all 82), and the
+    //    historical backfill (#2581 child 3) categorised the pre-runtime rows whose
+    //    exact action is on its reviewed list — but an unlisted action on a fork's
+    //    history is still null. Naming it is the fail-closed remedy:
     //    without the sentence, a Finance Officer asking about a subscription reconcile
     //    gets zero rows, the state `not_found` ("there is no evidence of this to
     //    report"), and prose steering them to the other four entries — none of which can

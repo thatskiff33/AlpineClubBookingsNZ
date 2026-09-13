@@ -1337,12 +1337,12 @@ export type HistoricalNullActionMapping = {
  * "exact, reviewed mapping; no fuzzy prefix/substr/file-name inference"):
  *
  *  1. The CURRENT WRITER of the same exact action carries an explicit category
- *     (`scanAuditWriterCensus()`, never a grep). 78 of the 83 resolve this way,
- *     including the families written from a `(dynamic)` site whose literals
- *     the census or the site's own file names. Two more — the bulk
- *     deactivate/reactivate pair — take the category the same exact action
- *     carried BEFORE #2755, by owner decision (13 Sep 2026): see
- *     `superseded-writer`.
+ *     (`scanAuditWriterCensus()`, never a grep) — most of the 83, including the
+ *     families written from a `(dynamic)` site whose literals the census or
+ *     the site's own file names. The bulk deactivate/reactivate pair takes the
+ *     category the same exact action carried BEFORE #2755, by owner decision
+ *     (13 Sep 2026): see `superseded-writer`. The tally by evidence kind is
+ *     measured and pinned by the contract test rather than written here.
  *  2. The corrected runtime has ALREADY WRITTEN that exact action with a
  *     category on the reference deployment (28 of the 83; the read-only
  *     preflight on the issue, section F). Every one of the 28 agrees with (1).
@@ -1371,19 +1371,23 @@ export type HistoricalNullActionMapping = {
  *    pre-release bulk history reads as one thing and crosses nothing. The
  *    operator-side date split #2763 accepted remains (rows written after #2755
  *    are `admin`).
- *  - The 203 rows that GAIN a place only on the acting officer's own timeline
- *    (booking rules and promotions -> `booking`; fee configuration and
- *    subscription billing -> `payment`; three Xero invoice rows leaving the
- *    legacy Payments guess for `xero`) are applied as mapped.
- *  - The six rows that become visible to a member OTHER than the acting officer
- *    — `fee-configuration.set_member_billing_family` x3 (the billed member),
- *    `issue.reported` x2 (the reporter), and the `nominator_replaced`
- *    correction (the replacement nominator) — are applied as mapped: disclosure
- *    to the subject, never withdrawal.
+ *  - The rows that touch only the ACTING OFFICER's own timeline are applied as
+ *    mapped: 201 GAIN one (booking rules and promotions -> `booking`; fee
+ *    configuration and subscription billing -> `payment`) and 3 LOSE one (the
+ *    Xero invoice rows leaving the legacy Payments guess for `xero`).
+ *  - The 5 rows that become visible to a member OTHER than the acting officer
+ *    — `fee-configuration.set_member_billing_family` x3 (the billed member) and
+ *    `issue.reported` x2 (the reporter) — are applied as mapped: disclosure to
+ *    the subject, never a withdrawal from anyone but the acting officer.
  *
- * So 58 actions cross nothing and 25 (209 rows) cross by decision;
+ * So 58 actions cross nothing and 25 cross by decision: 201 + 3 + 5 = 209 rows.
+ * The four corrected non-canonical rows are OUTSIDE that figure and counted
+ * separately by the migration; they too become visible (two `EMAIL` rows and
+ * `nomination_workflow_refreshed` to the acting officer only,
+ * `nominator_replaced` to the replacement nominator).
  * `WITHHELD_HISTORICAL_NULL_ACTIONS_2581` stays empty. `whoIsAffected` is kept
- * on every crossing row so a reviewer can see whose timeline it is.
+ * on every crossing row so a reviewer can see whose timeline it is, and the
+ * contract test pins this partition from `rowsMeasured`.
  */
 export const HISTORICAL_NULL_CATEGORY_MAP_2581: Readonly<
   Record<string, HistoricalNullActionMapping>
@@ -2589,7 +2593,7 @@ export const APPROVED_MIGRATION_AUDIT_SQL: Readonly<Record<string, string>> = {
   "prisma/migrations/20260810020000_backfill_bed_allocation_audit_category/migration.sql::insert#0":
     "The same backfill's record of itself: one AUDIT_CATEGORY_BACKFILLED row carrying the before/after counts decision B asked for, written only when rows actually moved so a replay appends nothing. Names `\"category\"` and writes `admin` — the support-only category, on purpose, so the operator who just lost these rows from their system correlation entry can see in that entry why — plus an explicit severity, retentionClass and expiresAt.",
   "prisma/migrations/20260923010000_backfill_historical_audit_categories/migration.sql::update#0":
-    "The #2581 third-child backfill: sets `category` on rows where it IS NULL, joined on EXACT action to the literal (action, category) list that `HISTORICAL_NULL_CATEGORY_MAP_2581` records (never a prefix). `category` is the only column in the SET clause; retentionClass and expiresAt stay NULL, because these rows were written with no retention and deriving one is a separate decision. Pinned against the map in both directions by src/lib/__tests__/historical-audit-category-backfill.test.ts and executed against a real PostgreSQL by its verification fixture.",
+    "The #2581 third-child backfill: sets `category` on rows where it IS NULL, joined on EXACT action to the literal (action, category) list that `HISTORICAL_NULL_CATEGORY_MAP_2581` records (never a prefix). `category` is the only column in the SET clause; retentionClass and expiresAt keep whatever the row was written with (none, for every uncategorised writer the census sampled — the stored rows were not measured), because deriving one is a separate decision. Pinned against the map in both directions by src/lib/__tests__/historical-audit-category-backfill.test.ts and executed against a real PostgreSQL by its verification fixture.",
   "prisma/migrations/20260923010000_backfill_historical_audit_categories/migration.sql::update#1":
     "The same migration's four-row exception to decision 6, rows 1-2 (owner decision on #2581, 13 Sep 2026): `EMAIL` -> `communication` on exactly `EMAIL_SUPPRESSION_CLEARED`, matched by prior string AND action.",
   "prisma/migrations/20260923010000_backfill_historical_audit_categories/migration.sql::update#2":

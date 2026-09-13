@@ -17,18 +17,21 @@
 -- decision 4: "no fuzzy prefix/substr/file-name inference"). The single
 -- source of truth is `HISTORICAL_NULL_CATEGORY_MAP_2581` in
 -- `scripts/audit/audit-writer-census-manifest.ts`, one row per action with the
--- evidence that proves it: the CURRENT WRITER of the same exact action carries
--- that category in the tree (78 of 83, measured by `scanAuditWriterCensus()`),
--- corroborated where the corrected runtime has already written the same action
--- WITH a category on the reference deployment (28 of 83, and all 28 agree);
--- repository history for the three `COMMITTEE_MEMBER_*` actions nothing writes
--- any more; and, for `member.bulk-deactivate`/`-reactivate`, the category the
--- same exact action carried BEFORE #2755 — `account` — by owner decision (see
--- below). `src/lib/__tests__/historical-audit-category-backfill.test.ts`
--- parses the `VALUES` list below and fails if it and that map ever disagree in
--- either direction, or if any pair names a category outside the taxonomy.
--- Nothing here is `admin` or `system` as a fallback: every `admin` pair is
--- `admin` because its writer says so.
+-- evidence that proves it — the CURRENT WRITER of the same exact action, read
+-- by `scanAuditWriterCensus()`, for most; corroborated where the corrected
+-- runtime has already written the same action WITH a category on the reference
+-- deployment (28 of 83, and all 28 agree); repository history for the three
+-- `COMMITTEE_MEMBER_*` actions nothing writes any more; and, for
+-- `member.bulk-deactivate`/`-reactivate`, the category the same exact action
+-- carried BEFORE #2755 — `account` — by owner decision (see below). The tally
+-- by evidence kind is measured and pinned by the contract test, not restated
+-- here. `src/lib/__tests__/historical-audit-category-backfill.test.ts` parses
+-- the `VALUES` list below and fails if it and that map ever disagree in either
+-- direction, or if any pair names a category outside the taxonomy. Nothing here
+-- is `admin` or `system` as a fallback: every `admin` pair is `admin` because
+-- its current OR successor writer says so — the removed `COMMITTEE_MEMBER_*`
+-- writers carried no category at all, and `admin` rests on the
+-- `COMMITTEE_ASSIGNMENT_*` writers that replaced them.
 --
 -- ONE LIST, NEVER A PREFIX. The `mapping` CTE holds every (action, category)
 -- pair as a literal, once, and the UPDATE joins on `a."action" = m."action"`.
@@ -47,12 +50,14 @@
 -- `userAgent` and every actor column (`memberId`, `actorMemberId`,
 -- `subjectMemberId`, `targetId`) keep the bytes they were written with.
 --
--- RETENTION DOES NOT MOVE — AND THESE ROWS HAVE NONE, which is worth saying
--- plainly. A row written with no category was also written with no
--- `retentionClass` and no `expiresAt` (the boundary derives retention only
--- when a category, severity or class is supplied), so every row this touches
--- is KEPT FOREVER today and is still kept forever afterwards. This migration
--- deliberately does NOT derive `critical`/seven years from the new category:
+-- RETENTION DOES NOT MOVE. Whatever `retentionClass`/`expiresAt` a row was
+-- written with, it keeps — and for every uncategorised writer the census
+-- sampled that is NONE (the boundary derives retention only when a category,
+-- severity or class is supplied), so those rows are kept indefinitely before
+-- and after. That is a statement about the writers, not a measurement of the
+-- stored rows: the 13 Sep preflight did not read the retention columns, and
+-- `docs/UPGRADING.md` gives the operator a postflight query that does. This
+-- migration deliberately does NOT derive `critical`/seven years from the new category:
 -- `pruneExpiredAuditLogs`, `archiveEligibleAuditLogs` and
 -- `anonymizeExpiredAuditRequestData` in `src/lib/audit-retention.ts` select on
 -- the STORED `retentionClass`/`expiresAt`/`severity`/`createdAt`/`archivedAt`
@@ -64,11 +69,10 @@
 -- WHO CAN READ THEM AFTERWARDS — this IS a readership change, in two places:
 --   * AI Diagnostics: every mapped row moves from readable by NOBODY to
 --     readable by the correlation entry its category maps to
---     (`AUDIT_CATEGORY_CORRELATION_DOMAIN`): `booking` needs support+bookings,
---     `payment`/`xero` support+finance, `account`/`family`/`privacy`/
---     `communication` support+membership, `lodge` support+lodge, and
---     `admin`/`security` support alone. That is the same gate each action's
---     NEW rows already sit behind, applied to the older rows too — with ONE
+--     (`AUDIT_CATEGORY_CORRELATION_DOMAIN`), behind that entry's areas
+--     (`AUDIT_CORRELATION_DOMAIN_AREAS` in `src/lib/audit-categories.ts`; the
+--     table is in `docs/ai-diagnostics/tool-pack-support.md`). That is the same
+--     gate each action's NEW rows already sit behind, applied to the older rows too — with ONE
 --     deliberate exception: the 632 bulk deactivate/reactivate rows land on
 --     `account` (support + membership), not on the `admin` their post-#2755
 --     writer files (support alone), so the older bulk history is read by the
@@ -92,11 +96,15 @@
 -- either direction (block 1, `base`). For 25 it does (block 2,
 -- `member_boundary_crossings`, 209 rows): three Xero rows leave the acting
 -- officer's own timeline, and 206 booking-rule, fee-configuration,
--- subscription-billing and issue-report rows APPEAR on a timeline, almost
--- always only the acting officer's own — the exceptions being
--- `fee-configuration.set_member_billing_family` (the billed member) and
--- `issue.reported` (the reporter). The owner applied all of them: disclosure to
--- the subject, never withdrawal. The bulk deactivate/reactivate pair (632 rows)
+-- subscription-billing and issue-report rows APPEAR on a timeline — 201 only
+-- on the acting officer's own, 5 on another member's
+-- (`fee-configuration.set_member_billing_family` x3, the billed member;
+-- `issue.reported` x2, the reporter). Separately, and outside those 209, the
+-- four corrected rows below also become visible: the two `EMAIL` rows to the
+-- acting officer only, `nominator_replaced` to the replacement nominator, and
+-- `nomination_workflow_refreshed` to the acting officer only. The owner
+-- applied all of them: disclosure to the subject, and no withdrawal from any
+-- member other than the acting officer. The bulk deactivate/reactivate pair (632 rows)
 -- is NOT in block 2 because the owner rerouted it: its current writer files
 -- `admin` (#2755), which would have withdrawn the deactivated member's sight of
 -- their own deactivation — the withdrawal already refused for these actions'
