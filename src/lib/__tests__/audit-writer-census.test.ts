@@ -1307,7 +1307,7 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // `edit-financial-review-charge-request.ts`, which imports only the pure
     // `measureCarriedAskShortfall`. Categorised `payment` at the site and
     // named in none of the four per-site maps, so it lands unpinned.
-    // 471 sites MEASURED on this branch with `npm run audit:census` minus 127
+    // 472 sites MEASURED on this branch with `npm run audit:census` minus 127
     // pinned; `pinned` is unchanged, so no existing classification moved.
     ).toEqual({ pinned: 127, unpinned: 345 });
   });

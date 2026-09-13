@@ -584,7 +584,7 @@ land.
 manifest moving with it. The numbers this page was written against:
 
 ```
-row-producing sites:  471
+row-producing sites:  472
 uncategorised:        0
 category values: admin 105, booking 102, xero 34, family 35, payment 45,
                  lodge 65, account 19, security 22, privacy 19,
@@ -680,7 +680,7 @@ was found. `payment` for the same audience reason as every row beside it: money
 left the club with nobody deciding it should, and the person who answers for that
 is the one who reconciles the club's money.
 
-#3371 then added one more (`payment` 44 -> 45, 470 -> 471, MEASURED with
+#3371 then added one more (`payment` 44 -> 45, 471 -> 472, MEASURED with
 `npm run audit:census` on that branch rather than added to the literal): the
 record that a booking change's payment request absorbed another change's unpaid
 extra, because raising the new request cancels the old one. Once that earlier row
