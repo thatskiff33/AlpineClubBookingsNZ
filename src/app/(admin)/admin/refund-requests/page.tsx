@@ -29,6 +29,7 @@ import {
 } from "@/hooks/use-admin-area-edit-access"
 import { BookingNoEmailsNotice } from "@/components/booking-no-emails-notice"
 import { getCancellationSettlementBreakdown } from "@/lib/payment-status-display"
+import { getRemainingRefundableCents } from "@/lib/booking-payment-state"
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path"
 import { useClubTime } from "@/components/club-time-provider"
 import { parseInstant, type BoundClubTime } from "@/lib/club-time"
@@ -70,6 +71,7 @@ interface RefundRequestData {
       description: string | null
     }>
     payment: {
+      status: string
       amountCents: number
       refundedAmountCents: number
       stripePaymentIntentId: string | null
@@ -368,15 +370,16 @@ export default function RefundRequestsPage() {
     setReviewingRefundId(req.id)
     setAdminNotes("")
 
-    const payment = req.booking.payment
-    if (payment) {
-      // #2932: compare in integer cents, render ONCE through the canonical plain
-      // formatter. This divided both amounts by 100 and compared the resulting
-      // doubles - float money arithmetic into a money box (`INV-MONEY-003`).
-      const max = payment.amountCents - payment.refundedAmountCents
-      const requested = req.requestedAmountCents
-      setApprovedAmount(formatCentsPlain(requested ? Math.min(requested, max) : max))
-    }
+    // #2932: compare in integer cents, render ONCE through the canonical plain
+    // formatter. This divided both amounts by 100 and compared the resulting
+    // doubles - float money arithmetic into a money box (`INV-MONEY-003`).
+    // The ceiling is the one remaining-refundable helper the approve route
+    // already decides by, and there is an ELSE: a request whose booking has no
+    // captured payment used to leave the amount prefilled for the request
+    // viewed before it (#2932 review).
+    const max = getRemainingRefundableCents(req.booking.payment)
+    const requested = req.requestedAmountCents
+    setApprovedAmount(max > 0 ? formatCentsPlain(Math.min(requested || max, max)) : "")
   }
 
   const totalItems = refundRequests.length + creditApprovals.length
@@ -460,9 +463,7 @@ export default function RefundRequestsPage() {
                         req.booking.creditsFromCancellation
                       )
                     : null
-                  const maxRefundable = payment
-                    ? payment.amountCents - payment.refundedAmountCents
-                    : 0
+                  const maxRefundable = getRemainingRefundableCents(payment)
                   const isReviewing = reviewingRefundId === req.id
 
                   return (
