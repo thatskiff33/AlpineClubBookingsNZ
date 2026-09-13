@@ -1,22 +1,40 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({
-  prisma: {
+const mocks = vi.hoisted(() => {
+  const prisma = {
     integrationCredential: {
       findMany: vi.fn(),
+      findUnique: vi.fn(),
       upsert: vi.fn(),
       create: vi.fn(),
       updateMany: vi.fn(),
       deleteMany: vi.fn(),
     },
-  },
-}));
+    auditLog: { create: vi.fn() },
+    // Every mutator runs inside one transaction with its audit row (#2723).
+    // Handing the callback the SAME double is what makes the assertions below
+    // able to say the credential statement and the audit row went to one client.
+    $transaction: vi.fn(),
+  };
+  prisma.$transaction.mockImplementation(
+    async (callback: (tx: typeof prisma) => unknown) => callback(prisma),
+  );
+  return { prisma };
+});
 
 vi.mock("@/lib/prisma", () => ({ prisma: mocks.prisma }));
 
 import { encryptCredential, INTEGRATION_CREDENTIAL_LABEL } from "@/lib/integration-crypto";
 import {
+  CredentialActorError,
+  CredentialExpectationError,
+  StaleCredentialWriteError,
+  credentialVersionOf,
+  type CredentialActor,
+} from "@/lib/integration-credential-actor";
+import {
   CACHE_TTL_MS,
+  deleteIntegrationCredential,
   ensureGeneratedCredential,
   getIntegrationsNeedingReentry,
   resetIntegrationCredentialCacheForTests,
@@ -25,6 +43,12 @@ import {
 } from "@/lib/integration-credentials";
 
 const STRONG_SECRET = "a".repeat(48);
+/** Every write in this file names an actor; the store has no other mode. */
+const ADMIN: CredentialActor = { kind: "admin", memberId: "member-1" };
+const SYSTEM: CredentialActor = {
+  kind: "system",
+  actor: "xero-token-key-generation",
+};
 const OTHER_STRONG_SECRET = "b".repeat(48);
 const originalEnv = { ...process.env };
 
@@ -53,6 +77,11 @@ function storedRow(provider: string, key: string, value: string) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.prisma.$transaction.mockImplementation(
+    async (callback: (tx: unknown) => unknown) => callback(mocks.prisma),
+  );
+  mocks.prisma.auditLog.create.mockResolvedValue({});
+  mocks.prisma.integrationCredential.findUnique.mockResolvedValue(null);
   resetIntegrationCredentialCacheForTests();
   delete process.env.NEXTAUTH_SECRET;
   process.env.AUTH_SECRET = STRONG_SECRET;
@@ -109,6 +138,8 @@ describe("integration-credentials: cross-process cache contract", () => {
       provider: "xero",
       key: "client_id",
       value: "written",
+      actor: ADMIN,
+      expect: { expect: "any" },
     });
 
     // No TTL wait: the write invalidated this process's cache.
@@ -189,6 +220,7 @@ describe("ensureGeneratedCredential: create-only / create-or-lose (FIX-6)", () =
       key: "token_key",
       label: INTEGRATION_CREDENTIAL_LABEL,
       generate: () => "fresh-generated-key",
+      actor: SYSTEM,
     });
 
     expect(value).toBe("fresh-generated-key");
@@ -210,6 +242,7 @@ describe("ensureGeneratedCredential: create-only / create-or-lose (FIX-6)", () =
       key: "token_key",
       label: INTEGRATION_CREDENTIAL_LABEL,
       generate: () => "loser-key",
+      actor: SYSTEM,
     });
 
     expect(value).toBe("winner-key");
@@ -226,6 +259,7 @@ describe("ensureGeneratedCredential: create-only / create-or-lose (FIX-6)", () =
       key: "token_key",
       label: INTEGRATION_CREDENTIAL_LABEL,
       generate,
+      actor: SYSTEM,
     });
 
     expect(value).toBe("already-there");
@@ -246,6 +280,7 @@ describe("ensureGeneratedCredential: create-only / create-or-lose (FIX-6)", () =
       key: "token_key",
       label: INTEGRATION_CREDENTIAL_LABEL,
       generate: () => "regenerated-key",
+      actor: SYSTEM,
     });
 
     expect(value).toBe("regenerated-key");
@@ -278,6 +313,7 @@ describe("ensureGeneratedCredential: create-only / create-or-lose (FIX-6)", () =
       key: "token_key",
       label: INTEGRATION_CREDENTIAL_LABEL,
       generate: () => "our-losing-key",
+      actor: SYSTEM,
     });
 
     expect(value).toBe("winner-regenerated");
