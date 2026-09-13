@@ -161,7 +161,7 @@ export async function POST(request: Request) {
   };
   // The backups form posts the whole configuration it wants stored, so there is
   // no read-modify-write here for a concurrent admin to make stale.
-  const expect = { expect: "any" } as const;
+  const writeExpectation = { expect: "any" } as const;
 
   const changedKeys: string[] = [];
   try {
@@ -171,7 +171,7 @@ export async function POST(request: Request) {
         key: BACKUP_CREDENTIAL_KEYS.enabled,
         value: body.enabled ? "true" : "false",
         actor,
-        expect,
+        expect: writeExpectation,
       });
       changedKeys.push(BACKUP_CREDENTIAL_KEYS.enabled);
     }
@@ -181,7 +181,7 @@ export async function POST(request: Request) {
         key: BACKUP_CREDENTIAL_KEYS.retentionDays,
         value: String(body.retentionDays),
         actor,
-        expect,
+        expect: writeExpectation,
       });
       changedKeys.push(BACKUP_CREDENTIAL_KEYS.retentionDays);
     }
@@ -191,7 +191,7 @@ export async function POST(request: Request) {
           provider: BACKUP_PROVIDER,
           key: BACKUP_CREDENTIAL_KEYS.bucket,
           actor,
-          expect,
+          expect: writeExpectation,
         });
       } else {
         await setIntegrationCredential({
@@ -199,7 +199,7 @@ export async function POST(request: Request) {
           key: BACKUP_CREDENTIAL_KEYS.bucket,
           value: body.bucket.trim(),
           actor,
-          expect,
+          expect: writeExpectation,
         });
       }
       changedKeys.push(BACKUP_CREDENTIAL_KEYS.bucket);
@@ -210,7 +210,7 @@ export async function POST(request: Request) {
           provider: BACKUP_PROVIDER,
           key: BACKUP_CREDENTIAL_KEYS.region,
           actor,
-          expect,
+          expect: writeExpectation,
         });
       } else {
         await setIntegrationCredential({
@@ -218,7 +218,7 @@ export async function POST(request: Request) {
           key: BACKUP_CREDENTIAL_KEYS.region,
           value: body.region.trim(),
           actor,
-          expect,
+          expect: writeExpectation,
         });
       }
       changedKeys.push(BACKUP_CREDENTIAL_KEYS.region);
@@ -229,7 +229,7 @@ export async function POST(request: Request) {
           provider: BACKUP_PROVIDER,
           key: BACKUP_CREDENTIAL_KEYS.localPath,
           actor,
-          expect,
+          expect: writeExpectation,
         });
       } else {
         await setIntegrationCredential({
@@ -237,7 +237,7 @@ export async function POST(request: Request) {
           key: BACKUP_CREDENTIAL_KEYS.localPath,
           value: resolvedLocalPath,
           actor,
-          expect,
+          expect: writeExpectation,
         });
       }
       changedKeys.push(BACKUP_CREDENTIAL_KEYS.localPath);
@@ -248,7 +248,7 @@ export async function POST(request: Request) {
         key: BACKUP_CREDENTIAL_KEYS.localEnabled,
         value: body.localEnabled ? "true" : "false",
         actor,
-        expect,
+        expect: writeExpectation,
       });
       changedKeys.push(BACKUP_CREDENTIAL_KEYS.localEnabled);
     }

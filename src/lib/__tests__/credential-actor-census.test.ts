@@ -94,23 +94,23 @@ const CREDENTIAL_WRITE_SITES: Record<string, string> = {
   "e2e/setup/seed-stripe-credentials.ts::main#2":
     "setIntegrationCredential (forwarded) actor / any",
   "src/app/api/admin/backups/config/route.ts::POST#0":
-    "setIntegrationCredential (forwarded) actor / (forwarded) expect",
+    "setIntegrationCredential (forwarded) actor / (forwarded) writeExpectation",
   "src/app/api/admin/backups/config/route.ts::POST#1":
-    "setIntegrationCredential (forwarded) actor / (forwarded) expect",
+    "setIntegrationCredential (forwarded) actor / (forwarded) writeExpectation",
   "src/app/api/admin/backups/config/route.ts::POST#2":
-    "deleteIntegrationCredential (forwarded) actor / (forwarded) expect",
+    "deleteIntegrationCredential (forwarded) actor / (forwarded) writeExpectation",
   "src/app/api/admin/backups/config/route.ts::POST#3":
-    "setIntegrationCredential (forwarded) actor / (forwarded) expect",
+    "setIntegrationCredential (forwarded) actor / (forwarded) writeExpectation",
   "src/app/api/admin/backups/config/route.ts::POST#4":
-    "deleteIntegrationCredential (forwarded) actor / (forwarded) expect",
+    "deleteIntegrationCredential (forwarded) actor / (forwarded) writeExpectation",
   "src/app/api/admin/backups/config/route.ts::POST#5":
-    "setIntegrationCredential (forwarded) actor / (forwarded) expect",
+    "setIntegrationCredential (forwarded) actor / (forwarded) writeExpectation",
   "src/app/api/admin/backups/config/route.ts::POST#6":
-    "deleteIntegrationCredential (forwarded) actor / (forwarded) expect",
+    "deleteIntegrationCredential (forwarded) actor / (forwarded) writeExpectation",
   "src/app/api/admin/backups/config/route.ts::POST#7":
-    "setIntegrationCredential (forwarded) actor / (forwarded) expect",
+    "setIntegrationCredential (forwarded) actor / (forwarded) writeExpectation",
   "src/app/api/admin/backups/config/route.ts::POST#8":
-    "setIntegrationCredential (forwarded) actor / (forwarded) expect",
+    "setIntegrationCredential (forwarded) actor / (forwarded) writeExpectation",
   "src/app/api/admin/integrations/credentials/route.ts::POST#0":
     "setIntegrationCredential admin / any",
   "src/lib/club-post-mirror.ts::ensurePushRegistration#0":
