@@ -87,9 +87,12 @@ export class XeroCronRunnerError extends Error {
     payload: XeroCronRunnerPayload,
     failures: Array<{ task: XeroCronTask; message: string }>
   ) {
+    // One failure reports its own message; none or several report the task
+    // list, which is what the length check chose between (#2800).
+    const [soleFailure, ...extraFailures] = failures;
     super(
-      failures.length === 1
-        ? failures[0].message
+      soleFailure !== undefined && extraFailures.length === 0
+        ? soleFailure.message
         : `Xero cron failed for ${failures
             .map((failure) => failure.task)
             .join(", ")}`

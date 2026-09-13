@@ -1,14 +1,13 @@
 import {
-  CLUB_MODULE_SETTINGS_COLUMN_SELECT,
   DEFAULT_MODULE_SETTINGS,
   MODULE_KEYS,
   getEffectiveModuleFlags,
+  readClubModuleSettingsRecord,
   type ModuleKey,
   type ModuleSettingsValues,
 } from "@/config/modules";
 import type { FeatureFlags } from "@/config/schema";
 import {
-  CLUB_MODULE_SETTINGS_ID,
   loadEffectiveModuleFlags,
   normalizeClubModuleSettings,
 } from "@/lib/module-settings";
@@ -49,9 +48,8 @@ export async function loadAdminModuleSettings(
   }
 
   try {
-    const record = await db.clubModuleSettings.findUnique({
-      where: { id: CLUB_MODULE_SETTINGS_ID },
-      select: CLUB_MODULE_SETTINGS_COLUMN_SELECT,
+    const record = await readClubModuleSettingsRecord({
+      clubModuleSettings: db.clubModuleSettings,
     });
 
     return normalizeClubModuleSettings(record);

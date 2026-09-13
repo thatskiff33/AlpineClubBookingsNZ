@@ -97,7 +97,7 @@ function createFixture(): Fixture {
   };
 }
 
-function readArtifact(fixture: Fixture, directory: string, fileName: string): string {
+function readArtifact(directory: string, fileName: string): string {
   return readFileSync(path.join(directory, fileName), "utf8");
 }
 
@@ -123,11 +123,11 @@ describe("agent context generator", () => {
     };
     const first = generateAgentContext(options);
     const firstFiles = ["manifest.json", "overview.md", "typescript.md", "prisma.md"].map(
-      (fileName) => readArtifact(fixture, first.outputDirectory, fileName),
+      (fileName) => readArtifact(first.outputDirectory, fileName),
     );
     const second = generateAgentContext(options);
     const secondFiles = ["manifest.json", "overview.md", "typescript.md", "prisma.md"].map(
-      (fileName) => readArtifact(fixture, second.outputDirectory, fileName),
+      (fileName) => readArtifact(second.outputDirectory, fileName),
     );
 
     expect(second.outputDirectory).toBe(first.outputDirectory);
@@ -154,7 +154,7 @@ describe("agent context generator", () => {
       repoRoot: fixture.root,
       maxChars: 100_000,
     });
-    expect(readArtifact(fixture, result.outputDirectory, "overview.md")).toContain("`src/entry.ts`");
+    expect(readArtifact(result.outputDirectory, "overview.md")).toContain("`src/entry.ts`");
     expect(() =>
       generateAgentContext({
         base: "HEAD",
@@ -175,7 +175,7 @@ describe("agent context generator", () => {
       maxChars: 100_000,
       repoRoot: fixture.root,
     });
-    const oneHop = readArtifact(fixture, depthOne.outputDirectory, "typescript.md");
+    const oneHop = readArtifact(depthOne.outputDirectory, "typescript.md");
     expect(oneHop).toContain("## `src/local.ts`");
     expect(oneHop).toContain("## `src/alias.ts`");
     expect(oneHop).toContain("## `src/dynamic.ts`");
@@ -195,7 +195,7 @@ describe("agent context generator", () => {
       maxChars: 100_000,
       repoRoot: fixture.root,
     });
-    expect(readArtifact(fixture, depthTwo.outputDirectory, "typescript.md")).toContain(
+    expect(readArtifact(depthTwo.outputDirectory, "typescript.md")).toContain(
       "## `src/deep.ts`",
     );
     expect(() =>
@@ -219,7 +219,7 @@ describe("agent context generator", () => {
       maxChars: 100_000,
       repoRoot: fixture.root,
     });
-    const prisma = readArtifact(fixture, result.outputDirectory, "prisma.md");
+    const prisma = readArtifact(result.outputDirectory, "prisma.md");
     expect(prisma).toContain("- `Booking`");
     expect(prisma).toContain("- `Lodge`");
     expect(prisma).toContain("- `User`");

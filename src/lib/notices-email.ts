@@ -108,8 +108,7 @@ export async function sendNoticePublishedEmails(
   let failed = 0;
   const optedOut = audience.length - recipients.length;
 
-  for (let i = 0; i < recipients.length; i++) {
-    const recipient = recipients[i];
+  for (const [i, recipient] of recipients.entries()) {
     const firstName = firstNameById.get(recipient.memberId) ?? "there";
     try {
       const outcome = await sendEmail({

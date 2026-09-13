@@ -5,9 +5,7 @@ const { getXeroSyncCursor } = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/xero-sync-cursors", async () => {
-  const actual = await vi.importActual<
-    typeof import("@/lib/xero-sync-cursors")
-  >("@/lib/xero-sync-cursors");
+  const actual = (await vi.importActual("@/lib/xero-sync-cursors")) as typeof import("@/lib/xero-sync-cursors");
   return { ...actual, getXeroSyncCursor };
 });
 

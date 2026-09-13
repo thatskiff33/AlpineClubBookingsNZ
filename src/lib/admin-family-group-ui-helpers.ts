@@ -377,25 +377,30 @@ export function buildInitialRequestSelections(
   const nextSelections: Record<string, string> = {};
 
   for (const request of requests) {
-    if (current[request.id]) {
-      const currentId = current[request.id];
+    const existingSelection = current[request.id];
+    if (existingSelection) {
       const refreshedMatch = request.matchingMembers.find(
-        (candidate) => candidate.id === currentId,
+        (candidate) => candidate.id === existingSelection,
       );
       const currentStillAllowed =
-        currentId === "__create__"
+        existingSelection === "__create__"
           ? request.canCreateMemberFromRequest === true
           : !refreshedMatch?.ineligibleReason;
       if (currentStillAllowed) {
-        nextSelections[request.id] = currentId;
+        nextSelections[request.id] = existingSelection;
         continue;
       }
     }
     const eligibleMatches = request.matchingMembers.filter(
       (candidate) => !candidate.ineligibleReason,
     );
-    if (request.type === "CHILD_REQUEST" && eligibleMatches.length === 1) {
-      nextSelections[request.id] = eligibleMatches[0].id;
+    const [onlyEligibleMatch] = eligibleMatches;
+    if (
+      request.type === "CHILD_REQUEST" &&
+      eligibleMatches.length === 1 &&
+      onlyEligibleMatch
+    ) {
+      nextSelections[request.id] = onlyEligibleMatch.id;
     }
     if (
       request.type === "CHILD_REQUEST" &&

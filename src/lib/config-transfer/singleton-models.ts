@@ -28,7 +28,8 @@ export function singletonShapedModelNamesFromSchema(schemaText: string): string[
   for (const rawLine of schemaText.split(/\r?\n/)) {
     const line = rawLine.trim();
     const modelMatch = line.match(/^model\s+(\w+)\s*\{/);
-    if (modelMatch) {
+    // The capture group has no `?` quantifier, so a match always carries it.
+    if (modelMatch?.[1] !== undefined) {
       current = modelMatch[1];
       continue;
     }

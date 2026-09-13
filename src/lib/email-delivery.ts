@@ -176,6 +176,11 @@ function parseIpv4(host: string): number[] | null {
 }
 
 function isPrivateIpv4([a, b]: number[]): boolean {
+  // Unreachable: `parseIpv4` only ever returns exactly 4 octets. Fail
+  // closed the same way `classifyCaptureHost`'s docstring commits to for
+  // every other unrecognised shape: "I could not tell" must never come out
+  // as private/safe.
+  if (a === undefined || b === undefined) return false;
   if (a === 127) return true; // loopback, RFC 1122
   if (a === 10) return true; // RFC 1918
   if (a === 172 && b >= 16 && b <= 31) return true; // RFC 1918
@@ -199,9 +204,9 @@ function isPrivateIpv4([a, b]: number[]): boolean {
  *
  * WHY A BARE SINGLE-LABEL NAME COUNTS AS PRIVATE. `mailpit` is what every capture
  * stack in this repository actually uses — the browser suite, the staging stack,
- * `.env.staging.example` and the measurement stack all set
- * `EMAIL_SERVER_HOST=mailpit` — because a Compose service name is how one
- * container reaches another. A name with no dot in it cannot be a public FQDN, so
+ * and `.env.staging.example` all set `EMAIL_SERVER_HOST=mailpit` — because a
+ * Compose service name is how one container reaches another. A name with no
+ * dot in it cannot be a public FQDN, so
  * accepting it costs nothing that a public relay could exploit. The stated limit
  * is a resolver search domain (`smtp` plus a search suffix of `sendgrid.net`),
  * which needs the host's own resolver configuration to collude and which no

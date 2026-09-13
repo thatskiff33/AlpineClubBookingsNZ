@@ -1143,32 +1143,33 @@ export async function buildApprovalMappingPreview(params: {
 
   // Suggestions are advisory (ranked exact-email first) and intentionally
   // excluded from the token so unrelated member edits never invalidate an
-  // approval.
-  const personSuggestions = await Promise.all(
+  // approval. Built together with each person in one pass, rather than a
+  // separate same-length array read back by position, so there is no index
+  // correlation for the type to lose track of.
+  const personsWithSuggestions = await Promise.all(
     persons.map(async (person) => {
       if (person.ref.kind === "applicant") {
-        return suggestCandidates(db, {
+        const suggestions = await suggestCandidates(db, {
           email: application.applicantEmail,
           firstName: application.applicantFirstName,
           lastName: application.applicantLastName,
         });
+        return { ...person, suggestions };
       }
       const familyMember = familyMembers[person.ref.index];
-      return suggestCandidates(db, {
+      const suggestions = await suggestCandidates(db, {
         email: null,
         firstName: familyMember?.firstName ?? "",
         lastName: familyMember?.lastName ?? "",
       });
+      return { ...person, suggestions };
     }),
   );
 
   const preview: ApprovalMappingPreview = {
     applicationId: application.id,
     generatedAt: new Date().toISOString(),
-    persons: persons.map((person, index) => ({
-      ...person,
-      suggestions: personSuggestions[index],
-    })),
+    persons: personsWithSuggestions,
     blockingErrors,
     hasMappings: resolution.mapTargetIds.length > 0,
     previewToken,

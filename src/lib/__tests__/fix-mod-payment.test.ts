@@ -1622,10 +1622,20 @@ describe("GET /api/bookings/[id]/additional-payment-secret", () => {
     expect(res.status).toBe(404);
   });
 
-  it("returns clientSecret and amountCents for pending additional payment", async () => {
+  /*
+    #3340. The amount and the intent id now come from the INTENT, never from the
+    `Payment` column's mirror of it. The fixture deliberately makes the two
+    disagree: `additionalAmountCents` is 3000 while the live intent is 3650, the
+    shape a second booking edit produces between the page's server render and
+    this fetch. Reading the column is what let the page display one figure while
+    Stripe charged another.
+  */
+  it("returns the INTENT's own secret, amount and id, not the Payment column's", async () => {
     mockedAuth.mockResolvedValue(makeSession() as any);
     mockPaymentFindUnique.mockResolvedValue(additionalPaymentRow());
     mockedGetPaymentIntent.mockResolvedValue({
+      id: "pi_additional",
+      amount: 3650,
       client_secret: "pi_additional_secret_xyz",
     } as any);
 
@@ -1635,7 +1645,8 @@ describe("GET /api/bookings/[id]/additional-payment-secret", () => {
 
     expect(res.status).toBe(200);
     expect(data.clientSecret).toBe("pi_additional_secret_xyz");
-    expect(data.amountCents).toBe(3000);
+    expect(data.amountCents).toBe(3650);
+    expect(data.paymentIntentId).toBe("pi_additional");
   });
 
   /*

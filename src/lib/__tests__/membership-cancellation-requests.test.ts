@@ -69,9 +69,7 @@ vi.mock("@/lib/logger", () => ({
 }));
 
 vi.mock("@/lib/membership-cancellation-settings", async (importOriginal) => ({
-  ...(await importOriginal<
-    typeof import("@/lib/membership-cancellation-settings")
-  >()),
+  ...((await importOriginal()) as typeof import("@/lib/membership-cancellation-settings")),
   loadMembershipCancellationSettings: mocks.loadSettings,
 }));
 

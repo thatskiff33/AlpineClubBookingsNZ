@@ -34,9 +34,7 @@ const { mockPrisma, mockFlags, mockInstructions } = vi.hoisted(() => ({
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
 vi.mock("@/lib/public-layout-config", async () => {
-  const actual = await vi.importActual<
-    typeof import("@/lib/club-identity-settings")
-  >("@/lib/club-identity-settings");
+  const actual = (await vi.importActual("@/lib/club-identity-settings")) as typeof import("@/lib/club-identity-settings");
   return { getCachedClubIdentity: actual.getClubIdentity };
 });
 vi.mock("@/lib/module-settings", () => ({

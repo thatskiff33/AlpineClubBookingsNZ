@@ -46,7 +46,7 @@ const { clubTimeFindUnique, mockPrisma } = vi.hoisted(() => {
 
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
 vi.mock("@/lib/lodge-capacity", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/lodge-capacity")>()),
+  ...((await importOriginal()) as typeof import("@/lib/lodge-capacity")),
   getDefaultLodgeCapacity: vi.fn(async () => 12),
 }));
 vi.mock("@/lib/stripe-config", () => ({

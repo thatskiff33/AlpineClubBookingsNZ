@@ -45,7 +45,7 @@ const MEMBER_FACING_LONG_DATE_SITES: ReadonlyArray<{
 }> = [
   {
     what: "the booking messages and emails a member receives",
-    file: "src/app/(authenticated)/bookings/[id]/page.tsx",
+    file: "src/app/(authenticated)/bookings/[id]/_lib/booking-detail-messages.ts",
     /*
       MIGRATED TO THE KERNEL BY CT-4 (#2870), AND STILL THE LONG FORM.
 

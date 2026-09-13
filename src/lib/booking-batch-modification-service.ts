@@ -346,8 +346,13 @@ function buildIdentityOnlyPricing(booking: LoadedBookingForModify): PricingResul
   // The two absences stay apart, exactly as they do at the write. `null` is the
   // row's own statement and is preserved; `undefined` is still a SELECT that
   // did not ask for the price — a caller wiring defect — and still throws.
-  const echoedNights = booking.guests.map((guest) =>
-    (guest.nights ?? []).map((night) => {
+  //
+  // Each guest carries its own echoed nights rather than a second array read
+  // back by position, so the rate vector and its dates cannot drift apart from
+  // the guest they describe (#2800).
+  const echoedGuests = booking.guests.map((guest) => ({
+    guest,
+    nights: (guest.nights ?? []).map((night) => {
       if (night.priceCents === undefined) {
         throw new Error(
           `Booking guest ${guest.id} night ${night.stayDate.toISOString()} was loaded without its stored sold price (#3031)`,
@@ -364,7 +369,7 @@ function buildIdentityOnlyPricing(booking: LoadedBookingForModify): PricingResul
         priceSource: night.priceSource,
       };
     }),
-  );
+  }));
   return {
     kind: "priced",
     inProgressPlan: null,
@@ -372,11 +377,11 @@ function buildIdentityOnlyPricing(booking: LoadedBookingForModify): PricingResul
     newTotalPriceCents: booking.totalPriceCents,
     priceBreakdown: {
       totalPriceCents: booking.totalPriceCents,
-      guests: booking.guests.map((guest, index) => ({
+      guests: echoedGuests.map(({ guest, nights }) => ({
         priceCents: guest.priceCents,
-        perNightCents: echoedNights[index].map((night) => night.priceCents),
-        nightDates: echoedNights[index].map((night) => night.stayDate),
-        perNightPriceSources: echoedNights[index].map((night) => night.priceSource),
+        perNightCents: nights.map((night) => night.priceCents),
+        nightDates: nights.map((night) => night.stayDate),
+        perNightPriceSources: nights.map((night) => night.priceSource),
       })),
     },
     // #3170: RATES ONLY, and the pair stays aligned. A night whose stored price
@@ -386,8 +391,8 @@ function buildIdentityOnlyPricing(booking: LoadedBookingForModify): PricingResul
     // re-runs no promotion cap, which is the only reader — so dropping is safe
     // as well as honest; what would not be safe is a rate vector whose
     // positions no longer matched its dates.
-    guestNightRates: booking.guests.map((guest, index) => {
-      const rated = echoedNights[index].filter(
+    guestNightRates: echoedGuests.map(({ guest, nights }) => {
+      const rated = nights.filter(
         (night): night is typeof night & { priceCents: number } =>
           night.priceCents !== null,
       );

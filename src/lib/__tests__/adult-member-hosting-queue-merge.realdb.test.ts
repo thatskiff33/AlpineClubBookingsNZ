@@ -21,6 +21,7 @@ import { Prisma, type PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
+import type { MemberContactCreateReservationPlan } from "@/lib/xero-contacts";
 
 
 /**
@@ -239,6 +240,25 @@ describe("hosting queue/member merge race DB safety guard (#2597)", () => {
   });
 });
 
+/**
+ * The reservation input this suite builds by hand.
+ *
+ * Named rather than written inline in the parameter annotation below, because
+ * an `import()` type in a PARAMETER position carrying a type argument or an
+ * indexed access is a shape Semgrep cannot parse (#3318) - and it was this one
+ * line that put the whole file on `.semgrep/unparsed-allowlist.json`, with none
+ * of the generic-call shape in it at all.
+ *
+ * The name is built from a TOP-LEVEL TYPE-ONLY IMPORT, not from an alias over
+ * the `import()` type. #3318 wrote the alias form here and #3345 measured why
+ * that is the wrong remedy: `type P = import("x").A<null>` does not parse
+ * either, and only the trailing `["input"]` happened to rescue this particular
+ * line. A type-only import is erased at compile time, so `@/lib/xero-contacts`
+ * is still loaded exactly once, dynamically, with the rest of the modules
+ * below.
+ */
+type StaticContactCreateInput = MemberContactCreateReservationPlan<null>["input"];
+
 let primary: PrismaClient;
 let ordinary: PrismaClient;
 let mergeA: PrismaClient;
@@ -284,7 +304,7 @@ let deletionApprovalWasReleased: (typeof import("@/lib/deletion-request-decision
   () => {
     async function reserveStaticContactCreate(
       memberId: string,
-      input: import("@/lib/xero-contacts").MemberContactCreateReservationPlan<null>["input"],
+      input: StaticContactCreateInput,
       db: PrismaClient = ordinary,
     ) {
       const { operation } = await reserveMemberContactCreateOperation(

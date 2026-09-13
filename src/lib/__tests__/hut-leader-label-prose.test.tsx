@@ -35,7 +35,7 @@ import type { ClubIdentity } from "@/config/club-identity-types";
 // Server surface reads the static constant. Override it, and stub the client
 // panel so the test renders only the prose under test.
 vi.mock("@/config/club-identity", async (importActual) => {
-  const actual = await importActual<typeof import("@/config/club-identity")>();
+  const actual = (await importActual()) as typeof import("@/config/club-identity");
   return { ...actual, CLUB_HUT_LEADER_LABEL: "Warden" };
 });
 

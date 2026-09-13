@@ -86,6 +86,10 @@ function isBlockedSyncHost(hostname: string): boolean {
   const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
   if (v4) {
     const [a, b] = v4.slice(1).map(Number);
+    // Fail CLOSED, not open: the 4-group match guarantees both octets are
+    // present, but this function gates an outbound SSRF surface, so an
+    // unreachable gap here must read as "blocked", never as "not blocked".
+    if (a === undefined || b === undefined) return true;
     if ([a, b].some((n) => Number.isNaN(n) || n > 255)) return true;
     if (a === 127 || a === 0 || a === 10) return true; // loopback, "this host", RFC1918
     if (a === 169 && b === 254) return true; // link-local, incl. cloud metadata

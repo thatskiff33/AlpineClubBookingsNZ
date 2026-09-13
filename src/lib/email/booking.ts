@@ -50,6 +50,8 @@ import {
 import { CLUB_NAME } from "@/config/club-identity";
 import { EMAIL_DEFAULT_LODGE_NAME } from "@/lib/email-message-settings";
 import { financialReviewNote } from "@/lib/booking-financial-review-copy";
+import { supersededPaymentRefundedTemplate } from "@/lib/email-templates/refunds";
+import { supersededRefundOwingSentence } from "@/lib/superseded-additional-refund-event";
 import { formatCents as formatMoneyCents } from "@/lib/utils";
 import { loadEmailMessageSettingsForLodge } from "@/lib/email-message-settings";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
@@ -1564,6 +1566,47 @@ export async function sendSetupIntentFailedEmail(params: {
       firstName: params.firstName,
       checkIn: emailCalendarDay(params.checkIn),
       checkOut: emailCalendarDay(params.checkOut),
+    },
+    lodgeId: params.lodgeId,
+  });
+}
+
+/**
+ * #3340 — tells the member about a supersede refund the recovery queue made on
+ * its own. Booking-scoped like its siblings, so the per-booking "No emails"
+ * switch applies; the operator alert beside it is admin-audience and is not
+ * silenceable, which is the standing split for money notifications.
+ */
+export async function sendSupersededPaymentRefundedEmail(params: {
+  bookingId: string;
+  recipientMemberId: string;
+  email: string;
+  firstName: string;
+  checkIn: Date;
+  checkOut: Date;
+  refundedAmountCents: number;
+  amountOwingCents: number;
+  lodgeId?: string | null;
+}) {
+  await sendEmail({
+    to: params.email,
+    subject: `Payment Refunded - ${EMAIL_DEFAULT_LODGE_NAME}`,
+    html: await renderEmailHtml(() => supersededPaymentRefundedTemplate(params)),
+    bookingContext: bookingOwnerEmailContext(
+      params.bookingId,
+      params.recipientMemberId,
+    ),
+    templateName: "superseded-payment-refunded",
+    templateData: {
+      firstName: params.firstName,
+      checkIn: emailCalendarDay(params.checkIn),
+      checkOut: emailCalendarDay(params.checkOut),
+      refundedAmount: formatMoneyCents(params.refundedAmountCents),
+      amountOwing: formatMoneyCents(params.amountOwingCents),
+      // #3340 fix round: the SENTENCE, composed by the same function the coded
+      // template calls, so a club that rewrites this message in the editor
+      // cannot end up sending "Still owing: $0.00" as reassurance.
+      owingSentence: supersededRefundOwingSentence(params.amountOwingCents),
     },
     lodgeId: params.lodgeId,
   });

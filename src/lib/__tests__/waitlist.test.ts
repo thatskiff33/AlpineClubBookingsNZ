@@ -191,9 +191,7 @@ vi.mock("@/lib/capacity", () => ({
 
 vi.mock("@/lib/bed-allocation-lifecycle", async () => {
   const actual =
-    await vi.importActual<typeof import("@/lib/bed-allocation-lifecycle")>(
-      "@/lib/bed-allocation-lifecycle",
-    );
+    (await vi.importActual("@/lib/bed-allocation-lifecycle")) as typeof import("@/lib/bed-allocation-lifecycle");
   return {
     ...actual,
     reconcileBedAllocationsForBookingWithGlobalLockHeld: (
@@ -212,9 +210,7 @@ vi.mock("@/lib/bed-allocation-lifecycle", async () => {
 const mockValidateMinimumStay = vi.fn();
 vi.mock("@/lib/booking-policies", async () => {
   const actual =
-    await vi.importActual<typeof import("@/lib/booking-policies")>(
-      "@/lib/booking-policies"
-    );
+    (await vi.importActual("@/lib/booking-policies")) as typeof import("@/lib/booking-policies");
   return {
     ...actual,
     validateMinimumStay: (...args: unknown[]) =>

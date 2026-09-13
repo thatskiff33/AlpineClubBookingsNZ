@@ -1101,14 +1101,18 @@ export async function listAdminMembers(
     );
 
     const explained = textMatches.flatMap((candidate, index) => {
+      // `candidateDepths` is built 1:1 against `textMatches` just above, so
+      // this always has an entry; an unreachable gap just drops that one
+      // candidate from the explanation list, which is display-only.
+      const candidateDepth = candidateDepths[index];
+      if (!candidateDepth) return [];
       const [reason] = dependentLinkBlockers(
         dependentLinkEligibleFor,
         candidate,
         {
           parentAncestorIds: parentSide.ancestorIds,
           parentAncestorGenerations: parentSide.ancestorGenerations,
-          candidateDescendantGenerations:
-            candidateDepths[index].descendantGenerations,
+          candidateDescendantGenerations: candidateDepth.descendantGenerations,
         },
       );
       if (!reason) return [];

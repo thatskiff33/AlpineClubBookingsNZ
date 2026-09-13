@@ -365,6 +365,119 @@ describe("FamilyGroupRequestReviewSection - searchRequestMembers", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    { label: "no replacement", members: [] },
+    {
+      label: "multiple different replacements",
+      members: [
+        buildSearchRow({ id: "child-3", firstName: "Cara" }),
+        buildSearchRow({ id: "child-4", firstName: "Dina" }),
+      ],
+    },
+  ])(
+    "clears a prior searched-member selection when a new search returns $label",
+    async ({ members }) => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            members: [buildSearchRow({ id: "child-2" })],
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ members }),
+        });
+      vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+      render(
+        <FamilyGroupRequestReviewSection
+          requests={[buildChildRequest()]}
+          onReviewed={vi.fn()}
+          canEdit={true}
+        />,
+      );
+
+      fireEvent.change(screen.getByTestId("term-req-child"), {
+        target: { value: "Bea" },
+      });
+      fireEvent.click(screen.getByTestId("search-req-child"));
+      await waitFor(() =>
+        expect(screen.getByTestId("selection-req-child").textContent).toBe(
+          "child-2",
+        ),
+      );
+
+      fireEvent.change(screen.getByTestId("term-req-child"), {
+        target: { value: "Different" },
+      });
+      fireEvent.click(screen.getByTestId("search-req-child"));
+      await waitFor(() =>
+        expect(screen.getByTestId("selection-req-child").textContent).toBe(""),
+      );
+
+      fireEvent.click(screen.getByTestId("approve-req-child"));
+      expect(screen.getByTestId("error-req-child").textContent).toContain(
+        "Choose the member record to link",
+      );
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it("replaces a vanished searched-member selection with the sole eligible result", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          members: [buildSearchRow({ id: "child-2" })],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          members: [
+            buildSearchRow({
+              id: "child-3",
+              firstName: "Cara",
+              lastName: "Replacement",
+            }),
+          ],
+        }),
+      });
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+    render(
+      <FamilyGroupRequestReviewSection
+        requests={[buildChildRequest()]}
+        onReviewed={vi.fn()}
+        canEdit={true}
+      />,
+    );
+
+    fireEvent.change(screen.getByTestId("term-req-child"), {
+      target: { value: "Bea" },
+    });
+    fireEvent.click(screen.getByTestId("search-req-child"));
+    await waitFor(() =>
+      expect(screen.getByTestId("selection-req-child").textContent).toBe(
+        "child-2",
+      ),
+    );
+
+    fireEvent.change(screen.getByTestId("term-req-child"), {
+      target: { value: "Cara" },
+    });
+    fireEvent.click(screen.getByTestId("search-req-child"));
+    await waitFor(() =>
+      expect(screen.getByTestId("selection-req-child").textContent).toBe(
+        "child-3",
+      ),
+    );
+    expect(screen.getByTestId("feedback-req-child").textContent).toBe(
+      "Found and selected Cara Replacement.",
+    );
+  });
+
   it("surfaces the API error on a failed search", async () => {
     stubFetch({ ok: false, body: { error: "Search blew up" } });
     render(

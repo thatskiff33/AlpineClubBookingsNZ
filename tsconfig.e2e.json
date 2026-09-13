@@ -1,0 +1,23 @@
+{
+  // #2693: the Playwright suite's own typecheck project. Before this file the
+  // specs were reached by `tsconfig.json`'s bare `**/*.ts` glob — an incidental
+  // home that gave them the app's Next plugin and route typegen, and gave the
+  // app project a dependency on `@playwright/test`. Here they get Node's types
+  // and nothing from Vitest, and the app project no longer lists them.
+  //
+  // Specs import application modules (`@/lib/...`, `../../src/...`) and the
+  // paths alias is inherited for that, so a schema or helper change the suite
+  // depends on still fails `npm run typecheck` — the property
+  // `docs/AUTHORITATIVE_FEES.md` relies on for `e2e/setup/seed-second-lodge.ts`.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"],
+    // #2802: see tsconfig.test.json for why this stays off here for now —
+    // the same "application code before tests" scoping applies to the
+    // Playwright suite, and none of its diagnostics were part of programme
+    // #2694's tracked inventory. #3363 is the one home for how many there are.
+    "noUncheckedIndexedAccess": false
+  },
+  "include": ["e2e/**/*.ts", "playwright.config.ts"],
+  "exclude": ["node_modules"]
+}

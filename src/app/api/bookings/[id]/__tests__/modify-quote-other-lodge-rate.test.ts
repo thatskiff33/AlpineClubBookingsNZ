@@ -64,7 +64,7 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 vi.mock("@/lib/capacity", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/capacity")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/capacity");
   return { ...actual, checkCapacityForGuestRanges: h.checkCapacityForGuestRanges };
 });
 vi.mock("@/lib/booking-member-night-conflicts", () => ({
@@ -83,7 +83,7 @@ vi.mock("@/lib/lodges", () => ({
 // `FALLBACK_LODGE_CAPACITY` from this module at import time. A wholesale mock
 // kills the file before a single test runs (AGENTS.md, "test:related").
 vi.mock("@/lib/lodge-capacity", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/lodge-capacity")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/lodge-capacity");
   return { ...actual, getLodgeCapacity: h.getLodgeCapacity };
 });
 // The rate resolver is a PASSTHROUGH here, deliberately: it stamps a snapshot and
@@ -118,7 +118,7 @@ vi.mock("@/lib/membership-type-policy", () => ({
 // `lockedNightPricesForGuest` is left REAL — it is half of what this suite
 // asserts. Only the three collaborators that would need a database are stubbed.
 vi.mock("@/lib/booking-modify", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/booking-modify")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/booking-modify");
   return {
     ...actual,
     isQuotePricedBooking: h.isQuotePricedBooking,
@@ -153,7 +153,7 @@ vi.mock("@/lib/module-settings", () => ({
 }));
 vi.mock("@/lib/xero-token-store", () => ({ isXeroConnected: h.isXeroConnected }));
 vi.mock("@/lib/xero-organisation", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/xero-organisation")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/xero-organisation");
   return { ...actual, getXeroLockDates: h.getXeroLockDates };
 });
 vi.mock("@/lib/logger", () => ({

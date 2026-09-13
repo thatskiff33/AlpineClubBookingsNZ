@@ -26,6 +26,7 @@
 import * as RadixColors from "@radix-ui/colors";
 import Color from "colorjs.io";
 import BezierEasing from "bezier-easing";
+import { must as mustDefined } from "./index-guards";
 
 export type Appearance = "light" | "dark";
 
@@ -51,6 +52,11 @@ const num = (coord: number | null | undefined): number => coord ?? 0;
 
 /** Every coordinate of a colour as a plain number, missing components as 0. */
 const numericCoords = (color: Color): number[] => color.coords.map(num);
+
+/** `must` (shared in `./index-guards`) with this module's own error prefix. */
+function must<T>(value: T | undefined, message: string): T {
+  return mustDefined(value, `generate-radix-colors: ${message}`);
+}
 
 /**
  * True when a hue is absent rather than zero — colorjs 0.5.x said `NaN`, 0.7.x
@@ -117,28 +123,39 @@ const scaleNames = [
 
 const radix = RadixColors as unknown as Record<string, Record<string, string>>;
 
+/**
+ * `scaleNames`/`grayScaleNames` above are hand-copied from the vendored
+ * `@radix-ui/colors` package's own export names — every key looked up here is
+ * one this module lists itself, so a miss can only mean that dependency's
+ * exports changed shape underneath it, not a per-request condition to recover
+ * from silently.
+ */
+function requiredRadixScale(key: string): Record<string, string> {
+  return must(radix[key], `no "${key}" export in the vendored @radix-ui/colors package`);
+}
+
 const lightColors = Object.fromEntries(
   scaleNames.map((scaleName) => [
     scaleName,
-    Object.values(radix[`${scaleName}P3`]).map((str) => new Color(str).to("oklch")),
+    Object.values(requiredRadixScale(`${scaleName}P3`)).map((str) => new Color(str).to("oklch")),
   ]),
 );
 const darkColors = Object.fromEntries(
   scaleNames.map((scaleName) => [
     scaleName,
-    Object.values(radix[`${scaleName}DarkP3`]).map((str) => new Color(str).to("oklch")),
+    Object.values(requiredRadixScale(`${scaleName}DarkP3`)).map((str) => new Color(str).to("oklch")),
   ]),
 );
 const lightGrayColors = Object.fromEntries(
   grayScaleNames.map((scaleName) => [
     scaleName,
-    Object.values(radix[`${scaleName}P3`]).map((str) => new Color(str).to("oklch")),
+    Object.values(requiredRadixScale(`${scaleName}P3`)).map((str) => new Color(str).to("oklch")),
   ]),
 );
 const darkGrayColors = Object.fromEntries(
   grayScaleNames.map((scaleName) => [
     scaleName,
-    Object.values(radix[`${scaleName}DarkP3`]).map((str) => new Color(str).to("oklch")),
+    Object.values(requiredRadixScale(`${scaleName}DarkP3`)).map((str) => new Color(str).to("oklch")),
   ]),
 );
 
@@ -194,10 +211,14 @@ export const generateRadixColors = ({
     appearance === "light"
       ? getAlphaColorSrgb(accentScaleHex[1], backgroundHex, 0.8)
       : getAlphaColorSrgb(accentScaleHex[1], backgroundHex, 0.5);
+  const accentScaleWideGamutStep1 = must(
+    accentScaleWideGamut[1],
+    "accentScaleWideGamut has no step 1 — every scale here has exactly 12 steps",
+  );
   const accentSurfaceWideGamutString =
     appearance === "light"
-      ? getAlphaColorP3(accentScaleWideGamut[1], backgroundHex, 0.8)
-      : getAlphaColorP3(accentScaleWideGamut[1], backgroundHex, 0.5);
+      ? getAlphaColorP3(accentScaleWideGamutStep1, backgroundHex, 0.8)
+      : getAlphaColorP3(accentScaleWideGamutStep1, backgroundHex, 0.5);
   return {
     accentScale: accentScaleHex,
     accentScaleAlpha: accentScaleAlphaHex,
@@ -267,13 +288,17 @@ function getScaleFromColor(source: any, scales: any, backgroundColor: any): any[
   );
   const grayScaleNamesStr = grayScaleNames;
   const allAreGrays = closestColors.every((color) => grayScaleNamesStr.includes(color.scale));
-  if (!allAreGrays && grayScaleNamesStr.includes(closestColors[0].scale)) {
-    while (grayScaleNamesStr.includes(closestColors[1].scale)) {
+  const closestScaleName = () =>
+    must(closestColors[0], "no closest colour scale — `scales` supplied nothing to interpolate from").scale;
+  const secondClosestScaleName = () =>
+    must(closestColors[1], "fewer than two candidate scales remain after de-duplication").scale;
+  if (!allAreGrays && grayScaleNamesStr.includes(closestScaleName())) {
+    while (grayScaleNamesStr.includes(secondClosestScaleName())) {
       closestColors.splice(1, 1);
     }
   }
-  const colorA = closestColors[0];
-  const colorB = closestColors[1];
+  const colorA = must(closestColors[0], "no closest colour scale after de-duplication");
+  const colorB = must(closestColors[1], "fewer than two candidate colour scales after de-duplication");
   const a = colorB.distance;
   const b = colorA.distance;
   const c = colorA.color.deltaEOK(colorB.color);
@@ -289,9 +314,10 @@ function getScaleFromColor(source: any, scales: any, backgroundColor: any): any[
   const scaleA = scales[colorA.scale];
   const scaleB = scales[colorB.scale];
   const scale = arrayOf12.map((i) => new Color(Color.mix(scaleA[i], scaleB[i], ratio)).to("oklch"));
-  const baseColor = scale
-    .slice()
-    .sort((a2, b2) => source.deltaEOK(a2) - source.deltaEOK(b2))[0];
+  const baseColor = must(
+    scale.slice().sort((a2, b2) => source.deltaEOK(a2) - source.deltaEOK(b2))[0],
+    "sorted an empty scale — the generator always builds 12 steps",
+  );
   /*
    * #2303 — the one place the 0.5.2 -> 0.7.x bump needs a real adaptation, not
    * just a coalesce. Upstream rescales the reference ramp's chroma so its
@@ -332,7 +358,10 @@ function getScaleFromColor(source: any, scales: any, backgroundColor: any): any[
     // source means the whole scale is achromatic, exactly as under 0.5.x.
     color.coords[2] = source.coords[2];
   });
-  if (num(scale[0].coords[0]) > 0.5) {
+  // `scale` is always the 12 steps `arrayOf12` built it from; every numeric
+  // index used below names one of those 12 positions.
+  const stepAt = (i: number) => must(scale[i], `getScaleFromColor: scale has no step ${i} of its 12`);
+  if (num(stepAt(0).coords[0]) > 0.5) {
     const lightnessScale2 = scale.map(({ coords }) => num(coords[0]));
     const backgroundL2 = Math.max(0, Math.min(1, backgroundColor.coords[0]));
     const newLightnessScale2 = transposeProgressionStart(
@@ -342,26 +371,27 @@ function getScaleFromColor(source: any, scales: any, backgroundColor: any): any[
     );
     newLightnessScale2.shift();
     newLightnessScale2.forEach((lightness, i) => {
-      scale[i].coords[0] = lightness;
+      stepAt(i).coords[0] = lightness;
     });
     return scale;
   }
   const ease: [number, number, number, number] = [...darkModeEasing];
-  const referenceBackgroundColorL = num(scale[0].coords[0]);
+  const referenceBackgroundColorL = num(stepAt(0).coords[0]);
   const backgroundColorL = Math.max(0, Math.min(1, backgroundColor.coords[0]));
   const ratioL = backgroundColorL / referenceBackgroundColorL;
   if (ratioL > 1) {
     const maxRatio = 1.5;
     for (let i = 0; i < ease.length; i++) {
       const metaRatio = (ratioL - 1) * (maxRatio / (maxRatio - 1));
-      ease[i] = ratioL > maxRatio ? 0 : Math.max(0, ease[i] * (1 - metaRatio));
+      const current = must(ease[i], `getScaleFromColor: ease has no index ${i} of its fixed 4`);
+      ease[i] = ratioL > maxRatio ? 0 : Math.max(0, current * (1 - metaRatio));
     }
   }
   const lightnessScale = scale.map(({ coords }) => num(coords[0]));
   const backgroundL = backgroundColor.coords[0];
   const newLightnessScale = transposeProgressionStart(backgroundL, lightnessScale, ease);
   newLightnessScale.forEach((lightness, i) => {
-    scale[i].coords[0] = lightness;
+    stepAt(i).coords[0] = lightness;
   });
   return scale;
 }
@@ -516,7 +546,10 @@ export function transposeProgressionStart(
 ): number[] {
   return arr.map((n, i, arr2) => {
     const lastIndex = arr2.length - 1;
-    const diff = arr2[0] - to;
+    // `.map` never invokes its callback on an empty array, so whenever this
+    // line runs `arr2` has at least one element and index 0 exists.
+    const first = must(arr2[0], "transposeProgressionStart: unreachable — map callback ran on an empty array");
+    const diff = first - to;
     const fn = BezierEasing(...curve);
     return n - diff * fn(1 - i / lastIndex);
   });

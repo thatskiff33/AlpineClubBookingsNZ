@@ -1687,7 +1687,25 @@ export async function verifyAndCreateNonMemberJoin(
           hasNonMembers: true,
           nonMemberHoldUntil,
           parentBookingId: organiserBookingId,
-          guests: { create: buildGuestCreateData(guests, price, checkIn, checkOut) },
+          guests: {
+            // `buildGuestCreateData` (booking-create-guests.ts, outside this
+            // tranche) always sets `stayStart`/`stayEnd` -- from the priced
+            // guest's own nights when it has any, or the booking's checkIn/
+            // checkOut otherwise -- but its inferred return type still
+            // carries `| undefined` from an internal array read. Proven here
+            // at the boundary rather than asserted, so a real gap throws
+            // instead of writing a bed-allocation row with no stay range.
+            create: buildGuestCreateData(guests, price, checkIn, checkOut).map((guestCreate) => {
+              if (guestCreate.stayStart === undefined || guestCreate.stayEnd === undefined) {
+                throw new Error("Guest create data is missing its stay range");
+              }
+              return {
+                ...guestCreate,
+                stayStart: guestCreate.stayStart,
+                stayEnd: guestCreate.stayEnd,
+              };
+            }),
+          },
         },
         select: { id: true },
       });

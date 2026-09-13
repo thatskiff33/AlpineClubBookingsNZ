@@ -47,7 +47,7 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 vi.mock("@/lib/booking-exception-request-service", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/booking-exception-request-service")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/booking-exception-request-service");
   return {
     ...actual,
     createModificationExceptionRequest: (...a: unknown[]) => mocks.createMod(...a),

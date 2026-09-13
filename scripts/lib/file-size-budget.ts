@@ -18,11 +18,11 @@
  * extensions in `SOURCE_EXTENSIONS`, and a tracked `src/` file carrying an
  * extension the classifier does not recognise fails the check rather than
  * dropping quietly out of scope. Everything
- * outside `src/` — `scripts/`, `prisma/`, `e2e/`, `load/`, `measurement/` — is
- * outside the file-size policy by definition. That is what makes a temporary
- * measurement tree (#2663) a non-event for this gate: it is not in scope when
- * it is added and it is not in scope when it is deleted, so there is nothing to
- * regenerate and nothing to hide.
+ * outside `src/` — `scripts/`, `prisma/`, `e2e/`, `load/` — is outside the
+ * file-size policy by definition. That was what made the temporary
+ * `measurement/` tree (#2663) a non-event for this gate: it was not in scope
+ * when it was added and it was not in scope when it was removed (#3382), so
+ * there was nothing to regenerate and nothing to hide.
  *
  * Uses `git ls-files` and `fs` only — no network, no build, no database.
  */
@@ -80,14 +80,20 @@ export type OversizedFileStat = FileStat & Budget & { overBy: number };
  * to read as progress. The file could then grow 500 lines with the gate green.
  * It was reachable, not theoretical: Next's default `pageExtensions` is
  * `['tsx','ts','jsx','js']` and `next.config.ts` overrides nothing, so
- * `route.js` and `page.jsx` are served normally; `tsconfig.json` sets
- * `allowJs: true` and its `include` names `.mts` explicitly; and every custom
- * lint rule block is scoped to `.ts`/`.tsx` under `src`, so a `.js` file there
- * was policed by nothing at all — not the ratchet, not the lint rules, not tsc.
+ * `route.js` and `page.jsx` are served normally whatever `tsconfig.json` says
+ * (`allowJs` has been off since #2693, so tsc reads no `.js` at all); and every
+ * custom lint rule block is scoped to `.ts`/`.tsx` under `src`, so a `.js` file
+ * there was policed by nothing at all — not the ratchet, not the lint rules,
+ * not tsc.
  *
- * Widening this set is zero churn today — tracked `src/` is 2500 `.ts`, 874
- * `.tsx`, 2 `.css`, 1 `.md`, 1 `.json` — but the set is still a list, and a
- * list rots. `findUnclassifiedFiles` is what stops it rotting: any tracked
+ * Widening this set is zero churn today — tracked `src/` is 3065 `.ts`, 1003
+ * `.tsx`, 2 `.css`, 1 `.txt`, 1 `.md`, 1 `.json` — but the set is still a list,
+ * and a list rots. Those numbers were 2500/874 and omitted the `.txt`
+ * altogether; they were already stale on `main` and this sentence was rewritten
+ * once without re-measuring the one beside it. Re-measure with
+ * `git ls-files 'src/**' | sed 's/.*\.//' | sort | uniq -c` rather than
+ * trusting them, because they are the evidence for the "zero churn" claim and
+ * being 20% low makes that claim wrong in the direction that matters. `findUnclassifiedFiles` is what stops it rotting: any tracked
  * `src/` file whose extension appears in neither this set nor
  * `NON_SOURCE_EXTENSIONS` fails the gate rather than slipping silently out of
  * scope.

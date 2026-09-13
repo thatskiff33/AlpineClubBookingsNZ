@@ -58,7 +58,7 @@ vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 
 vi.mock("@/hooks/use-admin-area-edit-access", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("@/hooks/use-admin-area-edit-access")>();
+    (await importOriginal()) as typeof import("@/hooks/use-admin-area-edit-access");
   return { ...actual, useAdminAreaEditAccess: () => editAccessMock() };
 });
 
@@ -88,7 +88,7 @@ vi.mock("@/components/club-identity-provider", () => ({
  */
 vi.mock("@/components/lodge-select", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("@/components/lodge-select")>();
+    (await importOriginal()) as typeof import("@/components/lodge-select");
   return {
     ...actual,
     LodgeSelect: ({

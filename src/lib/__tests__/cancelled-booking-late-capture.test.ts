@@ -75,9 +75,7 @@ vi.mock("@/lib/logger", () => ({
 */
 vi.mock("@/lib/deleted-booking-modification-payment", async (importOriginal) => {
   const actual =
-    await importOriginal<
-      typeof import("@/lib/deleted-booking-modification-payment")
-    >();
+    (await importOriginal()) as typeof import("@/lib/deleted-booking-modification-payment");
   return {
     ...actual,
     recordAutomaticCancelledBookingRefundTask: (...args: unknown[]) =>

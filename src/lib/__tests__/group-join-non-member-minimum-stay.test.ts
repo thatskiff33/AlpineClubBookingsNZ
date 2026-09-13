@@ -56,16 +56,12 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 vi.mock("@/lib/lodge-capacity", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/lodge-capacity")>(
-    "@/lib/lodge-capacity"
-  );
+  const actual = (await vi.importActual("@/lib/lodge-capacity")) as typeof import("@/lib/lodge-capacity");
   return { ...actual, getLodgeCapacity: mocks.getLodgeCapacity };
 });
 
 vi.mock("@/lib/lodges", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/lodges")>(
-    "@/lib/lodges"
-  );
+  const actual = (await vi.importActual("@/lib/lodges")) as typeof import("@/lib/lodges");
   return { ...actual, getDefaultLodgeId: mocks.getDefaultLodgeId };
 });
 
@@ -88,9 +84,7 @@ vi.mock("@/lib/email", () => ({
 }));
 
 vi.mock("@/lib/action-tokens", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/action-tokens")>(
-    "@/lib/action-tokens"
-  );
+  const actual = (await vi.importActual("@/lib/action-tokens")) as typeof import("@/lib/action-tokens");
   return {
     ...actual,
     issueActionToken: mocks.issueActionToken,

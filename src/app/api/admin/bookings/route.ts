@@ -63,7 +63,13 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "calendarMonth parameter required (YYYY-MM)" }, { status: 400 });
   }
 
-  const [yearStr, monthStr] = calendarMonth.split("-");
+  // Sliced rather than split: the pattern above has already proven the string
+  // is exactly `YYYY-MM`, so fixed offsets read the two halves as `string`
+  // where `split` hands back a lookup the compiler must treat as possibly
+  // absent — and a second refusal here would be answering a question the
+  // 400 above already answered (#2801).
+  const yearStr = calendarMonth.slice(0, 4);
+  const monthStr = calendarMonth.slice(5, 7);
   const year = parseInt(yearStr, 10);
   const month = parseInt(monthStr, 10);
   if (month < 1 || month > 12) {

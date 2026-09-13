@@ -538,8 +538,16 @@ function pricePartyNights(
   const allNightKeys = occupied
     .flatMap(({ participant }) => [...participant.nightKeys])
     .sort();
-  const firstNight = parseDateOnly(allNightKeys[0]);
-  const lastNight = parseDateOnly(allNightKeys[allNightKeys.length - 1]);
+  // Both ends of the pass envelope. Every occupied participant has at least one
+  // night, so the list is non-empty here; with no night there is no envelope to
+  // price and nothing to price it for (#2800, INV-DATE).
+  const firstNightKey = allNightKeys[0];
+  const lastNightKey = allNightKeys.at(-1);
+  if (firstNightKey === undefined || lastNightKey === undefined) {
+    return pricedByParticipant;
+  }
+  const firstNight = parseDateOnly(firstNightKey);
+  const lastNight = parseDateOnly(lastNightKey);
 
   const breakdown = calculateBookingPrice(
     firstNight,
@@ -560,11 +568,26 @@ function pricePartyNights(
     groupDiscount
   );
 
+  // The engine was handed one participant per occupied entry, in this order,
+  // so each position has a breakdown and each index has a map. A missing one
+  // would mean a per-night amount landing on the wrong guest, or none at all,
+  // so this refuses rather than dropping a priced night (#3031, #2800).
   occupied.forEach(({ index }, position) => {
     const guestBreakdown = breakdown.guests[position];
     const priced = pricedByParticipant[index];
+    if (guestBreakdown === undefined || priced === undefined) {
+      throw new Error(
+        `Party pricing returned ${breakdown.guests.length} guest breakdown(s) for ${occupied.length} occupied participant(s).`,
+      );
+    }
     guestBreakdown.nightDates.forEach((night, nightIndex) => {
-      priced.set(dateOnlyKey(night), guestBreakdown.perNightCents[nightIndex]);
+      const nightCents = guestBreakdown.perNightCents[nightIndex];
+      if (nightCents === undefined) {
+        throw new Error(
+          `Party pricing returned no amount for ${dateOnlyKey(night)} (#3031).`,
+        );
+      }
+      priced.set(dateOnlyKey(night), nightCents);
     });
   });
   return pricedByParticipant;
@@ -720,7 +743,7 @@ function composeCapacityCoverage(
  * home for that rule (`INV-SSOT`) — and records anything else as `null`. This
  * only reads that verdict; it does not restate it. It exists because the parked
  * branch must PRESERVE whatever a strand's rows can still be read for, while
- * `soldNightPriceByGuest` is deliberately EMPTY for an unreadable strand so no
+ * a strand's sold-price map is deliberately EMPTY when it is unreadable, so no
  * priced arithmetic can touch a partial history.
  */
 function usableStoredNightPrices(
@@ -1107,12 +1130,10 @@ export function buildInProgressGuestRangePlan(
     // their rows still extends from where they really stop; identical to
     // `stayEnd` for every guest whose envelope agrees with their nights
     // (INV-DATE-012), and for the envelope-fallback guest by construction.
+    const lastHeldNightKey = heldNightKeys.at(-1);
     const heldEndExclusive =
-      heldNightKeys.length > 0
-        ? addDaysDateOnly(
-            parseDateOnly(heldNightKeys[heldNightKeys.length - 1]),
-            1
-          )
+      lastHeldNightKey !== undefined
+        ? addDaysDateOnly(parseDateOnly(lastHeldNightKey), 1)
         : stayEnd;
     // #2743: an edit may only SELL nights the edit itself creates. The added leg
     // therefore starts no earlier than the booking's ORIGINAL check-out as well
@@ -1398,19 +1419,21 @@ export function buildInProgressGuestRangePlan(
    * for. Every value is a stored integer — this map is the ONLY source of a
    * historical amount below, and it is empty for a strand the gate rejected.
    */
-  const soldNightPriceByGuest: Array<ReadonlyMap<string, number>> = [];
+  const existingStrands: Array<{
+    entry: (typeof existingNightPlans)[number];
+    soldNightPriceByKey: ReadonlyMap<string, number>;
+  }> = [];
   for (const entry of existingNightPlans) {
     const verdict = classifyStoredSoldPriceEvidence(
       heldNightPrices(entry.heldNightKeys, entry.storedNightPriceByKey),
       entry.guest.priceCents
     );
-    soldNightPriceByGuest.push(
-      new Map(
-        verdict.kind === "exact"
-          ? verdict.nightPrices.map((night) => [night.date, night.priceCents])
-          : []
-      )
+    const soldNightPriceByKey: ReadonlyMap<string, number> = new Map(
+      verdict.kind === "exact"
+        ? verdict.nightPrices.map((night) => [night.date, night.priceCents])
+        : []
     );
+    existingStrands.push({ entry, soldNightPriceByKey });
     if (verdict.kind === "exact") {
       /**
        * #3166: an exact strand this edit takes nights from, or puts new nights
@@ -1608,8 +1631,19 @@ export function buildInProgressGuestRangePlan(
 
     const parkedAddedGuests: ProposedAddedGuestRange[] = addGuests.map(
       (guest, addedIndex) => {
+        // Their slice of the pass: the existing strands were handed in first,
+        // in booking order, then each added guest in request order. An absent
+        // slice would be an added guest with nothing priced, and #3031 forbids
+        // inventing the amount (#2800).
+        const addedPriced =
+          parkedAddedPrices[existingNightPlans.length + addedIndex];
+        if (addedPriced === undefined) {
+          throw new Error(
+            `Parked party pricing returned no slice for added guest ${addedIndex + 1} (#3031).`,
+          );
+        }
         const perNightCents = nightPricesFrom(
-          parkedAddedPrices[existingNightPlans.length + addedIndex],
+          addedPriced,
           addedGuestNightKeys
         );
         return {
@@ -1682,17 +1716,13 @@ export function buildInProgressGuestRangePlan(
   // no others.
   const proposedPartyPrices = pricePartyNights(
     [
-      ...existingNightPlans.map((entry, index) => ({
+      ...existingStrands.map(({ entry, soldNightPriceByKey }) => ({
         guest: entry.guest,
         nightKeys:
           pricingFloorKey === undefined
             ? []
-            : proposedPassNightKeys(
-                entry,
-                soldNightPriceByGuest[index],
-                pricingFloorKey
-              ),
-        lockedNightPricesByKey: soldNightPriceByGuest[index],
+            : proposedPassNightKeys(entry, soldNightPriceByKey, pricingFloorKey),
+        lockedNightPricesByKey: soldNightPriceByKey,
       })),
       // No stored night prices to honour: every night is being bought now, so
       // each one is its own current season rate (#2744) — under the post-edit
@@ -1704,8 +1734,9 @@ export function buildInProgressGuestRangePlan(
   );
 
   /** Strands whose composed rows do not add up — see the check inside. */
-  const unreconciledGuestIndexes: number[] = [];
-  const proposedExistingGuests = existingNightPlans.map((entry, index) => {
+  const unreconciledStrands: Array<(typeof existingNightPlans)[number]> = [];
+  const proposedExistingGuests = existingStrands.map(
+    ({ entry, soldNightPriceByKey }, index) => {
     const {
       guest,
       heldNightKeySet,
@@ -1714,8 +1745,15 @@ export function buildInProgressGuestRangePlan(
       futureNightKeys,
       removedFromFuture,
     } = entry;
+    // The pass was handed the existing strands first, in this order, so this
+    // position is that strand's slice of it. An absent slice would mean pricing
+    // a night against nothing, and #3031 forbids inventing the amount (#2800).
     const proposedPriced = proposedPartyPrices[index];
-    const soldNightPriceByKey = soldNightPriceByGuest[index];
+    if (proposedPriced === undefined) {
+      throw new Error(
+        `Post-edit party pricing returned no slice for existing guest ${guest.id} (#3031).`,
+      );
+    }
 
     /** What the guest was SOLD this night for. Exact by the gate above. */
     const soldPriceOf = (nightKey: string): number => {
@@ -1801,7 +1839,7 @@ export function buildInProgressGuestRangePlan(
     // because smoothing it over is precisely how the even split used to write a
     // guess into the history.
     if (sumCents(perNightCents) !== priceCents) {
-      unreconciledGuestIndexes.push(index);
+      unreconciledStrands.push(entry);
     }
 
     return {
@@ -1824,9 +1862,10 @@ export function buildInProgressGuestRangePlan(
       removedFromFuture,
       futureStart: entry.newFutureStart,
     };
-  });
+  },
+  );
 
-  if (unreconciledGuestIndexes.length > 0) {
+  if (unreconciledStrands.length > 0) {
     // #3170: this exit parks too. A strand whose composed rows do not add up is
     // unpriceable for the same reason as one the gate caught — the difference is
     // only WHEN it was discovered — so the structural change commits and the
@@ -1841,8 +1880,7 @@ export function buildInProgressGuestRangePlan(
       // the evidence of are recorded here exactly as they are at the gate
       // (#3166) — and a strand named in BOTH lists is recorded once.
       occurrences: parkedOccurrences(
-        unreconciledGuestIndexes.map((index) => {
-          const entry = existingNightPlans[index];
+        unreconciledStrands.map((entry) => {
           return editFinancialReviewOccurrence({
             bookingId: input.booking.id,
             bookingGuestId: entry.guest.id,
@@ -1867,10 +1905,14 @@ export function buildInProgressGuestRangePlan(
     // returned night by night — no average, and the sum is the total by
     // construction (#2744) — and each one now carries the group discount the
     // whole party qualifies for on that night.
-    const perNightCents = nightPricesFrom(
-      proposedPartyPrices[existingNightPlans.length + addedIndex],
-      addedGuestNightKeys
-    );
+    const addedPriced =
+      proposedPartyPrices[existingNightPlans.length + addedIndex];
+    if (addedPriced === undefined) {
+      throw new Error(
+        `Post-edit party pricing returned no slice for added guest ${addedIndex + 1} (#3031).`,
+      );
+    }
+    const perNightCents = nightPricesFrom(addedPriced, addedGuestNightKeys);
     return {
       guest,
       stayStart: editableFrom,

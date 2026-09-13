@@ -30,15 +30,25 @@ import {
   fromOklch,
 } from "./theme-substrate";
 import { generateRadixColors } from "./generate-radix-colors";
+import { must } from "./index-guards";
 
 /** A1 banding, replicated from theme-substrate (the export is module-private). */
 const BAND_STEPS = new Set([0, 1, 2, 3, 4, 5, 6, 7, 10, 11]);
 function bandScale(hex12: string[], bandL: number[]): string[] {
   return hex12.map((hex, i) => {
     if (!BAND_STEPS.has(i)) return hex;
+    // `bandL` is the kiosk neutral ramp's per-step lightness, always built
+    // with one entry per step of `hex12` (both are always the fixed kiosk
+    // context's 12 steps).
+    const l = must(bandL[i], `bandScale: no band-source lightness at index ${i}`);
     const [, C, H] = oklch(hex);
-    return fromOklch(bandL[i], C, H);
+    return fromOklch(l, C, H);
   });
+}
+
+/** One named step of a fixed-12-step scale array — always present by construction. */
+function step(scale: readonly string[], i: number, label: string): string {
+  return must(scale[i], `buildKioskTokens: ${label} has no step ${i + 1} of its 12`);
 }
 
 /**
@@ -63,25 +73,38 @@ function kioskStatusScale(seed: string, bandL: number[]): string[] {
 export function buildKioskTokens(): Record<string, string> {
   const { theme, lightNeutral12 } = buildKioskTheme();
   const n = theme.neutralHex; // 12-step kiosk neutral ramp (dark)
-  const a = theme.scales.accent.hex; // 12-step kiosk accent ramp (dark)
-  const accentOnSolid = theme.scales.accent.generatorContrast ?? "#ffffff";
+  const accentScale = must(theme.scales.accent, "buildKioskTokens: kiosk theme has no accent scale");
+  const a = accentScale.hex; // 12-step kiosk accent ramp (dark)
+  const accentOnSolid = accentScale.generatorContrast ?? "#ffffff";
   const bandL = theme.bandL;
 
-  const danger = kioskStatusScale(PINS.semanticSeeds.danger, bandL);
-  const success = kioskStatusScale(PINS.semanticSeeds.success, bandL);
-  const warning = kioskStatusScale(PINS.semanticSeeds.warning, bandL);
-  const orange = kioskStatusScale(PINS.categoricalSeeds.cat4, bandL);
+  const danger = kioskStatusScale(
+    must(PINS.semanticSeeds.danger, "buildKioskTokens: no semantic seed for danger"),
+    bandL,
+  );
+  const success = kioskStatusScale(
+    must(PINS.semanticSeeds.success, "buildKioskTokens: no semantic seed for success"),
+    bandL,
+  );
+  const warning = kioskStatusScale(
+    must(PINS.semanticSeeds.warning, "buildKioskTokens: no semantic seed for warning"),
+    bandL,
+  );
+  const orange = kioskStatusScale(
+    must(PINS.categoricalSeeds.cat4, "buildKioskTokens: no categorical seed for cat4"),
+    bandL,
+  );
 
-  const statusTriplet = (scale: string[], prefix: string) => ({
-    [`${prefix}-bg`]: scale[2], // step 3 — dark tinted background
-    [`${prefix}-fg`]: scale[10], // step 11 — light accent text (AA on bg + page)
-    [`${prefix}-border`]: scale[6], // step 7 — visible border
+  const statusTriplet = (scale: readonly string[], prefix: string) => ({
+    [`${prefix}-bg`]: step(scale, 2, `${prefix} scale`), // step 3 — dark tinted background
+    [`${prefix}-fg`]: step(scale, 10, `${prefix} scale`), // step 11 — light accent text (AA on bg + page)
+    [`${prefix}-border`]: step(scale, 6, `${prefix} scale`), // step 7 — visible border
   });
 
-  const statusSolid = (scale: string[], prefix: string) => ({
-    [`${prefix}-solid`]: scale[8], // step 9 — solid fill
+  const statusSolid = (scale: readonly string[], prefix: string) => ({
+    [`${prefix}-solid`]: step(scale, 8, `${prefix} scale`), // step 9 — solid fill
     [`${prefix}-solid-fg`]: a4SolidForeground(
-      scale[8],
+      step(scale, 8, `${prefix} scale`),
       // step-9 fill has no generatorContrast here (accent-only field); recompute.
       "#ffffff",
       lightNeutral12,
@@ -99,33 +122,33 @@ export function buildKioskTokens(): Record<string, string> {
     const [L, C, H] = oklch(hex);
     return fromOklch(Math.min(1, L + dL), C, H);
   };
-  const statusSolidStates = (scale: string[], prefix: string) => ({
-    [`${prefix}-solid-hover`]: lighten(scale[8], 0.06),
-    [`${prefix}-solid-active`]: lighten(scale[8], 0.12),
+  const statusSolidStates = (scale: readonly string[], prefix: string) => ({
+    [`${prefix}-solid-hover`]: lighten(step(scale, 8, `${prefix} scale`), 0.06),
+    [`${prefix}-solid-active`]: lighten(step(scale, 8, `${prefix} scale`), 0.12),
   });
 
   return {
     // --- Neutral surfaces (page darkest → chip lightest) + hover/borders. ---
     page: PINS.kiosk.background, // A5 fixed near-black page background
-    card: n[2], // step 3
-    inset: n[3], // step 4
-    chip: n[5], // step 6
-    hover: n[6], // step 7 — hover/active feedback surface
-    border: n[6], // step 7 — visible rules
-    "border-muted": n[3], // step 4 — faint/disabled borders
+    card: step(n, 2, "neutral ramp"), // step 3
+    inset: step(n, 3, "neutral ramp"), // step 4
+    chip: step(n, 5, "neutral ramp"), // step 6
+    hover: step(n, 6, "neutral ramp"), // step 7 — hover/active feedback surface
+    border: step(n, 6, "neutral ramp"), // step 7 — visible rules
+    "border-muted": step(n, 3, "neutral ramp"), // step 4 — faint/disabled borders
 
     // --- Text tiers. ---
-    fg: n[11], // step 12 — primary text (near-white)
-    "muted-fg": n[10], // step 11 — secondary labels
-    "faint-fg": n[8], // step 9 — disabled / tertiary text
+    fg: step(n, 11, "neutral ramp"), // step 12 — primary text (near-white)
+    "muted-fg": step(n, 10, "neutral ramp"), // step 11 — secondary labels
+    "faint-fg": step(n, 8, "neutral ramp"), // step 9 — disabled / tertiary text
 
     // --- Fixed accent (the kiosk action colour; #7dd3fc seed, NOT brand). ---
-    accent: a[8], // step 9 — solid fill / text / ring
-    "accent-hover": a[9], // step 10
-    "accent-active": a[10], // step 11
+    accent: step(a, 8, "accent ramp"), // step 9 — solid fill / text / ring
+    "accent-hover": step(a, 9, "accent ramp"), // step 10
+    "accent-active": step(a, 10, "accent ramp"), // step 11
     "accent-fg": accentOnSolid, // on-accent text (generator on-solid pick)
-    "accent-bg": a[2], // step 3 — tinted selected/active background
-    "accent-border": a[6], // step 7 — selected/active border
+    "accent-bg": step(a, 2, "accent ramp"), // step 3 — tinted selected/active background
+    "accent-border": step(a, 6, "accent ramp"), // step 7 — selected/active border
 
     // --- Status hues (generated in the fixed kiosk context). ---
     ...statusTriplet(danger, "danger"),

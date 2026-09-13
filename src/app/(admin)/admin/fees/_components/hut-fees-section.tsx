@@ -14,6 +14,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { APP_CURRENCY } from "@/config/operational";
 import { formatCents } from "@/lib/pricing";
 import { MONEY_INPUT_PROPS, parseDecimalDollarsToCents } from "@/lib/money-input";
+import { must } from "@/lib/indexed-access";
 import {
   AdminViewOnlyNotice,
   AdminViewOnlySectionBanner,
@@ -419,7 +420,14 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
       ([key, price]) => {
         const [membershipTypeId, tierPart] = key.split("::");
         return {
-          membershipTypeId,
+          // `String.prototype.split` always yields at least one element, so
+          // the id half is present for every rate key this component builds.
+          // `must` names that once rather than letting a missing membership
+          // type id ride into a saved rate row (#2801).
+          membershipTypeId: must(
+            membershipTypeId,
+            `hut fees: rate key "${key}" carries no membership type id`,
+          ),
           ageTier: tierPart === FLAT_KEY ? null : (tierPart as AgeTier),
           pricePerNightCents: price,
         };

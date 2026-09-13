@@ -234,6 +234,72 @@ describe("AllocationPreferencesSection", () => {
     });
   });
 
+  /**
+   * #2801 — a drag whose index no longer names a row leaves the order alone.
+   *
+   * `move` bounds `to` and has never bounded `from`. `from` comes from
+   * `draggedIndex`, set at drag start, so unlike every other caller it OUTLIVES
+   * the render that produced it; and `setDraft` applies its updater to the LIVE
+   * draft, not to the one the bounds check read. Disable a preference between
+   * drag start and drop and the two disagree: `splice(from, 1)` removes
+   * nothing, and the insert that followed put `undefined` INTO the priority
+   * order — one entry longer than it started, carrying a preference that is not
+   * one. The stricter indexed-access rule is what surfaced it; this pins the
+   * answer, which is to leave the draft untouched.
+   */
+  it("ignores a drop whose dragged index no longer exists, and saves the order intact", async () => {
+    const expectedOrder = ["BOOKING_COHESION"];
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) =>
+      init?.method === "PUT"
+        ? response({ ...LOADED, allocationPriorityOrder: expectedOrder })
+        : response(),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    await renderLoaded();
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+
+    const keptLabel = "Keep each booking together";
+    const draggedLabel = "Keep guests in the same room and bed";
+    const rowFor = (label: string) => {
+      const row = screen.getByText(label).parentElement;
+      expect(row).not.toBeNull();
+      return row as HTMLElement;
+    };
+
+    // Drag starts on the second (last) preference: `draggedIndex` becomes 1.
+    fireEvent.dragStart(rowFor(draggedLabel));
+    // It is then disabled, so the list is one long and index 1 names nobody.
+    fireEvent.click(
+      within(rowFor(draggedLabel)).getByRole("button", {
+        name: `Disable ${draggedLabel}`,
+      }),
+    );
+    // The drop still arrives, carrying the stale index.
+    const keptRow = rowFor(keptLabel);
+    fireEvent.dragOver(keptRow);
+    fireEvent.drop(keptRow);
+
+    // Still exactly one enabled preference, and it is the one that was kept.
+    expect(
+      screen.getByRole("button", { name: `Move ${keptLabel} up` }),
+    ).toBeTruthy();
+    expect(
+      screen.queryByRole("button", { name: `Move ${draggedLabel} up` }),
+    ).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    const putCall = fetchMock.mock.calls.find(
+      ([, init]) => init?.method === "PUT",
+    );
+    expect(JSON.parse(String(putCall?.[1]?.body))).toEqual({
+      lodgeId: "lodge-1",
+      autoAllocationEnabled: true,
+      allocationPriorityOrder: expectedOrder,
+    });
+  });
+
   it("PUTs once, refreshes the parent, and re-seeds from the server response", async () => {
     const authoritative = {
       autoAllocationEnabled: false,

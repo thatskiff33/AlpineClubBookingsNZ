@@ -419,6 +419,8 @@ export function parseCsv(text: string): CsvParseResult {
   let index = 0;
   while (index < text.length) {
     const character = text[index];
+    // Unreachable: the loop condition already guarantees `index < text.length`.
+    if (character === undefined) break;
 
     if (inQuotes) {
       if (character === '"') {
@@ -538,14 +540,17 @@ export function parseMemberImportCsv(text: string): MemberImportCsvParseResult {
     return parsed;
   }
 
-  if (parsed.records.length < 2) {
+  // The first record's own absence, plus no data rows remaining after it, is
+  // the emptiness check — equivalent to the old `parsed.records.length < 2`,
+  // but reading `headerRecord` this way lets its type say it is present for
+  // every use below.
+  const [headerRecord, ...rows] = parsed.records;
+  if (!headerRecord || rows.length === 0) {
     return {
       ok: false,
       error: "CSV must have a header row and at least one data row",
     };
   }
-
-  const [headerRecord, ...rows] = parsed.records;
   const headers = headerRecord.values.map((header) => header.trim());
   if (headers.every((header) => header === "")) {
     return {
@@ -776,20 +781,28 @@ export function normalizeMemberImportDateValue(
       month = Number(match[2]);
       year = Number(match[3]);
       break;
-    case "d MMM yyyy":
+    case "d MMM yyyy": {
       match = trimmed.match(/^(\d{1,2})\s+([A-Za-z]{3,})\s+(\d{4})$/);
       if (!match) return { ok: false, error: `must match ${format}` };
+      // The month-name group can't be blank when the pattern above matched
+      // (no `?` on it), but the array type can't say so.
+      const monthName = match[2];
+      if (!monthName) return { ok: false, error: `must match ${format}` };
       day = Number(match[1]);
-      month = parseMonthName(match[2]);
+      month = parseMonthName(monthName);
       year = Number(match[3]);
       break;
-    case "MMM d yyyy":
+    }
+    case "MMM d yyyy": {
       match = trimmed.match(/^([A-Za-z]{3,})\s+(\d{1,2}),?\s+(\d{4})$/);
       if (!match) return { ok: false, error: `must match ${format}` };
-      month = parseMonthName(match[1]);
+      const monthName = match[1];
+      if (!monthName) return { ok: false, error: `must match ${format}` };
+      month = parseMonthName(monthName);
       day = Number(match[2]);
       year = Number(match[3]);
       break;
+    }
     default:
       return { ok: false, error: "uses an unsupported date format" };
   }
@@ -816,7 +829,6 @@ function getMappedColumnLabels(
     if (columnIndex !== null) {
       // The bracket key is definition.key from the MEMBER_IMPORT_FIELD_DEFINITIONS
       // constant, not user input; the CSV header only supplies the string value.
-      // nosemgrep: javascript.express.security.audit.remote-property-injection.remote-property-injection
       labels[definition.key] =
         csv.headers[columnIndex]?.trim() || `Column ${columnIndex + 1}`;
     }

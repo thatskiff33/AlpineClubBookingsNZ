@@ -332,6 +332,177 @@ export const MONEY_GUARD_EXEMPTIONS = [
 
 const MONEY_HELPER_MODULES = MONEY_GUARD_EXEMPTIONS.map((entry) => entry.file);
 
+// ---------------------------------------------------------------------------
+// #3302 — the MIRROR of INV-MONEY-003 above. That guard catches BUILDING
+// cents inline (dollars typed or provided, scaled up). Nothing caught the
+// reverse: hand-rolling `(cents / 100).toFixed(n)` to RENDER cents instead of
+// importing the shared `formatCents` / `formatCentsPlain` from `@/lib/utils`.
+// That exact shape was independently written nine times under the name
+// `formatCents`, and a TENTH (`formatOfferCents`) escaped #3302's own census
+// because it kept its own name — proof the census alone cannot hold this
+// still; only a structural check can.
+//
+// WHAT THIS DELIBERATELY DOES NOT DISTINGUISH. The AST node this matches is
+// identical whether the result becomes a currency-labelled display string or
+// a bare numeric export cell — that distinction lives in what happens to the
+// call's RESULT, which this selector does not follow. `CENTS_DISPLAY_EXEMPTIONS`
+// below is where that judgement is made, once, in writing, per file — exactly
+// the shape `MONEY_GUARD_EXEMPTIONS` above already uses for the same reason.
+const CENTS_DISPLAY_MESSAGE =
+  "INV-SSOT-001 / #3302: do not hand-roll `(cents / 100).toFixed(n)` to render an amount. Use the shared formatCents (a currency-formatted string) or formatCentsPlain (a bare two-decimal string with no symbol or grouping — for an editable dollars input, or a report line that already reads as a delta), both from @/lib/utils. Seeding an EDITABLE input's plain value, or a raw numeric export cell (CSV, a JSON report row) that must carry no currency symbol, is a different, legitimate concept — add the file to CENTS_DISPLAY_EXEMPTIONS in eslint.config.mjs with a written reason; that list is read by money-cents-guard.test.ts, so adding to it passes CI. Never an eslint-disable comment.";
+
+const CENTS_DISPLAY_RESTRICTIONS = [
+  {
+    selector:
+      'CallExpression[callee.type="MemberExpression"][callee.property.name="toFixed"][callee.object.type="BinaryExpression"][callee.object.operator="/"][callee.object.right.value=100]',
+    message: CENTS_DISPLAY_MESSAGE,
+  },
+];
+
+/**
+ * The one arm as a bare selector array, for `money-cents-guard.test.ts` —
+ * same reason `MONEY_GUARD_ARMS` is exported above: the suite resolves the
+ * REAL config and checks the resolved rule still carries every selector this
+ * array declares, so a copy nobody kept in sync cannot pass while the config
+ * that ships has dropped the rule.
+ */
+export const CENTS_DISPLAY_GUARD_ARM = CENTS_DISPLAY_RESTRICTIONS.map(
+  (entry) => entry.selector,
+);
+
+// INV-CONFIG-001 (#3325) — the locale and currency are the club's
+// configuration. `new Intl.NumberFormat("en-NZ", { style: "currency", ... })`
+// was found in three files at the merge base (the fee sections, the joining
+// fee preview, the public content tokens) that #3302's toFixed arm above
+// structurally cannot see (there is no division to match), and two of them
+// sat on that arm's editable-input exemption. This is therefore its OWN
+// group, on the mandatory set, so
+// `srcRestrictedSyntaxWithout(CENTS_DISPLAY_RESTRICTIONS, ...)` does not lift
+// it: an exemption written for seeding an input's plain value never excused a
+// hard-coded locale. The two homes (`@/lib/utils`, `@/lib/finance-format`)
+// pass `APP_LOCALE` and `APP_CURRENCY`, both Identifiers, so they pass without
+// an exemption list — which is the point: there is no legitimate literal
+// locale or currency code in `src/`.
+//
+// Two arms, each with the shape it does and does not see stated in
+// `cents-display-guard.test.ts`. Both match `Intl.NumberFormat` whether or not
+// it is spelled with `new`. The FIRST fires on a string-literal LOCALE on a
+// currency formatter; the SECOND on a string-literal CURRENCY code whatever
+// the locale argument is. Neither sees a template-literal or array locale, an
+// aliased constructor, `Intl["NumberFormat"]`, or `toLocaleString(...)` — the
+// guard is a structural check on the one shape this codebase has actually
+// written, not a proof that no other shape exists.
+const CURRENCY_LOCALE_MESSAGE =
+  "INV-CONFIG-001 / #3325: do not construct `Intl.NumberFormat(<literal locale>, { style: \"currency\" })` — the locale is the club's configuration, not this codebase's. Render an integer-cent amount with formatCents / formatSignedCents from @/lib/utils, or a whole-dollar dashboard figure with formatDollarsDisplay from @/lib/finance-format; both read APP_LOCALE and APP_CURRENCY. A genuinely new rendering shape is added to one of those two modules, built from APP_LOCALE, never as another Intl instance. There is no exemption list for this rule and no eslint-disable.";
+
+const CURRENCY_CODE_MESSAGE =
+  "INV-CONFIG-001 / #3325: do not pass a literal currency code (`currency: \"NZD\"`) to Intl.NumberFormat — the currency is the club's configuration (APP_CURRENCY), not this codebase's. Use formatCents / formatSignedCents from @/lib/utils or formatDollarsDisplay from @/lib/finance-format, which read it; a formatter in a foreign currency (a Xero invoice's own) takes that currency as a variable, never a literal. There is no exemption list for this rule and no eslint-disable.";
+
+const INTL_NUMBER_FORMAT =
+  ':matches(NewExpression, CallExpression)[callee.object.name="Intl"][callee.property.name="NumberFormat"]';
+
+const CURRENCY_LOCALE_RESTRICTIONS = [
+  {
+    selector: `${INTL_NUMBER_FORMAT}[arguments.0.type="Literal"]:has(Property[key.name="style"][value.value="currency"])`,
+    message: CURRENCY_LOCALE_MESSAGE,
+  },
+  {
+    selector: `${INTL_NUMBER_FORMAT}:has(Property[key.name="currency"][value.type="Literal"])`,
+    message: CURRENCY_CODE_MESSAGE,
+  },
+];
+
+/**
+ * Bare selectors, for `cents-display-guard.test.ts` — the same mirror
+ * `CENTS_DISPLAY_GUARD_ARM` provides above: the suite resolves the REAL config
+ * at an ordinary file AND at every toFixed-exempted file and checks each still
+ * carries every selector here, so an edit that drops or lifts one fails.
+ */
+export const CURRENCY_LOCALE_GUARD_ARM = CURRENCY_LOCALE_RESTRICTIONS.map(
+  (entry) => entry.selector,
+);
+
+/**
+ * THE ESCAPE HATCH for `CENTS_DISPLAY_RESTRICTIONS`, same rule as
+ * `MONEY_GUARD_EXEMPTIONS`: every entry names the file(s) and states in
+ * writing why hand-rolled `(cents / 100).toFixed(n)` is allowed there.
+ * `money-cents-guard.test.ts` reads THIS array and fails an entry with no
+ * reason, and separately fails if a listed file no longer contains the
+ * pattern — an exemption is deleted when its cause is, never left "for now".
+ */
+export const CENTS_DISPLAY_EXEMPTIONS = [
+  {
+    files: ["src/lib/utils.ts"],
+    reason:
+      "The canonical definition. `formatCentsPlain`'s own body IS this arithmetic — every other file is sent here to call it rather than write it again.",
+  },
+  {
+    files: [
+      "src/app/(admin)/admin/fees/_components/finance-fees-sections.tsx",
+      "src/app/(admin)/admin/fees/_components/hut-fees-section.tsx",
+      "src/app/(admin)/admin/promo-codes/promo-codes-page-client.tsx",
+      "src/app/(admin)/admin/refund-requests/page.tsx",
+      "src/components/admin/booking-policies/cancellation-rules-editor.tsx",
+      "src/components/admin/booking-requests/public-booking-requests-panel.tsx",
+      "src/components/admin/joining-fee-preview.tsx",
+      "src/components/admin/manual-refund-task-queue.tsx",
+    ],
+    reason:
+      'Seeds an EDITABLE dollars input\'s plain string value — a form field default, an `<input max>` attribute, a redraft-on-open value — never a currency symbol, because nobody types "$10.00" into an amount box. #3302 names this as a legitimately different concept from rendering an amount for reading, and excludes it on that basis rather than fixing or flagging it.',
+  },
+  {
+    files: [
+      "src/app/(admin)/admin/reports/page.tsx",
+      "src/lib/finance-legacy-dashboard-export.ts",
+      "src/lib/promo-redemptions-csv.ts",
+    ],
+    reason:
+      "A raw numeric export cell (a CSV row, a JSON report row) that must carry no currency symbol — the export-format counterpart of the editable-input exclusion above, same reasoning.",
+  },
+  {
+    files: ["src/lib/membership-cancellation-blocker-messages.ts"],
+    reason:
+      "Formats an amount in a Xero invoice's OWN currency, which the club's configured formatCents structurally cannot do — the currency varies per call and is deliberately not APP_CURRENCY (see formatBlockerAmount's own docblock).",
+  },
+];
+
+/**
+ * Which `CENTS_DISPLAY_EXEMPTIONS` files are ALSO `MONEY_DOMAIN_MODULES`
+ * members (declared below) — `finance-legacy-dashboard-export.ts`
+ * (`finance-*`), `promo-redemptions-csv.ts` (`*promo*`),
+ * and `membership-cancellation-blocker-messages.ts`
+ * (`membership-cancellation-*`); `internet-banking-payment-cron.ts` left the
+ * list with #3325. Those three already take the broader
+ * `MONEY_MODULE_RESTRICTIONS` arm instead of the narrow one, so the block that
+ * lifts `CENTS_DISPLAY_RESTRICTIONS` for them has to replicate that swap
+ * rather than the ordinary exemption block's plain
+ * `srcRestrictedSyntaxWithout(CENTS_DISPLAY_RESTRICTIONS, ...)`. Matching a
+ * glob family against a literal path is a real pattern match, not a Set
+ * lookup, so this list is hand-verified against `MONEY_DOMAIN_MODULES` rather
+ * than computed; `cents-display-guard.test.ts` checks the resolved config at
+ * each of these three paths carries the money-MODULE arm, not the narrow one,
+ * precisely so a hand-verified list cannot go stale silently.
+ */
+const CENTS_DISPLAY_MONEY_DOMAIN_OVERLAP = [
+  "src/lib/finance-legacy-dashboard-export.ts",
+  "src/lib/promo-redemptions-csv.ts",
+  "src/lib/membership-cancellation-blocker-messages.ts",
+];
+
+/**
+ * The one `CENTS_DISPLAY_EXEMPTIONS` file that is ALSO a `DATE_FNS_ADAPTER_FILES`
+ * member: it already drops `DATE_FNS_RESTRICTIONS` (CT-6, #2991) via its own
+ * block, so the block that additionally drops `CENTS_DISPLAY_RESTRICTIONS` for
+ * it has to replicate THAT swap too, for the same flat-config-replaces-not-merges
+ * reason as `CENTS_DISPLAY_MONEY_DOMAIN_OVERLAP` above. Found by `npm run lint`
+ * actually going red the first time this file's exemption was wired as an
+ * ordinary one — proof this kind of overlap is exactly the failure mode that
+ * reading glob text instead of asking ESLint misses.
+ */
+const CENTS_DISPLAY_DATE_FNS_OVERLAP = [
+  "src/app/(admin)/admin/reports/page.tsx",
+];
+
 // Where a bare `x * 100` is money by construction.
 //
 // The families are matched by PREFIX so the guard follows the code through an
@@ -1829,6 +2000,460 @@ export const SSOT_LOCAL_RULES = {
 };
 
 // ---------------------------------------------------------------------------
+// #3318 — the TypeScript shapes Semgrep's parser cannot read.
+// ---------------------------------------------------------------------------
+//
+// `semgrep scan --error` exits 0 on code it could not PARSE. A parse failure is
+// a `warn`-level entry in the JSON `errors` array and is nowhere in the exit
+// status, so a file the scanner skipped a region of has looked exactly like a
+// file it read and cleared. #2842 made that visible — the affected files are
+// listed in `.semgrep/unparsed-allowlist.json` and
+// `scripts/ci/check-semgrep-coverage.mjs` ratchets the list in both directions
+// — and this rule is what stops the list REGROWING. Catching each new entry
+// afterwards was measured: while #2842 was in flight, one upstream sync and
+// three separate batches of sibling children each added entries, so the
+// recurrence is not an event to absorb once, it is anything landing at all.
+// Removing the growth at source is the structural fix `INV-SSOT-001` prefers.
+//
+// HOW MUCH OF THE CLASS THIS RULE REACHES, said plainly, because the honest
+// version is not "the shapes are closed". #3318 shipped saying THREE shapes
+// defeat the parser and that two of them could not come back. #3345 re-measured
+// and found roughly a dozen further failing positions with the rule silent on
+// every one of them, so the arms below are wider and the CLAIM is narrower:
+// this rule reaches the positions listed here, and the coverage gate remains
+// the backstop for anything it does not.
+//
+// EVERY LINE BELOW WAS MEASURED, on the pinned image `semgrep/semgrep:1.161.0`
+// (the one the blocking scan runs) against minimal single-construct files, with
+// a probe rule written to defeat Semgrep's prefilter so that every target is
+// really parsed. `f` is any function at all and `A` is any exported type.
+//
+// THE CALL CLASS — an `import()` type inside a call's type-argument list:
+//
+//     f<typeof import("x")>()                   FAILS  `>()` was unexpected
+//     f<typeof import("x")>( "x", ) on 3 lines   FAILS  `,` was unexpected
+//     f<typeof import("x"), string>("x")         FAILS  two type arguments
+//     f<typeof import("x")>                      FAILS  `>` was unexpected
+//     f<typeof import("x")>?.()                  FAILS  `>?.()` was unexpected
+//     f<typeof import("x")>("x")                parses
+//     f<typeof import("x")>("x", 1)             parses
+//     f?.<typeof import("x")>()                 parses
+//     tag<typeof import("x")>`abc`              parses
+//     new K<typeof import("x")>()               parses, and so does every other
+//                                               argument-list variant of `new`,
+//                                               INCLUDING the trailing comma
+//
+// Which side of that line a CALL sits on is decided by PRINT WIDTH: a rename
+// that pushes the call past it splits the argument list across lines, the
+// trailing comma arrives with the reflow, and a passing line becomes an
+// unscanned region with no change of any substance. That is not hypothetical —
+// it appeared at 12 call sites, and for 10 of the 169 entries #3318 inherited
+// it was the only cause. A further 23 files in the tree held the "parses today"
+// spelling, every one of them one reflow from an entry of its own. So the whole
+// call class is reported, and the remedy moves the type out of the call, where
+// nothing about it depends on formatting:
+//
+//     (await f()) as typeof import("x")
+//
+// which is measured clean, including with the multi-line trailing-comma
+// argument list the fixer leaves behind.
+//
+// `new` is the one member of the family that print width does NOT reach, so it
+// is deliberately not reported: `new K<typeof import("x")>` is clean with no
+// arguments, with arguments, with a trailing comma and with no parentheses at
+// all. A `new` whose type argument is DECORATED does fail, and the arm below
+// reports that wherever it appears — including there.
+//
+// THE DECORATED-TYPE CLASS — an `import()` type carrying a type-argument list,
+// an indexed access, a `keyof`, or a wrapping parenthesis. This is where #3318
+// was narrowest: it reported only the FUNCTION PARAMETER position, and the
+// position turned out to be almost irrelevant.
+//
+//     type P = import("x").A<null>                   FAILS  `<null>` unexpected
+//     interface I { p: import("x").A<null> }         FAILS
+//     (i: import("x").A<null>)                       FAILS
+//     (): import("x").A<null>                        FAILS
+//     let v: import("x").A<null>                     FAILS
+//     class C { p!: import("x").A<null> }            FAILS
+//     <T extends import("x").A<null>>                FAILS
+//     <T = import("x").A<null>>                      FAILS
+//     Array<import("x").A<null>>                     FAILS
+//     interface I extends import("x").A<null> {}     FAILS
+//     class C implements import("x").A<null> {}      FAILS
+//     new () => import("x").A<null>                  FAILS
+//     new K<import("x").A<null>>()                   FAILS
+//     keyof import("x")                              FAILS
+//     keyof import("x").A                            FAILS
+//     (import("x").A)                                FAILS
+//     (typeof import("x").v)                         FAILS
+//     (i: import("x").A["k"])                        FAILS
+//     (): import("x").A["k"]                         FAILS
+//     (i: import("x")["v"])                          FAILS
+//
+// and, in the SAME construct family, measured clean:
+//
+//     type P = import("x").A<null>["k"]             parses
+//     type P = import("x").A["k"]                   parses
+//     x as import("x").A<null>                      parses
+//     x satisfies import("x").A<null>               parses
+//     readonly import("x").A<null>[]                parses
+//     (typeof import("x"))                          parses
+//     keyof typeof import("x")                      parses
+//
+// THAT is the argument for reporting the class. Adding an index to a failing
+// alias FIXES it and removing one BREAKS it; the same type fails in a return
+// position and parses in an alias; `keyof` fails on a bare module type and
+// parses the moment a `typeof` is in front of it. No contributor can predict
+// which side of that boundary their line lands on, and nothing in the shape
+// tells them.
+//
+// THE REMEDY FOR A DECORATED TYPE IS A TOP-LEVEL `import type`, and getting
+// this wrong is what #3345 was filed to fix. #3318's message said "give the
+// type a name and use the name", which is measured WRONG for the commonest
+// member of the class: `type P = import("x").A<null>;` does not parse, so
+// following that instruction verbatim produced a new unscanned region and the
+// rule was silent on it — a guard printing an instruction that creates the hole
+// it exists to close. Measured clean:
+//
+//     import type { A } from "@/lib/x";        then  A<null>["k"]
+//     import type * as M from "@/lib/x";       then  M.A<null>
+//
+// Both are type-only and fully erased, so a module that must stay dynamically
+// loaded stays dynamically loaded. Where a value-space namespace is genuinely
+// wanted, rooting the type at `typeof` is the other clean answer:
+// `typeof import("@/lib/x").k` and `(typeof import("@/lib/x"))["k"]` parse in
+// every position outside a call.
+//
+// THE PARAMETER POSITION is still reported on its own, for an UNDECORATED type
+// that measures clean there, and it is the one arm resting on a margin argument
+// rather than on a measured failure: `(i: import("x").A)` and
+// `(i: typeof import("x"))` both parse, and one added type argument, index or
+// `keyof` fails. It is also the shape that put
+// `adult-member-hosting-queue-merge.realdb.test.ts` on the allowlist while
+// carrying no call shape at all, so that entry read as unexplained for as long
+// as the construct description named only the call.
+//
+// WHAT THIS RULE STILL CANNOT SEE, stated rather than left to be found:
+// `((typeof import("x")))` — a DOUBLY parenthesised module type, which fails
+// where the single-parenthesised form parses. typescript-eslint drops
+// `TSParenthesizedType` from the AST entirely, so parentheses are visible only
+// as tokens; the arm below reads the one pair immediately around the type and
+// requires a qualifier, which is the measured-failing shape. Population in this
+// tree is zero, and the coverage gate is what would catch it.
+
+const IMPORT_TYPE_CALL_MESSAGE =
+  '#3318: Semgrep cannot parse a call whose TYPE ARGUMENT contains an `import()` type, so it skips a region of this file and every security rule stops running there — while `semgrep scan --error` still exits 0 and reports nothing (#2842). Move the type out of the call: `(await importOriginal()) as typeof import("@/lib/x")`, which is type-equivalent because these helpers are declared `<T = unknown>() => Promise<T>`. YOUR CALL MAY WELL PARSE TODAY, and it is still reported: measured on semgrep 1.161.0, an EMPTY argument list, a multi-line TRAILING COMMA, a second type argument, a bare instantiation `f<typeof import("x")>` with no call, and `f<typeof import("x")>?.()` all fail, while `f<typeof import("x")>("x")`, `f?.<typeof import("x")>()` and a tagged template parse — so which side of the line a call sits on is decided by print width, and a rename that reflows the argument list turns a scanned line into an unscanned region. Gate: `scripts/ci/check-semgrep-coverage.mjs`. Background: docs/MAINTENANCE.md -> "Semgrep parse coverage".';
+
+const IMPORT_TYPE_DECORATED_MESSAGE =
+  '#3318/#3345: Semgrep cannot parse an `import()` type once it carries a type-argument list, an indexed access, a `keyof` or a wrapping parenthesis, so it skips a region of this file and every security rule stops running there — while `semgrep scan --error` still exits 0 and reports nothing (#2842). THE REMEDY IS A TOP-LEVEL TYPE-ONLY IMPORT, NOT AN ALIAS: measured on semgrep 1.161.0, `type P = import("@/lib/x").A<null>;` FAILS, so the "give the type a name" instruction this rule used to print created the very hole it exists to close (#3345). Write `import type { A } from "@/lib/x";` and then `A<null>["k"]`, or `import type * as M from "@/lib/x";` and then `M.A<null>` — both are erased at compile time, so a dynamically-loaded module stays dynamically loaded. If you need the value-space namespace, root the type at `typeof`: `typeof import("@/lib/x").k` and `(typeof import("@/lib/x"))["k"]` parse everywhere outside a call. The whole class is reported because the boundary inside it is incoherent and unguessable: `import("x").A<null>` fails in an alias while `import("x").A<null>["k"]` parses, the same type fails in a return position and parses in an alias, `keyof import("x")` fails while `keyof typeof import("x")` parses, and `(import("x").A)` fails while `(typeof import("x"))` parses. Gate: `scripts/ci/check-semgrep-coverage.mjs`. Background: docs/MAINTENANCE.md -> "Semgrep parse coverage".';
+
+const IMPORT_TYPE_PARAMETER_MESSAGE =
+  '#3318: an `import()` type in a FUNCTION PARAMETER annotation is one added type argument, index or `keyof` away from a shape Semgrep cannot parse — and when it cannot parse one it skips a region of this file, every security rule stops running there, and `semgrep scan --error` still exits 0 and reports nothing (#2842). THIS EXACT LINE PARSES TODAY: measured on semgrep 1.161.0, `(i: import("x").A)` and `(i: typeof import("x"))` are clean, while `(i: import("x").A<null>)`, `(i: import("x").A["k"])` and `(i: import("x")["v"])` all fail. It is reported because a parameter annotation is where this fault was found — one line of it put a whole file on `.semgrep/unparsed-allowlist.json` with none of the generic-call shape in it at all — and because the remedy costs a line: `import type { A } from "@/lib/x";` at the top of the file, then `(input: A)`. A type-only import is erased at compile time, so a dynamically-loaded module stays dynamically loaded. Gate: `scripts/ci/check-semgrep-coverage.mjs`. Background: docs/MAINTENANCE.md -> "Semgrep parse coverage".';
+
+/**
+ * The callee spellings whose declared signature makes the cast form
+ * type-equivalent, and therefore the ones the autofix will rewrite.
+ *
+ * DETECTION IS BEHAVIOURAL AND THIS LIST IS NOT PART OF IT. The parse fault is
+ * a property of the syntax and fires for any `f` at all, so the report keys on
+ * the shape; a name-keyed report would repeat #3132's mistake of sweeping by
+ * name and leaving the same defect alive under a second one. What the name buys
+ * is only the FIX: `importOriginal<T>()` and `vi.importActual<T>(path)` are both
+ * declared to resolve to `T`, so dropping the type argument and asserting the
+ * awaited value yields the identical type. For an arbitrary generic function it
+ * would not, and an autofix that silently changed a type would be worse than no
+ * autofix, so every other callee is reported unfixed.
+ */
+const IMPORT_TYPE_CALL_AUTOFIXABLE_CALLEES = new Set([
+  "importOriginal",
+  "importActual",
+  "vi.importActual",
+]);
+
+/** Node kinds that own a `params` list, i.e. every parameter position. */
+const PARAMETER_OWNER_NODE_TYPES = new Set([
+  "FunctionDeclaration",
+  "FunctionExpression",
+  "ArrowFunctionExpression",
+  "TSDeclareFunction",
+  "TSFunctionType",
+  "TSMethodSignature",
+  "TSEmptyBodyFunctionExpression",
+  "TSConstructorType",
+  "TSConstructSignatureDeclaration",
+]);
+
+/**
+ * The expression kinds whose type-argument list the parser chokes on.
+ *
+ * `TSInstantiationExpression` is the shape #3318 missed twice over. It is
+ * `f<typeof import("x")>` with no call at all, which fails on its own, and it
+ * is ALSO how `f<typeof import("x")>?.()` parses — there the type arguments
+ * hang off the callee rather than off the optional call, so a visitor keyed on
+ * `CallExpression.typeArguments` sees neither (#3345).
+ *
+ * `NewExpression` is deliberately absent: measured, every `new` variant of the
+ * fault parses, including the trailing-comma reflow that is the whole reason
+ * the call class is banned wholesale. A decorated type argument still fails
+ * under `new`, and the decorated arm reports that wherever it appears.
+ */
+const IMPORT_TYPE_ARGUMENT_OWNER_NODE_TYPES = new Set([
+  "CallExpression",
+  "TSInstantiationExpression",
+]);
+
+/** Whether `node`'s subtree contains an `import()` TYPE anywhere. */
+function containsImportType(node, visitorKeys) {
+  if (!node || typeof node.type !== "string") return false;
+  if (node.type === "TSImportType") return true;
+  const keys =
+    visitorKeys[node.type] ??
+    Object.keys(node).filter((key) => key !== "parent");
+  for (const key of keys) {
+    const value = node[key];
+    if (Array.isArray(value)) {
+      for (const child of value) {
+        if (containsImportType(child, visitorKeys)) return true;
+      }
+    } else if (containsImportType(value, visitorKeys)) return true;
+  }
+  return false;
+}
+
+/**
+ * `f`, `vi.importActual` — the dotted source spelling of a callee, or null for
+ * anything computed or deeper, which is never autofixed.
+ */
+function calleeSpelling(callee) {
+  if (callee.type === "Identifier") return callee.name;
+  if (
+    callee.type === "MemberExpression" &&
+    !callee.computed &&
+    callee.object.type === "Identifier" &&
+    callee.property.type === "Identifier"
+  ) {
+    return `${callee.object.name}.${callee.property.name}`;
+  }
+  return null;
+}
+
+/**
+ * Whether this `import()` type sits in a type-argument list the call arm has
+ * already reported, so the decorated and parameter arms stay quiet and one
+ * construct produces exactly one report.
+ */
+function inReportedTypeArgumentList(node) {
+  let child = node;
+  for (let current = node.parent; current; current = current.parent) {
+    if (
+      IMPORT_TYPE_ARGUMENT_OWNER_NODE_TYPES.has(current.type) &&
+      current.typeArguments === child
+    ) {
+      return true;
+    }
+    child = current;
+  }
+  return false;
+}
+
+/**
+ * How this `import()` type is DECORATED, or null when it is a plain module or
+ * qualified-name type.
+ *
+ * The four decorations are the measured-failing ones, listed in the block
+ * comment above with the clean forms beside them. Two details of the walk are
+ * load-bearing:
+ *
+ * - a `typeof` in front RESCUES the indexed and `keyof` forms — measured,
+ *   `typeof import("x")["k"]` and `keyof typeof import("x")` are clean while
+ *   `import("x")["k"]` and `keyof import("x")` fail — so the walk records
+ *   whether it crossed a `TSTypeQuery` and stops asking;
+ * - the QUALIFIER is a child of `TSImportType`, never a `TSQualifiedName`
+ *   parent, so there is nothing to climb for it. `node.qualifier` is the whole
+ *   test, and it is what separates the failing `(import("x").A)` and
+ *   `(typeof import("x").v)` from the clean `(typeof import("x"))`.
+ *
+ * Parentheses are read as TOKENS because typescript-eslint drops
+ * `TSParenthesizedType` from the AST: `(import("x").A)` and `import("x").A` are
+ * the identical tree. Reading the single pair immediately around the type is
+ * why the doubly-parenthesised module type is a stated limit rather than a
+ * covered case.
+ */
+function importTypeDecoration(node, sourceCode) {
+  if (node.typeArguments) return "typeArguments";
+
+  let outer = node;
+  let underTypeof = false;
+  while (outer.parent && outer.parent.type === "TSTypeQuery") {
+    underTypeof = true;
+    outer = outer.parent;
+  }
+
+  const consumer = outer.parent;
+  if (!underTypeof && consumer) {
+    if (
+      consumer.type === "TSIndexedAccessType" &&
+      consumer.objectType === outer
+    ) {
+      return "indexedAccess";
+    }
+    if (consumer.type === "TSTypeOperator" && consumer.operator === "keyof") {
+      return "keyof";
+    }
+  }
+
+  if (node.qualifier) {
+    const before = sourceCode.getTokenBefore(outer);
+    const after = sourceCode.getTokenAfter(outer);
+    if (before?.value === "(" && after?.value === ")") return "parenthesised";
+  }
+
+  return null;
+}
+
+/**
+ * Whether this `import()` type sits in a parameter annotation.
+ *
+ * The remedy — a top-level type-only import — needs nothing special here, and a
+ * first cut that stopped the walk at a `TSTypeAliasDeclaration` "so the alias is
+ * not reported in a circle" was DEAD CODE: a type alias can only be declared at
+ * statement level, so an `import()` type inside one never has a function whose
+ * `params` contain the branch it came up through. A mutation probe that deleted
+ * that branch left every case of
+ * `semgrep-unparsable-import-type-guard.test.ts` green, which is how it was
+ * found; it is gone rather than left in place with a comment claiming it does
+ * work.
+ */
+function inParameterAnnotation(node) {
+  let child = node;
+  for (let current = node.parent; current; current = current.parent) {
+    if (
+      PARAMETER_OWNER_NODE_TYPES.has(current.type) &&
+      Array.isArray(current.params) &&
+      current.params.includes(child)
+    ) {
+      return true;
+    }
+    child = current;
+  }
+  return false;
+}
+
+/**
+ * The autofix for the call shape, or null when it cannot be made safely.
+ *
+ * It rebuilds the whole `await` expression rather than patching around the type
+ * argument, so the trailing comma and the line break a reflow introduced go
+ * away with it. Anything it cannot account for — a callee it does not know to
+ * resolve to `T`, more than one type argument, a call that is not directly
+ * awaited, an optional call, an instantiation expression with no call to await
+ * at all, or a comment inside the expression it would rewrite — is reported
+ * with no fix rather than fixed approximately.
+ */
+function importTypeCallFix(node, typeArguments, sourceCode) {
+  if (node.type !== "CallExpression") return null;
+  if (typeArguments.params.length !== 1) return null;
+  if (node.optional) return null;
+  const spelling = calleeSpelling(node.callee);
+  if (!spelling || !IMPORT_TYPE_CALL_AUTOFIXABLE_CALLEES.has(spelling)) {
+    return null;
+  }
+  const awaited = node.parent;
+  if (
+    !awaited ||
+    awaited.type !== "AwaitExpression" ||
+    awaited.argument !== node
+  ) {
+    return null;
+  }
+  if (sourceCode.getCommentsInside(awaited).length > 0) return null;
+
+  const typeText = sourceCode.getText(typeArguments.params[0]);
+  const args = node.arguments
+    .map((argument) => sourceCode.getText(argument))
+    .join(", ");
+  const call = `${sourceCode.getText(node.callee)}(${args})`;
+  return (fixer) =>
+    fixer.replaceText(awaited, `(await ${call}) as ${typeText}`);
+}
+
+/**
+ * The rule, reached through `SCAN_COVERAGE_LOCAL_RULES` below and exercised by
+ * `semgrep-unparsable-import-type-guard.test.ts` through the SHIPPED config.
+ *
+ * It is a rule of its own rather than a `no-restricted-syntax` arm for the same
+ * reason `no-local-comment-stripper` is: that rule is switched OFF for every
+ * test file by the block at the bottom of this config, and test files are the
+ * entire population — every call site #3318 measured was in a test
+ * (counts live in `docs/MAINTENANCE.md` -> "Semgrep parse coverage", their one home).
+ */
+const noSemgrepUnparsableImportType = {
+  meta: {
+    type: "problem",
+    docs: {
+      description:
+        "Report the TypeScript shapes Semgrep cannot parse, each of which silently removes a region of the file from the security scan (#2842, #3318, #3345).",
+    },
+    fixable: "code",
+    schema: [],
+    messages: {
+      callTypeArgument: IMPORT_TYPE_CALL_MESSAGE,
+      decoratedImportType: IMPORT_TYPE_DECORATED_MESSAGE,
+      parameterAnnotation: IMPORT_TYPE_PARAMETER_MESSAGE,
+    },
+  },
+  create(context) {
+    const sourceCode = context.sourceCode;
+    const visitorKeys = sourceCode.visitorKeys ?? {};
+
+    /** Shared by the call and instantiation visitors — the fault is identical. */
+    const reportTypeArgumentOwner = (node) => {
+      const typeArguments = node.typeArguments;
+      if (!typeArguments) return;
+      if (!containsImportType(typeArguments, visitorKeys)) return;
+      const fix = importTypeCallFix(node, typeArguments, sourceCode);
+      context.report({
+        node: typeArguments,
+        messageId: "callTypeArgument",
+        ...(fix ? { fix } : {}),
+      });
+    };
+
+    return {
+      CallExpression: reportTypeArgumentOwner,
+      TSInstantiationExpression: reportTypeArgumentOwner,
+      TSImportType(node) {
+        if (inReportedTypeArgumentList(node)) return;
+        if (importTypeDecoration(node, sourceCode)) {
+          context.report({ node, messageId: "decoratedImportType" });
+          return;
+        }
+        if (inParameterAnnotation(node)) {
+          context.report({ node, messageId: "parameterAnnotation" });
+        }
+      },
+    };
+  },
+};
+
+/**
+ * The scan-coverage rules, as a flat-config plugin.
+ *
+ * A namespace of its own rather than another entry under `ssot` because this
+ * enforces Semgrep's parse coverage, not single-source-of-truth, and a rule id
+ * that misdescribes what it protects is the first thing a reader gets wrong.
+ *
+ * NOT exported, unlike its neighbour, and deliberately.
+ * `semgrep-unparsable-import-type-guard.test.ts` reaches the rule by linting
+ * fixture text through the shipped config with the real `ESLint` class, so it
+ * never needs the plugin object — and an export nothing imports would also
+ * owe `eslint.config.d.mts` a declaration to stay reachable from TypeScript.
+ */
+const SCAN_COVERAGE_LOCAL_RULES = {
+  rules: { "no-semgrep-unparsable-import-type": noSemgrepUnparsableImportType },
+};
+
+// ---------------------------------------------------------------------------
 // Composition: every restriction that must survive in EVERY `src/**` block,
 // whatever else that block is there to lift.
 // ---------------------------------------------------------------------------
@@ -1878,6 +2503,8 @@ const ALWAYS_RESTRICTED_IN_SRC = [
   ...ENVIRONMENT_ZONE_RESTRICTIONS,
   ...DATE_FNS_RESTRICTIONS,
   ...MONEY_CENTS_RESTRICTIONS,
+  ...CENTS_DISPLAY_RESTRICTIONS,
+  ...CURRENCY_LOCALE_RESTRICTIONS,
   ...AUTHORITY_DEFAULT_RESTRICTIONS,
 ];
 
@@ -2023,10 +2650,10 @@ const eslintConfig = defineConfig([
       its own measurement.
     */
     /*
-      Every extension the ratchet treats as production, not just .ts/.tsx. Next
-      serves .js/.jsx by default and tsconfig sets allowJs, so a component
-      written as .jsx in this folder would otherwise be scoped out of the very
-      rule this block exists to apply — and, as file-size-budget.ts records, a
+      Every extension the ratchet treats as production, not just .ts/.tsx. Next's
+      default pageExtensions serve .js/.jsx whatever tsconfig says (allowJs has
+      been off since #2693), so a component written as .jsx in this folder
+      would otherwise be scoped out of the very rule this block exists to apply — and, as file-size-budget.ts records, a
       .js file under src is policed by nothing at all.
     */
     files: ["src/components/edit-booking/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}"],
@@ -2349,6 +2976,57 @@ const eslintConfig = defineConfig([
     },
   },
   {
+    // #3302 — CENTS_DISPLAY_EXEMPTIONS, ordinary case: every exempted file
+    // EXCEPT the ones on `CENTS_DISPLAY_MONEY_DOMAIN_OVERLAP` and
+    // `CENTS_DISPLAY_DATE_FNS_OVERLAP` below. Drops only the new group by
+    // name, plus re-states `DATE_RENDERING_RESTRICTIONS` (the generic
+    // `src/**` block's own addition, not part of the mandatory set), so
+    // nothing else these files were guarded against is lifted with it.
+    files: CENTS_DISPLAY_EXEMPTIONS.flatMap((entry) => entry.files).filter(
+      (file) =>
+        !CENTS_DISPLAY_MONEY_DOMAIN_OVERLAP.includes(file) &&
+        !CENTS_DISPLAY_DATE_FNS_OVERLAP.includes(file),
+    ),
+    rules: {
+      "no-restricted-syntax": srcRestrictedSyntaxWithout(
+        CENTS_DISPLAY_RESTRICTIONS,
+        ...DATE_RENDERING_RESTRICTIONS,
+      ),
+    },
+  },
+  {
+    // #3302 — `CENTS_DISPLAY_DATE_FNS_OVERLAP`: the one exempted file that is
+    // ALSO a `DATE_FNS_ADAPTER_FILES` member, so it already drops
+    // `DATE_FNS_RESTRICTIONS` via its own block. Replicated here for the same
+    // flat-config-replaces reason as the money-domain overlap below — `npm run
+    // lint` caught this one going red before this block existed.
+    files: CENTS_DISPLAY_DATE_FNS_OVERLAP,
+    rules: {
+      "no-restricted-syntax": srcRestrictedSyntaxWithout(
+        [...DATE_FNS_RESTRICTIONS, ...CENTS_DISPLAY_RESTRICTIONS],
+        ...DATE_RENDERING_RESTRICTIONS,
+      ),
+    },
+  },
+  {
+    // #3302 — `CENTS_DISPLAY_MONEY_DOMAIN_OVERLAP`: the three exempted files
+    // that are ALSO `MONEY_DOMAIN_MODULES` members (`finance-*`, `*promo*`,
+    // `membership-cancellation-*` respectively), so they already
+    // take the broader `MONEY_MODULE_RESTRICTIONS` arm instead of the narrow
+    // one. Replicated here rather than re-derived, because flat config
+    // replaces a matching block's rule wholesale and this block must win for
+    // these three paths without silently reverting them to the narrow money
+    // arm the block above would otherwise leave them with.
+    files: CENTS_DISPLAY_MONEY_DOMAIN_OVERLAP,
+    rules: {
+      "no-restricted-syntax": srcRestrictedSyntaxWithout(
+        [...MONEY_CENTS_RESTRICTIONS, ...CENTS_DISPLAY_RESTRICTIONS],
+        ...DATE_RENDERING_RESTRICTIONS,
+        ...MONEY_MODULE_RESTRICTIONS,
+      ),
+    },
+  },
+  {
     // Test expectation builders mirror the component format under test.
     //
     // The raw-SQL restrictions (#2289) are off here too, deliberately. A test's
@@ -2372,6 +3050,34 @@ const eslintConfig = defineConfig([
     files: ["**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}"],
     plugins: { ssot: SSOT_LOCAL_RULES },
     rules: { "ssot/no-local-comment-stripper": "error" },
+  },
+  {
+    // #3318 — the shapes Semgrep cannot parse, applied to EVERY linted file
+    // for the same reason as the block above: the population is TESTS, and
+    // `no-restricted-syntax` is switched off for every one of those.
+    //
+    // This config grants no allowlist and no per-file exemption. Every arm has
+    // a remedy that is available everywhere and changes no behaviour — the cast
+    // form for the call, a top-level type-only import for the type — so an
+    // exemption would only ever be a way of signing part of a file off as
+    // unscanned, which is what `.semgrep/unparsed-allowlist.json` is for and
+    // what this rule exists to stop needing.
+    //
+    // "No escape" USED to be an overclaim, because an inline ESLint disable
+    // directive naming the rule is exactly one: `npm run lint` is bare
+    // `eslint`, `noInlineConfig` is not set, and 37 files in this tree already
+    // carry directives for other rules. The residual was bounded for a
+    // construct that genuinely fails to parse — the coverage gate catches those
+    // — and UNBOUNDED for the half of the class that parses today, which is the
+    // whole reason the rule was widened past the broken spelling. So the claim
+    // is now enforced the way #2685 enforced the money guard's:
+    // `semgrep-unparsable-import-type-guard.test.ts` censuses the tree for one
+    // (#3345). That census reads raw source, so it keeps prose about a
+    // directive on a different line from the rule id — which is why the
+    // sentence above is spelled the long way round.
+    files: ["**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}"],
+    plugins: { scan: SCAN_COVERAGE_LOCAL_RULES },
+    rules: { "scan/no-semgrep-unparsable-import-type": "error" },
   },
   // Override default ignores of eslint-config-next.
   globalIgnores([

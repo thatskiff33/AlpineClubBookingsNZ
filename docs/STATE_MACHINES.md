@@ -635,6 +635,36 @@ negative delta -> Stripe refund or source-linked member credit
 admin review path -> REQUESTED -> APPROVED or REJECTED
 ```
 
+**One ask at a time, sized to the whole outstanding balance (#3340).** A booking
+edit raises ONE ask, so minting a replacement ADDITIONAL PaymentIntent queues
+every other outstanding one on that payment for cancellation. That makes the new
+ask the ONLY figure anybody will ever collect, and sizing it on this edit's own
+delta therefore deleted the unpaid balance of the ask it replaced — two
+consecutive +$70 edits on a $130 paid booking asked $70 and lost $70, silently
+and permanently ([INV-PAY-047]). The ask is the edit's net PLUS the unpaid
+balance of the ask it supersedes.
+
+```text
+edit raises an ask -> mint the replacement intent
+  -> enqueue CANCEL_PAYMENT_INTENT for every other live ADDITIONAL intent
+  -> cancel it SYNCHRONOUSLY, best-effort, BEFORE the new client secret returns
+       still cancellable -> transaction FAILED, operation SUCCEEDED
+       Stripe already captured it -> handed off to REFUND_SUPERSEDED_PAYMENT
+       provider failure -> the queued operation stands; the recovery cron finishes
+  -> the member's card sees only the replacing intent
+REFUND_SUPERSEDED_PAYMENT completes
+  -> reconcile aggregates, THEN one audit row + one REFUNDED BookingEvent
+     (discriminated, so the cancellation narrative never reads it as a
+     settlement) + ONE member email (superseded-payment-refunded, naming the
+     corrected amount owing) + ONE admin alert
+     (admin-superseded-payment-refund)
+```
+
+Before #3340 the cancellation was only enqueued, so the retired intent stayed
+confirmable until the five-minute cron reached it (measured at 4m05s), and the
+refund that followed a capture inside that window wrote nothing at all — Stripe's
+own receipt was the entire notice.
+
 **Booking-policy exception requests (#2365).** A `BookingChangeRequest` now
 carries a `kind`: the original today/past-night edit is `LOCKED_PERIOD`, and a
 member request to override an eligible *soft* booking-policy failure (a

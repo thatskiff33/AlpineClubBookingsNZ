@@ -87,7 +87,6 @@ export const CALENDAR_CLICK_TIMEOUT_MS = 15_000;
 function calendarMonthLocator(page: Page): Locator {
   // Test helper: the pattern is built from the twelve formatted month names, not
   // from user input; no ReDoS.
-  // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp
   const anyMonthHeading = new RegExp(`^(?:${MONTH_NAMES.join("|")}) \\d{4}$`);
   return page.getByRole("heading", { name: anyMonthHeading });
 }

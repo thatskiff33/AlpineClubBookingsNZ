@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { AlertTriangle } from "lucide-react";
+import { formatCents } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -876,7 +877,7 @@ export default function AdminWaitlistPage() {
                   </TableCell>
                   <TableCell>{entry.guestCount}</TableCell>
                   <TableCell>
-                    ${(entry.finalPriceCents / 100).toFixed(2)}
+                    {formatCents(entry.finalPriceCents)}
                   </TableCell>
                   <TableCell>
                     <div className="space-y-1">

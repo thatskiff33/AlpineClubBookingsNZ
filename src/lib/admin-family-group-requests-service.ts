@@ -855,18 +855,17 @@ export async function reviewAdminFamilyGroupRequest(params: {
         // created inside this transaction need no lock — their ids are not
         // visible to any concurrent mapping yet. Single key today; keep any
         // future multi-member variant in sorted key order.
-        const parentLinkMemberIds = childMemberForParentLink
-          ? [request.requesterId, childMemberForParentLink.id]
-          : [];
+        const parentLinkPair = childMemberForParentLink
+          ? ([request.requesterId, childMemberForParentLink.id] as const)
+          : null;
+        const parentLinkMemberIds = parentLinkPair ? [...parentLinkPair] : [];
         await acquireMemberLifecycleLocks(tx, [
           affectedMemberId,
           ...parentLinkMemberIds,
         ]);
-        if (parentLinkMemberIds.length > 0) {
+        if (parentLinkPair) {
           await acquireMemberPartnerLinkLocks(tx, parentLinkMemberIds);
-          await acquireMemberParentPartnerPairLocks(tx, [
-            [parentLinkMemberIds[0], parentLinkMemberIds[1]],
-          ]);
+          await acquireMemberParentPartnerPairLocks(tx, [parentLinkPair]);
 
           // The preflight selected the candidate for user feedback, but the
           // relationship decision is made again through this transaction only
@@ -882,7 +881,7 @@ export async function reviewAdminFamilyGroupRequest(params: {
               },
             }),
             tx.member.findUnique({
-              where: { id: childMemberForParentLink!.id },
+              where: { id: parentLinkPair[1] },
               select: {
                 id: true,
                 ageTier: true,

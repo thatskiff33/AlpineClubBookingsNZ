@@ -266,7 +266,6 @@ function readObjectField(
   scope: ModuleScope,
   bindings: Map<string, string>,
 ): string | null {
-  // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp
   const pattern = new RegExp(`(?:^|[{,\\s])${key}\\s*(?::\\s*([^,}]+))?\\s*[,}]`);
   const match = pattern.exec(objectText);
   if (!match) return null;
@@ -403,7 +402,6 @@ function gateFor(
   for (const local of scope.locals) {
     if (!local.body.includes("requireAdmin")) continue;
     if (local.body === body) continue;
-    // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp
     const call = new RegExp(`\\b${local.name}\\s*\\(([^)]*)\\)`).exec(body);
     if (!call) continue;
     return gateFor(
@@ -417,7 +415,6 @@ function gateFor(
   for (const [wrapper, definingFile] of Object.entries(
     SHARED_ADMIN_GUARD_WRAPPERS,
   )) {
-    // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp
     const call = new RegExp(`\\b${wrapper}\\s*\\(([^)]*)\\)`).exec(body);
     if (!call) continue;
     const outer = wrapperScope(definingFile);

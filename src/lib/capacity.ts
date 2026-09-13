@@ -826,7 +826,13 @@ export async function checkCapacityForPartnerSharedAdmission(
   // partner's-own-booking case, where excludeBookingId removes the partner's
   // existing row from occupancy), or from the partner's other capacity-
   // holding bookings at this lodge. Never from an unverified caller claim.
-  const coverageBySharer: Array<Set<string>> = [];
+  // Each sharer carries its own coverage set, rather than a parallel array
+  // read back by position: the pairing is then a fact of the type, not of two
+  // loops staying in step (#2799).
+  const sharersWithCoverage: Array<{
+    sharer: (typeof sharers)[number];
+    covered: Set<string>;
+  }> = [];
   for (const sharer of sharers) {
     const covered = new Set<string>();
     const proposedPartnerRows = ordinaryGuests.filter(
@@ -889,7 +895,7 @@ export async function checkCapacityForPartnerSharedAdmission(
         if (present) covered.add(nightKey);
       }
     }
-    coverageBySharer.push(covered);
+    sharersWithCoverage.push({ sharer, covered });
   }
 
   // Base occupancy from the one implementation. The custodian term carries an
@@ -925,11 +931,11 @@ export async function checkCapacityForPartnerSharedAdmission(
     }
 
     let sharersPresent = 0;
-    for (const [index, sharer] of sharers.entries()) {
+    for (const { sharer, covered } of sharersWithCoverage) {
       if (countActiveGuestsForNight([sharer.range], night, envelope) === 0) {
         continue;
       }
-      if (!coverageBySharer[index].has(nightKey)) {
+      if (!covered.has(nightKey)) {
         // A shared slot exists only on nights the partner also stays.
         reason ??=
           "The partner is not staying on every night requested for the shared guest.";

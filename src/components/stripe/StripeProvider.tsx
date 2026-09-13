@@ -99,7 +99,14 @@ export default function StripeProvider({
   }
 
   return (
+    // #3340: KEYED ON THE CLIENT SECRET. Stripe treats `options.clientSecret` as
+    // immutable after mount - handing `<Elements>` a new one changes nothing, and
+    // the mounted PaymentElement goes on confirming the intent it was born with.
+    // A second booking edit therefore left the browser confirming the SUPERSEDED
+    // intent while the surrounding page rendered the new amount. The key forces a
+    // remount, so a changed secret rebinds the form to the intent it belongs to.
     <Elements
+      key={clientSecret}
       stripe={stripePromise}
       options={{
         clientSecret,

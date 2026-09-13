@@ -340,6 +340,21 @@ describe("email render gate contract (#2900)", () => {
     expect(paletteReading.has("refundRequestDeclinedTemplate")).toBe(true);
     // And it must NOT be "everything in the directory", or the guard would stop
     // discriminating: these exports read no colour.
+    //
+    // "formatCents" passes here VACUOUSLY since #3302 (equivalence lens,
+    // confirmed harmless but worth stating so the next reader is not misled):
+    // `layout.ts` changed it from a delegating function declaration to
+    // `export { formatCents } from "@/lib/utils"`, and
+    // `paletteReadingTemplateExports()` above only walks
+    // `ts.isFunctionDeclaration` and `ts.isVariableStatement` — it does not
+    // see a bare `ExportDeclaration` at all, so `formatCents` is absent from
+    // BOTH `callees` and `exported` rather than present-and-verified-clean.
+    // `.has("formatCents")` still returns `false` either way, so this
+    // assertion still passes, but it is no longer proof this scanner looked
+    // at `formatCents` and found no palette read — it is proof the scanner
+    // cannot see a re-export at all. Still true in substance (the re-export
+    // delegates to a pure, palette-free helper), just true for a different
+    // reason than this test's own shape claims.
     for (const plain of [
       "escapeHtml",
       "formatCents",

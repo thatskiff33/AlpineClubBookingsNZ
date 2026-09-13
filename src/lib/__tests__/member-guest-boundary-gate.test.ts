@@ -22,7 +22,7 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/admin-modules", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/admin-modules")>()),
+  ...((await importOriginal()) as typeof import("@/lib/admin-modules")),
   isEffectiveModuleEnabled: h.isEffectiveModuleEnabled,
 }));
 
