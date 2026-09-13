@@ -17,13 +17,166 @@ import {
   useSectionEditState,
 } from "@/hooks/use-section-edit-state";
 import {
+  MODULE_DISABLED_ERROR_CODE,
+  apiErrorCodeFromBody,
+  apiErrorMessageFromBody,
+  readApiErrorBody,
+} from "@/lib/api-error-message";
+import {
   BED_ALLOCATION_PRIORITY_VOCABULARY,
   type BedAllocationPriority,
+  type BedAllocationSettingsWriteBody,
+  type EffectiveBedAllocationSettings,
 } from "@/lib/bed-allocation-settings";
 
-interface AllocationPreferencesDraft {
-  autoAllocationEnabled: boolean;
-  allocationPriorityOrder: BedAllocationPriority[];
+/**
+ * The editable half of the settings payload, DERIVED from the server's own type
+ * rather than restated (#2931).
+ *
+ * It used to be a hand-written interface naming the same two fields, and the
+ * responses were cast to it at both the load and the save — so the compiler
+ * never saw the six read-only provenance fields that actually arrive, and the
+ * projection below type-checked as an identity function. `Pick` costs nothing
+ * here (this module is client-safe and already imported) and turns a
+ * server-side rename of either field into a compile error instead of a runtime
+ * surprise.
+ */
+type AllocationPreferencesDraft = Pick<
+  EffectiveBedAllocationSettings,
+  "autoAllocationEnabled" | "allocationPriorityOrder"
+>;
+
+/**
+ * Why a refused load or save is not diagnosed from the status code (#2931).
+ *
+ * `/api/admin/bed-allocation` is module-gated, and a module-gated route answers
+ * 404 both when the module is off and when the caller is not signed in at all —
+ * `moduleGatedNotFoundResponse` in `src/lib/session-guards.ts` does that on
+ * purpose, so one anonymous probe cannot read which optional modules a club
+ * runs. Reading 404 as "module off" therefore told an admin whose session had
+ * expired mid-board to go and turn a module on: on a page they could not reach,
+ * and which only a `support` role could switch anyway. A wrong diagnosis, not
+ * merely an unhelpful message.
+ *
+ * So the module refusal NAMES itself — `code: MODULE_DISABLED` on the route's
+ * own 404, set only past the permission guard — and this screen reads the name.
+ * A 404 without it is the other cause, and is worded as such.
+ */
+export const ALLOCATION_PREFERENCES_MODULE_OFF_REASON =
+  "Bed allocation is switched off for this club, so allocation preferences cannot be loaded or saved. Someone who can manage Feature modules can turn it on.";
+
+/**
+ * 401. The gate that turns an anonymous 401 into a 404 fails OPEN when the
+ * request-path header is missing, so this status is reachable — and used to
+ * reach the officer as the bare word "Unauthorized".
+ */
+export const ALLOCATION_PREFERENCES_SIGNED_OUT_REASON =
+  "Your sign-in has expired, so allocation preferences could not be loaded or saved. Sign in again — another tab is fine — then try again.";
+
+/**
+ * 404 with no module code. Hedged, because the browser cannot prove it: an
+ * expired sign-in is the cause this route can actually produce, and the action
+ * that settles it is the same one either way.
+ */
+export const ALLOCATION_PREFERENCES_NOT_FOUND_REASON =
+  "Your sign-in may have expired, so this request was refused. Sign in again — another tab is fine — then try again.";
+
+/**
+ * 403 on the LOAD. The save's 403 keeps the shared
+ * `ADMIN_FORBIDDEN_SAVE_REASON` ("this change was not saved…"), which is the
+ * wrong tense for a read that never attempted a change — and before this the
+ * load had no 403 branch at all, so it rendered the bare word "Forbidden".
+ */
+export const ALLOCATION_PREFERENCES_VIEW_FORBIDDEN_REASON =
+  "Your admin role cannot view allocation preferences. Bookings view access is required. Refresh the page to see the latest permissions.";
+
+/**
+ * The bare word `requireAdmin` answers a plain permission refusal with
+ * (`forbiddenResponse` in `src/lib/session-guards.ts`). It is the ONE 403 body
+ * worth replacing: the guard's other 403s — "Two-factor verification required",
+ * "Password change required", "Account is deactivated" — are curated, specific
+ * and actionable, and overwriting them with a generic sentence about roles
+ * would be the same wrong diagnosis this whole change removes.
+ */
+const BARE_FORBIDDEN_ERROR = "Forbidden";
+
+const LOAD_FALLBACK = "Failed to load allocation preferences";
+const SAVE_FALLBACK = "Failed to save allocation preferences";
+const UNREADABLE_SAVE_REPLY =
+  "Allocation preferences may have been saved, but the reply could not be read. Reload the board to see what is stored.";
+
+/**
+ * Turn a non-OK reply into the error to throw, reading the body exactly once —
+ * a `Response` body can only be read once, and both the code and the sentence
+ * come out of it.
+ *
+ * `bareForbidden` is what a 403 becomes when the body carries nothing better:
+ * the load wants a read-shaped sentence, the save wants the hook's shared
+ * "this change was not saved" copy via {@link ForbiddenSaveError}.
+ */
+async function refusalFor(
+  response: Response,
+  fallback: string,
+  bareForbidden: () => Error,
+): Promise<Error> {
+  const body = await readApiErrorBody(response);
+  if (apiErrorCodeFromBody(body) === MODULE_DISABLED_ERROR_CODE) {
+    return new Error(ALLOCATION_PREFERENCES_MODULE_OFF_REASON);
+  }
+  if (response.status === 401) {
+    return new Error(ALLOCATION_PREFERENCES_SIGNED_OUT_REASON);
+  }
+  if (response.status === 404) {
+    return new Error(ALLOCATION_PREFERENCES_NOT_FOUND_REASON);
+  }
+  if (response.status === 403) {
+    const message = apiErrorMessageFromBody(body, BARE_FORBIDDEN_ERROR);
+    return message === BARE_FORBIDDEN_ERROR
+      ? bareForbidden()
+      : new Error(message);
+  }
+  return new Error(apiErrorMessageFromBody(body, fallback));
+}
+
+/**
+ * The settings out of a 200 body, or `null` when the reply is not the shape
+ * this screen was promised.
+ *
+ * A 200 whose body has no `settings` used to reach `toDraft(undefined)` and put
+ * a raw `TypeError` on the officer's screen — internal detail, which is the one
+ * thing the card's error contract says never happens (#2931).
+ */
+function settingsOf(payload: unknown): EffectiveBedAllocationSettings | null {
+  const settings = (payload as { settings?: unknown } | null | undefined)
+    ?.settings;
+  if (typeof settings !== "object" || settings === null) return null;
+  const candidate = settings as Partial<EffectiveBedAllocationSettings>;
+  return typeof candidate.autoAllocationEnabled === "boolean" &&
+    Array.isArray(candidate.allocationPriorityOrder)
+    ? (candidate as EffectiveBedAllocationSettings)
+    : null;
+}
+
+/**
+ * The GET and PUT both answer with the server's EFFECTIVE settings view: the
+ * two editable fields plus read-only provenance (`source`, `fallback`,
+ * `settingsId`, `authoritativeLodgeId`, `updatedByMemberId`, `updatedAt`).
+ * Only the two editable fields are the draft.
+ *
+ * Projecting here rather than at save time is the point: the PUT schema is
+ * `.strict()`, so while the whole response WAS the draft, the save body spread
+ * six fields the write contract does not accept and every save came back 400
+ * "Invalid input" — which the generic error message then hid (#2931). Taking
+ * the WIDE type is what makes this a real projection to the compiler rather
+ * than an identity function wearing a cast.
+ */
+function toDraft(
+  settings: EffectiveBedAllocationSettings,
+): AllocationPreferencesDraft {
+  return {
+    autoAllocationEnabled: settings.autoAllocationEnabled,
+    allocationPriorityOrder: settings.allocationPriorityOrder,
+  };
 }
 
 const LABELS: Record<BedAllocationPriority, string> = {
@@ -60,34 +213,48 @@ export function AllocationPreferencesSection({
   const section = useSectionEditState<AllocationPreferencesDraft>({
     load: async (signal) => {
       const response = await fetch(endpoint, { cache: "no-store", signal });
-      if (!response.ok) throw new Error("Failed to load allocation preferences");
-      const body = (await response.json()) as {
-        settings: AllocationPreferencesDraft;
-      };
-      return body.settings;
+      if (!response.ok) {
+        throw await refusalFor(
+          response,
+          LOAD_FALLBACK,
+          () => new Error(ALLOCATION_PREFERENCES_VIEW_FORBIDDEN_REASON),
+        );
+      }
+      const settings = settingsOf(await response.json().catch(() => null));
+      if (!settings) throw new Error(LOAD_FALLBACK);
+      return toDraft(settings);
     },
     save: async (draft) => {
+      // The write contract, field by field and TYPED by it — never a spread of
+      // the draft. The annotation is what makes a stray field a compile error.
+      const writeBody: BedAllocationSettingsWriteBody = {
+        lodgeId,
+        autoAllocationEnabled: draft.autoAllocationEnabled,
+        allocationPriorityOrder: draft.allocationPriorityOrder,
+      };
       const response = await fetch("/api/admin/bed-allocation/settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...draft,
-          lodgeId,
-        }),
+        body: JSON.stringify(writeBody),
       });
-      if (response.status === 403) throw new ForbiddenSaveError();
-      if (!response.ok) throw new Error("Failed to save allocation preferences");
-      const body = (await response.json()) as {
-        settings: AllocationPreferencesDraft;
-      };
+      if (!response.ok) {
+        throw await refusalFor(
+          response,
+          SAVE_FALLBACK,
+          () => new ForbiddenSaveError(),
+        );
+      }
+      const settings = settingsOf(await response.json().catch(() => null));
+      if (!settings) throw new Error(UNREADABLE_SAVE_REPLY);
+      const saved = toDraft(settings);
       // The section is keyed by lodge. A save may finish after a scope change;
       // never let that stale completion refresh its former parent's board.
-      if (mountedRef.current) await onSaved(body.settings);
-      return body.settings;
+      if (mountedRef.current) await onSaved(saved);
+      return saved;
     },
     successMessage: "Allocation preferences saved",
-    loadErrorFallback: "Failed to load allocation preferences",
-    saveErrorFallback: "Failed to save allocation preferences",
+    loadErrorFallback: LOAD_FALLBACK,
+    saveErrorFallback: SAVE_FALLBACK,
     isDirty: (draft, saved) =>
       draft.autoAllocationEnabled !== saved.autoAllocationEnabled ||
       draft.allocationPriorityOrder.join("|") !==
