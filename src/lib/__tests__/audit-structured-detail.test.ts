@@ -15,31 +15,52 @@
  * WHAT THE SWEEP DOES AND DOES NOT DISCRIMINATE, measured rather than assumed,
  * because this repository has shipped tests that passed for the wrong reason.
  * It proves the OUTPUT is never wrong — no invented field, no altered value, at
- * any cut. It does NOT discriminate the boundary SEARCH: moving the scan to the
- * wrong token leaves the reconstructed document unbalanced, so the final
- * `JSON.parse` refuses it and the sweep sees a null it is entitled to skip.
- * That is the division of labour worth knowing when changing this code — the
- * parse is the safety net, and the `depth === 1` scan is only what makes
- * recovery find anything at all. The scan therefore needs its own named tests,
- * and has them.
+ * any cut. It does NOT catch a wrong boundary SEARCH by catching a wrong VALUE:
+ * moving the scan to the wrong token leaves the reconstructed document
+ * unbalanced, so the final `JSON.parse` refuses it and every cut returns null.
+ * What then fails is the vacuity guard at the end of the sweep — `recoveries`
+ * is 0 — and that is the only thing standing between "recovers nothing" and a
+ * green run. That is the division of labour worth knowing when changing this
+ * code: the parse is the safety net, the `depth === 1` scan is what makes
+ * recovery find anything at all, and the scan therefore needs its own named
+ * tests, which it has.
  *
  * WHAT THE MUTATION PROBES SHOWED. Each was applied to the source, run,
  * restored, and the tree proved clean with `git diff`. The failing test named
  * here is what actually failed, not what was expected to:
  *
  *  - closing at the last top-level COLON instead of the last comma, so a
- *    half-written value is admitted, fails four named tests — "keeps whole pairs
- *    from before the cut", "does not mistake a comma inside a nested value",
- *    "cannot be handed a forged recovery marker", and "renders a legacy clipped
- *    payload as fields". Not the sweep, per the paragraph above;
+ *    half-written value is admitted, fails six — "keeps whole pairs from before
+ *    the cut", "does not mistake a comma inside a nested value", "cannot be
+ *    handed forged bookkeeping", "renders a legacy clipped payload as fields",
+ *    and BOTH sweep variants, each on the vacuity guard rather than on a wrong
+ *    value. An earlier version of this list said "not the sweep"; re-measured,
+ *    that was wrong, and the paragraph above says why the distinction matters;
  *  - dropping the `depth === 1` test on the comma scan fails exactly one:
  *    "does not mistake a comma inside a nested value for a pair boundary". It
  *    was expected to fail the sweep too and does not, even against a payload
  *    whose last field is a nested object — which is why that limit is written
  *    down above instead of left as an assumption;
- *  - reverting `sanitizeAuditDetails` to the plain text clip fails "stores a
- *    payload that still parses, with no fragment of a number in it" and
- *    "shortens a long string behind the marker rather than dropping it";
+ *  - reverting `sanitizeAuditDetails` to the plain text clip fails five:
+ *    "stores a payload that still parses, with no fragment of a number in it",
+ *    "shortens a long string behind the marker rather than dropping it",
+ *    "records the payload's own length", "does not claim truncation when
+ *    sanitising made the payload fit", and "narrows, and cannot widen, what a
+ *    member's own booking page reads";
+ *  - admitting the first pass's fields in KEY order rather than cheapest-first
+ *    fails exactly one, and it is the one written for it: "keeps every short
+ *    field whatever the length of the long one in front of them";
+ *  - dropping `_droppedKeyCount` fails "says how many fields it dropped when it
+ *    cannot name them all" and "records the payload's own length";
+ *  - sanitising the over-budget `details` payload through `sanitizeAuditMetadata`
+ *    again — the double reduction — fails "records the payload's own length,
+ *    not an intermediate nobody wrote";
+ *  - taking `_truncatedKeys` back out of the reserved set fails two: "cannot be
+ *    handed forged bookkeeping" and "filters the sanitiser's own dropped-keys
+ *    flag out of the description too";
+ *  - removing the reserved-key strip from the recovery fails "cannot be handed
+ *    forged bookkeeping". The test it REPLACED, which forged only the recovery
+ *    marker, stayed green under this mutation — that is why it was replaced;
  *  - putting the raw clipped blob back in the sentence slot, by re-deriving the
  *    parse inside `getDescription` instead of taking `hasStructuredDetails`,
  *    fails "renders a legacy clipped payload as fields, and keeps the raw

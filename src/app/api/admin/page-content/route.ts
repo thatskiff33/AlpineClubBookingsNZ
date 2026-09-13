@@ -718,8 +718,8 @@ export async function DELETE(request: NextRequest) {
         // whole-metadata JSON budget to `24,000 + maxStringLength * 2`, so a page
         // sitting at both caps at once (200,000 of body plus 20,000 of intro,
         // each of which can double under JSON escaping) would overflow a budget
-        // sized for the body alone and fall back to the `{_truncated, preview}`
-        // stub — losing the entire snapshot rather than part of it. It does not
+        // sized for the body alone, where the over-budget reduction (#2704; a
+        // stub before it) loses the entire snapshot, not part of it. It does not
         // let either field exceed its own limit: the write schemas above already
         // bound them, and this only bounds one string.
         //

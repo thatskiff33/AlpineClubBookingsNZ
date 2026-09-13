@@ -11,10 +11,15 @@
 
   An entry that will not fit now keeps whole fields instead. It records as many
   complete fields as there is room for, says how long the full record was, and
-  names the fields it could not keep. A long piece of free text inside one is
-  still shortened and still says so; a number, an identifier or a date is either
-  recorded in full or listed as dropped. Nothing on the screen is a piece of a
-  value pretending to be the whole one.
+  names the fields it could not keep — and on the rare entry with more names
+  than will fit, it says how many fields were dropped altogether, so a short
+  list is never mistaken for the whole story. Which fields it keeps no longer
+  depends on the order they were written in: the small ones are taken first, so
+  a single long note can never push the amount, the booking and the payment
+  reference off an entry. A long piece of free text is still shortened and still
+  says so; a number, an identifier or a date is either recorded in full or
+  listed as dropped. Nothing on the screen is a piece of a value pretending to
+  be the whole one.
 
   **Entries recorded before this release are read back the same way, as far as
   that is possible.** The cut already happened and nothing can undo it, so the
@@ -29,8 +34,10 @@
   change makes more of an entry readable to an authorised officer and nothing
   readable to anybody else — the member's own activity history and the data
   download both still show the sentence the event declared for them, or nothing.
-  A member's own booking page, which shows the reason a payment failed, was left
-  exactly as it was for the same reason.
+  One member-facing page does read a recorded entry: a member's own booking
+  page, showing the reason a payment failed. No code on it changed and it now
+  shows *less*, not more — where a long recorded reason used to make the whole
+  stored record spill onto the page, it now shows the reason itself.
 
 - **The audit-writer census now reports which entries store structured evidence
   and which store a sentence**, so "how many writers does this rule govern"
