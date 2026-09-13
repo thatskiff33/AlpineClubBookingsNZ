@@ -392,8 +392,9 @@ const DECLARED_FILES: Record<string, string> = {
     "its other half: derives the people named on that contact from the " +
     "organisation's contact rows, and keeps them honest",
   "src/lib/xero-contact-home.ts":
-    "the two-homes refusal (INV-INT-018): reads the Organisation holding a " +
-    "Xero contact id so a member cannot claim it as well",
+    "INV-INT-018: the two-homes refusal, which reads the Organisation holding " +
+    "a Xero contact id so a member cannot claim it as well, and the ONE " +
+    "transfer that lets a school take the contact its own invented member holds",
 };
 
 /**
@@ -618,5 +619,44 @@ describe("#3367: each declared reader still plays its declared part", () => {
         "lockXeroContactHome(",
       );
     }
+  });
+
+  it("the transfer establishes the school's own member from the DATABASE", () => {
+    // The one exception to the refusal, and the thing that keeps it narrow. A
+    // caller-supplied member id would make it fire on whatever a mistaken call
+    // site passed, so all four legs are reads inside the locked transaction.
+    const source = read("src/lib/xero-contact-home.ts");
+    const start = source.indexOf(
+      "export async function takeXeroContactFromSchoolsOwnMember(",
+    );
+    expect(start, "the transfer must still exist").toBeGreaterThan(-1);
+    const body = source.slice(start);
+    // Leg 1 and leg 2: this organisation's bookings resolve to the member, and
+    // no other organisation's do.
+    expect(body).toContain("tx.booking.findFirst({");
+    expect(body).toContain("organisationId: input.organisationId");
+    expect(body).toContain("NOT: { organisationId: input.organisationId }");
+    // Leg 3 and leg 4: it cannot sign in, and it is not a named teacher.
+    expect(body).toContain("if (holder.canLogin) return null;");
+    expect(body).toContain("tx.organisationContact.findUnique({");
+    // The hand-over: the column, its ledger row, and the audit, all on `tx`.
+    expect(body).toContain("data: { xeroContactId: null }");
+    expect(body).toContain("tx.xeroObjectLink.updateMany({");
+    expect(body).toContain('action: "xero.contact.moved_to_organisation"');
+    expect(body).toContain('category: "xero"');
+  });
+
+  it("the organisation resolve still refuses AFTER it transfers", () => {
+    // Order is the whole safety argument: the transfer removes a legitimate
+    // holder and the refusal decides every other case, so a transfer that
+    // declines to fire can only ever produce a refusal.
+    const source = read("src/lib/organisation-xero-contacts.ts");
+    const transfer = source.indexOf("takeXeroContactFromSchoolsOwnMember(tx, {");
+    const refusal = source.indexOf("assertXeroContactHasNoOtherHome(tx, {");
+    expect(transfer).toBeGreaterThan(-1);
+    expect(refusal).toBeGreaterThan(transfer);
+    // And the retired fallback stays retired: an Organisation-linked booking is
+    // invoiced as the Organisation or not at all.
+    expect(source).not.toContain("OrganisationXeroContactHeldByMemberError");
   });
 });

@@ -14,8 +14,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  *  2. IDEMPOTENCY UNDER REPLAY. The create carries an organisation-scoped
  *     idempotency key built by the REAL builder, so a retry converges on one
  *     contact instead of minting a second.
- *  3. THE TWO-HOMES REFUSAL (INV-INT-018) and what it means for a returning
- *     school, which is the common case rather than an exotic one.
+ *  3. ONE CONTACT, ONE LOCAL HOME (INV-INT-018): the ONE transfer — a school
+ *     taking the contact its own invented member holds, which is the returning
+ *     school and therefore the common case — and the refusal that still fires,
+ *     unweakened, for every other holder.
  *  4. NO EMAIL SEARCH. The one place the organisation path deliberately
  *     diverges from the member path, because a school's recorded address is
  *     routinely a teacher's own and adopting that person's contact is what
@@ -32,7 +34,14 @@ const mocks = vi.hoisted(() => {
       findUnique: vi.fn(),
       update: vi.fn(),
     },
-    member: { findFirst: vi.fn() },
+    organisationContact: { findUnique: vi.fn() },
+    // Everything the ONE transfer touches. A MISSING delegate here would be an
+    // undefined-property throw rather than a wrong answer, which is how this
+    // suite wants an unmocked read to behave.
+    member: { findFirst: vi.fn(), update: vi.fn() },
+    booking: { findFirst: vi.fn() },
+    xeroObjectLink: { updateMany: vi.fn() },
+    auditLog: { create: vi.fn() },
   };
   return {
     tx,
@@ -115,8 +124,8 @@ vi.mock("@/lib/logger", () => ({
 import {
   findOrCreateXeroContactForInvoicedParty,
   findOrCreateXeroContactForOrganisation,
-  OrganisationXeroContactHeldByMemberError,
 } from "@/lib/organisation-xero-contacts";
+import { XeroContactTwoHomesError } from "@/lib/xero-contact-home";
 import { buildXeroIdempotencyKey } from "@/lib/xero-sync";
 import {
   declareEnvironmentRole,
@@ -164,6 +173,11 @@ beforeEach(() => {
   mocks.tx.organisation.findUnique.mockResolvedValue({ xeroContactId: null });
   mocks.tx.organisation.update.mockResolvedValue({ id: "org-1" });
   mocks.tx.member.findFirst.mockResolvedValue(null);
+  mocks.tx.member.update.mockResolvedValue({ id: "invented-school-member" });
+  mocks.tx.booking.findFirst.mockResolvedValue(null);
+  mocks.tx.organisationContact.findUnique.mockResolvedValue(null);
+  mocks.tx.xeroObjectLink.updateMany.mockResolvedValue({ count: 1 });
+  mocks.tx.auditLog.create.mockResolvedValue({ id: "audit-1" });
   mocks.tx.$executeRaw.mockResolvedValue(1);
   mocks.transaction.mockImplementation(
     async (fn: (client: unknown) => Promise<unknown>) => fn(mocks.tx),
@@ -343,7 +357,7 @@ describe("#3367: creating the contact is idempotent under replay", () => {
   });
 });
 
-describe("#3367: a school's contact never becomes a person's (INV-INT-018)", () => {
+describe("#3367: one Xero contact, one local home (INV-INT-018)", () => {
   /** Xero's refusal when the contact name is already taken. */
   const DUPLICATE_NAME = Object.assign(new Error("Validation Exception"), {
     response: {
@@ -361,6 +375,40 @@ describe("#3367: a school's contact never becomes a person's (INV-INT-018)", () 
       },
     },
   });
+
+  /**
+   * A member holds the contact. Each test below then supplies exactly ONE
+   * reason the transfer must not fire, so no test can pass for another's
+   * reason — that is what makes the refusals discriminating rather than
+   * merely red.
+   */
+  function aMemberHoldsTheContact(
+    overrides: { canLogin?: boolean } = {},
+  ) {
+    // STATEFUL on purpose. The refusal re-reads the same unique column the
+    // transfer just cleared, so a double that always answers "still held" would
+    // make the transfer untestable and would be lying about the database. This
+    // one releases the row exactly when the code writes the release — which is
+    // also what lets the refusal below run UNWEAKENED on the transfer path.
+    let held = true;
+    mocks.tx.member.findFirst.mockImplementation(async () =>
+      held ? { id: "invented-school-member", canLogin: overrides.canLogin ?? false } : null,
+    );
+    mocks.tx.member.update.mockImplementation(
+      async (args: { data: { xeroContactId: string | null } }) => {
+        if (args.data.xeroContactId === null) held = false;
+        return { id: "invented-school-member" };
+      },
+    );
+  }
+
+  /** Leg 1 answers yes for THIS school; leg 2 (any other school) answers no. */
+  function onlyThisSchoolsBookings() {
+    mocks.tx.booking.findFirst.mockImplementation(
+      async (args: { where: { organisationId?: string } }) =>
+        args.where.organisationId === "org-1" ? { id: "booking-1" } : null,
+    );
+  }
 
   beforeEach(() => {
     mocks.createContacts.mockRejectedValue(DUPLICATE_NAME);
@@ -384,30 +432,160 @@ describe("#3367: a school's contact never becomes a person's (INV-INT-018)", () 
       where: { id: "org-1" },
       data: { xeroContactId: "contact-held-by-member" },
     });
+    // Nothing was taken from anybody, so no member link was released.
+    expect(mocks.tx.member.update).not.toHaveBeenCalled();
+    expect(mocks.tx.auditLog.create).not.toHaveBeenCalled();
   });
 
-  it("REFUSES when a member still holds it, and creates nothing", async () => {
-    mocks.tx.member.findFirst.mockResolvedValue({
-      id: "invented-school-member",
-      firstName: "New Plymouth Primary School",
-      lastName: "",
+  it("TAKES the contact from the school's OWN invented member", async () => {
+    aMemberHoldsTheContact();
+    onlyThisSchoolsBookings();
+
+    // The returning school: its Xero customer was created against the invented
+    // member of an earlier booking, and the school now owns it. Owner decision,
+    // 13 September 2026.
+    await expect(findOrCreateXeroContactForOrganisation("org-1")).resolves.toBe(
+      "contact-held-by-member",
+    );
+    expect(mocks.tx.member.update).toHaveBeenCalledWith({
+      where: { id: "invented-school-member" },
+      data: { xeroContactId: null },
     });
+    expect(mocks.tx.organisation.update).toHaveBeenCalledWith({
+      where: { id: "org-1" },
+      data: { xeroContactId: "contact-held-by-member" },
+    });
+    // Never refused, so no failure row and no cancellation.
+    expect(mocks.failXeroSyncOperation).not.toHaveBeenCalled();
+  });
+
+  it("releases the member's CONTACT ledger row with the column", async () => {
+    aMemberHoldsTheContact();
+    onlyThisSchoolsBookings();
+
+    await findOrCreateXeroContactForOrganisation("org-1");
+    // Scoped to this contact and this role: an unrelated link on the same
+    // record must survive the hand-over.
+    expect(mocks.tx.xeroObjectLink.updateMany).toHaveBeenCalledWith({
+      where: {
+        localModel: "Member",
+        localId: "invented-school-member",
+        xeroObjectType: "CONTACT",
+        xeroObjectId: "contact-held-by-member",
+        active: true,
+      },
+      data: { active: false },
+    });
+  });
+
+  it("audits the hand-over, in the same transaction, under `xero`", async () => {
+    aMemberHoldsTheContact();
+    onlyThisSchoolsBookings();
+
+    await findOrCreateXeroContactForOrganisation("org-1");
+
+    // Written through the REAL createAuditLog on the transaction's own client,
+    // so the canonical-category assertion and the retention classification are
+    // exercised rather than mocked past.
+    expect(mocks.tx.auditLog.create).toHaveBeenCalledTimes(1);
+    const row = mocks.tx.auditLog.create.mock.calls[0][0].data;
+    expect(row.action).toBe("xero.contact.moved_to_organisation");
+    expect(row.category).toBe("xero");
+    expect(row.severity).toBe("critical");
+    expect(row.subjectMemberId).toBe("invented-school-member");
+    expect(row.entityType).toBe("Organisation");
+    expect(row.entityId).toBe("org-1");
+    expect(row.metadata).toMatchObject({
+      xeroContactId: "contact-held-by-member",
+      fromMemberId: "invented-school-member",
+      toOrganisationId: "org-1",
+    });
+    // INV-PRIV: ids and the school's own name, never a person's name or address.
+    expect(JSON.stringify(row.metadata)).not.toContain("@");
+  });
+
+  it("commits the release and the claim together, never one without the other", async () => {
+    aMemberHoldsTheContact();
+    onlyThisSchoolsBookings();
+    // Everything the hand-over touches runs on the SAME client the transaction
+    // handed the callback, which is what makes "both or neither" true.
+    await findOrCreateXeroContactForOrganisation("org-1");
+
+    const inside = [
+      mocks.tx.member.update,
+      mocks.tx.organisation.update,
+      mocks.tx.xeroObjectLink.updateMany,
+      mocks.tx.auditLog.create,
+    ];
+    for (const call of inside) expect(call).toHaveBeenCalledTimes(1);
+    const opened = mocks.transaction.mock.invocationCallOrder[0];
+    for (const call of inside) {
+      expect(call.mock.invocationCallOrder[0]).toBeGreaterThan(opened);
+    }
+  });
+
+  it("REFUSES a member none of this school's bookings resolve to", async () => {
+    aMemberHoldsTheContact();
+    mocks.tx.booking.findFirst.mockResolvedValue(null);
 
     await expect(
       findOrCreateXeroContactForOrganisation("org-1"),
-    ).rejects.toBeInstanceOf(OrganisationXeroContactHeldByMemberError);
+    ).rejects.toBeInstanceOf(XeroContactTwoHomesError);
+    expect(mocks.tx.member.update).not.toHaveBeenCalled();
     expect(mocks.tx.organisation.update).not.toHaveBeenCalled();
-    // CANCELLED with a reason, not FAILED: this recurs once per invoice for as
-    // long as the school keeps booking, and a failure row per invoice trains an
-    // operator to ignore the panel.
-    expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
+  });
+
+  it("REFUSES a member that also books for a DIFFERENT school", async () => {
+    aMemberHoldsTheContact();
+    // Both legs answer: this school's bookings resolve to it, and so do
+    // another's. A contact shared by two organisations belongs to neither.
+    mocks.tx.booking.findFirst.mockResolvedValue({ id: "booking-1" });
+
+    await expect(
+      findOrCreateXeroContactForOrganisation("org-1"),
+    ).rejects.toBeInstanceOf(XeroContactTwoHomesError);
+    expect(mocks.tx.member.update).not.toHaveBeenCalled();
+  });
+
+  it("REFUSES a member that can sign in", async () => {
+    aMemberHoldsTheContact({ canLogin: true });
+    onlyThisSchoolsBookings();
+
+    await expect(
+      findOrCreateXeroContactForOrganisation("org-1"),
+    ).rejects.toBeInstanceOf(XeroContactTwoHomesError);
+    expect(mocks.tx.member.update).not.toHaveBeenCalled();
+  });
+
+  it("REFUSES one of the school's OWN named teachers", async () => {
+    aMemberHoldsTheContact();
+    onlyThisSchoolsBookings();
+    mocks.tx.organisationContact.findUnique.mockResolvedValue({ id: "oc-1" });
+
+    // A teacher is pushed to Xero as a contact person ON the school's record;
+    // their personal Xero contact is exactly what #2912 forbids repurposing.
+    await expect(
+      findOrCreateXeroContactForOrganisation("org-1"),
+    ).rejects.toBeInstanceOf(XeroContactTwoHomesError);
+    expect(mocks.tx.member.update).not.toHaveBeenCalled();
+  });
+
+  it("fails a refusal LOUDLY and replayably, never closing it as skipped", async () => {
+    aMemberHoldsTheContact();
+    mocks.tx.booking.findFirst.mockResolvedValue(null);
+
+    await expect(
+      findOrCreateXeroContactForOrganisation("org-1"),
+    ).rejects.toBeInstanceOf(XeroContactTwoHomesError);
+    // FAILED, not CANCELLED-with-a-reason: a contact this organisation cannot
+    // be given is a genuinely unresolved provider operation, and the
+    // idempotency key it keeps is what makes a replay converge.
+    expect(mocks.failXeroSyncOperation).toHaveBeenCalledWith(
       "op-1",
-      expect.objectContaining({
-        status: "CANCELLED",
-        responsePayload: expect.objectContaining({ skipped: true }),
-      }),
+      expect.any(XeroContactTwoHomesError),
+      expect.objectContaining({ resolvedContactId: "contact-held-by-member" }),
     );
-    expect(mocks.failXeroSyncOperation).not.toHaveBeenCalled();
+    expect(mocks.completeXeroSyncOperation).not.toHaveBeenCalled();
   });
 
   it("takes the contact-home lock before it judges, and only local work is inside", async () => {
@@ -427,28 +605,24 @@ describe("#3367: a school's contact never becomes a person's (INV-INT-018)", () 
     );
   });
 
-  it("raises the invoice against the contact the school already has", async () => {
-    mocks.tx.member.findFirst.mockResolvedValue({
-      id: "invented-school-member",
-      firstName: "New Plymouth Primary School",
-      lastName: "",
-    });
-    mocks.findOrCreateXeroContact.mockResolvedValue("contact-held-by-member");
+  it("does NOT fall back to the member when the organisation cannot be resolved", async () => {
+    aMemberHoldsTheContact();
+    mocks.tx.booking.findFirst.mockResolvedValue(null);
 
-    // The returning school: refusing is right, and failing to invoice is not.
+    // The fallback that raised the invoice against the member's own contact is
+    // retired (owner, 13 September 2026). An Organisation-linked booking is
+    // invoiced as the Organisation or not at all: an invoice against a customer
+    // nobody chose is worse than an invoice that was not raised.
     await expect(
       findOrCreateXeroContactForInvoicedParty({
         memberId: "invented-school-member",
         organisationId: "org-1",
       }),
-    ).resolves.toBe("contact-held-by-member");
-    expect(mocks.findOrCreateXeroContact).toHaveBeenCalledWith(
-      "invented-school-member",
-      undefined,
-    );
+    ).rejects.toBeInstanceOf(XeroContactTwoHomesError);
+    expect(mocks.findOrCreateXeroContact).not.toHaveBeenCalled();
   });
 
-  it("does NOT swallow any other failure behind that fallback", async () => {
+  it("lets any other provider failure through untouched", async () => {
     mocks.createContacts.mockRejectedValue(new Error("Xero is down"));
 
     await expect(
@@ -457,8 +631,6 @@ describe("#3367: a school's contact never becomes a person's (INV-INT-018)", () 
         organisationId: "org-1",
       }),
     ).rejects.toThrow("Xero is down");
-    // An invoice raised against the wrong customer is worse than one that was
-    // not raised, so the fallback is exactly one error wide.
     expect(mocks.findOrCreateXeroContact).not.toHaveBeenCalled();
   });
 });
