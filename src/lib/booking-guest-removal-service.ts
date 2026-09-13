@@ -22,6 +22,12 @@ import {
   type PromoAdjustmentTarget,
 } from "@/lib/night-adjustment-write";
 import {
+  d3CompatibleBookingMoneyBuildUpCents,
+  readBookingMoneyBuildUp,
+  selectBookingMoneyBuildUp,
+  selectLoadedBookingMoneyBuildUp,
+} from "@/lib/booking-money-build-up";
+import {
   describePromoCapCoverage,
   type PromoCoverageNotice,
 } from "@/lib/promo-cap-coverage";
@@ -576,7 +582,7 @@ export async function removeBookingGuestInTransaction({
     )
     .map((guest) => ({
       guest,
-      evidence: storedSoldPriceEvidenceForGuest(guest, booking),
+      evidence: storedSoldPriceEvidenceForGuest(guest, booking, "WHOLE_GUEST"),
     }));
   /**
    * Is this removal's money unknowable from the booking's own history?
@@ -655,9 +661,15 @@ export async function removeBookingGuestInTransaction({
         ];
       });
 
-  const choreWarnings = await removeGuestChoreAssignments(tx, guestId);
-
-  await tx.bookingGuest.delete({ where: { id: guestId } });
+  // #3277: capture the build-up under the existing global -> lodge locks and
+  // before the chore/guest deletes below can cascade any of its target rows.
+  // Selection waits until today's existing calculation is available; the input
+  // itself is the pre-removal record.
+  const recordedMoneyBuildUp = await readBookingMoneyBuildUp(tx, {
+    bookingId,
+    purpose: "GUEST_REMOVAL",
+    bookingGuestId: guestId,
+  });
 
   const remainingGuests = booking.guests.filter((guest) => guest.id !== guestId);
   const seasonRateData = await loadSeasonRateData(tx, bookingLodgeId);
@@ -891,7 +903,34 @@ export async function removeBookingGuestInTransaction({
         totalPriceCents: newTotalPriceCents,
         promoAdjustmentCents: promoResult.newPromoAdjustmentCents,
       });
-  const priceDiffCents = newFinalPriceCents - booking.finalPriceCents;
+  const derivedPriceDiffCents = newFinalPriceCents - booking.finalPriceCents;
+  const firstUnusableEvidence = strandEvidence.find(
+    (strand) => strand.evidence.kind === "unusable",
+  )?.evidence;
+  const moneyBuildUpSelection = parkedFinancialReview
+    ? selectBookingMoneyBuildUp({
+        ...recordedMoneyBuildUp,
+        baseEvidence: {
+          kind: "UNKNOWN",
+          reason:
+            firstUnusableEvidence?.kind === "unusable"
+              ? firstUnusableEvidence.cause
+              : "STORED_TOTAL_MISMATCH",
+        },
+        derivedCents: derivedPriceDiffCents,
+      })
+    : selectLoadedBookingMoneyBuildUp(recordedMoneyBuildUp, {
+        derivedCents: derivedPriceDiffCents,
+        // A valid old build-up can differ when the surviving promo is re-capped
+        // or redistributed. D3 keeps today's existing result in that case.
+        mismatchClassification: "LEGITIMATE_DIVERGENCE",
+      });
+
+  // The canonical decision is complete while the departing guest and all of
+  // its targets still exist. Only now may the destructive half start.
+  const choreWarnings = await removeGuestChoreAssignments(tx, guestId);
+  await tx.bookingGuest.delete({ where: { id: guestId } });
+  const priceDiffCents = d3CompatibleBookingMoneyBuildUpCents(moneyBuildUpSelection);
   // Owner rule (#1100): a booking left with only non-adults must go through
   // admin approval, even if it was previously paid and approved for a
   // different composition. The self-removing guest is never blocked — the
@@ -1071,6 +1110,7 @@ export async function removeBookingGuestInTransaction({
         ...(promoResult.promoCoverage
           ? { promoCoverageNote: promoResult.promoCoverage.message }
           : {}),
+        ...moneyBuildUpSelection.historyMetadata,
       },
       priceDiffCents,
       changeFeeCents: 0,

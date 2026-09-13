@@ -96,6 +96,7 @@ File: [`invariants/money.md`](invariants/money.md). Prefix `INV-MONEY`.
 | `INV-MONEY-027` | A `SET_PRICE` application netting to exactly zero counts as no use |
 | `INV-MONEY-028` | Each stored guest-night price records its origin; even splits are not evidence |
 | `INV-MONEY-029` | Promo adjustment rows reconcile to the promo total; unknown is never zero |
+| `INV-MONEY-030` | Stored money readers preserve current amounts and record their source |
 | `INV-MONEY-006` | Refunds, credits, Stripe and Xero amounts reconcile back to cent-based ledger records |
 | `INV-MONEY-007` | Admin adjustments need audit, approval, and a visible business reason |
 | `INV-MONEY-008` | A confirmed subscription charge is immutable; only delivery, status, Xero metadata advance |
@@ -383,7 +384,7 @@ Prefix `INV-MOD`.
 | `INV-MOD-036` | A blank is filled only by a person, on four conditions |
 | `INV-MOD-037` | The repair is optional, and four things it deliberately does not repair |
 | `INV-MOD-038` | Three consumers read a re-based strand total; none restates a billed amount |
-| `INV-MOD-039` | Reconciliation, not provenance; an exact strand values every night from its rows |
+| `INV-MOD-039` | Whole-guest evidence may reconcile; individual-night evidence also requires exact provenance |
 | `INV-MOD-040` | A parked edit writes structure, never an amount; prohibited estimate sources |
 | `INV-MOD-041` | It holds on every edit path; a second edit is refused |
 | `INV-MOD-042` | What every parked path does; a dropped promotion is disclosed |
@@ -400,6 +401,7 @@ Prefix `INV-MOD`.
 | `INV-MOD-053` | Where the removal park and the second act are pinned |
 | `INV-MOD-054` | Where the settle-time repair is pinned |
 | `INV-MOD-055` | Closing a parked review re-prices the booking from its strands, or declines |
+| `INV-MOD-056` | Operation-grain provenance governs edits and review re-bases |
 
 ### Adult-member hosting
 

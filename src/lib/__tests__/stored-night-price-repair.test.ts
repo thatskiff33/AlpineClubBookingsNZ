@@ -430,7 +430,7 @@ describe("a booking whose blanks are all cleared stops parking (#3191)", () => {
 
     // BEFORE: the classifier every edit path consults sends this strand to a
     // person, which is why the booking parks.
-    expect(storedSoldPriceEvidenceForGuest(guest, booking).kind).toBe(
+    expect(storedSoldPriceEvidenceForGuest(guest, booking, "WHOLE_GUEST").kind).toBe(
       "unusable",
     );
 
@@ -453,7 +453,7 @@ describe("a booking whose blanks are all cleared stops parking (#3191)", () => {
     // AFTER: the same classifier, on the same strand, now prices it exactly - so
     // the next edit is answered from stored evidence instead of parking.
     expect(newGuestTotalCents).toBe(10_000);
-    const after = storedSoldPriceEvidenceForGuest(guest, booking);
+    const after = storedSoldPriceEvidenceForGuest(guest, booking, "WHOLE_GUEST");
     expect(after.kind).toBe("exact");
     expect(after.kind === "exact" && after.totalCents).toBe(10_000);
   });
@@ -490,7 +490,9 @@ describe("a booking whose blanks are all cleared stops parking (#3191)", () => {
     });
     expect(newGuestTotalCents).toBe(14_000);
     expect(guest.priceCents).toBe(14_000);
-    expect(storedSoldPriceEvidenceForGuest(guest, booking).kind).toBe("exact");
+    expect(
+      storedSoldPriceEvidenceForGuest(guest, booking, "WHOLE_GUEST").kind,
+    ).toBe("exact");
   });
 });
 

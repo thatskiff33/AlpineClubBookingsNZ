@@ -32,6 +32,7 @@ describe("#3170 the evidence reader: a null is an absence, never a price", () =>
         { date: K("2026-08-21"), priceCents: null },
       ],
       2 * RATE,
+      "WHOLE_GUEST",
     );
 
     expect(verdict.kind).toBe("unusable");
@@ -46,13 +47,11 @@ describe("#3170 the evidence reader: a null is an absence, never a price", () =>
   });
 
   it("still prices an evenly-split backfilled strand as EXACT", () => {
-    // A RECORDED DECISION, and a large share of historical bookings depend on
-    // it. Two of the three events that populated this table were themselves even
-    // splits (migrations 20260704150000 and 20260810010000), there is no
-    // provenance column, and INV-MOD-028 therefore tests RECONCILIATION rather
-    // than provenance. Making `priceCents` nullable does not change that test,
-    // and this is what proves it: equal integer nights that sum to the stored
-    // total are exact, exactly as before, and go nowhere near a person.
+    // A RECORDED WHOLE-GUEST decision, and a large share of historical bookings
+    // depend on it. The two backfills that divided guest totals now carry
+    // `EVEN_SPLIT` provenance, which is inexact for one surrendered night. At
+    // whole-guest grain the stored total itself is still the amount being
+    // valued, so reconciling rows remain exact and go nowhere near a person.
     const verdict = storedSoldPriceEvidenceForGuest(
       {
         priceCents: 3 * RATE,
@@ -65,6 +64,7 @@ describe("#3170 the evidence reader: a null is an absence, never a price", () =>
         ],
       },
       { checkIn: D("2026-08-20"), checkOut: D("2026-08-23") },
+      "WHOLE_GUEST",
     );
 
     expect(verdict.kind).toBe("exact");
@@ -87,6 +87,7 @@ describe("#3170 the evidence reader: a null is an absence, never a price", () =>
         ],
       },
       { checkIn: D("2026-08-20"), checkOut: D("2026-08-23") },
+      "WHOLE_GUEST",
     );
 
     expect(verdict.kind).toBe("unusable");

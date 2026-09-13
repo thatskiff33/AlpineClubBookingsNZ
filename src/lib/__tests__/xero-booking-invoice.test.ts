@@ -244,6 +244,80 @@ import { toXeroSandboxContactEmail } from "@/lib/xero-sandbox-contact-email";
 // (getOperationalXeroEncryptionKey mock above) makes these deterministic.
 let encryptedAccess: string;
 let encryptedRefresh: string;
+
+type XeroBookingFixture = Record<string, unknown> & {
+  checkIn: Date | string;
+  checkOut: Date | string;
+  totalPriceCents?: number;
+  promoAdjustmentCents?: number;
+  guests: Array<
+    Record<string, unknown> & {
+      id?: string;
+      priceCents: number;
+      nights?: Array<
+        Record<string, unknown> & {
+          id?: string;
+          stayDate?: Date | string;
+          priceCents?: number | null;
+          priceSource?: "SOLD" | "OFFICER_PRICED" | "EVEN_SPLIT" | "UNKNOWN";
+        }
+      >;
+    }
+  >;
+  promoRedemption?: (Record<string, unknown> & { allocations?: unknown[] }) | null;
+  nightAdjustments?: unknown[];
+};
+
+/**
+ * The create-path mock ignores Prisma's select/include shape, so every booking
+ * it returns must still carry the complete Stage 3 projection Prisma would
+ * materialise. Keeping that repair in test code makes omitted relations a
+ * fixture defect instead of production compatibility behaviour.
+ */
+function withMoneyBuildUpProjection<T extends XeroBookingFixture>(booking: T) {
+  const checkIn = booking.checkIn instanceof Date ? booking.checkIn : new Date(booking.checkIn);
+  const checkOut = booking.checkOut instanceof Date ? booking.checkOut : new Date(booking.checkOut);
+  const guests = booking.guests.map((guest, guestIndex) => {
+    const suppliedNights = guest.nights ?? [];
+    const nights = (suppliedNights.length > 0
+      ? suppliedNights
+      : [{ stayDate: checkIn, priceCents: guest.priceCents, priceSource: "SOLD" as const }]
+    ).map((night, nightIndex) => ({
+      ...night,
+      id: night.id ?? `guest-${guestIndex + 1}-night-${nightIndex + 1}`,
+      stayDate:
+        night.stayDate instanceof Date
+          ? night.stayDate
+          : new Date(night.stayDate ?? checkIn),
+      priceCents: night.priceCents ?? guest.priceCents,
+      priceSource: night.priceSource ?? ("SOLD" as const),
+    }));
+    return {
+      ...guest,
+      id: guest.id ?? `guest-${guestIndex + 1}`,
+      stayStart: null,
+      stayEnd: null,
+      nights,
+    };
+  });
+  return {
+    ...booking,
+    checkIn,
+    checkOut,
+    totalPriceCents:
+      booking.totalPriceCents ?? guests.reduce((sum, guest) => sum + guest.priceCents, 0),
+    promoAdjustmentCents: booking.promoAdjustmentCents ?? 0,
+    guests,
+    promoRedemption: booking.promoRedemption
+      ? {
+          ...booking.promoRedemption,
+          allocations: booking.promoRedemption.allocations ?? [],
+        }
+      : null,
+    nightAdjustments: booking.nightAdjustments ?? [],
+  };
+}
+
 beforeAll(async () => {
   encryptedAccess = await encryptToken("access");
   encryptedRefresh = await encryptToken("refresh");
@@ -293,7 +367,7 @@ describe("createXeroInvoiceForBooking", () => {
       xeroContactId: "contact_1",
     });
 
-    mocks.prisma.booking.findUnique.mockResolvedValue({
+    mocks.prisma.booking.findUnique.mockResolvedValue(withMoneyBuildUpProjection({
       id: "booking_1",
       memberId: "mem_1",
       member: { id: "mem_1" },
@@ -323,7 +397,7 @@ describe("createXeroInvoiceForBooking", () => {
         xeroInvoiceNumber: null,
         source: "STRIPE",
       },
-    });
+    }));
     mocks.prisma.payment.findUnique.mockResolvedValue(null);
     mocks.prisma.paymentTransaction.updateMany.mockResolvedValue({ count: 0 });
     mocks.prisma.season.findFirst.mockResolvedValue({ type: "WINTER" });
@@ -384,10 +458,11 @@ describe("createXeroInvoiceForBooking", () => {
     }
 
     function cardCreditBooking(paymentOverrides: Record<string, unknown> = {}) {
-      return {
+      return withMoneyBuildUpProjection({
         id: "booking_1",
         memberId: "mem_1",
         member: { id: "mem_1" },
+        totalPriceCents: 10000,
         checkIn: "2026-07-31T00:00:00.000Z",
         checkOut: "2026-08-02T00:00:00.000Z",
         createdAt: "2026-05-15T10:30:00.000Z",
@@ -395,15 +470,17 @@ describe("createXeroInvoiceForBooking", () => {
         promoAdjustmentCents: 0,
         guests: [
           {
+            id: "guest_1",
             firstName: "Jordan",
             lastName: "Hartley-Smith",
             ageTier: "ADULT",
             isMember: true,
             priceCents: 10000,
+            nights: [],
           },
         ],
         payment: cardPayment(paymentOverrides),
-      };
+      });
     }
 
     beforeEach(() => {
@@ -525,7 +602,7 @@ describe("createXeroInvoiceForBooking", () => {
   });
 
   it("does NOT let Xero email the invoice when the booking has No emails on, and records the withhold (#2258)", async () => {
-    mocks.prisma.booking.findUnique.mockResolvedValue({
+    mocks.prisma.booking.findUnique.mockResolvedValue(withMoneyBuildUpProjection({
       id: "booking_1",
       memberId: "mem_1",
       member: { id: "mem_1", email: "member@example.test" },
@@ -555,7 +632,7 @@ describe("createXeroInvoiceForBooking", () => {
         xeroInvoiceNumber: null,
         source: "INTERNET_BANKING",
       },
-    });
+    }));
 
     await expect(createXeroInvoiceForBooking("booking_1")).resolves.toBe("inv_1");
 
@@ -626,9 +703,12 @@ describe("createXeroInvoiceForBooking", () => {
         source: "INTERNET_BANKING",
       },
     };
-    // First read (the invoice build) succeeds; the pre-email re-read throws.
+    // The invoice build and its Stage 3 money-evidence read succeed; the
+    // pre-email re-read throws.
+    const projectedBookingRow = withMoneyBuildUpProjection(bookingRow);
     mocks.prisma.booking.findUnique
-      .mockResolvedValueOnce(bookingRow)
+      .mockResolvedValueOnce(projectedBookingRow)
+      .mockResolvedValueOnce(projectedBookingRow)
       .mockRejectedValueOnce(new Error("connection reset"));
 
     await expect(createXeroInvoiceForBooking("booking_1")).resolves.toBe("inv_1");
@@ -660,7 +740,7 @@ describe("createXeroInvoiceForBooking", () => {
   */
   describe("the environment-safety boundary", () => {
     function internetBankingBooking() {
-      return {
+      return withMoneyBuildUpProjection({
         id: "booking_1",
         memberId: "mem_1",
         member: { id: "mem_1", email: "member@example.test" },
@@ -689,7 +769,7 @@ describe("createXeroInvoiceForBooking", () => {
           xeroInvoiceNumber: null,
           source: "INTERNET_BANKING",
         },
-      };
+      });
     }
 
     it("raises the invoice but emails nobody on a confirmed copy, and stays SUCCEEDED", async () => {
@@ -814,7 +894,7 @@ describe("createXeroInvoiceForBooking", () => {
   });
 
   it("emails Internet Banking invoices and updates the Internet Banking transaction", async () => {
-    mocks.prisma.booking.findUnique.mockResolvedValue({
+    mocks.prisma.booking.findUnique.mockResolvedValue(withMoneyBuildUpProjection({
       id: "booking_1",
       memberId: "mem_1",
       member: { id: "mem_1" },
@@ -844,7 +924,7 @@ describe("createXeroInvoiceForBooking", () => {
         xeroInvoiceNumber: null,
         source: "INTERNET_BANKING",
       },
-    });
+    }));
     mocks.xeroClientInstance.accountingApi.emailInvoice.mockResolvedValue({
       body: {},
     });
@@ -882,7 +962,7 @@ describe("createXeroInvoiceForBooking", () => {
   });
 
   it("does not record settled Internet Banking invoices as Stripe Xero payments", async () => {
-    mocks.prisma.booking.findUnique.mockResolvedValue({
+    mocks.prisma.booking.findUnique.mockResolvedValue(withMoneyBuildUpProjection({
       id: "booking_1",
       memberId: "mem_1",
       member: { id: "mem_1" },
@@ -912,7 +992,7 @@ describe("createXeroInvoiceForBooking", () => {
         xeroInvoiceNumber: null,
         source: "INTERNET_BANKING",
       },
-    });
+    }));
     mocks.xeroClientInstance.accountingApi.emailInvoice.mockResolvedValue({
       body: {},
     });
@@ -1406,21 +1486,24 @@ describe("createXeroInvoiceForBooking", () => {
     });
 
     it("is the club's calendar day, not the UTC one", async () => {
-      mocks.prisma.booking.findUnique.mockResolvedValue({
+      mocks.prisma.booking.findUnique.mockResolvedValue(withMoneyBuildUpProjection({
         id: "booking_1",
         memberId: "mem_1",
         member: { id: "mem_1" },
+        totalPriceCents: 10000,
         checkIn: "2026-07-31T00:00:00.000Z",
         checkOut: "2026-08-02T00:00:00.000Z",
         createdAt: "2026-05-15T10:30:00.000Z",
         discountCents: 0,
         guests: [
           {
+            id: "guest_1",
             firstName: "Jordan",
             lastName: "Hartley-Smith",
             ageTier: "ADULT",
             isMember: true,
             priceCents: 10000,
+            nights: [],
           },
         ],
         payment: {
@@ -1434,7 +1517,7 @@ describe("createXeroInvoiceForBooking", () => {
           xeroInvoiceNumber: null,
           source: "STRIPE",
         },
-      });
+      }));
       mocks.xeroClientInstance.accountingApi.createInvoices.mockResolvedValue({
         body: {
           invoices: [
@@ -1477,10 +1560,11 @@ describe("createXeroInvoiceForBooking", () => {
       xeroItemCode: string | null;
       xeroAccountCode: string | null;
     } | null) {
-      return {
+      return withMoneyBuildUpProjection({
         id: "booking_1",
         memberId: "mem_1",
         member: { id: "mem_1" },
+        totalPriceCents: 10000,
         checkIn: "2026-07-31T00:00:00.000Z",
         checkOut: "2026-08-02T00:00:00.000Z",
         createdAt: "2026-05-15T10:30:00.000Z",
@@ -1488,11 +1572,13 @@ describe("createXeroInvoiceForBooking", () => {
         promoAdjustmentCents: -5000,
         guests: [
           {
+            id: "guest_1",
             firstName: "Jordan",
             lastName: "Hartley-Smith",
             ageTier: "ADULT",
             isMember: true,
             priceCents: 10000,
+            nights: [],
           },
         ],
         payment: {
@@ -1503,8 +1589,24 @@ describe("createXeroInvoiceForBooking", () => {
           xeroInvoiceId: null,
           xeroInvoiceNumber: null,
         },
-        promoRedemption: promo ? { promoCode: promo } : null,
-      };
+        promoRedemption: promo
+          ? {
+              promoCode: promo,
+              priceAdjustmentCents: -5000,
+              allocations: [
+                { memberId: "mem_1", priceAdjustmentCents: -5000 },
+              ],
+            }
+          : null,
+        nightAdjustments: [
+          {
+            bookingGuestId: "guest_1",
+            beneficiaryMemberId: "mem_1",
+            amountCents: -5000,
+            bookingGuestNight: null,
+          },
+        ],
+      });
     }
 
     function getPromoAdjustmentLine() {
@@ -1531,6 +1633,18 @@ describe("createXeroInvoiceForBooking", () => {
       expect(discount?.itemCode).toBe("PROMO-DISC");
       expect(discount?.accountCode).toBeUndefined();
       expect(discount?.unitAmount).toBe(-50);
+      expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          requestPayload: expect.objectContaining({
+            moneyBuildUp: expect.objectContaining({
+              moneyBuildUpOperation: "XERO_PROMO_LINE",
+              moneyBuildUpSource: "STORED",
+              moneyBuildUpStoredCents: -5000,
+              moneyBuildUpDerivedCents: -5000,
+            }),
+          }),
+        }),
+      );
     });
 
     it("posts the promo adjustment line to the promo's xeroAccountCode when only an account code is set", async () => {
@@ -1582,6 +1696,33 @@ describe("createXeroInvoiceForBooking", () => {
       const discount = getPromoAdjustmentLine();
       expect(discount?.description).toBe("Promo adjustment");
     });
+
+    it("classifies stale recorded promo rows even when today's Xero headline is zero", async () => {
+      const booking = bookingWithPromo({
+        code: "EXPIRED",
+        xeroItemCode: null,
+        xeroAccountCode: null,
+      });
+      booking.promoAdjustmentCents = 0;
+      booking.discountCents = 0;
+      mocks.prisma.booking.findUnique.mockResolvedValue(booking);
+
+      await createXeroInvoiceForBooking("booking_1");
+
+      expect(getPromoAdjustmentLine()).toBeUndefined();
+      expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          requestPayload: expect.objectContaining({
+            moneyBuildUp: expect.objectContaining({
+              moneyBuildUpSource: "DERIVED_COMPATIBILITY_FALLBACK",
+              moneyBuildUpFallbackClassification: "STORED_SIDE_DEFECT",
+              moneyBuildUpStoredCents: -5000,
+              moneyBuildUpDerivedCents: 0,
+            }),
+          }),
+        }),
+      );
+    });
   });
 
   // #1765 — repay-after-refund: the Payment aggregate sits in
@@ -1591,7 +1732,7 @@ describe("createXeroInvoiceForBooking", () => {
   // `status === "SUCCEEDED"` or write the gross aggregate.
   describe("#1765 repay-after-refund invoice payment", () => {
     function repayBooking(paymentOverrides: Record<string, unknown> = {}) {
-      return {
+      return withMoneyBuildUpProjection({
         id: "booking_1",
         memberId: "mem_1",
         member: { id: "mem_1" },
@@ -1624,7 +1765,7 @@ describe("createXeroInvoiceForBooking", () => {
           source: "STRIPE",
           ...paymentOverrides,
         },
-      };
+      });
     }
 
     beforeEach(() => {

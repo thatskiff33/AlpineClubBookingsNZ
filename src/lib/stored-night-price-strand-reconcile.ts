@@ -187,7 +187,7 @@ export function strandNightPriceOfferForGuest(
 ): StrandNightPriceOffer | null {
   if (!isNonNegativeIntegerCents(guest.priceCents)) return null;
 
-  const evidence = storedSoldPriceEvidenceForGuest(guest, booking);
+  const evidence = storedSoldPriceEvidenceForGuest(guest, booking, "WHOLE_GUEST");
   if (evidence.kind === "exact") return null;
 
   const dates = getGuestBedNightKeys(guest, booking)

@@ -236,7 +236,7 @@ const bookingRange = { checkIn: CHECK_IN, checkOut: CHECK_OUT };
 
 /** What the classifier every edit path consults says about this strand now. */
 const evidenceKind = (row: GuestRow) =>
-  storedSoldPriceEvidenceForGuest(row, bookingRange).kind;
+  storedSoldPriceEvidenceForGuest(row, bookingRange, "WHOLE_GUEST").kind;
 
 /** Beds held on each night of the stay, by the capacity predicate itself. */
 function bedsPerNight(rows: GuestRow[]) {

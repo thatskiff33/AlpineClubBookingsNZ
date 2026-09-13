@@ -343,6 +343,9 @@ describe("POST /api/payments/switch-to-internet-banking", () => {
       2_000,
       BOOKING_ID,
       expect.anything(),
+      expect.objectContaining({
+        description: expect.stringContaining("price source BASE_EVIDENCE_UNKNOWN"),
+      }),
     );
     // The invoice is raised for the post-election remainder, and the mirror
     // keeps amountCents + creditAppliedCents = finalPriceCents.
