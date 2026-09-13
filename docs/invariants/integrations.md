@@ -256,41 +256,64 @@ legitimately depend on being offered an out-of-service lodge.
 
 ### INV-INT-018
 
-- **A Xero contact id has at most ONE local home.** Since #3366 two unique
-  columns can hold one — `Member.xeroContactId` and
-  `Organisation.xeroContactId` — and no constraint spans two tables. Both holding
-  it means the books say a school and a person are one customer.
+- **A Xero contact id has at most ONE local home.** Two unique columns can hold
+  one (#3366) — `Member.xeroContactId`, `Organisation.xeroContactId` — with no
+  constraint spanning tables. Both holding it means the books say a school and a
+  person are one customer.
 - **Every writer refuses rather than guesses**, throwing
-  `XeroContactTwoHomesError` naming the holder. `src/lib/xero-contact-home.ts` is
-  the one home for the check, the lock and the transfer below. The writers:
-  `findOrCreateXeroContact`'s phase-2 link, `commitManualXeroContactLink`, and
-  the organisation resolve.
-- **ONE exception: a contact may change hands exactly once, only to its
+  `XeroContactTwoHomesError` naming the holder. `xero-contact-home.ts` holds the
+  check, the lock and the transfer. Guarded writers: `findOrCreateXeroContact`
+  phase 2, `commitManualXeroContactLink`, the organisation resolve,
+  `POST /api/admin/xero/import-member-contact`.
+- **The refusal is SYMMETRIC**, because a collision is reachable without a race:
+  the member resolve searches Xero by email, and a school's contact carries the
+  same address its invented member does.
+- **Serialised by `hashtext('xero-contact-home:<contactId>')`**, its own
+  keyspace, taken after the writer's entity advisory key and BEFORE any `Member`
+  row lock (`INV-LOCK-002`) — outer-to-the-row-lock, because the transfer takes a
+  member row while holding it. No provider call inside.
+- **ONE exception: a contact changes hands exactly once, only to its
   Organisation** (owner, 13 Sep 2026, #3367). A returning school's contact is
-  held by the invented school member of an earlier booking, so the organisation
-  TAKES it: the member's link and its `CONTACT` ledger row are released in the
+  held by the invented school member of an earlier booking; the organisation
+  takes it, that member's link and its `CONTACT` ledger rows are released in the
   same transaction, and the hand-over is audited
   (`xero.contact.moved_to_organisation`, category `xero`). Four legs read under
-  the lock establish the member is this school's own — this organisation's
-  booking resolves to it, no other organisation's does, it cannot sign in, and it
-  is not one of the school's named contact people. The refusal runs immediately
-  afterwards, so anybody else is refused unchanged. Nothing moves at Xero, which
-  has no merge API; a duplicate there is merged by hand.
-- **Reachable on purpose, not only under concurrency**, hence a SYMMETRIC
-  refusal: the member resolve searches Xero by email first, and a school's
-  contact carries the same address the invented member does, so a credit note on
-  a school booking would find the organisation's contact.
-- **A contact-scoped advisory lock closes the concurrent half.**
-  `hashtext('xero-contact-home:<contactId>')`, its own keyspace, acquired LAST
-  after the writer's entity key (`INV-LOCK-002`), with no provider call inside.
-- **The organisation resolve never searches by email**, for that reason: a
-  school's recorded address is routinely a teacher's own, and #2912 settled that
-  a person's contact is never repurposed as the school. Its only adoption path is
-  a name Xero itself refused to duplicate.
-- **A refusal fails LOUDLY and stays replayable.** The sync operation is recorded
-  `FAILED` and keeps its idempotency key; no invoice is raised against a customer
-  nobody chose.
-- **Bounded.** #3369 removes the invented member, the other home.
-- **NOT guarded:** the bulk member import, which links members onto contacts
-  from mapped contact GROUPS — bulk seeding is #2939's subject. Pinned by
+  the lock establish the member is this school's own: this school's history
+  resolves to it, no other school's does, it cannot sign in, it is not a named
+  contact person of the school. The first two read BOTH `Booking.organisationId`
+  AND the `BookingRequest` that minted the member (`convertedMemberId` with
+  `organisationId`, or a matching `schoolName`) — the organisation column is
+  written only from this release, so a returning school's earlier booking has
+  none. The refusal then runs unchanged.
+- **Bounded.** #3369 removes the invented member, the other home. Pinned by
+  `organisation-reader-contract.test.ts`.
+
+### INV-INT-019
+
+- **A Xero link that cannot be made fails LOUDLY and stays REPLAYABLE.** The
+  sync operation is recorded `FAILED`, never closed as skipped, and keeps its
+  idempotency key so a replay converges on the same contact rather than minting
+  a second. No invoice is ever raised against a customer nobody chose.
+- **An Organisation-linked booking is invoiced as the Organisation or not at
+  all** (owner, 13 Sep 2026, #3367). There is no fallback to the booking's
+  member: the returning school's contact is taken rather than borrowed, so
+  anything left for a fallback to catch is a genuine failure.
+- **A stale contact reference is repaired against the INVOICED party**, not the
+  booking's member. The member repair searches Xero by email, and a school's
+  recorded address is routinely a teacher's own, so repairing a school's invoice
+  through the member can adopt that person's contact — the #2912 prohibition
+  reached indirectly.
+- **The organisation resolve never searches by email**, for the same reason. Its
+  only adoption path is a name Xero itself refused to duplicate, and a contact
+  adopted that way is re-shaped to the organisation form so a school stops
+  reading as a surnameless person.
+- **A correction that is only cosmetic never fails an invoice.** The
+  contact-person refresh and the organisation-shape correction record `FAILED`
+  and retry on the next resolve; neither throws into the invoice, because a
+  contact that already works must not be held hostage to its own shape.
+- **NOT guarded by the refusal:** the bulk member import, which links members
+  onto contacts from mapped contact GROUPS (bulk seeding is #2939's subject), and
+  `applyInboundMemberContactPatch`, which links a member from an inbound Xero
+  contact. `createXeroContactForMember` needs no guard: a contact Xero minted a
+  moment ago can have no other home. Pinned by
   `src/lib/__tests__/organisation-reader-contract.test.ts`.

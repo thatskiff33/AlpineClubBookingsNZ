@@ -667,7 +667,7 @@ export async function createXeroInvoiceForBooking(
     const response = await retryXeroWriteWithContactRepair({
       memberId: booking.memberId,
       currentContactId: contactId,
-      // #3367: THE REPAIR ENTITY MUST MATCH THE INVOICED PARTY.
+      // #3367 / `INV-INT-019`: THE REPAIR ENTITY MUST MATCH THE INVOICED PARTY.
       //
       // `currentContactId` above is now the ORGANISATION's contact where this
       // booking is a school's. The default repair resolves through

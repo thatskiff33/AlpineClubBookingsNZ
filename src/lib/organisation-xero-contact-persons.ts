@@ -1,6 +1,7 @@
 /**
  * The people named on a school's Xero contact, and keeping them honest (#3367,
- * stage 2 of programme #2912). `INV-INT-018`, `INV-CONFIG-005`, `INV-PRIV`.
+ * stage 2 of programme #2912). `INV-INT-018`, `INV-INT-019`,
+ * `INV-CONFIG-005`, `INV-PRIV`.
  *
  * Split out of `organisation-xero-contacts.ts`, which resolves and creates the
  * contact itself. This half owns one question — WHO is named on it, and what
@@ -44,6 +45,22 @@
  * that records NO teacher reconciles nothing — an absence of information is not
  * an assertion that the school has no contacts, and treating it as one would
  * let an incomplete request erase a known-good teacher.
+ *
+ * ### WHAT IS *NOT* KEPT HONEST: THE SCHOOL'S OWN EMAIL AND PHONE
+ *
+ * Only the named PEOPLE are refreshed. The school's own recorded email address
+ * and phone number are written once, by `resolveOrCreateSchoolOrganisation`, at
+ * the first approval that created the record — from whatever that request
+ * happened to type — and are never overwritten afterwards, deliberately: the
+ * club's own record of a school outranks one booking request, and silently
+ * rewriting it would change who the next invoice reaches.
+ *
+ * The honest consequence is that in THIS stage they are frozen, with no in-app
+ * way to correct them. A school whose office address changes keeps the old one
+ * on its Xero contact until an officer edits it at Xero. #2936 (admin editing
+ * of requests) is where the in-app remedy belongs. "Kept honest" above is about
+ * the contact PERSONS and nothing else, and this paragraph exists because that
+ * phrase reads as though it covered more.
  *
  * Only `contactPersons` is refreshed. The contact's NAME is never rewritten:
  * Xero enforces unique contact names, renaming is the operation the settled rule
@@ -220,8 +237,13 @@ export async function readOrganisationForXeroContact(
         ? ""
         : row.member.email,
     };
-    const identity =
-      `${person.firstName} ${person.lastName} ${person.email}`.toLowerCase();
+    // JSON rather than a joined string: a separator character can appear inside
+    // a name, and "Ana Marie / T" would then collapse into "Ana / Marie T".
+    const identity = JSON.stringify([
+      person.firstName.toLowerCase(),
+      person.lastName.toLowerCase(),
+      person.email.toLowerCase(),
+    ]);
     if (seen.has(identity)) continue;
     seen.add(identity);
     contactPersons.push(person);

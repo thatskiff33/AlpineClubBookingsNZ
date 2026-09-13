@@ -28,6 +28,8 @@ const mocks = vi.hoisted(() => ({
   syncMemberSubscriptionHistoryForLinkedContact: vi.fn(),
   ensureMemberAccessRolesFromCompatibilityFields: vi.fn(),
   logAudit: vi.fn(),
+  txExecuteRaw: vi.fn(),
+  organisationFindFirst: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -51,7 +53,17 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     member: { findFirst: mocks.memberFindFirst, create: mocks.memberCreate },
     $transaction: async (callback: (tx: unknown) => Promise<unknown>) =>
-      callback({ member: { create: mocks.memberCreate } }),
+      callback({
+        member: { create: mocks.memberCreate },
+        // #3367 (INV-INT-018): the route now takes the contact-home key and
+        // asks whether an ORGANISATION already holds this contact. A missing
+        // delegate here would be an undefined-property throw rather than a
+        // wrong answer, which is how this suite wants an unmocked read to
+        // behave — so both are named, and the organisation answer is
+        // overridable per test.
+        $executeRaw: mocks.txExecuteRaw,
+        organisation: { findFirst: mocks.organisationFindFirst },
+      }),
   },
 }));
 
@@ -127,6 +139,9 @@ describe("POST /api/admin/xero/import-member-contact deep links (#2314)", () => 
       },
     });
     mocks.memberFindFirst.mockResolvedValue(null);
+    // #3367: nobody else holds the contact, and the lock statement succeeds.
+    mocks.txExecuteRaw.mockResolvedValue(1);
+    mocks.organisationFindFirst.mockResolvedValue(null);
     mocks.memberCreate.mockResolvedValue({
       id: "mem_1",
       firstName: "Riley",
@@ -218,6 +233,38 @@ describe("POST /api/admin/xero/import-member-contact deep links (#2314)", () => 
     const response = await POST(request());
     expect(response.status).toBe(201);
     expect(mocks.memberCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it("REFUSES a contact an Organisation already holds (#3367, INV-INT-018)", async () => {
+    /*
+      A WRITER THIS STAGE NEWLY EXPOSES. Until #3367 a school's Xero contact was
+      held by the invented school member, so it never appeared in this screen's
+      list of UNLINKED contacts and could not be imported from here. After the
+      transfer the contact is held by an `Organisation` — which this route never
+      read — and the name-split fallback above would happily turn "New Plymouth
+      Primary School" into a first and a last name and mint a person for it.
+
+      So it takes the contact-home key and the same named refusal every other
+      linker gives, and answers the officer 409 with which record holds it
+      rather than a 500 they cannot act on.
+    */
+    mocks.organisationFindFirst.mockResolvedValue({
+      id: "org-1",
+      name: "New Plymouth Primary School",
+    });
+
+    const response = await POST(request());
+    const body = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body.error).toContain("New Plymouth Primary School");
+    expect(body.heldBy).toEqual({ kind: "ORGANISATION", id: "org-1" });
+    // The lock is taken before anything else in the transaction.
+    expect(mocks.txExecuteRaw).toHaveBeenCalled();
+    // And no member survives the refusal: the throw rolls the create back, and
+    // nothing outside the transaction was told an import happened.
+    expect(mocks.upsertXeroObjectLink).not.toHaveBeenCalled();
+    expect(mocks.logAudit).not.toHaveBeenCalled();
   });
 
   it("degrades the returned link when no short code is available", async () => {

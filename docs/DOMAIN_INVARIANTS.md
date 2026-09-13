@@ -817,6 +817,7 @@ File: [`invariants/integrations.md`](invariants/integrations.md). Prefix
 | `INV-INT-016` | The rooms API keeps its no-`lodgeId` mode for external consumers only |
 | `INV-INT-017` | Xero NZBN field carries date of birth via one shared codec |
 | `INV-INT-018` | A Xero contact has ONE local home, transferable once to its Organisation |
+| `INV-INT-019` | A Xero link that cannot be made fails loudly and stays replayable |
 
 ## Operations
 

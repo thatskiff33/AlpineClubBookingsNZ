@@ -1,7 +1,8 @@
 /**
  * An organisation's OWN Xero customer: resolve it, create it, and keep the
  * named contact person on it honest (#3367, stage 2 of programme #2912).
- * `INV-INT`, `INV-INT-018`, `INV-CONFIG-005`, `INV-LOCK-001`/`INV-LOCK-002`.
+ * `INV-INT`, `INV-INT-018`, `INV-INT-019`, `INV-CONFIG-005`,
+ * `INV-LOCK-001`/`INV-LOCK-002`.
  *
  * NOTE ON THE NAME. `xero-organisation.ts`, `xero-organisation-cache-bus.ts`
  * and the `xero-organisation-*` tests are about XERO'S OWN TENANT — the
@@ -142,7 +143,8 @@ export async function findOrCreateXeroContactForInvoicedParty(
   },
 ): Promise<string> {
   if (booking.organisationId) {
-    // NO FALLBACK TO THE MEMBER, on purpose (owner, 13 September 2026). A
+    // NO FALLBACK TO THE MEMBER, on purpose (owner, 13 September 2026;
+    // `INV-INT-019`). A
     // returning school's existing contact is TAKEN by the organisation rather
     // than invoiced through the member that holds it, so there is nothing left
     // for a fallback to catch that is not a genuine failure — and a provider

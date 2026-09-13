@@ -990,7 +990,7 @@ const SCOPED_ADVISORY_LOCK_INVENTORY: Record<string, number> = {
   /*
     #3367 — the CONTACT-HOME key,
     `pg_advisory_xact_lock(hashtext('xero-contact-home:<contactId>'))`.
-    INV-INT-018, minted once in `lockXeroContactHome` and taken by all three
+    INV-INT-018, minted once in `lockXeroContactHome` and taken by all four
     writers that link a Xero contact id to a local record.
 
     WHY IT EXISTS. Since #3366 two columns can hold one Xero contact id —

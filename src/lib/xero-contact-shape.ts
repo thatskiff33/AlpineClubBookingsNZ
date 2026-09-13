@@ -49,16 +49,24 @@
  * with this module and nothing else, which is the part that has no ordering
  * consequence.
  *
- * ## Every address still goes through the containment policy
+ * ## Every EMAIL address goes through the containment policy — and only email
  *
- * Both the contact's own address and each contact person's address are written
- * through `applyXeroContactEmailPolicy`, which is the identity function on the
- * club's live site and the containment transform on a copy (INV-CONFIG-005). A
- * caller cannot reach this function without a policy token, because the token
- * type can only be produced by `xero-contact-containment.ts` after the
- * environment role has been read. That is the same compile-time guarantee the
- * person builder always had, extended to the new shape rather than duplicated
- * beside it.
+ * Both the contact's own email address and each contact person's email address
+ * are written through `applyXeroContactEmailPolicy`, which is the identity
+ * function on the club's live site and the containment transform on a copy
+ * (INV-CONFIG-005). A caller cannot reach this function without a policy token,
+ * because the token type can only be produced by `xero-contact-containment.ts`
+ * after the environment role has been read. That is the same compile-time
+ * guarantee the person builder always had, extended to the new shape rather
+ * than duplicated beside it.
+ *
+ * **The word "email" is load-bearing and this heading used to omit it.** A
+ * POSTAL address is not contained: {@link buildXeroAddresses} passes street,
+ * city, region, postcode and country through untouched, on every installation.
+ * That is the behaviour this application has always had, and it is not changed
+ * here — but a privacy docblock that says "every address" when it means "every
+ * email address" tells the next reader a copy contains something it does not,
+ * which is the kind of imprecision that gets relied on.
  */
 
 import { Address, type Contact, Phone } from "xero-node";
@@ -69,9 +77,12 @@ import {
 } from "@/lib/xero-contact-containment";
 
 /**
- * The address columns a contact payload reads. Structural rather than a Prisma
- * type, because the two callers pass different rows — a locked `Member`
+ * The POSTAL address columns a contact payload reads. Structural rather than a
+ * Prisma type, because the two callers pass different rows — a locked `Member`
  * snapshot and an update payload — and an organisation passes none at all.
+ *
+ * These are passed to Xero verbatim. The containment policy in the docblock
+ * above covers EMAIL addresses only; nothing filters what follows.
  */
 export type XeroContactAddressSource = {
   streetAddressLine1?: string | null;
