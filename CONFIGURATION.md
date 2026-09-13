@@ -2410,16 +2410,28 @@ question text is ever stored). The whole page 404s while the module is off.
    works. This asymmetry is deliberate (an unconfigured assistant is invisible,
    not broken).
 3. **Adjust the budget** if needed on **Admin → AI help assistant** (the
-   monthly spend-cap editor takes dollars-and-cents; support-edit access). The
-   in-app **monthly spend cap** (default **NZ$10**, `AiAssistantSettings.monthlyBudgetCents`,
-   integer cents) is a **hard cutoff**: once the month's estimated spend would
-   exceed it, the assistant returns a "budget exhausted" fallback for the rest of
-   the calendar month (Pacific/Auckland) and no further paid calls are made. Cost
-   is deliberately **over-estimated** (conservative NZD FX, rounded up) so the cap
-   trips early rather than late, and the app also stops spending if it can no
-   longer record usage ("can't-meter ⇒ don't-spend"). The cap is a
-   deployment-specific control and does **not** travel in a config-transfer
-   bundle — a fresh import gets the NZ$10 default.
+   monthly spend-cap editor takes an amount in the club's configured currency;
+   support-edit access). The in-app **monthly spend cap** (default **10.00 in
+   the club's configured currency** — NZ$10 for a New Zealand club —
+   `AiAssistantSettings.monthlyBudgetCents`, integer cents) is a **hard
+   cutoff**: once the month's estimated spend would exceed it, the assistant
+   returns a "budget exhausted" fallback for the rest of the calendar month
+   (Pacific/Auckland) and no further paid calls are made. Cost is deliberately
+   **over-estimated** (conservative USD→NZD FX, then the club's rate below,
+   rounded up) so the cap trips early rather than late, and the app also stops
+   spending if it can no longer record usage ("can't-meter ⇒ don't-spend"). The
+   cap is a deployment-specific control and does **not** travel in a
+   config-transfer bundle — a fresh import gets the default.
+4. **If `CURRENCY` is not `NZD`, set the conversion rate** (#3354). AI usage is
+   priced in New Zealand dollars; the **Currency for AI spend** card on both AI
+   settings pages takes **how many units of the club's currency one New Zealand
+   dollar buys** (for example `0.92`), stores it as an integer in parts per
+   million (`AiSpendCurrencySettings.clubUnitsPerNzdMicros`, one row shared by
+   the AI help assistant and AI Diagnostics) and shows **when it was last set**,
+   because nothing updates it for you. Until it is set, spend is counted as if
+   1 NZD = 1 unit of the club's currency. A New Zealand club sees no editor.
+   Like the caps, the rate is deployment-local and is **not** carried in the
+   config-transfer bundle.
 
 Per-member, per-IP, and global daily rate limits throttle abuse, but the monthly
 budget cap is the real spend ceiling.

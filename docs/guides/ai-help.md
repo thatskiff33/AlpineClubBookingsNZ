@@ -108,10 +108,35 @@ alert is raised — see Troubleshooting).
 
 ### 3. Set the monthly spend cap
 
-1. On **Admin → AI help assistant**, the **monthly spend cap** editor takes a
-   dollars-and-cents amount. The default is **NZ$10 per month**.
+1. On **Admin → AI help assistant**, the **monthly spend cap** editor takes an
+   amount in the club's configured currency. The default is **10.00 in the
+   club's configured currency per month** (NZ$10 for a New Zealand club).
 2. Adjusting the cap needs **support-edit** access (it doesn't require Full
    Admin).
+
+### 4. If the club's currency is not New Zealand dollars: set the conversion rate
+
+AI usage is priced in **New Zealand dollars** (the provider's US-dollar list
+prices at a fixed, conservative 1.8 NZD per USD). A club configured for another
+currency enters and reads its cap in its **own** money, so each estimate is
+converted through **one administrator-set rate** before it counts against the
+cap. The rate is shared with AI Diagnostics — it is one setting, shown on both
+AI settings pages.
+
+1. On **Admin → AI help assistant** (or **Admin → AI Diagnostics**), the
+   **Currency for AI spend** card shows the club's currency, the current rate
+   and **when it was last set**. Until a rate is set, spend is counted as if one
+   New Zealand dollar were one unit of the club's currency, and the card says so.
+2. Enter how many units of the club's currency one New Zealand dollar buys — for
+   example `0.92` — and save. Support-edit access is required.
+3. **Check the rate now and then.** Nothing updates it for you; a rate that
+   drifts makes the caps silently too loose or too tight, which is why the card
+   shows when it was last set. The rate is rounded in the club's favour of
+   caution: every converted estimate is rounded **up** to the next cent.
+
+A New Zealand club sees a one-sentence note that no conversion applies and no
+rate editor. Past usage is never re-priced: each recorded call keeps the
+club-currency cost at the rate in force when it was made.
 
 ## Cost and spend behaviour
 
@@ -122,17 +147,20 @@ alert is raised — see Troubleshooting).
   spend would exceed the cap, the assistant stops making paid calls and returns a
   "unavailable for the rest of the month" notice; curated page help keeps working.
   Spend resets at the start of the next NZ month.
-- Cost is deliberately **over-estimated** (a conservative exchange rate, always
-  rounded up), so the cap trips **early rather than late** — your real Anthropic
-  bill should come in a little under the cap, not over.
+- Cost is deliberately **over-estimated** (a conservative US-dollar to New
+  Zealand dollar rate, then — for a club in another currency — the
+  administrator's rate, always rounded up), so the cap trips **early rather
+  than late** — your real Anthropic bill should come in a little under the cap,
+  not over.
 - The cap reserves the worst-case cost of an in-flight question before allowing
   it, and the app **stops spending if it can no longer record usage**
   ("can't-meter, don't-spend"). Per-member, per-IP, and global daily rate limits
   also throttle bursts, but the monthly cap is the real spend ceiling — with the
   Anthropic console limit (step 1) as the outer backstop.
-- The cap is a **deployment-specific** control: it does **not** travel in a
-  config-transfer/import bundle, so a freshly imported club starts at the NZ$10
-  default.
+- The cap and the currency conversion rate are **deployment-specific**
+  controls: neither travels in a config-transfer/import bundle, so a freshly
+  imported club starts at the default cap of 10.00 in its configured currency
+  and, outside New Zealand, with no rate set.
 
 ## Privacy
 
@@ -163,7 +191,8 @@ alert is raised — see Troubleshooting).
 | --- | --- | --- | --- |
 | AI help assistant module | Admin → Modules | Module editor | Off by default. Turns the free-text box on across authenticated surfaces. |
 | Anthropic API key | Admin → AI help assistant | **Full Admin** | Write-only, encrypted at rest, never shown/logged/audited. No `ANTHROPIC_API_KEY` env var exists — the key is in-app only. |
-| Monthly spend cap | Admin → AI help assistant | Support (edit) | Default **NZ$10**. Hard cutoff for the NZ calendar month. Not carried in config-transfer bundles. |
+| Monthly spend cap | Admin → AI help assistant | Support (edit) | Default **10.00 in the club's configured currency** (NZ$10 for a New Zealand club). Hard cutoff for the NZ calendar month. Not carried in config-transfer bundles. |
+| Currency for AI spend | Admin → AI help assistant, Admin → AI Diagnostics (one shared setting) | Support (edit) | How many units of the club's currency one New Zealand dollar buys, shown with when it was last set. Only for a club whose currency is not NZD; unset means 1:1. Not carried in config-transfer bundles. |
 | Usage panel | Admin → AI help assistant | Support (view) | Month spend vs cap, token totals, request/failed counts, per-surface breakdown, recent failures. No question text. |
 
 ## Troubleshooting
