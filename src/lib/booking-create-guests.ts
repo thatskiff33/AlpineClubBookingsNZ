@@ -350,4 +350,3 @@ function nightEntryKey(entry: GuestNightInput): CalendarDate {
   }
   return nightEntryKey(entry.stayDate);
 }
-
