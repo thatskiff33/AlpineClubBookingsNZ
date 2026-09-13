@@ -7,7 +7,7 @@ import {
   ADMIN_VIEW_ONLY_ACTION_REASON,
   useAdminAreaEditAccess,
 } from "@/hooks/use-admin-area-edit-access";
-import { parseDecimalDollarsToCents } from "@/lib/money-input";
+import { MONEY_INPUT_PROPS, parseDecimalDollarsToCents } from "@/lib/money-input";
 import { centsToDollars } from "@/app/(admin)/admin/ai-assistant/budget";
 
 /**
@@ -282,8 +282,7 @@ export function DiagnosticsBudgetCard({
           </label>
           <input
             id={inputId}
-            type="text"
-            inputMode="decimal"
+            {...MONEY_INPUT_PROPS}
             value={draft}
             aria-describedby={hintId}
             onChange={(event) => setDraft(event.target.value)}

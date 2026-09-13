@@ -33,8 +33,8 @@ import { buildHrefWithReturnTo } from "@/lib/internal-return-path"
 import { useClubTime } from "@/components/club-time-provider"
 import { parseInstant, type BoundClubTime } from "@/lib/club-time"
 import { formatPayloadCalendarDay } from "../_lib/calendar-day"
-import { parseDecimalDollarsToCents } from "@/lib/money-input"
-import { formatCents } from "@/lib/utils"
+import { MONEY_INPUT_PROPS, parseDecimalDollarsToCents } from "@/lib/money-input"
+import { formatCents, formatCentsPlain } from "@/lib/utils"
 
 type ReviewFilter = "PENDING" | "APPROVED" | "REJECTED" | "ALL"
 const reviewFilters = new Set<ReviewFilter>(["PENDING", "APPROVED", "REJECTED", "ALL"])
@@ -370,11 +370,17 @@ export default function RefundRequestsPage() {
 
     const payment = req.booking.payment
     if (payment) {
-      const maxRefundable = (payment.amountCents - payment.refundedAmountCents) / 100
+      // #2932: compare in integer cents and render ONCE through the canonical
+      // plain formatter. This used to divide both amounts by 100 and compare
+      // the resulting doubles, which is float money arithmetic on the way into
+      // a money box (`INV-MONEY-001`, `INV-MONEY-003`).
+      const maxRefundableCents = payment.amountCents - payment.refundedAmountCents
       setApprovedAmount(
-        req.requestedAmountCents
-          ? Math.min(req.requestedAmountCents / 100, maxRefundable).toFixed(2)
-          : maxRefundable.toFixed(2)
+        formatCentsPlain(
+          req.requestedAmountCents
+            ? Math.min(req.requestedAmountCents, maxRefundableCents)
+            : maxRefundableCents
+        )
       )
     }
   }
@@ -581,10 +587,7 @@ export default function RefundRequestsPage() {
                               <Label htmlFor="approvedAmount">Refund Amount ($)</Label>
                               <Input
                                 id="approvedAmount"
-                                type="number"
-                                step="0.01"
-                                min="0"
-                                max={(maxRefundable / 100).toFixed(2)}
+                                {...MONEY_INPUT_PROPS}
                                 value={approvedAmount}
                                 onChange={(e) => setApprovedAmount(e.target.value)}
                                 disabled={!canEditFinance}
