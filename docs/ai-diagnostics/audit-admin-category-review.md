@@ -586,7 +586,7 @@ manifest moving with it. The numbers this page was written against:
 ```
 row-producing sites:  471
 uncategorised:        0
-category values: admin 104, booking 102, xero 34, family 35, payment 45,
+category values: admin 105, booking 102, xero 34, family 35, payment 45,
                  lodge 65, account 19, security 22, privacy 19,
                  communication 21, system 4
 ```
@@ -661,6 +661,13 @@ is the figure above, and it was taken from `npm run audit:census` on the merged
 tree rather than by adding one branch's delta to the other's total. The category
 values sum to 463 rather than 464 because one site forwards its category rather
 than naming one.
+
+Since then #3354 added one (`admin` 104 -> 105, 470 -> 471, MEASURED by running
+the census suite on that branch rather than added to the literal):
+`AI_SPEND_CURRENCY_RATE_UPDATED`, the record that an administrator changed the
+rate both AI spend caps are compared through. `admin` for the same reason as the
+two AI settings writers beside it: installation configuration, readable with
+`support:view` alone, carrying a ratio and an administrator id and no member data.
 
 Since then #3340 added two (`payment` 42 -> 44, 468 -> 470, MEASURED with
 `npm run audit:census` on that branch rather than added to the literal): the

@@ -63,6 +63,8 @@ import {
 } from "@/lib/ai-diagnostics-config";
 import { readinessForAdmin } from "@/lib/diagnostics-readiness-tiers";
 
+import { AiSpendCurrencyCard } from "@/components/admin/ai-spend-currency-card";
+
 import { DiagnosticsBudgetCard } from "./_components/diagnostics-budget-card";
 
 export const metadata = { title: "AI Diagnostics" };
@@ -200,6 +202,26 @@ export default async function DiagnosticsPage() {
             Folding it into the detailed tier made it look like an internal too. */}
         <div className="mt-3">
           <DiagnosticsBudgetCard moduleEnabled={readiness.moduleEnabled} />
+        </div>
+      </section>
+
+      <section
+        aria-labelledby="diagnostics-spend-currency-heading"
+        className="rounded-lg border border-border p-4"
+      >
+        <h2
+          id="diagnostics-spend-currency-heading"
+          className="text-base font-semibold"
+        >
+          Currency for AI spend
+        </h2>
+        {/* ONE setting shared with the page-help assistant (#3354): the rate that
+            turns New Zealand dollar AI prices into the club's currency before they
+            count against EITHER module's cap. The same component renders on both
+            settings pages so there is one place to state one fact; it is not
+            module-gated because it belongs to two modules and spends nothing. */}
+        <div className="mt-3">
+          <AiSpendCurrencyCard />
         </div>
       </section>
 

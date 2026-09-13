@@ -1294,7 +1294,13 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // land unpinned. 470 sites MEASURED on this branch with
     // `npm run audit:census` minus 127 pinned; `pinned` is unchanged, so no
     // existing classification moved.
-    // 343 -> 344 (#3371): the carried-unpaid-balance record, declared as
+    // 343 -> 344 (#3354): the AI spend currency-rate writer in
+    // `/api/admin/ai-spend-currency`. Categorised `admin` at the site and named
+    // in none of the four per-site maps, like the two sibling AI settings
+    // writers, so it lands unpinned. 471 sites MEASURED on this branch by
+    // running this suite minus 127 pinned; `pinned` is unchanged, so no
+    // existing classification moved.
+    // 344 -> 345 (#3371): the carried-unpaid-balance record, declared as
     // `recordCarriedEditReviewChargeBalance` in
     // `edit-financial-review-carried-balance.ts` and called post-commit from
     // `edit-financial-review-charge.ts` - not from
@@ -1303,7 +1309,7 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // named in none of the four per-site maps, so it lands unpinned.
     // 471 sites MEASURED on this branch with `npm run audit:census` minus 127
     // pinned; `pinned` is unchanged, so no existing classification moved.
-    ).toEqual({ pinned: 127, unpinned: 344 });
+    ).toEqual({ pinned: 127, unpinned: 345 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {

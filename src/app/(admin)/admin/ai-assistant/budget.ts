@@ -1,10 +1,11 @@
 import { parseDecimalDollarsToCents } from "@/lib/money-input";
-import { formatCentsPlain } from "@/lib/utils";
+import { formatCents, formatCentsPlain } from "@/lib/utils";
 
-// Money helpers for the AI assistant monthly spend cap. All money is NZD integer
-// cents; the editor shows dollars-and-cents. Bounds mirror the settings route's
-// zod contract (0..100_000 cents = NZ$0..NZ$1,000). Cap 0 disables all paid
-// answers (hard-off).
+// Money helpers for the AI assistant monthly spend cap. All money is integer
+// cents of the club's configured currency (#3354); the editor shows a plain
+// two-decimal amount. Bounds mirror the settings route's zod contract
+// (0..100_000 cents = 0.00..1,000.00). Cap 0 disables all paid answers
+// (hard-off).
 
 export const MAX_BUDGET_CENTS = 100_000;
 
@@ -56,7 +57,7 @@ export function parseDollarsToCents(input: string): ParseBudgetResult {
   if (cents > MAX_BUDGET_CENTS) {
     return {
       ok: false,
-      error: `The monthly cap cannot exceed $${centsToDollars(MAX_BUDGET_CENTS)}.`,
+      error: `The monthly cap cannot exceed ${formatCents(MAX_BUDGET_CENTS)}.`,
     };
   }
   return { ok: true, cents };

@@ -83,8 +83,14 @@ export const MODEL_LEVEL_EXCLUSIONS: Record<string, string> = {
     "deployment-local setup-wizard progress (which steps THIS install has " +
     "completed/skipped, and by whom); operational install state, not portable " +
     "club policy — instance-local",
+  AiSpendCurrencySettings:
+    "the administrator-set NZD -> club-currency conversion rate for AI spend " +
+    "(#3354), shared by both AI modules; a property of THIS deployment's " +
+    "configured currency (APP_CURRENCY), so a source club's rate has no meaning on " +
+    "a target and, like the two spend caps it prices against, must never land " +
+    "there — a fresh import keeps the target's own rate (or none) — instance-local",
   AiAssistantSettings:
-    "deployment-specific AI monthly spend cap (NZD integer cents); an operational " +
+    "deployment-specific AI monthly spend cap (club-currency integer cents, #3354); an operational " +
     "spend control a source club must never silently reset on a target — a fresh " +
     "import keeps the target's own cap (#2211) — instance-local",
   AnalyticsSettings:
@@ -97,7 +103,7 @@ export const MODEL_LEVEL_EXCLUSIONS: Record<string, string> = {
     "target's own analytics configuration, and a target with none stays off " +
     "(fail-closed) — instance-local",
   DiagnosticsSettings:
-    "deployment-local AI Diagnostics monthly spend cap (NZD integer cents) for a " +
+    "deployment-local AI Diagnostics monthly spend cap (club-currency integer cents) for a " +
     "SEPARATE admin-only paid product (AID-2, #2371); like AiAssistantSettings it " +
     "is an operational spend control a source club must never silently reset on a " +
     "target — enabling paid diagnostics is a per-deployment decision, so a fresh " +

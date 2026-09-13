@@ -23,7 +23,7 @@
  *
  * WHAT IT IS NOT. It is not a general "every reclassification ships a backfill"
  * gate, and INV-OPS-012 says plainly why one is not available: the census pins
- * only 127 of 470 write sites per-site by design, so a reclassification of any
+ * only 127 of 471 write sites per-site by design, so a reclassification of any
  * other site is invisible to any check that has no per-site baseline to compare
  * against. This is the enforceable half — the population the rule was invented
  * on — and the rest of INV-OPS-012 is a rule a reviewer applies.

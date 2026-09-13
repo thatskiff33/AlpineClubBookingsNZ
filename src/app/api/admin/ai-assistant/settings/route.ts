@@ -16,8 +16,9 @@ const AI_ASSISTANT_SETTINGS_ID = "default";
 
 const updateSchema = z
   .object({
-    // NZD integer cents. 0 disables all paid answers (hard-off);
-    // 100000c = NZ$1,000 upper guard so a fat-finger cannot uncap spend.
+    // Integer cents of the club's configured currency (#3354). 0 disables all
+    // paid answers (hard-off); 100000c = 1,000.00 upper guard so a fat-finger
+    // cannot uncap spend.
     monthlyBudgetCents: z.number().int().min(0).max(100000),
   })
   .strict();

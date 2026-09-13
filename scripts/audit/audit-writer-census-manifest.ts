@@ -414,7 +414,16 @@ export const AUDIT_CENSUS_TOTALS = {
   // Both are `payment`, both are categorised at the site, so neither joins
   // `UNCATEGORISED_AUDIT_WRITERS`. Re-MEASURED with `npm run audit:census` on
   // this branch (470 sites), never by adding two to the literal.
-  // 470 -> 471 (#3371): `booking.editFinancialReview.chargeCarriedUnpaidBalance`,
+  // 470 -> 471 (#3354): `AI_SPEND_CURRENCY_RATE_UPDATED` in
+  // `/api/admin/ai-spend-currency`, the administrator-set NZD -> club-currency
+  // rate both AI spend caps are now compared through. `tx.auditLog.create` with
+  // `buildStructuredAuditLogCreateArgs`, the same form as the two sibling AI
+  // settings writers (`AI_ASSISTANT_SETTINGS_UPDATED`,
+  // `AI_DIAGNOSTICS_SETTINGS_UPDATED`) it sits beside, and like them
+  // categorised `admin` at the site and named in none of the four per-site
+  // maps. Re-MEASURED by running the census suite on this branch (471 sites),
+  // never by adding one to the literal.
+  // 471 -> 472 (#3371): `booking.editFinancialReview.chargeCarriedUnpaidBalance`,
   // the record that a review charge absorbed another change's unpaid extra when
   // its mint retired that change's ask. It is provenance rather than a queue -
   // nothing is owed outside the system and nobody has to act - but an officer
@@ -423,7 +432,7 @@ export const AUDIT_CENSUS_TOTALS = {
   // join `UNCATEGORISED_AUDIT_WRITERS` below. Measured by RUNNING
   // `npm run audit:census` on this tree (471 sites, 2319 files scanned), not by
   // adding one to the literal.
-  writeSites: 471,
+  writeSites: 472,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -553,7 +562,10 @@ export const AUDIT_CENSUS_TOTALS = {
     // as the club-timezone writer beside it, inside the route's own Serializable
     // transaction — so the two-table contract that route's test enumerates stays
     // enumerable.
-    "auditLog.create": { total: 74, uncategorised: 0 },
+    // 74 -> 75 (#3354): the AI spend currency-rate writer, above — the same
+    // `tx.auditLog.create` + `buildStructuredAuditLogCreateArgs` form as the two
+    // AI settings routes it is a sibling of.
+    "auditLog.create": { total: 75, uncategorised: 0 },
   },
   /**
    * Literal category values written, and by how many sites. The three `membership`
@@ -775,7 +787,15 @@ export const AUDIT_CENSUS_TOTALS = {
     // disclosure. `security` was considered and rejected: this changes what the
     // installation DOES, not who may sign in or what they may reach, and its read
     // gate is `support:view` either way.
-    admin: 104,
+    // 104 -> 105 (#3354): AI_SPEND_CURRENCY_RATE_UPDATED. A widening of who can
+    // read what by one site, stated rather than counted: `admin` is readable
+    // with `support:view` alone, so the derived weakest-gate total moves
+    // 130 -> 131. The row carries the before/after rate (a ratio, not an
+    // amount) and the id of the administrator who set it — no member data —
+    // and it is `admin` for the same reason the two sibling AI settings writers
+    // are: installation configuration that changes what the caps are compared
+    // against, not who may sign in or what they may reach.
+    admin: 105,
     // 16 -> 19 (#2581 child 2): `member.password-reset-sent` and
     // `member.setup-invite-sent` (decision 3 — the affected domain is the
     // CREDENTIAL, not the mailing), plus the `member.bulk-set-role` branch

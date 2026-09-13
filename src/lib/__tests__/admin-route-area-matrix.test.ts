@@ -107,6 +107,9 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/ai-diagnostics/ask": "support",
   "/api/admin/ai-diagnostics/readiness": "support",
   "/api/admin/ai-diagnostics/settings": "support",
+  // The NZD -> club-currency rate for AI spend (#3354): one setting shared by
+  // both AI modules, at its own prefix, same support view/edit levels.
+  "/api/admin/ai-spend-currency": "support",
   "/api/admin/audit-log": "support",
   "/api/admin/backups/config": "support",
   // The `support` AREA, with a Full-Admin gate inside the handler — the same
