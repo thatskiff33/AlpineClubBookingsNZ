@@ -167,7 +167,7 @@ async function mintedGoodwillLine(appliedCents = 3000): Promise<LineItem> {
   return lines[0];
 }
 
-describe("goodwill credit applied to an Internet Banking booking (#2717)", () => {
+describe("goodwill credit spent on a booking (#2717)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     h.mappingRows.clear();

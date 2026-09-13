@@ -100,7 +100,7 @@ export const XERO_ACCOUNT_MAPPING_DEFINITIONS = [
     key: "goodwillWriteOffs",
     label: "Goodwill & Write-Offs",
     description:
-      "Expense account for discretionary goodwill — admin-granted account credit applied to an Internet Banking booking. Keeping it separate from refunds lets the accounts show what the club billed and what it chose not to collect, instead of netting the two together.",
+      "Expense account for discretionary goodwill — account credit an admin granted, spent on a booking. Keeping it separate from refunds lets the accounts show what the club billed and what it chose not to collect, instead of netting the two together. Credit a member had already paid for is not goodwill and still posts to the refund account.",
     // The WHOLE expense class, with no type narrowing. On the standard New
     // Zealand chart the range a treasurer puts write-offs in is typed
     // OVERHEADS, so narrowing to type EXPENSE would render an empty picker and
