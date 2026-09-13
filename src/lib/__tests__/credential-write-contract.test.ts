@@ -316,7 +316,7 @@ describe("the secret and its audit row are one local action (#2723)", () => {
 // ---------------------------------------------------------------------------
 
 describe("a stale concurrent write loses deterministically (#2723)", () => {
-  it("refuses a create-only write when a row appeared first", async () => {
+  it("refuses a create-only write when a row is already there", async () => {
     const winner = storedRow("stripe", "secret_key", "winner-value");
     mocks.tx.integrationCredential.create.mockRejectedValueOnce(
       Object.assign(new Error("Unique constraint failed"), { code: "P2002" }),
@@ -336,6 +336,32 @@ describe("a stale concurrent write loses deterministically (#2723)", () => {
       credentialVersionOf(winner),
     );
     // The loser wrote nothing, so it recorded nothing.
+    expect(mocks.tx.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it("loses a true create race without reading from the aborted transaction", async () => {
+    // The row appears BETWEEN the pre-check and the insert, so the unique
+    // violation fires. A failed statement aborts the PostgreSQL transaction, and
+    // reading the winner from inside it would replace this writer's clean
+    // "you lost" with a 25P02 about a transaction it can no longer use — so the
+    // version is reported as unknown and the caller re-reads instead.
+    mocks.tx.integrationCredential.findUnique.mockResolvedValue(null);
+    mocks.tx.integrationCredential.create.mockRejectedValueOnce(
+      Object.assign(new Error("Unique constraint failed"), { code: "P2002" }),
+    );
+
+    const error = await setIntegrationCredential({
+      provider: "stripe",
+      key: "secret_key",
+      value: SECRET,
+      actor: ADMIN,
+      expect: { expect: "absent" },
+    }).catch((err: unknown) => err);
+
+    expect(error).toBeInstanceOf(StaleCredentialWriteError);
+    expect((error as StaleCredentialWriteError).observedVersion).toBeNull();
+    // Exactly one read: the pre-check. None after the failed insert.
+    expect(mocks.tx.integrationCredential.findUnique).toHaveBeenCalledTimes(1);
     expect(mocks.tx.auditLog.create).not.toHaveBeenCalled();
   });
 

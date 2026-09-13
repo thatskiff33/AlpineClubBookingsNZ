@@ -72,6 +72,22 @@ export async function applyCredentialWrite(
   }
 
   if (expectation.expect === "absent") {
+    // READ BEFORE THE CREATE, and not only as an optimisation. A failed
+    // statement puts a PostgreSQL transaction into the aborted state, where
+    // every later statement fails with 25P02 — so reading the winner AFTER
+    // catching the unique violation, which is the obvious shape, would replace
+    // this writer's clean "you lost" with a driver error about a transaction it
+    // cannot use. The ordinary case (somebody got there first, and their row is
+    // sitting there to be read) is answered here with the winner's real version.
+    const existing = await readRowForWrite(tx, provider, key);
+    if (existing !== null) {
+      throw new StaleCredentialWriteError({
+        provider,
+        key,
+        expectation,
+        observedVersion: credentialVersionOf(existing),
+      });
+    }
     try {
       const row = await tx.integrationCredential.create({
         data: { provider, key, ...written },
@@ -79,12 +95,15 @@ export async function applyCredentialWrite(
       return row.updatedAt;
     } catch (error) {
       if (!isUniqueConstraintError(error)) throw error;
-      const winner = await readRowForWrite(tx, provider, key);
+      // A true race: the row appeared between the read above and this insert.
+      // The transaction is now aborted, so this writer cannot report the
+      // winner's version — `null` says "unknown from here", and the caller's
+      // cache is dropped so its re-read is fresh.
       throw new StaleCredentialWriteError({
         provider,
         key,
         expectation,
-        observedVersion: winner === null ? null : credentialVersionOf(winner),
+        observedVersion: null,
       });
     }
   }

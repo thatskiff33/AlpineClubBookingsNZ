@@ -269,8 +269,11 @@ export type CredentialDeleteExpectation =
  * under a concurrent writer. The stale write made NO change and wrote NO audit
  * row — it lost, and it is told so rather than silently winning.
  *
- * `observedVersion` is the token now stored (or `null` when the row is gone),
- * so a caller can re-read, re-decide and retry against a known state.
+ * `observedVersion` is the token now stored WHEN THE LOSER COULD READ IT, and
+ * `null` when it could not — either the row is gone, or the write lost to a
+ * unique violation, which aborts the PostgreSQL transaction and leaves nothing
+ * readable from inside it. Either way the caller re-reads: the store drops its
+ * cache for the provider before the error leaves, so that re-read is fresh.
  */
 export class StaleCredentialWriteError extends Error {
   readonly provider: string;
