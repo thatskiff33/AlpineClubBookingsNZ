@@ -781,12 +781,14 @@ derivation).
   until it is set up (the setup-readiness Club Config check warns on a
   default lodge left at 0).
 - The arithmetic itself has **one home**, `src/lib/lodge-effective-capacity.ts`
-  (`INV-SSOT-001`): `getLodgeCapacityStatus` resolves through it, and the admin
-  lodge configuration screen previews the same function against an unsaved
-  value, so what an officer is told cannot drift from what the save does. A
-  configured capacity **above** the active bed count is accepted and explained
-  on that screen — the beds simply bind until more are activated — never
-  refused and never silently rewritten (#2724).
+  (`INV-SSOT-001`): the resolver, the partner-headroom formula
+  (`INV-CAP-031`) and the save bounds all live there, and the admin lodge
+  configuration screen previews them against an unsaved value, so what an
+  officer is told cannot drift from what the save does. A configured capacity
+  **above** the active bed count is accepted and explained on that screen —
+  never refused, never silently rewritten — and the explanation must name the
+  partner spots the surplus allows, because the surplus is the gap that
+  headroom is measured against and is therefore never inert (#2724).
 
 ### INV-CAP-004
 
