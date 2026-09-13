@@ -3,7 +3,7 @@
 One file, and the number is bigger than this change is.
 
 It also **carries #2933's declaration for the same file forward**. That entry
-recorded 1143 lines and this change makes the file 1182, so 1143 stopped being
+recorded 1143 lines and this change makes the file 1249, so 1143 stopped being
 its real length — and two live entries for one file is an unusable input rather
 than a redundant one, because the gate cannot tell which number is meant. The
 entry was removed from `3405-missing-membership-rates.md` (whose other two files
@@ -11,20 +11,24 @@ are untouched and still accurate) and its reasoning is restated at the end of
 this one. Nothing is withdrawn.
 
 file: src/app/(admin)/admin/fees/_components/hut-fees-section.tsx
-lines: 1182
-reason: thirty-nine lines against the branch this work started from, and the
-  gate reads a bigger figure than that because it measures against `origin/main`
-  while this pull request opens into `epic/2725-mad`. Of the 209 lines between
-  973 and 1182, 170 are #2933's growth, already declared and already merged into
-  the epic; 39 are this change. Splitting was tried FIRST and is most of the
+lines: 1249
+reason: 106 lines against the branch this work started from, and the gate reads
+  a bigger figure than that because it measures against `origin/main` while this
+  pull request opens into `epic/2725-mad`. Of the 276 lines between 973 and
+  1249, 170 are #2933's growth, already declared and already merged into the
+  epic; 106 are this change, and 67 of those are the review round.
+  Splitting was tried FIRST and is most of the
   diff: eleven helpers moved out to `src/lib/season-rate-grid.ts`, taking about
   130 lines with them, and the save handler's inline rate building went with
   them as `rateRowsFromCells`. That move is the point rather than a concession to
   this gate — one of those helpers decides whether a blank rate box saves as "no
   rate" or as a $0.00 nightly rate, and while it lived in a form component the
   only way to exercise it was to render the whole admin console over a fake API.
-  What is left is wiring that cannot move: the timeline memo that decodes each
-  season's edges and hands the decoded pair to `buildSeasonTimeline`, the
+  The review round moved a second rule out for the same reason: the
+  decode-and-order policy this screen ran over the season payload is now
+  `admin/_lib/season-schedule.ts`, shared with the Seasons page, which took the
+  memo with it and made the wiring here three lines.
+  What is left is wiring that cannot move: that three-line memo, the
   `startCopyFrom` handler and the paragraph above it explaining why `editingId`
   stays null, and one more action button. The season card was lifted into a local
   `renderSeasonCard` so the timeline can render it in two places — in order, and
@@ -33,7 +37,21 @@ reason: thirty-nine lines against the branch this work started from, and the
   ten lines and prevents the duplication a reviewer would rightly object to. The
   gap panel itself is NOT here: it is
   `src/components/admin/season-coverage-warning.tsx`, a new file, because the
-  Seasons page renders the same warning. The real remaining seam is the one
+  Seasons page renders the same warning.
+
+  The review round's 67 lines are the accessibility work and its explanation,
+  and roughly forty of them are comments. The code is four `aria-label`s, three
+  `headingLevel`s, one piece of state, one ref, one four-line focus effect and
+  the paragraph it focuses. None of it can move: a heading level is a statement
+  about the page this card sits on and is said at the call site by design, an
+  accessible name has to be built from the season the button is rendered for,
+  and the notice reports what `startCopyFrom` just did. The comments are the
+  load-bearing part — the only record that four identically-named buttons per
+  card meant a screen-reader user picked "New season from this" by counting, and
+  that the copy's deliberate namelessness, which is what stops it overwriting its
+  source, is also why nothing confirmed which season was copied.
+
+  The real remaining seam is the one
   #2933's allowance already named — this is one component holding a season
   editor, a rate grid and a season list — and it is a piece of work in its own
   right rather than something to attempt while adding a button to each.

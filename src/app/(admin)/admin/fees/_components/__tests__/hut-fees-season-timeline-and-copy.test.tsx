@@ -28,6 +28,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { FROZEN_TEST_CLOCK_BASE_ISO } from "@/lib/__tests__/helpers/clock";
+import { expectRecoveryAlertToHoldFocus } from "@/lib/__tests__/helpers/focus";
 
 vi.mock("@/components/lodge-select", async (importOriginal) => {
   const actual = (await importOriginal()) as typeof import("@/components/lodge-select");
@@ -174,16 +175,15 @@ describe("Hut Fees lists the seasons in order and warns about holes (#2938)", ()
     ]);
     renderSection();
 
-    await screen.findByText("Winter 2026");
-    // Read the DOM order directly rather than a list of names: the card title
-    // is a styled `div`, so there is no heading role to enumerate, and the
-    // question is only ever "does summer come after winter on the page".
+    await screen.findByRole("heading", { name: "Winter 2026" });
+    // Enumerating the heading list IS the order question, now that each card
+    // title claims a level (#2938 review) — and it is the same list a screen
+    // reader offers, so this asserts what such a user is actually handed.
     expect(
       screen
-        .getByText("Winter 2026")
-        .compareDocumentPosition(screen.getByText("Summer 2026-27")) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
+        .getAllByRole("heading", { level: 3 })
+        .map((heading) => heading.textContent),
+    ).toEqual(["Winter 2026", "Summer 2026-27"]);
   });
 
   it("names the nights nothing prices, and counts them", async () => {
@@ -233,35 +233,46 @@ describe("Hut Fees lists the seasons in order and warns about holes (#2938)", ()
   });
 });
 
+/**
+ * A season with one priced type, one deliberate hole, and an odd-cent rate.
+ *
+ * 45.05 is not a round dollar on purpose: an amount that round-tripped through
+ * the box's displayed text would be at risk here, and a round number would
+ * survive the trip and prove nothing.
+ */
+function sourceSeason() {
+  return season({
+    flatWholeLodgeNightCents: 60050,
+    membershipTypeRates: [
+      { membershipTypeId: FULL.id, ageTier: null, pricePerNightCents: 4505 },
+    ],
+  });
+}
+
+async function openTheCopy() {
+  await screen.findByText("Winter 2026");
+  fireEvent.click(
+    screen.getByRole("button", { name: "New season from this: Winter 2026" }),
+  );
+  await screen.findByRole("heading", { name: "New Season" });
+}
+
+/** Open the edit form for the one seeded season. */
+async function openTheEdit() {
+  await screen.findByText("Winter 2026");
+  fireEvent.click(screen.getByRole("button", { name: "Edit Winter 2026" }));
+  await screen.findByRole("heading", { name: "Edit Season" });
+}
+
 describe("Hut Fees copies a season exactly (#2938)", () => {
-  /**
-   * A season with one priced type, one deliberate hole, and an odd-cent rate.
-   *
-   * 45.05 is not a round dollar on purpose: an amount that round-tripped
-   * through the box's displayed text would be at risk here, and a round number
-   * would survive the trip and prove nothing.
-   */
-  function sourceSeason() {
-    return season({
-      flatWholeLodgeNightCents: 60050,
-      membershipTypeRates: [
-        { membershipTypeId: FULL.id, ageTier: null, pricePerNightCents: 4505 },
-      ],
-    });
-  }
-
-  async function openTheCopy() {
-    await screen.findByText("Winter 2026");
-    fireEvent.click(screen.getByRole("button", { name: "New season from this" }));
-    await screen.findByText("New Season");
-  }
-
   it("opens a NEW season, not an edit of the one clicked", async () => {
     mockApi([sourceSeason()]);
     renderSection();
     await openTheCopy();
 
-    expect(screen.queryByText("Edit Season")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Edit Season" }),
+    ).not.toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Create Season" }),
     ).toBeInTheDocument();
@@ -369,5 +380,166 @@ describe("Hut Fees copies a season exactly (#2938)", () => {
       ageTier: null,
       pricePerNightCents: 0,
     });
+  });
+});
+
+describe("Hut Fees is navigable without seeing it (#2938)", () => {
+  const SUMMER = season({
+    id: "summer",
+    name: "Summer 2026-27",
+    startDate: "2026-10-01T00:00:00.000Z",
+    endDate: "2027-04-30T00:00:00.000Z",
+  });
+
+  it("gives the section, and every season card, a level in the page outline", async () => {
+    // The page's <h1> is "Fees". Without these levels the schedule is a
+    // headingless run of cards with gap notices interleaved, and a screen
+    // reader's heading list — one of the two main ways such a user moves around
+    // a page — is empty below the page title.
+    mockApi([sourceSeason(), SUMMER]);
+    renderSection();
+
+    await screen.findByRole("heading", { name: "Winter 2026" });
+    expect(
+      screen.getByRole("heading", { level: 2, name: "Hut fees" }),
+    ).toBeInTheDocument();
+    expect(
+      screen
+        .getAllByRole("heading", { level: 3 })
+        .map((heading) => heading.textContent),
+    ).toEqual(["Winter 2026", "Summer 2026-27"]);
+  });
+
+  it("names all four of a card's buttons after its season", async () => {
+    // Two seasons used to give EIGHT buttons carrying four labels between them.
+    // A screen-reader user picking "New season from this" out of a control list
+    // had nothing to tell the two apart — and the copy deliberately carries no
+    // name or dates, so choosing wrongly produced a season with the other one's
+    // rates and no confirmation either way.
+    mockApi([sourceSeason(), { ...SUMMER, active: false }]);
+    renderSection();
+
+    await screen.findByText("Winter 2026");
+    for (const name of [
+      "Deactivate Winter 2026",
+      "Edit Winter 2026",
+      "New season from this: Winter 2026",
+      "Delete Winter 2026",
+      "Activate Summer 2026-27",
+      "Edit Summer 2026-27",
+      "New season from this: Summer 2026-27",
+      "Delete Summer 2026-27",
+    ]) {
+      expect(screen.getByRole("button", { name })).toBeInTheDocument();
+    }
+  });
+
+  it("keeps each visible label at the start of its accessible name", async () => {
+    // WCAG 2.5.3: a voice-control user says what they can see, so the
+    // accessible name has to EXTEND the visible text, never replace it.
+    mockApi([sourceSeason()]);
+    renderSection();
+
+    const copy = await screen.findByRole("button", {
+      name: "New season from this: Winter 2026",
+    });
+    expect(copy).toHaveTextContent("New season from this");
+  });
+});
+
+describe("Hut Fees says what a copy carried, and takes the officer to it (#2938)", () => {
+  it("names the season it was pre-filled from, and what did and did not cross", async () => {
+    mockApi([sourceSeason()]);
+    renderSection();
+    await openTheCopy();
+
+    const text = (
+      screen.getByText(/Pre-filled from/).textContent ?? ""
+    ).replace(/\s+/g, " ");
+    // The three facts the guide and the code comment both state carefully and
+    // the screen never showed: that it is pre-filled, from WHAT, and what did
+    // and did not come across with it.
+    expect(text).toContain("Pre-filled from Winter 2026");
+    expect(text).toContain("Its name and dates did not");
+    expect(text).toContain("arrives blank here rather than as 0.00");
+    expect(text).toContain("does not change Winter 2026");
+  });
+
+  it("moves focus into the form, so the next Tab reaches the name field", async () => {
+    // Opening the form only SCROLLED a container, which moves no focus and
+    // speaks no message: a keyboard user stayed on the button at the bottom of
+    // the list, and tabbing forward landed on the next season's card rather
+    // than in the form that had just opened.
+    mockApi([sourceSeason()]);
+    renderSection();
+    await openTheCopy();
+
+    await expectRecoveryAlertToHoldFocus(screen.getByText(/Pre-filled from/));
+  });
+
+  it("says nothing of the sort for an ordinary Edit", async () => {
+    // The notice is a statement about a COPY. An edit is not one, and claiming
+    // an edit was pre-filled from the season it IS would be false.
+    mockApi([sourceSeason()]);
+    renderSection();
+    await openTheEdit();
+
+    expect(screen.queryByText(/Pre-filled from/)).not.toBeInTheDocument();
+  });
+
+  it("drops the notice when the form is cancelled and reopened as a new season", async () => {
+    mockApi([sourceSeason()]);
+    renderSection();
+    await openTheCopy();
+    expect(screen.getByText(/Pre-filled from/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() =>
+      expect(screen.queryByText(/Pre-filled from/)).not.toBeInTheDocument(),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Add season" }));
+    await screen.findByRole("heading", { name: "New Season" });
+    expect(screen.queryByText(/Pre-filled from/)).not.toBeInTheDocument();
+  });
+});
+
+describe("Hut Fees draws the whole-lodge box from its one home (#2938)", () => {
+  /*
+    The flat whole-lodge amount is the one that prices the entire building, and
+    the box that seeds it hand-rolled both halves of the absence-versus-zero
+    display rule twenty lines below the rate boxes that take it from the shared
+    helper. These pin the behaviour that substitution had to preserve, so the
+    field cannot drift back to its own copy of the rule unnoticed.
+  */
+  it("leaves the box EMPTY when the season sets no whole-lodge rate", async () => {
+    mockApi([season({ flatWholeLodgeNightCents: null })]);
+    renderSection();
+    await openTheEdit();
+
+    expect(screen.getByLabelText(/Flat whole-lodge night rate/)).toHaveValue("");
+  });
+
+  it("shows a deliberate zero as 0.00, which is not the same box as empty", async () => {
+    // Absence means "whole-lodge bookings are priced per guest"; zero means
+    // "the whole building costs nothing a night". Rendering both as an empty
+    // box is exactly the confusion #2933 removed from the rate grid.
+    mockApi([season({ flatWholeLodgeNightCents: 0 })]);
+    renderSection();
+    await openTheEdit();
+
+    expect(screen.getByLabelText(/Flat whole-lodge night rate/)).toHaveValue(
+      "0.00",
+    );
+  });
+
+  it("shows an odd-cent amount without rounding it", async () => {
+    mockApi([season({ flatWholeLodgeNightCents: 60005 })]);
+    renderSection();
+    await openTheEdit();
+
+    expect(screen.getByLabelText(/Flat whole-lodge night rate/)).toHaveValue(
+      "600.05",
+    );
   });
 });
