@@ -10,7 +10,7 @@ import {
 import { E2E_ADMIN } from "./helpers/fixtures";
 import { personas } from "./helpers/personas";
 import { cancelMemberBookingsOnDate } from "./helpers/reset";
-import { lodgeNightLabel, stayWindow } from "./helpers/stay-dates";
+import { dateOnlyParts, lodgeNightLabel, stayWindow } from "./helpers/stay-dates";
 
 // Critical row: member books a bed through /book with the capacity lock.
 // The persona signed in by auth.setup.ts creates a real booking through the
@@ -79,7 +79,7 @@ test("member books a bed through /book and the booking owes payment", async ({
 
   // The booking is visible to the member with payment still owed.
   await page.goto("/bookings");
-  const checkInDay = String(Number(window.checkIn.split("-")[2]));
+  const checkInDay = String(dateOnlyParts(window.checkIn).day);
   await expect(
     page.getByText(new RegExp(`\\b${checkInDay}[/ ]`)).first(),
   ).toBeVisible();

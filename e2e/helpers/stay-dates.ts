@@ -23,6 +23,11 @@ import {
   WAITLIST_FULL_WINDOW,
   WAITLIST_OFFER_WINDOW,
 } from "../../prisma/e2e-fixtures";
+import {
+  calendarDateParts,
+  requireCalendarDate,
+} from "../../src/lib/club-time/calendar-date";
+import { must } from "../../src/lib/indexed-access";
 
 const FIRST_WINDOW_OFFSET_DAYS = 21;
 
@@ -258,17 +263,15 @@ export function stayWindowForAttempt(index: number, retry: number): StayWindow {
   return stayWindow(index + retry * RETRY_WINDOW_STRIDE);
 }
 
-// A `YYYY-MM-DD` lodge night split into its numeric parts. Throws on anything
-// else, so a malformed fixture fails here rather than as `new Date(NaN)`
-// downstream (#3363).
+// A `YYYY-MM-DD` lodge night split into its numeric parts. The grammar of a
+// calendar date is the club-time kernel's (`INV-SSOT`), so this is a derivation
+// over it rather than a second regex: `requireCalendarDate` throws on anything
+// that is not a real day, so a malformed fixture fails here rather than as
+// `new Date(NaN)` downstream (#3363).
 export function dateOnlyParts(
   dateOnly: string,
 ): { year: number; month: number; day: number } {
-  const [, year, month, day] = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateOnly) ?? [];
-  if (year === undefined || month === undefined || day === undefined) {
-    throw new Error(`Expected a YYYY-MM-DD date, received ${dateOnly}`);
-  }
-  return { year: Number(year), month: Number(month), day: Number(day) };
+  return calendarDateParts(requireCalendarDate(dateOnly));
 }
 
 // A `YYYY-MM` month key (the first seven characters of a lodge night) split
@@ -286,13 +289,10 @@ export function monthKeyParts(monthKey: string): { year: number; month: number }
 // after the first — the date a one-night stay checks out. Throws when the
 // window has no second night, rather than handing back `undefined`.
 export function oneNightCheckOut(window: Pick<StayWindow, "nights">): string {
-  const [, checkOut] = window.nights;
-  if (!checkOut) {
-    throw new Error(
-      `stay window ${window.nights.join(", ")} has no second night to check out on`,
-    );
-  }
-  return checkOut;
+  return must(
+    window.nights[1],
+    `stay window ${window.nights.join(", ")} has no second night to check out on`,
+  );
 }
 
 // How the app renders a lodge night in prose, e.g. "17 Aug 2026" — the member-

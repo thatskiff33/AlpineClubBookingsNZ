@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { storageStatePath } from "./helpers/auth";
 import { DEMO_BOOKING_WINDOWS, E2E_ADMIN } from "./helpers/fixtures";
+import { must } from "../src/lib/indexed-access";
 
 /**
  * #2622 — a guest who leaves this morning is on this morning's chore roster.
@@ -186,8 +187,10 @@ test("rosters a mixed turnover day with both sides of midday", async ({ page }) 
   // a departing guest who is NOT already the current assignee.
   await page.getByRole("button", { name: "Edit roster" }).click();
   const firstSelect = page.getByRole("combobox").first();
-  const [firstDeparting] = departing;
-  if (!firstDeparting) throw new Error("the turnover day must list a departing guest");
+  const firstDeparting = must(
+    departing[0],
+    "the turnover day must list a departing guest",
+  );
   const departingLabel = `${firstDeparting.firstName} ${firstDeparting.lastName} (departing today)`;
   await expect(firstSelect.locator("option", { hasText: departingLabel })).toHaveCount(1);
   const currentValue = await firstSelect.inputValue();

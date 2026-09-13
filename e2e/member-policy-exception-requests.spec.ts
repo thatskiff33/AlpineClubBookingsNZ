@@ -28,6 +28,7 @@ import {
   stayWindowForAttempt,
   type StayWindow,
 } from "./helpers/stay-dates";
+import { must } from "../src/lib/indexed-access";
 
 /**
  * #2562 — the MEMBER's own booking-policy exception journey, driven through the
@@ -162,9 +163,7 @@ async function openRequest(): Promise<MemberExceptionRow> {
     open.length,
     `exactly one open request expected, got ${open.length}`,
   ).toBe(1);
-  const [only] = open;
-  if (!only) throw new Error("no open request to return");
-  return only;
+  return must(open[0], "no open request to return");
 }
 
 /** Poll the member's own list until one request reaches a state. */
@@ -768,9 +767,10 @@ test("the edit panel offers the same request, with the modification's own capaci
     bookings.length,
     "test 1's two-night booking must still exist for the edit journey",
   ).toBe(1);
-  const [booking] = bookings;
-  if (!booking) throw new Error("test 1's two-night booking is missing");
-  const bookingId = booking.id;
+  const bookingId = must(
+    bookings[0],
+    "test 1's two-night booking is missing",
+  ).id;
 
   const page = await memberContext.newPage();
   await page.goto(`/bookings/${bookingId}`);

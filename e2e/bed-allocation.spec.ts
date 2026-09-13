@@ -13,6 +13,7 @@ import {
   shiftDateOnly,
 } from "./helpers/fixtures";
 import { personas } from "./helpers/personas";
+import { must } from "../src/lib/indexed-access";
 
 // High row (docs/END_TO_END_TEST_MATRIX.md): "Approve a review-flagged booking,
 // then allocate its guests to specific beds." The seeded AWAITING_REVIEW booking
@@ -198,8 +199,10 @@ test("pointer, keyboard and menu moves share reviewed scopes and preserve origin
   const kensAllocations = payload.allocations
     .filter((allocation) => allocation.guestName.includes("Ken"))
     .sort((left, right) => left.stayDate.localeCompare(right.stayDate));
-  const [firstKenAllocation] = kensAllocations;
-  if (!firstKenAllocation) throw new Error("Ken must hold at least one bed allocation");
+  const firstKenAllocation = must(
+    kensAllocations[0],
+    "Ken must hold at least one bed allocation",
+  );
   const originalDates = kensAllocations.map(
     (allocation) => allocation.stayDate,
   );
@@ -236,10 +239,10 @@ test("pointer, keyboard and menu moves share reviewed scopes and preserve origin
     originalBedIds.size,
     "the seeded full-stay placement starts on one bed",
   ).toBe(1);
-  const originalBedId = [...originalBedIds][0];
-  if (!originalBedId) {
-    throw new Error("Ken's seeded full-stay placement has no source bed");
-  }
+  const originalBedId = must(
+    [...originalBedIds][0],
+    "Ken's seeded full-stay placement has no source bed",
+  );
   const originalBed = payload.rooms
     .flatMap((room) =>
       room.beds.map((bed) => ({ ...bed, roomName: room.name })),

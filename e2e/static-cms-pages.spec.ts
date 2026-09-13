@@ -5,7 +5,9 @@ import {
   type APIResponse,
 } from "@playwright/test";
 import { storageStatePath } from "./helpers/auth";
+import { unnoncedInlineScripts } from "./helpers/csp";
 import { E2E_ADMIN } from "../prisma/e2e-fixtures";
+import { must } from "../src/lib/indexed-access";
 
 /**
  * The admin-authored CMS pages served from full-route ISR (#2352 slice 1).
@@ -47,8 +49,10 @@ const CMS_PAGE = "/about";
  * applies to `'unsafe-inline'`, which `style-src` carries on every route.
  */
 function directive(response: APIResponse, name: string): string {
-  const policy = response.headers()["content-security-policy"];
-  if (!policy) throw new Error("every response must carry a CSP");
+  const policy = must(
+    response.headers()["content-security-policy"],
+    "every response must carry a CSP",
+  );
 
   const found = policy
     .split(";")
@@ -63,21 +67,6 @@ function scriptSrcNonce(response: APIResponse): string {
   const nonce = directive(response, "script-src").match(/'nonce-([^']+)'/)?.[1];
   expect(nonce, "script-src must name a nonce").toBeTruthy();
   return nonce as string;
-}
-
-/** Every inline `<script>` open tag in `html` that carries no non-empty nonce. */
-function unnoncedInlineScripts(html: string): string[] {
-  const offenders: string[] = [];
-
-  for (const match of html.matchAll(/<script\b([^>]*)>/gi)) {
-    const attributes = match[1] ?? "";
-    if (/\bsrc\s*=/i.test(attributes)) continue;
-    if (/\btype\s*=\s*["']?application\/(?:ld\+)?json/i.test(attributes)) continue;
-    if (/\bnonce\s*=\s*(?:"[^"]+"|'[^']+'|[^\s"'>]+)/i.test(attributes)) continue;
-    offenders.push(match[0]);
-  }
-
-  return offenders;
 }
 
 test("a CMS page is served with the SAME script nonce on every request", async ({

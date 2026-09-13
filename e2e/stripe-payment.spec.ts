@@ -8,6 +8,7 @@ import {
 } from "./helpers/booking";
 import { personas } from "./helpers/personas";
 import { stayWindowForAttempt } from "./helpers/stay-dates";
+import { must } from "../src/lib/indexed-access";
 import {
   payWithCard,
   STRIPE_SKIP_REASON,
@@ -85,10 +86,10 @@ test("test-mode card payment succeeds and confirms the booking", async ({
   // booking PAID and claims capacity in the success callback just after, so poll
   // instead of sampling instantly.
   for (const night of window.nights) {
-    const before = occupiedBefore[night];
-    if (before === undefined) {
-      throw new Error(`no occupied-bed reading for ${night} before payment`);
-    }
+    const before = must(
+      occupiedBefore[night],
+      `no occupied-bed reading for ${night} before payment`,
+    );
     await expect
       .poll(
         async () => (await fetchOccupiedBeds(page, window.nights))[night],

@@ -18,6 +18,7 @@ import {
   WAITLISTER,
 } from "./helpers/fixtures";
 import { monthKeyParts, stayWindow } from "./helpers/stay-dates";
+import { must } from "../src/lib/indexed-access";
 import { overrideModules, setModuleSettings, type ModuleSettings } from "./helpers/modules";
 
 /*
@@ -196,11 +197,10 @@ async function memberOccupiedBeds(
     payloads.push(body);
     for (const night of nights) {
       if (night.slice(0, 7) !== month) continue;
-      const count = body.availability[night];
-      if (count === undefined) {
-        throw new Error(`/api/availability for ${month} gave no answer for ${night}`);
-      }
-      occupied[night] = count;
+      occupied[night] = must(
+        body.availability[night],
+        `/api/availability for ${month} gave no answer for ${night}`,
+      );
     }
   }
   return { occupied, payloads };

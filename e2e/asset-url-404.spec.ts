@@ -1,6 +1,8 @@
 import { expect, test, type APIRequestContext } from "@playwright/test";
 import { storageStatePath } from "./helpers/auth";
+import { unnoncedInlineScripts } from "./helpers/csp";
 import { E2E_ADMIN } from "./helpers/fixtures";
+import { must } from "../src/lib/indexed-access";
 
 /**
  * Static-asset URLs on the wire (#2404).
@@ -31,21 +33,6 @@ import { E2E_ADMIN } from "./helpers/fixtures";
  * Anonymous on purpose: these are the addresses scanners and stale browser tabs
  * ask for, never a logged-in human.
  */
-
-/** Every inline `<script>` in `html` that carries no non-empty `nonce`. */
-function unnoncedInlineScripts(html: string) {
-  const offenders: string[] = [];
-
-  for (const match of html.matchAll(/<script\b([^>]*)>/gi)) {
-    const attributes = match[1] ?? "";
-    if (/\bsrc\s*=/i.test(attributes)) continue;
-    if (/\btype\s*=\s*["']?application\/(ld\+)?json/i.test(attributes)) continue;
-    if (/\bnonce\s*=\s*(?:"[^"]+"|'[^']+'|[^\s"'>]+)/i.test(attributes)) continue;
-    offenders.push(match[0]);
-  }
-
-  return offenders;
-}
 
 const missingAssetUrls = [
   "/foo.png",
@@ -103,8 +90,10 @@ test("a missing asset URL is answered with nothing, not the 404 document", async
     //  • `/_next/static/…` is still outside the matcher, so the terminal route's
     //    own `default-src 'none'` is what ships there. That case is asserted
     //    exactly, below the loop, so the route's headers stay pinned.
-    const csp = response.headers()["content-security-policy"];
-    if (!csp) throw new Error(`${url} must carry a policy from the app`);
+    const csp = must(
+      response.headers()["content-security-policy"],
+      `${url} must carry a policy from the app`,
+    );
 
     expect(
       csp === TERMINAL_CSP || csp.includes("'nonce-"),

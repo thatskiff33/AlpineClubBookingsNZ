@@ -7,6 +7,7 @@ import {
   wrongTotpCode,
 } from "./helpers/auth";
 import { personas } from "./helpers/personas";
+import { must } from "../src/lib/indexed-access";
 
 // Critical row: global two-factor enforcement — forced enrollment on first
 // login, TOTP verification on later logins, wrong-code rejection, and
@@ -79,10 +80,10 @@ test("recovery code completes the challenge and is single-use", async ({
 }) => {
   const stored = readStoredTwoFactor(enrollee.email);
   if (!stored) throw new Error("enrollment spec must have stored recovery codes");
-  const [recoveryCode] = stored.recoveryCodes;
-  if (!recoveryCode) {
-    throw new Error("enrollment spec must have stored at least one recovery code");
-  }
+  const recoveryCode = must(
+    stored.recoveryCodes[0],
+    "enrollment spec must have stored at least one recovery code",
+  );
 
   await submitLoginForm(page, enrollee.email);
   await expect(page).toHaveURL(/\/login\/verify/);

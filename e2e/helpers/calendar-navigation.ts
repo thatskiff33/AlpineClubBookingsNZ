@@ -11,9 +11,6 @@ type MonthKey = string;
 
 function monthKeyOfDateOnly(dateOnly: string): MonthKey {
   const { year, month } = dateOnlyParts(dateOnly);
-  if (month < 1 || month > 12) {
-    throw new Error(`Expected a valid month in ${dateOnly}`);
-  }
   return `${year}-${String(month).padStart(2, "0")}`;
 }
 
