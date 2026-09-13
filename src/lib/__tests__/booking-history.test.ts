@@ -91,6 +91,50 @@ describe("buildBookingHistoryItems", () => {
     expect(detail).not.toContain("$0.00");
   });
 
+  it.each([
+    [
+      "DERIVATION_DEFECT",
+      "the current calculation needs investigation",
+    ],
+    [
+      "LEGITIMATE_DIVERGENCE",
+      "the two methods legitimately describe different states",
+    ],
+  ] as const)("renders the %s fallback classification in booking history", (classification, words) => {
+    const items = buildBookingHistoryItems({
+      audience: "member",
+      createdAt: new Date("2026-04-01T09:00:00Z"),
+      payment: null,
+      modifications: [
+        {
+          id: `mod-${classification}`,
+          modificationType: "GUEST_REMOVE",
+          previousData: { guestCount: 2 },
+          newData: {
+            guestCount: 1,
+            moneyBuildUpOperation: "GUEST_REMOVAL",
+            moneyBuildUpSource: "DERIVED_COMPATIBILITY_FALLBACK",
+            moneyBuildUpReason: "STORED_DERIVED_MISMATCH",
+            moneyBuildUpStoredCents: -4_500,
+            moneyBuildUpDerivedCents: -4_000,
+            moneyBuildUpFallbackClassification: classification,
+          },
+          priceDiffCents: -4_000,
+          changeFeeCents: 0,
+          createdAt: new Date("2026-04-04T12:00:00Z"),
+        },
+      ],
+      refundRequests: [],
+      auditLogs: [],
+    });
+
+    const detail = items.find(
+      (item) => item.id === `modification-mod-${classification}`,
+    )?.detail;
+    expect(detail).toContain(words);
+    expect(detail).not.toContain(classification);
+  });
+
   it("builds a unified history sorted newest-first", () => {
     const items = buildBookingHistoryItems({
       audience: "member",

@@ -1,5 +1,8 @@
 import { formatCents } from "@/lib/utils";
-import type { BookingMoneyBuildUpHistoryMetadata } from "@/lib/booking-money-build-up";
+import type {
+  BookingMoneyBuildUpHistoryMetadata,
+  BookingMoneyCompatibilityClassification,
+} from "@/lib/booking-money-build-up";
 
 /**
  * HOW A STORED `BookingModification` ROW IS DESCRIBED IN WORDS.
@@ -76,7 +79,10 @@ export function memberFacingNoteOf(
   return typeof note === "string" && note.trim().length > 0 ? note : null;
 }
 
-const MONEY_BUILD_UP_FALLBACK_LABELS: Record<string, string> = {
+const MONEY_BUILD_UP_FALLBACK_LABELS: Record<
+  BookingMoneyCompatibilityClassification,
+  string
+> = {
   STORED_SIDE_DEFECT: "the stored evidence is incomplete or inconsistent",
   DERIVATION_DEFECT: "the current calculation needs investigation",
   LEGITIMATE_DIVERGENCE: "the two methods legitimately describe different states",

@@ -703,11 +703,10 @@ describe("createXeroInvoiceForBooking", () => {
         source: "INTERNET_BANKING",
       },
     };
-    // The invoice build and its Stage 3 money-evidence read succeed; the
-    // pre-email re-read throws.
+    // The invoice and Stage 3 evidence share the first coherent booking read;
+    // the pre-email re-read throws.
     const projectedBookingRow = withMoneyBuildUpProjection(bookingRow);
     mocks.prisma.booking.findUnique
-      .mockResolvedValueOnce(projectedBookingRow)
       .mockResolvedValueOnce(projectedBookingRow)
       .mockRejectedValueOnce(new Error("connection reset"));
 
@@ -1710,6 +1709,7 @@ describe("createXeroInvoiceForBooking", () => {
       await createXeroInvoiceForBooking("booking_1");
 
       expect(getPromoAdjustmentLine()).toBeUndefined();
+      expect(mocks.prisma.booking.findUnique).toHaveBeenCalledTimes(1);
       expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
         expect.objectContaining({
           requestPayload: expect.objectContaining({

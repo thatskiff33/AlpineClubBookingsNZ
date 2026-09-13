@@ -94,25 +94,40 @@ export type LoadedBookingMoneyBuildUp = {
 
 type BookingMoneyBuildUpStore = Pick<Prisma.TransactionClient, "booking">;
 
+export type BookingMoneyBuildUpProjection = {
+  checkIn: Date;
+  checkOut: Date;
+  totalPriceCents: number;
+  guests: Array<{
+    id: string;
+    priceCents: number;
+    stayStart: Date | null;
+    stayEnd: Date | null;
+    nights: Array<{
+      id: string;
+      stayDate: Date;
+      priceCents: number | null;
+      priceSource: "SOLD" | "OFFICER_PRICED" | "EVEN_SPLIT" | "UNKNOWN";
+    }>;
+  }>;
+  promoRedemption: {
+    priceAdjustmentCents: number;
+    allocations: Array<{ memberId: string; priceAdjustmentCents: number }>;
+  } | null;
+  nightAdjustments: Array<{
+    bookingGuestId: string | null;
+    bookingGuestNightId: string | null;
+    beneficiaryMemberId: string;
+    amountCents: number | null;
+  }>;
+};
+
 function exactBaseAmount(
   operation: BookingMoneyBuildUpOperation,
-  booking: {
-    checkIn: Date;
-    checkOut: Date;
-    totalPriceCents: number;
-    guests: Array<{
-      id: string;
-      priceCents: number;
-      stayStart: Date | null;
-      stayEnd: Date | null;
-      nights: Array<{
-        id: string;
-        stayDate: Date;
-        priceCents: number | null;
-        priceSource: "SOLD" | "OFFICER_PRICED" | "EVEN_SPLIT" | "UNKNOWN";
-      }>;
-    }>;
-  },
+  booking: Pick<
+    BookingMoneyBuildUpProjection,
+    "checkIn" | "checkOut" | "totalPriceCents" | "guests"
+  >,
   bookingGuestId?: string,
 ): BookingMoneyBaseEvidence {
   if (operation === "GUEST_REMOVAL") {
@@ -150,9 +165,10 @@ function exactBaseAmount(
 }
 
 /**
- * The one database projection for Stage 3 money readers. A transaction-owning
- * caller passes its transaction client; Xero passes the module client before
- * any provider call. No ambient client is imported here.
+ * The one database loader for transaction-owning Stage 3 money readers. The
+ * caller passes its transaction client; no ambient client is imported here.
+ * Xero already needs a wider booking snapshot and uses the pure projector
+ * below against that same query instead of performing a second unlocked read.
  */
 export async function readBookingMoneyBuildUp(
   store: BookingMoneyBuildUpStore,
@@ -203,6 +219,21 @@ export async function readBookingMoneyBuildUp(
   if (!booking) {
     refuse(`${args.purpose}: booking ${args.bookingId} does not exist`);
   }
+  return bookingMoneyBuildUpFromProjection(booking, args);
+}
+
+/**
+ * Project the canonical Stage 3 evidence from a coherent booking snapshot.
+ * Xero uses this with its invoice query so the headline and build-up cannot
+ * come from different commits; transaction-owning paths use the loader above.
+ */
+export function bookingMoneyBuildUpFromProjection(
+  booking: BookingMoneyBuildUpProjection,
+  args: {
+    purpose: BookingMoneyBuildUpOperation;
+    bookingGuestId?: string;
+  },
+): LoadedBookingMoneyBuildUp {
   const guestIdByNightId = new Map(
     booking.guests.flatMap((guest) =>
       guest.nights.map((night) => [night.id, guest.id] as const),

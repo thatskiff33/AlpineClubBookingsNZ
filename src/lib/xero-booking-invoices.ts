@@ -65,8 +65,8 @@ import {
 } from "./xero-invoice-helpers";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
 import {
+  bookingMoneyBuildUpFromProjection,
   d3CompatibleBookingMoneyBuildUpCents,
-  readBookingMoneyBuildUp,
   selectLoadedBookingMoneyBuildUp,
 } from "@/lib/booking-money-build-up";
 
@@ -399,7 +399,8 @@ export async function createXeroInvoiceForBooking(
       // item per contiguous run.
       guests: { include: { nights: true } },
       payment: true,
-      promoRedemption: { include: { promoCode: true } },
+      promoRedemption: { include: { promoCode: true, allocations: true } },
+      nightAdjustments: true,
       // #2258: recipient for the withheld-send audit row when the booking's
       // "No emails" switch stops Xero emailing the invoice.
       member: { select: { email: true } },
@@ -486,8 +487,7 @@ export async function createXeroInvoiceForBooking(
   // before authentication or any provider call. A mismatch remains today's
   // headline under D3 and its classified fallback is persisted on the uniquely
   // anchored sync operation below.
-  const recordedMoneyBuildUp = await readBookingMoneyBuildUp(prisma, {
-    bookingId,
+  const recordedMoneyBuildUp = bookingMoneyBuildUpFromProjection(booking, {
     purpose: "XERO_PROMO_LINE",
   });
   const promoMoneyBuildUpSelection = selectLoadedBookingMoneyBuildUp(

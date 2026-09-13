@@ -21,7 +21,7 @@ import { BOOKING_MONEY_BUILD_UP_INVARIANT } from "@/lib/booking-money-build-up";
  */
 
 const REPO = process.cwd();
-const READ = /(?<!function\s)\breadBookingMoneyBuildUp\s*\(/g;
+const READ = /(?<!function\s)\b(?:readBookingMoneyBuildUp|bookingMoneyBuildUpFromProjection)\s*\(/g;
 const SELECT = /\bselectLoadedBookingMoneyBuildUp\s*\(/g;
 const RESOLVE = /(?<!function\s)\bd3CompatibleBookingMoneyBuildUpCents\s*\(/g;
 
@@ -86,13 +86,14 @@ export function canonicalReaderShape(code: string, site: ReaderSite): boolean {
 }
 
 describe("#3277 canonical stored-money reader census", () => {
-  it("declares every production call to the canonical loader", () => {
+  it("declares every production call to the canonical loader or coherent-snapshot projector", () => {
     const discovered = sourceFiles()
+      .filter((file) => relativeSource(file) !== "src/lib/booking-money-build-up.ts")
       .filter((file) => [...stripComments(readFileSync(file, "utf8")).matchAll(READ)].length > 0)
       .map(relativeSource)
       .sort();
     expect(discovered).toEqual(Object.keys(NAMED_READERS).sort());
-  });
+  }, 15_000);
 
   it("requires every named reader to select, classify disagreement, and record history", () => {
     for (const [file, site] of Object.entries(NAMED_READERS)) {
@@ -130,7 +131,12 @@ describe("#3277 canonical stored-money reader census", () => {
     before(credit, "const moneyBuildUpSelection", "await tx.booking.updateMany");
 
     const xero = productionCode("src/lib/xero-booking-invoices.ts");
-    before(xero, "readBookingMoneyBuildUp(prisma", "getAuthenticatedXeroClient()");
+    before(xero, "const booking = await prisma.booking.findUnique", "bookingMoneyBuildUpFromProjection(booking");
+    before(xero, "bookingMoneyBuildUpFromProjection(booking", "getAuthenticatedXeroClient()");
+    expect(xero).toMatch(
+      /promoRedemption:\s*\{\s*include:\s*\{\s*promoCode:\s*true,\s*allocations:\s*true\s*\}\s*\}[\s\S]{0,80}nightAdjustments:\s*true/,
+    );
+    expect(xero).not.toContain("readBookingMoneyBuildUp(prisma");
     expect(xero).toMatch(
       /buildRequestPayload:[\s\S]{0,240}moneyBuildUp:\s*promoMoneyBuildUpSelection\.historyMetadata/,
     );
