@@ -1,0 +1,543 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { NextRequest } from "next/server";
+
+/*
+  #2721 — the server half of own-dependant identity (`INV-GUEST-019`), at the
+  route.
+
+  THE DEFECT BEING PINNED. A party row with no `memberId` is a NON-MEMBER guest:
+  provisional under the club's hold policy (no bed reserved until the booking is
+  confirmed and paid nearer the stay), bumpable when the lodge fills, invoiced as
+  the deferred guest portion. A parent typing their own recorded dependant's name
+  used to create exactly that row, silently, for a member of this club. Every
+  refusal below is asserted together with "and no create service was called", so
+  the pin is that no such row is ever written — not merely that a message came
+  back.
+
+  The unit suite `src/lib/__tests__/booking-dependant-identity.test.ts` owns the
+  rule itself. This file owns the WIRING: that the route re-resolves the booker's
+  dependants from authenticated data rather than from anything the client sent,
+  that it runs on the NORMALISED party so a forged member link cannot walk past
+  it, that it runs before any create service, and that an authorised on-behalf
+  create is deliberately exempt.
+*/
+
+const h = vi.hoisted(() => ({
+  auth: vi.fn(),
+  requireActiveSessionUser: vi.fn(),
+  managementRole: vi.fn(),
+  hasAdminAccess: vi.fn(),
+  hasAccessRole: vi.fn(),
+  loadEffectiveModuleFlags: vi.fn(),
+  createConfirmedBooking: vi.fn(),
+  createDraftBooking: vi.fn(),
+  createWaitlistedBooking: vi.fn(),
+  memberFindUnique: vi.fn(),
+  memberFindMany: vi.fn(),
+  isXeroConnected: vi.fn(),
+  getEffectiveXeroLockDate: vi.fn(),
+  resolveOptionalActiveLodgeId: vi.fn().mockResolvedValue("lodge-1"),
+  resolveLinkedBookingMembersWithBoundary: vi.fn(),
+}));
+
+vi.mock("@/lib/auth", () => ({ auth: h.auth }));
+vi.mock("@/lib/session-guards", () => ({
+  requireActiveSessionUser: h.requireActiveSessionUser,
+}));
+vi.mock("@/lib/rate-limit", () => ({
+  applyRateLimit: vi.fn().mockResolvedValue(null),
+  rateLimiters: { bookingCreate: {}, bookingQuery: {} },
+}));
+vi.mock("@/lib/logger", () => ({
+  default: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+vi.mock("@/lib/access-roles", () => ({
+  hasAdminAccess: h.hasAdminAccess,
+  hasAccessRole: h.hasAccessRole,
+}));
+vi.mock("@/lib/admin-permissions", () => ({
+  bookingManagementAuthorizationRole: h.managementRole,
+}));
+vi.mock("@/lib/module-settings", () => ({
+  loadEffectiveModuleFlags: h.loadEffectiveModuleFlags,
+  CLUB_MODULE_SETTINGS_ID: "default",
+  normalizeClubModuleSettings: (record: unknown) => record ?? {},
+}));
+vi.mock("@/lib/prisma", () => ({
+  prisma: {
+    // `member.findMany` is THE seam this file is about: it is what
+    // `loadBookerDependants` calls, and it is served from the route's own
+    // authenticated member id rather than from anything in the request body.
+    member: { findUnique: h.memberFindUnique, findMany: h.memberFindMany },
+    groupDiscountSetting: { findUnique: vi.fn().mockResolvedValue(null) },
+    minimumStayPolicy: { findMany: vi.fn().mockResolvedValue([]) },
+    adultMemberHostingPolicy: { findMany: vi.fn().mockResolvedValue([]) },
+    clubTimeSettings: {
+      findUnique: vi.fn().mockResolvedValue({
+        timeZone: "Pacific/Auckland",
+        updatedByMemberId: null,
+        updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+      }),
+    },
+  },
+}));
+vi.mock("@/lib/booking-guests", async () => {
+  // `normalizeBookingGuestInputs` is the REAL one. It is what strips a
+  // `memberId` that did not resolve and forces `isMember: false` — the step that
+  // makes a forged client assertion irrelevant — so mocking it out would make
+  // the tampering cases below prove nothing.
+  const actual = (await vi.importActual(
+    "@/lib/booking-guests",
+  )) as typeof import("@/lib/booking-guests");
+  return {
+    ...actual,
+    resolveLinkedBookingMembersWithBoundary:
+      h.resolveLinkedBookingMembersWithBoundary,
+    assertLinkedBookingMembersCanBeBooked: vi.fn().mockResolvedValue(undefined),
+  };
+});
+vi.mock("@/lib/member-guest-add-policy", () => ({
+  loadMemberGuestAddPolicy: vi
+    .fn()
+    .mockResolvedValue({ wideningEnabled: false }),
+  matchMemberGuestNotificationRows: () => [],
+  planMemberGuestConsentWrites: ({ guests }: { guests: unknown[] }) => ({
+    guests,
+    entriesByMemberId: new Map(),
+  }),
+}));
+vi.mock("@/lib/member-guest-probe-guard", () => ({
+  handleMemberGuestAddRefusal: vi.fn().mockResolvedValue(undefined),
+  memberGuestAddThrottleHook: () => undefined,
+  MemberGuestAddThrottledError: class extends Error {},
+  startMemberGuestRefusalClock: () => 0,
+}));
+vi.mock("@/lib/booking-guest-stay-range-input", () => ({
+  normalizeGuestStayRanges: (guests: unknown[]) => guests,
+  BookingGuestStayRangeValidationError: class extends Error {},
+}));
+vi.mock("@/lib/booking-member-night-conflicts", () => ({
+  findBookingMemberNightConflicts: vi.fn().mockResolvedValue([]),
+  BookingMemberNightConflictError: class extends Error {
+    conflicts: unknown[] = [];
+  },
+  getBookingMemberNightConflictResponse: () => ({ error: "conflict" }),
+}));
+vi.mock("@/lib/lodges", () => ({
+  resolveOptionalActiveLodgeId: h.resolveOptionalActiveLodgeId,
+  resolvePolicyRowsForLodge: () => [],
+}));
+vi.mock("@/lib/lodge-capacity", () => ({
+  getLodgeCapacity: vi.fn().mockResolvedValue(30),
+}));
+vi.mock("@/lib/membership-type-policy", () => ({
+  assertMembershipTypeBookingAllowed: vi.fn().mockResolvedValue(undefined),
+  getMembershipTypeBookingPolicyErrorBody: (e: { message: string }) => ({
+    error: e.message,
+  }),
+  MembershipTypeBookingPolicyError: class extends Error {
+    status = 400;
+  },
+  requiresPaidSubscriptionForMemberForBooking: vi.fn().mockResolvedValue(false),
+}));
+vi.mock("@/lib/booking-member-guest-subscriptions", () => ({
+  findUnpaidMemberGuests: vi.fn().mockResolvedValue([]),
+}));
+vi.mock("@/lib/cancellation", () => ({
+  getNonMemberHoldPolicy: vi
+    .fn()
+    .mockResolvedValue({ enabled: false, holdDays: 0, source: "default" }),
+}));
+vi.mock("@/lib/policies/booking-route-decisions", () => ({
+  calculateBookingHoldDecision: () => ({
+    shouldBePending: false,
+    status: "PAYMENT_PENDING",
+  }),
+  toGroupDiscountConfig: () => ({}),
+}));
+vi.mock("@/lib/member-credit", () => ({
+  getMemberCreditBalance: vi.fn().mockResolvedValue(0),
+}));
+vi.mock("@/lib/internet-banking-settings", () => ({
+  checkInternetBankingLeadTime: () => ({ allowed: true }),
+  loadInternetBankingPaymentSettings: vi.fn().mockResolvedValue({}),
+}));
+vi.mock("@/lib/xero-token-store", () => ({
+  isXeroConnected: h.isXeroConnected,
+}));
+vi.mock("@/lib/xero-organisation", () => ({
+  getXeroLockDates: vi.fn().mockResolvedValue(null),
+  getEffectiveXeroLockDate: h.getEffectiveXeroLockDate,
+  getXeroFinancialYearEndMonth: vi.fn(async () => null),
+}));
+vi.mock("@/lib/booking-create", async () => {
+  const actual = (await vi.importActual(
+    "@/lib/booking-create-types",
+  )) as typeof import("@/lib/booking-create-types");
+  return {
+    createConfirmedBooking: h.createConfirmedBooking,
+    createDraftBooking: h.createDraftBooking,
+    createWaitlistedBooking: h.createWaitlistedBooking,
+    RETROACTIVE_BOOKING_MAX_LOOKBACK_DAYS:
+      actual.RETROACTIVE_BOOKING_MAX_LOOKBACK_DAYS,
+    BookingLodgeError: class extends Error {},
+    BookingPromoError: class extends Error {},
+    BookingReviewJustificationRequiredError: class extends Error {},
+  };
+});
+vi.mock("@/lib/family-booking-add-notifications", () => ({
+  sendFamilyMemberBookingAddNotifications: vi.fn().mockResolvedValue({
+    notifiedTargetMemberIds: [],
+    failedTargetMemberIds: [],
+    unreachableTargetMemberIds: [],
+    suppressedByPreferenceMemberIds: [],
+  }),
+}));
+
+import { POST } from "@/app/api/bookings/route";
+import { DIFFERENT_PERSON_SAME_NAME } from "@/lib/booking-dependant-identity";
+
+// Fixed future nights relative to the repository's frozen clock
+// (2026-07-01), per `docs/TESTING.md`. Never derived from the real calendar.
+const CHECK_IN = "2026-08-01";
+const CHECK_OUT = "2026-08-03";
+
+const BOOKER_ID = "booker-1";
+const DEPENDANT = { id: "dep-sam", firstName: "Sam", lastName: "Smith" };
+
+function makeRequest(body: Record<string, unknown>) {
+  return new NextRequest("http://localhost/api/bookings", {
+    method: "POST",
+    body: JSON.stringify({
+      lodgeId: "lodge-1",
+      checkIn: CHECK_IN,
+      checkOut: CHECK_OUT,
+      ...body,
+    }),
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+/** The party the defect produces: the booker's own dependant as free text. */
+const OWN_DEPENDANT_AS_FREE_TEXT = [
+  {
+    firstName: "Sam",
+    lastName: "Smith",
+    ageTier: "CHILD" as const,
+    isMember: false,
+  },
+];
+
+function expectNoBookingWritten() {
+  expect(h.createConfirmedBooking).not.toHaveBeenCalled();
+  expect(h.createDraftBooking).not.toHaveBeenCalled();
+  expect(h.createWaitlistedBooking).not.toHaveBeenCalled();
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  h.auth.mockResolvedValue({
+    user: { id: BOOKER_ID, role: "USER", accessRoles: [{ role: "USER" }] },
+  });
+  h.requireActiveSessionUser.mockResolvedValue(null);
+  h.managementRole.mockReturnValue("USER");
+  h.hasAdminAccess.mockReturnValue(false);
+  h.hasAccessRole.mockReturnValue(true);
+  h.loadEffectiveModuleFlags.mockResolvedValue({
+    xeroIntegration: false,
+    bedAllocation: false,
+    internetBankingPayments: false,
+    memberGuests: false,
+  });
+  h.memberFindUnique.mockResolvedValue({
+    active: true,
+    emailVerified: new Date("2026-01-01T00:00:00.000Z"),
+    xeroContactId: "xc-1",
+    ageTier: "ADULT",
+  });
+  h.memberFindMany.mockResolvedValue([DEPENDANT]);
+  h.resolveLinkedBookingMembersWithBoundary.mockResolvedValue({
+    members: new Map(),
+    boundary: { scopeByMemberId: new Map(), beyondFamilyMemberIds: [] },
+  });
+  h.isXeroConnected.mockResolvedValue(false);
+  h.getEffectiveXeroLockDate.mockReturnValue(null);
+  h.createConfirmedBooking.mockResolvedValue({
+    type: "created",
+    booking: { id: "b-new", status: "PAID", guests: [] },
+  });
+  h.createDraftBooking.mockResolvedValue({
+    booking: { id: "b-draft", status: "DRAFT", guests: [] },
+  });
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+describe("POST /api/bookings own-dependant identity guard (#2721)", () => {
+  it("refuses the original defect before any booking is written", async () => {
+    const res = await POST(makeRequest({ guests: OWN_DEPENDANT_AS_FREE_TEXT }));
+
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.code).toBe("DEPENDANT_IDENTITY_UNRESOLVED");
+    expect(body.dependantCollisions[0].dependants).toEqual([DEPENDANT]);
+    expectNoBookingWritten();
+  });
+
+  it("asks the database about the AUTHENTICATED booker, never about the payload", async () => {
+    await POST(makeRequest({ guests: OWN_DEPENDANT_AS_FREE_TEXT }));
+
+    expect(h.memberFindMany).toHaveBeenCalledTimes(1);
+    expect(h.memberFindMany.mock.calls[0]?.[0]).toMatchObject({
+      where: {
+        active: true,
+        OR: [{ parentMemberId: BOOKER_ID }, { secondaryParentId: BOOKER_ID }],
+      },
+    });
+  });
+
+  it("refuses a DRAFT the same way — a wrong-path row must not be parked either", async () => {
+    const res = await POST(
+      makeRequest({ guests: OWN_DEPENDANT_AS_FREE_TEXT, draft: true }),
+    );
+
+    expect(res.status).toBe(409);
+    expectNoBookingWritten();
+  });
+
+  it("refuses a WAITLIST join the same way", async () => {
+    const res = await POST(
+      makeRequest({ guests: OWN_DEPENDANT_AS_FREE_TEXT, waitlist: true }),
+    );
+
+    expect(res.status).toBe(409);
+    expectNoBookingWritten();
+  });
+
+  it("lets the guest path through on a declaration naming the dependant", async () => {
+    const res = await POST(
+      makeRequest({
+        guests: OWN_DEPENDANT_AS_FREE_TEXT,
+        dependantIdentityDeclarations: [
+          {
+            kind: DIFFERENT_PERSON_SAME_NAME,
+            dependantMemberId: DEPENDANT.id,
+            normalizedName: "sam smith",
+          },
+        ],
+      }),
+    );
+
+    expect(res.status).toBe(201);
+    expect(h.createConfirmedBooking).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not ask the database at all for an all-member party", async () => {
+    h.resolveLinkedBookingMembersWithBoundary.mockResolvedValue({
+      members: new Map([
+        [
+          DEPENDANT.id,
+          { id: DEPENDANT.id, ageTier: "CHILD", firstName: "Sam", lastName: "Smith" },
+        ],
+      ]),
+      boundary: { scopeByMemberId: new Map(), beyondFamilyMemberIds: [] },
+    });
+
+    const res = await POST(
+      makeRequest({
+        guests: [
+          {
+            firstName: "Sam",
+            lastName: "Smith",
+            ageTier: "CHILD",
+            isMember: true,
+            memberId: DEPENDANT.id,
+          },
+        ],
+      }),
+    );
+
+    expect(res.status).toBe(201);
+    // The ordinary family booking pays nothing for this guard.
+    expect(h.memberFindMany).not.toHaveBeenCalled();
+  });
+
+  it("lets an ordinary non-member guest through untouched", async () => {
+    const res = await POST(
+      makeRequest({
+        guests: [
+          {
+            firstName: "Kiri",
+            lastName: "Ngata",
+            ageTier: "ADULT",
+            isMember: false,
+          },
+        ],
+      }),
+    );
+
+    expect(res.status).toBe(201);
+  });
+
+  describe("a client cannot talk its way past it", () => {
+    it("catches a row whose member id resolved to nobody — the forged member link", async () => {
+      // The client asserts the row is already on the member path. The boundary
+      // resolver returns no such member, so `normalizeBookingGuestInputs` strips
+      // the id and the row is the free-text guest it really was.
+      const res = await POST(
+        makeRequest({
+          guests: [
+            {
+              firstName: "Sam",
+              lastName: "Smith",
+              ageTier: "CHILD",
+              isMember: true,
+              memberId: "not-a-real-member",
+            },
+          ],
+        }),
+      );
+
+      expect(res.status).toBe(409);
+      expect((await res.json()).code).toBe("DEPENDANT_IDENTITY_UNRESOLVED");
+      expectNoBookingWritten();
+    });
+
+    it("catches a bare `isMember: true` with no member id at all", async () => {
+      const res = await POST(
+        makeRequest({
+          guests: [
+            {
+              firstName: "Sam",
+              lastName: "Smith",
+              ageTier: "CHILD",
+              isMember: true,
+            },
+          ],
+        }),
+      );
+
+      expect(res.status).toBe(409);
+      expectNoBookingWritten();
+    });
+
+    it("rejects a generic override at schema level — it is not a shape the field holds", async () => {
+      for (const forged of [
+        [{ override: true }],
+        [{ kind: "override", dependantMemberId: DEPENDANT.id }],
+        [
+          {
+            kind: DIFFERENT_PERSON_SAME_NAME,
+            dependantMemberId: DEPENDANT.id,
+          },
+        ],
+      ]) {
+        const res = await POST(
+          makeRequest({
+            guests: OWN_DEPENDANT_AS_FREE_TEXT,
+            dependantIdentityDeclarations: forged,
+          }),
+        );
+        expect(res.status).toBe(400);
+        expect((await res.json()).error).toBe("Invalid input");
+      }
+      expectNoBookingWritten();
+    });
+
+    it("rejects a fabricated dependant id", async () => {
+      const res = await POST(
+        makeRequest({
+          guests: OWN_DEPENDANT_AS_FREE_TEXT,
+          dependantIdentityDeclarations: [
+            {
+              kind: DIFFERENT_PERSON_SAME_NAME,
+              dependantMemberId: "invented",
+              normalizedName: "sam smith",
+            },
+          ],
+        }),
+      );
+
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.code).toBe("DEPENDANT_IDENTITY_DECLARATION_INVALID");
+      expect(body.dependantCollisions).toEqual([]);
+      expectNoBookingWritten();
+    });
+
+    it("rejects an unrelated dependant of the SAME booker", async () => {
+      h.memberFindMany.mockResolvedValue([
+        DEPENDANT,
+        { id: "dep-ana", firstName: "Ana", lastName: "Smith" },
+      ]);
+
+      const res = await POST(
+        makeRequest({
+          guests: OWN_DEPENDANT_AS_FREE_TEXT,
+          dependantIdentityDeclarations: [
+            {
+              kind: DIFFERENT_PERSON_SAME_NAME,
+              dependantMemberId: "dep-ana",
+              normalizedName: "sam smith",
+            },
+          ],
+        }),
+      );
+
+      expect(res.status).toBe(400);
+      expectNoBookingWritten();
+    });
+
+    it("rejects a STALE declaration the club's own records have moved under", async () => {
+      // The dependant has been recorded under a new surname since the wizard
+      // asked the question, so the collision the booker answered is gone.
+      h.memberFindMany.mockResolvedValue([
+        { id: DEPENDANT.id, firstName: "Sam", lastName: "Smith-Ngata" },
+      ]);
+
+      const res = await POST(
+        makeRequest({
+          guests: OWN_DEPENDANT_AS_FREE_TEXT,
+          dependantIdentityDeclarations: [
+            {
+              kind: DIFFERENT_PERSON_SAME_NAME,
+              dependantMemberId: DEPENDANT.id,
+              normalizedName: "sam smith",
+            },
+          ],
+        }),
+      );
+
+      expect(res.status).toBe(400);
+      expect((await res.json()).code).toBe(
+        "DEPENDANT_IDENTITY_DECLARATION_INVALID",
+      );
+      expectNoBookingWritten();
+    });
+  });
+
+  it("is skipped on an authorised on-behalf create, like every other member-facing gate on this route", async () => {
+    // The officer has the family in front of them, is audited, and has no wizard
+    // on which to answer a collision question. `isAuthorizedOnBehalf` is the same
+    // flag that passes `skipAuthorization` to the member-guest boundary check.
+    h.managementRole.mockReturnValue("ADMIN");
+    h.hasAdminAccess.mockReturnValue(true);
+    h.hasAccessRole.mockReturnValue(false);
+    h.auth.mockResolvedValue({
+      user: { id: "officer-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] },
+    });
+    h.memberFindUnique.mockResolvedValue({ active: true });
+
+    const res = await POST(
+      makeRequest({
+        guests: OWN_DEPENDANT_AS_FREE_TEXT,
+        forMemberId: BOOKER_ID,
+      }),
+    );
+
+    expect(res.status).toBe(201);
+    expect(h.memberFindMany).not.toHaveBeenCalled();
+  });
+});
