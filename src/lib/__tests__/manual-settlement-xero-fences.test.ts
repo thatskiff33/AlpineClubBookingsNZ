@@ -83,7 +83,9 @@ describe("level 1 — the enqueueXeroBookingInvoiceOperation choke point", () =>
     const { enqueueXeroBookingInvoiceOperation } = await import(
       "@/lib/xero-operation-outbox"
     );
-    return enqueueXeroBookingInvoiceOperation("booking-1");
+    return enqueueXeroBookingInvoiceOperation("booking-1", {
+      invoiceEmailDelivery: null,
+    });
   }
 
   it("refuses to queue an invoice for a manually settled booking, and says so", async () => {

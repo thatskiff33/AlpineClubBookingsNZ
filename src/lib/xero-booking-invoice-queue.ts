@@ -15,11 +15,10 @@ export async function queueXeroInvoiceForPaidBooking({
   createdByMemberId,
 }: QueueXeroInvoiceForPaidBookingOptions) {
   try {
-    const enqueueOptions = createdByMemberId ? { createdByMemberId } : undefined;
-    const queuedInvoice = await enqueueXeroBookingInvoiceOperation(
-      bookingId,
-      enqueueOptions
-    );
+    const queuedInvoice = await enqueueXeroBookingInvoiceOperation(bookingId, {
+      ...(createdByMemberId ? { createdByMemberId } : {}),
+      invoiceEmailDelivery: null,
+    });
 
     if (queuedInvoice.queueOperationId) {
       await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
