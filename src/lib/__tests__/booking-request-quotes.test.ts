@@ -1400,13 +1400,84 @@ describe("public quote response", () => {
           data: expect.objectContaining({ status: expectedStatus }),
         })
       );
-      expect(prisma.bookingRequestQuote.update).toHaveBeenCalledWith(
+      // #2936: the supersede is a CLAIM on the live quote, not a bare update by
+      // id. Mutation-check: widen this `where` back to `{ id }` and the case
+      // below stops discriminating anything.
+      expect(prisma.bookingRequestQuote.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
+          where: expect.objectContaining({
+            id: "quote-1",
+            status: {
+              in: [
+                BookingRequestQuoteStatus.DRAFT,
+                BookingRequestQuoteStatus.SENT,
+              ],
+            },
+          }),
           data: expect.objectContaining({
             status: BookingRequestQuoteStatus.SUPERSEDED,
           }),
         })
       );
+      expect(prisma.bookingRequestQuote.update).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(["MODIFY", "QUERY"] as const)(
+    "leaves a correction's supersede mark alone when a %s lands after it (#2936)",
+    async (action) => {
+      // The fourth writer a correction re-opens past, and the one deliberately
+      // NOT lock-fenced: the request flip is allowed to stand (a status and the
+      // requester's own words, nothing else). What must NOT stand is re-stamping
+      // a quote the officer's correction already SUPERSEDED with the requester's
+      // timestamp — or flipping a CANCELLED quote to SUPERSEDED. The claim is
+      // what refuses both, and it refuses them by claiming nothing.
+      const token = "k".repeat(64);
+      vi.mocked(prisma.bookingRequestQuote.findUnique).mockResolvedValue({
+        id: "quote-1",
+        bookingRequestId: "req-1",
+        version: 1,
+        status: BookingRequestQuoteStatus.SENT,
+        createdByMemberId: "admin-1",
+        responseTokenExpiresAt: new Date(Date.now() + 60_000),
+        options: [],
+        // The correction has already landed: the request is back at VERIFIED,
+        // which is not DECLINED or CANCELLED, so the request guard passes.
+        bookingRequest: baseRequest({ status: BookingRequestStatus.VERIFIED }),
+      } as never);
+      vi.mocked(prisma.bookingRequest.updateMany).mockResolvedValue({
+        count: 1,
+      } as never);
+      // The quote is already SUPERSEDED, so the DRAFT/SENT claim matches no row.
+      vi.mocked(prisma.bookingRequestQuote.updateMany).mockResolvedValue({
+        count: 0,
+      } as never);
+
+      const result = await respondToBookingRequestQuote({
+        token,
+        action,
+        message: "can we add two more children?",
+      });
+
+      // The message is still recorded rather than thrown away — that is the
+      // whole reason this branch is not fenced.
+      expect(result).toMatchObject({
+        outcome:
+          action === "MODIFY" ? "modification_requested" : "query_sent",
+      });
+      expect(prisma.bookingRequestQuote.update).not.toHaveBeenCalled();
+      expect(
+        vi.mocked(prisma.bookingRequestQuote.updateMany).mock.calls[0][0]
+      ).toMatchObject({
+        where: {
+          status: {
+            in: [
+              BookingRequestQuoteStatus.DRAFT,
+              BookingRequestQuoteStatus.SENT,
+            ],
+          },
+        },
+      });
     }
   );
 

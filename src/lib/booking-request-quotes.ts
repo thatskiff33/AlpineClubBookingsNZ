@@ -797,6 +797,14 @@ export async function sendBookingRequestQuote(input: {
     // correction's hold release runs after this. Claim the quote only while it
     // is still the live one; count 0 rolls the whole transaction back (request
     // status included) and no email is sent, because the send is outside it.
+    //
+    // The rollback does NOT cover the hold: `holdBookingRequestSlots` ran and
+    // COMMITTED before this transaction opened, so a refusal here leaves the
+    // request still pointing at beds it holds. That is the #1504 refusal's
+    // behaviour above too, unchanged by this guard, and the remedy is the
+    // officer's own Release button on the request — the stale-hold sweep cannot
+    // be relied on for it, because that sweep needs a lapsed response window and
+    // a send that never completed wrote none.
     const saved = await tx.bookingRequestQuote.updateMany({
       where: {
         id: quote.id,
@@ -1121,8 +1129,37 @@ export async function respondToBookingRequestQuote(input: {
           409
         );
       }
-      await tx.bookingRequestQuote.update({
-        where: { id: quote.id },
+      // #2936: THE FOURTH WRITER A CORRECTION RE-OPENS PAST, and the one that is
+      // deliberately NOT lock-fenced. The claim above has the defect shape this
+      // issue named — it excludes only DECLINED and CANCELLED, and a corrected
+      // request is VERIFIED — so a requester pressing "ask for changes" on a
+      // quote link that was live a moment ago still flips a freshly corrected
+      // request to MODIFICATION_REQUESTED/QUERY_PENDING.
+      //
+      // That is allowed to stand, and the reason is what it writes: a status and
+      // the requester's own words. No price, no accepted snapshot, no hold, no
+      // conversion — nothing the accept re-arm had to be fenced for. Refusing it
+      // would throw away a message from the person whose booking it is, and both
+      // statuses it can reach are correctable and swept exactly as VERIFIED is.
+      // If a future version of this branch ever writes a price or converts, it
+      // joins the fenced set and takes the key; until then the honest answer is
+      // this comment rather than a lock. Registered as a deliberate omission in
+      // `docs/CONCURRENCY_AND_LOCKING.md` and `INV-REQ-009`.
+      //
+      // The QUOTE write is narrowed, though, because that part is not cosmetic:
+      // a bare update by id re-stamps a quote the correction already SUPERSEDED
+      // (overwriting the officer's mark with the requester's timestamp) and
+      // would flip a CANCELLED quote to SUPERSEDED. Claiming DRAFT/SENT is what
+      // every other supersede writer in this tree already does — the quote save
+      // above, the withdraw and the decline in `booking-request.ts` — so a
+      // retired quote is simply left as the writer that retired it left it.
+      await tx.bookingRequestQuote.updateMany({
+        where: {
+          id: quote.id,
+          status: {
+            in: [BookingRequestQuoteStatus.DRAFT, BookingRequestQuoteStatus.SENT],
+          },
+        },
         data: {
           status: BookingRequestQuoteStatus.SUPERSEDED,
           supersededAt: respondedAt,
@@ -1193,10 +1230,14 @@ export async function respondToBookingRequestQuote(input: {
   // dates and party at yesterday's price, resolved to the corrected school's
   // organisation, with that organisation's invoice queued to Xero. Money and
   // the provider. So the re-arm now runs in a transaction that takes the global
-  // key the correction holds — every other branch of this function already
-  // does — and re-reads the quote under it. The quote's own status is the exact
-  // evidence: a correction retires it, and nothing else moves a SENT quote out
-  // of the live set beneath a token that loaded it as SENT.
+  // key the correction holds — as the CANCEL branch above already does — and
+  // re-reads the quote under it. The quote's own status is the exact evidence: a
+  // correction retires it, and nothing else moves a SENT quote out of the live
+  // set beneath a token that loaded it as SENT.
+  //
+  // The MODIFY/QUERY branch takes no key and is not fenced against a correction
+  // at all: see the note there for what it writes and why that is deliberate.
+  // "Every branch is fenced" would be the overclaim — three of the four are.
   //
   // The live set is deliberately "not retired" rather than "still SENT": a
   // double-accept (#1232) finds the quote already ACCEPTED and must STILL
