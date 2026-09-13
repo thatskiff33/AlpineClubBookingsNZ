@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
+import { MODULE_DISABLED_ERROR_CODE } from "@/lib/api-error-message";
 import {
   BedAllocationAdminError,
 } from "@/lib/bed-allocation-admin-contract";
@@ -16,9 +17,27 @@ async function requireBedAllocationPermission(
   }
 
   if (!(await isEffectiveModuleEnabled("bedAllocation"))) {
+    // The status stays 404 — every `/api/admin/bed-allocation` address answers
+    // that way while the module is off, and the browser-facing page gate
+    // depends on it. What is added is the NAME of the refusal (#2931).
+    //
+    // 404 alone is ambiguous here and the ambiguity is deliberate:
+    // `moduleGatedNotFoundResponse` in `src/lib/session-guards.ts` answers an
+    // ANONYMOUS caller on this same gated path with the identical bare
+    // `{ error: "Not found" }`, so that one unauthenticated probe cannot read
+    // which optional modules a club runs. A screen inferring "module off" from
+    // the status therefore told an admin whose sign-in had expired to go and
+    // turn on a module — a wrong diagnosis, not merely an unhelpful one.
+    //
+    // This code is reachable ONLY past the `requireAdmin` call above, so it is
+    // set only for a caller already authenticated and permitted. The anonymous
+    // 404 still carries nothing and the probe still learns nothing.
     return {
       ok: false as const,
-      response: NextResponse.json({ error: "Not found" }, { status: 404 }),
+      response: NextResponse.json(
+        { error: "Not found", code: MODULE_DISABLED_ERROR_CODE },
+        { status: 404 },
+      ),
     };
   }
 
