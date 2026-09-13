@@ -20,7 +20,21 @@
  * Extracted from `use-booking-wizard.ts` rather than left inline: it is pure,
  * it is the piece worth testing on its own, and the hook it came from is over
  * its file-size budget.
+ *
+ * WHOSE NIGHT IT IS, THOUGH, IS NOT DECIDED HERE. Which guests occupy a given
+ * night is the frozen night model in `booking-guest-stay-ranges.ts`, and this
+ * module calls it rather than restating it (`INV-SSOT-001`). The first draft
+ * restated it and dropped one of its two branches: it compared the guest's
+ * `stayStart`/`stayEnd` envelope alone, so a guest with an EXPLICIT night set —
+ * the "Multiple date ranges" mode (#713), where the envelope is only a bounding
+ * box and the gaps inside it are absences — was counted as present on nights
+ * they had not asked for. That overstated the party on the gap nights, and since
+ * #2930 the overstatement decides `waitlistOnly`: it withdrew the payment-method
+ * chooser and replaced Confirm Booking with Join Waitlist for a stay the server
+ * would have confirmed.
  */
+import { isGuestActiveOnNight } from "@/lib/booking-guest-stay-ranges";
+import { parseDateOnly } from "@/lib/date-only";
 
 /** One night's figures as `/api/availability/check` reports them. */
 export interface AdvisoryNight {
@@ -33,10 +47,15 @@ export interface AdvisoryNight {
   availableBeds: number;
 }
 
-/** A proposed guest, with the optional per-guest stay range the wizard allows. */
+/**
+ * A proposed guest, in the shapes the wizard's `GuestData` carries: an optional
+ * per-guest stay range, and an optional explicit night set which OVERRIDES it
+ * (#713). Both are `yyyy-MM-dd`.
+ */
 export interface AdvisoryGuest {
   stayStart?: string | null;
   stayEnd?: string | null;
+  nights?: readonly string[] | null;
 }
 
 /**
@@ -48,9 +67,12 @@ export interface AdvisoryGuest {
  * either way. This is the same "absent is not zero" rule the calendar applies to
  * an unloaded month.
  *
- * Counting is per night and half-open, matching the stay itself: a guest occupies
- * `[stayStart, stayEnd)`, so the departure morning is not counted against them
- * (`INV-DATE-003`).
+ * Who occupies a night is `isGuestActiveOnNight`, unchanged and uncopied: an
+ * explicit night set wins, and otherwise the half-open `[stayStart, stayEnd)`
+ * envelope applies, so the departure morning is not counted against a guest
+ * (`INV-DATE-003`). It is the same predicate `checkCapacity` counts beds with on
+ * the server, which is what makes this advisory agree with the answer it is
+ * previewing.
  */
 export function getCapacityShortNights(
   nights: readonly AdvisoryNight[],
@@ -59,13 +81,26 @@ export function getCapacityShortNights(
 ): string[] {
   if (!bookingDates || nights.length === 0) return [];
 
+  // The booking envelope, decoded once. `parseDateOnly` yields the UTC-midnight
+  // encoding of a calendar day, which is what the night model reads.
+  const bookingRange = {
+    checkIn: parseDateOnly(bookingDates.checkIn),
+    checkOut: parseDateOnly(bookingDates.checkOut),
+  };
+  const stayRanges = guests.map((guest) => ({
+    stayStart: guest.stayStart ? parseDateOnly(guest.stayStart) : null,
+    stayEnd: guest.stayEnd ? parseDateOnly(guest.stayEnd) : null,
+    // Passed by REFERENCE rather than copied: the night model caches the derived
+    // key set against this array, so re-deriving it per night would defeat that.
+    nights: guest.nights ?? null,
+  }));
+
   return nights
     .filter((night) => {
-      const activeGuests = guests.filter((guest) => {
-        const stayStart = guest.stayStart ?? bookingDates.checkIn;
-        const stayEnd = guest.stayEnd ?? bookingDates.checkOut;
-        return stayStart <= night.date && night.date < stayEnd;
-      }).length;
+      const nightDate = parseDateOnly(night.date);
+      const activeGuests = stayRanges.filter((guest) =>
+        isGuestActiveOnNight(guest, nightDate, bookingRange),
+      ).length;
       return activeGuests > night.availableBeds;
     })
     .map((night) => night.date);

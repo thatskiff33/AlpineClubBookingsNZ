@@ -79,6 +79,42 @@ describe("getCapacityShortNights", () => {
     ).toEqual(["2026-08-02", "2026-08-03"]);
   });
 
+  it("honours an EXPLICIT night set, whose gaps are absences (#713)", () => {
+    // The "Multiple date ranges" mode. This guest is booked on the 1st and the
+    // 3rd; the 2nd is a gap they are not in the lodge for, so a full 2nd is no
+    // obstacle to them. The first draft compared the stayStart/stayEnd envelope
+    // alone, counted them present on the 2nd, and made the whole stay
+    // waitlist-only — withdrawing the payment chooser and replacing Confirm
+    // Booking with Join Waitlist for a stay the server would have confirmed.
+    expect(
+      getCapacityShortNights(
+        [
+          { date: "2026-08-01", availableBeds: 1 },
+          { date: "2026-08-02", availableBeds: 0 },
+          { date: "2026-08-03", availableBeds: 1 },
+        ],
+        [{ stayStart: "2026-08-01", stayEnd: "2026-08-04", nights: ["2026-08-01", "2026-08-03"] }],
+        DATES,
+      ),
+    ).toEqual([]);
+  });
+
+  it("still names a night the explicit set DOES include", () => {
+    // The other half of the same branch: the set is authoritative in both
+    // directions, so a booked night that will not fit is still reported.
+    expect(
+      getCapacityShortNights(
+        [
+          { date: "2026-08-01", availableBeds: 1 },
+          { date: "2026-08-02", availableBeds: 0 },
+          { date: "2026-08-03", availableBeds: 0 },
+        ],
+        [{ stayStart: "2026-08-01", stayEnd: "2026-08-04", nights: ["2026-08-01", "2026-08-03"] }],
+        DATES,
+      ),
+    ).toEqual(["2026-08-03"]);
+  });
+
   it("cannot tell a held night from a full one, because the payload does not", () => {
     // `/api/availability/check` pins a whole-lodge-held night to zero available
     // beds and projects no hold flag (`INV-CAP-021`, ADR-001 decision 6). The
