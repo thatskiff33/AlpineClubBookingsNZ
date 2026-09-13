@@ -256,57 +256,41 @@ legitimately depend on being offered an out-of-service lodge.
 
 ### INV-INT-018
 
-- **A Xero contact id has at most ONE local home.** Since
-  [#3366](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3366) two
-  columns can hold one: `Member.xeroContactId` and
-  `Organisation.xeroContactId`. Each is unique within its own table and nothing
-  can express "at most one of the two", because no database constraint spans two
-  tables that way. If both hold it the club's books say a school and a person
-  are the same customer, and whichever path runs next decides which one wins.
-- **Every writer that links a contact id refuses rather than guesses.** Before
-  writing the link it establishes that the OTHER table has no claim on that id,
-  and throws `XeroContactTwoHomesError` naming the record that holds it —
-  `src/lib/xero-contact-home.ts` is the one home for both the check and the lock.
-  The three writers are `findOrCreateXeroContact`'s phase-2 link,
-  `commitManualXeroContactLink`, and the organisation-keyed resolve.
-- **It is reachable on purpose, not only under concurrency.** A school's
-  organisation contact carries the school's contact email, which is the same
-  address the invented school member carries, and the member resolve asks Xero
-  `EmailAddress="…"` FIRST. So a credit note or supplementary invoice on a school
-  booking — paths that still read the booking's member — would deterministically
-  find the organisation's contact and link it to the member. That is why the
-  refusal is symmetric rather than sitting only on the organisation writer.
-- **A contact-scoped advisory lock closes the concurrent half.** Key
-  `hashtext('xero-contact-home:<contactId>')`, a domain-keyed lock in its own
-  keyspace, joining neither the global lock(1) cohort nor the per-lodge capacity
-  key. It is always acquired LAST — the writer's own entity key first
-  (`INV-LOCK-002`) — and no provider call runs inside the transaction holding it.
-- **The organisation resolve never searches Xero by email.** Its only adoption
-  path is a contact Xero itself refused to duplicate because the NAME is taken,
-  and even that is subject to the refusal above. A school's recorded address is
-  routinely a teacher's own, so an email search would adopt that person's
-  personal contact — the one thing
-  [#2912](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/2912)
-  settled must never happen.
-- **The returning school is an expected outcome, not a failure.** A school that
-  has booked before already has a person-shaped contact under its own name, so
-  the create is refused by Xero for the duplicate name and the adoption is
-  refused here. The organisation stays unlinked, the sync operation is closed
-  `CANCELLED` with a populated reason rather than `FAILED`, and the invoice is
-  raised against the contact the school already has. Classifying that contact as
-  the school's is
-  [#3369](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3369)'s
-  census, which requires zero ambiguous rows.
-- **This is bounded.** #3369 removes the invented school member, which is the
-  other home. The overlap opens when
-  [#3367](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3367) first
-  links an organisation and closes there. Nothing here is meant to be permanent;
-  what it must be is real while it lasts.
-- **What is NOT guarded, and why.** `xero-member-import.ts` links members onto
-  pre-existing Xero contacts in bulk from mapped contact GROUPS, and does not
-  take this refusal. A school's organisation contact reaches it only if an
-  operator puts that contact into a membership group, and bulk contact seeding is
-  [#2939](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/2939)'s
-  subject. Stated here rather than left to be discovered, and pinned by the
-  reader census in
+- **A Xero contact id has at most ONE local home.** Since #3366 two unique
+  columns can hold one — `Member.xeroContactId` and
+  `Organisation.xeroContactId` — and no constraint spans two tables. Both holding
+  it means the books say a school and a person are one customer.
+- **Every writer refuses rather than guesses**, throwing
+  `XeroContactTwoHomesError` naming the holder. `src/lib/xero-contact-home.ts` is
+  the one home for the check, the lock and the transfer below. The writers:
+  `findOrCreateXeroContact`'s phase-2 link, `commitManualXeroContactLink`, and
+  the organisation resolve.
+- **ONE exception: a contact may change hands exactly once, only to its
+  Organisation** (owner, 13 Sep 2026, #3367). A returning school's contact is
+  held by the invented school member of an earlier booking, so the organisation
+  TAKES it: the member's link and its `CONTACT` ledger row are released in the
+  same transaction, and the hand-over is audited
+  (`xero.contact.moved_to_organisation`, category `xero`). Four legs read under
+  the lock establish the member is this school's own — this organisation's
+  booking resolves to it, no other organisation's does, it cannot sign in, and it
+  is not one of the school's named contact people. The refusal runs immediately
+  afterwards, so anybody else is refused unchanged. Nothing moves at Xero, which
+  has no merge API; a duplicate there is merged by hand.
+- **Reachable on purpose, not only under concurrency**, hence a SYMMETRIC
+  refusal: the member resolve searches Xero by email first, and a school's
+  contact carries the same address the invented member does, so a credit note on
+  a school booking would find the organisation's contact.
+- **A contact-scoped advisory lock closes the concurrent half.**
+  `hashtext('xero-contact-home:<contactId>')`, its own keyspace, acquired LAST
+  after the writer's entity key (`INV-LOCK-002`), with no provider call inside.
+- **The organisation resolve never searches by email**, for that reason: a
+  school's recorded address is routinely a teacher's own, and #2912 settled that
+  a person's contact is never repurposed as the school. Its only adoption path is
+  a name Xero itself refused to duplicate.
+- **A refusal fails LOUDLY and stays replayable.** The sync operation is recorded
+  `FAILED` and keeps its idempotency key; no invoice is raised against a customer
+  nobody chose.
+- **Bounded.** #3369 removes the invented member, the other home.
+- **NOT guarded:** the bulk member import, which links members onto contacts
+  from mapped contact GROUPS — bulk seeding is #2939's subject. Pinned by
   `src/lib/__tests__/organisation-reader-contract.test.ts`.

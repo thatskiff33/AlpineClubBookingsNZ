@@ -3974,6 +3974,24 @@ while the contact key is held, the wait graph has no cycle. Only ONE contact key
 is ever taken per transaction, so the sorted-key discipline the member families
 need does not apply here.
 
+### The one transfer runs under these same locks
+
+A returning school's contact is held by the invented school member of an earlier
+booking, and the organisation TAKES it rather than being refused (owner decision,
+13 September 2026). That hand-over is three writes — clear `Member.xeroContactId`,
+deactivate the member's `CONTACT` object link, write the audit row — plus an
+`Organisation.xeroContactId` update, and **all four are statements in the same
+phase-2 transaction, under both keys already held**. So they commit or roll back
+together: a failure later leaves the member holding the contact, which is the
+state it was already in, and the contact-home key held across the whole of it
+means no concurrent linker can claim the id in the gap between the clear and the
+set.
+
+The four legs that establish the member is *this school's own* are read inside
+that transaction too, never taken from the caller — `INV-INT-018` lists them.
+The refusal then runs immediately after the transfer and is unchanged, so a
+transfer that declines to fire can only ever produce a refusal.
+
 ### What is inside the transaction, and what is not
 
 **No provider call, on any of the three paths.** The organisation resolve copies

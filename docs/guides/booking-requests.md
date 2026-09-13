@@ -420,12 +420,19 @@ about the teacher is sent.
 ### A school that has booked before
 
 A school that booked before this change already has a contact in Xero, created
-under the old arrangement where a school was recorded as a person. The club will
-not move that contact onto the new school record by itself, because working out
-which historical contacts really belong to which school is a separate,
-checked-by-hand job. Until that happens, a returning school's invoices go to the
-contact it already has, exactly as they did before — nothing breaks, and nothing
-is duplicated.
+under the old arrangement where a school was recorded as a person. The first time
+the club raises something against that school after the change, **the school's
+own record takes that same contact over**.
+
+Nothing happens in Xero when it does. It is the same contact, with the same
+history and the same invoices on it; all that changes is which of the club's own
+records says "this customer is mine". You will see it recorded in the audit log.
+A returning school's invoices therefore keep going to the customer you already
+know, and no second contact is created for it.
+
+If a school does somehow end up with two contacts in Xero — an old one and a new
+one — **merge them in Xero**. Xero can merge two contacts and this application
+cannot, so that is an ordinary bit of tidying rather than something to report.
 
 ## Troubleshooting
 
@@ -446,7 +453,8 @@ is duplicated.
 | Approve is greyed out on a policy exception | You have not ticked the confirmation, or an adult-member hosting override needs a written reason | Write the reason and tick the confirmation |
 | Cannot price/approve anything | Your role is view-only for bookings | Ask a full admin for bookings edit access |
 | A school's Xero contact names a teacher who has left | The teacher on the contact is refreshed when the club next raises something against that school | Approve the school's next booking and it corrects itself, or edit the contact person in Xero now |
-| A returning school's invoice went to its old Xero contact, not a new one | The school already had a contact from before schools were recorded in their own right, and the club will not move it by itself | Nothing is wrong and nothing is duplicated. Moving historical contacts onto school records is a separate, checked-by-hand job |
+| A returning school's invoice went to the Xero contact it always used | Correct. The school's own record took that contact over; it is the same customer with the same history | Nothing to do. The hand-over is in the audit log if you want to see it |
+| A school has two contacts in Xero | Something created a second one — usually a name that was typed differently | Merge the two contacts in Xero. This application cannot merge them for you |
 | A request says **Saved details need attention** and its buttons are greyed out | Some of its saved data could not be read back, so it cannot be quoted, priced, held, or approved | Confirm what the group wants with the requester, then **Decline** so they can submit again — or ask support to repair the stored row. There is no guest-edit screen |
 
 ## Related links

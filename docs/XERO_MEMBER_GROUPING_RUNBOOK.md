@@ -201,13 +201,16 @@ Rules and guarantees:
   rewritten by this application, because Xero requires contact names to be
   unique and renaming an existing contact is what #2912 forbids. Rename a school
   in Xero by hand if it really has changed its name.
-- **A school that booked before #3367 keeps the contact it has.** Its Xero
-  customer was created against the invented school member of the earlier
-  booking, and this application will not move that link onto the school record
-  by itself — classifying historical contacts is #3369's owner-run census, which
-  requires zero ambiguous rows. Until then a returning school's invoices go
-  where they always went, and the sync operation that tried records a
-  `CANCELLED` row naming the school rather than a failure.
+- **A school that booked before #3367 keeps the SAME Xero contact, and the
+  school record takes it over.** Its Xero customer was created against the
+  invented school member of the earlier booking; the first time the club raises
+  something against that school, the school's own record claims that contact and
+  the member's link is released, with an audit entry recording the hand-over.
+  **Nothing changes in Xero**: the contact keeps its id, its history and every
+  invoice already raised against it, so a returning school's invoices still go to
+  the customer the treasurer already knows. Where a genuine duplicate does turn
+  up, merge the two contacts in Xero's own interface — the API has no merge
+  endpoint, so this application cannot and will not do it for you.
 
 - **Mode/rule changes never auto-resync.** Switching the mode, or adding,
   editing, deactivating, or deleting a rule, does not re-group anyone
