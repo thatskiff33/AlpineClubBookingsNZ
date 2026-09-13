@@ -448,13 +448,6 @@ export type MembershipSyncMode = "incremental" | "backfill"
 type MappingValue = {
   code: string | null
   itemCode: string | null
-  /**
-   * Derived by `/api/admin/xero/account-mappings`, never written (#2717,
-   * `INV-INT-021`): whether this club chose the code, as opposed to inheriting
-   * an application default or another mapping's fallback. The fallback notice
-   * on a mapping row is driven by this canonical flag.
-   */
-  codeExplicitlyConfigured: boolean
 }
 
 // One row per writable mapping key, straight off the registry (#2717): the

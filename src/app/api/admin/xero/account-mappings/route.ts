@@ -4,9 +4,9 @@ import { requireAdmin } from "@/lib/session-guards";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
-import { isCodeExplicitlyConfigured } from "@/lib/xero-mappings";
 import {
   XERO_MAPPING_WRITABLE_KEYS,
+  normalizeMappingCode,
   type XeroMappingWritableKey,
 } from "@/lib/xero-account-mapping-keys";
 
@@ -21,15 +21,16 @@ import {
 const VALID_KEYS = XERO_MAPPING_WRITABLE_KEYS;
 
 type SerialisedMapping = {
+  /**
+   * Normalised (#2717): a blank stored code is reported as `null`, because
+   * blank is not a choice. The Xero setup screen asks
+   * `isCodeExplicitlyConfigured` of the code it is SHOWING — which during an
+   * edit is the staged one — rather than reading a configuredness flag from
+   * here, which would describe the saved code and go stale the moment an
+   * officer cleared the field.
+   */
   code: string | null;
   itemCode: string | null;
-  /**
-   * Derived, never written (#2717, `INV-INT-021`): whether this club CHOSE the
-   * code, as opposed to inheriting an application default or another mapping's
-   * fallback. The Xero setup screen drives its "falling back to ..." notice off
-   * this canonical flag rather than inferring configuredness from a null code.
-   */
-  codeExplicitlyConfigured: boolean;
 };
 
 /** Every writable key, present whether or not a row exists for it. */
@@ -38,13 +39,12 @@ function serialiseMappings(
 ): Record<string, SerialisedMapping> {
   const result: Record<string, SerialisedMapping> = {};
   for (const key of VALID_KEYS) {
-    result[key] = { code: null, itemCode: null, codeExplicitlyConfigured: false };
+    result[key] = { code: null, itemCode: null };
   }
   for (const row of rows) {
     result[row.key] = {
-      code: row.code,
+      code: normalizeMappingCode(row.code),
       itemCode: row.itemCode,
-      codeExplicitlyConfigured: isCodeExplicitlyConfigured(row),
     };
   }
   return result;
@@ -72,13 +72,12 @@ export async function GET() {
 }
 
 const MappingValueSchema = z.object({
-  code: z.string().nullable().optional(),
-  itemCode: z.string().nullable().optional(),
-  // Accepted and IGNORED: the GET response carries this derived flag, so the
-  // settings panel round-trips it on save. Declaring it here keeps that
-  // round-trip deliberate rather than relying on zod silently stripping it —
-  // the write below reads `code` and `itemCode` only.
-  codeExplicitlyConfigured: z.boolean().optional(),
+  // A blank code is refused rather than stored (#2717). Stored blank, it read as
+  // an explicit choice, which disengaged the key's fallback and sent an empty
+  // accountCode to Xero — which rejects it, so the outbox retried for ever.
+  // Clearing a mapping is `null`, which is a different and supported thing.
+  code: z.string().trim().min(1).nullable().optional(),
+  itemCode: z.string().trim().min(1).nullable().optional(),
 });
 
 const UpdateMappingsSchema = z.object(

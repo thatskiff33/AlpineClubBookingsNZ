@@ -131,15 +131,15 @@ describe("GET /api/admin/xero/account-mappings", () => {
     const res = await getMappings();
     expect(res.status).toBe(200);
     const data = await res.json();
-    expect(data.hutFeesIncome).toEqual({ code: "201", itemCode: null, codeExplicitlyConfigured: true });
-    expect(data.hutFeeRefunds).toEqual({ code: "202", itemCode: null, codeExplicitlyConfigured: true });
-    expect(data.stripeBankAccount).toEqual({ code: "607", itemCode: null, codeExplicitlyConfigured: true });
-    expect(data.stripeFees).toEqual({ code: "490", itemCode: null, codeExplicitlyConfigured: true });
-    expect(data.subscriptionIncome).toEqual({ code: "205", itemCode: null, codeExplicitlyConfigured: true });
-    expect(data.membershipCancellationCredit).toEqual({ code: "206", itemCode: "CANCEL-CREDIT", codeExplicitlyConfigured: true });
-    // #2717: a key with no row at all reports itself unconfigured, which is
-    // what drives the setup screen's fallback notice for goodwill.
-    expect(data.goodwillWriteOffs).toEqual({ code: null, itemCode: null, codeExplicitlyConfigured: false });
+    expect(data.hutFeesIncome).toEqual({ code: "201", itemCode: null });
+    expect(data.hutFeeRefunds).toEqual({ code: "202", itemCode: null });
+    expect(data.stripeBankAccount).toEqual({ code: "607", itemCode: null });
+    expect(data.stripeFees).toEqual({ code: "490", itemCode: null });
+    expect(data.subscriptionIncome).toEqual({ code: "205", itemCode: null });
+    expect(data.membershipCancellationCredit).toEqual({ code: "206", itemCode: "CANCEL-CREDIT" });
+    // #2717: a key with no row at all comes back with a null code, which is
+    // what the setup screen asks isCodeExplicitlyConfigured about.
+    expect(data.goodwillWriteOffs).toEqual({ code: null, itemCode: null });
   });
 
   it("returns null for keys not in DB", async () => {
@@ -148,13 +148,13 @@ describe("GET /api/admin/xero/account-mappings", () => {
     ]);
     const res = await getMappings();
     const data = await res.json();
-    expect(data.hutFeesIncome).toEqual({ code: "201", itemCode: null, codeExplicitlyConfigured: true });
-    expect(data.hutFeeRefunds).toEqual({ code: null, itemCode: null, codeExplicitlyConfigured: false });
-    expect(data.goodwillWriteOffs).toEqual({ code: null, itemCode: null, codeExplicitlyConfigured: false });
-    expect(data.stripeBankAccount).toEqual({ code: null, itemCode: null, codeExplicitlyConfigured: false });
-    expect(data.stripeFees).toEqual({ code: null, itemCode: null, codeExplicitlyConfigured: false });
-    expect(data.subscriptionIncome).toEqual({ code: null, itemCode: null, codeExplicitlyConfigured: false });
-    expect(data.membershipCancellationCredit).toEqual({ code: null, itemCode: null, codeExplicitlyConfigured: false });
+    expect(data.hutFeesIncome).toEqual({ code: "201", itemCode: null });
+    expect(data.hutFeeRefunds).toEqual({ code: null, itemCode: null });
+    expect(data.goodwillWriteOffs).toEqual({ code: null, itemCode: null });
+    expect(data.stripeBankAccount).toEqual({ code: null, itemCode: null });
+    expect(data.stripeFees).toEqual({ code: null, itemCode: null });
+    expect(data.subscriptionIncome).toEqual({ code: null, itemCode: null });
+    expect(data.membershipCancellationCredit).toEqual({ code: null, itemCode: null });
   });
 
   it("returns 500 on DB error", async () => {
@@ -204,7 +204,7 @@ describe("PUT /api/admin/xero/account-mappings", () => {
     expect(res.status).toBe(200);
     expect(mockPrisma.xeroAccountMapping.upsert).toHaveBeenCalledTimes(2);
     const data = await res.json();
-    expect(data.hutFeesIncome).toEqual({ code: "201", itemCode: null, codeExplicitlyConfigured: true });
+    expect(data.hutFeesIncome).toEqual({ code: "201", itemCode: null });
   });
 
   it("accepts null codes (clears mapping)", async () => {
@@ -231,19 +231,19 @@ describe("PUT /api/admin/xero/account-mappings", () => {
     );
   });
 
-  it("never writes the derived codeExplicitlyConfigured flag the panel round-trips (#2717)", async () => {
-    const req = makePutRequest({
-      goodwillWriteOffs: { code: "404", itemCode: null, codeExplicitlyConfigured: true },
-    });
-    const res = await putMappings(req);
-    expect(res.status).toBe(200);
-    expect(mockPrisma.xeroAccountMapping.upsert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { key: "goodwillWriteOffs" },
-        update: { code: "404", itemCode: null },
-        create: { key: "goodwillWriteOffs", code: "404", itemCode: null },
-      })
-    );
+  it("refuses a BLANK code rather than storing one (#2717)", async () => {
+    // Stored blank, a code read as an explicit choice: the key's fallback
+    // disengaged and an empty accountCode went to Xero, which rejects it, so
+    // the outbox retried for ever. Clearing a mapping is null, not "".
+    const res = await putMappings(makePutRequest({ goodwillWriteOffs: { code: "" } }));
+    expect(res.status).toBe(400);
+    expect(mockPrisma.xeroAccountMapping.upsert).not.toHaveBeenCalled();
+  });
+
+  it("refuses a whitespace-only code the same way (#2717)", async () => {
+    const res = await putMappings(makePutRequest({ hutFeeRefunds: { code: "   " } }));
+    expect(res.status).toBe(400);
+    expect(mockPrisma.xeroAccountMapping.upsert).not.toHaveBeenCalled();
   });
 
   it("ignores unknown keys (they fail Zod schema)", async () => {

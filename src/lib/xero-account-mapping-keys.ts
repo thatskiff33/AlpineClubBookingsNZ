@@ -60,6 +60,13 @@ export type XeroAccountMappingDefinition = {
    * declare one — and the setup screen says so while the fallback is active.
    */
   readonly fallbackKey?: string;
+  /**
+   * What the setup screen calls the entries this key routes, for the sentence
+   * it writes while the fallback is active ("so goodwill entries keep posting
+   * to …"). Defaults to a bare "entries", which is true but tells an admin
+   * less than it could at no cost.
+   */
+  readonly unsetEntriesLabel?: string;
 };
 
 export const XERO_ACCOUNT_MAPPING_DEFINITIONS = [
@@ -91,6 +98,7 @@ export const XERO_ACCOUNT_MAPPING_DEFINITIONS = [
     accountClass: "EXPENSE",
     defaultCode: null,
     fallbackKey: "hutFeeRefunds",
+    unsetEntriesLabel: "goodwill entries",
   },
   {
     key: "stripeBankAccount",
@@ -212,12 +220,22 @@ export const MAPPING_ACCOUNT_FILTERS: Record<
  * because that is what an admin is being asked to pick; a key that offers a
  * whole class is named by the class.
  */
+/** What the setup screen calls this key's entries while its fallback is live. */
+export function describeMappingUnsetEntries(key: AccountMappingKey): string {
+  return MAPPING_UNSET_ENTRY_LABELS[key] ?? "entries";
+}
+
 export function describeMappingAccountFilter(key: AccountMappingKey): string {
   const filter = MAPPING_ACCOUNT_FILTERS[key];
   const narrowed =
     filter.accountTypes?.length === 1 ? filter.accountTypes[0] : null;
   return (narrowed ?? filter.accountClass).toLowerCase();
 }
+
+const MAPPING_UNSET_ENTRY_LABELS: Record<string, string | undefined> = byKey(
+  XERO_ACCOUNT_MAPPING_DEFINITIONS,
+  (d) => ("unsetEntriesLabel" in d ? d.unsetEntriesLabel : undefined),
+);
 
 /** Application default code per key — `null` for an optional mapping. */
 export const ACCOUNT_MAPPING_DEFAULTS: Record<string, string | null> = byKey(
@@ -260,6 +278,40 @@ export function accountsForMappingKey<
     if (accountClass) return accountClass === filter.accountClass && typeMatches(account);
     return filter.accountTypes != null && typeMatches(account);
   });
+}
+
+/**
+ * A stored mapping code, or `null` when there is not one (#2717).
+ *
+ * BLANK IS NOT A CHOICE. A row whose code is an empty string used to read as
+ * explicitly configured, which disengaged the fallback and sent an empty
+ * `accountCode` to Xero — which rejects it, so the outbox retried for ever.
+ * That was true of every key; normalising here fixes all of them at once, and
+ * repairs rows already stored that way rather than only new writes.
+ */
+export function normalizeMappingCode(
+  code: string | null | undefined,
+): string | null {
+  const trimmed = code?.trim();
+  return trimmed ? trimmed : null;
+}
+
+/**
+ * The ONE definition of "this club chose this code" (#2717, `INV-INT-021`).
+ *
+ * A row with no usable code is a row the club has not decided — the mapping
+ * then resolves from the application default, or from the key's registered
+ * fallback. The runtime resolver, the account-mappings API and the Xero setup
+ * screen all call this, so nobody re-derives configuredness from a null check
+ * of their own. It lives in this pure module rather than beside the resolver so
+ * the admin picker, which cannot import the database client, can call it on the
+ * code an officer has STAGED — a server-sent flag would describe the saved code
+ * instead, and go stale the moment the officer typed.
+ */
+export function isCodeExplicitlyConfigured(
+  row: { code: string | null } | null | undefined,
+): boolean {
+  return normalizeMappingCode(row?.code) != null;
 }
 
 export function isAccountMappingKey(key: string): key is AccountMappingKey {

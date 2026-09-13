@@ -18,6 +18,8 @@ import {
 } from "@/lib/joining-fee";
 import {
   ACCOUNT_MAPPING_DEFAULTS,
+  isCodeExplicitlyConfigured,
+  normalizeMappingCode,
   resolveAccountMappingSource,
   type AccountMappingKey,
 } from "@/lib/xero-account-mapping-keys";
@@ -55,20 +57,10 @@ export type ResolvedAccountMapping = {
   codeExplicitlyConfigured: boolean;
 };
 
-/**
- * The ONE definition of "this club chose this code" (#2717, `INV-INT-021`).
- *
- * A row whose `code` is null is a row the club has not decided — the mapping
- * then resolves from the application default, or from the key's registered
- * fallback. Both the resolver below and `/api/admin/xero/account-mappings`
- * call this, so the setup screen is told whether a code is a club's own choice
- * rather than inferring it from a null column of its own accord.
- */
-export function isCodeExplicitlyConfigured(
-  row: { code: string | null } | null | undefined,
-): boolean {
-  return row?.code != null;
-}
+// `isCodeExplicitlyConfigured` lives in the pure registry module (#2717) so the
+// admin picker can call it too, and is re-exported here because the resolver is
+// where every server caller already looks for it.
+export { isCodeExplicitlyConfigured } from "@/lib/xero-account-mapping-keys";
 
 export async function getResolvedAccountMapping(
   key: string,
@@ -80,7 +72,10 @@ export async function getResolvedAccountMapping(
       select: { code: true, itemCode: true },
     });
     return {
-      code: mapping?.code ?? ACCOUNT_MAPPING_DEFAULTS[key] ?? null,
+      // Blank is not a choice (#2717): a row stored with an empty code falls
+      // back exactly as an unset one does, rather than sending an empty
+      // accountCode to Xero for the outbox to retry on for ever.
+      code: normalizeMappingCode(mapping?.code) ?? ACCOUNT_MAPPING_DEFAULTS[key] ?? null,
       itemCode: mapping?.itemCode ?? null,
       codeExplicitlyConfigured: isCodeExplicitlyConfigured(mapping),
     };

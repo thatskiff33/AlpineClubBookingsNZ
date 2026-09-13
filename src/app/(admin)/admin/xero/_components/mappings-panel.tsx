@@ -24,9 +24,12 @@ import {
 } from "./hut-fee-grid"
 import { useClubTime } from "@/components/club-time-provider"
 import {
+  ACCOUNT_MAPPING_DEFAULTS,
   ACCOUNT_MAPPING_KEYS,
   accountsForMappingKey,
   describeMappingAccountFilter,
+  describeMappingUnsetEntries,
+  isCodeExplicitlyConfigured,
   MAPPING_DESCRIPTIONS,
   MAPPING_LABELS,
   resolveAccountMappingSource,
@@ -360,15 +363,26 @@ function AccountMappingRow({
     currentCode !== "" &&
     !filtered.some((account) => account.code === currentCode)
   // INV-INT-021: while a mapping with a registered fallback is unset, say so
-  // here and name where its entries are going. Driven by the API's canonical
-  // `codeExplicitlyConfigured` flag — the panel never decides "configured?" for
-  // itself from a null code — and by the same resolver the runtime path uses,
-  // so the notice cannot claim a destination the server would not pick.
+  // here and name where its entries are going. Both halves come from the server's
+  // own rules — `isCodeExplicitlyConfigured` is the one definition of a club
+  // having CHOSEN a code, and `resolveAccountMappingSource` is the resolver the
+  // runtime path uses — so the notice cannot claim a destination the server
+  // would not pick. It is applied to the STAGED code rather than to a flag the
+  // server sent, which is what makes the notice appear the moment an officer
+  // clears a previously-configured mapping: a server flag would still say
+  // "configured" and they would never be told that saving sends goodwill back
+  // to the revenue account.
   const { sourceKey, usingFallback } = resolveAccountMappingSource(
     mappingKey,
-    mappings[mappingKey]?.codeExplicitlyConfigured ?? false,
+    isCodeExplicitlyConfigured({ code: currentCode ?? null }),
   )
-  const fallbackCode = usingFallback ? mappings[sourceKey]?.code : null
+  // The RESOLVED fallback code, not the raw row. Where the fallback key has no
+  // code of its own the entries go to the application default, and showing the
+  // empty row would tell a treasurer that two mappings are unconfigured while
+  // naming no account at all.
+  const fallbackCode = usingFallback
+    ? mappings[sourceKey]?.code ?? ACCOUNT_MAPPING_DEFAULTS[sourceKey] ?? null
+    : null
   const fallbackAccount = accounts.find((account) => account.code === fallbackCode)
   return (
     <div className="grid grid-cols-3 items-start gap-4">
@@ -404,7 +418,7 @@ function AccountMappingRow({
         ) : null}
         {usingFallback ? (
           <p className="mt-1 text-xs text-muted-foreground">
-            Not set, so entries keep posting to the{" "}
+            Not set, so {describeMappingUnsetEntries(mappingKey)} keep posting to the{" "}
             <span className="font-medium">{MAPPING_LABELS[sourceKey]}</span> mapping
             {fallbackAccount ? ` (${fallbackAccount.code} - ${fallbackAccount.name})` : fallbackCode ? ` (${fallbackCode})` : ""}
             , exactly as they did before this setting existed. Choosing a{" "}

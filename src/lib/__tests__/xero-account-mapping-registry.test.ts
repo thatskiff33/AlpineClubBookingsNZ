@@ -40,6 +40,7 @@ import {
   XERO_ITEM_ONLY_MAPPING_DEFINITIONS,
   XERO_MAPPING_WRITABLE_KEYS,
   isAccountMappingKey,
+  normalizeMappingCode,
   resolveAccountMappingSource,
   type AccountMappingKey,
 } from "@/lib/xero-account-mapping-keys";
@@ -235,6 +236,16 @@ describe("isCodeExplicitlyConfigured — the one definition of a club's own choi
     expect(isCodeExplicitlyConfigured({ code: null })).toBe(false);
     expect(isCodeExplicitlyConfigured(null)).toBe(false);
     expect(isCodeExplicitlyConfigured(undefined)).toBe(false);
+  });
+
+  it("treats a BLANK code as unset, not as a choice", () => {
+    // Stored blank it used to read as configured, which disengaged the key's
+    // fallback and sent an empty accountCode to Xero — rejected, so the outbox
+    // retried for ever. True of every key, so the one normalisation fixes all.
+    expect(isCodeExplicitlyConfigured({ code: "" })).toBe(false);
+    expect(isCodeExplicitlyConfigured({ code: "   " })).toBe(false);
+    expect(normalizeMappingCode(" 404 ")).toBe("404");
+    expect(normalizeMappingCode("")).toBeNull();
   });
 });
 
