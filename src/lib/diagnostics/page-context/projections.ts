@@ -216,7 +216,12 @@ async function readBooking({
   }
 
   if (includeSensitive) {
-    facts.push(sensitiveFact("bookingOwner(booking).member-name", displayName(bookingOwner(booking).member)));
+    // The fact KEY is a stable operator-facing string and is NOT an ownership
+    // read (#3368): the sweep rewrote it along with the value beside it, which
+    // renamed a diagnostics fact. Left as it was.
+    facts.push(
+      sensitiveFact("booking.member-name", displayName(bookingOwner(booking).member)),
+    );
     if (booking.notes) {
       facts.push(sensitiveFact("booking.notes", booking.notes));
     }
