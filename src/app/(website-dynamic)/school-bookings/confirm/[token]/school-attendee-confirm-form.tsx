@@ -36,10 +36,20 @@ export function SchoolAttendeeConfirmForm({
   const [error, setError] = useState("");
 
   function setName(guestId: string, field: "firstName" | "lastName", value: string) {
-    setNames((current) => ({
-      ...current,
-      [guestId]: { ...current[guestId], [field]: value },
-    }));
+    setNames((current) => {
+      const existing = current[guestId];
+      // The map is seeded with every guest, so an id that is not in it belongs
+      // to nobody on this booking. Spreading the absent entry would have
+      // written a HALF row — one name set, the other missing — which
+      // `changedUpdates` then silently reads back as the stored name. Leaving
+      // the state alone is the only answer that cannot half-rename a guest
+      // (#2801).
+      if (!existing) return current;
+      return {
+        ...current,
+        [guestId]: { ...existing, [field]: value },
+      };
+    });
   }
 
   function changedUpdates() {

@@ -41,7 +41,7 @@ vi.mock("@/lib/lodge-capacity", () => ({
 
 vi.mock("@/lib/bed-allocation-lifecycle", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("@/lib/bed-allocation-lifecycle")>();
+    (await importOriginal()) as typeof import("@/lib/bed-allocation-lifecycle");
   return {
     ...actual,
     // The write-time re-check (#2285) has its own coverage; here it passes

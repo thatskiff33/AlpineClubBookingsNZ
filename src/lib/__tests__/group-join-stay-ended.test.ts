@@ -44,23 +44,17 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 vi.mock("@/lib/lodge-capacity", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/lodge-capacity")>(
-    "@/lib/lodge-capacity"
-  );
+  const actual = (await vi.importActual("@/lib/lodge-capacity")) as typeof import("@/lib/lodge-capacity");
   return { ...actual, getLodgeCapacity: mocks.getLodgeCapacity };
 });
 
 vi.mock("@/lib/lodges", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/lodges")>(
-    "@/lib/lodges"
-  );
+  const actual = (await vi.importActual("@/lib/lodges")) as typeof import("@/lib/lodges");
   return { ...actual, getDefaultLodgeId: mocks.getDefaultLodgeId };
 });
 
 vi.mock("@/lib/booking-guests", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/booking-guests")>(
-    "@/lib/booking-guests"
-  );
+  const actual = (await vi.importActual("@/lib/booking-guests")) as typeof import("@/lib/booking-guests");
   return {
     ...actual,
     resolveLinkedBookingMembers: mocks.resolveLinkedBookingMembers,

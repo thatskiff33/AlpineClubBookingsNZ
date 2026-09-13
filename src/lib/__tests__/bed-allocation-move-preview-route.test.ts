@@ -19,9 +19,7 @@ vi.mock("@/lib/admin-modules", () => ({
   isEffectiveModuleEnabled: (...args: unknown[]) => moduleEnabledMock(...args),
 }));
 vi.mock("@/lib/bed-allocation-move", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/bed-allocation-move")>(
-    "@/lib/bed-allocation-move",
-  );
+  const actual = (await vi.importActual("@/lib/bed-allocation-move")) as typeof import("@/lib/bed-allocation-move");
   return { ...actual, previewBedAllocationMove: previewMock };
 });
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));

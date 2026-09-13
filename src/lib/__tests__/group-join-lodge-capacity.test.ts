@@ -51,25 +51,19 @@ vi.mock("@/lib/prisma", () => ({
 // Partial mock: only override getLodgeCapacity; keep FALLBACK_LODGE_CAPACITY
 // et al so other importers (email registry) still resolve.
 vi.mock("@/lib/lodge-capacity", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/lodge-capacity")>(
-    "@/lib/lodge-capacity"
-  );
+  const actual = (await vi.importActual("@/lib/lodge-capacity")) as typeof import("@/lib/lodge-capacity");
   return { ...actual, getLodgeCapacity: mocks.getLodgeCapacity };
 });
 
 // Partial mock: keep lodgeNullTolerantScope et al intact; only spy on the
 // default-lodge fallback so we can assert the group's lodge is used instead.
 vi.mock("@/lib/lodges", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/lodges")>(
-    "@/lib/lodges"
-  );
+  const actual = (await vi.importActual("@/lib/lodges")) as typeof import("@/lib/lodges");
   return { ...actual, getDefaultLodgeId: mocks.getDefaultLodgeId };
 });
 
 vi.mock("@/lib/booking-guests", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/booking-guests")>(
-    "@/lib/booking-guests"
-  );
+  const actual = (await vi.importActual("@/lib/booking-guests")) as typeof import("@/lib/booking-guests");
   return {
     ...actual,
     resolveLinkedBookingMembers: mocks.resolveLinkedBookingMembers,
@@ -97,16 +91,14 @@ vi.mock("@/lib/booking-member-guest-subscriptions", () => ({
 }));
 
 vi.mock("@/lib/booking-create", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/booking-create")>(
-    "@/lib/booking-create",
-  );
+  const actual = (await vi.importActual("@/lib/booking-create")) as typeof import("@/lib/booking-create");
   return { ...actual, createConfirmedBooking: mocks.createConfirmedBooking };
 });
 // #3128 moved `evaluateProposedAdultMemberHosting` to its own module; the
 // partial mock follows it there so it still intercepts.
 vi.mock("@/lib/adult-member-hosting-proposed", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("@/lib/adult-member-hosting-proposed")>();
+    (await importOriginal()) as typeof import("@/lib/adult-member-hosting-proposed");
   return {
     ...actual,
     evaluateProposedAdultMemberHosting:

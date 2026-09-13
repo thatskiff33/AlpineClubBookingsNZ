@@ -75,7 +75,6 @@ function migrationNames(): string[] {
 function migrationSql(name: string): string {
   // Test helper: joins the repo's own migrations directory with a name read
   // from that same directory listing; no user input.
-  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
   return readFileSync(path.join(MIGRATIONS_DIR, name, "migration.sql"), "utf8");
 }
 
@@ -403,7 +402,6 @@ describeWithDatabase("data migrations against a real PostgreSQL (#2418)", () => 
       try {
         // Test fixture: this repository's own committed migration SQL, against a
         // disposable database; no user input.
-        // nosemgrep: javascript.express.db.pg-express.pg-express
         await queryClient.query(statement);
       } catch (error) {
         throw new Error(
@@ -461,8 +459,7 @@ describeWithDatabase("data migrations against a real PostgreSQL (#2418)", () => 
   ) {
     for (const expectation of testCase.expectations) {
       // Test fixture: the fixture's own read-only assertion query.
-      // nosemgrep: javascript.express.db.pg-express.pg-express
-      const result = await queryClient.query(expectation.sql);
+        const result = await queryClient.query(expectation.sql);
       readings.push({
         claim: expectation.claim,
         expected: expectation.rows,
@@ -522,8 +519,7 @@ describeWithDatabase("data migrations against a real PostgreSQL (#2418)", () => 
 
     const caseDatabase = `dmv_case_${randomUUID().replaceAll("-", "")}`;
     // Both names are generated locally; no request or fixture value is used.
-    // nosemgrep: javascript.express.db.pg-express.pg-express
-    await adminClient.query(
+      await adminClient.query(
       `CREATE DATABASE "${caseDatabase}" TEMPLATE "${scratchDatabase}"`,
     );
     const caseClient = new Client({
@@ -546,15 +542,13 @@ describeWithDatabase("data migrations against a real PostgreSQL (#2418)", () => 
           // One query containing the exact committed bytes, including its
           // top-level BEGIN/COMMIT envelope. The case database is disposable,
           // so the committed result needs no enclosing rollback transaction.
-          // nosemgrep: javascript.express.db.pg-express.pg-express
-          await caseClient.query(version);
+            await caseClient.query(version);
         } catch (error) {
           capturedError = captureDatabaseError(error);
           // A failure inside the explicit transaction leaves the connection in
           // aborted state because the remaining COMMIT was not reached. Clear
           // it before proving that no schema artifact survived the rollback.
-          // nosemgrep: javascript.express.db.pg-express.pg-express
-          await caseClient.query("ROLLBACK");
+            await caseClient.query("ROLLBACK");
           break;
         }
       }
@@ -575,8 +569,7 @@ describeWithDatabase("data migrations against a real PostgreSQL (#2418)", () => 
     } finally {
       await caseClient.end().catch(() => {});
       // Test fixture: drops the UUID-named disposable case database.
-      // nosemgrep: javascript.express.db.pg-express.pg-express
-      await adminClient
+        await adminClient
         .query(`DROP DATABASE IF EXISTS "${caseDatabase}" WITH (FORCE)`)
         .catch(() => {});
     }
@@ -590,7 +583,6 @@ describeWithDatabase("data migrations against a real PostgreSQL (#2418)", () => 
     await adminClient.connect();
     scratchDatabase = `dmv_${randomUUID().replaceAll("-", "")}`;
     // Test fixture: a generated UUID-derived database name; no user input.
-    // nosemgrep: javascript.express.db.pg-express.pg-express
     await adminClient.query(`CREATE DATABASE "${scratchDatabase}"`);
 
 
@@ -658,7 +650,6 @@ describeWithDatabase("data migrations against a real PostgreSQL (#2418)", () => 
     await client?.end().catch(() => {});
     if (adminClient && scratchDatabase) {
       // Test fixture: drops the disposable database created above.
-      // nosemgrep: javascript.express.db.pg-express.pg-express
       await adminClient
         .query(`DROP DATABASE IF EXISTS "${scratchDatabase}" WITH (FORCE)`)
         .catch(() => {});

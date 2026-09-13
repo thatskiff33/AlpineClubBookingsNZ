@@ -428,8 +428,8 @@ describe("PATCH /api/admin/page-content (publish toggle)", () => {
   #2352 MC-03D. The supported hard delete for CMS page content.
 
   What these cases are FOR, stated once so a later reader does not loosen them:
-  the measurement gate needs a supported writer whose invalidation can be proved,
-  and the writer is only safe because of four properties — it refuses anyone
+  the measurement gate needed a supported writer whose invalidation could be
+  proved, and the writer is only safe because of four properties — it refuses anyone
   without content edit, it refuses a page the product itself links, the row and
   its audit snapshot move together, and nothing is written on any refused path.
   So every case below asserts what the database and the response DID, not that a
@@ -596,7 +596,7 @@ describe("DELETE /api/admin/page-content", () => {
     // hand-set value is exactly the drift it exists to prevent.
     expect(auditEvent).not.toHaveProperty("retentionClass");
     const { classifyAuditRetention } =
-      await vi.importActual<typeof import("@/lib/audit")>("@/lib/audit");
+      (await vi.importActual("@/lib/audit")) as typeof import("@/lib/audit");
     expect(
       classifyAuditRetention({
         action: auditEvent.action,
@@ -955,7 +955,7 @@ describe("DELETE /api/admin/page-content", () => {
     const [auditEvent, auditOptions] =
       mocks.buildStructuredAuditLogCreateArgs.mock.calls.at(-1)!;
     const { sanitizeAuditMetadata } =
-      await vi.importActual<typeof import("@/lib/audit")>("@/lib/audit");
+      (await vi.importActual("@/lib/audit")) as typeof import("@/lib/audit");
 
     const sanitized = sanitizeAuditMetadata(
       auditEvent.metadata,

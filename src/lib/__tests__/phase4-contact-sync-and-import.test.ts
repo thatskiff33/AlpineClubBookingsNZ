@@ -205,7 +205,7 @@ vi.mock("xero-node", () => ({
 // encryptForTest fixtures round-trip, and the operational config must resolve
 // without integration-credential DB rows.
 vi.mock("@/lib/xero-config", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/xero-config")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/xero-config");
   return {
     ...actual,
     getOperationalXeroConfig: vi.fn().mockResolvedValue({

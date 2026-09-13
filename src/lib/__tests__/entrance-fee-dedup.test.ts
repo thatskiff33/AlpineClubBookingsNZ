@@ -22,7 +22,7 @@ vi.mock("@/lib/prisma", () => ({
 const mockCompleteXeroSyncOperation = vi.fn();
 const mockStartXeroSyncOperation = vi.fn();
 vi.mock("@/lib/xero-sync", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/xero-sync")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/xero-sync");
   return {
     ...actual,
     completeXeroSyncOperation: (...args: unknown[]) =>
@@ -37,7 +37,7 @@ vi.mock("@/lib/xero-sync", async (importOriginal) => {
 // default to rejecting and let the reference test override per-call.
 const mockGetAuthenticatedXeroClient = vi.fn();
 vi.mock("@/lib/xero-api-client", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/xero-api-client")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/xero-api-client");
   return {
     ...actual,
     // Run the wrapped call directly; the real wrapper persists metered usage to
@@ -49,7 +49,7 @@ vi.mock("@/lib/xero-api-client", async (importOriginal) => {
 });
 
 vi.mock("@/lib/xero-mappings", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/xero-mappings")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/xero-mappings");
   return {
     ...actual,
     getResolvedAccountMapping: vi

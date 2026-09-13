@@ -80,8 +80,9 @@ export function LodgeDetailsPanel() {
           return;
         }
         const lodges = rows.filter(hasLodgeDetailFields);
-        if (lodges.length === 1) {
-          setLodge(lodges[0]);
+        const [onlyLodge] = lodges;
+        if (lodges.length === 1 && onlyLodge) {
+          setLodge(onlyLodge);
           setMultiLodge(false);
         } else {
           setLodge(null);

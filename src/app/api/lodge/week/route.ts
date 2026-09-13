@@ -34,7 +34,7 @@ function isDateAccessible(date: string, range: DateRange): boolean {
   return date >= range.minDate && date <= range.maxDate;
 }
 
-async function resolveWeekAuth(req: NextRequest, dates: string[]) {
+async function resolveWeekAuth(req: NextRequest, dates: readonly string[]) {
   let forbidden: Awaited<ReturnType<typeof checkLodgeAuth>> | null = null;
 
   for (const date of dates) {
@@ -63,7 +63,7 @@ async function resolveWeekAuth(req: NextRequest, dates: string[]) {
         tier: "none" as const,
         session: null,
       },
-    authDate: dates[0],
+    authDate: null,
   };
 }
 
@@ -98,7 +98,9 @@ async function handleGet(req: NextRequest) {
   const dateKeys = weekDates.map(formatDateOnly);
   const { authResult, authDate } = await resolveWeekAuth(req, dateKeys);
 
-  if (authResult.error) {
+  // #2801: `authDate` is null only on the arms that also set `error`, so this
+  // refuses exactly what it refused before, and narrows the granted day too.
+  if (authResult.error || authDate === null) {
     return NextResponse.json(
       { error: authResult.error },
       { status: authResult.status! }
@@ -197,9 +199,8 @@ async function handleGet(req: NextRequest) {
     },
   });
 
-  const days = weekDates.map((date, index) => {
-    const dateKey = dateKeys[index];
-
+  const days = weekDates.map((date) => {
+    const dateKey = formatDateOnly(date);
     if (!isDateAccessible(dateKey, dateRange)) {
       return { date: dateKey, accessible: false };
     }

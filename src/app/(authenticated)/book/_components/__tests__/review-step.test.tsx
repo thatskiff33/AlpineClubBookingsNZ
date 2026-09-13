@@ -330,6 +330,9 @@ describe("ReviewStep split provisional copy (#1942)", () => {
     expect(
       screen.getByText(/at non-member rates\) are not charged today/i),
     ).toBeInTheDocument();
+    // The promo adjustment line renders through the shared formatSignedCents
+    // (#3264); this pins the string the former local copy produced here.
+    expect(screen.getByText("-$140.00")).toBeInTheDocument();
     // The gross guest portion is still shown ($120.00) but no longer framed as
     // a slice of "the total above".
     expect(

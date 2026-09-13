@@ -1517,7 +1517,6 @@ export async function formPartnerLinkOnClaim(params: {
   // must still commit when Child B's database backstop wins a mixed-runtime
   // race. A savepoint recovers the transaction before returning the stable
   // refusal reason; without it PostgreSQL would leave the whole claim aborted.
-  // nosemgrep: acb-unsafe-raw-sql — fixed identifier, no arguments or request-reachable input
   await tx.$executeRawUnsafe(
     "SAVEPOINT member_partner_token_claim_optional_write",
   );
@@ -1546,16 +1545,13 @@ export async function formPartnerLinkOnClaim(params: {
       });
       linkId = link.id;
     }
-    // nosemgrep: acb-unsafe-raw-sql — fixed identifier, no arguments or request-reachable input
     await tx.$executeRawUnsafe(
       "RELEASE SAVEPOINT member_partner_token_claim_optional_write",
     );
   } catch (error) {
-    // nosemgrep: acb-unsafe-raw-sql — fixed identifier, no arguments or request-reachable input
     await tx.$executeRawUnsafe(
       "ROLLBACK TO SAVEPOINT member_partner_token_claim_optional_write",
     );
-    // nosemgrep: acb-unsafe-raw-sql — fixed identifier, no arguments or request-reachable input
     await tx.$executeRawUnsafe(
       "RELEASE SAVEPOINT member_partner_token_claim_optional_write",
     );

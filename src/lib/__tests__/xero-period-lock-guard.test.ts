@@ -16,7 +16,7 @@ vi.mock("@/lib/xero-token-store", () => ({
 // resolution is part of what these tests prove.
 vi.mock("@/lib/xero-organisation", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("@/lib/xero-organisation")>();
+    (await importOriginal()) as typeof import("@/lib/xero-organisation");
   return { ...actual, getXeroLockDates: h.getXeroLockDates };
 });
 

@@ -234,6 +234,33 @@ export async function createModificationAdditionalPaymentIntent({
       idempotencyKey,
     });
 
+    // THE NEW INTENT'S OWN ROW IS WRITTEN FIRST, AND THE ORDER IS LOAD-BEARING
+    // (#3340 fix round). Cancelling a superseded intent reconciles the payment
+    // aggregates - both terminal branches of the cancel processor call
+    // `reconcilePaymentAggregates` - and that reconcile mirrors the LATEST
+    // ADDITIONAL transaction into `Payment.additionalAmountCents` and
+    // `additionalPaymentIntentId`. Run with the cancel first, the latest
+    // ADDITIONAL row is still the one being retired, so the reconcile writes the
+    // OLD, smaller ask back over the payment and points it at an intent that has
+    // just been cancelled. The line below normally corrects that a moment later;
+    // a process death in between does not, and leaves a booking whose price has
+    // risen reading the superseded figure with no live instrument behind it.
+    //
+    // Writing the row first cannot select itself for cancellation: the
+    // `findMany` in `queueSupersededAdditionalIntentCancellations` excludes
+    // `newPaymentIntentId` explicitly. The cost is one database upsert of
+    // latency before the old secret dies, which is far inside the window the
+    // synchronous cancel exists to close.
+    await upsertPaymentIntentTransaction({
+      paymentId: result.paymentId,
+      kind: PaymentTransactionKind.ADDITIONAL,
+      paymentIntentId: pi.id,
+      amountCents: result.additionalAmountCents,
+      status: PaymentStatus.PENDING,
+      reason,
+      stripeCustomerId: customerId,
+    });
+
     await queueSupersededAdditionalIntentCancellations({
       bookingId,
       paymentId: result.paymentId,
@@ -244,16 +271,6 @@ export async function createModificationAdditionalPaymentIntent({
         "Failed to queue superseded additional intent cancellations",
       ),
     );
-
-    await upsertPaymentIntentTransaction({
-      paymentId: result.paymentId,
-      kind: PaymentTransactionKind.ADDITIONAL,
-      paymentIntentId: pi.id,
-      amountCents: result.additionalAmountCents,
-      status: PaymentStatus.PENDING,
-      reason,
-      stripeCustomerId: customerId,
-    });
 
     return {
       additionalPaymentClientSecret: pi.client_secret ?? undefined,

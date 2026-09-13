@@ -936,9 +936,13 @@ Verified controls already present and intentionally preserved:
   lightweight unless explicitly approved.
 - Semgrep uses a pinned `semgrep/semgrep:1.161.0` image and runs this
   repository's own rules (`.semgrep/rules/`) alongside the four registry packs;
-  gitleaks uses the pinned `ghcr.io/gitleaks/gitleaks:v8.28.0` container for
-  the pull-request commit range, the history of `main` and the checked-out
-  tree, in one job; and the Dockerfile uses `node:24.15-alpine`.
+  gitleaks runs the container pinned in `scripts/ci/gitleaks-image.sh`, through
+  the one invocation in `scripts/ci/gitleaks-scan.sh`, over the pull-request
+  commit range, the history of `main` and the checked-out tree in the required
+  gate's single job, and over every branch's history in the advisory scheduled
+  sweep (#2852); and the Dockerfile uses `node:24.15-alpine`. The version
+  literal is deliberately not repeated here — a copy of it is a second home a
+  bump can miss.
 - Two CI security gates are **required** protected-branch checks today —
   `Static analysis gate` and `verify`. #2686 adds `Secret scan (gitleaks)` and
   `Image security gate (Trivy CRITICAL)` to that list, and #2946 adds
@@ -3506,7 +3510,7 @@ visibly new, and someone reads it.
 | `js/insufficient-password-hash` | `src/lib/mirotalk-token.ts` | false positive | "MiroTalk meeting tokens", below |
 | `js/insufficient-password-hash`, `js/weak-cryptographic-algorithm` | `mirotalk-token.test.ts` (×2) | used in tests | Same protocol reason, in the round-trip test |
 | `js/incomplete-multi-character-sanitization` | `booking-requests-noindex.test.ts`, `website-page-header-fallback-render.test.tsx` | used in tests | `vi.mock` doubles, "Test-file and harness alerts" below |
-| `js/bad-code-sanitization` | `measurement/**/self-test.mjs` (×3) | used in tests | Harness, never in the runtime image |
+| `js/bad-code-sanitization` | `measurement/**/self-test.mjs` (×3) | used in tests | Harness, never in the runtime image. **Historical** — the `measurement/` tree was removed whole by #3382; these three findings can no longer exist because the file they were raised against does not exist |
 
 **Two of those were never triaged by #2841, because they did not exist yet**, and
 both were verified from scratch on 28 August:
@@ -3679,11 +3683,16 @@ unsuppressed again, so the alert returns.
   `pageContentHtmlToPlainText` uses `sanitize-html` with `allowedTags: []`. Test
   doubles, no production path. Keeping the doubles crude is deliberate: a test
   that reimplements the sanitiser proves nothing about the sanitiser.
-- **38, 37, 36 — bad code sanitization** in the `measurement/` harness. One-off
-  evidence tooling that generates fixture `.js` files from paths it constructed
-  itself. Measured: the Dockerfile's runner stage copies only `public`,
-  `.next/standalone`, `.next/static`, `prisma`, `node_modules` and `.artifacts`,
-  so `measurement/` is not in the runtime image at all.
+- **38, 37, 36 — bad code sanitization** in the `measurement/` harness.
+  **Historical, since #3382.** This was one-off evidence tooling that generated
+  fixture `.js` files from paths it constructed itself. Measured at the time:
+  the Dockerfile's runner stage copied only `public`, `.next/standalone`,
+  `.next/static`, `prisma`, `node_modules` and `.artifacts`, so `measurement/`
+  was never in the runtime image at all. The `measurement/` tree was removed
+  whole by #3382 (owner decision on #2663: the CPU measurement it existed for
+  will never run), so these three findings can no longer exist — the file they
+  were raised against is gone. Left here rather than deleted, per this page's
+  own convention of keeping a disposition at the site of the thing it explains.
 
 ### Stated limits
 

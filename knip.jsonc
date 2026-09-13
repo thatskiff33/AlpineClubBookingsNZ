@@ -51,20 +51,17 @@
   // k6 binary, not Node/Next — its scripts import k6-runtime modules (k6/http,
   // k6/execution, ...) that are not npm packages, so knip cannot analyze them.
   // Dead-code coverage for load/ comes from `node --check` + eslint instead.
-  // The #2352/#2663 measurement harness is operator-invoked evidence tooling.
-  // Every .mjs under measurement/ is a standalone script a shell runner spawns
-  // with `node <path>` or that another such script imports at a path knip does
-  // not follow, so knip sees ~50 unreferenced files. It is deliberately outside
-  // CI and is removed again in the follow-up PR once the figure is recorded
-  // (owner decision on #2663), so this entry goes with it. Dead-code coverage
-  // for measurement/ comes from its own three self-tests plus `node --check`
-  // and `bash -n`.
   // #2686: `.semgrep/**` holds the repository's own Semgrep rules and their
   // must-fail/must-pass fixtures. Nothing in the application imports them —
   // Semgrep reads them directly, and the `Static analysis gate` job runs
   // `semgrep --test` over them on every pull request, which is what proves they
   // are alive. knip would report every fixture as an unused file.
-  "ignore": ["load/**", "measurement/**", ".semgrep/**"],
+  //
+  // The #2352/#2663 measurement harness (`measurement/**`) carried the same
+  // kind of carve-out here. It was removed whole by #3382, so the carve-out
+  // went with it rather than becoming a stale ignore for a directory that no
+  // longer exists.
+  "ignore": ["load/**", ".semgrep/**"],
   "ignoreBinaries": [
     // Runtime shell-outs; these binaries live on the host/container, not node_modules.
     // #2418: the data-migration gate's contract test runs the shared awk statement

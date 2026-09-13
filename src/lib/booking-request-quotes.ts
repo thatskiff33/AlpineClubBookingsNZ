@@ -580,6 +580,11 @@ export async function createBookingRequestQuote(input: {
     linkedGuestMembers,
   });
 
+  // A single-option quote carries its price on the request; two or more leave
+  // it null. "Exactly one" is a first with no rest, so the price stored is a
+  // value this already holds (#2800).
+  const [soleOption, ...extraOptions] = options;
+
   const message = cleanNullableString(input.quote.message);
   const quotedAt = new Date();
 
@@ -592,7 +597,8 @@ export async function createBookingRequestQuote(input: {
       where: { id: request.id },
       data: {
         status: BookingRequestStatus.QUOTED,
-        priceCents: options.length === 1 ? options[0].totalCents : null,
+        priceCents:
+          extraOptions.length === 0 ? (soleOption?.totalCents ?? null) : null,
         pricedByMemberId: input.adminMemberId,
         pricedAt: quotedAt,
         linkedGuestMembers: linkedGuestMembers as unknown as Prisma.InputJsonValue,

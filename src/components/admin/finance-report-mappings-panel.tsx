@@ -565,7 +565,7 @@ export function FinanceReportMappingsPanel() {
         {state ? (
           <>
             <div className="rounded-md border border-border bg-muted px-3 py-2 text-sm text-muted-foreground">
-              Latest inspected P&L snapshot:{" "}
+              Latest inspected P&amp;L snapshot:{" "}
               {state.snapshotCoverage.latestProfitAndLossSnapshot ?? "none"} ·{" "}
               {state.snapshotCoverage.inspectedSnapshotCount} snapshots checked.
               Lines are matched to groups by Xero account code only.

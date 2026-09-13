@@ -90,7 +90,11 @@ interface UnassignedDate {
 // Compute the last inclusive day of a "YYYY-MM" month.
 function monthBounds(monthKey: string) {
   const start = parseDateOnly(`${monthKey}-01`);
-  const [year, month] = monthKey.split("-").map(Number);
+  // Sliced at the fixed `YYYY-MM` offsets rather than split: the two halves
+  // read as `number` where a destructured split hands back lookups the
+  // compiler must treat as possibly absent (#2801).
+  const year = Number(monthKey.slice(0, 4));
+  const month = Number(monthKey.slice(5, 7));
   const nextYear = month === 12 ? year + 1 : year;
   const nextMonth = month === 12 ? 1 : month + 1;
   const endExclusive = parseDateOnly(
@@ -103,8 +107,11 @@ function monthBounds(monthKey: string) {
 // the surname is long, so a custodian's multi-month block reads as a band.
 function shortLeaderLabel(memberName: string) {
   const parts = memberName.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return memberName;
+  // The last part IS the "there are no parts" check: a blank name has no
+  // surname to abbreviate, which is the same condition the length test
+  // expressed (#2801).
   const surname = parts[parts.length - 1];
+  if (surname === undefined) return memberName;
   if (surname.length > 10) {
     return parts.map((p) => p[0]?.toUpperCase() ?? "").join("");
   }

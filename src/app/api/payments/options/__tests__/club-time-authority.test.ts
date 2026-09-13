@@ -61,7 +61,7 @@ vi.mock("@/lib/internet-banking-settings", async (importOriginal) => {
   // has no interest in), but `buildInternetBankingPaymentOptionState` and
   // `checkInternetBankingLeadTime` are the REAL ones — they are the subject.
   const actual =
-    await importOriginal<typeof import("@/lib/internet-banking-settings")>();
+    (await importOriginal()) as typeof import("@/lib/internet-banking-settings");
   return {
     ...actual,
     loadInternetBankingPaymentSettings: mocks.loadInternetBankingPaymentSettings,

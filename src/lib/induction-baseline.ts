@@ -374,7 +374,15 @@ function validateActiveTemplate(
     );
   }
 
-  const template = templates[0];
+  // `templates.length === 1` is checked above, so this is always present;
+  // the type can't carry that, so a missing element is a named refusal
+  // rather than an assumption.
+  const [template] = templates;
+  if (!template) {
+    throw new InductionBaselineError(
+      `Exactly one active NEW_MEMBER induction template is required; found ${templates.length}.`,
+    );
+  }
   const hasBlankSection = template.sections.some(
     (section) => !section.title.trim(),
   );

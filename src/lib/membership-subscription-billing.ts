@@ -893,7 +893,11 @@ export async function buildSubscriptionBillingPreview(input: {
         }));
         continue;
       }
-      if (member.familyGroupMemberships.length === 0) {
+      // Reading the member's first family is what says they are in one; the
+      // MISSING_FAMILY exception below is that same check, now stated by the
+      // value the resolution goes on to use (#2800).
+      const firstMembership = member.familyGroupMemberships[0];
+      if (firstMembership === undefined) {
         exceptions.push(exception({
           code: "MISSING_FAMILY", message: `${memberName} has a per-family fee but is not in a family.`,
           seasonYear: input.seasonYear, memberId: member.id, familyGroupId: null,
@@ -913,7 +917,7 @@ export async function buildSubscriptionBillingPreview(input: {
       // The chosen family then flows through the SAME downstream recipient checks
       // (MISSING_FAMILY_RECIPIENT / INVALID_FAMILY_RECIPIENT) as an unambiguous
       // family — no duplicated path.
-      let membership = member.familyGroupMemberships[0];
+      let membership = firstMembership;
       if (member.familyGroupMemberships.length > 1) {
         if (!member.billingFamilyGroupId) {
           exceptions.push(exception({
@@ -1089,9 +1093,17 @@ export async function buildSubscriptionBillingPreview(input: {
   if (invoiceEntries.length > 0) {
     const mapping = await getResolvedAccountMapping("subscriptionIncome", db);
     if (!mapping.code || !mapping.codeExplicitlyConfigured) {
-      for (let index = entries.length - 1; index >= 0; index -= 1) {
-        if (entries[index].billingBasis !== "NO_INVOICE") entries.splice(index, 1);
-      }
+      // Drop every invoiceable entry, keeping the NO_INVOICE ones. The
+      // descending splice loop this replaces was CORRECT — descending is the
+      // safe direction for splicing — and this is an equivalent rewrite, not a
+      // bug fix: it says the same thing as a filter, which needs no indexed
+      // read at all. `entries` is reused rather than rebound because callers
+      // above hold the same array (#2800).
+      const keptEntries = entries.filter(
+        (entry) => entry.billingBasis === "NO_INVOICE",
+      );
+      entries.length = 0;
+      entries.push(...keptEntries);
       exceptions.push(exception({
         code: "MISSING_XERO_ACCOUNT_MAPPING",
         message: "The subscriptionIncome Xero account mapping must be explicitly configured before membership invoices can be queued.",

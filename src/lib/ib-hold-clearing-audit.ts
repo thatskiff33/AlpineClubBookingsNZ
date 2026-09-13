@@ -22,6 +22,7 @@ import {
   PaymentStatus,
 } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { formatCents } from "@/lib/utils";
 import { isAdditionalAmountUncollected } from "@/lib/unpaid-finished-stays";
 
 export interface IbHoldClearingRow {
@@ -187,11 +188,6 @@ export async function auditIbHoldClearingUnderclears(options?: {
   }
 
   return result;
-}
-
-function formatCents(cents: number): string {
-  const sign = cents < 0 ? "-" : "";
-  return `${sign}NZ$${(Math.abs(cents) / 100).toFixed(2)}`;
 }
 
 export function formatIbHoldClearingAuditReport(

@@ -16,9 +16,7 @@ const { auditMock, capacityLockMock, prismaMock } = vi.hoisted(() => ({
 
 vi.mock("@/lib/audit", () => ({ createAuditLog: auditMock }));
 vi.mock("@/lib/capacity", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/capacity")>(
-    "@/lib/capacity",
-  );
+  const actual = (await vi.importActual("@/lib/capacity")) as typeof import("@/lib/capacity");
   return { ...actual, acquireLodgeCapacityLock: capacityLockMock };
 });
 vi.mock("@/lib/prisma", () => ({ prisma: prismaMock }));

@@ -19,6 +19,14 @@ import { parseXeroContactDateOfBirth } from "@/lib/xero-contact-date-of-birth";
 import { buildXeroIdempotencyKey, completeXeroSyncOperation } from "@/lib/xero-sync";
 import { CLUB_NAME } from "@/config/club-identity";
 
+/**
+ * The `@/lib/xero` module namespace, named because an `import()` type written
+ * inline in a PARAMETER annotation is one of the two shapes Semgrep cannot
+ * parse (#3318) - the module is still loaded dynamically, at the one call site
+ * that does it.
+ */
+type XeroModule = typeof import("@/lib/xero");
+
 type RetryableOperation = Pick<
   XeroSyncOperation,
   | "id"
@@ -493,7 +501,7 @@ function parseRefundCreditNoteRepairInput(
 
 async function repairRefundCreditNoteFollowUpActions(
   operation: Pick<RetryableOperation, "id" | "localId" | "responsePayload" | "xeroObjectNumber">,
-  xero: typeof import("@/lib/xero"),
+  xero: XeroModule,
   repair: {
     creditNoteId: string;
     invoiceId: string;

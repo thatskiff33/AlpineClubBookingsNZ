@@ -225,8 +225,11 @@ export function BedAllocationRemovalDialog({
     previewInFlightRef.current = false;
     if (!open || !anchor) return;
     setScopeType(anchor.initialScope);
+    const [onlyAllocation] = anchor.allocations;
     setSelectedNight(
-      anchor.allocations.length === 1 ? anchor.allocations[0].stayDate : "",
+      anchor.allocations.length === 1 && onlyAllocation
+        ? onlyAllocation.stayDate
+        : "",
     );
     setCategories(anchor.initialCategories);
     setPreview(null);

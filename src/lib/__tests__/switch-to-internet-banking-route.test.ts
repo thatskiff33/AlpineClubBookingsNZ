@@ -68,7 +68,7 @@ vi.mock("@/lib/member-credit", () => ({
   deriveBookingAppliedCreditCents: mocks.deriveBookingAppliedCreditCents,
 }));
 vi.mock("@/lib/capacity", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/capacity")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/capacity");
   return {
     ...actual,
     acquireLodgeCapacityLock: mocks.acquireLodgeCapacityLock,
@@ -81,9 +81,7 @@ vi.mock("@/lib/logger", () => ({
 // Internet Banking module gate. Partial-mock so the module's other exports
 // (used transitively) stay intact.
 vi.mock("@/lib/module-settings", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/module-settings")>(
-    "@/lib/module-settings"
-  );
+  const actual = (await vi.importActual("@/lib/module-settings")) as typeof import("@/lib/module-settings");
   return { ...actual, loadEffectiveModuleFlags: mocks.loadEffectiveModuleFlags };
 });
 

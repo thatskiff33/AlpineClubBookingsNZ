@@ -489,8 +489,11 @@ export function MemberImportDialog({
   };
 
   const currentStepIndex = getStepIndex(wizardStep);
+  // The previous step IS the "there is a step before this one" test the index
+  // comparison expressed, and it is what Back navigates to (#2801).
+  const previousStep = WIZARD_STEPS[currentStepIndex - 1];
   const canGoBack =
-    currentStepIndex > 0 && wizardStep !== "import" && !importLoading;
+    previousStep !== undefined && wizardStep !== "import" && !importLoading;
   const canContinueFromParse = wizardStep === "parse" && Boolean(csvData);
   const canContinueFromMapping = wizardStep === "mapping" && Boolean(csvData);
   const canImport =
@@ -835,9 +838,9 @@ export function MemberImportDialog({
           {canGoBack && (
             <Button
               variant="outline"
-              onClick={() =>
-                setWizardStep(WIZARD_STEPS[currentStepIndex - 1].key)
-              }
+              onClick={() => {
+                if (previousStep) setWizardStep(previousStep.key);
+              }}
             >
               <ArrowLeft className="mr-2 h-4 w-4" />
               Back

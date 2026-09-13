@@ -142,19 +142,22 @@ export async function verifyEmailTransport(): Promise<{ modeLabel: string }> {
  *
  * IT USED TO BE ONE `logger.debug` in `sendEmail`, and the claim beside it — that
  * the mode is "named where an operator reads it" — was false in the shipped
- * configuration: the staging and measurement stacks both run `LOG_LEVEL: info`,
- * so nobody ever saw the line. That matters because a capture send is otherwise
- * indistinguishable from a real one — a plain `SENT` row with no transport marker
- * on it — and "sent" on a copy must never be read as "sent to a member".
+ * configuration: the staging stack runs `LOG_LEVEL: info`, so nobody ever saw
+ * the line. That matters because a capture send is otherwise indistinguishable
+ * from a real one — a plain `SENT` row with no transport marker on it — and
+ * "sent" on a copy must never be read as "sent to a member".
  *
  * So the CAPTURE case is `info` and everything else stays `debug`. The live site
  * keeps its silence deliberately: an info line per message is thousands a day on
  * a real club, which is how a log stops being read at all. A copy sends little,
  * so the raised line is bounded there.
  *
- * The sentence avoids every word `measurement/current-main-refresh/bin/
- * analyse-log-noise.mjs` classifies as a warning or an error, so MC-09 cannot
- * count it however often the harness recreates the app.
+ * The sentence also avoided every word the now-removed
+ * `measurement/current-main-refresh/bin/analyse-log-noise.mjs` classified as a
+ * warning or an error, so MC-09 could not count it however often the harness
+ * recreated the app. That analyser is gone with the rest of the harness
+ * (#3382), but the word choice is worth keeping anyway — "held back" is the
+ * more accurate description of what a copy does to outbound mail.
  *
  * Lives HERE rather than in `sendEmail` because this module owns transports, and
  * because `email/core.ts` sits four lines under its size budget.

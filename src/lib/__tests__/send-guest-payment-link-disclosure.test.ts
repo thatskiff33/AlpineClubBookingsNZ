@@ -28,7 +28,7 @@ vi.mock("@/lib/access-roles", () => ({ hasAdminAccess: mocks.hasAdminAccess }));
 vi.mock("@/lib/prisma", () => ({
   prisma: { booking: { findUnique: mocks.bookingFindUnique } },
 }));
-vi.mock("@/lib/payment-link", () => ({
+vi.mock("@/lib/payment-link-split-guest", () => ({
   issueSplitGuestPaymentLink: mocks.issueSplitGuestPaymentLink,
 }));
 vi.mock("@/lib/logger", () => ({

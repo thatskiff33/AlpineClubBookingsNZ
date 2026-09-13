@@ -785,15 +785,38 @@ async function countBlockedSubscriptionSeasons(
 // Preview builder
 // ---------------------------------------------------------------------------
 
+/**
+ * The ONE place a Prisma delegate is resolved from a merge spec's `delegate`
+ * NAME (#2800, `INV-SSOT`). Every step of the merge drives the client
+ * dynamically off `MEMBER_MERGE_RELATION_SPECS`, so a name that does not
+ * resolve means a spec has drifted from the schema — and a merge that quietly
+ * skipped that model would leave the duplicate's rows pointing at a member the
+ * merge is about to archive. There is no safe way to continue past it, so it
+ * refuses (INV-LIFE).
+ */
+function mergeDelegate<Delegate>(db: unknown, delegate: string): Delegate {
+  const resolved = (db as Record<string, Delegate | undefined>)[delegate];
+  if (resolved === undefined) {
+    throw new Error(
+      `Member merge cannot resolve the Prisma delegate "${delegate}"; the merge spec no longer matches the schema.`,
+    );
+  }
+  return resolved;
+}
+
+type CountingDelegate = { count: (args: unknown) => Promise<number> };
+type FindManyDelegate<Row> = { findMany: (args: unknown) => Promise<Row[]> };
+type UpdateManyDelegate = {
+  updateMany: (args: unknown) => Promise<{ count: number }>;
+};
+
 async function countLoserRows(
   db: MergeDbClient,
   delegate: string,
   column: string,
   loserId: string,
 ): Promise<number> {
-  const model = (db as unknown as Record<string, { count: (args: unknown) => Promise<number> }>)[
-    delegate
-  ];
+  const model = mergeDelegate<CountingDelegate>(db, delegate);
   return model.count({ where: { [column]: loserId } });
 }
 
@@ -853,13 +876,16 @@ async function countFkLessMoveRows(
   db: MergeDbClient,
   loserId: string,
 ): Promise<{ model: string; count: number }[]> {
-  const counts = await Promise.all(
-    MEMBER_MERGE_FK_LESS_MOVE_COLUMNS.map((c) =>
-      countLoserRows(db, c.delegate, c.column, loserId),
-    ),
+  // Each column carries its own count instead of a second array read back by
+  // position, so the two can never fall out of step (#2800).
+  const counted = await Promise.all(
+    MEMBER_MERGE_FK_LESS_MOVE_COLUMNS.map(async (c) => ({
+      key: c.key,
+      count: await countLoserRows(db, c.delegate, c.column, loserId),
+    })),
   );
-  return MEMBER_MERGE_FK_LESS_MOVE_COLUMNS.flatMap((c, i) =>
-    counts[i] > 0 ? [{ model: c.key, count: counts[i] }] : [],
+  return counted.flatMap(({ key, count }) =>
+    count > 0 ? [{ model: key, count }] : [],
   );
 }
 
@@ -914,19 +940,22 @@ export async function buildMemberMergePreview(params: {
   // shared with the execute-time token re-derivation, so the digest agrees.
   const moveSpecs = MEMBER_MERGE_RELATION_SPECS.filter((s) => s.bucket === "move");
   const moveCounts = await Promise.all(
-    moveSpecs.map((s) => {
-      if (!s.selfRelation) return countLoserRows(db, s.delegate, s.column, loserId);
-      const delegate = (db as unknown as Record<string, {
-        count: (args: unknown) => Promise<number>;
-      }>)[s.delegate];
-      return delegate.count({
-        where: selfRelationMoveWhere(s.column, masterId, loserId),
-      });
+    moveSpecs.map(async (s) => {
+      if (!s.selfRelation) {
+        return { key: s.key, count: await countLoserRows(db, s.delegate, s.column, loserId) };
+      }
+      const delegate = mergeDelegate<CountingDelegate>(db, s.delegate);
+      return {
+        key: s.key,
+        count: await delegate.count({
+          where: selfRelationMoveWhere(s.column, masterId, loserId),
+        }),
+      };
     }),
   );
-  moveSpecs.forEach((s, i) => {
-    if (moveCounts[i] > 0) relationMoves.push({ model: s.key, count: moveCounts[i] });
-  });
+  for (const { key, count } of moveCounts) {
+    if (count > 0) relationMoves.push({ model: key, count });
+  }
   relationMoves.push(...(await countFkLessMoveRows(db, loserId)));
 
   // The loser's own OUTBOUND self-relation columns (parent, inheritEmailFrom,
@@ -1242,23 +1271,31 @@ async function summariseResolveCollisions(
     // Both partner-link sides are summarised together via the planner below.
     (s) => s.bucket === "resolve" && s.model !== "MemberPartnerLink",
   );
-  const counts = await Promise.all(
-    specs.map((s) => countLoserRows(db, s.delegate, s.column, loserId)),
+  const counted = await Promise.all(
+    specs.map(async (s) => ({
+      spec: s,
+      count: await countLoserRows(db, s.delegate, s.column, loserId),
+    })),
   );
-  specs.forEach((s, i) => {
-    if (counts[i] > 0) {
-      collisions.push({ model: s.key, resolution: s.note ?? "dedupe on unique key", count: counts[i] });
+  for (const { spec, count } of counted) {
+    if (count > 0) {
+      collisions.push({
+        model: spec.key,
+        resolution: spec.note ?? "dedupe on unique key",
+        count,
+      });
     }
-  });
+  }
 
   // Specific drop notes for money/roster rows (actual collisions, not just
   // loser-row counts).
   for (const g of GENERIC_KEYED_RESOLVERS) {
     const note = MONEY_ROSTER_DROP_NOTES[g.spec];
     if (!note) continue;
-    const delegate = (db as unknown as Record<string, {
-      findMany: (a: unknown) => Promise<Record<string, unknown>[]>;
-    }>)[g.delegate];
+    const delegate = mergeDelegate<FindManyDelegate<Record<string, unknown>>>(
+      db,
+      g.delegate,
+    );
     const [loserRows, masterRows] = await Promise.all([
       delegate.findMany({ where: { [g.memberColumn]: loserId } }),
       delegate.findMany({ where: { [g.memberColumn]: masterId } }),
@@ -2053,9 +2090,9 @@ export async function executeMemberMerge(params: {
     // FK check takes KEY SHARE on the duplicate's row, which conflicts with
     // FOR UPDATE) and then fails loudly on the FK once the hard-delete
     // commits.
-    const memberFindMany = (tx as unknown as Record<string, {
-      findMany: (args: unknown) => Promise<Record<string, unknown>[]>;
-    }>)["member"];
+    const memberFindMany = mergeDelegate<
+      FindManyDelegate<Record<string, unknown>>
+    >(tx, "member");
     const inboundAtWrite = await memberFindMany.findMany({
       where: {
         id: { notIn: [masterId, loserId] },
@@ -2334,23 +2371,26 @@ async function previewRelationCountsForToken(
   const out: { model: string; count: number }[] = [];
   const moveSpecs = MEMBER_MERGE_RELATION_SPECS.filter((s) => s.bucket === "move");
   const selfRelationRefs: Record<string, string[]> = {};
-  const counts = await Promise.all(
+  const counted = await Promise.all(
     moveSpecs.map(async (s) => {
-      if (!s.selfRelation) return countLoserRows(db, s.delegate, s.column, loserId);
-      const delegate = (db as unknown as Record<string, {
-        findMany: (args: unknown) => Promise<{ id: string }[]>;
-      }>)[s.delegate];
+      if (!s.selfRelation) {
+        return { key: s.key, count: await countLoserRows(db, s.delegate, s.column, loserId) };
+      }
+      const delegate = mergeDelegate<FindManyDelegate<{ id: string }>>(
+        db,
+        s.delegate,
+      );
       const rows = await delegate.findMany({
         where: selfRelationMoveWhere(s.column, masterId, loserId),
         select: { id: true },
       });
       selfRelationRefs[s.column] = rows.map((r) => r.id);
-      return rows.length;
+      return { key: s.key, count: rows.length };
     }),
   );
-  moveSpecs.forEach((s, i) => {
-    if (counts[i] > 0) out.push({ model: s.key, count: counts[i] });
-  });
+  for (const { key, count } of counted) {
+    if (count > 0) out.push({ model: key, count });
+  }
   // Same order and same source as `buildMemberMergePreview`, so the digest the
   // token is verified against matches the one it was issued from (#2243).
   out.push(...(await countFkLessMoveRows(db, loserId)));
@@ -2370,9 +2410,10 @@ async function collectMovedIdSample(
       truncated = true;
       break;
     }
-    const delegate = (db as unknown as Record<string, {
-      findMany: (args: unknown) => Promise<{ id: string }[]>;
-    }>)[s.delegate];
+    const delegate = mergeDelegate<FindManyDelegate<{ id: string }>>(
+      db,
+      s.delegate,
+    );
     const remaining = MOVED_ID_SAMPLE_CAP - sample.length;
     const rows = await delegate.findMany({
       // Self-relation columns exclude the master's own row: its pointer at the
@@ -2484,9 +2525,7 @@ async function applyMoves(
   const moves: { model: string; count: number }[] = [];
   for (const s of MEMBER_MERGE_RELATION_SPECS) {
     if (s.bucket !== "move") continue;
-    const delegate = (tx as unknown as Record<string, {
-      updateMany: (args: unknown) => Promise<{ count: number }>;
-    }>)[s.delegate];
+    const delegate = mergeDelegate<UpdateManyDelegate>(tx, s.delegate);
     // Member SELF-relations (`parentMemberId`, `secondaryParentId`,
     // `inheritEmailFromId`, `detailsConfirmedByMemberId`) sweep ONLY the rows
     // captured by the token re-derivation (`selfRelationRefs`), and never the
@@ -2534,9 +2573,7 @@ async function applyMoves(
   // before deleting the loser. Left on a hard-deleted loser, either pointer
   // would later name a member that no longer exists.
   for (const c of MEMBER_MERGE_FK_LESS_MOVE_COLUMNS) {
-    const delegate = (tx as unknown as Record<string, {
-      updateMany: (args: unknown) => Promise<{ count: number }>;
-    }>)[c.delegate];
+    const delegate = mergeDelegate<UpdateManyDelegate>(tx, c.delegate);
     const res = await delegate.updateMany({
       where: { [c.column]: loserId },
       data: { [c.column]: masterId },
@@ -2668,12 +2705,10 @@ async function resolveKeyedCollisions(
     loserId: string;
   },
 ): Promise<{ moved: number; dropped: number }> {
-  const delegates = tx as unknown as Record<string, {
-    findMany: (a: unknown) => Promise<Record<string, unknown>[]>;
-    deleteMany: (a: unknown) => Promise<{ count: number }>;
-    updateMany: (a: unknown) => Promise<{ count: number }>;
-  }>;
-  const delegate = delegates[args.delegate];
+  const delegate = mergeDelegate<
+    FindManyDelegate<Record<string, unknown>> &
+      UpdateManyDelegate & { deleteMany: (a: unknown) => Promise<{ count: number }> }
+  >(tx, args.delegate);
 
   const [loserRows, masterRows] = await Promise.all([
     delegate.findMany({ where: { [args.memberColumn]: args.loserId } }),
@@ -2697,7 +2732,14 @@ async function resolveKeyedCollisions(
         (value): value is string => typeof value === "string",
       );
       if (matches.length === 0) continue;
-      await delegates[dependent.delegate].deleteMany({
+      // Routed through the same typed accessor as every other delegate read in
+      // this file (#2800). #3276 wrote this against an inline
+      // `Record<string, ...>` cast of the transaction, which is the shape the
+      // type-safety stage removed from six other sites; taking it verbatim
+      // would leave one untyped hole in a file that no longer has any.
+      await mergeDelegate<{
+        deleteMany: (a: unknown) => Promise<{ count: number }>;
+      }>(tx, dependent.delegate).deleteMany({
         where: {
           [dependent.memberColumn]: args.loserId,
           [dependent.matchColumn]: { in: matches },
@@ -2744,20 +2786,22 @@ export function partitionKeyedCollisions(
   masterRows: readonly Record<string, unknown>[],
   keySpecs: readonly (readonly string[])[],
 ): { dropIds: string[]; moveIds: string[] } {
+  // Each unique key carries its own master-side set rather than a parallel
+  // array read back by position, so the pairing is a fact of the value (#2800).
   const masterKeySets = keySpecs.map((fields) => {
     const set = new Set<string>();
     for (const r of masterRows) {
       const k = keyOf(r, fields);
       if (k !== null) set.add(k);
     }
-    return set;
+    return { fields, set };
   });
   const dropIds: string[] = [];
   const moveIds: string[] = [];
   for (const row of loserRows) {
-    const collides = keySpecs.some((fields, i) => {
+    const collides = masterKeySets.some(({ fields, set }) => {
       const k = keyOf(row, fields);
-      return k !== null && masterKeySets[i].has(k);
+      return k !== null && set.has(k);
     });
     if (collides) dropIds.push(row.id as string);
     else moveIds.push(row.id as string);

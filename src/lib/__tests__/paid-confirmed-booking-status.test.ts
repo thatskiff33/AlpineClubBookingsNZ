@@ -49,7 +49,6 @@ import { FALLBACK_LODGE_CAPACITY as LODGE_CAPACITY } from "../lodge-capacity";
 
 function readRepoFile(relativePath: string) {
   // Test helper: reads a fixed repo file under process.cwd(); relativePath is test-controlled, not user input.
-  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
   return readFileSync(path.resolve(process.cwd(), relativePath), "utf8");
 }
 

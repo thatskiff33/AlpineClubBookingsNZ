@@ -128,7 +128,7 @@ vi.mock("@/lib/module-settings", async (importOriginal) => ({
   // member-guest add policy on the booking paths), and admin-modules re-exports
   // module-settings helpers at module scope — so the bare object mock now
   // breaks the import. Keep the real module and override only the flag loader.
-  ...(await importOriginal<typeof import("@/lib/module-settings")>()),
+  ...((await importOriginal()) as typeof import("@/lib/module-settings")),
   loadEffectiveModuleFlags: mocks.loadModuleFlags,
 }));
 vi.mock("@/lib/email", () => ({

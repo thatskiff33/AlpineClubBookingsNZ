@@ -199,7 +199,12 @@ export function deriveSettlementKind(input: {
 
   if (buckets.length === 0) return "none";
   if (buckets.length > 1) return "mixed";
-  return buckets[0];
+  const [onlyBucket] = buckets;
+  if (!onlyBucket) {
+    // Unreachable: `buckets.length` is checked to be exactly 1 above.
+    throw new Error("Settlement bucket list had length 1 but no element");
+  }
+  return onlyBucket;
 }
 
 export function matchesSettlementFilter(

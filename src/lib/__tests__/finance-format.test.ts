@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
+  formatCompactDollarsDisplay,
   formatDollarsDisplay,
   formatFinanceNumber,
   formatFinancePercent,
@@ -27,5 +28,35 @@ describe("finance display formatters", () => {
     expect(formatFinanceSignedNumber(42)).toBe("+42");
     expect(formatFinanceSignedNumber(-7)).toBe("-7");
     expect(formatFinancePercent(0.125)).toBe("12.5%");
+  });
+});
+
+describe("formatCompactDollarsDisplay (#3325)", () => {
+  it("keeps the chart theme's k/m tick shape under the default configuration", () => {
+    expect(formatCompactDollarsDisplay(1_000_000)).toBe("$10k");
+    expect(formatCompactDollarsDisplay(120_000_000)).toBe("$1.2m");
+    expect(formatCompactDollarsDisplay(45_000)).toBe("$450");
+    expect(formatCompactDollarsDisplay(-120_000_000)).toBe("$-1.2m");
+  });
+
+  // The symbol and its position come from the configured locale, not a
+  // hand-spelt `$` prefix: de-DE writes the euro AFTER the number. A fresh
+  // import is required because the formatter is built at module load.
+  it("places the compact number where the configured locale puts its digits", async () => {
+    vi.resetModules();
+    vi.doMock("@/config/operational", () => ({
+      APP_CURRENCY: "EUR",
+      APP_STRIPE_CURRENCY: "eur",
+      APP_TIME_ZONE: "Europe/Berlin",
+      APP_LOCALE: "de-DE",
+    }));
+    try {
+      const fresh = await import("@/lib/finance-format");
+      expect(fresh.formatCompactDollarsDisplay(1_000_000)).toBe("10k\u00a0€");
+      expect(fresh.formatCompactDollarsDisplay(120_000_000)).toBe("1.2m\u00a0€");
+    } finally {
+      vi.doUnmock("@/config/operational");
+      vi.resetModules();
+    }
   });
 });

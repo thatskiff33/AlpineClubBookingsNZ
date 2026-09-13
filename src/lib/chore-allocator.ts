@@ -11,6 +11,7 @@ import {
   calendarDayOfWeek,
 } from "@/lib/club-time";
 import { FALLBACK_LODGE_CAPACITY } from "@/lib/lodge-capacity";
+import { must } from "@/lib/indexed-access";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -405,9 +406,10 @@ export function allocateChores(
 
       // Pick first adult
       if (adults.length > 0) {
-        assigned.push(adults[0]);
+        const firstAdult = must(adults[0], "allocateChores: adults is non-empty but has no element 0");
+        assigned.push(firstAdult);
         // Prefer non-adults from same booking as first adult
-        const familyNonAdults = familySortRemaining(nonAdults, adults[0].bookingId);
+        const familyNonAdults = familySortRemaining(nonAdults, firstAdult.bookingId);
         const familyAdults = adults.slice(1);
 
         let ni = 0;
@@ -415,13 +417,13 @@ export function allocateChores(
         let pickNonAdult = true;
         while (assigned.length < needed && (ni < familyNonAdults.length || ai < familyAdults.length)) {
           if (pickNonAdult && ni < familyNonAdults.length) {
-            assigned.push(familyNonAdults[ni++]);
+            assigned.push(must(familyNonAdults[ni++], "allocateChores: ni is within familyNonAdults' bounds"));
           } else if (!pickNonAdult && ai < familyAdults.length) {
-            assigned.push(familyAdults[ai++]);
+            assigned.push(must(familyAdults[ai++], "allocateChores: ai is within familyAdults' bounds"));
           } else if (ni < familyNonAdults.length) {
-            assigned.push(familyNonAdults[ni++]);
+            assigned.push(must(familyNonAdults[ni++], "allocateChores: ni is within familyNonAdults' bounds"));
           } else if (ai < familyAdults.length) {
-            assigned.push(familyAdults[ai++]);
+            assigned.push(must(familyAdults[ai++], "allocateChores: ai is within familyAdults' bounds"));
           }
           pickNonAdult = !pickNonAdult;
         }
@@ -437,10 +439,11 @@ export function allocateChores(
       const adults = sorted.filter((g) => g.ageTier === "ADULT");
 
       if (adults.length > 0) {
-        assigned.push(adults[0]);
+        const firstAdult = must(adults[0], "allocateChores: adults is non-empty but has no element 0");
+        assigned.push(firstAdult);
         // Fill remaining slots preferring same booking
-        const remaining = sorted.filter((g) => g.id !== adults[0].id);
-        const familyRemaining = familySortRemaining(remaining, adults[0].bookingId);
+        const remaining = sorted.filter((g) => g.id !== firstAdult.id);
+        const familyRemaining = familySortRemaining(remaining, firstAdult.bookingId);
         for (const g of familyRemaining) {
           if (assigned.length >= needed) break;
           assigned.push(g);
@@ -455,10 +458,11 @@ export function allocateChores(
     } else {
       // ANY or ADULTS_ONLY - take first, then prefer family for remaining slots
       if (needed >= 2 && sorted.length >= 2) {
-        assigned.push(sorted[0]);
+        const firstSorted = must(sorted[0], "allocateChores: sorted has at least 2 elements but no element 0");
+        assigned.push(firstSorted);
         const remaining = familySortRemaining(
           sorted.slice(1),
-          sorted[0].bookingId
+          firstSorted.bookingId
         );
         for (const g of remaining) {
           if (assigned.length >= needed) break;

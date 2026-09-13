@@ -49,7 +49,7 @@ vi.mock("@/lib/prisma", () => ({
 // Keep the REAL error classes (so the http mapper's instanceof checks work), but
 // swap the two service functions the routes call for mocks.
 vi.mock("@/lib/booking-exception-request-service", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/booking-exception-request-service")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/booking-exception-request-service");
   return {
     ...actual,
     createNewBookingExceptionRequest: (...a: unknown[]) => mocks.createNew(...a),

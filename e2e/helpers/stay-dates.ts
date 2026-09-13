@@ -23,6 +23,11 @@ import {
   WAITLIST_FULL_WINDOW,
   WAITLIST_OFFER_WINDOW,
 } from "../../prisma/e2e-fixtures";
+import {
+  calendarDateParts,
+  requireCalendarDate,
+} from "../../src/lib/club-time/calendar-date";
+import { must } from "../../src/lib/indexed-access";
 
 const FIRST_WINDOW_OFFSET_DAYS = 21;
 
@@ -258,6 +263,38 @@ export function stayWindowForAttempt(index: number, retry: number): StayWindow {
   return stayWindow(index + retry * RETRY_WINDOW_STRIDE);
 }
 
+// A `YYYY-MM-DD` lodge night split into its numeric parts. The grammar of a
+// calendar date is the club-time kernel's (`INV-SSOT`), so this is a derivation
+// over it rather than a second regex: `requireCalendarDate` throws on anything
+// that is not a real day, so a malformed fixture fails here rather than as
+// `new Date(NaN)` downstream (#3363).
+export function dateOnlyParts(
+  dateOnly: string,
+): { year: number; month: number; day: number } {
+  return calendarDateParts(requireCalendarDate(dateOnly));
+}
+
+// A `YYYY-MM` month key (the first seven characters of a lodge night) split
+// into its numeric parts; `month` is one-based, as written. Throws otherwise.
+export function monthKeyParts(monthKey: string): { year: number; month: number } {
+  const [, year, month] = /^(\d{4})-(\d{2})$/.exec(monthKey) ?? [];
+  if (year === undefined || month === undefined) {
+    throw new Error(`Expected a YYYY-MM month key, received ${monthKey}`);
+  }
+  return { year: Number(year), month: Number(month) };
+}
+
+// The checkout of a ONE-night stay on a window's first night. A window's
+// `nights` are its occupied lodge nights, so the second night is the morning
+// after the first — the date a one-night stay checks out. Throws when the
+// window has no second night, rather than handing back `undefined`.
+export function oneNightCheckOut(window: Pick<StayWindow, "nights">): string {
+  return must(
+    window.nights[1],
+    `stay window ${window.nights.join(", ")} has no second night to check out on`,
+  );
+}
+
 // How the app renders a lodge night in prose, e.g. "17 Aug 2026" — the member-
 // night conflict copy (#2250) formats every night with
 // `formatNZDate(parseDateOnly(night))`, which is `Intl.DateTimeFormat` at
@@ -270,21 +307,20 @@ export function stayWindowForAttempt(index: number, retry: number): StayWindow {
 // hardcoding a date in a spec produces an assertion that can only pass on the
 // week it was written.
 export function lodgeNightLabel(dateOnly: string): string {
-  const [y, m, d] = dateOnly.split("-").map(Number);
+  const { year, month, day } = dateOnlyParts(dateOnly);
   return new Intl.DateTimeFormat("en-NZ", {
     timeZone: "Pacific/Auckland",
     dateStyle: "medium",
-  }).format(new Date(Date.UTC(y, m - 1, d)));
+  }).format(new Date(Date.UTC(year, month - 1, day)));
 }
 
 // aria-label date fragment used by the booking calendar day buttons, e.g.
 // "Monday, 17 August 2026".
 export function calendarDayLabel(dateOnly: string): RegExp {
-  const [y, m, d] = dateOnly.split("-").map(Number);
+  const { year: y, month: m, day: d } = dateOnlyParts(dateOnly);
   const date = new Date(y, m - 1, d);
   const weekday = date.toLocaleDateString("en-NZ", { weekday: "long" });
   const month = date.toLocaleDateString("en-NZ", { month: "long" });
   // Test helper: pattern is built from a formatted test date (weekday/day/month/year), not user input; no ReDoS.
-  // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp
   return new RegExp(`^${weekday}, ${d} ${month} ${y},`);
 }

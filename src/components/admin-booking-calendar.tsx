@@ -297,9 +297,24 @@ export function AdminBookingCalendar() {
   });
 
   // Deepest lane occupied in each week row.
+  //
+  // From here down, several arrays are sized `rows` long and read back by
+  // `seg.row` (every `BarSegment`'s week row) or an equivalent row number
+  // derived the same way (`cellIdx / 7`). `seg.row` is always in
+  // `[0, rows)` by construction: it comes from `Math.floor(cell / 7)` for a
+  // `cell` built from `startDow + day - 1` with `day` clamped to the current
+  // month, and `rows = Math.ceil(totalCells / 7)` — but that is a fact about
+  // how these arrays were built, not something `noUncheckedIndexedAccess`
+  // can see at a read far from the loop that built them. Each read below
+  // falls back to the value that row would hold before anything was ever
+  // recorded into it (`-1` "no lanes used", `false` "not overflowing",
+  // `Infinity` "no cap", `0` "no rows above it") — a fallback that only
+  // matters if the invariant above were ever false, in which case it draws
+  // at the top of the grid rather than crashing.
   const maxLaneByRow = Array.from({ length: rows }, () => -1);
   for (const seg of barSegments) {
-    if (seg.laneIdx > maxLaneByRow[seg.row]) {
+    const currentMax = maxLaneByRow[seg.row] ?? -1;
+    if (seg.laneIdx > currentMax) {
       maxLaneByRow[seg.row] = seg.laneIdx;
     }
   }
@@ -322,9 +337,13 @@ export function AdminBookingCalendar() {
   const rowOffsets: number[] = [];
   {
     let acc = 0;
-    for (let r = 0; r < rows; r++) {
+    // Walk `rowHeights` directly rather than counting to `rows` and indexing
+    // it — `rowOffsets` ends up the same length either way, since
+    // `rowHeights` (via `lanesUsedByRow`, via `maxLaneByRow`) is already
+    // exactly `rows` long.
+    for (const height of rowHeights) {
       rowOffsets.push(acc);
-      acc += rowHeights[r];
+      acc += height;
     }
   }
 
@@ -335,7 +354,8 @@ export function AdminBookingCalendar() {
   // its first segment — or that continuation renders as a nameless orphan bar
   // (#2088 review). barSegments is built in ascending row order per booking.
   const isSegmentHidden = (seg: BarSegment) =>
-    rowIsOverflow[seg.row] && seg.laneIdx >= barLaneCapByRow[seg.row];
+    (rowIsOverflow[seg.row] ?? false) &&
+    seg.laneIdx >= (barLaneCapByRow[seg.row] ?? Number.POSITIVE_INFINITY);
   const firstVisibleRowByBooking = new Map<string, number>();
   for (const seg of barSegments) {
     if (isSegmentHidden(seg)) continue;
@@ -349,7 +369,10 @@ export function AdminBookingCalendar() {
   // can label itself; the dialog then opens the complete day list.
   const hiddenCountByCell = new Map<number, number>();
   for (const seg of barSegments) {
-    if (!rowIsOverflow[seg.row] || seg.laneIdx < barLaneCapByRow[seg.row]) {
+    // "Hidden under the cap" is the exact condition `isSegmentHidden` already
+    // owns — reusing it here keeps that one decision in one place instead of
+    // re-deriving it (De Morgan's) with its own pair of indexed reads.
+    if (!isSegmentHidden(seg)) {
       continue;
     }
     for (let col = seg.colStart; col <= seg.colEnd; col++) {
@@ -504,7 +527,7 @@ export function AdminBookingCalendar() {
             const { booking } = seg;
             const leftPct = (seg.colStart / 7) * 100;
             const widthPct = ((seg.colEnd - seg.colStart + 1) / 7) * 100;
-            const rowTop = rowOffsets[seg.row];
+            const rowTop = rowOffsets[seg.row] ?? 0;
             const rowHeight = rowHeights[seg.row];
             const top = rowTop + BAR_TOP_OFFSET + seg.laneIdx * LANE_STRIDE;
             // A segment fully in the past dims with its cells; a segment that
@@ -550,7 +573,7 @@ export function AdminBookingCalendar() {
             const leftPct = (col / 7) * 100;
             const widthPct = (1 / 7) * 100;
             const top =
-              rowOffsets[row] + BAR_TOP_OFFSET + (MAX_LANES - 1) * LANE_STRIDE;
+              (rowOffsets[row] ?? 0) + BAR_TOP_OFFSET + (MAX_LANES - 1) * LANE_STRIDE;
             const isPastCell = dayStr < todayStr;
             return (
               <button

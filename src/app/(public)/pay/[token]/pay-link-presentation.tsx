@@ -90,7 +90,7 @@ const TONE_STYLES: Record<Tone, { wrap: string; icon: typeof Info }> = {
  * #2988).
  *
  * `payable.checkIn`/`checkOut` are the booking's `@db.Date` lodge nights,
- * serialised by `src/lib/payment-link.ts` with `.toISOString()`. A calendar day
+ * serialised by `src/lib/payment-link-context.ts` with `.toISOString()`. A calendar day
  * has no timezone, so this consults no zone and could not be wrong about one:
  * the kernel decodes the UTC-midnight encoding and formats it pinned to `UTC`,
  * provably the identity for every club. The legacy helper projected it through
