@@ -326,3 +326,171 @@ describe("sync loop hygiene", () => {
     expect(mockRecordUpload).not.toHaveBeenCalled();
   });
 });
+
+// ── Cursor overlap (#2995) ─────────────────────────────────────────────────
+//
+// Transactions do not become visible in `updatedAt` order. A slow transaction
+// can take an earlier timestamp and commit after a faster one; if the cursor
+// advanced past it in that window, a strictly-newer-than request skips it
+// FOREVER while sync keeps reporting success. Every pull after the first
+// therefore re-asks one bounded overlap before the stored cursor. The repeats
+// must stay harmless, and the DURABLE cursor must still be the server's answer.
+
+/** A local row identical to `remoteLodge()`, as the overlap re-delivers it. */
+function localCopyOf(id: string, updatedAt: string) {
+  return {
+    id,
+    updatedAt: new Date(updatedAt),
+    location: "Whakapapa",
+    bookingOfficerName: "Ann Officer",
+    bookingOfficerEmail: "bookings@club.test",
+    bookingOfficerPhone: "+64 27 422 4115",
+    bedCapacity: 24,
+  };
+}
+
+describe("download cursor overlap", () => {
+  it("requests exactly one overlap before the stored cursor, across minute and day boundaries", async () => {
+    // Literal expectations, not the constant recomputed: a test that derives the
+    // answer from the same constant the code uses passes just as happily when
+    // the overlap is zero, which is the mutation this test exists to catch.
+    const cases: [stored: string, requested: string][] = [
+      // Mid-minute: a plain 60-second step back.
+      ["2026-06-20T10:05:30.000Z", "2026-06-20T10:04:30.000Z"],
+      // Minute boundary: borrows from the minute above.
+      ["2026-06-20T10:00:00.000Z", "2026-06-20T09:59:00.000Z"],
+      // Day boundary: borrows from the previous day, not clamped at midnight.
+      ["2026-06-20T00:00:30.000Z", "2026-06-19T23:59:30.000Z"],
+      // Year boundary, and a non-UTC offset the server is free to send.
+      ["2027-01-01T13:00:00+13:00", "2026-12-31T23:59:00.000Z"],
+    ];
+
+    for (const [stored, requested] of cases) {
+      vi.clearAllMocks();
+      mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesCursor: stored });
+      mockRecordDownload.mockResolvedValue(undefined);
+      mockPullOtherLodges.mockResolvedValue({
+        lodges: [],
+        count: 0,
+        cursor: "2026-06-21T00:00:00.000Z",
+        dropped: 0,
+      });
+
+      await downloadOtherClubsFromServer();
+
+      expect(mockPullOtherLodges).toHaveBeenCalledWith(requested);
+    }
+  });
+
+  it("persists the server's returned watermark, never the overlapped request value", async () => {
+    const stored = "2026-06-20T10:05:30.000Z";
+    mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesCursor: stored });
+    mockPullOtherLodges.mockResolvedValue({
+      lodges: [],
+      count: 0,
+      cursor: "2026-06-21T09:00:00.000Z",
+      dropped: 0,
+    });
+
+    await downloadOtherClubsFromServer();
+
+    // The overlap widens the QUESTION; it must never move the stored ANSWER
+    // backwards, which is what would turn a bounded re-ask into a slow rewind.
+    expect(mockRecordDownload).toHaveBeenCalledWith("2026-06-21T09:00:00.000Z");
+    expect(mockRecordDownload).not.toHaveBeenCalledWith("2026-06-20T10:04:30.000Z");
+    expect(mockRecordDownload).not.toHaveBeenCalledWith(stored);
+  });
+
+  it("counts a row the overlap re-delivers unchanged as unchanged, not as a change", async () => {
+    mockLoadSettings.mockResolvedValue({
+      ...SETTINGS,
+      otherLodgesCursor: "2026-06-20T10:05:30.000Z",
+    });
+    mockPullOtherLodges.mockResolvedValue({
+      // The first row is the repeat the overlap deliberately re-fetched; the
+      // second is the genuine change the pull was for.
+      lodges: [remoteLodge("Aorangi Ski Club"), remoteLodge("Arlberg Ski Club", { bedCapacity: 30 })],
+      count: 2,
+      cursor: "2026-06-21T00:00:00.000Z",
+      dropped: 0,
+    });
+    mockFindUnique
+      .mockResolvedValueOnce(localCopyOf("ol_1", "2026-06-19T00:00:00.000Z"))
+      .mockResolvedValueOnce(localCopyOf("ol_2", "2026-06-19T00:00:00.000Z"));
+
+    const result = await downloadOtherClubsFromServer();
+
+    // One write, for the one row that actually differed. An inflated `updated`
+    // here would make every overlapped pull look like a burst of remote edits.
+    expect(mockUpdate).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ fetched: 2, created: 0, updated: 1, unchanged: 1, keptLocal: 0 });
+  });
+
+  it("still refuses an overlapped remote row that is older than the local copy", async () => {
+    mockLoadSettings.mockResolvedValue({
+      ...SETTINGS,
+      otherLodgesCursor: "2026-06-20T10:05:30.000Z",
+    });
+    mockPullOtherLodges.mockResolvedValue({
+      lodges: [remoteLodge("Aorangi Ski Club", { bedCapacity: 30 })],
+      count: 1,
+      cursor: "2026-06-21T00:00:00.000Z",
+      dropped: 0,
+    });
+    // Corrected locally after the server's copy — the overlap re-offering that
+    // older copy must not become a way to undo the club's own edit.
+    mockFindUnique.mockResolvedValue(localCopyOf("ol_1", "2026-08-20T00:00:00.000Z"));
+
+    const result = await downloadOtherClubsFromServer();
+
+    expect(mockPullOtherLodges).toHaveBeenCalledWith("2026-06-20T10:04:30.000Z");
+    expect(mockUpdate).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ updated: 0, keptLocal: 1 });
+  });
+
+  it("leaves an initial sync with no stored cursor exactly as it was", async () => {
+    mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesCursor: null });
+    mockPullOtherLodges.mockResolvedValue({
+      lodges: [],
+      count: 0,
+      cursor: "2026-06-21T00:00:00.000Z",
+      dropped: 0,
+    });
+
+    await downloadOtherClubsFromServer();
+
+    // No cursor means no watermark to overlap: the full/initial pull is asked
+    // for unchanged, rather than for a window before an instant that has no
+    // meaning yet.
+    expect(mockPullOtherLodges).toHaveBeenCalledWith(null);
+    expect(mockRecordDownload).toHaveBeenCalledWith("2026-06-21T00:00:00.000Z");
+  });
+
+  it("does not advance the durable cursor when the pull or the merge fails", async () => {
+    mockLoadSettings.mockResolvedValue({
+      ...SETTINGS,
+      otherLodgesCursor: "2026-06-20T10:05:30.000Z",
+    });
+
+    // The pull itself fails: nothing was merged, so the old cursor stands and
+    // the next run asks the same question again.
+    mockPullOtherLodges.mockRejectedValue(new Error("central server unreachable"));
+    await expect(downloadOtherClubsFromServer()).rejects.toThrow("central server unreachable");
+    expect(mockRecordDownload).not.toHaveBeenCalled();
+
+    // A partial merge: rows were written and then a write failed. The cursor is
+    // recorded only after the whole loop, so the next run re-fetches from the
+    // old cursor and the idempotent merge re-applies what already landed.
+    mockPullOtherLodges.mockResolvedValue({
+      lodges: [remoteLodge("Aorangi Ski Club", { bedCapacity: 30 })],
+      count: 1,
+      cursor: "2026-06-21T00:00:00.000Z",
+      dropped: 0,
+    });
+    mockFindUnique.mockResolvedValue(localCopyOf("ol_1", "2026-06-19T00:00:00.000Z"));
+    mockUpdate.mockRejectedValue(new Error("write failed"));
+
+    await expect(downloadOtherClubsFromServer()).rejects.toThrow("write failed");
+    expect(mockRecordDownload).not.toHaveBeenCalled();
+  });
+});
