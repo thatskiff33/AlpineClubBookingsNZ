@@ -39,6 +39,7 @@ export type SectionKey =
   | "operations"
   | "inbound"
   | "contactSync"
+  | "missingContacts"
   | "membershipSync"
   | "usage"
   | "mappings"
@@ -53,6 +54,9 @@ export const SECTION_DEFAULTS: Record<SectionKey, boolean> = {
   operations: true,
   inbound: true,
   contactSync: true,
+  // #2939: collapsed by default. It is a one-off migration task, not a thing an
+  // operator does weekly, and its dry run reads the whole member table.
+  missingContacts: false,
   membershipSync: true,
   usage: false,
   mappings: false,

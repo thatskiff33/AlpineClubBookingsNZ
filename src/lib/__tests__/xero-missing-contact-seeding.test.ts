@@ -43,9 +43,14 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/prisma", () => ({ prisma: mocks.prisma }));
 vi.mock("@/lib/logger", () => ({ default: mocks.logger }));
 vi.mock("@/lib/xero-environment-write-gate", async (importOriginal) => {
+  // The type moved OUT of the call (#3318): a type argument containing an
+  // `import()` type makes Semgrep skip a region of this file silently.
   const actual =
-    await importOriginal<typeof import("@/lib/xero-environment-write-gate")>();
-  return { ...actual, assertXeroProviderWriteAllowed: mocks.assertXeroProviderWriteAllowed };
+    (await importOriginal()) as typeof import("@/lib/xero-environment-write-gate");
+  return {
+    ...actual,
+    assertXeroProviderWriteAllowed: mocks.assertXeroProviderWriteAllowed,
+  };
 });
 /*
   PARTIAL, through `importOriginal`, on purpose. Only the funnel is replaced;
@@ -55,7 +60,7 @@ vi.mock("@/lib/xero-environment-write-gate", async (importOriginal) => {
   (INV-SSOT) rather than a second copy written to agree with it.
 */
 vi.mock("@/lib/xero-contacts", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/xero-contacts")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/xero-contacts");
   return { ...actual, findOrCreateXeroContact: mocks.findOrCreateXeroContact };
 });
 
