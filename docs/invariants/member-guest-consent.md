@@ -283,3 +283,32 @@ This table is the same data as `MEMBER_GUEST_CONSENT_SUB_STATES` in
 the code table (one mapping of set / null / any / the responder words) and fails
 unless this file contains it verbatim, so a shape that changes in code cannot
 leave a stale row here.
+
+## INV-GUEST-019
+
+- **A booker's own recorded dependant belongs on the member path, and the app
+  never guesses which person a typed name is** (#2721, owner rule). A party row
+  with no `memberId` is a non-member guest: provisional under the hold policy —
+  no bed reserved until the booking is confirmed and paid nearer the stay —
+  bumpable when the lodge fills, and invoiced as the deferred guest portion. A
+  recorded dependant put there is a member of this club standing behind the
+  members.
+- **The candidate set is the booker's own parent links and nothing wider**, and
+  that is the privacy half of the rule: free-text guest entry must never become a
+  way to ask the club whether a name is a member. Not the family group, not the
+  lodge, not the membership database. Matching is **exact on the normalised name**
+  (trim, lowercase, collapse whitespace, `person-name-normalization.ts`) — nothing
+  fuzzy, phonetic or partial, because a false collision is a question about
+  somebody the booker never mentioned.
+- **A collision is resolved explicitly, per dependant.** Either the row moves to
+  the member path, or the guest path continues behind a declaration naming the
+  exact dependant it is not. A generic override is prohibited and is not a shape
+  the field can hold. Two dependants whose names normalise alike are two people
+  and need two answers.
+- **The server re-resolves both** from authenticated data on the create path,
+  after guest normalisation and before any create service, so a forged member
+  link, a fabricated or unrelated dependant id, and a stale declaration are all
+  refused. An authorised on-behalf create is exempt, exactly as the member-guest
+  boundary check and the member profile gate are.
+- **Identity is keyed by the normalised name, never by a party position.** Home:
+  `src/lib/booking-dependant-identity.ts`.
