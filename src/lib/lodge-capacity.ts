@@ -9,6 +9,7 @@ import {
 import type { FeatureFlags } from "@/config/schema";
 import {
   resolveEffectiveLodgeCapacity,
+  resolvePartnerSharedHeadroom,
   type LodgeCapacitySource,
 } from "@/lib/lodge-effective-capacity";
 
@@ -236,10 +237,10 @@ export async function getLodgePartnerSharedCapacityStatus(
   const client = db ?? (await resolveLodgeCapacityDb());
   const base = await getLodgeCapacityStatus(lodgeId, client);
 
-  // Shared slots exist only where beds are the bookable inventory: with the
-  // module off (or no active beds) there are no DOUBLE rows admitting a second
-  // occupant, and with a capacity below the bed count the explicit people
-  // ceiling already binds.
+  // Query short-circuit, not a second copy of the rule: on each of these the
+  // shared resolver below would return 0 anyway (no active beds cannot resolve
+  // to `configured_beds`, and neither can a capacity under the bed count), so
+  // there is nothing to learn from counting doubles or re-reading the override.
   if (
     !base.bedAllocationEnabled ||
     base.activeBedCount <= 0 ||
@@ -254,18 +255,15 @@ export async function getLodgePartnerSharedCapacityStatus(
 
   const { loadLodgeCapacityOverride } = await import("@/lib/lodge-settings");
   const override = await loadLodgeCapacityOverride(client, lodgeId);
-  const peopleCeiling =
-    override !== null && override !== undefined
-      ? override
-      : Number.POSITIVE_INFINITY;
 
-  const partnerSharedHeadroom = Math.max(
-    0,
-    Math.min(
-      activeDoubleBedCount,
-      peopleCeiling - base.activeBedCount,
-    ),
-  );
+  // The capacity-versus-beds relationship has one home (#2724, INV-SSOT-001).
+  // It used to be re-derived by hand here, which meant the admin screen could
+  // not preview the headroom without a third copy of it.
+  const partnerSharedHeadroom = resolvePartnerSharedHeadroom({
+    configuredCapacity: override,
+    activeBedCount: base.activeBedCount,
+    activeDoubleBedCount,
+  });
 
   return { ...base, activeDoubleBedCount, partnerSharedHeadroom };
 }
