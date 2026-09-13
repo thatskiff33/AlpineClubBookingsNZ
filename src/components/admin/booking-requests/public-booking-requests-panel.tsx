@@ -47,6 +47,7 @@ import {
   BookingRequestContactPicker,
   type OwnerContactChoice,
 } from "@/components/admin/booking-requests/booking-request-contact-picker";
+import { BookingRequestCorrectionEditor } from "@/components/admin/booking-requests/booking-request-correction-editor";
 import {
   MemberWholeLodgeApprovalFields,
   WholeLodgeAvailabilityStrip,
@@ -239,6 +240,10 @@ interface PublicBookingRequestData {
   attendeesConfirmedAt: string | null;
   convertedMemberId: string | null;
   heldBookingId: string | null;
+  // #2936: the row's optimistic-concurrency counter, sent back with a
+  // correction so the server refuses one written over a request an accept or a
+  // decline has moved underneath the officer.
+  version: number;
   acceptedQuoteOptionId: string | null;
   acceptedPriceCents: number | null;
   acceptedAt: string | null;
@@ -1558,6 +1563,24 @@ export function PublicBookingRequestsPanel({
                   {LINKING_EDITOR_STATUSES.has(request.status) ? (
                     canEdit ? (
                     <div className="space-y-3 rounded-md border border-border p-3">
+                      {/* #2936: correcting what was asked for comes BEFORE
+                          pricing it — a price or a quote built from the wrong
+                          dates is the thing this exists to stop. Hidden for a
+                          member whole-lodge request, which has no quote stage,
+                          and for a row whose stored party cannot be read back,
+                          which is repaired or declined rather than guessed at;
+                          the service refuses both anyway. */}
+                      {memberWholeLodge || dataNeedsAttention ? null : (
+                        <BookingRequestCorrectionEditor
+                          request={request}
+                          disabled={isActioning}
+                          onCorrected={(summary) => {
+                            toast.success(summary);
+                            void fetchRequests();
+                          }}
+                          onError={showActionError}
+                        />
+                      )}
                       {/* #2263: a member whole-lodge booking is owned by the
                           member's own login account, so there is no non-login
                           contact to map or create, and no hold to release. */}
