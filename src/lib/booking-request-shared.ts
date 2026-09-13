@@ -192,8 +192,6 @@ export function buildApprovalGuestNights(params: {
   }));
 }
 
-/** Capacity nights that came back oversubscribed, as NZ date-only strings. */
-
 /**
  * Idempotency guard (#1232 double-charge). Under the per-lodge advisory lock —
  * call this AFTER acquireLodgeCapacityLock and BEFORE the status-claim — observe

@@ -30,6 +30,10 @@
   calendar. A month whose availability has not loaded — or could not be
   fetched — now says so on the day instead of being drawn as a completely empty
   lodge, and months already looked at stay loaded when paging back and forth.
+  Switching lodge clears the old lodge's numbers straight away rather than
+  leaving them on screen until a reply comes back — which, for a lodge you are
+  not able to book, never happened. A season label whose season has since been
+  turned off stops being shown the next time that month is loaded.
 
   **Nothing reveals that a lodge is reserved for a private group.** When the
   whole lodge is held for one booking, members see exactly what they see when it
@@ -40,6 +44,33 @@
   going on. Both cases now read and behave identically. Members can join the
   waitlist over those nights, and are moved off it only once the hold no longer
   applies.
+
+  Three member screens had the same gap, not one. **Changing the dates of a
+  booking you already have** showed "Not enough beds available" over an empty
+  list when a hold was the reason, and over an itemised one when the lodge was
+  genuinely full — and the itemised version printed how many beds short each
+  night was, which a held night has no answer for. **Settling a group booking**
+  named no nights for the same reason, and named them in a different format from
+  every other message the club sends. All three now say the same thing the same
+  way, and the club's own count of how many beds are missing stays on the
+  officer's screen, where it belongs.
+
+  **The waitlist keeps your account credit.** Joining the waitlist from the
+  review step sent everything except the credit you had chosen to apply. That
+  request can still turn into a real booking if a bed frees up in the moment
+  between reading the screen and pressing the button, so the booking could be
+  created without the credit and cost more than the page had quoted.
+
+  **"Also waitlist me for another lodge" is offered wherever the waitlist is.**
+  Those tick boxes only appeared on the older "lodge is fully booked" panel, so a
+  member taken straight to the waitlist from the review step never saw them.
+
+  **A lodge whose beds have not been set up yet no longer traps you.** With no
+  bed count configured, a lodge counts as having none — deliberately, so it
+  cannot be overbooked by accident. The guests step was reading that as "you may
+  add nobody", so nobody could get past it while the calendar was offering the
+  waitlist. The screen now leaves the decision to the server, which refuses and
+  offers the waitlist in the normal way.
 
   Booking on a member's behalf from the admin screens is unchanged: a full night
   there still means the over-capacity confirmation an officer already knows, not
