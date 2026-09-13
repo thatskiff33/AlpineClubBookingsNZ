@@ -8,6 +8,10 @@ import {
 } from "@/lib/xero-contact-create-recovery";
 import { prisma } from "@/lib/prisma";
 import { upsertXeroObjectLink } from "@/lib/xero-sync";
+import {
+  assertXeroContactHasNoOtherHome,
+  lockXeroContactHome,
+} from "@/lib/xero-contact-home";
 
 /**
  * Commit the Member pointer and its FK-less canonical CONTACT ledger row under
@@ -23,7 +27,23 @@ export async function commitManualXeroContactLink(
   db: PrismaClient = prisma,
 ): Promise<void> {
   await db.$transaction(async (tx) => {
+    // INV-INT-018 (#3367): an administrator typing a contact id is the other
+    // way a member can end up claiming a Xero customer an ORGANISATION already
+    // owns — a school's contact is in the same Xero contact list the admin picks
+    // from. Refuse and say which organisation holds it, rather than leaving two
+    // local records pointing at one customer.
+    //
+    // THE CONTACT-HOME KEY COMES BEFORE THE MEMBER ROW FENCE (INV-LOCK-002).
+    // The organisation-side transfer takes a Member ROW lock while holding this
+    // key, so a writer that held the row and then waited for the key would close
+    // a deadlock cycle with it. Taking the key first means every participant
+    // reaches a Member row only with the contact key already held.
+    await lockXeroContactHome(tx, input.xeroContactId);
     await lockMemberForManualXeroContactLink(tx, input.memberId);
+    await assertXeroContactHasNoOtherHome(tx, {
+      xeroContactId: input.xeroContactId,
+      home: { kind: "MEMBER", id: input.memberId },
+    });
     await tx.member.update({
       where: { id: input.memberId },
       data: { xeroContactId: input.xeroContactId },

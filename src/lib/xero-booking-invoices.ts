@@ -51,10 +51,13 @@ import {
   getResolvedAccountMapping,
 } from "./xero-mappings";
 import {
-  findOrCreateXeroContact,
   retryXeroWriteWithContactRepair,
   type FindOrCreateXeroContactOptions,
 } from "./xero-contacts";
+import {
+  findOrCreateXeroContactForInvoicedParty,
+  invoicedPartyContactRepair,
+} from "@/lib/organisation-xero-contacts";
 import { formatDateOnly } from "@/lib/date-only";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
@@ -479,10 +482,16 @@ export async function createXeroInvoiceForBooking(
 
   const { xero, tenantId } = await getAuthenticatedXeroClient();
 
-  // Ensure the member has a Xero contact
+  // Ensure the invoiced party has a Xero contact.
+  // #3367: where this booking is linked to an Organisation — a school — the
+  // ORGANISATION is the invoiced party and its own organisation-shaped Xero
+  // customer is used. Where it is not, this is byte-for-byte today's behaviour:
+  // the booking's member. The invoice payload below carries only a contact
+  // reference and no name, so this one line is the whole of "the organisation
+  // becomes the invoiced party" for the invoice builder.
   // #3036 review P1-12: this client was built two lines up, so hand it to the
   // containment verification rather than making it authenticate a second time.
-  const contactId = await findOrCreateXeroContact(booking.memberId, {
+  const contactId = await findOrCreateXeroContactForInvoicedParty(booking, {
     ...options,
     xero,
     tenantId,
@@ -658,6 +667,21 @@ export async function createXeroInvoiceForBooking(
     const response = await retryXeroWriteWithContactRepair({
       memberId: booking.memberId,
       currentContactId: contactId,
+      // #3367 / `INV-INT-019`: THE REPAIR ENTITY MUST MATCH THE INVOICED PARTY.
+      //
+      // `currentContactId` above is now the ORGANISATION's contact where this
+      // booking is a school's. The default repair resolves through
+      // `findOrCreateXeroContact(booking.memberId)`, which searches Xero by
+      // EMAIL first — and a school's recorded address is routinely a teacher's
+      // own, which this module's own comment calls routine. So on a stale
+      // contact reference the default would find that teacher's personal Xero
+      // contact, link it, and re-send the SCHOOL's invoice against a person:
+      // the #2912 prohibition, through the back door.
+      //
+      // Repairing the invoiced party instead is the fix. Disabling repair for
+      // schools would have been smaller and wrong — a stale reference is
+      // exactly the situation a repair exists for.
+      repairContactLink: invoicedPartyContactRepair(booking),
       workflow: "createXeroInvoiceForBooking",
       operationId: operationId!,
       repairExistingLink: options?.repairExistingLink,
