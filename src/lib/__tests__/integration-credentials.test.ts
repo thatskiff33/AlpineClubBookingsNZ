@@ -31,16 +31,9 @@ const mocks = vi.hoisted(() => {
 vi.mock("@/lib/prisma", () => ({ prisma: mocks.prisma }));
 
 import { encryptCredential, INTEGRATION_CREDENTIAL_LABEL } from "@/lib/integration-crypto";
-import {
-  CredentialActorError,
-  CredentialExpectationError,
-  StaleCredentialWriteError,
-  credentialVersionOf,
-  type CredentialActor,
-} from "@/lib/integration-credential-actor";
+import type { CredentialActor } from "@/lib/integration-credential-actor";
 import {
   CACHE_TTL_MS,
-  deleteIntegrationCredential,
   ensureGeneratedCredential,
   getIntegrationsNeedingReentry,
   resetIntegrationCredentialCacheForTests,

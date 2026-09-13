@@ -503,8 +503,14 @@ export const AUDIT_CENSUS_TOTALS = {
    * safe. Unlike an unreadable category, an unreadable disclosure cannot leak —
    * the reader's default is to publish nothing — so this bounds the
    * measurement's claim rather than holding a gate shut.
+   *
+   * 7 -> 6 (#2723): the credential write route stopped building its own audit
+   * row. The store writes it now, inside the transaction that writes the secret,
+   * from a literal event object — so the conditionally-spread request context
+   * that put the route here is gone, and the store's own site is readable.
+   * Re-measured by running `npm run audit:census`, not by subtracting one.
    */
-  memberDisclosureForwarded: 7,
+  memberDisclosureForwarded: 6,
   /** Per-sink totals, so a shift between forms cannot cancel out in the total. */
   bySink: {
     // 238 -> 239 (#2623): the waitlist-confirm recovery marker, fire-and-forget
@@ -2125,11 +2131,18 @@ export const MEMBER_FACING_AUDIT_WRITERS_2695: Readonly<
  * to publish something it meant to.
  *
  * So this list exists to keep the measurement honest rather than to hold a gate
- * shut: it records that seven sites are outside the census's sight, so
+ * shut: it records that six sites are outside the census's sight, so
  * "one member-facing site" is a claim with a stated boundary instead of a
- * completeness assertion the scanner cannot support. Six are an opaque spread
- * of a conditional object into the event; the seventh forwards a whole event
+ * completeness assertion the scanner cannot support. Five are an opaque spread
+ * of a conditional object into the event; the sixth forwards a whole event
  * object through a wrapper.
+ *
+ * It was seven until #2723. The credential write route used to build its own
+ * audit row two awaits after the secret landed, with the request context spread
+ * in conditionally — the shape this list is mostly made of. The store now writes
+ * that row itself, inside the transaction that writes the secret, from a literal
+ * event object, so the site the route used to own is gone and the store's own
+ * one is readable.
  */
 export const APPROVED_FORWARDED_MEMBER_DISCLOSURE_SITES_2695: Readonly<
   Record<string, string>
@@ -2143,8 +2156,6 @@ export const APPROVED_FORWARDED_MEMBER_DISCLOSURE_SITES_2695: Readonly<
   "src/app/api/admin/backups/restore/route.ts::POST#2":
     "Same spread shape; declares nothing.",
   "src/app/api/admin/backups/run/route.ts::POST#0":
-    "Same spread shape; declares nothing.",
-  "src/app/api/admin/integrations/credentials/route.ts::POST#0":
     "Same spread shape; declares nothing.",
   "src/lib/google-oauth.ts::auditGoogleLink#0":
     "Forwards a caller-supplied StructuredAuditEvent. `memberDisclosure` is optional on that type and none of its five callers sets one, so the member reads nothing.",
