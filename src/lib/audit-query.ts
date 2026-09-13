@@ -6,6 +6,10 @@ import {
   type AuditCategory,
 } from "./audit-categories";
 import { readDeclaredMemberText } from "./audit-member-disclosure";
+import {
+  isReservedDetailKey,
+  recoverTruncatedStructuredDetail,
+} from "./audit-structured-detail";
 import { formatCents } from "./utils";
 
 /**
@@ -532,6 +536,11 @@ function formatMetadataDescription(
   }
 
   return Object.entries(metadata)
+    // Reserved bookkeeping keys are filtered BEFORE the slice, not after
+    // (#2704). A reduced or recovered payload leads with `_truncated` and
+    // `_originalLength`, which would otherwise take two of the four fragments
+    // and render "Truncated · True" as if it were what happened.
+    .filter(([key]) => !isReservedDetailKey(key))
     .slice(0, 4)
     .map(([key, value]) =>
       value === undefined ? null : formatMetadataFragment(key, value)
@@ -679,12 +688,20 @@ function getMemberSummary(log: AuditTimelineLog): string {
   return storedSummary(log) ?? titleCaseAction(log.action);
 }
 
+/**
+ * The one-line description an officer reads under the row title.
+ *
+ * `structuredDetails` — the column holds a payload, parsed cleanly or rebuilt
+ * from a clipped one — is passed IN rather than re-derived here (#2704). The
+ * old test was "did it parse?", which called a legacy clipped payload prose and
+ * printed a broken fragment of JSON where a human sentence goes.
+ */
 function getDescription(
   log: AuditTimelineLog,
-  metadata: Prisma.JsonValue | Prisma.JsonObject | null
+  metadata: Prisma.JsonValue | Prisma.JsonObject | null,
+  structuredDetails: boolean
 ): string | null {
-  const legacyMetadata = parseJsonObject(log.details);
-  if (log.details && !legacyMetadata) {
+  if (log.details && !structuredDetails) {
     return log.details;
   }
 
@@ -1123,9 +1140,17 @@ function projectFreeTextForAudience(params: {
   audience: "admin" | "member";
   log: AuditTimelineLog;
   legacyMetadata: Prisma.JsonObject | null;
+  /**
+   * The `details` column holds a payload — parsed, or rebuilt from a clipped
+   * one (#2704). ADMIN-ONLY in effect: the member branch below reads neither
+   * this nor the column, so a payload that becomes readable here cannot become
+   * readable there.
+   */
+  hasStructuredDetails: boolean;
   adminMetadata: Prisma.JsonValue | Prisma.JsonObject | null;
 }): { summary: string; description: string | null; details: string | null } {
-  const { audience, log, legacyMetadata, adminMetadata } = params;
+  const { audience, log, legacyMetadata, hasStructuredDetails, adminMetadata } =
+    params;
 
   if (audience === "member") {
     return {
@@ -1141,7 +1166,15 @@ function projectFreeTextForAudience(params: {
 
   return {
     summary: getSummary(log),
-    description: getDescription(log, adminMetadata),
+    description: getDescription(log, adminMetadata, hasStructuredDetails),
+    // The RAW column, and the test is the CLEAN parse rather than
+    // `hasStructuredDetails` — deliberately (#2704). A cleanly-parsed payload
+    // is shown whole in the metadata panel, so repeating it is noise; a
+    // RECOVERED one is a derived view, so the stored string stays on screen as
+    // the club's actual record. The officer reads both, never a rendering
+    // standing in for the record. (A property of this reader, held by its own
+    // test — not `INV-OPS-012`, which an earlier draft cited here and which
+    // governs reclassifying a stored `category`.)
     details: legacyMetadata ? null : log.details,
   };
 }
@@ -1168,18 +1201,27 @@ function serializeAuditTimelineLog(params: {
     currentMemberId,
   });
   const legacyMetadata = parseJsonObject(log.details);
+  // A payload written before #2704, which the old character clip left
+  // unparseable — the whole legacy population, which no write-time change can
+  // reach. Attempted only when the clean parse failed, and marked
+  // `_recoveredFromTruncatedText` so it is never mistaken for the stored
+  // document. Rule and guarantees: `audit-structured-detail.ts`.
+  const structuredDetails =
+    legacyMetadata ??
+    (recoverTruncatedStructuredDetail(log.details) as Prisma.JsonObject | null);
   // The admin metadata panel deliberately still shows the reserved
   // `memberFacingText` key when a row carries one: an officer reviewing the
   // trail should be able to read exactly what the member was told, and hiding
   // it from them would put the two audiences back out of step (#2695).
   const metadata =
     audience === "admin"
-      ? log.metadata ?? legacyMetadata
+      ? log.metadata ?? structuredDetails
       : null;
   const freeText = projectFreeTextForAudience({
     audience,
     log,
     legacyMetadata,
+    hasStructuredDetails: structuredDetails !== null,
     adminMetadata: metadata,
   });
 

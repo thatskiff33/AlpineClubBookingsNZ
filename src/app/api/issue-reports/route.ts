@@ -206,17 +206,17 @@ export async function POST(request: NextRequest) {
       //
       // `privacy` is member-visible, and this row is written with
       // `memberId: member.id`, so the REPORTER sees it on their own timeline.
-      // The usual reassurance — "`details` is a JSON object, so the member
-      // projection returns `null`" — is true by SHAPE but not by SIZE here.
-      // `sanitizeAuditDetails` clips anything over 1000 characters to
-      // `<first 1000>...[TRUNCATED]`; a clipped object no longer parses, so
-      // `parseJsonObject` returns null and `serializeAuditTimelineLog` hands
-      // the clipped string back as `details`/`description`. This payload CAN
-      // exceed 1000: `pageUrl` is capped at 2048 and `pageTitle` at 300 by the
-      // schema above, and `normalizeInternalAppUrl` keeps the query string. The
-      // exposure is nil — it is the reporter's own page URL and title on their
-      // own report — but the shape argument alone would be wrong here, so both
-      // halves are stated, in `docs/guides/audit-log.md` as well.
+      // What they read from it is now an explicit DECLARATION and nothing else
+      // (#2695): this event declares none, so the member's timeline and their
+      // data export both show them no free text from this row. The reasoning
+      // that used to sit here — "`details` is a JSON object, so the member
+      // projection returns null", caveated because a payload clipped past 1000
+      // characters stopped parsing and was handed back whole — was the SHAPE
+      // test, and it is gone. What the size still decides is what an AUTHORISED
+      // officer sees, and #2704 made that whole fields rather than a broken
+      // fragment; this payload can exceed 1000, because `pageUrl` is capped at
+      // 2048 and `pageTitle` at 300 by the schema above and
+      // `normalizeInternalAppUrl` keeps the query string.
       category: "privacy",
       memberId: member.id,
       targetId: issueReport.id,

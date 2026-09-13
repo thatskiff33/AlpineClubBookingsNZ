@@ -84,6 +84,58 @@ and machine `action`, the actor, the affected member (subject), the entity, and
 primary drill-down links. Expanding a row reveals the request ID, IP, user
 agent, **retention class**, raw details, and JSON metadata.
 
+### Very large entries, and the older ones that look broken (#2704)
+
+Some entries record structured evidence — a before-and-after snapshot, a list of
+what changed — rather than a sentence. There is a size limit on that field, and
+until this release an entry that ran past it was simply **cut off at the
+thousandth character**, wherever that happened to fall.
+
+That produced two problems on exactly the entries you most want to read.
+
+- The expanded row showed a wall of broken text instead of named fields, with no
+  metadata panel and none of the drill-through links.
+- Worse, the cut could land **in the middle of a value**. An entry recording an
+  amount of 1234567 could be stored showing `1`, with nothing on screen to say
+  it was a fragment. Anyone reading it would have read a figure that was wrong
+  by six orders of magnitude.
+
+**From this release an entry that will not fit keeps whole fields instead.** It
+records as many complete fields as there is room for, tells you how long the
+full record was, and names the fields it could not keep. On a very wide entry
+the list of names can itself run out of room; when that happens the entry also
+carries `_droppedKeyCount`, the number of fields dropped altogether, so a short
+list of names is never mistaken for the whole story. Which fields survive does
+not depend on the order they were written in — the small ones are taken first,
+so one long note cannot push the amount, the booking and the payment reference
+off the entry. A long piece of *text* inside one is still shortened — you will
+see `...[TRUNCATED]` at the end of it — but a number, an identifier or a date is
+now either recorded in full or listed as dropped. **Nothing on the screen is
+ever a piece of a value pretending to be the whole one.**
+
+**Entries recorded before this release are read back the same way, as far as
+that is possible.** The cut already happened and nothing can undo it, so the
+screen rebuilds the fields that were complete before the cut and discards the
+part that was not. Such an entry is marked `_recoveredFromTruncatedText` in its
+metadata panel, and **the original stored text is still shown beside it** under
+Details. That is deliberate: the rebuilt fields are a convenience, and the
+stored text is the club's actual record. Nothing is rewritten in the database —
+what changed is only how it is read.
+
+One place is worth being exact about: a member's own booking page, which shows
+the reason a payment failed. That page decides its own readership (see the note
+at the end of the member section below) and **no code on it changed** — but it
+reads the stored entry, so what it reads changed with everything else. It gets
+*less*, not more. When the recorded reason was too long, the entry used to stop
+being readable and the page fell back to showing the member the whole stored
+record, punctuation and internal references and all; now it reads the recorded
+reason itself, shortened if need be, or falls back to a plain sentence. That is
+pinned by a test rather than argued, because "this cannot widen what a member
+reads" is the kind of claim that has to be checked. On the member's own activity
+history it changes nothing at all — that is decided by the rule in "What a
+member reads on their own timeline", which reads neither this field nor its
+shape.
+
 ### Categories, and what they are actually for
 
 The **Category** on an entry is not a colour or a label for tidiness. It is the
@@ -275,14 +327,13 @@ touched*: a member's own photo or their own cancellation request stays theirs to
 see, while the administration of their record — fields, activation, roles — does
 not. Each entry concerns the member reading it, and a member's view never
 shows the stored metadata, the request ID, the IP address, the user agent, the
-retention class or any drill-down link. It **does** show the entry's own
-free-text line where it has one: that line is dropped only when what the entry
-recorded is structured data rather than a sentence, which is a property of the
-entry and not of who is reading it. (One size caveat, because it is easy to
-miss: structured data long enough to be clipped at the platform's
-1000-character limit stops reading as structured, so a very long payload comes
-back as the clipped text.) If a member asks why sign-in entries have started
-appearing, that is why.
+retention class or any drill-down link. Whether it shows the entry's own
+free-text line is decided by what the entry **declares** for the member — see
+"What a member reads on their own timeline" below, which replaced an older rule
+that dropped the line whenever the entry recorded structured data rather than a
+sentence. Nothing about the size or the shape of what was recorded decides it
+any more. If a member asks why sign-in entries have started appearing, that is
+why.
 
 **A second thing on the member side, from this release.** Twenty-six of the kinds
 of entry that gained a category are now inside the member-visible slice when they
@@ -292,14 +343,14 @@ administrator who made the change, so the only member timeline they reach is tha
 administrator's own. Two reach an ordinary member, and both are about that member:
 an **issue report** appears for the member who filed it, and a change to a
 member's **billing family** appears for the member it was made for. Neither shows
-the request ID, the IP or any drill-down link, and neither normally shows the
-stored details either — both record structured data rather than a sentence, which
-a member's view drops. The one exception is size: an issue report records the
-page address and title the member was on, and a page address long enough to push
-that past the 1000-character clip stops reading as structured, so the clipped
-text is shown. What that shows the member is their own page address and title, so
-nothing travels that should not; the billing-family entry is nowhere near the
-limit. **They do name who acted, unless that person is a Full Admin.** A member's
+the request ID, the IP or any drill-down link, and neither shows the stored
+details either — neither declares anything for the member, and an entry that
+declares nothing shows nothing. That was once a statement about their *shape*,
+with a size exception: an issue report records the page address and title the
+member was on, and a page address long enough to be clipped stopped reading as
+structured, so the clipped text was shown. Both the rule and its exception are
+gone; what governs now is the declaration.
+**They do name who acted, unless that person is a Full Admin.** A member's
 view renders a Full
 Admin as "Club admin", but a scoped officer — a Finance Manager, say, who is not
 a Full Admin — is rendered by name. That is how every entry a member can already

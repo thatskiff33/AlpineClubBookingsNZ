@@ -59,12 +59,14 @@ import type { Prisma } from "@prisma/client";
  * no member. Structural, not policed: there is no lint rule to forget.
  *
  * AND IT IS INDEPENDENT OF PAYLOAD SIZE, which is the hole the old shape test
- * had in a second form. `sanitizeAuditMetadata` replaces a metadata object over
- * its JSON budget with a `{_truncated, preview}` stub; if the declared text were
- * merged BEFORE that, a large admin payload would silently delete what the
- * member reads. The boundary sanitises the caller's metadata first and attaches
- * the declared text afterwards, so no audience decision depends on a length or
- * on whether a payload parses.
+ * had in a second form. `sanitizeAuditMetadata` reduces a metadata object over
+ * its JSON budget to the fields that fit (#2704 — before that it swapped the
+ * whole payload for a `{_truncated, preview}` stub, which is what the tests
+ * below were written against); if the declared text were merged BEFORE that, a
+ * large admin payload would still silently delete what the member reads. The
+ * boundary sanitises the caller's metadata first and attaches the declared text
+ * afterwards, so no audience decision depends on a length or on whether a
+ * payload parses.
  */
 
 /**

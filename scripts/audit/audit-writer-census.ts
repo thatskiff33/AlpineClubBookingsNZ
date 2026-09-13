@@ -207,6 +207,33 @@ export type AuditFreeTextEvidence =
   | { kind: "dynamic" }
   | { kind: "forwarded" };
 
+/**
+ * WHAT KIND OF THING THE SITE PUTS IN `details` (#2704).
+ *
+ * `detailsText` above answers "does this carry run-time values"; this answers
+ * the different question the structured-detail rule turns on — is the column
+ * holding a JSON PAYLOAD or a sentence? The two populations are governed by
+ * different halves of `audit-structured-detail.ts`: a payload too big for the
+ * column is REDUCED to its whole fields, while prose keeps the honest text clip.
+ *
+ * It is a MEASUREMENT and deliberately not a gate. Every count this census
+ * DOES pin guards a per-site decision a writer can get wrong; this column is a
+ * passive fact about how a payload was spelled, and the reduction at the write
+ * boundary covers all four write forms whatever the spelling. A count of it
+ * would move for a rename or for a hundred-and-fifth payload writer, neither of
+ * which anybody needs to act on — and a number that moves for reasons nobody
+ * acts on teaches its readers to re-baseline it. The reasoning in full is in
+ * `audit-writer-census-scanner.test.ts`.
+ *
+ *  - `payload`  `details: JSON.stringify(…)` — structured evidence.
+ *  - `text`     anything else: a sentence, a template, a variable holding one.
+ *  - `absent`   the event object names no `details` at all.
+ *  - `unknown`  the site's keys could not be read, so neither can this.
+ */
+export type AuditDetailShapeEvidence = {
+  kind: "absent" | "payload" | "text" | "unknown";
+};
+
 export type AuditWriteSite = {
   /** Repo-relative POSIX path. */
   file: string;
@@ -230,6 +257,8 @@ export type AuditWriteSite = {
   memberDisclosure: AuditMemberDisclosureEvidence;
   /** The shape of the `details` free-text channel. */
   detailsText: AuditFreeTextEvidence;
+  /** Whether `details` holds a JSON payload or a sentence (#2704). */
+  detailsShape: AuditDetailShapeEvidence;
   /** The shape of the `summary` free-text channel. */
   summaryText: AuditFreeTextEvidence;
   /** True when the event object also omits `severity` and `retentionClass`. */
@@ -634,6 +663,46 @@ function resolveFreeText(
   return { kind: "dynamic" };
 }
 
+/**
+ * Is this site's `details` a JSON payload or a sentence (#2704)?
+ *
+ * `JSON.stringify(...)` at the top of the expression is the whole test, because
+ * that is how all 104 payload writers spell it today. A site that builds its
+ * payload somewhere else and passes the variable reads as `text` — an
+ * UNDER-count, which is the right direction for a measurement nobody gates on:
+ * it can understate how many payload writers exist and can never invent one.
+ * The reduction at the write boundary does not share this blind spot; it reads
+ * the value, not the spelling.
+ */
+function resolveDetailShape(event: ResolvedObject): AuditDetailShapeEvidence {
+  const property = findTopLevelProperty(event, "details");
+  if (!property) {
+    return { kind: event.unreadableKeys ? "unknown" : "absent" };
+  }
+  if (property.kind === "opaque") return { kind: "unknown" };
+
+  const value = unwrap(property.value);
+  if (
+    ts.isCallExpression(value) &&
+    collapse(value.expression.getText()) === "JSON.stringify"
+  ) {
+    return { kind: "payload" };
+  }
+  return { kind: "text" };
+}
+
+/** A site writing a payload in ANY branch is governed by the reduction. */
+function combineDetailShape(
+  events: readonly ResolvedObject[] | null,
+): AuditDetailShapeEvidence {
+  if (!events || events.length === 0) return { kind: "unknown" };
+  const each = events.map(resolveDetailShape);
+  for (const kind of ["payload", "unknown", "text"] as const) {
+    if (each.some((evidence) => evidence.kind === kind)) return { kind };
+  }
+  return { kind: "absent" };
+}
+
 /** The weakest (most revealing) reading across a multi-row write. */
 function combineFreeText(
   events: readonly ResolvedObject[] | null,
@@ -891,6 +960,7 @@ function scanFile(file: string, repoRoot: string): AuditWriteSite[] {
         ? combineMemberDisclosure(events, payloadText)
         : { kind: "absent" },
       detailsText: producesRow ? combineFreeText(events, "details") : { kind: "absent" },
+      detailsShape: producesRow ? combineDetailShape(events) : { kind: "absent" },
       summaryText: producesRow ? combineFreeText(events, "summary") : { kind: "absent" },
       // ANY element omitting retention inputs flags the site, and EVERY element
       // must name an entity before the site counts as identified: both take the
@@ -1435,6 +1505,7 @@ const TSV_COLUMNS = [
   "category",
   "memberDisclosure",
   "detailsText",
+  "detailsShape",
   "summaryText",
   "omitsRetentionInputs",
   "hasEntityIdentifier",
@@ -1459,6 +1530,7 @@ export function renderCensusTsv(census: AuditWriterCensus): string {
       describeCategory(site.category),
       describeMemberDisclosure(site.memberDisclosure),
       site.detailsText.kind,
+      site.detailsShape.kind,
       site.summaryText.kind,
       String(site.omitsRetentionInputs),
       String(site.hasEntityIdentifier),
@@ -1481,6 +1553,9 @@ export function renderCensusTsv(census: AuditWriterCensus): string {
           : "(absent)"
         : "(dml)",
       "(absent)",
+      // detailsText, detailsShape, summaryText: a migration statement has no
+      // event object to read any of them from.
+      "(sql)",
       "(sql)",
       "(sql)",
       "false",
