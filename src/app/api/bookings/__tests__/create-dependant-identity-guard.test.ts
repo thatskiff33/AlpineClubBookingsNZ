@@ -282,7 +282,11 @@ describe("POST /api/bookings own-dependant identity guard (#2721)", () => {
     expect(res.status).toBe(409);
     const body = await res.json();
     expect(body.code).toBe("DEPENDANT_IDENTITY_UNRESOLVED");
-    expect(body.dependantCollisions[0].dependants).toEqual([DEPENDANT]);
+    // Code and sentence, and nothing else (#2721 review). The collisions used to
+    // travel with it and nothing read them: a client that meets this refusal has
+    // a stale picture by definition, so the wizard re-reads the authoritative
+    // list rather than believing the refusal's account of it.
+    expect(Object.keys(body).sort()).toEqual(["code", "error"]);
     expectNoBookingWritten();
   });
 
@@ -463,7 +467,9 @@ describe("POST /api/bookings own-dependant identity guard (#2721)", () => {
       expect(res.status).toBe(400);
       const body = await res.json();
       expect(body.code).toBe("DEPENDANT_IDENTITY_DECLARATION_INVALID");
-      expect(body.dependantCollisions).toEqual([]);
+      // The body carries the code and the sentence and nothing else (#2721
+      // review): it used to echo the collisions back, which no consumer read.
+      expect(Object.keys(body).sort()).toEqual(["code", "error"]);
       expectNoBookingWritten();
     });
 
@@ -487,6 +493,49 @@ describe("POST /api/bookings own-dependant identity guard (#2721)", () => {
       );
 
       expect(res.status).toBe(400);
+      expectNoBookingWritten();
+    });
+
+    /*
+      THE PRIVACY HALF OF THE RULE, which is the half a refusal can leak
+      (#2721 review). A declaration naming another family's REAL dependant and
+      one naming a person who does not exist must be indistinguishable: the
+      moment the refusal is more "helpful" about one of them, the guest name box
+      becomes a way to ask the club whether a name belongs to a member — the
+      exact thing the owner rule forbids. The fabricated and same-booker cases
+      were pinned; this one, the one that carries the leak, was not, and a
+      helpful message would have passed everything that existed.
+    */
+    it("answers for ANOTHER family's real dependant exactly as for an invented id", async () => {
+      async function refusalFor(dependantMemberId: string) {
+        // The booker's OWN dependant set is the same either way — that is the
+        // point: the query never widens, so the server does not know and cannot
+        // say whether the id names a real member of some other family.
+        h.memberFindMany.mockResolvedValue([DEPENDANT]);
+        const res = await POST(
+          makeRequest({
+            guests: OWN_DEPENDANT_AS_FREE_TEXT,
+            dependantIdentityDeclarations: [
+              {
+                kind: DIFFERENT_PERSON_SAME_NAME,
+                dependantMemberId,
+                normalizedName: "sam smith",
+              },
+            ],
+          }),
+        );
+        return { status: res.status, body: await res.text() };
+      }
+
+      // `another-familys-child` is a real member on this club's books; `invented`
+      // names nobody at all.
+      const other = await refusalFor("another-familys-child");
+      const nobody = await refusalFor("invented");
+
+      expect(other.status).toBe(nobody.status);
+      // Byte-identical, not merely the same code: a name, a count or a different
+      // sentence would each be an oracle.
+      expect(other.body).toBe(nobody.body);
       expectNoBookingWritten();
     });
 
